@@ -7,9 +7,9 @@ Simulation: run with pypeline_sim.py for a live matplotlib display.
     python3 src/pypeline_sim.py examples/pypeline/vga_donut.py --run <cycles>
 
 Cycles per frame by resolution:
-    640×480   (VGA_640_480)  : 800  × 525  =   420 000
-    1280×720  (VGA_1280_720) : 1650 × 750  = 1 237 500
-    1920×1080 (VGA_1920_1080): 2200 × 1125 = 2 475 000
+    640x480   (VGA_640_480)  : 800  x 525  =   420 000
+    1280x720  (VGA_1280_720) : 1650 x 750  = 1 237 500
+    1920x1080 (VGA_1920_1080): 2200 x 1125 = 2 475 000
 """
 
 import sys, os
@@ -40,12 +40,12 @@ from vga.timing import (
 )
 
 # ── CONFIG ──────────────────────────────────────────────────────────────────
-RESOLUTION = VGA_640_480  # swapable
-CALC_FRAC_BITS = 0  # Extra CORDIC precision bits (0 = blocky/minimum, 4-8 = smooth)
-NCORDIC = 6  # CORDIC iterations per call  (6 = original; 8+ = smoother)
-NITERS = 16  # ray-march steps             (16 = original; 24+ = smoother)
+RESOLUTION = VGA_1280_720  # swapable
+CALC_FRAC_BITS = 4  # Extra CORDIC precision bits (0 = blocky/minimum, 4-8 = smooth)
+NCORDIC = 7  # CORDIC iterations per call  (6 = original; 8+ = smoother)
+NITERS = 20  # ray-march steps             (16 = original; 24+ = smoother)
 CORDIC_DZ = 5  # ray-sphere offset
-SCALE = 1  # coordinate units per pixel  (2 = original; 1 = 2x larger donut)
+SCALE = 2  #  SCALE=1 is broken? coordinate units per pixel  (2 = original; 1 = 2x larger donut)
 BOUNCE = True  # True = emit bounce-animation hardware
 BOUNCE_SPEED_X = 3  # pixels per frame (horizontal)
 BOUNCE_SPEED_Y = 2  # pixels per frame (vertical)
