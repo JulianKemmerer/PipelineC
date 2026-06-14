@@ -1526,19 +1526,25 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         # ALl globals driven
         for state_reg in logic.state_regs:
             if logic.state_regs[state_reg].is_volatile == False:
-                global_wire = state_reg
-                if (global_wire not in wires_driven_by_so_far) or (
-                    wires_driven_by_so_far[global_wire] is None
+                if (state_reg not in wires_driven_by_so_far) or (
+                    wires_driven_by_so_far[state_reg] is None
                 ):
+                    # A reg with no wire_driven_by entry was never written: it holds its
+                    # value via REG_VAR (VHDL emits REG_COMB_x <= REG_VAR_x := x).
+                    # This is valid hardware (read-only init-value register); skip it.
+                    if state_reg not in logic.wire_driven_by:
+                        if print_debug:
+                            print("Register holds value (never written):", state_reg)
+                        continue
                     if print_debug:
-                        print("Pipeline not done global.", global_wire)
+                        print("Pipeline not done state_reg.", state_reg)
                     return False
                 if print_debug:
                     print(
-                        "Global driven ",
-                        global_wire,
+                        "state_reg driven ",
+                        state_reg,
                         "<=",
-                        wires_driven_by_so_far[global_wire],
+                        wires_driven_by_so_far[state_reg],
                     )
         # All write only global var wires
         for global_wire in logic.write_only_global_wires:
@@ -1614,8 +1620,8 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             print("inst_name", inst_name)
             bad_inf_loop = True
             print_debug = True
-            # print(0/0)
-            # sys.exit(-1)
+        if stage_num >= 5001:
+            sys.exit(-1)
         if est_total_latency is not None:
             if stage_num >= max_possible_latency_with_extra:
                 print("Something is wrong here, infinite loop probably...")

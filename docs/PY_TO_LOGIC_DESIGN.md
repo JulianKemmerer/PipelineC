@@ -42,6 +42,8 @@
 
 **Special Signal Declarations**
 - [Registers (`Reg[T]`)](#registers-regt)
+  - [Register Init Values](#register-init-values)
+  - [Never-Written (Read-Only) Registers](#never-written-read-only-registers)
   - [Clock Enable and Function Calls](#clock-enable-and-function-calls)
 - [Feedback Wires (`Feedback[T]`)](#feedback-wires-feedbackt)
 - [Global Wires (`Wire[T]`)](#global-wires-wiret)
@@ -1053,14 +1055,21 @@ Only the taken branch's hardware is emitted; the other branch produces no Logic(
 ## Registers (`Reg[T]`)
 
 A local variable annotated `Reg[T]` declares a hardware register — a value that persists
-across clock cycles and is initialised to zero at reset.
+across clock cycles. By default the register is initialised to zero at reset; an optional
+initializer expression provides a non-zero reset value.
 
 ```python
 @MAIN
 def accumulator(data_in: uint32_t) -> uint32_t:
-    acc: Reg[uint32_t]   # register, init=0
-    acc = acc + data_in  # read current value, compute next
+    acc: Reg[uint32_t]       # register, reset value = 0 (default)
+    acc = acc + data_in      # read current value, compute next
     return acc
+
+@MAIN
+def counter_from_10() -> uint32_t:
+    cnt: Reg[uint32_t] = 10  # register, reset value = 10
+    cnt = cnt + 1
+    return cnt
 ```
 
 Elaboration treats the annotation specially:
@@ -1073,6 +1082,78 @@ Elaboration treats the annotation specially:
 
 `Reg` is re-exported from `pypeline` as `_RegType`; `Reg[T]` uses `__class_getitem__` to
 produce a typed register descriptor that `_elab_ann_assign` recognises.
+
+### Register Init Values
+
+Four forms are supported for the optional initializer:
+
+```python
+cnt: Reg[uint32_t] = 10                          # scalar integer (or negative)
+n:   Reg[int32_t]  = -5                          # signed scalar
+buf: Reg[uint8_t[4]] = [10, 20, 30, 40]          # array — list of scalars
+pt:  Reg[point_t] = {"x": 3, "y": 7}            # struct — dict-style
+pt:  Reg[point_t] = point_t(x=5, y=2)           # struct — NamedTuple constructor
+```
+
+**Elaboration (`_elab_ann_assign`):** when `stmt.value` is not `None`, `_try_eval_const`
+is called on the RHS. The result must be a plain Python value (`int`, `list`, `dict`, or
+NamedTuple instance) — any `None` return triggers `NotImplementedError` ("Reg[T]
+initializer must be a compile-time constant"). The evaluated value is passed to
+`_declare_state_reg` as `init_py_val`.
+
+**Storage:** `_declare_state_reg` sets `var_info.init = init_py_val` on the
+`VariableInfo` object. `var_info.resolved_const_str` is not used on the Pypeline path
+(left `None`).
+
+**VHDL output (`VHDL.py` — `STATE_REG_TO_VHDL_INIT_STR`):** the dispatch chain checks
+`isinstance(init, (int, list, tuple, dict))` before the C AST fallback and calls
+`INIT_PYTHON_VAL_TO_VHDL_INIT_STR(init, c_type, ...)`:
+
+- `int` → `CONST_VAL_STR_TO_VHDL(str(init), c_type, ...)` — e.g.
+  `signal cnt : uint32_t := to_unsigned(10, 32);`
+- `list` / non-NamedTuple `tuple` → `(0 => val, 1 => val, others => null)` aggregate
+- `dict` → `(field_a => val, field_b => val)` aggregate (unspecified fields → null)
+- NamedTuple (has `_fields`) → same as dict using `_fields` order
+
+`INIT_PYTHON_VAL_TO_VHDL_INIT_STR` mirrors `INIT_C_AST_NODE_TO_VHDL_INIT_STR` but
+takes Python values directly and dispatches recursively on type, so nested
+struct-of-arrays and arrays-of-structs are handled correctly. No existing C AST paths
+are affected.
+
+### Never-Written (Read-Only) Registers
+
+A register may be declared with an init value and then only read — never assigned in the
+function body. This is valid hardware: the register holds its power-on reset value every
+cycle:
+
+```python
+@hw_func
+def array_reg_read_init() -> uint8_t:
+    buf: Reg[uint8_t[4]] = [10, 20, 30, 40]
+    return buf[0]   # buf is never written — holds [10,20,30,40] forever
+```
+
+**VHDL behaviour:** The VHDL process always emits:
+```vhdl
+REG_VAR_buf := buf;          -- read current value into variable
+-- (no pipeline stage writes REG_VAR_buf)
+REG_COMB_buf <= REG_VAR_buf; -- write-back: holds value each cycle
+```
+The clocked process then does `buf <= REG_COMB_buf;`, making the register stable.
+
+**Pipeline completion check (`SYN.py` — `GET_PIPELINE_MAP`):** The check iterates
+`logic.state_regs` and requires each non-volatile register to be present in
+`wires_driven_by_so_far` with a non-`None` driver. A register that was never written has
+no `wire_driven_by` entry (because `_connect_final_state_wires` skips the connect when
+`final_wire == reg_name`). The check allows this case:
+
+```python
+if global_wire not in logic.wire_driven_by:
+    continue  # hold-value register — VHDL handles it via REG_VAR default
+```
+
+Without this exemption, an elaboration error like `"Pipeline not done global. buf"` would
+be emitted at 5000 pipeline stages for any function with an unwritten register.
 
 ### Clock Enable and Function Calls
 
@@ -2217,13 +2298,6 @@ file (e.g. `vga_pos_t`) would be missing from the elaboration namespace.
 
 **`_sim_active` guard — elaborator-probing protection:**
 
-The `@hw_func` wrapper has this guard at its start:
-
-```python
-if not _sim_active:
-    return fn(*args, **kwargs)
-```
-
 `_sim_active` is `False` by default in `pypeline.py`. It is set to `True` in two places:
 
 - `pypeline_sim.py` sets `pypeline._sim_active = True` before the first clock cycle of
@@ -2237,18 +2311,48 @@ and never sets this flag — it probes functions directly.
 This guard is needed because `_elab_assign` calls `_try_eval_const(stmt.value)` on every
 assignment RHS to test whether the RHS is a plain Python constant. `_try_eval_const`
 evaluates the expression in `{**module_globals, **const_env}` — which includes live
-callables like `vga_timing`. If the wrapper were always active:
+callables like `vga_timing`. Without the guard the elaborator would probe `vga_timing()`,
+the wrapper would run the simulation body, return a concrete `vga_timing_signals_t`, and
+`_try_eval_const` would cache it as a constant — causing an elaboration error later when
+hardware wires derived from it are not in `self.env`.
 
-- The elaborator calls `vga_timing()` via `_try_eval_const`
-- The `@hw_func` wrapper runs the simulation body → returns a concrete `vga_timing_signals_t`
-- `_try_eval_const` returns non-`None` → the result is stored in `const_env`
-- Later, `sig` (= the constant) is used in `test_pattern(sig)` → elaboration error:
-  *"Cannot emit non-int Python value as hardware"*
+The guard is **behaviour-split on `has_state`** (set by `_sim_type_wrap` based on
+whether `_build_reg_sim_func` found any `Reg[T]` or `Feedback[T]` annotations):
 
-With the `_sim_active` guard, calling `vga_timing()` outside of simulation falls through
-to the raw closure, which raises `UnboundLocalError` on its unbound `Reg[T]` variables.
-`_try_eval_const` catches that exception, returns `None`, and the elaborator uses the
-hardware path (`_elaborate_live_func`) correctly.
+**`has_state=False` (pure combinational):**
+
+```python
+if not _sim_active:
+    return fn(*args, **kwargs)   # falls through to raw function
+```
+
+Pure combinational functions have no `Reg[T]` variables, so calling the raw `fn()`
+when probed by `_try_eval_const` either succeeds and returns a useful constant (which
+the elaborator can use) or raises a `NameError` / `TypeError` from touching a hardware
+wire (which causes `_try_eval_const` to return `None`).
+
+**`has_state=True` (has `Reg[T]` or `Feedback[T]`):**
+
+```python
+if not _sim_active:
+    raise TypeError(
+        f"{fn.__qualname__!r} has Reg[T]/Feedback[T] state and "
+        f"cannot be called outside sim_call()"
+    )
+```
+
+An explicit `TypeError` is raised rather than calling `fn()`. The reason:
+`Reg[T] = init_val` syntax (`h_cntr: Reg[h_uint] = H_START`) is a Python annotated
+assignment **with a value**, which Python executes unconditionally — `h_cntr` is bound
+to `H_START` in the local scope. As a result, calling the raw function body would
+**succeed** and return a real value, causing `_try_eval_const` to cache it as a
+constant and bypass hardware elaboration. Raising `TypeError` ensures `_try_eval_const`
+always returns `None` for state-bearing functions, forcing the hardware path.
+
+Note: the prior mechanism relied on `Reg[T]` (annotation-only, no value) leaving the
+variable unbound, so `fn()` would raise `UnboundLocalError`. That relied on every
+register having no init value — once `Reg[T] = init_val` was introduced, the implicit
+guard broke, and the explicit `TypeError` became necessary.
 
 **Scoped operator key correctness:** scoped ops are registered with `scope=func` where
 `func` is the name at the point of the `register_*_operator` call. If `@hw_func` has
@@ -2579,14 +2683,19 @@ def _make_sim_zero(ctype): ...
 
 def _sim_reg_read(inst_path, reg_name, default=0): ...
 # Returns the stored value, or `default` if the register has never been written.
-# _build_reg_sim_func passes a type-appropriate zero (from _make_sim_zero) so
-# compound registers return a zero struct rather than integer 0.
+# _build_reg_sim_func passes the register's init value as `default` — either
+# _make_sim_zero(inner_ctype) (no initializer) or the evaluated init expression
+# (Reg[T] = init_val).  Compound registers return a proper struct or list rather
+# than integer 0, so field/index access on an uninitialised register works correctly.
 
 def _sim_reg_write(inst_path, reg_name, value): ...
 # Stores value as-is — struct/array instances are preserved without int() coercion.
 ```
 
-`sim_reset()` clears `_sim_reg_state` entirely, equivalent to a hardware power-on reset.
+`sim_reset()` clears `_sim_reg_state` entirely. After the reset, the first
+`_sim_reg_read` for each register returns the per-register `default` — the declared
+init value (which may be non-zero) or zero when no initializer was given. This correctly
+models a hardware power-on reset that applies VHDL signal initial values.
 Call it at the start of each independent sim test.
 
 #### `_build_reg_sim_func` — AST Transformation at Decoration Time
@@ -2611,10 +2720,14 @@ This function:
    without generating an assignment. Wire `AnnAssign` nodes have already been replaced by
    plain calls in step 3, so this pass sees only non-wire annotations. Non-scalar types
    (`Reg[T]`, `Feedback[T]`, `Wire[T]`, structs) are left untouched.
-5. **Discovers registers and feedback wires** by evaluating each annotation-only `AnnAssign`
-   node in the (now rewritten) body against `fn.__globals__` — the only way to detect
-   `_RegType`/`_FeedbackType` instances without running the hardware elaborator (because
-   Python never stores local variable annotations in `__annotations__`).
+5. **Discovers registers and feedback wires** by evaluating each `AnnAssign` annotation
+   node in the (now rewritten) body against `_eval_ns` (= `fn.__globals__` plus closure
+   variables) — the only way to detect `_RegType`/`_FeedbackType` instances without
+   running the hardware elaborator (because Python never stores local variable annotations
+   in `__annotations__`). For `Reg[T]` nodes that carry an `AnnAssign.value` (init
+   expression), the value is also evaluated in `_eval_ns`; the result becomes the
+   `__reg_init_<name>__` default injected into the generated function's globals. For
+   annotation-only `Reg[T]` nodes (no value), `_make_sim_zero(inner_ctype)` is used.
 6. If no `_RegType`, `_FeedbackType`, global wire names, or typed local annotation rewrites
    are found, returns `None` (no transformation needed).
 7. Otherwise builds a **transformed function body**:
@@ -2623,7 +2736,7 @@ This function:
 # generated at decoration time — not user-written:
 def accum_func(data_in: uint32_t) -> uint32_t:
     __ip__ = _sim_current_inst_path()
-    acc    = _sim_reg_read(__ip__, "acc", __reg_zero_acc__)   # ← type-appropriate reset default
+    acc    = _sim_reg_read(__ip__, "acc", __reg_init_acc__)   # ← init/reset default
     try:
         # original body with Reg[T] AnnAssign nodes removed and typed annotations rewritten:
         result: uint32_t = acc + data_in      # original source
@@ -2639,11 +2752,22 @@ The `try/finally` pattern handles all return paths (including multiple `return`
 statements and exceptions). Python's `finally` executes with `acc` at its **final
 local value** before the frame is torn down, so the written-back value is always correct.
 
-`__reg_zero_acc__` is injected into the generated function's `__globals__` at decoration
-time as `_make_sim_zero(ann_val.inner_ctype)`. For scalar types (e.g. `uint32_t`) this is
-plain `0`; for compound types (e.g. `Reg[vga_12bpp_t]`) this is a zero-initialised struct
-instance. This means accessing fields like `vga_pmod_reg.r[0]` on an uninitialised register
-works correctly — the register already holds a proper struct rather than integer `0`.
+`__reg_init_acc__` is injected into the generated function's `__globals__` at decoration
+time. Its value depends on whether an initializer was present in the source:
+
+- **No initializer** (`acc: Reg[uint32_t]`): `_make_sim_zero(ann_val.inner_ctype)` — `0`
+  for scalar types, a zero-initialised struct instance for compound types.
+- **With initializer** (`cnt: Reg[uint32_t] = 10`): `_build_reg_sim_func` evaluates
+  `ast.unparse(ann_node.value)` in `_eval_ns` (which includes `fn.__globals__` and all
+  closure variables). The result (e.g. `10` for a scalar, `[10, 20, 30, 40]` for an
+  array, or a NamedTuple instance for a struct) is used directly as the default. After
+  `sim_reset()`, the first `_sim_reg_read` for that register returns this init value,
+  correctly modelling power-on reset behaviour.
+
+This means `sim_reset()` restores registers to their **declared init values** (which may
+be non-zero), not necessarily to zero. Accessing fields of a compound register on first
+use after reset always succeeds because the default is a proper struct instance rather
+than integer `0`.
 
 Values are stored as-is by `_sim_reg_write` (no `int()` coercion), so struct values
 survive write-back across clock cycles.
@@ -3163,7 +3287,7 @@ The companion module provides the types and decorators used in design files:
 | `@struct` | Adds `__class_getitem__` + captures resolved field annotations |
 | `@MAIN` | Registers a function as a hardware entry point; implies `@hw_func`; appends to `_main_registry` |
 | `@sim_output` | Marks a function as simulation output-only; no-op during convergence passes, executes normally in the final post-convergence pass each cycle |
-| `Reg` / `_RegType` | Register descriptor; `Reg[T]` annotation declares a stateful register |
+| `Reg` / `_RegType` | Register descriptor; `Reg[T]` annotation declares a stateful register; optional init value (`Reg[T] = val`) sets the power-on reset value in both VHDL and simulation |
 | `Feedback` / `_FeedbackType` | Feedback wire descriptor; `Feedback[T]` annotation declares a combinatorial feedback wire (no flip-flop, no zero-init) |
 | `Wire` / `_WireType` | Global wire descriptor; `Wire[T]` annotation at **module level** declares a named combinatorial wire shared across functions (one writer, any number of readers) |
 | `Input` / `_InputType` | Top-level design input port; `Input[T]` at module level; any function may read, no function may write |
@@ -3182,7 +3306,7 @@ The companion module provides the types and decorators used in design files:
 | `_sim_cast(val, ctype)` | Cast a Python int/SimVal to a pypeline ctype: mask to bit width, two's-complement signedness |
 | `hw_func` | Decorator for inner hardware function definitions; adds sim-mode input/output type casting and register state management; transparent to hardware elaboration via `inspect.unwrap` |
 | `sim_call(func, *args)` | Call a pypeline function in simulation mode with scoped operators active |
-| `sim_reset()` | Clear all simulated register state (`_sim_reg_state`) and global wire state (`_sim_wire_state`), equivalent to hardware power-on reset |
+| `sim_reset()` | Clear all simulated register state (`_sim_reg_state`) and global wire state (`_sim_wire_state`); after reset, each register returns its declared init value (non-zero when `Reg[T] = val` was used), equivalent to hardware power-on reset |
 | `sim_wire_reset()` | Clear only `_sim_wire_state`; leaves register state intact |
 | `_sim_inst_stack` | Module-level list tracking the current simulation instance path; each `@hw_func`/`@MAIN` wrapper pushes/pops `(func_qualname, call_loc)` |
 | `_sim_reg_state` | Module-level dict `inst_path → {reg_name: value}`; holds persistent register values across `sim_call` invocations |
@@ -3780,6 +3904,14 @@ these bodies so the instance stack is irrelevant.
 `SIM_TRACE_LOCATIONS = True` restores full column-level tracking for designs with
 multiple hardware instances of the same Reg[T] function instantiated at different call
 sites.
+
+The `_sim_active` guard in the `has_state=True` wrapper raises `TypeError` (rather than
+calling `fn()`) when `_sim_active=False`. This prevents the hardware elaborator's
+`_try_eval_const` from treating a state-bearing hw_func as a compile-time constant — an
+issue that arises when `Reg[T] = init_val` syntax is used, because the Python annotated
+assignment actually binds the variable, so the raw function would succeed and return a
+real value instead of raising `UnboundLocalError`. See `_sim_active guard` for full
+details.
 
 The `co_positions()` call was particularly expensive because it allocates a list of
 `(lineno, end_lineno, col, end_col)` tuples for **every bytecode instruction** in the

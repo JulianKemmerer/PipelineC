@@ -1588,17 +1588,16 @@ def _build_reg_sim_func(fn):
         _TypedAnnAssignRewriter(_eval_ns, ann_ctypes_out).visit(func_def)
         _ast.fix_missing_locations(func_def)
 
-    # Discover register and feedback variable names by evaluating each
-    # annotation-only AnnAssign against the function's eval namespace
-    # (globals + closure vars so closures like vga_timing work correctly).
+    # Discover register and feedback variable names by evaluating each AnnAssign
+    # annotation against the function's eval namespace.
+    # Typed local AnnAssigns (e.g. x: int16_t = 512) were already rewritten to plain
+    # Assign nodes by _TypedAnnAssignRewriter above, so only Reg[T]/Feedback[T] remain.
     reg_names = []
-    reg_zeros = {}  # name → zero default value, computed once at decoration time
+    reg_zeros = {}  # name → power-on default value, computed once at decoration time
     feedback_names = []
     for stmt in func_def.body:
         if not (
-            isinstance(stmt, _ast.AnnAssign)
-            and isinstance(stmt.target, _ast.Name)
-            and stmt.value is None
+            isinstance(stmt, _ast.AnnAssign) and isinstance(stmt.target, _ast.Name)
         ):
             continue
         try:
@@ -1610,8 +1609,25 @@ def _build_reg_sim_func(fn):
             continue
         if isinstance(ann_val, _RegType):
             reg_names.append(stmt.target.id)
-            reg_zeros[stmt.target.id] = _make_sim_zero(ann_val.inner_ctype)
-        elif isinstance(ann_val, _FeedbackType):
+            if stmt.value is not None:
+                # Reg[T] = val: evaluate the init expression for the power-on default.
+                try:
+                    init_val = eval(
+                        compile(_ast.Expression(body=stmt.value), "<reg_init>", "eval"),
+                        _eval_ns,
+                    )
+                    # Dict-style struct init {"field": val} → convert to NamedTuple
+                    # so that field access (pt.x) works in the simulated body.
+                    if isinstance(init_val, dict) and hasattr(
+                        ann_val.inner_ctype, "_fields"
+                    ):
+                        init_val = ann_val.inner_ctype(**init_val)
+                    reg_zeros[stmt.target.id] = init_val
+                except Exception:
+                    reg_zeros[stmt.target.id] = _make_sim_zero(ann_val.inner_ctype)
+            else:
+                reg_zeros[stmt.target.id] = _make_sim_zero(ann_val.inner_ctype)
+        elif isinstance(ann_val, _FeedbackType) and stmt.value is None:
             feedback_names.append(stmt.target.id)
 
     if (
@@ -1623,16 +1639,22 @@ def _build_reg_sim_func(fn):
     ):
         return None, False
 
-    # Strip both Reg[T] and Feedback[T] annotation-only statements from the body.
-    stripped = set(reg_names) | set(feedback_names)
+    # Strip Reg[T] annotations (with or without init value) and Feedback[T]
+    # annotation-only stmts from the body — init values are handled via
+    # __reg_zero_<name>__ injected into new_globals; the AnnAssign itself must not
+    # remain or it would overwrite the _sim_reg_read result.
+    _reg_set = set(reg_names)
+    _fb_set = set(feedback_names)
     orig_body = [
         stmt
         for stmt in func_def.body
         if not (
             isinstance(stmt, _ast.AnnAssign)
             and isinstance(stmt.target, _ast.Name)
-            and stmt.target.id in stripped
-            and stmt.value is None
+            and (
+                stmt.target.id in _reg_set
+                or (stmt.target.id in _fb_set and stmt.value is None)
+            )
         )
     ]
 
@@ -1895,7 +1917,14 @@ def _sim_type_wrap(fn):
             @_functools.wraps(fn)
             def wrapper(*args, **kwargs):
                 if not _sim_active:
-                    return fn(*args, **kwargs)
+                    # State-bearing hw_funcs must be called via sim_call() so the
+                    # register state dict is active.  Raising here prevents the
+                    # elaborator's _try_eval_const from accidentally treating a
+                    # Reg[T]=init_val function as a compile-time constant.
+                    raise TypeError(
+                        f"{fn.__qualname__!r} has Reg[T]/Feedback[T] state and "
+                        f"cannot be called outside sim_call()"
+                    )
                 caller_f = _sys._getframe(1)
                 call_loc = (caller_f.f_code.co_filename, caller_f.f_lineno, None, None)
                 _sim_inst_stack.append((fn.__qualname__, call_loc))
@@ -1944,7 +1973,14 @@ def _sim_type_wrap(fn):
         @_functools.wraps(fn)
         def wrapper(*args, **kwargs):
             if not _sim_active:
-                return fn(*args, **kwargs)
+                # State-bearing hw_funcs must be called via sim_call() so the
+                # register state dict is active.  Raising here prevents the
+                # elaborator's _try_eval_const from accidentally treating a
+                # Reg[T]=init_val function as a compile-time constant.
+                raise TypeError(
+                    f"{fn.__qualname__!r} has Reg[T]/Feedback[T] state and "
+                    f"cannot be called outside sim_call()"
+                )
             caller_f = _sys._getframe(1)
             if SIM_TRACE_LOCATIONS:
                 filename = caller_f.f_code.co_filename

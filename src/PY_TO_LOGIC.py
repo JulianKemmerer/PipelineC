@@ -1694,7 +1694,15 @@ class FuncElaborator:
         ann_val = self._try_eval_const(stmt.annotation)
         if isinstance(ann_val, _RegType):
             inner_ctype = _inner_ctype_to_str(ann_val.inner_ctype)
-            self._declare_state_reg(var_name, inner_ctype, stmt.target)
+            init_py_val = None
+            if stmt.value is not None:
+                init_py_val = self._try_eval_const(stmt.value)
+                if init_py_val is None:
+                    raise ElaborationError(
+                        f"'{var_name}': Reg[T] initializer must be a compile-time constant",
+                        stmt.value,
+                    )
+            self._declare_state_reg(var_name, inner_ctype, stmt.target, init_py_val)
             return
         if isinstance(ann_val, (_WireType, _InputType, _OutputType)):
             raise ElaborationError(
@@ -3542,7 +3550,7 @@ class FuncElaborator:
         _connect(self.logic, zeros_wire, var_name)
         self.env[var_name] = (var_name, typ)
 
-    def _declare_state_reg(self, var_name, c_type, node):
+    def _declare_state_reg(self, var_name, c_type, node, init_py_val=None):
         """Declare a hardware state register (Reg[T] annotation).
 
         The base wire represents the register's current (start-of-cycle) value.
@@ -3550,11 +3558,14 @@ class FuncElaborator:
         sources it from the persistent flip-flop signal. All writes via _write_ref
         create aliases in wire_aliases_over_time; the final alias is the next-cycle
         value (drives REG_COMB_<var_name> in the generated VHDL).
+
+        init_py_val: Python value (int/list/dict/NamedTuple) for power-on reset, or
+        None for zero init. Stored in VariableInfo.init for VHDL.STATE_REG_TO_VHDL_INIT_STR.
         """
         var_info = C_TO_LOGIC.VariableInfo()
         var_info.name = var_name
         var_info.type_name = c_type
-        var_info.resolved_const_str = "0"  # power-on reset value
+        var_info.init = init_py_val  # None → WIRE_TO_VHDL_NULL_STR; else Python value
         var_info.is_volatile = False
         var_info.is_static_local = True
 

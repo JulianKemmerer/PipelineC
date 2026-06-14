@@ -143,6 +143,101 @@ def INIT_C_AST_NODE_TO_VHDL_INIT_STR(c_ast_init, c_type, logic, parser_state):
     return text
 
 
+def INIT_PYTHON_VAL_TO_VHDL_INIT_STR(py_val, c_type, logic, parser_state):
+    """Convert a Python init value (int/list/dict/NamedTuple) to a VHDL initializer string.
+    Used by STATE_REG_TO_VHDL_INIT_STR for Pypeline Reg[T] = val declarations.
+    Mirrors INIT_C_AST_NODE_TO_VHDL_INIT_STR but takes Python values instead of C AST nodes.
+    SimVal (from @struct construction) subclasses int, so the scalar branch handles it.
+    """
+    # Scalar integer — also covers SimVal (subclass of int) and negatives (str(-5)=="-5")
+    if isinstance(py_val, int) and not isinstance(py_val, bool):
+        return CONST_VAL_STR_TO_VHDL(str(py_val), c_type, parser_state)
+
+    # Array: list or plain tuple of values
+    if (
+        isinstance(py_val, (list, tuple))
+        and not hasattr(py_val, "_fields")
+        and C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type)
+    ):
+        elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+        sub_elem_type = elem_t
+        for d in dims[1:]:
+            sub_elem_type += f"[{d}]"
+        index_to_vhdl = {}
+        for i, elem in enumerate(py_val):
+            index_to_vhdl[i] = INIT_PYTHON_VAL_TO_VHDL_INIT_STR(
+                elem, sub_elem_type, logic, parser_state
+            )
+        text = "(\n"
+        for idx, vhdl in index_to_vhdl.items():
+            text += str(idx) + " => " + vhdl + ",\n"
+        text += (
+            "others => "
+            + C_TYPE_STR_TO_VHDL_NULL_STR(sub_elem_type, parser_state)
+            + ",\n"
+        )
+        text = text.strip("\n").strip(",")
+        text += ")\n"
+        return text
+
+    # Struct: NamedTuple instance — constructor style: my_struct_t(field1=0, field2=5)
+    if (
+        isinstance(py_val, tuple)
+        and hasattr(py_val, "_fields")
+        and C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state)
+    ):
+        field_type_dict = parser_state.struct_to_field_type_dict[c_type]
+        member_to_vhdl = {}
+        for field_name in py_val._fields:
+            field_val = getattr(py_val, field_name)
+            field_type = field_type_dict[field_name]
+            member_to_vhdl[field_name] = INIT_PYTHON_VAL_TO_VHDL_INIT_STR(
+                field_val, field_type, logic, parser_state
+            )
+        text = "(\n"
+        for member_name, member_type in field_type_dict.items():
+            if member_name in member_to_vhdl:
+                text += member_name + " => " + member_to_vhdl[member_name] + ",\n"
+            else:
+                text += (
+                    member_name
+                    + " => "
+                    + C_TYPE_STR_TO_VHDL_NULL_STR(member_type, parser_state)
+                    + ",\n"
+                )
+        text = text.strip("\n").strip(",")
+        text += ")\n"
+        return text
+
+    # Struct: dict style — {"field1": 0, "field2": 5}
+    if isinstance(py_val, dict) and C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state):
+        field_type_dict = parser_state.struct_to_field_type_dict[c_type]
+        member_to_vhdl = {}
+        for field_name, field_val in py_val.items():
+            field_type = field_type_dict[field_name]
+            member_to_vhdl[field_name] = INIT_PYTHON_VAL_TO_VHDL_INIT_STR(
+                field_val, field_type, logic, parser_state
+            )
+        text = "(\n"
+        for member_name, member_type in field_type_dict.items():
+            if member_name in member_to_vhdl:
+                text += member_name + " => " + member_to_vhdl[member_name] + ",\n"
+            else:
+                text += (
+                    member_name
+                    + " => "
+                    + C_TYPE_STR_TO_VHDL_NULL_STR(member_type, parser_state)
+                    + ",\n"
+                )
+        text = text.strip("\n").strip(",")
+        text += ")\n"
+        return text
+
+    raise NotImplementedError(
+        f"Cannot convert Python init value {py_val!r} to VHDL for type {c_type}"
+    )
+
+
 # Could be volatile state too
 def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
     parser_state.existing_logic = logic
@@ -160,6 +255,10 @@ def STATE_REG_TO_VHDL_INIT_STR(wire, logic, parser_state):
     # If none use null
     if init is None:
         return WIRE_TO_VHDL_NULL_STR(wire, logic, parser_state)
+
+    # Python value stored by Pypeline _declare_state_reg (int/list/tuple/dict/NamedTuple)
+    if isinstance(init, (int, list, tuple, dict)) and not isinstance(init, bool):
+        return INIT_PYTHON_VAL_TO_VHDL_INIT_STR(init, c_type, logic, parser_state)
 
     # Raw VHDL init string?
     if type(init) is str:
