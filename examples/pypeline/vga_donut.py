@@ -26,9 +26,7 @@ sys.path.insert(
 from pypeline import *
 
 # Board info:
-import board.arty.part35t  # sets PART pragma for this board  (swap to part100t for A7-100T)
-
-# import board.arty.part100t
+import board.arty.part100t  # sets PART pragma for this board
 import board.arty.vga_pmod_ja_jb as board_vga
 
 # VGA info:
@@ -42,22 +40,20 @@ from vga.timing import (
 )
 
 # ── CONFIG ──────────────────────────────────────────────────────────────────
-RESOLUTION = (
-    VGA_1280_720  # VGA_640_480  # swap: VGA_800_600 | VGA_1280_720 | VGA_1920_1080
-)
-CALC_FRAC_BITS = 6  # Extra CORDIC precision bits (0 = blocky/minimum, 4-8 = smooth)
+RESOLUTION = VGA_640_480  # swapable
+CALC_FRAC_BITS = 0  # Extra CORDIC precision bits (0 = blocky/minimum, 4-8 = smooth)
 NCORDIC = 6  # CORDIC iterations per call  (6 = original; 8+ = smoother)
 NITERS = 16  # ray-march steps             (16 = original; 24+ = smoother)
-TORUS_R1I = 256  # tube radius x 256
-TORUS_R2I = 512  # ring radius x 256
 CORDIC_DZ = 5  # ray-sphere offset
-SCALE = 2  # coordinate units per pixel  (2 = original; 1 = 2x larger donut)
+SCALE = 1  # coordinate units per pixel  (2 = original; 1 = 2x larger donut)
 BOUNCE = True  # True = emit bounce-animation hardware
 BOUNCE_SPEED_X = 3  # pixels per frame (horizontal)
 BOUNCE_SPEED_Y = 2  # pixels per frame (vertical)
 DITHER = True  # Bayer ordered dither: smooth 4-bit PMOD output
 
 # ── Derived elaboration-time values ──────────────────────────────────────────
+TORUS_R1I = RESOLUTION.frame_height // 3  # tube radius x 256
+TORUS_R2I = TORUS_R1I * 2  # ring radius x 256
 FRAME_WIDTH = RESOLUTION.frame_width
 FRAME_HEIGHT = RESOLUTION.frame_height
 
@@ -384,7 +380,6 @@ def full_update(sig: vga_timing_signals_t) -> full_state_t:
         if BOUNCE:
             bounce_vel_x = BOUNCE_SPEED_X
             bounce_vel_y = BOUNCE_SPEED_Y
-        out_state = state
 
     return out_state
 
