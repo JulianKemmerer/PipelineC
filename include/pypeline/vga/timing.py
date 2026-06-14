@@ -22,9 +22,10 @@ class VgaTimingSpec:
 VGA_640_480 = VgaTimingSpec(640, 480, 16, 96, 800, 10, 2, 525, 0, 0, 25.0)
 VGA_800_600 = VgaTimingSpec(800, 600, 40, 128, 1056, 1, 4, 628, 1, 1, 40.0)
 VGA_1280_720 = VgaTimingSpec(1280, 720, 110, 40, 1650, 5, 5, 750, 1, 1, 74.25)
+VGA_1920_1080 = VgaTimingSpec(1920, 1080, 88, 44, 2200, 4, 5, 1125, 1, 1, 148.5)
 
 
-def make_vga_timing(spec: VgaTimingSpec):
+def make_vga_timing(spec: VgaTimingSpec, h_start: int = 0, v_start: int = 0):
     """
     Returns a hw_func implementing beam-chase VGA timing for the given spec.
 
@@ -32,6 +33,10 @@ def make_vga_timing(spec: VgaTimingSpec):
     so no hardware comparator logic is emitted for threshold checks.
     Counter registers are sized to the minimum width for the resolution.
     Sync polarity is applied inside — callers receive correctly-polled signals.
+
+    h_start / v_start: initial counter values (default 0,0 = normal start of frame).
+    Set v_start to a mid-frame line to skip blank scan lines in simulation so pixels
+    of interest are reached sooner. Has no effect in hardware when both are 0.
     """
     FRAME_WIDTH = spec.frame_width
     FRAME_HEIGHT = spec.frame_height
@@ -43,14 +48,16 @@ def make_vga_timing(spec: VgaTimingSpec):
     V_MAX = spec.v_max
     H_POL = spec.h_pol
     V_POL = spec.v_pol
+    H_START = h_start
+    V_START = v_start
     # Size counters to the minimum bit-width needed for this resolution
     h_uint = make_uint(spec.h_max.bit_length())  # e.g. 800 → 10 bits
     v_uint = make_uint(spec.v_max.bit_length())  # e.g. 525 → 10 bits
 
     @hw_func
     def vga_timing() -> vga_timing_signals_t:
-        h_cntr: Reg[h_uint]
-        v_cntr: Reg[v_uint]
+        h_cntr: Reg[h_uint] = H_START
+        v_cntr: Reg[v_uint] = V_START
 
         # Derive all signals from CURRENT counter values (beam-chase: derive then advance)
         pos = vga_pos_t(x=h_cntr, y=v_cntr)

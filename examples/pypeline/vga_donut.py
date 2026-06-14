@@ -94,7 +94,10 @@ if BOUNCE:
 coord_t = make_int(COORD_WIDTH)
 calc_t = make_int(CALC_WIDTH)
 
-vga_timing = make_vga_timing(RESOLUTION)
+# Sim start line: skip blank rows above the donut to reach pixels of interest sooner.
+# Set to 0 for a complete frame (hardware always uses 0 via the default).
+SIM_V_START = max(0, FRAME_HEIGHT // 3)
+vga_timing = make_vga_timing(RESOLUTION, v_start=SIM_V_START)
 DISPLAY_8BIT = False  # False = match 4-bit PMOD output; True = smooth 8-bit sim display
 
 # ── Sim-only display state (plain Python) ────────────────────────────────────
@@ -281,10 +284,25 @@ donut = make_donut(calc_t, coord_t, length_cordic, NITERS, TORUS_R1I, TORUS_R2I,
 
 @hw_func
 def full_update(sig: vga_timing_signals_t) -> full_state_t:
-    state: Reg[full_state_t]
-    initialized: Reg[uint1_t]
-    bounce_vel_x: Reg[int16_t]
-    bounce_vel_y: Reg[int16_t]
+    state: Reg[full_state_t] = full_state_t(
+        sB=0,
+        cB=16384,
+        sA=11583,
+        cA=11583,
+        sAsB=0,
+        cAsB=0,
+        sAcB=11583,
+        cAcB=11583,
+        yincC=45,
+        yincS=45,
+        xincX=64,
+        xincY=0,
+        xincZ=0,
+        pos_x=FRAME_WIDTH // 2,
+        pos_y=FRAME_HEIGHT // 2,
+    )
+    bounce_vel_x: Reg[int16_t] = BOUNCE_SPEED_X if BOUNCE else 0
+    bounce_vel_y: Reg[int16_t] = BOUNCE_SPEED_Y if BOUNCE else 0
 
     out_state: full_state_t = full_state_t(
         sB=state.sB,
@@ -356,30 +374,6 @@ def full_update(sig: vga_timing_signals_t) -> full_state_t:
             pos_x=new_pos_x,
             pos_y=new_pos_y,
         )
-
-    # Power-on init — overrides zero-init from Reg[T] (last-write wins)
-    if not initialized:
-        initialized = 1
-        state = full_state_t(
-            sB=0,
-            cB=16384,
-            sA=11583,
-            cA=11583,
-            sAsB=0,
-            cAsB=0,
-            sAcB=11583,
-            cAcB=11583,
-            yincC=45,
-            yincS=45,
-            xincX=64,
-            xincY=0,
-            xincZ=0,
-            pos_x=FRAME_WIDTH // 2,
-            pos_y=FRAME_HEIGHT // 2,
-        )
-        if BOUNCE:
-            bounce_vel_x = BOUNCE_SPEED_X
-            bounce_vel_y = BOUNCE_SPEED_Y
 
     return out_state
 
