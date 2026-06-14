@@ -130,7 +130,7 @@ def accumulator(data: uint32_t) -> uint32_t:
 ```python
 from pypeline import sim_call, sim_reset, uint32_t
 
-sim_reset()                          # clear all register state (power-on reset)
+sim_reset()                          # reset to power-on state (non-zero inits restored too)
 
 r0 = sim_call(accumulator, 10)       # cycle 1: acc=0+10=10, returns 10
 r1 = sim_call(accumulator, 5)        # cycle 2: acc=10+5=15, returns 15
@@ -171,6 +171,18 @@ python3 src/pypeline_sim.py my_design.py --run 1000
 
 This runs 1000 simulated clock cycles, with delta-cycle convergence each cycle to resolve
 global wires before committing register values.
+
+A `--mode` flag trades simulation accuracy for speed:
+
+| Mode | Description |
+|---|---|
+| `strict` (default) | Full hardware accuracy — integer widths masked at every typed operation |
+| `loose` | SimVal objects preserved (bit-indexing works) but no bit-width masking on arithmetic |
+| `raw` | Maximum speed (~9× faster than strict) — plain Python ints throughout; use for structural tests where precise overflow behaviour is not needed |
+
+```
+python3 src/pypeline_sim.py my_design.py --run 1000 --mode raw
+```
 
 ### `@sim_output` — side effects once per cycle
 
@@ -303,6 +315,31 @@ def abs_val(x: int32_t) -> int32_t:
 out: uint8_t = a if condition else b    # equivalent to the if/else above
 ```
 
+#### Augmented assignment
+
+`+=`, `-=`, `*=`, `|=`, `&=`, `^=` are supported and expand to the equivalent binary operation:
+
+```python
+total: uint32_t = 0
+total += arr[0]   # equivalent to: total = total + arr[0]
+```
+
+#### Boolean operators
+
+Python's `and` / `or` keywords work in hardware conditions.
+Each operand is normalised to `uint1_t` (non-zero → 1, zero → 0) before combining:
+
+```python
+if (x > 0) and (y < 100):   # both conditions must be true
+    ...
+
+if valid or overflow:         # either condition triggers the branch
+    ...
+```
+
+This is equivalent to `(x > 0) & (y < 100)` with each side coerced to 1 bit.
+The result type is always `uint1_t`.
+
 #### `for` / `while` → loop unrolling
 
 Loops are **fully unrolled at compile time**.
@@ -422,6 +459,16 @@ import file_b
 **Only `import file_a` (qualified attribute access) is supported.**
 `from file_a import *` is intentionally not supported.
 
+**Import aliases use the actual module name for hardware, not the alias.**
+`import file_a as fa` lets you write `fa.func()` in Python, but the generated VHDL
+wire and function names are prefixed with `file_a`, not `fa`.
+Two aliases pointing at the same file both refer to the same hardware wires.
+
+**Recursive imports are not followed automatically.**
+Only the top file's `import` statements are processed.
+If `file_a.py` itself imports `file_b.py`, `file_b` must also be imported by the
+top file if its hardware functions or wires are needed.
+
 Call hardware functions from imported files using attribute syntax:
 
 ```python
@@ -507,6 +554,20 @@ prev = acc
 acc  = acc + data
 return prev        # returns the pre-update value
 ```
+
+### Non-zero initial values
+
+An optional initialiser sets the power-on reset value:
+
+```python
+cnt: Reg[uint32_t] = 10                  # scalar — starts at 10 after reset
+
+buf: Reg[uint8_t[4]] = [10, 20, 30, 40] # array — each element initialised
+
+pt:  Reg[point_t] = point_t(x=5, y=2)  # struct — NamedTuple constructor form
+```
+
+Without an initialiser the register resets to zero.
 
 ### Counter example
 
@@ -722,16 +783,33 @@ in one go:
 
 ```python
 def make_point(a: uint32_t, b: uint32_t) -> point_t:
-    p: point_t = point_t(x=a, y=b)   # NamedTuple constructor
+    p: point_t = point_t(x=a, y=b)   # NamedTuple constructor (preferred)
     return p
 
 def zero_pair() -> uint32_t[2]:
     v: uint32_t[2] = [0, 0]          # list literal
     return v
+
+def make_point_dict(a: uint32_t, b: uint32_t) -> point_t:
+    p: point_t = {"x": a, "y": b}    # dict form (also supported)
+    return p
 ```
 
 The NamedTuple form is preferred because it works in both hardware elaboration and
 simulation.
+
+Plain Python helper functions that return a `dict`, `list`, or NamedTuple instance
+at elaboration time can also serve as compound initialisers — the result must contain
+only compile-time integer values, not hardware wires:
+
+```python
+def zero_point():          # ordinary Python function
+    return point_t(x=0, y=0)
+
+def my_func(...) -> point_t:
+    p: point_t = zero_point()   # elaboration-time call → compound init
+    return p
+```
 
 ### Floating-point types
 
