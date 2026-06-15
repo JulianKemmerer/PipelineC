@@ -1,4 +1,5 @@
 # pyright: reportInvalidTypeForm=none
+# pyright: reportUndefinedVariable=none
 """VGA donut — hardware design + simulation display.
 
 Hardware: compiles with pipelinec to drive a VGA monitor via the Arty A7 PMOD connectors.
@@ -45,7 +46,7 @@ CALC_FRAC_BITS = 4  # Extra CORDIC precision bits (0 = blocky/minimum, 4-8 = smo
 NCORDIC = 7  # CORDIC iterations per call  (6 = original; 8+ = smoother)
 NITERS = 20  # ray-march steps             (16 = original; 24+ = smoother)
 CORDIC_DZ = 5  # ray-sphere offset
-SCALE = 2  #  SCALE=1 is broken? coordinate units per pixel  (2 = original; 1 = 2x larger donut)
+SCALE = 1  # coordinate units per pixel  (2 = original; 1 = 2x larger donut)
 BOUNCE = True  # True = emit bounce-animation hardware
 BOUNCE_SPEED_X = 3  # pixels per frame (horizontal)
 BOUNCE_SPEED_Y = 2  # pixels per frame (vertical)
@@ -82,6 +83,13 @@ max_calc_val = (DONUT_BOUND * 128) + 32768
 min_calc_width = int(math.ceil(math.log2(max_calc_val))) + 1  # +1 for signed
 CALC_WIDTH = min_calc_width + CALC_FRAC_BITS
 
+# 4. Auto-calculate width for the ray-step intermediate: d * vxi14
+#    d is bounded by t < 2048; |vxi14| <= (DONUT_BOUND+256)*64 + 23170
+#    (max i * max xincX + max |cB+sB| where cB,sB are 16384-scale sin/cos)
+RAY_MUL_VMAX = (DONUT_BOUND + 256) * 64 + 23170
+RAY_MUL_MAX = 2048 * RAY_MUL_VMAX
+RAY_MUL_WIDTH = int(math.ceil(math.log2(RAY_MUL_MAX))) + 1  # +1 for signed
+
 # ── Configuration Validation ────────────────────────────────────────────────
 # Validate Bounce limits
 if BOUNCE:
@@ -93,6 +101,7 @@ if BOUNCE:
 # ── Hardware types ────────────────────────────────────────────────────────────
 coord_t = make_int(COORD_WIDTH)
 calc_t = make_int(CALC_WIDTH)
+ray_mul_t = make_int(RAY_MUL_WIDTH)  # wider type for d*vxi14 intermediate in ray march
 
 # Sim start line: skip blank rows above the donut to reach pixels of interest sooner.
 # Set to 0 for a complete frame (hardware always uses 0 via the default).
@@ -234,9 +243,10 @@ def make_donut(c_t, co_t, lc_fn, niters, r1i, r2i, scale):
     @hw_func
     def donut(cx: co_t, cy: co_t, state: full_state_t) -> c_t:
         # cx/cy are pixel offsets from donut centre; scale converts to internal coordinate space
-        # X-axis math requires the 256 offset to center the CORDIC projection
+        # +256 on i only: at i=256, i*xincX cancels (cB+sB), centering x on the torus.
+        # j=0 is the y-center: ray direction (vxi14,vyi14,vzi14) at i=256,j=0 equals
+        # (-sB,-sAcB,cAcB) which is the inverse of the camera position, pointing at origin.
         i: c_t = (cx * scale) + 256
-        # Y-axis mathematical center natively rests at 0
         j: c_t = cy * scale
         t: c_t = 512
         vxi14: c_t = i * state.xincX - (state.cB + state.sB)
@@ -267,9 +277,17 @@ def make_donut(c_t, co_t, lc_fn, niters, r1i, r2i, scale):
             d = t2 - r1i
             t = t + d
             if (t < 2048) and not (d < 2):
-                px = px + (d * vxi14 >> 14)
-                py = py + (d * vyi14 >> 14)
-                pz = pz + (d * vzi14 >> 14)
+                # d * vxi14 can exceed calc_t range; widen to ray_mul_t for this product
+                dm: ray_mul_t = d
+                vxm: ray_mul_t = vxi14
+                vym: ray_mul_t = vyi14
+                vzm: ray_mul_t = vzi14
+                dx: ray_mul_t = (dm * vxm) >> 14
+                dy: ray_mul_t = (dm * vym) >> 14
+                dz: ray_mul_t = (dm * vzm) >> 14
+                px = px + dx
+                py = py + dy
+                pz = pz + dz
         result: c_t = lz
         if d > 2:
             result = -1
@@ -418,7 +436,7 @@ def render_pixel(sig: vga_timing_signals_t, state: full_state_t) -> sim_px_t:
 
 @MAIN(vga_timing.pixel_clk_mhz)
 def vga_donut():
-    """Top-level hardware process: generate timing, compute pixel colour, drive board output."""
+    """Top-level hardware process: generate timing, compute pixel color, drive board output."""
     sig = vga_timing()
     state = full_update(sig)
     px = render_pixel(sig, state)
