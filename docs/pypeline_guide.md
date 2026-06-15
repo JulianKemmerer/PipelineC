@@ -23,7 +23,7 @@ synthesises them for an FPGA.
 
 ---
 
-## 1  What is pypeline?
+## 1 What is pypeline?
 
 pypeline lets you describe digital hardware using Python syntax.
 A design file is a regular Python module.
@@ -44,7 +44,7 @@ target clock frequency.
 
 ---
 
-## 2  Digital Logic Basics
+## 2 Digital Logic Basics
 
 This section is a brief primer for readers new to hardware description languages.
 Skip ahead if you already know VHDL or Verilog.
@@ -103,7 +103,7 @@ From a user's perspective:
 
 ---
 
-## 3  Simulation
+## 3 Simulation
 
 pypeline designs can be simulated in Python before synthesising for an FPGA.
 This is useful for unit-testing combinational functions and verifying register behaviour.
@@ -203,7 +203,7 @@ they produce no gates or wires in the synthesised design.
 
 ---
 
-## 4  Top-Level Entry Points
+## 4 Top-Level Entry Points
 
 ### `@MAIN`
 
@@ -250,7 +250,7 @@ synthesis.
 
 ---
 
-## 5  Your First Hardware Function
+## 5 Your First Hardware Function
 
 ### Functions as modules
 
@@ -363,7 +363,7 @@ pure Python.
 
 ---
 
-## 6  Calling Functions
+## 6 Calling Functions
 
 ### Functions call functions
 
@@ -511,7 +511,7 @@ SHIFT = my_lib.SHIFT_AMOUNT   # now available as a plain Python int in this modu
 
 ---
 
-## 7  Registers: `Reg[T]`
+## 7 Registers: `Reg[T]`
 
 ### Declaration
 
@@ -605,7 +605,7 @@ Plain combinational helpers do not need it.
 
 ---
 
-## 8  Feedback Wires: `Feedback[T]`
+## 8 Feedback Wires: `Feedback[T]`
 
 A `Feedback[T]` wire is a combinational signal whose **driver appears later in the
 function body than its first use**.
@@ -642,7 +642,7 @@ f: Feedback[uint1_t] = x   # error
 
 ---
 
-## 9  Bit Manipulation
+## 9 Bit Manipulation
 
 Hardware frequently needs sub-word access that Python integers do not support natively.
 pypeline adds the following syntax and built-in functions.
@@ -698,7 +698,7 @@ All size/count arguments must be compile-time constants.
 
 ---
 
-## 10  Types
+## 10 Types
 
 ### Integer types
 
@@ -831,7 +831,7 @@ elaboration time.
 
 ---
 
-## 11  Parametric Hardware with Factory Functions
+## 11 Parametric Hardware with Factory Functions
 
 Because module-level Python code runs at elaboration time, you can generate specialised
 hardware functions and types using ordinary Python factories (closures).
@@ -898,7 +898,7 @@ Only the inner function's body becomes hardware.
 
 ---
 
-## 12  Custom Operators
+## 12 Custom Operators
 
 You can overload Python's binary and unary operators for specific pypeline types using
 the registration functions:
@@ -935,7 +935,7 @@ register_unary_operator("NEGATE", my_t, negate_my_t, scope=my_function)
 
 ---
 
-## 13  Global Signals
+## 13 Global Signals
 
 Global signals are module-level wires shared between `@MAIN` functions.
 They are declared at module scope (outside any function) using a type annotation.
@@ -993,7 +993,7 @@ my_wire: Wire[uint32_t] = 0  # error — initialisers are not allowed on Wire/In
 
 ---
 
-## 14  Worked Example: VGA Test Pattern
+## 14 Worked Example: VGA Test Pattern
 
 This walks through `examples/pypeline/vga_test_pattern.py`, a complete design that
 generates a colour test pattern on a VGA monitor.

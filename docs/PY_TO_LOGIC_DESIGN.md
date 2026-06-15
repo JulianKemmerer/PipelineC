@@ -83,7 +83,7 @@
   - [Limitations of the Current Proto-Sim](#limitations-of-the-current-proto-sim)
 
 **Reference**
-- [pypeline.py — Runtime Support](#pypeline-py--runtime-support)
+- [pypeline.py — Runtime Support](#pypelinepy--runtime-support)
 - [Predicting C/VHDL Output Names](#predicting-cvhdl-output-names)
   - [VHDL Identifier Safety — Name Sanitization](#vhdl-identifier-safety--name-sanitization)
 
