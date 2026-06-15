@@ -17,8 +17,8 @@ from pypeline import (
     uint64_t,
     int32_t,
     int33_t,
-    make_uint,
-    make_int,
+    make_uint_t,
+    make_int_t,
     make_float_t,
     register_operator,
     register_left_operator,
@@ -226,7 +226,7 @@ abs_int32 = make_abs(int32_t, uint32_t)
 def make_shifter_SL(value_t, amount_t=None):
     n_bits = len(value_t)
     narrow_bits = n_bits.bit_length()
-    narrow_t = make_uint(narrow_bits)
+    narrow_t = make_uint_t(narrow_bits)
     actual_amount_t = narrow_t if amount_t is None else amount_t
 
     @hw_func
@@ -253,7 +253,7 @@ def make_shifter_SL(value_t, amount_t=None):
 def make_shifter_SR(value_t, amount_t=None):
     n_bits = len(value_t)
     narrow_bits = n_bits.bit_length()
-    narrow_t = make_uint(narrow_bits)
+    narrow_t = make_uint_t(narrow_bits)
     actual_amount_t = narrow_t if amount_t is None else amount_t
 
     @hw_func
@@ -286,7 +286,7 @@ register_left_operator("SR", uint32_t, shr_uint32)
 
 def make_clz(value_t):
     n_bits = len(value_t)
-    out_t = make_uint(n_bits.bit_length())
+    out_t = make_uint_t(n_bits.bit_length())
 
     @hw_func
     def clz(v: value_t) -> out_t:
@@ -310,11 +310,11 @@ def make_float_adder(float_t):
     exp_t = float_t.typeof("exp")
     man_t = float_t.typeof("man")
     M_LEN = len(man_t)
-    man_hidden_t = make_uint(M_LEN + 1)
-    signed_man_t = make_int(M_LEN + 2)
-    sum_man_t = make_int(M_LEN + 3)
-    abs_sum_t = make_uint(M_LEN + 2)
-    narrow_t = make_uint(M_LEN + 1)
+    man_hidden_t = make_uint_t(M_LEN + 1)
+    signed_man_t = make_int_t(M_LEN + 2)
+    sum_man_t = make_int_t(M_LEN + 3)
+    abs_sum_t = make_uint_t(M_LEN + 2)
+    narrow_t = make_uint_t(M_LEN + 1)
     clz_narrow = make_clz(narrow_t)
     clz_out_t = clz_narrow.out_t
     negate_man_h = make_negate(man_hidden_t, signed_man_t)

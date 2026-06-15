@@ -714,14 +714,14 @@ pypeline provides fixed-width integer types matching C hardware-description conv
 | `int8_t` | 8 bits signed | −128 … 127 |
 | `int32_t` | 32 bits signed | −2³¹ … 2³¹−1 |
 
-Use `make_uint` / `make_int` for widths that are computed at module level:
+Use `make_uint_t` / `make_int_t` for widths that are computed at module level:
 
 ```python
-from pypeline import make_uint, make_int
+from pypeline import make_uint_t, make_int_t
 
 N = 24
-uint24_t = make_uint(N)
-int33_t  = make_int(N + 9)
+uint24_t = make_uint_t(N)
+int33_t  = make_int_t(N + 9)
 ```
 
 Integer literals in hardware function bodies are automatically given the minimum-width

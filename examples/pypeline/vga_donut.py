@@ -99,9 +99,11 @@ if BOUNCE:
         )
 
 # ── Hardware types ────────────────────────────────────────────────────────────
-coord_t = make_int(COORD_WIDTH)
-calc_t = make_int(CALC_WIDTH)
-ray_mul_t = make_int(RAY_MUL_WIDTH)  # wider type for d*vxi14 intermediate in ray march
+coord_t = make_int_t(COORD_WIDTH)
+calc_t = make_int_t(CALC_WIDTH)
+ray_mul_t = make_int_t(
+    RAY_MUL_WIDTH
+)  # wider type for d*vxi14 intermediate in ray march
 
 # Sim start line: skip blank rows above the donut to reach pixels of interest sooner.
 # Set to 0 for a complete frame (hardware always uses 0 via the default).

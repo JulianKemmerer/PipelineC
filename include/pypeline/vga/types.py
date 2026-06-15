@@ -1,8 +1,8 @@
 # pyright: reportInvalidTypeForm=none
 from pypeline import *
 
-uint12_t = make_uint(12)
-uint4_t = make_uint(4)
+uint12_t = make_uint_t(12)
+uint4_t = make_uint_t(4)
 
 
 @struct

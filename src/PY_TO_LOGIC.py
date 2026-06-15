@@ -368,7 +368,7 @@ def _var_ref_assign_func_name(output_type, base_type, ref_toks, covering_ref_tok
 
 def _inner_ctype_to_str(inner_ctype):
     """Convert a Reg/Wire/Input/Output inner type to its C-type name string.
-    _CTypeMeta types (make_uint, etc.) have __str__ returning the C name.
+    _CTypeMeta types (make_uint_t, etc.) have __str__ returning the C name.
     @struct NamedTuple types are plain Python classes — use _pypeline_ctype_name.
     """
     if isinstance(inner_ctype, type):

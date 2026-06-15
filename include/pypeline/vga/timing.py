@@ -51,8 +51,8 @@ def make_vga_timing(spec: VgaTimingSpec, h_start: int = 0, v_start: int = 0):
     H_START = h_start
     V_START = v_start
     # Size counters to the minimum bit-width needed for this resolution
-    h_uint = make_uint(spec.h_max.bit_length())  # e.g. 800 → 10 bits
-    v_uint = make_uint(spec.v_max.bit_length())  # e.g. 525 → 10 bits
+    h_uint = make_uint_t(spec.h_max.bit_length())  # e.g. 800 → 10 bits
+    v_uint = make_uint_t(spec.v_max.bit_length())  # e.g. 525 → 10 bits
 
     @hw_func
     def vga_timing() -> vga_timing_signals_t:

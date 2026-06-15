@@ -63,13 +63,13 @@ def _make_ctype(name: str):
     return _CTypeMeta(name, (object,), {"_ctype_name": name})
 
 
-def make_uint(width: int):
-    """Return the C unsigned integer type for the given bit width, e.g. make_uint(3) -> uint3_t."""
+def make_uint_t(width: int):
+    """Return the C unsigned integer type for the given bit width, e.g. make_uint_t(3) -> uint3_t."""
     return _make_ctype(f"uint{width}_t")
 
 
-def make_int(width: int):
-    """Return the C signed integer type for the given bit width, e.g. make_int(8) -> int8_t."""
+def make_int_t(width: int):
+    """Return the C signed integer type for the given bit width, e.g. make_int_t(8) -> int8_t."""
     return _make_ctype(f"int{width}_t")
 
 
@@ -120,8 +120,8 @@ def make_float_t(exponent_width, mantissa_width):
         float32_t = make_float_t(8, 23)   # standard FP32
         x: float32_t = float32_t.as_const(1.23)
     """
-    exp_t = make_uint(exponent_width)
-    man_t = make_uint(mantissa_width)
+    exp_t = make_uint_t(exponent_width)
+    man_t = make_uint_t(mantissa_width)
 
     @struct
     class float_t(NamedTuple):
@@ -136,40 +136,50 @@ def make_float_t(exponent_width, mantissa_width):
 
 
 # ── unsigned integer types ────────────────────
-uint1_t = make_uint(1)
-uint2_t = make_uint(2)
-uint3_t = make_uint(3)
-uint4_t = make_uint(4)
-uint5_t = make_uint(5)
-uint6_t = make_uint(6)
-uint7_t = make_uint(7)
-uint8_t = make_uint(8)
-uint9_t = make_uint(9)
-uint10_t = make_uint(10)
-uint11_t = make_uint(11)
-uint12_t = make_uint(12)
-uint13_t = make_uint(13)
-uint14_t = make_uint(14)
-uint15_t = make_uint(15)
-uint16_t = make_uint(16)
-uint17_t = make_uint(17)
-uint18_t = make_uint(18)
-uint24_t = make_uint(24)
-uint32_t = make_uint(32)
-uint33_t = make_uint(33)
-uint34_t = make_uint(34)
-uint48_t = make_uint(48)
-uint64_t = make_uint(64)
+uint1_t = make_uint_t(1)
+uint2_t = make_uint_t(2)
+uint3_t = make_uint_t(3)
+uint4_t = make_uint_t(4)
+uint5_t = make_uint_t(5)
+uint6_t = make_uint_t(6)
+uint7_t = make_uint_t(7)
+uint8_t = make_uint_t(8)
+uint9_t = make_uint_t(9)
+uint10_t = make_uint_t(10)
+uint11_t = make_uint_t(11)
+uint12_t = make_uint_t(12)
+uint13_t = make_uint_t(13)
+uint14_t = make_uint_t(14)
+uint15_t = make_uint_t(15)
+uint16_t = make_uint_t(16)
+uint17_t = make_uint_t(17)
+uint18_t = make_uint_t(18)
+uint24_t = make_uint_t(24)
+uint32_t = make_uint_t(32)
+uint33_t = make_uint_t(33)
+uint34_t = make_uint_t(34)
+uint48_t = make_uint_t(48)
+uint64_t = make_uint_t(64)
 
 # ── signed integer types ──────────────────────
-int1_t = make_int(1)
-int2_t = make_int(2)
-int4_t = make_int(4)
-int8_t = make_int(8)
-int16_t = make_int(16)
-int32_t = make_int(32)
-int33_t = make_int(33)
-int64_t = make_int(64)
+int2_t = make_int_t(2)
+int3_t = make_int_t(3)
+int4_t = make_int_t(4)
+int5_t = make_int_t(5)
+int6_t = make_int_t(6)
+int7_t = make_int_t(7)
+int8_t = make_int_t(8)
+int9_t = make_int_t(9)
+int10_t = make_int_t(10)
+int11_t = make_int_t(11)
+int12_t = make_int_t(12)
+int13_t = make_int_t(13)
+int14_t = make_int_t(14)
+int15_t = make_int_t(15)
+int16_t = make_int_t(16)
+int32_t = make_int_t(32)
+int33_t = make_int_t(33)
+int64_t = make_int_t(64)
 
 # ─────────────────────────────────────────────
 # C-type-string helpers (shared with PY_TO_LOGIC)
@@ -248,7 +258,7 @@ def _arith_output_ctype(op: str, eff_l_type: str, eff_r_type: str, result_signed
     """Full-precision output ctype OBJECT for an arithmetic op (after sign promotion).
 
     op: "add" | "sub" | "mul" | "div" | "mod"
-    Returns a _CTypeMeta ctype object (e.g. make_int(17)).
+    Returns a _CTypeMeta ctype object (e.g. make_int_t(17)).
     Width rules:
       add  -> max(lw, rw) + 1
       sub  -> max+1 (signed), max (unsigned)
@@ -266,7 +276,7 @@ def _arith_output_ctype(op: str, eff_l_type: str, eff_r_type: str, result_signed
         out_w = l_w + r_w
     else:
         out_w = max_w
-    return make_int(out_w) if result_signed else make_uint(out_w)
+    return make_int_t(out_w) if result_signed else make_uint_t(out_w)
 
 
 # ─────────────────────────────────────────────
@@ -1133,7 +1143,7 @@ def concat(*args):
 
     Width of each argument is inferred from its SimVal ctype (via len(ctype)) or,
     for plain Python ints, from max(1, val.bit_length()). The result is a SimVal
-    with ctype = make_uint(total_bits).
+    with ctype = make_uint_t(total_bits).
 
     In hardware (PY_TO_LOGIC elaboration) this function is intercepted and treated
     as variadic tuple concat — see the 'concat' branch in _elab_bit_manip_call.
@@ -1150,7 +1160,7 @@ def concat(*args):
     result = 0
     for a, w in zip(args, widths):
         result = (result << w) | (int(a) & ((1 << w) - 1))
-    return SimVal(result, ctype=make_uint(total))
+    return SimVal(result, ctype=make_uint_t(total))
 
 
 BIT_MANIP_FUNC_NAMES = frozenset(

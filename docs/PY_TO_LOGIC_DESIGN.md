@@ -2048,8 +2048,8 @@ intermediate types it uses internally, without polluting the global registry:
 def make_float_adder(float_t):
     man_t = float_t.typeof('man')
     M_LEN = len(man_t)
-    man_hidden_t = make_uint(M_LEN + 1)
-    signed_man_t = make_int(M_LEN + 2)
+    man_hidden_t = make_uint_t(M_LEN + 1)
+    signed_man_t = make_int_t(M_LEN + 2)
     negate_man_h = make_negate(man_hidden_t, signed_man_t)
     sr_signed    = make_shifter_SR(signed_man_t)
 
@@ -2258,7 +2258,7 @@ Width of each argument is inferred:
 - `SimVal` with `_ctype` → `len(_ctype)` bits
 - Plain Python `int` → `max(1, val.bit_length())` bits (mirrors hardware literal inference)
 
-The result is a `SimVal` with `_ctype = make_uint(total_bits)`. For float32 where
+The result is a `SimVal` with `_ctype = make_uint_t(total_bits)`. For float32 where
 `x.man` has ctype `uint23_t` and `x_hidden` is `0` or `1` (1-bit), the result has ctype
 `uint24_t`, which matches `man_hidden_t`. This ctype then enables operator dispatch
 (e.g. `-x_man_h` dispatches to the registered `negate_man_h`).
@@ -2372,7 +2372,7 @@ def make_negate(value_t, out_t):
 
 def make_clz(value_t):
     n_bits = len(value_t)
-    out_t = make_uint(n_bits.bit_length())
+    out_t = make_uint_t(n_bits.bit_length())
     @hw_func
     def clz(v: value_t) -> out_t:
         result: out_t = n_bits
@@ -3281,7 +3281,7 @@ The companion module provides the types and decorators used in design files:
 | `uint1_t` … `uint64_t` | C integer types as real Python classes (`_CTypeMeta` metaclass) |
 | `int1_t` … `int64_t` | Signed integer types |
 | `float16_t`, `float32_t`, `float64_t` | Float types |
-| `make_uint(n)` | Dynamically creates `uintN_t` for arbitrary bit width `n` |
+| `make_uint_t(n)` | Dynamically creates `uintN_t` for arbitrary bit width `n` |
 | `make_float_t(E, M)` | Creates an IEEE 754-like struct type with `sign/exp/man` fields; `.as_const(v)` converts a Python float to the field dict at elaboration time |
 | `NamedTuple` | Re-export of `typing.NamedTuple` |
 | `@struct` | Adds `__class_getitem__` + captures resolved field annotations |
