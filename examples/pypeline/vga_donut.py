@@ -105,7 +105,7 @@ ray_mul_t = make_int(RAY_MUL_WIDTH)  # wider type for d*vxi14 intermediate in ra
 
 # Sim start line: skip blank rows above the donut to reach pixels of interest sooner.
 # Set to 0 for a complete frame (hardware always uses 0 via the default).
-SIM_V_START = max(0, FRAME_HEIGHT // 3)
+SIM_V_START = max(0, int(FRAME_HEIGHT / 3.5))
 vga_timing = make_vga_timing(RESOLUTION, v_start=SIM_V_START)
 DISPLAY_8BIT = False  # False = match 4-bit PMOD output; True = smooth 8-bit sim display
 
@@ -398,7 +398,7 @@ def full_update(sig: vga_timing_signals_t) -> full_state_t:
 
 def dither4(v: uint8_t, x: uint12_t, y: uint12_t) -> uint4_t:
     # 4x4 Bayer ordered dither matrix (thresholds 0-15), row-major flattened
-    bayer: uint4_t[16] = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]  # type: ignore[name-defined]
+    bayer: uint4_t[16] = [0, 8, 2, 10, 12, 4, 14, 6, 3, 11, 1, 9, 15, 7, 13, 5]
     thresh: uint4_t = 0
     for row in range(4):
         for col in range(4):
