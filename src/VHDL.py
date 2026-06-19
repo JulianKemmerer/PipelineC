@@ -5311,8 +5311,8 @@ def WRITE_LOGIC_ENTITY(
 
                 # ENTITY
                 submodule_timing_params = TimingParamsLookupTable[instance_name]
-                submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(
-                    parser_state, TimingParamsLookupTable
+                submodule_latency = timing_params.GET_SUBMODULE_LATENCY(
+                    instance_name, parser_state, TimingParamsLookupTable
                 )
                 new_inst_name = WIRE_TO_VHDL_NAME(inst, Logic)
                 rv += (

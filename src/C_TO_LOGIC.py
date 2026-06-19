@@ -417,6 +417,10 @@ class Logic:
         self.next_user_inst_name = None  # User name for func
         self.debug_names = set()  # Names MARK_DEBUG
         self.mcp_tuples = set()  # Tuples of MCP params
+        self.next_func_call_autopipeline_depth = (
+            None  # Auto pipeline flag for next func call
+        )
+        self.sub_inst_to_autopipeline_depth = {}  # Which instances tagged autopipeline?
         self.ast_meta = None
         # Is this logic a c built in C function?
         self.is_c_built_in = False
@@ -510,6 +514,8 @@ class Logic:
         rv.next_user_inst_name = self.next_user_inst_name
         rv.debug_names = set(self.debug_names)
         rv.mcp_tuples = set(self.mcp_tuples)
+        rv.next_func_call_autopipeline_depth = self.next_func_call_autopipeline_depth
+        rv.sub_inst_to_autopipeline_depth = dict(self.sub_inst_to_autopipeline_depth)
         rv.ast_meta = self.ast_meta
         rv.is_c_built_in = self.is_c_built_in
         rv.is_vhdl_func = self.is_vhdl_func
@@ -1395,7 +1401,9 @@ class Logic:
                 self.ref_submodule_instance_to_ref_toks[old_inst]
             )
 
-    def CAN_BE_SLICED(self, parser_state):
+    def CAN_HAVE_ADDED_LATENCY(self, parser_state):
+        if self.func_name in parser_state.func_fixed_latency:
+            return False
         if self.is_vhdl_text_module:
             return False
         if self.is_vhdl_func:
@@ -1403,6 +1411,8 @@ class Logic:
         if self.is_vhdl_expr:
             return False
         if self.is_clock_crossing:
+            return False
+        if self.uses_nonvolatile_state_regs:
             return False
         # Is actually OK since global wires arent registered like func/pipelined IO regs
         # if self.uses_nonvolatile_state_regs and len(self.write_only_global_wires) > 0:
@@ -1417,18 +1427,34 @@ class Logic:
         #       return False
         if self.func_name in parser_state.func_marked_blackbox:
             return False
-        return True
-
-    def BODY_CAN_BE_SLICED(self, parser_state):
-        if self.func_name in parser_state.func_fixed_latency:
-            return False
-        if not self.CAN_BE_SLICED(parser_state):
-            return False
         if self.uses_nonvolatile_state_regs:
             return False
         if len(self.feedback_vars) > 0:
             return False
         return True
+
+    def SUB_HAS_AUTOPIPELINE_IN_HIER(self, sub_inst, parser_state):
+        if sub_inst in self.sub_inst_to_autopipeline_depth:
+            return True
+        sub_func_name = self.submodule_instances[sub_inst]
+        sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+        if len(sub_logic.sub_inst_to_autopipeline_depth) > 0:
+            return True
+        for sub_sub_inst in sub_logic.submodule_instances:
+            if sub_logic.SUB_HAS_AUTOPIPELINE_IN_HIER(sub_sub_inst, parser_state):
+                return True
+        return False
+
+    def HAS_AUTOPIPELINE_IN_HIER(self, parser_state):
+        for sub_inst in self.submodule_instances:
+            if self.SUB_HAS_AUTOPIPELINE_IN_HIER(sub_inst, parser_state):
+                return True
+        return False
+
+    def CAN_USE_AUTOPIPELINING(self, parser_state):
+        return self.CAN_HAVE_ADDED_LATENCY(
+            parser_state
+        ) or self.HAS_AUTOPIPELINE_IN_HIER(parser_state)
 
 
 def RECURSIVE_RENAME_GLOBAL_INST(inst_to_rename, renamed_inst_name, parser_state):
@@ -2049,6 +2075,13 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_st
     if toks[0] == "MULTI_CYCLE":
         mcp_tup = (toks[1], toks[2], toks[3])
         parser_state.existing_logic.mcp_tuples.add(mcp_tup)
+
+    # Autopipelined submodule instances
+    if toks[0] == "AUTOPIPELINE":
+        depth = -1  # auto
+        if len(toks) > 1:
+            depth = int(toks[1])
+        parser_state.existing_logic.next_func_call_autopipeline_depth = depth
 
     return parser_state.existing_logic
 
@@ -7183,6 +7216,14 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         # Build instance name
         func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, func_c_ast_node)
 
+    # Record if user specified call to be autopipeline
+    if parser_state.existing_logic.next_func_call_autopipeline_depth is not None:
+        depth = parser_state.existing_logic.next_func_call_autopipeline_depth
+        parser_state.existing_logic.sub_inst_to_autopipeline_depth[func_inst_name] = (
+            depth
+        )
+        parser_state.existing_logic.next_func_call_autopipeline_depth = None
+
     # Should not be evaluating c ast node if driver is already known
     for input_i in range(0, len(input_port_names)):
         input_port_name = input_port_names[input_i]
@@ -11879,6 +11920,11 @@ def APPEND_PRAGMA_INFO(parser_state):
 
         # MULTI_CYCLE
         elif name == "MULTI_CYCLE":
+            # Not handled here, done in func def parsing
+            pass
+
+        # AUTOPIPELINE
+        elif name == "AUTOPIPELINE":
             # Not handled here, done in func def parsing
             pass
 

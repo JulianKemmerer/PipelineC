@@ -524,6 +524,13 @@ class TimingParams:
         self.hash_ext = None
         # self.timing_report_stage_range = None
 
+    def IS_EMPTY(self):
+        return (
+            len(self._slices) == 0
+            and not self._has_input_regs
+            and not self._has_output_regs
+        )
+
     # I was dumb and used get latency all over
     # mAKE CACHED VERSION
     def GET_TOTAL_LATENCY(self, parser_state, TimingParamsLookupTable=None):
@@ -570,7 +577,7 @@ class TimingParams:
             pipeline_latency = len(self._slices)
         else:
             # If cant be sliced then latency must be zero right?
-            if not self.logic.CAN_BE_SLICED(parser_state):
+            if not self.logic.CAN_HAVE_ADDED_LATENCY(parser_state):
                 if self._has_input_regs or self._has_output_regs:
                     raise Exception(
                         f"{self.logic.func_name} cannot have IO regs but has been given them!?"
@@ -703,6 +710,10 @@ class TimingParams:
     def GET_SUBMODULE_LATENCY(
         self, submodule_inst_name, parser_state, TimingParamsLookupTable
     ):
+        # Autopipelined submodules report themselves as zero latency like regular comb logic funcs
+        sub_inst = C_TO_LOGIC.LEAF_NAME(submodule_inst_name)
+        if sub_inst in self.logic.sub_inst_to_autopipeline_depth:
+            return 0
         submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
         return submodule_timing_params.GET_TOTAL_LATENCY(
             parser_state, TimingParamsLookupTable
@@ -746,15 +757,12 @@ def GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state):
     for logic_inst_name in parser_state.LogicInstLookupTable:
         logic_i = parser_state.LogicInstLookupTable[logic_inst_name]
         timing_params_i = ZeroAddedClocksTimingParamsLookupTable[logic_inst_name]
-        total_latency = timing_params_i.GET_TOTAL_LATENCY(
-            parser_state, ZeroAddedClocksTimingParamsLookupTable
-        )
         # Sanity check functions that can't be sliced arent showing up with slices/latency in them
         pipeline_added_latency = timing_params_i.GET_PIPELINE_LOGIC_ADDED_LATENCY(
             parser_state, ZeroAddedClocksTimingParamsLookupTable
         )
         if logic_i.func_name not in bad_fixed_latency_when_cant_slice_func_names:
-            if (pipeline_added_latency > 0) and not logic_i.BODY_CAN_BE_SLICED(
+            if (pipeline_added_latency > 0) and not logic_i.CAN_HAVE_ADDED_LATENCY(
                 parser_state
             ):
                 print(
@@ -2001,19 +2009,6 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                         submodule_latency_from_container_logic
                     )
 
-                    # Sanity?
-                    submodule_timing_params = TimingParamsLookupTable[
-                        submodule_inst_name
-                    ]
-                    submodule_latency = submodule_timing_params.GET_TOTAL_LATENCY(
-                        parser_state, TimingParamsLookupTable
-                    )
-                    if submodule_latency != submodule_latency_from_container_logic:
-                        print(
-                            "submodule_latency != submodule_latency_from_container_logic"
-                        )
-                        sys.exit(-1)
-
                     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                     # Set delay_offset_when_driven for this output wire
                     if has_delay:
@@ -2203,182 +2198,112 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
         print("Trying to add slice to fixed params?", inst_name)
         sys.exit(-1)
 
-    # If body cant be sliced then can only add IO regs
-    if not logic.BODY_CAN_BE_SLICED(parser_state) and logic.CAN_BE_SLICED(parser_state):
-        if new_slice_pos > 0.5:
-            # Output reg
-            timing_params.SET_HAS_OUT_REGS(True)
+    if print_debug:
+        print(
+            "SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES",
+            inst_name,
+            new_slice_pos,
+            "write_files",
+            write_files,
+        )
+
+    # Add slice to current func
+    timing_params.ADD_SLICE(new_slice_pos)
+    slice_index = timing_params._slices.index(new_slice_pos)
+    slice_ends_stage = slice_index
+
+    # Raw HDL doesnt need further slicing, bottom of hierarchy
+    if len(logic.submodule_instances) > 0:
+        # print "logic.submodule_instances",logic.submodule_instances
+        # Get the zero clock pipeline map for this logic
+        zero_added_clks_pipeline_map = GET_ZERO_ADDED_CLKS_PIPELINE_MAP(
+            inst_name, logic, parser_state
+        )
+        total_delay = zero_added_clks_pipeline_map.zero_clk_max_delay
+
+        # Get the offset as float
+        delay_offset_float = new_slice_pos * total_delay
+        delay_offset = math.floor(delay_offset_float)
+        # Clamp to max?
+        max_delay = max(
+            zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map.keys()
+        )
+        if delay_offset > max_delay:
+            delay_offset = max_delay
+        delay_offset_decimal = delay_offset_float - delay_offset
+
+        # Slice can be through modules or on the boundary between modules
+        # The boundary between modules is important for moving slices right up against global logic?
+
+        # Get submodules at this offset
+        submodule_insts = (
+            zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map[delay_offset]
+        )
+
+        # Slice each submodule at offset
+        # Record if submodules need to be artifically delayed to start in a later stage
+        for submodule_inst in submodule_insts:
+            # Slice through submodule
+            submodule_inst_name = (
+                inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+            )
+            submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
+            # Only continue slicing down if not fixed slices already (trying to slice deeper and make fixed slices)
+            if submodule_timing_params.params_are_fixed:
+                continue
+            # Slice through submodule
+            # Only slice when >= 1 delay unit?
+            submodule_func_name = logic.submodule_instances[submodule_inst]
+            submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
+
+            start_offset = zero_added_clks_pipeline_map.zero_clk_submodule_start_offset[
+                submodule_inst
+            ]
+            local_offset = delay_offset - start_offset
+            local_offset_w_decimal = local_offset + delay_offset_decimal
+
+            # print "start_offset",start_offset
+            # print "local_offset",local_offset
+            # print "local_offset_w_decimal",local_offset_w_decimal
+
+            # Convert to percent to add slice
+            submodule_total_delay = submodule_logic.delay
+            slice_pos = float(local_offset_w_decimal) / float(submodule_total_delay)
             if print_debug:
-                print(inst_name, "output reg")
-        else:
-            # Input reg
-            timing_params.SET_HAS_IN_REGS(True)
-            if print_debug:
-                print(inst_name, "input reg")
-        TimingParamsLookupTable[inst_name] = timing_params
-    elif logic.BODY_CAN_BE_SLICED(parser_state):
-        # Add slice to body
-        timing_params.ADD_SLICE(new_slice_pos)
-        slice_index = timing_params._slices.index(new_slice_pos)
-        slice_ends_stage = slice_index
-        slice_starts_stage = slice_ends_stage + 1
-        prev_slice_pos = None
-        if len(timing_params._slices) > 1:
-            prev_slice_pos = timing_params._slices[slice_index - 1]
+                print(" Slicing:", submodule_inst)
+                print("   @", slice_pos)
 
-        """
-    # Sanity check if not adding last slice then must be skipping boundary right?
-    if slice_index != len(timing_params._slices)-1 and not skip_boundary_slice:
-        print "Wtf added old/to left slice",new_slice_pos,"while not skipping boundary?",timing_params._slices
-        print 0/0
-        sys.exit(-1)
-    """
+            # Slice into submodule if current func can support added latency
+            # Or if submodule contains an auto pipeline somewhere in hier
+            if not (
+                logic.CAN_HAVE_ADDED_LATENCY(parser_state)
+                or logic.SUB_HAS_AUTOPIPELINE_IN_HIER(submodule_inst, parser_state)
+            ):
+                continue
 
-        # Write into timing params dict, almost certainly unecessary
-        TimingParamsLookupTable[inst_name] = timing_params
-
-        ## Already checked getting here
-        ## Check if can slice
-        # if not logic.CAN_BE_SLICED(parser_state):
-        #    # Can't slice globals, return index of bad slice
-        #    if print_debug:
-        #        print("Can't slice")
-        #    return slice_index
-
-        if print_debug:
-            print(
-                "SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES",
-                inst_name,
-                new_slice_pos,
-                "write_files",
+            # Slice into that submodule
+            skip_boundary_slice = False
+            TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
+                submodule_inst_name,
+                submodule_logic,
+                slice_pos,
+                parser_state,
+                TimingParamsLookupTable,
+                skip_boundary_slice,
                 write_files,
             )
 
-        # Raw HDL doesnt need further slicing, bottom of hierarchy
-        if len(logic.submodule_instances) > 0:
-            # print "logic.submodule_instances",logic.submodule_instances
-            # Get the zero clock pipeline map for this logic
-            zero_added_clks_pipeline_map = GET_ZERO_ADDED_CLKS_PIPELINE_MAP(
-                inst_name, logic, parser_state
-            )
-            total_delay = zero_added_clks_pipeline_map.zero_clk_max_delay
-            if total_delay is None:
-                print("No delay for module?", logic.func_name)
-                sys.exit(-1)
-            epsilon = SLICE_EPSILON(total_delay)
-
-            # Sanity?
-            if logic.func_name != zero_added_clks_pipeline_map.logic.func_name:
-                print(
-                    "Zero clk inst name:", zero_added_clks_pipeline_map.logic.func_name
-                )
-                print("Wtf using pipeline map from other func?")
-                sys.exit(-1)
-
-            # Get the offset as float
-            delay_offset_float = new_slice_pos * total_delay
-            delay_offset = math.floor(delay_offset_float)
-            # Clamp to max?
-            max_delay = max(
-                zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map.keys()
-            )
-            if delay_offset > max_delay:
-                delay_offset = max_delay
-            delay_offset_decimal = delay_offset_float - delay_offset
-
-            # Slice can be through modules or on the boundary between modules
-            # The boundary between modules is important for moving slices right up against global logic?
-
-            # Get submodules at this offset
-            submodule_insts = (
-                zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map[
-                    delay_offset
-                ]
-            )
-            # Get submodules in previous and next delay units
-            prev_submodule_insts = []
-            if (
-                delay_offset - 1
-                in zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map
-            ):
-                prev_submodule_insts = (
-                    zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map[
-                        delay_offset - 1
-                    ]
-                )
-            next_submodule_insts = []
-            if (
-                delay_offset + 1
-                in zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map
-            ):
-                next_submodule_insts = (
-                    zero_added_clks_pipeline_map.zero_clk_per_delay_submodules_map[
-                        delay_offset + 1
-                    ]
-                )
-
-            # Slice each submodule at offset
-            # Record if submodules need to be artifically delayed to start in a later stage
-            for submodule_inst in submodule_insts:
-                # Slice through submodule
-                submodule_inst_name = (
-                    inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
-                )
-                submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
-                # Only continue slicing down if not fixed slices already (trying to slice deeper and make fixed slices)
-                if not submodule_timing_params.params_are_fixed:
-                    # Slice through submodule
-                    # Only slice when >= 1 delay unit?
-                    submodule_func_name = logic.submodule_instances[submodule_inst]
-                    submodule_logic = parser_state.FuncLogicLookupTable[
-                        submodule_func_name
-                    ]
-                    containing_logic = logic
-
-                    start_offset = (
-                        zero_added_clks_pipeline_map.zero_clk_submodule_start_offset[
-                            submodule_inst
-                        ]
-                    )
-                    local_offset = delay_offset - start_offset
-                    local_offset_w_decimal = local_offset + delay_offset_decimal
-
-                    # print "start_offset",start_offset
-                    # print "local_offset",local_offset
-                    # print "local_offset_w_decimal",local_offset_w_decimal
-
-                    # Convert to percent to add slice
-                    submodule_total_delay = submodule_logic.delay
-                    slice_pos = float(local_offset_w_decimal) / float(
-                        submodule_total_delay
-                    )
-                    if print_debug:
-                        print(" Slicing:", submodule_inst)
-                        print("   @", slice_pos)
-
-                    # Slice into that submodule
-                    skip_boundary_slice = False
-                    TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
-                        submodule_inst_name,
-                        submodule_logic,
-                        slice_pos,
-                        parser_state,
-                        TimingParamsLookupTable,
-                        skip_boundary_slice,
-                        write_files,
-                    )
-
-                    # Might be bad slice
-                    if type(TimingParamsLookupTable) is int:
-                        # Slice into submodule was bad
-                        if print_debug:
-                            print("Adding slice", slice_pos)
-                            print("To", submodule_inst)
-                            print("Submodule Slice index", TimingParamsLookupTable)
-                            print("Container slice index", slice_index)
-                            print("Was bad")
-                        # Return the slice in the container that was bad
-                        return slice_index
+            # Might be bad slice
+            if type(TimingParamsLookupTable) is int:
+                # Slice into submodule was bad
+                if print_debug:
+                    print("Adding slice", slice_pos)
+                    print("To", submodule_inst)
+                    print("Submodule Slice index", TimingParamsLookupTable)
+                    print("Container slice index", slice_index)
+                    print("Was bad")
+                # Return the slice in the container that was bad
+                return slice_index
 
     if write_files:
         # Final write package
@@ -2395,34 +2320,6 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
     return TimingParamsLookupTable
 
 
-# Does not change fixed params
-def RECURSIVE_SET_NON_FIXED_TO_ZERO_CLK_TIMING_PARAMS(
-    inst_name, parser_state, TimingParamsLookupTable, override_fixed=False
-):
-    # Get timing params for this logic
-    timing_params = TimingParamsLookupTable[inst_name]
-    if not timing_params.params_are_fixed or override_fixed:
-        # Set to be zero clk
-        timing_params.SET_SLICES([])
-        # Maybe unfix
-        if override_fixed:
-            # Reset value
-            timing_params.params_are_fixed = not timing_params.logic.CAN_BE_SLICED(
-                parser_state
-            )
-        # Repeat down through submodules since not fixed
-        logic = parser_state.LogicInstLookupTable[inst_name]
-        for local_sub_inst in logic.submodule_instances:
-            sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + local_sub_inst
-            TimingParamsLookupTable = RECURSIVE_SET_NON_FIXED_TO_ZERO_CLK_TIMING_PARAMS(
-                sub_inst, parser_state, TimingParamsLookupTable, override_fixed
-            )
-
-    TimingParamsLookupTable[inst_name] = timing_params
-
-    return TimingParamsLookupTable
-
-
 # Returns index of bad slices or working TimingParamsLookupTable
 def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
     inst_name,
@@ -2433,6 +2330,12 @@ def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
     write_files=True,
     rounding_so_fuck_it=False,
 ):
+    # Sanity check
+    if not FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+        logic.func_name, parser_state
+    ):
+        raise Exception("Trying to slice into", inst_name, "for no reason...")
+
     # Do slice to main logic for each slice
     for current_slice_i in current_slices:
         # print "  current_slice_i:",current_slice_i
@@ -2458,12 +2361,7 @@ def ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
         for inst_name_to_wr in TimingParamsLookupTable:
             wr_logic = parser_state.LogicInstLookupTable[inst_name_to_wr]
             wr_timing_params = TimingParamsLookupTable[inst_name_to_wr]
-            if (
-                wr_timing_params.GET_TOTAL_LATENCY(
-                    parser_state, TimingParamsLookupTable
-                )
-                > 0
-            ):
+            if not wr_timing_params.IS_EMPTY():
                 wr_syn_out_dir = GET_OUTPUT_DIRECTORY(wr_logic)
                 if not os.path.exists(wr_syn_out_dir):
                     os.makedirs(wr_syn_out_dir)
@@ -2694,14 +2592,18 @@ def GET_MOST_RECENT_OR_DEFAULT_SWEEP_STATE(parser_state, multimain_timing_params
             # Any instance will do
             inst_name = main_inst_name
             # Only need slicing if has delay?
-            delay = parser_state.LogicInstLookupTable[main_inst_name].delay
+            if func_logic.delay is None:
+                continue
+            delay = func_logic.delay
             # Init hier sweep mult to be top level
-            func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
+            func_path_delay_ns = float(delay) / DELAY_UNIT_MULT
             target_mhz = GET_TARGET_MHZ(main_inst_name, parser_state)
             if target_mhz is not None:
                 target_path_delay_ns = 1000.0 / target_mhz
                 sweep_state.inst_sweep_state[main_inst_name].hier_sweep_mult = 0.0
-                if delay > 0.0 and func_logic.CAN_BE_SLICED(parser_state):
+                if delay > 0.0 and FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                    func_logic.func_name, parser_state
+                ):
                     sweep_state.inst_sweep_state[
                         main_inst_name
                     ].slice_ep = SLICE_EPSILON(delay)
@@ -3188,6 +3090,8 @@ def DO_THROUGHPUT_SWEEP(
                     ":",
                     main_func_latency,
                     "clocks latency total...",
+                    len(main_func_timing_params._slices),
+                    "slices...",
                     flush=True,
                 )
         # Comb logic only AND coarse?
@@ -3244,8 +3148,11 @@ def DO_THROUGHPUT_SWEEP(
             possible_mains = []
             for main_func in parser_state.main_mhz:
                 main_logic = parser_state.FuncLogicLookupTable[main_func]
-                if main_logic.delay != 0 and main_logic.BODY_CAN_BE_SLICED(
-                    parser_state
+                if (
+                    main_logic.delay != 0
+                    and FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                        main_logic.func_name, parser_state
+                    )
                 ):
                     possible_mains.append(main_func)
             if len(possible_mains) == 1:
@@ -3313,24 +3220,702 @@ def DO_THROUGHPUT_SWEEP(
 # Do I like Joe Walsh?
 
 
+def COLLECT_LOWEST_LEVEL_INSTS_TO_PIPELINE(parser_state, sweep_state):
+    def HIER_SWEEP_MULT_FUNC(target_path_delay_ns, func_path_delay_ns):
+        return (target_path_delay_ns / func_path_delay_ns) + HIER_SWEEP_MULT_INC
+
+    # @#NEED TO REDO search for modules at this hierarchy/delay level starting from top and moving down
+    # @Starting from small can run into breaking optimizations that occur at higher levels
+    lowest_level_insts_to_pipeline = set()
+    for main_inst in parser_state.main_mhz:
+        main_func_logic = parser_state.LogicInstLookupTable[main_inst]
+        if FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+            main_func_logic.func_name, parser_state
+        ):
+            lowest_level_insts_to_pipeline.add(main_inst)
+    # Do this not recursive down the multi main hier tree walk
+    # Looking for lowest level submodule large enough to pipeline lowest_level_insts_to_pipeline is lowest_level_insts_to_pipeline
+    collecting_modules_to_pipeline = True
+    while collecting_modules_to_pipeline:
+        collecting_modules_to_pipeline = False
+        for func_inst in list(
+            lowest_level_insts_to_pipeline
+        ):  # Copy for modification dur iter
+            # Is this function large enough to pipeline?
+            func_logic = parser_state.LogicInstLookupTable[func_inst]
+            func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
+            main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                func_inst, parser_state
+            )
+            # Cached coarse sweep?
+            target_mhz = GET_TARGET_MHZ(main_func, parser_state)
+            if target_mhz is None:
+                raise Exception(
+                    f"Main function {main_func} does not have a specified operating frequency. Missing MAIN_MHZ pragma?"
+                )
+            target_path_delay_ns = 1000.0 / target_mhz
+            coarse_target_mhz = (
+                target_mhz * sweep_state.inst_sweep_state[main_func].coarse_sweep_mult
+            )
+
+            if (
+                sweep_state.inst_sweep_state[main_func].hier_sweep_mult
+                * func_path_delay_ns
+            ) <= target_path_delay_ns:
+                # Does NOT need pipelining
+                lowest_level_insts_to_pipeline.discard(func_inst)
+                collecting_modules_to_pipeline = True
+                if func_path_delay_ns > 0.0:
+                    hsm_i = HIER_SWEEP_MULT_FUNC(
+                        target_path_delay_ns, func_path_delay_ns
+                    )
+                    if (
+                        hsm_i
+                        < sweep_state.inst_sweep_state[
+                            main_func
+                        ].smallest_not_sliced_hier_mult
+                    ):
+                        sweep_state.inst_sweep_state[
+                            main_func
+                        ].smallest_not_sliced_hier_mult = hsm_i
+            elif FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                func_logic.func_name, parser_state
+            ):
+                # Might need pipelining here if no submodules are also large enough pipeline
+                # Invalidate timing param caches similar to how slicing down does
+                func_inst_timing_params = (
+                    sweep_state.multimain_timing_params.TimingParamsLookupTable[
+                        func_inst
+                    ]
+                )
+                func_inst_timing_params.INVALIDATE_CACHE()
+                for local_sub_inst in func_logic.submodule_instances:
+                    sub_inst_name = (
+                        func_inst + C_TO_LOGIC.SUBMODULE_MARKER + local_sub_inst
+                    )
+                    sub_logic = parser_state.LogicInstLookupTable[sub_inst_name]
+                    if sub_logic.delay is not None:
+                        sub_func_path_delay_ns = (
+                            float(sub_logic.delay) / DELAY_UNIT_MULT
+                        )
+                        if (
+                            sweep_state.inst_sweep_state[main_func].hier_sweep_mult
+                            * sub_func_path_delay_ns
+                        ) > target_path_delay_ns:
+                            # Submodule DOES need pipelining
+                            if FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                                sub_logic.func_name, parser_state
+                            ):
+                                lowest_level_insts_to_pipeline.add(sub_inst_name)
+                            # This current inst is not lowest level sub needing pipelining
+                            lowest_level_insts_to_pipeline.discard(func_inst)
+                            collecting_modules_to_pipeline = True
+                        else:
+                            # Submodule does not neet pipelining, record for hier mult step
+                            if sub_func_path_delay_ns > 0.0:
+                                hsm_i = HIER_SWEEP_MULT_FUNC(
+                                    target_path_delay_ns, sub_func_path_delay_ns
+                                )
+                                if (
+                                    hsm_i
+                                    < sweep_state.inst_sweep_state[
+                                        main_func
+                                    ].smallest_not_sliced_hier_mult
+                                ):
+                                    sweep_state.inst_sweep_state[
+                                        main_func
+                                    ].smallest_not_sliced_hier_mult = hsm_i
+    return lowest_level_insts_to_pipeline
+
+
+def PIPELINE_LOWEST_LEVEL_INSTS(
+    lowest_level_insts_to_pipeline,
+    parser_state,
+    sweep_state,
+    coarse_slices_cache,
+    printed_slices_cache,
+):
+    got_timing_params_from_walking_tree = True
+    keep_try_for_timing_params = False
+    for func_inst in sorted(
+        list(lowest_level_insts_to_pipeline)
+    ):  # Sorted for same order of execution
+        func_logic = parser_state.LogicInstLookupTable[func_inst]
+        func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
+        main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+            func_inst, parser_state
+        )
+        # Cached coarse sweep?
+        target_mhz = GET_TARGET_MHZ(main_func, parser_state)
+        target_path_delay_ns = 1000.0 / target_mhz
+        coarse_target_mhz = (
+            target_mhz * sweep_state.inst_sweep_state[main_func].coarse_sweep_mult
+        )
+        cache_key = (func_logic.func_name, coarse_target_mhz)
+
+        # How to pipeline?
+        # Just IO regs? no slicing
+        if (
+            func_path_delay_ns
+            * sweep_state.inst_sweep_state[main_func].coarse_sweep_mult
+        ) / target_path_delay_ns <= 1.0:  # func_path_delay_ns < target_path_delay_ns:
+            # Do single clock with io regs "coarse grain"
+            slices = []  # [0.0, 1.0]
+            needs_in_regs = True
+            needs_out_regs = True
+            if func_logic.func_name in parser_state.func_marked_no_add_io_regs:
+                needs_in_regs = False
+                needs_out_regs = False
+            if cache_key not in printed_slices_cache:
+                print(
+                    "Slicing (w/ IO regs if possible):",
+                    func_logic.func_name,
+                    ", mult =",
+                    sweep_state.inst_sweep_state[main_func].coarse_sweep_mult,
+                    slices,
+                    flush=True,
+                )
+
+        # Cached result?
+        elif cache_key in coarse_slices_cache:
+            # Try cache of coarse grain before trying for real
+            slices = coarse_slices_cache[cache_key]
+            needs_in_regs = True
+            needs_out_regs = True
+            if func_logic.func_name in parser_state.func_marked_no_add_io_regs:
+                needs_in_regs = False
+                needs_out_regs = False
+            if cache_key not in printed_slices_cache:
+                print(
+                    "Cached coarse grain slicing (w/ IO regs if possible):",
+                    func_logic.func_name,
+                    ", target MHz =",
+                    coarse_target_mhz,
+                    slices,
+                    flush=True,
+                )
+
+        # Manual coarse pipelining
+        else:
+            # Have state for this module?
+            if func_inst not in sweep_state.inst_sweep_state:
+                sweep_state.inst_sweep_state[func_inst] = InstSweepState()
+            func_inst_timing_params = (
+                sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst]
+            )
+            if cache_key not in printed_slices_cache:
+                print(
+                    "Coarse grain sweep slicing",
+                    func_logic.func_name,
+                    ", target MHz =",
+                    coarse_target_mhz,
+                    flush=True,
+                )
+            # Need way to stop coarse sweep if sweeping at this level of hierarchy wont work
+            # Number of tries should be more for smaller modules with more uneven slicing landscape
+            # Most tries is like 6?
+            # Which should used for modules where inital guess says ~1clk slicing
+            coarse_sweep_initial_clks = (
+                int(
+                    math.ceil(
+                        (
+                            func_path_delay_ns
+                            * sweep_state.inst_sweep_state[main_func].coarse_sweep_mult
+                        )
+                        / target_path_delay_ns
+                    )
+                )
+                - 1
+            )
+            allowed_worse_results = int(
+                MAX_N_WORSE_RESULTS_MULT / coarse_sweep_initial_clks
+            )
+            if allowed_worse_results == 0:
+                allowed_worse_results = 1
+            print("Allowed worse results in coarse sweep:", allowed_worse_results)
+            # Why not do middle out again? All the way down? Because complicated?weird do later
+            (
+                sweep_state.inst_sweep_state[func_inst],
+                working_slices,
+                inst_TimingParamsLookupTable,
+            ) = DO_COARSE_THROUGHPUT_SWEEP(
+                func_inst,
+                coarse_target_mhz,
+                sweep_state.inst_sweep_state[func_inst],
+                parser_state,
+                starting_guess_latency=None,
+                do_incremental_guesses=True,
+                max_allowed_latency_mult=MAX_ALLOWED_LATENCY_MULT,
+                stop_at_n_worse_result=allowed_worse_results,
+            )
+            if not sweep_state.inst_sweep_state[func_inst].met_timing:
+                # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
+                # Done in this loop, try again
+                got_timing_params_from_walking_tree = False
+                print(
+                    func_logic.func_name,
+                    "failed to meet timing, trying to pipeline smaller modules...",
+                )
+                # If at smallest module then done trying to get params too
+                if (
+                    sweep_state.inst_sweep_state[
+                        main_func
+                    ].smallest_not_sliced_hier_mult
+                    != INF_HIER_MULT
+                ):
+                    keep_try_for_timing_params = True
+                    # Increase mult to start at next delay unit down
+                    # WTF float stuff end up with slice getting repeatedly set just close enough not to slice next level down ?
+                    if (
+                        sweep_state.inst_sweep_state[
+                            main_func
+                        ].smallest_not_sliced_hier_mult
+                        == sweep_state.inst_sweep_state[main_func].hier_sweep_mult
+                    ):
+                        sweep_state.inst_sweep_state[
+                            main_func
+                        ].hier_sweep_mult += HIER_SWEEP_MULT_INC
+                        print(
+                            main_func,
+                            "nudging hierarchy sweep multiplier:",
+                            sweep_state.inst_sweep_state[main_func].hier_sweep_mult,
+                        )
+                    else:
+                        # Normal case
+                        sweep_state.inst_sweep_state[
+                            main_func
+                        ].hier_sweep_mult = sweep_state.inst_sweep_state[
+                            main_func
+                        ].smallest_not_sliced_hier_mult
+                        print(
+                            main_func,
+                            "hierarchy sweep multiplier:",
+                            sweep_state.inst_sweep_state[main_func].hier_sweep_mult,
+                        )
+                    sweep_state.inst_sweep_state[main_func].best_guess_sweep_mult = 1.0
+                    sweep_state.inst_sweep_state[main_func].coarse_sweep_mult = 1.0
+                else:
+                    # Unless no more modules left?
+                    print("No smaller submodules to pipeline...")
+                    keep_try_for_timing_params = False
+                break
+            # Assummed met timing if here
+            # Add IO regs for timing
+            slices = working_slices[:]
+            needs_in_regs = True
+            needs_out_regs = True
+            if func_logic.func_name in parser_state.func_marked_no_add_io_regs:
+                needs_in_regs = False
+                needs_out_regs = False
+            if cache_key not in printed_slices_cache:
+                print(
+                    "Coarse gain confirmed slicing (w/ IO regs if possible):",
+                    func_logic.func_name,
+                    ", target MHz =",
+                    coarse_target_mhz,
+                    slices,
+                    flush=True,
+                )
+            coarse_slices_cache[cache_key] = slices[:]
+
+        # Apply pipelining slices
+        # Do add slices with the current slices
+        write_files = False
+        sweep_state.multimain_timing_params.TimingParamsLookupTable = (
+            ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
+                func_inst,
+                func_logic,
+                slices,
+                parser_state,
+                sweep_state.multimain_timing_params.TimingParamsLookupTable,
+                write_files,
+            )
+        )
+        # Set this module to use io regs or not
+        func_inst_timing_params = (
+            sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst]
+        )
+        func_inst_timing_params.SET_HAS_IN_REGS(needs_in_regs)
+        func_inst_timing_params.SET_HAS_OUT_REGS(needs_out_regs)
+        # Lock these slices in place?
+        # Not be sliced through from the top down in the future
+        func_inst_timing_params.params_are_fixed = True
+        sweep_state.multimain_timing_params.TimingParamsLookupTable[func_inst] = (
+            func_inst_timing_params
+        )
+
+        # sET PRINT Cche - yup
+        if cache_key not in printed_slices_cache:
+            printed_slices_cache.add(cache_key)
+
+    return got_timing_params_from_walking_tree, keep_try_for_timing_params
+
+
+def APPLY_BEST_GUESS_SLICING_FROM_MAINS(parser_state, sweep_state):
+    # Done pipelining lowest level modules
+    # Apply best guess slicing from main top level if wasnt fixed by above loop
+    # (could change to do best guess at first place moving up in hier without fixed params?)
+    for main_inst in parser_state.main_mhz:
+        if not FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+            main_inst, parser_state
+        ):
+            continue
+        main_inst_timing_params = (
+            sweep_state.multimain_timing_params.TimingParamsLookupTable[main_inst]
+        )
+        if main_inst_timing_params.params_are_fixed:
+            continue
+        main_func_logic = parser_state.LogicInstLookupTable[main_inst]
+        if main_func_logic.delay is None:
+            continue
+        main_func_path_delay_ns = float(main_func_logic.delay) / DELAY_UNIT_MULT
+        target_mhz = GET_TARGET_MHZ(main_inst, parser_state)
+        target_path_delay_ns = 1000.0 / target_mhz
+        clks = (
+            int(
+                math.ceil(
+                    (
+                        main_func_path_delay_ns
+                        * sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult
+                    )
+                    / target_path_delay_ns
+                )
+            )
+            - 1
+        )
+        if clks <= 0:
+            continue
+        slices = GET_BEST_GUESS_IDEAL_SLICES(clks)
+        print(
+            "Best guess slicing:",
+            main_func_logic.func_name,
+            main_func_path_delay_ns,
+            "(ns) in to target",
+            target_path_delay_ns,
+            "(ns)",
+            ", mult =",
+            sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult,
+            "~=",
+            len(slices),
+            "slices",
+            flush=True,
+        )
+        write_files = False
+        sweep_state.multimain_timing_params.TimingParamsLookupTable = (
+            ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
+                main_inst,
+                main_func_logic,
+                slices,
+                parser_state,
+                sweep_state.multimain_timing_params.TimingParamsLookupTable,
+                write_files,
+            )
+        )
+        # Set this module to use io regs or not
+        main_inst_timing_params = (
+            sweep_state.multimain_timing_params.TimingParamsLookupTable[main_inst]
+        )
+        main_inst_timing_params.SET_HAS_IN_REGS(False)
+        main_inst_timing_params.SET_HAS_OUT_REGS(False)
+        # Lock these slices in place?
+        # Not be sliced through from the top down in the future
+        main_inst_timing_params.params_are_fixed = (
+            False  # Best guess can be overwritten
+        )
+        sweep_state.multimain_timing_params.TimingParamsLookupTable[main_inst] = (
+            main_inst_timing_params
+        )
+
+
+def WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(TimingParamsLookupTable, parser_state):
+    entities_written = set()
+    for inst_name_to_wr in TimingParamsLookupTable:
+        wr_logic = parser_state.LogicInstLookupTable[inst_name_to_wr]
+        wr_timing_params = TimingParamsLookupTable[inst_name_to_wr]
+        if not wr_timing_params.IS_EMPTY():
+            entity_name = VHDL.GET_ENTITY_NAME(
+                inst_name_to_wr, wr_logic, TimingParamsLookupTable, parser_state
+            )
+            if entity_name not in entities_written:
+                entities_written.add(entity_name)
+                wr_syn_out_dir = GET_OUTPUT_DIRECTORY(wr_logic)
+                if not os.path.exists(wr_syn_out_dir):
+                    os.makedirs(wr_syn_out_dir)
+                wr_filename = wr_syn_out_dir + "/" + entity_name + ".vhd"
+                if not os.path.exists(wr_filename):
+                    VHDL.WRITE_LOGIC_ENTITY(
+                        inst_name_to_wr,
+                        wr_logic,
+                        wr_syn_out_dir,
+                        parser_state,
+                        TimingParamsLookupTable,
+                    )
+
+
+def RUN_MULTIMAIN_SYN_AND_UPDATE_CACHE(parser_state, sweep_state):
+    # Print info on main funcs being synthesized in top
+    print("Running syn w timing params...", flush=True)
+    print(f"Elapsed time: {str(datetime.timedelta(seconds=(timer() - START_TIME)))}...")
+    for main_func in parser_state.main_mhz:
+        main_func_logic = parser_state.FuncLogicLookupTable[main_func]
+        main_func_timing_params = (
+            sweep_state.multimain_timing_params.TimingParamsLookupTable[main_func]
+        )
+        main_func_latency = main_func_timing_params.GET_TOTAL_LATENCY(
+            parser_state,
+            sweep_state.multimain_timing_params.TimingParamsLookupTable,
+        )
+        if main_func_latency > 0:
+            print(
+                main_func,
+                ":",
+                main_func_latency,
+                "clocks latency total...",
+                len(main_func_timing_params._slices),
+                "slices...",
+                flush=True,
+            )
+
+    # Run syn on multi main top
+    sweep_state.timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
+        parser_state, sweep_state.multimain_timing_params
+    )
+    if len(sweep_state.timing_report.path_reports) == 0:
+        print(sweep_state.timing_report.orig_text)
+        print("Using a bad syn log file?")
+        sys.exit(-1)
+
+    # Write pipeline delay cache
+    UPDATE_PIPELINE_MIN_PERIOD_CACHE(
+        sweep_state.timing_report,
+        sweep_state.multimain_timing_params.TimingParamsLookupTable,
+        parser_state,
+    )
+
+
+def STEP_DOWN_HIERARCHY_TO_SMALLER_MODULES(sweep_state, main_inst):
+    # Dont compensate with higher fmax, start with original coarse grain compensation on smaller modules
+    # WTF float stuff end up with slice getting repeatedly set just close enough not to slice next level down ?
+    inst_sweep_state = sweep_state.inst_sweep_state[main_inst]
+    if (
+        inst_sweep_state.smallest_not_sliced_hier_mult
+        == inst_sweep_state.hier_sweep_mult
+    ):
+        inst_sweep_state.hier_sweep_mult += HIER_SWEEP_MULT_INC
+        print(
+            "Nudging hierarchy sweep multiplier:",
+            inst_sweep_state.hier_sweep_mult,
+        )
+    else:
+        inst_sweep_state.hier_sweep_mult = (
+            inst_sweep_state.smallest_not_sliced_hier_mult
+        )
+        print("Hierarchy sweep multiplier:", inst_sweep_state.hier_sweep_mult)
+    inst_sweep_state.best_guess_sweep_mult = 1.0
+    inst_sweep_state.coarse_sweep_mult = 1.0
+
+
+def CHECK_TIMING_REPORT_AND_ADJUST(parser_state, sweep_state):
+    # Did it meet timing? Make adjusments as checking
+    made_adj = False
+    has_paths = len(sweep_state.timing_report.path_reports) > 0
+    sweep_state.met_timing = has_paths
+    for reported_clock_group in sweep_state.timing_report.path_reports:
+        path_report = sweep_state.timing_report.path_reports[reported_clock_group]
+        curr_mhz = 1000.0 / path_report.path_delay_ns
+        # Oh boy old log files can still be used if target freq changes right?
+        # Do a little hackery to get actual target freq right now, not from log
+        # Could be a clock crossing too right?
+        all_main_insts = list(parser_state.main_mhz.keys())
+        if len(parser_state.main_mhz) == 1:  # hacky work around for pyrtl really...
+            main_insts = set([all_main_insts[0]])
+        else:
+            # More hacky pyrtl support
+            if path_report.start_reg_name is None:
+                print(
+                    "WARNING: No start reg name in timing report! Assuming all clock domains had critical paths..."
+                )
+                main_insts = set(all_main_insts)
+            elif path_report.end_reg_name is None:
+                print(
+                    "WARNING: No end reg name in timing report! Assuming all clock domains had critical paths..."
+                )
+                main_insts = set(all_main_insts)
+            else:
+                main_insts = GET_MAIN_INSTS_FROM_PATH_REPORT(
+                    path_report,
+                    parser_state,
+                    sweep_state.multimain_timing_params.TimingParamsLookupTable,
+                )
+        if len(main_insts) <= 0:
+            print(
+                "Path group:",
+                reported_clock_group,
+                "is likely only limited by built in FIFO implementations...",
+            )
+        # Check timing, make adjustments and print info for each main in the timing report
+        for main_inst in main_insts:
+            # Met timing?
+            main_func_logic = parser_state.LogicInstLookupTable[main_inst]
+            main_func_timing_params = (
+                sweep_state.multimain_timing_params.TimingParamsLookupTable[main_inst]
+            )
+            latency = main_func_timing_params.GET_TOTAL_LATENCY(
+                parser_state,
+                sweep_state.multimain_timing_params.TimingParamsLookupTable,
+            )
+            target_mhz = GET_TARGET_MHZ(main_inst, parser_state)
+            target_path_delay_ns = 1000.0 / target_mhz
+            clk_group = parser_state.main_clk_group[main_inst]
+            main_met_timing = curr_mhz >= target_mhz
+            if not main_met_timing:
+                sweep_state.met_timing = False
+
+            # Print and log
+            print(
+                "{} Clock Goal: {:.2f} (MHz) Current: {:.2f} (MHz)({:.2f} ns) {} clks {} slices".format(
+                    main_func_logic.func_name,
+                    target_mhz,
+                    curr_mhz,
+                    path_report.path_delay_ns,
+                    latency,
+                    len(main_func_timing_params._slices),
+                ),
+                flush=True,
+            )
+            best_mhz_so_far = 0.0
+            if len(sweep_state.inst_sweep_state[main_inst].mhz_to_latency) > 0:
+                best_mhz_so_far = max(
+                    sweep_state.inst_sweep_state[main_inst].mhz_to_latency.keys()
+                )
+            best_mhz_this_latency = 0.0
+            if latency in sweep_state.inst_sweep_state[main_inst].latency_to_mhz:
+                best_mhz_this_latency = sweep_state.inst_sweep_state[
+                    main_inst
+                ].latency_to_mhz[latency]
+            better_mhz = curr_mhz > best_mhz_so_far
+            better_latency = curr_mhz > best_mhz_this_latency
+            # Log result
+            got_same_mhz_again = (
+                curr_mhz == sweep_state.inst_sweep_state[main_inst].last_mhz
+            ) and (latency != sweep_state.inst_sweep_state[main_inst].last_latency)
+            sweep_state.inst_sweep_state[main_inst].last_mhz = curr_mhz
+            sweep_state.inst_sweep_state[main_inst].last_latency = latency
+            if better_mhz or better_latency:
+                sweep_state.inst_sweep_state[main_inst].mhz_to_latency[curr_mhz] = (
+                    latency
+                )
+                sweep_state.inst_sweep_state[main_inst].latency_to_mhz[latency] = (
+                    curr_mhz
+                )
+
+            # Make adjustment if can be sliced
+            if not main_met_timing:
+                print_path = False
+                if FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                    main_func_logic.func_name, parser_state
+                ):
+                    # How would best guess mult increase?
+                    # Given current latency for pipeline and stage delay what new total comb logic delay does this imply?
+                    max_path_delay_ns = 1000.0 / curr_mhz
+                    total_delay = max_path_delay_ns * (latency + 1)
+                    # How many slices for that delay to meet timing
+                    fake_one_clk_mhz = 1000.0 / total_delay
+                    new_clks = target_mhz / fake_one_clk_mhz
+                    latency_mult = new_clks / (latency + 1)
+                    new_best_guess_sweep_mult = (
+                        sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult
+                        * latency_mult
+                    )
+
+                    # TODO: Very much need to organize this
+
+                    # Getting exactly same MHz is bad sign, that didnt pipeline current modules right
+                    if got_same_mhz_again:
+                        print(
+                            "Got identical timing result, trying to pipeline smaller modules instead..."
+                        )
+                        STEP_DOWN_HIERARCHY_TO_SMALLER_MODULES(sweep_state, main_inst)
+                        made_adj = True
+                    elif (
+                        new_best_guess_sweep_mult > BEST_GUESS_MUL_MAX
+                    ):  # 15 like? main_max_allowed_latency_mult  2.0 magic?
+                        # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
+                        print(
+                            "Middle sweep at this hierarchy level failed to meet timing...",
+                            "Next best guess multiplier was",
+                            new_best_guess_sweep_mult,
+                        )
+                        sys.exit(-1)  # TEMP
+                        if (
+                            sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult
+                            + COARSE_SWEEP_MULT_INC
+                        ) <= COARSE_SWEEP_MULT_MAX:
+                            print(
+                                "Trying to pipeline current modules to higher fmax to compensate..."
+                            )
+                            sweep_state.inst_sweep_state[
+                                main_inst
+                            ].best_guess_sweep_mult = 1.0
+                            sweep_state.inst_sweep_state[
+                                main_inst
+                            ].coarse_sweep_mult += COARSE_SWEEP_MULT_INC
+                            print(
+                                "Coarse synthesis sweep multiplier:",
+                                sweep_state.inst_sweep_state[
+                                    main_inst
+                                ].coarse_sweep_mult,
+                            )
+                            made_adj = True
+                            # New timing goal resets recorded best for all recorded insts
+                            for inst_i in sweep_state.inst_sweep_state:
+                                inst_sweep_state_i = sweep_state.inst_sweep_state[
+                                    inst_i
+                                ]
+                                inst_sweep_state_i.reset_recorded_best()
+                        elif (
+                            sweep_state.inst_sweep_state[
+                                main_inst
+                            ].smallest_not_sliced_hier_mult
+                            != INF_HIER_MULT
+                        ):
+                            print("Trying to pipeline smaller modules instead...")
+                            STEP_DOWN_HIERARCHY_TO_SMALLER_MODULES(
+                                sweep_state, main_inst
+                            )
+                            made_adj = True
+                        else:
+                            print_path = True
+                    else:
+                        sweep_state.inst_sweep_state[
+                            main_inst
+                        ].best_guess_sweep_mult = new_best_guess_sweep_mult
+                        print(
+                            "Best guess sweep multiplier:",
+                            sweep_state.inst_sweep_state[
+                                main_inst
+                            ].best_guess_sweep_mult,
+                        )
+                        made_adj = True
+                else:
+                    print_path = True
+
+                if print_path:
+                    print("Cannot pipeline path to meet timing:")
+                    print("START: ", path_report.start_reg_name, "=>")
+                    print(" ~", path_report.path_delay_ns, "ns of logic+routing ~")
+                    print("END: =>", path_report.end_reg_name, flush=True)
+    return made_adj
+
+
 # Inside out timing params
 # Kinda like "make all adds N cycles" as in original thinking
 # But starts from first module where any slice approaches timing goal
 # Middle out coarseness?
 # Modules can be locked/fixed in place and not sliced from above less accurately
 def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
-    debug = False
-
     # Cache the multiple coarse runs
     coarse_slices_cache = {}
-    printed_slices_cache = set()  # hacky indicator of if printed slicing of func yet
-
-    def cache_key_func(logic, target_mhz):
-        key = (logic.func_name, target_mhz)
-        return key
-
-    def hier_sweep_mult_func(target_path_delay_ns, func_path_delay_ns):
-        return (target_path_delay_ns / func_path_delay_ns) + HIER_SWEEP_MULT_INC
 
     # Outer loop for this sweep
     sweep_state.met_timing = False
@@ -3340,8 +3925,6 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         got_timing_params_from_walking_tree = False
         keep_try_for_timing_params = True
         while keep_try_for_timing_params:
-            got_timing_params_from_walking_tree = True
-            keep_try_for_timing_params = False
             printed_slices_cache = (
                 set()
             )  # Print each time trying to walk tree for slicing
@@ -3355,436 +3938,30 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
                     main_inst
                 ].smallest_not_sliced_hier_mult = INF_HIER_MULT
 
-            # @#NEED TO REDO search for modules at this hierarchy/delay level starting from top and moving down
-            # @Starting from small can run into breaking optimizations that occur at higher levels
             print("Collecting modules to pipeline...", flush=True)
-            lowest_level_insts_to_pipeline = set()
-            for main_inst in parser_state.main_mhz:
-                main_func_logic = parser_state.LogicInstLookupTable[main_inst]
-                if main_func_logic.CAN_BE_SLICED(parser_state):
-                    lowest_level_insts_to_pipeline.add(main_inst)
-            # Do this not recursive down the multi main hier tree walk
-            # Looking for lowest level submodule large enough to pipeline lowest_level_insts_to_pipeline is lowest_level_insts_to_pipeline
-            collecting_modules_to_pipeline = True
-            while collecting_modules_to_pipeline:
-                collecting_modules_to_pipeline = False
-                for func_inst in list(
-                    lowest_level_insts_to_pipeline
-                ):  # Copy for modification dur iter
-                    # Is this function large enough to pipeline?
-                    func_logic = parser_state.LogicInstLookupTable[func_inst]
-                    func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
-                    main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
-                        func_inst, parser_state
-                    )
-                    # Cached coarse sweep?
-                    target_mhz = GET_TARGET_MHZ(main_func, parser_state)
-                    if target_mhz is None:
-                        raise Exception(
-                            f"Main function {main_func} does not have a specified operating frequency. Missing MAIN_MHZ pragma?"
-                        )
-                    target_path_delay_ns = 1000.0 / target_mhz
-                    coarse_target_mhz = (
-                        target_mhz
-                        * sweep_state.inst_sweep_state[main_func].coarse_sweep_mult
-                    )
-
-                    if (
-                        sweep_state.inst_sweep_state[main_func].hier_sweep_mult
-                        * func_path_delay_ns
-                    ) <= target_path_delay_ns:
-                        # Does NOT need pipelining
-                        lowest_level_insts_to_pipeline.discard(func_inst)
-                        collecting_modules_to_pipeline = True
-                        if func_path_delay_ns > 0.0:
-                            hsm_i = hier_sweep_mult_func(
-                                target_path_delay_ns, func_path_delay_ns
-                            )
-                            if (
-                                hsm_i
-                                < sweep_state.inst_sweep_state[
-                                    main_func
-                                ].smallest_not_sliced_hier_mult
-                            ):
-                                sweep_state.inst_sweep_state[
-                                    main_func
-                                ].smallest_not_sliced_hier_mult = hsm_i
-                    elif func_logic.CAN_BE_SLICED(parser_state):
-                        # Might need pipelining here if no submodules are also large enough pipeline
-                        # Invalidate timing param caches similar to how slicing down does
-                        func_inst_timing_params = (
-                            sweep_state.multimain_timing_params.TimingParamsLookupTable[
-                                func_inst
-                            ]
-                        )
-                        func_inst_timing_params.INVALIDATE_CACHE()
-                        for local_sub_inst in func_logic.submodule_instances:
-                            sub_inst_name = (
-                                func_inst + C_TO_LOGIC.SUBMODULE_MARKER + local_sub_inst
-                            )
-                            sub_logic = parser_state.LogicInstLookupTable[sub_inst_name]
-                            if sub_logic.delay is not None:
-                                sub_func_path_delay_ns = (
-                                    float(sub_logic.delay) / DELAY_UNIT_MULT
-                                )
-                                if (
-                                    sweep_state.inst_sweep_state[
-                                        main_func
-                                    ].hier_sweep_mult
-                                    * sub_func_path_delay_ns
-                                ) > target_path_delay_ns:
-                                    # Submodule DOES need pipelining
-                                    if sub_logic.CAN_BE_SLICED(parser_state):
-                                        lowest_level_insts_to_pipeline.add(
-                                            sub_inst_name
-                                        )
-                                    # This current inst is not lowest level sub needing pipelining
-                                    lowest_level_insts_to_pipeline.discard(func_inst)
-                                    collecting_modules_to_pipeline = True
-                                else:
-                                    # Submodule does not neet pipelining, record for hier mult step
-                                    if sub_func_path_delay_ns > 0.0:
-                                        hsm_i = hier_sweep_mult_func(
-                                            target_path_delay_ns, sub_func_path_delay_ns
-                                        )
-                                        if (
-                                            hsm_i
-                                            < sweep_state.inst_sweep_state[
-                                                main_func
-                                            ].smallest_not_sliced_hier_mult
-                                        ):
-                                            sweep_state.inst_sweep_state[
-                                                main_func
-                                            ].smallest_not_sliced_hier_mult = hsm_i
-
-            # Sanity
-            for func_inst in lowest_level_insts_to_pipeline:
-                containr_inst = C_TO_LOGIC.GET_CONTAINER_INST(func_inst)
-                if containr_inst in lowest_level_insts_to_pipeline:
-                    print(
-                        containr_inst,
-                        "and submodule",
-                        func_inst,
-                        "both to be pipelined?",
-                    )
-                    sys.exit(-1)
+            lowest_level_insts_to_pipeline = COLLECT_LOWEST_LEVEL_INSTS_TO_PIPELINE(
+                parser_state, sweep_state
+            )
 
             # Got correct lowest_level_insts_to_pipeline
             # Do loop doing pipelining
             print("Pipelining modules...", flush=True)
-            pipelining_worked = True
-            for func_inst in sorted(
-                list(lowest_level_insts_to_pipeline)
-            ):  # Sorted for same order of execution
-                func_logic = parser_state.LogicInstLookupTable[func_inst]
-                func_path_delay_ns = float(func_logic.delay) / DELAY_UNIT_MULT
-                main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
-                    func_inst, parser_state
-                )
-                # Cached coarse sweep?
-                target_mhz = GET_TARGET_MHZ(main_func, parser_state)
-                target_path_delay_ns = 1000.0 / target_mhz
-                coarse_target_mhz = (
-                    target_mhz
-                    * sweep_state.inst_sweep_state[main_func].coarse_sweep_mult
-                )
-                cache_key = cache_key_func(func_logic, coarse_target_mhz)
-
-                # How to pipeline?
-                # Just IO regs? no slicing
-                if (
-                    (
-                        func_path_delay_ns
-                        * sweep_state.inst_sweep_state[main_func].coarse_sweep_mult
-                    )
-                    / target_path_delay_ns
-                    <= 1.0
-                ):  # func_path_delay_ns < target_path_delay_ns:
-                    # Do single clock with io regs "coarse grain"
-                    slices = []  # [0.0, 1.0]
-                    needs_in_regs = True
-                    needs_out_regs = True
-                    if func_logic.func_name in parser_state.func_marked_no_add_io_regs:
-                        needs_in_regs = False
-                        needs_out_regs = False
-                    if cache_key not in printed_slices_cache:
-                        print(
-                            "Slicing (w/ IO regs if possible):",
-                            func_logic.func_name,
-                            ", mult =",
-                            sweep_state.inst_sweep_state[main_func].coarse_sweep_mult,
-                            slices,
-                            flush=True,
-                        )
-
-                # Cached result?
-                elif cache_key in coarse_slices_cache:
-                    # Try cache of coarse grain before trying for real
-                    slices = coarse_slices_cache[cache_key]
-                    needs_in_regs = True
-                    needs_out_regs = True
-                    if func_logic.func_name in parser_state.func_marked_no_add_io_regs:
-                        needs_in_regs = False
-                        needs_out_regs = False
-                    if cache_key not in printed_slices_cache:
-                        print(
-                            "Cached coarse grain slicing (w/ IO regs if possible):",
-                            func_logic.func_name,
-                            ", target MHz =",
-                            coarse_target_mhz,
-                            slices,
-                            flush=True,
-                        )
-
-                # Manual coarse pipelining
-                else:
-                    # Have state for this module?
-                    if func_inst not in sweep_state.inst_sweep_state:
-                        sweep_state.inst_sweep_state[func_inst] = InstSweepState()
-                    func_inst_timing_params = (
-                        sweep_state.multimain_timing_params.TimingParamsLookupTable[
-                            func_inst
-                        ]
-                    )
-                    if cache_key not in printed_slices_cache:
-                        print(
-                            "Coarse grain sweep slicing",
-                            func_logic.func_name,
-                            ", target MHz =",
-                            coarse_target_mhz,
-                            flush=True,
-                        )
-                    # Need way to stop coarse sweep if sweeping at this level of hierarchy wont work
-                    # Number of tries should be more for smaller modules with more uneven slicing landscape
-                    # Most tries is like 6?
-                    # Which should used for modules where inital guess says ~1clk slicing
-                    coarse_sweep_initial_clks = (
-                        int(
-                            math.ceil(
-                                (
-                                    func_path_delay_ns
-                                    * sweep_state.inst_sweep_state[
-                                        main_func
-                                    ].coarse_sweep_mult
-                                )
-                                / target_path_delay_ns
-                            )
-                        )
-                        - 1
-                    )
-                    allowed_worse_results = int(
-                        MAX_N_WORSE_RESULTS_MULT / coarse_sweep_initial_clks
-                    )
-                    if allowed_worse_results == 0:
-                        allowed_worse_results = 1
-                    print(
-                        "Allowed worse results in coarse sweep:", allowed_worse_results
-                    )
-                    # Why not do middle out again? All the way down? Because complicated?weird do later
-                    (
-                        sweep_state.inst_sweep_state[func_inst],
-                        working_slices,
-                        inst_TimingParamsLookupTable,
-                    ) = DO_COARSE_THROUGHPUT_SWEEP(
-                        func_inst,
-                        coarse_target_mhz,
-                        sweep_state.inst_sweep_state[func_inst],
-                        parser_state,
-                        starting_guess_latency=None,
-                        do_incremental_guesses=True,
-                        max_allowed_latency_mult=MAX_ALLOWED_LATENCY_MULT,
-                        stop_at_n_worse_result=allowed_worse_results,
-                    )
-                    if not sweep_state.inst_sweep_state[func_inst].met_timing:
-                        # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
-                        # Done in this loop, try again
-                        got_timing_params_from_walking_tree = False
-                        print(
-                            func_logic.func_name,
-                            "failed to meet timing, trying to pipeline smaller modules...",
-                        )
-                        # If at smallest module then done trying to get params too
-                        if (
-                            sweep_state.inst_sweep_state[
-                                main_func
-                            ].smallest_not_sliced_hier_mult
-                            != INF_HIER_MULT
-                        ):
-                            keep_try_for_timing_params = True
-                            # Increase mult to start at next delay unit down
-                            # WTF float stuff end up with slice getting repeatedly set just close enough not to slice next level down ?
-                            if (
-                                sweep_state.inst_sweep_state[
-                                    main_func
-                                ].smallest_not_sliced_hier_mult
-                                == sweep_state.inst_sweep_state[
-                                    main_func
-                                ].hier_sweep_mult
-                            ):
-                                sweep_state.inst_sweep_state[
-                                    main_func
-                                ].hier_sweep_mult += HIER_SWEEP_MULT_INC
-                                print(
-                                    main_func,
-                                    "nudging hierarchy sweep multiplier:",
-                                    sweep_state.inst_sweep_state[
-                                        main_func
-                                    ].hier_sweep_mult,
-                                )
-                            else:
-                                # Normal case
-                                sweep_state.inst_sweep_state[
-                                    main_func
-                                ].hier_sweep_mult = sweep_state.inst_sweep_state[
-                                    main_func
-                                ].smallest_not_sliced_hier_mult
-                                print(
-                                    main_func,
-                                    "hierarchy sweep multiplier:",
-                                    sweep_state.inst_sweep_state[
-                                        main_func
-                                    ].hier_sweep_mult,
-                                )
-                            sweep_state.inst_sweep_state[
-                                main_func
-                            ].best_guess_sweep_mult = 1.0
-                            sweep_state.inst_sweep_state[
-                                main_inst
-                            ].coarse_sweep_mult = 1.0
-                        else:
-                            # Unless no more modules left?
-                            print("No smaller submodules to pipeline...")
-                            keep_try_for_timing_params = False
-                        break
-                    # Assummed met timing if here
-                    # Add IO regs for timing
-                    slices = working_slices[:]
-                    needs_in_regs = True
-                    needs_out_regs = True
-                    if func_logic.func_name in parser_state.func_marked_no_add_io_regs:
-                        needs_in_regs = False
-                        needs_out_regs = False
-                    if cache_key not in printed_slices_cache:
-                        print(
-                            "Coarse gain confirmed slicing (w/ IO regs if possible):",
-                            func_logic.func_name,
-                            ", target MHz =",
-                            coarse_target_mhz,
-                            slices,
-                            flush=True,
-                        )
-                    coarse_slices_cache[cache_key] = slices[:]
-
-                # Apply pipelining slices
-                # Do add slices with the current slices
-                write_files = False
-                sweep_state.multimain_timing_params.TimingParamsLookupTable = (
-                    ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
-                        func_inst,
-                        func_logic,
-                        slices,
-                        parser_state,
-                        sweep_state.multimain_timing_params.TimingParamsLookupTable,
-                        write_files,
-                    )
-                )
-                # Set this module to use io regs or not
-                func_inst_timing_params = (
-                    sweep_state.multimain_timing_params.TimingParamsLookupTable[
-                        func_inst
-                    ]
-                )
-                func_inst_timing_params.SET_HAS_IN_REGS(needs_in_regs)
-                func_inst_timing_params.SET_HAS_OUT_REGS(needs_out_regs)
-                # Lock these slices in place?
-                # Not be sliced through from the top down in the future
-                func_inst_timing_params.params_are_fixed = True
-                sweep_state.multimain_timing_params.TimingParamsLookupTable[
-                    func_inst
-                ] = func_inst_timing_params
-
-                # sET PRINT Cche - yup
-                if cache_key not in printed_slices_cache:
-                    printed_slices_cache.add(cache_key)
+            (
+                got_timing_params_from_walking_tree,
+                keep_try_for_timing_params,
+            ) = PIPELINE_LOWEST_LEVEL_INSTS(
+                lowest_level_insts_to_pipeline,
+                parser_state,
+                sweep_state,
+                coarse_slices_cache,
+                printed_slices_cache,
+            )
 
             # Above determination of slices may have failed
             if not got_timing_params_from_walking_tree:
                 continue
 
-            # Done pipelining lowest level modules
-            # Apply best guess slicing from main top level if wasnt fixed by above loop
-            # (could change to do best guess at first place moving up in hier without fixed params?)
-            for main_inst in parser_state.main_mhz:
-                main_inst_timing_params = (
-                    sweep_state.multimain_timing_params.TimingParamsLookupTable[
-                        main_inst
-                    ]
-                )
-                if main_inst_timing_params.params_are_fixed:
-                    continue
-                main_func_logic = parser_state.LogicInstLookupTable[main_inst]
-                main_func_path_delay_ns = float(main_func_logic.delay) / DELAY_UNIT_MULT
-                target_mhz = GET_TARGET_MHZ(main_inst, parser_state)
-                target_path_delay_ns = 1000.0 / target_mhz
-                clks = (
-                    int(
-                        math.ceil(
-                            (
-                                main_func_path_delay_ns
-                                * sweep_state.inst_sweep_state[
-                                    main_inst
-                                ].best_guess_sweep_mult
-                            )
-                            / target_path_delay_ns
-                        )
-                    )
-                    - 1
-                )
-                if clks <= 0:
-                    continue
-                slices = GET_BEST_GUESS_IDEAL_SLICES(clks)
-                print(
-                    "Best guess slicing:",
-                    main_func_logic.func_name,
-                    main_func_path_delay_ns,
-                    "(ns) in to target",
-                    target_path_delay_ns,
-                    "(ns)",
-                    ", mult =",
-                    sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult,
-                    "~=",
-                    len(slices),
-                    "clks",
-                    flush=True,
-                )
-                write_files = False
-                sweep_state.multimain_timing_params.TimingParamsLookupTable = (
-                    ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
-                        main_inst,
-                        main_func_logic,
-                        slices,
-                        parser_state,
-                        sweep_state.multimain_timing_params.TimingParamsLookupTable,
-                        write_files,
-                    )
-                )
-                # Set this module to use io regs or not
-                main_inst_timing_params = (
-                    sweep_state.multimain_timing_params.TimingParamsLookupTable[
-                        main_inst
-                    ]
-                )
-                main_inst_timing_params.SET_HAS_IN_REGS(False)
-                main_inst_timing_params.SET_HAS_OUT_REGS(False)
-                # Lock these slices in place?
-                # Not be sliced through from the top down in the future
-                main_inst_timing_params.params_are_fixed = (
-                    False  # Best guess can be overwritten
-                )
-                sweep_state.multimain_timing_params.TimingParamsLookupTable[
-                    main_inst
-                ] = main_inst_timing_params
-
+            APPLY_BEST_GUESS_SLICING_FROM_MAINS(parser_state, sweep_state)
         # }END WHILE LOOP REPEATEDLY walking tree for params
 
         # Quit if cant slice submodules to meet timing / no params from walking tree
@@ -3797,351 +3974,14 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
         # Do one final dumb loop over all timing params that arent zero clocks?
         # because write_files_in_loop = False above
         print("Updating output files...", flush=True)
-        entities_written = set()
-        for (
-            inst_name_to_wr
-        ) in sweep_state.multimain_timing_params.TimingParamsLookupTable:
-            wr_logic = parser_state.LogicInstLookupTable[inst_name_to_wr]
-            wr_timing_params = (
-                sweep_state.multimain_timing_params.TimingParamsLookupTable[
-                    inst_name_to_wr
-                ]
-            )
-            if (
-                wr_timing_params.GET_TOTAL_LATENCY(
-                    parser_state,
-                    sweep_state.multimain_timing_params.TimingParamsLookupTable,
-                )
-                > 0
-            ):
-                entity_name = VHDL.GET_ENTITY_NAME(
-                    inst_name_to_wr,
-                    wr_logic,
-                    sweep_state.multimain_timing_params.TimingParamsLookupTable,
-                    parser_state,
-                )
-                if entity_name not in entities_written:
-                    entities_written.add(entity_name)
-                    wr_syn_out_dir = GET_OUTPUT_DIRECTORY(wr_logic)
-                    if not os.path.exists(wr_syn_out_dir):
-                        os.makedirs(wr_syn_out_dir)
-                    wr_filename = wr_syn_out_dir + "/" + entity_name + ".vhd"
-                    if not os.path.exists(wr_filename):
-                        VHDL.WRITE_LOGIC_ENTITY(
-                            inst_name_to_wr,
-                            wr_logic,
-                            wr_syn_out_dir,
-                            parser_state,
-                            sweep_state.multimain_timing_params.TimingParamsLookupTable,
-                        )
+        WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(
+            sweep_state.multimain_timing_params.TimingParamsLookupTable, parser_state
+        )
         # Write estimate of FF usage
         WRITE_REGISTERS_ESTIMATE_FILE(parser_state, sweep_state.multimain_timing_params)
 
-        # Print info on main funcs being synthesized in top
-        print("Running syn w timing params...", flush=True)
-        print(
-            f"Elapsed time: {str(datetime.timedelta(seconds=(timer() - START_TIME)))}..."
-        )
-        for main_func in parser_state.main_mhz:
-            main_func_logic = parser_state.FuncLogicLookupTable[main_func]
-            main_func_timing_params = (
-                sweep_state.multimain_timing_params.TimingParamsLookupTable[main_func]
-            )
-            main_func_latency = main_func_timing_params.GET_TOTAL_LATENCY(
-                parser_state,
-                sweep_state.multimain_timing_params.TimingParamsLookupTable,
-            )
-            if main_func_latency > 0:
-                print(
-                    main_func,
-                    ":",
-                    main_func_latency,
-                    "clocks latency total...",
-                    flush=True,
-                )
-
-        # Run syn on multi main top
-        sweep_state.timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
-            parser_state, sweep_state.multimain_timing_params
-        )
-        if len(sweep_state.timing_report.path_reports) == 0:
-            print(sweep_state.timing_report.orig_text)
-            print("Using a bad syn log file?")
-            sys.exit(-1)
-
-        # Write pipeline delay cache
-        UPDATE_PIPELINE_MIN_PERIOD_CACHE(
-            sweep_state.timing_report,
-            sweep_state.multimain_timing_params.TimingParamsLookupTable,
-            parser_state,
-        )
-
-        # Did it meet timing? Make adjusments as checking
-        made_adj = False
-        has_paths = len(sweep_state.timing_report.path_reports) > 0
-        sweep_state.met_timing = has_paths
-        for reported_clock_group in sweep_state.timing_report.path_reports:
-            path_report = sweep_state.timing_report.path_reports[reported_clock_group]
-            # print("Path report:")
-            # print(path_report.start_reg_name)
-            # print(path_report.end_reg_name)
-            # print(path_report.netlist_resources)
-            curr_mhz = 1000.0 / path_report.path_delay_ns
-            # Oh boy old log files can still be used if target freq changes right?
-            # Do a little hackery to get actual target freq right now, not from log
-            # Could be a clock crossing too right?
-            all_main_insts = list(parser_state.main_mhz.keys())
-            if len(parser_state.main_mhz) == 1:  # hacky work around for pyrtl really...
-                main_insts = set([all_main_insts[0]])
-            else:
-                # More hacky pyrtl support
-                if path_report.start_reg_name is None:
-                    print(
-                        "WARNING: No start reg name in timing report! Assuming all clock domains had critical paths..."
-                    )
-                    main_insts = set(all_main_insts)
-                elif path_report.end_reg_name is None:
-                    print(
-                        "WARNING: No end reg name in timing report! Assuming all clock domains had critical paths..."
-                    )
-                    main_insts = set(all_main_insts)
-                else:
-                    main_insts = GET_MAIN_INSTS_FROM_PATH_REPORT(
-                        path_report,
-                        parser_state,
-                        sweep_state.multimain_timing_params.TimingParamsLookupTable,
-                    )
-            if len(main_insts) <= 0:
-                print(
-                    "Path group:",
-                    reported_clock_group,
-                    "is likely only limited by built in FIFO implementations...",
-                )
-            # Check timing, make adjustments and print info for each main in the timing report
-            for main_inst in main_insts:
-                # Met timing?
-                main_func_logic = parser_state.LogicInstLookupTable[main_inst]
-                main_func_timing_params = (
-                    sweep_state.multimain_timing_params.TimingParamsLookupTable[
-                        main_inst
-                    ]
-                )
-                latency = main_func_timing_params.GET_TOTAL_LATENCY(
-                    parser_state,
-                    sweep_state.multimain_timing_params.TimingParamsLookupTable,
-                )
-                target_mhz = GET_TARGET_MHZ(main_inst, parser_state)
-                target_path_delay_ns = 1000.0 / target_mhz
-                clk_group = parser_state.main_clk_group[main_inst]
-                main_met_timing = curr_mhz >= target_mhz
-                if not main_met_timing:
-                    sweep_state.met_timing = False
-
-                # Print and log
-                print(
-                    "{} Clock Goal: {:.2f} (MHz) Current: {:.2f} (MHz)({:.2f} ns) {} clks".format(
-                        main_func_logic.func_name,
-                        target_mhz,
-                        curr_mhz,
-                        path_report.path_delay_ns,
-                        latency,
-                    ),
-                    flush=True,
-                )
-                best_mhz_so_far = 0.0
-                if len(sweep_state.inst_sweep_state[main_inst].mhz_to_latency) > 0:
-                    best_mhz_so_far = max(
-                        sweep_state.inst_sweep_state[main_inst].mhz_to_latency.keys()
-                    )
-                best_mhz_this_latency = 0.0
-                if latency in sweep_state.inst_sweep_state[main_inst].latency_to_mhz:
-                    best_mhz_this_latency = sweep_state.inst_sweep_state[
-                        main_inst
-                    ].latency_to_mhz[latency]
-                better_mhz = curr_mhz > best_mhz_so_far
-                better_latency = curr_mhz > best_mhz_this_latency
-                # Log result
-                got_same_mhz_again = (
-                    curr_mhz == sweep_state.inst_sweep_state[main_inst].last_mhz
-                ) and (latency != sweep_state.inst_sweep_state[main_inst].last_latency)
-                sweep_state.inst_sweep_state[main_inst].last_mhz = curr_mhz
-                sweep_state.inst_sweep_state[main_inst].last_latency = latency
-                if better_mhz or better_latency:
-                    sweep_state.inst_sweep_state[main_inst].mhz_to_latency[curr_mhz] = (
-                        latency
-                    )
-                    sweep_state.inst_sweep_state[main_inst].latency_to_mhz[latency] = (
-                        curr_mhz
-                    )
-
-                # Make adjustment if can be sliced
-                if not main_met_timing:
-                    print_path = False
-                    if main_func_logic.BODY_CAN_BE_SLICED(parser_state):
-                        # How would best guess mult increase?
-                        # Given current latency for pipeline and stage delay what new total comb logic delay does this imply?
-                        max_path_delay_ns = 1000.0 / curr_mhz
-                        total_delay = max_path_delay_ns * (latency + 1)
-                        # How many slices for that delay to meet timing
-                        fake_one_clk_mhz = 1000.0 / total_delay
-                        new_clks = target_mhz / fake_one_clk_mhz
-                        latency_mult = new_clks / (latency + 1)
-                        new_best_guess_sweep_mult = (
-                            sweep_state.inst_sweep_state[
-                                main_inst
-                            ].best_guess_sweep_mult
-                            * latency_mult
-                        )
-
-                        # TODO: Very much need to organize this
-
-                        # Getting exactly same MHz is bad sign, that didnt pipeline current modules right
-                        if got_same_mhz_again:
-                            print(
-                                "Got identical timing result, trying to pipeline smaller modules instead..."
-                            )
-                            # Dont compensate with higher fmax, start with original coarse grain compensation on smaller modules
-                            # WTF float stuff end up with slice getting repeatedly set just close enough not to slice next level down ?
-                            if (
-                                sweep_state.inst_sweep_state[
-                                    main_func
-                                ].smallest_not_sliced_hier_mult
-                                == sweep_state.inst_sweep_state[
-                                    main_func
-                                ].hier_sweep_mult
-                            ):
-                                sweep_state.inst_sweep_state[
-                                    main_func
-                                ].hier_sweep_mult += HIER_SWEEP_MULT_INC
-                                print(
-                                    "Nudging hierarchy sweep multiplier:",
-                                    sweep_state.inst_sweep_state[
-                                        main_func
-                                    ].hier_sweep_mult,
-                                )
-                            else:
-                                sweep_state.inst_sweep_state[
-                                    main_inst
-                                ].hier_sweep_mult = sweep_state.inst_sweep_state[
-                                    main_inst
-                                ].smallest_not_sliced_hier_mult
-                                print(
-                                    "Hierarchy sweep multiplier:",
-                                    sweep_state.inst_sweep_state[
-                                        main_inst
-                                    ].hier_sweep_mult,
-                                )
-                            sweep_state.inst_sweep_state[
-                                main_inst
-                            ].best_guess_sweep_mult = 1.0
-                            sweep_state.inst_sweep_state[
-                                main_inst
-                            ].coarse_sweep_mult = 1.0
-                            made_adj = True
-                        elif (
-                            new_best_guess_sweep_mult > BEST_GUESS_MUL_MAX
-                        ):  # 15 like? main_max_allowed_latency_mult  2.0 magic?
-                            # Fail here, increment sweep mut and try_to_slice logic will slice lower module next time
-                            print(
-                                "Middle sweep at this hierarchy level failed to meet timing...",
-                                "Next best guess multiplier was",
-                                new_best_guess_sweep_mult,
-                            )
-                            if (
-                                sweep_state.inst_sweep_state[
-                                    main_inst
-                                ].coarse_sweep_mult
-                                + COARSE_SWEEP_MULT_INC
-                            ) <= COARSE_SWEEP_MULT_MAX:
-                                print(
-                                    "Trying to pipeline current modules to higher fmax to compensate..."
-                                )
-                                sweep_state.inst_sweep_state[
-                                    main_inst
-                                ].best_guess_sweep_mult = 1.0
-                                sweep_state.inst_sweep_state[
-                                    main_inst
-                                ].coarse_sweep_mult += COARSE_SWEEP_MULT_INC
-                                print(
-                                    "Coarse synthesis sweep multiplier:",
-                                    sweep_state.inst_sweep_state[
-                                        main_inst
-                                    ].coarse_sweep_mult,
-                                )
-                                made_adj = True
-                                # New timing goal resets recorded best for all recorded insts
-                                for inst_i in sweep_state.inst_sweep_state:
-                                    inst_sweep_state_i = sweep_state.inst_sweep_state[
-                                        inst_i
-                                    ]
-                                    inst_sweep_state_i.reset_recorded_best()
-                            elif (
-                                sweep_state.inst_sweep_state[
-                                    main_inst
-                                ].smallest_not_sliced_hier_mult
-                                != INF_HIER_MULT
-                            ):
-                                print("Trying to pipeline smaller modules instead...")
-                                # Dont compensate with higher fmax, start with original coarse grain compensation on smaller modules
-                                # WTF float stuff end up with slice getting repeatedly set just close enough not to slice next level down ?
-                                if (
-                                    sweep_state.inst_sweep_state[
-                                        main_func
-                                    ].smallest_not_sliced_hier_mult
-                                    == sweep_state.inst_sweep_state[
-                                        main_func
-                                    ].hier_sweep_mult
-                                ):
-                                    sweep_state.inst_sweep_state[
-                                        main_func
-                                    ].hier_sweep_mult += HIER_SWEEP_MULT_INC
-                                    print(
-                                        "Nudging hierarchy sweep multiplier:",
-                                        sweep_state.inst_sweep_state[
-                                            main_func
-                                        ].hier_sweep_mult,
-                                    )
-                                else:
-                                    sweep_state.inst_sweep_state[
-                                        main_inst
-                                    ].hier_sweep_mult = sweep_state.inst_sweep_state[
-                                        main_inst
-                                    ].smallest_not_sliced_hier_mult
-                                    print(
-                                        "Hierarchy sweep multiplier:",
-                                        sweep_state.inst_sweep_state[
-                                            main_inst
-                                        ].hier_sweep_mult,
-                                    )
-                                sweep_state.inst_sweep_state[
-                                    main_inst
-                                ].best_guess_sweep_mult = 1.0
-                                sweep_state.inst_sweep_state[
-                                    main_inst
-                                ].coarse_sweep_mult = 1.0
-                                made_adj = True
-                            else:
-                                print_path = True
-                        else:
-                            # sweep_state.inst_sweep_state[main_inst].best_guess_sweep_mult *= best_guess_sweep_mult_inc
-                            sweep_state.inst_sweep_state[
-                                main_inst
-                            ].best_guess_sweep_mult = new_best_guess_sweep_mult
-                            print(
-                                "Best guess sweep multiplier:",
-                                sweep_state.inst_sweep_state[
-                                    main_inst
-                                ].best_guess_sweep_mult,
-                            )
-                            made_adj = True
-                    else:
-                        print_path = True
-
-                    if print_path:
-                        print("Cannot pipeline path to meet timing:")
-                        print("START: ", path_report.start_reg_name, "=>")
-                        print(" ~", path_report.path_delay_ns, "ns of logic+routing ~")
-                        print("END: =>", path_report.end_reg_name, flush=True)
+        RUN_MULTIMAIN_SYN_AND_UPDATE_CACHE(parser_state, sweep_state)
+        made_adj = CHECK_TIMING_REPORT_AND_ADJUST(parser_state, sweep_state)
 
         if sweep_state.met_timing:
             print("Met timing...")
@@ -4152,21 +3992,9 @@ def DO_MIDDLE_OUT_THROUGHPUT_SWEEP(parser_state, sweep_state):
             sys.exit(-1)
 
 
-# Returns main_inst_to_slices = {} since "coarse" means timing defined by top level slices
-# Of Montreal - The Party's Crashing Us
-# Starting guess really only saves 1 extra syn run for dup multimain top
-def DO_COARSE_THROUGHPUT_SWEEP(
-    inst_name,
-    target_mhz,
-    inst_sweep_state,
-    parser_state,
-    starting_guess_latency=None,
-    do_incremental_guesses=True,
-    max_allowed_latency_mult=None,
-    stop_at_n_worse_result=None,
-    stop_at_latency=None,
+def SET_INITIAL_COARSE_LATENCY_GUESS(
+    inst_name, target_mhz, inst_sweep_state, parser_state, starting_guess_latency
 ):
-    working_slices = None
     logic = parser_state.LogicInstLookupTable[inst_name]
     # Reasonable starting guess and coarse throughput strategy is dividing each main up to meet target
     # Dont even bother running multimain top as combinatorial logic
@@ -4182,14 +4010,287 @@ def DO_COARSE_THROUGHPUT_SWEEP(
             if mult > 1.0:
                 # Divide up into that many clocks as a starting guess
                 # If doesnt have global wires
-                if logic.BODY_CAN_BE_SLICED(parser_state):
+                if FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                    logic.func_name, parser_state
+                ):
                     clks = int(math.ceil(mult)) - 1
                     inst_sweep_state.coarse_latency = clks
                     inst_sweep_state.initial_guess_latency = clks
     else:
-        if logic.BODY_CAN_BE_SLICED(parser_state):
+        if FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+            logic.func_name, parser_state
+        ):
             inst_sweep_state.coarse_latency = starting_guess_latency
             inst_sweep_state.initial_guess_latency = starting_guess_latency
+
+
+def BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS(
+    inst_name, logic, inst_sweep_state, parser_state
+):
+    # Reset to zero clock
+    print("Building timing params starting without added pipelining...", flush=True)
+    # TODO dont need full copy of all other inst being zero clock too
+    TimingParamsLookupTable = GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+
+    # Do slicing
+    # Set the slices in timing params and then rebuild
+    # Make even slices
+    best_guess_slices = GET_BEST_GUESS_IDEAL_SLICES(inst_sweep_state.coarse_latency)
+    print(
+        logic.func_name,
+        ": sliced coarsely ~=",
+        inst_sweep_state.coarse_latency,
+        "clocks latency added...",
+        flush=True,
+    )
+    # Do slicing and dont write vhdl this way since slow
+    write_files = False
+
+    # Sanity
+    if len(TimingParamsLookupTable[inst_name]._slices) != 0:
+        print(
+            "Not starting with comb logic for main? sliced already?",
+            TimingParamsLookupTable[inst_name]._slices,
+        )
+        sys.exit(-1)
+
+    # Apply slices to main funcs
+    TimingParamsLookupTable = (
+        ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
+            inst_name,
+            logic,
+            best_guess_slices,
+            parser_state,
+            TimingParamsLookupTable,
+            write_files,
+        )
+    )
+    # TimingParamsLookupTable == None
+    # means these slices go through global code
+    if type(TimingParamsLookupTable) is not dict:
+        print("Slicing through globals still an issue?")
+        sys.exit(-1)
+        # print("Can't syn when slicing through globals!")
+        # return None, None, None, None
+
+    # Fast one time loop writing only files that have non default,>0 latency
+    print("Updating output files...", flush=True)
+    WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(TimingParamsLookupTable, parser_state)
+    # Write estimate of FF usage
+    WRITE_REGISTERS_ESTIMATE_FILE(parser_state, TimingParamsLookupTable, inst_name)
+
+    return TimingParamsLookupTable
+
+
+def RUN_INST_SYN_AND_UPDATE_CACHE(
+    inst_name, logic, inst_sweep_state, parser_state, TimingParamsLookupTable
+):
+    # Run syn on multi main top
+    timing_params = TimingParamsLookupTable[inst_name]
+    latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+    print(
+        "Synthesizing",
+        logic.func_name,
+        ":",
+        latency,
+        "clocks total latency...",
+        len(timing_params._slices),
+        "slices...",
+        flush=True,
+    )
+    print(f"Elapsed time: {str(datetime.timedelta(seconds=(timer() - START_TIME)))}...")
+    inst_sweep_state.timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING(
+        inst_name, logic, parser_state, TimingParamsLookupTable
+    )
+
+    # Write pipeline delay cache
+    UPDATE_PIPELINE_MIN_PERIOD_CACHE(
+        inst_sweep_state.timing_report,
+        TimingParamsLookupTable,
+        parser_state,
+        inst_name,
+    )
+
+
+def CHECK_INST_TIMING_REPORT_AND_ADJUST(
+    inst_name,
+    logic,
+    inst_sweep_state,
+    parser_state,
+    TimingParamsLookupTable,
+    target_mhz,
+    working_slices,
+    do_incremental_guesses,
+    max_allowed_latency_mult,
+    stop_at_n_worse_result,
+    stop_at_latency,
+):
+    # Did it meet timing? Make adjusments as checking
+    made_adj = False
+    has_paths = len(inst_sweep_state.timing_report.path_reports) > 0
+    inst_sweep_state.met_timing = has_paths
+    for reported_clock_group in inst_sweep_state.timing_report.path_reports:
+        path_report = inst_sweep_state.timing_report.path_reports[reported_clock_group]
+        curr_mhz = 1000.0 / path_report.path_delay_ns
+        # Oh boy old log files can still be used if target freq changes right?
+        # Do a little hackery to get actual target freq right now, not from log
+        # Could be a clock crossing too right?
+
+        # Met timing?
+        func_logic = parser_state.LogicInstLookupTable[inst_name]
+        timing_params = TimingParamsLookupTable[inst_name]
+        latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+        met_timing = curr_mhz >= target_mhz
+        if not met_timing:
+            inst_sweep_state.met_timing = False
+
+        # Print, log, maybe give up
+        print(
+            "{} Clock Goal: {:.2f} (MHz) Current: {:.2f} (MHz)({:.2f} ns) {} clks {} slices".format(
+                func_logic.func_name,
+                target_mhz,
+                curr_mhz,
+                path_report.path_delay_ns,
+                latency,
+                len(timing_params._slices),
+            ),
+            flush=True,
+        )
+        best_mhz_so_far = 0.0
+        if len(inst_sweep_state.mhz_to_latency) > 0:
+            best_mhz_so_far = max(inst_sweep_state.mhz_to_latency.keys())
+        better_mhz = curr_mhz >= best_mhz_so_far
+        if better_mhz:
+            # Log result
+            inst_sweep_state.mhz_to_latency[curr_mhz] = latency
+            inst_sweep_state.latency_to_mhz[latency] = curr_mhz
+            # Log return val best result fmax
+            best_guess_slices = GET_BEST_GUESS_IDEAL_SLICES(
+                inst_sweep_state.coarse_latency
+            )
+            working_slices = best_guess_slices
+            # Reset count of bad tries
+            inst_sweep_state.worse_or_same_tries_count = 0
+        else:
+            # Same or worse timing result
+            inst_sweep_state.worse_or_same_tries_count += 1
+            print(
+                f"Same or worse timing result... (best={best_mhz_so_far})",
+                flush=True,
+            )
+            if stop_at_n_worse_result is not None:
+                if inst_sweep_state.worse_or_same_tries_count >= stop_at_n_worse_result:
+                    print(
+                        logic.func_name,
+                        "giving up after",
+                        inst_sweep_state.worse_or_same_tries_count,
+                        "bad tries...",
+                    )
+                    continue
+
+        # Intentionally stopping?
+        if (
+            stop_at_latency is not None
+            and inst_sweep_state.coarse_latency >= stop_at_latency
+        ):
+            print("Stopping at", stop_at_latency, "clocks latency added...")
+            continue
+
+        # Make adjustment if can be sliced
+        if not met_timing and FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+            func_logic.func_name, parser_state
+        ):
+            # DO incremental guesses based on time report results
+            if do_incremental_guesses:
+                max_path_delay = path_report.path_delay_ns
+                # Given current latency for pipeline and stage delay what new total comb logic delay does this imply?
+                total_delay = max_path_delay * (inst_sweep_state.coarse_latency + 1)
+                # How many slices for that delay to meet timing
+                fake_one_clk_mhz = 1000.0 / total_delay
+                mult = target_mhz / fake_one_clk_mhz
+                if mult > 1.0:
+                    # Divide up into that many clocks
+                    clks = int(mult) - 1
+                    print("Timing report suggests", clks, "clocks...")
+                    # Reached max check again before setting main_inst_to_coarse_latency
+                    if max_allowed_latency_mult is not None:
+                        if inst_sweep_state.initial_guess_latency == 0:
+                            limit = max_allowed_latency_mult
+                        else:
+                            limit = (
+                                inst_sweep_state.initial_guess_latency
+                                * max_allowed_latency_mult
+                            )
+                        if clks >= limit:
+                            print(
+                                logic.func_name,
+                                "reached maximum allowed latency, no more adjustments...",
+                                "multiplier =",
+                                max_allowed_latency_mult,
+                            )
+                            continue
+
+                    """
+            # If very far off, or at very low local min, suggested step can be too large
+            inc_ratio = clks / inst_sweep_state.coarse_latency
+            if inc_ratio > MAX_CLK_INC_RATIO:
+              clks = int(MAX_CLK_INC_RATIO*inst_sweep_state.coarse_latency)
+              print("Clipped for smaller jump up to",clks,"clocks...")
+            """
+                    # If very close to goal suggestion might be same clocks (or less?), still increment
+                    if clks <= inst_sweep_state.coarse_latency:
+                        clks = inst_sweep_state.coarse_latency + 1
+                    # Calc diff in latency change
+                    clk_inc = clks - inst_sweep_state.coarse_latency
+                    # Should be getting smaller
+                    if (
+                        inst_sweep_state.last_latency_increase is not None
+                        and clk_inc >= inst_sweep_state.last_latency_increase
+                    ):
+                        # Clip to last inc size - 1, minus one to always be narrowing down
+                        # Extra div by 2 helps?
+                        clk_inc = int(inst_sweep_state.last_latency_increase / 2)  # - 1
+                        if clk_inc <= 0:
+                            clk_inc = 1
+                        clks = inst_sweep_state.coarse_latency + clk_inc
+                        print("Clipped for decreasing jump size to", clks, "clocks...")
+
+                    # Record
+                    inst_sweep_state.last_non_passing_latency = (
+                        inst_sweep_state.coarse_latency
+                    )
+                    inst_sweep_state.coarse_latency = clks
+                    inst_sweep_state.last_latency_increase = clk_inc
+                    made_adj = True
+            else:
+                # No guess, dumb increment by 1
+                # Record, save non passing latency
+                inst_sweep_state.last_non_passing_latency = (
+                    inst_sweep_state.coarse_latency
+                )
+                inst_sweep_state.coarse_latency += 1
+                inst_sweep_state.last_latency_increase = 1
+                made_adj = True
+
+    return made_adj, working_slices
+
+
+def DO_COARSE_THROUGHPUT_SWEEP(
+    inst_name,
+    target_mhz,
+    inst_sweep_state,
+    parser_state,
+    starting_guess_latency=None,
+    do_incremental_guesses=True,
+    max_allowed_latency_mult=None,
+    stop_at_n_worse_result=None,
+    stop_at_latency=None,
+):
+    working_slices = None
+    logic = parser_state.LogicInstLookupTable[inst_name]
+    SET_INITIAL_COARSE_LATENCY_GUESS(
+        inst_name, target_mhz, inst_sweep_state, parser_state, starting_guess_latency
+    )
 
     # Do loop of:
     #   Reset top to 0 clk
@@ -4198,267 +4299,27 @@ def DO_COARSE_THROUGHPUT_SWEEP(
     #   Course adjust func latency
     # until mhz goals met
     while True:
-        # Reset to zero clock
-        print("Building timing params starting without added pipelining...", flush=True)
-        # TODO dont need full copy of all other inst being zero clock too
-        TimingParamsLookupTable = GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
-
-        # Do slicing
-        # Set the slices in timing params and then rebuild
-        done = False
-        logic = parser_state.LogicInstLookupTable[inst_name]
-        # Make even slices
-        best_guess_slices = GET_BEST_GUESS_IDEAL_SLICES(inst_sweep_state.coarse_latency)
-        print(
-            logic.func_name,
-            ": sliced coarsely ~=",
-            inst_sweep_state.coarse_latency,
-            "clocks latency added...",
-            flush=True,
-        )
-        # Do slicing and dont write vhdl this way since slow
-        write_files = False
-
-        # Sanity
-        if len(TimingParamsLookupTable[inst_name]._slices) != 0:
-            print(
-                "Not starting with comb logic for main? sliced already?",
-                TimingParamsLookupTable[inst_name]._slices,
-            )
-            sys.exit(-1)
-
-        # Apply slices to main funcs
-        TimingParamsLookupTable = (
-            ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
-                inst_name,
-                logic,
-                best_guess_slices,
-                parser_state,
-                TimingParamsLookupTable,
-                write_files,
-            )
-        )
-        # TimingParamsLookupTable == None
-        # means these slices go through global code
-        if type(TimingParamsLookupTable) is not dict:
-            print("Slicing through globals still an issue?")
-            sys.exit(-1)
-            # print("Can't syn when slicing through globals!")
-            # return None, None, None, None
-
-        # Fast one time loop writing only files that have non default,>0 latency
-        print("Updating output files...", flush=True)
-        entities_written = set()
-        for inst_name_to_wr in TimingParamsLookupTable:
-            wr_logic = parser_state.LogicInstLookupTable[inst_name_to_wr]
-            wr_timing_params = TimingParamsLookupTable[inst_name_to_wr]
-            if (
-                wr_timing_params.GET_TOTAL_LATENCY(
-                    parser_state, TimingParamsLookupTable
-                )
-                > 0
-            ):
-                entity_name = VHDL.GET_ENTITY_NAME(
-                    inst_name_to_wr, wr_logic, TimingParamsLookupTable, parser_state
-                )
-                if entity_name not in entities_written:
-                    entities_written.add(entity_name)
-                    wr_syn_out_dir = GET_OUTPUT_DIRECTORY(wr_logic)
-                    if not os.path.exists(wr_syn_out_dir):
-                        os.makedirs(wr_syn_out_dir)
-                    wr_filename = wr_syn_out_dir + "/" + entity_name + ".vhd"
-                    if not os.path.exists(wr_filename):
-                        VHDL.WRITE_LOGIC_ENTITY(
-                            inst_name_to_wr,
-                            wr_logic,
-                            wr_syn_out_dir,
-                            parser_state,
-                            TimingParamsLookupTable,
-                        )
-        # Write estimate of FF usage
-        WRITE_REGISTERS_ESTIMATE_FILE(parser_state, TimingParamsLookupTable, inst_name)
-
-        # Run syn on multi main top
-        latency = TimingParamsLookupTable[inst_name].GET_TOTAL_LATENCY(
-            parser_state, TimingParamsLookupTable
-        )
-        print(
-            "Synthesizing",
-            logic.func_name,
-            ":",
-            latency,
-            "clocks total latency...",
-            flush=True,
-        )
-        print(
-            f"Elapsed time: {str(datetime.timedelta(seconds=(timer() - START_TIME)))}..."
-        )
-        inst_sweep_state.timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING(
-            inst_name, logic, parser_state, TimingParamsLookupTable
+        TimingParamsLookupTable = BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS(
+            inst_name, logic, inst_sweep_state, parser_state
         )
 
-        # Write pipeline delay cache
-        UPDATE_PIPELINE_MIN_PERIOD_CACHE(
-            inst_sweep_state.timing_report,
-            TimingParamsLookupTable,
-            parser_state,
+        RUN_INST_SYN_AND_UPDATE_CACHE(
+            inst_name, logic, inst_sweep_state, parser_state, TimingParamsLookupTable
+        )
+
+        made_adj, working_slices = CHECK_INST_TIMING_REPORT_AND_ADJUST(
             inst_name,
+            logic,
+            inst_sweep_state,
+            parser_state,
+            TimingParamsLookupTable,
+            target_mhz,
+            working_slices,
+            do_incremental_guesses,
+            max_allowed_latency_mult,
+            stop_at_n_worse_result,
+            stop_at_latency,
         )
-
-        # Did it meet timing? Make adjusments as checking
-        made_adj = False
-        has_paths = len(inst_sweep_state.timing_report.path_reports) > 0
-        inst_sweep_state.met_timing = has_paths
-        for reported_clock_group in inst_sweep_state.timing_report.path_reports:
-            path_report = inst_sweep_state.timing_report.path_reports[
-                reported_clock_group
-            ]
-            curr_mhz = 1000.0 / path_report.path_delay_ns
-            # Oh boy old log files can still be used if target freq changes right?
-            # Do a little hackery to get actual target freq right now, not from log
-            # Could be a clock crossing too right?
-
-            # Met timing?
-            func_logic = parser_state.LogicInstLookupTable[inst_name]
-            timing_params = TimingParamsLookupTable[inst_name]
-            latency = timing_params.GET_TOTAL_LATENCY(
-                parser_state, TimingParamsLookupTable
-            )
-            met_timing = curr_mhz >= target_mhz
-            if not met_timing:
-                inst_sweep_state.met_timing = False
-
-            # Print, log, maybe give up
-            print(
-                "{} Clock Goal: {:.2f} (MHz) Current: {:.2f} (MHz)({:.2f} ns) {} clks".format(
-                    func_logic.func_name,
-                    target_mhz,
-                    curr_mhz,
-                    path_report.path_delay_ns,
-                    latency,
-                ),
-                flush=True,
-            )
-            best_mhz_so_far = 0.0
-            if len(inst_sweep_state.mhz_to_latency) > 0:
-                best_mhz_so_far = max(inst_sweep_state.mhz_to_latency.keys())
-            better_mhz = curr_mhz >= best_mhz_so_far
-            if better_mhz:
-                # Log result
-                inst_sweep_state.mhz_to_latency[curr_mhz] = latency
-                inst_sweep_state.latency_to_mhz[latency] = curr_mhz
-                # Log return val best result fmax
-                best_guess_slices = GET_BEST_GUESS_IDEAL_SLICES(
-                    inst_sweep_state.coarse_latency
-                )
-                working_slices = best_guess_slices
-                # Reset count of bad tries
-                inst_sweep_state.worse_or_same_tries_count = 0
-            else:
-                # Same or worse timing result
-                inst_sweep_state.worse_or_same_tries_count += 1
-                print(
-                    f"Same or worse timing result... (best={best_mhz_so_far})",
-                    flush=True,
-                )
-                if stop_at_n_worse_result is not None:
-                    if (
-                        inst_sweep_state.worse_or_same_tries_count
-                        >= stop_at_n_worse_result
-                    ):
-                        print(
-                            logic.func_name,
-                            "giving up after",
-                            inst_sweep_state.worse_or_same_tries_count,
-                            "bad tries...",
-                        )
-                        continue
-
-            # Intentionally stopping?
-            if (
-                stop_at_latency is not None
-                and inst_sweep_state.coarse_latency >= stop_at_latency
-            ):
-                print("Stopping at", stop_at_latency, "clocks latency added...")
-                continue
-
-            # Make adjustment if can be sliced
-            if not met_timing and func_logic.CAN_BE_SLICED(parser_state):
-                # DO incremental guesses based on time report results
-                if do_incremental_guesses:
-                    max_path_delay = path_report.path_delay_ns
-                    # Given current latency for pipeline and stage delay what new total comb logic delay does this imply?
-                    total_delay = max_path_delay * (inst_sweep_state.coarse_latency + 1)
-                    # How many slices for that delay to meet timing
-                    fake_one_clk_mhz = 1000.0 / total_delay
-                    mult = target_mhz / fake_one_clk_mhz
-                    if mult > 1.0:
-                        # Divide up into that many clocks
-                        clks = int(mult) - 1
-                        print("Timing report suggests", clks, "clocks...")
-                        # Reached max check again before setting main_inst_to_coarse_latency
-                        if max_allowed_latency_mult is not None:
-                            if inst_sweep_state.initial_guess_latency == 0:
-                                limit = max_allowed_latency_mult
-                            else:
-                                limit = (
-                                    inst_sweep_state.initial_guess_latency
-                                    * max_allowed_latency_mult
-                                )
-                            if clks >= limit:
-                                print(
-                                    logic.func_name,
-                                    "reached maximum allowed latency, no more adjustments...",
-                                    "multiplier =",
-                                    max_allowed_latency_mult,
-                                )
-                                continue
-
-                        """
-            # If very far off, or at very low local min, suggested step can be too large
-            inc_ratio = clks / inst_sweep_state.coarse_latency
-            if inc_ratio > MAX_CLK_INC_RATIO:
-              clks = int(MAX_CLK_INC_RATIO*inst_sweep_state.coarse_latency)
-              print("Clipped for smaller jump up to",clks,"clocks...")
-            """
-                        # If very close to goal suggestion might be same clocks (or less?), still increment
-                        if clks <= inst_sweep_state.coarse_latency:
-                            clks = inst_sweep_state.coarse_latency + 1
-                        # Calc diff in latency change
-                        clk_inc = clks - inst_sweep_state.coarse_latency
-                        # Should be getting smaller
-                        if (
-                            inst_sweep_state.last_latency_increase is not None
-                            and clk_inc >= inst_sweep_state.last_latency_increase
-                        ):
-                            # Clip to last inc size - 1, minus one to always be narrowing down
-                            # Extra div by 2 helps?
-                            clk_inc = int(
-                                inst_sweep_state.last_latency_increase / 2
-                            )  # - 1
-                            if clk_inc <= 0:
-                                clk_inc = 1
-                            clks = inst_sweep_state.coarse_latency + clk_inc
-                            print(
-                                "Clipped for decreasing jump size to", clks, "clocks..."
-                            )
-
-                        # Record
-                        inst_sweep_state.last_non_passing_latency = (
-                            inst_sweep_state.coarse_latency
-                        )
-                        inst_sweep_state.coarse_latency = clks
-                        inst_sweep_state.last_latency_increase = clk_inc
-                        made_adj = True
-                else:
-                    # No guess, dumb increment by 1
-                    # Record, save non passing latency
-                    inst_sweep_state.last_non_passing_latency = (
-                        inst_sweep_state.coarse_latency
-                    )
-                    inst_sweep_state.coarse_latency += 1
-                    inst_sweep_state.last_latency_increase = 1
-                    made_adj = True
 
         # Intentionally stopping?
         if (
@@ -4475,8 +4336,6 @@ def DO_COARSE_THROUGHPUT_SWEEP(
                 "Unable to make further adjustments. Failed coarse grain attempt meet timing for this module."
             )
             return inst_sweep_state, working_slices, TimingParamsLookupTable
-
-    return inst_sweep_state, working_slices, TimingParamsLookupTable
 
 
 def GET_SLICE_PER_STAGE(current_slices):
@@ -4840,27 +4699,51 @@ def GET_CACHED_PATH_DELAY(logic, parser_state):
     return None
 
 
-def RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(start_insts, parser_state, funcs_to_synth=[]):
-    # Recurse through submodules
-    for start_inst in start_insts:
-        func_logic = parser_state.LogicInstLookupTable[start_inst]
+def FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(func_name, parser_state):
+    # Immediate yes if is raw HDL with no submodules and is sliceable, has delay
+    func_logic = parser_state.FuncLogicLookupTable[func_name]
+    if len(func_logic.submodule_instances) == 0:
+        return not LOGIC_IS_ZERO_DELAY(func_logic, parser_state, allow_none_delay=True)
+    # Recurse into submodule if can use pipelining
+    # Return true if any submodule is true
+    if func_logic.CAN_USE_AUTOPIPELINING(parser_state):
         for sub_inst in func_logic.submodule_instances:
-            sub_inst_name = start_inst + C_TO_LOGIC.SUBMODULE_MARKER + sub_inst
-            sub_logic = parser_state.LogicInstLookupTable[sub_inst_name]
-            if func_logic.BODY_CAN_BE_SLICED(parser_state):
-                if sub_logic.BODY_CAN_BE_SLICED(parser_state):
-                    funcs_to_synth = RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(
-                        [sub_inst_name], parser_state, funcs_to_synth
+            sub_func_name = func_logic.submodule_instances[sub_inst]
+            if FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                sub_func_name, parser_state
+            ):
+                return True
+    return False
+
+
+def RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(func_names, parser_state):
+    funcs_to_synth = []
+    for func_name in func_names:
+        if FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(func_name, parser_state):
+            func_logic = parser_state.FuncLogicLookupTable[func_name]
+            # Only recurse into submodules that have path to slice raw vhdl
+            for sub_inst in func_logic.submodule_instances:
+                sub_func_name = func_logic.submodule_instances[sub_inst]
+                if FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                    sub_func_name, parser_state
+                ):
+                    sub_funcs_to_synth = RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(
+                        [sub_func_name], parser_state
                     )
-                if sub_logic.func_name not in funcs_to_synth:
-                    funcs_to_synth.append(sub_logic.func_name)
-    # Include start inst if MAIN
-    for start_inst in start_insts:
-        func_logic = parser_state.LogicInstLookupTable[start_inst]
-        if func_logic.func_name in funcs_to_synth:
-            continue
-        if start_inst in parser_state.main_mhz:
-            funcs_to_synth.append(func_logic.func_name)
+                    for sub_func_to_synth in sub_funcs_to_synth:
+                        if sub_func_to_synth not in funcs_to_synth:
+                            funcs_to_synth.append(sub_func_to_synth)
+            # Include self and all submodules for synth
+            for sub_inst in func_logic.submodule_instances:
+                sub_func_name = func_logic.submodule_instances[sub_inst]
+                if sub_func_name not in funcs_to_synth:
+                    funcs_to_synth.append(sub_func_name)
+            if func_name not in funcs_to_synth:
+                funcs_to_synth.append(func_name)
+        # Default include all main funcs too
+        if func_name in parser_state.main_mhz.keys():
+            if func_name not in funcs_to_synth:
+                funcs_to_synth.append(func_name)
     return funcs_to_synth
 
 
@@ -4992,7 +4875,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                 sys.exit(-1)
             mhz = 1000.0 / path_report.path_delay_ns
             logic.delay = int(path_report.path_delay_ns * DELAY_UNIT_MULT)
-            if logic.delay > 0 and logic.BODY_CAN_BE_SLICED(parser_state):
+            if logic.delay > 0 and FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                logic.func_name, parser_state
+            ):
                 print(
                     f"{logic_func_name} Path delay (maybe to be pipelined): {path_report.path_delay_ns:.3f} ns"
                 )
@@ -5022,7 +4907,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
 
         # Syn results are delay and clock
         # Try to communicate if is a problem path that cant be autopipelined
-        if logic.delay > 0 and not logic.BODY_CAN_BE_SLICED(parser_state):
+        if logic.delay > 0 and not FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+            logic.func_name, parser_state
+        ):
             path_delay_ns = logic.delay / DELAY_UNIT_MULT
             mhz = 1000.0 / path_delay_ns
             print(
@@ -5049,7 +4936,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         if logic.delay is None:
             print("None delay for func to synth?", logic_func_name)
         # What if do want pipeline map for something that will never be pipelined? --synth_all?
-        if not logic.BODY_CAN_BE_SLICED(parser_state):
+        if not FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+            logic.func_name, parser_state
+        ):
             continue
         if len(logic.submodule_instances) <= 0:
             continue
@@ -5093,6 +4982,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
 def UPDATE_PIPELINE_MIN_PERIOD_CACHE(
     timing_report, TimingParamsLookupTable, parser_state, inst_name=None
 ):
+    return  # Disabled for now - wasnt using anyway...
     # Make dir if needed
     cache_dir = GET_PATH_DELAY_CACHE_DIR(parser_state, "pipeline_min_period_cache")
     if not os.path.exists(cache_dir):
