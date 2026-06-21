@@ -2799,6 +2799,24 @@ class FuncElaborator:
         return port_return, C_TO_LOGIC.BOOL_C_TYPE
 
     def _elab_call(self, expr):
+        # autopipeline(call_expr[, depth]) — elaborate the wrapped call as the
+        # real submodule instance and tag it with the given depth.
+        autopipeline_probe = self._try_eval_const(expr.func)
+        if getattr(autopipeline_probe, "_is_autopipeline_pragma", False):
+            if not expr.args or not isinstance(expr.args[0], ast.Call):
+                raise NotImplementedError(
+                    "autopipeline(...) must wrap a single direct function call, "
+                    f"got: {ast.dump(expr)}"
+                )
+            depth = -1
+            if len(expr.args) > 1:
+                depth = self._try_eval_const(expr.args[1])
+            else:
+                for kw in expr.keywords:
+                    if kw.arg == "depth":
+                        depth = self._try_eval_const(kw.value)
+            self.logic.next_func_call_autopipeline_depth = depth
+            return self._elab_call(expr.args[0])
         # ── Resolve callee ──────────────────────────────────────────────────────
         if isinstance(expr.func, ast.Attribute):
             # Module-qualified call: pypeline_tests.abs_int32(a)
@@ -2872,6 +2890,11 @@ class FuncElaborator:
             expr,
             self.src_file,
         )
+        if self.logic.next_func_call_autopipeline_depth is not None:
+            self.logic.sub_inst_to_autopipeline_depth[inst] = (
+                self.logic.next_func_call_autopipeline_depth
+            )
+            self.logic.next_func_call_autopipeline_depth = None
         return port_return, ret_typ
 
     def _elab_bit_manip_call(self, expr):

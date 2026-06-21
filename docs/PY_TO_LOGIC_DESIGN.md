@@ -68,6 +68,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
   - [`PART(...)` — FPGA Target Device](#part--fpga-target-device)
   - [`@MAIN(mhz)` — Clock Frequency Constraint](#mainmhz--clock-frequency-constraint)
   - [Clock Domain Inference (`INFER_CLOCK_DOMAINS`)](#clock-domain-inference-infer_clock_domains)
+- [`autopipeline(call_expr, depth)` — Forced Submodule Pipelining](#autopipelinecall_expr-depth--forced-submodule-pipelining)
 
 **Syntax Extensions**
 - [Compound Initializer Syntax](#compound-initializer-syntax)
@@ -2149,6 +2150,129 @@ search of `preprocessed_c_text`.
 
 ---
 
+## `autopipeline(call_expr, depth)` — Forced Submodule Pipelining
+
+Python equivalent of PipelineC's `#pragma AUTOPIPELINE <depth>` (see
+`examples/autopipelined_submodules.c`). It forces the synthesizer to slice (insert
+pipeline registers) through one specific submodule call, even when that call sits inside
+a register/feedback context that would otherwise forbid added latency
+(`CAN_HAVE_ADDED_LATENCY` false there). The underlying mechanism is entirely in
+`C_TO_LOGIC.Logic()` and `SYN.py` and is shared, unmodified, with the C frontend:
+
+```python
+# C_TO_LOGIC.py — already present on every Logic(), C and Python frontends alike
+self.next_func_call_autopipeline_depth = None   # single-use, forward-looking
+self.sub_inst_to_autopipeline_depth = {}        # inst_name -> depth, persists per Logic()
+```
+
+`SYN.py`'s `GET_SUBMODULE_LATENCY` (reports zero latency for tagged instances) and
+`SUB_HAS_AUTOPIPELINE_IN_HIER` (the forced-slicing gate, checked even when
+`CAN_HAVE_ADDED_LATENCY` is false) consume `sub_inst_to_autopipeline_depth` generically
+by submodule-instance name — they have no dependency on which frontend produced the
+`Logic()`. Porting the feature to Pypeline therefore required **no changes to
+`C_TO_LOGIC.py` or `SYN.py`** — only teaching `PY_TO_LOGIC.py`'s elaborator to populate
+the same two fields.
+
+### Syntax — wrapper call, not a bare pragma statement
+
+Unlike `PART(...)` / `@MAIN(mhz)` (which mirror C pragma syntax fairly literally),
+`autopipeline(...)` wraps the call it modifies, since this reads more naturally as
+targeted decoration of one expression rather than a floating, easy-to-misplace flag:
+
+```python
+rv = autopipeline(some_func(x))          # auto depth (-1)
+rv = autopipeline(some_func(x), 2)       # explicit depth, positional
+rv = autopipeline(some_func(x), depth=2) # explicit depth, keyword
+```
+
+`autopipeline` is defined in `pypeline.py` as a plain identity passthrough, stamped with
+a recognition flag exactly like `@sim_output`'s `_is_sim_output`:
+
+```python
+def autopipeline(call_result, depth: int = -1):
+    return call_result
+
+autopipeline._is_autopipeline_pragma = True
+```
+
+Because it's a real Python function, `rv = autopipeline(some_func(x))` runs correctly
+under proto-simulation (`sim_call`) with no special-casing — `autopipeline` just returns
+its argument.
+
+### Elaboration (`FuncElaborator._elab_call`)
+
+Two additions to `_elab_call`, no other methods touched.
+
+**Unwrap at the top of `_elab_call`** — before the existing callee-resolution logic
+runs, check whether `expr.func` resolves to the flagged `autopipeline` callable:
+
+```python
+def _elab_call(self, expr):
+    autopipeline_probe = self._try_eval_const(expr.func)
+    if getattr(autopipeline_probe, "_is_autopipeline_pragma", False):
+        if not expr.args or not isinstance(expr.args[0], ast.Call):
+            raise NotImplementedError(
+                "autopipeline(...) must wrap a single direct function call, "
+                f"got: {ast.dump(expr)}"
+            )
+        depth = -1
+        if len(expr.args) > 1:
+            depth = self._try_eval_const(expr.args[1])
+        else:
+            for kw in expr.keywords:
+                if kw.arg == "depth":
+                    depth = self._try_eval_const(kw.value)
+        self.logic.next_func_call_autopipeline_depth = depth
+        return self._elab_call(expr.args[0])
+    # ── Resolve callee ── (unchanged)
+    ...
+```
+
+`expr.args[0]` must be a literal `ast.Call` node — `autopipeline(...)` only wraps a
+single direct function call, not an arbitrary expression. The wrapper itself never
+becomes a submodule instance; it recurses straight into `_elab_call` on the inner call,
+which performs the real instantiation.
+
+**Tag at the bottom of `_elab_call`** — immediately after `_add_submodule_instance(...)`,
+before the final `return`. This is the generic consumption point, reached by *every* call
+elaboration (mirroring the C consumption site in `C_AST_N_ARG_FUNC_INST_TO_LOGIC`, which
+reads and resets `parser_state.existing_logic.next_func_call_autopipeline_depth`):
+
+```python
+        _add_submodule_instance(...)
+        if self.logic.next_func_call_autopipeline_depth is not None:
+            self.logic.sub_inst_to_autopipeline_depth[inst] = (
+                self.logic.next_func_call_autopipeline_depth
+            )
+            self.logic.next_func_call_autopipeline_depth = None
+        return port_return, ret_typ
+```
+
+Both fields live on `self.logic` — the `FuncElaborator`'s own per-function `Logic()`
+object — so a pragma used inside one function body only affects calls elaborated within
+that same function, matching the C implementation's per-`Logic()` scoping exactly.
+
+**Caveat (shared with the C pragma, not a Pypeline-specific limitation):** if the
+wrapped call's *arguments* themselves contain function calls
+(`autopipeline(foo(bar(x)))`), those nested calls are elaborated — and therefore tagged —
+before `foo`'s own instance is created, since argument expressions are elaborated before
+`_add_submodule_instance` runs for the outer call. The flag is consumed by whichever
+submodule instantiation happens next during elaboration, exactly as in the C frontend,
+which has no special-casing for nested call arguments either. In practice the wrapped
+call's arguments are wires/locals, not nested calls, so this rarely matters.
+
+### Test coverage
+
+`src/tests/pypeline_tests/inst/autopipeline_test.py` is the Pypeline translation of
+`examples/autopipelined_submodules.c` (FIFO omitted; backpressure faked with a toggling
+`Reg[uint1_t]` instead). It wraps the comb `test_pipeline` submodule call inside
+`valid_ready_pipeline_test`, a function that also declares a register — giving
+`autopipeline(...)` a real register/feedback context to force pipelining through. This is
+a synthesis-only test, run by hand via `pipelinec ... --comb` (see `run_all.sh`), not
+part of the proto-simulation suite.
+
+---
+
 ## `@sim_output` Calls — Elaborator Skip
 
 A `@sim_output` call appearing as a bare expression statement in a `@MAIN` body must be
@@ -2485,7 +2609,8 @@ top.py  (single-file or multi-file entry point)
   │               ├─ _elab_bit_select   BIT_SELECT submodule (scalar x[N])
   │               ├─ _elab_bit_slice    BIT_SLICE submodule (scalar x[hi:lo] or s.field[hi:lo])
   │               ├─ _elab_tuple_concat TUPLE_CONCAT submodule ((a, b, c))
-  │               └─ _elab_call         ast.Name: try prefixed name (sub-file), FuncLogicLookupTable, _elaborate_live_func
+  │               └─ _elab_call         autopipeline(call, depth) → unwrap, tag inst, recurse
+  │                                   ast.Name: try prefixed name (sub-file), FuncLogicLookupTable, _elaborate_live_func
   │                                   ast.Attribute: module-qualified call (mod.func(args)) →
   │                                     getattr lookup + FuncLogicLookupTable (sub-files pre-elaborated)
   │                   └─ bit_dup/rotl/rotr/bswap/bit_assign/array_uint/concat → BIT_MANIP submodules

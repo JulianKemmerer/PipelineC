@@ -790,6 +790,29 @@ def sim_output(fn):
     return wrapper
 
 
+def autopipeline(call_result, depth: int = -1):
+    """Force pipelining through the wrapped function call (equivalent to
+    PipelineC's `#pragma AUTOPIPELINE <depth>`).
+
+    Wrap a single direct function call::
+
+        rv = autopipeline(some_func(x))        # auto depth
+        rv = autopipeline(some_func(x), 2)      # explicit depth
+        rv = autopipeline(some_func(x), depth=2)
+
+    Identity passthrough in proto-simulation. The elaborator unwraps this to
+    elaborate `some_func(x)` as the real submodule instance and tags it with
+    the given depth; `autopipeline(...)` itself produces no hardware. If the
+    wrapped call's *arguments* themselves contain function calls, those
+    nested calls are tagged first (same "next instantiation" semantics as
+    the underlying PipelineC C pragma).
+    """
+    return call_result
+
+
+autopipeline._is_autopipeline_pragma = True
+
+
 # ─────────────────────────────────────────────
 # Operator overloading registry
 # ─────────────────────────────────────────────

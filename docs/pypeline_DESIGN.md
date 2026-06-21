@@ -337,6 +337,36 @@ def _register_main(func, mhz):
 so every `@MAIN` function automatically gets simulation type wrapping. Users do not need both
 `@MAIN` and `@hw_func` on the same function.
 
+### `autopipeline(call_result, depth=-1)` — Forced Submodule Pipelining
+
+Python equivalent of PipelineC's `#pragma AUTOPIPELINE <depth>`. Wrap a single direct
+function call to force the synthesizer to slice (insert pipeline registers) through that
+call's submodule, even inside a register/feedback context that would otherwise forbid
+added latency:
+
+```python
+rv = autopipeline(some_func(x))          # auto depth
+rv = autopipeline(some_func(x), 2)       # explicit depth
+rv = autopipeline(some_func(x), depth=2)
+```
+
+At simulation time it is a plain identity passthrough:
+
+```python
+def autopipeline(call_result, depth: int = -1):
+    return call_result
+
+autopipeline._is_autopipeline_pragma = True
+```
+
+The `_is_autopipeline_pragma` flag is the only thing the elaborator inspects (mirroring
+`@sim_output`'s `_is_sim_output` flag). See
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#autopipelinecall_expr-depth--forced-submodule-pipelining)
+for how `PY_TO_LOGIC.FuncElaborator._elab_call` unwraps the call and tags the resulting
+submodule instance. The underlying `Logic()` fields
+(`next_func_call_autopipeline_depth`, `sub_inst_to_autopipeline_depth`) and the
+synthesis-side forced-slicing mechanism are shared, unmodified, with the C frontend.
+
 ### Registries
 
 | Name | Type | Content | Consumer |
@@ -560,6 +590,7 @@ BIT_MANIP_FUNC_NAMES = frozenset({
 | `@struct` | Adds `__class_getitem__`, stamps canonical `_pypeline_ctype_name`, wraps scalar fields in sim |
 | `@MAIN` | Registers a function as a hardware entry point; implies `@hw_func`; appends to `_main_registry` |
 | `@sim_output` | Marks a function as simulation output-only; no-op during convergence passes; executes in final pass per cycle |
+| `autopipeline(call_result, depth=-1)` | Wraps a single direct call; identity in sim; forces pipelining through that submodule during elaboration (equivalent to `#pragma AUTOPIPELINE`) |
 | `Reg` / `_RegType` | Register descriptor; `Reg[T]` declares a stateful register; optional init value (`Reg[T] = val`) |
 | `Feedback` / `_FeedbackType` | Feedback wire descriptor; `Feedback[T]` declares a combinatorial feedback wire (no flip-flop) |
 | `Wire` / `_WireType` | Global wire descriptor; `Wire[T]` at module level declares a shared combinatorial wire (one writer) |

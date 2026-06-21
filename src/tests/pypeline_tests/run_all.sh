@@ -3,6 +3,8 @@ set -e
 reset
 cd /media/1TB/Dropbox/PipelineC/git/PipelineC
 
+rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/autopipeline_test.py --out_dir ~/pypeline_run_all
+
 rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./examples/pypeline/vga_donut.py --out_dir ~/pypeline_run_all --comb
 
 rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./examples/pypeline/vga_test_pattern.py --out_dir ~/pypeline_run_all --comb
