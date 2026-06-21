@@ -428,8 +428,9 @@ class Logic:
         self.is_vhdl_func = False
         # Is this logic implemented as a VHDL expression (also 0 clk)
         self.is_vhdl_expr = False
-        # Is this logic completely replaced with vhdl module text? (non-pipelineable global func like)
-        self.is_vhdl_text_module = False
+        # Is this logic completely replaced with raw vhdl module text?
+        # (non-pipelineable global func like) None if not, else the literal text.
+        self.vhdl_module_text = None
         # Is this logic the input or output of a clock crossing?
         self.is_clock_crossing = False
         # TODO 'new style' is_? checks like below replacing SW_LIB stuff eventually
@@ -520,7 +521,7 @@ class Logic:
         rv.is_c_built_in = self.is_c_built_in
         rv.is_vhdl_func = self.is_vhdl_func
         rv.is_vhdl_expr = self.is_vhdl_expr
-        rv.is_vhdl_text_module = self.is_vhdl_text_module
+        rv.vhdl_module_text = self.vhdl_module_text
         rv.is_new_style_bit_manip = self.is_new_style_bit_manip
         rv.is_clock_crossing = self.is_clock_crossing
         rv.submodule_instance_to_ast_meta = self.DEEPCOPY_DICT_COPY(
@@ -646,22 +647,22 @@ class Logic:
         else:
             self.is_vhdl_expr = logic_b.is_vhdl_expr
 
-        # VHDL text module status must match if set
-        if (self.is_vhdl_text_module is not None) and (
-            logic_b.is_vhdl_text_module is not None
+        # VHDL module text keep whichever is set
+        if (self.vhdl_module_text is not None) and (
+            logic_b.vhdl_module_text is not None
         ):
-            if self.is_vhdl_text_module != logic_b.is_vhdl_text_module:
-                print("Cannot merge comb logic with mismatching is_vhdl_text_module !")
-                print(self.func_name, self.is_vhdl_text_module)
-                print(logic_b.func_name, logic_b.is_vhdl_text_module)
+            if self.vhdl_module_text != logic_b.vhdl_module_text:
+                print("Cannot merge comb logic with mismatching vhdl_module_text !")
+                print(self.func_name, self.vhdl_module_text)
+                print(logic_b.func_name, logic_b.vhdl_module_text)
                 sys.exit(-1)
             else:
-                self.is_vhdl_text_module = self.is_vhdl_text_module
+                self.vhdl_module_text = self.vhdl_module_text
         # Otherwise use whichever is set
-        elif self.is_vhdl_text_module is not None:
-            self.is_vhdl_text_module = self.is_vhdl_text_module
+        elif self.vhdl_module_text is not None:
+            self.vhdl_module_text = self.vhdl_module_text
         else:
-            self.is_vhdl_text_module = logic_b.is_vhdl_text_module
+            self.vhdl_module_text = logic_b.vhdl_module_text
 
         # TODO refactor all the above copypasta
 
@@ -1404,7 +1405,7 @@ class Logic:
     def CAN_HAVE_ADDED_LATENCY(self, parser_state):
         if self.func_name in parser_state.func_fixed_latency:
             return False
-        if self.is_vhdl_text_module:
+        if self.vhdl_module_text is not None:
             return False
         if self.is_vhdl_func:
             return False
@@ -7868,7 +7869,12 @@ def C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC(
     # sys.exit(-1)
 
     # One vhdl text func call marks logic - hello future me? well, hello
-    parser_state.existing_logic.is_vhdl_text_module = True
+    text = c_ast_func_call.args.exprs[0].value.strip('"')[:]
+    # hacky replace two chars \n with single char '\n'
+    text = text.replace("\\" + "n", "\n")
+    # similar hacky for strings
+    text = text.replace("\\" + '"', '"')
+    parser_state.existing_logic.vhdl_module_text = text
 
     # Mark as using globals, cant be sliced
     parser_state.existing_logic.uses_nonvolatile_state_regs = True
@@ -9339,7 +9345,7 @@ def C_AST_FUNC_DEF_TO_LOGIC(
         # Sanity check for return wire
         if parse_body:
             if (
-                not parser_state.existing_logic.is_vhdl_text_module
+                parser_state.existing_logic.vhdl_module_text is None
                 and not parser_state.existing_logic.is_clock_crossing
             ):
                 for out_wire in parser_state.existing_logic.outputs:

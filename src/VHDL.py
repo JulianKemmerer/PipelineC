@@ -4584,7 +4584,7 @@ def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
     latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
     i_need_clk = (
         LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
-        or Logic.is_vhdl_text_module
+        or Logic.vhdl_module_text is not None
     )
     needs_clk = i_need_clk
     # No need ot check subs if self needs already
@@ -4676,26 +4676,6 @@ end if;\n"""
     )
     text += "end postponed process;\n"
     text += "-- synthesis translate_on\n"
-    return text
-
-
-def GET_VHDL_TEXT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
-    # Logic should have exactly one __vhdl__ func submodule to get text from
-    if len(Logic.submodule_instances) != 1:
-        print("Bad vhdl text sub count", len(Logic.submodule_instances))
-        sys.exit(-1)
-    sub_func_name = list(Logic.submodule_instances.values())[0]
-    sub_inst_name = list(Logic.submodule_instances.keys())[0]
-    if sub_func_name != C_TO_LOGIC.VHDL_FUNC_NAME:
-        print("Bad vhdl text sub func name")
-        sys.exit(-1)
-    c_ast_node = Logic.submodule_instance_to_ast_meta[sub_inst_name].raw
-    text = c_ast_node.args.exprs[0].value.strip('"')[:]
-    # hacky replace two chars \n with single char '\n'
-    text = text.replace("\\" + "n", "\n")
-    # similar hacky for strings
-    text = text.replace("\\" + '"', '"')
-    # print(text)
     return text
 
 
@@ -4858,7 +4838,7 @@ class PiplineHDLParams:
             LOGIC_IS_RAW_HDL(Logic, parser_state)
             or Logic.is_vhdl_func
             or Logic.is_vhdl_expr
-            or Logic.is_vhdl_text_module
+            or Logic.vhdl_module_text is not None
             or Logic.func_name in parser_state.func_marked_blackbox
         ):
             return
@@ -5165,7 +5145,7 @@ def WRITE_LOGIC_ENTITY(
         rv += "use work.global_wires_pkg.all;\n"
 
     # Debug
-    if not Logic.is_vhdl_text_module:
+    if Logic.vhdl_module_text is None:
         num_non_vhdl_expr_submodules = 0
         for submodule_inst in Logic.submodule_instances:
             submodule_func_name = Logic.submodule_instances[submodule_inst]
@@ -5267,10 +5247,8 @@ def WRITE_LOGIC_ENTITY(
             inst_name, Logic, parser_state, TimingParamsLookupTable
         )
     # VHDL func replaces arch decl and body
-    elif Logic.is_vhdl_text_module:
-        rv += GET_VHDL_TEXT_MODULE_TEXT(
-            inst_name, Logic, parser_state, TimingParamsLookupTable
-        )
+    elif Logic.vhdl_module_text is not None:
+        rv += Logic.vhdl_module_text
     # Printf another special case woo?
     elif Logic.func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME):
         rv += GET_PRINTF_MODULE_TEXT(

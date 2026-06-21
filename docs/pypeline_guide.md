@@ -22,6 +22,7 @@ synthesises them for an FPGA.
 14. [Global Signals](#14-global-signals)
 15. [Forcing Pipelining: `autopipeline()`](#15-forcing-pipelining-autopipeline)
 16. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#16-multi-cycle-paths-multi_cycle)
+17. [Raw VHDL Passthrough: `vhdl()`](#17-raw-vhdl-passthrough-vhdl)
 
 ---
 
@@ -1193,3 +1194,68 @@ without a `PART()` target it has no effect. See
 `src/tests/pypeline_tests/inst/multi_cycle_test.py` (translated from
 `examples/mcp/mcp_test.c`) for the full example, including the `PART(...)` call needed to
 target a real device.
+
+---
+
+## 17 Raw VHDL Passthrough: `vhdl()`
+
+Sometimes you need an escape hatch — a primitive your target FPGA vendor provides, a
+trick that's awkward to express in pypeline, or an existing VHDL block you want to drop
+in unchanged. `vhdl(text)` replaces a function's entire body with literal VHDL text,
+spliced directly into the generated entity's architecture. It's the pypeline equivalent
+of C's `__vhdl__("...")`.
+
+```python
+from pypeline import vhdl, uint64_t
+
+@MAIN
+def main(x: uint64_t, y: uint64_t) -> uint64_t:
+    vhdl(f"""
+        begin
+        return_output <= x + y;
+    """)
+```
+
+`vhdl(...)` must be the **only statement** in the function body (an optional leading
+docstring is fine). The function's signature is still used to generate the entity's
+ports exactly as normal — `x` and `y` become `in` ports, the return value becomes the
+`return_output` `out` port — but nothing inside the body is elaborated; the text is
+inserted as-is into the architecture, which already supplies
+`architecture arch of <name> is ... end arch;` around it. Your text should *not* include
+its own `end;` — only the declarative part (optional), `begin`, and the statements.
+
+Inside the text, reference ports by their literal VHDL signal names: the function's
+parameter names, `return_output` for the return value, and `CLOCK_ENABLE`/`clk` if your
+logic needs them. (Parameter names with leading/trailing/double underscores, or that
+collide with a VHDL reserved word, get sanitised into a different port name — keep
+parameter names simple to avoid surprises.)
+
+The argument to `vhdl(...)` can be **any compile-time-computed Python string** — an
+f-string, concatenation, or a call to a plain Python helper function — as long as it only
+references plain Python/elaboration-time values. It cannot reference hardware wire
+values (there's no way to "interpolate" a signal's runtime value into VHDL text; if you
+need to refer to a port, write its VHDL name literally in the string, as in the example
+above).
+
+```python
+def make_adder_vhdl(width):
+    return f"""
+        begin
+        return_output <= std_logic_vector(unsigned(x) + unsigned(y))({width-1} downto 0);
+    """
+
+@MAIN
+def sized_add(x: uint32_t, y: uint32_t) -> uint32_t:
+    vhdl(make_adder_vhdl(32))
+```
+
+**No timing information.** The compiler has no idea what's inside a `vhdl(...)` block,
+so it's always treated as an opaque, zero-cycle-delay black box — same as C's
+`__vhdl__`. If your raw VHDL needs registers, manage them yourself within the text.
+
+**Cannot currently be simulated.** Calling a function containing `vhdl(...)` outside
+hardware elaboration — directly, via `sim_call()`, or via `pypeline_sim.py` — raises
+`NotImplementedError`. There is no general way to simulate arbitrary user-supplied VHDL
+text in Python; a future hook may let you attach a Python model to a specific block.
+
+See `src/tests/pypeline_tests/inst/vhdl_text_test.py` for a complete example.

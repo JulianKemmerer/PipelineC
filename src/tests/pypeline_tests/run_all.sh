@@ -31,6 +31,9 @@ rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/bit
 
 rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/old_sw_lib_ops.py --out_dir ~/pypeline_run_all --comb
 
+python3 ./src/tests/pypeline_tests/inst/vhdl_text_test.py
+rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/vhdl_text_test.py --out_dir ~/pypeline_run_all --comb
+
 rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/global_wires_test.py --out_dir ~/pypeline_run_all --comb --no_synth
 
 rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/compound_init_test.py --out_dir ~/pypeline_run_all --comb --no_synth

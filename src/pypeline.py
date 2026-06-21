@@ -1265,6 +1265,31 @@ BIT_MANIP_FUNC_NAMES = frozenset(
 
 
 # ─────────────────────────────────────────────
+# Raw VHDL passthrough
+# (intercepted by PY_TO_LOGIC elaborator; not callable at Python runtime)
+# ─────────────────────────────────────────────
+
+
+def vhdl(vhdl_text):
+    """Raw VHDL passthrough: replaces the entire calling function's body with
+    literal VHDL text spliced into the generated entity's architecture. Must be
+    the only statement in the function body. Equivalent to C's __vhdl__("...").
+
+    Unlike the bit manipulation primitives above, there is no general way to
+    simulate arbitrary user-supplied VHDL text in Python, so this function has
+    no dual-mode simulation behavior: it always raises when actually called
+    (i.e. outside hardware elaboration, which recognizes vhdl(...) structurally
+    by AST and never executes this body).
+    """
+    raise NotImplementedError(
+        "vhdl(...) has no simulation model yet. It can only be used inside "
+        "hardware-elaborated functions — calling it directly, via sim_call(), or "
+        "via pypeline_sim.py is not yet supported. (A future hook will let you "
+        "attach a Python simulation model to a specific vhdl(...) block.)"
+    )
+
+
+# ─────────────────────────────────────────────
 # Sim infrastructure: _sim_cast, _sim_type_wrap / hw_func, sim_call
 # ─────────────────────────────────────────────
 

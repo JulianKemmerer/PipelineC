@@ -18,6 +18,7 @@ internals (Logic() graph, FuncElaborator, CONST_REF_RD, etc.) see
 - [Operator Registry](#operator-registry)
 - [`SimVal` — Typed Simulation Integer](#simval--typed-simulation-integer)
 - [`concat(*args)` — Bit Concatenation](#concatargs--bit-concatenation)
+- [`vhdl(text)` — Raw VHDL Passthrough](#vhdltext--raw-vhdl-passthrough)
 - [Reference: `pypeline.py` Public API](#reference-pypelinepy-public-api)
 
 ---
@@ -625,6 +626,33 @@ BIT_MANIP_FUNC_NAMES = frozenset({
 
 ---
 
+## `vhdl(text)` — Raw VHDL Passthrough
+
+Like the bit-manipulation primitives above, `vhdl` is a real top-level function in
+`pypeline.py` that the elaborator (`PY_TO_LOGIC.py`) recognizes structurally by name and
+never actually calls. Unlike them, it is **not** dual-mode: there is no general way to
+simulate arbitrary user-supplied VHDL text in Python, so `vhdl`'s body unconditionally
+raises:
+
+```python
+def vhdl(vhdl_text):
+    raise NotImplementedError(
+        "vhdl(...) has no simulation model yet. ..."
+    )
+```
+
+This means a function whose body is `vhdl(...)` elaborates to hardware normally, but
+cannot be exercised through `sim_call()`/`pypeline_sim.py`/a direct call — doing so
+raises `NotImplementedError` immediately, rather than silently returning a wrong value or
+running real (but unrelated) Python code, as could happen if `vhdl` were missing
+entirely (`NameError`) or aliased to something else. See `PY_TO_LOGIC_DESIGN.md` →
+"Raw VHDL Passthrough (`vhdl(...)`)" for the elaboration side, including how the text
+argument is resolved via `_try_eval_const` (so it can be any compile-time-computed
+Python string, not just a literal) and how it's stored on the shared
+`Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("...")`).
+
+---
+
 ## Reference: `pypeline.py` Public API
 
 | Name | Purpose |
@@ -655,6 +683,7 @@ BIT_MANIP_FUNC_NAMES = frozenset({
 | `array_to_uint_be/le`, `uint_to_array_be/le` | Array ↔ integer packing primitives |
 | `concat(*args)` | Bit concatenation — works in hardware (→ `TUPLE_CONCAT`) and simulation (→ typed `SimVal`) |
 | `BIT_MANIP_FUNC_NAMES` | Frozenset of function names intercepted as built-in bit manipulation by the elaborator |
+| `vhdl(text)` | Raw VHDL passthrough — recognized structurally by name in `PY_TO_LOGIC._elab_stmt`, never called during elaboration; the real function only runs when called outside elaboration (directly, via `sim_call()`, or via `pypeline_sim.py`) and always raises `NotImplementedError` — no simulation model yet |
 | `_make_ctype(name)` | Dynamically creates C type class objects (used by `make_uint_t`, array subscript, etc.) |
 | `SimVal` | Simulation typed integer: bit-slice `__getitem__`, operator dispatch, hardware-accurate arithmetic |
 | `_RawField` | Raw-mode int subclass for struct fields: C-level arithmetic + `__getitem__` for bit slicing |

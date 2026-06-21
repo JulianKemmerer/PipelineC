@@ -24,6 +24,11 @@ from pypeline import (
     _arith_output_ctype,
 )
 
+# Recognized by name in FuncElaborator._elab_stmt as a raw-VHDL-passthrough statement.
+# Distinct from C_TO_LOGIC.VHDL_FUNC_NAME ("__vhdl__") — Pypeline's user-facing surface
+# avoids dunder-style names.
+_VHDL_TEXT_FUNC_NAME = "vhdl"
+
 UNARY_OP_MAP = {
     ast.Invert: C_TO_LOGIC.UNARY_OP_NOT_NAME,
     ast.USub: C_TO_LOGIC.UNARY_OP_NEGATE_NAME,
@@ -1575,10 +1580,52 @@ class FuncElaborator:
             callee = self._try_eval_const(stmt.value.func)
             if getattr(callee, "_is_sim_output", False):
                 pass  # @sim_output call — sim-only side effect, skip in hardware
+            elif (
+                isinstance(stmt.value.func, ast.Name)
+                and stmt.value.func.id == _VHDL_TEXT_FUNC_NAME
+            ):
+                self._elab_vhdl_text_stmt(stmt)
             else:
                 raise NotImplementedError(f"Unsupported statement: {ast.dump(stmt)}")
         else:
             raise NotImplementedError(f"Unsupported statement: {ast.dump(stmt)}")
+
+    def _elab_vhdl_text_stmt(self, stmt):
+        """vhdl(text) — raw VHDL passthrough. Replaces the entire function body: the
+        resolved text is spliced directly into the generated entity's architecture body
+        (see VHDL.py architecture-body dispatch on Logic.vhdl_module_text). Mirrors C's
+        __vhdl__("...") (C_TO_LOGIC.C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC), except the text
+        argument can be any compile-time Python string expression, not just a literal.
+        """
+        call = stmt.value
+        # Must be the only statement (an optional leading docstring is fine).
+        body_stmts = [
+            s
+            for s in self.func_def.body
+            if not (isinstance(s, ast.Expr) and isinstance(s.value, ast.Constant))
+        ]
+        if body_stmts != [stmt]:
+            raise ElaborationError(
+                f"{_VHDL_TEXT_FUNC_NAME}(...) must be the only statement in "
+                f"'{self.func_name}' (an optional leading docstring is fine) "
+                f"(at {_loc_str(self.src_file, stmt)})"
+            )
+        if len(call.args) != 1 or call.keywords:
+            raise ElaborationError(
+                f"{_VHDL_TEXT_FUNC_NAME}(text) takes exactly one positional argument "
+                f"(at {_loc_str(self.src_file, stmt)})"
+            )
+        text = self._try_eval_const(call.args[0])
+        if not isinstance(text, str):
+            raise ElaborationError(
+                f"{_VHDL_TEXT_FUNC_NAME}(...) argument must be a compile-time-constant "
+                f"string — it cannot reference hardware wire values; reference ports by "
+                f"their literal VHDL signal names inside the string instead "
+                f"(at {_loc_str(self.src_file, stmt)})"
+            )
+        self.logic.vhdl_module_text = text
+        # Mark as using globals, cant be sliced — mirrors the C frontend.
+        self.logic.uses_nonvolatile_state_regs = True
 
     def _elab_assign(self, stmt):
         target = stmt.targets[0]

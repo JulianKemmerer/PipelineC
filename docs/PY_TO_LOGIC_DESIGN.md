@@ -77,6 +77,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
 - [Boolean Operators (`and` / `or`)](#boolean-operators-and--or)
 - [Bit Manipulation Syntax](#bit-manipulation-syntax)
 - [Built-in Bit Manipulation Functions](#built-in-bit-manipulation-functions)
+- [Raw VHDL Passthrough (`vhdl(...)`)](#raw-vhdl-passthrough-vhdl)
 - [Custom Operator Registration](#custom-operator-registration)
 
 **Reference**
@@ -1957,6 +1958,70 @@ instances. All bounds / counts are evaluated at elaboration time via `_try_eval_
 Each function elaborates to a `BIT_MANIP_<func>_<types>` submodule instance in the
 Logic() graph. The output type is derived from the input widths and parameters at
 elaboration time.
+
+---
+
+## Raw VHDL Passthrough (`vhdl(...)`)
+
+`vhdl(text)` is pypeline's equivalent of the C frontend's `__vhdl__("...")`: it replaces
+a function's entire body with literal VHDL text, spliced directly into the generated
+entity's architecture. Both frontends now share a single `Logic` field for this,
+`Logic.vhdl_module_text: str | None`, set once at parse/elaborate time — `VHDL.py`'s
+architecture-body dispatch (and the `SYN.py`/`VHDL.py` pipelining/timing exemptions for
+this kind of opaque module) just checks `vhdl_module_text is not None`, regardless of
+which frontend produced the `Logic()`. There is no separate boolean flag to keep in sync.
+
+```python
+from pypeline import vhdl, uint64_t
+
+@MAIN
+def main(x: uint64_t, y: uint64_t) -> uint64_t:
+    vhdl(f"""
+        begin
+        return_output <= x + y;
+    """)
+```
+
+**Recognition (`_elab_stmt`):** a bare call statement (`ast.Expr(ast.Call(...))`) whose
+callee is `ast.Name(id="vhdl")` — checked structurally by name
+(`_VHDL_TEXT_FUNC_NAME = "vhdl"`), not by evaluating/calling anything — is routed to
+`_elab_vhdl_text_stmt` instead of raising `NotImplementedError` like other unrecognised
+call statements. `vhdl` is distinct from `C_TO_LOGIC.VHDL_FUNC_NAME` (`"__vhdl__"`):
+Pypeline's user-facing surface avoids dunder-style names.
+
+**`_elab_vhdl_text_stmt(stmt)`:**
+
+1. Requires `vhdl(...)` to be the only statement in `func_def.body`, aside from an
+   optional leading docstring (`ast.Expr(ast.Constant)`, already skipped elsewhere in
+   `_elab_stmt`) — `ElaborationError` otherwise. This mirrors the C side, where
+   `__vhdl__("...")` likewise replaces the whole function body.
+2. Requires exactly one positional argument and no keywords — `ElaborationError`
+   otherwise.
+3. Resolves the argument via `self._try_eval_const(call.args[0])` and requires a `str`
+   result — `ElaborationError` otherwise. Because `_try_eval_const` evaluates against
+   `{**module_globals, **const_env}` (never hardware wires), this is what naturally
+   prevents — with a clear message rather than a stray `NameError` — referencing a
+   hardware wire's value inside the text. Unlike C's literal-string-only form, the
+   argument can be **any compile-time-computed Python string expression**: an f-string,
+   concatenation, or a call to a plain Python helper function.
+4. Sets `self.logic.vhdl_module_text = text` and `self.logic.uses_nonvolatile_state_regs
+   = True` (mirrors `C_AST_VHDL_TEXT_FUNC_CALL_TO_LOGIC` in `C_TO_LOGIC.py` — prevents
+   slicing/pipelining optimizations on an opaque block).
+
+No changes are needed to `_setup_inputs`/`_setup_outputs`, `_is_hardware_func`, or
+downstream synthesis: ports are generated from the function signature exactly as for any
+other hardware function, and all `SYN.py`/`VHDL.py` exemptions for raw-VHDL modules
+(pipeline-map skip, undriven-output skip, timing-unknown, single-submodule-delay-unknown)
+key off `Logic.vhdl_module_text` directly, so they apply automatically regardless of
+frontend. `C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE` is likewise frontend-agnostic.
+
+**Has no simulation model.** The real `vhdl(...)` Python function (`pypeline.py`) is
+never invoked during elaboration — the elaborator recognizes it structurally by AST name
+and never executes Python code for it. It *is* what actually runs if a function
+containing `vhdl(...)` is called outside elaboration (directly, via `sim_call()`, or via
+`pypeline_sim.py`), and it unconditionally raises `NotImplementedError` — there is no
+general way to simulate arbitrary user-supplied VHDL text in Python. See
+`pypeline_DESIGN.md` for the runtime-side details.
 
 ---
 

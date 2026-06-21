@@ -1205,7 +1205,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         VHDL.LOGIC_IS_RAW_HDL(logic, parser_state)
         or logic.is_vhdl_func
         or logic.is_vhdl_expr
-        or logic.is_vhdl_text_module
+        or logic.vhdl_module_text is not None
         or logic.func_name in parser_state.func_marked_blackbox
         or C_TO_LOGIC.FUNC_IS_PRIMITIVE(logic.func_name, parser_state)
     ):
@@ -4567,7 +4567,7 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
         C_TO_LOGIC.CONST_PREFIX + C_TO_LOGIC.BIN_OP_SR_NAME
     ):
         return True
-    elif logic.is_vhdl_text_module:
+    elif logic.vhdl_module_text is not None:
         return False  # No idea what user has in there
     elif logic.is_vhdl_func or logic.is_vhdl_expr:
         return True
@@ -4600,7 +4600,7 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
 def LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state):
     if len(logic.submodule_instances) != 1:
         return None
-    if logic.is_vhdl_text_module:
+    if logic.vhdl_module_text is not None:
         return None
 
     submodule_inst = list(logic.submodule_instances.keys())[0]
@@ -4941,7 +4941,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
             continue
         if len(logic.submodule_instances) <= 0:
             continue
-        if logic.is_vhdl_text_module:
+        if logic.vhdl_module_text is not None:
             continue
         if logic.delay <= 0:
             continue
