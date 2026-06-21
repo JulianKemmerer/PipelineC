@@ -3846,7 +3846,6 @@ def CHECK_TIMING_REPORT_AND_ADJUST(parser_state, sweep_state):
                             "Next best guess multiplier was",
                             new_best_guess_sweep_mult,
                         )
-                        sys.exit(-1)  # TEMP
                         if (
                             sweep_state.inst_sweep_state[main_inst].coarse_sweep_mult
                             + COARSE_SWEEP_MULT_INC
