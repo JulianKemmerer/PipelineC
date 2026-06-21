@@ -24,6 +24,10 @@ synthesises them for an FPGA.
 16. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#16-multi-cycle-paths-multi_cycle)
 17. [Raw VHDL Passthrough: `vhdl()`](#17-raw-vhdl-passthrough-vhdl)
 18. [Just-Wires Synthesis Hint: `@wires`](#18-just-wires-synthesis-hint-wires)
+19. [Keep-Tagged Lanes: `kept_data_bus_t`](#19-keep-tagged-lanes-kept_data_bus_t)
+20. [N-Dimensional Stream Fragments: `ndarray_fragment_t`](#20-n-dimensional-stream-fragments-ndarray_fragment_t)
+21. [Valid/Ready Streams: `stream_t`](#21-validready-streams-stream_t)
+22. [AXI-Stream: `axis_t`](#22-axi-stream-axis_t)
 
 ---
 
@@ -1311,3 +1315,181 @@ underestimate timing through it — use it only for genuinely free rewiring.
 See `src/tests/pypeline_tests/inst/func_wires_test.py` for the full example.
 
 See `src/tests/pypeline_tests/inst/vhdl_text_test.py` for a complete example.
+
+---
+
+## 19 Keep-Tagged Lanes: `kept_data_bus_t`
+
+A common streaming pattern is N parallel lanes of data, each with its own "is this lane
+actually valid this transfer" bit — AXI-Stream's `tdata`/`tkeep` is the best-known example,
+but the same shape shows up any time you transport a partially-filled chunk of a larger
+array one beat at a time. `kept_data_bus_t`, from `include/pypeline/kept_data_bus.py`,
+captures exactly that shape, generic over both the lane count and the element type:
+
+```python
+from pypeline import uint8_t
+from kept_data_bus import make_kept_data_bus_t
+
+bus4_t = make_kept_data_bus_t(uint8_t, 4)   # 4 lanes of uint8_t + a 4-bit keep mask
+
+def make_lane(b: bus4_t, i: int) -> uint8_t:
+    return b.data[i] if b.keep[i] else 0
+```
+
+`make_kept_data_bus_t(data_t, n)` returns a struct with two fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `.data` | `data_t[n]` | the N lanes of payload |
+| `.keep` | `uint1_t[n]` | per-lane "this lane is valid" flag |
+
+`data_t` doesn't have to be a byte — it can be any pypeline type, including a struct. The
+result is only literally AXI-Stream-shaped when `data_t` is `uint8_t`; with another element
+type it's the same per-lane keep-masking generalized to a stream of structs (see
+[§22 AXI-Stream](#22-axi-stream-axis_t)).
+
+This layer has no handshake (`valid`) and no end-of-transfer flag (`eod`/`tlast`) of its
+own — those are added by the layers above it.
+
+---
+
+## 20 N-Dimensional Stream Fragments: `ndarray_fragment_t`
+
+AXI-Stream's `tlast` marks the end of one dimension — the end of a packet. Many real
+streams have more than one nested boundary: a video stream has an end-of-line *and* an
+end-of-frame, for instance. `ndarray_fragment_t`, from `include/pypeline/ndarray.py`,
+generalizes a single `tlast` bit into one end-of-dimension flag per dimension of whatever
+N-dimensional array the stream is serializing:
+
+```python
+from pixel import pixel_t   # whatever your pixel struct is
+from ndarray import make_ndarray_fragment_t
+
+video_frag_t = make_ndarray_fragment_t(pixel_t, 2)   # eod[0]=end of row, eod[1]=end of frame
+
+def track_position(frag: video_frag_t, x: uint16_t, y: uint16_t) -> ...:
+    next_x: uint16_t = x + 1
+    next_y: uint16_t = y
+    if frag.eod[0]:           # end of row
+        next_x = 0
+        next_y = y + 1
+    if frag.eod[1]:           # end of frame
+        next_y = 0
+    ...
+```
+
+`make_ndarray_fragment_t(frag_t, ndims)` returns a struct with two fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `.frag` | `frag_t` | the payload for this one transfer |
+| `.eod` | `uint1_t[ndims]` | per-dimension "end of dimension k" flags; `eod[0]` is the innermost dimension (AXIS `tlast`'s direct equivalent) |
+
+The field is named `.frag` rather than `.data` specifically so that nesting
+`ndarray_fragment_t` inside [`kept_data_bus_t`](#19-keep-tagged-lanes-kept_data_bus_t)
+(which already has a `.data` array field) and inside
+[`stream_t`](#21-validready-streams-stream_t) (which already has a `.data` payload field)
+doesn't produce an ambiguous `.data.data.data` chain.
+
+`frag_t` can be anything — a single struct (one whole element per transfer, as above) or a
+[`kept_data_bus_t`](#19-keep-tagged-lanes-kept_data_bus_t) (multiple byte/element lanes per
+transfer, the AXI-Stream case — see [§22](#22-axi-stream-axis_t)).
+
+---
+
+## 21 Valid/Ready Streams: `stream_t`
+
+`stream_t`, from `include/pypeline/stream/stream.py`, adds the final piece needed for a
+standard streaming interface: a `.valid` bit marking whether this cycle's payload is
+actually being transferred. Pair it with a plain `uint1_t ready` signal at the call site
+for a full valid/ready handshake (pypeline doesn't bundle `ready` into the struct itself,
+since `ready` flows in the opposite direction along the stream).
+
+```python
+from stream.stream import make_stream_t
+
+uint32_stream_t = make_stream_t(uint32_t)
+
+def consume(s: uint32_stream_t, downstream_ready: uint1_t) -> uint1_t:
+    accepted: uint1_t = s.valid & downstream_ready
+    if accepted:
+        ...  # use s.data
+    return accepted   # this stage's ready_for_input, computed however is appropriate
+```
+
+`make_stream_t(data_t)` returns a struct with two fields:
+
+| Field | Type | Meaning |
+|---|---|---|
+| `.data` | `data_t` | the payload |
+| `.valid` | `uint1_t` | whether `.data` is valid this cycle |
+
+`data_t` is typically an [`ndarray_fragment_t`](#20-n-dimensional-stream-fragments-ndarray_fragment_t)
+(giving end-of-dimension flags) or a [`kept_data_bus_t`](#19-keep-tagged-lanes-kept_data_bus_t)
+(giving per-lane keep flags), but it can be any type — `make_stream_t(uint32_t)` above is a
+plain valid-only stream of integers with no `eod`/`keep` layer at all.
+
+---
+
+## 22 AXI-Stream: `axis_t`
+
+`include/pypeline/axi/axis.py` composes the three layers above into a single factory for
+the common case — a complete AXI-Stream-equivalent type:
+
+```python
+from pypeline import uint8_t, sim_call
+from kept_data_bus import make_kept_data_bus_t
+from axi.axis import make_axis_t, make_keep_count, make_count_to_keep
+
+axis32_t = make_axis_t(4)   # 4 lanes of uint8_t: stream(ndarray_fragment(1, kept_data_bus(uint8_t, 4)))
+
+def axis32_passthrough(x: axis32_t) -> axis32_t:
+    return x
+```
+
+`make_axis_t(n, elem_t=uint8_t, ndims=1)` is exactly:
+
+```python
+bus_t = make_kept_data_bus_t(elem_t, n)
+fragment_t = make_ndarray_fragment_t(bus_t, ndims)
+return make_stream_t(fragment_t)
+```
+
+so for an `axis32_t` value `x`:
+
+| Old AXIS field | pypeline equivalent |
+|---|---|
+| `tdata[i]` | `x.data.frag.data[i]` |
+| `tkeep[i]` | `x.data.frag.keep[i]` |
+| `tlast` | `x.data.eod[0]` |
+| `valid` | `x.valid` |
+
+`elem_t` only needs to be `uint8_t` (the default) for this to be literally AXI-Stream —
+with any other `elem_t`, `make_axis_t` produces the same `tdata`/`tkeep`-shaped struct
+generalized to a stream of per-lane elements instead of bytes. `ndims` only needs to be `1`
+(the default, a single `tlast`-equivalent flag) — pass a larger value for streams with
+nested end-of-dimension boundaries, the same way
+[`ndarray_fragment_t`](#20-n-dimensional-stream-fragments-ndarray_fragment_t) does on its
+own.
+
+Two small helpers cover the `tkeep`↔lane-count conversions that AXIS-handling logic
+typically needs:
+
+```python
+bus4_t = make_kept_data_bus_t(uint8_t, 4)
+keep_count_4 = make_keep_count(bus4_t, 4)        # .keep[4] -> count of asserted lanes
+count_to_keep_4 = make_count_to_keep(4)          # count -> thermometer-coded .keep[4]
+
+assert sim_call(count_to_keep_4, 3) == [1, 1, 1, 0]
+assert sim_call(keep_count_4, bus4_t(data=[0, 0, 0, 0], keep=[1, 1, 1, 0])) == 3
+```
+
+`make_keep_count(bus_t, n)` returns a hardware function summing `.keep` over `n` lanes
+(a popcount). `make_count_to_keep(n)` returns the inverse: given a lane count, produces a
+thermometer-coded `.keep[n]` array with lanes `[0, count)` asserted. Both fully unroll
+their internal `for i in range(n)` loop at elaboration time (see
+[§6 for/while → loop unrolling](#6-your-first-hardware-function)), so there's no need for
+the per-width duplication older, non-generic AXIS implementations require.
+
+See `src/tests/pypeline_tests/inst/axis_test.py` for a complete worked example, including
+synthesis through `pipelinec`.
