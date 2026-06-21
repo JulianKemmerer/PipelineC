@@ -7,21 +7,21 @@ synthesises them for an FPGA.
 ## Table of Contents
 
 1. [What is pypeline?](#1-what-is-pypeline)
-2. [Digital Logic Basics](#2-digital-logic-basics)
-3. [Simulation](#3-simulation)
-4. [Top-Level Entry Points](#4-top-level-entry-points)
-5. [Your First Hardware Function](#5-your-first-hardware-function)
-6. [Calling Functions](#6-calling-functions)
-7. [Registers: `Reg[T]`](#7-registers-regt)
-8. [Feedback Wires: `Feedback[T]`](#8-feedback-wires-feedbackt)
-9. [Bit Manipulation](#9-bit-manipulation)
-10. [Types](#10-types)
-11. [Parametric Hardware with Factory Functions](#11-parametric-hardware-with-factory-functions)
-12. [Custom Operators](#12-custom-operators)
-13. [Global Signals](#13-global-signals)
-14. [Forcing Pipelining: `autopipeline()`](#14-forcing-pipelining-autopipeline)
-15. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#15-multi-cycle-paths-multi_cycle)
-16. [Worked Example: VGA Test Pattern](#16-worked-example-vga-test-pattern)
+2. [Worked Example: VGA Test Pattern](#2-worked-example-vga-test-pattern)
+3. [Digital Logic Basics](#3-digital-logic-basics)
+4. [Simulation](#4-simulation)
+5. [Top-Level Entry Points](#5-top-level-entry-points)
+6. [Your First Hardware Function](#6-your-first-hardware-function)
+7. [Calling Functions](#7-calling-functions)
+8. [Registers: `Reg[T]`](#8-registers-regt)
+9. [Feedback Wires: `Feedback[T]`](#9-feedback-wires-feedbackt)
+10. [Bit Manipulation](#10-bit-manipulation)
+11. [Types](#11-types)
+12. [Parametric Hardware with Factory Functions](#12-parametric-hardware-with-factory-functions)
+13. [Custom Operators](#13-custom-operators)
+14. [Global Signals](#14-global-signals)
+15. [Forcing Pipelining: `autopipeline()`](#15-forcing-pipelining-autopipeline)
+16. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#16-multi-cycle-paths-multi_cycle)
 
 ---
 
@@ -46,7 +46,108 @@ target clock frequency.
 
 ---
 
-## 2 Digital Logic Basics
+## 2 Worked Example: VGA Test Pattern
+
+This is a complete, real design example. Each piece used here (registers,
+bit-slicing, structs, top-level entry points, global wires, simulation hooks, factory
+functions) is explained in its own section later in this guide; this walkthrough links to
+each of them at first use.
+
+See the full design that generates a colour test pattern on a VGA monitor at `examples/pypeline/vga_test_pattern.py`.
+
+### Imports
+
+```python
+from pypeline import *
+
+import board.arty.part35t          # sets PART for the Arty A7-35T
+import board.arty.vga_pmod_ja_jb as board_vga   # board-level output wires
+
+from vga.types import vga_timing_signals_t, vga_12bpp_t
+from vga.timing import make_vga_timing, VGA_640_480
+
+vga_timing = make_vga_timing(VGA_640_480)  # factory: produces a timing generator function
+```
+
+`PART(...)` (called inside `board.arty.part35t`) sets the FPGA target device — see
+[Top-Level Entry Points](#5-top-level-entry-points).
+`vga_timing_signals_t` and `vga_12bpp_t` are struct types — see [Types](#11-types).
+`make_vga_timing` is a factory closure — see
+[Parametric Hardware with Factory Functions](#12-parametric-hardware-with-factory-functions).
+Calling it with a resolution spec produces a hardware function (`vga_timing`) that
+generates VGA sync signals and pixel coordinates.
+
+### Combinational pixel function
+
+```python
+def test_pattern(sig: vga_timing_signals_t) -> vga_12bpp_t:
+    r: uint4_t = sig.pos.x[7:4]          # upper 4 bits of X coordinate
+    g: uint4_t = sig.pos.y[7:4]          # upper 4 bits of Y coordinate
+    b: uint4_t = sig.pos.x[3:0] ^ sig.pos.y[3:0]   # XOR diagonal
+    out_r: uint4_t = 0
+    out_g: uint4_t = 0
+    out_b: uint4_t = 0
+    if sig.active:          # only output colour inside the visible region
+        out_r = r
+        out_g = g
+        out_b = b
+    return vga_12bpp_t(r=out_r, g=out_g, b=out_b, hs=sig.hsync, vs=sig.vsync)
+```
+
+- `sig.pos.x[7:4]` — bit-slice of the X pixel coordinate; see
+  [Bit Manipulation](#10-bit-manipulation).
+- `sig.active` — hardware `if`, synthesised as a MUX: colour inside the image, black
+  outside; see [Your First Hardware Function](#6-your-first-hardware-function).
+- `vga_12bpp_t(...)` — compound struct initialiser; see [Types](#11-types).
+
+### Top-level entry point
+
+```python
+@MAIN(vga_timing.pixel_clk_mhz)   # frequency comes from the resolution spec
+def vga_test_pattern():
+    sig = vga_timing()             # call the timing generator (stateful — contains registers)
+    px  = test_pattern(sig)        # compute pixel colour (combinational)
+    board_vga.vga_pmod = px        # drive the board's output wire
+    capture_pixel(sig, px)         # @sim_output — invisible to the hardware compiler
+```
+
+`@MAIN(mhz)` declares a top-level entry point with a frequency constraint — see
+[Top-Level Entry Points](#5-top-level-entry-points).
+`vga_timing()` is a hardware function call (submodule instance) that contains
+registers — see [Registers: `Reg[T]`](#8-registers-regt).
+`board_vga.vga_pmod` is a `Wire[T]` declared in the imported board file; assigning to it
+drives the FPGA pins — see [Global Signals](#14-global-signals).
+
+### Simulation display
+
+```python
+@sim_output
+def capture_pixel(sig, px):
+    # accumulate pixels into a numpy array and refresh a matplotlib window
+    ...
+```
+
+`@sim_output` marks this as simulation-only — see [Simulation](#4-simulation).
+The hardware compiler skips it entirely; `pypeline_sim.py` calls it once per clock cycle
+after convergence.
+
+### Running the simulation
+
+```
+python3 src/pypeline_sim.py examples/pypeline/vga_test_pattern.py --run 420000
+```
+
+One frame of 640×480 video at 25 MHz = 800 × 525 = 420 000 cycles.
+A matplotlib window appears and fills in as the simulation runs.
+
+### Synthesising for the FPGA
+
+Run pipelinec on the design file (see the main PipelineC documentation for build steps).
+The `PART()` call and `@MAIN(mhz)` frequency constraint are forwarded to Vivado.
+
+---
+
+## 3 Digital Logic Basics
 
 This section is a brief primer for readers new to hardware description languages.
 Skip ahead if you already know VHDL or Verilog.
@@ -105,7 +206,7 @@ From a user's perspective:
 
 ---
 
-## 3 Simulation
+## 4 Simulation
 
 pypeline designs can be simulated in Python before synthesising for an FPGA.
 This is useful for unit-testing combinational functions and verifying register behaviour.
@@ -163,7 +264,7 @@ r = sim_call(dual_accum, 10, 5)   # sum_a: 10+10=20, sum_b: 5+5=10 → 30
 
 ### `pypeline_sim.py` — multi-MAIN designs
 
-Designs that use `Wire[T]` global signals (see [Global Signals](#13-global-signals))
+Designs that use `Wire[T]` global signals (see [Global Signals](#14-global-signals))
 require running multiple `@MAIN` functions together.
 Use the `pypeline_sim.py` CLI:
 
@@ -205,7 +306,7 @@ they produce no gates or wires in the synthesised design.
 
 ---
 
-## 4 Top-Level Entry Points
+## 5 Top-Level Entry Points
 
 ### `@MAIN`
 
@@ -252,7 +353,7 @@ synthesis.
 
 ---
 
-## 5 Your First Hardware Function
+## 6 Your First Hardware Function
 
 ### Functions as modules
 
@@ -272,7 +373,7 @@ and the logic `output = a + b`.
 ### Void functions
 
 A function with no return annotation and no `return` statement is void — it has outputs
-only via global signals (see [Global Signals](#13-global-signals)).
+only via global signals (see [Global Signals](#14-global-signals)).
 
 ```python
 def drive_leds(val: uint8_t):   # no return type → void
@@ -365,7 +466,7 @@ pure Python.
 
 ---
 
-## 6 Calling Functions
+## 7 Calling Functions
 
 ### Functions call functions
 
@@ -513,7 +614,7 @@ SHIFT = my_lib.SHIFT_AMOUNT   # now available as a plain Python int in this modu
 
 ---
 
-## 7 Registers: `Reg[T]`
+## 8 Registers: `Reg[T]`
 
 ### Declaration
 
@@ -601,13 +702,13 @@ When `load=0`, `stored` keeps its previous value.
 
 Any non-`@MAIN` function that contains `Reg[T]` (or `Feedback[T]`) must be decorated
 with `@hw_func`.
-This is required for simulation (see [Simulation](#3-simulation)) and is good practice
+This is required for simulation (see [Simulation](#4-simulation)) and is good practice
 for documenting that the function has hardware-typed behaviour.
 Plain combinational helpers do not need it.
 
 ---
 
-## 8 Feedback Wires: `Feedback[T]`
+## 9 Feedback Wires: `Feedback[T]`
 
 A `Feedback[T]` wire is a combinational signal whose **driver appears later in the
 function body than its first use**.
@@ -644,7 +745,7 @@ f: Feedback[uint1_t] = x   # error
 
 ---
 
-## 9 Bit Manipulation
+## 10 Bit Manipulation
 
 Hardware frequently needs sub-word access that Python integers do not support natively.
 pypeline adds the following syntax and built-in functions.
@@ -700,7 +801,7 @@ All size/count arguments must be compile-time constants.
 
 ---
 
-## 10 Types
+## 11 Types
 
 ### Integer types
 
@@ -833,7 +934,7 @@ elaboration time.
 
 ---
 
-## 11 Parametric Hardware with Factory Functions
+## 12 Parametric Hardware with Factory Functions
 
 Because module-level Python code runs at elaboration time, you can generate specialised
 hardware functions and types using ordinary Python factories (closures).
@@ -900,7 +1001,7 @@ Only the inner function's body becomes hardware.
 
 ---
 
-## 12 Custom Operators
+## 13 Custom Operators
 
 You can overload Python's binary and unary operators for specific pypeline types using
 the registration functions:
@@ -937,7 +1038,7 @@ register_unary_operator("NEGATE", my_t, negate_my_t, scope=my_function)
 
 ---
 
-## 13 Global Signals
+## 14 Global Signals
 
 Global signals are module-level wires shared between `@MAIN` functions.
 They are declared at module scope (outside any function) using a type annotation.
@@ -999,7 +1100,7 @@ my_wire: Wire[uint32_t] = 0  # error — initialisers are not allowed on Wire/In
 
 ---
 
-## 14 Forcing Pipelining: `autopipeline()`
+## 15 Forcing Pipelining: `autopipeline()`
 
 By default, a function called from inside a register or feedback context must complete
 **combinationally, in the same cycle** as its caller — the synthesiser is not free to
@@ -1052,7 +1153,7 @@ See `src/tests/pypeline_tests/inst/autopipeline_test.py` for the full example.
 
 ---
 
-## 15 Multi-Cycle Paths: `MULTI_CYCLE[...]`
+## 16 Multi-Cycle Paths: `MULTI_CYCLE[...]`
 
 Combinational logic normally has to finish settling within a single clock period — that's
 what the synthesiser's timing analysis assumes by default. Sometimes that's overly
@@ -1092,91 +1193,3 @@ without a `PART()` target it has no effect. See
 `src/tests/pypeline_tests/inst/multi_cycle_test.py` (translated from
 `examples/mcp/mcp_test.c`) for the full example, including the `PART(...)` call needed to
 target a real device.
-
----
-
-## 16 Worked Example: VGA Test Pattern
-
-This walks through `examples/pypeline/vga_test_pattern.py`, a complete design that
-generates a colour test pattern on a VGA monitor.
-
-### Imports
-
-```python
-from pypeline import *
-
-import board.arty.part35t          # sets PART for the Arty A7-35T
-import board.arty.vga_pmod_ja_jb as board_vga   # board-level output wires
-
-from vga.types import vga_timing_signals_t, vga_12bpp_t
-from vga.timing import make_vga_timing, VGA_640_480
-
-vga_timing = make_vga_timing(VGA_640_480)  # factory: produces a timing generator function
-```
-
-`make_vga_timing` is a factory closure.
-Calling it with a resolution spec produces a hardware function (`vga_timing`) that
-generates VGA sync signals and pixel coordinates.
-
-### Combinational pixel function
-
-```python
-def test_pattern(sig: vga_timing_signals_t) -> vga_12bpp_t:
-    r: uint4_t = sig.pos.x[7:4]          # upper 4 bits of X coordinate
-    g: uint4_t = sig.pos.y[7:4]          # upper 4 bits of Y coordinate
-    b: uint4_t = sig.pos.x[3:0] ^ sig.pos.y[3:0]   # XOR diagonal
-    out_r: uint4_t = 0
-    out_g: uint4_t = 0
-    out_b: uint4_t = 0
-    if sig.active:          # only output colour inside the visible region
-        out_r = r
-        out_g = g
-        out_b = b
-    return vga_12bpp_t(r=out_r, g=out_g, b=out_b, hs=sig.hsync, vs=sig.vsync)
-```
-
-- `sig.pos.x[7:4]` — bit-slice of the X pixel coordinate.
-- `sig.active` — hardware `if`, synthesised as a MUX: colour inside the image, black outside.
-- `vga_12bpp_t(...)` — compound struct initialiser.
-
-### Top-level entry point
-
-```python
-@MAIN(vga_timing.pixel_clk_mhz)   # frequency comes from the resolution spec
-def vga_test_pattern():
-    sig = vga_timing()             # call the timing generator (stateful — contains registers)
-    px  = test_pattern(sig)        # compute pixel colour (combinational)
-    board_vga.vga_pmod = px        # drive the board's output wire
-    capture_pixel(sig, px)         # @sim_output — invisible to the hardware compiler
-```
-
-`vga_timing()` is a hardware function call (submodule instance) that contains registers.
-`board_vga.vga_pmod` is a `Wire[T]` declared in the imported board file; assigning to it
-drives the FPGA pins.
-
-### Simulation display
-
-```python
-@sim_output
-def capture_pixel(sig, px):
-    # accumulate pixels into a numpy array and refresh a matplotlib window
-    ...
-```
-
-`@sim_output` marks this as simulation-only.
-The hardware compiler skips it entirely; `pypeline_sim.py` calls it once per clock cycle
-after convergence.
-
-### Running the simulation
-
-```
-python3 src/pypeline_sim.py examples/pypeline/vga_test_pattern.py --run 420000
-```
-
-One frame of 640×480 video at 25 MHz = 800 × 525 = 420 000 cycles.
-A matplotlib window appears and fills in as the simulation runs.
-
-### Synthesising for the FPGA
-
-Run pipelinec on the design file (see the main PipelineC documentation for build steps).
-The `PART()` call and `@MAIN(mhz)` frequency constraint are forwarded to Vivado.
