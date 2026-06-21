@@ -19,7 +19,8 @@ synthesises them for an FPGA.
 11. [Parametric Hardware with Factory Functions](#11-parametric-hardware-with-factory-functions)
 12. [Custom Operators](#12-custom-operators)
 13. [Global Signals](#13-global-signals)
-14. [Worked Example: VGA Test Pattern](#14-worked-example-vga-test-pattern)
+14. [Forcing Pipelining: `autopipeline()`](#14-forcing-pipelining-autopipeline)
+15. [Worked Example: VGA Test Pattern](#15-worked-example-vga-test-pattern)
 
 ---
 
@@ -997,7 +998,60 @@ my_wire: Wire[uint32_t] = 0  # error — initialisers are not allowed on Wire/In
 
 ---
 
-## 14 Worked Example: VGA Test Pattern
+## 14 Forcing Pipelining: `autopipeline()`
+
+By default, a function called from inside a register or feedback context must complete
+**combinationally, in the same cycle** as its caller — the synthesiser is not free to
+split its logic across multiple clock cycles. That's normally what you want for a small
+state machine. But sometimes you want to call a large, otherwise-combinational pipeline
+stage (a multiplier, a divider, a deep arithmetic chain) from inside such a context, and
+you're fine with it taking several cycles internally as long as it still produces a
+valid/ready style stream.
+
+`autopipeline()` tells the synthesiser it's allowed to insert pipeline registers inside
+one specific function call, overriding the normal "must stay combinational here" rule:
+
+```python
+rv = autopipeline(some_func(x))          # let the synthesiser pick how many stages
+rv = autopipeline(some_func(x), 2)       # force exactly 2 pipeline stages
+rv = autopipeline(some_func(x), depth=2) # same, as a keyword argument
+```
+
+Wrap a single, direct function call — not a larger expression
+(`autopipeline(foo(x) + 1)` is not supported, only `autopipeline(foo(x))` is).
+In simulation, `autopipeline(...)` is a no-op: it just returns its argument unchanged, so
+`sim_call` behaves identically with or without it.
+
+### Example
+
+This mirrors the shape of `examples/autopipelined_submodules.c`: a free-running
+combinational pipeline stage, instantiated from inside a function that also has a
+register (so without `autopipeline()`, the call would have to be a single-cycle
+combinational instance):
+
+```python
+def pipeline_stage(x: stream_t) -> stream_t:
+    rv: stream_t
+    rv.data = x.data / ~x.data   # some multi-cycle-worthy combinational logic
+    rv.valid = x.valid
+    return rv
+
+def wrapper(pipeline_in: stream_t) -> stream_t:
+    # `ready_reg` makes this a register/feedback context — normally `pipeline_stage`
+    # would have to complete combinationally within this same cycle.
+    ready_reg: Reg[uint1_t]
+    ready_reg = ~ready_reg
+
+    # autopipeline() overrides that: the synthesiser may slice pipeline_stage's
+    # logic across multiple cycles.
+    return autopipeline(pipeline_stage(pipeline_in))
+```
+
+See `src/tests/pypeline_tests/inst/autopipeline_test.py` for the full example.
+
+---
+
+## 15 Worked Example: VGA Test Pattern
 
 This walks through `examples/pypeline/vga_test_pattern.py`, a complete design that
 generates a colour test pattern on a VGA monitor.
