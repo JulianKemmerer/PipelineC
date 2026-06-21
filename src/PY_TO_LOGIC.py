@@ -1393,6 +1393,8 @@ class FuncElaborator:
         # VHDL name-safety tracking (populated by _hw_name)
         self._vhdl_names_lower: dict = {}  # safe_name.lower() -> safe_name
         self._mangled_names: set = set()  # python names that have triggered a warning
+        # MULTI_CYCLE[...] tag tracking: _MultiCycleTag -> [start_name, end_name]
+        self._multi_cycle_pending: dict = {}
 
     def _inst(self, op_full_name, node):
         """Build a unique submodule instance name, prepending any active loop prefix."""
@@ -1488,6 +1490,14 @@ class FuncElaborator:
         self._setup_outputs()
         for stmt in self.func_def.body:
             self._elab_stmt(stmt)
+        for tag, (start_name, end_name) in self._multi_cycle_pending.items():
+            if start_name is None or end_name is None:
+                missing = "start" if start_name is None else "end"
+                raise ElaborationError(
+                    f"MULTI_CYCLE[{tag.ncycles}] tag is missing its .{missing} — "
+                    f"must be applied to exactly two Reg[T] declarations",
+                    self.func_def,
+                )
         self._connect_final_state_wires()
         return self.logic
 
@@ -1703,6 +1713,8 @@ class FuncElaborator:
                         stmt.value,
                     )
             self._declare_state_reg(var_name, inner_ctype, stmt.target, init_py_val)
+            if ann_val.multi_cycle_role is not None:
+                self._tag_multi_cycle_reg(var_name, ann_val.multi_cycle_role)
             return
         if isinstance(ann_val, (_WireType, _InputType, _OutputType)):
             raise ElaborationError(
@@ -3598,6 +3610,25 @@ class FuncElaborator:
         _add_wire(self.logic, var_name, c_type)
         self.logic.variable_names.add(var_name)
         self.env[var_name] = (var_name, c_type)
+
+    def _tag_multi_cycle_reg(self, var_name, role):
+        """Record one endpoint of a MULTI_CYCLE[...] tag (see Reg[T, role] in
+        _elab_ann_assign). Once both .start and .end of the same tag have been
+        seen, emits the (ncycles, start_reg, end_reg) tuple onto logic.mcp_tuples
+        — the same shape SYN.py::GET_MCP_PATH_CONSTRAINTS already consumes from
+        the C frontend's #pragma MULTI_CYCLE.
+        """
+        pending = self._multi_cycle_pending.setdefault(role.tag, [None, None])
+        idx = 0 if role.is_start else 1
+        if pending[idx] is not None:
+            side = "start" if role.is_start else "end"
+            raise ElaborationError(
+                f"MULTI_CYCLE[{role.tag.ncycles}] tag's .{side} is already used by "
+                f"'{pending[idx]}'; cannot also tag '{var_name}'"
+            )
+        pending[idx] = var_name
+        if pending[0] is not None and pending[1] is not None:
+            self.logic.mcp_tuples.add((str(role.tag.ncycles), pending[0], pending[1]))
 
     def _declare_feedback_var(self, var_name, c_type, node):
         """Declare a combinatorial feedback wire (Feedback[T] annotation).

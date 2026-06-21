@@ -254,6 +254,10 @@ Declares a **hardware register** (D flip-flop). Persists across clock cycles.
 - Valid only inside hardware function bodies
 - Implies clock-enable behaviour: writes inside `if` only latch when condition is true
 - `@hw_func` (or `@MAIN`) required for simulation infrastructure to engage
+- Optional second subscript argument tags the register as one endpoint of a
+  `MULTI_CYCLE[...]` timing constraint: `Reg[T, tag]` where `tag` is
+  `MULTI_CYCLE[ncycles].start` or `.end` — see
+  [`MULTI_CYCLE[ncycles]` — Multi-Cycle Path Tag](#multi_cyclencycles--multi-cycle-path-tag)
 
 ### `Feedback[T]` / `_FeedbackType`
 
@@ -366,6 +370,51 @@ for how `PY_TO_LOGIC.FuncElaborator._elab_call` unwraps the call and tags the re
 submodule instance. The underlying `Logic()` fields
 (`next_func_call_autopipeline_depth`, `sub_inst_to_autopipeline_depth`) and the
 synthesis-side forced-slicing mechanism are shared, unmodified, with the C frontend.
+
+### `MULTI_CYCLE[ncycles]` — Multi-Cycle Path Tag
+
+Python equivalent of PipelineC's `#pragma MULTI_CYCLE <ncycles> <start_reg> <end_reg>`.
+Unlike `PART(...)` and `autopipeline(...)`, this is not a call at all — `MULTI_CYCLE` is a
+subscriptable class (same idiom as `Reg`/`Feedback`/`Wire`), and the cycle count and two
+register endpoints are attached directly to the `Reg[T]` declarations they constrain:
+
+```python
+MC = MULTI_CYCLE[32]
+data0: Reg[my_struct_t, MC.start]
+data1: Reg[my_struct_t, MC.end]
+```
+
+```python
+class _MultiCycleRole:
+    def __init__(self, tag, is_start):
+        self.tag = tag
+        self.is_start = is_start
+
+class _MultiCycleTag:
+    def __init__(self, ncycles):
+        self.ncycles = ncycles
+        self.start = _MultiCycleRole(self, is_start=True)
+        self.end = _MultiCycleRole(self, is_start=False)
+
+class _MultiCycleMeta(type):
+    def __getitem__(cls, ncycles):
+        if not isinstance(ncycles, int):
+            raise TypeError(f"MULTI_CYCLE[ncycles] expects an int, got {ncycles!r}")
+        return _MultiCycleTag(ncycles)
+
+class MULTI_CYCLE(metaclass=_MultiCycleMeta):
+    pass
+```
+
+`_RegType`/`_RegMeta` (see [`Reg[T]` / `_RegType`](#regt--_regtype) above) accept this as
+an optional second subscript argument, storing it as `_RegType.multi_cycle_role`.
+`MULTI_CYCLE`/`_MultiCycleTag`/`_MultiCycleRole` are plain Python objects with no
+hardware-wire involvement, so this whole mechanism is ordinary Python at every layer
+(module exec, proto-simulation, elaboration's `_try_eval_const`) — no simulation-specific
+code is needed. See
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#multi_cyclencycles--regt-tag--multi-cycle-path-constraint)
+for how `PY_TO_LOGIC.FuncElaborator._elab_ann_assign`/`_tag_multi_cycle_reg` consume the
+role and populate `Logic.mcp_tuples` — shared, unmodified, with the C frontend.
 
 ### Registries
 
@@ -591,7 +640,8 @@ BIT_MANIP_FUNC_NAMES = frozenset({
 | `@MAIN` | Registers a function as a hardware entry point; implies `@hw_func`; appends to `_main_registry` |
 | `@sim_output` | Marks a function as simulation output-only; no-op during convergence passes; executes in final pass per cycle |
 | `autopipeline(call_result, depth=-1)` | Wraps a single direct call; identity in sim; forces pipelining through that submodule during elaboration (equivalent to `#pragma AUTOPIPELINE`) |
-| `Reg` / `_RegType` | Register descriptor; `Reg[T]` declares a stateful register; optional init value (`Reg[T] = val`) |
+| `MULTI_CYCLE` / `_MultiCycleTag` / `_MultiCycleRole` | `MULTI_CYCLE[ncycles]` tag; `.start`/`.end` attach to `Reg[T, tag]` declarations to relax setup timing between them (equivalent to `#pragma MULTI_CYCLE`) |
+| `Reg` / `_RegType` | Register descriptor; `Reg[T]` declares a stateful register; optional init value (`Reg[T] = val`); optional `Reg[T, tag]` multi-cycle role |
 | `Feedback` / `_FeedbackType` | Feedback wire descriptor; `Feedback[T]` declares a combinatorial feedback wire (no flip-flop) |
 | `Wire` / `_WireType` | Global wire descriptor; `Wire[T]` at module level declares a shared combinatorial wire (one writer) |
 | `Input` / `_InputType` | Top-level input port; `Input[T]` at module level; any function may read, none may write |

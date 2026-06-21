@@ -69,6 +69,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
   - [`@MAIN(mhz)` — Clock Frequency Constraint](#mainmhz--clock-frequency-constraint)
   - [Clock Domain Inference (`INFER_CLOCK_DOMAINS`)](#clock-domain-inference-infer_clock_domains)
 - [`autopipeline(call_expr, depth)` — Forced Submodule Pipelining](#autopipelinecall_expr-depth--forced-submodule-pipelining)
+- [`MULTI_CYCLE[ncycles]` / `Reg[T, tag]` — Multi-Cycle Path Constraint](#multi_cyclencycles--regt-tag--multi-cycle-path-constraint)
 
 **Syntax Extensions**
 - [Compound Initializer Syntax](#compound-initializer-syntax)
@@ -2270,6 +2271,151 @@ call's arguments are wires/locals, not nested calls, so this rarely matters.
 `autopipeline(...)` a real register/feedback context to force pipelining through. This is
 a synthesis-only test, run by hand via `pipelinec ... --comb` (see `run_all.sh`), not
 part of the proto-simulation suite.
+
+---
+
+## `MULTI_CYCLE[ncycles]` / `Reg[T, tag]` — Multi-Cycle Path Constraint
+
+Python equivalent of PipelineC's `#pragma MULTI_CYCLE <ncycles> <start_reg> <end_reg>`
+(see `examples/mcp/mcp_test.c`). It relaxes Vivado setup timing between two named
+registers by `<ncycles>` clock cycles, letting slow combinational logic (e.g. integer
+division) spread across multiple cycles without forcing the synthesizer to pipeline it.
+The underlying mechanism is entirely in `C_TO_LOGIC.Logic.mcp_tuples` and `SYN.py` and is
+shared, unmodified, with the C frontend:
+
+```python
+# C_TO_LOGIC.py — already present on every Logic(), C and Python frontends alike
+self.mcp_tuples = set()  # Tuples of (ncycles, start_reg, end_reg) — strings
+```
+
+`SYN.py`'s `GET_MCP_PATH_CONSTRAINTS` (emits `set_multicycle_path` + `KEEP` constraints,
+Vivado-only) consumes `mcp_tuples` generically by register name — it has no dependency on
+which frontend produced the `Logic()`. Porting the feature to Pypeline therefore required
+**no changes to `C_TO_LOGIC.py` or `SYN.py`** — only teaching `PY_TO_LOGIC.py`'s
+elaborator to populate the same field.
+
+### Syntax — tag the `Reg[T]` declarations, not a call
+
+Earlier drafts considered a bare `multi_cycle(32, data0, data1)` statement and a
+`with multi_cycle(...):` block, but both read like a hardware-producing call/region. The
+chosen syntax tags the two `Reg[T]` declarations directly, with no parens anywhere in the
+pragma itself:
+
+```python
+MC = MULTI_CYCLE[32]
+data0: Reg[my_struct_t, MC.start]
+data1: Reg[my_struct_t, MC.end]
+```
+
+`MULTI_CYCLE[ncycles]` is ALL_CAPS (matching `PART`/`MAIN_MHZ`-style pragmas) and uses
+**subscript, not call syntax** — matching the `Reg[T]` / `Feedback[T]` / `Wire[T]` bracket
+idiom already used for declarative annotations, as opposed to parens which mean
+"instantiate hardware." `Reg[T, tag]` is a 2-tuple subscript (vs. the plain `Reg[T]`
+single-type subscript) that attaches the role marker to that one register declaration:
+
+```python
+# pypeline.py
+class _MultiCycleRole:
+    def __init__(self, tag, is_start):
+        self.tag = tag
+        self.is_start = is_start
+
+class _MultiCycleTag:
+    def __init__(self, ncycles):
+        self.ncycles = ncycles
+        self.start = _MultiCycleRole(self, is_start=True)
+        self.end = _MultiCycleRole(self, is_start=False)
+
+class _MultiCycleMeta(type):
+    def __getitem__(cls, ncycles):
+        if not isinstance(ncycles, int):
+            raise TypeError(f"MULTI_CYCLE[ncycles] expects an int, got {ncycles!r}")
+        return _MultiCycleTag(ncycles)
+
+class MULTI_CYCLE(metaclass=_MultiCycleMeta):
+    pass
+```
+
+`_RegType` carries an optional `multi_cycle_role`, and `_RegMeta.__getitem__` accepts
+either the usual single type (`Reg[T]`) or a `(type, role)` tuple (`Reg[T, tag]`):
+
+```python
+class _RegType:
+    def __init__(self, inner_ctype, multi_cycle_role=None):
+        self.inner_ctype = inner_ctype
+        self.multi_cycle_role = multi_cycle_role
+
+class _RegMeta(type):
+    def __getitem__(cls, inner_type):
+        if isinstance(inner_type, tuple):
+            base_type, role = inner_type   # role must be a _MultiCycleRole
+            return _RegType(base_type, multi_cycle_role=role)
+        return _RegType(inner_type)
+```
+
+`MULTI_CYCLE`/`_MultiCycleTag`/`_MultiCycleRole` are plain Python objects with no
+hardware-wire involvement, so `MC = MULTI_CYCLE[32]` and `Reg[T, MC.start]` evaluate as
+ordinary Python at every layer (module exec, proto-simulation, `_try_eval_const`) — no
+simulation-specific code is needed anywhere for this feature.
+
+### Elaboration (`FuncElaborator._elab_ann_assign` / `_tag_multi_cycle_reg`)
+
+`_elab_ann_assign`'s existing `isinstance(ann_val, _RegType)` branch (which already calls
+`_declare_state_reg`) gets one addition: if a role was attached, tag the just-declared
+register:
+
+```python
+self._declare_state_reg(var_name, inner_ctype, stmt.target, init_py_val)
+if ann_val.multi_cycle_role is not None:
+    self._tag_multi_cycle_reg(var_name, ann_val.multi_cycle_role)
+return
+```
+
+Because the tagging call happens at the exact same point `_declare_state_reg` runs, the
+elaborator never needs to separately verify "is this a register declared in this
+function" the way the `with`/bare-call drafts would have — it's guaranteed by
+construction.
+
+`FuncElaborator.__init__` adds one tracking dict, keyed by the live `_MultiCycleTag`
+object (default identity hashing — no string lookups involved):
+
+```python
+self._multi_cycle_pending: dict = {}  # _MultiCycleTag -> [start_name, end_name]
+```
+
+`_tag_multi_cycle_reg` records each side and emits the `mcp_tuples` entry once both sides
+of the same tag have been seen:
+
+```python
+def _tag_multi_cycle_reg(self, var_name, role):
+    pending = self._multi_cycle_pending.setdefault(role.tag, [None, None])
+    idx = 0 if role.is_start else 1
+    if pending[idx] is not None:
+        raise ElaborationError(...)   # same .start/.end tagged twice
+    pending[idx] = var_name
+    if pending[0] is not None and pending[1] is not None:
+        self.logic.mcp_tuples.add((str(role.tag.ncycles), pending[0], pending[1]))
+```
+
+`elaborate()` validates, after the statement-elaboration loop and before
+`_connect_final_state_wires()`, that every tag created during the function ended up fully
+paired (a tag with only `.start` or only `.end` used is an `ElaborationError`):
+
+```python
+for tag, (start_name, end_name) in self._multi_cycle_pending.items():
+    if start_name is None or end_name is None:
+        raise ElaborationError(...)  # tag missing its .start or .end partner
+```
+
+### Test coverage
+
+`src/tests/pypeline_tests/inst/multi_cycle_test.py` is the Pypeline translation of
+`examples/mcp/mcp_test.c`: `data0`/`data1` become `Reg[my_struct_t, MC.start]` /
+`Reg[my_struct_t, MC.end]` inside `my_fsm`, replacing `#pragma MULTI_CYCLE 32 data0
+data1`. Like `autopipeline_test.py`, it includes a `PART(...)` call (Arty A7-35T) since
+multi-cycle path constraints are Vivado-only and require real synthesis to exercise; it's
+a synthesis-only test run by hand (see `run_all.sh`), not part of the proto-simulation
+suite.
 
 ---
 

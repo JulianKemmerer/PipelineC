@@ -943,11 +943,60 @@ def _pop_scoped_registrations(saved):
 # ─────────────────────────────────────────────
 
 
-class _RegType:
-    """Produced by Reg[T]. Marks a variable as a hardware register (flip-flop)."""
+class _MultiCycleRole:
+    """One endpoint (.start or .end) of a MULTI_CYCLE[...] tag. Produced by
+    MULTI_CYCLE[ncycles].start / .end, consumed by Reg[T, role] to mark that
+    register declaration as one end of a multi-cycle timing path."""
 
-    def __init__(self, inner_ctype):
+    def __init__(self, tag, is_start):
+        self.tag = tag
+        self.is_start = is_start
+
+
+class _MultiCycleTag:
+    """Returned by MULTI_CYCLE[ncycles]. Tag exactly two Reg[T] declarations
+    with .start / .end (equivalent of PipelineC's
+    `#pragma MULTI_CYCLE <ncycles> <start_reg> <end_reg>`):
+
+        MC = MULTI_CYCLE[32]
+        data0: Reg[my_struct_t, MC.start]
+        data1: Reg[my_struct_t, MC.end]
+    """
+
+    def __init__(self, ncycles):
+        self.ncycles = ncycles
+        self.start = _MultiCycleRole(self, is_start=True)
+        self.end = _MultiCycleRole(self, is_start=False)
+
+
+class _MultiCycleMeta(type):
+    def __getitem__(cls, ncycles):
+        if not isinstance(ncycles, int):
+            raise TypeError(f"MULTI_CYCLE[ncycles] expects an int, got {ncycles!r}")
+        return _MultiCycleTag(ncycles)
+
+
+class MULTI_CYCLE(metaclass=_MultiCycleMeta):
+    """MULTI_CYCLE[ncycles] — tag for two Reg[T] declarations forming a
+    multi-cycle timing path (equivalent of PipelineC's
+    `#pragma MULTI_CYCLE <ncycles> <start_reg> <end_reg>`).
+
+    Usage:
+        MC = MULTI_CYCLE[32]
+        data0: Reg[my_struct_t, MC.start]
+        data1: Reg[my_struct_t, MC.end]
+    """
+
+    pass
+
+
+class _RegType:
+    """Produced by Reg[T] or Reg[T, MULTI_CYCLE[...].start/.end].
+    Marks a variable as a hardware register (flip-flop)."""
+
+    def __init__(self, inner_ctype, multi_cycle_role=None):
         self.inner_ctype = inner_ctype  # a _CTypeMeta class or array ctype
+        self.multi_cycle_role = multi_cycle_role  # _MultiCycleRole or None
 
     def __str__(self):
         return f"Reg[{self.inner_ctype}]"
@@ -958,6 +1007,14 @@ class _RegType:
 
 class _RegMeta(type):
     def __getitem__(cls, inner_type):
+        if isinstance(inner_type, tuple):
+            if len(inner_type) != 2 or not isinstance(inner_type[1], _MultiCycleRole):
+                raise TypeError(
+                    "Reg[T, tag] second argument must be a MULTI_CYCLE[...].start "
+                    "or .end role"
+                )
+            base_type, role = inner_type
+            return _RegType(base_type, multi_cycle_role=role)
         return _RegType(inner_type)
 
 
@@ -967,6 +1024,11 @@ class Reg(metaclass=_RegMeta):
     Usage in hardware functions:
         acc: Reg[uint32_t]      # register, initialized to 0 at power-on
         acc = acc + data_in     # read current value; write sets next-cycle value
+
+    A register may also be tagged as one end of a multi-cycle timing path:
+        MC = MULTI_CYCLE[32]
+        data0: Reg[my_struct_t, MC.start]
+        data1: Reg[my_struct_t, MC.end]
     """
 
     pass

@@ -20,7 +20,8 @@ synthesises them for an FPGA.
 12. [Custom Operators](#12-custom-operators)
 13. [Global Signals](#13-global-signals)
 14. [Forcing Pipelining: `autopipeline()`](#14-forcing-pipelining-autopipeline)
-15. [Worked Example: VGA Test Pattern](#15-worked-example-vga-test-pattern)
+15. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#15-multi-cycle-paths-multi_cycle)
+16. [Worked Example: VGA Test Pattern](#16-worked-example-vga-test-pattern)
 
 ---
 
@@ -1051,7 +1052,50 @@ See `src/tests/pypeline_tests/inst/autopipeline_test.py` for the full example.
 
 ---
 
-## 15 Worked Example: VGA Test Pattern
+## 15 Multi-Cycle Paths: `MULTI_CYCLE[...]`
+
+Combinational logic normally has to finish settling within a single clock period — that's
+what the synthesiser's timing analysis assumes by default. Sometimes that's overly
+strict: a slow operation (integer division, a deep arithmetic chain) sits between two
+registers, and you know it's fine for it to take several clock periods to settle because
+the surrounding logic only samples the result every `N` cycles anyway (e.g. inside a small
+FSM that only advances every `N` cycles). `MULTI_CYCLE[...]` tells the synthesiser to
+relax its setup-timing check between two specific registers by `N` cycles instead of one.
+
+```python
+from pypeline import Reg, MULTI_CYCLE
+
+def my_fsm(i: my_struct_t) -> my_struct_t:
+    o: my_struct_t
+    MC = MULTI_CYCLE[32]                      # allow up to 32 cycles between these two regs
+    data0: Reg[my_struct_t, MC.start]
+    data1: Reg[my_struct_t, MC.end]
+    o = data1
+    data1 = big_comb_multi_cycle_func(data0)  # slow combinational logic — gets up to 32 cycles
+    data0 = i
+    return o
+```
+
+`MULTI_CYCLE[ncycles]` produces a tag; `.start` and `.end` mark which of the two `Reg[T]`
+declarations is the source and which is the destination of the relaxed timing path —
+`.start` is where the path begins (the register whose output feeds the slow logic),
+`.end` is where it's captured (the register that's allowed to take longer to settle).
+Each tag must be used exactly twice: once as `.start`, once as `.end`, on two different
+`Reg[T]` declarations in the same function.
+
+This is purely a synthesis timing constraint — it has no effect on simulation, and no
+effect on what value ends up in the registers, only on how much time the tool is allowed
+to assume is available for the logic between them to settle.
+
+**Requires Vivado.** Like `PART()`, this only does something during real FPGA synthesis;
+without a `PART()` target it has no effect. See
+`src/tests/pypeline_tests/inst/multi_cycle_test.py` (translated from
+`examples/mcp/mcp_test.c`) for the full example, including the `PART(...)` call needed to
+target a real device.
+
+---
+
+## 16 Worked Example: VGA Test Pattern
 
 This walks through `examples/pypeline/vga_test_pattern.py`, a complete design that
 generates a colour test pattern on a VGA monitor.
