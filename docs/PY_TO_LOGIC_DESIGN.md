@@ -70,6 +70,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
   - [Clock Domain Inference (`INFER_CLOCK_DOMAINS`)](#clock-domain-inference-infer_clock_domains)
 - [`autopipeline(call_expr, depth)` — Forced Submodule Pipelining](#autopipelinecall_expr-depth--forced-submodule-pipelining)
 - [`MULTI_CYCLE[ncycles]` / `Reg[T, tag]` — Multi-Cycle Path Constraint](#multi_cyclencycles--regt-tag--multi-cycle-path-constraint)
+- [`@wires` — Just-Wires Synthesis Hint](#wires--just-wires-synthesis-hint)
 
 **Syntax Extensions**
 - [Compound Initializer Syntax](#compound-initializer-syntax)
@@ -2481,6 +2482,119 @@ data1`. Like `autopipeline_test.py`, it includes a `PART(...)` call (Arty A7-35T
 multi-cycle path constraints are Vivado-only and require real synthesis to exercise; it's
 a synthesis-only test run by hand (see `run_all.sh`), not part of the proto-simulation
 suite.
+
+---
+
+## `@wires` — Just-Wires Synthesis Hint
+
+Python equivalent of PipelineC's `#pragma FUNC_WIRES <func_name>` (see
+`include/leds/leds_port.c`, which tags its `#pragma MAIN leds_module` function this way).
+It tells the synthesizer that a function's entire hierarchy reduces to pure
+rewiring/bit-casting — no real combinational delay — so it should be treated as
+zero-delay rather than timed/estimated:
+
+```c
+// PipelineC C syntax
+#pragma FUNC_WIRES my_struct_to_bytes
+byte_array_t my_struct_to_bytes(my_struct_t x) { ... }
+```
+
+The underlying mechanism is entirely in `C_TO_LOGIC.ParserState.func_marked_wires` (a
+`set()` of func names) and `SYN.py`'s `LOGIC_IS_ZERO_DELAY`, and is shared, unmodified,
+with the C frontend — the same way `autopipeline`/`MULTI_CYCLE` are:
+
+```python
+# C_TO_LOGIC.py — already present on every ParserState, C and Python frontends alike
+self.func_marked_wires = set()   # func_name -> tagged "just wires" by #pragma FUNC_WIRES
+```
+
+```python
+# SYN.py
+def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
+    if logic.func_name in parser_state.func_marked_wires:
+        return True
+    ...
+```
+
+Porting the feature to Pypeline therefore required **no changes to `C_TO_LOGIC.py` or
+`SYN.py`** — only teaching `PY_TO_LOGIC.py` to populate the same set, keyed by the
+final hardware name.
+
+### Syntax — `@wires` decorator, implies `@hw_func`
+
+```python
+from pypeline import wires
+
+@wires
+def my_struct_to_bytes(x: my_struct_t) -> uint8_t[4]:
+    ...
+```
+
+Unlike `autopipeline(...)` (wraps a call) or `MULTI_CYCLE[...]` (tags a `Reg[T]`
+declaration), `FUNC_WIRES` tags a *function definition* — the same shape as `@sim_output`
+and `@MAIN`. A decorator directly on the `def` is therefore the natural fit. See
+`pypeline_DESIGN.md` for the `pypeline.py`-side implementation
+(`wires(func)` = `_sim_type_wrap(func)` + `_is_func_wires_pragma` stamp); it implies
+`@hw_func` so a "just wires" helper can also be called directly via `sim_call()` with no
+separate decorator. Because it does not introduce its own wrapper layer beyond
+`_sim_type_wrap`'s, `inspect.unwrap()` in `_elaborate_live_func` recovers the original
+source exactly as it already does for `@hw_func`/`@MAIN`.
+
+`@wires` stacks with `@MAIN` in either order, mirroring the two independent C pragmas on
+`leds_module`:
+
+```python
+@MAIN
+@wires
+def leds_module(): ...
+```
+
+### Elaboration — two name-finalization hook points
+
+A function's hardware name (`hw_name` for top-level defs, the canonical `key` for
+factory-closure functions) is settled in exactly two places in `PY_TO_LOGIC.py`; both
+check the live Python function object for the `_is_func_wires_pragma` flag right after
+the name is finalized.
+
+**Top-level `def`s — `PARSE_FILE` step 7:**
+
+```python
+logic = elab.elaborate()
+parser_state.FuncLogicLookupTable[hw_name] = logic
+if getattr(fglobals.get(node.name), "_is_func_wires_pragma", False):
+    parser_state.func_marked_wires.add(hw_name)
+if node.name in main_names:
+    ...
+```
+
+`fglobals[node.name]` is the live module-level object bound to that function's Python
+name — i.e. the fully-decorated function (after `@wires`/`@MAIN`/etc. have all run),
+which carries the stamp directly since `wires()` sets it on the object it returns.
+
+**Closures / factory-produced functions — `FuncElaborator._elaborate_live_func`:**
+
+```python
+logic.func_name = key
+if getattr(func, "_is_func_wires_pragma", False):
+    self.parser_state.func_marked_wires.add(key)
+self.parser_state.FuncLogicLookupTable[key] = logic
+return logic
+```
+
+`func` is the live callable passed in by the caller (the closure result found via
+`module_globals`/closure namespace lookup) — same stamp check, just using the canonical
+`key` instead of `hw_name`. This means `@wires` works identically whether applied to a
+plain top-level `def` or to an inner `def` inside a `make_*` factory function.
+
+No elaboration-time validation enforces that the tagged function is "really" just
+wires — exactly like the C pragma, it's a trusted assertion consumed only by the
+synthesis/timing-estimation stage.
+
+### Test coverage
+
+`src/tests/pypeline_tests/inst/func_wires_test.py` exercises both the plain top-level
+helper case and the `@MAIN`-stacked case (mirroring `leds_port.c`), plus a `sim_call()`
+smoke test proving the implied `@hw_func` wrapping works correctly.
 
 ---
 

@@ -42,3 +42,6 @@ rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/bit
 
 rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/import_test.py --out_dir ~/pypeline_run_all --comb --no_synth
 
+python3 ./src/tests/pypeline_tests/inst/func_wires_test.py
+rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/func_wires_test.py --out_dir ~/pypeline_run_all --comb --no_synth
+

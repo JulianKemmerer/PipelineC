@@ -2155,6 +2155,21 @@ Transparent to the hardware elaborator (inspect.unwrap recovers the original).
 """
 
 
+def wires(func):
+    """Mark a function as "just wires" (equivalent to PipelineC's
+    `#pragma FUNC_WIRES <func_name>`): pure rewiring/bit-casting logic with no
+    real combinational delay, so the synthesizer skips timing estimation for
+    its whole hierarchy.
+
+    Implies @hw_func: inputs/outputs are type-cast for simulation and the
+    function can be passed to sim_call() directly — no separate @hw_func
+    needed. Stacks with @MAIN in either order.
+    """
+    wrapped = _sim_type_wrap(func)
+    wrapped._is_func_wires_pragma = True
+    return wrapped
+
+
 def sim_call(func, *args, **kwargs):
     """Call a pypeline function in simulation mode with scoped operators active.
 

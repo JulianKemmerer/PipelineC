@@ -23,6 +23,7 @@ synthesises them for an FPGA.
 15. [Forcing Pipelining: `autopipeline()`](#15-forcing-pipelining-autopipeline)
 16. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#16-multi-cycle-paths-multi_cycle)
 17. [Raw VHDL Passthrough: `vhdl()`](#17-raw-vhdl-passthrough-vhdl)
+18. [Just-Wires Synthesis Hint: `@wires`](#18-just-wires-synthesis-hint-wires)
 
 ---
 
@@ -1257,5 +1258,56 @@ so it's always treated as an opaque, zero-cycle-delay black box — same as C's
 hardware elaboration — directly, via `sim_call()`, or via `pypeline_sim.py` — raises
 `NotImplementedError`. There is no general way to simulate arbitrary user-supplied VHDL
 text in Python; a future hook may let you attach a Python model to a specific block.
+
+---
+
+## 18 Just-Wires Synthesis Hint: `@wires`
+
+Some functions don't synthesise to any real logic — they just rearrange bits: packing a
+struct into a byte array, splitting an integer into its individual bits and wiring them
+out to separate ports, casting one same-width type to another. There's no gate delay to
+estimate for logic like that, but by default the synthesiser doesn't know that, and will
+spend time measuring or estimating a path delay through it anyway. `@wires` tells it not
+to bother — equivalent to PipelineC's `#pragma FUNC_WIRES <func_name>`.
+
+```python
+from pypeline import wires, struct, uint8_t
+from typing import NamedTuple
+
+@struct
+class pair_t(NamedTuple):
+    a: uint8_t
+    b: uint8_t
+
+@wires
+def pair_to_bytes(p: pair_t) -> uint8_t[2]:
+    return [p.a, p.b]
+```
+
+**`@wires` implies `@hw_func`** — you don't need to add `@hw_func` separately. That means
+a `@wires` function can be called directly with `sim_call()` (or from inside another
+`@hw_func`/`@MAIN` body) just like any other hardware helper:
+
+```python
+assert sim_call(pair_to_bytes, pair_t(a=1, b=2)) == [1, 2]
+```
+
+It also stacks with `@MAIN` in either order, for the case where an entire top-level entry
+point is just wires — mirroring `include/leds/leds_port.c`, which independently tags its
+`leds_module` function with both `#pragma MAIN` and `#pragma FUNC_WIRES`:
+
+```python
+@MAIN
+@wires
+def leds_module(): ...
+```
+
+**This is purely a synthesis-time hint** — it has no effect on simulation behaviour (the
+function still runs as ordinary Python/hardware logic), and the compiler does not check
+that the function is actually wires-only. Tagging logic that has real delay (arithmetic,
+comparisons, anything beyond rewiring/casting) with `@wires` will make the synthesiser
+underestimate timing through it — use it only for genuinely free rewiring.
+
+See `src/tests/pypeline_tests/inst/func_wires_test.py` for the full example.
 
 See `src/tests/pypeline_tests/inst/vhdl_text_test.py` for a complete example.

@@ -3247,6 +3247,8 @@ class FuncElaborator:
         finally:
             _pypeline._pop_scoped_registrations(saved)
         logic.func_name = key
+        if getattr(func, "_is_func_wires_pragma", False):
+            self.parser_state.func_marked_wires.add(key)
         self.parser_state.FuncLogicLookupTable[key] = logic
         return logic
 
@@ -4083,6 +4085,8 @@ def PARSE_FILE(py_file):
         )
         logic = elab.elaborate()
         parser_state.FuncLogicLookupTable[hw_name] = logic
+        if getattr(fglobals.get(node.name), "_is_func_wires_pragma", False):
+            parser_state.func_marked_wires.add(hw_name)
         if node.name in main_names:
             mhz = pypeline._main_mhz_registry.get(node.name)
             parser_state.main_mhz[hw_name] = mhz

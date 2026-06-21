@@ -417,6 +417,53 @@ code is needed. See
 for how `PY_TO_LOGIC.FuncElaborator._elab_ann_assign`/`_tag_multi_cycle_reg` consume the
 role and populate `Logic.mcp_tuples` — shared, unmodified, with the C frontend.
 
+### `wires(func)` — Just-Wires Synthesis Hint
+
+Python equivalent of PipelineC's `#pragma FUNC_WIRES <func_name>`. Tags a function
+definition as pure rewiring/bit-casting logic with no real combinational delay, so the
+synthesizer treats its whole hierarchy as zero-delay instead of estimating timing for it
+(see `include/leds/leds_port.c` for the C original — it tags its
+`#pragma MAIN leds_module` function this way):
+
+```python
+from pypeline import wires
+
+@wires
+def my_struct_to_bytes(x: my_struct_t) -> uint8_t[4]:
+    ...
+```
+
+Unlike `autopipeline(...)` (wraps a call expression) or `MULTI_CYCLE[...]` (tags a `Reg[T]`
+declaration), `FUNC_WIRES` tags a *function definition* — the same shape as `@MAIN` and
+`@sim_output`. Implementation mirrors `_register_main`'s "implies `@hw_func`" pattern
+(see [`@MAIN` / `@MAIN(mhz)` — Three-Form Decorator](#main--mainmhz--three-form-decorator)
+above):
+
+```python
+def wires(func):
+    wrapped = _sim_type_wrap(func)
+    wrapped._is_func_wires_pragma = True
+    return wrapped
+```
+
+**`@wires` implies `@hw_func`:** like `@MAIN`, it calls `_sim_type_wrap` before stamping
+the flag, so a "just wires" helper can be passed straight to `sim_call()` — no separate
+`@hw_func` needed. Because `_sim_type_wrap` already sets `__wrapped__` via
+`functools.wraps`, `inspect.unwrap()` in `PY_TO_LOGIC._elaborate_live_func` recovers the
+original source exactly as it already does for `@hw_func`/`@MAIN` — `wires` adds no
+extra wrapping layer of its own. It stacks with `@MAIN` in either order (mirroring the two
+independent C pragmas on `leds_module`); whichever decorator runs last is the one bound to
+the module-level name, and the `_is_func_wires_pragma` flag survives either order because
+`_sim_type_wrap`'s `functools.wraps` merges `__dict__` from the wrapped object.
+
+The `_is_func_wires_pragma` flag is the only thing the elaborator inspects (mirroring
+`@sim_output`'s `_is_sim_output` flag and `autopipeline`'s `_is_autopipeline_pragma`
+flag). See
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#wires--just-wires-synthesis-hint) for how
+`PY_TO_LOGIC.PARSE_FILE` / `FuncElaborator._elaborate_live_func` consume it and populate
+`parser_state.func_marked_wires`. The underlying `ParserState.func_marked_wires` set and
+`SYN.LOGIC_IS_ZERO_DELAY` consumer are shared, unmodified, with the C frontend.
+
 ### Registries
 
 | Name | Type | Content | Consumer |
@@ -669,6 +716,7 @@ Python string, not just a literal) and how it's stored on the shared
 | `@sim_output` | Marks a function as simulation output-only; no-op during convergence passes; executes in final pass per cycle |
 | `autopipeline(call_result, depth=-1)` | Wraps a single direct call; identity in sim; forces pipelining through that submodule during elaboration (equivalent to `#pragma AUTOPIPELINE`) |
 | `MULTI_CYCLE` / `_MultiCycleTag` / `_MultiCycleRole` | `MULTI_CYCLE[ncycles]` tag; `.start`/`.end` attach to `Reg[T, tag]` declarations to relax setup timing between them (equivalent to `#pragma MULTI_CYCLE`) |
+| `wires` | Marks a function as pure rewiring/bit-casting with no real delay; implies `@hw_func`; stacks with `@MAIN` in either order (equivalent to `#pragma FUNC_WIRES`) |
 | `Reg` / `_RegType` | Register descriptor; `Reg[T]` declares a stateful register; optional init value (`Reg[T] = val`); optional `Reg[T, tag]` multi-cycle role |
 | `Feedback` / `_FeedbackType` | Feedback wire descriptor; `Feedback[T]` declares a combinatorial feedback wire (no flip-flop) |
 | `Wire` / `_WireType` | Global wire descriptor; `Wire[T]` at module level declares a shared combinatorial wire (one writer) |
