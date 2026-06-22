@@ -1714,6 +1714,25 @@ class FuncElaborator:
                         self._declare_global_write_wire(mangled)
                     self._elab_compound_init(mangled, stmt.value, stmt.value)
                     return
+        # Compound field/array write via list/dict literal RHS, on any target shape
+        # (x = [...], x.field = [...], x.nested.field = [...]): _elab_expr has no
+        # case for a bare List/Dict node, so route through the same per-leaf
+        # _write_ref walk that _elab_ann_assign already uses for compound inits.
+        if isinstance(stmt.value, (ast.List, ast.Dict)):
+            ref_toks = self._parse_ref_toks(target)
+            if not _has_variable_index(ref_toks):
+                base_var = ref_toks[0]
+                global_key = self._resolve_global_wire(base_var)
+                if global_key and global_key != base_var:
+                    ref_toks = (global_key,) + ref_toks[1:]
+                    base_var = global_key
+                if global_key is not None and base_var not in self.env:
+                    self._declare_global_write_wire(base_var)
+                if base_var in self.env:
+                    self._elab_compound_init(
+                        base_var, stmt.value, stmt.value, path_toks=ref_toks[1:]
+                    )
+                    return
         # Hardware path
         rhs_wire, rhs_type = self._elab_expr(stmt.value)
         # x[15:0] = y — bit-slice assign on a scalar integer wire

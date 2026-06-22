@@ -321,13 +321,40 @@ below). `var: T = value` (an initializer already present) needs no rewrite — p
 already binds the name — but the variable is still tracked (see Rule 4).
 
 `_is_compound_pypeline_type(ctype)` distinguishes struct (`hasattr(ctype, "_fields")`) and
-array (`hasattr(ctype, "_ctype_name") and "[" in ctype._ctype_name`) annotations from the
-`Reg[T]`/`Feedback[T]`/`Wire[T]`/`Input[T]`/`Output[T]` descriptor objects, none of which
-carry either attribute, so those continue to fall through to their own dedicated handling
-untouched.
+array (`hasattr(ctype, "_ctype_name") and "[" in ctype._ctype_name`) annotations from
+`Wire[T]`/`Input[T]`/`Output[T]` descriptor objects, none of which carry either attribute, so
+those continue to fall through to their own dedicated handling untouched. `Reg[T]`/`Feedback[T]`
+are also wrapper objects with neither attribute, but their `inner_ctype` is checked separately —
+see Rule 3b below — so a compound-typed register/feedback wire is tracked too.
+
+**Rule 3b — `Reg[T]`/`Feedback[T]` locals where `T` is compound** (`AnnAssign`, annotation
+evaluates to a `_RegType`/`_FeedbackType` instance whose `inner_ctype` is a struct/array):
+
+```python
+reg: Reg[my_struct_t]              # tracked in _compound_declared; AnnAssign left untouched
+reg.field = expr                   # → reg = _sim_lens_set(reg, ["field"], expr)   (Rule 4)
+```
+
+`ann_val` for a `Reg[T]`/`Feedback[T]` annotation is the wrapper object itself (`_RegType`/
+`_FeedbackType`), not `T` — so `_is_compound_pypeline_type(ann_val)` (Rule 3's check) is always
+`False` for these, even when `T` is a struct/array. Rule 3b checks `ann_val.inner_ctype` instead:
+when it's compound, the variable name is added to `_compound_declared` exactly as Rule 3 does,
+but **the `AnnAssign` node itself is left untouched** — `reg`'s read/zero-init is handled
+separately by `_build_reg_sim_func` step 6 below (`_sim_reg_read`/`__reg_zero_<name>__`), not by
+`_make_sim_zero` at the rewrite site. The only effect of Rule 3b is making Rule 4 fire for nested
+writes through `reg`.
+
+Before this rule existed, `reg.field = expr` (any nesting depth, scalar **or** array-typed field)
+fell through untouched, then ran as plain Python attribute assignment on the immutable
+`NamedTuple` returned by `_sim_reg_read` — raising `AttributeError: can't set attribute` at
+runtime. Single-element index writes on an already-reachable list (`reg.arr[i] = x`) never hit
+this gap, since mutating a list in place needs no `NamedTuple.__setattr__` call — which made the
+bug easy to miss until a whole-field write (`reg.arr = [...]`) was attempted. The
+`PY_TO_LOGIC.py` elaborator has an analogous gap for the same `obj.field = [...]` pattern; see
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#compound-initializer-syntax).
 
 **Rule 4 — Partial writes to a tracked compound local** (`Assign` with an `Attribute` or
-`Subscript` target, chain rooted at a name from Rule 3):
+`Subscript` target, chain rooted at a name from Rule 3 or 3b):
 
 ```python
 rv.field = expr        →    rv = _sim_lens_set(rv, ["field"], expr)
@@ -343,7 +370,8 @@ tracked by Rule 3 are rewritten — an untracked object's `.attr = x` is left as
 attribute assignment, so arbitrary non-Pypeline objects used as locals are unaffected.
 
 **What is NOT rewritten:**
-- `Reg[T]`, `Feedback[T]`, `Wire[T]`, `Input[T]`, `Output[T]` descriptor annotations
+- `Wire[T]`, `Input[T]`, `Output[T]` descriptor annotations, and `Reg[T]`/`Feedback[T]` whose
+  inner type is scalar (a bare `reg = expr` reassignment has no nested chain to rewrite)
 - Tuple-unpack targets: `a, b = f()`
 - Whole-variable reassignment of a compound local (`rv = some_full_value`) — no cast or
   lens rewrite applies; plain Python rebinding is already correct
@@ -394,8 +422,11 @@ function body and compiles it via `exec`. Returns `(transformed_fn_or_None, has_
 
 **7-step pipeline:**
 
-1. **Retrieve source** — `inspect.getsource(inspect.unwrap(fn))` + `textwrap.dedent` to
-   normalize indentation.
+1. **Retrieve source** — `inspect.getsourcelines(inspect.unwrap(fn))` + `textwrap.dedent` to
+   normalize indentation. Unlike plain `getsource`, `getsourcelines` also returns the function's
+   real starting line number in its file; `ast.increment_lineno(tree, first_lineno - 1)` is
+   applied right after parsing (step 2) to shift every node's `lineno` to match — see
+   [Traceback Line Numbers](#traceback-line-numbers) below.
 
 2. **Parse** — `ast.parse` + find the top-level `FunctionDef`.
 
@@ -476,6 +507,25 @@ Annotation-only uses (`a: value_t`, `def f(a: value_t)`) are not captured. Fix: 
 `exec`, cross-reference parameter annotation `Name` nodes against `orig_fn.__annotations__`
 (already-evaluated type objects keyed by parameter name) and inject any missing names into
 `new_globals`. This is safe because `__annotations__` holds resolved objects, not source strings.
+
+### Traceback Line Numbers
+
+`compile(tree, src_file, "exec")` (step 7) passes the **real** file path as `src_file`, so that
+errors raised from the exec'd body show real, navigable file/line references rather than a
+synthetic name. But `ast.parse` numbers any standalone source snippet starting from line 1,
+regardless of where in the real file that snippet actually starts — and `inspect.getsource`
+returns only the function's own snippet. Left uncorrected, a node at snippet-line 3 (say) would
+be compiled with `lineno=3`, then an exception there would print a traceback pointing at line 3
+of the *real* file — typically an unrelated `import` or `sys.path.insert` near the top — not the
+line that actually failed.
+
+Step 1 uses `inspect.getsourcelines` instead of `inspect.getsource` to additionally capture
+`first_lineno` (the snippet's real starting line), and step 2 applies
+`ast.increment_lineno(tree, first_lineno - 1)` immediately after parsing — before any further
+rewriting — so every node's `lineno` (original statements and anything `copy_location`d from
+them) matches its true position in the real file. New synthetic statements introduced later
+(register read/write boilerplate, etc.) inherit a correct `lineno` too, via
+`ast.fix_missing_locations` copying down from the now-correctly-numbered `FunctionDef`.
 
 ---
 

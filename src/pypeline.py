@@ -1603,9 +1603,12 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
        [path...], expr)`, since struct instances are immutable NamedTuples and can't
        be mutated with plain attribute assignment.
 
-    Reg[T]/Feedback[T]/Wire[T]/Input[T]/Output[T] descriptor objects carry neither
-    `_fields` nor `_ctype_name`, so they fall through both the scalar and compound
-    checks untouched, leaving their dedicated handling elsewhere intact.
+    Reg[T]/Feedback[T] descriptor objects carry neither `_fields` nor `_ctype_name`
+    themselves, but when their `inner_ctype` is a struct/array, the variable is
+    tracked in `_compound_declared` (rule 4) exactly like a bare compound local —
+    `_build_reg_sim_func` handles their read/zero-init separately, but nested
+    `.field=`/`[i]=` writes on them go through the same `_sim_lens_set` rewrite.
+    Wire[T]/Input[T]/Output[T] still fall through both checks untouched.
     """
 
     def __init__(self, eval_ns, ann_ctypes_out):
@@ -1680,8 +1683,18 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
                 )
                 return _ast.copy_location(new_node, node)
             return node  # `var: T = value` already binds the name via plain Python
+        if isinstance(
+            ann_val, (_RegType, _FeedbackType)
+        ) and _is_compound_pypeline_type(ann_val.inner_ctype):
+            # Reg[T]/Feedback[T] where T is a struct/array: the read-back value is
+            # an immutable NamedTuple (or plain list), exactly like a bare compound
+            # local, so nested .field=/[i]= writes need the same lens-rewrite. The
+            # AnnAssign itself is left untouched — _build_reg_sim_func handles
+            # Reg/Feedback read/zero-init separately.
+            self._compound_declared[node.target.id] = True
+            return node
         if not _is_scalar_pypeline_int(ann_val):
-            return node  # Reg, Feedback, Wire, Input, Output — skip
+            return node  # Wire, Input, Output — skip
         # Always record: bare `var: T` declarations also type subsequent plain assigns.
         self._declared_types[node.target.id] = ann_val
         if node.value is None:
@@ -1777,13 +1790,19 @@ def _build_reg_sim_func(fn):
     """
     orig_fn = _inspect.unwrap(fn)
     try:
-        src = _textwrap.dedent(_inspect.getsource(orig_fn))
+        _src_lines, _first_lineno = _inspect.getsourcelines(orig_fn)
+        src = _textwrap.dedent("".join(_src_lines))
     except (OSError, TypeError):
         return None, False
     try:
         tree = _ast.parse(src)
     except SyntaxError:
         return None, False
+    # getsourcelines numbers the snippet from 1, but `src_file` below is the real file
+    # on disk — shift every node's lineno to match its true position there so
+    # tracebacks raised from the exec'd body point at the actual failing line instead
+    # of whatever happens to sit at that line number near the top of the real file.
+    _ast.increment_lineno(tree, _first_lineno - 1)
 
     func_def = next((n for n in tree.body if isinstance(n, _ast.FunctionDef)), None)
     if func_def is None:

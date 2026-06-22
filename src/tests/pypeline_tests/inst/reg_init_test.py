@@ -27,6 +27,19 @@ class reg_point_t(NamedTuple):
     y: uint32_t
 
 
+# ── structs for nested Reg[T] field-write tests ──────────────────────────────
+@struct
+class flags_t(NamedTuple):
+    bits: uint8_t[4]
+    valid: uint8_t
+
+
+@struct
+class nested_flags_t(NamedTuple):
+    inner: flags_t
+    tag: uint8_t
+
+
 # ── hardware functions ───────────────────────────────────────────────────────
 
 
@@ -73,6 +86,31 @@ def struct_reg_init_ctor() -> uint32_t:
     """Struct register constructor style reg_point_t(x=5, y=2); first return is 7."""
     pt: Reg[reg_point_t] = reg_point_t(x=5, y=2)
     return pt.x + pt.y
+
+
+@MAIN
+def reg_scalar_field_write() -> uint32_t:
+    """Scalar field write through Reg[struct], 1 level deep: pt.x=9, pt.y=1 -> 10."""
+    pt: Reg[reg_point_t]
+    pt.x = 9
+    pt.y = 1
+    return pt.x + pt.y
+
+
+@MAIN
+def reg_array_field_write() -> uint8_t:
+    """Whole-array-literal field write through Reg[struct], 1 level deep; returns bits[2]."""
+    f: Reg[flags_t]
+    f.bits = [5, 6, 7, 8]
+    return f.bits[2]
+
+
+@MAIN
+def reg_nested_array_field_write() -> uint8_t:
+    """Whole-array-literal field write through Reg[struct], 2 levels deep; returns inner.bits[3]."""
+    nf: Reg[nested_flags_t]
+    nf.inner.bits = [1, 2, 3, 4]
+    return nf.inner.bits[3]
 
 
 # ── simulation tests ─────────────────────────────────────────────────────────
@@ -141,6 +179,30 @@ def test_sim_reset_restores_init():
     print(f"test_sim_reset_restores_init PASS  after_reset={int(after_reset)}")
 
 
+def test_reg_scalar_field_write():
+    """Scalar field write through a Reg[struct] local, 1 level deep."""
+    sim_reset()
+    r = sim_call(reg_scalar_field_write)
+    assert int(r) == 10, f"expected 10 (9+1), got {int(r)}"
+    print(f"test_reg_scalar_field_write PASS  result={int(r)}")
+
+
+def test_reg_array_field_write():
+    """Whole-array-literal field write through a Reg[struct] local, 1 level deep."""
+    sim_reset()
+    r = sim_call(reg_array_field_write)
+    assert int(r) == 7, f"expected 7 (bits[2]), got {int(r)}"
+    print(f"test_reg_array_field_write PASS  result={int(r)}")
+
+
+def test_reg_nested_array_field_write():
+    """Whole-array-literal field write through a Reg[struct] local, 2 levels deep."""
+    sim_reset()
+    r = sim_call(reg_nested_array_field_write)
+    assert int(r) == 4, f"expected 4 (inner.bits[3]), got {int(r)}"
+    print(f"test_reg_nested_array_field_write PASS  result={int(r)}")
+
+
 if __name__ == "__main__":
     test_scalar_init()
     test_default_init_unchanged()
@@ -149,4 +211,7 @@ if __name__ == "__main__":
     test_struct_init_dict()
     test_struct_init_ctor()
     test_sim_reset_restores_init()
+    test_reg_scalar_field_write()
+    test_reg_array_field_write()
+    test_reg_nested_array_field_write()
     print("All reg_init tests passed.")

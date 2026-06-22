@@ -1776,11 +1776,43 @@ node; `_resolve_module_wire_name` mangles it to the hardware wire name, the wire
 declared if needed, and `_elab_compound_init` is called with the `ast.Call` node —
 identical to the `ast.Name` plain-assignment path.
 
+**Elaboration — list/dict literal RHS on an already-declared variable's nested field:**
+
+The forms above all assign to the *whole* variable (`my_point = ...`) or to a field at
+declaration time. `_elab_assign` separately special-cases `ast.List`/`ast.Dict` RHS values on
+**any** assignment target shape — `Name`, `Attribute`, or `Subscript` — so list/dict literals
+can also be written through an already-declared variable's nested field or array element:
+
+```python
+reg: Reg[axis_t]
+reg.data.frag.keep = [0, 0, 0, 0]   # whole-array field write, 2 levels deep
+
+f: flags_t
+f.bits = [5, 6, 7, 8]               # whole-array field write, 1 level deep
+```
+
+`_parse_ref_toks(target)` resolves the target chain to `(base_var, *path_toks)`. Provided none
+of the path tokens is a variable (non-constant) index and `base_var` already exists (declared by
+an earlier `AnnAssign`, or promoted to a global write wire), `_elab_compound_init(base_var, ...,
+path_toks=path_toks)` runs the same per-leaf `_write_ref` walk used by the declaration-time forms
+above. If `base_var` isn't already known, the assignment falls through to the generic
+`_elab_expr`-based hardware path unchanged — a brand-new compound-typed variable can't be
+inferred from a bare list/dict literal the way it can from a NamedTuple constructor call (whose
+callee names the type).
+
+Before this case was added, `_elab_expr` had no handling for a bare `ast.List`/`ast.Dict` node at
+all, so any nested-field write with a list/dict RHS (not just whole-array writes — even a
+single-level `obj.field = [...]`) raised `NotImplementedError: Unsupported expr: List(...)` at
+elaboration time. This is the `PY_TO_LOGIC.py` counterpart to the simulation-side fix described
+in [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#_typedannassignrewriter--truncation-at-every-typed-assignment)
+(Rule 3b/4) — both backends now support the same `reg.nested.field = [...]` pattern.
+
 **Rules (all forms):**
 - Leaf values can be any hardware expression (constants, input wires, sub-expressions).
 - Nesting is allowed to arbitrary depth (struct of arrays, array of structs, etc.).
 - Applies to annotated assignment (`var: T = …`), plain assignment (`x = MyStruct(...)`),
-  module-qualified global wire assignment (`mod.wire = MyStruct(...)`), and return
+  module-qualified global wire assignment (`mod.wire = MyStruct(...)`), nested field/index
+  assignment on an already-declared variable (`x.field = […]`, `x.a.b = […]`), and return
   statements.
 
 This is **pure elaboration sugar** — the result is identical to writing the assignments
