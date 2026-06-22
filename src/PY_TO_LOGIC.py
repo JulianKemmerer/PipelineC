@@ -4123,6 +4123,10 @@ def PARSE_FILE(py_file):
 
     _build_inst_lookup(parser_state)
 
+    # Sanity check have at least 1 MAIN func
+    if len(parser_state.main_mhz) == 0:
+        raise ElaborationError(f"No functions were decorated as @MAIN?")
+
     # Trim logic (currently PipelineC backend has bug that needs this)
     if C_TO_LOGIC.TRIM_COLLAPSE_LOGIC:
         print("Doing simple logic trimming/collapsing...", flush=True)
