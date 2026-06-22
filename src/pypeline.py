@@ -699,6 +699,13 @@ def struct(cls):
                     and _is_scalar_pypeline_int(ftype)
                 ):
                     v = _RawField(int(v))
+                elif ftype is not None and type(v) is list:
+                    elem_ftype = _array_elem_ctype(ftype)
+                    if elem_ftype is not None and _is_scalar_pypeline_int(elem_ftype):
+                        v = [
+                            _RawField(int(e)) if type(e) in (int, SimVal) else e
+                            for e in v
+                        ]
                 typed[fname] = v
         else:
             for fname, v in kwargs.items():
@@ -713,6 +720,14 @@ def struct(cls):
                         obj = _int_new(SimVal, int(v))
                         _obj_setattr(obj, "_ctype", ftype)
                         v = obj
+                elif ftype is not None and type(v) is list:
+                    # Array-of-scalar field passed a raw Python list (e.g. a list
+                    # literal): cast each element so it carries the field's bit width,
+                    # matching the per-field scalar wrap above. Struct/array elements
+                    # are left untouched -- they self-type via their own constructor.
+                    elem_ftype = _array_elem_ctype(ftype)
+                    if elem_ftype is not None and _is_scalar_pypeline_int(elem_ftype):
+                        v = [_sim_cast(e, elem_ftype) for e in v]
                 typed[fname] = v
         return _orig_new(klass, **typed)
 
@@ -1382,19 +1397,49 @@ def _is_compound_pypeline_type(ctype):
     return False
 
 
+def _array_elem_ctype(ctype):
+    """Return the element ctype of an array ctype (preferring _elem_ctype, falling back
+    to stripping the trailing [N] from _ctype_name), or None if ctype is not an array."""
+    if not hasattr(ctype, "_ctype_name"):
+        return None
+    m = _re_ctype.search(r"\[(\d+)\]$", ctype._ctype_name)
+    if not m:
+        return None
+    return getattr(ctype, "_elem_ctype", None) or _make_ctype(
+        ctype._ctype_name[: m.start()]
+    )
+
+
+def _array_len(ctype):
+    """Return the trailing [N] dimension of an array ctype, or None if not an array."""
+    if not hasattr(ctype, "_ctype_name"):
+        return None
+    m = _re_ctype.search(r"\[(\d+)\]$", ctype._ctype_name)
+    return int(m.group(1)) if m else None
+
+
 def _make_sim_zero(ctype):
     """Return a zero-initialized simulation value for the given pypeline ctype."""
     if hasattr(ctype, "_fields"):
         return ctype(*(_make_sim_zero(ctype.__annotations__[f]) for f in ctype._fields))
-    if hasattr(ctype, "_ctype_name"):
-        m = _re_ctype.search(r"\[(\d+)\]$", ctype._ctype_name)
-        if m:
-            n = int(m.group(1))
-            elem_ctype = getattr(ctype, "_elem_ctype", None) or _make_ctype(
-                ctype._ctype_name[: m.start()]
-            )
-            return [_make_sim_zero(elem_ctype) for _ in range(n)]
-    return 0
+    elem_ctype = _array_elem_ctype(ctype)
+    if elem_ctype is not None:
+        n = _array_len(ctype)
+        return [_make_sim_zero(elem_ctype) for _ in range(n)]
+    return _sim_cast(0, ctype)
+
+
+def _sim_cast_deep(value, ctype):
+    """Cast value to ctype, recursing through arrays so every scalar leaf becomes a
+    typed SimVal -- mirrors hardware where an array's elements all share one declared
+    bit width. Structs are left as-is: struct construction already types scalar (and,
+    via _typed_new, array-of-scalar) fields at construction time."""
+    if hasattr(ctype, "_fields"):
+        return value
+    elem_ctype = _array_elem_ctype(ctype)
+    if elem_ctype is not None:
+        return [_sim_cast_deep(v, elem_ctype) for v in value]
+    return _sim_cast(value, ctype)
 
 
 def _sim_lens_set(obj, path, value):
@@ -1615,7 +1660,7 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
         self._eval_ns = eval_ns
         self._ann_ctypes_out = ann_ctypes_out  # filled in-place: key → ctype_obj
         self._declared_types = {}  # var_name → ctype, populated by AnnAssign visits
-        self._compound_declared = {}  # var_name → True, bare/typed struct or array locals
+        self._compound_declared = {}  # var_name → ctype, bare/typed struct or array locals
         self.modified = False  # True if any compound zero-init/lens rewrite happened
 
     def _make_cast(self, value_node, ctype, ref_node):
@@ -1638,27 +1683,67 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
             keywords=[],
         )
 
+    def _make_deep_cast(self, value_node, ctype, ref_node):
+        """Return a _sim_cast_deep(value_node, __sim_ann_L_C__) Call node -- casts a
+        Rule-4 partial-write value (scalar or array-of-scalar) to the statically-resolved
+        leaf ctype before it's threaded through _sim_lens_set."""
+        key = f"__sim_ann_{ref_node.lineno}_{ref_node.col_offset}__deep__"
+        self._ann_ctypes_out[key] = ctype
+        return _ast.Call(
+            func=_ast.Name(id="_sim_cast_deep", ctx=_ast.Load()),
+            args=[value_node, _ast.Name(id=key, ctx=_ast.Load())],
+            keywords=[],
+        )
+
     def _chain_to_path(self, target):
-        """Walk an Attribute/Subscript chain to (root_name, [path_node, ...]),
+        """Walk an Attribute/Subscript chain to (root_name, [path_node, ...], [kind, ...]),
         root-to-leaf order. path nodes are ast.Constant(field_name) for attribute
-        access or the raw slice node for subscript access. Returns (None, None) if
-        the chain doesn't bottom out in a plain Name."""
+        access or the raw slice node for subscript access -- used to build the runtime
+        _sim_lens_set path list. kinds is a parallel list of ('attr', field_name_str) or
+        ('idx', None), used at rewrite time (not runtime) to statically resolve the leaf
+        ctype, since an array's elements all share one declared ctype regardless of the
+        (possibly dynamic) index expression. Returns (None, None, None) if the chain
+        doesn't bottom out in a plain Name."""
         path = []
+        kinds = []
         node = target
         while isinstance(node, (_ast.Attribute, _ast.Subscript)):
             if isinstance(node, _ast.Attribute):
                 path.append(_ast.Constant(value=node.attr))
+                kinds.append(("attr", node.attr))
                 node = node.value
             else:
                 slc = node.slice
                 if isinstance(slc, _ast.Index):  # py3.8 compat
                     slc = slc.value
                 path.append(slc)
+                kinds.append(("idx", None))
                 node = node.value
         path.reverse()
+        kinds.reverse()
         if isinstance(node, _ast.Name):
-            return node.id, path
-        return None, None
+            return node.id, path, kinds
+        return None, None, None
+
+    def _resolve_leaf_ctype(self, root_ctype, kinds):
+        """Walk root_ctype through a _chain_to_path 'kinds' list to the statically-known
+        leaf ctype, or None if it can't be resolved (defensive -- callers fall back to
+        today's uncast behavior rather than erroring)."""
+        ctype = root_ctype
+        for kind, field_name in kinds:
+            if kind == "attr":
+                if not hasattr(ctype, "_fields"):
+                    return None
+                ann = ctype.__annotations__.get(field_name)
+                if ann is None:
+                    return None
+                ctype = ann
+            else:
+                elem_ctype = _array_elem_ctype(ctype)
+                if elem_ctype is None:
+                    return None
+                ctype = elem_ctype
+        return ctype
 
     def visit_AnnAssign(self, node):
         self.generic_visit(node)
@@ -1672,9 +1757,10 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
         except Exception:
             return node
         if _is_compound_pypeline_type(ann_val):
-            # Bare struct/array local: track it so subsequent .field=/[i]= writes
-            # get lens-rewritten, and zero-init it if declared without a value.
-            self._compound_declared[node.target.id] = True
+            # Bare struct/array local: track it (with its ctype, so later .field=/[i]=
+            # writes can resolve the leaf ctype for casting) so subsequent writes get
+            # lens-rewritten, and zero-init it if declared without a value.
+            self._compound_declared[node.target.id] = ann_val
             if node.value is None:
                 self.modified = True
                 new_node = _ast.Assign(
@@ -1691,7 +1777,7 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
             # local, so nested .field=/[i]= writes need the same lens-rewrite. The
             # AnnAssign itself is left untouched — _build_reg_sim_func handles
             # Reg/Feedback read/zero-init separately.
-            self._compound_declared[node.target.id] = True
+            self._compound_declared[node.target.id] = ann_val.inner_ctype
             return node
         if not _is_scalar_pypeline_int(ann_val):
             return node  # Wire, Input, Output — skip
@@ -1720,16 +1806,22 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
             )
             return _ast.copy_location(new_node, node)
         if isinstance(target, (_ast.Attribute, _ast.Subscript)):
-            root, path = self._chain_to_path(target)
+            root, path, kinds = self._chain_to_path(target)
             if root is not None and root in self._compound_declared:
                 self.modified = True
+                leaf_ctype = self._resolve_leaf_ctype(
+                    self._compound_declared[root], kinds
+                )
+                value_node = node.value
+                if leaf_ctype is not None:
+                    value_node = self._make_deep_cast(value_node, leaf_ctype, node)
                 path_list = _ast.List(elts=path, ctx=_ast.Load())
                 lens_call = _ast.Call(
                     func=_ast.Name(id="_sim_lens_set", ctx=_ast.Load()),
                     args=[
                         _ast.Name(id=root, ctx=_ast.Load()),
                         path_list,
-                        node.value,
+                        value_node,
                     ],
                     keywords=[],
                 )
@@ -2045,6 +2137,7 @@ def _build_reg_sim_func(fn):
     new_globals = _eval_ns.copy()  # includes globals + closure vars
     new_globals.update(
         _sim_cast=_sim_cast,
+        _sim_cast_deep=_sim_cast_deep,
         _make_sim_zero=_make_sim_zero,
         _sim_lens_set=_sim_lens_set,
         _sim_current_inst_path=_sim_current_inst_path,

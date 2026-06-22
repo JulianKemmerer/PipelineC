@@ -366,8 +366,65 @@ in `pypeline_DESIGN.md`), so `rv.field = expr` cannot mutate in place — it mus
 via `rv._replace(field=...)`. `_sim_lens_set` (below) does this generically for arbitrarily
 nested `.field`/`[i]` chains, rewritten by walking the assignment target's `Attribute`/
 `Subscript` chain back to its root `Name` (`_chain_to_path`). Only chains rooted at a name
-tracked by Rule 3 are rewritten — an untracked object's `.attr = x` is left as plain Python
+tracked by Rule 3/3b are rewritten — an untracked object's `.attr = x` is left as plain Python
 attribute assignment, so arbitrary non-Pypeline objects used as locals are unaffected.
+
+**Leaf-ctype casting (`_sim_cast_deep`):** `_compound_declared` stores the root variable's
+*ctype*, not just a membership flag, specifically so Rule 4 can resolve the statically-known
+type of the leaf being written. `_chain_to_path` returns a parallel `kinds` list alongside the
+runtime path nodes — `('attr', field_name)` for each `.field` step (the name is already a
+plain Python string on the AST node, no eval needed) and `('idx', None)` for each `[i]` step
+(the index value is irrelevant to the type, since every element of an array shares one
+declared ctype). `_resolve_leaf_ctype(root_ctype, kinds)` walks `root_ctype` through `kinds` —
+`'attr'` steps look up `ctype.__annotations__[field_name]`; `'idx'` steps move to
+`_array_elem_ctype(ctype)` (the same `_elem_ctype`-preferred / `_ctype_name`-suffix-stripping
+helper `_make_sim_zero` uses below) — returning `None` if it can't resolve (defensive: falls
+back to the old uncast behavior rather than erroring). When a leaf ctype *is* resolved, the
+rewriter wraps `node.value` in `_sim_cast_deep(value, leaf_ctype)` before it reaches
+`_sim_lens_set`:
+
+```python
+rv.field = expr        →    rv = _sim_lens_set(rv, ["field"], _sim_cast_deep(expr, field_ctype))
+wide_reg.frag.keep = [0]*n  →  wide_reg = _sim_lens_set(wide_reg, ["frag", "keep"],
+                                              _sim_cast_deep([0]*n, uint1_t_n_ctype))
+```
+
+Without this, a value with no `_ctype` flowing through a partial write — a raw Python list
+literal (`wide_reg.frag.keep = [0,0,1,1]`), or a read of an already-untyped element elsewhere
+— stayed an untyped plain `int`/`list` indefinitely, since `_sim_lens_set` itself just stores
+whatever it's given. Plain-int bitwise ops then silently diverge from hardware: Python
+`~0 == -1` and `~1 == -2` are **both truthy**, so an `if ~field:` idiom on an untyped 1-bit
+value was always-true regardless of the real bit — a real (non-cosmetic) correctness bug,
+not just a typing nicety, since it breaks the extremely common
+`valid_or_ready: uint1_t = ~some.field` hardware pattern. Found while building `dwidth_widen`/
+`dwidth_narrow` in `include/pypeline/axi/axis.py`, where `chunks[c].valid = wide.frag.keep[...]`
+(reading an array-of-scalar `keep` field) and `wide_out_reg.data.frag.keep = [0] * wide_n`
+(writing one) both fed an `if ~chunks[0].valid:` realignment loop.
+
+### `_sim_cast_deep(value, ctype)` — Typed Casting Through Arrays
+
+```python
+def _sim_cast_deep(value, ctype):
+    if hasattr(ctype, "_fields"):
+        return value                                    # struct: self-types via _typed_new
+    elem_ctype = _array_elem_ctype(ctype)
+    if elem_ctype is not None:
+        return [_sim_cast_deep(v, elem_ctype) for v in value]   # array: recurse per element
+    return _sim_cast(value, ctype)                       # scalar: mask/sign-extend
+```
+
+Used by Rule 4 above (with a statically-resolved leaf ctype) and conceptually mirrors what
+`_typed_new` does for struct constructor kwargs (see
+[Struct Support](pypeline_DESIGN.md#struct-support) in `pypeline_DESIGN.md`) — both now
+recurse through array-of-scalar values element-wise rather than only handling top-level
+scalars. Struct-typed values are passed through unchanged: a struct instance reaching this
+point either already went through its own `_typed_new` (already typed) or isn't a pypeline
+value at all, so no further action is needed at this level.
+
+`_array_elem_ctype(ctype)` (a small shared helper, also used by `_make_sim_zero` below) returns
+an array ctype's element ctype — preferring `_elem_ctype` (set at array-type-creation time,
+see [C Type System](pypeline_DESIGN.md#c-type-system) in `pypeline_DESIGN.md`) over re-deriving
+it from `_ctype_name`'s trailing `[N]` — or `None` if `ctype` isn't an array.
 
 **What is NOT rewritten:**
 - `Wire[T]`, `Input[T]`, `Output[T]` descriptor annotations, and `Reg[T]`/`Feedback[T]` whose
@@ -594,18 +651,31 @@ def _sim_reg_write(inst_path, reg_name, value): ...
 # Stores value as-is — struct/array instances preserved without int() coercion.
 
 def _make_sim_zero(ctype): ...
-# 0 for scalar; recursively zero-initialised NamedTuple for @struct types;
-# recursively zero-initialised list for array types (each element zeroed the same way,
-# so arrays of structs and multi-dimensional arrays both work).
+# a typed zero SimVal (_sim_cast(0, ctype)) for scalar; recursively zero-initialised
+# NamedTuple for @struct types; recursively zero-initialised list for array types (each
+# element zeroed the same way, so arrays of structs and multi-dimensional arrays both work).
 ```
 
-Array element type resolution prefers `ctype._elem_ctype` (set by `_CTypeMeta.__getitem__` /
-`_struct_class_getitem` at array-type-creation time — see
-[C Type System](pypeline_DESIGN.md#c-type-system) in `pypeline_DESIGN.md`) over re-deriving
-it by stripping the trailing `[N]` from `ctype._ctype_name`: the string-only path can't
-recover a struct element type's field layout, only its name, so `_elem_ctype` is what makes
-`point_t[10]` zero-initialize to ten real zero-valued `point_t` instances rather than ten
-bare `0`s. The string-derived fallback remains for array ctypes built without `__getitem__`.
+Array element type resolution (`_array_elem_ctype`, also used by `_sim_cast_deep` above)
+prefers `ctype._elem_ctype` (set by `_CTypeMeta.__getitem__` / `_struct_class_getitem` at
+array-type-creation time — see [C Type System](pypeline_DESIGN.md#c-type-system) in
+`pypeline_DESIGN.md`) over re-deriving it by stripping the trailing `[N]` from
+`ctype._ctype_name`: the string-only path can't recover a struct element type's field layout,
+only its name, so `_elem_ctype` is what makes `point_t[10]` zero-initialize to ten real
+zero-valued `point_t` instances rather than ten bare `0`s. The string-derived fallback remains
+for array ctypes built without `__getitem__`.
+
+**Scalar leaf typing:** the scalar fallback returns `_sim_cast(0, ctype)` — a properly typed
+`SimVal` — rather than a bare Python `0`. This matters most for **arrays of scalar ints**
+(e.g. `keep: uint1_t[n]`): a struct field's scalar zero gets retyped anyway when the recursive
+call's result is passed through the struct's own constructor (`_typed_new` wraps it — see
+[Struct Support](pypeline_DESIGN.md#struct-support) in `pypeline_DESIGN.md`), but a *list*
+built by the array branch here has no constructor to route through, so each element needed to
+already be typed coming out of the recursive `_make_sim_zero(elem_ctype)` call. Before this
+fix, `_make_sim_zero(uint1_t[4])` produced `[0, 0, 0, 0]` with every element a plain `int` —
+combined with the Rule 4 gap above, this was the root cause of `if ~chunks[0].valid:`-style
+conditionals always evaluating true regardless of the real bit (Python `~0`/`~1` are both
+truthy on plain ints; only a 1-bit-masked `SimVal` alternates correctly).
 
 `_make_sim_zero` is also used directly by `_TypedAnnAssignRewriter` Rule 3 (above) to
 zero-initialize bare struct/array **local variables**, not just `Reg[T]` defaults — the two

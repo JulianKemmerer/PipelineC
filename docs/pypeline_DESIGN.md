@@ -229,17 +229,30 @@ above, the returned array class also gets `_elem_ctype = point_t` set, so the si
 zero-initialize `point_t[10]` arrays as a list of zero-valued `point_t` instances rather than
 a list of bare `0`s.
 
-**3. Overrides `__new__`** with `_typed_new` to wrap scalar integer fields in typed
-simulation values when constructing struct instances. This enables `left.exp` in `float_add`
-to carry the correct `_ctype` (`uint8_t` for float32) so `concat(x_hidden, left.man)` can
-infer field widths without being told. Two code paths:
+**3. Overrides `__new__`** with `_typed_new` to wrap scalar integer fields — and scalar
+*array* fields, element-wise — in typed simulation values when constructing struct
+instances. This enables `left.exp` in `float_add` to carry the correct `_ctype` (`uint8_t`
+for float32) so `concat(x_hidden, left.man)` can infer field widths without being told. Two
+code paths:
 
 - **Normal sim mode** (`SIM_RAW_INTS=False`): wraps scalar fields with `_int_new(SimVal, ...)` +
-  `_obj_setattr(obj, "_ctype", ftype)` (bypasses `SimVal.__new__` Python overhead).
+  `_obj_setattr(obj, "_ctype", ftype)` (bypasses `SimVal.__new__` Python overhead). A field
+  whose type is an array of a scalar pypeline int (e.g. `keep: uint1_t[n]`) and whose value
+  is a plain Python `list` (e.g. a list-literal argument) has each element cast individually
+  via `_sim_cast(e, elem_ctype)`, using the element ctype resolved by `_array_elem_ctype`
+  (see [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#regt-simulation--stateful-registers-across-clock-cycles)).
 - **Raw sim mode** (`SIM_RAW_INTS=True`): wraps scalar fields with `_RawField(int(v))` —
-  `int` subclass keeping C-level arithmetic, with `__getitem__` for bit-slicing.
+  `int` subclass keeping C-level arithmetic, with `__getitem__` for bit-slicing. Scalar array
+  fields get the same per-element `_RawField` wrap.
 
-Array and nested-struct fields are passed through unchanged in both modes.
+Nested-struct fields are passed through unchanged in both modes — a struct-typed value
+arriving here is either already a typed instance (built through its own `_typed_new`) or a
+raw object the elaborator/sim layer doesn't need to touch at this level. Without the
+array-of-scalar handling above, a raw list literal passed straight into a struct constructor
+(e.g. `narrow_bus_t(data=[0]*n, keep=[0]*n)`) would silently keep untyped `int` elements —
+this previously broke `~`/other bit-width-sensitive ops on values read back out of such a
+field (see [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#regt-simulation--stateful-registers-across-clock-cycles)
+for the full mechanism and the matching `_make_sim_zero`/Rule 4 fixes).
 
 **Hardware transparency:** `SimVal` subclasses `int`, and `_RawField` subclasses `int`, so
 struct instances returned by `as_const` or any constant helper are seen as plain integers by
