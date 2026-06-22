@@ -35,7 +35,9 @@ class _CTypeMeta(type):
     def __getitem__(cls, dim):
         if not isinstance(dim, int):
             raise TypeError(f"Array dimension must be int, got {type(dim)}: {dim!r}")
-        return _make_ctype(f"{cls._ctype_name}[{dim}]")
+        arr = _make_ctype(f"{cls._ctype_name}[{dim}]")
+        arr._elem_ctype = cls
+        return arr
 
     @property
     def width(cls):
@@ -292,7 +294,9 @@ def _mangle_type(s):
 def _struct_class_getitem(cls, dim):
     """Enables point_t[10] -> _make_ctype('point_t[10]') using the canonical C type name."""
     name = getattr(cls, "_pypeline_ctype_name", cls.__name__)
-    return _make_ctype(f"{name}[{dim}]")
+    arr = _make_ctype(f"{name}[{dim}]")
+    arr._elem_ctype = cls
+    return arr
 
 
 @_functools.lru_cache(maxsize=None)
@@ -1367,11 +1371,49 @@ def _sim_current_inst_path():
     return tuple(_sim_inst_stack)
 
 
+def _is_compound_pypeline_type(ctype):
+    """True for struct (NamedTuple) or array ctypes; False for scalars and the
+    Reg/Feedback/Wire/Input/Output descriptor objects (none of which carry
+    _fields or _ctype_name)."""
+    if hasattr(ctype, "_fields"):
+        return True
+    if hasattr(ctype, "_ctype_name") and "[" in ctype._ctype_name:
+        return True
+    return False
+
+
 def _make_sim_zero(ctype):
     """Return a zero-initialized simulation value for the given pypeline ctype."""
     if hasattr(ctype, "_fields"):
         return ctype(*(_make_sim_zero(ctype.__annotations__[f]) for f in ctype._fields))
+    if hasattr(ctype, "_ctype_name"):
+        m = _re_ctype.search(r"\[(\d+)\]$", ctype._ctype_name)
+        if m:
+            n = int(m.group(1))
+            elem_ctype = getattr(ctype, "_elem_ctype", None) or _make_ctype(
+                ctype._ctype_name[: m.start()]
+            )
+            return [_make_sim_zero(elem_ctype) for _ in range(n)]
     return 0
+
+
+def _sim_lens_set(obj, path, value):
+    """Return a copy of obj with the nested element at path replaced by value.
+
+    Handles NamedTuple structs (immutable -> _replace) and lists (copy + index set).
+    path is a list of field-name strings (struct attribute) or ints (array index),
+    root-to-leaf order.
+    """
+    if not path:
+        return value
+    head, rest = path[0], path[1:]
+    if isinstance(head, str):
+        child = getattr(obj, head)
+        return obj._replace(**{head: _sim_lens_set(child, rest, value)})
+    new_list = list(obj)
+    idx = int(head)
+    new_list[idx] = _sim_lens_set(new_list[idx], rest, value)
+    return new_list
 
 
 def _sim_reg_read(inst_path, reg_name, default=0):
@@ -1550,14 +1592,28 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
 
     Must be applied AFTER _GlobalWireRewriter: wire AnnAssigns have already been
     converted to Expr(Call) nodes by that pass, so this rewriter only sees non-wire
-    annotations.  Non-integer types (structs, arrays, Reg, Feedback, Wire) are
-    left untouched.
+    annotations.
+
+    A third rule handles bare struct/array locals (the canonical `rv: T` then
+    `rv.field = ...` / `rv[i] = ...` idiom carried over from C PipelineC):
+    3. `var: struct_or_array_type` (no value)  →  `var = _make_sim_zero(T)`, so the
+       name is bound to a zero-valued instance instead of raising UnboundLocalError.
+    4. `var.field = expr` / `var[i] = expr` (and nested chains thereof) where `var` was
+       declared via rule 3 (or via `var: T = ...`)  →  `var = _sim_lens_set(var,
+       [path...], expr)`, since struct instances are immutable NamedTuples and can't
+       be mutated with plain attribute assignment.
+
+    Reg[T]/Feedback[T]/Wire[T]/Input[T]/Output[T] descriptor objects carry neither
+    `_fields` nor `_ctype_name`, so they fall through both the scalar and compound
+    checks untouched, leaving their dedicated handling elsewhere intact.
     """
 
     def __init__(self, eval_ns, ann_ctypes_out):
         self._eval_ns = eval_ns
         self._ann_ctypes_out = ann_ctypes_out  # filled in-place: key → ctype_obj
         self._declared_types = {}  # var_name → ctype, populated by AnnAssign visits
+        self._compound_declared = {}  # var_name → True, bare/typed struct or array locals
+        self.modified = False  # True if any compound zero-init/lens rewrite happened
 
     def _make_cast(self, value_node, ctype, ref_node):
         """Return a _sim_cast(value_node, __sim_ann_L_C__) Call node."""
@@ -1568,6 +1624,38 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
             args=[value_node, _ast.Name(id=key, ctx=_ast.Load())],
             keywords=[],
         )
+
+    def _make_zero_call(self, ctype, ref_node):
+        """Return a _make_sim_zero(__sim_ann_L_C__) Call node."""
+        key = f"__sim_ann_{ref_node.lineno}_{ref_node.col_offset}__"
+        self._ann_ctypes_out[key] = ctype
+        return _ast.Call(
+            func=_ast.Name(id="_make_sim_zero", ctx=_ast.Load()),
+            args=[_ast.Name(id=key, ctx=_ast.Load())],
+            keywords=[],
+        )
+
+    def _chain_to_path(self, target):
+        """Walk an Attribute/Subscript chain to (root_name, [path_node, ...]),
+        root-to-leaf order. path nodes are ast.Constant(field_name) for attribute
+        access or the raw slice node for subscript access. Returns (None, None) if
+        the chain doesn't bottom out in a plain Name."""
+        path = []
+        node = target
+        while isinstance(node, (_ast.Attribute, _ast.Subscript)):
+            if isinstance(node, _ast.Attribute):
+                path.append(_ast.Constant(value=node.attr))
+                node = node.value
+            else:
+                slc = node.slice
+                if isinstance(slc, _ast.Index):  # py3.8 compat
+                    slc = slc.value
+                path.append(slc)
+                node = node.value
+        path.reverse()
+        if isinstance(node, _ast.Name):
+            return node.id, path
+        return None, None
 
     def visit_AnnAssign(self, node):
         self.generic_visit(node)
@@ -1580,8 +1668,20 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
             )
         except Exception:
             return node
+        if _is_compound_pypeline_type(ann_val):
+            # Bare struct/array local: track it so subsequent .field=/[i]= writes
+            # get lens-rewritten, and zero-init it if declared without a value.
+            self._compound_declared[node.target.id] = True
+            if node.value is None:
+                self.modified = True
+                new_node = _ast.Assign(
+                    targets=[node.target],
+                    value=self._make_zero_call(ann_val, node),
+                )
+                return _ast.copy_location(new_node, node)
+            return node  # `var: T = value` already binds the name via plain Python
         if not _is_scalar_pypeline_int(ann_val):
-            return node  # struct, array, Reg, Feedback, Wire — skip
+            return node  # Reg, Feedback, Wire, Input, Output — skip
         # Always record: bare `var: T` declarations also type subsequent plain assigns.
         self._declared_types[node.target.id] = ann_val
         if node.value is None:
@@ -1594,16 +1694,38 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
 
     def visit_Assign(self, node):
         self.generic_visit(node)
-        if len(node.targets) != 1 or not isinstance(node.targets[0], _ast.Name):
-            return node  # tuple-unpack or subscript target, skip
-        ctype = self._declared_types.get(node.targets[0].id)
-        if ctype is None:
-            return node  # not a previously-declared typed variable
-        new_node = _ast.Assign(
-            targets=node.targets,
-            value=self._make_cast(node.value, ctype, node),
-        )
-        return _ast.copy_location(new_node, node)
+        if len(node.targets) != 1:
+            return node  # tuple-unpack target, skip
+        target = node.targets[0]
+        if isinstance(target, _ast.Name):
+            ctype = self._declared_types.get(target.id)
+            if ctype is None:
+                return node  # not a previously-declared scalar-typed variable
+            new_node = _ast.Assign(
+                targets=node.targets,
+                value=self._make_cast(node.value, ctype, node),
+            )
+            return _ast.copy_location(new_node, node)
+        if isinstance(target, (_ast.Attribute, _ast.Subscript)):
+            root, path = self._chain_to_path(target)
+            if root is not None and root in self._compound_declared:
+                self.modified = True
+                path_list = _ast.List(elts=path, ctx=_ast.Load())
+                lens_call = _ast.Call(
+                    func=_ast.Name(id="_sim_lens_set", ctx=_ast.Load()),
+                    args=[
+                        _ast.Name(id=root, ctx=_ast.Load()),
+                        path_list,
+                        node.value,
+                    ],
+                    keywords=[],
+                )
+                new_node = _ast.Assign(
+                    targets=[_ast.Name(id=root, ctx=_ast.Store())],
+                    value=lens_call,
+                )
+                return _ast.copy_location(new_node, node)
+        return node
 
 
 def _build_reg_sim_func(fn):
@@ -1704,9 +1826,12 @@ def _build_reg_sim_func(fn):
     # Skipped in SIM_RAW_INTS mode: no _sim_cast calls injected, plain Python
     # arithmetic flows through unchanged.
     ann_ctypes_out: dict = {}
+    _typed_rewriter_modified = False
     if not SIM_RAW_INTS:
-        _TypedAnnAssignRewriter(_eval_ns, ann_ctypes_out).visit(func_def)
+        _typed_rewriter = _TypedAnnAssignRewriter(_eval_ns, ann_ctypes_out)
+        _typed_rewriter.visit(func_def)
         _ast.fix_missing_locations(func_def)
+        _typed_rewriter_modified = _typed_rewriter.modified
 
     # Discover register and feedback variable names by evaluating each AnnAssign
     # annotation against the function's eval namespace.
@@ -1715,15 +1840,34 @@ def _build_reg_sim_func(fn):
     reg_names = []
     reg_zeros = {}  # name → power-on default value, computed once at decoration time
     feedback_names = []
+    # Locals assigned via plain `name = expr` earlier in the body (e.g.
+    # `MC = MULTI_CYCLE[32]`) aren't in _eval_ns (built before the function ran), but
+    # Reg[T, MC.start] annotations reference them. Accumulate pure-Python-evaluable
+    # locals here, in source order, mirroring the elaborator's const_env.
+    _local_const_ns = {}
     for stmt in func_def.body:
+        if (
+            isinstance(stmt, _ast.Assign)
+            and len(stmt.targets) == 1
+            and isinstance(stmt.targets[0], _ast.Name)
+        ):
+            try:
+                _local_const_ns[stmt.targets[0].id] = eval(
+                    compile(_ast.Expression(body=stmt.value), "<local_const>", "eval"),
+                    {**_eval_ns, **_local_const_ns},
+                )
+            except Exception:
+                pass
+            continue
         if not (
             isinstance(stmt, _ast.AnnAssign) and isinstance(stmt.target, _ast.Name)
         ):
             continue
+        _merged_ns = {**_eval_ns, **_local_const_ns}
         try:
             ann_val = eval(
                 compile(_ast.Expression(body=stmt.annotation), "<ann>", "eval"),
-                _eval_ns,
+                _merged_ns,
             )
         except Exception:
             continue
@@ -1734,7 +1878,7 @@ def _build_reg_sim_func(fn):
                 try:
                     init_val = eval(
                         compile(_ast.Expression(body=stmt.value), "<reg_init>", "eval"),
-                        _eval_ns,
+                        _merged_ns,
                     )
                     # Dict-style struct init {"field": val} → convert to NamedTuple
                     # so that field access (pt.x) works in the simulated body.
@@ -1756,6 +1900,7 @@ def _build_reg_sim_func(fn):
         and not global_wire_names
         and not module_wire_attrs
         and not ann_ctypes_out
+        and not _typed_rewriter_modified
     ):
         return None, False
 
@@ -1881,6 +2026,8 @@ def _build_reg_sim_func(fn):
     new_globals = _eval_ns.copy()  # includes globals + closure vars
     new_globals.update(
         _sim_cast=_sim_cast,
+        _make_sim_zero=_make_sim_zero,
+        _sim_lens_set=_sim_lens_set,
         _sim_current_inst_path=_sim_current_inst_path,
         _sim_reg_read=_sim_reg_read,
         _sim_reg_write=_sim_reg_write,

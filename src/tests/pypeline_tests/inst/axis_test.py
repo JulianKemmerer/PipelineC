@@ -28,9 +28,6 @@ axis32_t = make_axis_t(N)  # full stream(ndarray_fragment(1, kept_data_bus))
 count_t = make_uint_t(N.bit_length())
 keep_count_4 = make_keep_count(bus4_t, N)
 count_to_keep_4 = make_count_to_keep(N)
-video_frag_t = make_ndarray_fragment_t(
-    uint8_t, 2
-)  # standalone ndarray_fragment_t, no kept_data_bus
 
 
 @MAIN
@@ -50,8 +47,8 @@ def count_to_keep_4_main(count: count_t) -> uint1_t[N]:
 
 @MAIN
 def video_frag_eod_test(
-    frag: video_frag_t,
-) -> uint1_t:  # exercises ndarray_fragment_t standalone
+    frag: make_ndarray_fragment_t(uint8_t, 2),
+) -> uint1_t:  # exercises ndarray_fragment_t standalone, struct created inline (no module-level binding)
     return frag.eod[0] & frag.eod[1]
 
 

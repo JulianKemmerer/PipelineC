@@ -303,17 +303,87 @@ top-to-bottom so declarations always precede uses in well-structured hardware co
 `__sim_ann_{lineno}_{col_offset}__` is a unique name per rewrite site; the ctype object is
 injected into the compiled function's `__globals__` at decoration time.
 
+**Rule 3 — Bare struct/array local declarations** (`AnnAssign`, no value, compound type):
+
+```python
+rv: my_struct_t    →    rv = _make_sim_zero(my_struct_t)
+rv: keep_t          →    rv = _make_sim_zero(keep_t)        # keep_t = uint1_t[n]
+```
+
+A bare struct or array declaration with no value binds no name in plain Python (`x: T`
+alone is annotation-only), so the canonical PipelineC idiom carried over into pypeline —
+`rv: T` then field/index writes — raised `UnboundLocalError` on first use under simulation,
+even though the same source elaborates fine through the real AST elaborator
+(`PY_TO_LOGIC.py`, which has no such gap; see [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md)).
+Rule 3 closes that gap by zero-initializing the variable, exactly mirroring how `Reg[T]`
+bare declarations are zero-initialized (see [`Reg[T]` Simulation](#regt-simulation--stateful-registers-across-clock-cycles)
+below). `var: T = value` (an initializer already present) needs no rewrite — plain Python
+already binds the name — but the variable is still tracked (see Rule 4).
+
+`_is_compound_pypeline_type(ctype)` distinguishes struct (`hasattr(ctype, "_fields")`) and
+array (`hasattr(ctype, "_ctype_name") and "[" in ctype._ctype_name`) annotations from the
+`Reg[T]`/`Feedback[T]`/`Wire[T]`/`Input[T]`/`Output[T]` descriptor objects, none of which
+carry either attribute, so those continue to fall through to their own dedicated handling
+untouched.
+
+**Rule 4 — Partial writes to a tracked compound local** (`Assign` with an `Attribute` or
+`Subscript` target, chain rooted at a name from Rule 3):
+
+```python
+rv.field = expr        →    rv = _sim_lens_set(rv, ["field"], expr)
+rv.dim[i] = expr        →    rv = _sim_lens_set(rv, ["dim", i], expr)
+```
+
+Structs are immutable `NamedTuple`s (see [Struct Support](pypeline_DESIGN.md#struct-support)
+in `pypeline_DESIGN.md`), so `rv.field = expr` cannot mutate in place — it must rebuild `rv`
+via `rv._replace(field=...)`. `_sim_lens_set` (below) does this generically for arbitrarily
+nested `.field`/`[i]` chains, rewritten by walking the assignment target's `Attribute`/
+`Subscript` chain back to its root `Name` (`_chain_to_path`). Only chains rooted at a name
+tracked by Rule 3 are rewritten — an untracked object's `.attr = x` is left as plain Python
+attribute assignment, so arbitrary non-Pypeline objects used as locals are unaffected.
+
 **What is NOT rewritten:**
-- Non-scalar types: structs, arrays, `Reg[T]`, `Feedback[T]`, `Wire[T]`
-- Tuple-unpack or subscript targets: `a, b = f()`, `buf[i] = x`
+- `Reg[T]`, `Feedback[T]`, `Wire[T]`, `Input[T]`, `Output[T]` descriptor annotations
+- Tuple-unpack targets: `a, b = f()`
+- Whole-variable reassignment of a compound local (`rv = some_full_value`) — no cast or
+  lens rewrite applies; plain Python rebinding is already correct
 - Global wire `AnnAssign` nodes (already converted to `Expr(Call)` by `_GlobalWireRewriter`)
 
-**`@hw_func` is required.** The rewriter runs at decoration time inside `_build_reg_sim_func`.
-Inner hardware functions must carry `@hw_func` to opt in.
+**`@hw_func` is required.** The rewriter runs at decoration time inside `_build_reg_sim_func`,
+itself only invoked from inside the wrapper `_sim_type_wrap` builds. `sim_call(func, ...)`
+calls `func(*args, **kwargs)` directly with **no** wrapping, so an undecorated function —
+including one called as a plain nested call from inside another hardware function's body —
+never goes through this rewriter at all, regardless of whether its body needs Rule 1-4. Inner
+hardware functions (including `make_*` factory-produced ones) must carry `@hw_func` to opt in.
 
-**Combined effect:** with both mechanisms active, simulation accurately models hardware at
-every typed arithmetic operation AND every typed variable assignment — including loop-body
-re-assignments that lack an explicit type annotation.
+**Combined effect:** with all four rules active, simulation accurately models hardware at
+every typed arithmetic operation, every typed scalar variable assignment, AND the canonical
+bare-declare-then-fill idiom for structs and arrays — including loop-body re-assignments
+that lack an explicit type annotation.
+
+### `_sim_lens_set(obj, path, value)` — Immutable-Aware Deep Set
+
+A small free function (not part of the rewriter class) used by the code Rule 4 generates:
+
+```python
+def _sim_lens_set(obj, path, value):
+    if not path:
+        return value
+    head, rest = path[0], path[1:]
+    if isinstance(head, str):                     # struct field
+        child = getattr(obj, head)
+        return obj._replace(**{head: _sim_lens_set(child, rest, value)})
+    new_list = list(obj)                            # array index
+    new_list[int(head)] = _sim_lens_set(new_list[int(head)], rest, value)
+    return new_list
+```
+
+`path` is a list of field-name strings (`.field`) or indices (`[i]`), root-to-leaf order,
+covering arbitrarily nested chains (`rv.a[i].b = x`, `rv[i].field = x`) with no special-casing
+per shape: structs reconstruct via `_replace` at each level, arrays copy-and-set via `list(obj)`.
+Each call returns a new top-level value; the rewritten `Assign` rebinds the root variable name
+to it, matching the existing per-statement alias semantics the rest of the simulator already
+uses for hardware variables.
 
 ---
 
@@ -339,16 +409,35 @@ function body and compiles it via `exec`. Returns `(transformed_fn_or_None, has_
 5. **Apply `_TypedAnnAssignRewriter`** — rewrites typed local variable assignments (two rules
    above). Skipped entirely when `SIM_RAW_INTS=True`.
 
-6. **Detect `Reg[T]`/`Feedback[T]`** — evaluates each `AnnAssign` annotation node in the
-   (now rewritten) body against `_eval_ns` = `fn.__globals__` + closure variables (the only
-   way to detect `_RegType`/`_FeedbackType` without running the hardware elaborator, since
-   Python never stores local annotations in `fn.__annotations__`). For `Reg[T]` nodes with
-   an init expression, evaluates the init in `_eval_ns` to get the `__reg_init_<name>__`
-   default.
+6. **Detect `Reg[T]`/`Feedback[T]`** — walks the (now rewritten) body in source order,
+   evaluating each `AnnAssign` annotation node against `_eval_ns` = `fn.__globals__` +
+   closure variables (the only way to detect `_RegType`/`_FeedbackType` without running the
+   hardware elaborator, since Python never stores local annotations in `fn.__annotations__`).
+   For `Reg[T]` nodes with an init expression, evaluates the init to get the
+   `__reg_init_<name>__` default.
 
-7. **If no Reg/Feedback/wires found and no typed annotation rewrites:** return `(None, False)`.
-   Otherwise build the **transformed function body** (see below), compile via `exec` into a
-   new globals dict, and return `(sim_body_fn, has_state)`.
+   `_eval_ns` alone can't resolve annotations that reference a **local** assigned earlier in
+   the same body — e.g. `MC = MULTI_CYCLE[32]` then `data0: Reg[my_struct_t, MC.start]`: `MC`
+   is a per-call local, not a module global or closure variable, so a bare `eval(..., _eval_ns)`
+   raises `NameError` and the register would be silently skipped (`has_state` would come back
+   `False`, leaving the same `UnboundLocalError` Rule 3 above fixes for bare struct/array
+   locals — but for the register itself). The walk accumulates a `_local_const_ns` dict in
+   parallel: for every plain `Assign` to a single `Name` target encountered before the current
+   statement, it tries to eval the RHS against `{**_eval_ns, **_local_const_ns}` and stores the
+   result on success (silently skipped on failure — most RHS expressions reference hardware
+   wires and can't evaluate as plain Python, same as the elaborator's `const_env`/
+   `_try_eval_const` in `PY_TO_LOGIC.py`). Each `AnnAssign` annotation is then evaluated
+   against the merged `{**_eval_ns, **_local_const_ns}` namespace instead of `_eval_ns` alone.
+
+7. **If no Reg/Feedback/wires found and no typed-rewriter changes:** return `(None, False)`,
+   meaning the original undecorated `fn` runs as-is. "No typed-rewriter changes" means
+   `ann_ctypes_out` is empty (Rule 1/2 scalar casts) **and** `_typed_rewriter.modified` is
+   `False` (Rule 3/4 compound zero-init/lens rewrites — tracked separately since Rule 4 lens
+   rewrites don't add to `ann_ctypes_out`, having no ctype to inject). Otherwise build the
+   **transformed function body** (see below), compile via `exec` into a new globals dict
+   (which must also expose `_make_sim_zero`/`_sim_lens_set` alongside `_sim_cast` and the
+   register/wire helpers for Rule 3/4's generated calls to resolve), and return
+   `(sim_body_fn, has_state)`.
 
 ### Transformed Function Body Pattern
 
@@ -455,8 +544,22 @@ def _sim_reg_write(inst_path, reg_name, value): ...
 # Stores value as-is — struct/array instances preserved without int() coercion.
 
 def _make_sim_zero(ctype): ...
-# 0 for scalar; recursively zero-initialised NamedTuple for @struct types.
+# 0 for scalar; recursively zero-initialised NamedTuple for @struct types;
+# recursively zero-initialised list for array types (each element zeroed the same way,
+# so arrays of structs and multi-dimensional arrays both work).
 ```
+
+Array element type resolution prefers `ctype._elem_ctype` (set by `_CTypeMeta.__getitem__` /
+`_struct_class_getitem` at array-type-creation time — see
+[C Type System](pypeline_DESIGN.md#c-type-system) in `pypeline_DESIGN.md`) over re-deriving
+it by stripping the trailing `[N]` from `ctype._ctype_name`: the string-only path can't
+recover a struct element type's field layout, only its name, so `_elem_ctype` is what makes
+`point_t[10]` zero-initialize to ten real zero-valued `point_t` instances rather than ten
+bare `0`s. The string-derived fallback remains for array ctypes built without `__getitem__`.
+
+`_make_sim_zero` is also used directly by `_TypedAnnAssignRewriter` Rule 3 (above) to
+zero-initialize bare struct/array **local variables**, not just `Reg[T]` defaults — the two
+share one implementation since both need the same "default value for this ctype" behavior.
 
 `sim_reset()` clears `_sim_reg_state`. The first `_sim_reg_read` after reset returns the
 per-register default — the declared init value (non-zero when `Reg[T] = val`) or zero.
@@ -698,7 +801,13 @@ subclass has `__getitem__`.
 ## Limitations
 
 - **Registers (`Reg[T]`)** — supported; functions must carry `@hw_func` (or `@MAIN`).
+  `Reg[T, MULTI_CYCLE[...].start/.end]` tags are resolved even when the `MULTI_CYCLE[...]`
+  call is assigned to a local (`MC = MULTI_CYCLE[32]`) earlier in the same body (`_local_const_ns`).
 - **Feedback wires (`Feedback[T]`)** — supported via convergence loop; functions must carry `@hw_func`.
+- **Bare struct/array locals** (`rv: my_struct_t` / `rv: uint1_t[n]`, no initializer, followed
+  by `rv.field = ...` / `rv[i] = ...`) — supported (`_TypedAnnAssignRewriter` Rules 3-4,
+  `_make_sim_zero`, `_sim_lens_set` above); functions must carry `@hw_func` (or `@MAIN`), same
+  as `Reg[T]`/`Feedback[T]`.
 - **Global wires (`Wire[T]`, `Input[T]`, `Output[T]`)** — supported via `pypeline_sim.py`;
   multi-file designs supported (`_discover_wire_names` recursively scans imported sub-modules).
   Wire sim-keys are bare names (no module prefix); unique wire names across sub-modules assumed.

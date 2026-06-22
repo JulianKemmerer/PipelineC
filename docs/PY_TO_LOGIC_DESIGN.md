@@ -1025,6 +1025,40 @@ always set by `@struct` before any annotation resolution occurs. `_struct_class_
 (which backs `point_t[10]` syntax) also uses `_pypeline_ctype_name` so that array types
 of factory structs carry the correct canonical base name.
 
+**Struct factories called inline in a signature annotation:**
+
+`_discover_structs_from_module` (module-level names) and the closure-scanning pass above
+(closure/global-bound names) both register a struct from somewhere it is *bound to a name*.
+A struct produced by a factory call written directly in a parameter or return annotation —
+never bound to any name at all — is invisible to both:
+
+```python
+@MAIN
+def f(frag: make_ndarray_fragment_t(uint8_t, 2)) -> uint1_t:   # never bound to a name
+    return frag.eod[0]
+```
+
+Without registration this fails with `KeyError: 'ndarray_fragment_t_..._2'` from
+`_ref_toks_to_ctype` (`struct_to_field_type_dict` lookup) the moment a field of `frag` is
+read — `_annotation_to_ctype` resolves the annotation expression to the correct canonical
+*name string* fine, but nothing ever registered that name's field layout.
+
+The fix: `_annotation_to_ctype(ann, eval_ns=None, parser_state=None)` takes an optional
+`parser_state`. After `eval()`-ing the annotation expression (the same `result` used to read
+`_pypeline_ctype_name`), if `parser_state` is given it calls `_register_struct_recursive(result,
+parser_state)` on the live type object *before* returning the name string — reusing the exact
+same registration helper `_discover_structs_from_module` and the closure-scanning pass already
+use, so dedup (`visited`/`struct_to_field_type_dict` membership) and nested struct-field
+registration come for free. `_register_struct_recursive` itself is a no-op for any non-struct
+`result` (plain ctypes, ints, etc. — it returns immediately if `result` isn't a `NamedTuple`
+subclass), so passing every evaluated annotation type through it is safe.
+
+`FuncElaborator._setup_inputs`, `_setup_outputs`, and the local-variable `AnnAssign` handler
+(the three places that evaluate a live annotation expression with an `eval_ns`) all pass
+`self.parser_state` through. This means inline factory-call annotations now work for
+parameters, return types, and local variable declarations alike — not just module-level-bound
+struct types.
+
 ### Conditional Type-Driven Code
 
 Because closure variables are real Python objects at elaboration time, hardware functions

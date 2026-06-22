@@ -385,10 +385,13 @@ def _inner_ctype_to_str(inner_ctype):
     return str(inner_ctype)
 
 
-def _annotation_to_ctype(ann, eval_ns=None):
+def _annotation_to_ctype(ann, eval_ns=None, parser_state=None):
     """Convert Python AST annotation to C type string. Returns None if no annotation.
     If eval_ns provided, evaluates the annotation expression against that namespace.
     This handles: uint1_t[N], uint1_t[sum_widths(N,M)], point_t, etc.
+    If parser_state provided, registers any live struct type the annotation evaluates
+    to (e.g. an inline factory call like `make_foo_t(uint8_t, 2)` that's never bound to
+    a module-level name, so _discover_structs_from_module would never see it).
     """
     if ann is None:
         return None
@@ -400,6 +403,8 @@ def _annotation_to_ctype(ann, eval_ns=None):
             ast.fix_missing_locations(expr)
             result = eval(compile(expr, "<annotation>", "eval"), eval_ns)
             if isinstance(result, type):
+                if parser_state is not None:
+                    _register_struct_recursive(result, parser_state)
                 return getattr(result, "_pypeline_ctype_name", None) or getattr(
                     result, "_pypeline_ctype_canonical", result.__name__
                 )
@@ -1539,7 +1544,7 @@ class FuncElaborator:
         eval_ns = self._make_eval_ns()
         for arg in self.func_def.args.args:
             name = self._hw_name(arg.arg)
-            typ = _annotation_to_ctype(arg.annotation, eval_ns)
+            typ = _annotation_to_ctype(arg.annotation, eval_ns, self.parser_state)
             self.logic.inputs.append(name)
             _add_wire(self.logic, name, typ)
             self.logic.variable_names.add(name)
@@ -1547,7 +1552,9 @@ class FuncElaborator:
 
     def _setup_outputs(self):
         eval_ns = self._make_eval_ns()
-        ret_typ = _annotation_to_ctype(self.func_def.returns, eval_ns)
+        ret_typ = _annotation_to_ctype(
+            self.func_def.returns, eval_ns, self.parser_state
+        )
         self._return_type = ret_typ
         if ret_typ is not None:
             self.logic.outputs.append(C_TO_LOGIC.RETURN_WIRE_NAME)
@@ -1777,7 +1784,9 @@ class FuncElaborator:
             self._declare_feedback_var(var_name, inner_ctype, stmt.target)
             return
         # Normal local variable
-        typ = _annotation_to_ctype(stmt.annotation, self._make_eval_ns())
+        typ = _annotation_to_ctype(
+            stmt.annotation, self._make_eval_ns(), self.parser_state
+        )
         self._declare_var(var_name, typ, stmt.target)
         if stmt.value is not None:
             if isinstance(stmt.value, (ast.Dict, ast.List)):

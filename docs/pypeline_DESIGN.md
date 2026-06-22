@@ -74,6 +74,16 @@ uint32_t.width         # → 32   (property, raises for array types)
 returns a proper class object with `_ctype_name = "point_t[10]"`. This is why
 `uint32_t[4]` works as a type annotation in `NamedTuple` fields.
 
+The returned array class also gets `arr._elem_ctype = cls` set — a direct reference to
+the element type object, not just its name string. This lets the simulator zero-initialize
+arrays of structs correctly (`_make_sim_zero`, see
+[`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)): re-deriving the element type by
+parsing `_ctype_name` (stripping the trailing `[N]`) only recovers a name string, which
+is enough for scalar elements (`_make_ctype("uint1_t")` is equivalent to `uint1_t`) but
+not for struct elements, since a struct's field layout isn't recoverable from its name
+alone. `_elem_ctype` is preferred when present; the string-derived fallback still exists
+for array types constructed without going through `__getitem__`.
+
 ### Type Factories
 
 ```python
@@ -213,8 +223,11 @@ Two factory calls with identical class name and field types produce the same can
 and share a single VHDL type declaration — correct deduplication without module prefixing.
 
 **2. Adds `__class_getitem__`** via `_struct_class_getitem` so that `point_t[10]`
-produces `_make_ctype("point_t[10]")` — a valid array C type usable in further annotations.
-The canonical name is used as the base: `point_t_x_uint32_t_y_uint32_t[10]`.
+produces `_make_ctype("point_t_x_uint32_t_y_uint32_t[10]")` — a valid array C type usable
+in further annotations. The canonical name is used as the base. As with `_CTypeMeta.__getitem__`
+above, the returned array class also gets `_elem_ctype = point_t` set, so the simulator can
+zero-initialize `point_t[10]` arrays as a list of zero-valued `point_t` instances rather than
+a list of bare `0`s.
 
 **3. Overrides `__new__`** with `_typed_new` to wrap scalar integer fields in typed
 simulation values when constructing struct instances. This enables `left.exp` in `float_add`
