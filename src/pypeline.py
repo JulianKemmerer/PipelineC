@@ -832,6 +832,69 @@ def autopipeline(call_result, depth: int = -1):
 autopipeline._is_autopipeline_pragma = True
 
 
+def make_autopipeline(func, has_input_reg: bool, has_output_reg: bool):
+    """Factory wrapping a hardware function so its call is always elaborated as an
+    AUTOPIPELINE submodule instance (see `autopipeline`), optionally adding a plain
+    input and/or output register around it.
+
+    Returns a new function with the same (in_type) -> out_type signature as `func`,
+    suitable for calling from a register/feedback context without needing to wrap
+    that outer call in `autopipeline(...)` — the AUTOPIPELINE tagging is internal to
+    the returned function's own body, on its call to `func`.
+
+        autopipelined_add = make_autopipeline(add, has_input_reg=True, has_output_reg=True)
+
+        def caller(x: my_t) -> my_t:
+            state: Reg[my_t]
+            ...
+            return autopipelined_add(x)   # no autopipeline(...) needed here
+
+    has_input_reg / has_output_reg add an unconditional, every-cycle pipeline
+    register (Reg[T], no enable) immediately before/after the AUTOPIPELINE call,
+    matching the registered-input/registered-output idiom used elsewhere (e.g.
+    vga_to_pmod8's Reg[T] read-before-write pattern).
+    """
+    (in_type,) = hw_arg_types(func)
+    out_type = hw_return_type(func)
+
+    if has_input_reg and has_output_reg:
+
+        @hw_func
+        def autopipelined(x: in_type) -> out_type:
+            in_reg: Reg[in_type]
+            out_reg: Reg[out_type]
+            rv: out_type = out_reg
+            out_reg = autopipeline(func(in_reg))
+            in_reg = x
+            return rv
+
+    elif has_input_reg:
+
+        @hw_func
+        def autopipelined(x: in_type) -> out_type:
+            in_reg: Reg[in_type]
+            rv: out_type = autopipeline(func(in_reg))
+            in_reg = x
+            return rv
+
+    elif has_output_reg:
+
+        @hw_func
+        def autopipelined(x: in_type) -> out_type:
+            out_reg: Reg[out_type]
+            rv: out_type = out_reg
+            out_reg = autopipeline(func(x))
+            return rv
+
+    else:
+
+        @hw_func
+        def autopipelined(x: in_type) -> out_type:
+            return autopipeline(func(x))
+
+    return autopipelined
+
+
 # ─────────────────────────────────────────────
 # Operator overloading registry
 # ─────────────────────────────────────────────

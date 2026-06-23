@@ -1188,6 +1188,48 @@ def wrapper(pipeline_in: stream_t) -> stream_t:
 
 See `src/tests/pypeline_tests/inst/autopipeline_test.py` for the full example.
 
+### Ready-made wrapper: `make_autopipeline`
+
+Wrapping a call in `autopipeline(...)` at every call site works, but it means every
+caller has to know and repeat that detail. `make_autopipeline(func, has_input_reg,
+has_output_reg)` builds a standalone wrapper function around `func` *once* — the
+`autopipeline(...)` call lives inside the wrapper's own body, so callers just call the
+returned function like any other hardware function, from a register/feedback context or
+otherwise:
+
+```python
+from pypeline import make_autopipeline
+
+def pipeline_stage(x: stream_t) -> stream_t:
+    rv: stream_t
+    rv.data = x.data / ~x.data
+    rv.valid = x.valid
+    return rv
+
+# Builds a new function with the same (stream_t) -> stream_t signature as pipeline_stage.
+pipeline_stage_ap = make_autopipeline(pipeline_stage, has_input_reg=True, has_output_reg=True)
+
+def wrapper(pipeline_in: stream_t) -> stream_t:
+    ready_reg: Reg[uint1_t]
+    ready_reg = ~ready_reg
+
+    # No autopipeline(...) needed here — it's already inside pipeline_stage_ap.
+    return pipeline_stage_ap(pipeline_in)
+```
+
+`has_input_reg` / `has_output_reg` each add a plain `Reg[T]`, updated unconditionally
+every cycle, immediately before/after the `autopipeline(...)`-wrapped call — useful for
+registering the pipeline's inputs/outputs at its boundary rather than leaving them
+combinational. Pass `False` for either to omit that register entirely (not just disable
+it — the `Reg[T]` declaration itself is left out).
+
+`in_type`/`out_type` are inferred from `func`'s own annotations via `hw_arg_types`/
+`hw_return_type` (see [§12](#12-parametric-hardware-with-factory-functions)), the same
+way `make_valid_ready_mcp` infers its types — see
+`src/tests/pypeline_tests/inst/autopipeline_test.py` for the full example, which uses
+`make_autopipeline(test_pipeline, has_input_reg=True, has_output_reg=True)` in place of
+the raw `autopipeline(test_pipeline(...))` call shown above.
+
 ---
 
 ## 16 Multi-Cycle Paths: `MULTI_CYCLE[...]`
