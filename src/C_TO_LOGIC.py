@@ -9445,6 +9445,17 @@ def PRINT_DRIVER_WIRE_TRACE(start, logic, wires_driven_so_far=None):
     return start
 
 
+def FIND_DANGLING_LOGIC(logic):
+    for driving_wire in logic.wire_drives:
+        driven_wires = logic.wire_drives[driving_wire]
+        # Handle each driven wire
+        for driven_wire in driven_wires:
+            if driven_wire not in logic.wire_driven_by:
+                raise Exception(
+                    f"{logic.func_name} has driving_wire {driving_wire} that is listed as driving driven_wire {driven_wire} but driven_wire is not in wire_driven_by dict?"
+                )
+
+
 _TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE_done_cache = set()
 
 

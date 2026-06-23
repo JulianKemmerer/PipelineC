@@ -1970,6 +1970,7 @@ class FuncElaborator:
                 targets=[stmt.target],
                 value=ast.BinOp(left=stmt.target, op=stmt.op, right=stmt.value),
             )
+            ast.copy_location(synth, stmt)
             ast.fix_missing_locations(synth)
             self._elab_assign(synth)
 
@@ -4140,6 +4141,10 @@ def PARSE_FILE(py_file):
             parser_state = C_TO_LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(
                 main_func_logic, parser_state
             )
+
+    # Check for dangling logic after trim
+    for l in parser_state.FuncLogicLookupTable.values():
+        C_TO_LOGIC.FIND_DANGLING_LOGIC(logic)
 
     # ── Propagate MHz across MAINs sharing global wires ──
     C_TO_LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)

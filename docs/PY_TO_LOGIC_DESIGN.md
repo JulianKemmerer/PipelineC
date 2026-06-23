@@ -75,6 +75,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
 **Syntax Extensions**
 - [Compound Initializer Syntax](#compound-initializer-syntax)
 - [Ternary (IfExp) Assignment](#ternary-ifexp-assignment)
+- [Augmented Assignment (`+=`, `-=`, etc.)](#augmented-assignment-----etc)
 - [Boolean Operators (`and` / `or`)](#boolean-operators-and--or)
 - [Bit Manipulation Syntax](#bit-manipulation-syntax)
 - [Built-in Bit Manipulation Functions](#built-in-bit-manipulation-functions)
@@ -1907,6 +1908,82 @@ x = body if test else orelse
 This reuses the full `_elab_if` MUX machinery, including clock-enable propagation and
 temporal sorting of covering wires. If the condition evaluates to a compile-time constant
 via `_try_eval_const`, the unused branch is eliminated entirely.
+
+---
+
+## Augmented Assignment (`+=`, `-=`, etc.)
+
+Python's in-place operators (`+=`, `-=`, `*=`, `/=`, `%=`) are supported on both
+elaboration-time constants and hardware wires.
+
+**Two paths in `_elab_aug_assign`:**
+
+**Path 1 — `const_env` target** (elaboration-time constant, never a hardware wire):
+
+The RHS is evaluated via `_try_eval_const`. The result is applied to `const_env[name]`
+using the `AUG_OP_MAP` lambda:
+
+```python
+AUG_OP_MAP = {
+    ast.Add:  lambda a, b: a + b,
+    ast.Sub:  lambda a, b: a - b,
+    ast.Mult: lambda a, b: a * b,
+    ast.Div:  lambda a, b: a // b,
+    ast.Mod:  lambda a, b: a % b,
+}
+```
+
+This is the loop-counter case — `b += 1` inside a `for` body updates the Python
+counter without emitting any hardware.
+
+**Path 2 — hardware target** (name is in `env`, not `const_env`):
+
+The augmented assignment is **desugared** to an equivalent plain assignment via a
+synthetic AST node:
+
+```python
+# r += 1  desugared to:
+synth = ast.Assign(
+    targets=[stmt.target],
+    value=ast.BinOp(left=stmt.target, op=stmt.op, right=stmt.value),
+)
+ast.copy_location(synth, stmt)   # copy AugAssign's source position to synth
+ast.fix_missing_locations(synth) # propagate down to BinOp and other children
+self._elab_assign(synth)
+```
+
+`_elab_assign` then elaborates this exactly like `r = r + 1`, reusing all the normal
+binary-operator, alias-wire, and `_write_ref` machinery.
+
+**Why `ast.copy_location` is required:**
+
+`ast.fix_missing_locations` propagates source positions **from parent to children** within
+each recursive call, but NOT across siblings. Without `copy_location`, `synth` has no
+lineno and gets the global default `(lineno=1, col_offset=0, end_col_offset=0)`. That
+default is then propagated into the synthetic `ast.BinOp`, giving every augmented
+assignment in the file the same `_l1_c0_e0` suffix in its wire/instance names.
+
+When two augmented assignments appear in opposite branches of a hardware `if`
+(e.g. `r += 1` and `r -= 1`), they both produce the alias wire name
+`r_<file>_l1_c0_e0`, causing a collision: `_connect` overwrites `wire_driven_by`
+for the shared alias name while `wire_drives` for the first BIN_OP still lists it.
+Logic trimming then removes the stale `wire_driven_by` entry, and
+`FIND_DANGLING_LOGIC` raises an exception.
+
+`ast.copy_location(synth, stmt)` copies the `AugAssign`'s real source position onto
+`synth` so that `fix_missing_locations` propagates the actual location (e.g.
+`_l45_c8_e14`) into the `BinOp`, giving each augmented assignment a unique,
+source-accurate name. This mirrors the established pattern used in `_elab_if` for
+ternary rewrites (lines 1648, 1654, 1661) and in `_elab_bool_op` (lines 2727, 2735).
+
+**Hardware elaboration is identical to explicit form:**
+
+```python
+r += 1   # desugared → r = r + 1 at elaboration time
+```
+
+No new hardware primitives — the synthetic `BinOp` goes through the normal
+`_elab_binop` path and emits a standard `BIN_OP_PLUS_<type>` submodule instance.
 
 ---
 

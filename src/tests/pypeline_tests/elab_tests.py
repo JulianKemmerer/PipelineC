@@ -16,6 +16,7 @@ NO_SYNTH_TEST_FILES = [
     "bit_manip_test.py",
     "import_test.py",
     "func_wires_test.py",
+    "dangling_logic_test.py",
 ]
 # fmt: on
 
