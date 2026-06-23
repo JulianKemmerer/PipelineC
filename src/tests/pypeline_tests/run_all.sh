@@ -8,6 +8,9 @@ rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/aut
 python3 ./src/tests/pypeline_tests/inst/multi_cycle_test.py
 rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/multi_cycle_test.py --out_dir ~/pypeline_run_all --comb
 
+python3 ./src/tests/pypeline_tests/inst/valid_ready_mcp_test.py
+rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/valid_ready_mcp_test.py --out_dir ~/pypeline_run_all --comb
+
 rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./examples/pypeline/vga_donut.py --out_dir ~/pypeline_run_all --comb
 
 rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./examples/pypeline/vga_test_pattern.py --out_dir ~/pypeline_run_all --comb

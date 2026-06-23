@@ -1201,6 +1201,49 @@ without a `PART()` target it has no effect. See
 `examples/mcp/mcp_test.c`) for the full example, including the `PART(...)` call needed to
 target a real device.
 
+### Ready-made valid/ready wrapper: `make_valid_ready_mcp`
+
+Wiring up the launch/capture registers and a cycle counter by hand, as above, is the
+right tool when a multi-cycle path sits between two registers you're already managing
+yourself inside a larger function. For the common case of wrapping one slow
+combinational function in its own standalone valid/ready stream interface,
+`include/pypeline/multi_cycle_path.py`'s `make_valid_ready_mcp` builds exactly that FSM
+for you — the pypeline equivalent of PipelineC's `DECL_VALID_READY_MCP_FUNC` macro:
+
+```python
+from stream.stream import make_stream_t
+from multi_cycle_path import make_valid_ready_mcp
+
+def divider(i: my_struct_t) -> uint32_t:
+    return i.x / i.y
+
+divider_mcp, divider_mcp_t = make_valid_ready_mcp(divider, 16)   # 16-cycle MCP
+
+my_struct_stream_t = make_stream_t(my_struct_t)
+
+@MAIN(100.0)
+def top(stream_in: my_struct_stream_t, ready_for_stream_out: uint1_t) -> divider_mcp_t:
+    return divider_mcp(stream_in, ready_for_stream_out)
+```
+
+`make_valid_ready_mcp(func, ncycles)` infers `in_type`/`out_type` from `func`'s own
+parameter/return type annotations (unlike the C macro, which takes them as separate
+arguments) and returns `(func_mcp, func_mcp_t)`:
+
+| | Type | Meaning |
+|---|---|---|
+| `func_mcp(stream_in, ready_for_stream_out)` | `(stream_t(in_type), uint1_t) -> func_mcp_t` | one MCP-wrapped instance of `func` |
+| `func_mcp_t.stream_out` | `stream_t(out_type)` | `func`'s result, valid `ncycles + 1` cycles after launch |
+| `func_mcp_t.ready_for_stream_in` | `uint1_t` | high while the FSM is idle and ready to accept a new `stream_in` |
+
+Internally it's the same `MULTI_CYCLE[ncycles]` / `Reg[T, MC.start]` / `Reg[T, MC.end]`
+pattern shown above, with `launch`/`capture` registers and a `cycles_since_launch`
+counter driving the handshake. Like `MULTI_CYCLE[...]` itself, the relaxed timing only
+matters during real FPGA synthesis (requires `PART()` + Vivado); simulation always sees
+`func`'s result settle the same cycle it's computed. See
+`src/tests/pypeline_tests/inst/valid_ready_mcp_test.py` (translated from
+`examples/mcp/mcp_divider.c`) for the full example.
+
 ---
 
 ## 17 Raw VHDL Passthrough: `vhdl()`
