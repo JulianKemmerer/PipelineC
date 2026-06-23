@@ -14,6 +14,8 @@ from pypeline import (
     Reg,
     uint1_t,
     uint8_t,
+    sim_call,
+    sim_reset,
 )
 
 data_t = uint8_t
@@ -71,3 +73,14 @@ def autopipelined_submodules_main(
     pipeline_in: stream_t, pipeline_out_ready: uint1_t
 ) -> valid_ready_pipeline_test_t:
     return valid_ready_pipeline_test(pipeline_in, pipeline_out_ready)
+
+
+def test_autopipelined_submodules_sim():
+    sim_reset()
+    out = sim_call(autopipelined_submodules_main, stream_t(data=4, valid=1), 1)
+    print(f"test_autopipelined_submodules_sim out={out}")
+
+
+if __name__ == "__main__":
+    test_autopipelined_submodules_sim()
+    print("All autopipeline tests passed.")

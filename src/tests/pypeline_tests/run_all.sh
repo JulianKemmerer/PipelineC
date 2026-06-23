@@ -3,6 +3,7 @@ set -e
 reset
 cd /media/1TB/Dropbox/PipelineC/git/PipelineC
 
+python3 ./src/tests/pypeline_tests/inst/autopipeline_test.py
 rm -rf ~/pypeline_run_all/*; ./src/pipelinec ./src/tests/pypeline_tests/inst/autopipeline_test.py --out_dir ~/pypeline_run_all
 
 python3 ./src/tests/pypeline_tests/inst/valid_ready_mcp_test.py
