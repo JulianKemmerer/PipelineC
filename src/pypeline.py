@@ -847,6 +847,16 @@ def _ctype_str(t) -> str:
     return str(t)
 
 
+def ctype_name(t) -> str:
+    """Return the canonical C/VHDL hardware type name for a pypeline type
+    (e.g. uint32_t -> "uint32_t", an @struct NamedTuple -> its mangled name).
+    Useful when writing raw vhdl(...) text that needs to reference the
+    compiler's auto-generated {type}_SLV_LEN constant or {type}_to_slv /
+    slv_to_{type} conversion functions for a given pypeline type.
+    """
+    return _ctype_str(t)
+
+
 _operator_registry: dict = {}  # (op_str, l_type_str, r_type_str) -> name_or_callable
 _left_operator_registry: dict = {}  # (op_str, l_type_str) -> name_or_callable
 _unary_operator_registry: dict = {}  # (op_str, type_str) -> name_or_callable
