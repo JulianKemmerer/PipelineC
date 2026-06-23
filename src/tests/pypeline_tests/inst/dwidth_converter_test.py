@@ -16,7 +16,7 @@ sys.path.insert(
         "pypeline",
     ),
 )
-from pypeline import MAIN, sim_call, sim_reset, uint1_t, uint8_t
+from pypeline import MAIN, sim_call, sim_reset, uint1_t, uint8_t, hw_return_type
 
 from axi.axis import (
     make_split_to_chunks,
@@ -46,10 +46,10 @@ dwidth_widen, _narrow_axis_t_w, _wide_axis_t_w = make_dwidth_widen(uint8_t, N, R
 dwidth_narrow, _wide_axis_t_n, _narrow_axis_t_n = make_dwidth_narrow(uint8_t, N, RATIO)
 
 # dwidth_widen/dwidth_narrow return an internal result struct type built inside their
-# factory (not exposed by make_dwidth_widen/make_dwidth_narrow's return tuple) — pull it
-# from the already-decorated function's own return annotation instead of re-deriving it.
-dwidth_widen_result_t = dwidth_widen.__annotations__["return"]
-dwidth_narrow_result_t = dwidth_narrow.__annotations__["return"]
+# factory (not exposed by make_dwidth_widen/make_dwidth_narrow's return tuple) — recover
+# it from the already-annotated function itself instead of re-deriving it by hand.
+dwidth_widen_result_t = hw_return_type(dwidth_widen)
+dwidth_narrow_result_t = hw_return_type(dwidth_narrow)
 
 # Top-level entry points so `pipelinec --comb` elaborates/synthesizes the same hardware
 # functions exercised below, mirroring axis_test.py/multi_cycle_test.py. MAIN(...) only

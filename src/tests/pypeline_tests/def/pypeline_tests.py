@@ -34,6 +34,7 @@ from pypeline import (
     uint_to_array_le,
     concat,
     hw_func,
+    hw_return_type,
     sim_call,
 )
 
@@ -246,7 +247,6 @@ def make_shifter_SL(value_t, amount_t=None):
                 result = shifted
         return result
 
-    shifter_SL.amount_t = actual_amount_t
     return shifter_SL
 
 
@@ -273,7 +273,6 @@ def make_shifter_SR(value_t, amount_t=None):
                 result = shifted
         return result
 
-    shifter_SR.amount_t = actual_amount_t
     return shifter_SR
 
 
@@ -296,7 +295,6 @@ def make_clz(value_t):
                 result = n_bits - 1 - i
         return result
 
-    clz.out_t = out_t
     return clz
 
 
@@ -316,7 +314,7 @@ def make_float_adder(float_t):
     abs_sum_t = make_uint_t(M_LEN + 2)
     narrow_t = make_uint_t(M_LEN + 1)
     clz_narrow = make_clz(narrow_t)
-    clz_out_t = clz_narrow.out_t
+    clz_out_t = hw_return_type(clz_narrow)
     negate_man_h = make_negate(man_hidden_t, signed_man_t)
     negate_sum_man = make_negate(sum_man_t, abs_sum_t)
     sr_signed = make_shifter_SR(signed_man_t, exp_t)

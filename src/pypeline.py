@@ -2239,8 +2239,8 @@ def _sim_type_wrap(fn):
 
     Transparent to the hardware elaborator: _elaborate_live_func uses
     inspect.unwrap() to recover the original function for source analysis.
-    functools.wraps copies __annotations__ and merges __dict__ (preserving
-    custom attributes like .out_t and .amount_t set by factory functions).
+    functools.wraps copies __annotations__, so hw_arg_types()/hw_return_type()
+    (see below) work the same whether called on the wrapped or original function.
     """
     ann = fn.__annotations__
     try:
@@ -2422,6 +2422,26 @@ Apply to inner function definitions inside make_* factory functions:
 
 Transparent to the hardware elaborator (inspect.unwrap recovers the original).
 """
+
+
+def hw_arg_types(func):
+    """Returns a hardware function's parameter types, in declaration order, as a tuple.
+
+    For user-facing code that needs to introspect an already-annotated hardware
+    function (e.g. a factory wrapping a caller-supplied function), instead of reaching
+    into func.__annotations__ directly.
+    """
+    fn = _inspect.unwrap(func)
+    return tuple(v for k, v in fn.__annotations__.items() if k != "return")
+
+
+def hw_return_type(func):
+    """Returns a hardware function's declared return type.
+
+    See hw_arg_types — the return-type counterpart for the same introspection use case.
+    """
+    fn = _inspect.unwrap(func)
+    return fn.__annotations__["return"]
 
 
 def wires(func):

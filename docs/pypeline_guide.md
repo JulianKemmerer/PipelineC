@@ -1006,6 +1006,36 @@ sum8_u8  = make_sum_array(uint8_t, 8)
 The factory body (`for i in range(N)`) is pure Python and runs at elaboration time.
 Only the inner function's body becomes hardware.
 
+### Introspecting a function's types: `hw_arg_types` / `hw_return_type`
+
+Sometimes a factory wraps a function *supplied by the caller* rather than one it builds
+itself, and needs that function's parameter/return types to build the rest of its
+hardware (a stream type around the payload type, a result struct sized to match, etc.):
+
+```python
+def make_valid_ready_mcp(func, ncycles):
+    """func must be a plain hardware function with one annotated parameter and an
+    annotated return type, e.g. def divider(i: my_struct_t) -> uint32_t: ..."""
+    ...
+```
+
+There's no factory call site to ask for these types — `func` is just an ordinary
+annotated Python function. `hw_arg_types(func)` and `hw_return_type(func)` recover them:
+
+```python
+from pypeline import hw_arg_types, hw_return_type
+
+(in_type,) = hw_arg_types(func)   # tuple of parameter types, in declaration order
+out_type = hw_return_type(func)   # the declared return type
+```
+
+Both work whether `func` is a plain function or already `@hw_func`-decorated.
+Prefer these over reading `func.__annotations__` directly, or having a factory stash a
+type as a custom attribute on the function it returns (e.g. `my_func.out_t = out_t`) —
+the type is already recoverable generically from the function's own annotations, so
+there's no need for either function authors or callers to manage it by hand.
+See `include/pypeline/multi_cycle_path.py` for the full `make_valid_ready_mcp` example.
+
 ---
 
 ## 13 Custom Operators

@@ -172,7 +172,8 @@ def make_dwidth_widen(elem_t, narrow_n, ratio):
         o.wide_out = wide_out_reg
         if o.wide_out.valid & wide_out_ready:
             wide_out_reg.valid = 0
-            wide_out_reg.data.frag.keep = [0] * wide_n
+            for i in range(wide_n):
+                wide_out_reg.data.frag.keep[i] = 0
             wide_out_reg.data.eod[0] = 0
 
         out_reg_ready: uint1_t = ~wide_out_reg.valid
@@ -181,7 +182,8 @@ def make_dwidth_widen(elem_t, narrow_n, ratio):
             chunks = shift_into_top(chunks, narrow_in_reg)
             last_cycle: uint1_t = narrow_in_reg.data.eod[0]
             narrow_in_reg.valid = 0
-            narrow_in_reg.data.frag.keep = [0] * narrow_n
+            for i in range(narrow_n):
+                narrow_in_reg.data.frag.keep[i] = 0
             narrow_in_reg.data.eod[0] = 0
             if last_cycle:
                 null_chunk: narrow_axis_t = _make_null_chunk(
@@ -236,7 +238,8 @@ def make_dwidth_narrow(elem_t, narrow_n, ratio):
         o.narrow_out = narrow_out_reg
         if o.narrow_out.valid & narrow_out_ready:
             narrow_out_reg.valid = 0
-            narrow_out_reg.data.frag.keep = [0] * narrow_n
+            for i in range(narrow_n):
+                narrow_out_reg.data.frag.keep[i] = 0
             narrow_out_reg.data.eod[0] = 0
 
         out_reg_ready: uint1_t = ~narrow_out_reg.valid
@@ -250,7 +253,8 @@ def make_dwidth_narrow(elem_t, narrow_n, ratio):
             wide_in_reg.data = assemble_chunks(chunks)
             if ~chunks[0].valid:
                 wide_in_reg.valid = 0
-                wide_in_reg.data.frag.keep = [0] * wide_n
+                for i in range(wide_n):
+                    wide_in_reg.data.frag.keep[i] = 0
                 wide_in_reg.data.eod[0] = 0
 
         o.wide_in_ready = ~wide_in_reg.valid
