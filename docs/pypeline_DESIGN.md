@@ -286,7 +286,8 @@ Declares a **hardware register** (D flip-flop). Persists across clock cycles.
   `MULTI_CYCLE[ncycles].start` or `.end` — see
   [`MULTI_CYCLE[ncycles]` — Multi-Cycle Path Tag](#multi_cyclencycles--multi-cycle-path-tag)
 - When `T` is a struct/array, nested field/element writes (`reg.field = expr`,
-  `reg.nested.arr = [...]`) are supported in both backends: simulation via
+  `reg.nested.arr = [...]`, `reg.nested.field = SubStruct_t(...)`) are supported in both
+  backends: simulation via
   `_sim_lens_set` (Rule 3b/4 in [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#_typedannassignrewriter--truncation-at-every-typed-assignment)),
   hardware elaboration via `_elab_compound_init` (see
   [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#compound-initializer-syntax))

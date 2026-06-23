@@ -1714,11 +1714,16 @@ class FuncElaborator:
                         self._declare_global_write_wire(mangled)
                     self._elab_compound_init(mangled, stmt.value, stmt.value)
                     return
-        # Compound field/array write via list/dict literal RHS, on any target shape
-        # (x = [...], x.field = [...], x.nested.field = [...]): _elab_expr has no
-        # case for a bare List/Dict node, so route through the same per-leaf
-        # _write_ref walk that _elab_ann_assign already uses for compound inits.
-        if isinstance(stmt.value, (ast.List, ast.Dict)):
+        # Compound field/array write via list/dict literal or struct-constructor-call
+        # RHS, on any target shape (x = [...], x.field = [...], x.nested.field = [...],
+        # x.field = MyStruct(...)): _elab_expr has no case for a bare List/Dict node and
+        # _elab_call has no struct-constructor awareness, so route through the same
+        # per-leaf _write_ref walk that _elab_ann_assign already uses for compound inits.
+        is_struct_ctor_call = False
+        if isinstance(stmt.value, ast.Call):
+            callee = self._try_eval_const(stmt.value.func)
+            is_struct_ctor_call = callee is not None and hasattr(callee, "_fields")
+        if isinstance(stmt.value, (ast.List, ast.Dict)) or is_struct_ctor_call:
             ref_toks = self._parse_ref_toks(target)
             if not _has_variable_index(ref_toks):
                 base_var = ref_toks[0]
