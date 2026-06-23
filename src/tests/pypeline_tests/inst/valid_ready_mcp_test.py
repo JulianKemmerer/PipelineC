@@ -44,6 +44,7 @@ class my_struct_t(NamedTuple):
     y: uint32_t
 
 
+@hw_func
 def divider(i: my_struct_t) -> uint32_t:
     # capture_next = func(launch) is computed unconditionally every cycle
     # (including before any real input has been launched, while the internal

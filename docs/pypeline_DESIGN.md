@@ -773,6 +773,7 @@ Python string, not just a literal) and how it's stored on the shared
 | `hw_func` | Decorator for inner hardware functions; adds sim-mode type casting and register state management |
 | `hw_arg_types(func)` | Returns a hardware function's parameter types, in declaration order, as a tuple — reads through `__wrapped__`/`__annotations__` so it works on `@hw_func`-wrapped or plain functions alike |
 | `hw_return_type(func)` | Returns a hardware function's declared return type — same unwrapping as `hw_arg_types` |
+| `is_hw_func(func)` | Returns True if `func` is already `@hw_func`/`@MAIN`-decorated (checks the `_is_hw_func` marker `_sim_type_wrap` sets on its wrapper); used by factories (`make_autopipeline`, `make_valid_ready_mcp`, `make_stream_pipeline`) to validate a caller-supplied `func` before calling it from their own hardware function body |
 | `sim_call(func, *args)` | Call a pypeline function in simulation mode with scoped operators active |
 | `sim_reset()` | Clear all simulated register state and global wire state; restores declared init values |
 | `sim_wire_reset()` | Clear only `_sim_wire_state`; leaves register state intact |

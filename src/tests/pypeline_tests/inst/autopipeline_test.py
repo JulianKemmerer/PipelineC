@@ -9,6 +9,7 @@ sys.path.insert(
 from typing import NamedTuple
 from pypeline import (
     MAIN,
+    hw_func,
     make_autopipeline,
     struct,
     Reg,
@@ -33,6 +34,7 @@ class valid_ready_pipeline_test_t(NamedTuple):
     pipeline_out: stream_t
 
 
+@hw_func
 def test_pipeline(x: stream_t) -> stream_t:
     rv: stream_t
     rv.data = x.data / ~x.data
@@ -48,6 +50,7 @@ autopipelined_test_pipeline = make_autopipeline(
 )
 
 
+@hw_func
 def valid_ready_pipeline_test(
     pipeline_in: stream_t, pipeline_out_ready: uint1_t
 ) -> valid_ready_pipeline_test_t:

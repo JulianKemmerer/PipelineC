@@ -441,6 +441,29 @@ including one called as a plain nested call from inside another hardware functio
 never goes through this rewriter at all, regardless of whether its body needs Rule 1-4. Inner
 hardware functions (including `make_*` factory-produced ones) must carry `@hw_func` to opt in.
 
+**`is_hw_func(func)` — validating caller-supplied functions at factory entry.** Factories
+that accept a caller-supplied `func` and then *call* it from inside their own `@hw_func`
+body — `make_autopipeline`, `make_valid_ready_mcp`, `make_stream_pipeline` — must have
+`func` itself already `@hw_func`-decorated, or `func`'s own `Reg[T]`/`Feedback[T]`/bare
+struct-array locals silently fall through the gap above and raise `UnboundLocalError`
+deep inside `sim_call` (a confusing failure far from its cause). `_sim_type_wrap`/`hw_func`
+sets `wrapper._is_hw_func = True` on the wrapper it returns; `is_hw_func(func)` reads that
+marker (`pypeline.py`, next to `hw_arg_types`/`hw_return_type`). Each of these three
+factories calls `is_hw_func(func)` right after its `hw_arg_types`/`hw_return_type`
+introspection and raises `TypeError` immediately if it's `False`, surfacing the problem at
+the factory call site (elaboration/import time) instead of inside a later `sim_call`.
+
+This was deliberately chosen over having the factories silently call `hw_func(func)`
+themselves when `func` isn't yet decorated: `_sim_type_wrap`'s closure-variable resolution
+(`_build_reg_sim_func`, see the "Closure Variable Caveat" above) reads
+`fn.__code__.co_freevars`/`fn.__closure__` directly off whatever is passed in, without
+unwrapping first — wrapping an already-`@hw_func`-decorated function a second time would
+resolve closure variables off the *wrapper's own* closure instead of the original
+function's, silently breaking any `Reg[T, X]`-style annotation that depends on a closure
+variable. Requiring explicit decoration up front avoids that risk entirely and matches
+the existing convention (`make_negate`/`make_clz` factory examples above) of writing
+`@hw_func` on every inner hardware function definition.
+
 **Combined effect:** with all four rules active, simulation accurately models hardware at
 every typed arithmetic operation, every typed scalar variable assignment, AND the canonical
 bare-declare-then-fill idiom for structs and arrays — including loop-body re-assignments
@@ -933,6 +956,10 @@ subclass has `__getitem__`.
   Wire sim-keys are bare names (no module prefix); unique wire names across sub-modules assumed.
 - **Closures from factory functions** — add `@hw_func` to the inner closure definition.
   `_build_reg_sim_func` resolves `Reg[T]` annotations using closure-captured variables.
+  Factories that accept and then call a caller-supplied function
+  (`make_autopipeline`/`make_valid_ready_mcp`/`make_stream_pipeline`) require that
+  function to already be `@hw_func`-decorated and raise `TypeError` at the factory call
+  site otherwise — see `is_hw_func(func)` above.
 - **Global variables** — only `Wire[T]`/`Input[T]`/`Output[T]` annotations are valid as
   shared cross-function globals. No other form of module-level mutable state is supported.
 - **Bit-accurate arithmetic** — `SIM_STRICT_ARITH=True` + `_TypedAnnAssignRewriter` together

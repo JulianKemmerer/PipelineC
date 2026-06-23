@@ -29,6 +29,7 @@ synthesises them for an FPGA.
 21. [Valid/Ready Streams: `stream_t`](#21-validready-streams-stream_t)
 22. [AXI-Stream: `axis_t`](#22-axi-stream-axis_t)
 23. [FIFOs: `make_stream_fifo`](#23-fifos-make_stream_fifo)
+24. [Pipelined Stream Wrappers: `make_stream_pipeline`](#24-pipelined-stream-wrappers-make_stream_pipeline)
 
 ---
 
@@ -1014,8 +1015,10 @@ hardware (a stream type around the payload type, a result struct sized to match,
 
 ```python
 def make_valid_ready_mcp(func, ncycles):
-    """func must be a plain hardware function with one annotated parameter and an
-    annotated return type, e.g. def divider(i: my_struct_t) -> uint32_t: ..."""
+    """func must already be @hw_func-decorated, with one annotated parameter and an
+    annotated return type, e.g.:
+        @hw_func
+        def divider(i: my_struct_t) -> uint32_t: ..."""
     ...
 ```
 
@@ -1029,12 +1032,24 @@ from pypeline import hw_arg_types, hw_return_type
 out_type = hw_return_type(func)   # the declared return type
 ```
 
-Both work whether `func` is a plain function or already `@hw_func`-decorated.
-Prefer these over reading `func.__annotations__` directly, or having a factory stash a
-type as a custom attribute on the function it returns (e.g. `my_func.out_t = out_t`) —
-the type is already recoverable generically from the function's own annotations, so
-there's no need for either function authors or callers to manage it by hand.
-See `include/pypeline/multi_cycle_path.py` for the full `make_valid_ready_mcp` example.
+Both work whether `func` is undecorated or already `@hw_func`-decorated — but for
+factories that go on to *call* `func` from inside their own hardware function body
+(rather than just introspecting its annotations), `func` itself must already be
+`@hw_func`-decorated: `make_autopipeline`, `make_valid_ready_mcp`, and
+`make_stream_pipeline` all validate this with `is_hw_func(func)` and raise `TypeError`
+otherwise (see [§15](#15-forcing-pipelining-autopipeline) /
+[§16](#16-multi-cycle-paths-multi_cycle)). This matters because `_build_reg_sim_func`'s
+AST rewriting — which makes `Reg[T]`/`Feedback[T]` and bare struct/array locals
+simulate correctly under `sim_call` — only runs once, at `@hw_func` decoration time, on
+the function actually being decorated; it does not propagate to plain functions called
+from inside that body.
+
+Prefer `hw_arg_types`/`hw_return_type` over reading `func.__annotations__` directly, or
+having a factory stash a type as a custom attribute on the function it returns (e.g.
+`my_func.out_t = out_t`) — the type is already recoverable generically from the
+function's own annotations, so there's no need for either function authors or callers
+to manage it by hand. See `include/pypeline/multi_cycle_path.py` for the full
+`make_valid_ready_mcp` example.
 
 ---
 
@@ -1169,12 +1184,14 @@ register (so without `autopipeline()`, the call would have to be a single-cycle
 combinational instance):
 
 ```python
+@hw_func
 def pipeline_stage(x: stream_t) -> stream_t:
     rv: stream_t
     rv.data = x.data / ~x.data   # some multi-cycle-worthy combinational logic
     rv.valid = x.valid
     return rv
 
+@hw_func
 def wrapper(pipeline_in: stream_t) -> stream_t:
     # `ready_reg` makes this a register/feedback context — normally `pipeline_stage`
     # would have to complete combinationally within this same cycle.
@@ -1185,6 +1202,10 @@ def wrapper(pipeline_in: stream_t) -> stream_t:
     # logic across multiple cycles.
     return autopipeline(pipeline_stage(pipeline_in))
 ```
+
+`Reg[T]` and bare struct/array locals (like `rv` above) only simulate correctly under
+`sim_call` when their own function carries `@hw_func` (or `@MAIN`) — see
+[§8](#8-registers-regt) / [§12](#12-parametric-hardware-with-factory-functions).
 
 See `src/tests/pypeline_tests/inst/autopipeline_test.py` for the full example.
 
@@ -1198,8 +1219,9 @@ returned function like any other hardware function, from a register/feedback con
 otherwise:
 
 ```python
-from pypeline import make_autopipeline
+from pypeline import hw_func, make_autopipeline
 
+@hw_func
 def pipeline_stage(x: stream_t) -> stream_t:
     rv: stream_t
     rv.data = x.data / ~x.data
@@ -1207,8 +1229,12 @@ def pipeline_stage(x: stream_t) -> stream_t:
     return rv
 
 # Builds a new function with the same (stream_t) -> stream_t signature as pipeline_stage.
+# pipeline_stage must already be @hw_func-decorated -- make_autopipeline calls it
+# directly from inside its own hardware function body, so it needs its own decoration
+# to simulate correctly under sim_call (see §12).
 pipeline_stage_ap = make_autopipeline(pipeline_stage, has_input_reg=True, has_output_reg=True)
 
+@hw_func
 def wrapper(pipeline_in: stream_t) -> stream_t:
     ready_reg: Reg[uint1_t]
     ready_reg = ~ready_reg
@@ -1283,9 +1309,11 @@ combinational function in its own standalone valid/ready stream interface,
 for you — the pypeline equivalent of PipelineC's `DECL_VALID_READY_MCP_FUNC` macro:
 
 ```python
+from pypeline import hw_func
 from stream.stream import make_stream_t
 from multi_cycle_path import make_valid_ready_mcp
 
+@hw_func
 def divider(i: my_struct_t) -> uint32_t:
     return i.x / i.y
 
@@ -1654,3 +1682,56 @@ only underlying FIFO implementation currently available.
 hardware elaboration — directly, via `sim_call()`, or via `pypeline_sim.py` — raises
 `NotImplementedError`. Synthesise/elaborate normally through `pipelinec` to use it.
 See `src/tests/pypeline_tests/inst/stream_fifo_test.py`.
+
+---
+
+## 24 Pipelined Stream Wrappers: `make_stream_pipeline`
+
+`include/pypeline/stream/stream_pipeline.py`'s `make_stream_pipeline` wraps a single
+combinational hardware function in a free-running, fully-pipelined
+[`stream_t`](#21-validready-streams-stream_t) interface: an
+[AUTOPIPELINE'd](#15-forcing-pipelining-autopipeline) instance (with registered
+input/output) feeding a [`make_fifo`](#23-fifos-make_stream_fifo)-backed output FIFO sized
+`MAX_IN_FLIGHT`. It's the pypeline equivalent of PipelineC's
+`GLOBAL_VALID_READY_PIPELINE_INST` macro — minus the global wires, since this is one
+locally-instantiated function rather than two `MAIN`s joined by `Wire[T]`s.
+
+```python
+from pypeline import hw_func, uint8_t, MAIN, uint1_t
+from stream.stream import make_stream_t
+from stream.stream_pipeline import make_stream_pipeline
+
+@hw_func
+def div_inv(x: uint8_t) -> uint8_t:
+    return x / ~x
+
+uint8_stream_t = make_stream_t(uint8_t)
+stream_pipeline, stream_pipeline_t = make_stream_pipeline(div_inv, MAX_IN_FLIGHT=4)
+
+@MAIN(50.0)
+def buffered_div_inv(
+    stream_in: uint8_stream_t, ready_for_stream_out: uint1_t
+) -> stream_pipeline_t:
+    return stream_pipeline(stream_in, ready_for_stream_out)
+```
+
+`make_stream_pipeline(func, MAX_IN_FLIGHT)` returns `(stream_pipeline_func, stream_pipeline_t)`:
+
+| | Type | Meaning |
+|---|---|---|
+| `stream_pipeline_func(stream_in, ready_for_stream_out)` | `(stream_t(in_type), uint1_t) -> stream_pipeline_t` | one pipelined instance of `func` |
+| `stream_pipeline_t.stream_out` | `stream_t(out_type)` | `func`'s result, after AUTOPIPELINE retiming and the output FIFO |
+| `stream_pipeline_t.ready_for_stream_in` | `uint1_t` | high while the pipeline can accept a new `stream_in` (tracks in-flight count against `MAX_IN_FLIGHT`) |
+
+`in_type`/`out_type` are inferred from `func`'s own annotations via `hw_arg_types`/
+`hw_return_type`, the same way `make_autopipeline` and `make_valid_ready_mcp` do (see
+[§12](#12-parametric-hardware-with-factory-functions)). **`func` must already be
+`@hw_func`-decorated** — `make_stream_pipeline` calls `is_hw_func(func)` and raises
+`TypeError` immediately if it isn't, since `func` is called from inside an internal
+AUTOPIPELINE'd wrapper and needs its own decoration for any `Reg[T]`/bare struct-array
+locals in its body to simulate correctly (see [§15](#15-forcing-pipelining-autopipeline)).
+
+**Cannot currently be simulated.** Same limitation as `make_stream_fifo` above — the
+internal FIFO is built on `vhdl()`, so calling `stream_pipeline_func` via `sim_call()` or
+`pypeline_sim.py` raises `NotImplementedError`. Synthesise/elaborate normally through
+`pipelinec` to use it. See `src/tests/pypeline_tests/inst/stream_pipeline_test.py`.

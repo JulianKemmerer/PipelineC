@@ -837,10 +837,18 @@ def make_autopipeline(func, has_input_reg: bool, has_output_reg: bool):
     AUTOPIPELINE submodule instance (see `autopipeline`), optionally adding a plain
     input and/or output register around it.
 
+    `func` must already be @hw_func-decorated — make_autopipeline calls it directly
+    from inside its own @hw_func body, so any Reg[T]/Feedback[T] or bare struct/array
+    locals in func's own body need func's own @hw_func decoration to simulate
+    correctly (see is_hw_func).
+
     Returns a new function with the same (in_type) -> out_type signature as `func`,
     suitable for calling from a register/feedback context without needing to wrap
     that outer call in `autopipeline(...)` — the AUTOPIPELINE tagging is internal to
     the returned function's own body, on its call to `func`.
+
+        @hw_func
+        def add(a: my_t, b: my_t) -> my_t: ...
 
         autopipelined_add = make_autopipeline(add, has_input_reg=True, has_output_reg=True)
 
@@ -854,6 +862,11 @@ def make_autopipeline(func, has_input_reg: bool, has_output_reg: bool):
     matching the registered-input/registered-output idiom used elsewhere (e.g.
     vga_to_pmod8's Reg[T] read-before-write pattern).
     """
+    if not is_hw_func(func):
+        raise TypeError(
+            f"make_autopipeline(func, ...): {func.__qualname__!r} must be "
+            f"@hw_func-decorated before being passed in"
+        )
     (in_type,) = hw_arg_types(func)
     out_type = hw_return_type(func)
 
@@ -2391,6 +2404,7 @@ def _sim_type_wrap(fn):
                     _pop_scoped_registrations(saved)
                     _sim_inst_stack.pop()
 
+        wrapper._is_hw_func = True
         return wrapper
 
     if not has_state:
@@ -2470,6 +2484,7 @@ def _sim_type_wrap(fn):
             finally:
                 _sim_inst_stack.pop()
 
+    wrapper._is_hw_func = True
     return wrapper
 
 
@@ -2505,6 +2520,18 @@ def hw_return_type(func):
     """
     fn = _inspect.unwrap(func)
     return fn.__annotations__["return"]
+
+
+def is_hw_func(func):
+    """Returns True if func is already @hw_func-decorated (or @MAIN, which implies
+    @hw_func).
+
+    For factories that accept a caller-supplied function (see hw_arg_types/
+    hw_return_type) and need to validate it's been decorated before using it inside
+    their own hardware function body — an undecorated func's own Reg[T]/Feedback[T]
+    and bare struct/array locals won't be simulated correctly otherwise.
+    """
+    return getattr(func, "_is_hw_func", False)
 
 
 def wires(func):
