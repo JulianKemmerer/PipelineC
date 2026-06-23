@@ -31,6 +31,7 @@ For the shared pypeline.py type system and `SimVal` foundations, see
 **Reference**
 - [Limitations](#limitations)
 - [Simulation Performance — Hot Paths and Key Optimizations](#simulation-performance--hot-paths-and-key-optimizations)
+- [Tests](#tests)
 
 ---
 
@@ -1093,3 +1094,25 @@ achieve ~9× speedup vs. baseline in raw mode:
 The remaining time in raw mode is dominated by Python function-call overhead across the sim
 loop (`_run_clock_cycle`, `_convergence_loop`, `sim_call`) and `_sim_reg_read`/`_sim_reg_write`
 dict lookups. Further speedup would require C extension code or a numpy-vectorised strategy.
+
+## Tests
+
+`src/tests/pypeline_tests/sim_tests.py` covers the simulation behaviors described in this
+document directly — `Reg[T]`/`Feedback[T]`/`Wire[T]` simulation, bit-accurate arithmetic
+(`SIM_STRICT_ARITH`), and `sim_call()` — by running the plain-`python3` test files under
+`inst/` (e.g. `pypeline_test.py`, `bit_math_test.py`, `reg_init_test.py`), each of which
+asserts on `sim_call()` results and exits non-zero on failure. It also covers the
+multi-MAIN clock-cycle runner (`pypeline_sim.py` § above) via `global_wires_sim_test.py`,
+invoked as `python3 src/pypeline_sim.py inst/global_wires_sim_test.py --run 10`.
+
+```
+python3 src/tests/pypeline_tests/sim_tests.py            # just the sim tests
+python3 src/tests/pypeline_tests/sim_tests.py -j 4
+python3 src/tests/pypeline_tests/run_all.py --category sim
+```
+
+No `pipelinec` elaboration/synthesis happens in this script — that's covered separately by
+`elab_tests.py`/`synth_tests.py` (see
+[PY_TO_LOGIC_DESIGN.md § Tests](PY_TO_LOGIC_DESIGN.md#tests)). Tests run in parallel via a
+thread pool (`common.py`, shared with the other two scripts); see
+[pypeline_DESIGN.md § Tests](pypeline_DESIGN.md#tests) for the full-suite runner.

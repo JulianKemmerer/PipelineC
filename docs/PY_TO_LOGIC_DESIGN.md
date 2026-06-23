@@ -83,8 +83,9 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
 
 **Reference**
 - [`@sim_output` Calls — Elaborator Skip](#sim_output-calls--elaborator-skip)
+- [VHDL Identifier Safety — Name Sanitization](#vhdl-identifier-safety--name-sanitization)
 - [Predicting C/VHDL Output Names](#predicting-cvhdl-output-names)
-  - [VHDL Identifier Safety — Name Sanitization](#vhdl-identifier-safety--name-sanitization)
+- [Tests](#tests)
 
 ---
 
@@ -3036,3 +3037,33 @@ top.py  (single-file or multi-file entry point)
 ```
 
 ---
+
+## Tests
+
+`src/tests/pypeline_tests/` drives `pipelinec` against design files in `inst/` to exercise
+the elaboration mechanics, pragmas, and syntax extensions described above end-to-end. Two
+scripts cover the `pipelinec` side of the suite (a third, `sim_tests.py`, covers pure-Python
+simulation — see [pypeline_sim_DESIGN.md § Tests](pypeline_sim_DESIGN.md#tests)):
+
+- **`elab_tests.py`** — runs `pipelinec --comb --no_synth` (elaboration only, no
+  autopipelining or synthesis tool invocation) against design files that exercise global
+  wires, compound initializers, bit manipulation syntax, and multi-file imports
+  (`global_wires_test.py`, `compound_init_test.py`, `bit_manip_test.py`, `import_test.py`,
+  `func_wires_test.py`). Fast — useful for checking HDL generation/elaboration correctness
+  without needing a synthesis toolchain installed.
+- **`synth_tests.py`** — runs `pipelinec` (with or without `--comb`, but without
+  `--no_synth`) on the remaining design files, exercising the full pipeline: elaboration →
+  `SYN.DO_THROUGHPUT_SWEEP` autopipelining → synthesis. Requires a synthesis tool to be
+  installed and discoverable via `SYN.PART_SET_TOOL` (falls back to `--comb --no_synth`
+  with a warning if none is found).
+
+```
+python3 src/tests/pypeline_tests/elab_tests.py            # elaboration only, fast
+python3 src/tests/pypeline_tests/synth_tests.py            # full elaboration + synthesis
+python3 src/tests/pypeline_tests/run_all.py --category elab --category synth
+```
+
+Each test gets an isolated `--out_dir` under a tmp directory (`common.run_test()` in
+`src/tests/pypeline_tests/common.py`), so tests can run in parallel safely — unlike the old
+`run_all.sh`, which serialized everything through one shared `~/pypeline_run_all` directory.
+See [pypeline_DESIGN.md § Tests](pypeline_DESIGN.md#tests) for the combined-suite runner.

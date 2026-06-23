@@ -20,6 +20,7 @@ internals (Logic() graph, FuncElaborator, CONST_REF_RD, etc.) see
 - [`concat(*args)` — Bit Concatenation](#concatargs--bit-concatenation)
 - [`vhdl(text)` — Raw VHDL Passthrough](#vhdltext--raw-vhdl-passthrough)
 - [Reference: `pypeline.py` Public API](#reference-pypelinepy-public-api)
+- [Tests](#tests)
 
 ---
 
@@ -801,3 +802,29 @@ All types are declared as proper Python `class` statements with `_CTypeMeta` as 
 (not variable assignments), so Pylance/pyright accepts them as valid type expressions.
 Adding `# pyright: reportInvalidTypeForm=none` to design files suppresses warnings for
 dynamically-produced types like factory structs.
+
+## Tests
+
+`src/tests/pypeline_tests/` exercises the type system, struct support, operator registry,
+and elaboration paths described above against real `.py` design files in `inst/`. The suite
+is split across three scripts, run together via `run_all.py`:
+
+- **`sim_tests.py`** — plain `python3 <file>` simulation tests (no elaboration). See
+  [pypeline_sim_DESIGN.md § Tests](pypeline_sim_DESIGN.md#tests) for what these cover.
+- **`elab_tests.py`** / **`synth_tests.py`** — `pipelinec` elaboration and synthesis runs
+  against the same design files. See
+  [PY_TO_LOGIC_DESIGN.md § Tests](PY_TO_LOGIC_DESIGN.md#tests) for details.
+
+```
+python3 src/tests/pypeline_tests/run_all.py            # run everything, in parallel
+python3 src/tests/pypeline_tests/run_all.py -j 4        # cap parallelism at 4 workers
+python3 src/tests/pypeline_tests/run_all.py --category sim
+```
+
+These scripts replace the old `run_all.sh`: each test gets its own tmp output directory
+(`common.py`'s `make_tmp_root()`/`run_test()`), tests run in parallel via a thread pool
+(default worker count = `cpu_count() // 2`), and all paths are resolved relative to the
+repository root (`common.REPO_ROOT`) rather than hardcoded — the suite runs unmodified on
+any checkout. A summary table reports PASS/FAIL per test, with output directories of any
+failed test printed for inspection. `sim_tests.py`, `elab_tests.py`, and `synth_tests.py`
+can each also be run standalone.
