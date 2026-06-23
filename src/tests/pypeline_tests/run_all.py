@@ -10,7 +10,13 @@ import sys
 import elab_tests
 import sim_tests
 import synth_tests
-from common import make_arg_parser, make_tmp_root, print_summary, run_tests
+from common import (
+    filter_tests,
+    make_arg_parser,
+    make_tmp_root,
+    print_summary,
+    run_tests,
+)
 
 CATEGORY_MODULES = {
     "sim": sim_tests,
@@ -34,6 +40,7 @@ def main() -> int:
     for category in categories:
         tests += CATEGORY_MODULES[category].get_tests()
 
+    tests = filter_tests(tests, args)
     tmp_root = make_tmp_root()
     results = run_tests(tests, args.jobs, tmp_root)
     return print_summary(results)

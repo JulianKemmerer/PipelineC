@@ -186,14 +186,44 @@ def make_arg_parser(description: str) -> argparse.ArgumentParser:
         default=default_jobs(),
         help=f"Number of tests to run in parallel. Default = (cpu count / 2) = {default_jobs()}.",
     )
+    parser.add_argument(
+        "--test",
+        "-t",
+        type=int,
+        default=None,
+        metavar="INDEX",
+        help="Run only the test at position INDEX in the list (0-based). Run with --list to see indices.",
+    )
+    parser.add_argument(
+        "--list",
+        "-l",
+        action="store_true",
+        help="Print the numbered list of tests and exit without running anything.",
+    )
     return parser
+
+
+def filter_tests(tests: list, args) -> list:
+    if args.list:
+        for i, t in enumerate(tests):
+            print(f"  {i:3d}  [{t.category}]  {t.name}")
+        sys.exit(0)
+    if args.test is not None:
+        if args.test < 0 or args.test >= len(tests):
+            print(
+                f"Error: --test {args.test} out of range (0-{len(tests) - 1})",
+                file=sys.stderr,
+            )
+            sys.exit(1)
+        tests = [tests[args.test]]
+    return tests
 
 
 def main(get_tests, description: str) -> int:
     parser = make_arg_parser(description)
     args = parser.parse_args()
 
-    tests = get_tests()
+    tests = filter_tests(get_tests(), args)
     tmp_root = make_tmp_root()
     results = run_tests(tests, args.jobs, tmp_root)
     return print_summary(results)
