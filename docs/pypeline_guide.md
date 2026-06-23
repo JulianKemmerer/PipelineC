@@ -28,6 +28,7 @@ synthesises them for an FPGA.
 20. [N-Dimensional Stream Fragments: `ndarray_fragment_t`](#20-n-dimensional-stream-fragments-ndarray_fragment_t)
 21. [Valid/Ready Streams: `stream_t`](#21-validready-streams-stream_t)
 22. [AXI-Stream: `axis_t`](#22-axi-stream-axis_t)
+23. [FIFOs: `make_stream_fifo`](#23-fifos-make_stream_fifo)
 
 ---
 
@@ -1493,3 +1494,48 @@ the per-width duplication older, non-generic AXIS implementations require.
 
 See `src/tests/pypeline_tests/inst/axis_test.py` for a complete worked example, including
 synthesis through `pipelinec`.
+
+---
+
+## 23 FIFOs: `make_stream_fifo`
+
+`include/pypeline/stream/stream_fifo.py`'s `make_stream_fifo` wraps a single-clock-domain FIFO
+in pypeline's standard [`stream_t`](#21-validready-streams-stream_t) valid/ready shape, so you
+don't have to unpack/repack `.data`/`.valid` by hand. (It's a thin layer over
+`include/pypeline/fifo.py`'s lower-level `make_fifo` — most users should just use
+`make_stream_fifo` directly and never need to touch `make_fifo` itself.)
+
+```python
+from pypeline import uint32_t, MAIN, uint1_t
+from stream.stream import make_stream_t
+from stream.stream_fifo import make_stream_fifo
+
+uint32_stream_t = make_stream_t(uint32_t)
+stream_fifo, stream_fifo_t = make_stream_fifo(uint32_t, 256)   # 256-deep FIFO of uint32_t
+
+@MAIN
+def buffered(out_ready: uint1_t, in_stream: uint32_stream_t) -> stream_fifo_t:
+    return stream_fifo(out_ready, in_stream)
+```
+
+`make_stream_fifo(data_t, depth, mode="fwft")` returns `(stream_fifo_func, stream_fifo_t)`:
+
+| | Type | Meaning |
+|---|---|---|
+| `stream_fifo_func(out_ready, in_stream)` | `(uint1_t, stream_t) -> stream_fifo_t` | one FIFO instance |
+| `stream_fifo_t.out_stream` | `stream_t` | the FIFO's output: `.data`/`.valid` |
+| `stream_fifo_t.in_ready` | `uint1_t` | backpressure for `in_stream` — high while the FIFO has room |
+
+`in_stream` is built with `make_stream_t(data_t)` exactly as in [§21](#21-validready-streams-stream_t).
+`out_ready` is the downstream consumer's readiness for `stream_fifo_t.out_stream`, following the
+same convention `stream_t` itself uses — `ready` flows opposite to the stream and isn't bundled
+into the struct, so you wire it in from whatever's downstream.
+
+`depth` must be `>= 2`. `mode` only accepts `"fwft"` (first-word-fall-through) for now — the
+only underlying FIFO implementation currently available.
+
+**Cannot currently be simulated.** Like anything built on [`vhdl()`](#17-raw-vhdl-passthrough-vhdl)
+(the FIFO is a raw VHDL entity instantiated under the hood), calling `stream_fifo_func` outside
+hardware elaboration — directly, via `sim_call()`, or via `pypeline_sim.py` — raises
+`NotImplementedError`. Synthesise/elaborate normally through `pipelinec` to use it.
+See `src/tests/pypeline_tests/inst/stream_fifo_test.py`.
