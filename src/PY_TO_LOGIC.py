@@ -2068,7 +2068,31 @@ class FuncElaborator:
             return
 
         # ── Runtime condition ──
-        cond_wire, _ = self._elab_expr(stmt.test)
+        cond_wire, cond_type = self._elab_expr(stmt.test)
+        if cond_type != C_TO_LOGIC.BOOL_C_TYPE:
+            # if num: → if num != 0:  (matches _elab_bool_op convention)
+            zero_wire, zero_type = self._elab_python_value(0, stmt)
+            if _ctype_is_int(cond_type) and _ctype_is_int(zero_type):
+                eff_l, eff_r, _ = _arith_promote(cond_type, zero_type)
+            else:
+                eff_l, eff_r = cond_type, zero_type
+            neq_func = _bin_func_name(C_TO_LOGIC.BIN_OP_NEQ_NAME, eff_l, eff_r)
+            neq_inst = self._inst(
+                f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.BIN_OP_NEQ_NAME}_if_cond",
+                stmt,
+            )
+            neq_out = _port_wire(neq_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            _add_submodule_instance(
+                self.logic,
+                neq_inst,
+                neq_func,
+                [("left", cond_wire, eff_l), ("right", zero_wire, eff_r)],
+                neq_out,
+                C_TO_LOGIC.BOOL_C_TYPE,
+                stmt,
+                self.src_file,
+            )
+            cond_wire = neq_out
 
         # ── Clock-enable MUX wires for each branch ──
         # true_ce  = MUX(cond, parent_ce, 0)  — active only when condition is true

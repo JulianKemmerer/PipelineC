@@ -2,10 +2,13 @@
 import sys, os
 
 sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
+)
+sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "def")
 )
 
-from pypeline import MAIN, uint1_t, uint32_t
+from pypeline import MAIN, uint1_t, uint8_t, uint32_t, sim_reset, sim_call
 
 import pypeline_tests
 
@@ -158,3 +161,32 @@ def if_main0(cond: uint1_t) -> uint1_t:
     if cond:
         rv = 0
     return rv
+
+
+@MAIN
+def if_num_cond(num: uint8_t) -> uint1_t:
+    rv: uint1_t = 1
+    if num:
+        rv = 0
+    return rv
+
+
+# ---------------------------------------------------------------------------
+# Simulation tests
+# ---------------------------------------------------------------------------
+
+
+def test_if_num_cond():
+    sim_reset()
+    assert int(sim_call(if_num_cond, num=0)) == 1  # 0 → condition false, rv stays 1
+    assert int(sim_call(if_num_cond, num=1)) == 0  # 1 != 0 → condition true, rv = 0
+    # num=2 (0b00000010): bit[0]=0 but num!=0, so condition must be true → rv=0.
+    # If the mux select were wired to bit[0] instead of (num!=0) this would wrongly return 1.
+    assert int(sim_call(if_num_cond, num=2)) == 0  # 2 != 0 → condition true, rv = 0
+    assert int(sim_call(if_num_cond, num=255)) == 0  # 255 != 0 → condition true, rv = 0
+    print("test_if_num_cond PASS")
+
+
+if __name__ == "__main__":
+    test_if_num_cond()
+    print("\nAll if_test simulation tests passed.")

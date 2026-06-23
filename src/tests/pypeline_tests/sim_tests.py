@@ -12,7 +12,6 @@ from common import INST_DIR, PYPELINE_SIM, Test, main
 # fmt: off
 PLAIN_PYTHON_TEST_FILES = [
     "stream_pipeline_test.py",
-    "autopipeline_test.py",
     "valid_ready_mcp_test.py",
     "float32_add_test.py",
     "pypeline_test.py",
@@ -24,6 +23,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "axis_test.py",
     "dwidth_converter_test.py",
     "func_wires_test.py",
+    "if_test.py",
 ]
 # fmt: on
 

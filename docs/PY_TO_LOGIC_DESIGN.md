@@ -619,7 +619,9 @@ Compile-time constant conditions → branch elimination (no hardware emitted).
 Runtime hardware conditions → snapshot/restore + MUX per driven variable:
 
 ```
-1. Evaluate condition:  cond_wire, _ = _elab_expr(stmt.test)
+1. Evaluate condition:  cond_wire, cond_type = _elab_expr(stmt.test)
+   If cond_type != uint1_t: emit BIN_OP_NEQ(cond_wire, 0) → cond_wire : uint1_t
+   (matches Python truthiness: any non-zero value is true, same as and/or convention)
 2. Emit clock-enable MUX wires (permanent, see below)
 3. Snapshot env and wire_aliases_over_time → env_snap, aliases_snap
 4. Push true_ce_wire onto clock_enable_wires
@@ -637,6 +639,13 @@ Runtime hardware conditions → snapshot/restore + MUX per driven variable:
       false_wire = _read_branch_coverage(env_false, aliases_false, ...)
       MUX(cond, true_wire, false_wire) → mux_alias
 ```
+
+**Non-`uint1_t` condition coercion:** the MUX select input must be `uint1_t`. If the
+condition expression has a wider type (e.g. `if num:` where `num: uint8_t`), `_elab_if`
+emits a `BIN_OP_NEQ(cond_wire, 0)` submodule immediately after elaborating the condition,
+producing a `uint1_t` wire before continuing. This mirrors the `!= 0` wrapping that
+`_elab_bool_op` applies to `and`/`or` operands. The coercion correctly implements Python
+truthiness: `num=2` (bit[0]=0 but `num != 0`) evaluates as true, not as bit[0].
 
 Both branches elaborate **into the same `logic` object** — wires and submodule instances
 accumulate permanently. Only `env` and `wire_aliases_over_time` are snapshot/restored, so
