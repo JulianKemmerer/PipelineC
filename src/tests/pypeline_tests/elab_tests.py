@@ -18,6 +18,7 @@ NO_SYNTH_TEST_FILES = [
     "import_test.py",
     "func_wires_test.py",
     "dangling_logic_test.py",
+    "stream_pipeline_test.py",
 ]
 # fmt: on
 
@@ -27,7 +28,7 @@ def get_tests() -> list:
         Test(
             name=filename[: -len(".py")],
             category="elab",
-            cmd=[PIPELINEC, INST_DIR / filename, "--comb", "--no_synth"],
+            cmd=[PIPELINEC, INST_DIR / filename, "--no_synth"],
             needs_out_dir=True,
         )
         for filename in NO_SYNTH_TEST_FILES

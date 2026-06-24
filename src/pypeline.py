@@ -12,8 +12,13 @@ Usage in user design files:
     # point_t[10] works as a type annotation after the class definition
 """
 
+import hashlib as _hashlib
 import typing
 import functools as _functools
+
+# If a fully-expanded struct canonical name exceeds this length it is replaced
+# with "{class_name}_{sha256[:8]}" to keep VHDL type identifiers manageable.
+_MAX_MANGLE_NAME_LEN = 64
 
 
 # ─────────────────────────────────────────────
@@ -677,8 +682,12 @@ def struct(cls):
             ann_str = str(ann)
         parts.append(f"{field}_{_mangle_type(ann_str)}")
     canonical = cls.__name__ + ("_" + "_".join(parts) if parts else "")
-    cls._pypeline_ctype_canonical = canonical
-    cls._pypeline_ctype_name = canonical
+    cls._pypeline_ctype_canonical = canonical  # full name retained for debugging
+    if len(canonical) > _MAX_MANGLE_NAME_LEN:
+        h = _hashlib.sha256(canonical.encode()).hexdigest()[:8]
+        cls._pypeline_ctype_name = f"{cls.__name__}_{h}"
+    else:
+        cls._pypeline_ctype_name = canonical
 
     # Override __new__ so that scalar integer fields are auto-wrapped in SimVals.
     # This makes float32_t(sign=0, exp=127, man=0) produce typed SimVal fields for

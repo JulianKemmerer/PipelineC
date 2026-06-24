@@ -433,28 +433,69 @@ def _annotation_to_ctype(ann, eval_ns=None, parser_state=None):
 # Naming helpers
 # ─────────────────────────────────────────────
 
+# If a fully-expanded canonical name exceeds this length, it is replaced with
+# "{base_name}_{sha256[:8]}" to keep VHDL identifiers manageable.
+_MAX_MANGLE_NAME_LEN = 64
+
+
+def _callable_hash(val):
+    """Return a short (8-char hex) hash representing a callable's identity.
+
+    Uses qualname + module + a digest of closure cell reprs so that two
+    factory-produced functions with the same name but different captured
+    types produce different hashes.
+    """
+    qual = getattr(val, "__qualname__", repr(val))
+    mod = getattr(val, "__module__", "")
+    closure_key = ""
+    if hasattr(val, "__closure__") and val.__closure__:
+        try:
+            closure_key = str(
+                sorted(
+                    repr(c.cell_contents)
+                    for c in val.__closure__
+                    if c.cell_contents is not None
+                )
+            )
+        except Exception:
+            pass
+    return hashlib.sha256(f"{qual}:{mod}:{closure_key}".encode()).hexdigest()[:8]
+
 
 def _canonical_func_name(func, closure_ns, module_globals=None):
     """Return a canonical name for a factory-produced closure, or None for top-level functions.
 
     Factory closures have '.<locals>.' in __qualname__. The canonical name is:
 
-        <factory_prefix>_<param1>_<val1>_<param2>_<val2>_...
+        <inner_func_name>_<param1>_<val1>_<param2>_<val2>_...
 
-    where <factory_prefix> is the qualname chain (definition hierarchy, not call site),
-    and only closure variables whose names match a factory parameter are included.
+    where <inner_func_name> is the innermost returned function name (mirrors how
+    @struct uses the inner class name, not the factory name).
 
-    Three cases:
-      1. Factory not found in module_globals: fall back to all type/int closure vars.
-      2. Factory has 0 params: name is just the factory prefix (no suffix).
-      3. Factory has params but none are in the closure (e.g. T not captured in
-         make_swap because only a derived local was used): fall back to all type/int
-         closure vars so the name is still unique.
+    For each factory parameter:
+      - C type / @struct type → use canonical type name
+      - int / bool             → use value string
+      - callable (in closure)  → hash(qualname + module + closure reprs)
+      - absent from closure    → the param was consumed by the factory to produce
+                                 derived locals; hash those derived closure vars
+                                 and label the term with the param name
+
+    If the full name exceeds _MAX_MANGLE_NAME_LEN it is replaced with
+    "{inner_func_name}_{sha256[:8]}" of the full name.
+
+    Four cases:
+      1. Factory not found in module_globals: fall back to all closure vars (legacy).
+      2. Factory has 0 params: name is just the inner function name (no suffix).
+      3. ALL factory params absent from closure: hash all closure vars under param names.
+      4. SOME params absent: include found params normally + hash derived vars for missing.
     """
     if ".<locals>." not in func.__qualname__:
         return None
     parts = func.__qualname__.split(".<locals>.")
-    factory_prefix = "_".join(parts[:-1])  # drop inner func name, keep factory chain
+    inner_func_name = parts[-1]  # e.g. "stream_pipeline" — used as the name base
+    factory_prefix = "_".join(
+        parts[:-1]
+    )  # e.g. "make_stream_pipeline" — for fallback hash suffix
 
     # Collect parameter names from each factory in the qualname chain.
     # None means "factory not found"; empty set means "0-param factory".
@@ -472,26 +513,32 @@ def _canonical_func_name(func, closure_ns, module_globals=None):
                     factory_param_names.update(middle_func.__code__.co_varnames[:m])
 
     if factory_param_names is None:
-        # Factory not found — fall back to all type/int closure vars (legacy).
+        # Factory not found — fall back to all closure vars (legacy).
         filtered_ns = closure_ns
+        missing_params = set()
     elif factory_param_names:
-        # Factory has params — only include those present in the closure.
-        filtered_ns = {k: v for k, v in closure_ns.items() if k in factory_param_names}
-        if not filtered_ns:
-            # None of the factory params were captured (the factory derived locals
-            # from them instead, e.g. make_vga_timing expands spec into constants).
-            # Hash all closure vars to produce a short unique suffix, and use the
-            # factory param names to describe what was hashed.
-            # e.g. make_vga_timing(spec=VGA_640_480) → make_vga_timing_spec_a1b2c3d4
+        # Factory has params — separate those captured in closure from those that were
+        # consumed by the factory to produce derived locals (and are absent from closure).
+        found_params = {k: v for k, v in closure_ns.items() if k in factory_param_names}
+        missing_params = factory_param_names - set(found_params.keys())
+        if not found_params:
+            # ALL factory params were consumed/derived — hash all closure vars.
+            # e.g. make_vga_timing(spec=VGA_640_480) → inner_name_spec_a1b2c3d4
             closure_repr = repr(
                 sorted((k, repr(v)) for k, v in closure_ns.items())
             ).encode()
             h = hashlib.sha256(closure_repr).hexdigest()[:8]
             param_suffix = "_".join(sorted(factory_param_names))
-            return factory_prefix + "_" + param_suffix + "_" + h
+            full = inner_func_name + "_" + param_suffix + "_" + h
+            if len(full) > _MAX_MANGLE_NAME_LEN:
+                h2 = hashlib.sha256(full.encode()).hexdigest()[:8]
+                return f"{inner_func_name}_{h2}"
+            return full
+        filtered_ns = found_params
     else:
-        # 0-param factory — name is just the factory prefix, no suffix.
+        # 0-param factory — name is just the inner function name, no suffix.
         filtered_ns = {}
+        missing_params = set()
 
     name_parts = []
     for var_name in sorted(filtered_ns.keys()):
@@ -510,14 +557,35 @@ def _canonical_func_name(func, closure_ns, module_globals=None):
         elif val is None:
             name_parts.append(f"{var_name}_None")
         elif callable(val):
-            continue  # local function objects — elaborated separately, not part of name
+            # Hash callable identity so different function args produce different names.
+            name_parts.append(f"{var_name}_{_callable_hash(val)}")
         else:
             raise ElaborationError(
                 f"Factory closure variable '{var_name}' has unsupported value "
                 f"{val!r} (type: {type(val).__name__}). "
                 f"Factory parameters must be C types, ints, bools, None, or callables."
             )
-    return factory_prefix + ("_" + "_".join(name_parts) if name_parts else "")
+
+    # Factory params that were consumed by the factory (not in closure) are represented
+    # by hashing the derived closure vars — e.g. make_stream_pipeline(func, MAX_IN_FLIGHT)
+    # where 'func' is absent from stream_pipeline's closure but its effects appear in
+    # in_stream_t, out_stream_t, autopipelined_func, etc.
+    if missing_params:
+        derived_ns = {
+            k: v for k, v in closure_ns.items() if k not in factory_param_names
+        }
+        derived_repr = repr(
+            sorted((k, repr(v)) for k, v in derived_ns.items())
+        ).encode()
+        missing_hash = hashlib.sha256(derived_repr).hexdigest()[:8]
+        for mp in sorted(missing_params):
+            name_parts.append(f"{mp}_{missing_hash}")
+
+    full = inner_func_name + ("_" + "_".join(name_parts) if name_parts else "")
+    if len(full) > _MAX_MANGLE_NAME_LEN:
+        h = hashlib.sha256(full.encode()).hexdigest()[:8]
+        return f"{inner_func_name}_{h}"
+    return full
 
 
 def _loc_str(src_file, node):

@@ -878,9 +878,9 @@ def make_sum3(T):
     return sum3
 
 sum3_u32 = make_sum3(uint32_t)
-# local_add gets canonical "make_adder_T_uint32_t" regardless of which outer
-# factory created it — make_sum3(uint32_t) and make_sum3(uint8_t) produce
-# distinct "make_adder_T_uint32_t" and "make_adder_T_uint8_t" respectively
+# local_add (inner function "add") gets canonical "add_T_uint32_t" regardless of
+# which outer factory created it — make_sum3(uint32_t) and make_sum3(uint8_t)
+# produce distinct "add_T_uint32_t" and "add_T_uint8_t" respectively
 ```
 
 Only top-level `def` statements are scanned by `ast.walk` on `tree.body`. Nested functions
@@ -890,62 +890,74 @@ inside factory closures (like `def concat` inside `make_concat`) are deliberatel
 **Canonical function name format:**
 
 ```
-<factory_prefix>_<param1>_<val1>_<param2>_<val2>_...
+<inner_func_name>_<param1>_<val1>_<param2>_<val2>_...
 ```
 
-`factory_prefix` encodes the **definition hierarchy** (from `func.__qualname__`, not the
-call site): `func.__qualname__` with the last `.<locals>.<funcname>` stripped and remaining
-`.<locals>.` replaced with `_`. This means a module-level factory called from inside
-another factory still uses only its own name as the prefix.
+`inner_func_name` is the **innermost function name** from `func.__qualname__` (the part
+after the last `.<locals>.`). This mirrors how `@struct` uses the inner class name rather
+than the outer factory name, and produces short, readable VHDL entity names: a user-written
+inner function named `stream_pipeline` becomes a VHDL entity `stream_pipeline_...`, not
+`make_stream_pipeline_...`.
 
 Only closure variables whose names match a **parameter of the enclosing factory function**
 are included (sorted alphabetically). The factory is looked up by name in `module_globals`;
 middle-chain factories (nested definitions) are looked up as callables in the closure.
 
-**Three cases for the suffix:**
+**Value encoding per parameter type:**
 
-1. **Factory not found** in `module_globals` — fall back to all type/int-valued closure vars.
-2. **Factory has 0 parameters** — suffix is empty; name is just `factory_prefix`.
-3. **Factory has parameters, but none appear in the closure** — this happens when the factory
-   computes derived locals from its parameters (e.g. `make_vga_timing` expands `spec` into
-   integer constants `FRAME_WIDTH`, `H_SYNC_START`, etc.; none of those match the parameter
-   name `spec`). In this case, all closure vars are **hashed** (SHA-256, first 8 hex chars)
-   and the factory parameter names are used as the descriptor: `<param_names>_<hash8>`.
-   Example: `make_vga_timing_spec_a1b2c3d4`. This avoids the 300+ character names that
-   would result from listing all derived closure vars, which can exceed OS path limits.
+- `_CTypeMeta` / `@struct` type → canonical C type name (brackets mangled: `[` → `_`, `]` removed)
+- `int` / `bool` → stringified value
+- `None` → `"None"`
+- **callable (present in closure)** → SHA-256 hash of `qualname:module:closure_reprs`, first 8 hex chars — encoded as `{param_name}_{hash8}`
+- **callable or other param absent from closure** → the factory consumed it to produce derived locals; the derived (non-param) closure vars are hashed instead, and the missing param name labels the term: `{param_name}_{hash8}`
 
-Values are: C type name for `_CTypeMeta` / `@struct` types (with brackets mangled to `_`),
-integer/bool values as their string representation. Non-C-type objects are skipped.
+**If the fully-expanded name exceeds `_MAX_MANGLE_NAME_LEN` (64 chars)**, it is replaced
+with `{inner_func_name}_{sha256[:8]}` of the full name, keeping VHDL identifiers short.
+
+**Four cases for the suffix:**
+
+1. **Factory not found** in `module_globals` — fall back to all closure vars (callable ones are hashed).
+2. **Factory has 0 parameters** — suffix is empty; name is just `inner_func_name`.
+3. **ALL factory params absent from closure** — factory consumed them into derived locals; all closure vars are hashed under the factory param names: `{param_names}_{hash8}`.
+4. **SOME params absent** — present params are encoded normally; each missing param is encoded as `{param_name}_{hash_of_derived_closure_vars}`.
 
 ```python
 # make_concat.<locals>.concat  factory params: LO_SIZE, HI_SIZE
-# → "make_concat_HI_SIZE_4_LO_SIZE_3"     (OUT_SIZE excluded — derived local)
+# → "concat_HI_SIZE_4_LO_SIZE_3"      (inner name "concat"; OUT_SIZE excluded — derived local)
 
 # make_adder.<locals>.add  factory params: T  (recovered from annotations)
-# → "make_adder_T_uint32_t"
+# → "add_T_uint32_t"                  (inner name "add")
 
 # make_negate.<locals>.negate  factory params: value_t, out_t
-# → "make_negate_out_t_int33_t_value_t_uint32_t"
+# → "negate_out_t_int33_t_value_t_uint32_t"
 
-# make_float_adder.<locals>.float_add  factory params: float_t
-# → "make_float_adder_float_t_float_t_sign_uint1_t_exp_uint8_t_man_uint23_t"
-# (M, SHIFT_AMOUNT_BITS, exp_t, man_t, etc. are all derived locals — excluded)
+# make_clz.<locals>.clz  factory params: value_t
+# → "clz_value_t_uint24_t"            (inner name "clz"; definition hierarchy irrelevant)
 
-# make_clz called from inside make_float_adder: clz.__qualname__ = "make_clz.<locals>.clz"
-# → "make_clz_value_t_uint24_t"   (definition is at module level, call site irrelevant)
+# make_double_inv.<locals>.make_inv.<locals>.inv  factory params: t (from make_inv)
+# → "inv_t_uint32_t"                  (inner name "inv")
 
-# make_double_neg.<locals>.make_inv.<locals>.inv  factory params: t (from make_inv)
-# → "make_double_neg_make_inv_t_uint32_t"   (nested definition encoded in prefix)
+# make_double_inv.<locals>.double_inv  factory params: T (from make_double_inv)
+# → "double_inv_T_uint32_t"
 
 # make_swap.<locals>.swap  factory params: T, but T not captured in swap's closure
-# → hashed fallback: "make_swap_T_<hash8>"   (all closure vars hashed; "T" is the param name)
+# → hashed fallback: "swap_T_<hash8>"  (all closure vars hashed; "T" is the param name)
 
 # make_vga_timing.<locals>.vga_timing  factory params: spec (VgaTimingSpec)
 # spec not in closure (expanded into FRAME_WIDTH, H_SYNC_START, etc.)
-# → hashed fallback: "make_vga_timing_spec_a1b2c3d4"
+# → hashed fallback: "vga_timing_spec_a1b2c3d4"
+
+# make_stream_pipeline.<locals>.stream_pipeline  factory params: func, MAX_IN_FLIGHT
+# MAX_IN_FLIGHT IS in closure (used directly in body); func IS NOT (consumed to make
+# in_stream_t, out_stream_t, etc.).  func → hash of derived closure vars.
+# → "stream_pipeline_MAX_IN_FLIGHT_4_func_8146762b"
+
+# make_stream_pipeline.<locals>.func_stream  factory params: func, MAX_IN_FLIGHT
+# func IS in closure (called directly); MAX_IN_FLIGHT IS NOT (consumed).
+# → "func_stream_func_7c27d30a_MAX_IN_FLIGHT_429caa85"
 
 # def make_singleton():  (0 params)
-# → "make_singleton"
+# → "singleton"   (inner func name; no suffix)
 ```
 
 ### Specialised Types
@@ -983,7 +995,13 @@ variable name used at the call site. This allows structs created inside nested f
 <class_name>_<field1>_<type1_mangled>_<field2>_<type2_mangled>_...
 ```
 
-where mangling removes array brackets: `uint32_t[2]` → `uint32_t_2`.
+where mangling removes array brackets: `uint32_t[2]` → `uint32_t_2`. When a field's type
+is itself a `@struct`, its `_pypeline_ctype_name` (possibly already truncated) is used as
+the field type string, so truncation propagates upward through nested structs naturally.
+
+**Length truncation:** if the fully-expanded name exceeds `_MAX_MANGLE_NAME_LEN` (64 chars),
+it is replaced with `{class_name}_{sha256[:8]}` of the full name. The full name is always
+retained in `_pypeline_ctype_canonical` for debugging.
 
 Examples:
 
@@ -991,14 +1009,22 @@ Examples:
 @struct
 class point_t(NamedTuple):
     dim: uint32_t[2]
-# _pypeline_ctype_name = "point_t_dim_uint32_t_2"
+# _pypeline_ctype_name = "point_t_dim_uint32_t_2"  (30 chars — kept)
 
 @struct
 class float_t(NamedTuple):
     sign: uint1_t
     exp: uint8_t
     man: uint23_t
-# _pypeline_ctype_name = "float_t_sign_uint1_t_exp_uint8_t_man_uint23_t"
+# _pypeline_ctype_name = "float_t_sign_uint1_t_exp_uint8_t_man_uint23_t"  (46 chars — kept)
+
+# stream_t produced by make_stream_t(uint8_t):
+# full canonical: "stream_t_data_uint8_t_valid_uint1_t"  (35 chars — kept under 64)
+# _pypeline_ctype_name = "stream_t_data_uint8_t_valid_uint1_t"
+
+# stream_pipeline_t (nested stream fields): full name > 64 chars → truncated
+# _pypeline_ctype_canonical = "stream_pipeline_t_stream_out_stream_t_data_uint8_t_valid_uint1_t_..."
+# _pypeline_ctype_name      = "stream_pipeline_t_40fc18a7"
 ```
 
 Two factory calls with the same parameters produce structs with the same canonical
@@ -2838,24 +2864,31 @@ Every `@struct`-decorated class gets a canonical name stamped at decoration time
 <class_name>_<field1>_<type1_mangled>_<field2>_<type2_mangled>_...
 ```
 
-Array brackets are mangled: `[` → `_`, `]` removed.
+Array brackets are mangled: `[` → `_`, `]` removed. If the full name exceeds
+`_MAX_MANGLE_NAME_LEN` (64 chars) it is replaced with `{class_name}_{sha256[:8]}`.
+The full name is always preserved in `_pypeline_ctype_canonical`.
 
 ```python
 @struct
 class point_t(NamedTuple):
     x: uint32_t
     y: uint32_t
-# C/VHDL type: point_t_x_uint32_t_y_uint32_t
+# C/VHDL type: point_t_x_uint32_t_y_uint32_t   (38 chars — kept)
 
 @struct
 class buf_t(NamedTuple):
     data: uint8_t[64]
-# C/VHDL type: buf_t_data_uint8_t_64
+# C/VHDL type: buf_t_data_uint8_t_64            (19 chars — kept)
+
+# Deeply nested factory struct (e.g. stream_pipeline_t with stream fields):
+# C/VHDL type: stream_pipeline_t_40fc18a7       (truncated; full name in _pypeline_ctype_canonical)
 ```
 
 This name is independent of what Python variable the factory result is assigned to.
 Two factory calls with identical field definitions produce the same canonical name and
-share one VHDL type declaration.
+share one VHDL type declaration. Because a field whose type is itself truncated uses
+the truncated `_pypeline_ctype_name` as its field-type string, truncation propagates
+upward through nested structs and avoids exponential name growth.
 
 Array types of a struct use the canonical name as the base:
 ```
@@ -2871,20 +2904,28 @@ def adder(l: uint32_t, r: uint32_t) -> uint32_t:  ...
 # FuncLogicLookupTable key and VHDL entity: "adder"
 ```
 
-Factory-produced functions (closures) get a **canonical name** derived from the factory
-chain and all closure variable values. The Python alias (`concat_3_4`) is never the
-VHDL entity name:
+Factory-produced functions (closures) get a **canonical name** derived from the **inner
+function name** and factory parameter values. The Python alias (`concat_3_4`) is never the
+VHDL entity name. The inner function name (not the factory name) is used as the prefix,
+mirroring how `@struct` uses the inner class name:
 
 ```python
-concat_3_4 = make_concat(3, 4)
-# VHDL entity: "make_concat_HI_SIZE_4_LO_SIZE_3_OUT_SIZE_7"
+concat_3_4 = make_concat(3, 4)   # inner func: "concat"
+# VHDL entity: "concat_HI_SIZE_4_LO_SIZE_3"
 
-clz_uint32 = make_clz(uint32_t)
-# VHDL entity: "make_clz_OUT_TYPE_uint6_t_VALUE_TYPE_uint32_t_n_bits_32"
+add_u32 = make_adder(uint32_t)   # inner func: "add"
+# VHDL entity: "add_T_uint32_t"
 
-negate_uint32 = make_negate(uint32_t, int33_t)
-# VHDL entity: "make_negate_OUT_TYPE_int33_t_VALUE_TYPE_uint32_t"
+negate_uint32 = make_negate(uint32_t, int33_t)   # inner func: "negate"
+# VHDL entity: "negate_out_t_int33_t_value_t_uint32_t"
+
+stream_pipeline, _ = make_stream_pipeline(div_inv, MAX_IN_FLIGHT=4)   # inner func: "stream_pipeline"
+# VHDL entity: "stream_pipeline_MAX_IN_FLIGHT_4_func_8146762b"
+# (func not in closure → hash of derived closure vars; MAX_IN_FLIGHT is direct int)
 ```
+
+If the full name exceeds `_MAX_MANGLE_NAME_LEN` (64 chars) it is replaced with
+`{inner_func_name}_{sha256[:8]}` of the full name.
 
 The canonical name is independent of which Python variable the result is assigned to.
 Two aliases with identical factory + args produce the same canonical name and share a

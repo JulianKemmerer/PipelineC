@@ -152,8 +152,8 @@ def make_double_inv(T):
     double_inv(a) = ~~a = a (double bitwise NOT).
 
     Canonical names:
-      inv       -> make_double_inv_make_inv_t_<type>  (definition path in prefix)
-      double_inv -> make_double_inv_T_<type>
+      inv        -> inv_t_<type>         (inner function name as prefix)
+      double_inv -> double_inv_T_<type>
     """
 
     def make_inv(

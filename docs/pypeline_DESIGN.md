@@ -210,14 +210,24 @@ the class name and field types, with no dependence on the Python variable name:
 <class_name>_<field1>_<type1_mangled>_<field2>_<type2_mangled>_...
 ```
 
-Array brackets are mangled: `[` → `_`, `]` removed. Examples:
+Array brackets are mangled: `[` → `_`, `]` removed. If the full name exceeds
+`_MAX_MANGLE_NAME_LEN` (64 chars) it is replaced with `{class_name}_{sha256[:8]}` of the
+full name. The full name is always preserved in `_pypeline_ctype_canonical` for debugging.
+Because a field whose type is itself truncated uses the shorter `_pypeline_ctype_name` as
+its field-type string, truncation propagates upward through nested structs naturally.
+
+Examples:
 
 ```python
-# class point_t with fields x: uint32_t, y: uint32_t
+# class point_t with fields x: uint32_t, y: uint32_t   (38 chars — kept)
 # _pypeline_ctype_name = "point_t_x_uint32_t_y_uint32_t"
 
-# class float_t with fields sign: uint1_t, exp: uint8_t, man: uint23_t
+# class float_t with fields sign: uint1_t, exp: uint8_t, man: uint23_t   (46 chars — kept)
 # _pypeline_ctype_name = "float_t_sign_uint1_t_exp_uint8_t_man_uint23_t"
+
+# Deeply nested stream_pipeline_t (field types themselves have truncated names → > 64 chars)
+# _pypeline_ctype_canonical = "stream_pipeline_t_stream_out_stream_t_..."  (full, for debug)
+# _pypeline_ctype_name      = "stream_pipeline_t_40fc18a7"                 (used in VHDL)
 ```
 
 Two factory calls with identical class name and field types produce the same canonical name
