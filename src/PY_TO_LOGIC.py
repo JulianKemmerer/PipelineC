@@ -405,6 +405,8 @@ def _annotation_to_ctype(ann, eval_ns=None, parser_state=None):
             if isinstance(result, type):
                 if parser_state is not None:
                     _register_struct_recursive(result, parser_state)
+                    if getattr(result, "_pypeline_is_enum", False):
+                        _register_enum(result, parser_state)
                 return getattr(result, "_pypeline_ctype_name", None) or getattr(
                     result, "_pypeline_ctype_canonical", result.__name__
                 )
@@ -1850,6 +1852,8 @@ class FuncElaborator:
         ann_val = self._try_eval_const(stmt.annotation)
         if isinstance(ann_val, _RegType):
             inner_ctype = _inner_ctype_to_str(ann_val.inner_ctype)
+            if getattr(ann_val.inner_ctype, "_pypeline_is_enum", False):
+                _register_enum(ann_val.inner_ctype, self.parser_state)
             init_py_val = None
             if stmt.value is not None:
                 init_py_val = self._try_eval_const(stmt.value)
@@ -2450,6 +2454,29 @@ class FuncElaborator:
                     if _is_scalar(typ, self.parser_state):
                         return wire, typ
                     return self._read_ref((mangled,), typ, expr)
+            # Enum member constant: state_t.IDLE
+            if isinstance(expr, ast.Attribute) and isinstance(expr.value, ast.Name):
+                type_name = expr.value.id
+                member_name = expr.attr
+                type_obj = self.module_globals.get(type_name) or self.const_env.get(
+                    type_name
+                )
+                if type_obj is not None and getattr(
+                    type_obj, "_pypeline_is_enum", False
+                ):
+                    _register_enum(type_obj, self.parser_state)
+                    enum_ctype = type_obj._pypeline_ctype_name
+                    enum_info = self.parser_state.enum_info_dict.get(enum_ctype)
+                    if enum_info and member_name in enum_info.id_to_int_val:
+                        coord_str = _loc_str(self.src_file, expr)
+                        wire_name = (
+                            C_TO_LOGIC.CONST_PREFIX
+                            + member_name
+                            + C_TO_LOGIC.ENUM_CONST_MARKER
+                            + coord_str
+                        )
+                        _add_wire(self.logic, wire_name, enum_ctype)
+                        return wire_name, enum_ctype
             return self._elab_ref_read(expr)
         else:
             raise NotImplementedError(f"Unsupported expr: {ast.dump(expr)}")
@@ -3339,12 +3366,12 @@ class FuncElaborator:
         )
         merged_globals = {**func_own_globals, **self.module_globals, **closure_ns}
 
-        # Register any struct types found in closure vars that were created inside
-        # a factory (not visible to _discover_structs_from_module). The @struct
-        # decorator already stamped _pypeline_ctype_name on them; we just need to
-        # ensure they appear in struct_to_field_type_dict.
+        # Register any struct/enum types found in closure vars that were created
+        # inside a factory (not visible to _discover_structs/enums_from_module).
         for val in list(closure_ns.values()) + list(func_own_globals.values()):
-            if (
+            if getattr(val, "_pypeline_is_enum", False):
+                _register_enum(val, self.parser_state)
+            elif (
                 inspect.isclass(val)
                 and issubclass(val, tuple)
                 and hasattr(val, "_fields")
@@ -3938,6 +3965,26 @@ def _discover_structs_from_module(module, parser_state):
         # print(f"  struct: {c_name} -> {fields}")
 
 
+def _register_enum(ctype_obj, parser_state):
+    """Register a @enum-decorated IntEnum class in parser_state.enum_info_dict."""
+    ctype_name = getattr(ctype_obj, "_pypeline_ctype_name", None)
+    if not ctype_name or ctype_name in parser_state.enum_info_dict:
+        return
+    info = C_TO_LOGIC.EnumInfo()
+    info.name = ctype_name
+    for m in ctype_obj:
+        info.id_to_int_val[m.name] = m.value
+    info.int_c_type = ctype_obj._pypeline_enum_int_ctype
+    parser_state.enum_info_dict[ctype_name] = info
+
+
+def _discover_enums_from_module(module, parser_state):
+    """Scan module namespace for @enum-decorated IntEnum types and register them."""
+    for name, obj in vars(module).items():
+        if not name.startswith("_") and getattr(obj, "_pypeline_is_enum", False):
+            _register_enum(obj, parser_state)
+
+
 def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None):
     """Scan top-level AnnAssign nodes for Wire[T] annotations.
     Populates parser_state.global_vars with a VariableInfo per wire.
@@ -4117,6 +4164,7 @@ def _process_imports(
             sub_tree = ast.parse(sub_src)
 
             _discover_structs_from_module(sub_mod, parser_state)
+            _discover_enums_from_module(sub_mod, parser_state)
             _discover_global_wires(
                 sub_tree, sub_globals, parser_state, name_prefix=actual_name
             )
@@ -4156,8 +4204,9 @@ def PARSE_FILE(py_file):
     if pypeline._part_registry is not None:
         parser_state.part = pypeline._part_registry
 
-    # ── Step 2: discover structs from live module namespace ──
+    # ── Step 2: discover structs and enums from live module namespace ──
     _discover_structs_from_module(module, parser_state)
+    _discover_enums_from_module(module, parser_state)
 
     # ── Step 3: collect MAINs from the pypeline registry ──
     main_names = {f.__name__ for f in pypeline._main_registry}

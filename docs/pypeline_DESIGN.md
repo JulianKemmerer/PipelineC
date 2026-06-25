@@ -271,6 +271,56 @@ struct instances returned by `as_const` or any constant helper are seen as plain
 
 ---
 
+## Enum Support
+
+### `@enum` Decorator
+
+The `@enum` decorator turns a Python `IntEnum` subclass (or a plain class with int members,
+which is auto-converted) into a Pypeline enum type.  Enums are integer-encoded scalar types —
+not compound types like structs.
+
+**At decoration time**, `@enum`:
+
+1. Converts a plain class to `IntEnum` if needed (extracts non-underscore int members).
+2. Derives a canonical C type name: `name_MEMBER1_val1_MEMBER2_val2` (members sorted by
+   value). SHA256-truncates if the name exceeds `_MAX_MANGLE_NAME_LEN`.
+3. Stamps `_pypeline_ctype_name`, `_pypeline_ctype_canonical`, `_pypeline_is_enum = True`,
+   and `_pypeline_enum_int_ctype` (e.g. `"uint2_t"`) on the class.
+
+The `_pypeline_ctype_name` attribute means enum types are handled uniformly by
+`_inner_ctype_to_str`, `_annotation_to_ctype`, and `_ctype_str` — the same machinery
+that already handles struct types.
+
+### `_enum_bit_width(enum_cls) → int`
+
+Computes the minimum uint bit width to represent all enum member values:
+```
+max(1, max_value.bit_length()) if max_value > 0 else 1
+```
+Never stored — computed fresh from the IntEnum members whenever needed.
+
+### `_is_scalar_pypeline_int(ctype)` — Enum Path
+
+Updated to check `getattr(ctype, "_pypeline_is_enum", False)` before the `_ctype_name`
+path. This makes enum types transparent scalars throughout simulation: `_TypedAnnAssignRewriter`
+inserts `_sim_cast` calls, struct `_typed_new` wraps enum-typed fields, and `_sim_type_wrap`
+casts arguments and return values.
+
+### Parameterizable Enums
+
+Since `@enum` is callable with a class as its argument, user factories call
+`enum(IntEnum("name", members_dict))` — directly analogous to the `@struct` pattern.
+No library-provided `make_enum_t` helper: each project writes its own factories.
+
+### Introspection API
+
+```python
+enum_bit_width(enum_cls) → int       # minimum bit width from member values
+enum_uint_type(enum_cls) → uintN_t   # corresponding pypeline uint type
+```
+
+---
+
 ## Annotation Types
 
 Each annotation type is a descriptor class returned by `__class_getitem__` with the following

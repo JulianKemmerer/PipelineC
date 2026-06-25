@@ -25,6 +25,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "dwidth_converter_test.py",
     "func_wires_test.py",
     "if_test.py",
+    "enum_test.py",
 ]
 # fmt: on
 

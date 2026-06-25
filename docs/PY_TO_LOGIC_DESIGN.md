@@ -120,6 +120,7 @@ Design file (.py)
 - Executes the design file as a Python module
 - Discovers `@MAIN` entry points via `pypeline._main_registry`
 - Discovers struct types via `_discover_structs_from_module`
+- Discovers enum types via `_discover_enums_from_module` (registers them in `parser_state.enum_info_dict`)
 - Captures all module-level names (constants `N`, `M`, helper functions, closures) into
   `module_globals` for use during elaboration
 
@@ -138,6 +139,7 @@ parser_state.FuncLogicLookupTable       # func_name -> Logic()  (function defini
 parser_state.LogicInstLookupTable       # inst_key  -> Logic()  (instantiated call sites)
 parser_state.FuncToInstances            # func_name -> {inst_keys}
 parser_state.struct_to_field_type_dict  # struct_name -> {field: c_type_str}
+parser_state.enum_info_dict             # enum_ctype_name -> C_TO_LOGIC.EnumInfo (member map + int_c_type)
 parser_state.part                       # FPGA part string or None (set by PART(...) pragma)
 parser_state.main_mhz                   # main_name -> float MHz or None (set by @MAIN(mhz=...) + inference)
 ```
@@ -1095,6 +1097,46 @@ subclass), so passing every evaluated annotation type through it is safe.
 `self.parser_state` through. This means inline factory-call annotations now work for
 parameters, return types, and local variable declarations alike — not just module-level-bound
 struct types.
+
+### Enum Types
+
+Enum types follow the same discovery / registration pattern as struct types, with three
+entry points and a different backend dict (`enum_info_dict` instead of
+`struct_to_field_type_dict`):
+
+**`_register_enum(ctype_obj, parser_state)`** — populates `parser_state.enum_info_dict`
+with a `C_TO_LOGIC.EnumInfo` built from the `IntEnum` members:
+
+```python
+info.id_to_int_val = {m.name: m.value for m in ctype_obj}   # e.g. {"IDLE": 0, "RUNNING": 1}
+info.int_c_type    = ctype_obj._pypeline_enum_int_ctype       # e.g. "uint2_t"
+```
+
+**`_discover_enums_from_module(module, parser_state)`** — walks `vars(module)` and registers
+every object with `_pypeline_is_enum = True`. Called immediately after
+`_discover_structs_from_module` in both `PARSE_FILE` (main module) and `_process_imports`
+(imported sub-modules).
+
+**`_annotation_to_ctype` + `_elaborate_live_func`** — the same two late-registration paths
+used for inline struct annotations also register enums: `_annotation_to_ctype` calls
+`_register_enum` when it evaluates an annotation to an enum type; `_elaborate_live_func`
+calls `_register_enum` for every enum-flagged object in the function's closure.
+
+**Enum member constants in `_elab_expr`** — `state_t.IDLE` appears in hardware function
+bodies as `ast.Attribute(value=Name(id='state_t'), attr='IDLE')`. After the module-wire
+check, `_elab_expr` checks whether `state_t` in `module_globals`/`const_env` has
+`_pypeline_is_enum = True`. If so it emits a constant wire:
+
+```
+wire_name = CONST_PREFIX + member_name + ENUM_CONST_MARKER + coord_str
+           = "CONST_IDLE$<file>_<line>_<col>"
+wire_type  = "state_t_IDLE_0_RUNNING_1_DONE_2"   # the enum's canonical ctype name
+```
+
+`C_TO_LOGIC.ENUM_CONST_MARKER = "$"` distinguishes enum constants from plain integer
+constants in the backend. The rest of VHDL generation (comparison operators,
+`wire_to_c_type` propagation, `enum_info_dict` lookup) is already handled by the existing
+C_TO_LOGIC backend — no changes to VHDL generation are needed.
 
 ### Conditional Type-Driven Code
 

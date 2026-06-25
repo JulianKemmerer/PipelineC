@@ -124,7 +124,42 @@ mux tree. See [pypeline_guide.md §11](pypeline_guide.md#11-types).
 
 ### 3d. Enum Types
 
-`typedef enum` is **not yet supported** in pypeline. See [§13](#13-not-yet-supported).
+PipelineC `typedef enum` maps to a Python `IntEnum` subclass decorated with `@enum`:
+
+```c
+// PipelineC
+typedef enum { IDLE=0, RUNNING=1, DONE=2 } state_t;
+```
+
+```python
+# pypeline
+from enum import IntEnum
+from pypeline import enum
+
+@enum
+class state_t(IntEnum):
+    IDLE    = 0
+    RUNNING = 1
+    DONE    = 2
+```
+
+Enums are integer-encoded (not one-hot). The bit width is computed automatically from the
+largest member value. Member access (`state_t.IDLE`) and comparisons (`s == state_t.IDLE`)
+work identically to PipelineC. Use `Reg[state_t]` for FSM state registers.
+
+Parameterizable enums (like parameterizable structs) are written as user factories:
+
+```python
+def make_traffic_t(include_yellow=True):
+    members = {"RED": 0, "GREEN": 2}
+    if include_yellow:
+        members["YELLOW"] = 1
+    return enum(IntEnum("traffic_t", members))
+
+traffic_t = make_traffic_t(include_yellow=True)
+```
+
+See [pypeline_guide.md §3d](pypeline_guide.md#3d-enum-types) for the full API.
 
 ---
 
@@ -588,7 +623,6 @@ The following PipelineC features do not yet have a pypeline equivalent.
 
 | PipelineC feature | Notes |
 |---|---|
-| `typedef enum` | Use `make_uint_t(N)` + named integer constants as a workaround |
 | Multiple clock domains (`MAIN_MHZ_GROUP`, `#pragma ASYNC_WIRE`) | Not supported |
 | Async clock-crossing FIFOs (`GLOBAL_STREAM_FIFO` across clock domains) | Not supported |
 | Dual-port stream RAM (`DECL_STREAM_RAM_DP_W_R_1`) | Use `vhdl()` passthrough |

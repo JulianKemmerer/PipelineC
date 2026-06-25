@@ -80,6 +80,24 @@ def make_int_t(width: int):
     return _make_ctype(f"int{width}_t")
 
 
+def _enum_bit_width(enum_cls) -> int:
+    """Compute the minimum uint bit width needed to represent all values of a pypeline enum type."""
+    max_val = max((m.value for m in enum_cls), default=0)
+    return max(1, max_val.bit_length()) if max_val > 0 else 1
+
+
+def enum_bit_width(enum_cls) -> int:
+    """Return the minimum uint bit width for a pypeline @enum type (inspects member values)."""
+    return _enum_bit_width(enum_cls)
+
+
+def enum_uint_type(enum_cls):
+    """Return the underlying uint pypeline type for a pypeline @enum type.
+    e.g. enum_uint_type(state_t) -> uint2_t  for a 3-state enum with values 0,1,2
+    """
+    return make_uint_t(_enum_bit_width(enum_cls))
+
+
 def _float_to_fields(value, exponent_width, mantissa_width):
     """Convert a Python float to an IEEE 754-like sign/exp/man dict at elaboration time."""
     import struct as _struct
@@ -306,7 +324,9 @@ def _struct_class_getitem(cls, dim):
 
 @_functools.lru_cache(maxsize=None)
 def _is_scalar_pypeline_int(ctype):
-    """True for scalar uint/int types; False for array types (uint32_t[N]) and structs."""
+    """True for scalar uint/int types and @enum types; False for arrays and structs."""
+    if getattr(ctype, "_pypeline_is_enum", False):
+        return True
     if not hasattr(ctype, "_ctype_name"):
         return False
     try:
@@ -704,24 +724,21 @@ def struct(cls):
                 ftype = klass.__annotations__.get(fname)
                 if (
                     ftype is not None
-                    and (type(v) is int or type(v) is SimVal)
+                    and isinstance(v, int)  # covers int, SimVal, IntEnum members
                     and _is_scalar_pypeline_int(ftype)
                 ):
                     v = _RawField(int(v))
                 elif ftype is not None and type(v) is list:
                     elem_ftype = _array_elem_ctype(ftype)
                     if elem_ftype is not None and _is_scalar_pypeline_int(elem_ftype):
-                        v = [
-                            _RawField(int(e)) if type(e) in (int, SimVal) else e
-                            for e in v
-                        ]
+                        v = [_RawField(int(e)) if isinstance(e, int) else e for e in v]
                 typed[fname] = v
         else:
             for fname, v in kwargs.items():
                 ftype = klass.__annotations__.get(fname)
                 if (
                     ftype is not None
-                    and (type(v) is int or type(v) is SimVal)
+                    and isinstance(v, int)  # covers int, SimVal, IntEnum members
                     and _is_scalar_pypeline_int(ftype)
                 ):
                     if type(v) is not SimVal or v._ctype is None:
@@ -741,6 +758,58 @@ def struct(cls):
         return _orig_new(klass, **typed)
 
     cls.__new__ = staticmethod(_typed_new)
+    return cls
+
+
+def enum(cls):
+    """Decorator for pypeline enum types. Stamps canonical _pypeline_ctype_name and
+    pypeline metadata onto an IntEnum subclass (or plain class, which is auto-converted).
+
+    Integer-encoded: each variant is an unsigned integer value. The underlying uint width
+    is computed from the maximum member value at decoration time.
+
+    Usage:
+        from enum import IntEnum
+        from pypeline import enum
+
+        @enum
+        class state_t(IntEnum):
+            IDLE    = 0
+            RUNNING = 1
+            DONE    = 2
+
+        # Parameterizable factory (user-written):
+        def make_my_enum_t(include_err=True):
+            members = {"IDLE": 0, "RUN": 1}
+            if include_err:
+                members["ERR"] = 2
+            return enum(IntEnum("my_enum_t", members))
+    """
+    from enum import IntEnum as _IntEnum
+
+    if not isinstance(cls, type) or not issubclass(cls, _IntEnum):
+        # Plain class body: extract integer attributes and convert to IntEnum
+        members = {
+            k: v
+            for k, v in vars(cls).items()
+            if not k.startswith("_") and isinstance(v, int)
+        }
+        cls = _IntEnum(cls.__name__, members)
+
+    # Canonical name: name_MEMBER1_val1_MEMBER2_val2 sorted by value
+    parts = [f"{m.name}_{m.value}" for m in sorted(cls, key=lambda m: m.value)]
+    canonical = cls.__name__ + ("_" + "_".join(parts) if parts else "")
+    if len(canonical) > _MAX_MANGLE_NAME_LEN:
+        h = _hashlib.sha256(canonical.encode()).hexdigest()[:8]
+        ctype_name = f"{cls.__name__}_{h}"
+    else:
+        ctype_name = canonical
+
+    n_bits = _enum_bit_width(cls)
+    cls._pypeline_ctype_name = ctype_name
+    cls._pypeline_ctype_canonical = canonical
+    cls._pypeline_is_enum = True
+    cls._pypeline_enum_int_ctype = f"uint{n_bits}_t"
     return cls
 
 
@@ -2266,6 +2335,9 @@ def _build_reg_sim_func(fn):
 @_functools.lru_cache(maxsize=None)
 def _sim_cast_params(ctype):
     """Pre-compute mask, sign_bit, and is_signed for a ctype (cached per unique type object)."""
+    if getattr(ctype, "_pypeline_is_enum", False):
+        n = _enum_bit_width(ctype)
+        return (1 << n) - 1, 1 << (n - 1), False  # enums are unsigned
     n = len(ctype)
     mask = (1 << n) - 1
     is_signed = str(ctype).startswith("int")
@@ -2347,7 +2419,7 @@ def _sim_type_wrap(fn):
             pt = ann.get(k)
             if (
                 pt is not None
-                and (type(v) is int or type(v) is SimVal)
+                and isinstance(v, int)  # covers int, SimVal, IntEnum members
                 and _is_scalar_pypeline_int(pt)
             ):
                 new_kwargs[k] = _sim_cast(v, pt)
@@ -2361,7 +2433,7 @@ def _sim_type_wrap(fn):
             _pop_scoped_registrations(saved)
         if (
             ret_t is not None
-            and (type(result) is int or type(result) is SimVal)
+            and isinstance(result, int)  # covers int, SimVal, IntEnum members
             and _is_scalar_pypeline_int(ret_t)
         ):
             result = _sim_cast(result, ret_t)

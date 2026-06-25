@@ -19,6 +19,7 @@ NO_SYNTH_TEST_FILES = [
     "func_wires_test.py",
     "dangling_logic_test.py",
     "stream_pipeline_test.py",
+    "enum_test.py",
 ]
 # fmt: on
 

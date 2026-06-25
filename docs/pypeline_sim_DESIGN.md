@@ -64,6 +64,13 @@ Converts a Python `int` / `SimVal` to a typed `SimVal` with the correct hardware
 2. Two's-complement sign extension for signed types (`int…_t`)
 3. Set `_ctype` to `ctype`
 
+**Enum types:** `_sim_cast_params(ctype)` checks `getattr(ctype, "_pypeline_is_enum", False)`
+first and computes `(mask, sign_bit=0, is_signed=False)` from `_enum_bit_width(ctype)` —
+the minimum bit width derived from the largest member value.  This path is hit for
+`@enum`-decorated `IntEnum` types.  Since `IntEnum` members are int subclasses (`isinstance(m,
+int)` is True), `_run_body` in `_sim_type_wrap` casts them correctly without any special
+casing beyond the `_sim_cast_params` update.
+
 **Identity fast-path:** if `type(val) is SimVal and val._ctype is ctype`, return `val`
 immediately with no work.
 

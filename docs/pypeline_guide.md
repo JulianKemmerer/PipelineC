@@ -863,6 +863,87 @@ def add_points(a: point_t, b: point_t) -> point_t:
     return point_t(x=a.x + b.x, y=a.y + b.y)
 ```
 
+### Enum types
+
+Use `@enum` on a Python `IntEnum` subclass to declare an integer-encoded enumeration type.
+The bit width is computed automatically from the largest member value.
+
+```python
+from enum import IntEnum
+from pypeline import enum, MAIN, Reg, uint1_t
+
+@enum
+class state_t(IntEnum):
+    IDLE    = 0
+    RUNNING = 1
+    DONE    = 2
+```
+
+Members are accessed with dot notation and compare with `==`:
+
+```python
+@MAIN
+def is_idle(s: state_t) -> uint1_t:
+    rv: uint1_t = 0
+    if s == state_t.IDLE:
+        rv = 1
+    return rv
+```
+
+Use `Reg[state_t]` for FSM state registers:
+
+```python
+@MAIN
+def simple_fsm(trigger: uint1_t) -> state_t:
+    st: Reg[state_t]
+    if st == state_t.IDLE and trigger:
+        st = state_t.RUNNING
+    elif st == state_t.RUNNING:
+        st = state_t.DONE
+    return st
+```
+
+The `@enum` decorator also accepts a plain class (auto-converted to `IntEnum`):
+
+```python
+@enum
+class direction_t:         # @enum detects int members and converts
+    NORTH = 0; EAST = 1; SOUTH = 2; WEST = 3
+```
+
+#### Parameterizable enums
+
+Write a user factory that calls `enum(IntEnum(...))` — the same pattern as
+parameterizable structs:
+
+```python
+def make_traffic_t(include_yellow=True):
+    members = {"RED": 0, "GREEN": 2}
+    if include_yellow:
+        members["YELLOW"] = 1
+    return enum(IntEnum("traffic_t", members))
+
+traffic_t = make_traffic_t(include_yellow=True)
+```
+
+#### Introspection helpers
+
+```python
+from pypeline import enum_bit_width, enum_uint_type
+
+enum_bit_width(state_t)   # → 2  (minimum bits to represent 0..2)
+enum_uint_type(state_t)   # → uint2_t
+```
+
+Enum types can also be used as struct fields:
+
+```python
+@struct
+class packet_t(NamedTuple):
+    state: state_t
+    data:  uint8_t
+```
+
 ### Arrays
 
 Append `[N]` to any type to get a fixed-length array of that type:
@@ -1747,7 +1828,6 @@ The table below consolidates all known limitations and unsupported features.
 |---|---|---|
 | **Multiple clock domains** | Not supported | `MAIN_MHZ_GROUP`, `#pragma ASYNC_WIRE`, `CLK_MHZ` have no pypeline equivalent |
 | **Async clock-crossing FIFOs** | Not supported | `GLOBAL_STREAM_FIFO` across clock boundaries cannot yet be expressed |
-| **`typedef enum`** | Not supported | Use `make_uint_t(N)` + named integer constants as a workaround |
 | **Dual-port stream RAM** | Not built-in | `DECL_STREAM_RAM_DP_W_R_1` — use `vhdl()` passthrough |
 | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation; this includes `make_stream_fifo`, `make_stream_pipeline`, and `make_valid_ready_mcp` |
 | **`MULTI_CYCLE[...]`** | Synthesis only | No effect without `PART()` / Vivado; ignored in simulation |
