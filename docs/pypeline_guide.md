@@ -30,6 +30,7 @@ synthesises them for an FPGA.
 22. [AXI-Stream: `axis_t`](#22-axi-stream-axis_t)
 23. [FIFOs: `make_stream_fifo`](#23-fifos-make_stream_fifo)
 24. [Pipelined Stream Wrappers: `make_stream_pipeline`](#24-pipelined-stream-wrappers-make_stream_pipeline)
+25. [Limitations / Not Yet Supported](#25-limitations--not-yet-supported)
 
 ---
 
@@ -1735,3 +1736,25 @@ locals in its body to simulate correctly (see [§15](#15-forcing-pipelining-auto
 internal FIFO is built on `vhdl()`, so calling `stream_pipeline_func` via `sim_call()` or
 `pypeline_sim.py` raises `NotImplementedError`. Synthesise/elaborate normally through
 `pipelinec` to use it. See `src/tests/pypeline_tests/inst/stream_pipeline_test.py`.
+
+---
+
+## 25. Limitations / Not Yet Supported
+
+The table below consolidates all known limitations and unsupported features.
+
+| Feature | Status | Notes |
+|---|---|---|
+| **Multiple clock domains** | Not supported | `MAIN_MHZ_GROUP`, `#pragma ASYNC_WIRE`, `CLK_MHZ` have no pypeline equivalent |
+| **Async clock-crossing FIFOs** | Not supported | `GLOBAL_STREAM_FIFO` across clock boundaries cannot yet be expressed |
+| **`typedef enum`** | Not supported | Use `make_uint_t(N)` + named integer constants as a workaround |
+| **Dual-port stream RAM** | Not built-in | `DECL_STREAM_RAM_DP_W_R_1` — use `vhdl()` passthrough |
+| **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation; this includes `make_stream_fifo`, `make_stream_pipeline`, and `make_valid_ready_mcp` |
+| **`MULTI_CYCLE[...]`** | Synthesis only | No effect without `PART()` / Vivado; ignored in simulation |
+| **`from module import *`** | Not supported | Only qualified imports (`import module`) are supported |
+| **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead |
+| **Hardware signals as loop conditions** | Not supported | `for`/`while` loop bounds must be compile-time Python integers (fully unrollable) |
+| **`autopipeline()` around expressions** | Not supported | Must wrap a single direct function call, not a larger expression |
+
+Coming from PipelineC? See also [docs/pipelinec_to_pypeline.md](pipelinec_to_pypeline.md)
+for a pattern-by-pattern translation reference.
