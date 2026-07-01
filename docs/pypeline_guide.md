@@ -421,6 +421,11 @@ def abs_val(x: int32_t) -> int32_t:
     return result
 ```
 
+A hardware function may have **at most one** `return` statement, and it must be the
+function's final top-level statement — there is no early return from inside an `if`/`else`
+branch. To make a value conditional, assign to a variable in each branch (as above) and
+return it once at the end.
+
 #### Ternary expression
 
 ```python
@@ -1835,6 +1840,7 @@ The table below consolidates all known limitations and unsupported features.
 | **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead |
 | **Hardware signals as loop conditions** | Not supported | `for`/`while` loop bounds must be compile-time Python integers (fully unrollable) |
 | **`autopipeline()` around expressions** | Not supported | Must wrap a single direct function call, not a larger expression |
+| **Multiple/early `return` statements** | Not supported | A function may have at most one `return`, and it must be the function's final top-level statement; assign to a variable inside `if`/`else` branches and return it once at the end (see [§6 Control flow](#6-your-first-hardware-function)) |
 
 Coming from PipelineC? See also [docs/pipelinec_to_pypeline.md](pipelinec_to_pypeline.md)
 for a pattern-by-pattern translation reference.

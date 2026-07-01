@@ -628,6 +628,7 @@ The following PipelineC features do not yet have a pypeline equivalent.
 | Dual-port stream RAM (`DECL_STREAM_RAM_DP_W_R_1`) | Use `vhdl()` passthrough |
 | `CLK_MHZ` annotation for non-MAIN peripheral clocks | Not supported |
 | Simulation of `vhdl()`-based primitives | `make_stream_fifo`, `make_stream_pipeline`, `make_valid_ready_mcp` raise `NotImplementedError` in simulation; synthesise normally via `pipelinec` |
+| Multiple / early `return` statements (returning from inside an `if` branch) | Not supported — a pypeline function has exactly one `return`, which must be the final top-level statement; restructure to assign a result variable in each branch and return it once at the end (see [pypeline_guide.md §6](pypeline_guide.md#6-your-first-hardware-function)) |
 
 See also the [Limitations](pypeline_guide.md#25-limitations--not-yet-supported) section
 of the pypeline guide.
