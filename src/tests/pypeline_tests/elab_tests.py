@@ -21,6 +21,7 @@ NO_SYNTH_TEST_FILES = [
     "stream_pipeline_test.py",
     "enum_test.py",
     "char_array_test.py",
+    "sim_print_test.py",
 ]
 # fmt: on
 

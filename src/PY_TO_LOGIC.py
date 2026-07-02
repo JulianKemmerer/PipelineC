@@ -608,6 +608,22 @@ def _port_wire(inst, port):
     return f"{inst}{C_TO_LOGIC.SUBMODULE_MARKER}{port}"
 
 
+def _py_str_to_c_quoted(s):
+    """Convert an already-Python-unescaped string (e.g. one built internally by
+    _elab_sim_print_stmt) into the raw-quoted-with-C-escapes form
+    C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS / VHDL.C_CONST_STR_TO_VHDL_CONST_STR expect --
+    i.e. what a pycparser string-constant .value would contain for the equivalent C source
+    literal (surrounding quotes kept, real control chars re-escaped to literal two-char
+    backslash sequences)."""
+    out = (
+        s.replace("\\", "\\\\")
+        .replace('"', '\\"')
+        .replace("\n", "\\n")
+        .replace("\t", "\\t")
+    )
+    return '"' + out + '"'
+
+
 def _alias(var_name, src_file, node):
     return f"{var_name}_{_loc_str(src_file, node)}"
 
@@ -878,14 +894,16 @@ def _add_submodule_instance(
     inst_name,
     func_name,
     input_ports,
-    output_wire,
-    output_type,
-    ast_node,
-    src_file,
+    output_wire=None,
+    output_type=None,
+    ast_node=None,
+    src_file=None,
 ):
     """Shared wiring bookkeeping for all submodule instance types.
     input_ports: list of (port_name, driver_wire, port_type)
     ast_node may be None for programmatically-built Logic() internals.
+    output_wire/output_type may be None for a void builtin instance (e.g. sim_print's
+    printf submodule) -- no return_output wire is declared in that case.
     """
     if inst_name in logic.submodule_instances:
         raise ElaborationError(
@@ -908,7 +926,8 @@ def _add_submodule_instance(
         port_wire = _port_wire(inst_name, port_name)
         _add_wire(logic, port_wire, port_type)
         _connect(logic, driver_wire, port_wire)
-    _add_wire(logic, output_wire, output_type)
+    if output_wire is not None:
+        _add_wire(logic, output_wire, output_type)
 
 
 # ─────────────────────────────────────────────
@@ -1666,6 +1685,8 @@ class FuncElaborator:
             callee = self._try_eval_const(stmt.value.func)
             if getattr(callee, "_is_sim_output", False):
                 pass  # @sim_output call — sim-only side effect, skip in hardware
+            elif getattr(callee, "_is_sim_print", False):
+                self._elab_sim_print_stmt(stmt)
             elif (
                 isinstance(stmt.value.func, ast.Name)
                 and stmt.value.func.id == _VHDL_TEXT_FUNC_NAME
@@ -1712,6 +1733,162 @@ class FuncElaborator:
         self.logic.vhdl_module_text = text
         # Mark as using globals, cant be sliced — mirrors the C frontend.
         self.logic.uses_nonvolatile_state_regs = True
+
+    def _elab_sim_print_stmt(self, stmt):
+        """sim_print(...) — printf-style console output. Takes exactly one argument (an
+        f-string or plain string literal), matching ordinary Python print()-like usage —
+        there is no C-style printf(fmt, *args) form exposed to the user. This method walks
+        the argument's AST and reconstructs an internal %-style format string + typed
+        argument list, then drives the *existing*, unmodified C_TO_LOGIC/VHDL printf
+        backend (Logic.printf_format_string / submodule_instance_to_printf_format_string,
+        see C_TO_LOGIC.py) exactly as C's own printf(...) does.
+
+        Bare {expr} interpolation is only inferred for plain scalar ints (%d/%u), where
+        Python's own str(int) already matches VHDL's rendering exactly. hex(expr) /
+        chr(expr) / char_array_to_str(expr) are recognized structurally (like vhdl(...)
+        above) as explicit %X/%c/%s markers — these are real Python functions, so
+        simulation output (Part C's sim_print, which just prints the already-formatted
+        f-string) is guaranteed to match hardware output; a bare {ch}/{name} for a
+        char_t/char array is rejected instead of silently inferring %c/%s, since Python's
+        default int/list formatting of a SimVal would print the wrong thing in simulation
+        even though it would be correct in hardware.
+        """
+        call = stmt.value
+        if len(call.args) != 1 or call.keywords:
+            raise ElaborationError(
+                f"sim_print(...) takes exactly one argument -- an f-string or plain "
+                f'string literal, e.g. sim_print(f"n={{n}} hex={{hex(n)}}") '
+                f"(at {_loc_str(self.src_file, stmt)})"
+            )
+        arg = call.args[0]
+        if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
+            parts = [arg]
+        elif isinstance(arg, ast.JoinedStr):
+            parts = arg.values
+        else:
+            raise ElaborationError(
+                f"sim_print(...) argument must be an f-string or plain string literal "
+                f"(at {_loc_str(self.src_file, stmt)})"
+            )
+
+        fmt_pieces = []
+        input_ports = []
+        for part in parts:
+            if isinstance(part, ast.Constant):
+                fmt_pieces.append(part.value.replace("%", "%%"))
+                continue
+            if not isinstance(part, ast.FormattedValue):
+                raise ElaborationError(
+                    f"sim_print: unsupported f-string element "
+                    f"(at {_loc_str(self.src_file, stmt)})"
+                )
+            if part.conversion not in (-1, None):
+                raise ElaborationError(
+                    f"sim_print: !r/!s/!a conversions are not supported "
+                    f"(at {_loc_str(self.src_file, stmt)})"
+                )
+            is_hex = False
+            if part.format_spec is not None:
+                if not self._is_hex_format_spec(part.format_spec):
+                    raise ElaborationError(
+                        f"sim_print: only plain {{expr}} and hex {{expr:x}}/{{expr:X}} "
+                        f"interpolation are supported (at {_loc_str(self.src_file, stmt)})"
+                    )
+                is_hex = True
+            value_expr = part.value
+            wrapper_name = None
+            if (
+                isinstance(value_expr, ast.Call)
+                and isinstance(value_expr.func, ast.Name)
+                and len(value_expr.args) == 1
+                and not value_expr.keywords
+            ):
+                wrapper_name = value_expr.func.id
+            if wrapper_name == "hex":
+                is_hex = True
+                value_expr = value_expr.args[0]
+            elif wrapper_name in ("chr", "char_array_to_str"):
+                value_expr = value_expr.args[0]
+            else:
+                wrapper_name = None  # not a recognized wrapper -- ignore any other call
+
+            if isinstance(value_expr, ast.Constant) and isinstance(
+                value_expr.value, str
+            ):
+                arg_wire, arg_typ = self._elab_str_literal(
+                    value_expr.value, None, value_expr
+                )
+            else:
+                arg_wire, arg_typ = self._elab_expr(value_expr)
+
+            if is_hex:
+                spec = "%X"
+            elif wrapper_name == "chr":
+                spec = "%c"
+            elif wrapper_name == "char_array_to_str":
+                spec = "%s"
+            else:
+                spec = self._sim_print_infer_spec(arg_typ, stmt)
+
+            input_ports.append((f"arg{len(input_ports)}", arg_wire, arg_typ))
+            fmt_pieces.append(spec)
+
+        fmt_c_quoted = _py_str_to_c_quoted(
+            "".join(fmt_pieces) + "\n"
+        )  # auto-appended, like print()
+        func_base_name = (
+            f"{C_TO_LOGIC.PRINTF_FUNC_NAME}_{_loc_str(self.src_file, stmt)}"
+        )
+        inst = self._inst(func_base_name, call)
+        _add_submodule_instance(
+            self.logic,
+            inst,
+            func_base_name,
+            input_ports,
+            ast_node=call,
+            src_file=self.src_file,
+        )
+        self.logic.submodule_instance_to_printf_format_string[inst] = fmt_c_quoted
+        # Manual CE wiring, mirroring C_TO_LOGIC.C_AST_PRINTF_FUNC_CALL_TO_LOGIC's own
+        # explicit CE connection -- LOGIC_NEEDS_CLOCK_ENABLE (the generic path used by
+        # _elab_call) only fires for a callee already resolved in FuncLogicLookupTable,
+        # never true for this built-in at its own call-site elaboration time. Kept as a
+        # separate wire connect (not part of input_ports/submodule_instance_to_input_port_names)
+        # to match C's own input_port_names, which also excludes CE.
+        ce_port_wire = _port_wire(inst, C_TO_LOGIC.CLOCK_ENABLE_NAME)
+        _add_wire(self.logic, ce_port_wire, C_TO_LOGIC.BOOL_C_TYPE)
+        _connect(self.logic, self.logic.clock_enable_wires[-1], ce_port_wire)
+
+    def _is_hex_format_spec(self, format_spec_node):
+        # format_spec is itself a JoinedStr; only a bare static "x"/"X" is recognized.
+        if (
+            not isinstance(format_spec_node, ast.JoinedStr)
+            or len(format_spec_node.values) != 1
+        ):
+            return False
+        v = format_spec_node.values[0]
+        return isinstance(v, ast.Constant) and v.value in ("x", "X")
+
+    def _sim_print_infer_spec(self, ctype, stmt):
+        m = _INT_CTYPE_RE.match(ctype) if isinstance(ctype, str) else None
+        if m:
+            return "%u" if m.group(1) == "u" else "%d"
+        is_char_scalar = ctype == "char"
+        is_char_array = _is_array(ctype) and ctype[: ctype.index("[")] in (
+            "char",
+            "uint8_t",
+        )
+        if is_char_scalar or is_char_array:
+            raise ElaborationError(
+                f"sim_print: bare {{expr}} for a char/char-array value would print "
+                f"differently in simulation than in hardware -- wrap it explicitly: "
+                f"chr(expr) for a single character, char_array_to_str(expr) for a char "
+                f"array (at {_loc_str(self.src_file, stmt)})"
+            )
+        raise ElaborationError(
+            f"sim_print: unsupported type {ctype!r} for interpolation "
+            f"(at {_loc_str(self.src_file, stmt)})"
+        )
 
     def _elab_assign(self, stmt):
         target = stmt.targets[0]

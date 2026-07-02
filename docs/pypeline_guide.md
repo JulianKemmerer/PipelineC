@@ -313,6 +313,37 @@ def display_result(data):
 `@sim_output` calls inside `@MAIN` bodies are **invisible to the hardware compiler** —
 they produce no gates or wires in the synthesised design.
 
+### `sim_print` — printf-style console output
+
+`sim_print(...)` looks like `@sim_output` (fires once per cycle, in the final pass) but is
+**not** invisible to the hardware compiler — it also elaborates to a real VHDL console
+`write(output, ...)` statement, PipelineC's equivalent of C's `printf(...)`.
+
+```python
+from pypeline import sim_print
+
+n: Reg[uint8_t]
+sim_print(f"n={n} hex={hex(n)}")
+```
+
+Write it like ordinary Python `print()`-style code: an f-string (or a plain string with no
+interpolation), one argument, no separate `%`-style format-string-plus-args form. A trailing
+newline is appended automatically, like real `print()`. Bare `{expr}` interpolation works for
+plain integers (decimal, sign-aware); `hex(expr)` gives hex. A `char_t[N]` value needs an
+explicit `char_array_to_str(expr)` wrapper (and a single `char_t` needs `chr(expr)`) — bare
+`{name}` for either would print correctly in hardware but wrong in simulation, so it's a
+compile error instead of a silent mismatch:
+
+```python
+from pypeline import char_array_to_str, char_t, strlen
+
+def print_name(name: char_t[16]):
+    sim_print(f"name={char_array_to_str(name)} len={strlen(name)}")
+```
+
+See `docs/pypeline_sim_DESIGN.md` and `docs/PY_TO_LOGIC_DESIGN.md` for the simulation and
+elaboration mechanics.
+
 ---
 
 ## 5 Top-Level Entry Points

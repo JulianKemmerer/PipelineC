@@ -1478,6 +1478,39 @@ def vhdl(vhdl_text):
 
 
 # ─────────────────────────────────────────────
+# sim_print -- printf-style console output
+# (intercepted by PY_TO_LOGIC elaborator; also a real callable for simulation)
+# ─────────────────────────────────────────────
+
+
+def sim_print(s):
+    """printf-style console output: prints during simulation (once per cycle, using
+    converged wire values -- same @sim_output-style semantics) and elaborates to a real
+    VHDL write(output, ...) statement in hardware.
+
+    Takes exactly one argument, matching how it's normally written -- an f-string or a
+    plain string literal, e.g.::
+
+        sim_print(f"n={n} hex={hex(n)} ch={chr(n)}")
+        sim_print("starting up")
+
+    A trailing newline is appended automatically, like real print(). Unlike PipelineC's C
+    printf(fmt, ...), there is no separate %-style multi-argument form -- ordinary Python
+    interpolation is used instead; the elaborator reconstructs an equivalent internal
+    format string from the f-string's AST (see PY_TO_LOGIC.py's _elab_sim_print_stmt).
+    Since Python evaluates the f-string before this function is ever called, the
+    simulation side is just a plain print() of the already-formatted text.
+    """
+    if _sim_converging:
+        return SimVal(0)
+    print(s)
+    return SimVal(0)
+
+
+sim_print._is_sim_print = True
+
+
+# ─────────────────────────────────────────────
 # Sim infrastructure: _sim_cast, _sim_type_wrap / hw_func, sim_call
 # ─────────────────────────────────────────────
 

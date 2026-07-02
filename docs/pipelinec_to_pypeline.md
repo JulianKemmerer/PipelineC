@@ -22,6 +22,7 @@ PipelineC documentation: [GitHub wiki](https://github.com/JulianKemmerer/Pipelin
 11. [Synthesis Pragmas](#11-synthesis-pragmas)
 12. [Parametric / Generic Hardware](#12-parametric--generic-hardware)
 13. [Not Yet Supported](#13-not-yet-supported)
+14. [Debug Output: printf / sim_print](#14-debug-output-printf--sim_print)
 
 ---
 
@@ -667,3 +668,44 @@ The following PipelineC features do not yet have a pypeline equivalent.
 
 See also the [Limitations](pypeline_guide.md#25-limitations--not-yet-supported) section
 of the pypeline guide.
+
+---
+
+## 14. Debug Output: printf / sim_print
+
+PipelineC's `printf(fmt, ...)` maps to pypeline's `sim_print(...)` — both print during
+simulation and elaborate to a real VHDL console `write(output, ...)` statement:
+
+```c
+// PipelineC
+printf("n=%d hex=%X\n", n, n);
+```
+
+```python
+# pypeline
+from pypeline import sim_print
+
+sim_print(f"n={n} hex={hex(n)}")
+```
+
+Note two differences from C's `printf`:
+
+- **Syntax.** pypeline uses ordinary Python interpolation (an f-string, one argument) instead
+  of a separate format-string-plus-`%`-args form — `printf("...%d...", n)` isn't valid
+  Python, so it isn't `sim_print`'s syntax either.
+- **Newline.** C's `printf` requires an explicit `\n`; `sim_print` appends one automatically,
+  like real Python `print()`.
+
+`%s` pairs with `char_t[N]` (see [§3e](#3e-char-array-string-types)) via an explicit
+`char_array_to_str(...)` wrapper — `sim_print(f"name={char_array_to_str(name)}")` — rather
+than plain `{name}` interpolation, since a bare `char_t`/`char_t[N]` value would print
+correctly in hardware but incorrectly in simulation (see
+[PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#sim_print--printf-style-console-output)); a
+single `char_t` similarly needs `chr(...)`.
+
+`%f` has no pypeline equivalent yet — pypeline has no native Python-float representation for
+its bit-packed float type.
+
+See [pypeline_guide.md](pypeline_guide.md#sim_print--printf-style-console-output) and
+[PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#sim_print--printf-style-console-output) for
+full details.

@@ -881,6 +881,7 @@ Python string, not just a literal) and how it's stored on the shared
 | `@struct` | Adds `__class_getitem__`, stamps canonical `_pypeline_ctype_name`, wraps scalar fields in sim |
 | `@MAIN` | Registers a function as a hardware entry point; implies `@hw_func`; appends to `_main_registry` |
 | `@sim_output` | Marks a function as simulation output-only; no-op during convergence passes; executes in final pass per cycle |
+| `sim_print(fstring_or_str)` | printf-style console output — same once-per-cycle firing as `@sim_output`, but *also* elaborates to a real VHDL `write(output, ...)` statement (see `PY_TO_LOGIC_DESIGN.md`) |
 | `autopipeline(call_result, depth=-1)` | Wraps a single direct call; identity in sim; forces pipelining through that submodule during elaboration (equivalent to `#pragma AUTOPIPELINE`) |
 | `MULTI_CYCLE` / `_MultiCycleTag` / `_MultiCycleRole` | `MULTI_CYCLE[ncycles]` tag; `.start`/`.end` attach to `Reg[T, tag]` declarations to relax setup timing between them (equivalent to `#pragma MULTI_CYCLE`) |
 | `wires` | Marks a function as pure rewiring/bit-casting with no real delay; implies `@hw_func`; stacks with `@MAIN` in either order (equivalent to `#pragma FUNC_WIRES`) |

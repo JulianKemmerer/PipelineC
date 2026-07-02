@@ -964,6 +964,41 @@ The `_is_sim_output = True` attribute set by `@sim_output` is checked by
 `FuncElaborator._elab_stmt` in the hardware elaborator to silently skip such calls in
 hardware function bodies. See `PY_TO_LOGIC_DESIGN.md` for the elaborator side.
 
+### `sim_print` — printf-style Console + Hardware Output
+
+`sim_print(...)` looks like `@sim_output` (same once-per-cycle/final-pass firing) but is
+**dual-mode**, not sim-only: it also elaborates to a real VHDL `write(output, ...)`
+statement in hardware, reusing PipelineC's C-frontend printf backend
+(`C_TO_LOGIC.py`/`VHDL.py`) unmodified. Where `@sim_output`-decorated calls are invisible to
+the hardware compiler (skipped entirely by the elaborator), `sim_print(...)` calls produce a
+real submodule instance — see `PY_TO_LOGIC_DESIGN.md`'s "`sim_print` — printf-style Console
+Output" section for the elaboration side.
+
+```python
+n: Reg[uint8_t]
+sim_print(f"n={n} hex={hex(n)}")   # prints once per cycle, final pass only, AND
+                                    # elaborates to hardware console output
+```
+
+Simulation-side, `sim_print` is intentionally trivial — a plain `print(s)` gated by
+`_sim_converging`, since Python already evaluates the f-string into a final string *before*
+`sim_print` is ever called:
+
+```python
+def sim_print(s):
+    if _sim_converging:
+        return SimVal(0)
+    print(s)
+    return SimVal(0)
+
+sim_print._is_sim_print = True   # distinct from _is_sim_output -- see PY_TO_LOGIC_DESIGN.md
+```
+
+Correctness under both simulation layers follows directly from the existing
+`_sim_converging` semantics documented above for `@sim_output`: always fires under plain
+`sim_call()` (`_sim_converging` stays `False` there), fires only in the final pass under
+`pypeline_sim.py`.
+
 ---
 
 ## Simulation Modes

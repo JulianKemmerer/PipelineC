@@ -80,6 +80,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
 - [Bit Manipulation Syntax](#bit-manipulation-syntax)
 - [Built-in Bit Manipulation Functions](#built-in-bit-manipulation-functions)
 - [Raw VHDL Passthrough (`vhdl(...)`)](#raw-vhdl-passthrough-vhdl)
+- [`sim_print` — printf-style Console Output](#sim_print--printf-style-console-output)
 - [Custom Operator Registration](#custom-operator-registration)
 
 **Reference**
@@ -2344,6 +2345,189 @@ general way to simulate arbitrary user-supplied VHDL text in Python. See
 
 ---
 
+## `sim_print` — printf-style Console Output
+
+`sim_print(...)` is pypeline's equivalent of PipelineC C's `printf(fmt, ...)`: it elaborates
+to a genuine `printf`-prefixed submodule instance, reusing the C frontend's printf backend
+(`C_TO_LOGIC.py`/`VHDL.py`) **completely unmodified**. Unlike `vhdl(...)`, it *does* have a
+real simulation model — see `pypeline_sim_DESIGN.md`'s "`sim_print`" section for the runtime
+side.
+
+```python
+from pypeline import sim_print, char_array_to_str
+
+n: Reg[uint8_t]
+sim_print(f"n={n} hex={hex(n)} ch={chr(n)}")            # -> "n=5 hex=0x5 ch=\x05\n"
+sim_print(f"name={char_array_to_str(name)}")             # %s via a char_t[N] argument
+```
+
+### Syntax: ordinary Python interpolation, not C's `printf(fmt, *args)`
+
+`sim_print` takes **exactly one argument** — an f-string or a plain string literal — matching
+how real Python `print()`-style code is normally written. There is no user-facing `%`-style
+multi-argument form (`sim_print("n=%d", n)` isn't valid Python, so it isn't valid `sim_print`
+either). A trailing newline is appended automatically, like real `print()`.
+
+The elaborator internally reconstructs an equivalent `%`-style format string from the
+f-string's AST, driving the *existing* printf backend exactly as C's own `printf(...)` would
+— the `%`-style string only ever exists as an elaboration-time implementation detail.
+
+### Recognition and dispatch
+
+`sim_print` is a real Python function (`pypeline.py`) stamped with a marker attribute,
+exactly like `autopipeline`'s `_is_autopipeline_pragma`:
+
+```python
+def sim_print(s):
+    if _sim_converging:
+        return SimVal(0)
+    print(s)
+    return SimVal(0)
+
+sim_print._is_sim_print = True
+```
+
+`_elab_stmt`'s `ast.Expr(ast.Call(...))` branch resolves the callee via `_try_eval_const` and
+checks `getattr(callee, "_is_sim_print", False)`, routing to `_elab_sim_print_stmt` —
+deliberately a **separate** marker from `@sim_output`'s `_is_sim_output`, checked first in the
+`if`/`elif` chain but functionally independent: `_is_sim_output` calls are skipped entirely
+(no hardware emitted, see "`@sim_output` Calls — Elaborator Skip" below), while `sim_print`
+calls always produce a real submodule instance. Using `@sim_output` to build `sim_print` would
+have stamped `_is_sim_output` too, silently routing every `sim_print` call into the
+skip-hardware-entirely branch instead — building it as an independent function avoids that
+trap.
+
+### `_elab_sim_print_stmt(stmt)` — f-string → internal `%`-format translation
+
+1. Requires exactly one positional argument, no keywords — `ElaborationError` otherwise.
+2. The argument must be `ast.Constant(str)` (plain literal, no interpolation) or
+   `ast.JoinedStr` (f-string) — anything else is an `ElaborationError`.
+3. Walks the argument's pieces. Each `ast.Constant` text segment is appended to an internal
+   format-string buffer with literal `%` escaped to `%%` (the buffer is later fed through
+   `C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS`, which scans for `%`-specifiers — any `%` the user
+   actually typed must not be misread as one). Each `ast.FormattedValue` (an `{expr}`
+   interpolation) is elaborated and mapped to a specifier:
+   - `{expr:x}` / `{expr:X}` (format-spec) or `hex(expr)` (structurally recognized by bare
+     name, the same technique `vhdl(...)` recognition uses) → `%X`.
+   - `chr(expr)` → `%c`. `char_array_to_str(expr)` → `%s`.
+   - Bare `{expr}` with no wrapper → inferred from `expr`'s elaborated ctype, but **only**
+     for plain scalar ints (`%d` for signed, `%u` for unsigned) — see below for why char
+     types are excluded from this inference.
+   - `!r`/`!s`/`!a` conversions, non-hex format specs, and anything else are rejected with a
+     clear `ElaborationError` (the "Minimal + hex" scope decision).
+4. Each interpolated value is elaborated via `self._elab_expr(...)` (or `self._elab_str_literal(...)`
+   for a literal-string sub-expression, e.g. `char_array_to_str("id")`), and its **real**
+   elaborated type becomes the submodule port's type directly — there is no format-implied
+   placeholder type to reconcile, unlike the C frontend's historical `%s` handling (see the
+   `%s` real-size fix below).
+5. Builds the func/instance name (`f"{C_TO_LOGIC.PRINTF_FUNC_NAME}_{coord}"`, mirroring
+   `C_TO_LOGIC.py`'s own `PRINTF_FUNC_NAME + "_" + coord` construction) and calls
+   `_add_submodule_instance(...)` with `output_wire=None, output_type=None` — see below.
+6. Populates `self.logic.submodule_instance_to_printf_format_string[inst]` with the quoted,
+   C-escaped format string (`_py_str_to_c_quoted`, converting the internally-built string back
+   into the raw-quoted-with-C-escapes convention `PRTINTF_STRING_TO_FORMATS` expects — the
+   same convention `_elab_str_literal` already uses for string-literal wire naming).
+7. Manually wires `CLOCK_ENABLE`, mirroring `C_TO_LOGIC.C_AST_PRINTF_FUNC_CALL_TO_LOGIC`'s own
+   explicit CE connection: `LOGIC_NEEDS_CLOCK_ENABLE` (the generic path `_elab_call` uses) only
+   fires for a callee already resolved in `FuncLogicLookupTable` — never true for `sim_print`'s
+   `printf_...`-named instance at its own call-site elaboration time, since it's only added to
+   that table later, inside `_walk_instances`. CE is added as a separate wire connect, kept out
+   of `submodule_instance_to_input_port_names` — matching C's own `input_port_names`, which
+   also excludes CE (`GET_PRINTF_MODULE_TEXT`'s sensitivity list already hardcodes
+   `CLOCK_ENABLE` once).
+
+### Why char types require an explicit wrapper, not type-inference
+
+A bare `{ch}` or `{name}` for a `char_t` scalar or `char_t[N]`/`uint8_t[N]` array would be
+**type-inferable** for hardware (the ctype alone is enough to pick `%c`/`%s`) but would print
+the **wrong thing in simulation** if silently allowed: `SimVal` is a plain `int` subclass and a
+char array is a plain `list` of them, so Python's default `str()`/f-string formatting of a bare
+value gives a raw ordinal or list repr, not the intended character/string. `_sim_print_infer_spec`
+raises an `ElaborationError` for these two cases instead, pointing at `chr(...)`/
+`char_array_to_str(...)`. Since those are genuine Python functions (not just elaborator
+markers), they produce identical text in both simulation (evaluated for real, before
+`sim_print` is ever called — see `pypeline_sim_DESIGN.md`) and hardware (structurally
+recognized and unwrapped by the elaborator) — sim and hardware output can never silently
+diverge for a supported case.
+
+### `%s` real array-size fix (both frontends)
+
+PipelineC C's `printf`'s `%s` historically forced every string argument's port to a fixed
+`char[256]` (`PRTINTF_STRING_TO_FORMATS`, "some max size for now...todo inspect driving wire
+type" — the code's own long-standing TODO), regardless of the argument's real declared array
+size. Fixed for **both** frontends as part of this work, since the VHDL codegen never actually
+needed the fixed size: `to_string(bytes : byte_array_t)` operates on the *unconstrained*
+`byte_array_t` (`array (natural range <>) of unsigned(7 downto 0)`), so any real length already
+works.
+
+- `PRTINTF_STRING_TO_FORMATS`'s `%s` case now sets `f.c_type = None` instead of the `char[256]`
+  placeholder — `None` is legal here since printf's `base_name_is_name=True` path skips the
+  "all types must be concrete" check in `BUILD_FUNC_NAME`, and `.c_type` isn't consumed
+  anywhere else in the `%s` codegen path (only `.specifier`/`.vhdl_to_string_toks` are).
+- `C_AST_PRINTF_FUNC_CALL_TO_LOGIC` (the C frontend's printf call-site elaboration) now
+  pre-elaborates each `%s` argument into its own port wire — mirroring the existing
+  `C_AST_STRLEN_FUNC_CALL_TO_LOGIC` precedent — and substitutes the argument's *real*
+  discovered type/wire for that port, in place of the removed placeholder.
+- Pypeline's `_elab_sim_print_stmt` needed no equivalent fix: it already elaborates each
+  interpolated value directly and uses its real type as the port type by construction (step 4
+  above), never a format-implied placeholder.
+
+### Frontend-agnostic format-string plumbing (`Logic.printf_format_string`)
+
+`VHDL.py`'s `GET_PRINTF_MODULE_TEXT` used to read the format string via
+`Logic.c_ast_node.args.exprs[0].value` — a pycparser-`FuncCall`-shaped read only the C frontend
+could produce. Rather than have Pypeline fabricate a duck-typed stand-in node just to satisfy
+that shape (rejected during design review as needlessly confusing — `ASTMeta.raw` is
+specifically "the original AST node," not a general-purpose data stash), `Logic` gained two
+real fields, mirroring the *existing* `vhdl_module_text` (plain field) /
+`submodule_instance_to_ast_meta` (per-instance relay dict) precedent pair:
+
+```python
+self.printf_format_string = None                        # Logic.__init__
+self.submodule_instance_to_printf_format_string = {}     # Logic.__init__
+```
+
+- **Population**: each frontend's printf call-site elaboration
+  (`C_AST_PRINTF_FUNC_CALL_TO_LOGIC` in C, `_elab_sim_print_stmt` in Pypeline) sets
+  `submodule_instance_to_printf_format_string[inst_name] = <quoted format string>` on the
+  *containing* function's `Logic()`.
+- **Extraction**: `BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC` copies the entry for a given
+  instance onto that instance's own standalone `Logic.printf_format_string`, right alongside
+  its existing `ast_meta` extraction — the same relay mechanism already used for instance
+  source-location metadata.
+- **Read**: `GET_PRINTF_MODULE_TEXT` reads `Logic.printf_format_string` directly and calls
+  `C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS(format_string)` (already frontend-agnostic — it always
+  took a plain string, it just wasn't being called directly at this site before).
+
+`Logic.__init__`/`DEEPCOPY`/`MERGE_COMB_LOGIC` were updated for both new fields, following the
+exact `vhdl_module_text`/`submodule_instance_to_ast_meta` patterns respectively (keep-whichever-
+set for the plain field; `UNIQUE_KEY_DICT_MERGE` — the plain-value variant, not
+`C_AST_VAL_UNIQUE_KEY_DICT_MERGE`, since values here are ordinary strings — for the dict).
+`Logic.REMOVE_SUBMODULE`/`COPY_SUBMODULE_INFO` were deliberately **not** touched: printf
+instances are always uniquely named per call site (the coord string is baked into
+`func_base_name`), so the duplicate-instance dedup/rename pass those two methods serve
+essentially never has two printf instances to collapse or rename into each other, and a stale
+dict entry left behind after a printf instance is removed as dead code is a harmless leak
+(never looked up again), not a correctness bug.
+
+### `_add_submodule_instance`'s optional output wire
+
+`sim_print`'s printf instance is void (no return value). `_add_submodule_instance`
+(`PY_TO_LOGIC.py`) gained default `output_wire=None, output_type=None` params, guarding its
+final `_add_wire(logic, output_wire, output_type)` call with `if output_wire is not None:` —
+the one pre-existing caller (`_elab_call`) always passes real values, so its behavior is
+unchanged. This is what lets `sim_print`'s instance skip registering a `return_output` wire,
+matching `BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC`'s existing
+`elif submodule_logic.func_name.startswith(PRINTF_FUNC_NAME): pass` void handling.
+
+### `%f` is not yet supported
+
+No format-spec or wrapper function maps to a float specifier — `sim_print` has no way to emit
+`%f`. Pypeline has no native Python-float representation for its bit-packed float type
+(`make_float_t`), so there's no natural wrapper function (analogous to `hex`/`chr`) to add yet.
+
+---
+
 ## Custom Operator Registration
 
 Any binary or unary Python operator can be overloaded for specific operand types by
@@ -2952,6 +3136,12 @@ def vga_test_pattern():
 - The callee must be resolvable via `_try_eval_const`. If not, `getattr(None, "_is_sim_output",
   False)` is `False` and `NotImplementedError` fires as before.
 - No hardware node, wire, or submodule instance is emitted for the skipped call.
+
+**Not the same dispatch path as `sim_print`.** The same `if`/`elif` chain also checks
+`getattr(callee, "_is_sim_print", False)` — a deliberately distinct marker, checked
+immediately after `_is_sim_output` — but routes to `_elab_sim_print_stmt` instead of `pass`:
+`sim_print(...)` calls are *not* invisible to the hardware elaborator; they produce a real
+`printf`-prefixed submodule instance. See "`sim_print` — printf-style Console Output" above.
 
 ---
 

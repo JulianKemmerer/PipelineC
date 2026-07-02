@@ -4622,8 +4622,8 @@ def C_CONST_STR_TO_VHDL_CONST_STR(c_str):
 
 
 def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
-    format_string = Logic.c_ast_node.args.exprs[0].value
-    formats = C_TO_LOGIC.C_AST_PRINTF_FUNC_CALL_TO_FORMATS(Logic.c_ast_node)
+    format_string = Logic.printf_format_string
+    formats = C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS(format_string)
 
     # Make a vhdl format string working left to right replacing as you go
     vhdl_format_string = C_CONST_STR_TO_VHDL_CONST_STR(format_string)

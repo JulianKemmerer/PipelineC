@@ -431,6 +431,12 @@ class Logic:
         # Is this logic completely replaced with raw vhdl module text?
         # (non-pipelineable global func like) None if not, else the literal text.
         self.vhdl_module_text = None
+        # Quoted printf format string for a printf-builtin instance's own standalone Logic()
+        # (set by BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC from the containing func's
+        # submodule_instance_to_printf_format_string below). Frontend-agnostic: both the C
+        # and Pypeline frontends populate the per-instance dict; VHDL.GET_PRINTF_MODULE_TEXT
+        # reads this instead of Logic.c_ast_node.
+        self.printf_format_string = None
         # Is this logic the input or output of a clock crossing?
         self.is_clock_crossing = False
         # TODO 'new style' is_? checks like below replacing SW_LIB stuff eventually
@@ -440,6 +446,11 @@ class Logic:
 
         # Mostly for c built in C functions
         self.submodule_instance_to_ast_meta = {}
+        # inst_name -> quoted printf format string, for printf-builtin submodule instances
+        # (relay from call-site elaboration to BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC, which
+        # copies the entry for a given instance onto that instance's own standalone
+        # Logic.printf_format_string above)
+        self.submodule_instance_to_printf_format_string = {}
         self.submodule_instance_to_input_port_names = {}
         self.ref_submodule_instance_to_input_port_driven_ref_toks = {}
         self.ref_submodule_instance_to_ref_toks = {}
@@ -522,11 +533,15 @@ class Logic:
         rv.is_vhdl_func = self.is_vhdl_func
         rv.is_vhdl_expr = self.is_vhdl_expr
         rv.vhdl_module_text = self.vhdl_module_text
+        rv.printf_format_string = self.printf_format_string
         rv.is_new_style_bit_manip = self.is_new_style_bit_manip
         rv.is_clock_crossing = self.is_clock_crossing
         rv.submodule_instance_to_ast_meta = self.DEEPCOPY_DICT_COPY(
             self.submodule_instance_to_ast_meta
         )  # dict(self.submodule_instance_to_ast_meta) # IMMUTABLE types / dont care
+        rv.submodule_instance_to_printf_format_string = dict(
+            self.submodule_instance_to_printf_format_string
+        )  # IMMUTABLE (plain strings)
         rv.submodule_instance_to_input_port_names = self.DEEPCOPY_DICT_LIST(
             self.submodule_instance_to_input_port_names
         )
@@ -664,6 +679,22 @@ class Logic:
         else:
             self.vhdl_module_text = logic_b.vhdl_module_text
 
+        # Printf format string keep whichever is set (same pattern as vhdl_module_text)
+        if (self.printf_format_string is not None) and (
+            logic_b.printf_format_string is not None
+        ):
+            if self.printf_format_string != logic_b.printf_format_string:
+                print("Cannot merge comb logic with mismatching printf_format_string !")
+                print(self.func_name, self.printf_format_string)
+                print(logic_b.func_name, logic_b.printf_format_string)
+                sys.exit(-1)
+            else:
+                self.printf_format_string = self.printf_format_string
+        elif self.printf_format_string is not None:
+            self.printf_format_string = self.printf_format_string
+        else:
+            self.printf_format_string = logic_b.printf_format_string
+
         # TODO refactor all the above copypasta
 
         # Dont do the same dumb above code - probably dont need it?
@@ -771,6 +802,11 @@ class Logic:
         self.submodule_instance_to_ast_meta = C_AST_VAL_UNIQUE_KEY_DICT_MERGE(
             self.submodule_instance_to_ast_meta,
             logic_b.submodule_instance_to_ast_meta,
+        )
+        # Plain strings, unlike ast_meta -- ordinary equality-based merge is fine
+        self.submodule_instance_to_printf_format_string = UNIQUE_KEY_DICT_MERGE(
+            self.submodule_instance_to_printf_format_string,
+            logic_b.submodule_instance_to_printf_format_string,
         )
         self.submodule_instance_to_input_port_names = LIST_VAL_UNIQUE_KEY_DICT_MERGE(
             self.submodule_instance_to_input_port_names,
@@ -1593,6 +1629,15 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
     if submodule_inst in containing_func_logic.submodule_instance_to_ast_meta:
         ast_meta = containing_func_logic.submodule_instance_to_ast_meta[submodule_inst]
         submodule_logic.ast_meta = ast_meta
+    if (
+        submodule_inst
+        in containing_func_logic.submodule_instance_to_printf_format_string
+    ):
+        submodule_logic.printf_format_string = (
+            containing_func_logic.submodule_instance_to_printf_format_string[
+                submodule_inst
+            ]
+        )
 
     # It looks like the c parser doesnt let you look up type from name...
     # Probably would be complicated
@@ -7616,8 +7661,12 @@ def PRTINTF_STRING_TO_FORMATS(format_string):
             f.base = None
             f.vhdl_to_string_toks = ["character'val(to_integer(", "))"]
         elif format_specifier == "%s":
-            # Uhhh... some max size for now...todo inspect driving wire type
-            f.c_type = "char[" + str(256) + "]"
+            # Real type/size not known from the format string alone -- callers
+            # (C_AST_PRINTF_FUNC_CALL_TO_LOGIC) inspect the driving wire's actual type
+            # instead, mirroring C_AST_STRLEN_FUNC_CALL_TO_LOGIC. VHDL codegen already
+            # supports any real length (to_string() operates on the unconstrained
+            # byte_array_t), so no placeholder size is needed here.
+            f.c_type = None
             f.base = None
             f.vhdl_to_string_toks = ["to_string(", ")"]
         else:
@@ -7651,6 +7700,7 @@ def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(
     formats = C_AST_PRINTF_FUNC_CALL_TO_FORMATS(c_ast_func_call)
     args = c_ast_func_call.args.exprs
     str_arg = args[0]
+    format_string = str_arg.value
     format_args = []
     if len(args) > 1:
         format_args = args[1:]
@@ -7666,15 +7716,32 @@ def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(
         + VHDL.WIRE_TO_VHDL_NAME(C_AST_NODE_COORD_STR(c_ast_func_call))
     )
     base_name_is_name = True  # Dont need type into if coord str is enough?
-    input_drivers = format_args
+    input_drivers = list(format_args)  # mutable -- %s indices get overwritten below
     input_driver_types = arg_c_types
-    input_drivers = format_args
     if len(input_drivers) != len(input_driver_types):
         raise Exception(f"printf args mismatch at {c_ast_func_call.coord}")
     input_port_names = ["arg" + str(i) for i in range(0, len(format_args))]
     output_driven_wire_names = driven_wire_names  # Probably none?
     # Printf is first built in with clock enable?
     func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, c_ast_func_call)
+
+    # %s: don't force a fixed max size -- pre-elaborate the arg to discover its REAL
+    # array size/type from the driving wire (same technique as
+    # C_AST_STRLEN_FUNC_CALL_TO_LOGIC below), and use that as the port's real type
+    # instead of PRTINTF_STRING_TO_FORMATS's placeholder (None) for %s.
+    for i, f in enumerate(formats):
+        if f.specifier == "%s":
+            input_wire_name = func_inst_name + SUBMODULE_MARKER + input_port_names[i]
+            parser_state.existing_logic = C_AST_NODE_TO_LOGIC(
+                format_args[i], [input_wire_name], prepend_text, parser_state
+            )
+            driver_of_input = parser_state.existing_logic.wire_driven_by[
+                input_wire_name
+            ]
+            real_type = parser_state.existing_logic.wire_to_c_type[driver_of_input]
+            input_driver_types[i] = real_type
+            input_drivers[i] = driver_of_input  # resolved wire name, not a c_ast node
+
     func_ce_wire = func_inst_name + SUBMODULE_MARKER + CLOCK_ENABLE_NAME
     parser_state.existing_logic.wire_to_c_type[func_ce_wire] = BOOL_C_TYPE
     # This is suspiciously stolen from n arg where it doesnt happen since printf is first
@@ -7699,6 +7766,13 @@ def C_AST_PRINTF_FUNC_CALL_TO_LOGIC(
         output_driven_wire_names,
         parser_state,
     )
+
+    # Frontend-agnostic format-string storage, read by VHDL.GET_PRINTF_MODULE_TEXT via
+    # Logic.printf_format_string instead of Logic.c_ast_node -- lets other frontends
+    # (Pypeline) reuse this same codegen without needing a pycparser-shaped node.
+    parser_state.existing_logic.submodule_instance_to_printf_format_string[
+        func_inst_name
+    ] = format_string
 
     return parser_state.existing_logic
 

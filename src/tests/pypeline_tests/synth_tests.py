@@ -30,6 +30,7 @@ SYNTH_TEST_FILES = [
     ("dwidth_converter_test.py", INST_DIR, ["--comb"]),
     ("enum_test.py", INST_DIR, ["--comb"]),
     ("char_array_test.py", INST_DIR, ["--comb"]),
+    ("sim_print_test.py", INST_DIR, ["--comb"]),
 ]
 # fmt: on
 
