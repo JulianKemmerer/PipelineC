@@ -48,6 +48,8 @@ class _CTypeMeta(type):
     def width(cls):
         import re
 
+        if cls._ctype_name == "char":
+            return 8
         m = re.match(r"(?:u?int)(\d+)_t", cls._ctype_name)
         if m:
             return int(m.group(1))
@@ -205,6 +207,9 @@ int16_t = make_int_t(16)
 int32_t = make_int_t(32)
 int33_t = make_int_t(33)
 int64_t = make_int_t(64)
+
+# ── char type (8-bit; distinct C-type-string "char", not "uint8_t") ──────────
+char_t = _make_ctype("char")
 
 # ─────────────────────────────────────────────
 # C-type-string helpers (shared with PY_TO_LOGIC)
@@ -1606,6 +1611,40 @@ def _sim_cast_deep(value, ctype):
     return _sim_cast(value, ctype)
 
 
+def char_array_to_str(value) -> str:
+    """Convert a char_t[N] simulation value (list of int-like elements) to a Python str,
+    stopping at the first NUL (0) byte if present, else using the full length. Sim-side
+    display convenience only -- distinct from strlen(), which returns the array's
+    declared capacity, not this NUL-aware content length."""
+    chars = []
+    for v in value:
+        iv = int(v)
+        if iv == 0:
+            break
+        chars.append(chr(iv))
+    return "".join(chars)
+
+
+def str_to_char_array(s: str, n: int):
+    """Python str -> zero-padded char_t[n] simulation value (list of SimVal(char_t)).
+    Raises ValueError if len(s) > n. Mirrors the elaboration-time string-literal
+    initializer's zero-padding rule."""
+    if len(s) > n:
+        raise ValueError(f"String {s!r} (len {len(s)}) exceeds char array size {n}")
+    codes = [ord(c) for c in s] + [0] * (n - len(s))
+    return [_sim_cast(c, char_t) for c in codes]
+
+
+def strlen(arr) -> int:
+    """Simulation-mode strlen(): returns the declared array length (element count) of
+    arr, matching the hardware elaborator's constant-fold semantics -- NOT a runtime scan
+    for a NUL terminator. This mirrors PipelineC's own strlen() exactly (see
+    C_AST_STRLEN_FUNC_CALL_TO_LOGIC in C_TO_LOGIC.py), which is intentionally "declared
+    capacity", not "content length". Use char_array_to_str() for content-length string
+    display instead."""
+    return len(arr)
+
+
 def _sim_lens_set(obj, path, value):
     """Return a copy of obj with the nested element at path replaced by value.
 
@@ -1847,6 +1886,16 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
             keywords=[],
         )
 
+    def _make_str_literal_init_call(self, value_node, n):
+        """Return a str_to_char_array(value_node, n) Call node -- converts a Python
+        str literal RHS into a zero-padded char_t[n] sim value, mirroring the
+        elaboration-side _elab_str_literal's target-type-aware zero-padding."""
+        return _ast.Call(
+            func=_ast.Name(id="str_to_char_array", ctx=_ast.Load()),
+            args=[value_node, _ast.Constant(value=n)],
+            keywords=[],
+        )
+
     def _make_deep_cast(self, value_node, ctype, ref_node):
         """Return a _sim_cast_deep(value_node, __sim_ann_L_C__) Call node -- casts a
         Rule-4 partial-write value (scalar or array-of-scalar) to the statically-resolved
@@ -1932,6 +1981,24 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
                     value=self._make_zero_call(ann_val, node),
                 )
                 return _ast.copy_location(new_node, node)
+            if (
+                isinstance(node.value, _ast.Constant)
+                and isinstance(node.value.value, str)
+                and _array_elem_ctype(ann_val) is not None
+                and getattr(_array_elem_ctype(ann_val), "_ctype_name", None)
+                in ("char", "uint8_t")
+            ):
+                # `var: char_t[N] = "literal"` -- a bare str RHS doesn't shape into
+                # the expected list-of-SimVal representation on its own, unlike a
+                # list/dict/struct-constructor initializer. Convert explicitly.
+                self.modified = True
+                new_node = _ast.Assign(
+                    targets=[node.target],
+                    value=self._make_str_literal_init_call(
+                        node.value, _array_len(ann_val)
+                    ),
+                )
+                return _ast.copy_location(new_node, node)
             return node  # `var: T = value` already binds the name via plain Python
         if isinstance(
             ann_val, (_RegType, _FeedbackType)
@@ -1977,7 +2044,18 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
                     self._compound_declared[root], kinds
                 )
                 value_node = node.value
-                if leaf_ctype is not None:
+                if (
+                    leaf_ctype is not None
+                    and isinstance(node.value, _ast.Constant)
+                    and isinstance(node.value.value, str)
+                    and _array_elem_ctype(leaf_ctype) is not None
+                    and getattr(_array_elem_ctype(leaf_ctype), "_ctype_name", None)
+                    in ("char", "uint8_t")
+                ):
+                    value_node = self._make_str_literal_init_call(
+                        value_node, _array_len(leaf_ctype)
+                    )
+                elif leaf_ctype is not None:
                     value_node = self._make_deep_cast(value_node, leaf_ctype, node)
                 path_list = _ast.List(elts=path, ctx=_ast.Load())
                 lens_call = _ast.Call(
@@ -2161,6 +2239,15 @@ def _build_reg_sim_func(fn):
                         ann_val.inner_ctype, "_fields"
                     ):
                         init_val = ann_val.inner_ctype(**init_val)
+                    # str init {"boot"} for Reg[char_t[N]] → zero-padded char array,
+                    # mirroring the elaboration-side Reg[T] string encoding.
+                    elif (
+                        isinstance(init_val, str)
+                        and _array_elem_ctype(ann_val.inner_ctype) is not None
+                    ):
+                        init_val = str_to_char_array(
+                            init_val, _array_len(ann_val.inner_ctype)
+                        )
                     reg_zeros[stmt.target.id] = init_val
                 except Exception:
                     reg_zeros[stmt.target.id] = _make_sim_zero(ann_val.inner_ctype)
@@ -2310,6 +2397,7 @@ def _build_reg_sim_func(fn):
         _SIM_FEEDBACK_MAX_ITER=_SIM_FEEDBACK_MAX_ITER,
         _sim_wire_read=_sim_wire_read,
         _sim_wire_write=_sim_wire_write,
+        str_to_char_array=str_to_char_array,
     )
     for _name, _zero in reg_zeros.items():
         new_globals[f"__reg_zero_{_name}__"] = _zero
@@ -2385,6 +2473,21 @@ def _sim_cast(val, ctype):
     return _sim_val_make(v, ctype)
 
 
+def _sim_cast_call_arg(pt, v):
+    """Cast a hw_func call argument to its declared parameter ctype pt, for
+    simulation. Scalar int/SimVal args get bit-accurate truncation (existing
+    behavior); a bare Python str passed for a char/uint8_t array param gets
+    converted to a zero-padded list of SimVals (mirrors the elaboration-side
+    string-literal-argument handling in PY_TO_LOGIC._elab_call)."""
+    if pt is None:
+        return v
+    if (type(v) is int or type(v) is SimVal) and _is_scalar_pypeline_int(pt):
+        return _sim_cast(v, pt)
+    if isinstance(v, str) and _array_elem_ctype(pt) is not None:
+        return str_to_char_array(v, _array_len(pt))
+    return v
+
+
 def _sim_type_wrap(fn):
     """Wrap a pypeline hardware function for bit-accurate simulation.
 
@@ -2423,6 +2526,12 @@ def _sim_type_wrap(fn):
                 and _is_scalar_pypeline_int(pt)
             ):
                 new_kwargs[k] = _sim_cast(v, pt)
+            elif (
+                pt is not None
+                and isinstance(v, str)
+                and _array_elem_ctype(pt) is not None
+            ):
+                new_kwargs[k] = str_to_char_array(v, _array_len(pt))
         saved = _push_scoped_registrations(fn)
         try:
             if sim_body_fn is not None:
@@ -2502,13 +2611,7 @@ def _sim_type_wrap(fn):
             new_args = list(args)
             for i, a in enumerate(args):
                 if i < len(params):
-                    pt = ann.get(params[i])
-                    if (
-                        pt is not None
-                        and (type(a) is int or type(a) is SimVal)
-                        and _is_scalar_pypeline_int(pt)
-                    ):
-                        new_args[i] = _sim_cast(a, pt)
+                    new_args[i] = _sim_cast_call_arg(ann.get(params[i]), a)
             return _run_body(new_args, kwargs)
     else:
         # ── Register-aware path (has Reg[T] / Feedback[T]) ───────────────────
@@ -2554,13 +2657,7 @@ def _sim_type_wrap(fn):
                 new_args = list(args)
                 for i, a in enumerate(args):
                     if i < len(params):
-                        pt = ann.get(params[i])
-                        if (
-                            pt is not None
-                            and (type(a) is int or type(a) is SimVal)
-                            and _is_scalar_pypeline_int(pt)
-                        ):
-                            new_args[i] = _sim_cast(a, pt)
+                        new_args[i] = _sim_cast_call_arg(ann.get(params[i]), a)
                 return _run_body(new_args, kwargs)
             finally:
                 _sim_inst_stack.pop()

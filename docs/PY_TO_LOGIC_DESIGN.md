@@ -196,6 +196,11 @@ _is_struct("point_t", ps)        # True if point_t in struct_to_field_type_dict
 _is_scalar("uint32_t", ps)       # True (not array, not struct)
 ```
 
+`"char"` / `"char[N]"` follow this exact same convention (`char_t[16]` → `"char[16]"`)
+and need no elaborator-side special-casing beyond it — the shared backend
+(`C_TO_LOGIC.py`/`VHDL.py`) already understands `char`/`char[N]` natively. See
+[Char Array Support](#char-array-support) below.
+
 ### Bit-Accurate Constant Inference
 
 When a plain Python integer literal appears in hardware context (e.g. `my_points[1].x = 1`),
@@ -1137,6 +1142,81 @@ wire_type  = "state_t_IDLE_0_RUNNING_1_DONE_2"   # the enum's canonical ctype na
 constants in the backend. The rest of VHDL generation (comparison operators,
 `wire_to_c_type` propagation, `enum_info_dict` lookup) is already handled by the existing
 C_TO_LOGIC backend — no changes to VHDL generation are needed.
+
+## Char Array Support
+
+Unlike enum types, char arrays need **no discovery/registration pass** — `"char[16]"` is
+already a self-describing C-type-string, exactly like `"uint8_t[16]"`, so no out-of-band
+side table (`enum_info_dict`-equivalent) is needed. `char_t[N]` rides the existing
+array/struct machinery unmodified for struct fields, function params/returns, and nested
+arrays. The only new elaboration code is string-literal-initializer support and the
+`strlen()` builtin, both described below.
+
+### String Literal Initializers
+
+`name: char_t[16] = "hello"` (a bare Python `str` constant used where a char/uint8_t array
+is expected) is handled by `FuncElaborator._elab_str_literal(py_str, target_ctype,
+ast_node)`, which builds a **single CONST wire**, mirroring PipelineC's C frontend exactly
+(`C_TO_LOGIC.NON_ENUM_CONST_VALUE_STR_TO_LOGIC` / `BUILD_CONST_WIRE`) rather than
+per-character wires:
+
+```python
+const_wire = f'{C_TO_LOGIC.CONST_PREFIX}"{py_str}"_{coord_str}'
+```
+
+The literal's text — with its surrounding quote characters preserved, matching how a C-AST
+string constant's `.value` already includes them — lives directly in the wire name. The
+shared backend's `GET_VAL_STR_FROM_CONST_WIRE` (`C_TO_LOGIC.py`) recovers it later by
+splitting on `"_"` and taking the first token, so **no new value-decoding code is needed
+on the Pypeline side at all**. Known, inherited limitation: a literal containing `"_"`
+gets truncated on readback — this is a pre-existing PipelineC bug shared by both frontends
+(same recovery function), not something new here; it is not worked around.
+
+**Zero-padding is free.** When `target_ctype` is known (e.g. the declared type of the
+variable/field/param being assigned), the CONST wire's `c_type` is set to `target_ctype`
+directly rather than the literal's own inferred length — this is the same
+`known_c_type`-override trick `NON_ENUM_CONST_VALUE_STR_TO_LOGIC` already uses. Downstream,
+`VHDL.py`'s `to_byte_array(s, size)` helper already zero-initializes its full `size`-length
+output before copying in the literal's own characters, so a 5-character literal assigned
+into a declared `char[16]` is zero-padded entirely by existing, unmodified backend code.
+Elaboration raises `ElaborationError` if the literal is longer than the declared target
+array (checked explicitly, since the VHDL backend has no bounds check of its own here).
+
+Four call sites hook into `_elab_str_literal`, all of which already have the target ctype
+in scope: `_elab_ann_assign` (annotated local declaration), `_elab_assign` (plain
+reassignment of an already-declared var), `_elab_return`, and the argument-passing loop in
+`_elab_call` (a string literal passed directly as a call argument, e.g.
+`print_3x3("Current:", ...)`). Because `_elab_str_literal` returns a `(wire, type)` pair —
+the same shape `_elab_expr`/`_elab_python_value` return — it drops directly into each call
+site's existing `_write_ref`/`input_ports` plumbing with no per-leaf writes or scratch
+variables needed.
+
+**Known limitation — `Reg[T]` initializers**: `Reg[T]` where `T`'s leaf element type is
+`"char"` cannot have *any* explicit initializer (int, list, or string) — see
+[pypeline_DESIGN.md's Char Array Support section](pypeline_DESIGN.md#char-array-support)
+for why (a pre-existing `VHDL.py` bug in the Python-value register-init path, independent
+of this feature). `_elab_ann_assign` raises a clear `ElaborationError` for this case;
+zero-init (`Reg[T]` with no `=`) is unaffected.
+
+### `strlen()` Builtin
+
+`FuncElaborator._elab_strlen_call(expr)` handles calls to a function literally named
+`strlen`, dispatched from `_elab_call` before the `_BIT_MANIP_FUNC_NAMES` check (`strlen`
+is Pypeline-local, not inserted into that C_TO_LOGIC-owned frozenset). Unlike bit-manip
+builtins, it builds no submodule instance — it's a **pure elaboration-time constant**,
+exactly like an integer literal:
+
+```python
+_, arg_type = self._elab_expr(expr.args[0])   # only the type is used, not the wire
+n = _array_first_dim(arg_type)
+out_type = _infer_const_ctype(n)               # reuses the same width-inference rule
+                                                # as plain int literals
+```
+
+This mirrors `C_AST_STRLEN_FUNC_CALL_TO_LOGIC` exactly: the result is the array's
+*declared capacity* (`n`), not a runtime scan for a NUL terminator or content length —
+`strlen()` on a `char_t[16]` holding `"hello"` returns `16`, not `5`. Works for any array
+type, not just char arrays, matching the C frontend's own genericity.
 
 ### Conditional Type-Driven Code
 
@@ -3096,6 +3176,22 @@ VHDL basic identifiers are more restrictive than Python identifiers:
 - **For-loop prefix** (`_elab_for`): loop variable sanitized for the `loop_instance_prefix` string (but kept raw in `const_env` so elaboration-time `eval()` still resolves it).
 - **Global `Wire[T]`** (`_discover_global_wires`): auto-mangled with a stderr warning (internal wires have no constraint-file dependency).
 - **Global `Input[T]` / `Output[T]`** (`_discover_global_wires`): **`ElaborationError`** — these names appear in VHDL entity ports that must match XDC/SDC constraint files exactly; silent renaming would break synthesis.
+- **Struct field names**: sanitized at every point a field identifier becomes a
+  `struct_to_field_type_dict` key or a ref_toks token — `_register_struct_recursive`,
+  `_discover_structs` (AST fallback), the closure-registered-struct block in
+  `_elaborate_live_func`, `_parse_ref_toks` (`ast.Attribute`/`ast.Subscript` field access),
+  and `_elab_compound_init`/`_elab_compound_init_from_pyval` (`ast.Call` keyword args,
+  dict-style string keys, and `NamedTuple._fields` iteration) all route string field
+  tokens through `_sanitize_ref_tok` (a thin `_sanitize_vhdl_name` wrapper that passes
+  non-str tokens — array indices, variable-index AST nodes — through unchanged). Without
+  this, a struct field literally named after a VHDL reserved word (e.g. `label`, `signal`,
+  `type`) would compile through Pypeline's elaboration and VHDL-generation stages
+  successfully but produce VHDL that fails downstream synthesis tooling — this was a
+  latent, pre-existing gap (unrelated to any single type), only exposed by an actual test
+  case using a reserved-word field name. Simulation is unaffected: sim-side struct
+  construction/access uses the real, unsanitized Python attribute names throughout (a
+  reserved-word-named field is perfectly valid Python), since collision risk exists only
+  in generated VHDL identifiers.
 
 **Case-insensitivity collision detection:**
 

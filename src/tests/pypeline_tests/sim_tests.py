@@ -26,6 +26,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "func_wires_test.py",
     "if_test.py",
     "enum_test.py",
+    "char_array_test.py",
 ]
 # fmt: on
 

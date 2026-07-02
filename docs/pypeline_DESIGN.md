@@ -233,6 +233,13 @@ Examples:
 Two factory calls with identical class name and field types produce the same canonical name
 and share a single VHDL type declaration — correct deduplication without module prefixing.
 
+**Field names** are Python identifiers at this layer and are not mangled here — VHDL
+reserved-word mangling for individual field names (e.g. a field literally named `label` or
+`signal`) happens on the elaboration side, in `PY_TO_LOGIC.py`, everywhere a field name is
+turned into a `struct_to_field_type_dict` key or ref_toks token. See
+[PY_TO_LOGIC_DESIGN.md's VHDL Identifier Safety section](PY_TO_LOGIC_DESIGN.md#vhdl-identifier-safety--name-sanitization)
+for the full list of call sites.
+
 **2. Adds `__class_getitem__`** via `_struct_class_getitem` so that `point_t[10]`
 produces `_make_ctype("point_t_x_uint32_t_y_uint32_t[10]")` — a valid array C type usable
 in further annotations. The canonical name is used as the base. As with `_CTypeMeta.__getitem__`
@@ -318,6 +325,73 @@ No library-provided `make_enum_t` helper: each project writes its own factories.
 enum_bit_width(enum_cls) → int       # minimum bit width from member values
 enum_uint_type(enum_cls) → uintN_t   # corresponding pypeline uint type
 ```
+
+---
+
+## Char Array Support
+
+### `char_t` — Predefined Scalar Type
+
+```python
+char_t = _make_ctype("char")
+```
+
+A plain predefined scalar, exactly parallel to `uint8_t` (single global instance, no
+factory function). `char_t[16]` rides the existing `_CTypeMeta.__getitem__` array
+machinery for free, producing C-type-string `"char[16]"` — the same convention
+PipelineC's C frontend already uses, so the shared backend (`C_TO_LOGIC.py`/`VHDL.py`)
+needs no changes to understand `char`/`char[N]` from Pypeline.
+
+`_CTypeMeta.width` special-cases `"char"` → 8 (mirroring `VHDL.py`'s
+`GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR`), since its general `(u?)int(\d+)_t` regex doesn't
+match the bare name `"char"`. `_ctype_is_int("char")` correctly returns `False` — `char_t`
+is excluded from generic integer arithmetic promotion (`_arith_promote`), matching the C
+frontend's own behavior where `char` is interchangeable with `uint8_t` only via an
+explicit swap in binary ops, not general promotion.
+
+Fixed-size char arrays (`char_t[N]`) require **no other special-casing anywhere** in the
+array/struct machinery: `_array_elem_ctype`, `_array_len`, `_make_sim_zero`,
+`_sim_cast_deep` (this file) and `_is_array`/`_annotation_to_ctype`/struct discovery
+(`PY_TO_LOGIC.py`) are all generic over any scalar element ctype already. A `char_t[16]`
+struct field, function param/return, or nested `char_t[3][3]` grid works through the
+exact same code paths as `uint8_t[16]` today.
+
+### String Literal Initializers
+
+`name: char_t[16] = "hello"` (and the equivalent struct-field, return, and call-argument
+forms) elaborate a Python `str` constant to a **single CONST wire**, mirroring PipelineC's
+C frontend exactly (`C_TO_LOGIC.NON_ENUM_CONST_VALUE_STR_TO_LOGIC`/`BUILD_CONST_WIRE`) —
+not per-character wires. See
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#string-literal-initializers) for the full
+elaboration-side writeup, including the target-type-override trick that gives free
+zero-padding via the existing VHDL `to_byte_array` helper, and the known
+underscore-in-literal limitation inherited unmodified from the shared backend.
+
+### `strlen(arr)` Builtin
+
+Constant-folds to `arr`'s **declared array length** (its first dimension) at elaboration
+time — deliberate parity with PipelineC's `C_AST_STRLEN_FUNC_CALL_TO_LOGIC`, which is
+*not* a runtime scan for a NUL terminator. `strlen()` on a `char_t[16]` holding `"hello"`
+returns `16`, not `5`. Works for any array type, not just char arrays. The sim-mode
+equivalent (`pypeline.strlen`) is just `len(arr)`.
+
+For content-length string display in simulation, use `char_array_to_str` instead (see
+[`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)) — the two are deliberately distinct
+functions so the capacity-vs-content distinction stays visible in the API surface.
+
+### Known Limitation: `Reg[T]` Initializers
+
+`Reg[T]` where `T`'s leaf element type is `"char"` (a bare `char_t` register, or any
+`char_t[...]` array) **cannot have an explicit initializer** — `= 65`, `= "hello"`, and
+`= [65, 66, ...]` all hit a pre-existing bug in `VHDL.CONST_VAL_STR_TO_VHDL`'s char branch,
+which assumes its input is always a quoted C-AST character-literal token (e.g. `"'A'"`)
+and mishandles a plain Python-int-derived value from Pypeline's
+`INIT_PYTHON_VAL_TO_VHDL_INIT_STR` register-init path. This reproduces even for the
+simplest case (`Reg[char_t] = 65`, no arrays or strings involved), so it predates and is
+independent of char-array support specifically; fixing it would require editing
+`VHDL.py`, which char-array support deliberately avoids. `Reg[char_t[N]]` with **no**
+initializer (zero-init) is unaffected and works normally through the generic `Reg[T]`
+machinery.
 
 ---
 

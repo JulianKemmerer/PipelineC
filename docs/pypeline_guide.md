@@ -949,6 +949,83 @@ class packet_t(NamedTuple):
     data:  uint8_t
 ```
 
+### Char arrays (strings)
+
+`char_t` is a predefined 8-bit scalar type, exactly like `uint8_t` but with its own
+C-type-string (`"char"`). Combine it with `[N]` array syntax to get a fixed-size string
+type:
+
+```python
+from pypeline import char_t, strlen, str_to_char_array, char_array_to_str
+
+def greet() -> char_t[16]:
+    name: char_t[16] = "hello"    # Python string literal as a compile-time initializer
+    return name
+```
+
+A shorter literal is zero-padded on the right; a literal longer than the declared array
+raises an error at elaboration time. String literals also work as struct-field
+initializers, function return values, and directly as call arguments:
+
+```python
+@struct
+class packet_t(NamedTuple):
+    name: char_t[16]
+    value: uint32_t
+
+@hw_func
+def make_packet(v: uint32_t) -> packet_t:
+    p: packet_t
+    p.name = "sensor_1"
+    p.value = v
+    return p
+
+@hw_func
+def log_event(tag: char_t[16]) -> uint32_t:
+    ...
+
+@MAIN
+def call_site() -> uint32_t:
+    return log_event("startup")   # string literal passed directly as an argument
+```
+
+`strlen(arr)` returns the array's **declared capacity**, not the length of whatever text
+happens to be stored in it — `strlen()` on the `name` field above always returns `16`,
+even when it holds `"sensor_1"` (8 characters). This matches PipelineC's C-side `strlen()`
+exactly: it's a compile-time constant (the array size), not a runtime scan for a
+null terminator.
+
+In simulation, a `char_t[N]` value is a plain list — use `str_to_char_array(s, n)` and
+`char_array_to_str(value)` to convert to/from Python `str`:
+
+```python
+r = sim_call(greet)
+assert char_array_to_str(r) == "hello"
+
+p = sim_call(make_packet, v=42)
+assert char_array_to_str(p.name) == "sensor_1"
+
+tag = str_to_char_array("custom_tag", 16)
+r = sim_call(log_event, tag=tag)
+```
+
+Char arrays support ordinary per-element arithmetic like any other array — each element
+is just an 8-bit value:
+
+```python
+@MAIN
+def increment_chars(s: char_t[16]) -> char_t[16]:
+    out: char_t[16] = s
+    for i in range(16):
+        out[i] = s[i] + 1
+    return out
+```
+
+Known limitation: `Reg[char_t[N]]` cannot have an explicit initializer (`Reg[char_t[16]] =
+"hello"` raises an `ElaborationError`) — only zero-initialized char-array registers
+(`Reg[char_t[16]]` with no `=`) are currently supported. See
+[`pypeline_DESIGN.md`](pypeline_DESIGN.md#char-array-support) for why.
+
 ### Arrays
 
 Append `[N]` to any type to get a fixed-length array of that type:

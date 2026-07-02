@@ -95,21 +95,22 @@ def make_tmp_root() -> Path:
 def run_test(test: Test, tmp_root: Path) -> TestResult:
     test_dir = tmp_root / test.category / test.name
     test_dir.mkdir(parents=True, exist_ok=True)
-    stdout_log = test_dir / "stdout.log"
-    stderr_log = test_dir / "stderr.log"
+    out_log = test_dir / "out.log"
 
     cmd = [sys.executable] + [str(c) for c in test.cmd]
     if test.needs_out_dir:
         cmd += ["--out_dir", str(test_dir)]
 
-    _log(f"[RUN ] {test.category:6s} {test.name}  log: {stdout_log}")
+    _log(f"[RUN ] {test.category:6s} {test.name}  log: {out_log}")
 
     start = time.monotonic()
-    # Hand the log files directly to the child process so output is written
+    # Hand the log file directly to the child process so output is written
     # (and visible via e.g. `tail -f`) as the test runs, not just on completion.
-    with open(stdout_log, "w") as out_f, open(stderr_log, "w") as err_f:
+    # stdout and stderr are combined into one stream so interleaved output
+    # (e.g. a traceback next to the print that triggered it) stays readable.
+    with open(out_log, "w") as out_f:
         proc = subprocess.Popen(
-            cmd, cwd=REPO_ROOT, stdout=out_f, stderr=err_f, text=True
+            cmd, cwd=REPO_ROOT, stdout=out_f, stderr=subprocess.STDOUT, text=True
         )
         _register_proc(proc)
         try:
@@ -121,7 +122,7 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
     result = TestResult(test, returncode, duration, test_dir)
     status = "PASS" if result.passed else "FAIL"
     _log(
-        f"[{status}] {test.category:6s} {test.name}  ({duration:.1f}s)  log: {stdout_log}"
+        f"[{status}] {test.category:6s} {test.name}  ({duration:.1f}s)  log: {out_log}"
     )
     return result
 

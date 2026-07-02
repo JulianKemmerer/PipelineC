@@ -760,6 +760,15 @@ def _sanitize_vhdl_name(name: str) -> str:
     return result
 
 
+def _sanitize_ref_tok(tok):
+    """Sanitize a ref_toks token if it's a struct field name (str); array indices
+    (int) and variable-index AST nodes pass through unchanged. Struct field names
+    must be VHDL-legal since they become VHDL record field names in generated code
+    (struct_to_field_type_dict keys) -- applied consistently everywhere a field name
+    is turned into a ref_toks token so lookups stay in sync with registration."""
+    return _sanitize_vhdl_name(tok) if isinstance(tok, str) else tok
+
+
 _HW_OP_TO_ARITH_OP = {
     C_TO_LOGIC.BIN_OP_PLUS_NAME: "add",
     C_TO_LOGIC.BIN_OP_MINUS_NAME: "sub",
@@ -1809,7 +1818,27 @@ class FuncElaborator:
                     )
                     return
         # Hardware path
-        rhs_wire, rhs_type = self._elab_expr(stmt.value)
+        if isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
+            # String literal reassignment of an already-declared var, e.g.
+            # x: char_t[16]; ...; x = "hello". Look up x's declared type (if any) so
+            # the literal is sized/zero-padded against it, mirroring _elab_ann_assign.
+            target_ctype = None
+            probe_toks = self._parse_ref_toks(target)
+            probe_base = probe_toks[0]
+            if isinstance(probe_base, str):
+                probe_global = self._resolve_global_wire(probe_base)
+                if probe_global and probe_global != probe_base:
+                    probe_base = probe_global
+            if probe_base in self.env:
+                _, probe_base_type = self.env[probe_base]
+                target_ctype = _ref_toks_to_ctype(
+                    (probe_base,) + probe_toks[1:], probe_base_type, self.parser_state
+                )
+            rhs_wire, rhs_type = self._elab_str_literal(
+                stmt.value.value, target_ctype, stmt.value
+            )
+        else:
+            rhs_wire, rhs_type = self._elab_expr(stmt.value)
         # x[15:0] = y — bit-slice assign on a scalar integer wire
         if isinstance(target, ast.Subscript):
             if self._try_elab_bit_slice_assign(target, rhs_wire, rhs_type, stmt):
@@ -1856,6 +1885,27 @@ class FuncElaborator:
                 _register_enum(ann_val.inner_ctype, self.parser_state)
             init_py_val = None
             if stmt.value is not None:
+                # KNOWN LIMITATION: Reg[T] initializers where T's leaf scalar type is
+                # "char" (bare char_t, or any char_t[...] array) hit a pre-existing bug
+                # in VHDL.CONST_VAL_STR_TO_VHDL's char branch, which assumes its input is
+                # a quoted C-AST character-literal token (e.g. "'A'") and mishandles a
+                # plain Python-int-derived value (e.g. from Reg[char_t] = 65) -- this
+                # reproduces even for a bare scalar char_t register with an int literal,
+                # with no arrays or strings involved, so it predates and is independent
+                # of this feature's own code. Fixing it would require editing VHDL.py,
+                # which is out of scope here. Zero-init (Reg[T] with no '=') is
+                # unaffected and works normally.
+                leaf_ctype = inner_ctype
+                while _is_array(leaf_ctype):
+                    leaf_ctype = _array_elem_type(leaf_ctype)
+                if leaf_ctype == "char":
+                    raise ElaborationError(
+                        f"'{var_name}': Reg[{inner_ctype}] cannot have an initializer "
+                        f"-- Reg[T] where T's element type is 'char' hits a known "
+                        f"VHDL-generation limitation for any explicit init value. "
+                        f"Use 'Reg[{inner_ctype}]' with no '=' (zero-init) instead.",
+                        stmt.value,
+                    )
                 init_py_val = self._try_eval_const(stmt.value)
                 if init_py_val is None:
                     raise ElaborationError(
@@ -1903,7 +1953,10 @@ class FuncElaborator:
                         self._write_ref((var_name,), rhs_wire, typ, stmt.value)
             else:
                 const_val = self._try_eval_const(stmt.value)
-                if isinstance(const_val, (dict, list, tuple)):
+                if isinstance(const_val, str):
+                    rhs_wire, _ = self._elab_str_literal(const_val, typ, stmt.value)
+                    self._write_ref((var_name,), rhs_wire, typ, stmt.value)
+                elif isinstance(const_val, (dict, list, tuple)):
                     self._elab_compound_init_from_pyval(var_name, const_val, stmt.value)
                 else:
                     rhs_wire, _ = self._elab_expr(stmt.value)
@@ -1925,13 +1978,19 @@ class FuncElaborator:
                         f"Compound init dict key must be str or int, got: {type(key)}"
                     )
                 self._elab_compound_init(
-                    base_name, val_node, context_node, path_toks + (key,)
+                    base_name,
+                    val_node,
+                    context_node,
+                    path_toks + (_sanitize_ref_tok(key),),
                 )
         elif isinstance(init_node, ast.Call):
             # NamedTuple struct constructor: MyStruct(field=val, ...)
             for kw in init_node.keywords:
                 self._elab_compound_init(
-                    base_name, kw.value, context_node, path_toks + (kw.arg,)
+                    base_name,
+                    kw.value,
+                    context_node,
+                    path_toks + (_sanitize_ref_tok(kw.arg),),
                 )
         else:
             rhs_wire, rhs_type = self._elab_expr(init_node)
@@ -1951,14 +2010,20 @@ class FuncElaborator:
                         f"Compound init dict key must be str or int, got {type(key)}: {key!r}"
                     )
                 self._elab_compound_init_from_pyval(
-                    base_name, sub_val, context_node, path_toks + (key,)
+                    base_name,
+                    sub_val,
+                    context_node,
+                    path_toks + (_sanitize_ref_tok(key),),
                 )
         elif isinstance(val, (list, tuple)):
             if hasattr(val, "_fields"):
                 # NamedTuple: use field names as path tokens, not integer indices
                 for fname, sub_val in zip(val._fields, val):
                     self._elab_compound_init_from_pyval(
-                        base_name, sub_val, context_node, path_toks + (fname,)
+                        base_name,
+                        sub_val,
+                        context_node,
+                        path_toks + (_sanitize_ref_tok(fname),),
                     )
             else:
                 for i, sub_val in enumerate(val):
@@ -1997,6 +2062,12 @@ class FuncElaborator:
                 self._connect_compound_return(RET, stmt.value)
                 return
         const_val = self._try_eval_const(stmt.value)
+        if isinstance(const_val, str):
+            result_wire, _ = self._elab_str_literal(
+                const_val, self._return_type, stmt.value
+            )
+            _connect(self.logic, result_wire, RET)
+            return
         if isinstance(const_val, (dict, list, tuple)):
             self._elab_compound_init_from_pyval(RET, const_val, stmt.value)
             self._connect_compound_return(RET, stmt.value)
@@ -2538,6 +2609,45 @@ class FuncElaborator:
         _add_wire(self.logic, const_wire, typ)
         return const_wire, typ
 
+    def _elab_str_literal(self, py_str, target_ctype, ast_node):
+        """Emit a Python str literal as a single CONST wire, mirroring how PipelineC's C
+        frontend elaborates string literals (C_TO_LOGIC.NON_ENUM_CONST_VALUE_STR_TO_LOGIC /
+        BUILD_CONST_WIRE): the literal's text lives directly in the wire name, and gets
+        recovered later by the shared VHDL backend's GET_VAL_STR_FROM_CONST_WIRE (splits on
+        "_", takes the first token) -- so, like the C frontend, a literal containing "_"
+        will be truncated on readback. This is an accepted, pre-existing limitation shared
+        with the C frontend, not something new here.
+
+        If target_ctype is a known char/uint8_t array type, the wire's c_type is set to
+        target_ctype directly (not the literal's own length) -- this is what lets a
+        shorter literal be zero-padded into a longer declared array for free, via the
+        existing VHDL to_byte_array() helper (already zero-inits its full output before
+        copying in the literal's characters). Raises if the literal is longer than the
+        declared target array.
+        """
+        coord_str = _loc_str(self.src_file, ast_node)
+        # Wire value carries literal surrounding quotes, matching the C frontend's own
+        # string-constant wire encoding (c_ast string constants keep their quote chars
+        # in .value) -- VHDL.C_CONST_STR_TO_VHDL_CONST_STR expects them already present,
+        # it only does escape substitution, not quoting.
+        const_wire = f'{C_TO_LOGIC.CONST_PREFIX}"{py_str}"_{coord_str}'
+        if (
+            target_ctype is not None
+            and _is_array(target_ctype)
+            and target_ctype[: target_ctype.index("[")] in ("char", "uint8_t")
+        ):
+            n = _array_first_dim(target_ctype)
+            if len(py_str) > n:
+                raise ElaborationError(
+                    f"String literal {py_str!r} (len {len(py_str)}) exceeds "
+                    f"declared array size {n} ({target_ctype!r})"
+                )
+            typ = target_ctype
+        else:
+            typ = f"char[{len(py_str)}]"
+        _add_wire(self.logic, const_wire, typ)
+        return const_wire, typ
+
     def _elab_ref_read(self, expr):
         """Elaborate a subscript or attribute RHS. Routes to VAR or CONST path."""
         ref_toks = self._parse_ref_toks(expr)
@@ -3058,6 +3168,8 @@ class FuncElaborator:
         else:
             # Simple name call: abs_int32(a)
             callee_name = expr.func.id
+            if callee_name == "strlen":
+                return self._elab_strlen_call(expr)
             if callee_name in _BIT_MANIP_FUNC_NAMES:
                 return self._elab_bit_manip_call(expr)
             callee_def = self.parser_state.FuncLogicLookupTable.get(callee_name)
@@ -3082,7 +3194,13 @@ class FuncElaborator:
         port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
         input_ports = []
         for arg_expr, port_name in zip(expr.args, callee_def.inputs):
-            arg_wire, arg_typ = self._elab_expr(arg_expr)
+            if isinstance(arg_expr, ast.Constant) and isinstance(arg_expr.value, str):
+                port_typ = callee_def.wire_to_c_type.get(port_name)
+                arg_wire, arg_typ = self._elab_str_literal(
+                    arg_expr.value, port_typ, arg_expr
+                )
+            else:
+                arg_wire, arg_typ = self._elab_expr(arg_expr)
             input_ports.append((port_name, arg_wire, arg_typ))
         if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(callee_def, self.parser_state):
             input_ports.append(
@@ -3108,6 +3226,28 @@ class FuncElaborator:
             )
             self.logic.next_func_call_autopipeline_depth = None
         return port_return, ret_typ
+
+    def _elab_strlen_call(self, expr):
+        """strlen(arr) -- pure elaboration-time constant, mirroring PipelineC's
+        C_AST_STRLEN_FUNC_CALL_TO_LOGIC exactly: returns the array's *declared capacity*
+        (its first dimension), NOT a runtime scan for a NUL terminator / content length.
+        Works for any array type, not just char arrays, matching the C frontend's own
+        genericity. No submodule instance is built -- this never touches the argument's
+        runtime value, only its type.
+        """
+        if len(expr.args) != 1:
+            raise ElaborationError("strlen() takes exactly one argument")
+        _, arg_type = self._elab_expr(expr.args[0])
+        if not _is_array(arg_type):
+            raise ElaborationError(
+                f"strlen() argument must be an array type, got {arg_type!r}"
+            )
+        n = _array_first_dim(arg_type)
+        out_type = _infer_const_ctype(n)
+        coord_str = _loc_str(self.src_file, expr)
+        const_wire = f"{C_TO_LOGIC.CONST_PREFIX}{n}_{coord_str}"
+        _add_wire(self.logic, const_wire, out_type)
+        return const_wire, out_type
 
     def _elab_bit_manip_call(self, expr):
         """Elaborate a call to a bit manipulation primitive function.
@@ -3379,7 +3519,10 @@ class FuncElaborator:
             ):
                 c_name = val._pypeline_ctype_name
                 if c_name not in self.parser_state.struct_to_field_type_dict:
-                    fields = {f: str(a) for f, a in val.__annotations__.items()}
+                    fields = {
+                        _sanitize_vhdl_name(f): str(a)
+                        for f, a in val.__annotations__.items()
+                    }
                     self.parser_state.struct_to_field_type_dict[c_name] = fields
 
         # Register a stub under the canonical key so recursive calls resolve
@@ -3415,19 +3558,19 @@ class FuncElaborator:
         if isinstance(node, ast.Name):
             return (self._hw_name(node.id),)
         elif isinstance(node, ast.Attribute):
-            return self._parse_ref_toks(node.value) + (node.attr,)
+            return self._parse_ref_toks(node.value) + (_sanitize_ref_tok(node.attr),)
         elif isinstance(node, ast.Subscript):
             parent = self._parse_ref_toks(node.value)
             slc = node.slice
             if isinstance(slc, ast.Index):  # Python 3.8 compat
                 slc = slc.value
             if isinstance(slc, ast.Constant):
-                return parent + (slc.value,)
+                return parent + (_sanitize_ref_tok(slc.value),)
             # Try to evaluate as elaboration-time constant (e.g. bits[b] where b in const_env,
             # or rv[f] where f is a string field name from _fields iteration)
             const_val = self._try_eval_const(slc)
             if const_val is not None and isinstance(const_val, (int, str)):
-                return parent + (const_val,)
+                return parent + (_sanitize_ref_tok(const_val),)
             return parent + (slc,)  # variable index: store raw AST expression
         else:
             raise NotImplementedError(f"Cannot parse ref toks from: {ast.dump(node)}")
@@ -3914,7 +4057,9 @@ def _discover_structs(tree, parser_state):
         fields = {}
         for item in node.body:
             if isinstance(item, ast.AnnAssign) and isinstance(item.target, ast.Name):
-                fields[item.target.id] = _annotation_to_ctype(item.annotation)
+                fields[_sanitize_vhdl_name(item.target.id)] = _annotation_to_ctype(
+                    item.annotation
+                )
         parser_state.struct_to_field_type_dict[node.name] = fields
         # print(f"  struct: {node.name} -> {fields}")
 
@@ -3938,7 +4083,7 @@ def _register_struct_recursive(obj, parser_state, visited=None):
     visited.add(c_name)
     fields = {}
     for field, annotation in obj.__annotations__.items():
-        fields[field] = (
+        fields[_sanitize_vhdl_name(field)] = (
             _inner_ctype_to_str(annotation)
             if isinstance(annotation, type)
             else str(annotation)

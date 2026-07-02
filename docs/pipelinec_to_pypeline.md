@@ -161,6 +161,40 @@ traffic_t = make_traffic_t(include_yellow=True)
 
 See [pypeline_guide.md §3d](pypeline_guide.md#3d-enum-types) for the full API.
 
+### 3e. Char Array (String) Types
+
+PipelineC's `char`/`char[N]` maps to Pypeline's predefined `char_t` scalar type combined
+with the same `[N]` array syntax used for any other array:
+
+```c
+// PipelineC
+char name[16] = "hello";
+```
+
+```python
+# pypeline
+from pypeline import char_t
+
+name: char_t[16] = "hello"
+```
+
+A string literal shorter than the declared array is zero-padded; longer raises an
+elaboration error. String literals also work as struct-field initializers, return values,
+and call arguments (`some_func("literal")`), exactly like PipelineC's `char[N]`
+initializers and `char name[16]` function parameters.
+
+`strlen(arr)` maps directly to PipelineC's `strlen()` and has the **same
+capacity-not-content semantics**: it returns the array's declared size (a compile-time
+constant), not a runtime scan for a NUL terminator — `strlen(name)` above is always `16`,
+not `5`.
+
+In simulation, use `str_to_char_array(s, n)` / `char_array_to_str(value)` to convert
+to/from Python `str` (a `char_t[N]` sim value is a plain list, like any other array — see
+[pypeline_guide.md §11](pypeline_guide.md#11-types)).
+
+`Reg[char_t[N]]` currently only supports zero-init (no `=` initializer) — see
+[pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) for the known limitation.
+
 ---
 
 ## 4. Top-Level Entry Points
@@ -629,6 +663,7 @@ The following PipelineC features do not yet have a pypeline equivalent.
 | `CLK_MHZ` annotation for non-MAIN peripheral clocks | Not supported |
 | Simulation of `vhdl()`-based primitives | `make_stream_fifo`, `make_stream_pipeline`, `make_valid_ready_mcp` raise `NotImplementedError` in simulation; synthesise normally via `pipelinec` |
 | Multiple / early `return` statements (returning from inside an `if` branch) | Not supported — a pypeline function has exactly one `return`, which must be the final top-level statement; restructure to assign a result variable in each branch and return it once at the end (see [pypeline_guide.md §6](pypeline_guide.md#6-your-first-hardware-function)) |
+| `Reg[char_t[N]] = <initializer>` (register power-on value for a char array, e.g. equivalent of C's `static char name[16] = "boot";`) | Not supported for hardware elaboration — raises `ElaborationError`. `Reg[char_t[N]]` with no initializer (zero-init) works normally. See [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) |
 
 See also the [Limitations](pypeline_guide.md#25-limitations--not-yet-supported) section
 of the pypeline guide.

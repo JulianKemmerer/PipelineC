@@ -20,6 +20,7 @@ NO_SYNTH_TEST_FILES = [
     "dangling_logic_test.py",
     "stream_pipeline_test.py",
     "enum_test.py",
+    "char_array_test.py",
 ]
 # fmt: on
 

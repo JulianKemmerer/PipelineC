@@ -477,6 +477,58 @@ every typed arithmetic operation, every typed scalar variable assignment, AND th
 bare-declare-then-fill idiom for structs and arrays — including loop-body re-assignments
 that lack an explicit type annotation.
 
+### Char Arrays — Simulation Helpers
+
+A `char_t[N]` simulation value is a plain Python **list** of `char_t`-typed `SimVal`s,
+exactly like any other array — no new value representation, no dunder overrides on
+`SimVal`/`list`. Two free functions in `pypeline.py` bridge it to Python `str`:
+
+```python
+char_array_to_str(value) -> str   # stops at the first NUL (0) element; sim-side display
+                                   # convenience only
+str_to_char_array(s, n)  -> list  # zero-padded list of char_t SimVals; ValueError if
+                                   # len(s) > n
+```
+
+These are deliberately distinct from `strlen()`, which returns the array's *declared
+capacity* (see [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support)), not the
+NUL-terminated content length `char_array_to_str` stops at — conflating the two would
+hide a real semantic difference behind one overloaded name.
+
+Adding char-array support to the simulator required extending three existing mechanisms,
+all additively (no behavior change for non-char types):
+
+1. **`_TypedAnnAssignRewriter` Rule 1 extension** — `var: char_t[N] = "literal"` is a
+   compound-typed `AnnAssign` *with* a value, which the pre-existing Rule 1
+   (`_is_compound_pypeline_type(ann_val)` branch) left completely untouched ("`var: T =
+   value` already binds the name via plain Python"), correct for list/dict/struct-ctor
+   RHS values, but not for a bare `str` — a raw Python string doesn't shape into the
+   expected list-of-`SimVal` representation on its own. When the RHS is an `ast.Constant`
+   str and the target's array element ctype is `char`/`uint8_t`, the rewriter now injects
+   a `str_to_char_array(<literal>, N)` call instead, mirroring the elaboration-side
+   `_elab_str_literal`'s target-type-aware zero-padding (`PY_TO_LOGIC_DESIGN.md`).
+2. **Rule 4 extension (`.field = "literal"` / `[i] = "literal"`)** — the same str-RHS
+   check is applied in `visit_Assign`'s Attribute/Subscript branch, generating the
+   `str_to_char_array(...)` call in place of `_make_deep_cast` when the leaf ctype is a
+   char/uint8_t array.
+3. **Call-argument casting (`_sim_cast_call_arg`)** — a small shared helper used by both
+   `_sim_type_wrap` wrapper variants (positional args) and `_run_body` (kwargs): alongside
+   the existing scalar int/SimVal → `_sim_cast` path, a bare `str` argument passed for a
+   char/uint8_t array parameter is converted via `str_to_char_array`. This covers a string
+   literal passed directly as a call argument (e.g. `echo_name("Current:")`), which
+   otherwise reaches the function body as a raw, un-shaped Python string.
+
+`Reg[T] = "literal"` power-on-reset values are also supported **in simulation only**:
+`_build_reg_sim_func`'s per-register init-value evaluation converts a `str` init value via
+`str_to_char_array` before storing it in `reg_zeros`. This has **no** corresponding
+hardware-elaboration support — `Reg[T]` where `T`'s leaf element type is `"char"` raises
+`ElaborationError` for any initializer at all (see
+[pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) for why: a pre-existing
+`VHDL.py` bug in the Python-value register-init path, out of scope to fix here). This is a
+deliberate, documented sim/hardware asymmetry, not an oversight — useful for pure-Python
+prototyping of a design before its register-init strategy is finalized, but such a
+function cannot be elaborated to hardware as written.
+
 ### `_sim_lens_set(obj, path, value)` — Immutable-Aware Deep Set
 
 A small free function (not part of the rewriter class) used by the code Rule 4 generates:
