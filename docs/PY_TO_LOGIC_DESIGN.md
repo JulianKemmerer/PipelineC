@@ -2354,11 +2354,11 @@ real simulation model — see `pypeline_sim_DESIGN.md`'s "`sim_print`" section f
 side.
 
 ```python
-from pypeline import sim_print, char_array_to_str
+from pypeline import sim_print
 
 n: Reg[uint8_t]
 sim_print(f"n={n} hex={hex(n)} ch={chr(n)}")            # -> "n=5 hex=0x5 ch=\x05\n"
-sim_print(f"name={char_array_to_str(name)}")             # %s via a char_t[N] argument
+sim_print(f"name={name}")                                 # %s auto-inferred from a char_t[N] argument
 ```
 
 ### Syntax: ordinary Python interpolation, not C's `printf(fmt, *args)`
@@ -2409,17 +2409,17 @@ trap.
    interpolation) is elaborated and mapped to a specifier:
    - `{expr:x}` / `{expr:X}` (format-spec) or `hex(expr)` (structurally recognized by bare
      name, the same technique `vhdl(...)` recognition uses) → `%X`.
-   - `chr(expr)` → `%c`. `char_array_to_str(expr)` → `%s`.
-   - Bare `{expr}` with no wrapper → inferred from `expr`'s elaborated ctype, but **only**
-     for plain scalar ints (`%d` for signed, `%u` for unsigned) — see below for why char
-     types are excluded from this inference.
+   - `chr(expr)` → `%c`.
+   - Bare `{expr}` with no wrapper → inferred from `expr`'s elaborated ctype: plain scalar
+     ints (`%d` for signed, `%u` for unsigned) and `char_t[N]` arrays (`%s`) — see below for
+     why a single `char_t` scalar and `uint8_t[N]` arrays are excluded from this inference.
    - `!r`/`!s`/`!a` conversions, non-hex format specs, and anything else are rejected with a
      clear `ElaborationError` (the "Minimal + hex" scope decision).
 4. Each interpolated value is elaborated via `self._elab_expr(...)` (or `self._elab_str_literal(...)`
-   for a literal-string sub-expression, e.g. `char_array_to_str("id")`), and its **real**
-   elaborated type becomes the submodule port's type directly — there is no format-implied
-   placeholder type to reconcile, unlike the C frontend's historical `%s` handling (see the
-   `%s` real-size fix below).
+   for a literal-string sub-expression), and its **real** elaborated type becomes the
+   submodule port's type directly — there is no format-implied placeholder type to
+   reconcile, unlike the C frontend's historical `%s` handling (see the `%s` real-size fix
+   below).
 5. Builds the func/instance name (`f"{C_TO_LOGIC.PRINTF_FUNC_NAME}_{coord}"`, mirroring
    `C_TO_LOGIC.py`'s own `PRINTF_FUNC_NAME + "_" + coord` construction) and calls
    `_add_submodule_instance(...)` with `output_wire=None, output_type=None` — see below.
@@ -2436,19 +2436,35 @@ trap.
    also excludes CE (`GET_PRINTF_MODULE_TEXT`'s sensitivity list already hardcodes
    `CLOCK_ENABLE` once).
 
-### Why char types require an explicit wrapper, not type-inference
+### Why a bare `char_t` scalar / `uint8_t[N]` array still need an explicit wrapper
 
-A bare `{ch}` or `{name}` for a `char_t` scalar or `char_t[N]`/`uint8_t[N]` array would be
-**type-inferable** for hardware (the ctype alone is enough to pick `%c`/`%s`) but would print
-the **wrong thing in simulation** if silently allowed: `SimVal` is a plain `int` subclass and a
-char array is a plain `list` of them, so Python's default `str()`/f-string formatting of a bare
-value gives a raw ordinal or list repr, not the intended character/string. `_sim_print_infer_spec`
-raises an `ElaborationError` for these two cases instead, pointing at `chr(...)`/
-`char_array_to_str(...)`. Since those are genuine Python functions (not just elaborator
-markers), they produce identical text in both simulation (evaluated for real, before
-`sim_print` is ever called — see `pypeline_sim_DESIGN.md`) and hardware (structurally
-recognized and unwrapped by the elaborator) — sim and hardware output can never silently
-diverge for a supported case.
+A bare `{ch}` or `{name}` for any char-shaped value is **type-inferable** for hardware (the
+ctype alone is enough to pick `%c`/`%s`), but silently inferring it is only *safe* for
+simulation when the sim-side value's own Python formatting already matches hardware's
+rendering — otherwise sim and hardware output would silently diverge. This is exactly why
+`char_t[N]` arrays *can* auto-infer `%s` (see previous section) while a single `char_t`
+scalar and `uint8_t[N]` arrays still cannot:
+
+- **`char_t[N]` arrays**: the sim-side value is a `CharArray` (`pypeline.py`), whose
+  `__str__` NUL-stops exactly like hardware's `%s` — Python's own f-string formatting of a
+  bare `{name}` already produces the correct text, so inference is safe. (Earlier revisions
+  required an explicit `char_array_to_str(expr)` wrapper here, before `CharArray` existed;
+  it's no longer needed or recognized — see `pypeline_sim_DESIGN.md`.)
+- **A single `char_t` scalar**: `SimVal` is a plain `int` subclass, so Python's default
+  `str()`/f-string formatting of a bare value gives a raw ordinal, not a character — and the
+  ambiguity is genuine even in hardware (is a lone `char_t` meant as a number or a
+  character?). `_sim_print_infer_spec` still raises an `ElaborationError`, pointing at
+  `chr(expr)`.
+- **`uint8_t[N]` arrays**: a plain `list` (not `CharArray` — only `char_t` arrays get that
+  wrapper, since raw byte arrays aren't meant to behave like display strings) has no custom
+  `__str__`, so Python's default list-repr formatting would be wrong. `_sim_print_infer_spec`
+  still raises an `ElaborationError` here too; there is currently no wrapper that forces a
+  `uint8_t[N]` array to print as `%s` (an untested, out-of-scope edge case).
+
+`chr(...)` remains a genuine Python function (not just an elaborator marker), so it produces
+identical text in both simulation (evaluated for real, before `sim_print` is ever called —
+see `pypeline_sim_DESIGN.md`) and hardware (structurally recognized and unwrapped by the
+elaborator).
 
 ### `%s` real array-size fix (both frontends)
 

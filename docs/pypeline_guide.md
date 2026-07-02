@@ -329,16 +329,15 @@ sim_print(f"n={n} hex={hex(n)}")
 Write it like ordinary Python `print()`-style code: an f-string (or a plain string with no
 interpolation), one argument, no separate `%`-style format-string-plus-args form. A trailing
 newline is appended automatically, like real `print()`. Bare `{expr}` interpolation works for
-plain integers (decimal, sign-aware); `hex(expr)` gives hex. A `char_t[N]` value needs an
-explicit `char_array_to_str(expr)` wrapper (and a single `char_t` needs `chr(expr)`) — bare
-`{name}` for either would print correctly in hardware but wrong in simulation, so it's a
-compile error instead of a silent mismatch:
+plain integers (decimal, sign-aware) and for `char_t[N]` arrays (`%s`); `hex(expr)` gives hex.
+A single `char_t` still needs `chr(expr)` — a bare `{ch}` is ambiguous between a number and a
+character, so it's a compile error instead of a silent mismatch:
 
 ```python
-from pypeline import char_array_to_str, char_t, strlen
+from pypeline import char_t, strlen
 
 def print_name(name: char_t[16]):
-    sim_print(f"name={char_array_to_str(name)} len={strlen(name)}")
+    sim_print(f"name={name} len={strlen(name)}")
 ```
 
 See `docs/pypeline_sim_DESIGN.md` and `docs/PY_TO_LOGIC_DESIGN.md` for the simulation and
@@ -987,7 +986,7 @@ C-type-string (`"char"`). Combine it with `[N]` array syntax to get a fixed-size
 type:
 
 ```python
-from pypeline import char_t, strlen, str_to_char_array, char_array_to_str
+from pypeline import char_t, strlen
 
 def greet() -> char_t[16]:
     name: char_t[16] = "hello"    # Python string literal as a compile-time initializer
@@ -1026,18 +1025,18 @@ even when it holds `"sensor_1"` (8 characters). This matches PipelineC's C-side 
 exactly: it's a compile-time constant (the array size), not a runtime scan for a
 null terminator.
 
-In simulation, a `char_t[N]` value is a plain list — use `str_to_char_array(s, n)` and
-`char_array_to_str(value)` to convert to/from Python `str`:
+In simulation, a `char_t[N]` value is a `CharArray` (a list of `SimVal`s that also behaves
+like the Python string it represents) — pass and compare plain Python `str` values
+directly, with no conversion helpers needed:
 
 ```python
 r = sim_call(greet)
-assert char_array_to_str(r) == "hello"
+assert r == "hello"
 
 p = sim_call(make_packet, v=42)
-assert char_array_to_str(p.name) == "sensor_1"
+assert p.name == "sensor_1"
 
-tag = str_to_char_array("custom_tag", 16)
-r = sim_call(log_event, tag=tag)
+r = sim_call(log_event, tag="custom_tag")
 ```
 
 Char arrays support ordinary per-element arithmetic like any other array — each element

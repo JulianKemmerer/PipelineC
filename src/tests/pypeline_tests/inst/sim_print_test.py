@@ -11,13 +11,11 @@ sys.path.insert(
 from pypeline import (
     MAIN,
     Reg,
-    char_array_to_str,
     char_t,
     hw_func,
     sim_call,
     sim_reset,
     sim_print,
-    str_to_char_array,
     strlen,
     uint8_t,
 )
@@ -40,9 +38,10 @@ def counter_with_print(en: uint8_t) -> uint8_t:
 
 @MAIN
 def print_name(name: char_t[8]) -> uint8_t:
-    """%s via char_array_to_str(...), sized to 8 (not PipelineC C's historical 256) --
-    proves the real-array-size fix, not just that %s elaborates at all."""
-    sim_print(f"name={char_array_to_str(name)} len={strlen(name)}")
+    """%s auto-inferred from the bare char_t[8] value, sized to 8 (not PipelineC C's
+    historical 256) -- proves the real-array-size fix, not just that %s elaborates
+    at all."""
+    sim_print(f"name={name} len={strlen(name)}")
     return strlen(name)
 
 
@@ -69,7 +68,7 @@ def test_print_name():
     sim_reset()
     buf = io.StringIO()
     with contextlib.redirect_stdout(buf):
-        r = sim_call(print_name, name=str_to_char_array("hi", 8))
+        r = sim_call(print_name, name="hi")
     # strlen() returns declared capacity (8), not content length -- see char_array_test.py.
     assert int(r) == 8, int(r)
     assert buf.getvalue() == "name=hi len=8\n", repr(buf.getvalue())
@@ -89,21 +88,48 @@ def test_sim_call_always_fires():
     print("test_sim_call_always_fires PASS")
 
 
-def test_bare_char_rejected_at_elaboration():
-    """A bare {expr} for a char_t/char_t[N] value would print correctly in hardware
-    (type-inferred %c/%s) but WRONG in simulation (Python's default int/list formatting
-    of a SimVal) -- this must be a hard elaboration error, not a silent divergence. Runs
-    the elaborator in-process on an isolated temp file (not this file itself, since this
-    file is also fed wholesale to pipelinec by elab_tests.py/synth_tests.py and must
-    elaborate cleanly end to end)."""
+def test_bare_char_array_elaborates():
+    """A bare {expr} for a char_t[N] array now auto-infers %s at elaboration time, and
+    matches it in simulation via CharArray's NUL-stopped __str__ -- no wrapper call
+    needed. print_name/test_print_name above already exercises this end to end; this
+    test just pins down that elaboration itself succeeds (doesn't raise) for the bare
+    form, on an isolated temp file (not this file itself, since this file is also fed
+    wholesale to pipelinec by elab_tests.py/synth_tests.py and must elaborate cleanly
+    end to end)."""
     import PY_TO_LOGIC
 
     src = (
         "from pypeline import MAIN, char_t, sim_print, uint8_t\n\n"
         "@MAIN\n"
-        "def bad(name: char_t[8]) -> uint8_t:\n"
+        "def good(name: char_t[8]) -> uint8_t:\n"
         '    sim_print(f"name={name}")\n'
         "    return 0\n"
+    )
+    fd, path = tempfile.mkstemp(
+        suffix=".py", dir=os.path.dirname(os.path.abspath(__file__))
+    )
+    try:
+        with os.fdopen(fd, "w") as f:
+            f.write(src)
+        PY_TO_LOGIC.PARSE_FILE(path)  # must not raise
+    finally:
+        os.remove(path)
+    print("test_bare_char_array_elaborates PASS")
+
+
+def test_bare_char_scalar_rejected_at_elaboration():
+    """A bare {expr} for a single char_t value is ambiguous (%c vs %d) and would print
+    correctly in hardware but WRONG in simulation (Python's default int formatting of a
+    SimVal) -- this must still be a hard elaboration error; unaffected by the
+    char_array_to_str removal, since it's a distinct ambiguity requiring chr(expr)."""
+    import PY_TO_LOGIC
+
+    src = (
+        "from pypeline import MAIN, char_t, sim_print\n\n"
+        "@MAIN\n"
+        "def bad(ch: char_t) -> char_t:\n"
+        '    sim_print(f"ch={ch}")\n'
+        "    return ch\n"
     )
     fd, path = tempfile.mkstemp(
         suffix=".py", dir=os.path.dirname(os.path.abspath(__file__))
@@ -114,19 +140,20 @@ def test_bare_char_rejected_at_elaboration():
         try:
             PY_TO_LOGIC.PARSE_FILE(path)
         except PY_TO_LOGIC.ElaborationError as e:
-            assert "char_array_to_str" in str(e), str(e)
+            assert "chr(expr)" in str(e), str(e)
         else:
             raise AssertionError(
-                "expected ElaborationError for bare {name} char-array interpolation"
+                "expected ElaborationError for bare {ch} single-char interpolation"
             )
     finally:
         os.remove(path)
-    print("test_bare_char_rejected_at_elaboration PASS")
+    print("test_bare_char_scalar_rejected_at_elaboration PASS")
 
 
 if __name__ == "__main__":
     test_counter_prints()
     test_print_name()
     test_sim_call_always_fires()
-    test_bare_char_rejected_at_elaboration()
+    test_bare_char_array_elaborates()
+    test_bare_char_scalar_rejected_at_elaboration()
     print("All sim_print tests passed.")

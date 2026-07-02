@@ -189,9 +189,9 @@ capacity-not-content semantics**: it returns the array's declared size (a compil
 constant), not a runtime scan for a NUL terminator — `strlen(name)` above is always `16`,
 not `5`.
 
-In simulation, use `str_to_char_array(s, n)` / `char_array_to_str(value)` to convert
-to/from Python `str` (a `char_t[N]` sim value is a plain list, like any other array — see
-[pypeline_guide.md §11](pypeline_guide.md#11-types)).
+In simulation, a `char_t[N]` value is a `CharArray` (a list of `SimVal`s that also behaves
+like the Python string it represents) — pass and compare plain Python `str` values
+directly, no conversion needed (see [pypeline_guide.md §11](pypeline_guide.md#11-types)).
 
 `Reg[char_t[N]]` currently only supports zero-init (no `=` initializer) — see
 [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) for the known limitation.
@@ -696,12 +696,11 @@ Note two differences from C's `printf`:
 - **Newline.** C's `printf` requires an explicit `\n`; `sim_print` appends one automatically,
   like real Python `print()`.
 
-`%s` pairs with `char_t[N]` (see [§3e](#3e-char-array-string-types)) via an explicit
-`char_array_to_str(...)` wrapper — `sim_print(f"name={char_array_to_str(name)}")` — rather
-than plain `{name}` interpolation, since a bare `char_t`/`char_t[N]` value would print
-correctly in hardware but incorrectly in simulation (see
-[PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#sim_print--printf-style-console-output)); a
-single `char_t` similarly needs `chr(...)`.
+`%s` pairs with `char_t[N]` (see [§3e](#3e-char-array-string-types)) via plain `{name}`
+interpolation — `sim_print(f"name={name}")` — auto-inferred from the argument's type, same
+as plain integers. A single `char_t` still needs `chr(...)`, since a bare `{ch}` is
+ambiguous between a number and a character (see
+[PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#sim_print--printf-style-console-output)).
 
 `%f` has no pypeline equivalent yet — pypeline has no native Python-float representation for
 its bit-packed float type.

@@ -375,9 +375,10 @@ time — deliberate parity with PipelineC's `C_AST_STRLEN_FUNC_CALL_TO_LOGIC`, w
 returns `16`, not `5`. Works for any array type, not just char arrays. The sim-mode
 equivalent (`pypeline.strlen`) is just `len(arr)`.
 
-For content-length string display in simulation, use `char_array_to_str` instead (see
-[`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)) — the two are deliberately distinct
-functions so the capacity-vs-content distinction stays visible in the API surface.
+For content-length string display in simulation, use `str(arr)` instead (see
+[`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md) — a `char_t[N]` sim value is a
+`CharArray` whose `__str__` stops at the first NUL byte) — deliberately distinct from
+`strlen()` so the capacity-vs-content distinction stays visible in the API surface.
 
 ### Known Limitation: `Reg[T]` Initializers
 

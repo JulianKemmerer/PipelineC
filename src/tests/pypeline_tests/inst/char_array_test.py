@@ -9,12 +9,10 @@ from typing import NamedTuple
 
 from pypeline import (
     MAIN,
-    char_array_to_str,
     char_t,
     hw_func,
     sim_call,
     sim_reset,
-    str_to_char_array,
     strlen,
     struct,
     uint8_t,
@@ -125,7 +123,7 @@ def passthrough_mixed(m: mixed_arrays_t) -> mixed_arrays_t:
 def test_local_str_init():
     sim_reset()
     r = sim_call(local_str_init)
-    assert char_array_to_str(r) == "hello", char_array_to_str(r)
+    assert r == "hello", r
     assert [int(x) for x in r][5:] == [0] * 11, [int(x) for x in r]
     print("test_local_str_init PASS")
 
@@ -133,24 +131,23 @@ def test_local_str_init():
 def test_str_literal_exact_fit():
     sim_reset()
     r = sim_call(str_literal_exact_fit)
-    assert char_array_to_str(r) == "hello", char_array_to_str(r)
+    assert r == "hello", r
     print("test_str_literal_exact_fit PASS")
 
 
 def test_passthrough():
     sim_reset()
-    v = str_to_char_array("world!", 16)
-    r = sim_call(passthrough_char_array, s=v)
-    assert char_array_to_str(r) == "world!", char_array_to_str(r)
+    r = sim_call(passthrough_char_array, s="world!")
+    assert r == "world!", r
     print("test_passthrough PASS")
 
 
 def test_increment_chars():
     sim_reset()
-    v = str_to_char_array("hello", 16)
-    r = sim_call(increment_chars, s=v)
+    padded = [ord(c) for c in "hello"] + [0] * 11
+    r = sim_call(increment_chars, s="hello")
     got = [int(x) for x in r]
-    expected = [c + 1 for c in [int(x) for x in v]]
+    expected = [c + 1 for c in padded]
     assert got == expected, (got, expected)
     print("test_increment_chars PASS")
 
@@ -158,14 +155,14 @@ def test_increment_chars():
 def test_call_with_str_literal_arg():
     sim_reset()
     r = sim_call(call_with_str_literal_arg)
-    assert char_array_to_str(r) == "Current:", char_array_to_str(r)
+    assert r == "Current:", r
     print("test_call_with_str_literal_arg PASS")
 
 
 def test_struct_field():
     sim_reset()
     r = sim_call(make_named_val, v=42)
-    assert char_array_to_str(r.name) == "id", char_array_to_str(r.name)
+    assert r.name == "id", r.name
     assert int(r.value) == 42
     print("test_struct_field PASS")
 
@@ -175,7 +172,7 @@ def test_strlen():
     # strlen() returns declared capacity (16), NOT content length -- deliberate
     # parity with PipelineC's C_AST_STRLEN_FUNC_CALL_TO_LOGIC. Pin this down so a
     # future "fix" can't silently regress it into content-length semantics.
-    r = sim_call(strlen_of_char_array, s=str_to_char_array("hi", 16))
+    r = sim_call(strlen_of_char_array, s="hi")
     assert int(r) == 16, int(r)
     print("test_strlen PASS")
 
@@ -189,25 +186,17 @@ def test_strlen_not_char_gated():
 
 def test_2d_grid():
     sim_reset()
-    grid = [str_to_char_array(row, 3) for row in ["ab", "cd", "ef"]]
-    r = sim_call(passthrough_grid, g=grid)
-    assert [char_array_to_str(row) for row in r] == ["ab", "cd", "ef"], r
+    r = sim_call(passthrough_grid, g=["ab", "cd", "ef"])
+    assert [str(row) for row in r] == ["ab", "cd", "ef"], r
     print("test_2d_grid PASS")
 
 
 def test_mixed_arrays_struct():
     sim_reset()
-    m = mixed_arrays_t(label=str_to_char_array("x", 16), bytes=[0] * 16)
+    m = mixed_arrays_t(label="x", bytes=[0] * 16)
     r = sim_call(passthrough_mixed, m=m)
-    assert char_array_to_str(r.label) == "x", char_array_to_str(r.label)
+    assert r.label == "x", r.label
     print("test_mixed_arrays_struct PASS")
-
-
-def test_conversion_helpers():
-    v = str_to_char_array("ok", 4)
-    assert [int(x) for x in v] == [111, 107, 0, 0], [int(x) for x in v]
-    assert char_array_to_str(v) == "ok"
-    print("test_conversion_helpers PASS")
 
 
 if __name__ == "__main__":
@@ -221,5 +210,4 @@ if __name__ == "__main__":
     test_strlen_not_char_gated()
     test_2d_grid()
     test_mixed_arrays_struct()
-    test_conversion_helpers()
     print("All char array tests passed.")

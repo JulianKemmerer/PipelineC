@@ -1743,15 +1743,17 @@ class FuncElaborator:
         backend (Logic.printf_format_string / submodule_instance_to_printf_format_string,
         see C_TO_LOGIC.py) exactly as C's own printf(...) does.
 
-        Bare {expr} interpolation is only inferred for plain scalar ints (%d/%u), where
-        Python's own str(int) already matches VHDL's rendering exactly. hex(expr) /
-        chr(expr) / char_array_to_str(expr) are recognized structurally (like vhdl(...)
-        above) as explicit %X/%c/%s markers — these are real Python functions, so
-        simulation output (Part C's sim_print, which just prints the already-formatted
-        f-string) is guaranteed to match hardware output; a bare {ch}/{name} for a
-        char_t/char array is rejected instead of silently inferring %c/%s, since Python's
-        default int/list formatting of a SimVal would print the wrong thing in simulation
-        even though it would be correct in hardware.
+        Bare {expr} interpolation is inferred for plain scalar ints (%d/%u) and for
+        char_t[N] arrays specifically (%s) — Python's own str(int)/str(CharArray)
+        already match VHDL's %d/%s rendering exactly (CharArray, pypeline.py, gives
+        char arrays a NUL-stopped __str__ for exactly this reason). hex(expr) / chr(expr)
+        are recognized structurally (like vhdl(...) above) as explicit %X/%c markers —
+        these resolve genuine formatting ambiguity (is a scalar meant as a number or a
+        character?), not a type conversion. A bare {ch} for a single char_t scalar, or a
+        bare {arr} for a uint8_t[N] array, is still rejected: a lone char_t's intended
+        %c-vs-%d rendering is ambiguous, and a plain list has no custom __str__, so
+        Python's default formatting would print the wrong thing in simulation even
+        though it would be correct in hardware.
         """
         call = stmt.value
         if len(call.args) != 1 or call.keywords:
@@ -1804,10 +1806,17 @@ class FuncElaborator:
                 and not value_expr.keywords
             ):
                 wrapper_name = value_expr.func.id
+            if wrapper_name == "char_array_to_str":
+                raise ElaborationError(
+                    f"sim_print: char_array_to_str(...) no longer exists -- a char "
+                    f"array now formats as %s automatically, just use the bare "
+                    f'value directly, e.g. sim_print(f"{{name}}") '
+                    f"(at {_loc_str(self.src_file, stmt)})"
+                )
             if wrapper_name == "hex":
                 is_hex = True
                 value_expr = value_expr.args[0]
-            elif wrapper_name in ("chr", "char_array_to_str"):
+            elif wrapper_name == "chr":
                 value_expr = value_expr.args[0]
             else:
                 wrapper_name = None  # not a recognized wrapper -- ignore any other call
@@ -1825,8 +1834,6 @@ class FuncElaborator:
                 spec = "%X"
             elif wrapper_name == "chr":
                 spec = "%c"
-            elif wrapper_name == "char_array_to_str":
-                spec = "%s"
             else:
                 spec = self._sim_print_infer_spec(arg_typ, stmt)
 
@@ -1873,17 +1880,22 @@ class FuncElaborator:
         m = _INT_CTYPE_RE.match(ctype) if isinstance(ctype, str) else None
         if m:
             return "%u" if m.group(1) == "u" else "%d"
+        if _is_array(ctype) and ctype[: ctype.index("[")] == "char":
+            # char_t[N] arrays get CharArray on the sim side (pypeline.py), whose
+            # __str__ NUL-stops exactly like hardware's %s -- safe to auto-infer.
+            return "%s"
         is_char_scalar = ctype == "char"
-        is_char_array = _is_array(ctype) and ctype[: ctype.index("[")] in (
-            "char",
-            "uint8_t",
-        )
-        if is_char_scalar or is_char_array:
+        is_uint8_array = _is_array(ctype) and ctype[: ctype.index("[")] == "uint8_t"
+        if is_char_scalar:
             raise ElaborationError(
-                f"sim_print: bare {{expr}} for a char/char-array value would print "
+                f"sim_print: bare {{expr}} for a single char value would print "
                 f"differently in simulation than in hardware -- wrap it explicitly: "
-                f"chr(expr) for a single character, char_array_to_str(expr) for a char "
-                f"array (at {_loc_str(self.src_file, stmt)})"
+                f"chr(expr) (at {_loc_str(self.src_file, stmt)})"
+            )
+        if is_uint8_array:
+            raise ElaborationError(
+                f"sim_print: bare {{expr}} for a uint8_t array has no string "
+                f"formatting support (at {_loc_str(self.src_file, stmt)})"
             )
         raise ElaborationError(
             f"sim_print: unsupported type {ctype!r} for interpolation "

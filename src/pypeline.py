@@ -751,14 +751,15 @@ def struct(cls):
                         obj = _int_new(SimVal, int(v))
                         _obj_setattr(obj, "_ctype", ftype)
                         v = obj
-                elif ftype is not None and type(v) is list:
+                elif ftype is not None and (type(v) is list or isinstance(v, str)):
                     # Array-of-scalar field passed a raw Python list (e.g. a list
-                    # literal): cast each element so it carries the field's bit width,
-                    # matching the per-field scalar wrap above. Struct/array elements
-                    # are left untouched -- they self-type via their own constructor.
-                    elem_ftype = _array_elem_ctype(ftype)
-                    if elem_ftype is not None and _is_scalar_pypeline_int(elem_ftype):
-                        v = [_sim_cast(e, elem_ftype) for e in v]
+                    # literal) or, for a char/uint8_t array field, a bare Python str:
+                    # cast/convert via _sim_cast_deep so it carries the field's bit
+                    # width (and, for char_t[N], becomes a CharArray). Struct/array
+                    # elements are left untouched -- they self-type via their own
+                    # constructor.
+                    if _array_elem_ctype(ftype) is not None:
+                        v = _sim_cast_deep(v, ftype)
                 typed[fname] = v
         return _orig_new(klass, **typed)
 
@@ -1631,41 +1632,82 @@ def _make_sim_zero(ctype):
     return _sim_cast(0, ctype)
 
 
+class CharArray(list):
+    """Sim-mode representation of a char_t[N] value: a list of SimVal(char_t) that also
+    behaves like the Python str it represents, mirroring hardware's %s/strlen display
+    convention (stops at the first NUL byte). This is what lets sim_call args/kwargs,
+    sim_call return values, and sim_print interpolation all accept/produce plain Python
+    str transparently, with no user-facing conversion helpers required."""
+
+    def __str__(self):
+        chars = []
+        for v in self:
+            iv = int(v)
+            if iv == 0:
+                break
+            chars.append(chr(iv))
+        return "".join(chars)
+
+    def __repr__(self):
+        return f"CharArray({str(self)!r})"
+
+    def __eq__(self, other):
+        if isinstance(other, str):
+            return str(self) == other
+        return list.__eq__(self, other)
+
+    def __ne__(self, other):
+        return not self.__eq__(other)
+
+    __hash__ = None
+
+
 def _sim_cast_deep(value, ctype):
     """Cast value to ctype, recursing through arrays so every scalar leaf becomes a
     typed SimVal -- mirrors hardware where an array's elements all share one declared
     bit width. Structs are left as-is: struct construction already types scalar (and,
-    via _typed_new, array-of-scalar) fields at construction time."""
+    via _typed_new, array-of-scalar) fields at construction time.
+
+    A char_t[N] (or nested char_t[..][N]) target also accepts a bare Python str here,
+    zero-padded/length-checked and wrapped in CharArray -- this is the single mechanism
+    behind every sim-side string-literal boundary (sim_call args/kwargs/return, Reg[T]
+    init, struct-field construction, local var/field assignment inside a simulated
+    function body). uint8_t[N] targets accept a str too (matching the elaboration side's
+    parity between char/uint8_t string-literal targets) but are not wrapped in CharArray,
+    since raw byte arrays aren't meant to behave like display strings."""
     if hasattr(ctype, "_fields"):
         return value
     elem_ctype = _array_elem_ctype(ctype)
-    if elem_ctype is not None:
-        return [_sim_cast_deep(v, elem_ctype) for v in value]
-    return _sim_cast(value, ctype)
+    if elem_ctype is None:
+        return _sim_cast(value, ctype)
+    elem_name = getattr(elem_ctype, "_ctype_name", None)
+    if isinstance(value, str):
+        if elem_name not in ("char", "uint8_t"):
+            raise TypeError(f"string value not valid for array type {ctype!r}")
+        n = _array_len(ctype)
+        if len(value) > n:
+            raise ValueError(
+                f"string {value!r} (len {len(value)}) exceeds array size {n}"
+            )
+        codes = [ord(c) for c in value] + [0] * (n - len(value))
+        elems = [_sim_cast(c, elem_ctype) for c in codes]
+        return CharArray(elems) if elem_name == "char" else elems
+    elems = [_sim_cast_deep(v, elem_ctype) for v in value]
+    return CharArray(elems) if elem_name == "char" else elems
 
 
-def char_array_to_str(value) -> str:
-    """Convert a char_t[N] simulation value (list of int-like elements) to a Python str,
-    stopping at the first NUL (0) byte if present, else using the full length. Sim-side
-    display convenience only -- distinct from strlen(), which returns the array's
-    declared capacity, not this NUL-aware content length."""
-    chars = []
-    for v in value:
-        iv = int(v)
-        if iv == 0:
-            break
-        chars.append(chr(iv))
-    return "".join(chars)
-
-
-def str_to_char_array(s: str, n: int):
-    """Python str -> zero-padded char_t[n] simulation value (list of SimVal(char_t)).
-    Raises ValueError if len(s) > n. Mirrors the elaboration-time string-literal
-    initializer's zero-padding rule."""
-    if len(s) > n:
-        raise ValueError(f"String {s!r} (len {len(s)}) exceeds char array size {n}")
-    codes = [ord(c) for c in s] + [0] * (n - len(s))
-    return [_sim_cast(c, char_t) for c in codes]
+def _is_char_like_array(ctype):
+    """True if ctype is an array (at any nesting depth) whose ultimate scalar element
+    is char or uint8_t -- used to narrowly gate sim_call arg/kwarg/return casting to
+    char-array-shaped values, leaving other array types (e.g. uint32_t[N]) passing
+    through sim_call untouched, exactly as they do today."""
+    elem = _array_elem_ctype(ctype)
+    while elem is not None and _array_elem_ctype(elem) is not None:
+        elem = _array_elem_ctype(elem)
+    return elem is not None and getattr(elem, "_ctype_name", None) in (
+        "char",
+        "uint8_t",
+    )
 
 
 def strlen(arr) -> int:
@@ -1673,8 +1715,8 @@ def strlen(arr) -> int:
     arr, matching the hardware elaborator's constant-fold semantics -- NOT a runtime scan
     for a NUL terminator. This mirrors PipelineC's own strlen() exactly (see
     C_AST_STRLEN_FUNC_CALL_TO_LOGIC in C_TO_LOGIC.py), which is intentionally "declared
-    capacity", not "content length". Use char_array_to_str() for content-length string
-    display instead."""
+    capacity", not "content length". Use str(arr) for content-length string display
+    instead."""
     return len(arr)
 
 
@@ -1919,16 +1961,6 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
             keywords=[],
         )
 
-    def _make_str_literal_init_call(self, value_node, n):
-        """Return a str_to_char_array(value_node, n) Call node -- converts a Python
-        str literal RHS into a zero-padded char_t[n] sim value, mirroring the
-        elaboration-side _elab_str_literal's target-type-aware zero-padding."""
-        return _ast.Call(
-            func=_ast.Name(id="str_to_char_array", ctx=_ast.Load()),
-            args=[value_node, _ast.Constant(value=n)],
-            keywords=[],
-        )
-
     def _make_deep_cast(self, value_node, ctype, ref_node):
         """Return a _sim_cast_deep(value_node, __sim_ann_L_C__) Call node -- casts a
         Rule-4 partial-write value (scalar or array-of-scalar) to the statically-resolved
@@ -2023,13 +2055,13 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
             ):
                 # `var: char_t[N] = "literal"` -- a bare str RHS doesn't shape into
                 # the expected list-of-SimVal representation on its own, unlike a
-                # list/dict/struct-constructor initializer. Convert explicitly.
+                # list/dict/struct-constructor initializer. _sim_cast_deep accepts a
+                # str directly for a char/uint8_t array target, so route through the
+                # same deep-cast call used for every other compound-typed write.
                 self.modified = True
                 new_node = _ast.Assign(
                     targets=[node.target],
-                    value=self._make_str_literal_init_call(
-                        node.value, _array_len(ann_val)
-                    ),
+                    value=self._make_deep_cast(node.value, ann_val, node),
                 )
                 return _ast.copy_location(new_node, node)
             return node  # `var: T = value` already binds the name via plain Python
@@ -2077,18 +2109,10 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
                     self._compound_declared[root], kinds
                 )
                 value_node = node.value
-                if (
-                    leaf_ctype is not None
-                    and isinstance(node.value, _ast.Constant)
-                    and isinstance(node.value.value, str)
-                    and _array_elem_ctype(leaf_ctype) is not None
-                    and getattr(_array_elem_ctype(leaf_ctype), "_ctype_name", None)
-                    in ("char", "uint8_t")
-                ):
-                    value_node = self._make_str_literal_init_call(
-                        value_node, _array_len(leaf_ctype)
-                    )
-                elif leaf_ctype is not None:
+                if leaf_ctype is not None:
+                    # _sim_cast_deep accepts a str RHS directly for a char/uint8_t
+                    # array leaf type, so a string-literal write like `n.name = "id"`
+                    # is handled by the same deep-cast call as every other write.
                     value_node = self._make_deep_cast(value_node, leaf_ctype, node)
                 path_list = _ast.List(elts=path, ctx=_ast.Load())
                 lens_call = _ast.Call(
@@ -2278,9 +2302,7 @@ def _build_reg_sim_func(fn):
                         isinstance(init_val, str)
                         and _array_elem_ctype(ann_val.inner_ctype) is not None
                     ):
-                        init_val = str_to_char_array(
-                            init_val, _array_len(ann_val.inner_ctype)
-                        )
+                        init_val = _sim_cast_deep(init_val, ann_val.inner_ctype)
                     reg_zeros[stmt.target.id] = init_val
                 except Exception:
                     reg_zeros[stmt.target.id] = _make_sim_zero(ann_val.inner_ctype)
@@ -2430,7 +2452,6 @@ def _build_reg_sim_func(fn):
         _SIM_FEEDBACK_MAX_ITER=_SIM_FEEDBACK_MAX_ITER,
         _sim_wire_read=_sim_wire_read,
         _sim_wire_write=_sim_wire_write,
-        str_to_char_array=str_to_char_array,
     )
     for _name, _zero in reg_zeros.items():
         new_globals[f"__reg_zero_{_name}__"] = _zero
@@ -2509,15 +2530,16 @@ def _sim_cast(val, ctype):
 def _sim_cast_call_arg(pt, v):
     """Cast a hw_func call argument to its declared parameter ctype pt, for
     simulation. Scalar int/SimVal args get bit-accurate truncation (existing
-    behavior); a bare Python str passed for a char/uint8_t array param gets
-    converted to a zero-padded list of SimVals (mirrors the elaboration-side
-    string-literal-argument handling in PY_TO_LOGIC._elab_call)."""
+    behavior); a char/uint8_t-array-shaped param (at any nesting depth) is routed
+    through _sim_cast_deep, which accepts either a bare Python str or a (possibly
+    nested) list, mirroring the elaboration-side string-literal-argument handling
+    in PY_TO_LOGIC._elab_call."""
     if pt is None:
         return v
     if (type(v) is int or type(v) is SimVal) and _is_scalar_pypeline_int(pt):
         return _sim_cast(v, pt)
-    if isinstance(v, str) and _array_elem_ctype(pt) is not None:
-        return str_to_char_array(v, _array_len(pt))
+    if _is_char_like_array(pt):
+        return _sim_cast_deep(v, pt)
     return v
 
 
@@ -2559,12 +2581,8 @@ def _sim_type_wrap(fn):
                 and _is_scalar_pypeline_int(pt)
             ):
                 new_kwargs[k] = _sim_cast(v, pt)
-            elif (
-                pt is not None
-                and isinstance(v, str)
-                and _array_elem_ctype(pt) is not None
-            ):
-                new_kwargs[k] = str_to_char_array(v, _array_len(pt))
+            elif pt is not None and _is_char_like_array(pt):
+                new_kwargs[k] = _sim_cast_deep(v, pt)
         saved = _push_scoped_registrations(fn)
         try:
             if sim_body_fn is not None:
@@ -2579,6 +2597,8 @@ def _sim_type_wrap(fn):
             and _is_scalar_pypeline_int(ret_t)
         ):
             result = _sim_cast(result, ret_t)
+        elif ret_t is not None and _is_char_like_array(ret_t):
+            result = _sim_cast_deep(result, ret_t)
         return result
 
     if SIM_RAW_INTS:
