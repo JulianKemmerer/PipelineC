@@ -954,6 +954,45 @@ class direction_t:         # @enum detects int members and converts
     NORTH = 0; EAST = 1; SOUTH = 2; WEST = 3
 ```
 
+#### `auto()` values (0-based)
+
+PipelineC C enums start at 0. Use `auto()` so you don't have to write values
+manually — pypeline guarantees the first member is 0, not Python's default of 1.
+
+**Form 1 — plain class (no base class needed):**
+```python
+from enum import auto
+from pypeline import enum
+
+@enum
+class state_t:
+    IDLE    = auto()   # 0
+    RUNNING = auto()   # 1
+    DONE    = auto()   # 2
+```
+
+**Form 2 — `PypelineEnum` base class (IntEnum-subclass style):**
+```python
+from enum import auto
+from pypeline import enum, PypelineEnum
+
+@enum
+class state_t(PypelineEnum):
+    IDLE    = auto()   # 0
+    RUNNING = auto()   # 1
+    DONE    = auto()   # 2
+```
+
+Both forms produce identical enum types. You can also mix explicit int values with
+`auto()` — an explicit value resets the counter for subsequent `auto()` members:
+```python
+@enum
+class code_t:
+    ALPHA = 10
+    BETA  = auto()   # 11
+    GAMMA = auto()   # 12
+```
+
 #### Parameterizable enums
 
 Write a user factory that calls `enum(IntEnum(...))` — the same pattern as

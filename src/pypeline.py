@@ -15,6 +15,7 @@ Usage in user design files:
 import hashlib as _hashlib
 import typing
 import functools as _functools
+from enum import IntEnum as _IntEnum, auto as _auto
 
 # If a fully-expanded struct canonical name exceeds this length it is replaced
 # with "{class_name}_{sha256[:8]}" to keep VHDL type identifiers manageable.
@@ -98,6 +99,28 @@ def enum_uint_type(enum_cls):
     e.g. enum_uint_type(state_t) -> uint2_t  for a 3-state enum with values 0,1,2
     """
     return make_uint_t(_enum_bit_width(enum_cls))
+
+
+class PypelineEnum(_IntEnum):
+    """IntEnum base class for pypeline enum types with 0-based auto() numbering.
+
+    Unlike plain IntEnum (where auto() starts at 1), PypelineEnum makes
+    auto() start at 0, matching PipelineC's C enum convention.
+
+    Usage:
+        from enum import auto
+        from pypeline import enum, PypelineEnum
+
+        @enum
+        class state_t(PypelineEnum):
+            IDLE    = auto()   # 0
+            RUNNING = auto()   # 1
+            DONE    = auto()   # 2
+    """
+
+    @staticmethod
+    def _generate_next_value_(name, start, count, last_values):
+        return count  # 0, 1, 2, …
 
 
 def _float_to_fields(value, exponent_width, mantissa_width):
@@ -791,15 +814,20 @@ def enum(cls):
                 members["ERR"] = 2
             return enum(IntEnum("my_enum_t", members))
     """
-    from enum import IntEnum as _IntEnum
-
     if not isinstance(cls, type) or not issubclass(cls, _IntEnum):
-        # Plain class body: extract integer attributes and convert to IntEnum
-        members = {
-            k: v
-            for k, v in vars(cls).items()
-            if not k.startswith("_") and isinstance(v, int)
-        }
+        # Plain class body: extract members in definition order, supporting both
+        # explicit int values and auto() (which assigns 0-based sequential values).
+        members = {}
+        counter = 0
+        for k, v in vars(cls).items():
+            if k.startswith("_"):
+                continue
+            if isinstance(v, _auto):
+                members[k] = counter
+                counter += 1
+            elif isinstance(v, int):
+                members[k] = v
+                counter = v + 1
         cls = _IntEnum(cls.__name__, members)
 
     # Canonical name: name_MEMBER1_val1_MEMBER2_val2 sorted by value

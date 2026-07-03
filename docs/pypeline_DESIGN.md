@@ -288,7 +288,15 @@ not compound types like structs.
 
 **At decoration time**, `@enum`:
 
-1. Converts a plain class to `IntEnum` if needed (extracts non-underscore int members).
+1. Converts a plain class to `IntEnum` if needed.  The plain-class branch iterates
+   `vars(cls)` **in definition order** (Python 3.7+ dict order is insertion order).
+   Each non-underscore member is handled as follows:
+   - `isinstance(v, auto)` → assigns the current 0-based counter, then increments it.
+   - `isinstance(v, int)` → uses the explicit value and resets the counter to `v + 1`.
+   
+   This gives `auto()` a 0-based start (matching PipelineC's C enum convention) with
+   no special base class required.  The result is passed to `IntEnum("name", members_dict)`
+   which bypasses the `start=1` default entirely.
 2. Derives a canonical C type name: `name_MEMBER1_val1_MEMBER2_val2` (members sorted by
    value). SHA256-truncates if the name exceeds `_MAX_MANGLE_NAME_LEN`.
 3. Stamps `_pypeline_ctype_name`, `_pypeline_ctype_canonical`, `_pypeline_is_enum = True`,
@@ -318,6 +326,26 @@ casts arguments and return values.
 Since `@enum` is callable with a class as its argument, user factories call
 `enum(IntEnum("name", members_dict))` — directly analogous to the `@struct` pattern.
 No library-provided `make_enum_t` helper: each project writes its own factories.
+
+### `PypelineEnum` Base Class
+
+For users who prefer the `IntEnum`-subclass style over plain classes, `PypelineEnum`
+is an `IntEnum` subclass that overrides `_generate_next_value_` to return `count`
+(0-based) instead of `start` (1-based):
+
+```python
+class PypelineEnum(_IntEnum):
+    @staticmethod
+    def _generate_next_value_(name, start, count, last_values):
+        return count   # 0, 1, 2, …
+```
+
+`EnumMeta` resolves `auto()` during class construction, so by the time `@enum` sees
+a `PypelineEnum` subclass the values are already correct integers.  No special handling
+needed in `@enum` itself — the IntEnum-subclass branch is taken unchanged.
+
+Both `auto()` forms (plain class and `PypelineEnum`) produce identically-typed enums
+with the same canonical name and `_pypeline_enum_int_ctype`.
 
 ### Introspection API
 

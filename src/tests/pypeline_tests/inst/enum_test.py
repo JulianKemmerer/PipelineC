@@ -5,11 +5,12 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
 )
 
-from enum import IntEnum
+from enum import IntEnum, auto
 from typing import NamedTuple
 
 from pypeline import (
     MAIN,
+    PypelineEnum,
     Reg,
     enum,
     enum_bit_width,
@@ -58,6 +59,26 @@ class direction_t:
     EAST = 1
     SOUTH = 2
     WEST = 3
+
+
+# ── auto() enums: plain-class form (0-based) ────────────────────────────────
+
+
+@enum
+class auto_state_t:
+    IDLE = auto()
+    RUNNING = auto()
+    DONE = auto()
+
+
+# ── auto() enums: PypelineEnum base class form (0-based) ─────────────────────
+
+
+@enum
+class auto_color_t(PypelineEnum):
+    RED = auto()
+    GREEN = auto()
+    BLUE = auto()
 
 
 # ── struct with an enum field ────────────────────────────────────────────────
@@ -116,6 +137,16 @@ def passthrough_color(c: color_t) -> color_t:
 @MAIN
 def passthrough_direction(d: direction_t) -> direction_t:
     return d
+
+
+@MAIN
+def passthrough_auto_state(s: auto_state_t) -> auto_state_t:
+    return s
+
+
+@MAIN
+def passthrough_auto_color(c: auto_color_t) -> auto_color_t:
+    return c
 
 
 # ── simulation tests ─────────────────────────────────────────────────────────
@@ -195,6 +226,43 @@ def test_parameterizable():
     print("test_parameterizable PASS")
 
 
+def test_auto_plain_class_enum():
+    """auto() in a plain class assigns 0-based values (IDLE=0, RUNNING=1, DONE=2)."""
+    assert auto_state_t.IDLE.value == 0, f"expected 0, got {auto_state_t.IDLE.value}"
+    assert (
+        auto_state_t.RUNNING.value == 1
+    ), f"expected 1, got {auto_state_t.RUNNING.value}"
+    assert auto_state_t.DONE.value == 2, f"expected 2, got {auto_state_t.DONE.value}"
+    sim_reset()
+    for member in auto_state_t:
+        r = sim_call(passthrough_auto_state, s=member)
+        assert int(r) == member.value, f"expected {member.value}, got {int(r)}"
+    print("test_auto_plain_class_enum PASS")
+
+
+def test_pypeline_enum_base():
+    """PypelineEnum base class gives 0-based auto() for the IntEnum-subclass form."""
+    assert auto_color_t.RED.value == 0, f"expected 0, got {auto_color_t.RED.value}"
+    assert auto_color_t.GREEN.value == 1, f"expected 1, got {auto_color_t.GREEN.value}"
+    assert auto_color_t.BLUE.value == 2, f"expected 2, got {auto_color_t.BLUE.value}"
+    sim_reset()
+    for member in auto_color_t:
+        r = sim_call(passthrough_auto_color, c=member)
+        assert int(r) == member.value, f"expected {member.value}, got {int(r)}"
+    print("test_pypeline_enum_base PASS")
+
+
+def test_auto_introspection():
+    """Bit-width introspection is correct for auto() enums."""
+    assert (
+        enum_bit_width(auto_state_t) == 2
+    ), f"expected 2, got {enum_bit_width(auto_state_t)}"
+    assert (
+        enum_bit_width(auto_color_t) == 2
+    ), f"expected 2, got {enum_bit_width(auto_color_t)}"
+    print("test_auto_introspection PASS")
+
+
 if __name__ == "__main__":
     test_passthrough()
     test_is_idle()
@@ -204,4 +272,7 @@ if __name__ == "__main__":
     test_plain_class_enum()
     test_introspection()
     test_parameterizable()
+    test_auto_plain_class_enum()
+    test_pypeline_enum_base()
+    test_auto_introspection()
     print("All enum tests passed.")
