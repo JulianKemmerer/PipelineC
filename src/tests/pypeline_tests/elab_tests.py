@@ -22,12 +22,13 @@ NO_SYNTH_TEST_FILES = [
     "enum_test.py",
     "char_array_test.py",
     "sim_print_test.py",
+    "two_factory_wrappers_mixed_test.py",
 ]
 # fmt: on
 
 
 def get_tests() -> list:
-    return [
+    tests = [
         Test(
             name=filename[: -len(".py")],
             category="elab",
@@ -36,6 +37,21 @@ def get_tests() -> list:
         )
         for filename in NO_SYNTH_TEST_FILES
     ]
+    # Not run through the pipelinec CLI like the rest of this list: it calls
+    # PY_TO_LOGIC.PARSE_FILE directly (in-process) and inspects the resulting
+    # FuncLogicLookupTable, since the FuncLogicLookupTable closure-callable
+    # collision it regression-tests is otherwise undetectable -- same
+    # signature on both sides means no type error either way, and it's not
+    # reachable via sim_call (a native-Python path that never touches
+    # FuncLogicLookupTable at all).
+    tests.append(
+        Test(
+            name="two_factory_wrappers_test",
+            category="elab",
+            cmd=[INST_DIR / "two_factory_wrappers_test.py"],
+        )
+    )
+    return tests
 
 
 if __name__ == "__main__":

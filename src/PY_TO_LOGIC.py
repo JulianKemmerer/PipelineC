@@ -3616,12 +3616,50 @@ class FuncElaborator:
             )
         return self._elaborate_live_func(func.__name__, func)
 
+    def _top_level_func_key(self, func_for_source):
+        """FuncLogicLookupTable key for a plain top-level function -- called only
+        when _canonical_func_name (which decides factory-closure vs. plain
+        top-level) has already returned None. _canonical_func_name answers "does
+        this need a synthesized name at all"; this answers "given that it does,
+        what module-qualified name matches what PARSE_FILE Step 6/7 already used
+        for it" -- they run in sequence, not as alternatives.
+
+        Mirrors PARSE_FILE's hw_name convention (mod_prefix + name) via
+        file_to_module_prefix, so a function already pre-registered by PARSE_FILE
+        Step 6/7 is found and reused instead of elaborated a second time under a
+        different key. Falls back to the bare name if the defining file isn't one
+        PARSE_FILE tracked (not expected in practice, since inspect.getsource
+        already succeeded on this same function a few lines up in
+        _elaborate_live_func).
+        """
+        import inspect
+
+        try:
+            src_file = os.path.abspath(inspect.getsourcefile(func_for_source))
+        except TypeError:
+            src_file = None
+        file_to_module_prefix = getattr(self.parser_state, "file_to_module_prefix", {})
+        mod_prefix = file_to_module_prefix.get(src_file)
+        return (
+            f"{mod_prefix}_{func_for_source.__name__}"
+            if mod_prefix
+            else func_for_source.__name__
+        )
+
     def _elaborate_live_func(self, module_level_name, func):
         """Elaborate a live Python callable from module_globals.
         Handles closures returned by factory functions — extracts closure variables
         and merges them into the elaboration namespace so annotations like
         uint1_t[LO_SIZE] resolve correctly.
-        Stores the result under module_level_name in FuncLogicLookupTable.
+
+        Stores the result in FuncLogicLookupTable under a canonical name (factory
+        closures) or the function's own module-qualified identity (plain
+        top-level functions, via _top_level_func_key) -- never under
+        module_level_name, which is just the call-site alias text (e.g. "func"
+        for every make_valid_ready_mcp / make_stream_pipeline / make_autopipeline
+        wrapper) and must not be used as a table key: two different top-level
+        functions reached through two differently-wrapped factories would
+        otherwise collide on that shared alias.
         """
         import inspect
         import textwrap
@@ -3668,17 +3706,25 @@ class FuncElaborator:
 
         # Canonical name: factory closures get a name derived from the factory chain
         # + closure vars, so the same factory+args always maps to the same Logic().
-        # Top-level non-factory functions (no .<locals>. in qualname) keep their
-        # Python name and are not subject to deduplication here.
+        # Top-level non-factory functions (no .<locals>. in qualname) get their
+        # own module-qualified key from _top_level_func_key instead (see below).
         canonical = _canonical_func_name(
             func_for_source, closure_ns, self.module_globals
         )
-        key = canonical if canonical is not None else module_level_name
+        key = (
+            canonical
+            if canonical is not None
+            else self._top_level_func_key(func_for_source)
+        )
 
-        if canonical is not None:
-            existing = self.parser_state.FuncLogicLookupTable.get(canonical)
-            if existing is not None:
-                return existing  # dedup: already elaborated, no alias stored
+        existing = self.parser_state.FuncLogicLookupTable.get(key)
+        # Only reuse a genuinely completed elaboration, not a stub left by
+        # PARSE_FILE Step 6 (or by this same method, a few lines below) for a
+        # forward reference that hasn't been elaborated yet. Logic.ast_meta is
+        # set as virtually the first statement of FuncElaborator.elaborate(),
+        # so it stays None on any not-yet-elaborated stub.
+        if existing is not None and existing.ast_meta is not None:
+            return existing  # dedup: already elaborated, reuse it
 
         # Include the defining module's globals so that names imported at the top of
         # the closure's source file (e.g. vga_pos_t imported in vga/timing.py) are
@@ -4563,6 +4609,18 @@ def PARSE_FILE(py_file):
         tree, module_globals, parser_state, files_to_elaborate, top_file=py_file
     )
     files_to_elaborate.append((py_file, tree, module_globals, None))  # top file last
+
+    # Absolute source file -> module_prefix, so _elaborate_live_func can compute
+    # the same FuncLogicLookupTable key for a top-level function reached via a
+    # closure alias (e.g. the `func` parameter inside make_valid_ready_mcp /
+    # make_stream_pipeline / make_autopipeline) as Step 6/7 below use for that
+    # same function reached directly. Pypeline-only, set dynamically here the
+    # same way parser_state.module_alias_to_actual is (never declared in
+    # C_TO_LOGIC.py's shared ParserState.__init__).
+    parser_state.file_to_module_prefix = {
+        os.path.abspath(fp): mod_prefix
+        for fp, _tree, _fg, mod_prefix in files_to_elaborate
+    }
 
     # ── Step 5: collect top-level hardware function defs from all files ──
     # Only top-level defs (direct children of module body); nested factory closures

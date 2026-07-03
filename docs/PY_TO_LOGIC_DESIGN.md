@@ -857,6 +857,37 @@ After finding the `callee_def`, `_elab_call` passes `callee_def.func_name` (the 
 name) — not the Python alias — to `_add_submodule_instance`, so all references in
 `submodule_instances` and VHDL output use the canonical name consistently.
 
+**Plain top-level functions passed *into* a factory.** Step 4 above only synthesizes a
+canonical name when the callable itself is a factory-produced closure (`.<locals>.` in its
+`__qualname__`). Several factories instead take an *ordinary top-level function* as an
+argument and call it internally through their own closure variable — `make_valid_ready_mcp`,
+`make_stream_pipeline`, and `make_autopipeline` all name that variable `func`:
+
+```python
+divider_mcp, divider_mcp_t = make_valid_ready_mcp(divider, 16)   # divider: a plain top-level func
+# make_valid_ready_mcp's internal func_mcp wrapper calls it as `func(launch)`
+```
+
+For `divider` itself, `_canonical_func_name` returns `None` (it has no `.<locals>.` — it's
+just `divider`), so `_elaborate_live_func` falls back to `_top_level_func_key`, which
+returns the function's own module-qualified identity — its bare name if it's defined in the
+top design file (`FuncLogicLookupTable` key: `"divider"`), or `{module_prefix}_{name}` if
+it's defined in an imported sub-file (looked up via `parser_state.file_to_module_prefix`,
+the same `module_prefix` `PARSE_FILE` Step 6/7 already use for that function) — **never**
+the call-site alias text (`"func"`), which is just the name of the factory's own internal
+parameter and is shared by every wrapper of every one of these factories. Keying on that
+shared alias instead of the function's own identity is what a real bug in this exact spot
+used to do: two different top-level functions, each wrapped by a different factory (or two
+instantiations of the same factory), would both resolve their inner `func(...)` call through
+whichever entry got written under `"func"` first, silently reusing the first function's
+hardware for the second wrapper.
+
+The dedup check (step 5) runs for this case too, gated on `existing.ast_meta is not None`
+rather than merely the key being present in the table — `Logic.ast_meta` is assigned as
+virtually the first statement of `FuncElaborator.elaborate()`, so checking it distinguishes
+a genuinely completed elaboration from a not-yet-elaborated stub (e.g. one PARSE_FILE Step 6
+planted for a forward reference that this call is racing).
+
 **Closure globals merge:** when elaborating a closure function, the namespace used for
 `_try_eval_const` and annotation resolution is built as:
 
@@ -3260,6 +3291,18 @@ Two aliases with identical factory + args produce the same canonical name and sh
 single VHDL entity. `FuncLogicLookupTable` stores only canonical names for factory
 closures; Python aliases are resolved on-demand via `_elaborate_live_func` which returns
 the existing Logic() when the canonical name is already present.
+
+The `div_inv` argument above is itself a plain top-level function, not a factory closure —
+`stream_pipeline`'s canonical name (just shown) is for `make_stream_pipeline`'s own
+generated wrapper, not for `div_inv`. `div_inv` gets its own, separate
+`FuncLogicLookupTable` entry via `_top_level_func_key` (see [Plain top-level functions
+passed into a factory](#closure-factory-pattern)): `"div_inv"`, since it's defined in the
+top design file. Because that key comes from `div_inv`'s own module-qualified identity —
+never from `make_stream_pipeline`'s internal `func` parameter name — a second, unrelated
+function wrapped by `make_valid_ready_mcp` (or another `make_stream_pipeline`, or
+`make_autopipeline`) in the same design always gets its own distinct key, even though every
+one of those factories happens to call its wrapped argument through a same-named `func`
+closure variable internally.
 
 ### Submodule Instance Names
 
