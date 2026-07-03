@@ -494,7 +494,9 @@ def _canonical_func_name(func, closure_ns, module_globals=None):
     if ".<locals>." not in func.__qualname__:
         return None
     parts = func.__qualname__.split(".<locals>.")
-    inner_func_name = parts[-1]  # e.g. "stream_pipeline" — used as the name base
+    inner_func_name = _sanitize_vhdl_name(
+        parts[-1]
+    )  # e.g. "stream_pipeline" — used as the name base
     factory_prefix = "_".join(
         parts[:-1]
     )  # e.g. "make_stream_pipeline" — for fallback hash suffix
@@ -601,7 +603,7 @@ def _loc_str(src_file, node):
 
 
 def _inst_name(op_full_name, src_file, node):
-    return f"{op_full_name}[{_loc_str(src_file, node)}]"
+    return f"{_sanitize_vhdl_name(op_full_name)}[{_loc_str(src_file, node)}]"
 
 
 def _port_wire(inst, port):
@@ -783,6 +785,19 @@ def _sanitize_ref_tok(tok):
     (struct_to_field_type_dict keys) -- applied consistently everywhere a field name
     is turned into a ref_toks token so lookups stay in sync with registration."""
     return _sanitize_vhdl_name(tok) if isinstance(tok, str) else tok
+
+
+def _hw_func_name(mod_prefix, name):
+    """Canonical FuncLogicLookupTable key / Logic.func_name for a hardware
+    function: module-prefixed for sub-file functions, VHDL-name-sanitized.
+    Single source of truth -- PARSE_FILE Step 6/7, FuncElaborator.__init__,
+    _elab_call's lookups, and _top_level_func_key must all resolve to the same
+    string for a given (mod_prefix, name), or FuncLogicLookupTable lookups
+    silently diverge (see the closure-callable-collision bug regression-tested
+    by two_factory_wrappers_test.py). Always call this; never re-derive the
+    f-string locally."""
+    safe_name = _sanitize_vhdl_name(name)
+    return f"{mod_prefix}_{safe_name}" if mod_prefix else safe_name
 
 
 _HW_OP_TO_ARITH_OP = {
@@ -1476,9 +1491,7 @@ class FuncElaborator:
         self.func_def = func_def
         # Hardware function name: mangled with module prefix for sub-file functions
         # so file_a.main and file_b.main both elaborate without collision.
-        self.func_name = (
-            f"{module_prefix}_{func_def.name}" if module_prefix else func_def.name
-        )
+        self.func_name = _hw_func_name(module_prefix, func_def.name)
         self.parser_state = parser_state
         self.src_file = src_file
         # module_globals: live Python namespace from executing the design file.
@@ -3349,7 +3362,7 @@ class FuncElaborator:
                 )
             aliases = getattr(self.parser_state, "module_alias_to_actual", {})
             actual = aliases.get(base_name, base_name)
-            callee_name = f"{actual}_{attr_name}"
+            callee_name = _hw_func_name(actual, attr_name)
             # Check if already pre-elaborated (top-level def from sub-file)
             callee_def = self.parser_state.FuncLogicLookupTable.get(callee_name)
             if callee_def is None:
@@ -3361,10 +3374,12 @@ class FuncElaborator:
                 return self._elab_strlen_call(expr)
             if callee_name in _BIT_MANIP_FUNC_NAMES:
                 return self._elab_bit_manip_call(expr)
-            callee_def = self.parser_state.FuncLogicLookupTable.get(callee_name)
+            callee_def = self.parser_state.FuncLogicLookupTable.get(
+                _hw_func_name(None, callee_name)
+            )
             if callee_def is None and self.module_prefix:
                 # For sub-file functions, helpers are pre-elaborated under a prefixed name.
-                prefixed = f"{self.module_prefix}_{callee_name}"
+                prefixed = _hw_func_name(self.module_prefix, callee_name)
                 prefixed_def = self.parser_state.FuncLogicLookupTable.get(prefixed)
                 if prefixed_def is not None:
                     callee_def = prefixed_def
@@ -3640,11 +3655,7 @@ class FuncElaborator:
             src_file = None
         file_to_module_prefix = getattr(self.parser_state, "file_to_module_prefix", {})
         mod_prefix = file_to_module_prefix.get(src_file)
-        return (
-            f"{mod_prefix}_{func_for_source.__name__}"
-            if mod_prefix
-            else func_for_source.__name__
-        )
+        return _hw_func_name(mod_prefix, func_for_source.__name__)
 
     def _elaborate_live_func(self, module_level_name, func):
         """Elaborate a live Python callable from module_globals.
@@ -4635,9 +4646,23 @@ def PARSE_FILE(py_file):
 
     # ── Step 6: register stubs first so cross-file forward references resolve ──
     # hw_name is module-prefixed for sub-file functions (file_a_main, file_b_main)
-    # so two imported files can both define a function named 'main' without collision.
+    # so two imported files can both define a function named 'main' without collision,
+    # and VHDL-name-sanitized via _hw_func_name (e.g. a leading-underscore Python def
+    # name is illegal in VHDL). Two distinct (mod_prefix, name) pairs that sanitize to
+    # the same hw_name would otherwise silently collide on one FuncLogicLookupTable
+    # entry -- same failure class as the closure-callable collision bug
+    # (two_factory_wrappers_test.py) -- so guard against it explicitly here.
+    _hw_name_lower_to_orig = {}
     for node, _fp, _fg, mod_prefix in all_func_defs:
-        hw_name = f"{mod_prefix}_{node.name}" if mod_prefix else node.name
+        hw_name = _hw_func_name(mod_prefix, node.name)
+        orig = (mod_prefix, node.name)
+        existing_orig = _hw_name_lower_to_orig.setdefault(hw_name.lower(), orig)
+        if existing_orig != orig:
+            raise ElaborationError(
+                f"Function '{node.name}' (module {mod_prefix!r}) mangles to VHDL "
+                f"name '{hw_name}', which conflicts with function "
+                f"'{existing_orig[1]}' (module {existing_orig[0]!r})"
+            )
         if hw_name not in parser_state.FuncLogicLookupTable:
             stub = C_TO_LOGIC.Logic()
             stub.func_name = hw_name
@@ -4645,7 +4670,7 @@ def PARSE_FILE(py_file):
 
     # ── Step 7: elaborate all functions ──
     for node, file_path, fglobals, mod_prefix in all_func_defs:
-        hw_name = f"{mod_prefix}_{node.name}" if mod_prefix else node.name
+        hw_name = _hw_func_name(mod_prefix, node.name)
         print(f"  elaborating func: {hw_name}")
         elab = FuncElaborator(
             node, parser_state, file_path, fglobals, module_prefix=mod_prefix

@@ -933,9 +933,12 @@ inside factory closures (like `def concat` inside `make_concat`) are deliberatel
 ```
 
 `inner_func_name` is the **innermost function name** from `func.__qualname__` (the part
-after the last `.<locals>.`). This mirrors how `@struct` uses the inner class name rather
-than the outer factory name, and produces short, readable VHDL entity names: a user-written
-inner function named `stream_pipeline` becomes a VHDL entity `stream_pipeline_...`, not
+after the last `.<locals>.`), passed through `_sanitize_vhdl_name` (see
+[VHDL Identifier Safety](#vhdl-identifier-safety--name-sanitization)) so an inner `def`
+named with a leading underscore (or a VHDL reserved word) doesn't produce an illegal
+entity name. This mirrors how `@struct` uses the inner class name rather than the outer
+factory name, and produces short, readable VHDL entity names: a user-written inner
+function named `stream_pipeline` becomes a VHDL entity `stream_pipeline_...`, not
 `make_stream_pipeline_...`.
 
 Only closure variables whose names match a **parameter of the enclosing factory function**
@@ -3312,6 +3315,14 @@ Every call site in a hardware function body becomes a submodule instance:
 <func_name>[<loc_str>]
 ```
 
+`func_name` here is the raw callee-derived name (e.g. a call-site alias for a
+factory-returned closure) passed through `_sanitize_vhdl_name` inside
+`_inst_name` before the `[<loc_str>]` suffix is appended — see
+[VHDL Identifier Safety](#vhdl-identifier-safety--name-sanitization). This
+covers a Python-private-style alias such as `_compute_mcp = make_valid_ready_mcp(...)`:
+the instance name becomes `v_compute_mcp[<loc_str>]`, not the illegal
+`_compute_mcp[<loc_str>]`.
+
 Example: calling `adder(a, b)` at `my_design_py_l10_c4`:
 ```
 adder[my_design_py_l10_c4]
@@ -3425,6 +3436,28 @@ VHDL basic identifiers are more restrictive than Python identifiers:
 - **For-loop prefix** (`_elab_for`): loop variable sanitized for the `loop_instance_prefix` string (but kept raw in `const_env` so elaboration-time `eval()` still resolves it).
 - **Global `Wire[T]`** (`_discover_global_wires`): auto-mangled with a stderr warning (internal wires have no constraint-file dependency).
 - **Global `Input[T]` / `Output[T]`** (`_discover_global_wires`): **`ElaborationError`** — these names appear in VHDL entity ports that must match XDC/SDC constraint files exactly; silent renaming would break synthesis.
+- **Submodule instance names** (`_inst_name`): the callee-derived component (e.g. a
+  call-site alias `expr.func.id`, or a module-qualified `<module>_<attr>` name) is
+  sanitized before the `[<loc_str>]` suffix is appended — see
+  [Submodule Instance Names](#submodule-instance-names). Every other caller of
+  `_inst`/`_inst_name` already passes a compiler-synthesized, already-legal tag
+  (e.g. `UNARY_OP_...`, `mux_tag`), so this is a no-op for them.
+- **VHDL entity names / `FuncLogicLookupTable` keys** (`_hw_func_name(mod_prefix, name)`):
+  a single helper, defined next to `_sanitize_vhdl_name`, that sanitizes `name` and
+  applies the `<mod_prefix>_` convention. It is the sole source of truth for this
+  name — called identically from **seven** places that must all resolve to the same
+  string for a given `(mod_prefix, name)` pair, or `FuncLogicLookupTable` lookups
+  silently diverge (the same failure class as the closure-callable-collision bug —
+  see [Closure Factory Pattern](#closure-factory-pattern) — regression-tested by
+  `two_factory_wrappers_test.py`): `FuncElaborator.__init__` (`self.func_name`),
+  `_elab_call`'s module-qualified-call lookup, bare-name lookup, and module-prefixed
+  fallback lookup, `_top_level_func_key`, and `PARSE_FILE` Step 6 and Step 7. Never
+  re-derive the `<mod_prefix>_<name>` f-string locally — always call `_hw_func_name`.
+  Separately, `_canonical_func_name` (factory-closure names, whose result overwrites
+  `Logic.func_name` directly and is never routed through `_hw_func_name`) sanitizes
+  just its `inner_func_name` base (the innermost closure `def`'s own name) before
+  composing the param/hash suffix, covering e.g. a factory whose inner function is
+  itself named with a leading underscore.
 - **Struct field names**: sanitized at every point a field identifier becomes a
   `struct_to_field_type_dict` key or a ref_toks token — `_register_struct_recursive`,
   `_discover_structs` (AST fallback), the closure-registered-struct block in
@@ -3446,6 +3479,21 @@ VHDL basic identifiers are more restrictive than Python identifiers:
 
 `FuncElaborator._hw_name` maintains a per-function `_vhdl_names_lower` dict (lowercase safe name → safe name). If two distinct Python names sanitize to identifiers that differ only in case, an `ElaborationError` is raised.
 
+Instance names get the same protection implicitly: `_inst_name` always appends a
+per-AST-node `[<loc_str>]` suffix *after* sanitizing the callee-derived component, so
+two different call sites can never collide even if their raw names happen to sanitize
+identically.
+
+Top-level VHDL entity names have no such positional suffix, so `PARSE_FILE` Step 6
+explicitly checks for this: while registering stub `Logic()`s, it tracks
+`_hw_func_name(mod_prefix, name).lower() -> (mod_prefix, name)` for every top-level
+function def, and raises `ElaborationError` if two distinct `(mod_prefix, name)` pairs
+sanitize to the same `hw_name` (e.g. top-level `_foo` and `__foo` would otherwise both
+mangle to `v_foo`). Factory-closure names (`_canonical_func_name`) are not covered by
+this check — closures are discovered lazily, one call at a time, with no "register all
+candidates up front" pass to hook into — so a collision between two distinct factories'
+inner closures sharing an identical name remains a narrow, pre-existing residual risk.
+
 **`const_env` is exempt:**
 
 Loop counters and elaboration-time constants stored in `const_env` use raw Python names. They feed `_try_eval_const`'s `eval()` namespace, where the Python source spelling must match. These names never become VHDL signals.
@@ -3458,15 +3506,15 @@ Loop counters and elaboration-time constants stored in `const_env` use raw Pytho
 |---|---|
 | Struct C type | `<class_name>_<f1>_<t1_mangled>_...` (canonical, set by `@struct`) |
 | Array of struct | `<struct_canonical>[N]` in C type strings |
-| Top-level function | Python `def` name verbatim |
-| Imported sub-file function | `<actual_module_name>_<func_name>` (e.g. `file_a_main`) |
-| Factory function (params in closure) | `<factory_prefix>_<param>_<val>_...` (canonical, from qualname + closure vars) |
-| Factory function (params NOT in closure) | `<factory_prefix>_<param_names>_<hash8>` (closure vars hashed; e.g. `make_vga_timing_spec_a1b2c3d4`) |
+| Top-level function | sanitized Python `def` name (`_hw_func_name`) |
+| Imported sub-file function | `<actual_module_name>_<sanitized_func_name>` (`_hw_func_name`; e.g. `file_a_main`) |
+| Factory function (params in closure) | `<sanitized_factory_prefix>_<param>_<val>_...` (canonical, from qualname + closure vars; base sanitized via `_sanitize_vhdl_name`) |
+| Factory function (params NOT in closure) | `<sanitized_factory_prefix>_<param_names>_<hash8>` (closure vars hashed; e.g. `make_vga_timing_spec_a1b2c3d4`) |
 | Top-file global Wire | sanitized Python name (auto-mangled if illegal; see VHDL Identifier Safety) |
 | Imported sub-file Wire | `<actual_module_name>_<safe_bare_name>` |
 | Input[T] / Output[T] (any file) | **bare Python name** — no module prefix; must be a legal VHDL identifier (error if not) |
 | Local variable / function parameter | sanitized Python name (`_hw_name`) |
-| Submodule instance | `<func_name>[<loc_str>]` (+ `FOR_<safe_v>_<n>_` prefix per loop level) |
+| Submodule instance | `<sanitized_func_name>[<loc_str>]` (`_inst_name`; + `FOR_<safe_v>_<n>_` prefix per loop level) |
 | Port wire | `<inst>____<port>` (four underscores) |
 | Return port | `<inst>____return_output` |
 | Alias wire | `<safe_var_name>_<loc_str>` |

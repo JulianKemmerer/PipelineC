@@ -32,6 +32,7 @@ SYNTH_TEST_FILES = [
     ("char_array_test.py", INST_DIR, ["--comb"]),
     ("sim_print_test.py", INST_DIR, ["--comb"]),
     ("two_factory_wrappers_mixed_test.py", INST_DIR, ["--comb"]),
+    ("underscore_name_test.py", INST_DIR, ["--comb"]),
 ]
 # fmt: on
 
