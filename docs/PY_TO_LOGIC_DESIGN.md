@@ -2021,10 +2021,11 @@ treats its callee as a hardware function/submodule to instantiate, so it would t
 **Rules (all forms):**
 - Leaf values can be any hardware expression (constants, input wires, sub-expressions).
 - Nesting is allowed to arbitrary depth (struct of arrays, array of structs, etc.).
-- Applies to annotated assignment (`var: T = …`), plain assignment (`x = MyStruct(...)`),
+- Applies to annotated assignment (`var: T = …`), plain assignment (`x = MyStruct(...)`,
+  `x = zero_helper()` — see "Compound Init from Python Function Call" below),
   module-qualified global wire assignment (`mod.wire = MyStruct(...)`), nested field/index
   assignment on an already-declared variable (`x.field = […]`, `x.a.b = […]`,
-  `x.field = MyStruct(...)`), and return statements.
+  `x.field = MyStruct(...)`, `x.field = zero_helper()`), and return statements.
 
 This is **pure elaboration sugar** — the result is identical to writing the assignments
 explicitly. No new hardware primitives are introduced.
@@ -2054,6 +2055,30 @@ def my_func(...) -> point_xy_t:
 
 **Leaf values must be plain Python `int` or `bool`.** Hardware wires cannot appear
 inside the returned value.
+
+**`_elab_assign` (plain assignment / nested field assignment):** `_elab_assign`
+classifies an `ast.Call` RHS once, shared by all its struct-related special cases:
+`is_struct_ctor_call` (callee itself is a NamedTuple struct type) and `compound_pyval`
+(callee is a plain-Python helper — `_try_eval_const` on the *whole call* yields a
+dict/list/tuple). Both the module-qualified-global-wire branch and the shape-agnostic
+"any target" branch (the one that also handles nested-field writes like
+`x.field = MyStruct(...)`, described above) dispatch to `_elab_compound_init_from_pyval`
+instead of `_elab_compound_init` whenever `compound_pyval` is set, so the same helper
+call works uniformly for:
+
+```python
+x = zero_point()                 # plain reassignment of an already-declared var
+obj.field = zero_point()         # nested-field assignment
+mod.wire = zero_point()          # module-qualified global wire assignment
+```
+
+`_elab_return` already had this fallback unconditionally (it never special-cased
+struct-ctor calls separately from the plain-Python-helper case), so `return
+zero_point()` has always worked; this generalization brings `_elab_assign` in line
+with it. As with the `_elab_ann_assign` case, this can only ever activate for calls
+that are fully pure-Python-evaluable — `_make_eval_ns` never binds live hardware
+wires, so a call referencing a real wire argument always fails `_try_eval_const` and
+falls through to normal hardware elaboration unchanged.
 
 ### Float Type and `as_const`
 

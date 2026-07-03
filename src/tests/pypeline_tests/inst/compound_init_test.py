@@ -44,3 +44,28 @@ def array_init_list_consts() -> uint32_t[2]:
 def array_init_list_wires(v0: uint32_t, v1: uint32_t) -> uint32_t[2]:
     my_arr: uint32_t[2] = [v0, v1]
     return my_arr
+
+
+@MAIN
+def struct_field_reassign_from_func() -> pypeline_tests.point_xy_wrap_t:
+    # struct-field assignment case: o.field = helper() where o already declared
+    o: pypeline_tests.point_xy_wrap_t
+    o.p = pypeline_tests.make_point_xy_const(3, 4)
+    o.tag = 0
+    return o
+
+
+@MAIN
+def point_reassign_from_func() -> pypeline_tests.point_xy_t:
+    # already-declared-var reassignment case: bare annotation, then plain assign
+    p: pypeline_tests.point_xy_t
+    p = pypeline_tests.make_point_xy_const(3, 4)
+    return p
+
+
+@MAIN
+def point_reassign_twice_from_func() -> pypeline_tests.point_xy_t:
+    # already-assigned-once variable, reassigned again via a helper call
+    p: pypeline_tests.point_xy_t = pypeline_tests.make_point_xy_const(1, 2)
+    p = pypeline_tests.make_point_xy_const(3, 4)
+    return p

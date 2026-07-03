@@ -57,6 +57,12 @@ def make_point_xy_const(x, y):
 
 
 @struct
+class point_xy_wrap_t(NamedTuple):
+    p: point_xy_t
+    tag: uint32_t
+
+
+@struct
 class point2d_t(NamedTuple):
     dim: uint32_t[2]
 

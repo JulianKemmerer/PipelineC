@@ -1959,6 +1959,26 @@ class FuncElaborator:
                         const_val  # const_env uses Python names
                     )
                     return
+        # Classify an ast.Call RHS once, shared by the struct-ctor-call special
+        # cases below and the general compound-init block further down:
+        # - is_struct_ctor_call: callee itself is a NamedTuple struct type
+        #   (x = MyStruct(field=val, ...)).
+        # - compound_pyval: callee is a plain-Python compound-init helper function
+        #   (not a struct type itself) whose call, evaluated as real Python via
+        #   _try_eval_const, yields a dict/list/tuple/NamedTuple value
+        #   (x = axis128_null()). Only ever succeeds for calls with no hardware-wire
+        #   arguments -- see _make_eval_ns, which never binds live wires.
+        is_struct_ctor_call = False
+        compound_pyval = None
+        if isinstance(stmt.value, ast.Call):
+            ctor_callee = self._try_eval_const(stmt.value.func)
+            is_struct_ctor_call = ctor_callee is not None and hasattr(
+                ctor_callee, "_fields"
+            )
+            if not is_struct_ctor_call:
+                const_val = self._try_eval_const(stmt.value)
+                if isinstance(const_val, (dict, list, tuple)):
+                    compound_pyval = const_val
         # Struct compound init on plain assignment: x = MyStruct(field=val, ...)
         # Mirrors the same check in _elab_ann_assign for annotated assignments.
         if isinstance(stmt.value, ast.Call) and isinstance(target, ast.Name):
@@ -1981,30 +2001,37 @@ class FuncElaborator:
                     self._declare_var(hw_name, struct_ctype, target)
                     self._elab_compound_init(hw_name, stmt.value, stmt.value)
                 return
-        # Struct compound init on module-qualified global wire: board_vga.vga_pmod = MyStruct(...)
+        # Struct/compound-helper compound init on module-qualified global wire:
+        # board_vga.vga_pmod = MyStruct(...) or board_vga.vga_pmod = zero_pmod()
         if (
             isinstance(stmt.value, ast.Call)
             and isinstance(target, ast.Attribute)
             and isinstance(target.value, ast.Name)
         ):
-            callee = self._try_eval_const(stmt.value.func)
-            if callee is not None and hasattr(callee, "_fields"):
+            if is_struct_ctor_call or compound_pyval is not None:
                 mangled = self._resolve_module_wire_name(target.value.id, target.attr)
                 if mangled is not None:
                     if mangled not in self.env:
                         self._declare_global_write_wire(mangled)
-                    self._elab_compound_init(mangled, stmt.value, stmt.value)
+                    if compound_pyval is not None:
+                        self._elab_compound_init_from_pyval(
+                            mangled, compound_pyval, stmt.value
+                        )
+                    else:
+                        self._elab_compound_init(mangled, stmt.value, stmt.value)
                     return
-        # Compound field/array write via list/dict literal or struct-constructor-call
-        # RHS, on any target shape (x = [...], x.field = [...], x.nested.field = [...],
-        # x.field = MyStruct(...)): _elab_expr has no case for a bare List/Dict node and
-        # _elab_call has no struct-constructor awareness, so route through the same
-        # per-leaf _write_ref walk that _elab_ann_assign already uses for compound inits.
-        is_struct_ctor_call = False
-        if isinstance(stmt.value, ast.Call):
-            callee = self._try_eval_const(stmt.value.func)
-            is_struct_ctor_call = callee is not None and hasattr(callee, "_fields")
-        if isinstance(stmt.value, (ast.List, ast.Dict)) or is_struct_ctor_call:
+        # Compound field/array write via list/dict literal, struct-constructor-call,
+        # or plain-Python compound-init-helper-call RHS, on any target shape
+        # (x = [...], x.field = [...], x.nested.field = [...], x.field = MyStruct(...),
+        # x.field = zero_helper()): _elab_expr has no case for a bare List/Dict node and
+        # _elab_call has no struct-constructor/compound-helper awareness, so route
+        # through the same per-leaf _write_ref walk that _elab_ann_assign already uses
+        # for compound inits.
+        if (
+            isinstance(stmt.value, (ast.List, ast.Dict))
+            or is_struct_ctor_call
+            or compound_pyval is not None
+        ):
             ref_toks = self._parse_ref_toks(target)
             if not _has_variable_index(ref_toks):
                 base_var = ref_toks[0]
@@ -2015,9 +2042,17 @@ class FuncElaborator:
                 if global_key is not None and base_var not in self.env:
                     self._declare_global_write_wire(base_var)
                 if base_var in self.env:
-                    self._elab_compound_init(
-                        base_var, stmt.value, stmt.value, path_toks=ref_toks[1:]
-                    )
+                    if compound_pyval is not None:
+                        self._elab_compound_init_from_pyval(
+                            base_var,
+                            compound_pyval,
+                            stmt.value,
+                            path_toks=ref_toks[1:],
+                        )
+                    else:
+                        self._elab_compound_init(
+                            base_var, stmt.value, stmt.value, path_toks=ref_toks[1:]
+                        )
                     return
         # Hardware path
         if isinstance(stmt.value, ast.Constant) and isinstance(stmt.value.value, str):
