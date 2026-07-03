@@ -647,6 +647,14 @@ def connector():
 The hardware wire names are automatically prefixed with the module name
 (`file_a_output_wire`, etc.) to avoid collisions.
 
+Nested field and array access on cross-module wires is also supported, to any depth:
+
+```python
+@MAIN
+def connector():
+    file_b.state.count = file_a.counters.total[0]
+```
+
 Module-level constants from sub-files are not directly accessible by name inside a
 hardware function body.
 Copy them at module level in the top file first:

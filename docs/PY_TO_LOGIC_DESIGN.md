@@ -1769,6 +1769,27 @@ In `_elab_expr`, before reaching `_elab_ref_read`, the elaborator calls
 In `_elab_assign`, the same check runs before `_parse_ref_toks` on the LHS target,
 intercepting `file_a.i = ...` writes.
 
+**Nested field/array access** (`file_a.cfg.field`, `file_a.cfg.bits[0]`): the
+`_resolve_module_wire_name` fast path above only matches the exact 2-token AST shape
+`Attribute(value=Name(...))`, so a 3+-token chain (`expr.value` is itself an
+`Attribute`) falls through to the generic `ref_toks`-based path
+(`_elab_ref_read`/`_elab_assign`). There, `_fold_module_wire_ref_toks(ref_toks)` runs
+immediately after `_parse_ref_toks` and generalizes the same resolution to any depth:
+if `ref_toks[0]` is a module alias and `ref_toks[1]` is one of its wires, it calls
+`_resolve_module_wire_name(ref_toks[0], ref_toks[1])` and, on success, collapses both
+tokens into the single resolved base wire name (`ref_toks = (mangled,) + ref_toks[2:]`)
+before any struct/array walk over the remaining tokens runs. If that doesn't apply, it
+falls back to the bare-name `_resolve_global_wire` fold described below. This is the
+same base-token-resolution step, just also covering module aliases, so everything
+downstream (`_ref_toks_to_ctype`, `_read_ref`, `_write_ref`, `_elab_compound_init`,
+`_elab_compound_init_from_pyval`) is unaware whether the base token came from a plain
+local variable or a cross-module alias.
+
+Once the fold resolves it into `file_a_cfg`, `file_b.out_pair.bits[0] = file_a.cfg.a`
+elaborates identically to a same-file `out_pair.bits[0] = cfg.a` — the remaining
+`ref_toks` (`("bits", 0)` / `("a",)`) are walked through
+`parser_state.struct_to_field_type_dict` exactly as for a local struct variable.
+
 **Bare-name access inside sub-file functions** (`o = ~i` in `file_a.py`):
 
 Functions elaborated from a sub-file carry `module_prefix='file_a'` on the
@@ -1892,6 +1913,7 @@ are pre-existing and documented.
 | Sub-file wire discovery | `_discover_global_wires(..., name_prefix=actual_name)` |
 | Module-attr wire lookup | `FuncElaborator._resolve_module_wire_name(base, attr)` |
 | Bare-name sub-file wire lookup | `FuncElaborator._resolve_global_wire(bare_name)` |
+| Nested-path module-attr fold (`module.wire.field`, any depth) | `FuncElaborator._fold_module_wire_ref_toks(ref_toks)` |
 | Sub-file function hw name | `f"{mod_prefix}_{node.name}"` in PARSE_FILE steps 6–7; `FuncElaborator.func_name` |
 | Intra-sub-file call resolution | `_elab_call` prefixed-name lookup before `_elaborate_live_func` |
 | Cross-file function call | `_elab_call` `ast.Attribute` branch → `getattr` + `FuncLogicLookupTable` lookup |

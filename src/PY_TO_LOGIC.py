@@ -1587,6 +1587,36 @@ class FuncElaborator:
             return attr_name
         return None
 
+    def _fold_module_wire_ref_toks(self, ref_toks):
+        """Collapse ref_toks[0] into a single resolved base wire name, before any
+        struct/array walk over the remaining tokens.
+
+        Tried in order:
+          1. ref_toks[0] is a module alias and ref_toks[1] is an attribute on that
+             module (module.wire[...rest]) -- delegates to _resolve_module_wire_name.
+             Generalizes the 2-token 'module.wire' fast path (in _elab_expr /
+             _elab_assign) to any depth: module.wire.field, module.wire[i],
+             module.wire.field.subfield, etc.
+          2. ref_toks[0] is a bare name local to a sub-file's own module_prefix
+             namespace (e.g. 'arr' -> 'file_a_arr') -- delegates to _resolve_global_wire.
+
+        Returns ref_toks unchanged if neither resolves (ordinary local variable, or
+        an unresolvable name that will raise its normal error further down, same as today).
+        """
+        if (
+            len(ref_toks) >= 2
+            and isinstance(ref_toks[0], str)
+            and isinstance(ref_toks[1], str)
+        ):
+            mangled = self._resolve_module_wire_name(ref_toks[0], ref_toks[1])
+            if mangled is not None:
+                return (mangled,) + ref_toks[2:]
+        if isinstance(ref_toks[0], str):
+            global_key = self._resolve_global_wire(ref_toks[0])
+            if global_key and global_key != ref_toks[0]:
+                return (global_key,) + ref_toks[1:]
+        return ref_toks
+
     def _try_eval_const(self, node):
         """Try to evaluate an AST expression as a plain Python elaboration-time value.
         Returns the Python value if successful, None if it involves hardware wires
@@ -2034,12 +2064,12 @@ class FuncElaborator:
         ):
             ref_toks = self._parse_ref_toks(target)
             if not _has_variable_index(ref_toks):
+                ref_toks = self._fold_module_wire_ref_toks(ref_toks)
                 base_var = ref_toks[0]
-                global_key = self._resolve_global_wire(base_var)
-                if global_key and global_key != base_var:
-                    ref_toks = (global_key,) + ref_toks[1:]
-                    base_var = global_key
-                if global_key is not None and base_var not in self.env:
+                if (
+                    base_var not in self.env
+                    and base_var in self.parser_state.global_vars
+                ):
                     self._declare_global_write_wire(base_var)
                 if base_var in self.env:
                     if compound_pyval is not None:
@@ -2061,15 +2091,12 @@ class FuncElaborator:
             # the literal is sized/zero-padded against it, mirroring _elab_ann_assign.
             target_ctype = None
             probe_toks = self._parse_ref_toks(target)
+            probe_toks = self._fold_module_wire_ref_toks(probe_toks)
             probe_base = probe_toks[0]
-            if isinstance(probe_base, str):
-                probe_global = self._resolve_global_wire(probe_base)
-                if probe_global and probe_global != probe_base:
-                    probe_base = probe_global
             if probe_base in self.env:
                 _, probe_base_type = self.env[probe_base]
                 target_ctype = _ref_toks_to_ctype(
-                    (probe_base,) + probe_toks[1:], probe_base_type, self.parser_state
+                    probe_toks, probe_base_type, self.parser_state
                 )
             rhs_wire, rhs_type = self._elab_str_literal(
                 stmt.value.value, target_ctype, stmt.value
@@ -2089,13 +2116,8 @@ class FuncElaborator:
                 self._write_ref((mangled,), rhs_wire, rhs_type, stmt.value)
                 return
         ref_toks = self._parse_ref_toks(target)
+        ref_toks = self._fold_module_wire_ref_toks(ref_toks)
         base_var = ref_toks[0]
-        # Normalize bare base_var for sub-file functions (e.g. 'main_a_out' -> 'file_a_main_a_out')
-        if isinstance(base_var, str):
-            global_key = self._resolve_global_wire(base_var)
-            if global_key and global_key != base_var:
-                ref_toks = (global_key,) + ref_toks[1:]
-                base_var = global_key
         # Variable indices on LHS → VAR_REF_ASSIGN
         if _has_variable_index(ref_toks):
             if base_var not in self.env and base_var in self.parser_state.global_vars:
@@ -2888,13 +2910,8 @@ class FuncElaborator:
     def _elab_ref_read(self, expr):
         """Elaborate a subscript or attribute RHS. Routes to VAR or CONST path."""
         ref_toks = self._parse_ref_toks(expr)
+        ref_toks = self._fold_module_wire_ref_toks(ref_toks)
         base_var = ref_toks[0]
-        # Normalize bare base_var for sub-file functions (e.g. 'arr' -> 'file_a_arr')
-        if isinstance(base_var, str):
-            global_key = self._resolve_global_wire(base_var)
-            if global_key and global_key != base_var:
-                ref_toks = (global_key,) + ref_toks[1:]
-                base_var = global_key
         if base_var not in self.env and base_var in self.parser_state.global_vars:
             self._declare_global_read_wire(base_var)
         _, base_type = self.env[base_var]
