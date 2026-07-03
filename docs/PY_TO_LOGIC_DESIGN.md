@@ -390,6 +390,39 @@ representing the assignment history of that variable within the function. This t
 ordering is critical: it is the single source of truth for reconstructing partial writes
 when reading the variable back.
 
+### `self.env` Staleness — Invalidating Descendant Keys on a Coarser Write
+
+`self.env` is a flat, string-keyed cache (`env_key -> (wire, type)`) of the *last* wire
+written at each exact path, used by `_read_ref`'s scalar fast path
+(`if env_key in self.env: return self.env[env_key]`, `PY_TO_LOGIC.py:3948-3949`) to skip
+the alias-chain search in the common case. Because a write can happen at *any* granularity
+— a single leaf (`o.axis.valid = 1`), an intermediate compound field (`o.axis.data = ...`),
+or the whole variable (`o.axis = axis_in`) — a coarser write does not automatically make
+`self.env`'s existing *finer* keys for the same path disappear; the dict just gains a new
+key at the new write's own granularity, leaving the old, now-superseded keys in place.
+
+If a later scalar read then requests one of those stale finer keys directly — most notably
+the implicit false-branch of a nested `if` with no `else`, which reads the pre-if value of
+whatever it doesn't overwrite — `self.env`'s blind fast path returns the stale wire (e.g. a
+compound-init default from *before* the coarser write) instead of correctly resolving
+through `_find_covering_wire`, which *would* find the coarser write as the most recent
+covering alias. This was a real, silent miscompile: a wireguard-fpga port function with
+`o.axis = axis128_null()` (compound-init default, leaf writes) followed in one branch by
+`o.axis = axis_in` (whole-aggregate reassignment) and then a nested per-element `if` masking
+`o.axis.data.frag.data[i]` — the implicit false branch of that nested `if` read back the
+*pre-reassignment* default (0) instead of `axis_in`'s byte, silently corrupting ciphertext
+bytes that should have been passed through unchanged.
+
+The fix: `_invalidate_descendant_env(env_key)` is called immediately after every place that
+sets an `self.env` entry for a write (not a declaration) — `_write_ref`
+(`PY_TO_LOGIC.py:4196-4215`) and the `if`-merge's post-MUX env update
+(`PY_TO_LOGIC.py:2664-2668`, see below). It removes any existing `self.env` key that is a
+strict descendant of the one just written (i.e. starts with `env_key + "."` or
+`env_key + "["`), forcing any later scalar read of that finer path to fall through to
+`_find_covering_wire`'s correct, temporally-ordered alias-chain search instead of returning
+a cached-but-superseded wire. Compound (non-scalar) reads were never affected by this —
+they always enumerate leaves and consult the alias chain directly, never `self.env`.
+
 ---
 
 ## Finding the Covering Wire
@@ -738,6 +771,15 @@ VHDL signal is declared.
 **The MUX output alias** inherits the driven ref_toks with AST nodes intact, so any
 subsequent reads after the if statement correctly discover it via `_find_covering_wire`
 wildcard matching.
+
+**`self.env` update after the MUX:** for concrete (non-variable) `ref_toks`, `_elab_if`
+also sets `self.env[env_key] = (mux_alias, mux_type)` and immediately calls
+`self._invalidate_descendant_env(env_key)` (`PY_TO_LOGIC.py:2664-2668`) — the same
+staleness-purge described in **[`self.env` Staleness](#alias-tracking--assignments-over-time)**
+above, needed here for the same reason: the reduced `ref_toks` this MUX was built for may be
+coarser than pre-existing finer `self.env` keys left over from before the `if` (e.g. an
+earlier compound-init default), which must not be returned by a later scalar read once this
+MUX has produced the authoritative, more recent value for that path.
 
 ---
 

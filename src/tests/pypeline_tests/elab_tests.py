@@ -51,6 +51,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "two_factory_wrappers_test.py"],
         )
     )
+    # Not run through the pipelinec CLI either, for the same reason: it's a silent
+    # miscompile (stale self.env entry after a coarser-granularity write) with no
+    # ElaborationError on either side of the fix, so it's checked in-process via
+    # PY_TO_LOGIC.PARSE_FILE + direct Logic() inspection.
+    tests.append(
+        Test(
+            name="mixed_granularity_reassign_test",
+            category="elab",
+            cmd=[INST_DIR / "mixed_granularity_reassign_test.py"],
+        )
+    )
     return tests
 
 

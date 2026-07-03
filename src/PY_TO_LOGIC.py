@@ -2665,6 +2665,7 @@ class FuncElaborator:
             if not _has_variable_index(ref_toks):
                 env_key = _ref_toks_to_env_key(ref_toks)
                 self.env[env_key] = (mux_alias, mux_type)
+                self._invalidate_descendant_env(env_key)
 
     def _read_branch_coverage(
         self, ref_toks, mux_type, env_branch, aliases_branch, ast_node, branch_tag
@@ -4209,6 +4210,25 @@ class FuncElaborator:
         self.logic.alias_to_orig_var_name[alias] = base_var
         self.logic.alias_to_driven_ref_toks[alias] = ref_toks
         self.env[env_key] = (alias, lhs_type)
+        self._invalidate_descendant_env(env_key)
+
+    def _invalidate_descendant_env(self, env_key):
+        """Drop self.env entries for paths strictly nested under env_key.
+
+        A write at env_key supersedes any finer-grained path under it (e.g. writing
+        "o.axis" supersedes "o.axis.valid", "o.axis.data.frag.data[5]", ...). Leaving
+        those stale entries in self.env would let _read_ref's scalar fast path
+        (`if env_key in self.env: return self.env[env_key]`) return a wire that predates
+        this write instead of resolving through the alias chain (_find_covering_wire),
+        which is the only path that correctly accounts for write recency.
+        """
+        for k in [
+            k
+            for k in self.env
+            if k != env_key
+            and (k.startswith(env_key + ".") or k.startswith(env_key + "["))
+        ]:
+            del self.env[k]
 
     def _declare_var(self, var_name, typ, node):
         """First sight of a local variable: base wire driven by zeros, no alias."""
