@@ -78,7 +78,9 @@ def run_sim(design_file: str, num_cycles: int, sim_mode: str = "strict") -> None
     pypeline._sim_active = True
     t0 = time.perf_counter()
     for cycle in range(num_cycles):
+        print("Clock: ", cycle, flush=True)
         _run_clock_cycle(mains, cycle)
+        print("")
     elapsed = time.perf_counter() - t0
     print(
         f"{num_cycles} cycles in {elapsed:.3f}s"
