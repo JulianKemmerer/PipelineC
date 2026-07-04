@@ -21,6 +21,54 @@ def make_axis_t(n, elem_t=uint8_t, ndims=1):
     return make_stream_t(fragment_t)
 
 
+def make_axis_broadcast_interlock(axis_t, n):
+    """Combinatorially broadcasts one axis_t stream to n sink streams.
+
+    Named 'interlock' rather than 'fork' because it is pure combinational
+    valid/ready interlocking (no buffering/registers): the source is ready
+    only when every sink is ready, and each sink sees valid=1 only once
+    every sink can accept the transfer (or is already not ready itself,
+    since no transfer happens on it anyway that cycle).
+
+    Usage:
+        axis128_2broadcast, axis128_2broadcast_t = make_axis_broadcast_interlock(axis128_t, 2)
+        result = axis128_2broadcast(source.axis_out, sink_ready_s)
+        sink_a.axis_in = result.axis_out[0]
+        sink_b.axis_in = result.axis_out[1]
+        source.axis_out_ready = result.axis_in_ready
+
+    Returns (axis_broadcast_interlock, axis_broadcast_interlock_t):
+        axis_broadcast_interlock(axis_in: axis_t, sink_ready: uint1_t[n]) -> axis_broadcast_interlock_t
+        axis_broadcast_interlock_t fields:
+          .axis_out (axis_t[n]) - one forked copy of axis_in per sink
+          .axis_in_ready (uint1_t) - ready signal to drive back to the source
+    """
+
+    @struct
+    class axis_broadcast_interlock_t(NamedTuple):
+        axis_out: axis_t[n]
+        axis_in_ready: uint1_t
+
+    @hw_func
+    def axis_broadcast_interlock(
+        axis_in: axis_t, sink_ready: uint1_t[n]
+    ) -> axis_broadcast_interlock_t:
+        o: axis_broadcast_interlock_t
+        all_sinks_ready: uint1_t = 1
+        for i in range(n):
+            all_sinks_ready = all_sinks_ready & sink_ready[i]
+        for i in range(n):
+            out_i: axis_t = axis_in
+            out_i.valid = 0
+            if all_sinks_ready | ~sink_ready[i]:
+                out_i.valid = axis_in.valid
+            o.axis_out[i] = out_i
+        o.axis_in_ready = all_sinks_ready
+        return o
+
+    return axis_broadcast_interlock, axis_broadcast_interlock_t
+
+
 def make_keep_count(bus_t, n):
     """Hardware function: popcount of .keep over n lanes."""
     count_t = make_uint_t(n.bit_length())
