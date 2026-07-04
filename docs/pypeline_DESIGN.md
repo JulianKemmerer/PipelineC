@@ -962,6 +962,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `BIT_MANIP_FUNC_NAMES` | Frozenset of function names intercepted as built-in bit manipulation by the elaborator |
 | `vhdl(text)` | Raw VHDL passthrough — recognized structurally by name in `PY_TO_LOGIC._elab_stmt`, never called during elaboration; the real function only runs when called outside elaboration (directly, via `sim_call()`, or via `pypeline_sim.py`) and raises `NotImplementedError` unless a simulation model is attached via `sim_model` |
 | `sim_model(target, copy_state=True)` | Attaches a Python simulation model to an `@hw_func`/`@MAIN` function (exactly one per target): an `@hw_func` delegate with matching signature, or a class/callable holding arbitrary per-instance state with Reg-like deepcopy-commit timing; sim-only, invisible to elaboration (see `pypeline_sim_DESIGN.md`) |
+| `sim_zero(ctype)` | Returns a zero-initialized simulation value for any pypeline ctype (scalar/struct/array) — the same value `Reg[T]` uses for its reset default; a public wrapper around `_make_sim_zero` for `sim_model` authors needing a typed placeholder (e.g. an empty buffer/queue's output slot) |
 | `_make_ctype(name)` | Dynamically creates C type class objects (used by `make_uint_t`, array subscript, etc.) |
 | `SimVal` | Simulation typed integer: bit-slice `__getitem__`, operator dispatch, hardware-accurate arithmetic |
 | `_RawField` | Raw-mode int subclass for struct fields: C-level arithmetic + `__getitem__` for bit slicing |

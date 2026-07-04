@@ -2033,6 +2033,16 @@ def _make_sim_zero(ctype):
     return _sim_cast(0, ctype)
 
 
+def sim_zero(ctype):
+    """Return a zero-initialized simulation value for a pypeline ctype (scalar,
+    struct, or array) -- the same "power-on" value Reg[T] uses for its reset
+    default. For sim_model authors who need a correctly-typed placeholder for
+    an arbitrary caller-supplied type before any real data exists yet (e.g. an
+    empty queue/buffer's output slot).
+    """
+    return _make_sim_zero(ctype)
+
+
 class CharArray(list):
     """Sim-mode representation of a char_t[N] value: a list of SimVal(char_t) that also
     behaves like the Python str it represents, mirroring hardware's %s/strlen display

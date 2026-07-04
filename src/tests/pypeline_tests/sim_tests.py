@@ -57,6 +57,13 @@ def get_tests() -> list:
             cmd=[PYPELINE_SIM, INST_DIR / "sim_model_test.py", "--run", "20"],
         )
     )
+    tests.append(
+        Test(
+            name="fifo_sim_model_convergence_test",
+            category="sim",
+            cmd=[PYPELINE_SIM, INST_DIR / "fifo_sim_model_test.py", "--run", "16"],
+        )
+    )
     return tests
 
 

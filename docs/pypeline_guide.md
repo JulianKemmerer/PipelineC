@@ -2031,11 +2031,13 @@ into the struct, so you wire it in from whatever's downstream.
 `depth` must be `>= 2`. `mode` only accepts `"fwft"` (first-word-fall-through) for now — the
 only underlying FIFO implementation currently available.
 
-**Cannot currently be simulated.** Like anything built on [`vhdl()`](#17-raw-vhdl-passthrough-vhdl)
-(the FIFO is a raw VHDL entity instantiated under the hood), calling `stream_fifo_func` outside
-hardware elaboration — directly, via `sim_call()`, or via `pypeline_sim.py` — raises
-`NotImplementedError`. Synthesise/elaborate normally through `pipelinec` to use it.
-See `src/tests/pypeline_tests/inst/stream_fifo_test.py`.
+**Simulates via a functional model.** Even though the FIFO is a raw VHDL entity under the
+hood, `make_fifo` attaches a `collections.deque`-based FWFT [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions)
+to it, so `stream_fifo_func` works under `sim_call()`/`pypeline_sim.py` too — same data,
+same valid/ready handshake, and the same rounded-up-to-a-power-of-two capacity as real
+hardware, just not cycle-accurate internally. See `pypeline_sim_DESIGN.md`'s
+"`make_fifo` Simulation Model" section for the exact contract, and
+`src/tests/pypeline_tests/inst/stream_fifo_test.py`.
 
 ---
 
@@ -2085,10 +2087,11 @@ def buffered_div_inv(
 AUTOPIPELINE'd wrapper and needs its own decoration for any `Reg[T]`/bare struct-array
 locals in its body to simulate correctly (see [§15](#15-forcing-pipelining-autopipeline)).
 
-**Cannot currently be simulated.** Same limitation as `make_stream_fifo` above — the
-internal FIFO is built on `vhdl()`, so calling `stream_pipeline_func` via `sim_call()` or
-`pypeline_sim.py` raises `NotImplementedError`. Synthesise/elaborate normally through
-`pipelinec` to use it. See `src/tests/pypeline_tests/inst/stream_pipeline_test.py`.
+**Simulates end-to-end.** Since `make_fifo`'s internal FIFO now carries a
+[`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions), the whole
+pipeline — AUTOPIPELINE retiming plus the output FIFO — simulates via `sim_call()` or
+`pypeline_sim.py`, including realistic backpressure when the consumer stalls. See
+`src/tests/pypeline_tests/inst/stream_pipeline_test.py`.
 
 ---
 
@@ -2101,7 +2104,7 @@ The table below consolidates all known limitations and unsupported features.
 | **Multiple clock domains** | Not supported | `MAIN_MHZ_GROUP`, `#pragma ASYNC_WIRE`, `CLK_MHZ` have no pypeline equivalent |
 | **Async clock-crossing FIFOs** | Not supported | `GLOBAL_STREAM_FIFO` across clock boundaries cannot yet be expressed |
 | **Dual-port stream RAM** | Not built-in | `DECL_STREAM_RAM_DP_W_R_1` — use `vhdl()` passthrough |
-| **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation; this includes `make_stream_fifo`, `make_stream_pipeline`, and `make_valid_ready_mcp` |
+| **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo` now does, covering `make_stream_fifo`/`make_stream_pipeline` too); this still includes `make_valid_ready_mcp` |
 | **`MULTI_CYCLE[...]`** | Synthesis only | No effect without `PART()` / Vivado; ignored in simulation |
 | **`from module import *`** | Not supported | Only qualified imports (`import module`) are supported |
 | **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead |

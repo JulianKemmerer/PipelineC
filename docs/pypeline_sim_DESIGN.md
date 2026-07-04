@@ -958,6 +958,48 @@ each cycle.
 
 ---
 
+## `make_fifo` Simulation Model (`_FifoFwftModel`)
+
+`include/pypeline/fifo.py`'s `make_fifo` attaches a `collections.deque`-based FWFT model
+to its inner `vhdl(...)`-bodied `fifo` function via `@sim_model(fifo)` — a `class`-form
+model, `copy_state=True` (the default), so it gets the same Reg-like deepcopy/
+buffered-commit timing described above. `make_stream_fifo` and `make_stream_pipeline`
+need no changes of their own: both call `make_fifo` from inside their own `@hw_func`
+bodies, so the attached model is picked up automatically.
+
+**Capacity rounding.** Real hardware always rounds a requested `depth` up to a power of
+two (`DEPTH_LOG2 = ceil(log2(depth))` in the spliced VHDL). The model computes
+`capacity = 2 ** ceil(log2(depth))` in Python and enforces exactly that limit, so
+`data_in_ready` deasserts at the same fill level as real hardware — not at the raw
+requested `depth`.
+
+**Entry-state/registered-output contract.** `data_out`/`data_out_valid`/`data_in_ready`
+are computed from `self.q`'s state as of entry to `__call__` — i.e. as committed at the
+last clock edge — before any push/pop for this cycle is applied. Push/pop only mutate
+`self.q` for the *next* commit. Consequences:
+- A same-cycle push is never visible via `data_out` that same cycle.
+- A same-cycle pop never frees capacity for a same-cycle push (the `data_in_ready`
+  returned this cycle was already computed from the pre-pop occupancy).
+
+This mirrors the real FIFO's independent read/write pointers into the same memory,
+without needing to model pointers or a memory array directly.
+
+**Deliberate, documented deviation from cycle-accuracy.** The real
+`pipelinec_fifo_fwft` entity has a one-word FWFT "prefetch register" that can
+transiently hold one item beyond `2**DEPTH_LOG2`, and a 2-cycle (not 1-cycle)
+push→visible latency when starting from empty. The model reproduces neither — it
+backpressures at or before real hardware's true capacity limit, never after, which is
+the safe direction for verifying overflow-avoidance and dataflow correctness (e.g.
+`make_stream_pipeline`'s `MAX_IN_FLIGHT`-sized never-overflow invariant) without
+attempting cycle-exact co-simulation against GHDL.
+
+**Empty-queue placeholder.** `data_out` when `self.q` is empty is `sim_zero(data_t)` — a
+correctly-typed but otherwise arbitrary value. Real hardware gives no guarantee about
+`data_out`'s content when `data_out_valid` is 0 either; consumers must always gate on
+`data_out_valid`, never read `data_out` directly.
+
+---
+
 ## `Wire[T]` / `Input[T]` / `Output[T]` Global Wire Simulation
 
 `Wire[T]` declarations at module level create `__annotations__` entries but no Python variable.
@@ -1163,9 +1205,9 @@ subclass has `__getitem__`.
   not yet supported by `pypeline_sim.py`.
 - **Raw VHDL (`vhdl(...)`)** — simulable only with an attached `@sim_model`
   (see `sim_model` section above); without one, calling the function in simulation raises
-  `NotImplementedError`. `make_fifo`/`make_stream_fifo`/`make_stream_pipeline` do not yet
-  attach models, so those remain unsimulable for now (a `collections.deque`-based FWFT
-  FIFO model is the natural follow-up).
+  `NotImplementedError`. `make_fifo` attaches a `collections.deque`-based FWFT model (see
+  `make_fifo` Simulation Model below), so it and, transitively, `make_stream_fifo`/
+  `make_stream_pipeline` are now simulable.
 - **`sim_model` class models inside Layer-1 `Feedback[T]` loops** — commit once per
   convergence iteration instead of once per call (no write buffer is active under plain
   `sim_call`); same pre-existing behavior as nested `Reg[T]` hw_funcs in feedback loops.
@@ -1314,6 +1356,17 @@ of a normal hw_func, attachment error cases, model-less `vhdl(...)` still raisin
 `sim_model_convergence_test` under the multi-MAIN runner (`--run 20`), where a checker
 MAIN asserts a numpy class model's state advances exactly once per cycle despite being
 re-evaluated with mid-cycle-changing wire inputs from a later-queued driver MAIN.
+
+`make_fifo`'s `_FifoFwftModel` is covered by `inst/fifo_test.py` (plain `sim_call`: empty
+behavior, FWFT push/pop order, backpressure and overflow-drop at the rounded-up capacity,
+same-cycle push+pop ordering, and a multi-cycle reference-model soak against an
+independent plain-Python `deque`), `inst/stream_fifo_test.py` and
+`inst/stream_pipeline_test.py` (integration through the `stream_t` wrappers — the latter
+including a steady-drain and a stall-and-resume backpressure scenario, both checked
+against `sim_call(div_inv, x)` as ground truth), and `fifo_sim_model_convergence_test`
+(`inst/fifo_sim_model_test.py` under `--run 16`), which mirrors
+`sim_model_convergence_test`'s pattern to prove the FIFO's deque state doesn't double-push
+per cycle under wire convergence.
 
 ```
 python3 src/tests/pypeline_tests/sim_tests.py            # just the sim tests
