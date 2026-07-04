@@ -424,6 +424,34 @@ machinery.
 
 ---
 
+## Type ↔ Bytes Conversion
+
+```python
+byte_length(t) → int
+make_type_to_bytes(t, endian="little") → hardware function
+make_type_from_bytes(t, endian="little") → hardware function
+```
+
+Generic packing of any pypeline type (scalar, array, `@struct`, or any nesting) into a
+fixed `uint8_t[N]` array and back, as a packed/unpadded layout (each leaf scalar field
+rounds up to a whole byte; no other padding). Replaces hand-written per-type
+`concat()`/bit-slicing conversion code such as wireguard-fpga's `bytes_to_uint320()`.
+Enum types are not supported (raise `NotImplementedError`, checked recursively).
+
+`byte_length(t)` is a pure-Python recursive walk over the type object — `ceil(width /
+8)` per leaf, summed/multiplied through arrays and structs — with no elaborator
+involvement, the same shape as `enum_bit_width`/`enum_uint_type` above.
+
+`make_type_to_bytes`/`make_type_from_bytes` generate a **flat** (non-nested)
+`def <name>(...): ...` source string per `(type, direction, endian)`, `exec()` it after
+patching `linecache` so `inspect.getsource()` succeeds on the result, and tag it
+`@wires`. Full mechanics — why the source must be flat rather than a closure, the
+`_try_elab_bit_slice` restriction that requires materializing array-indexed leaves into
+a plain local before bit-slicing them, and the nested-struct auto-registration helper
+— are in [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#type-to-bytes-conversion-byte_length-make_type_to_bytes-make_type_from_bytes).
+
+---
+
 ## Annotation Types
 
 Each annotation type is a descriptor class returned by `__class_getitem__` with the following

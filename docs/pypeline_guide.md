@@ -1163,6 +1163,51 @@ def my_func(...) -> point_t:
     return p
 ```
 
+### Struct/type ↔ bytes conversion
+
+`byte_length(t)`, `make_type_to_bytes(t, endian="little")`, and
+`make_type_from_bytes(t, endian="little")` give a generic, built-in way to pack any
+pypeline type — scalar, array, struct, or any nesting thereof — into a fixed
+`uint8_t[N]` array and back, instead of hand-writing per-type `concat()`/bit-slicing
+code:
+
+```python
+from pypeline import struct, uint8_t, uint16_t, uint32_t, byte_length, make_type_to_bytes, make_type_from_bytes
+from typing import NamedTuple
+
+@struct
+class header_t(NamedTuple):
+    version: uint8_t
+    length: uint16_t
+    flags: uint32_t
+
+header_to_bytes   = make_type_to_bytes(header_t)     # -> hardware function
+header_from_bytes = make_type_from_bytes(header_t)   # exact inverse
+
+def pack(h: header_t) -> uint8_t[byte_length(header_t)]:
+    return header_to_bytes(h)
+```
+
+`byte_length(t)` is the companion "sizeof" — a plain Python function (no hardware
+elaboration involved) that returns the byte size of `t`, for sizing the destination
+array before calling `..._from_bytes` or after calling `..._to_bytes`.
+
+The layout is a **packed, unpadded struct**, not C's natural alignment: each leaf
+scalar field is rounded up to a whole number of bytes (`ceil(width / 8)` — so a
+`uint3_t` field still takes 1 byte), and fields/array elements are packed back-to-back
+in declaration order with no other padding. `endian` (`"little"` by default, or
+`"big"`) controls the byte order within each multi-byte field.
+
+The returned functions are tagged `@wires` (see [§18](#18-just-wires-synthesis-hint-wires))
+since they are pure bit rewiring with no real combinational delay.
+
+Works for any combination of arrays and structs, e.g.
+`make_type_to_bytes(uint32_t[3])` or `make_type_to_bytes(my_struct_t[3])`.
+
+**Enum types are not supported** by `byte_length`/`make_type_to_bytes`/
+`make_type_from_bytes` in this version — including an enum nested inside a struct or
+array field — and raise `NotImplementedError`.
+
 ### Floating-point types
 
 `make_float_t(E, M)` builds a struct type with `sign` (1 bit), `exp` (E bits), and
@@ -1995,6 +2040,7 @@ The table below consolidates all known limitations and unsupported features.
 | **Hardware signals as loop conditions** | Not supported | `for`/`while` loop bounds must be compile-time Python integers (fully unrollable) |
 | **`autopipeline()` around expressions** | Not supported | Must wrap a single direct function call, not a larger expression |
 | **Multiple/early `return` statements** | Not supported | A function may have at most one `return`, and it must be the function's final top-level statement; assign to a variable inside `if`/`else` branches and return it once at the end (see [§6 Control flow](#6-your-first-hardware-function)) |
+| **Enum types in `byte_length`/`make_type_to_bytes`/`make_type_from_bytes`** | Not supported | Raises `NotImplementedError`, including for an enum nested inside a struct or array field (see [§11 Types](#11-types)) |
 
 Coming from PipelineC? See also [docs/pipelinec_to_pypeline.md](pipelinec_to_pypeline.md)
 for a pattern-by-pattern translation reference.

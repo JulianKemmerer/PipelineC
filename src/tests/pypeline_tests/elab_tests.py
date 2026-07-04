@@ -23,6 +23,7 @@ NO_SYNTH_TEST_FILES = [
     "char_array_test.py",
     "sim_print_test.py",
     "two_factory_wrappers_mixed_test.py",
+    "type_bytes_test.py",
 ]
 # fmt: on
 

@@ -1482,6 +1482,277 @@ BIT_MANIP_FUNC_NAMES = frozenset(
 
 
 # ─────────────────────────────────────────────
+# Type <-> bytes conversion (packed, unpadded layout)
+# ─────────────────────────────────────────────
+
+import linecache as _linecache
+
+_ENDIAN_BYTE_SUFFIX = {"little": "le", "big": "be"}
+
+
+def _check_endian(endian: str, func_name: str) -> None:
+    if endian not in _ENDIAN_BYTE_SUFFIX:
+        raise ValueError(
+            f"{func_name}: endian must be 'little' or 'big', got {endian!r}"
+        )
+
+
+def _check_bytes_type(t, func_name: str) -> None:
+    if not (_is_compound_pypeline_type(t) or _is_scalar_pypeline_int(t)):
+        raise TypeError(f"{func_name}: not a pypeline type: {t!r}")
+
+
+def byte_length(t) -> int:
+    """Byte size of a pypeline type t, as a packed-unpadded struct: each leaf
+    scalar field rounds up to a whole byte (ceil(width / 8)); fields/elements
+    are packed back-to-back in declaration order with no further padding
+    (this is NOT C natural alignment). Works for scalars, arrays (any
+    nesting), and @struct types.
+
+    Enum types are not supported in this version -- raises NotImplementedError,
+    including when an enum appears nested inside a struct or array.
+
+    Pure Python; no hardware elaboration required (analogous to enum_bit_width()).
+    """
+    if getattr(t, "_pypeline_is_enum", False):
+        raise NotImplementedError(
+            f"byte_length: enum type {t!r} is not supported by "
+            "byte_length/make_type_to_bytes/make_type_from_bytes in this version"
+        )
+    elem = _array_elem_ctype(t)
+    if elem is not None:
+        return byte_length(elem) * _array_len(t)
+    if hasattr(t, "_fields"):
+        return sum(byte_length(t.__annotations__[f]) for f in t._fields)
+    return (t.width + 7) // 8
+
+
+def _enumerate_leaves(t, path=()):
+    """Yield (access_path, leaf_ctype) for every scalar leaf of t, in
+    declaration order. access_path tokens are int (array index) or str
+    (struct field name); () for a bare scalar t. Raises NotImplementedError
+    if an enum is encountered anywhere (leaf, nested struct field, or array
+    element)."""
+    if getattr(t, "_pypeline_is_enum", False):
+        raise NotImplementedError(
+            f"enum type {t!r} is not supported by "
+            "byte_length/make_type_to_bytes/make_type_from_bytes in this version"
+        )
+    elem = _array_elem_ctype(t)
+    if elem is not None:
+        for i in range(_array_len(t)):
+            yield from _enumerate_leaves(elem, path + (i,))
+        return
+    if hasattr(t, "_fields"):
+        for f in t._fields:
+            yield from _enumerate_leaves(t.__annotations__[f], path + (f,))
+        return
+    yield (path, t)
+
+
+def _access_expr(root: str, path) -> str:
+    """('a', 3, 'b') -> 'root.a[3].b' ; () -> 'root'"""
+    s = root
+    for tok in path:
+        s += f"[{tok}]" if isinstance(tok, int) else f".{tok}"
+    return s
+
+
+def _bytes_type_key(t) -> str:
+    """Raw (not yet length-limited) canonical identifier for a pypeline type,
+    used as the basis for generated to_bytes/from_bytes function names and as
+    the factory memoization cache key. Reuses @struct's own canonical name for
+    structs (already deterministic/hash-collapsed); mangles the C type string
+    for scalars/arrays, e.g. uint32_t[3] -> uint32_t_3."""
+    return getattr(t, "_pypeline_ctype_name", None) or _mangle_type(str(t))
+
+
+def _finalize_hw_name(name: str) -> str:
+    """Collapse a generated hardware function name to fit _MAX_MANGLE_NAME_LEN,
+    using the same truncated-prefix + sha256[:8] fallback convention as
+    @struct/@enum."""
+    if len(name) > _MAX_MANGLE_NAME_LEN:
+        h = _hashlib.sha256(name.encode()).hexdigest()[:8]
+        name = f"{name[: _MAX_MANGLE_NAME_LEN - 9]}_{h}"
+    return name
+
+
+def _collect_struct_types(t, out=None):
+    """Recursively collect every distinct @struct type reachable from t
+    (including t itself and any nested struct fields/array elements), keyed by
+    canonical name. Used to seed the exec() globals of a generated to_bytes/
+    from_bytes function so PY_TO_LOGIC's live-closure struct auto-registration
+    (which only scans that function's own __globals__ values, not transitively
+    through struct field types) sees every struct shape it needs regardless of
+    whether the caller's design module already registered them."""
+    if out is None:
+        out = {}
+    elem = _array_elem_ctype(t)
+    if elem is not None:
+        _collect_struct_types(elem, out)
+        return out
+    if hasattr(t, "_fields"):
+        name = getattr(t, "_pypeline_ctype_name", None)
+        if name is not None and name not in out:
+            out[name] = t
+            for f in t._fields:
+                _collect_struct_types(t.__annotations__[f], out)
+    return out
+
+
+def _exec_generated_func(func_name: str, src: str, extra_globals: dict):
+    """exec() a single-function source string (a flat, non-nested `def`, so
+    its __qualname__ has no '.<locals>.' and PY_TO_LOGIC's elaborator treats it
+    as an ordinary top-level function rather than a factory closure), patching
+    linecache so inspect.getsource()/getsourcelines() -- used both by the
+    elaborator and by hw_func's own simulation-body analysis -- can recover it.
+
+    The synthetic filename avoids '<', '>', ':' (unlike the common '<string>'-style
+    convention) because PY_TO_LOGIC._loc_str embeds os.path.basename(src_file)
+    verbatim (aside from '.' -> '_') into generated VHDL identifiers for
+    uniqueness -- those characters are legal in a Python/linecache "filename"
+    but not in a VHDL identifier, and only fail once the output actually reaches
+    a VHDL compiler (e.g. via --sim --ghdl), not under plain --no_synth
+    elaboration, which never compiles the generated text.
+    """
+    fake_file = f"/pypeline_generated_bytes/{func_name}.py"
+    _linecache.cache[fake_file] = (len(src), None, src.splitlines(True), fake_file)
+    code = compile(src, fake_file, "exec")
+    ns = dict(extra_globals)
+    exec(code, ns)
+    return ns[func_name]
+
+
+_TYPE_TO_BYTES_CACHE: dict = {}
+_TYPE_FROM_BYTES_CACHE: dict = {}
+
+
+def make_type_to_bytes(t, endian: str = "little"):
+    """Factory: returns a hardware function packing a value of type t into a
+    fixed uint8_t[byte_length(t)] array, matching a packed/unpadded C struct's
+    field order (sub-byte fields round up to 1 byte; no other padding).
+    endian in {"little", "big"} controls per-multi-byte-field byte order
+    (little = least-significant byte first). The returned function is tagged
+    @wires (pure bit rewiring, zero synthesis delay).
+
+    Enum types (including nested in structs/arrays) are not supported in this
+    version -- raises NotImplementedError at factory-call time.
+
+    Usage:
+        my_struct_to_bytes = make_type_to_bytes(my_struct_t)
+        raw: uint8_t[byte_length(my_struct_t)] = my_struct_to_bytes(x)
+    """
+    _check_endian(endian, "make_type_to_bytes")
+    _check_bytes_type(t, "make_type_to_bytes")
+    raw_name = _bytes_type_key(t)
+    cache_key = (raw_name, endian)
+    cached = _TYPE_TO_BYTES_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    n = byte_length(t)
+    out_t = uint8_t[n]
+    func_name = _finalize_hw_name(f"{raw_name}_to_bytes_{_ENDIAN_BYTE_SUFFIX[endian]}")
+
+    leaf_type_names: dict = {}  # ctype-name str -> synthetic global var name
+    extra_globals = {"t": t, "out_t": out_t, "wires": wires}
+
+    def _leaf_type_name(leaf_t) -> str:
+        key = str(leaf_t)
+        varname = leaf_type_names.get(key)
+        if varname is None:
+            varname = f"_leaf_t{len(leaf_type_names)}"
+            leaf_type_names[key] = varname
+            extra_globals[varname] = leaf_t
+        return varname
+
+    lines = ["@wires", f"def {func_name}(x: t) -> out_t:", "    rv: out_t"]
+    base = 0
+    for path, leaf_t in _enumerate_leaves(t):
+        w = leaf_t.width
+        k = (w + 7) // 8
+        access = _access_expr("x", path)
+        if k == 1:
+            lines.append(f"    rv[{base}] = {access}")
+        else:
+            # Bit-slicing is only elaborator-supported on a bare Name or a
+            # single struct-attribute chain (PY_TO_LOGIC._try_elab_bit_slice),
+            # not on an array-indexed base -- so any leaf reached via an array
+            # index (a bare array element, or an array-typed struct field)
+            # must first be materialized into a plain local, mirroring the
+            # existing hand-written idiom (e.g. wireguard-fpga's
+            # `word: uint32_t = block.state[i]` before slicing `word`).
+            tmp = f"tmp{base}"
+            lines.append(f"    {tmp}: {_leaf_type_name(leaf_t)} = {access}")
+            for j in range(k):
+                hi = min(w - 1, j * 8 + 7)
+                lo = j * 8
+                dst = base + j if endian == "little" else base + (k - 1 - j)
+                sel = f"{tmp}[{hi}]" if hi == lo else f"{tmp}[{hi}:{lo}]"
+                lines.append(f"    rv[{dst}] = {sel}")
+        base += k
+    lines.append("    return rv")
+    src = "\n".join(lines) + "\n"
+
+    extra_globals.update(_collect_struct_types(t))
+    fn = _exec_generated_func(func_name, src, extra_globals)
+    _TYPE_TO_BYTES_CACHE[cache_key] = fn
+    return fn
+
+
+def make_type_from_bytes(t, endian: str = "little"):
+    """Factory: returns a hardware function unpacking a uint8_t[byte_length(t)]
+    array into a value of type t. Exact inverse of make_type_to_bytes(t, endian)
+    for the same t/endian. The returned function is tagged @wires (pure bit
+    rewiring, zero synthesis delay).
+
+    Enum types (including nested in structs/arrays) are not supported in this
+    version -- raises NotImplementedError at factory-call time.
+
+    Usage:
+        my_struct_from_bytes = make_type_from_bytes(my_struct_t)
+        x: my_struct_t = my_struct_from_bytes(raw)
+    """
+    _check_endian(endian, "make_type_from_bytes")
+    _check_bytes_type(t, "make_type_from_bytes")
+    raw_name = _bytes_type_key(t)
+    cache_key = (raw_name, endian)
+    cached = _TYPE_FROM_BYTES_CACHE.get(cache_key)
+    if cached is not None:
+        return cached
+
+    n = byte_length(t)
+    in_t = uint8_t[n]
+    func_name = _finalize_hw_name(
+        f"{raw_name}_from_bytes_{_ENDIAN_BYTE_SUFFIX[endian]}"
+    )
+
+    lines = ["@wires", f"def {func_name}(src: in_t) -> t:", "    rv: t"]
+    base = 0
+    for path, leaf_t in _enumerate_leaves(t):
+        w = leaf_t.width
+        k = (w + 7) // 8
+        access = _access_expr("rv", path)
+        if k == 1:
+            lines.append(f"    {access} = src[{base}]")
+        else:
+            chunks = []
+            for j in range(k - 1, -1, -1):
+                dst = base + j if endian == "little" else base + (k - 1 - j)
+                chunks.append(f"src[{dst}]")
+            lines.append(f"    {access} = concat({', '.join(chunks)})")
+        base += k
+    lines.append("    return rv")
+    src = "\n".join(lines) + "\n"
+
+    extra_globals = {"t": t, "in_t": in_t, "concat": concat, "wires": wires}
+    extra_globals.update(_collect_struct_types(t))
+    fn = _exec_generated_func(func_name, src, extra_globals)
+    _TYPE_FROM_BYTES_CACHE[cache_key] = fn
+    return fn
+
+
+# ─────────────────────────────────────────────
 # Raw VHDL passthrough
 # (intercepted by PY_TO_LOGIC elaborator; not callable at Python runtime)
 # ─────────────────────────────────────────────

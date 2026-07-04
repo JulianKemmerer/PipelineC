@@ -28,6 +28,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "enum_test.py",
     "char_array_test.py",
     "sim_print_test.py",
+    "type_bytes_test.py",
 ]
 # fmt: on
 

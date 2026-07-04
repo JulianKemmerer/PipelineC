@@ -79,6 +79,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
 - [Boolean Operators (`and` / `or`)](#boolean-operators-and--or)
 - [Bit Manipulation Syntax](#bit-manipulation-syntax)
 - [Built-in Bit Manipulation Functions](#built-in-bit-manipulation-functions)
+- [Type-to-Bytes Conversion (`byte_length`, `make_type_to_bytes`, `make_type_from_bytes`)](#type-to-bytes-conversion-byte_length-make_type_to_bytes-make_type_from_bytes)
 - [Raw VHDL Passthrough (`vhdl(...)`)](#raw-vhdl-passthrough-vhdl)
 - [`sim_print` — printf-style Console Output](#sim_print--printf-style-console-output)
 - [Custom Operator Registration](#custom-operator-registration)
@@ -2456,6 +2457,99 @@ instances. All bounds / counts are evaluated at elaboration time via `_try_eval_
 Each function elaborates to a `BIT_MANIP_<func>_<types>` submodule instance in the
 Logic() graph. The output type is derived from the input widths and parameters at
 elaboration time.
+
+---
+
+## Type-to-Bytes Conversion (`byte_length`, `make_type_to_bytes`, `make_type_from_bytes`)
+
+Generic, built-in replacement for the hand-written per-type `concat()`/bit-slicing
+byte-packing code that otherwise gets duplicated across designs (e.g. wireguard-fpga's
+`bytes_to_uint320()`, `chacha20_init()`). Implemented entirely in `pypeline.py`; no
+`PY_TO_LOGIC.py` changes were needed — the whole feature reuses existing elaborator
+mechanics (closure-factory elaboration, `@wires`, `concat()`, bit-slicing) rather than
+adding a new one.
+
+**`byte_length(t)`** is pure Python, no elaborator involvement: it recursively walks
+`t` (scalar / array / `@struct`) and sums `ceil(width / 8)` per leaf scalar field, with
+no other padding — a packed, unpadded layout, not C's natural alignment. Enum types
+raise `NotImplementedError`, checked recursively (including through struct fields and
+array elements).
+
+**Codegen strategy — flat exec'd source, not a lexically-nested closure.** Struct field
+access in Pypeline is literal `x.field_name` `ast.Attribute` syntax; there is no
+elaborator code path for dynamic/positional struct field access (any integer subscript
+token is routed to array-only handling by `_ref_toks_to_ctype`/`_array_elem_type`), so
+the packing/unpacking body must be generated as literal source text naming each
+concrete struct's fields, per `(type, direction, endian)` combination.
+
+`_exec_generated_func` builds this source as a `def <canonical_name>(...): ...`
+string and `exec()`s it, after patching `linecache.cache[fake_file]` with the source
+lines under a synthetic `<pypeline_bytes:{name}>` filename — a standard technique
+(also used by REPLs/notebook kernels for `exec`'d code) that makes
+`inspect.getsource()`/`inspect.getsourcelines()` succeed on the resulting function
+object, exactly as needed by both `FuncElaborator._elaborate_live_func` (elaboration)
+and `_build_reg_sim_func` (simulation-body analysis for typed locals). This is the
+first user of the linecache-patch technique in this codebase; a future maintainer
+debugging an `inspect.getsource` failure on a `make_type_to_bytes`-produced function
+should look here.
+
+Because the generated `def` is **flat** (never lexically nested inside another `def`
+in the source text — the factory does not define an inner closure the way
+`make_shift_into_top`-style factories in `include/pypeline/axi/axis.py` do), Python's
+compiler assigns `__qualname__ == __name__` with no `.<locals>.` marker by construction.
+`_elaborate_live_func`'s `if ".<locals>." not in func.__qualname__` check (see
+"Closure Factory Pattern" above) is therefore naturally `False`, so naming/dedup
+already goes through the plain top-level path (`_top_level_func_key` →
+`_hw_func_name`), using exactly the name written into the generated `def` line — no
+post-hoc `__name__`/`__qualname__` manipulation is needed (contrast with
+`make_quarter_round` in wireguard-fpga's `chacha20.py`, which *does* need that
+override, precisely because it defines a genuine nested closure).
+
+**Packing (`to_bytes`)**, per scalar leaf at byte offset `base`, width `w`,
+`k = ceil(w / 8)`:
+- `k == 1`: `rv[base] = <access>` — relies on the implicit width-truncating
+  assignment-cast already used throughout the language for narrowing assignment.
+- `k > 1`: **first materializes the leaf into a plain local** (`tmpN: <leaf_type> =
+  <access>`), then bit-slices/selects the local, byte by byte. This materialization
+  step is required, not stylistic: `_try_elab_bit_slice` (the function that recognizes
+  `x[bit]`/`x[hi:lo]` as a bit-select rather than a structural index) only supports a
+  bare `Name` or a single struct-attribute chain as its base expression — not an
+  array-indexed (`Subscript`) base. Any leaf reached through an array index (a bare
+  array element, or an array-typed struct field, e.g. `chacha20_state.state[i]`) would
+  otherwise fall through to structural-reference resolution and fail. This mirrors the
+  existing hand-written idiom this feature replaces (wireguard-fpga's
+  `word: uint32_t = block.state[i]` extracted *before* slicing `word`) — the codegen
+  simply automates that same pattern generically for every leaf.
+
+**Unpacking (`from_bytes`)** does not hit this restriction: `concat()`'s arguments are
+always simple single-level `src[idx]` reads on the flat byte-array parameter, and the
+assignment target (`rv.field[i] = ...`) is a structural write handled by the same
+constant-index compound-write resolution used everywhere else — no bit-slicing is
+involved on the write side at all.
+
+**Nested struct auto-registration.** `_elaborate_live_func`'s live-closure struct
+scan only registers a struct type found *directly* as a value in the function's own
+`__globals__` — it does not recurse into that struct's own field types. Since the
+generated function's `exec()` globals only contain `t`/`out_t`, a struct nested inside
+`t` (a struct field, or the element type of an array field) would not be independently
+registered unless something else also happens to expose it at module scope.
+`_collect_struct_types(t)` walks `t` recursively and seeds every distinct struct type
+it finds (keyed by canonical name) into the generated function's globals, so this
+holds regardless of what the caller's own design module happens to already have
+registered.
+
+Both factories are tagged `@wires` directly in the generated source (`@wires\ndef
+...`) — see "`@wires` — Just-Wires Synthesis Hint" below; since `wires()` implies
+`@hw_func`, no separate wrapping step is needed. Memoized per `(canonical_type_name,
+endian)` so repeated calls with distinct-but-equal type objects (e.g. two separately
+written `uint32_t[3]` expressions) reuse the same generated function rather than
+re-`exec`ing.
+
+Tests: `src/tests/pypeline_tests/inst/type_bytes_test.py`, covering scalar/array/
+struct/nested-struct/array-of-struct round trips in both endiannesses, the
+byte-rounding rule, enum rejection, `@wires` tagging, and a regression proof mirroring
+wireguard-fpga's `chacha20_state`/`u320_t` shapes (registered in both `sim_tests.py`
+and `elab_tests.py`).
 
 ---
 
