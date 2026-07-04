@@ -285,6 +285,40 @@ casts and `_TypedAnnAssignRewriter` re-inject ctypes at assignment points.
 
 Set `pypeline.SIM_STRICT_ARITH = False` to disable (useful for performance testing).
 
+### Bitwise Operators (`&`, `|`, `^`) — `_ctype` Preservation for Bit-Manip Width Inference
+
+Unlike `+`/`-` (which can change width via carry/borrow and so need `_arith_promote`),
+hardware `and`/`or`/`xor` require matching-width operands and the result simply *keeps*
+that width — no promotion table needed. `SimVal.__and__`/`__or__`/`__xor__` implement this
+via a small `_bitwise_ctype(self, o)` helper: `self._ctype` if set, else `o._ctype` if `o`
+is a `SimVal`, else `None` (bare, untyped result — same as arithmetic ops with no typed
+operand).
+
+`__rand__`/`__ror__`/`__rxor__` (plain-int `op` `SimVal`, e.g. `0xFF & some_uint32`) mirror
+`__radd__`/`__rsub__`: `o` is always a non-`SimVal` int here (Python only calls the reflected
+method when the left operand isn't a `SimVal` subclass instance), so they just reuse
+`self._ctype` directly — AND/OR/XOR are commutative, so no promotion logic is needed.
+
+**Bug fixed 2026-07-04:** `__and__`/`__or__`/`__xor__` originally did
+`return SimVal(int(self) ^ int(o))` — constructing a **`_ctype=None`** result even when both
+operands were fully-typed. Bit-manipulation primitives (`rotl`, `rotr`, `bswap`, `bit_dup`,
+`bit_assign`) infer their operand's width via `_bit_manip_width`, which — when `_ctype` is
+`None` — falls back to `int(v).bit_length()`. That fallback silently returns a width
+*narrower* than the real type whenever the value happens to have leading zero bits (e.g.
+`0x0EFAF702` has `_ctype` uint32_t but `.bit_length() == 28`), so `rotl(x ^ y, n)` on an
+untyped XOR result rotated within the wrong (too-narrow) field — a completely different,
+but equally plausible-looking, 32-bit result. This was the root cause of a native-sim-only
+ciphertext corruption in the wireguard-fpga ChaCha20 port: `rotl(state[d] ^ a1, 16)` inside
+`quarter_round` lost `_ctype` at the `^`, corrupting every round's output while
+`chacha20_init` (no bitwise ops) matched GHDL exactly and scalar `rotl` alone (independently
+tested) was fine. Found by bisecting with matched `sim_print` probes between
+`pypeline_sim.py` and `pipelinec --comb --sim --cocotb --ghdl` at successively earlier
+points in the call chain (chacha20_block_step → chacha20_init) until one boundary matched
+and the next didn't, then hand-verifying the suspect intermediate value against the `rotl`
+formula directly in Python — the 28-bit-vs-32-bit rotation was diagnostic. See
+`project_pypeline_fixes` memory (Fix 9) for the full bisection method, worth reusing for any
+future "native sim disagrees with GHDL on a bit-manipulated value" bug.
+
 ### `_TypedAnnAssignRewriter` — Truncation at Every Typed Assignment
 
 An `ast.NodeTransformer` applied by `_build_reg_sim_func` to the function body AST.
@@ -825,7 +859,7 @@ Functions with `Feedback[T]` are wrapped in a convergence loop. Two problems:
 
 ```python
 def feedback_test(a: uint1_t, b: uint1_t) -> uint1_t:
-    f = 0              # ← zero-initialise feedback var
+    f = __fb_zero_f__  # ← zero-initialise feedback var (typed: _make_sim_zero(inner_ctype))
     __fb_iters = 0
     while True:
         __fb_iters += 1
@@ -842,6 +876,14 @@ def feedback_test(a: uint1_t, b: uint1_t) -> uint1_t:
 `_SIM_FEEDBACK_MAX_ITER = 1000` is the safety limit; valid combinatorial feedback converges
 in 1–2 iterations.
 
+`__fb_zero_f__` is precomputed once at decoration time (`feedback_zeros[name] =
+_make_sim_zero(ann_val.inner_ctype)`, mirroring `reg_zeros`) and injected into `new_globals`
+alongside `__reg_zero_<name>__`. This matters for `Feedback[struct_t]`: the bootstrap value on
+the loop's first pass must be a real zeroed struct instance, not a bare `int 0` — a body that
+reads a field off the feedback var before its own later assignment (the documented "declare
+before use" idiom) would otherwise hit `AttributeError: 'int' object has no attribute '...'`
+on iteration 1, before convergence ever gets a chance to settle it.
+
 ### Interaction with `Reg[T]`
 
 When a function contains both `Reg[T]` and `Feedback[T]`, registers are read once before
@@ -854,7 +896,7 @@ def fb_reg_accumulate(load: uint1_t, data: uint8_t) -> uint8_t:
     __ip__ = _sim_current_inst_path()
     acc = _sim_reg_read(__ip__, "acc")   # read once
     __reg_init_acc = acc                 # snapshot for per-iteration reset
-    f = 0
+    f = __fb_zero_f__
     __fb_iters = 0
     try:
         while True:
@@ -1010,14 +1052,21 @@ variables, and `r = ~main_a_in` would raise `NameError`. The `_GlobalWireRewrite
 ### Global Wire State
 
 ```python
-_sim_wire_state: dict[str, int]   # wire name → current value
+_sim_wire_state: dict[str, ...]   # wire name → current value (int or struct/array instance)
 ```
 
-Wire names are singletons — not keyed by instance path. Reads return 0 if the wire has
-never been driven.
+Wire names are singletons — not keyed by instance path. Every wire discovered by
+`_discover_wire_names` (see below) is pre-seeded to a correctly-typed zero
+(`_make_sim_zero(inner_ctype)`, recursing into struct/array fields) before any `@MAIN` runs,
+so reading a wire that simply hasn't been driven yet this cycle returns that zero — never a
+bare `0` for a struct/array-typed wire. Reading a wire name that was never discovered at all
+(an actual bug, not a normal "not yet driven" state) raises `RuntimeError` rather than
+silently returning `0` — this used to fall back to a bare `int 0`, which crashed confusingly
+several frames away the first time a caller accessed a field on it (see `_discover_wire_names`
+below for the discovery gap that used to trigger this).
 
 ```python
-def _sim_wire_read(name: str)               # returns current value; records reader dependency
+def _sim_wire_read(name: str)               # returns current value; records reader dependency; raises if name was never discovered
 def _sim_wire_write(name: str, value)       # stores value as-is (struct types preserved)
 ```
 
@@ -1219,8 +1268,11 @@ subclass has `__getitem__`.
   `_make_sim_zero`, `_sim_lens_set` above); functions must carry `@hw_func` (or `@MAIN`), same
   as `Reg[T]`/`Feedback[T]`.
 - **Global wires (`Wire[T]`, `Input[T]`, `Output[T]`)** — supported via `pypeline_sim.py`;
-  multi-file designs supported (`_discover_wire_names` recursively scans imported sub-modules).
-  Wire sim-keys are bare names (no module prefix); unique wire names across sub-modules assumed.
+  multi-file designs supported (`_discover_wire_names` recursively scans *every* imported
+  sub-module transitively, including "pass-through" modules that declare no `Wire[T]` of their
+  own but import ones that do — e.g. a module whose only job is cross-module wiring between
+  other modules' globals). Wire sim-keys are bare names (no module prefix); unique wire names
+  across sub-modules assumed.
 - **Closures from factory functions** — add `@hw_func` to the inner closure definition.
   `_build_reg_sim_func` resolves `Reg[T]` annotations using closure-captured variables.
   Factories that accept and then call a caller-supplied function

@@ -866,6 +866,13 @@ would fail for subclasses, causing incorrect simulation results.
 most-significant position. It is dual-mode: it works in both hardware elaboration and
 simulation without requiring separate implementations.
 
+The other `BIT_MANIP_FUNC_NAMES` members (`bit_dup`, `rotl`, `rotr`, `bswap`, `bit_assign`,
+`array_to_uint_be/le`, `uint_to_array_be/le`) are dual-mode the same way: each has a real
+Python body in `pypeline.py` (shared width-inference via `_bit_manip_width`/
+`_bit_manip_result_ctype`) whose bit-level semantics mirror the VHDL each one elaborates to
+in `RAW_VHDL.py` (`x rol/ror n`, big/little-endian byte packing, etc.) — verified by direct
+comparison against those VHDL code generators, not just re-derived independently.
+
 ```python
 out: uint64_t = concat(hi_word, lo_word)   # uint32_t ++ uint32_t → uint64_t
 packed: uint24_t = concat(r, g, b)         # three uint8_t values → uint24_t
@@ -957,7 +964,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `_push_scoped_registrations(func)` | Merges scoped operator entries for `func` into globals; returns save-list |
 | `_pop_scoped_registrations(saved)` | Restores global registries from save-list |
 | `bit_dup`, `rotl`, `rotr`, `bswap`, `bit_assign` | Bit manipulation primitives (hardware + sim) |
-| `array_to_uint_be/le`, `uint_to_array_be/le` | Array ↔ integer packing primitives |
+| `array_to_uint_be/le`, `uint_to_array_be/le` | Array ↔ integer packing primitives (hardware + sim) |
 | `concat(*args)` | Bit concatenation — works in hardware (→ `TUPLE_CONCAT`) and simulation (→ typed `SimVal`) |
 | `BIT_MANIP_FUNC_NAMES` | Frozenset of function names intercepted as built-in bit manipulation by the elaborator |
 | `vhdl(text)` | Raw VHDL passthrough — recognized structurally by name in `PY_TO_LOGIC._elab_stmt`, never called during elaboration; the real function only runs when called outside elaboration (directly, via `sim_call()`, or via `pypeline_sim.py`) and raises `NotImplementedError` unless a simulation model is attached via `sim_model` |

@@ -77,6 +77,31 @@ def get_tests() -> list:
             ],
         )
     )
+    tests.append(
+        Test(
+            name="wire_discovery_passthrough_sim_test",
+            category="sim",
+            cmd=[
+                PYPELINE_SIM,
+                INST_DIR / "wire_discovery_passthrough_sim_test.py",
+                "--run",
+                "3",
+            ],
+        )
+    )
+    tests.append(
+        Test(
+            name="wire_discovery_passthrough_native_sim_test",
+            category="sim",
+            cmd=[
+                PIPELINEC,
+                INST_DIR / "wire_discovery_passthrough_sim_test.py",
+                "--sim",
+                "--run",
+                "3",
+            ],
+        )
+    )
     return tests
 
 

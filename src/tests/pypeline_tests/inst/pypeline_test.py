@@ -331,3 +331,29 @@ def test_point_max():
 # cd /media/1TB/Dropbox/PipelineC/git/PipelineC/src && PYTHONPATH=. python3 tests/pypeline_tests/inst/pypeline_test.py 2>&1
 if __name__ == "__main__":
     test_point_max()
+
+
+@MAIN
+def feedback_struct_test(x: uint32_t, y: uint32_t) -> uint32_t:
+    # Feedback of a struct type -- the sim zero-bootstrap used to hardcode a bare
+    # int 0 regardless of T, which crashed here on the first convergence pass's
+    # field read (before f's own later assignment executes).
+    f: Feedback[pypeline_tests.point_xy_t]
+    rv: uint32_t = f.x | x
+    f = pypeline_tests.point_xy_t(x=y, y=y)
+    return rv
+
+
+def sim_feedback_struct_test():
+    sim_reset()
+    # y=0 -> f settles to point_xy_t(x=0, y=0), rv=0|x
+    assert sim_call(feedback_struct_test, x=0, y=0) == 0
+    assert sim_call(feedback_struct_test, x=1, y=0) == 1
+    # y=5 -> f settles to point_xy_t(x=5, y=5), rv=5|x
+    assert sim_call(feedback_struct_test, x=0, y=5) == 5
+    assert sim_call(feedback_struct_test, x=2, y=5) == 7
+    print("sim_feedback_struct_test PASS")
+
+
+if __name__ == "__main__":
+    sim_feedback_struct_test()

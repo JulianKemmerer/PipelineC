@@ -563,20 +563,68 @@ class SimVal(int):
                     return _sim_val_make(v, out_ctype)
         return SimVal(result)
 
+    # Bitwise ops: hardware requires matching-width operands and the result keeps
+    # that width/type (no arithmetic promotion like +/-). Losing the ctype here
+    # (falling back to a bare, untyped SimVal) previously made downstream width
+    # inference (_bit_manip_width, e.g. inside rotl()) fall back to
+    # int(v).bit_length() -- silently *narrower* than the real declared width
+    # whenever the result happens to have leading zero bits, corrupting any
+    # rotl()/rotr()/bswap() applied to a bitwise-op result (e.g. chacha20's
+    # `rotl(state[d] ^ a1, 16)`).
+    def _bitwise_ctype(self, o):
+        if self._ctype is not None:
+            return self._ctype
+        if type(o) is SimVal:
+            return o._ctype
+        return None
+
     def __and__(self, o):
+        v = int(self) & int(o)
         if SIM_RAW_INTS:
-            return int(self) & int(o)
-        return SimVal(int(self) & int(o))
+            return v
+        ctype = self._bitwise_ctype(o)
+        if ctype is None:
+            return SimVal(v)
+        return _sim_val_make(v, ctype)
 
     def __or__(self, o):
+        v = int(self) | int(o)
         if SIM_RAW_INTS:
-            return int(self) | int(o)
-        return SimVal(int(self) | int(o))
+            return v
+        ctype = self._bitwise_ctype(o)
+        if ctype is None:
+            return SimVal(v)
+        return _sim_val_make(v, ctype)
 
     def __xor__(self, o):
+        v = int(self) ^ int(o)
         if SIM_RAW_INTS:
-            return int(self) ^ int(o)
-        return SimVal(int(self) ^ int(o))
+            return v
+        ctype = self._bitwise_ctype(o)
+        if ctype is None:
+            return SimVal(v)
+        return _sim_val_make(v, ctype)
+
+    # Reflected bitwise ops: plain-int op SimVal (`o` is always a non-SimVal here,
+    # same reasoning as __radd__ below). AND/OR/XOR are commutative, so just reuse
+    # self's ctype -- no promotion needed, unlike +/-.
+    def __rand__(self, o):
+        v = int(o) & int(self)
+        if SIM_RAW_INTS or self._ctype is None:
+            return v if SIM_RAW_INTS else SimVal(v)
+        return _sim_val_make(v, self._ctype)
+
+    def __ror__(self, o):
+        v = int(o) | int(self)
+        if SIM_RAW_INTS or self._ctype is None:
+            return v if SIM_RAW_INTS else SimVal(v)
+        return _sim_val_make(v, self._ctype)
+
+    def __rxor__(self, o):
+        v = int(o) ^ int(self)
+        if SIM_RAW_INTS or self._ctype is None:
+            return v if SIM_RAW_INTS else SimVal(v)
+        return _sim_val_make(v, self._ctype)
 
     # Reflected arithmetic: plain-int op SimVal. Apply full SIM_STRICT_ARITH so that
     # `CONSTANT - typed_signal` wraps the same way hardware does (e.g. 481 - uint12_t).
@@ -1395,49 +1443,131 @@ class Output(metaclass=_OutputMeta):
 #   z = x[15:0]     # range       → uint16_t
 
 
+def _bit_manip_width(v):
+    """Infer the bit width of a sim value for the bit-manipulation prims below."""
+    if type(v) is SimVal and v._ctype is not None:
+        return len(v._ctype)
+    if type(v) is int or type(v) is SimVal:
+        return max(1, int(v).bit_length())
+    raise TypeError(f"cannot infer bit width for {v!r}")
+
+
+def _bit_manip_result_ctype(v, width):
+    """Preserve v's own ctype when typed, else synthesize a plain uint<width>_t."""
+    if type(v) is SimVal and v._ctype is not None:
+        return v._ctype
+    return make_uint_t(width)
+
+
 def bit_dup(x, n):
     """Replicate x n times: bit_dup(uint4_t, 4) → uint16_t."""
-    raise NotImplementedError("bit_dup is a PipelineC hardware primitive")
+    w = _bit_manip_width(x)
+    xv = int(x) & ((1 << w) - 1)
+    result = 0
+    for _ in range(n):
+        result = (result << w) | xv
+    return SimVal(result, ctype=make_uint_t(w * n))
 
 
 def rotl(x, amount):
-    """Rotate x left by amount bits (constant)."""
-    raise NotImplementedError("rotl is a PipelineC hardware primitive")
+    """Rotate x left by amount bits (constant). Matches VHDL's `x rol amount`."""
+    w = _bit_manip_width(x)
+    xv = int(x) & ((1 << w) - 1)
+    amount %= w
+    result = (
+        xv if amount == 0 else ((xv << amount) | (xv >> (w - amount))) & ((1 << w) - 1)
+    )
+    return SimVal(result, ctype=_bit_manip_result_ctype(x, w))
 
 
 def rotr(x, amount):
-    """Rotate x right by amount bits (constant)."""
-    raise NotImplementedError("rotr is a PipelineC hardware primitive")
+    """Rotate x right by amount bits (constant). Matches VHDL's `x ror amount`."""
+    w = _bit_manip_width(x)
+    xv = int(x) & ((1 << w) - 1)
+    amount %= w
+    result = (
+        xv if amount == 0 else ((xv >> amount) | (xv << (w - amount))) & ((1 << w) - 1)
+    )
+    return SimVal(result, ctype=_bit_manip_result_ctype(x, w))
 
 
 def bswap(x):
     """Reverse byte order of x."""
-    raise NotImplementedError("bswap is a PipelineC hardware primitive")
+    w = _bit_manip_width(x)
+    if w % 8 != 0:
+        raise ValueError(f"bswap: width {w} is not a multiple of 8")
+    xv = int(x) & ((1 << w) - 1)
+    nbytes = w // 8
+    result = 0
+    for i in range(nbytes):
+        byte = (xv >> (i * 8)) & 0xFF
+        result |= byte << ((nbytes - 1 - i) * 8)
+    return SimVal(result, ctype=_bit_manip_result_ctype(x, w))
 
 
 def bit_assign(base, x, pos):
     """Assign x into base at bit position pos (constant): base[pos+width-1:pos] = x."""
-    raise NotImplementedError("bit_assign is a PipelineC hardware primitive")
+    base_w = _bit_manip_width(base)
+    x_w = _bit_manip_width(x)
+    mask = ((1 << x_w) - 1) << pos
+    result = (int(base) & ~mask) | ((int(x) << pos) & mask)
+    result &= (1 << base_w) - 1
+    return SimVal(result, ctype=_bit_manip_result_ctype(base, base_w))
 
 
 def array_to_uint_be(arr):
     """Pack array elements into a single uint, big-endian (element[0] at MSB)."""
-    raise NotImplementedError("array_to_uint_be is a PipelineC hardware primitive")
+    result = 0
+    total_w = 0
+    for e in arr:
+        w = _bit_manip_width(e)
+        result = (result << w) | (int(e) & ((1 << w) - 1))
+        total_w += w
+    return SimVal(result, ctype=make_uint_t(total_w))
 
 
 def array_to_uint_le(arr):
     """Pack array elements into a single uint, little-endian (element[0] at LSB)."""
-    raise NotImplementedError("array_to_uint_le is a PipelineC hardware primitive")
+    result = 0
+    total_w = 0
+    for e in reversed(list(arr)):
+        w = _bit_manip_width(e)
+        result = (result << w) | (int(e) & ((1 << w) - 1))
+        total_w += w
+    return SimVal(result, ctype=make_uint_t(total_w))
 
 
 def uint_to_array_be(x, elem_w):
     """Split uint x into array of elem_w-bit elements, big-endian (MSB → element[0])."""
-    raise NotImplementedError("uint_to_array_be is a PipelineC hardware primitive")
+    w = _bit_manip_width(x)
+    if w % elem_w != 0:
+        raise ValueError(
+            f"uint_to_array_be: width {w} not a multiple of elem_w {elem_w}"
+        )
+    n = w // elem_w
+    xv = int(x) & ((1 << w) - 1)
+    elem_mask = (1 << elem_w) - 1
+    elem_ctype = make_uint_t(elem_w)
+    return [
+        SimVal((xv >> ((n - 1 - i) * elem_w)) & elem_mask, ctype=elem_ctype)
+        for i in range(n)
+    ]
 
 
 def uint_to_array_le(x, elem_w):
     """Split uint x into array of elem_w-bit elements, little-endian (LSB → element[0])."""
-    raise NotImplementedError("uint_to_array_le is a PipelineC hardware primitive")
+    w = _bit_manip_width(x)
+    if w % elem_w != 0:
+        raise ValueError(
+            f"uint_to_array_le: width {w} not a multiple of elem_w {elem_w}"
+        )
+    n = w // elem_w
+    xv = int(x) & ((1 << w) - 1)
+    elem_mask = (1 << elem_w) - 1
+    elem_ctype = make_uint_t(elem_w)
+    return [
+        SimVal((xv >> (i * elem_w)) & elem_mask, ctype=elem_ctype) for i in range(n)
+    ]
 
 
 def concat(*args):
@@ -1450,14 +1580,7 @@ def concat(*args):
     In hardware (PY_TO_LOGIC elaboration) this function is intercepted and treated
     as variadic tuple concat — see the 'concat' branch in _elab_bit_manip_call.
     """
-    widths = []
-    for a in args:
-        if type(a) is SimVal and a._ctype is not None:
-            widths.append(len(a._ctype))
-        elif type(a) is int or type(a) is SimVal:
-            widths.append(max(1, int(a).bit_length()))
-        else:
-            raise TypeError(f"concat: cannot infer bit width for {a!r}")
+    widths = [_bit_manip_width(a) for a in args]
     total = sum(widths)
     result = 0
     for a, w in zip(args, widths):
@@ -1977,7 +2100,7 @@ SIM_RAW_INTS: bool = False
 SIM_TRACE_LOCATIONS: bool = False
 
 # Global wire simulation state.
-_sim_wire_state: dict = {}  # wire name → current int value
+_sim_wire_state: dict = {}  # wire name → current value (int or struct/array instance)
 _sim_converging: bool = False  # True during delta-cycle convergence passes
 _sim_reg_write_buffer = None  # None = direct commit; dict = buffered mode
 _sim_current_main = None  # MAIN fn currently executing (for reader tracking)
@@ -2164,12 +2287,18 @@ def _sim_reg_write(inst_path, reg_name, value):
 
 
 def _sim_wire_read(name: str):
-    """Return the current global wire value (0 if not yet driven).
+    """Return the current global wire value.
     Records the calling MAIN as a reader of this wire for dependency tracking.
     """
     if _sim_current_main is not None:
         _sim_wire_readers.setdefault(name, set()).add(_sim_current_main)
-    return _sim_wire_state.get(name, 0)
+    if name not in _sim_wire_state:
+        raise RuntimeError(
+            f"Wire {name!r} was read but never discovered/initialized by "
+            f"pypeline_sim's wire scan (_discover_wire_names) -- its declaring "
+            f"module may not be reachable from the top design file's import graph."
+        )
+    return _sim_wire_state[name]
 
 
 def _sim_wire_write(name: str, value) -> None:
@@ -2207,17 +2336,23 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
     """AST transformer that rewrites global wire reads/writes in hw_func bodies.
 
     Replaces:
-      - Name(id='wire', ctx=Load)      →  _sim_wire_read('wire')
-      - wire = expr                    →  _sim_wire_write('wire', expr)   (Expr stmt)
-      - wire: T = expr                 →  _sim_wire_write('wire', expr)   (AnnAssign with value)
-      - module.wire  (Load)            →  _sim_wire_read('wire')          (cross-module read)
-      - module.wire = expr             →  _sim_wire_write('wire', expr)   (cross-module write)
+      - Name(id='wire', ctx=Load)      →  _sim_wire_read('<mod>.wire')
+      - wire = expr                    →  _sim_wire_write('<mod>.wire', expr)   (Expr stmt)
+      - wire: T = expr                 →  _sim_wire_write('<mod>.wire', expr)   (AnnAssign with value)
+      - module.wire  (Load)            →  _sim_wire_read('<mod>.wire')          (cross-module read)
+      - module.wire = expr             →  _sim_wire_write('<mod>.wire', expr)   (cross-module write)
 
-    module_wire_attrs: {(alias_name, attr_name): sim_key} for wires in imported modules.
+    Sim keys are module-qualified ('<declaring module name>.<wire name>'), not bare
+    attribute names -- two different modules declaring a same-named Wire[T] (e.g. both
+    calling it "key" for unrelated purposes) must not collide in _sim_wire_state.
+
+    wire_names: {bare_name: qualified_sim_key} for wires declared in the function's own
+    defining module. module_wire_attrs: {(alias_name, attr_name): qualified_sim_key} for
+    wires in imported modules.
     """
 
     def __init__(self, wire_names, module_wire_attrs=None):
-        self._wire_names = frozenset(wire_names)
+        self._wire_names = dict(wire_names)
         self._module_wire_attrs = module_wire_attrs or {}
 
     def visit_Name(self, node):
@@ -2225,7 +2360,7 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
             return _ast.copy_location(
                 _ast.Call(
                     func=_ast.Name(id="_sim_wire_read", ctx=_ast.Load()),
-                    args=[_ast.Constant(value=node.id)],
+                    args=[_ast.Constant(value=self._wire_names[node.id])],
                     keywords=[],
                 ),
                 node,
@@ -2256,7 +2391,7 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
             and isinstance(node.targets[0], _ast.Name)
             and node.targets[0].id in self._wire_names
         ):
-            wire_name = node.targets[0].id
+            wire_name = self._wire_names[node.targets[0].id]
             return _ast.copy_location(
                 _ast.Expr(
                     value=_ast.Call(
@@ -2298,7 +2433,7 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
             and node.target.id in self._wire_names
             and node.value is not None
         ):
-            wire_name = node.target.id
+            wire_name = self._wire_names[node.target.id]
             return _ast.copy_location(
                 _ast.Expr(
                     value=_ast.Call(
@@ -2457,25 +2592,24 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
                     value=self._make_zero_call(ann_val, node),
                 )
                 return _ast.copy_location(new_node, node)
-            if (
-                isinstance(node.value, _ast.Constant)
-                and isinstance(node.value.value, str)
-                and _array_elem_ctype(ann_val) is not None
-                and getattr(_array_elem_ctype(ann_val), "_ctype_name", None)
-                in ("char", "uint8_t")
-            ):
-                # `var: char_t[N] = "literal"` -- a bare str RHS doesn't shape into
-                # the expected list-of-SimVal representation on its own, unlike a
-                # list/dict/struct-constructor initializer. _sim_cast_deep accepts a
-                # str directly for a char/uint8_t array target, so route through the
-                # same deep-cast call used for every other compound-typed write.
-                self.modified = True
-                new_node = _ast.Assign(
-                    targets=[node.target],
-                    value=self._make_deep_cast(node.value, ann_val, node),
-                )
-                return _ast.copy_location(new_node, node)
-            return node  # `var: T = value` already binds the name via plain Python
+            # `var: T = value` -- always deep-cast so every scalar leaf (at any
+            # array nesting depth) becomes a properly width-tagged SimVal. `value`
+            # is not always already shaped that way: it may be a string literal, a
+            # bare Name referencing an external plain-int list/tuple constant (e.g.
+            # a testbench sourcing test vectors from another module), a list
+            # literal/comprehension of raw ints, etc. Without this, per-element
+            # width has to be *guessed* from each raw int's value wherever the
+            # array is later consumed (e.g. array_to_uint_be/le's bit_length()
+            # fallback) -- wrong for any element whose value doesn't happen to set
+            # its type's MSB. _sim_cast_deep is idempotent on already-typed values
+            # and passes structs through unchanged (its own `_fields` fast path),
+            # so this is safe to apply unconditionally.
+            self.modified = True
+            new_node = _ast.Assign(
+                targets=[node.target],
+                value=self._make_deep_cast(node.value, ann_val, node),
+            )
+            return _ast.copy_location(new_node, node)
         if isinstance(
             ann_val, (_RegType, _FeedbackType)
         ) and _is_compound_pypeline_type(ann_val.inner_ctype):
@@ -2623,8 +2757,12 @@ def _build_reg_sim_func(fn):
 
     # Discover global wire names from the function's defining module and rewrite
     # all reads/writes in the function body to go through _sim_wire_read/write.
+    # Sim keys are module-qualified ("<module>.<wire>") so two unrelated modules
+    # declaring a same-named Wire[T] (e.g. both calling it "key") don't collide in
+    # the single global _sim_wire_state dict.
+    _own_mod_name = fn.__module__
     global_wire_names = {
-        name
+        name: f"{_own_mod_name}.{name}"
         for name, ann in fn.__globals__.get("__annotations__", {}).items()
         if isinstance(ann, (_WireType, _InputType, _OutputType))
     }
@@ -2636,7 +2774,7 @@ def _build_reg_sim_func(fn):
             continue
         for _wname, _ann in getattr(_obj, "__annotations__", {}).items():
             if isinstance(_ann, (_WireType, _InputType, _OutputType)):
-                module_wire_attrs[(_alias, _wname)] = _wname
+                module_wire_attrs[(_alias, _wname)] = f"{_obj.__name__}.{_wname}"
     if global_wire_names or module_wire_attrs:
         _GlobalWireRewriter(global_wire_names, module_wire_attrs).visit(func_def)
         _ast.fix_missing_locations(func_def)
@@ -2661,6 +2799,7 @@ def _build_reg_sim_func(fn):
     reg_names = []
     reg_zeros = {}  # name → power-on default value, computed once at decoration time
     feedback_names = []
+    feedback_zeros = {}  # name → typed zero bootstrap value (struct/array-aware)
     # Locals assigned via plain `name = expr` earlier in the body (e.g.
     # `MC = MULTI_CYCLE[32]`) aren't in _eval_ns (built before the function ran), but
     # Reg[T, MC.start] annotations reference them. Accumulate pure-Python-evaluable
@@ -2721,6 +2860,7 @@ def _build_reg_sim_func(fn):
                 reg_zeros[stmt.target.id] = _make_sim_zero(ann_val.inner_ctype)
         elif isinstance(ann_val, _FeedbackType) and stmt.value is None:
             feedback_names.append(stmt.target.id)
+            feedback_zeros[stmt.target.id] = _make_sim_zero(ann_val.inner_ctype)
 
     if (
         not reg_names
@@ -2769,7 +2909,7 @@ def _build_reg_sim_func(fn):
     # Feedback zero-init and iteration counter (only when feedback_names non-empty).
     if feedback_names:
         for name in feedback_names:
-            new_stmts.append(_ast.parse(f"{name} = 0").body[0])
+            new_stmts.append(_ast.parse(f"{name} = __fb_zero_{name}__").body[0])
         new_stmts.append(_ast.parse("__fb_iters = 0").body[0])
 
     # When feedback is present, the return statement must live OUTSIDE the
@@ -2866,6 +3006,8 @@ def _build_reg_sim_func(fn):
     )
     for _name, _zero in reg_zeros.items():
         new_globals[f"__reg_zero_{_name}__"] = _zero
+    for _name, _zero in feedback_zeros.items():
+        new_globals[f"__fb_zero_{_name}__"] = _zero
     for _key, _ctype_obj in ann_ctypes_out.items():
         new_globals[_key] = _ctype_obj
     # Inject function signature annotation type names that only appear in annotations
@@ -3034,7 +3176,19 @@ def _sim_type_wrap(fn):
     inspect.unwrap() to recover the original function for source analysis.
     functools.wraps copies __annotations__, so hw_arg_types()/hw_return_type()
     (see below) work the same whether called on the wrapped or original function.
+
+    Idempotent: if `fn` is already hw_func-wrapped (e.g. `@MAIN`/`@wires`/`@hw_func`
+    stacked on the same function in either order -- `wires`'s docstring promises
+    "stacks with @MAIN in either order"), returns it unchanged instead of wrapping
+    again. Re-wrapping an already-wrapped function is never correct: the outer call
+    would rebuild the simulation body from `fn.__globals__`/`fn.__closure__`, but for
+    an already-wrapped `fn` those reflect wherever *this* wrapper function is defined
+    (pypeline.py itself), not the original function's module -- silently dropping
+    every module-level name (e.g. a testbench's own imported constants) the original
+    body actually needs, raising NameError deep inside the rewritten sim body.
     """
+    if is_hw_func(fn):
+        return fn
     ann = fn.__annotations__
     try:
         params = list(_inspect.signature(fn).parameters.keys())
