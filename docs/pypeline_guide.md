@@ -611,10 +611,13 @@ import file_b
 wire and function names are prefixed with `file_a`, not `fa`.
 Two aliases pointing at the same file both refer to the same hardware wires.
 
-**Recursive imports are not followed automatically.**
-Only the top file's `import` statements are processed.
-If `file_a.py` itself imports `file_b.py`, `file_b` must also be imported by the
-top file if its hardware functions or wires are needed.
+**Recursive (transitive) imports are followed automatically.**
+If `file_a.py` itself imports `file_b.py`, `file_b` is discovered and elaborated
+too — you don't need to also import it from the top file. Only plain top-level
+`import module_name` statements are followed at each hop (still not
+`from file_a import *`, and not an `import` written inside a function/`if`/`try`
+body), so each file only needs to import what it directly uses, the same way
+plain Python code is organized.
 
 Call hardware functions from imported files using attribute syntax:
 

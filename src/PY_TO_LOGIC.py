@@ -4761,9 +4761,16 @@ def _build_inst_lookup(parser_state):
 
 
 def _process_imports(
-    tree, module_globals, parser_state, files_to_elaborate, top_file=None
+    tree,
+    module_globals,
+    parser_state,
+    files_to_elaborate,
+    top_file=None,
+    processed_files=None,
 ):
-    """Scan top-level ast.Import nodes in tree.body.
+    """Scan top-level ast.Import nodes in tree.body, recursing into each newly
+    discovered sub-module's own tree so transitive (multi-hop) import chains are
+    followed automatically -- not just the top file's direct imports.
 
     For each imported module that resolves to a local .py file:
     - Registers Wire[T]/Input[T]/Output[T] declarations in parser_state.global_vars
@@ -4772,13 +4779,24 @@ def _process_imports(
       so the elaborator can resolve 'fa.main_a_out' -> 'file_a_main_a_out'.
     - Appends (file_path, sub_tree, sub_globals, module_prefix) to files_to_elaborate
       so those files' hardware functions are also elaborated.
+    - Recurses into the sub-module's own tree to discover its imports in turn.
 
-    Only processes each file once (tracked by processed_files set).
-    Skips built-in modules, .so extensions, and any file already in files_to_elaborate.
+    Only processes each file once, tracked by processed_files -- shared across the
+    whole recursion (passed by reference) so diamond-shaped import graphs (two
+    modules both importing a third) dedupe correctly regardless of which path
+    reaches it first. Skips built-in modules, .so extensions, and any file already
+    in files_to_elaborate.
+
+    A sub-file is recursed into and appended to files_to_elaborate AFTER its own
+    imports are fully processed, so its callees always land earlier in the list
+    than it does -- required by the "sub-files elaborated before dependents"
+    invariant that cross-file function calls rely on (see PY_TO_LOGIC_DESIGN.md,
+    Multi-File Import Support § Elaboration ordering), now upheld at any depth.
     """
-    processed_files = {entry[0] for entry in files_to_elaborate}
-    if top_file:
-        processed_files.add(os.path.abspath(top_file))
+    if processed_files is None:
+        processed_files = {entry[0] for entry in files_to_elaborate}
+        if top_file:
+            processed_files.add(os.path.abspath(top_file))
     for node in tree.body:
         if not isinstance(node, ast.Import):
             continue
@@ -4800,15 +4818,25 @@ def _process_imports(
                     continue
             if not os.path.isfile(sub_file):
                 continue
-            if sub_file in processed_files:
-                # Already queued (e.g. imported under two aliases) — still record alias
-                actual_name = alias.name.replace(".", "_")
-                parser_state.module_alias_to_actual[local_name] = actual_name
-                continue
-            processed_files.add(sub_file)
 
             actual_name = alias.name.replace(".", "_")
+            # Recursion flattens every file's own aliases into this one shared
+            # dict, so two different files reusing the same local alias name for
+            # two different modules must fail loudly rather than silently
+            # corrupting wire resolution for whichever file was processed first.
+            existing_actual = parser_state.module_alias_to_actual.get(local_name)
+            if existing_actual is not None and existing_actual != actual_name:
+                raise ElaborationError(
+                    f"Import alias '{local_name}' refers to module '{actual_name}' "
+                    f"here but to '{existing_actual}' elsewhere -- the same local "
+                    f"import alias must resolve to the same module everywhere "
+                    f"across an imported design tree"
+                )
             parser_state.module_alias_to_actual[local_name] = actual_name
+
+            if sub_file in processed_files:
+                continue  # already queued (e.g. imported under two aliases)
+            processed_files.add(sub_file)
 
             sub_globals = vars(sub_mod)
             with open(sub_file, "r") as fh:
@@ -4819,6 +4847,17 @@ def _process_imports(
             _discover_enums_from_module(sub_mod, parser_state)
             _discover_global_wires(
                 sub_tree, sub_globals, parser_state, name_prefix=actual_name
+            )
+
+            # Recurse before appending: a sub-file's own imports (its callees)
+            # must land earlier in files_to_elaborate than the sub-file itself.
+            _process_imports(
+                sub_tree,
+                sub_globals,
+                parser_state,
+                files_to_elaborate,
+                top_file=top_file,
+                processed_files=processed_files,
             )
             files_to_elaborate.append((sub_file, sub_tree, sub_globals, actual_name))
 

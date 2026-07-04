@@ -1816,16 +1816,31 @@ which scans `tree.body` for `ast.Import` nodes:
 For each imported module that is a local `.py` file:
 
 1. Records `local_alias → actual_module_name` in `parser_state.module_alias_to_actual`
-   (e.g. `'fa' → 'file_a'` for `import file_a as fa`).
+   (e.g. `'fa' → 'file_a'` for `import file_a as fa`). If the same local alias was
+   already recorded elsewhere in the design pointing to a *different* actual module,
+   this raises `ElaborationError` immediately — a real collision, not just a repeat.
 2. Calls `_discover_structs_from_module(sub_mod, parser_state)` to register struct types.
 3. Calls `_discover_global_wires(sub_tree, sub_globals, parser_state, name_prefix=actual_name)`
    which registers every `Wire[T]` / `Input[T]` / `Output[T]` in the sub-file under the
    mangled name (`file_a_i`, `file_a_o`) in `parser_state.global_vars`.
-4. Appends `(sub_file, sub_tree, sub_globals, actual_name)` to `files_to_elaborate`.
+4. **Recurses into the sub-module's own tree** (`_process_imports(sub_tree, sub_globals, ...)`)
+   to discover *its* imports in turn, before appending the sub-module itself.
+5. Appends `(sub_file, sub_tree, sub_globals, actual_name)` to `files_to_elaborate`.
 
 Modules are processed once per file path; a second alias pointing to the same file only
 adds an entry to `module_alias_to_actual` without re-parsing. The `top_file` path is
 passed to seed `processed_files` so the top file can never be added as its own sub-file.
+
+**Transitive (multi-hop) imports are followed automatically.** If `file_a.py` itself
+`import file_c`s, `file_c` is discovered and elaborated too, with no depth limit —
+`_process_imports` recurses into every newly discovered module's own tree. The
+`processed_files` set is threaded through the whole recursion by reference (not
+recomputed per call), so a diamond-shaped import graph — two different modules each
+importing a shared third module — dedupes correctly regardless of which path reaches
+it first. This still only recognizes plain top-level `import module_name` statements
+in each file's own `tree.body` — not `ast.ImportFrom`, and not imports nested inside a
+`def`/`if`/`try` block — matching the existing single-hop rule, just applied
+recursively across the whole graph instead of only to the top file.
 
 ### Elaboration ordering — sub-files first
 
@@ -1833,7 +1848,7 @@ passed to seed `processed_files` so the top file can never be added as its own s
 
 ```python
 files_to_elaborate = []
-_process_imports(...)          # appends sub-files
+_process_imports(...)          # appends sub-files (recursively, callees before callers)
 files_to_elaborate.append(top) # top file last
 ```
 
@@ -1843,6 +1858,12 @@ elaboration begins. If the top file calls a sub-file function
 `FuncLogicLookupTable` — no stub lookup race. The stubs registered in step 6 still
 exist as forward references for recursive calls within a single file; they are never
 hit cross-file as long as this ordering is maintained.
+
+This same guarantee now holds at any import depth: `_process_imports` recurses into a
+sub-module's own imports **before** appending that sub-module to `files_to_elaborate`,
+so if `file_a` imports `file_c` and calls one of its functions, `file_c` always lands
+earlier in the list than `file_a` — the same "callees before callers" rule applied one
+level deeper, transitively, for as many hops as the import graph has.
 
 ### Wire access in hardware function bodies
 
@@ -2000,14 +2021,26 @@ are pre-existing and documented.
   `import file_a as fa` → hardware prefix `file_a`, not `fa`.
 - Only `.py` source files are processed; `.so`, built-in, and package modules are skipped.
 - Each imported file is processed once even if imported under multiple aliases.
-- Recursive sub-file imports (`file_a.py` itself importing `file_c.py`) are not
-  automatically followed; only the top file's imports are scanned.
+- **Recursive (transitive) sub-file imports are followed automatically.** If
+  `file_a.py` itself imports `file_c.py`, `file_c.py` is discovered and elaborated
+  too — no depth limit, and diamond-shaped graphs dedupe correctly. Only plain
+  top-level `import module_name` statements are scanned at each hop, same as the
+  top file's own restriction above; `from file_a import *` is still excluded, and
+  an `import` statement nested inside a function/`if`/`try` body is still invisible
+  to this discovery pass (it is not an `ast.walk` over the whole file, only
+  `tree.body`).
+- Because every file's own aliases are now folded into the same shared
+  `parser_state.module_alias_to_actual` dict, two different files that reuse the
+  same local alias name for two *different* modules raises `ElaborationError`
+  immediately rather than silently letting whichever file was processed second
+  win.
 
 ### Implementation mapping
 
 | Concept | Storage / location |
 |---|---|
 | Alias → actual module name | `parser_state.module_alias_to_actual` (dict) |
+| Cross-file alias collision guard | `_process_imports` — `ElaborationError` if an alias already maps to a different actual module |
 | Sub-file wire discovery | `_discover_global_wires(..., name_prefix=actual_name)` |
 | Module-attr wire lookup | `FuncElaborator._resolve_module_wire_name(base, attr)` |
 | Bare-name sub-file wire lookup | `FuncElaborator._resolve_global_wire(bare_name)` |
