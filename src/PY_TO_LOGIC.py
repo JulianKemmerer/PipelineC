@@ -1,10 +1,12 @@
 import ast
+import functools
 import hashlib
 import importlib.util
 import inspect
 import os
 import re
 import sys
+import textwrap
 import types as _types
 
 import C_TO_LOGIC
@@ -435,9 +437,14 @@ def _annotation_to_ctype(ann, eval_ns=None, parser_state=None):
 # Naming helpers
 # ─────────────────────────────────────────────
 
-# If a fully-expanded canonical name exceeds this length, it is replaced with
-# "{base_name}_{sha256[:8]}" to keep VHDL identifiers manageable.
-_MAX_MANGLE_NAME_LEN = 64
+# If a fully-expanded canonical name exceeds this length, it is collapsed to a
+# truncated-but-readable prefix + "_{sha256[:8]}" to keep VHDL identifiers
+# manageable (see _collapse_overflow_name).
+_MAX_MANGLE_NAME_LEN = 96
+
+# Recursion bound for _callable_canonical_name <-> _canonical_func_name mutual
+# recursion (each nesting level consumes ~2 of these, one per direction).
+_MAX_CALLABLE_RECURSION_DEPTH = 16
 
 
 def _callable_hash(val):
@@ -445,7 +452,9 @@ def _callable_hash(val):
 
     Uses qualname + module + a digest of closure cell reprs so that two
     factory-produced functions with the same name but different captured
-    types produce different hashes.
+    types produce different hashes. Last-resort disambiguator used only by
+    _callable_canonical_name's fallback branches (lambdas, unintrospectable
+    objects, recursion-cycle/depth-cap) -- never the common case.
     """
     qual = getattr(val, "__qualname__", repr(val))
     mod = getattr(val, "__module__", "")
@@ -464,7 +473,187 @@ def _callable_hash(val):
     return hashlib.sha256(f"{qual}:{mod}:{closure_key}".encode()).hexdigest()[:8]
 
 
-def _canonical_func_name(func, closure_ns, module_globals=None):
+_ILLEGAL_IDENT_CHARS_RE = re.compile(r"[^A-Za-z0-9_]+")
+
+
+def _strip_qualname_markers(s: str) -> str:
+    """Collapse runs of non-identifier characters -- angle brackets from
+    synthetic qualname/repr segments like '<lambda>'/'<listcomp>', dots,
+    repr() punctuation (spaces, parens, '0x...' addresses, etc.) -- into
+    single underscores so the result stays a legal VHDL identifier."""
+    return _ILLEGAL_IDENT_CHARS_RE.sub("_", s)
+
+
+def _callable_hash_fallback(val):
+    """Readable-prefix-plus-hash token for callables with no stable readable
+    identity of their own (lambdas, unintrospectable objects, recursion
+    cycles/depth-cap). Kept short: this is the last-resort branch, not the
+    common case -- see _callable_canonical_name."""
+    qual = getattr(val, "__qualname__", None) or repr(val)
+    mod = getattr(val, "__module__", "") or ""
+    raw = f"{mod}_{qual}" if mod else qual
+    prefix = _sanitize_vhdl_name(_strip_qualname_markers(raw))
+    return f"{prefix}_{_callable_hash(val)}"
+
+
+def _closure_cells_ns(func_for_source):
+    """Extract closure-cell variables (co_freevars/__closure__) for a function.
+    Does not recover annotation-only vars -- see _recover_annotation_closure_vars."""
+    closure_ns = {}
+    if func_for_source.__code__.co_freevars and func_for_source.__closure__:
+        for var, cell in zip(
+            func_for_source.__code__.co_freevars, func_for_source.__closure__
+        ):
+            try:
+                closure_ns[var] = cell.cell_contents
+            except ValueError:
+                pass
+    return closure_ns
+
+
+def _recover_annotation_closure_vars(func_def, func_for_source, closure_ns):
+    """Mutate closure_ns in place, adding factory-parameter type vars that are
+    used only in annotations (e.g. VALUE_TYPE in 'v: VALUE_TYPE') and therefore
+    were never captured as closure cells by Python -- but WERE evaluated and
+    stored in __annotations__ at def time. Shared by _elaborate_live_func
+    (top-level closures) and _callable_canonical_name (nested/recursive
+    closures) so the same function gets the same closure_ns -- and therefore
+    the same canonical name -- regardless of which caller reaches it first.
+    """
+    ann_dict = getattr(func_for_source, "__annotations__", {})
+    for ast_arg in func_def.args.args:
+        if isinstance(ast_arg.annotation, ast.Name):
+            var_name = ast_arg.annotation.id
+            if var_name not in closure_ns and ast_arg.arg in ann_dict:
+                closure_ns[var_name] = ann_dict[ast_arg.arg]
+    if func_def.returns is not None and isinstance(func_def.returns, ast.Name):
+        var_name = func_def.returns.id
+        if var_name not in closure_ns and "return" in ann_dict:
+            closure_ns[var_name] = ann_dict["return"]
+
+
+def _parsed_func_def(func_for_source):
+    """Parse func_for_source's own source into its ast.FunctionDef node, or
+    None if source isn't available (builtins, C extensions, etc.)."""
+    try:
+        source = textwrap.dedent(inspect.getsource(func_for_source))
+        tree = ast.parse(source)
+    except (OSError, TypeError, SyntaxError):
+        return None
+    for node in ast.walk(tree):
+        if isinstance(node, ast.FunctionDef):
+            return node
+    return None
+
+
+def _callable_canonical_name(val, module_globals, _seen=None, _depth=0):
+    """Return a readable, hierarchical name for a callable closure-param value.
+
+    Rather than hashing the callable's identity into an opaque token, this
+    reflects which Python module/function the callable is defined in:
+      - functools.partial: unwrap .func, recurse, fold in bound args/keywords.
+      - factory-produced closure (has '.<locals>.' in __qualname__): recurse
+        into _canonical_func_name so it gets its OWN unique, readable name
+        (e.g. "quarter_round_a_0_b_4_c_8_d_12") -- this is what makes two
+        differently-parameterized instances of the same inner factory
+        function distinguishable without a hash.
+      - plain top-level function / builtin: use its own module + qualname
+        directly (e.g. "chacha20_round_a", "math_sqrt") -- already unique,
+        no hash needed.
+      - lambda / unintrospectable object: readable info runs out, so fall
+        back to a readable-prefix-plus-hash token (_callable_hash_fallback).
+
+    _seen/_depth bound the mutual recursion with _canonical_func_name against
+    cycles (mutual closures) and pathological nesting depth.
+    """
+    if _seen is None:
+        _seen = set()
+    # Strip any @hw_func / _sim_type_wrap wrapper first, mirroring
+    # _elaborate_live_func's func_for_source = inspect.unwrap(func) -- the
+    # wrapper's OWN closure (e.g. _sim_type_wrap's 'ann' annotations dict) is
+    # not a factory-closure param and must never be treated as one.
+    val = inspect.unwrap(val)
+    val_id = id(val)
+    if val_id in _seen or _depth > _MAX_CALLABLE_RECURSION_DEPTH:
+        return _callable_hash_fallback(val)
+    _seen = _seen | {val_id}
+
+    if isinstance(val, functools.partial):
+        inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
+        bound = []
+        for a in val.args:
+            if isinstance(a, (int, bool)) or a is None:
+                bound.append(str(a))
+            else:
+                bound.append(hashlib.sha256(repr(a).encode()).hexdigest()[:8])
+        for k in sorted(val.keywords):
+            v = val.keywords[k]
+            if isinstance(v, (int, bool)) or v is None:
+                bound.append(f"{k}_{v}")
+            else:
+                bound.append(f"{k}_{hashlib.sha256(repr(v).encode()).hexdigest()[:8]}")
+        return _sanitize_vhdl_name("_".join([inner] + bound)) if bound else inner
+
+    # Lambdas carry no distinguishing name of their own (many share "<lambda>"),
+    # so they stay in the hash-suffixed fallback regardless of nesting.
+    if getattr(val, "__name__", None) == "<lambda>":
+        return _callable_hash_fallback(val)
+
+    qualname = getattr(val, "__qualname__", None)
+    if qualname and ".<locals>." in qualname and hasattr(val, "__code__"):
+        closure_ns = _closure_cells_ns(val)
+        val_func_def = _parsed_func_def(val)
+        if val_func_def is not None:
+            _recover_annotation_closure_vars(val_func_def, val, closure_ns)
+        # Resolve the factory in val's OWN defining module, not the caller's
+        # module_globals -- val may be defined in an entirely different file
+        # than whatever function is currently closing over it (e.g. a shared
+        # helper like make_abs/make_clz imported and reused across designs),
+        # so using val.__globals__ is what makes this recursive name match
+        # the name val would get if elaborated directly as its own top-level
+        # FuncLogicLookupTable entry.
+        val_module_globals = getattr(val, "__globals__", None) or module_globals
+        nested = _canonical_func_name(
+            val, closure_ns, val_module_globals, _seen, _depth + 1
+        )
+        if nested is not None:
+            return nested  # already unique + readable; no hash needed
+
+    if qualname:
+        # Plain top-level function (or a factory closure whose defining
+        # factory wasn't found in module_globals): module + qualname is
+        # already a stable, readable identity -- e.g. "chacha20_round_a".
+        mod = getattr(val, "__module__", "") or ""
+        mod_last = mod.rsplit(".", 1)[-1] if mod else ""
+        dotted = f"{mod_last}.{qualname}" if mod_last else qualname
+        dotted = dotted.replace(".<locals>.", "_").replace(".", "_")
+        return _sanitize_vhdl_name(_strip_qualname_markers(dotted))
+
+    return _callable_hash_fallback(val)
+
+
+def _collapse_overflow_name(full: str, inner_func_name: str) -> str:
+    """Collapse an over-length canonical name to fit _MAX_MANGLE_NAME_LEN while
+    keeping a readable prefix, instead of discarding all descriptive content.
+
+    The hash is computed over the FULL untruncated name (so two different
+    over-length names that happen to share a truncated prefix still get
+    distinct results); the kept prefix is trimmed to the last '_' boundary so
+    it doesn't end mid-token.
+    """
+    if len(full) <= _MAX_MANGLE_NAME_LEN:
+        return full
+    h = hashlib.sha256(full.encode()).hexdigest()[:8]
+    budget = _MAX_MANGLE_NAME_LEN - 9  # "_" + 8 hex chars
+    prefix = full[:budget]
+    last_us = prefix.rfind("_")
+    if last_us > budget // 2:
+        prefix = prefix[:last_us]
+    prefix = prefix.rstrip("_") or inner_func_name
+    return f"{prefix}_{h}"
+
+
+def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _depth=0):
     """Return a canonical name for a factory-produced closure, or None for top-level functions.
 
     Factory closures have '.<locals>.' in __qualname__. The canonical name is:
@@ -477,19 +666,28 @@ def _canonical_func_name(func, closure_ns, module_globals=None):
     For each factory parameter:
       - C type / @struct type → use canonical type name
       - int / bool             → use value string
-      - callable (in closure)  → hash(qualname + module + closure reprs)
+      - callable (in closure)  → readable, hierarchical name reflecting which
+                                 module/function it's defined in, recursing into
+                                 its own factory-closure naming if applicable
+                                 (see _callable_canonical_name); hash only as a
+                                 last resort (lambdas, unintrospectable objects)
       - absent from closure    → the param was consumed by the factory to produce
                                  derived locals; hash those derived closure vars
                                  and label the term with the param name
 
-    If the full name exceeds _MAX_MANGLE_NAME_LEN it is replaced with
-    "{inner_func_name}_{sha256[:8]}" of the full name.
+    If the full name exceeds _MAX_MANGLE_NAME_LEN it is collapsed via
+    _collapse_overflow_name (truncated-but-readable prefix + hash of the full
+    name), not discarded entirely.
 
     Four cases:
       1. Factory not found in module_globals: fall back to all closure vars (legacy).
       2. Factory has 0 params: name is just the inner function name (no suffix).
       3. ALL factory params absent from closure: hash all closure vars under param names.
       4. SOME params absent: include found params normally + hash derived vars for missing.
+
+    _seen/_depth thread cycle/depth guards through to _callable_canonical_name
+    for callable-valued closure params (mutual recursion); callers outside this
+    module never need to pass them.
     """
     if ".<locals>." not in func.__qualname__:
         return None
@@ -534,10 +732,7 @@ def _canonical_func_name(func, closure_ns, module_globals=None):
             h = hashlib.sha256(closure_repr).hexdigest()[:8]
             param_suffix = "_".join(sorted(factory_param_names))
             full = inner_func_name + "_" + param_suffix + "_" + h
-            if len(full) > _MAX_MANGLE_NAME_LEN:
-                h2 = hashlib.sha256(full.encode()).hexdigest()[:8]
-                return f"{inner_func_name}_{h2}"
-            return full
+            return _collapse_overflow_name(full, inner_func_name)
         filtered_ns = found_params
     else:
         # 0-param factory — name is just the inner function name, no suffix.
@@ -561,8 +756,13 @@ def _canonical_func_name(func, closure_ns, module_globals=None):
         elif val is None:
             name_parts.append(f"{var_name}_None")
         elif callable(val):
-            # Hash callable identity so different function args produce different names.
-            name_parts.append(f"{var_name}_{_callable_hash(val)}")
+            # Readable, hierarchical name reflecting the callable's own module/
+            # function nesting (recursing into its own factory-closure naming
+            # if applicable) -- see _callable_canonical_name.
+            name_parts.append(
+                f"{var_name}_"
+                f"{_callable_canonical_name(val, module_globals, _seen, _depth + 1)}"
+            )
         else:
             raise ElaborationError(
                 f"Factory closure variable '{var_name}' has unsupported value "
@@ -586,10 +786,7 @@ def _canonical_func_name(func, closure_ns, module_globals=None):
             name_parts.append(f"{mp}_{missing_hash}")
 
     full = inner_func_name + ("_" + "_".join(name_parts) if name_parts else "")
-    if len(full) > _MAX_MANGLE_NAME_LEN:
-        h = hashlib.sha256(full.encode()).hexdigest()[:8]
-        return f"{inner_func_name}_{h}"
-    return full
+    return _collapse_overflow_name(full, inner_func_name)
 
 
 def _loc_str(src_file, node):
@@ -3725,14 +3922,24 @@ class FuncElaborator:
         functions reached through two differently-wrapped factories would
         otherwise collide on that shared alias.
         """
-        import inspect
-        import textwrap
-
         # Strip any @hw_func / _sim_type_wrap wrapper so we analyse the original source.
         func_for_source = inspect.unwrap(func)
 
+        # True defining file/line of the closure itself (not the enclosing
+        # elaboration context's self.src_file, and not relative to the
+        # dedented/re-parsed snippet below) -- consumed via Logic.ast_meta by
+        # e.g. SYN.GET_OUTPUT_DIRECTORY to place generated VHDL output
+        # mirroring the real source layout. Mirrors _top_level_func_key's
+        # os.path.abspath(inspect.getsourcefile(...)) pattern.
+        try:
+            true_src_file = os.path.abspath(inspect.getsourcefile(func_for_source))
+        except TypeError:
+            true_src_file = self.src_file
+        _, true_start_line = inspect.getsourcelines(func_for_source)
+
         source = textwrap.dedent(inspect.getsource(func_for_source))
         tree = ast.parse(source)
+        ast.increment_lineno(tree, true_start_line - 1)
 
         func_nodes = [n for n in ast.walk(tree) if isinstance(n, ast.FunctionDef)]
         if not func_nodes:
@@ -3741,32 +3948,14 @@ class FuncElaborator:
             )
         func_def = func_nodes[0]
 
-        # Extract closure variables (e.g. LO_SIZE=3, HI_SIZE=4, OUT_SIZE=7)
-        closure_ns = {}
-        if func_for_source.__code__.co_freevars and func_for_source.__closure__:
-            for var, cell in zip(
-                func_for_source.__code__.co_freevars, func_for_source.__closure__
-            ):
-                try:
-                    closure_ns[var] = cell.cell_contents
-                except ValueError:
-                    pass
-
-        # Python only captures names as closure cells when they appear in the
-        # function *body*.  Names used only in annotations (e.g. VALUE_TYPE in
-        # `v: VALUE_TYPE`) are NOT captured as closure cells, but Python DOES
-        # evaluate them at definition time and store the result in __annotations__.
-        # Recover those type variables here so annotation resolution works.
-        ann_dict = getattr(func, "__annotations__", {})
-        for ast_arg in func_def.args.args:
-            if isinstance(ast_arg.annotation, ast.Name):
-                var_name = ast_arg.annotation.id
-                if var_name not in closure_ns and ast_arg.arg in ann_dict:
-                    closure_ns[var_name] = ann_dict[ast_arg.arg]
-        if func_def.returns is not None and isinstance(func_def.returns, ast.Name):
-            var_name = func_def.returns.id
-            if var_name not in closure_ns and "return" in ann_dict:
-                closure_ns[var_name] = ann_dict["return"]
+        # Extract closure variables (e.g. LO_SIZE=3, HI_SIZE=4, OUT_SIZE=7), plus
+        # annotation-only type vars (e.g. VALUE_TYPE in 'v: VALUE_TYPE') that
+        # Python doesn't capture as closure cells -- shared with
+        # _callable_canonical_name's recursive closure reconstruction so the
+        # same function always gets the same closure_ns/canonical name
+        # regardless of which caller reaches it first.
+        closure_ns = _closure_cells_ns(func_for_source)
+        _recover_annotation_closure_vars(func_def, func_for_source, closure_ns)
 
         # Canonical name: factory closures get a name derived from the factory chain
         # + closure vars, so the same factory+args always maps to the same Logic().
@@ -3836,7 +4025,7 @@ class FuncElaborator:
         saved = _pypeline._push_scoped_registrations(func)
         try:
             elab = FuncElaborator(
-                func_def, self.parser_state, self.src_file, merged_globals
+                func_def, self.parser_state, true_src_file, merged_globals
             )
             logic = elab.elaborate()
         finally:

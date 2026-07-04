@@ -62,6 +62,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "mixed_granularity_reassign_test.py"],
         )
     )
+    # Not run through the pipelinec CLI either: pure-unit + in-process
+    # PARSE_FILE regression tests for _canonical_func_name/_callable_canonical_name
+    # readable-naming behavior and the factory-closure ast_meta src_file/line fix.
+    tests.append(
+        Test(
+            name="factory_closure_naming_test",
+            category="elab",
+            cmd=[INST_DIR / "factory_closure_naming_test.py"],
+        )
+    )
     return tests
 
 

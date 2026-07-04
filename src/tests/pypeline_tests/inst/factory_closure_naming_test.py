@@ -1,0 +1,303 @@
+# pyright: reportInvalidTypeForm=none
+import functools
+import inspect
+import math
+import os
+import sys
+
+sys.path.insert(
+    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
+)
+sys.path.insert(
+    0,
+    os.path.join(
+        os.path.dirname(os.path.abspath(__file__)),
+        "..",
+        "..",
+        "..",
+        "..",
+        "include",
+        "pypeline",
+    ),
+)
+
+import PY_TO_LOGIC as P
+import pypeline as PL
+
+# Regression tests for readable, hierarchical canonical names of factory-
+# closure functions (replacing opaque SHA-256 hashes for callable-valued
+# closure params) -- see docs/PY_TO_LOGIC_DESIGN.md "Canonical function name
+# format". These are pure-unit tests against _canonical_func_name /
+# _callable_canonical_name / _collapse_overflow_name directly, since the bug
+# being guarded against is silent/semantic (an uninformative-but-otherwise-
+# valid name), not a syntax/toolchain rejection.
+
+
+def round_a(x):
+    return x + 1
+
+
+def round_b(x):
+    return x * 2 + 3
+
+
+def make_quarter_round(a, b, c, d):
+    def quarter_round(s):
+        return s + a + b + c + d
+
+    return quarter_round
+
+
+def make_wrapper(func):
+    def func_stream(x):
+        return func(x)
+
+    return func_stream
+
+
+_module_level_lambda = lambda x: x + 1  # noqa: E731
+
+
+MODULE_GLOBALS = {
+    "round_a": round_a,
+    "round_b": round_b,
+    "make_quarter_round": make_quarter_round,
+    "make_wrapper": make_wrapper,
+}
+
+
+def _closure_ns(fn):
+    ns = {}
+    if fn.__code__.co_freevars and fn.__closure__:
+        for var, cell in zip(fn.__code__.co_freevars, fn.__closure__):
+            ns[var] = cell.cell_contents
+    return ns
+
+
+def test_nested_factory_instances_get_distinct_readable_names():
+    # The chacha20.py shape: two instantiations of the same inner factory,
+    # closed over by nothing else -- must be distinct AND readable (not a
+    # bare hash), matching quarter_round.py's now-removed manual __name__
+    # override.
+    qr1 = make_quarter_round(0, 4, 8, 12)
+    qr2 = make_quarter_round(1, 5, 9, 13)
+    name1 = P._canonical_func_name(qr1, _closure_ns(qr1), MODULE_GLOBALS)
+    name2 = P._canonical_func_name(qr2, _closure_ns(qr2), MODULE_GLOBALS)
+    assert name1 == "quarter_round_a_0_b_4_c_8_d_12", name1
+    assert name2 == "quarter_round_a_1_b_5_c_9_d_13", name2
+    assert name1 != name2
+    print("test_nested_factory_instances_get_distinct_readable_names PASS")
+
+
+def test_top_level_callable_closure_param_is_readable():
+    # func_stream(func=round_a)-shaped case: the closed-over callable is a
+    # plain top-level function -- its own name must appear, not a hash.
+    fw_a = make_wrapper(round_a)
+    fw_b = make_wrapper(round_b)
+    name_a = P._canonical_func_name(fw_a, _closure_ns(fw_a), MODULE_GLOBALS)
+    name_b = P._canonical_func_name(fw_b, _closure_ns(fw_b), MODULE_GLOBALS)
+    assert "round_a" in name_a, name_a
+    assert "round_b" in name_b, name_b
+    assert name_a != name_b
+    assert "_" + P._callable_hash(round_a) not in name_a  # no hash-only fallback
+    print("test_top_level_callable_closure_param_is_readable PASS")
+
+
+def test_nested_callable_closure_param_recurses_and_stays_unique():
+    # func_stream(func=<quarter_round instance>)-shaped case (the actual
+    # wireguard-fpga stream_pipeline shape): the closed-over callable is
+    # ITSELF a differently-parameterized factory closure -- two different
+    # instances must still be distinguishable through the outer name.
+    qr1 = make_quarter_round(0, 4, 8, 12)
+    qr2 = make_quarter_round(1, 5, 9, 13)
+    fw1 = make_wrapper(qr1)
+    fw2 = make_wrapper(qr2)
+    name1 = P._canonical_func_name(fw1, _closure_ns(fw1), MODULE_GLOBALS)
+    name2 = P._canonical_func_name(fw2, _closure_ns(fw2), MODULE_GLOBALS)
+    assert "quarter_round_a_0_b_4_c_8_d_12" in name1, name1
+    assert "quarter_round_a_1_b_5_c_9_d_13" in name2, name2
+    assert name1 != name2
+    print("test_nested_callable_closure_param_recurses_and_stays_unique PASS")
+
+
+def make_shared_typed_helper(T):
+    def shared_typed_helper(x: T) -> T:
+        return x
+
+    return shared_typed_helper
+
+
+def test_annotation_only_param_recovered_into_closure_ns():
+    # Regression: a factory param used only in annotations (never in the
+    # function body, e.g. the T in "x: T") is not captured as a Python
+    # closure cell -- only _recover_annotation_closure_vars's AST-based
+    # recovery finds it. A prior version of _callable_canonical_name's
+    # recursive closure_ns construction skipped this step entirely, silently
+    # dropping such params from nested names.
+    helper = make_shared_typed_helper(PL.uint32_t)
+    closure_ns = P._closure_cells_ns(helper)
+    assert closure_ns == {}, closure_ns  # T not referenced in the body
+    func_def = P._parsed_func_def(helper)
+    P._recover_annotation_closure_vars(func_def, helper, closure_ns)
+    assert closure_ns == {"T": PL.uint32_t}, closure_ns
+    print("test_annotation_only_param_recovered_into_closure_ns PASS")
+
+
+def test_recursive_naming_uses_callables_own_globals_and_recovers_annotations():
+    # Regression: found via the full synth_tests.py suite (float32_add_test),
+    # where a closed-over callable (make_abs's abs_val, imported from a
+    # different module than the one currently being elaborated) got TWO
+    # different names depending on whether it was named via the recursive
+    # callable-closure path (using the CALLER's module_globals, which didn't
+    # contain make_abs) or via its own direct top-level elaboration (using
+    # its OWN module's globals, which did) -- a naming-consistency bug, not
+    # just a readability one. Fixed by resolving the factory in the
+    # callable's OWN __globals__, not whatever module_globals the caller
+    # passes in. Also exercises annotation-only recovery (T is never
+    # referenced in shared_typed_helper's body).
+    helper = make_shared_typed_helper(PL.uint32_t)
+    fw = make_wrapper(helper)
+    # Deliberately empty module_globals: must not matter, since helper's own
+    # __globals__ (this test module, which has make_shared_typed_helper) is
+    # used instead.
+    name = P._canonical_func_name(fw, _closure_ns(fw), {})
+    assert "shared_typed_helper" in name, name
+    assert "uint32_t" in name, name
+    print(
+        "test_recursive_naming_uses_callables_own_globals_and_recovers_annotations PASS"
+    )
+
+
+def test_same_factory_same_args_dedups():
+    # Same factory + same args from two call sites must still produce the
+    # SAME canonical name (cache-hit / dedup behavior unchanged).
+    qr1a = make_quarter_round(0, 4, 8, 12)
+    qr1b = make_quarter_round(0, 4, 8, 12)
+    name1a = P._canonical_func_name(qr1a, _closure_ns(qr1a), MODULE_GLOBALS)
+    name1b = P._canonical_func_name(qr1b, _closure_ns(qr1b), MODULE_GLOBALS)
+    assert name1a == name1b
+    print("test_same_factory_same_args_dedups PASS")
+
+
+def test_functools_partial_closure_param_no_crash():
+    p = functools.partial(round_a)
+    fw_p = make_wrapper(p)
+    name = P._canonical_func_name(fw_p, _closure_ns(fw_p), MODULE_GLOBALS)
+    assert "round_a" in name, name
+    print("test_functools_partial_closure_param_no_crash PASS")
+
+
+def test_lambda_closure_param_is_valid_identifier_with_hash():
+    # Module-level (short-qualname) lambda so the outer name doesn't overflow
+    # _MAX_MANGLE_NAME_LEN and get hash-collapsed for an unrelated reason.
+    fw_lam = make_wrapper(_module_level_lambda)
+    name = P._canonical_func_name(fw_lam, _closure_ns(fw_lam), MODULE_GLOBALS)
+    assert name.isidentifier(), name
+    # Lambdas carry no distinguishing readable name, so a hash suffix is
+    # expected here (the one deliberate remaining fallback case).
+    assert P._callable_hash(_module_level_lambda) in name, name
+    print("test_lambda_closure_param_is_valid_identifier_with_hash PASS")
+
+
+@PL.hw_func
+def hw_round_a(x: PL.uint32_t) -> PL.uint32_t:
+    return x + 1
+
+
+def test_hw_func_wrapped_closure_param_unwraps_before_recursing():
+    # Regression for a real bug caught by the full synth suite (float32_add_test):
+    # a closed-over @hw_func-decorated callable is the _sim_type_wrap WRAPPER, not
+    # the original function -- the wrapper is itself a '.<locals>.'-qualified
+    # closure (over _sim_type_wrap's own locals like 'ann', an annotations dict),
+    # which is NOT a factory-closure param and must never be treated as one.
+    # _callable_canonical_name must inspect.unwrap() before recursing, exactly
+    # like _elaborate_live_func does for the top-level func.
+    fw = make_wrapper(hw_round_a)
+    name = P._canonical_func_name(fw, _closure_ns(fw), MODULE_GLOBALS)
+    assert "hw_round_a" in name, name
+    assert name.isidentifier(), name
+    print("test_hw_func_wrapped_closure_param_unwraps_before_recursing PASS")
+
+
+def test_builtin_closure_param_is_readable():
+    fw_sqrt = make_wrapper(math.sqrt)
+    name = P._canonical_func_name(fw_sqrt, _closure_ns(fw_sqrt), MODULE_GLOBALS)
+    assert "sqrt" in name, name
+    print("test_builtin_closure_param_is_readable PASS")
+
+
+def test_cycle_guard_falls_back_to_hash_not_infinite_recursion():
+    fw_a = make_wrapper(round_a)
+    seen_containing_self = {id(fw_a)}
+    result = P._callable_canonical_name(
+        fw_a, MODULE_GLOBALS, _seen=seen_containing_self, _depth=0
+    )
+    assert result.isidentifier(), result
+    print("test_cycle_guard_falls_back_to_hash_not_infinite_recursion PASS")
+
+
+def test_overflow_collapse_keeps_readable_prefix():
+    full = "inner_" + ("param_value_" * 20)
+    collapsed = P._collapse_overflow_name(full, "inner")
+    assert len(collapsed) <= P._MAX_MANGLE_NAME_LEN
+    assert collapsed.startswith("inner")
+    import hashlib
+
+    expected_hash = hashlib.sha256(full.encode()).hexdigest()[:8]
+    assert collapsed.endswith(expected_hash), collapsed
+    print("test_overflow_collapse_keeps_readable_prefix PASS")
+
+
+def test_ast_meta_src_file_and_line_point_to_true_definition():
+    # Regression for the _elaborate_live_func ast_meta bug: for a factory
+    # closure, Logic.ast_meta.src_file/.line must point at the closure's own
+    # true defining file/line (used by SYN.GET_OUTPUT_DIRECTORY to place
+    # generated VHDL), not the enclosing elaboration context's file or a
+    # dedent-relative line number.
+    import tempfile
+
+    import SYN
+    from multi_cycle_path import make_valid_ready_mcp  # noqa: F401
+
+    SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(prefix="factory_closure_naming_test_")
+    test_file = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "two_factory_wrappers_test.py")
+    )
+    parser_state = P.PARSE_FILE(test_file)
+
+    import multi_cycle_path
+
+    expected_file = os.path.abspath(inspect.getsourcefile(multi_cycle_path))
+    _, expected_line = inspect.getsourcelines(multi_cycle_path.make_valid_ready_mcp)
+    # func_mcp is defined a few lines into make_valid_ready_mcp's body; just
+    # assert the file matches and the line falls within that function's body
+    # (not, e.g., line 1 of a re-parsed/dedented snippet, and not the test
+    # file that called make_valid_ready_mcp).
+    found = False
+    for logic in parser_state.FuncLogicLookupTable.values():
+        if logic.ast_meta is not None and "func_mcp" in (logic.func_name or ""):
+            assert logic.ast_meta.src_file == expected_file, logic.ast_meta.src_file
+            assert logic.ast_meta.line > expected_line, (
+                logic.ast_meta.line,
+                expected_line,
+            )
+            found = True
+    assert found, "no func_mcp-derived Logic() found in FuncLogicLookupTable"
+    print("test_ast_meta_src_file_and_line_point_to_true_definition PASS")
+
+
+if __name__ == "__main__":
+    test_nested_factory_instances_get_distinct_readable_names()
+    test_top_level_callable_closure_param_is_readable()
+    test_nested_callable_closure_param_recurses_and_stays_unique()
+    test_annotation_only_param_recovered_into_closure_ns()
+    test_recursive_naming_uses_callables_own_globals_and_recovers_annotations()
+    test_same_factory_same_args_dedups()
+    test_functools_partial_closure_param_no_crash()
+    test_hw_func_wrapped_closure_param_unwraps_before_recursing()
+    test_lambda_closure_param_is_valid_identifier_with_hash()
+    test_builtin_closure_param_is_readable()
+    test_cycle_guard_falls_back_to_hash_not_infinite_recursion()
+    test_overflow_collapse_keeps_readable_prefix()
+    test_ast_meta_src_file_and_line_point_to_true_definition()
+    print("All factory_closure_naming tests passed.")

@@ -992,11 +992,43 @@ middle-chain factories (nested definitions) are looked up as callables in the cl
 - `_CTypeMeta` / `@struct` type → canonical C type name (brackets mangled: `[` → `_`, `]` removed)
 - `int` / `bool` → stringified value
 - `None` → `"None"`
-- **callable (present in closure)** → SHA-256 hash of `qualname:module:closure_reprs`, first 8 hex chars — encoded as `{param_name}_{hash8}`
-- **callable or other param absent from closure** → the factory consumed it to produce derived locals; the derived (non-param) closure vars are hashed instead, and the missing param name labels the term: `{param_name}_{hash8}`
+- **callable (present in closure)** → a **readable, hierarchical name** reflecting which
+  Python module/function the callable is defined in (`_callable_canonical_name`), not a
+  hash — see below.
+- **callable or other param absent from closure** → the factory consumed it to produce
+  derived locals; the derived (non-param) closure vars are hashed instead, and the
+  missing param name labels the term: `{param_name}_{hash8}` (unchanged — this is a
+  distinct mechanism from the callable-value case above; see "Known limitation" below)
 
-**If the fully-expanded name exceeds `_MAX_MANGLE_NAME_LEN` (64 chars)**, it is replaced
-with `{inner_func_name}_{sha256[:8]}` of the full name, keeping VHDL identifiers short.
+**Callable-valued closure params (`_callable_canonical_name`):** rather than hashing the
+callable's identity into an opaque token, the name reflects which module/function it's
+defined in, so it can be traced back to source instead of just deduplicated:
+
+- **Factory-produced closure** (e.g. the callable passed in is itself an instantiated
+  `make_quarter_round(0, 4, 8, 12)`-style closure): recurse into this same
+  `_canonical_func_name` algorithm so the callable gets its **own** unique, readable name
+  (e.g. `quarter_round_a_0_b_4_c_8_d_12`) — this is what makes two differently-parameterized
+  instances of the same inner factory function distinguishable without a hash, and is the
+  mechanism that makes manual `__name__`/`__qualname__` overrides on factory-closure
+  functions unnecessary (see the note at the end of this section).
+- **Plain top-level function or builtin** (the common case — e.g. an already-`@hw_func`-
+  decorated function passed into `make_stream_pipeline`): use its own `module.qualname`
+  directly (e.g. `chacha20_round_a`, `math_sqrt`) — already unique, no hash needed.
+- **`functools.partial`**: unwrap `.func`, recurse into it, and fold in bound
+  args/keywords (plain values encoded as-is; complex ones hashed individually).
+- **Lambda or an otherwise unintrospectable object**: readable info runs out here, so a
+  short hash suffix is appended to whatever partial identity is available (the one
+  remaining case where a hash is used for a callable value) — e.g.
+  `chacha20_make_wrapper_func_stream_lambda_ee724960`.
+- Recursion is bounded (`_MAX_CALLABLE_RECURSION_DEPTH`) and cycle-guarded (mutual
+  closures) — on a cycle or depth-cap hit, that one sub-callable falls back to a hash,
+  never the whole name.
+
+**If the fully-expanded name exceeds `_MAX_MANGLE_NAME_LEN` (96 chars)**, `_collapse_overflow_name`
+keeps a truncated-but-readable prefix (the front of the assembled name, trimmed to the
+last `_` boundary) plus `_{sha256[:8]}` of the **full, untruncated** name — e.g.
+`autopipelined_input_reg_true_output_reg_true_func_chacha20_block_step_a1b2c3d4` rather
+than discarding every descriptive part down to `autopipelined_a1b2c3d4`.
 
 **Four cases for the suffix:**
 
@@ -1033,16 +1065,39 @@ with `{inner_func_name}_{sha256[:8]}` of the full name, keeping VHDL identifiers
 
 # make_stream_pipeline.<locals>.stream_pipeline  factory params: func, MAX_IN_FLIGHT
 # MAX_IN_FLIGHT IS in closure (used directly in body); func IS NOT (consumed to make
-# in_stream_t, out_stream_t, etc.).  func → hash of derived closure vars.
+# in_stream_t, out_stream_t, etc.).  func → hash of derived closure vars (unchanged
+# mechanism -- see "Known limitation" below).
 # → "stream_pipeline_MAX_IN_FLIGHT_4_func_8146762b"
 
 # make_stream_pipeline.<locals>.func_stream  factory params: func, MAX_IN_FLIGHT
-# func IS in closure (called directly); MAX_IN_FLIGHT IS NOT (consumed).
-# → "func_stream_func_7c27d30a_MAX_IN_FLIGHT_429caa85"
+# func IS in closure (called directly, so its own readable name is used, not a hash);
+# MAX_IN_FLIGHT IS NOT (consumed elsewhere -- same hashed-fallback mechanism as above).
+# → "func_stream_func_chacha20_round_a_MAX_IN_FLIGHT_429caa85"
+# (previously "func_stream_func_7c27d30a_MAX_IN_FLIGHT_429caa85" -- the "func_..." term
+# used to be an opaque hash of round_a's identity; it's now round_a's own module-
+# qualified name, traceable back to chacha20.py)
 
 # def make_singleton():  (0 params)
 # → "singleton"   (inner func name; no suffix)
 ```
+
+**Known limitation: missing-param hash can be misleading.** The "param absent from
+closure" case (e.g. `MAX_IN_FLIGHT` above) hashes whatever *other* derived closure vars
+happen to be present — if the missing param's value doesn't actually influence any of
+those derived vars, the same hash suffix can appear for genuinely different values of
+that param. This is a distinct, narrower mechanism than the callable-value naming above
+and is not changed by it; when in doubt, cross-reference `Logic.ast_meta.src_file`/`.line`
+(now correctly pointing at the closure's true `def`, not the calling module) to find the
+exact source rather than relying on the name alone.
+
+**No manual naming needed.** Because factory-closure names are now both informative and
+guaranteed-unique from `_canonical_func_name`/`_callable_canonical_name` alone, hardware
+design source code should never need to manually assign `__name__`/`__qualname__` on a
+factory-produced function to make its generated name readable or unique — doing so is
+unsupported and unnecessary (a legacy pattern predating this naming scheme; e.g. a
+`quarter_round.__name__ = f"quarter_round_{a}_{b}_{c}_{d}"` override once used in the
+wireguard-fpga ChaCha20 port produces the exact same name automatically today, and has
+been removed).
 
 ### Specialised Types
 
