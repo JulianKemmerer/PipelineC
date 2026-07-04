@@ -1139,6 +1139,38 @@ Correctness under both simulation layers follows directly from the existing
 `sim_call()` (`_sim_converging` stays `False` there), fires only in the final pass under
 `pypeline_sim.py`.
 
+### Invocation via `pipelinec --sim --run N`
+
+`pypeline_sim.py`'s multi-MAIN runner is also reachable through the main compiler driver,
+`src/pipelinec`, without naming it explicitly:
+
+```
+python3 src/pipelinec my_design.py --sim --run 1000
+```
+
+is equivalent to `python3 src/pypeline_sim.py my_design.py --run 1000` whenever no other
+simulator backend flag (`--cocotb`, `--edaplay`, `--modelsim`, `--cxxrtl`, `--verilator`) is
+given. This is implemented entirely in `src/SIM.py`:
+
+- `SET_SIM_TOOL(cmd_line_args, source_file)` defaults `SIM_TOOL` to the `pypeline_sim` module
+  itself (used as a module-identity sentinel, the same pattern as `COCOTB`/`EDAPLAY`/etc.) when
+  `source_file` ends in `.py` and none of the explicit backend flags were passed. `.c` sources
+  keep defaulting to `EDAPLAY` — behavior is unchanged there.
+- `DO_OPTIONAL_SIM(...)` calls `pypeline_sim.run_sim(source_file, args.run)` in-process (no
+  subprocess) when `SIM_TOOL is pypeline_sim`.
+- `src/pipelinec` checks `SIM.SIM_TOOL is SIM.pypeline_sim` right after tool selection and, if
+  simulation was requested (`--sim`/`--sim_comb`), calls `DO_OPTIONAL_SIM` and exits immediately
+  — **no VHDL elaboration or synthesis happens on this path**, since the native simulator runs
+  directly against the design's Python source and has no use for generated VHDL. This mirrors
+  how `pypeline_sim.py` already works standalone.
+
+Explicitly requesting `--cocotb --ghdl` (or any other backend) on a `.py` design is unaffected
+and still goes through the full elaboration → VHDL → cocotb path described elsewhere in this
+document and in `PY_TO_LOGIC_DESIGN.md` — the two simulation systems remain independent, this
+just makes the native one the default when nothing else is requested. There is currently no
+`pipelinec` equivalent of `pypeline_sim.py`'s `--mode` flag; the native path always runs at the
+default `strict` accuracy.
+
 ---
 
 ## Simulation Modes
@@ -1368,14 +1400,21 @@ against `sim_call(div_inv, x)` as ground truth), and `fifo_sim_model_convergence
 `sim_model_convergence_test`'s pattern to prove the FIFO's deque state doesn't double-push
 per cycle under wire convergence.
 
+The `pipelinec --sim --run N` § above is covered by `pipelinec_native_sim_test`, which reruns
+`global_wires_sim_test.py` through `pipelinec`'s CLI (`pipelinec inst/global_wires_sim_test.py
+--sim --run 10`) instead of invoking `pypeline_sim.py` directly — this isolates the
+`SIM.SET_SIM_TOOL`/`DO_OPTIONAL_SIM` dispatch wiring from the simulator itself, which the other
+`global_wires_sim_test` entry already covers.
+
 ```
 python3 src/tests/pypeline_tests/sim_tests.py            # just the sim tests
 python3 src/tests/pypeline_tests/sim_tests.py -j 4
 python3 src/tests/pypeline_tests/run_all.py --category sim
 ```
 
-No `pipelinec` elaboration/synthesis happens in this script — that's covered separately by
-`elab_tests.py`/`synth_tests.py` (see
+Aside from `pipelinec_native_sim_test` above (which exits before elaboration even though it
+invokes `pipelinec`), no `pipelinec` elaboration/synthesis happens in this script — that's
+covered separately by `elab_tests.py`/`synth_tests.py` (see
 [PY_TO_LOGIC_DESIGN.md § Tests](PY_TO_LOGIC_DESIGN.md#tests)). Tests run in parallel via a
 thread pool (`common.py`, shared with the other two scripts); see
 [pypeline_DESIGN.md § Tests](pypeline_DESIGN.md#tests) for the full-suite runner.

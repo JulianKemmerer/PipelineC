@@ -296,6 +296,19 @@ A `--mode` flag trades simulation accuracy for speed:
 python3 src/pypeline_sim.py my_design.py --run 1000 --mode raw
 ```
 
+You can also reach the same simulator through the main compiler driver, without naming it:
+
+```
+python3 src/pipelinec my_design.py --sim --run 1000
+```
+
+This is equivalent to the `pypeline_sim.py` invocation above whenever no other simulator is
+explicitly selected (no `--cocotb`, `--edaplay`, `--modelsim`, `--cxxrtl`, or `--verilator`
+flag) — `pipelinec` detects the `.py` design and defaults to the native simulator, skipping
+VHDL elaboration/synthesis entirely. Explicitly passing `--cocotb --ghdl` (etc.) still
+elaborates the design to VHDL and simulates that instead; there's no `--mode` passthrough from
+`pipelinec` yet, so this path always runs at `strict` accuracy.
+
 ### `@sim_output` — side effects once per cycle
 
 Functions decorated with `@sim_output` are called normally in simulation's final pass

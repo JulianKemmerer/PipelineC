@@ -7,7 +7,7 @@ Run standalone: python3 sim_tests.py [-j N]
 
 import sys
 
-from common import INST_DIR, PYPELINE_SIM, Test, main
+from common import INST_DIR, PIPELINEC, PYPELINE_SIM, Test, main
 
 # fmt: off
 PLAIN_PYTHON_TEST_FILES = [
@@ -62,6 +62,19 @@ def get_tests() -> list:
             name="fifo_sim_model_convergence_test",
             category="sim",
             cmd=[PYPELINE_SIM, INST_DIR / "fifo_sim_model_test.py", "--run", "16"],
+        )
+    )
+    tests.append(
+        Test(
+            name="pipelinec_native_sim_test",
+            category="sim",
+            cmd=[
+                PIPELINEC,
+                INST_DIR / "global_wires_sim_test.py",
+                "--sim",
+                "--run",
+                "10",
+            ],
         )
     )
     return tests

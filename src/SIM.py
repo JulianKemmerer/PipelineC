@@ -4,6 +4,7 @@ import COCOTB
 import CXXRTL
 import EDAPLAY
 import MODELSIM
+import pypeline_sim
 import SYN
 import VERILATOR
 import VHDL
@@ -12,7 +13,7 @@ import VHDL
 SIM_TOOL = EDAPLAY
 
 
-def SET_SIM_TOOL(cmd_line_args):
+def SET_SIM_TOOL(cmd_line_args, source_file=None):
     global SIM_TOOL
     if cmd_line_args.cocotb:
         SIM_TOOL = COCOTB
@@ -24,9 +25,16 @@ def SET_SIM_TOOL(cmd_line_args):
         SIM_TOOL = VERILATOR
     elif cmd_line_args.modelsim:
         SIM_TOOL = MODELSIM
+    elif source_file is not None and source_file.endswith(".py"):
+        # No simulator explicitly requested for a Pypeline (.py) design --
+        # default to the built-in native Python simulator instead of
+        # edaplayground.com.
+        SIM_TOOL = pypeline_sim
 
 
-def DO_OPTIONAL_SIM(do_sim, parser_state, args, multimain_timing_params=None):
+def DO_OPTIONAL_SIM(
+    do_sim, parser_state, args, multimain_timing_params=None, source_file=None
+):
     if SIM_TOOL is COCOTB:
         if do_sim:
             COCOTB.DO_SIM(multimain_timing_params, parser_state, args)
@@ -41,6 +49,9 @@ def DO_OPTIONAL_SIM(do_sim, parser_state, args, multimain_timing_params=None):
     elif SIM_TOOL is VERILATOR:
         if do_sim:
             VERILATOR.DO_SIM(multimain_timing_params, parser_state, args)
+    elif SIM_TOOL is pypeline_sim:
+        if do_sim:
+            pypeline_sim.run_sim(source_file, args.run)
     else:
         print("WARNING: Unknown simulation tool:", SIM_TOOL.__name__)
 

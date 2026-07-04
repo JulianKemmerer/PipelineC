@@ -196,7 +196,14 @@ C_TO_LOGIC.MULT_STYLE = args.mult
 # Open tools flag to not run nextpnr
 OPEN_TOOLS.YOSYS_JSON_ONLY = args.yosys_json
 # Sim tool selection
-SIM.SET_SIM_TOOL(args)
+SIM.SET_SIM_TOOL(args, c_file)
+# Native Pypeline (.py) simulation runs directly against the design's Python
+# source -- no VHDL elaboration or synthesis needed. If SIM.py selected it
+# (no other simulator explicitly requested) and simulation was actually
+# requested, run it now and skip straight to done.
+if SIM.SIM_TOOL is SIM.pypeline_sim and (args.sim or args.sim_comb):
+    SIM.DO_OPTIONAL_SIM(True, None, args, source_file=c_file)
+    sys.exit(0)
 # AXIS XO file switch
 SYN.WRITE_AXIS_XO_FILE = args.xo_axis
 # Pin constraints file (if specified)
@@ -253,7 +260,7 @@ if SYN.SYN_TOOL is None:
 if args.comb:
     SYN.WRITE_FINAL_FILES(None, parser_state)
     # Here is a good point to check basic single cycle/comb logic functionality before pipelining with synth tools
-    SIM.DO_OPTIONAL_SIM(args.sim_comb, parser_state, args)
+    SIM.DO_OPTIONAL_SIM(args.sim_comb, parser_state, args, source_file=c_file)
 
 if not args.no_synth:
     if not args.comb and not args.yosys_json:
@@ -291,6 +298,8 @@ if not args.no_synth:
         )
 
     # Start simulation on final VHDL
-    SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params)
+    SIM.DO_OPTIONAL_SIM(
+        args.sim, parser_state, args, multimain_timing_params, source_file=c_file
+    )
 
 print("Done.", flush=True)
