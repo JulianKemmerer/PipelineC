@@ -22,6 +22,7 @@ For the shared pypeline.py type system and `SimVal` foundations, see
 - [`_GlobalWireRewriter` — Wire Read/Write Interception](#_globalwirerewriter--wire-readwrite-interception)
 - [`Reg[T]` Simulation — Stateful Registers Across Clock Cycles](#regt-simulation--stateful-registers-across-clock-cycles)
 - [`Feedback[T]` Simulation — Combinatorial Convergence](#feedbackt-simulation--combinatorial-convergence)
+- [`sim_model` — Python Simulation Models](#sim_model--python-simulation-models)
 
 **Multi-MAIN Runner (`pypeline_sim.py`)**
 - [`Wire[T]` / `Input[T]` / `Output[T]` Global Wire Simulation](#wiret--inputt--outputt-global-wire-simulation)
@@ -872,6 +873,91 @@ def fb_reg_accumulate(load: uint1_t, data: uint8_t) -> uint8_t:
 
 ---
 
+## `sim_model` — Python Simulation Models
+
+`sim_model(target, copy_state=True)` (public API, defined next to `vhdl()`) attaches a
+Python model to any `@hw_func`/`@MAIN` function: in simulation the model runs instead of
+the function's own body. This is the hook that makes `vhdl(...)`-bodied functions
+simulable, and it works equally as a fast-model override for ordinary hardware functions.
+Elaboration is untouched — the elaborator never sees models.
+
+### Model Routing Cell
+
+`_sim_type_wrap` creates a one-element closure list `_model_cell = [None]` per decorated
+function and exposes it as `wrapper._sim_model_cell`. `sim_model(target)` validates and
+stores `(model, kind, copy_state)` into it, where `kind` is `"hw_func"` (delegate),
+`"class"`, or `"callable"` (pre-constructed instance). Exactly one model per target —
+a second attachment raises `ValueError`; a non-`@hw_func` target raises `TypeError`, as
+does an `@hw_func` delegate whose arg/return types differ from the target's.
+
+Every wrapper variant checks the cell per call — the no-model hot path pays one
+`is not None` test:
+
+- `_run_body` (shared by the two casting wrappers) routes to
+  `_call_sim_model(...)` before the `sim_body_fn`/`fn` dispatch, so **arg and return
+  casting are shared with normal calls** (model outputs wrap to the declared return
+  width for free).
+- The `has_state=False` fast path normally skips the instance stack entirely; when a
+  model is attached it pushes `(fn.__qualname__, call_loc)` around the call (via
+  `_sim_capture_call_loc`, which honors `SIM_TRACE_LOCATIONS`), because class models key
+  their state by instance path.
+- The `SIM_RAW_INTS` wrappers route to the model with **no casting**, consistent with
+  raw mode.
+- The `if not _sim_active:` elaborator-probe fallbacks are unchanged — models never run
+  outside simulation.
+
+### Evaluation Semantics (`_call_sim_model`)
+
+**hw_func delegates** are simply called: the delegate's own wrapper manages its
+`Reg[T]`/`Feedback[T]` state and pushes its own stack entry *on top of the target's*, so
+two call sites of the target keep independent delegate state. Double arg/return casting
+through both wrappers is idempotent.
+
+**Class/callable models** get Reg-like commit timing. Per evaluation:
+
+```python
+inst_path = _sim_current_inst_path()
+committed = _sim_reg_read(inst_path, "__sim_model__", None)   # reserved key
+if committed is None:
+    committed = model()          # lazy per-instance creation (fresh power-on state)
+working = copy.deepcopy(committed)
+result  = working(*args, **kwargs)
+_sim_reg_write(inst_path, "__sim_model__", working)           # buffer-aware commit
+```
+
+Storing the instance under the reserved `"__sim_model__"` key in `_sim_reg_state` means
+buffered commit, `_sim_reg_flush_buffer`, and `sim_reset()` (models re-`__init__`) all
+come for free from the existing register machinery.
+
+The invariant this buys: **every evaluation computes outputs from a deepcopy of the
+state committed at the last clock edge** — outputs are a pure function of (cycle-start
+state, current inputs), which is exactly "combinational logic + registered state".
+Consequences per context:
+
+- **Plain `sim_call`** — no buffer, write commits immediately: one call = one cycle,
+  identical to Layer-1 `Reg[T]` semantics.
+- **`pypeline_sim.py` wire convergence** — the model may re-evaluate many times per
+  cycle with changing input wire values; committed state never moves mid-cycle, so each
+  re-evaluation recomputes fresh and a combinational input→output path through the model
+  converges exactly like ordinary comb logic. The final post-convergence pass's buffered
+  copy is what `_sim_reg_flush_buffer` commits — state advances exactly once per cycle,
+  computed from converged inputs.
+- **`Feedback[T]` loops in Layer 1** — no buffer is active, so a model called inside a
+  feedback convergence loop commits once per iteration. This is the same pre-existing
+  behavior as nested `Reg[T]` hw_funcs inside feedback loops (the transformed body
+  snapshots/resets only its *own* registers per iteration); a future unification could
+  have the outermost `sim_call` open a write buffer, fixing both uniformly.
+- **Side effects** — model `__call__` bodies multi-fire during convergence; keep them
+  side-effect-free or check `pypeline._sim_converging` (the rule `@sim_output` encodes).
+
+`copy_state=False` opts out of the deepcopy for heavy state: the instance is created
+once (written directly to `_sim_reg_state`, bypassing the buffer — otherwise re-
+evaluations in the creation cycle would re-instantiate) and mutated in place. Faster,
+but not convergence-safe; only sound when inputs are final the first time the model runs
+each cycle.
+
+---
+
 ## `Wire[T]` / `Input[T]` / `Output[T]` Global Wire Simulation
 
 `Wire[T]` declarations at module level create `__annotations__` entries but no Python variable.
@@ -1075,6 +1161,16 @@ subclass has `__getitem__`.
   limitations (plain int operands, shifts, `__radd__`).
 - **`Input[T]` wires** — initialized to zero; setting `Input[T]` values before each cycle is
   not yet supported by `pypeline_sim.py`.
+- **Raw VHDL (`vhdl(...)`)** — simulable only with an attached `@sim_model`
+  (see `sim_model` section above); without one, calling the function in simulation raises
+  `NotImplementedError`. `make_fifo`/`make_stream_fifo`/`make_stream_pipeline` do not yet
+  attach models, so those remain unsimulable for now (a `collections.deque`-based FWFT
+  FIFO model is the natural follow-up).
+- **`sim_model` class models inside Layer-1 `Feedback[T]` loops** — commit once per
+  convergence iteration instead of once per call (no write buffer is active under plain
+  `sim_call`); same pre-existing behavior as nested `Reg[T]` hw_funcs in feedback loops.
+  Model side effects also multi-fire during `pypeline_sim.py` convergence — keep model
+  bodies side-effect-free or check `_sim_converging`.
 
 ---
 
@@ -1210,6 +1306,14 @@ document directly — `Reg[T]`/`Feedback[T]`/`Wire[T]` simulation, bit-accurate 
 asserts on `sim_call()` results and exits non-zero on failure. It also covers the
 multi-MAIN clock-cycle runner (`pypeline_sim.py` § above) via `global_wires_sim_test.py`,
 invoked as `python3 src/pypeline_sim.py inst/global_wires_sim_test.py --run 10`.
+
+`sim_model` is covered by `inst/sim_model_test.py`, registered twice: as a plain-`python3`
+run (both model forms on vhdl-bodied accumulators, two-call-site instance independence,
+return-width casting, `sim_reset()` re-instantiation, `copy_state=False`, model override
+of a normal hw_func, attachment error cases, model-less `vhdl(...)` still raising) and as
+`sim_model_convergence_test` under the multi-MAIN runner (`--run 20`), where a checker
+MAIN asserts a numpy class model's state advances exactly once per cycle despite being
+re-evaluated with mid-cycle-changing wire inputs from a later-queued driver MAIN.
 
 ```
 python3 src/tests/pypeline_tests/sim_tests.py            # just the sim tests

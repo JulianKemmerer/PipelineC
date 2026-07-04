@@ -1767,14 +1767,115 @@ def vhdl(vhdl_text):
     simulate arbitrary user-supplied VHDL text in Python, so this function has
     no dual-mode simulation behavior: it always raises when actually called
     (i.e. outside hardware elaboration, which recognizes vhdl(...) structurally
-    by AST and never executes this body).
+    by AST and never executes this body). To simulate a vhdl(...)-bodied
+    function, attach a Python simulation model to it with @sim_model (below).
     """
     raise NotImplementedError(
-        "vhdl(...) has no simulation model yet. It can only be used inside "
-        "hardware-elaborated functions — calling it directly, via sim_call(), or "
-        "via pypeline_sim.py is not yet supported. (A future hook will let you "
-        "attach a Python simulation model to a specific vhdl(...) block.)"
+        "vhdl(...) has no attached simulation model. It can only be used inside "
+        "hardware-elaborated functions — to call a vhdl(...)-bodied function via "
+        "sim_call() or pypeline_sim.py, attach a Python simulation model to it "
+        "with @sim_model(target)."
     )
+
+
+def sim_model(target, copy_state=True):
+    """Attach a Python simulation model to a hardware function.
+
+    Returns a decorator that registers the model as the native-simulation
+    implementation of `target` (an @hw_func/@MAIN-decorated function). Whenever
+    target is called during simulation, the model runs instead of target's own
+    body; hardware elaboration is completely unaffected (models are invisible
+    to the elaborator). This is how vhdl(...)-bodied functions become
+    simulable, and it can equally override an ordinary hardware function with
+    a faster or higher-level model.
+
+    Exactly one model per target, of either form (a second attachment raises
+    ValueError):
+
+    Form 1 -- an @hw_func delegate (synthesizable Pypeline, same signature)::
+
+        @sim_model(accum)
+        @hw_func
+        def accum_model(din: uint32_t) -> uint32_t:
+            total: Reg[uint32_t]
+            total = total + din
+            return total
+
+    Form 2 -- an arbitrary Python class (sim-only; any state in __init__)::
+
+        @sim_model(accum)
+        class AccumModel:
+            def __init__(self):
+                self.samples = np.array([], dtype=np.uint64)
+            def __call__(self, din):
+                self.samples = np.append(self.samples, int(din))
+                return int(self.samples.sum())
+
+    One class instance is created lazily per hardware instance (per call site,
+    the same keying as Reg[T] state), so two call sites of target hold
+    independent model state. A pre-constructed callable instance may also be
+    attached; with copy_state=True it serves as the per-instance power-on
+    template.
+
+    State timing for class/callable models is Reg-like: each evaluation runs
+    on a copy.deepcopy of the instance committed at the last clock edge and
+    commits through the buffered register-write path, so outputs are a pure
+    function of (cycle-start state, current inputs) and pypeline_sim.py
+    wire-convergence re-evaluation cannot double-step state. Model __call__
+    bodies may run several times per cycle during convergence -- keep them
+    side-effect-free, or gate side effects on `not pypeline._sim_converging`
+    (the same rule @sim_output exists to solve).
+
+    copy_state=False skips the deepcopy: the instance is created once and
+    mutated in place -- faster for heavy state, but NOT convergence-safe (only
+    sound when the model's inputs are already final the first time it runs
+    each cycle, e.g. plain single-call sim_call() use). Ignored for hw_func
+    delegates, whose Reg[T] state already commits through the register path.
+
+    Model outputs are cast to target's declared return type at the call
+    boundary, exactly like any hw_func result.
+    """
+    cell = getattr(target, "_sim_model_cell", None)
+    if cell is None:
+        raise TypeError(
+            f"sim_model target {getattr(target, '__name__', target)!r} is not a "
+            f"hardware function — apply @hw_func (or @MAIN) to it first"
+        )
+
+    def _attach(model):
+        if cell[0] is not None:
+            raise ValueError(
+                f"{target.__name__!r} already has a sim model attached "
+                f"({cell[0][0]!r}); exactly one model (of either form) per "
+                f"hardware function"
+            )
+        if is_hw_func(model):
+            kind = "hw_func"
+            model_ret = _inspect.unwrap(model).__annotations__.get("return")
+            target_ret = _inspect.unwrap(target).__annotations__.get("return")
+            if hw_arg_types(model) != hw_arg_types(target) or model_ret != target_ret:
+                raise TypeError(
+                    f"sim model {model.__name__!r} signature does not match "
+                    f"target {target.__name__!r}: an @hw_func delegate must "
+                    f"take and return the same hardware types"
+                )
+        elif isinstance(model, type):
+            kind = "class"
+            if not any("__call__" in vars(c) for c in model.__mro__):
+                raise TypeError(
+                    f"sim model class {model.__name__!r} must define __call__"
+                )
+        elif callable(model):
+            kind = "callable"
+        else:
+            raise TypeError(
+                f"sim model must be an @hw_func delegate, a class, or a "
+                f"callable instance, not {type(model).__name__}"
+            )
+        cell[0] = (model, kind, copy_state)
+        return model
+
+    return _attach
 
 
 # ─────────────────────────────────────────────
@@ -1814,6 +1915,7 @@ sim_print._is_sim_print = True
 # Sim infrastructure: _sim_cast, _sim_type_wrap / hw_func, sim_call
 # ─────────────────────────────────────────────
 
+import copy as _copy
 import functools as _functools
 import inspect as _inspect
 import sys as _sys
@@ -2842,6 +2944,73 @@ def _sim_cast_call_arg(pt, v):
     return v
 
 
+# ─────────────────────────────────────────────
+# Simulation models (sim_model): per-instance storage and evaluation
+# ─────────────────────────────────────────────
+
+# Reserved _sim_reg_state key holding a hardware instance's committed
+# class/callable model instance (a name no real register can have).
+_SIM_MODEL_REG_KEY = "__sim_model__"
+
+
+def _sim_capture_call_loc(caller_f):
+    """Capture a call-site location tuple from a caller frame, honoring
+    SIM_TRACE_LOCATIONS (same convention as the register-aware wrapper).
+    Only used on model-attached paths, never the no-model hot path."""
+    if SIM_TRACE_LOCATIONS and hasattr(caller_f.f_code, "co_positions"):
+        instr_idx = caller_f.f_lasti // 2
+        positions = list(caller_f.f_code.co_positions())
+        if 0 <= instr_idx < len(positions):
+            pos = positions[instr_idx]
+            if pos[2] is not None:
+                return (caller_f.f_code.co_filename, caller_f.f_lineno, pos[2], pos[3])
+    return (caller_f.f_code.co_filename, caller_f.f_lineno, None, None)
+
+
+def _call_sim_model(model_entry, args, kwargs):
+    """Evaluate an attached simulation model for the current hardware instance.
+
+    hw_func delegates are simply called: the delegate's own wrapper manages its
+    Reg[T]/Feedback[T] state, pushing its own entry on top of the target's
+    already-pushed instance-stack entry, so delegate state stays per-instance
+    of the *target*.
+
+    Class/callable models get Reg-like commit timing: every evaluation computes
+    outputs from a deepcopy of the instance committed at the last clock edge,
+    then commits the mutated copy through the buffered register-write path.
+    Under pypeline_sim.py wire convergence the committed instance never moves
+    mid-cycle, so re-evaluations with changing inputs are idempotent — a
+    combinational input→output path through the model converges exactly like
+    ordinary comb logic, and state advances exactly once per cycle (the final
+    converged pass's buffered copy is what _sim_reg_flush_buffer commits).
+    Under plain sim_call (no buffer) the write commits immediately: one call =
+    one cycle, matching Layer-1 Reg[T] semantics. Shared pre-existing
+    limitation: a Layer-1 Feedback[T] convergence loop has no buffer, so models
+    (like nested Reg[T] hw_funcs) commit once per loop iteration there.
+    """
+    model, kind, copy_state = model_entry
+    if kind == "hw_func":
+        return model(*args, **kwargs)
+    inst_path = _sim_current_inst_path()
+    committed = _sim_reg_read(inst_path, _SIM_MODEL_REG_KEY, None)
+    if committed is None:
+        # First evaluation for this hardware instance: fresh power-on state
+        # (sim_reset() clears _sim_reg_state, re-triggering this).
+        committed = model() if kind == "class" else model
+        if not copy_state:
+            # In-place mode commits the instance itself directly, bypassing any
+            # write buffer — otherwise re-evaluations within the creation cycle
+            # would re-instantiate (and in-place mutation is not
+            # convergence-safe regardless).
+            _sim_reg_state.setdefault(inst_path, {})[_SIM_MODEL_REG_KEY] = committed
+    if not copy_state:
+        return committed(*args, **kwargs)
+    working = _copy.deepcopy(committed)
+    result = working(*args, **kwargs)
+    _sim_reg_write(inst_path, _SIM_MODEL_REG_KEY, working)
+    return result
+
+
 def _sim_type_wrap(fn):
     """Wrap a pypeline hardware function for bit-accurate simulation.
 
@@ -2868,6 +3037,11 @@ def _sim_type_wrap(fn):
     # _sim_current_inst_path() so the instance stack must be maintained.
     sim_body_fn, has_state = _build_reg_sim_func(fn)
 
+    # sim_model routing cell: sim_model(target) fills this one-element list
+    # with (model, kind, copy_state); every wrapper variant checks it per call
+    # (one is-None test on the no-model hot path).
+    _model_cell = [None]
+
     # Helper: cast args and kwargs to their annotated types, run the body, cast result.
     # Extracted so both wrapper variants share the same arg-casting logic.
     def _run_body(new_args, kwargs):
@@ -2884,7 +3058,9 @@ def _sim_type_wrap(fn):
                 new_kwargs[k] = _sim_cast_deep(v, pt)
         saved = _push_scoped_registrations(fn)
         try:
-            if sim_body_fn is not None:
+            if _model_cell[0] is not None:
+                result = _call_sim_model(_model_cell[0], new_args, new_kwargs)
+            elif sim_body_fn is not None:
                 result = sim_body_fn(*new_args, **new_kwargs)
             else:
                 result = fn(*new_args, **new_kwargs)
@@ -2910,6 +3086,17 @@ def _sim_type_wrap(fn):
             def wrapper(*args, **kwargs):
                 if not _sim_active:
                     return fn(*args, **kwargs)
+                if _model_cell[0] is not None:
+                    # Class models key their state by instance path, so this
+                    # otherwise stateless path must maintain the stack. Raw
+                    # mode: model args/results are not cast.
+                    _sim_inst_stack.append(
+                        (fn.__qualname__, _sim_capture_call_loc(_sys._getframe(1)))
+                    )
+                    try:
+                        return _call_sim_model(_model_cell[0], args, kwargs)
+                    finally:
+                        _sim_inst_stack.pop()
                 saved = _push_scoped_registrations(fn)
                 try:
                     return (
@@ -2937,6 +3124,8 @@ def _sim_type_wrap(fn):
                 _sim_inst_stack.append((fn.__qualname__, call_loc))
                 saved = _push_scoped_registrations(fn)
                 try:
+                    if _model_cell[0] is not None:
+                        return _call_sim_model(_model_cell[0], args, kwargs)
                     return (
                         sim_body_fn(*args, **kwargs)
                         if sim_body_fn is not None
@@ -2947,6 +3136,7 @@ def _sim_type_wrap(fn):
                     _sim_inst_stack.pop()
 
         wrapper._is_hw_func = True
+        wrapper._sim_model_cell = _model_cell
         return wrapper
 
     if not has_state:
@@ -2964,7 +3154,18 @@ def _sim_type_wrap(fn):
             for i, a in enumerate(args):
                 if i < len(params):
                     new_args[i] = _sim_cast_call_arg(ann.get(params[i]), a)
-            return _run_body(new_args, kwargs)
+            if _model_cell[0] is None:
+                return _run_body(new_args, kwargs)
+            # A model is attached: class models key their state by instance
+            # path, so this otherwise stateless fast path must maintain the
+            # stack (the no-model hot path pays only the is-None check above).
+            _sim_inst_stack.append(
+                (fn.__qualname__, _sim_capture_call_loc(_sys._getframe(1)))
+            )
+            try:
+                return _run_body(new_args, kwargs)
+            finally:
+                _sim_inst_stack.pop()
     else:
         # ── Register-aware path (has Reg[T] / Feedback[T]) ───────────────────
         # Must push to _sim_inst_stack so _sim_current_inst_path() returns a
@@ -3015,6 +3216,7 @@ def _sim_type_wrap(fn):
                 _sim_inst_stack.pop()
 
     wrapper._is_hw_func = True
+    wrapper._sim_model_cell = _model_cell
     return wrapper
 
 

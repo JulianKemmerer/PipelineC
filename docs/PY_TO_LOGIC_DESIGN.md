@@ -2640,13 +2640,17 @@ other hardware function, and all `SYN.py`/`VHDL.py` exemptions for raw-VHDL modu
 key off `Logic.vhdl_module_text` directly, so they apply automatically regardless of
 frontend. `C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE` is likewise frontend-agnostic.
 
-**Has no simulation model.** The real `vhdl(...)` Python function (`pypeline.py`) is
-never invoked during elaboration — the elaborator recognizes it structurally by AST name
-and never executes Python code for it. It *is* what actually runs if a function
-containing `vhdl(...)` is called outside elaboration (directly, via `sim_call()`, or via
-`pypeline_sim.py`), and it unconditionally raises `NotImplementedError` — there is no
-general way to simulate arbitrary user-supplied VHDL text in Python. See
-`pypeline_DESIGN.md` for the runtime-side details.
+**Has no built-in simulation behavior.** The real `vhdl(...)` Python function
+(`pypeline.py`) is never invoked during elaboration — the elaborator recognizes it
+structurally by AST name and never executes Python code for it. It *is* what actually
+runs if a function containing `vhdl(...)` is called outside elaboration (directly, via
+`sim_call()`, or via `pypeline_sim.py`), and it unconditionally raises
+`NotImplementedError` — there is no general way to simulate arbitrary user-supplied VHDL
+text in Python. Users make such functions simulable by attaching a Python model with
+`sim_model(target)`; models are **simulation-only and completely invisible to
+elaboration** — this elaborator neither knows nor cares whether one is attached (the
+routing lives entirely inside the `@hw_func` sim wrapper). See `pypeline_DESIGN.md` and
+`pypeline_sim_DESIGN.md`'s "`sim_model`" section for the runtime-side details.
 
 ---
 

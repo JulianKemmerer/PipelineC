@@ -29,6 +29,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "char_array_test.py",
     "sim_print_test.py",
     "type_bytes_test.py",
+    "sim_model_test.py",
 ]
 # fmt: on
 
@@ -47,6 +48,13 @@ def get_tests() -> list:
             name="global_wires_sim_test",
             category="sim",
             cmd=[PYPELINE_SIM, INST_DIR / "global_wires_sim_test.py", "--run", "10"],
+        )
+    )
+    tests.append(
+        Test(
+            name="sim_model_convergence_test",
+            category="sim",
+            cmd=[PYPELINE_SIM, INST_DIR / "sim_model_test.py", "--run", "20"],
         )
     )
     return tests

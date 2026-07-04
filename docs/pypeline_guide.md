@@ -343,6 +343,68 @@ def print_name(name: char_t[16]):
 See `docs/pypeline_sim_DESIGN.md` and `docs/PY_TO_LOGIC_DESIGN.md` for the simulation and
 elaboration mechanics.
 
+### `@sim_model` — Python simulation models for hardware functions
+
+`sim_model(target)` attaches a Python model to any `@hw_func`/`@MAIN` function: whenever
+`target` is called in simulation, the model runs instead of the function's own body.
+Hardware elaboration is completely unaffected — models are invisible to the compiler.
+This is how raw-VHDL functions become simulable (see
+[§17](#17-raw-vhdl-passthrough-vhdl)), and it can equally swap a slow bit-accurate
+function for a fast high-level model.
+
+The model can take **either** of two forms — attach exactly one per target (a second
+`@sim_model(target)` raises `ValueError`):
+
+**Form 1 — a synthesizable `@hw_func` delegate** with the same signature:
+
+```python
+from pypeline import hw_func, sim_model, vhdl, Reg, uint32_t
+
+@hw_func
+def accum(din: uint32_t) -> uint32_t:   # the hardware: raw VHDL
+    vhdl(ACCUM_VHDL_TEXT)
+
+@sim_model(accum)
+@hw_func
+def accum_model(din: uint32_t) -> uint32_t:
+    total: Reg[uint32_t]
+    total = total + din
+    return total
+```
+
+**Form 2 — an arbitrary Python class** (sim-only, never synthesizable): `__init__` holds
+any state you like — numpy arrays, deques, open files — and `__call__` takes the target's
+arguments and returns its output:
+
+```python
+import numpy as np
+
+@sim_model(accum)
+class AccumModel:
+    def __init__(self):
+        self.samples = np.array([], dtype=np.uint64)
+    def __call__(self, din):
+        self.samples = np.append(self.samples, int(din))
+        return int(self.samples.sum())
+```
+
+One class instance is created lazily **per hardware instance** — per call site, the same
+keying as `Reg[T]` state — so two call sites of `accum` accumulate independently.
+`sim_reset()` discards the instances (fresh power-on state), and model outputs are cast
+to the target's declared return type at the boundary like any other hw_func result.
+
+State timing is Reg-like: each evaluation runs on a `copy.deepcopy` of the instance
+committed at the last clock edge, and the mutated copy commits at the edge. Outputs are
+therefore a pure function of (cycle-start state, current inputs), so under
+`pypeline_sim.py` a model can be safely re-evaluated during wire convergence — even with
+a combinational input→output path through it — and its state still advances exactly once
+per cycle. Because `__call__` may run several times per cycle during convergence, keep
+model bodies side-effect-free (or gate side effects the way `@sim_output` does). For
+heavy state you can opt out of the deepcopy with `@sim_model(accum, copy_state=False)`:
+the instance is then created once and mutated in place — faster, but only sound when
+inputs are already final the first time the model runs each cycle (e.g. plain
+single-call `sim_call()` use).
+
 ---
 
 ## 5 Top-Level Entry Points
@@ -1691,10 +1753,13 @@ def sized_add(x: uint32_t, y: uint32_t) -> uint32_t:
 so it's always treated as an opaque, zero-cycle-delay black box — same as C's
 `__vhdl__`. If your raw VHDL needs registers, manage them yourself within the text.
 
-**Cannot currently be simulated.** Calling a function containing `vhdl(...)` outside
-hardware elaboration — directly, via `sim_call()`, or via `pypeline_sim.py` — raises
-`NotImplementedError`. There is no general way to simulate arbitrary user-supplied VHDL
-text in Python; a future hook may let you attach a Python model to a specific block.
+**Simulating raw VHDL requires a model.** There is no general way to simulate arbitrary
+user-supplied VHDL text in Python, so calling a `vhdl(...)`-bodied function in simulation
+— directly, via `sim_call()`, or via `pypeline_sim.py` — raises `NotImplementedError`
+unless you attach a Python simulation model to it with `@sim_model(target)` (see
+[§4](#sim_model--python-simulation-models-for-hardware-functions)): either a
+synthesizable `@hw_func` written in pypeline, or an arbitrary Python class with
+`__init__`-held state and a `__call__` matching the function's signature.
 
 ---
 
