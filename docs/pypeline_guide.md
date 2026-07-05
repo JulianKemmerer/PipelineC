@@ -987,6 +987,43 @@ int33_t  = make_int_t(N + 9)
 Integer literals in hardware function bodies are automatically given the minimum-width
 unsigned type that fits the value (`0` → `uint1_t`, `255` → `uint8_t`, etc.).
 
+### Casting — not yet supported
+
+There is no explicit cast expression. Calling a type as a function — `uint32_t(x)`,
+`int16_t(133)` — **anywhere inside a hardware function body** is not supported, even
+when the argument is a compile-time constant, not just when it wraps a wire or
+parameter. The elaborator resolves any `name(...)` call as either a registered
+hardware function or a submodule instantiation; a scalar type is neither, so it
+fails with a confusing `inspect`/`OSError` failure rather than a clear error message.
+
+```python
+def widen(x: uint16_t) -> uint32_t:
+    return uint32_t(x)          # wrong — fails at elaboration time
+
+def offset(x: uint32_t) -> uint32_t:
+    return x - uint32_t(133)    # also wrong — same failure, even though 133 is constant
+```
+
+Instead, assign the value to an **intermediate variable with an explicit type
+annotation** and use that variable. The annotation itself triggers the same
+implicit width-truncating/reinterpreting assignment used everywhere else in the
+language for narrowing/widening assignment — no wrapping call needed:
+
+```python
+def widen(x: uint16_t) -> uint32_t:
+    tmp: uint32_t = x       # correct — annotated intermediate variable
+    return tmp
+
+def offset(x: uint32_t) -> uint32_t:
+    const: uint32_t = 133   # correct — annotated intermediate constant
+    return x - const
+```
+
+This applies to signed/unsigned reinterpretation too (`tmp: uint32_t = some_int32`).
+Calling a type with a plain Python value **at module level**, outside any hardware
+function (e.g. `ABSTOP12 = uint32_t(0x3f4)`), is unaffected — that's ordinary Python
+executed at import time, not hardware elaboration.
+
 ### Struct types
 
 Use `@struct` + `NamedTuple` to declare compound record types.
@@ -1330,6 +1367,43 @@ def bias_one(x: float32_t) -> float32_t:
 
 `float32_t.as_const(value)` converts a Python `float` to a `float32_t` instance at
 elaboration time.
+
+#### Converting to/from a raw bit pattern (e.g. `uint32_t`)
+
+A float type is a **struct**, not a distinct bit-reinterpretation of an integer, so
+there is no cast between `float32_t` and `uint32_t` (see
+[Casting](#casting--not-yet-supported) above — this is exactly the case that section
+warns about). To move a float value across a boundary declared as a plain unsigned
+integer — a top-level port, a stream payload, anything typed `uintN_t` — unpack/pack
+the struct fields by hand with bit-slicing and `concat()` instead:
+
+```python
+from pypeline import concat
+
+E_LEN = len(float32_t.typeof("exp"))   # 8  -- generic: works for any make_float_t result
+M_LEN = len(float32_t.typeof("man"))   # 23
+S_BIT = E_LEN + M_LEN                  # 31 -- sign is the top bit
+
+def uint32_to_float32(bits: uint32_t) -> float32_t:
+    return float32_t(
+        sign=bits[S_BIT],
+        exp=bits[S_BIT - 1 : M_LEN],
+        man=bits[M_LEN - 1 : 0],
+    )
+
+def float32_to_uint32(f: float32_t) -> uint32_t:
+    return concat(f.sign, f.exp, f.man)   # first arg = MSB, matching IEEE 754 layout
+```
+
+`T.typeof(field_name)` is available on any `@struct` type (not just floats) and
+returns the declared ctype of that field; `len(...)` on the result gives its bit
+width. Computing `E_LEN`/`M_LEN`/`S_BIT` this way — rather than hardcoding `8`/`23` —
+keeps the same unpack/pack code working unchanged for `float64_t = make_float_t(11,
+52)` or any other exponent/mantissa width.
+
+See `src/tests/pypeline_tests/inst/float32_add_test.py`'s `float_add_32_main` for a
+complete worked example: it receives two `uint32_t` ports, unpacks each into a
+`float32_t`, adds them, and repacks the `float32_t` result back into a `uint32_t`.
 
 ---
 
@@ -2152,6 +2226,7 @@ The table below consolidates all known limitations and unsupported features.
 | **`autopipeline()` around expressions** | Not supported | Must wrap a single direct function call, not a larger expression |
 | **Multiple/early `return` statements** | Not supported | A function may have at most one `return`, and it must be the function's final top-level statement; assign to a variable inside `if`/`else` branches and return it once at the end (see [§6 Control flow](#6-your-first-hardware-function)) |
 | **Enum types in `byte_length`/`make_type_to_bytes`/`make_type_from_bytes`** | Not supported | Raises `NotImplementedError`, including for an enum nested inside a struct or array field (see [§11 Types](#11-types)) |
+| **Explicit casts (`uint32_t(x)`, etc.)** | Not supported | Calling a type as a function around a wire/parameter inside a hardware function body fails at elaboration time; assign to an intermediate variable with an explicit type annotation instead (see [§11 Types](#11-types)) |
 
 Coming from PipelineC? See also [docs/pipelinec_to_pypeline.md](pipelinec_to_pypeline.md)
 for a pattern-by-pattern translation reference.

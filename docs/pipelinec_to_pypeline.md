@@ -123,7 +123,32 @@ data: uint32_t[4]
 Indexing with a compile-time constant is free; indexing with a hardware signal infers a
 mux tree. See [pypeline_guide.md §11](pypeline_guide.md#11-types).
 
-### 3d. Enum Types
+### 3d. Casting
+
+PipelineC's C-style casts don't have a pypeline equivalent yet. Calling a type as a
+function around a wire/parameter inside a hardware function body — the direct
+translation of a C cast — fails at elaboration time in pypeline, not with a clear
+error message.
+
+```c
+// PipelineC
+uint32_t widen(uint16_t x) {
+    return (uint32_t)x;
+}
+```
+```python
+# pypeline — do NOT do this: uint32_t(x) fails at elaboration time
+def widen(x: uint16_t) -> uint32_t:
+    tmp: uint32_t = x    # assign to an intermediate, annotated variable instead
+    return tmp
+```
+
+The annotation on `tmp` performs the same implicit width-truncating/reinterpreting
+assignment a cast would, including signed/unsigned reinterpretation — there is just no
+wrapping call syntax for it. See
+[pypeline_guide.md §11](pypeline_guide.md#11-types) and [§13](#13-not-yet-supported).
+
+### 3e. Enum Types
 
 PipelineC `typedef enum` maps to a Python `IntEnum` subclass decorated with `@enum`:
 
@@ -162,7 +187,7 @@ traffic_t = make_traffic_t(include_yellow=True)
 
 See [pypeline_guide.md §3d](pypeline_guide.md#3d-enum-types) for the full API.
 
-### 3e. Char Array (String) Types
+### 3f. Char Array (String) Types
 
 PipelineC's `char`/`char[N]` maps to Pypeline's predefined `char_t` scalar type combined
 with the same `[N]` array syntax used for any other array:
@@ -195,6 +220,35 @@ directly, no conversion needed (see [pypeline_guide.md §11](pypeline_guide.md#1
 
 `Reg[char_t[N]]` currently only supports zero-init (no `=` initializer) — see
 [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) for the known limitation.
+
+### 3g. Floating-Point Types
+
+Pypeline has no native float type — this isn't a PipelineC construct being renamed,
+it's new: `make_float_t(E, M)` builds a **struct** with `sign`/`exp`/`man` fields
+matching IEEE 754 layout. If you're translating PipelineC/C code that manually
+reinterprets a `uint32_t`'s bits as a float (a union, a pointer cast, or hand-written
+`asuint32`/`asfloat32`-style helpers), the pypeline equivalent is **not** a cast —
+casting a struct type is not supported at all (see [§3d Casting](#3d-casting)).
+Convert by bit-slicing the fields out (or `concat()`-ing them back together):
+
+```python
+from pypeline import make_float_t, concat, uint32_t
+
+float32_t = make_float_t(8, 23)
+E_LEN = len(float32_t.typeof("exp"))   # 8
+M_LEN = len(float32_t.typeof("man"))   # 23
+S_BIT = E_LEN + M_LEN                  # 31 -- sign is the top bit
+
+def uint32_to_float32(bits: uint32_t) -> float32_t:
+    return float32_t(sign=bits[S_BIT], exp=bits[S_BIT-1:M_LEN], man=bits[M_LEN-1:0])
+
+def float32_to_uint32(f: float32_t) -> uint32_t:
+    return concat(f.sign, f.exp, f.man)   # first arg = MSB
+```
+
+See [pypeline_guide.md §11](pypeline_guide.md#11-types) for the full explanation
+(including why `typeof()` keeps this generic across exponent/mantissa widths) and
+`src/tests/pypeline_tests/inst/float32_add_test.py` for a complete worked example.
 
 ---
 
@@ -665,6 +719,7 @@ The following PipelineC features do not yet have a pypeline equivalent.
 | Simulation of `vhdl()`-based primitives | `make_stream_fifo`, `make_stream_pipeline`, `make_valid_ready_mcp` raise `NotImplementedError` in simulation; synthesise normally via `pipelinec` |
 | Multiple / early `return` statements (returning from inside an `if` branch) | Not supported — a pypeline function has exactly one `return`, which must be the final top-level statement; restructure to assign a result variable in each branch and return it once at the end (see [pypeline_guide.md §6](pypeline_guide.md#6-your-first-hardware-function)) |
 | `Reg[char_t[N]] = <initializer>` (register power-on value for a char array, e.g. equivalent of C's `static char name[16] = "boot";`) | Not supported for hardware elaboration — raises `ElaborationError`. `Reg[char_t[N]]` with no initializer (zero-init) works normally. See [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) |
+| C-style casts (`(uint32_t)x`) | No pypeline equivalent — calling a type as a function around a wire/parameter inside a hardware function body fails at elaboration time. Assign to an intermediate variable with an explicit type annotation instead (see [§3d Casting](#3d-casting)) |
 
 See also the [Limitations](pypeline_guide.md#25-limitations--not-yet-supported) section
 of the pypeline guide.
@@ -696,7 +751,7 @@ Note two differences from C's `printf`:
 - **Newline.** C's `printf` requires an explicit `\n`; `sim_print` appends one automatically,
   like real Python `print()`.
 
-`%s` pairs with `char_t[N]` (see [§3e](#3e-char-array-string-types)) via plain `{name}`
+`%s` pairs with `char_t[N]` (see [§3f](#3f-char-array-string-types)) via plain `{name}`
 interpolation — `sim_print(f"name={name}")` — auto-inferred from the argument's type, same
 as plain integers. A single `char_t` still needs `chr(...)`, since a bare `{ch}` is
 ambiguous between a number and a character (see
