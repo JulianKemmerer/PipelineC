@@ -73,6 +73,29 @@ def get_tests() -> list:
             cmd=[INST_DIR / "factory_closure_naming_test.py"],
         )
     )
+    # Not run through the pipelinec CLI either: in-process PARSE_FILE regression
+    # test for _process_imports only following ast.Import, never ast.ImportFrom --
+    # checks parser_state.struct_to_field_type_dict directly for a struct only
+    # reachable via a transitive ast.ImportFrom hop.
+    tests.append(
+        Test(
+            name="importfrom_test",
+            category="elab",
+            cmd=[INST_DIR / "importfrom_test.py"],
+        )
+    )
+    # Not run through the pipelinec CLI either: in-process PARSE_FILE regression
+    # test for _elaborate_live_func's struct-registration fallback (used to
+    # mis-stringify struct-typed fields via bare str(a) and never recurse into
+    # nested struct-typed fields) -- checks parser_state.struct_to_field_type_dict
+    # directly for a struct defined entirely inside a factory closure.
+    tests.append(
+        Test(
+            name="closure_local_nested_struct_test",
+            category="elab",
+            cmd=[INST_DIR / "closure_local_nested_struct_test.py"],
+        )
+    )
     return tests
 
 

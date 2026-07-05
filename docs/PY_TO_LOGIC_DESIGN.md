@@ -1202,6 +1202,13 @@ always set by `@struct` before any annotation resolution occurs. `_struct_class_
 (which backs `point_t[10]` syntax) also uses `_pypeline_ctype_name` so that array types
 of factory structs carry the correct canonical base name.
 
+This closure-scan registration (`_elaborate_live_func`) delegates to the same
+`_register_struct_recursive` helper `_discover_structs_from_module` uses, so a
+closure-local struct with a field typed as *another* closure-local struct — e.g.
+`local_pair_t`'s own fields referencing a third factory-local type — gets that nested
+type registered too, with its real canonical name rather than a raw `str(class)` repr.
+Regression test: `src/tests/pypeline_tests/inst/closure_local_nested_struct_test.py`.
+
 **Struct factories called inline in a signature annotation:**
 
 `_discover_structs_from_module` (module-level names) and the closure-scanning pass above
@@ -1811,14 +1818,22 @@ the single-underscore prefix is distinct and does not conflict.
 Before elaborating any hardware functions, `PARSE_FILE` inserts the design file's
 directory into `sys.path` so that `import file_a` resolves relative to the design file.
 It then calls `_process_imports(tree, module_globals, parser_state, files_to_elaborate, top_file)`,
-which scans `tree.body` for `ast.Import` nodes:
+which scans `tree.body` for both `ast.Import` **and** `ast.ImportFrom` nodes. Both forms
+share one helper, `_discover_and_queue_module(sub_mod, actual_name, parser_state,
+files_to_elaborate, top_file, processed_files)`, so a module's structs/wires/functions are
+discovered identically regardless of which import form reached it:
 
 For each imported module that is a local `.py` file:
 
-1. Records `local_alias → actual_module_name` in `parser_state.module_alias_to_actual`
-   (e.g. `'fa' → 'file_a'` for `import file_a as fa`). If the same local alias was
-   already recorded elsewhere in the design pointing to a *different* actual module,
-   this raises `ElaborationError` immediately — a real collision, not just a repeat.
+1. **`ast.Import` only:** records `local_alias → actual_module_name` in
+   `parser_state.module_alias_to_actual` (e.g. `'fa' → 'file_a'` for `import file_a as
+   fa`). If the same local alias was already recorded elsewhere in the design pointing to
+   a *different* actual module, this raises `ElaborationError` immediately — a real
+   collision, not just a repeat. `from X import Y` binds no module-qualified local name
+   in the importing file, so the `ast.ImportFrom` branch registers no alias — it resolves
+   the *source* module `X` directly via `sys.modules.get(node.module)` (populated as a
+   side effect of Python executing the `from`-import, regardless of what `Y` is) and
+   skips relative imports with no resolvable module name (`node.module is None`).
 2. Calls `_discover_structs_from_module(sub_mod, parser_state)` to register struct types.
 3. Calls `_discover_global_wires(sub_tree, sub_globals, parser_state, name_prefix=actual_name)`
    which registers every `Wire[T]` / `Input[T]` / `Output[T]` in the sub-file under the
@@ -1831,16 +1846,63 @@ Modules are processed once per file path; a second alias pointing to the same fi
 adds an entry to `module_alias_to_actual` without re-parsing. The `top_file` path is
 passed to seed `processed_files` so the top file can never be added as its own sub-file.
 
-**Transitive (multi-hop) imports are followed automatically.** If `file_a.py` itself
-`import file_c`s, `file_c` is discovered and elaborated too, with no depth limit —
-`_process_imports` recurses into every newly discovered module's own tree. The
-`processed_files` set is threaded through the whole recursion by reference (not
-recomputed per call), so a diamond-shaped import graph — two different modules each
-importing a shared third module — dedupes correctly regardless of which path reaches
-it first. This still only recognizes plain top-level `import module_name` statements
-in each file's own `tree.body` — not `ast.ImportFrom`, and not imports nested inside a
-`def`/`if`/`try` block — matching the existing single-hop rule, just applied
-recursively across the whole graph instead of only to the top file.
+**Transitive (multi-hop) imports are followed automatically, through either import
+form.** If `file_a.py` itself `import file_c`s, or `from file_c import something`s,
+`file_c` is discovered and elaborated too, with no depth limit — `_process_imports`
+recurses into every newly discovered module's own tree. The `processed_files` set is
+threaded through the whole recursion by reference (not recomputed per call), so a
+diamond-shaped import graph — two different modules each importing a shared third
+module, or the same module reached once via each import form — dedupes correctly
+regardless of which path reaches it first. Imports nested inside a `def`/`if`/`try`
+block are still not recognized — only top-level statements in each file's own
+`tree.body`.
+
+**Framework/stdlib modules are now queued too — harmless for struct/enum/wire
+discovery, but Step 5/7's "which top-level defs count as hardware" checks had to be
+hardened against it.** Every design file does `from pypeline import ...`, and every
+`ast.ImportFrom` target is now followed, so `pypeline.py` itself — and everything it
+transitively imports (`enum`, `functools`, `typing`, standard library and all) — gets
+discovered exactly like any other sub-file. `_discover_structs_from_module` /
+`_discover_enums_from_module` / `_discover_global_wires` are unaffected by this: they
+only match specific structural shapes (a `NamedTuple` with `_fields`, an `IntEnum` with
+`_pypeline_is_enum`, a `Wire[T]`/`Input[T]`/`Output[T]` `AnnAssign`), so scanning
+`pypeline.py` or the standard library for them is a safe no-op (a little wasted
+parsing, nothing more). A path- or module-identity-based allowlist/denylist was
+considered and rejected — a design's own source files, and shared libraries it
+depends on, can live anywhere (there's no fixed "framework" directory to exclude that
+holds in general), so **Step 5 and Step 7 were fixed instead of trying to keep
+non-design files out of discovery**:
+
+- **`_is_hardware_func(func_def, eval_ns=None)`** (`PARSE_FILE` Step 5's "is this
+  top-level def hardware" check) used to be purely syntactic — any def with a return
+  annotation or a typed argument qualified, decorator or not, so `pypeline.py`'s
+  plain-Python `_make_ctype(name: str)` (or a shared library's own plain-Python
+  elaboration-time factory, e.g. a VGA timing library's `make_vga_timing(spec:
+  VgaTimingSpec, ...)`, where `VgaTimingSpec` is an ordinary, non-`@struct` dataclass)
+  would qualify too. With `eval_ns` (Step 5 now passes each file's own module globals),
+  it additionally evaluates each annotation and requires *at least one* to resolve to
+  a genuine Pypeline hardware type — `_is_real_hw_ctype`: a scalar ctype
+  (`_make_ctype`'s `_CTypeMeta` classes carry `_ctype_name`), an `@struct` NamedTuple
+  (`_pypeline_ctype_name`), or an `@enum` IntEnum (`_pypeline_is_enum`). A plain
+  Python type annotation (`str`, `int`, an undecorated dataclass) no longer counts by
+  itself. If every annotation present fails to evaluate at all (as opposed to
+  evaluating successfully to a non-hardware type), that's not evidence either way, so
+  it falls back to the old, purely syntactic check rather than risk a false negative
+  for some unanticipated case — this is also why plain undecorated hardware helpers
+  like `src/tests/pypeline_tests/def/file_c.py`'s `def bump(x: uint1_t) -> uint1_t`
+  still work unchanged (`uint1_t` resolves to a real ctype).
+- **`node.name in main_names` became identity-based.** Both Step 5 (deciding which
+  top-level defs to collect) and Step 7 (assigning `main_mhz`/clock-domain info) used
+  to check membership by *bare Python name* against
+  `{f.__name__ for f in pypeline._main_registry}`. Once arbitrary stdlib modules are
+  reachable, this is a real name-collision hazard — e.g. the standard library's own
+  `tokenize.py` defines a plain, unrelated top-level `def main():` for its own CLI
+  entry point, which would match this check purely because *some* real `@MAIN`
+  function elsewhere in the design happens to also be named `main` (an extremely
+  common name to pick). Fixed by comparing the *actual function object* instead:
+  `main_func_ids = {id(f) for f in pypeline._main_registry}`, checked via
+  `id(fglobals.get(node.name)) in main_func_ids` — true only for the exact function
+  object `@MAIN` registered, never a same-named unrelated function in another file.
 
 ### Elaboration ordering — sub-files first
 
@@ -2560,16 +2622,21 @@ assignment target (`rv.field[i] = ...`) is a structural write handled by the sam
 constant-index compound-write resolution used everywhere else — no bit-slicing is
 involved on the write side at all.
 
-**Nested struct auto-registration.** `_elaborate_live_func`'s live-closure struct
-scan only registers a struct type found *directly* as a value in the function's own
-`__globals__` — it does not recurse into that struct's own field types. Since the
-generated function's `exec()` globals only contain `t`/`out_t`, a struct nested inside
-`t` (a struct field, or the element type of an array field) would not be independently
-registered unless something else also happens to expose it at module scope.
-`_collect_struct_types(t)` walks `t` recursively and seeds every distinct struct type
-it finds (keyed by canonical name) into the generated function's globals, so this
-holds regardless of what the caller's own design module happens to already have
-registered.
+**Nested struct auto-registration.** `_elaborate_live_func`'s live-closure struct scan
+(`PY_TO_LOGIC.py`) now delegates to `_register_struct_recursive` for every struct type it
+finds directly as a value in the function's own closure vars/`__globals__`, so it
+correctly recurses into that struct's own field types too — it used to build each
+struct's field-type dict by hand with bare `str(a)` and no recursion, which broke as
+soon as a struct-typed field's value only had a raw `str(class)` repr to fall back on
+(see "`_process_imports` import pre-pass" above for the real-world case this caused).
+Even so, the generated `make_type_to_bytes`/`_from_bytes` function's `exec()` globals
+deliberately only contain `t`/`out_t` — nothing else from the caller's module is
+exposed there — so if `t` itself is never one of the values `_elaborate_live_func`'s
+scan happens to inspect, its recursion never gets a chance to start.
+`_collect_struct_types(t)` (`pypeline.py`) walks `t` recursively up front and seeds
+every distinct struct type it finds (keyed by canonical name) directly into the
+generated function's globals, guaranteeing each one is *available* to be found —
+independent of, and unchanged by, the `_elaborate_live_func` recursion fix.
 
 Both factories are tagged `@wires` directly in the generated source (`@wires\ndef
 ...`) — see "`@wires` — Just-Wires Synthesis Hint" below; since `wires()` implies

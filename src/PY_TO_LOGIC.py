@@ -3996,6 +3996,11 @@ class FuncElaborator:
 
         # Register any struct/enum types found in closure vars that were created
         # inside a factory (not visible to _discover_structs/enums_from_module).
+        # Reuses _register_struct_recursive so struct-typed fields get their
+        # canonical VHDL name (not a raw str(class) repr) and so nested
+        # struct-typed fields (themselves only visible via this closure's own
+        # globals/closure vars) get registered too, matching what
+        # _discover_structs_from_module already does for module-level structs.
         for val in list(closure_ns.values()) + list(func_own_globals.values()):
             if getattr(val, "_pypeline_is_enum", False):
                 _register_enum(val, self.parser_state)
@@ -4007,11 +4012,7 @@ class FuncElaborator:
             ):
                 c_name = val._pypeline_ctype_name
                 if c_name not in self.parser_state.struct_to_field_type_dict:
-                    fields = {
-                        _sanitize_vhdl_name(f): str(a)
-                        for f, a in val.__annotations__.items()
-                    }
-                    self.parser_state.struct_to_field_type_dict[c_name] = fields
+                    _register_struct_recursive(val, self.parser_state)
 
         # Register a stub under the canonical key so recursive calls resolve
         stub = C_TO_LOGIC.Logic()
@@ -4731,18 +4732,75 @@ def _walk_instances(prefix, logic, parser_state):
         _walk_instances(inst_key, inst_logic, parser_state)
 
 
-def _is_hardware_func(func_def):
+def _eval_annotation_type(annotation, eval_ns):
+    """Evaluate an AST annotation expression against eval_ns.
+    Returns (True, value) on success, (False, None) if it couldn't be
+    evaluated at all (unresolvable name, syntax eval() doesn't support, etc).
+    """
+    try:
+        expr = ast.Expression(body=annotation)
+        ast.fix_missing_locations(expr)
+        return True, eval(compile(expr, "<annotation>", "eval"), eval_ns)
+    except Exception:
+        return False, None
+
+
+def _is_real_hw_ctype(value):
+    """True if a live Python value is an actual Pypeline hardware type: a
+    scalar ctype (uintN_t/intN_t, or an array thereof -- _make_ctype's
+    _CTypeMeta classes carry _ctype_name), an @struct NamedTuple (carries
+    _pypeline_ctype_name), or an @enum IntEnum (carries _pypeline_is_enum).
+    False for a plain Python type (str, int, an undecorated dataclass) that
+    merely has *a* type annotation -- see _is_hardware_func.
+    """
+    return (
+        hasattr(value, "_ctype_name")
+        or hasattr(value, "_pypeline_ctype_name")
+        or getattr(value, "_pypeline_is_enum", False)
+    )
+
+
+def _is_hardware_func(func_def, eval_ns=None):
     """True if this function should be hardware-elaborated.
     Pure Python elaboration-time helpers like sum_widths(n, m) have no type
     annotations and should not be treated as hardware functions.
-    A function is hardware if it has a return annotation OR any typed argument.
+
+    Without eval_ns: purely syntactic -- true if there's a return annotation
+    or any typed argument (the original check; still used wherever a live
+    namespace to evaluate annotations against isn't available).
+
+    With eval_ns: additionally requires that *some* annotation actually
+    evaluates (see _eval_annotation_type) to a genuine Pypeline hardware type
+    (_is_real_hw_ctype) rather than merely being present -- a plain Python
+    type annotation (str, int, an undecorated dataclass like a shared VGA
+    timing library's plain-Python `VgaTimingSpec` config type) no longer
+    counts by itself. Falls back to the purely syntactic check if every
+    annotation present fails to evaluate at all (as opposed to evaluating
+    successfully to a non-hardware type) -- an eval failure isn't evidence
+    either way, so this doesn't regress the syntactic check's existing
+    permissiveness for whatever case isn't anticipated here.
+
+    This distinction only matters once a file can be discovered without ever
+    being deliberately, directly compiled by the user as hardware (e.g. a
+    shared library reached transitively via ast.ImportFrom-following -- see
+    _process_imports): such a file's plain-Python, non-hardware
+    elaboration-time helpers/factories must not be mistaken for hardware
+    functions just because they happen to have type annotations too.
     """
-    if func_def.returns is not None:
+    arg_anns = [a.annotation for a in func_def.args.args if a.annotation is not None]
+    anns = ([func_def.returns] if func_def.returns is not None else []) + arg_anns
+    if not anns:
+        return False
+    if eval_ns is None:
         return True
-    for arg in func_def.args.args:
-        if arg.annotation is not None:
-            return True
-    return False
+    saw_eval_success = False
+    for ann in anns:
+        ok, value = _eval_annotation_type(ann, eval_ns)
+        if ok:
+            saw_eval_success = True
+            if _is_real_hw_ctype(value):
+                return True
+    return not saw_eval_success
 
 
 def _build_inst_lookup(parser_state):
@@ -4760,6 +4818,147 @@ def _build_inst_lookup(parser_state):
 # ─────────────────────────────────────────────
 
 
+def _module_has_explicit_pypeline_content(sub_mod, sub_tree):
+    """True if this module defines *any* explicitly Pypeline-relevant content:
+    an @struct class, an @enum class, a Wire[T]/Input[T]/Output[T] module-level
+    declaration, an already @hw_func/@MAIN-wrapped function (checked live via
+    pypeline.is_hw_func), or a plain undecorated top-level function whose
+    signature resolves (see _is_hardware_func) to a real Pypeline hardware
+    type.
+
+    Modules with none of these -- Python's own standard library, pypeline.py
+    itself, or a shared library that's pure factory functions with no
+    top-level struct/hw_func (e.g. multi_cycle_path.py) -- are not worth
+    _process_imports discovering any further: recursing into their own
+    imports and tracking their aliases only risks false-positive alias
+    collisions between unrelated modules that happen to reuse the same local
+    name (this is how PY_TO_LOGIC.py's own stdlib recursion once raised
+    ElaborationError over CPython's io/_io modules) and wasted work, and any
+    *actual* hardware content such a file produces (a factory-returned
+    closure) is still elaborated on demand via _elaborate_live_func the
+    moment a design actually calls it -- entirely independent of whether the
+    factory's own defining file was ever "discovered" here. This is
+    deliberately not a guess about file location (a design's own source
+    files, or shared libraries it depends on, can live anywhere) -- only
+    about whether the module explicitly opts in to being hardware, the same
+    contract every other part of the design already has to satisfy.
+    """
+    import pypeline as _pypeline_module
+
+    for name, obj in vars(sub_mod).items():
+        if name.startswith("_"):
+            continue
+        if getattr(obj, "_pypeline_is_enum", False):
+            return True
+        if (
+            inspect.isclass(obj)
+            and issubclass(obj, tuple)
+            and hasattr(obj, "_fields")
+            and hasattr(obj, "_pypeline_ctype_name")
+        ):
+            return True
+        if inspect.isfunction(obj) and _pypeline_module.is_hw_func(obj):
+            return True
+    if getattr(sub_mod, "__annotations__", None):
+        # Module-level Wire[T]/Input[T]/Output[T] declarations (even bare,
+        # unassigned ones) show up here -- see _discover_global_wires.
+        return True
+    sub_globals = vars(sub_mod)
+    for node in sub_tree.body:
+        if isinstance(node, ast.FunctionDef) and _is_hardware_func(
+            node, eval_ns=sub_globals
+        ):
+            return True
+    return False
+
+
+def _discover_and_queue_module(
+    sub_mod,
+    actual_name,
+    parser_state,
+    files_to_elaborate,
+    top_file,
+    processed_files,
+):
+    """Resolve an already-imported module object to its on-disk .py source,
+    discover its structs/enums/global wires, recurse into its own imports (so
+    transitive chains are followed), then queue it onto files_to_elaborate for
+    elaboration. Shared by both the ast.Import and ast.ImportFrom branches of
+    _process_imports below -- a module's structs/functions must be discovered
+    the same way regardless of which import form reached it.
+
+    Recursion into the module's own imports always happens, regardless of
+    whether the module itself has any explicit Pypeline content: a "pure
+    factory wrapper" file with no top-level struct/enum/wire/hw_func of its
+    own (e.g. multi_cycle_path.py, or a design's own thin factory-indirection
+    file that just forwards to a deeper file with the real content) must
+    still have its own imports followed, or whatever real content lies beyond
+    it would never be reached either. Only struct/enum/wire discovery and the
+    files_to_elaborate queue entry are skipped for a content-less module,
+    since it has nothing for either to find, and it's never going to be a
+    real, valid target of module-qualified wire access either way.
+
+    Returns True if this module has any explicit Pypeline content of its own
+    (see _module_has_explicit_pypeline_content), False otherwise (e.g. it's a
+    module from Python's own standard library, or a content-less
+    factory-wrapper file, or not a real, resolvable local .py module at all).
+    Callers use this -- not whether the module's own imports were followed --
+    to decide whether recording a module_alias_to_actual entry (and its
+    collision check) is even meaningful for this particular import: an alias
+    reused across two content-less modules that happen to share a bare name
+    (e.g. two of Python's own standard-library internals) is never looked up
+    for real wire resolution, so it isn't a real collision.
+    """
+    if not isinstance(sub_mod, _types.ModuleType):
+        return False
+    sub_file = getattr(sub_mod, "__file__", None)
+    if not sub_file:
+        return False
+    # Resolve .pyc -> .py
+    if not sub_file.endswith(".py"):
+        try:
+            sub_file = importlib.util.source_from_cache(sub_file)
+        except Exception:
+            return False
+    if not os.path.isfile(sub_file):
+        return False
+
+    if sub_file in processed_files:
+        return processed_files[sub_file]  # repeat encounter (e.g. two
+        # aliases, or both an ast.Import and an ast.ImportFrom of the same
+        # module) -- return the same verdict as the first encounter.
+
+    sub_globals = vars(sub_mod)
+    with open(sub_file, "r") as fh:
+        sub_src = fh.read()
+    sub_tree = ast.parse(sub_src)
+
+    has_content = _module_has_explicit_pypeline_content(sub_mod, sub_tree)
+    processed_files[sub_file] = has_content
+
+    if has_content:
+        _discover_structs_from_module(sub_mod, parser_state)
+        _discover_enums_from_module(sub_mod, parser_state)
+        _discover_global_wires(
+            sub_tree, sub_globals, parser_state, name_prefix=actual_name
+        )
+
+    # Recurse before appending: a sub-file's own imports (its callees)
+    # must land earlier in files_to_elaborate than the sub-file itself.
+    # Unconditional -- see docstring above.
+    _process_imports(
+        sub_tree,
+        sub_globals,
+        parser_state,
+        files_to_elaborate,
+        top_file=top_file,
+        processed_files=processed_files,
+    )
+    if has_content:
+        files_to_elaborate.append((sub_file, sub_tree, sub_globals, actual_name))
+    return has_content
+
+
 def _process_imports(
     tree,
     module_globals,
@@ -4768,24 +4967,33 @@ def _process_imports(
     top_file=None,
     processed_files=None,
 ):
-    """Scan top-level ast.Import nodes in tree.body, recursing into each newly
-    discovered sub-module's own tree so transitive (multi-hop) import chains are
-    followed automatically -- not just the top file's direct imports.
+    """Scan top-level ast.Import and ast.ImportFrom nodes in tree.body,
+    recursing into each newly discovered sub-module's own tree so transitive
+    (multi-hop) import chains are followed automatically -- not just the top
+    file's direct imports, regardless of whether a given hop in the chain
+    uses 'import X' or 'from X import Y'.
 
     For each imported module that resolves to a local .py file:
     - Registers Wire[T]/Input[T]/Output[T] declarations in parser_state.global_vars
       under a module-prefixed name ({actual_module_name}_{bare_wire_name}).
-    - Records local_alias -> actual_module_name in parser_state.module_alias_to_actual
-      so the elaborator can resolve 'fa.main_a_out' -> 'file_a_main_a_out'.
+    - For 'import X'/'import X as Y' only: records local_alias -> actual_module_name
+      in parser_state.module_alias_to_actual so the elaborator can resolve
+      'fa.main_a_out' -> 'file_a_main_a_out'. 'from X import Y' binds no
+      module-qualified local name in the importing file, so there's nothing to
+      register for that case.
     - Appends (file_path, sub_tree, sub_globals, module_prefix) to files_to_elaborate
       so those files' hardware functions are also elaborated.
     - Recurses into the sub-module's own tree to discover its imports in turn.
 
-    Only processes each file once, tracked by processed_files -- shared across the
-    whole recursion (passed by reference) so diamond-shaped import graphs (two
-    modules both importing a third) dedupe correctly regardless of which path
-    reaches it first. Skips built-in modules, .so extensions, and any file already
-    in files_to_elaborate.
+    Only processes each file once, tracked by processed_files -- a path -> was-it-
+    queued dict, shared across the whole recursion (passed by reference) so
+    diamond-shaped import graphs (two modules both importing a third) dedupe
+    correctly, with a consistent verdict, regardless of which path reaches it
+    first. Skips built-in modules, .so extensions, any file already in
+    files_to_elaborate, and any module with no explicit Pypeline content (see
+    _module_has_explicit_pypeline_content) -- most of Python's own standard
+    library, reachable once ast.ImportFrom targets are followed, falls into
+    that last case and is never queued nor recursed into further.
 
     A sub-file is recursed into and appended to files_to_elaborate AFTER its own
     imports are fully processed, so its callees always land earlier in the list
@@ -4794,72 +5002,72 @@ def _process_imports(
     Multi-File Import Support § Elaboration ordering), now upheld at any depth.
     """
     if processed_files is None:
-        processed_files = {entry[0] for entry in files_to_elaborate}
+        processed_files = {entry[0]: True for entry in files_to_elaborate}
         if top_file:
-            processed_files.add(os.path.abspath(top_file))
+            processed_files[os.path.abspath(top_file)] = True
     for node in tree.body:
-        if not isinstance(node, ast.Import):
-            continue
-        for alias in node.names:
-            local_name = alias.asname or alias.name
-            if local_name not in module_globals:
-                continue
-            sub_mod = module_globals[local_name]
-            if not isinstance(sub_mod, _types.ModuleType):
-                continue
-            sub_file = getattr(sub_mod, "__file__", None)
-            if not sub_file:
-                continue
-            # Resolve .pyc -> .py
-            if not sub_file.endswith(".py"):
-                try:
-                    sub_file = importlib.util.source_from_cache(sub_file)
-                except Exception:
+        if isinstance(node, ast.Import):
+            for alias in node.names:
+                local_name = alias.asname or alias.name
+                if local_name not in module_globals:
                     continue
-            if not os.path.isfile(sub_file):
-                continue
+                sub_mod = module_globals[local_name]
+                actual_name = alias.name.replace(".", "_")
 
-            actual_name = alias.name.replace(".", "_")
-            # Recursion flattens every file's own aliases into this one shared
-            # dict, so two different files reusing the same local alias name for
-            # two different modules must fail loudly rather than silently
-            # corrupting wire resolution for whichever file was processed first.
-            existing_actual = parser_state.module_alias_to_actual.get(local_name)
-            if existing_actual is not None and existing_actual != actual_name:
-                raise ElaborationError(
-                    f"Import alias '{local_name}' refers to module '{actual_name}' "
-                    f"here but to '{existing_actual}' elsewhere -- the same local "
-                    f"import alias must resolve to the same module everywhere "
-                    f"across an imported design tree"
+                has_content = _discover_and_queue_module(
+                    sub_mod,
+                    actual_name,
+                    parser_state,
+                    files_to_elaborate,
+                    top_file,
+                    processed_files,
                 )
-            parser_state.module_alias_to_actual[local_name] = actual_name
+                if not has_content:
+                    continue
 
-            if sub_file in processed_files:
-                continue  # already queued (e.g. imported under two aliases)
-            processed_files.add(sub_file)
-
-            sub_globals = vars(sub_mod)
-            with open(sub_file, "r") as fh:
-                sub_src = fh.read()
-            sub_tree = ast.parse(sub_src)
-
-            _discover_structs_from_module(sub_mod, parser_state)
-            _discover_enums_from_module(sub_mod, parser_state)
-            _discover_global_wires(
-                sub_tree, sub_globals, parser_state, name_prefix=actual_name
-            )
-
-            # Recurse before appending: a sub-file's own imports (its callees)
-            # must land earlier in files_to_elaborate than the sub-file itself.
-            _process_imports(
-                sub_tree,
-                sub_globals,
+                # Recursion flattens every file's own aliases into this one shared
+                # dict, so two different files reusing the same local alias name for
+                # two different modules must fail loudly rather than silently
+                # corrupting wire resolution for whichever file was processed first.
+                # Only meaningful for modules that actually queued (have explicit
+                # Pypeline content) -- an alias reused across two content-less
+                # modules (e.g. two unrelated standard-library internals) is never
+                # looked up for real wire resolution, so it isn't a real collision.
+                existing_actual = parser_state.module_alias_to_actual.get(local_name)
+                if existing_actual is not None and existing_actual != actual_name:
+                    raise ElaborationError(
+                        f"Import alias '{local_name}' refers to module '{actual_name}' "
+                        f"here but to '{existing_actual}' elsewhere -- the same local "
+                        f"import alias must resolve to the same module everywhere "
+                        f"across an imported design tree"
+                    )
+                parser_state.module_alias_to_actual[local_name] = actual_name
+        elif isinstance(node, ast.ImportFrom):
+            # Relative imports ('from . import X') have node.module possibly
+            # None with node.level > 0 -- nothing reliable to resolve there,
+            # so skip. An absolute 'from X import Y' always populates
+            # sys.modules[X] as a side effect of executing the import,
+            # regardless of what Y itself turns out to be (a function, a
+            # class, a submodule, ...), so that's the reliable resolution
+            # path -- module_globals only has the imported names (Y) bound
+            # in it, not the source module X itself.
+            if not node.module:
+                continue
+            sub_mod = sys.modules.get(node.module)
+            if sub_mod is None:
+                continue
+            actual_name = node.module.replace(".", "_")
+            # 'from X import Y' binds no module-qualified local name in the
+            # importing file, so there's no module_alias_to_actual entry to
+            # register here (unlike the ast.Import branch above).
+            _discover_and_queue_module(
+                sub_mod,
+                actual_name,
                 parser_state,
                 files_to_elaborate,
-                top_file=top_file,
-                processed_files=processed_files,
+                top_file,
+                processed_files,
             )
-            files_to_elaborate.append((sub_file, sub_tree, sub_globals, actual_name))
 
 
 def PARSE_FILE(py_file):
@@ -4900,7 +5108,14 @@ def PARSE_FILE(py_file):
     _discover_enums_from_module(module, parser_state)
 
     # ── Step 3: collect MAINs from the pypeline registry ──
-    main_names = {f.__name__ for f in pypeline._main_registry}
+    # Identity-based (not name-based): a top-level function elsewhere that
+    # merely happens to share its bare Python name with an actual @MAIN
+    # function -- e.g. some unrelated, transitively-discovered module's own
+    # "main" -- must never be mistaken for it. This wasn't reachable before
+    # ast.ImportFrom-following (see _process_imports) could pull in files far
+    # outside the design's own source tree, where a generic name collision
+    # like this becomes possible.
+    main_func_ids = {id(f) for f in pypeline._main_registry}
 
     # ── Step 4: AST parse for hardware elaboration ──
     with open(py_file, "r") as f:
@@ -4940,7 +5155,8 @@ def PARSE_FILE(py_file):
     for file_path, ftree, fglobals, mod_prefix in files_to_elaborate:
         for node in ftree.body:
             if isinstance(node, ast.FunctionDef) and (
-                _is_hardware_func(node) or node.name in main_names
+                _is_hardware_func(node, eval_ns=fglobals)
+                or id(fglobals.get(node.name)) in main_func_ids
             ):
                 all_func_defs.append((node, file_path, fglobals, mod_prefix))
 
@@ -4979,7 +5195,7 @@ def PARSE_FILE(py_file):
         parser_state.FuncLogicLookupTable[hw_name] = logic
         if getattr(fglobals.get(node.name), "_is_func_wires_pragma", False):
             parser_state.func_marked_wires.add(hw_name)
-        if node.name in main_names:
+        if id(fglobals.get(node.name)) in main_func_ids:
             mhz = pypeline._main_mhz_registry.get(node.name)
             parser_state.main_mhz[hw_name] = mhz
             parser_state.main_syn_mhz[hw_name] = mhz
