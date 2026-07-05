@@ -4,8 +4,35 @@ pypeline is the Python front-end for PipelineC.
 You write hardware designs in ordinary Python; the compiler translates them to VHDL and
 synthesises them for an FPGA.
 
+## Installation
+
+Clone the repo and add its `src/` and `include/pypeline` directories to your
+`PYTHONPATH`:
+
+    git clone https://github.com/JulianKemmerer/PipelineC.git
+    cd PipelineC/
+    export PYTHONPATH=$PYTHONPATH:$(pwd)/src:$(pwd)/include/pypeline
+
+That's it — no `pip install`, no build step. Any Python file can now do:
+
+    from pypeline import *
+
+Add the `export PYTHONPATH=...` line to your shell's startup file (e.g.
+`~/.bashrc`) to make it permanent across sessions.
+
+Verify it worked by running the worked example from [§2](#2-worked-example-vga-test-pattern)
+in native simulation — a matplotlib window pops up and fills in a VGA test-pattern
+frame buffer live, cycle by cycle:
+
+    python3 src/pypeline_sim.py examples/pypeline/vga_test_pattern.py --run 420000
+
+(To also build/synthesize designs for an FPGA with the `pipelinec` command-line
+tool, see `export PATH=$PATH:$(pwd)/src` on the
+[wiki](https://github.com/JulianKemmerer/PipelineC/wiki).)
+
 ## Table of Contents
 
+- [Installation](#installation)
 1. [What is pypeline?](#1-what-is-pypeline)
 2. [Worked Example: VGA Test Pattern](#2-worked-example-vga-test-pattern)
 3. [Digital Logic Basics](#3-digital-logic-basics)
