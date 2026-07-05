@@ -3109,6 +3109,51 @@ C_TO_LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
 `GET_CLK_CROSSING_INFO` (C path only) calls it with the populated dicts from its regex
 search of `preprocessed_c_text`.
 
+#### `RECURSIVE_FIND_MAIN_FUNCS` needs a function-name call graph — `_build_func_call_graph`
+
+`RECURSIVE_FIND_MAIN_FUNCS(func_name, func_name_to_calls, func_names_to_called_from,
+main_funcs)` walks `parser_state.func_name_to_calls` / `func_names_to_called_from` — dicts
+keyed by **function name**, not per-call-site instance path — to find which MAIN(s)
+transitively call a given function. On the C path these are built by
+`GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS` (walks `c_ast.FuncCall` nodes); nothing on the
+Python path ever populated them, so they stayed at their `ParserState.__init__` default of
+`{}`. `RECURSIVE_FIND_MAIN_FUNCS`'s only base case that works with empty dicts is
+`func_name in main_funcs` (the function *is* a MAIN) — so inference only ever succeeded for
+a global wire read/written directly inside a MAIN's own top-level body. A wire touched
+inside a called `@hw_func` (or, worse, a factory-produced closure instantiated deep inside
+another MAIN, e.g. a function passed as a parameter and called from inside a factory's
+body) silently contributed nothing to the shared-global's candidate-MAIN set, so a MAIN
+whose only connection to a known clock was through such a helper never got its MHz
+inferred — surfacing later as a spurious "Cannot have multiple clock domains for shared
+global" exception in `VHDL.py`, even in single-clock-domain designs.
+
+`PY_TO_LOGIC.py`'s `_build_func_call_graph(parser_state)` fixes this by populating the same
+two dicts directly from data elaboration already computed: every `Logic()`'s
+`submodule_instances` (`inst_name -> called func_name`, populated generically by
+`_add_submodule_instance` for every hardware call site, including calls through
+factory-bound parameters). No C-AST-style re-derivation needed — the call information is
+already exact:
+
+```python
+def _build_func_call_graph(parser_state):
+    for func_name, logic in parser_state.FuncLogicLookupTable.items():
+        called_func_names = set(logic.submodule_instances.values())
+        ...
+        parser_state.func_name_to_calls.setdefault(func_name, set()).update(called_func_names)
+        for called_func_name in called_func_names:
+            parser_state.func_names_to_called_from.setdefault(called_func_name, set()).add(func_name)
+```
+
+`PARSE_FILE` calls this **after** trimming (`TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE`) and the
+dangling-logic check, but before `INFER_CLOCK_DOMAINS` — trimming can remove dead
+submodule instances via `REMOVE_WIRES_AND_SUBMODULES_RECURSIVE`, so building the graph
+first would let it embed call edges that no longer exist in the final logic:
+
+```python
+_build_func_call_graph(parser_state)
+C_TO_LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
+```
+
 ---
 
 ## `autopipeline(call_expr, depth)` — Forced Submodule Pipelining
@@ -3933,6 +3978,11 @@ top.py  (single-file or multi-file entry point)
   ├─ Apply pypeline pragmas:
   │   ├─ parser_state.part ← pypeline._part_registry   (from PART(...))
   │   └─ parser_state.main_mhz[hw_name] ← _main_mhz_registry.get(func_name)  (from @MAIN(mhz))
+  │
+  ├─ Trim/collapse logic + dangling logic check
+  │
+  ├─ _build_func_call_graph()            func_name_to_calls / func_names_to_called_from
+  │                                      from each Logic()'s submodule_instances
   │
   ├─ INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
   │   Propagates known MHz to board-support MAINs sharing global wires (fixed-point loop)

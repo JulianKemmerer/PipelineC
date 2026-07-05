@@ -13,6 +13,7 @@ from common import INST_DIR, PIPELINEC, Test, main
 NO_SYNTH_TEST_FILES = [
     "autopipeline_test.py",
     "global_wires_test.py",
+    "clock_domain_inference_test.py",
     "compound_init_test.py",
     "bit_manip_test.py",
     "import_test.py",

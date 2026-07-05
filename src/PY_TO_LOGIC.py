@@ -4813,6 +4813,32 @@ def _build_inst_lookup(parser_state):
         _walk_instances(main_name, main_logic, parser_state)
 
 
+def _build_func_call_graph(parser_state):
+    """Populate func_name_to_calls / func_names_to_called_from (by function name,
+    not per-call-site instance path) from each function's already-elaborated
+    submodule_instances, so C_TO_LOGIC.INFER_CLOCK_DOMAINS's RECURSIVE_FIND_MAIN_FUNCS
+    call-graph walk can trace a global Wire[T] access up through helper/factory
+    functions to whichever MAIN(s) transitively call them -- not just wires touched
+    directly in a MAIN's own top-level body. Mirrors what
+    C_TO_LOGIC.GET_FUNC_NAME_TO_FROM_FUNC_CALLS_LOOKUPS does for the C frontend, but
+    built directly from submodule_instances instead of re-deriving it from a C AST.
+
+    Call this after trimming (TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE) so the graph
+    reflects final submodule instances, not ones later removed as dead logic.
+    """
+    for func_name, logic in parser_state.FuncLogicLookupTable.items():
+        called_func_names = set(logic.submodule_instances.values())
+        if not called_func_names:
+            continue
+        parser_state.func_name_to_calls.setdefault(func_name, set()).update(
+            called_func_names
+        )
+        for called_func_name in called_func_names:
+            parser_state.func_names_to_called_from.setdefault(
+                called_func_name, set()
+            ).add(func_name)
+
+
 # ─────────────────────────────────────────────
 # MAIN ENTRY POINT
 # ─────────────────────────────────────────────
@@ -5219,6 +5245,10 @@ def PARSE_FILE(py_file):
     # Check for dangling logic after trim
     for l in parser_state.FuncLogicLookupTable.values():
         C_TO_LOGIC.FIND_DANGLING_LOGIC(logic)
+
+    # ── Build function-name call graph so RECURSIVE_FIND_MAIN_FUNCS can trace a
+    # global var's use up through helper/factory functions to its owning MAIN(s) ──
+    _build_func_call_graph(parser_state)
 
     # ── Propagate MHz across MAINs sharing global wires ──
     C_TO_LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
