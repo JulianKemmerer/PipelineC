@@ -20,6 +20,7 @@ sys.path.insert(
 
 from pypeline import (
     hw_func,
+    wires,
     MAIN,
     struct,
     concat,
@@ -73,14 +74,14 @@ ABSTOP12_120: uint12_t = 0x42F  # ~120.0
 ABSTOP12_INFINITY: uint12_t = 0x7F8  # Inf
 
 
-@hw_func
+@wires
 def abstop12(y: float32_t) -> uint12_t:
     """Extracts top 12 bits of absolute value (exponent + top 3 mantissa bits)."""
     top3_man: uint3_t = y.man[22:20]
     return concat(y.exp, top3_man)
 
 
-@hw_func
+@wires
 def abs_f32(y: float32_t) -> float32_t:
     """Zero-cost wire operation: forces sign bit to 0."""
     zero_sign: uint1_t = 0
