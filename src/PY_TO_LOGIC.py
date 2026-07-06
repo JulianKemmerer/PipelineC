@@ -3006,6 +3006,8 @@ class FuncElaborator:
                         _add_wire(self.logic, wire_name, enum_ctype)
                         return wire_name, enum_ctype
             return self._elab_ref_read(expr)
+        elif isinstance(expr, ast.IfExp):
+            return self._elab_if_expr(expr)
         else:
             raise NotImplementedError(f"Unsupported expr: {ast.dump(expr)}")
 
@@ -3326,6 +3328,107 @@ class FuncElaborator:
         )
         self._write_ref((x_name,), result_wire, base_type, stmt)
         return True
+
+    def _elab_if_expr(self, expr: ast.IfExp):
+        """Elaborate a Python ternary expression:
+
+            true_expr if cond else false_expr
+
+        Compile-time constant conditions are folded away. Runtime conditions
+        become a single MUX selecting between the elaborated branch values.
+        """
+
+        # ------------------------------------------------------------
+        # Compile-time constant condition
+        # ------------------------------------------------------------
+        cond_val = self._try_eval_const(expr.test)
+        if cond_val is not None:
+            if cond_val:
+                return self._elab_expr(expr.body)
+            else:
+                return self._elab_expr(expr.orelse)
+
+        # ------------------------------------------------------------
+        # Runtime condition
+        # ------------------------------------------------------------
+        cond_wire, cond_type = self._elab_expr(expr.test)
+
+        # Match _elab_if() semantics:
+        # if x:   ==>   if x != 0:
+        if cond_type != C_TO_LOGIC.BOOL_C_TYPE:
+            zero_wire, zero_type = self._elab_python_value(0, expr)
+
+            if _ctype_is_int(cond_type) and _ctype_is_int(zero_type):
+                eff_l, eff_r, _ = _arith_promote(cond_type, zero_type)
+            else:
+                eff_l, eff_r = cond_type, zero_type
+
+            neq_func = _bin_func_name(
+                C_TO_LOGIC.BIN_OP_NEQ_NAME,
+                eff_l,
+                eff_r,
+            )
+
+            neq_inst = self._inst(
+                f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.BIN_OP_NEQ_NAME}_ifexpr_cond",
+                expr,
+            )
+
+            neq_out = _port_wire(neq_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+
+            _add_submodule_instance(
+                self.logic,
+                neq_inst,
+                neq_func,
+                [
+                    ("left", cond_wire, eff_l),
+                    ("right", zero_wire, eff_r),
+                ],
+                neq_out,
+                C_TO_LOGIC.BOOL_C_TYPE,
+                expr,
+                self.src_file,
+            )
+
+            cond_wire = neq_out
+
+        # ------------------------------------------------------------
+        # Elaborate both branch expressions
+        # ------------------------------------------------------------
+        true_wire, true_type = self._elab_expr(expr.body)
+        false_wire, false_type = self._elab_expr(expr.orelse)
+
+        if true_type != false_type:
+            raise ElaborationError(
+                "Ternary expression branches must have identical types: "
+                f"{true_type} vs {false_type}"
+            )
+
+        # ------------------------------------------------------------
+        # Emit MUX
+        # ------------------------------------------------------------
+        mux_suffix = true_type.replace("[", "_").replace("]", "")
+        mux_func = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_{mux_suffix}"
+
+        mux_inst = self._inst(f"{mux_func}_ifexpr", expr)
+        mux_output = _port_wire(mux_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+
+        _add_submodule_instance(
+            self.logic,
+            mux_inst,
+            mux_func,
+            [
+                ("cond", cond_wire, C_TO_LOGIC.BOOL_C_TYPE),
+                ("iftrue", true_wire, true_type),
+                ("iffalse", false_wire, false_type),
+            ],
+            mux_output,
+            true_type,
+            expr,
+            self.src_file,
+        )
+
+        return mux_output, true_type
 
     def _elab_unary(self, expr):
         op_name = UNARY_OP_MAP[type(expr.op)]
