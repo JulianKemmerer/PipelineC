@@ -95,12 +95,22 @@ make_int_t(width: int)  → intN_t        # e.g. make_int_t(33) → int33_t
 `_make_ctype(name)` is the primitive: creates a class with `_CTypeMeta` metaclass and
 `_ctype_name = name`. Both factories call it.
 
-### `make_float_t(E, M)`
+### Floating-point types have moved to `include/pypeline/floating_point.py`
 
-Builds a `@struct` NamedTuple type with three fields: `sign` (1 bit), `exp` (E bits),
-`man` (M bits). Matches IEEE 754 layout for standard sizes. Adds a `.as_const(value)`
-staticmethod that converts a Python `float` to the field dict at elaboration time using
-`struct.pack` for FP32/FP64, or a rebased FP64 approximation for other widths.
+`make_float_t(E, M)` (builds a `@struct` NamedTuple type with three fields: `sign`
+(1 bit), `exp` (E bits), `man` (M bits), matching IEEE 754 layout for standard
+sizes, plus a `.as_const(value)` staticmethod converting a Python `float` to the
+field dict at elaboration time using `struct.pack` for FP32/FP64 or a rebased
+FP64 approximation for other widths, and a `__float__` method — the inverse of
+`.as_const` — for reading a value back out as a Python `float`) is no longer part
+of core `pypeline.py`: it lives in the `floating_point` library alongside the
+arithmetic/conversion factories built on it (`make_float_adder`,
+`make_float_subtractor`, `make_float_multiplier`, `make_float_divider`,
+`make_float_converter`, `make_float_to_int`, `make_int_to_float`,
+`register_float_ops`), since none of that is generic beyond floats. Core
+`pypeline.py` keeps the generic building blocks it's built from: `make_uint_t`,
+`make_int_t`, `struct`, and the operator-registration functions (see
+[Operator Registry](#operator-registry)).
 
 ### Predefined Types
 
@@ -110,7 +120,8 @@ int1_t   int2_t   int3_t   int4_t   int8_t   int16_t   int32_t   int64_t
 ```
 
 All declared as proper `class` statements (not variable assignments) so static analysis tools
-accept them. `float16_t`, `float32_t`, `float64_t` are produced by `make_float_t`.
+accept them. `float16_t`, `float32_t`, `float64_t` are predefined (with `+`/`-`/`*`/`/`
+already registered) in `include/pypeline/floating_point.py`, not here.
 
 ### `_INT_CTYPE_RE`
 
@@ -716,9 +727,14 @@ register_unary_operator(op, operand_t, impl, scope=None)
 |---|---|
 | `"PLUS"` | `+` |
 | `"MINUS"` | `-` (binary) |
+| `"INFERRED_MULT"` | `*` — not `"MULT"`/`"TIMES"`; `"MULT"` is a separate name the C frontend uses |
+| `"DIV"` | `/` — not `"DIVIDE"` |
 | `"SL"` | `<<` |
 | `"SR"` | `>>` |
 | `"NEGATE"` | `-` (unary) |
+
+(`BIN_OP_MAP` in `PY_TO_LOGIC.py` is the source of truth mapping each `ast`
+operator node type to its op string.)
 
 ### Global Registries
 
@@ -742,11 +758,21 @@ _scoped_left_operator_registry: dict[id(func), {key: impl}]
 _scoped_unary_operator_registry: dict[id(func), {key: impl}]
 ```
 
-**`_push_scoped_registrations(func)`** merges scoped entries for `func` into the global
-registries and returns a save-list of `(registry, key, old_value)` triples for restoration.
+**`_push_scoped_registrations(scope_key)`** merges scoped entries for `scope_key` into the
+global registries and returns a save-list of `(registry, key, old_value)` triples for
+restoration. **`scope_key` must be the exact object passed as `scope=...` at registration
+time** — since `register_*(..., scope=my_func)` runs *after* `@hw_func` has already wrapped
+`my_func`, that object is the wrapper, not the pre-decoration function. Every internal
+caller inside `_sim_type_wrap` (both `_run_body`, shared by the two non-`SIM_RAW_INTS`
+wrapper variants, and the two `SIM_RAW_INTS` wrapper variants' own inline push/pop) passes
+its own `wrapper`, not the `fn` closure variable that same code also has in scope — passing
+`fn` there is a bug that silently disables a function's own scoped registrations for every
+call that isn't itself wrapped in an *outer* `sim_call(the_wrapper, ...)` (which pushes
+using the correct object as an independent side effect), i.e. for any plain nested call
+from inside another `@hw_func` body.
 
-**`_pop_scoped_registrations(saved)`** restores the previous global registry state using
-that save-list.
+**`_pop_scoped_registrations(saved)`** restores the previous global registry state (dict
+entries *and* fast-path set membership, see below) using that save-list.
 
 **Performance:** `_scoped_funcs: set` tracks `id(func)` for any function that has ever had
 a scoped registration. `_push_scoped_registrations` returns the module-level singleton
@@ -754,14 +780,39 @@ a scoped registration. `_push_scoped_registrations` returns the module-level sin
 iteration entirely for the vast majority of functions.
 
 **`_registered_binary_op_names`** and **`_registered_unary_op_names`** are module-level
-sets that track which op names have at least one *global* (non-scoped) registration.
-`SimVal.__rshift__`, `__lshift__`, `__neg__`, `__invert__` check these sets and skip
-dispatch entirely when no registration exists — critical for performance in the common case
-(see `pypeline_sim_DESIGN.md` performance section).
+sets that track which op names have at least one registration. `SimVal.__rshift__`,
+`__lshift__`, `__neg__`, `__invert__` check these sets and skip dispatch entirely when no
+registration exists — critical for performance in the common case (see
+`pypeline_sim_DESIGN.md` performance section).
 
 `register_operator` and `register_left_operator` add to `_registered_binary_op_names` when
 `scope is None`. `register_unary_operator` adds to `_registered_unary_op_names` when `scope
-is None`.
+is None`. For a *scoped* registration, `_push_scoped_registrations` provisionally adds the
+op name to the relevant set too (recorded in the save-list as a `_SCOPED_SET_ADD`-tagged
+entry, removed again on pop via `.discard()`, only if the name wasn't already present) —
+without this, a scoped-only registration (the common case: a factory's own internal
+NEGATE/SR/SL helpers, never registered globally) would never actually dispatch unless some
+unrelated module happened to also hold a global registration for that same op name, purely
+as an accidental side effect of the fast-path-set optimization.
+
+### Struct-Type Operator Dispatch
+
+The registries above are also consulted by `@struct`-decorated types directly, not just
+`SimVal`: `struct()` gives every decorated class `__add__` / `__sub__` / `__mul__` /
+`__truediv__` (bound to `_struct_dispatch_binary_op`) and `__neg__` (bound to
+`_struct_dispatch_unary_op`), so `a + b` on two registered struct instances works the same
+whether it's elaborated to hardware or executed as plain Python (`sim_call` or otherwise).
+Unlike `SimVal`'s int fallback, there's no meaningful default for `+` on a struct with
+nothing registered — an unregistered pair raises `TypeError` naming the op and both
+ctypes, rather than falling through to `NamedTuple`'s tuple concatenation/repeat.
+
+Both dispatch functions route through `_struct_dispatch_call(fn, args)`, which mirrors
+`sim_call`'s own body (activate `_sim_active`, push `fn`'s scoped registrations, call, pop,
+restore) for the looked-up impl. This matters because `_sim_type_wrap`'s wrapper only casts
+arguments/return values and honors `Reg[T]` state (via its "AST-rewritten sim body", see
+`PY_TO_LOGIC_DESIGN.md`) while `_sim_active` is already `True` — a bare `a + b` at module
+scope, with no enclosing `sim_call`, would otherwise silently run the impl's raw,
+un-rewritten source.
 
 ---
 
@@ -941,10 +992,8 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 |---|---|
 | `uint1_t` … `uint64_t` | C unsigned integer types as real Python classes (`_CTypeMeta` metaclass) |
 | `int1_t` … `int64_t` | C signed integer types |
-| `float16_t`, `float32_t`, `float64_t` | Float struct types (sign/exp/man fields) |
 | `make_uint_t(n)` | Dynamically creates `uintN_t` for arbitrary bit width `n` |
 | `make_int_t(n)` | Dynamically creates `intN_t` for arbitrary bit width `n` |
-| `make_float_t(E, M)` | Creates an IEEE 754-like struct type; `.as_const(v)` converts Python float |
 | `NamedTuple` | Re-export of `typing.NamedTuple` |
 | `@struct` | Adds `__class_getitem__`, stamps canonical `_pypeline_ctype_name`, wraps scalar fields in sim |
 | `@MAIN` | Registers a function as a hardware entry point; implies `@hw_func`; appends to `_main_registry` |

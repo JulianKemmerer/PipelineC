@@ -1352,21 +1352,53 @@ array field — and raise `NotImplementedError`.
 
 ### Floating-point types
 
-`make_float_t(E, M)` builds a struct type with `sign` (1 bit), `exp` (E bits), and
-`man` (M bits) fields, matching IEEE 754 layout for standard sizes:
+`from floating_point import float32_t, float64_t` (an import or two, from the
+`include/pypeline/floating_point.py` library) gets you IEEE 754-like struct types
+with `sign` (1 bit), `exp` (E bits), and `man` (M bits) fields, matching IEEE 754
+layout for standard sizes — with `+`, `-`, `*`, `/` already overloaded, ready to use:
 
 ```python
-from pypeline import make_float_t
-
-float32_t = make_float_t(8, 23)   # standard FP32
+from floating_point import float32_t, float64_t
 
 def bias_one(x: float32_t) -> float32_t:
     one: float32_t = float32_t.as_const(1.0)   # Python float → hardware constant
-    ...
+    return x + one                              # dispatches to the library's adder
 ```
 
 `float32_t.as_const(value)` converts a Python `float` to a `float32_t` instance at
-elaboration time.
+elaboration time; `float(x)` (on any value returned from a `float32_t`/`float64_t`
+computation) converts back to a Python `float`, for printing/debugging/comparing
+against a reference implementation.
+
+Need a non-standard precision, or just the building blocks? `make_float_t(E, M)`
+(also from `floating_point`) builds the struct type itself, and
+`register_float_ops(float_t)` builds and globally registers `+`/`-`/`*`/`/` for it
+— this is exactly how the library builds `float16_t`/`float32_t`/`float64_t`
+themselves. The individual factories (`make_float_adder`, `make_float_subtractor`,
+`make_float_multiplier`, `make_float_divider`) are available too if you want to
+register just one operator, or reuse an existing adder (`make_float_subtractor`'s
+`adder=` argument) instead of building a second copy.
+
+#### Converting between float precisions, or to/from an int
+
+`make_float_converter(src_t, dst_t)` builds a widening or narrowing conversion
+function between any two `make_float_t` types — this is what to reach for in place
+of a cast (structs can't be cast; see [Casting](#casting--not-yet-supported)):
+
+```python
+from floating_point import float32_t, float64_t, make_float_converter
+
+float32_to_float64 = make_float_converter(float32_t, float64_t)
+float64_to_float32 = make_float_converter(float64_t, float32_t)
+```
+
+The library already builds these two for you (`from floating_point import
+float32_to_float64, float64_to_float32`). For converting to/from a plain integer
+type, `make_float_to_int(float_t, int_t)` (truncating, toward zero, like C's
+`(int)f`) and `make_int_to_float(int_t, float_t)` (value-preserving) do the same
+job — the library also ships `float64_to_int32`/`int32_to_float64` pre-built.
+None of these handle subnormals, `inf`/`NaN`, or overflow specially — they match
+the common-case-only rigor of the adder they're built alongside.
 
 #### Converting to/from a raw bit pattern (e.g. `uint32_t`)
 
@@ -1533,25 +1565,45 @@ from pypeline import register_operator, register_left_operator, register_unary_o
 | `register_left_operator(op, lhs_t, impl)` | left type only | variable-width shift where rhs type is inferred |
 | `register_unary_operator(op, operand_t, impl)` | operand type | custom negation |
 
-`op` strings: `"PLUS"`, `"MINUS"`, `"SL"` (`<<`), `"SR"` (`>>`), `"NEGATE"` (unary `-`).
+`op` strings: `"PLUS"` (`+`), `"MINUS"` (`-`), `"INFERRED_MULT"` (`*` — not
+`"MULT"`/`"TIMES"`), `"DIV"` (`/` — not `"DIVIDE"`), `"SL"` (`<<`), `"SR"` (`>>`),
+`"NEGATE"` (unary `-`).
+
+The `floating_point` library (see [§11 Floating-point types](#floating-point-types))
+already does this registration for you for its predefined types:
 
 ```python
-float32_t = make_float_t(8, 23)
-float_add_32 = make_float_adder(float32_t)   # user-defined float adder function
-
-register_operator("PLUS", float32_t, float32_t, float_add_32)
+from floating_point import float32_t   # +, -, *, / already registered
 
 @MAIN
 def fp_add(a: float32_t, b: float32_t) -> float32_t:
-    return a + b    # dispatches to float_add_32
+    return a + b    # dispatches to the library's float32_add
 ```
 
-Registrations are global.
-To limit a registration to a single function's elaboration, use the `scope=` keyword:
+Registering your own follows the same shape — `register_float_ops` (also in
+`floating_point`) is a convenience wrapper around exactly this pattern:
+
+```python
+from floating_point import make_float_t, make_float_adder, register_operator
+
+my_float_t = make_float_t(6, 9)             # a non-standard precision
+my_adder = make_float_adder(my_float_t)
+register_operator("PLUS", my_float_t, my_float_t, my_adder)
+```
+
+Registrations are global. To limit a registration to a single function's
+elaboration, use the `scope=` keyword:
 
 ```python
 register_unary_operator("NEGATE", my_t, negate_my_t, scope=my_function)
 ```
+
+Registered operators dispatch both during hardware elaboration and during plain
+Python/native simulation (`a + b` on two registered struct instances works the
+same whether or not you're inside `sim_call`) — `@struct` types get `__add__` /
+`__sub__` / `__mul__` / `__truediv__` / `__neg__` that consult these same
+registries, raising a clear `TypeError` if nothing is registered for the pair
+rather than falling through to `NamedTuple`'s default tuple concatenation/repeat.
 
 ---
 

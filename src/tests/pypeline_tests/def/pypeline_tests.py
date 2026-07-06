@@ -1,4 +1,19 @@
 # pyright: reportInvalidTypeForm=none
+import sys as _sys, os as _os
+
+_sys.path.insert(
+    0,
+    _os.path.join(
+        _os.path.dirname(_os.path.abspath(__file__)),
+        "..",
+        "..",
+        "..",
+        "..",
+        "include",
+        "pypeline",
+    ),
+)
+
 from typing import NamedTuple
 from pypeline import (
     Reg,
@@ -19,7 +34,6 @@ from pypeline import (
     int33_t,
     make_uint_t,
     make_int_t,
-    make_float_t,
     register_operator,
     register_left_operator,
     register_unary_operator,
@@ -37,6 +51,7 @@ from pypeline import (
     hw_return_type,
     sim_call,
 )
+from floating_point import float32_t, float32_add as float_add_32
 
 
 @hw_func
@@ -305,112 +320,3 @@ def make_clz(value_t):
 
 
 clz_uint32 = make_clz(uint32_t)
-
-
-float32_t = make_float_t(8, 23)
-
-
-def make_float_adder(float_t):
-    exp_t = float_t.typeof("exp")
-    man_t = float_t.typeof("man")
-    M_LEN = len(man_t)
-    man_hidden_t = make_uint_t(M_LEN + 1)
-    signed_man_t = make_int_t(M_LEN + 2)
-    sum_man_t = make_int_t(M_LEN + 3)
-    abs_sum_t = make_uint_t(M_LEN + 2)
-    narrow_t = make_uint_t(M_LEN + 1)
-    clz_narrow = make_clz(narrow_t)
-    clz_out_t = hw_return_type(clz_narrow)
-    negate_man_h = make_negate(man_hidden_t, signed_man_t)
-    negate_sum_man = make_negate(sum_man_t, abs_sum_t)
-    sr_signed = make_shifter_SR(signed_man_t, exp_t)
-    sl_narrow = make_shifter_SL(narrow_t, clz_out_t)
-    abs_sum = make_abs(sum_man_t, abs_sum_t)
-
-    @hw_func
-    def float_add(left: float_t, right: float_t) -> float_t:
-        # Step 1: x gets the larger exponent
-        x: float_t
-        y: float_t
-        if right.exp > left.exp:
-            x = right
-            y = left
-        else:
-            x = left
-            y = right
-
-        # Step 2: hidden bit via concat uint(M_LEN+1)
-        x_hidden: uint1_t
-        if x.exp == 0:
-            x_hidden = 0
-        else:
-            x_hidden = 1
-        x_man_h: man_hidden_t = concat(x_hidden, x.man)
-
-        y_hidden: uint1_t
-        if y.exp == 0:
-            y_hidden = 0
-        else:
-            y_hidden = 1
-        y_man_h: man_hidden_t = concat(y_hidden, y.man)
-
-        # Step 3: sign-adjust int(M_LEN+2) via NEGATE
-        x_signed: signed_man_t
-        if x.sign:
-            x_signed = -x_man_h
-        else:
-            x_signed = x_man_h
-
-        y_signed: signed_man_t
-        if y.sign:
-            y_signed = -y_man_h
-        else:
-            y_signed = y_man_h
-
-        # Step 4: align y via SR (diff may exceed narrow range; shifter clamps)
-        diff: exp_t = x.exp - y.exp
-        y_aligned: signed_man_t = y_signed >> diff
-
-        # Step 5: sum int(M_LEN+3)
-        sum_man: sum_man_t = x_signed + y_aligned
-
-        # Step 6: sign and absolute value
-        sum_sign: uint1_t = sum_man[M_LEN + 2]
-        sum_abs: abs_sum_t = abs_sum(sum_man)
-
-        # Step 7: normalize (nested if-else, three cases)
-        sum_overflow: uint1_t = sum_abs[M_LEN + 1]
-        result_exp: exp_t
-        result_man: man_t
-        if sum_overflow:
-            # Case 1: carry out right shift, bump exponent
-            result_exp = x.exp + 1
-            result_man = sum_abs[M_LEN:1]
-        else:
-            if sum_abs == 0:
-                # Case 3: zero
-                result_exp = 0
-                result_man = 0
-            else:
-                # Case 2: normal remove leading zeros
-                sum_narrow: narrow_t = sum_abs[M_LEN:0]
-                lz: clz_out_t = clz_narrow(sum_narrow)
-                lz_wide: exp_t = lz
-                result_exp = x.exp - lz_wide
-                shifted: narrow_t = sum_narrow << lz
-                result_man = shifted[M_LEN - 1 : 0]
-
-        result: float_t = float_t(sign=sum_sign, exp=result_exp, man=result_man)
-        return result
-
-    # Operator registrations scoped to float_add's elaboration only.
-    register_unary_operator("NEGATE", man_hidden_t, negate_man_h, scope=float_add)
-    register_unary_operator("NEGATE", sum_man_t, negate_sum_man, scope=float_add)
-    register_operator("SR", signed_man_t, exp_t, sr_signed, scope=float_add)
-    register_operator("SL", narrow_t, clz_out_t, sl_narrow, scope=float_add)
-
-    return float_add
-
-
-float_add_32 = make_float_adder(float32_t)
-register_operator("PLUS", float32_t, float32_t, float_add_32)

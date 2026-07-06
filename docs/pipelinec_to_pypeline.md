@@ -224,17 +224,26 @@ directly, no conversion needed (see [pypeline_guide.md §11](pypeline_guide.md#1
 ### 3g. Floating-Point Types
 
 Pypeline has no native float type — this isn't a PipelineC construct being renamed,
-it's new: `make_float_t(E, M)` builds a **struct** with `sign`/`exp`/`man` fields
-matching IEEE 754 layout. If you're translating PipelineC/C code that manually
-reinterprets a `uint32_t`'s bits as a float (a union, a pointer cast, or hand-written
-`asuint32`/`asfloat32`-style helpers), the pypeline equivalent is **not** a cast —
-casting a struct type is not supported at all (see [§3d Casting](#3d-casting)).
-Convert by bit-slicing the fields out (or `concat()`-ing them back together):
+it's new: `include/pypeline/floating_point.py` builds IEEE 754-like **struct** types
+(`sign`/`exp`/`man` fields) with `+`/`-`/`*`/`/` already overloaded:
 
 ```python
-from pypeline import make_float_t, concat, uint32_t
+from floating_point import float32_t, float64_t
 
-float32_t = make_float_t(8, 23)
+def add(a: float32_t, b: float32_t) -> float32_t:
+    return a + b   # dispatches to the library's registered adder
+```
+
+If you're translating PipelineC/C code that manually reinterprets a `uint32_t`'s
+bits as a float (a union, a pointer cast, or hand-written `asuint32`/`asfloat32`-style
+helpers), the pypeline equivalent is **not** a cast — casting a struct type is not
+supported at all (see [§3d Casting](#3d-casting)). Convert by bit-slicing the fields
+out (or `concat()`-ing them back together):
+
+```python
+from pypeline import concat, uint32_t
+from floating_point import float32_t
+
 E_LEN = len(float32_t.typeof("exp"))   # 8
 M_LEN = len(float32_t.typeof("man"))   # 23
 S_BIT = E_LEN + M_LEN                  # 31 -- sign is the top bit
@@ -246,9 +255,15 @@ def float32_to_uint32(f: float32_t) -> uint32_t:
     return concat(f.sign, f.exp, f.man)   # first arg = MSB
 ```
 
+That's for crossing a boundary declared as a plain `uintN_t` (a port, a stream
+payload). Converting between float precisions, or to/from an actual int *value*,
+is a different operation — use `make_float_converter`/`make_float_to_int`/
+`make_int_to_float` (also in `floating_point`) instead of either of the above.
+
 See [pypeline_guide.md §11](pypeline_guide.md#11-types) for the full explanation
 (including why `typeof()` keeps this generic across exponent/mantissa widths) and
-`src/tests/pypeline_tests/inst/float32_add_test.py` for a complete worked example.
+`src/tests/pypeline_tests/inst/float32_add_test.py` /
+`src/tests/pypeline_tests/inst/float_ops_test.py` for complete worked examples.
 
 ---
 

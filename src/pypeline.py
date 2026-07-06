@@ -123,68 +123,6 @@ class PypelineEnum(_IntEnum):
         return count  # 0, 1, 2, …
 
 
-def _float_to_fields(value, exponent_width, mantissa_width):
-    """Convert a Python float to an IEEE 754-like sign/exp/man dict at elaboration time."""
-    import struct as _struct
-
-    f = float(value)
-    if exponent_width == 8 and mantissa_width == 23:
-        bits = _struct.unpack(">I", _struct.pack(">f", f))[0]
-    elif exponent_width == 11 and mantissa_width == 52:
-        bits = _struct.unpack(">Q", _struct.pack(">d", f))[0]
-    else:
-        # General: rebase from FP64 representation
-        bits64 = _struct.unpack(">Q", _struct.pack(">d", f))[0]
-        sign = (bits64 >> 63) & 1
-        exp64 = (bits64 >> 52) & 0x7FF
-        man64 = bits64 & ((1 << 52) - 1)
-        bias64 = 1023
-        bias_t = (1 << (exponent_width - 1)) - 1
-        exp_max = (1 << exponent_width) - 1
-        if exp64 == 0x7FF:  # inf / nan
-            biased_exp = exp_max
-            man = man64 >> (52 - mantissa_width) if man64 else 0
-        elif exp64 == 0 and man64 == 0:  # zero
-            biased_exp = 0
-            man = 0
-        else:  # normal
-            true_exp = exp64 - bias64
-            biased_exp = true_exp + bias_t
-            biased_exp = max(1, min(exp_max - 1, biased_exp))
-            man = man64 >> (52 - mantissa_width)
-        return {"sign": sign, "exp": biased_exp, "man": man}
-    sign = (bits >> (exponent_width + mantissa_width)) & 1
-    exp = (bits >> mantissa_width) & ((1 << exponent_width) - 1)
-    man = bits & ((1 << mantissa_width) - 1)
-    return {"sign": sign, "exp": exp, "man": man}
-
-
-def make_float_t(exponent_width, mantissa_width):
-    """Create an IEEE 754-like floating-point struct type with variable field widths.
-
-    Fields: sign (uint1_t), exp (uintE_t), man (uintM_t).
-    The returned type has an .as_const(value) method for elaboration-time conversion
-    of a Python float into the dict initializer form.
-
-    Usage:
-        float32_t = make_float_t(8, 23)   # standard FP32
-        x: float32_t = float32_t.as_const(1.23)
-    """
-    exp_t = make_uint_t(exponent_width)
-    man_t = make_uint_t(mantissa_width)
-
-    @struct
-    class float_t(NamedTuple):
-        sign: uint1_t
-        exp: exp_t
-        man: man_t
-
-    float_t.as_const = staticmethod(
-        lambda value: float_t(**_float_to_fields(value, exponent_width, mantissa_width))
-    )
-    return float_t
-
-
 # ── unsigned integer types ────────────────────
 uint1_t = make_uint_t(1)
 uint2_t = make_uint_t(2)
@@ -835,6 +773,20 @@ def struct(cls):
         return _orig_new(klass, **typed)
 
     cls.__new__ = staticmethod(_typed_new)
+
+    # Operator overloading for registered struct types (e.g. floating-point
+    # add/sub/mul/div): consult the same registries the hardware elaborator
+    # uses, so `a + b` also works during plain Python/native simulation, not
+    # just hardware elaboration. No registration -> clear TypeError, rather
+    # than the tuple/NamedTuple default (concatenation for +, repeat for *).
+    cls.__add__ = lambda self, other: _struct_dispatch_binary_op("PLUS", self, other)
+    cls.__sub__ = lambda self, other: _struct_dispatch_binary_op("MINUS", self, other)
+    cls.__mul__ = lambda self, other: _struct_dispatch_binary_op(
+        "INFERRED_MULT", self, other
+    )
+    cls.__truediv__ = lambda self, other: _struct_dispatch_binary_op("DIV", self, other)
+    cls.__neg__ = lambda self: _struct_dispatch_unary_op("NEGATE", self)
+
     return cls
 
 
@@ -1168,11 +1120,73 @@ def register_unary_operator(op: str, operand_type, func, scope=None) -> None:
         _scoped_unary_operator_registry.setdefault(id(scope), {})[key] = func
 
 
+def _struct_dispatch_call(fn, args):
+    """Call a registered struct-operator impl with simulation properly active.
+
+    Mirrors sim_call(): activates _sim_active and pushes fn's own scoped
+    registrations for the duration of the call. Without this, a registered
+    impl invoked from a bare `a + b` (outside any enclosing sim_call) would
+    take _sim_type_wrap's raw-passthrough branch -- skipping both its own
+    scoped sub-registrations (e.g. a float adder's internal NEGATE/SR
+    helpers) and its own arg/return casting -- silently computing wrong
+    results rather than raising, since ints tolerate ctype mismatches
+    numerically in a way structs don't surface as errors.
+    """
+    global _sim_active
+    prev_active = _sim_active
+    _sim_active = True
+    saved = _push_scoped_registrations(fn)
+    try:
+        return fn(*args)
+    finally:
+        _pop_scoped_registrations(saved)
+        _sim_active = prev_active
+
+
+def _struct_dispatch_binary_op(op_name, left, right):
+    """Look up and call a registered operator for a @struct-typed binary op.
+    Mirrors SimVal._dispatch_binary, but structs have no meaningful raw
+    fallback (unlike ints), so an unregistered pair raises TypeError instead
+    of silently falling through to e.g. tuple concatenation/repeat.
+    """
+    l_str = left._pypeline_ctype_name
+    r_str = getattr(right, "_pypeline_ctype_name", None)
+    fn = r_str and _operator_registry.get((op_name, l_str, r_str))
+    fn = fn or _left_operator_registry.get((op_name, l_str))
+    if not callable(fn):
+        raise TypeError(
+            f"No {op_name!r} operator registered for {l_str!r} and "
+            f"{r_str or type(right).__name__!r} -- use register_operator(...)"
+        )
+    return _struct_dispatch_call(fn, (left, right))
+
+
+def _struct_dispatch_unary_op(op_name, operand):
+    """Look up and call a registered operator for a @struct-typed unary op."""
+    l_str = operand._pypeline_ctype_name
+    fn = _unary_operator_registry.get((op_name, l_str))
+    if not callable(fn):
+        raise TypeError(f"No {op_name!r} operator registered for {l_str!r}")
+    return _struct_dispatch_call(fn, (operand,))
+
+
 def _push_scoped_registrations(func):
     """Merge scoped operator registrations for *func* into the active global registries.
     Returns a list of (registry, key, old_value) triples for restoring afterward.
     Scoped entries from outer elaboration frames are already present in the global
     registries, so inner callees automatically inherit them.
+
+    Also provisionally adds the op name to _registered_binary_op_names /
+    _registered_unary_op_names (the fast-path sets SimVal's __neg__/__invert__/
+    __rshift__/__lshift__ check before bothering to look in the precise
+    per-type registries at all) if not already present, so a scoped-only
+    registration dispatches correctly even when no unrelated global
+    registration for that op name happens to already exist. Without this, a
+    scoped NEGATE/SR/SL registration would silently never be consulted --
+    SimVal would take its default int-arithmetic fallback instead -- unless
+    some other, unrelated module happened to have also globally registered
+    that same op name (for any type), which is not something a self-contained
+    factory function should have to depend on.
     """
     func_id = id(func)
     if func_id not in _scoped_funcs:
@@ -1181,23 +1195,35 @@ def _push_scoped_registrations(func):
     for key, val in _scoped_operator_registry.get(func_id, {}).items():
         saved.append((_operator_registry, key, _operator_registry.get(key)))
         _operator_registry[key] = val
+        if key[0] not in _registered_binary_op_names:
+            _registered_binary_op_names.add(key[0])
+            saved.append((_registered_binary_op_names, key[0], _SCOPED_SET_ADD))
     for key, val in _scoped_left_operator_registry.get(func_id, {}).items():
         saved.append((_left_operator_registry, key, _left_operator_registry.get(key)))
         _left_operator_registry[key] = val
+        if key[0] not in _registered_binary_op_names:
+            _registered_binary_op_names.add(key[0])
+            saved.append((_registered_binary_op_names, key[0], _SCOPED_SET_ADD))
     for key, val in _scoped_unary_operator_registry.get(func_id, {}).items():
         saved.append((_unary_operator_registry, key, _unary_operator_registry.get(key)))
         _unary_operator_registry[key] = val
+        if key[0] not in _registered_unary_op_names:
+            _registered_unary_op_names.add(key[0])
+            saved.append((_registered_unary_op_names, key[0], _SCOPED_SET_ADD))
     return saved
 
 
 _SCOPED_MISSING = object()  # sentinel for _pop_scoped_registrations; created once
+_SCOPED_SET_ADD = object()  # sentinel: this saved entry is a set .add() to undo
 _EMPTY_SAVED = []  # returned by _push_scoped_registrations when nothing to push
 
 
 def _pop_scoped_registrations(saved):
-    """Restore registry entries to their pre-push state."""
+    """Restore registry entries (and fast-path set membership) to their pre-push state."""
     for registry, key, old_val in saved:
-        if old_val is None:
+        if old_val is _SCOPED_SET_ADD:
+            registry.discard(key)
+        elif old_val is None:
             registry.pop(key, _SCOPED_MISSING)
         else:
             registry[key] = old_val
@@ -3220,7 +3246,16 @@ def _sim_type_wrap(fn):
                 new_kwargs[k] = _sim_cast(v, pt)
             elif pt is not None and _is_char_like_array(pt):
                 new_kwargs[k] = _sim_cast_deep(v, pt)
-        saved = _push_scoped_registrations(fn)
+        # Scope key must be `wrapper` (the object register_operator(...,
+        # scope=...) was actually called with -- registration happens after
+        # `@hw_func` has already wrapped the function, so the name in the
+        # defining scope refers to the wrapper, not `fn`), not the pre-wrap
+        # `fn` this closure captured. Using `fn` here would never match any
+        # scope key, silently disabling this function's own scoped
+        # NEGATE/SR/SL registrations for every nested (non-sim_call) call --
+        # only working by accident when an *outer* sim_call(wrapper, ...)
+        # happened to push the same entries first.
+        saved = _push_scoped_registrations(wrapper)
         try:
             if _model_cell[0] is not None:
                 result = _call_sim_model(_model_cell[0], new_args, new_kwargs)
@@ -3261,7 +3296,9 @@ def _sim_type_wrap(fn):
                         return _call_sim_model(_model_cell[0], args, kwargs)
                     finally:
                         _sim_inst_stack.pop()
-                saved = _push_scoped_registrations(fn)
+                # See the matching comment in _run_body: scope key must be
+                # `wrapper`, not the pre-wrap `fn` this closure captured.
+                saved = _push_scoped_registrations(wrapper)
                 try:
                     return (
                         sim_body_fn(*args, **kwargs)
@@ -3286,7 +3323,9 @@ def _sim_type_wrap(fn):
                 caller_f = _sys._getframe(1)
                 call_loc = (caller_f.f_code.co_filename, caller_f.f_lineno, None, None)
                 _sim_inst_stack.append((fn.__qualname__, call_loc))
-                saved = _push_scoped_registrations(fn)
+                # See the matching comment in _run_body: scope key must be
+                # `wrapper`, not the pre-wrap `fn` this closure captured.
+                saved = _push_scoped_registrations(wrapper)
                 try:
                     if _model_cell[0] is not None:
                         return _call_sim_model(_model_cell[0], args, kwargs)
