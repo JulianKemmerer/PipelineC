@@ -13,11 +13,15 @@ from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PIPELINEC, Test, main
 # (filename, source_dir, extra_args)
 SYNTH_TEST_FILES = [
     ("stream_pipeline_test.py", INST_DIR, []),
+    # Planned throughput sweep tests (full sweep, no --comb)
+    ("sweep_comb_test.py", INST_DIR, []),
+    ("sweep_two_mains_test.py", INST_DIR, []),
+    ("sweep_fsm_autopipeline_test.py", INST_DIR, []),
+    ("sweep_stateful_boundary_test.py", INST_DIR, []),
     ("valid_ready_mcp_test.py", INST_DIR, ["--comb"]),
     ("vga_donut.py", EXAMPLES_PYPELINE_DIR, ["--comb"]),
     ("vga_test_pattern.py", EXAMPLES_PYPELINE_DIR, ["--comb"]),
     ("float32_add_test.py", INST_DIR, ["--comb"]),
-    ("float_ops_test.py", INST_DIR, ["--comb"]),
     ("pypeline_test.py", INST_DIR, ["--comb"]),
     ("reg_init_test.py", INST_DIR, ["--comb"]),
     ("if_test.py", INST_DIR, ["--comb"]),
@@ -39,7 +43,7 @@ SYNTH_TEST_FILES = [
 
 
 def get_tests() -> list:
-    return [
+    tests = [
         Test(
             name=filename[: -len(".py")],
             category="synth",
@@ -48,6 +52,24 @@ def get_tests() -> list:
         )
         for filename, source_dir, extra_args in SYNTH_TEST_FILES
     ]
+    # Wrapper scripts (run pipelinec themselves and assert on the sweep's output)
+    tests.append(
+        Test(
+            name="sweep_floor_detect_test",
+            category="synth",
+            cmd=[INST_DIR / "sweep_floor_detect_test.py"],
+            needs_out_dir=True,
+        )
+    )
+    tests.append(
+        Test(
+            name="sweep_unpipelinable_test",
+            category="synth",
+            cmd=[INST_DIR / "sweep_unpipelinable_test.py"],
+            needs_out_dir=True,
+        )
+    )
+    return tests
 
 
 if __name__ == "__main__":

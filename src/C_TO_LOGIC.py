@@ -479,6 +479,9 @@ class Logic:
         # For timing, delay integer units (tenths of nanosec probably)
         # this is populated by vendor tool
         self.delay = None
+        # True when delay was derived from the zero clock pipeline map
+        # (submodule delays) instead of measured by a real synthesis run
+        self.delay_is_estimated = False
 
         # Save C code text for later
         self.c_code_text = None
@@ -556,6 +559,7 @@ class Logic:
         )  # alias -> [ref,toks]
         rv.wire_to_c_type = dict(self.wire_to_c_type)  # IMMUTABLE
         rv.delay = self.delay
+        rv.delay_is_estimated = self.delay_is_estimated
         rv.c_code_text = self.c_code_text
         rv.containing_funcs = set(self.containing_funcs)
         rv.ref_submodule_instance_to_input_port_driven_ref_toks = (

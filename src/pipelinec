@@ -118,10 +118,15 @@ parser.add_argument(
     help="Specify an existing main C++ file for simulators such as CXXRTL and Verilator.",
 )
 parser.add_argument(
-    "--hier_mult",
-    type=float,
-    default=0.0,
-    help="Hierarchy sweep multiplier minimum starting value ~= 'what modules to focus pipelining efforts on to get to desired fmax'. 0.0 = starts with largest/slowest modules (default). 0.5 = modules half as fast fmax. 2.0 = modules twice as fast as fmax, etc.",
+    "--full_hier_syn",
+    help="Synthesize every level of the function hierarchy individually to collect path delays before pipelining (old behavior). Default is to only synthesize raw HDL leaf functions and estimate hierarchical function delays from their pipeline maps (with automatic fallback to real synthesis when estimates prove inaccurate).",
+    action="store_true",
+)
+parser.add_argument(
+    "--pipeline_min_effort",
+    type=int,
+    default=2,
+    help="Extra full-design synthesis iterations the throughput sweep may spend reducing pipeline stages after timing is met (hunting the fewest-registers solution). 0 = accept the first met result as-is (fastest, may be over-pipelined).",
 )
 parser.add_argument(
     "--coarse",
@@ -178,8 +183,10 @@ pins_file = os.path.abspath(args.pins) if args.pins else None
 SYN.TOP_LEVEL_MODULE = args.top
 # Flag for verilog conversion
 SYN.CONVERT_FINAL_TOP_VERILOG = args.verilog
-# Hierarchy sweep const
-SYN.HIER_SWEEP_MULT_MIN = args.hier_mult
+# Pre-pipelining per-func synthesis mode
+SYN.HIER_SYN_MODE = "full" if args.full_hier_syn else "leaf"
+# Post-met pipeline stage reduction effort
+SYN.PIPELINE_MIN_EFFORT = args.pipeline_min_effort
 # Output dir:
 #   Use what user provided
 #   Or create a new dir for each run by default
