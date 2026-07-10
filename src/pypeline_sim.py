@@ -90,6 +90,10 @@ def run_sim(design_file: str, num_cycles: int, sim_mode: str = "strict") -> None
 
 
 def _run_clock_cycle(mains: list, cycle: int) -> None:
+    # Reset @sim_input's once-per-cycle result cache before anything else runs
+    # this cycle, so the first call anywhere (convergence loop or final pass)
+    # computes fresh and every later call this cycle reuses that same result.
+    pypeline._sim_input_cache.clear()
     # Buffer register writes so they all commit together after convergence.
     pypeline._sim_reg_begin_buffer()
     pypeline._sim_converging = True

@@ -909,15 +909,83 @@ def sim_output(fn):
     post-convergence pass each clock cycle. Use this for side effects such
     as print, file writes, or live display updates that should fire exactly
     once per cycle with the correct converged wire values.
+
+    The function body may also read (or write) a module-level Wire[T]/Input[T]/
+    Output[T] directly by bare name (or module.attr for a cross-module wire) --
+    the same AST rewriting @hw_func/@MAIN bodies get is applied here too, via
+    _sim_type_wrap, so e.g. `print(out0)` inside a @sim_output body works without
+    out0 being passed in as an argument. This works no matter where the function
+    is called from in the design -- a top-level @MAIN body, or a nested
+    non-MAIN helper -- not just one fixed location.
+
+    Known limitation: a @sim_output function that both references a wire
+    directly AND uses `global x; x = ...` to mutate an unrelated plain Python
+    module-level variable will only see that mutation in its own subsequent
+    calls (it runs against a rebuilt, detached copy of the module's globals
+    dict), not from other code reading the true module attribute externally.
     """
+    hw_fn = _sim_type_wrap(fn)
 
     @_functools.wraps(fn)
     def wrapper(*args, **kwargs):
         if _sim_converging:
             return SimVal(0)
-        return fn(*args, **kwargs)
+        return hw_fn(*args, **kwargs)
 
     wrapper._is_sim_output = True
+    return wrapper
+
+
+def sim_input(fn):
+    """Mark a function as simulation input-only -- the temporal/directional mirror
+    of @sim_output.
+
+    Two supported call forms, usable interchangeably or together:
+      - direct-write form: the function's own body assigns directly to a
+        module-level Wire[T]/Input[T]/Output[T] name (bare name, or module.attr
+        for a cross-module wire) -- e.g. `in0 = python_stuff()`. Called as a
+        bare statement: `in_global()`.
+      - return-value form: the function's own body has no wire reference; its
+        return value is captured by the calling @MAIN/@hw_func's own (already
+        AST-rewritten) assignment: `in1 = in_return()`.
+
+    Both forms may be called from anywhere in the design -- a top-level @MAIN
+    body or a nested plain-Python helper -- any number of times, not just once
+    at a fixed point in simulation setup.
+
+    Runs the real body at most once per simulated clock cycle: the first call
+    (wherever in the design it happens to occur -- during delta-cycle
+    convergence or the unconditional final pass) computes for real and caches
+    the result; every later call the same cycle is a pure cache hit. This is
+    the temporal mirror of @sim_output's convergence gating: @sim_output defers
+    real execution to the final pass; @sim_input executes once, as early as it
+    is first reached, so a fresh value is available to every reader throughout
+    that cycle's convergence, not just after it. It also keeps convergence
+    stable: if the underlying value came from something non-idempotent (a
+    counter, a queue pop), calling it more than once per cycle would make its
+    wire look like it keeps changing.
+
+    The cache is reset once per cycle -- see pypeline_sim.py's _run_clock_cycle
+    (Layer 2) and this module's sim_call() (Layer 1, where each top-level
+    sim_call() invocation is itself one cycle).
+
+    Known limitation: the cache key is the function identity only (no args/
+    kwargs awareness) -- fine for zero-arg usage, but a @sim_input function
+    called with different arguments within the same cycle returns the first
+    call's cached result regardless of the later call's own arguments.
+    """
+    hw_fn = _sim_type_wrap(fn)
+
+    @_functools.wraps(fn)
+    def wrapper(*args, **kwargs):
+        key = id(wrapper)
+        if key in _sim_input_cache:
+            return _sim_input_cache[key]
+        result = hw_fn(*args, **kwargs)
+        _sim_input_cache[key] = result
+        return result
+
+    wrapper._is_sim_input = True
     return wrapper
 
 
@@ -2132,6 +2200,7 @@ _sim_reg_write_buffer = None  # None = direct commit; dict = buffered mode
 _sim_current_main = None  # MAIN fn currently executing (for reader tracking)
 _sim_wire_readers: dict = {}  # wire name → set of MAINs that have read it
 _sim_active: bool = False  # True only while pypeline_sim.py is driving a simulation run
+_sim_input_cache: dict = {}  # id(@sim_input wrapper) → cached result for the current cycle
 
 
 def _sim_current_inst_path():
@@ -2336,6 +2405,7 @@ def sim_reset():
     """Clear all simulated register and wire state."""
     _sim_reg_state.clear()
     _sim_wire_state.clear()
+    _sim_input_cache.clear()
 
 
 def _sim_reg_begin_buffer():
@@ -2375,14 +2445,23 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
     wire_names: {bare_name: qualified_sim_key} for wires declared in the function's own
     defining module. module_wire_attrs: {(alias_name, attr_name): qualified_sim_key} for
     wires in imported modules.
+
+    `self.modified` tracks whether this specific function body actually referenced any
+    wire (as opposed to `wire_names`/`module_wire_attrs` being non-empty merely because
+    the defining *module* declares wires somewhere else) -- `_build_reg_sim_func` uses
+    this to decide whether the function needs the detached-globals rebuilt-body path at
+    all. Without a function-specific flag, any function living in a wire-bearing module
+    would get rebuilt even if its own body never touches a wire.
     """
 
     def __init__(self, wire_names, module_wire_attrs=None):
         self._wire_names = dict(wire_names)
         self._module_wire_attrs = module_wire_attrs or {}
+        self.modified = False
 
     def visit_Name(self, node):
         if node.id in self._wire_names and isinstance(node.ctx, _ast.Load):
+            self.modified = True
             return _ast.copy_location(
                 _ast.Call(
                     func=_ast.Name(id="_sim_wire_read", ctx=_ast.Load()),
@@ -2399,6 +2478,7 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
             and isinstance(node.ctx, _ast.Load)
             and (node.value.id, node.attr) in self._module_wire_attrs
         ):
+            self.modified = True
             wire_name = self._module_wire_attrs[(node.value.id, node.attr)]
             return _ast.copy_location(
                 _ast.Call(
@@ -2417,6 +2497,7 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
             and isinstance(node.targets[0], _ast.Name)
             and node.targets[0].id in self._wire_names
         ):
+            self.modified = True
             wire_name = self._wire_names[node.targets[0].id]
             return _ast.copy_location(
                 _ast.Expr(
@@ -2437,6 +2518,7 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
             target = node.targets[0]
             key = (target.value.id, target.attr)
             if key in self._module_wire_attrs:
+                self.modified = True
                 wire_name = self._module_wire_attrs[key]
                 return _ast.copy_location(
                     _ast.Expr(
@@ -2459,6 +2541,7 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
             and node.target.id in self._wire_names
             and node.value is not None
         ):
+            self.modified = True
             wire_name = self._wire_names[node.target.id]
             return _ast.copy_location(
                 _ast.Expr(
@@ -2801,9 +2884,12 @@ def _build_reg_sim_func(fn):
         for _wname, _ann in getattr(_obj, "__annotations__", {}).items():
             if isinstance(_ann, (_WireType, _InputType, _OutputType)):
                 module_wire_attrs[(_alias, _wname)] = f"{_obj.__name__}.{_wname}"
+    _wire_rewriter_modified = False
     if global_wire_names or module_wire_attrs:
-        _GlobalWireRewriter(global_wire_names, module_wire_attrs).visit(func_def)
+        _wire_rewriter = _GlobalWireRewriter(global_wire_names, module_wire_attrs)
+        _wire_rewriter.visit(func_def)
         _ast.fix_missing_locations(func_def)
+        _wire_rewriter_modified = _wire_rewriter.modified
 
     # Rewrite typed local annotations AFTER _GlobalWireRewriter (wire AnnAssigns are
     # already converted to Expr nodes) and BEFORE orig_body is sliced, so orig_body
@@ -2891,8 +2977,7 @@ def _build_reg_sim_func(fn):
     if (
         not reg_names
         and not feedback_names
-        and not global_wire_names
-        and not module_wire_attrs
+        and not _wire_rewriter_modified
         and not ann_ctypes_out
         and not _typed_rewriter_modified
     ):
@@ -3497,9 +3582,16 @@ def sim_call(func, *args, **kwargs):
     wrappers run their sim bodies (Reg[T] handling) rather than falling through
     to the raw function. The raw-function fallback exists only for the elaborator's
     _try_eval_const probe, which calls functions directly without sim_call.
+
+    Each top-level (non-reentrant) sim_call() represents one clock cycle for
+    Layer-1 simulation, so @sim_input's once-per-cycle result cache is cleared
+    here on the outermost call only (prev_active is already True on a nested/
+    reentrant sim_call(), so mid-cycle helper calls don't spuriously reset it).
     """
     global _sim_active
     prev_active = _sim_active
+    if not prev_active:
+        _sim_input_cache.clear()
     _sim_active = True
     saved = _push_scoped_registrations(func)
     try:

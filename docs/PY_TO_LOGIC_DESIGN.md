@@ -85,7 +85,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
 - [Custom Operator Registration](#custom-operator-registration)
 
 **Reference**
-- [`@sim_output` Calls — Elaborator Skip](#sim_output-calls--elaborator-skip)
+- [`@sim_output` / `@sim_input` Calls — Elaborator Skip](#sim_output--sim_input-calls--elaborator-skip)
 - [VHDL Identifier Safety — Name Sanitization](#vhdl-identifier-safety--name-sanitization)
 - [Predicting C/VHDL Output Names](#predicting-cvhdl-output-names)
 - [Tests](#tests)
@@ -3537,26 +3537,29 @@ smoke test proving the implied `@hw_func` wrapping works correctly.
 
 ---
 
-## `@sim_output` Calls — Elaborator Skip
+## `@sim_output` / `@sim_input` Calls — Elaborator Skip
 
-A `@sim_output` call appearing as a bare expression statement in a `@MAIN` body must be
-invisible to the hardware elaborator. The elaborator normally raises `NotImplementedError`
-for any `ast.Expr` statement that is not a bare string constant. A dedicated guard in
-`FuncElaborator._elab_stmt` handles this:
+A `@sim_output`/`@sim_input` call appearing as a bare expression statement in a `@MAIN`
+body must be invisible to the hardware elaborator. The elaborator normally raises
+`NotImplementedError` for any `ast.Expr` statement that is not a bare string constant. A
+dedicated guard in `FuncElaborator._elab_stmt` handles this:
 
 ```python
 elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
     callee = self._try_eval_const(stmt.value.func)
     if getattr(callee, "_is_sim_output", False):
         pass  # @sim_output call — sim-only side effect, skip in hardware
+    elif getattr(callee, "_is_sim_input", False):
+        pass  # @sim_input call (direct-write or discarded-return form) — sim-only, skip in hardware
     else:
         raise NotImplementedError(f"Unsupported statement: {ast.dump(stmt)}")
 ```
 
 `_try_eval_const` evaluates the callee expression against `{**module_globals, **const_env}`.
 If it resolves to a Python callable with `_is_sim_output = True` (the attribute set by the
-`@sim_output` decorator), the statement is silently skipped. This lets simulation-only
-calls like `capture_pixel(sig, px)` live in `@MAIN` bodies without any conditional guard:
+`@sim_output` decorator) or `_is_sim_input = True` (`@sim_input`), the statement is silently
+skipped. This lets simulation-only calls like `capture_pixel(sig, px)` and `in_global()`
+live in `@MAIN` bodies without any conditional guard:
 
 ```python
 @MAIN
@@ -3567,18 +3570,61 @@ def vga_test_pattern():
     capture_pixel(sig, px)   # @sim_output — skipped by elaborator, fires in pypeline_sim.py
 ```
 
+**`@sim_input`'s return-value form needs a second guard.** `in1 = in_return()` is an
+`ast.Assign`, not a bare `ast.Expr(ast.Call)`, so it doesn't hit the guard above at all —
+it's handled by `_elab_assign` instead. Tracing `_elab_assign`: after resolving the RHS
+callee (`ctor_callee = self._try_eval_const(stmt.value.func)`, a cheap name lookup that
+does not call it), the very next step used to be `const_val =
+self._try_eval_const(stmt.value)` — which **actually invokes** `in_return()` during
+elaboration, a sim-only function that may not even be representable as hardware. A guard
+inserted immediately after resolving `ctor_callee`, before that call, makes the whole
+assignment a no-op instead:
+
+```python
+if isinstance(stmt.value, ast.Call):
+    ctor_callee = self._try_eval_const(stmt.value.func)
+    if getattr(ctor_callee, "_is_sim_input", False) or getattr(
+        ctor_callee, "_is_sim_output", False
+    ):
+        return  # sim-only call on the RHS — whole assignment is a hardware no-op
+    is_struct_ctor_call = ctor_callee is not None and hasattr(ctor_callee, "_fields")
+    ...
+```
+
+`_is_sim_output` is included here too, for the symmetric (if unusual) case of a
+`@sim_output` function's return value being assigned rather than discarded.
+
 **Constraints:**
-- Only bare function-call expression statements are checked (`ast.Expr` with `ast.Call`).
-  Assignment targets (`px = capture_pixel(...)`) are not affected.
-- The callee must be resolvable via `_try_eval_const`. If not, `getattr(None, "_is_sim_output",
-  False)` is `False` and `NotImplementedError` fires as before.
-- No hardware node, wire, or submodule instance is emitted for the skipped call.
+- Only bare function-call expression statements, and direct `name = call()`/
+  `attr = call()` assignments where the *entire* RHS is nothing but the sim-only call, are
+  recognized. A sim-only call embedded inside a larger expression (`x = in_return() + 1`)
+  is unsupported and falls through to ordinary expression elaboration.
+- The callee must be resolvable via `_try_eval_const`. If not, the marker check is `False`
+  against `None` and ordinary elaboration proceeds (`NotImplementedError` for the
+  bare-statement case).
+- No hardware node, wire, or submodule instance is emitted for a skipped call.
+
+**Excluded from the unconditional top-level elaboration sweep, too.** `PARSE_FILE`
+independently elaborates every top-level function definition that merely *looks*
+hardware-shaped (`_is_hardware_func`: has any annotated argument or a return annotation),
+regardless of whether it's ever actually called/instantiated. A `@sim_input` function
+using the return-value form naturally has a `-> T` return annotation (e.g. `def
+in_return() -> uint32_t:`), so without an explicit exclusion it would still be swept into
+that pass and independently elaborated as an orphan function — even though its call sites
+are correctly skipped by the guards above — which would raise if its (possibly
+Python-only) body isn't representable as hardware. The collection step (`PARSE_FILE`,
+"Step 5: collect top-level hardware function defs from all files") checks
+`getattr(fglobals.get(node.name), "_is_sim_output"/"_is_sim_input", False)` and excludes
+any match before appending to `all_func_defs`, so `@sim_output`/`@sim_input` functions
+never enter the top-level elaboration/stub-registration pipeline at all, regardless of
+their annotations.
 
 **Not the same dispatch path as `sim_print`.** The same `if`/`elif` chain also checks
 `getattr(callee, "_is_sim_print", False)` — a deliberately distinct marker, checked
-immediately after `_is_sim_output` — but routes to `_elab_sim_print_stmt` instead of `pass`:
-`sim_print(...)` calls are *not* invisible to the hardware elaborator; they produce a real
-`printf`-prefixed submodule instance. See "`sim_print` — printf-style Console Output" above.
+immediately after `_is_sim_output`/`_is_sim_input` — but routes to `_elab_sim_print_stmt`
+instead of `pass`: `sim_print(...)` calls are *not* invisible to the hardware elaborator;
+they produce a real `printf`-prefixed submodule instance. See "`sim_print` — printf-style
+Console Output" above.
 
 ---
 

@@ -103,6 +103,25 @@ def get_tests() -> list:
             ],
         )
     )
+    tests.append(
+        Test(
+            name="sim_output_direct_wire_test",
+            category="sim",
+            cmd=[
+                PYPELINE_SIM,
+                INST_DIR / "sim_output_direct_wire_test.py",
+                "--run",
+                "20",
+            ],
+        )
+    )
+    tests.append(
+        Test(
+            name="sim_input_test",
+            category="sim",
+            cmd=[PYPELINE_SIM, INST_DIR / "sim_input_test.py", "--run", "25"],
+        )
+    )
     return tests
 
 

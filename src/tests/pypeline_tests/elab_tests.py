@@ -26,6 +26,7 @@ NO_SYNTH_TEST_FILES = [
     "two_factory_wrappers_mixed_test.py",
     "type_bytes_test.py",
     "float_ops_test.py",
+    "sim_input_output_elab_test.py",
 ]
 # fmt: on
 

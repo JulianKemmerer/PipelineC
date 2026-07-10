@@ -1925,6 +1925,8 @@ class FuncElaborator:
             callee = self._try_eval_const(stmt.value.func)
             if getattr(callee, "_is_sim_output", False):
                 pass  # @sim_output call — sim-only side effect, skip in hardware
+            elif getattr(callee, "_is_sim_input", False):
+                pass  # @sim_input call (direct-write or discarded-return form) — sim-only, skip in hardware
             elif getattr(callee, "_is_sim_print", False):
                 self._elab_sim_print_stmt(stmt)
             elif (
@@ -2199,6 +2201,17 @@ class FuncElaborator:
         compound_pyval = None
         if isinstance(stmt.value, ast.Call):
             ctor_callee = self._try_eval_const(stmt.value.func)
+            # x = some_sim_input_fn() / x = some_sim_output_fn() — the whole RHS is a
+            # bare call to a sim-only function (@sim_input's return-value form, or the
+            # symmetric case for @sim_output). This must be checked, and must return,
+            # before the next block's _try_eval_const(stmt.value) below, which would
+            # otherwise actually INVOKE the sim-only function during elaboration — mirrors
+            # the bare-statement skip in _elab_stmt (both markers checked there too), just
+            # for the assignment-RHS shape instead of a standalone expression statement.
+            if getattr(ctor_callee, "_is_sim_input", False) or getattr(
+                ctor_callee, "_is_sim_output", False
+            ):
+                return  # sim-only call on the RHS — whole assignment is a hardware no-op
             is_struct_ctor_call = ctor_callee is not None and hasattr(
                 ctor_callee, "_fields"
             )
@@ -5287,6 +5300,21 @@ def PARSE_FILE(py_file):
                 _is_hardware_func(node, eval_ns=fglobals)
                 or id(fglobals.get(node.name)) in main_func_ids
             ):
+                # @sim_output/@sim_input functions must never be independently
+                # elaborated here, even when a return/arg type annotation makes
+                # them look hardware-shaped (e.g. `@sim_input def f() -> uint32_t:`,
+                # exactly the return-value form's natural signature) -- their call
+                # sites are already skipped (_elab_stmt/_elab_assign), but without
+                # this exclusion this unconditional top-level sweep would still try
+                # to elaborate the function's own (possibly Python-only) body,
+                # which could raise even though the function is otherwise fully
+                # invisible to hardware. "Can simply be ignored during elaboration"
+                # must hold regardless of whether the function carries annotations.
+                _top_level_callee = fglobals.get(node.name)
+                if getattr(_top_level_callee, "_is_sim_output", False) or getattr(
+                    _top_level_callee, "_is_sim_input", False
+                ):
+                    continue
                 all_func_defs.append((node, file_path, fglobals, mod_prefix))
 
     # ── Step 6: register stubs first so cross-file forward references resolve ──

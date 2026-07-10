@@ -351,7 +351,52 @@ def display_result(data):
 ```
 
 `@sim_output` calls inside `@MAIN` bodies are **invisible to the hardware compiler** —
-they produce no gates or wires in the synthesised design.
+they produce no gates or wires in the synthesised design. This holds no matter where in
+the design the call happens — a top-level `@MAIN` body or a nested non-MAIN helper.
+
+A `@sim_output` function's body can also read a `Wire[T]`/`Input[T]`/`Output[T]` directly
+by bare name, instead of only receiving values as passed-in arguments:
+
+```python
+out0: Wire[uint32_t]
+
+@sim_output
+def check_out():
+    print(int(out0))   # direct read, not passed in as an argument
+```
+
+### `@sim_input` — driving simulation inputs
+
+`@sim_input` is the reverse of `@sim_output`: it runs once near the *start* of each
+simulated clock cycle (before everything else needs a stable value) instead of the end,
+and is used to drive `Input[T]` wires rather than observe outputs. Two forms:
+
+```python
+from pypeline import sim_input
+
+in0: Input[uint32_t]
+
+@sim_input
+def in_global():
+    in0 = python_stuff()          # direct-write form: body drives the wire itself
+
+@sim_input
+def in_return() -> uint32_t:
+    return python_stuff()          # return-value form: caller assigns the return value
+
+in1: Input[uint32_t]
+
+@MAIN
+def tb_inputs():
+    in_global()
+    in1 = in_return()
+```
+
+Like `@sim_output`, `@sim_input` calls are invisible to the hardware compiler no matter
+where they appear. The real body runs at most once per simulated cycle — a per-cycle
+result cache, not a fixed call location, is what guarantees this — so a non-idempotent
+driving value (a counter, a random sample, a queue pop) advances exactly once per cycle
+even though a `@MAIN` body actually runs at least twice per cycle internally.
 
 ### `sim_print` — printf-style console output
 
@@ -1659,6 +1704,9 @@ def blinker():
 ```
 
 Port names match the pin names in your constraint (XDC/PCF) file exactly.
+
+In simulation, drive an `Input[T]`'s per-cycle value with `@sim_input` — see
+[§4 Simulation](#4-simulation).
 
 ### Wire declarations have no initialiser
 

@@ -1151,7 +1151,91 @@ def capture_pixel(sig, px):
 
 The `_is_sim_output = True` attribute set by `@sim_output` is checked by
 `FuncElaborator._elab_stmt` in the hardware elaborator to silently skip such calls in
-hardware function bodies. See `PY_TO_LOGIC_DESIGN.md` for the elaborator side.
+hardware function bodies, and `@sim_output`/`@sim_input` functions are also excluded from
+`PARSE_FILE`'s unconditional top-level "elaborate every annotated function" sweep (so a
+`@sim_input` function with a `-> T` return annotation — the return-value form's natural
+signature — is never independently elaborated as an orphan function either). See
+`PY_TO_LOGIC_DESIGN.md` for the elaborator side.
+
+**Direct global-wire access.** `sim_output(fn)` routes `fn` through `_sim_type_wrap` (the
+same machinery `@hw_func`/`@MAIN` use), so a `@sim_output` function's body may reference a
+module-level `Wire[T]`/`Input[T]`/`Output[T]` directly by bare name (or `module.attr` for a
+cross-module wire), not only receive values as passed-in arguments:
+
+```python
+out0: Wire[uint32_t]
+
+@sim_output
+def check_direct_read():
+    print(int(out0))   # bare-name read, not passed in as an argument
+```
+
+This works from anywhere in the design — a top-level `@MAIN` body or a nested non-MAIN
+helper — not just one fixed call site.
+
+`_build_reg_sim_func`'s bailout check (whether to run `fn` unmodified vs. a rewritten body)
+is keyed on whether *this function's own body* actually references a wire
+(`_GlobalWireRewriter.modified`), not merely whether the defining *module* declares any
+wire — this is what keeps every pre-existing `@sim_output` usage (none of which reference a
+wire directly) running the exact same code path as before this capability was added.
+
+**Caveat:** a `@sim_output` function that *does* reference a wire directly, and *also* uses
+`global x; x = ...` to mutate an unrelated plain Python module-level variable, only sees
+that mutation on its own subsequent calls — its rewritten body runs `exec`'d against a
+detached snapshot of the module's globals dict, not the live module `__dict__`, so other
+code reading the true module attribute externally (e.g. an `atexit`-registered cleanup
+function) won't observe the change. Functions that don't reference a wire directly (the
+common case) are unaffected — they always run unmodified, sharing the real live globals.
+
+### `@sim_input` — Driving Simulation Inputs
+
+`@sim_input` is the temporal/directional mirror of `@sim_output`: instead of firing once at
+the *end* of a cycle (after convergence) to observe values, it fires once near the *start*
+of a cycle, so its driven `Input[T]` value is available and stable throughout that cycle's
+convergence rather than only after it.
+
+Two call forms, usable interchangeably or together:
+
+```python
+in0: Input[uint32_t]
+
+@sim_input
+def in_global():
+    in0 = python_stuff()          # direct-write form: body writes the wire itself
+
+@sim_input
+def in_return() -> uint32_t:
+    return python_stuff()          # return-value form: caller assigns the return value
+
+in1: Input[uint32_t]
+
+@MAIN
+def tb_inputs():
+    in_global()
+    in1 = in_return()
+```
+
+Like `@sim_output`, both forms may be called from anywhere in the design — not restricted
+to one fixed location — though a dedicated testbench `@MAIN` (as above) is the typical
+usage.
+
+**Once-per-cycle caching.** The real body runs at most once per simulated clock cycle: the
+first call anywhere (during delta-cycle convergence or the final pass) computes for real and
+caches the result (keyed by function identity); every later call the same cycle is a pure
+cache hit. This is required, not just an optimization — without it, a non-idempotent driving
+value (a counter, a queue pop) would appear to change on every re-invocation (a `@MAIN` is
+called at least twice per cycle: during convergence and again, unconditionally, in the final
+pass), which both gives the wrong per-cycle value and can destabilize delta-cycle
+convergence (or trip its 10,000-execution safety limit).
+
+The cache (`pypeline._sim_input_cache`) is reset once per cycle: at the top of
+`pypeline_sim.py`'s `_run_clock_cycle` for Layer 2, and on the outermost (non-reentrant)
+`sim_call()` invocation for Layer 1, where each top-level call represents one clock cycle.
+`sim_reset()` also clears it.
+
+**Known limitation:** the cache key is the function identity only (no args/kwargs
+awareness) — a `@sim_input` function called with different arguments within the same cycle
+returns the first call's cached result regardless of the later call's own arguments.
 
 ### `sim_print` — printf-style Console + Hardware Output
 
@@ -1285,8 +1369,8 @@ subclass has `__getitem__`.
   make simulation hardware-accurate for functions decorated with `@hw_func` or `@MAIN`. Inner
   functions must carry `@hw_func` to opt in. See Bit-Accurate Arithmetic section for ctype-chain
   limitations (plain int operands, shifts, `__radd__`).
-- **`Input[T]` wires** — initialized to zero; setting `Input[T]` values before each cycle is
-  not yet supported by `pypeline_sim.py`.
+- **`Input[T]` wires** — initialized to zero at `sim_reset()`; driving a per-cycle value is
+  supported via `@sim_input` (see above).
 - **Raw VHDL (`vhdl(...)`)** — simulable only with an attached `@sim_model`
   (see `sim_model` section above); without one, calling the function in simulation raises
   `NotImplementedError`. `make_fifo` attaches a `collections.deque`-based FWFT model (see
