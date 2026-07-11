@@ -1156,20 +1156,40 @@ class float_t(NamedTuple):
     sign: uint1_t
     exp: uint8_t
     man: uint23_t
-# _pypeline_ctype_name = "float_t_sign_uint1_t_exp_uint8_t_man_uint23_t"  (46 chars — kept)
+# As a bare, module-level struct (as shown here): _pypeline_ctype_name =
+# "float_t_sign_uint1_t_exp_uint8_t_man_uint23_t"  (46 chars — kept). But the real
+# float_t is defined inside make_float_t(exponent_width, mantissa_width) -- see
+# "Factory parameter disambiguation" below for what that adds.
 
-# stream_t produced by make_stream_t(uint8_t):
-# full canonical: "stream_t_data_uint8_t_valid_uint1_t"  (35 chars — kept under 64)
-# _pypeline_ctype_name = "stream_t_data_uint8_t_valid_uint1_t"
+# stream_t produced by make_stream_t(data_t):
+# full canonical: "stream_t_data_uint8_t_valid_uint1_t_data_t_uint8_t"  (kept under 64)
+# _pypeline_ctype_name = "stream_t_data_uint8_t_valid_uint1_t_data_t_uint8_t"
 
-# stream_pipeline_t (nested stream fields): full name > 64 chars → truncated
+# stream_pipeline_t (nested stream fields + factory params): full name > 64 chars → truncated
 # _pypeline_ctype_canonical = "stream_pipeline_t_stream_out_stream_t_data_uint8_t_valid_uint1_t_..."
-# _pypeline_ctype_name      = "stream_pipeline_t_40fc18a7"
+# _pypeline_ctype_name      = "stream_pipeline_t_d1e1fd20"
 ```
 
-Two factory calls with the same parameters produce structs with the same canonical
+Two factory calls with the same field definitions *and* (for a struct defined inside a
+factory function) the same factory parameters produce structs with the same canonical
 name and the same `struct_to_field_type_dict` entry — correct deduplication with no
 redundant generated types.
+
+**Factory parameter disambiguation:** a struct class defined directly inside a factory
+function (its `__qualname__` contains `.<locals>.`) has that factory's own declared
+parameters appended to its canonical name, sorted by parameter name — unconditionally,
+as a pure function of the call's own inputs, so the result never depends on elaboration
+order (no shared registry is consulted, unlike a naive "detect and disambiguate on
+collision" approach would need). This is what makes two factory calls whose parameters
+combine arithmetically before reaching any field's type (e.g. a fixed-point factory
+where only `int_bits + frac_bits` sizes the single field, so `make_fixed_t(4, 8)` and
+`make_fixed_t(8, 4)` would otherwise both produce a `val: int12_t` field and hence an
+identical canonical name) still get distinct names — without requiring any change at
+the `@struct` call site. Value formatting mirrors `_canonical_func_name`'s convention
+for `@hw_func` closure params (above): a pypeline C type contributes its own canonical
+name, `int`/`bool` contributes its value (a negative value uses a `neg` prefix, since a
+bare `-` is not legal inside a VHDL identifier), `None` contributes `"None"`. A bare,
+module-level `@struct` (no enclosing factory function) is unaffected.
 
 **Nested factory structs:**
 
@@ -1193,7 +1213,8 @@ def make_swap(T):
 swap_u32 = make_swap(uint32_t)
 # When swap_u32 is first called:
 #   _elaborate_live_func sees local_pair_t in closure
-#   local_pair_t._pypeline_ctype_name already = "pair_t_a_uint32_t_b_uint32_t"
+#   local_pair_t._pypeline_ctype_name already = "pair_t_a_uint32_t_b_uint32_t_T_uint32_t"
+#   (the "_T_uint32_t" suffix is make_pair_t's own parameter, appended automatically)
 #   registers it in struct_to_field_type_dict if not already there
 ```
 
@@ -3676,7 +3697,7 @@ class buf_t(NamedTuple):
 # C/VHDL type: buf_t_data_uint8_t_64            (19 chars — kept)
 
 # Deeply nested factory struct (e.g. stream_pipeline_t with stream fields):
-# C/VHDL type: stream_pipeline_t_40fc18a7       (truncated; full name in _pypeline_ctype_canonical)
+# C/VHDL type: stream_pipeline_t_d1e1fd20       (truncated; full name in _pypeline_ctype_canonical)
 ```
 
 This name is independent of what Python variable the factory result is assigned to.

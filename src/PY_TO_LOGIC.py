@@ -752,7 +752,10 @@ def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _dep
                 s = s.replace("[", "_").replace("]", "")  # mangle brackets
             name_parts.append(f"{var_name}_{s}")
         elif isinstance(val, (int, bool)) and not isinstance(val, type):
-            name_parts.append(f"{var_name}_{val}")
+            # A bare '-' is not legal inside a VHDL basic identifier, so a
+            # negative value uses a 'neg' prefix instead of str(val)'s '-5'.
+            val_str = str(val) if val >= 0 else f"neg{-val}"
+            name_parts.append(f"{var_name}_{val_str}")
         elif val is None:
             name_parts.append(f"{var_name}_None")
         elif callable(val):

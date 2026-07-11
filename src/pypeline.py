@@ -685,12 +685,67 @@ def NamedTuple(cls=None, **kwargs):
 NamedTuple = typing.NamedTuple
 
 
+def _format_struct_param_value(val):
+    """Format one enclosing-factory parameter value for embedding in a struct's
+    canonical name. Mirrors the convention _canonical_func_name uses for
+    hw_func closure params in PY_TO_LOGIC.py (not imported -- pypeline.py has
+    zero dependency on the compiler and must stay that way): a pypeline C
+    type contributes its own canonical name, int/bool contributes its value
+    string, None contributes "None". Negative ints use a 'neg' prefix rather
+    than a bare '-', which is not legal inside a VHDL identifier. Anything
+    else falls back to a short hash of its repr so struct() never raises on
+    an unusual factory parameter type -- it just won't distinguish on it.
+    """
+    if isinstance(val, type):
+        return _mangle_type(getattr(val, "_pypeline_ctype_name", val.__name__))
+    if isinstance(val, bool) or isinstance(val, int):
+        return str(val) if val >= 0 else f"neg{-val}"
+    if val is None:
+        return "None"
+    return _hashlib.sha256(repr(val).encode()).hexdigest()[:8]
+
+
+def _enclosing_factory_param_suffix(cls, frame):
+    """If `cls` was defined directly inside a factory function (its
+    __qualname__ contains '.<locals>.'), return a canonical-name suffix built
+    from that function's own declared parameters -- unconditionally, as a
+    pure function of the call's own inputs, so the result never depends on
+    what else has been elaborated before it (mirrors _canonical_func_name's
+    closure-param handling for @hw_func factories). Returns "" if there's no
+    enclosing function, it has no declared parameters, or (safety bail-out)
+    the live frame's function name doesn't match what the qualname lexically
+    implies -- e.g. a struct defined two factory levels deep, which no
+    current factory in this codebase does; degrading to "no suffix" here is
+    safe (same as the module-level case), not incorrect.
+    """
+    qualname = getattr(cls, "__qualname__", "")
+    if ".<locals>." not in qualname:
+        return ""
+    expected_name = qualname.split(".<locals>.")[-2]
+    if frame.f_code.co_name != expected_name:
+        return ""
+    code = frame.f_code
+    n = code.co_argcount + code.co_kwonlyargcount
+    param_names = code.co_varnames[:n]
+    parts = [
+        f"{name}_{_format_struct_param_value(frame.f_locals[name])}"
+        for name in sorted(param_names)
+        if name in frame.f_locals
+    ]
+    return ("_" + "_".join(parts)) if parts else ""
+
+
 def struct(cls):
     """Decorator that adds array subscript support and stamps a canonical C type name.
-    The canonical name is derived from the class name and field types, making it
-    deterministic regardless of the Python variable name used at the call site.
-    This allows factory-produced structs nested inside other factories to get
-    unique, stable names without being visible at module level.
+    The canonical name is derived from the class name, field types, and (for a
+    struct defined directly inside a factory function) that factory's own
+    parameters -- making it deterministic regardless of the Python variable
+    name used at the call site, and collision-free even when two different
+    parameter combinations would otherwise produce identical field types (e.g.
+    a fixed-point factory where int_bits+frac_bits alone sizes the only
+    field). This allows factory-produced structs nested inside other
+    factories to get unique, stable names without being visible at module
+    level, and without requiring any change at the @struct call site itself.
 
     Usage:
         @struct
@@ -716,6 +771,7 @@ def struct(cls):
             ann_str = str(ann)
         parts.append(f"{field}_{_mangle_type(ann_str)}")
     canonical = cls.__name__ + ("_" + "_".join(parts) if parts else "")
+    canonical += _enclosing_factory_param_suffix(cls, _sys._getframe(1))
     cls._pypeline_ctype_canonical = canonical  # full name retained for debugging
     if len(canonical) > _MAX_MANGLE_NAME_LEN:
         h = _hashlib.sha256(canonical.encode()).hexdigest()[:8]

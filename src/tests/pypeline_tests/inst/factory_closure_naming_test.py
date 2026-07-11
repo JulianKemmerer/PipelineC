@@ -55,6 +55,13 @@ def make_wrapper(func):
     return func_stream
 
 
+def make_negative_offset(amount):
+    def offset_adder(s):
+        return s + amount
+
+    return offset_adder
+
+
 _module_level_lambda = lambda x: x + 1  # noqa: E731
 
 
@@ -63,6 +70,7 @@ MODULE_GLOBALS = {
     "round_b": round_b,
     "make_quarter_round": make_quarter_round,
     "make_wrapper": make_wrapper,
+    "make_negative_offset": make_negative_offset,
 }
 
 
@@ -248,6 +256,21 @@ def test_overflow_collapse_keeps_readable_prefix():
     print("test_overflow_collapse_keeps_readable_prefix PASS")
 
 
+def test_negative_int_closure_param_has_no_bare_minus():
+    # Regression: a negative-valued named closure constant used to bake a
+    # bare '-' into the canonical name (invalid inside a VHDL basic
+    # identifier) -- see the 'neg' prefix fix in _canonical_func_name and the
+    # BIAS_PLUS_M_LEN workaround it replaces in floating_point.py.
+    neg_instance = make_negative_offset(-5)
+    name = P._canonical_func_name(
+        neg_instance, _closure_ns(neg_instance), MODULE_GLOBALS
+    )
+    assert "-" not in name, name
+    assert name.isidentifier(), name
+    assert name == "offset_adder_amount_neg5", name
+    print("test_negative_int_closure_param_has_no_bare_minus PASS")
+
+
 def test_ast_meta_src_file_and_line_point_to_true_definition():
     # Regression for the _elaborate_live_func ast_meta bug: for a factory
     # closure, Logic.ast_meta.src_file/.line must point at the closure's own
@@ -286,6 +309,137 @@ def test_ast_meta_src_file_and_line_point_to_true_definition():
     print("test_ast_meta_src_file_and_line_point_to_true_definition PASS")
 
 
+# Regression tests for struct()'s automatic canonical-name disambiguation --
+# a struct defined directly inside a factory function gets its canonical name
+# suffixed, unconditionally, with that factory's own declared parameters
+# (mirroring _canonical_func_name's closure-param handling for @hw_func
+# factories -- a pure function of the call's own inputs, with no shared
+# state, so the result never depends on elaboration order). This fixes the
+# case where two distinct parameter combinations collapse to the same field
+# type (e.g. a fixed-point factory where int_bits+frac_bits alone sizes the
+# only field, so (4, 8) and (8, 4) would otherwise produce identical struct
+# names) without requiring any change at the @struct call site itself.
+
+
+def _make_split_struct(int_bits, frac_bits):
+    val_t = PL.make_int_t(int_bits + frac_bits)
+
+    @PL.struct
+    class split_t(PL.NamedTuple):
+        val: val_t
+
+    return split_t
+
+
+def test_struct_factory_param_suffix_disambiguates_colliding_field_types():
+    a = _make_split_struct(4, 8)
+    b = _make_split_struct(8, 4)
+    # Without the param suffix, both would collapse to split_t_val_int12_t.
+    assert (
+        a._pypeline_ctype_name == "split_t_val_int12_t_frac_bits_8_int_bits_4"
+    ), a._pypeline_ctype_name
+    assert (
+        b._pypeline_ctype_name == "split_t_val_int12_t_frac_bits_4_int_bits_8"
+    ), b._pypeline_ctype_name
+    assert a._pypeline_ctype_name != b._pypeline_ctype_name
+    print("test_struct_factory_param_suffix_disambiguates_colliding_field_types PASS")
+
+
+def test_struct_factory_param_suffix_deterministic_regardless_of_order():
+    # Elaborate a bunch of unrelated "noise" structs first, then the same
+    # (int_bits, frac_bits) combination as above -- the exact-string
+    # assertions above already prove this is a pure function of the call's
+    # own inputs (no registry / no shared state to be order-sensitive), but
+    # this test pins that guarantee explicitly rather than relying on
+    # reading the implementation.
+    for i in range(5):
+        _make_split_struct(i + 1, i + 2)
+    a = _make_split_struct(8, 4)
+    b = _make_split_struct(4, 8)
+    assert (
+        a._pypeline_ctype_name == "split_t_val_int12_t_frac_bits_4_int_bits_8"
+    ), a._pypeline_ctype_name
+    assert (
+        b._pypeline_ctype_name == "split_t_val_int12_t_frac_bits_8_int_bits_4"
+    ), b._pypeline_ctype_name
+    print("test_struct_factory_param_suffix_deterministic_regardless_of_order PASS")
+
+
+def test_struct_factory_param_suffix_same_args_same_name():
+    a = _make_split_struct(4, 8)
+    b = _make_split_struct(4, 8)
+    assert a._pypeline_ctype_name == b._pypeline_ctype_name
+    print("test_struct_factory_param_suffix_same_args_same_name PASS")
+
+
+def test_struct_bare_decorator_unaffected():
+    @PL.struct
+    class point_t(PL.NamedTuple):
+        x: PL.uint32_t
+        y: PL.uint32_t
+
+    assert (
+        point_t._pypeline_ctype_name == "point_t_x_uint32_t_y_uint32_t"
+    ), point_t._pypeline_ctype_name
+    print("test_struct_bare_decorator_unaffected PASS")
+
+
+def _make_elem_wrapper_struct(elem_t):
+    @PL.struct
+    class wrapper_t(PL.NamedTuple):
+        elem: elem_t
+
+    return wrapper_t
+
+
+def test_struct_factory_param_suffix_scalar_ctype_value():
+    a = _make_elem_wrapper_struct(PL.uint8_t)
+    b = _make_elem_wrapper_struct(PL.uint16_t)
+    assert (
+        a._pypeline_ctype_name == "wrapper_t_elem_uint8_t_elem_t_uint8_t"
+    ), a._pypeline_ctype_name
+    assert (
+        b._pypeline_ctype_name == "wrapper_t_elem_uint16_t_elem_t_uint16_t"
+    ), b._pypeline_ctype_name
+    print("test_struct_factory_param_suffix_scalar_ctype_value PASS")
+
+
+def _make_offset_struct(offset):
+    val_t = PL.make_int_t(16)
+
+    @PL.struct
+    class offset_t(PL.NamedTuple):
+        val: val_t
+
+    return offset_t
+
+
+def test_struct_factory_param_suffix_negative_value_safe():
+    t = _make_offset_struct(-5)
+    assert "-" not in t._pypeline_ctype_name, t._pypeline_ctype_name
+    assert t._pypeline_ctype_name.isidentifier(), t._pypeline_ctype_name
+    assert (
+        t._pypeline_ctype_name == "offset_t_val_int16_t_offset_neg5"
+    ), t._pypeline_ctype_name
+    print("test_struct_factory_param_suffix_negative_value_safe PASS")
+
+
+def _make_many_param_struct(p0, p1, p2, p3, p4, p5, p6, p7, p8, p9):
+    @PL.struct
+    class overflow_t(PL.NamedTuple):
+        val: PL.uint32_t
+
+    return overflow_t
+
+
+def test_struct_factory_param_suffix_overflow_collapses_safely():
+    t = _make_many_param_struct(*range(10))
+    assert len(t._pypeline_ctype_name) <= PL._MAX_MANGLE_NAME_LEN
+    assert t._pypeline_ctype_name.isidentifier(), t._pypeline_ctype_name
+    assert t._pypeline_ctype_name.startswith("overflow_t")
+    print("test_struct_factory_param_suffix_overflow_collapses_safely PASS")
+
+
 if __name__ == "__main__":
     test_nested_factory_instances_get_distinct_readable_names()
     test_top_level_callable_closure_param_is_readable()
@@ -299,5 +453,13 @@ if __name__ == "__main__":
     test_builtin_closure_param_is_readable()
     test_cycle_guard_falls_back_to_hash_not_infinite_recursion()
     test_overflow_collapse_keeps_readable_prefix()
+    test_negative_int_closure_param_has_no_bare_minus()
     test_ast_meta_src_file_and_line_point_to_true_definition()
+    test_struct_factory_param_suffix_disambiguates_colliding_field_types()
+    test_struct_factory_param_suffix_deterministic_regardless_of_order()
+    test_struct_factory_param_suffix_same_args_same_name()
+    test_struct_bare_decorator_unaffected()
+    test_struct_factory_param_suffix_scalar_ctype_value()
+    test_struct_factory_param_suffix_negative_value_safe()
+    test_struct_factory_param_suffix_overflow_collapses_safely()
     print("All factory_closure_naming tests passed.")

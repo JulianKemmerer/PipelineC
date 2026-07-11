@@ -233,16 +233,34 @@ Examples:
 # class point_t with fields x: uint32_t, y: uint32_t   (38 chars — kept)
 # _pypeline_ctype_name = "point_t_x_uint32_t_y_uint32_t"
 
-# class float_t with fields sign: uint1_t, exp: uint8_t, man: uint23_t   (46 chars — kept)
-# _pypeline_ctype_name = "float_t_sign_uint1_t_exp_uint8_t_man_uint23_t"
+# class float_t with fields sign: uint1_t, exp: uint8_t, man: uint23_t, defined directly
+# inside make_float_t(exponent_width, mantissa_width) -- the field-derived part alone is
+# "float_t_sign_uint1_t_exp_uint8_t_man_uint23_t" (46 chars), but a struct defined inside a
+# factory function also gets that factory's own parameters appended (see "Factory parameter
+# disambiguation" below), pushing this one over 64 chars and into the truncated form:
+# _pypeline_ctype_canonical = "float_t_sign_uint1_t_exp_uint8_t_man_uint23_t_exponent_width_8_mantissa_width_23"
+# _pypeline_ctype_name      = "float_t_bdfae6fa"                           (used in VHDL)
 
 # Deeply nested stream_pipeline_t (field types themselves have truncated names → > 64 chars)
 # _pypeline_ctype_canonical = "stream_pipeline_t_stream_out_stream_t_..."  (full, for debug)
-# _pypeline_ctype_name      = "stream_pipeline_t_40fc18a7"                 (used in VHDL)
+# _pypeline_ctype_name      = "stream_pipeline_t_d1e1fd20"                 (used in VHDL)
 ```
 
-Two factory calls with identical class name and field types produce the same canonical name
-and share a single VHDL type declaration — correct deduplication without module prefixing.
+Two factory calls with identical class name, field types, *and* (for a struct defined inside
+a factory function) identical factory parameters produce the same canonical name and share a
+single VHDL type declaration — correct deduplication without module prefixing.
+
+**Factory parameter disambiguation:** a struct class defined directly inside a factory
+function (its `__qualname__` contains `.<locals>.`) has that factory's own declared
+parameters appended to its canonical name, sorted by parameter name — unconditionally, as a
+pure function of the call's own inputs, so the result never depends on elaboration order (no
+shared registry is consulted). This is what makes `make_fixed_t(4, 8)` and `make_fixed_t(8, 4)`
+produce different canonical names even when both calls happen to produce a field of the exact
+same width (e.g. `val: int12_t` either way) — without requiring any change at the `@struct`
+call site. A pypeline C type parameter contributes its own canonical name; `int`/`bool`
+contributes its value (a negative value uses a `neg` prefix, since a bare `-` is not legal
+inside a VHDL identifier); `None` contributes `"None"`. A bare, module-level `@struct` (no
+enclosing factory function) is unaffected.
 
 **Field names** are Python identifiers at this layer and are not mangled here — VHDL
 reserved-word mangling for individual field names (e.g. a field literally named `label` or
