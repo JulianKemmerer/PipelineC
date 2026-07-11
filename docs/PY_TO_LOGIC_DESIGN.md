@@ -289,6 +289,20 @@ emitted. This prevents spurious `BIN_OP_minus` submodule instances from appearin
 Logic() graph for expressions that are entirely compile-time constants, even when the LHS
 variable being assigned to is already a hardware wire in `self.env`.
 
+**Value-context subscript/attribute reads:** bare-name reads (`_elab_name`) resolve a
+name that isn't a declared hardware variable by checking `const_env`, then
+`module_globals` (an `int`/`bool` value is emitted as a CONST wire via
+`_elab_python_value`; anything else is an `ElaborationError`). `_elab_ref_read` — the
+counterpart for subscript/attribute reads (`CQ[j]`, `obj.attr`) — mirrors this: if the
+base name isn't in `self.env` (and isn't a global wire), it falls back to
+`_try_eval_const` on the *whole* expression before giving up, so a plain Python
+container (a module-level or closure list/dict, e.g. `CQ = [3, -5, 7, 2]`) indexed with
+an elaboration-time-constant key can be read as a value, not just used as an index
+expression (`arr[IDX[j]]`, handled separately by `_parse_ref_toks`'s own
+`_try_eval_const` call on the subscript slice). If the fallback also fails — the name
+is genuinely undefined anywhere — `_elab_ref_read` raises a clean `ElaborationError`
+naming the base, rather than an unguarded `self.env[base_var]` `KeyError`.
+
 ### Annotation Evaluation
 
 Function signature annotations are evaluated against `{**module_globals, **const_env}`:

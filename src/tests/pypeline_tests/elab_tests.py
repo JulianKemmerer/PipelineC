@@ -28,6 +28,7 @@ NO_SYNTH_TEST_FILES = [
     "float_ops_test.py",
     "sim_input_output_elab_test.py",
     "array_2d_order_test.py",
+    "pylist_value_context_test.py",
 ]
 # fmt: on
 
@@ -98,6 +99,17 @@ def get_tests() -> list:
             name="closure_local_nested_struct_test",
             category="elab",
             cmd=[INST_DIR / "closure_local_nested_struct_test.py"],
+        )
+    )
+    # Not run through the pipelinec CLI either: it checks the *type* of
+    # exception PARSE_FILE raises for a genuinely-undefined reference
+    # (PY_TO_LOGIC.ElaborationError, not a raw KeyError), which needs direct
+    # in-process access to the exception object.
+    tests.append(
+        Test(
+            name="pylist_value_context_error_test",
+            category="elab",
+            cmd=[INST_DIR / "pylist_value_context_error_test.py"],
         )
     )
     return tests

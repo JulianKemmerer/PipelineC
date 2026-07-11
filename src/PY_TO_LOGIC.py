@@ -3130,6 +3130,16 @@ class FuncElaborator:
         base_var = ref_toks[0]
         if base_var not in self.env and base_var in self.parser_state.global_vars:
             self._declare_global_read_wire(base_var)
+        if base_var not in self.env:
+            # Not a declared hardware variable/wire -- e.g. a plain module-level or
+            # closure Python list read in value context (CQ[j]). Mirror _elab_name's
+            # const_env/module_globals fallback instead of indexing self.env blindly.
+            const_val = self._try_eval_const(expr)
+            if const_val is not None:
+                return self._elab_python_value(const_val, expr)
+            raise ElaborationError(
+                f"Unknown reference base '{base_var}' in func '{self.func_name}'"
+            )
         _, base_type = self.env[base_var]
         c_type = _ref_toks_to_ctype(ref_toks, base_type, self.parser_state)
         if _has_variable_index(ref_toks):
