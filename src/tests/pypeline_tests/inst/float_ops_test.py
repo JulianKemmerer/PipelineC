@@ -56,45 +56,12 @@ def float32_div_main(a: float32_t, b: float32_t) -> float32_t:
     return a / b
 
 
-@MAIN
-def float64_add_main(a: float64_t, b: float64_t) -> float64_t:
-    return a + b
-
-
-@MAIN
-def float64_sub_main(a: float64_t, b: float64_t) -> float64_t:
-    return a - b
-
-
-@MAIN
-def float64_mul_main(a: float64_t, b: float64_t) -> float64_t:
-    return a * b
-
-
-@MAIN
-def float64_div_main(a: float64_t, b: float64_t) -> float64_t:
-    return a / b
-
-
-@MAIN
-def f32_to_f64_main(a: float32_t) -> float64_t:
-    return float32_to_float64(a)
-
-
-@MAIN
-def f64_to_f32_main(a: float64_t) -> float32_t:
-    return float64_to_float32(a)
-
-
-@MAIN
-def f64_to_i32_main(a: float64_t) -> int32_t:
-    return float64_to_int32(a)
-
-
-@MAIN
-def i32_to_f64_main(a: int32_t) -> float64_t:
-    return int32_to_float64(a)
-
+# float64 +, -, *, /, and float32<->float64/int32 conversions are exercised
+# only via native sim below (test_bare_operators_native_sim/test_conversions),
+# not through @MAIN -- float64's wider mantissa (52 vs 23 bits) makes its
+# --comb synthesis substantially more expensive than float32's, and native
+# sim already gives full bit-accurate coverage of the same arithmetic without
+# paying that cost.
 
 # ─────────────────────────────────────────────
 # Native-simulation correctness tests

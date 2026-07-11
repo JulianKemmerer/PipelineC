@@ -16,6 +16,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "valid_ready_mcp_test.py",
     "float32_add_test.py",
     "float_ops_test.py",
+    "fixed_point_test.py",
     "pypeline_test.py",
     "reg_init_test.py",
     "bit_math_test.py",

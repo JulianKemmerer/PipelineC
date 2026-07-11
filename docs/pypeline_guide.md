@@ -1482,6 +1482,102 @@ See `src/tests/pypeline_tests/inst/float32_add_test.py`'s `float_add_32_main` fo
 complete worked example: it receives two `uint32_t` ports, unpacks each into a
 `float32_t`, adds them, and repacks the `float32_t` result back into a `uint32_t`.
 
+### Fixed-point types
+
+`from fixed_point import make_fixed_t` (from `include/pypeline/fixed_point.py`) builds a
+struct type wrapping a single raw integer field — a fixed-point number is just an
+`intN_t`/`uintN_t` with an implied binary point `frac_bits` positions up from the LSB:
+
+```python
+from fixed_point import make_fixed_t, register_fixed_ops
+
+q4_12_t = make_fixed_t(4, 12)          # signed Q4.12: 4 integer bits, 12 fraction bits
+add, sub, mul, neg = register_fixed_ops(q4_12_t)   # registers +, -, *, unary - globally
+
+def bias_one(x: q4_12_t):
+    one: q4_12_t = q4_12_t.as_const(1.0)   # Python float -> hardware constant
+    return x + one                          # dispatches to the registered adder
+```
+
+`q4_12_t.as_const(value)` converts a Python `float` to a `q4_12_t` instance at elaboration
+time (round-half-even, matching Python's own `round()`); `float(x)` (on any `q4_12_t` value)
+converts back to a Python `float` for printing/debugging/comparing against a reference
+implementation. `t.int_bits`/`t.frac_bits`/`t.signed` are plain attributes on any type
+returned by `make_fixed_t`, for introspection by generic code (e.g. a FIR filter library
+choosing accumulator widths).
+
+#### `+`, `-`, `*` always grow — they never truncate
+
+Unlike native `intN_t`/`uintN_t` arithmetic (which you assign into an explicitly-sized
+local to narrow), `register_fixed_ops`/`make_fixed_adder`/`make_fixed_subtractor`/
+`make_fixed_multiplier` deliberately return a **wider** type than either operand, sized to
+hold the exact mathematical result with **zero bit truncation** — this is why `a + b` for
+two `q4_12_t` values does not itself produce a `q4_12_t` (it produces a 5-integer-bit
+result); bind it to its own type (or let Python infer it) rather than assuming the sum has
+the same type as its operands:
+
+```python
+sum_t = add.__annotations__["return"]   # the actual (wider) result type
+```
+
+`+`/`-` require both operands to share the same `frac_bits` (mismatched `frac_bits` raises
+`TypeError` at the point you build the adder/subtractor — resize one operand first via
+`make_fixed_resize`, below); `*` has no such constraint and returns a full-precision, exact
+product (no rounding) with `frac_bits` equal to the sum of both operands' `frac_bits`.
+Growth accounts for **mismatched signedness** too: adding/multiplying a signed and an
+unsigned `fixed_t` grows the output 1 bit more than the naive `max(int_bits)+1` /
+`int_bits_a+int_bits_b` textbook formula would suggest, matching exactly the same
+sign-promotion rule Pypeline's native `intN_t`/`uintN_t` arithmetic already uses for any
+plain mismatched-signedness expression (`int8_t + uint10_t` promotes to `int12_t`, not
+`int11_t`) — this rule is literally the same shared code on both the native-simulation
+path and real hardware elaboration, so there's no risk of it behaving differently in
+`sim_call` versus synthesized hardware. **Narrowing is never an implicit side effect of
+arithmetic** — if you want a smaller result, resize explicitly (next section).
+
+Need the individual pieces instead of `register_fixed_ops`'s all-at-once self-pair
+registration? `make_fixed_adder(a_t, b_t)`/`make_fixed_subtractor(a_t, b_t)`/
+`make_fixed_multiplier(a_t, b_t)` build a single operator for any pair of `fixed_t` types
+(not just `a_t` with itself) — useful for e.g. an accumulator of one width absorbing
+products of another, without registering a global operator for every combination.
+`make_fixed_negate(a_t)` (requires `a_t.signed`) builds unary `-` at the same width as its
+input; like plain two's-complement negation elsewhere in this codebase, negating the
+most-negative representable value wraps back to itself rather than growing a bit.
+
+#### Resizing (rounding + saturation)
+
+`make_fixed_resize(src_t, dst_t, rounding="truncate", overflow="wrap")` is the explicit,
+opt-in narrowing/rounding operation — the only place bits are intentionally dropped. It
+changes `int_bits`/`frac_bits`/signedness between any two `fixed_t` types, vendor-FIR-IP
+"output precision control" style — e.g. rounding a wide accumulator down to a narrow
+output sample:
+
+```python
+from fixed_point import make_fixed_t, make_fixed_resize
+
+acc_t = make_fixed_t(12, 20)      # wide accumulator
+sample_t = make_fixed_t(4, 12)    # narrow output sample
+round_to_sample = make_fixed_resize(acc_t, sample_t, rounding="round_half_even", overflow="saturate")
+```
+
+`rounding` (only meaningful when narrowing the fraction, i.e. `src_t.frac_bits >
+dst_t.frac_bits` — a no-op when widening or unchanged):
+- `"truncate"` — drop the low bits (an arithmetic right shift, i.e. floor, not
+  round-toward-zero — `-1.5` truncates to `-2`, not `-1`).
+- `"round_half_up"` — ties always round toward `+∞`.
+- `"round_half_even"` — banker's/convergent rounding: ties round to whichever neighbor is
+  even.
+- `"round_half_away"` — symmetric rounding: ties round away from zero.
+
+`overflow` (applies regardless of whether the fraction narrowed): `"wrap"` (plain
+two's-complement truncation) or `"saturate"` (clamp to `dst_t`'s representable
+`[min, max]`, computed from `dst_t.int_bits`/`dst_t.signed`).
+
+`quantize_coeffs(taps, coeff_t, rounding="round_half_even")` is the plain-Python (no
+hardware) counterpart, for quantizing a list of floating-point filter taps into
+`coeff_t`'s raw integer representation ahead of time (e.g. baking FIR coefficients into
+`as_const`-initialized `Reg[T]`s) — each tap is quantized independently, with no
+symmetry-preservation logic.
+
 ---
 
 ## 12 Parametric Hardware with Factory Functions

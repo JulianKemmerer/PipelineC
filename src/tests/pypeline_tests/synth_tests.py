@@ -22,6 +22,8 @@ SYNTH_TEST_FILES = [
     ("vga_donut.py", EXAMPLES_PYPELINE_DIR, ["--comb"]),
     ("vga_test_pattern.py", EXAMPLES_PYPELINE_DIR, ["--comb"]),
     ("float32_add_test.py", INST_DIR, ["--comb"]),
+    ("float_ops_test.py", INST_DIR, ["--comb"]),
+    ("fixed_point_test.py", INST_DIR, ["--comb"]),
     ("pypeline_test.py", INST_DIR, ["--comb"]),
     ("reg_init_test.py", INST_DIR, ["--comb"]),
     ("if_test.py", INST_DIR, ["--comb"]),
