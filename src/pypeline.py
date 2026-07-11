@@ -3392,10 +3392,12 @@ def _call_sim_model(model_entry, args, kwargs):
     combinational input→output path through the model converges exactly like
     ordinary comb logic, and state advances exactly once per cycle (the final
     converged pass's buffered copy is what _sim_reg_flush_buffer commits).
-    Under plain sim_call (no buffer) the write commits immediately: one call =
-    one cycle, matching Layer-1 Reg[T] semantics. Shared pre-existing
-    limitation: a Layer-1 Feedback[T] convergence loop has no buffer, so models
-    (like nested Reg[T] hw_funcs) commit once per loop iteration there.
+    Under plain sim_call, the outermost call now also opens a register-write
+    buffer for its whole duration (see sim_call's docstring), so a Feedback[T]
+    convergence loop's re-invocations of a model (or a nested Reg[T] hw_func)
+    are convergence-safe there too: every pass reads the state committed at
+    the last real clock edge, and only the final pass's buffered write lands
+    in _sim_reg_state once the outermost sim_call returns.
     """
     model, kind, copy_state = model_entry
     if kind == "hw_func":
@@ -3733,11 +3735,26 @@ def sim_call(func, *args, **kwargs):
     Layer-1 simulation, so @sim_input's once-per-cycle result cache is cleared
     here on the outermost call only (prev_active is already True on a nested/
     reentrant sim_call(), so mid-cycle helper calls don't spuriously reset it).
+
+    The outermost call also opens a register-write buffer (the same
+    _sim_reg_begin_buffer/_sim_reg_flush_buffer machinery pypeline_sim.py uses
+    per clock cycle) so the whole call tree commits Reg[T]/@sim_model writes
+    atomically, once, after the call returns -- matching one hardware clock
+    edge. This is what makes a Feedback[T] convergence loop's re-invocations
+    of a stateful child safe: _sim_reg_read always reads the last *committed*
+    value regardless of how many buffered writes have piled up this call, so
+    every convergence pass (including the first) sees the true cycle-start
+    state for every descendant register, not a mix of this-call passes.
+    pypeline_sim.py is unaffected: it sets _sim_active once before its cycle
+    loop and never resets it per-MAIN-call, so prev_active is already True by
+    the time it calls sim_call(main_fn), and this branch is skipped there --
+    pypeline_sim.py's own per-cycle begin/flush bracket already covers it.
     """
     global _sim_active
     prev_active = _sim_active
     if not prev_active:
         _sim_input_cache.clear()
+        _sim_reg_begin_buffer()
     _sim_active = True
     saved = _push_scoped_registrations(func)
     try:
@@ -3745,3 +3762,5 @@ def sim_call(func, *args, **kwargs):
     finally:
         _pop_scoped_registrations(saved)
         _sim_active = prev_active
+        if not prev_active:
+            _sim_reg_flush_buffer()

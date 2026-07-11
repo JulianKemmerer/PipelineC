@@ -20,6 +20,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "pypeline_test.py",
     "reg_init_test.py",
     "reg_bitwise_mask_test.py",
+    "feedback_reeval_test.py",
     "bit_math_test.py",
     "vhdl_text_test.py",
     "fifo_test.py",
