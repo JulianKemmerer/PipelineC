@@ -420,7 +420,7 @@ plain Python string on the AST node, no eval needed) and `('idx', None)` for eac
 (the index value is irrelevant to the type, since every element of an array shares one
 declared ctype). `_resolve_leaf_ctype(root_ctype, kinds)` walks `root_ctype` through `kinds` —
 `'attr'` steps look up `ctype.__annotations__[field_name]`; `'idx'` steps move to
-`_array_elem_ctype(ctype)` (the same `_elem_ctype`-preferred / `_ctype_name`-suffix-stripping
+`_array_elem_ctype(ctype)` (the same `_elem_ctype`-preferred / leftmost-`[N]`-stripping
 helper `_make_sim_zero` uses below) — returning `None` if it can't resolve (defensive: falls
 back to the old uncast behavior rather than erroring). When a leaf ctype *is* resolved, the
 rewriter wraps `node.value` in `_sim_cast_deep(value, leaf_ctype)` before it reaches
@@ -467,7 +467,11 @@ value at all, so no further action is needed at this level.
 `_array_elem_ctype(ctype)` (a small shared helper, also used by `_make_sim_zero` below) returns
 an array ctype's element ctype — preferring `_elem_ctype` (set at array-type-creation time,
 see [C Type System](pypeline_DESIGN.md#c-type-system) in `pypeline_DESIGN.md`) over re-deriving
-it from `_ctype_name`'s trailing `[N]` — or `None` if `ctype` isn't an array.
+it from `_ctype_name`'s *leftmost* `[N]` — or `None` if `ctype` isn't an array. Its sibling
+`_array_len(ctype)` returns that same array's own outer/first dimension (`_arr_len`, or the
+leftmost `[N]` as a fallback). The leftmost bracket is always the outer/first dimension —
+matching C's `T x[A][B]` and `PY_TO_LOGIC.py`'s elaboration-side `_array_first_dim`/
+`_array_elem_type` (`PY_TO_LOGIC_DESIGN.md`) — for any chain of dimensions, not just one.
 
 **What is NOT rewritten:**
 - `Wire[T]`, `Input[T]`, `Output[T]` descriptor annotations, and `Reg[T]`/`Feedback[T]` whose

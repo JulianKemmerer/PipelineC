@@ -75,15 +75,28 @@ uint32_t.width         # → 32   (property, raises for array types)
 returns a proper class object with `_ctype_name = "point_t[10]"`. This is why
 `uint32_t[4]` works as a type annotation in `NamedTuple` fields.
 
-The returned array class also gets `arr._elem_ctype = cls` set — a direct reference to
-the element type object, not just its name string. This lets the simulator zero-initialize
-arrays of structs correctly (`_make_sim_zero`, see
-[`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)): re-deriving the element type by
-parsing `_ctype_name` (stripping the trailing `[N]`) only recovers a name string, which
-is enough for scalar elements (`_make_ctype("uint1_t")` is equivalent to `uint1_t`) but
-not for struct elements, since a struct's field layout isn't recoverable from its name
-alone. `_elem_ctype` is preferred when present; the string-derived fallback still exists
-for array types constructed without going through `__getitem__`.
+The returned array class also gets `arr._elem_ctype` and `arr._arr_len` set — a direct
+reference to the element type object (not just its name string) and this array's own
+outer element count. This lets the simulator zero-initialize arrays of structs correctly
+(`_make_sim_zero`, see [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)): re-deriving
+the element type by parsing `_ctype_name` only recovers a name string, which is enough
+for scalar elements (`_make_ctype("uint1_t")` is equivalent to `uint1_t`) but not for
+struct elements, since a struct's field layout isn't recoverable from its name alone.
+`_elem_ctype`/`_arr_len` are preferred when present; the string-derived fallback (leftmost
+`[N]`) still exists for array types constructed without going through `__getitem__`.
+
+For a single dimension (`cls` is scalar/struct), `arr._elem_ctype = cls` and
+`arr._arr_len = dim`, as above. When chaining further brackets on an already-array `cls`
+(e.g. `int8_t[3][4]`, evaluated as `(int8_t[3])[4]`), `__getitem__` does **not** wrap
+`cls` as the new element type — it pushes the new dimension onto `cls`'s own element type
+(`arr._elem_ctype = cls._elem_ctype[dim]`) and keeps `arr._arr_len = cls._arr_len`. This
+matters because Python evaluates `T[A][B]` left-to-right, so a naive wrap-outside
+implementation would make the *last*-written bracket the array's outer dimension — the
+reverse of C's `T x[A][B]` (`A`, the first-written/leftmost bracket, is outer; `B` is
+inner). Pushing new dimensions onto the leaf keeps the first-applied dimension as the
+permanent outer/first dimension no matter how many further brackets are chained, matching
+C and `PY_TO_LOGIC.py`'s elaboration-side `_array_first_dim`/`_array_elem_type`
+(`PY_TO_LOGIC_DESIGN.md`), which always treat the leftmost bracket as outer.
 
 ### Type Factories
 

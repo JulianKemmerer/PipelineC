@@ -32,6 +32,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "sim_print_test.py",
     "type_bytes_test.py",
     "sim_model_test.py",
+    "array_2d_order_test.py",
 ]
 # fmt: on
 

@@ -27,6 +27,7 @@ NO_SYNTH_TEST_FILES = [
     "type_bytes_test.py",
     "float_ops_test.py",
     "sim_input_output_elab_test.py",
+    "array_2d_order_test.py",
 ]
 # fmt: on
 

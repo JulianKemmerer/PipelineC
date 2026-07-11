@@ -41,8 +41,22 @@ class _CTypeMeta(type):
     def __getitem__(cls, dim):
         if not isinstance(dim, int):
             raise TypeError(f"Array dimension must be int, got {type(dim)}: {dim!r}")
-        arr = _make_ctype(f"{cls._ctype_name}[{dim}]")
+        name = f"{cls._ctype_name}[{dim}]"
+        inner_elem = getattr(cls, "_elem_ctype", None)
+        if inner_elem is not None:
+            # cls is itself an array type (from an earlier bracket, e.g. T[A]). A
+            # further bracket T[A][dim] declares `dim` as a MORE DEEPLY NESTED
+            # dimension -- matching C, where in `T x[A][dim]` A is the outer/first
+            # dimension and dim is inner -- so push the new dim onto the leaf
+            # element type instead of wrapping outside, keeping this array's own
+            # outer length (A) unchanged.
+            arr = _make_ctype(name)
+            arr._elem_ctype = inner_elem[dim]
+            arr._arr_len = cls._arr_len
+            return arr
+        arr = _make_ctype(name)
         arr._elem_ctype = cls
+        arr._arr_len = dim
         return arr
 
     @property
@@ -281,10 +295,13 @@ def _mangle_type(s):
 
 
 def _struct_class_getitem(cls, dim):
-    """Enables point_t[10] -> _make_ctype('point_t[10]') using the canonical C type name."""
+    """Enables point_t[10] -> _make_ctype('point_t[10]') using the canonical C type name.
+    Always a base case (cls is the scalar struct type, never itself an array -- a
+    further bracket on the result goes through _CTypeMeta.__getitem__ instead)."""
     name = getattr(cls, "_pypeline_ctype_name", cls.__name__)
     arr = _make_ctype(f"{name}[{dim}]")
     arr._elem_ctype = cls
+    arr._arr_len = dim
     return arr
 
 
@@ -2277,22 +2294,27 @@ def _is_compound_pypeline_type(ctype):
 
 def _array_elem_ctype(ctype):
     """Return the element ctype of an array ctype (preferring _elem_ctype, falling back
-    to stripping the trailing [N] from _ctype_name), or None if ctype is not an array."""
-    if not hasattr(ctype, "_ctype_name"):
+    to stripping the leading [N] from _ctype_name -- the array's own/outer dimension is
+    always the *first* bracket, matching C's `T x[A][B]` and PY_TO_LOGIC.py's
+    _array_elem_type), or None if ctype is not an array."""
+    if not hasattr(ctype, "_ctype_name") or "[" not in ctype._ctype_name:
         return None
-    m = _re_ctype.search(r"\[(\d+)\]$", ctype._ctype_name)
-    if not m:
-        return None
-    return getattr(ctype, "_elem_ctype", None) or _make_ctype(
-        ctype._ctype_name[: m.start()]
-    )
+    elem_ctype = getattr(ctype, "_elem_ctype", None)
+    if elem_ctype is not None:
+        return elem_ctype
+    m = _re_ctype.search(r"\[(\d+)\]", ctype._ctype_name)
+    return _make_ctype(ctype._ctype_name[: m.start()] + ctype._ctype_name[m.end() :])
 
 
 def _array_len(ctype):
-    """Return the trailing [N] dimension of an array ctype, or None if not an array."""
+    """Return an array ctype's own (outer/first, leftmost-bracket) dimension, or None if
+    not an array."""
     if not hasattr(ctype, "_ctype_name"):
         return None
-    m = _re_ctype.search(r"\[(\d+)\]$", ctype._ctype_name)
+    arr_len = getattr(ctype, "_arr_len", None)
+    if arr_len is not None:
+        return arr_len
+    m = _re_ctype.search(r"\[(\d+)\]", ctype._ctype_name)
     return int(m.group(1)) if m else None
 
 
