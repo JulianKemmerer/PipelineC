@@ -540,6 +540,14 @@ class SimVal(int):
         ctype = self._bitwise_ctype(o)
         if ctype is None:
             return SimVal(v)
+        if SIM_STRICT_ARITH:
+            try:
+                mask, sign_bit, is_signed = _sim_cast_param_cache[ctype]
+            except KeyError:
+                mask, sign_bit, is_signed = _sim_type_init(ctype)
+            v = v & mask
+            if is_signed and v >= sign_bit:
+                v -= mask + 1
         return _sim_val_make(v, ctype)
 
     def __or__(self, o):
@@ -549,6 +557,14 @@ class SimVal(int):
         ctype = self._bitwise_ctype(o)
         if ctype is None:
             return SimVal(v)
+        if SIM_STRICT_ARITH:
+            try:
+                mask, sign_bit, is_signed = _sim_cast_param_cache[ctype]
+            except KeyError:
+                mask, sign_bit, is_signed = _sim_type_init(ctype)
+            v = v & mask
+            if is_signed and v >= sign_bit:
+                v -= mask + 1
         return _sim_val_make(v, ctype)
 
     def __xor__(self, o):
@@ -558,6 +574,14 @@ class SimVal(int):
         ctype = self._bitwise_ctype(o)
         if ctype is None:
             return SimVal(v)
+        if SIM_STRICT_ARITH:
+            try:
+                mask, sign_bit, is_signed = _sim_cast_param_cache[ctype]
+            except KeyError:
+                mask, sign_bit, is_signed = _sim_type_init(ctype)
+            v = v & mask
+            if is_signed and v >= sign_bit:
+                v -= mask + 1
         return _sim_val_make(v, ctype)
 
     # Reflected bitwise ops: plain-int op SimVal (`o` is always a non-SimVal here,
@@ -565,20 +589,50 @@ class SimVal(int):
     # self's ctype -- no promotion needed, unlike +/-.
     def __rand__(self, o):
         v = int(o) & int(self)
-        if SIM_RAW_INTS or self._ctype is None:
-            return v if SIM_RAW_INTS else SimVal(v)
+        if SIM_RAW_INTS:
+            return v
+        if self._ctype is None:
+            return SimVal(v)
+        if SIM_STRICT_ARITH:
+            try:
+                mask, sign_bit, is_signed = _sim_cast_param_cache[self._ctype]
+            except KeyError:
+                mask, sign_bit, is_signed = _sim_type_init(self._ctype)
+            v = v & mask
+            if is_signed and v >= sign_bit:
+                v -= mask + 1
         return _sim_val_make(v, self._ctype)
 
     def __ror__(self, o):
         v = int(o) | int(self)
-        if SIM_RAW_INTS or self._ctype is None:
-            return v if SIM_RAW_INTS else SimVal(v)
+        if SIM_RAW_INTS:
+            return v
+        if self._ctype is None:
+            return SimVal(v)
+        if SIM_STRICT_ARITH:
+            try:
+                mask, sign_bit, is_signed = _sim_cast_param_cache[self._ctype]
+            except KeyError:
+                mask, sign_bit, is_signed = _sim_type_init(self._ctype)
+            v = v & mask
+            if is_signed and v >= sign_bit:
+                v -= mask + 1
         return _sim_val_make(v, self._ctype)
 
     def __rxor__(self, o):
         v = int(o) ^ int(self)
-        if SIM_RAW_INTS or self._ctype is None:
-            return v if SIM_RAW_INTS else SimVal(v)
+        if SIM_RAW_INTS:
+            return v
+        if self._ctype is None:
+            return SimVal(v)
+        if SIM_STRICT_ARITH:
+            try:
+                mask, sign_bit, is_signed = _sim_cast_param_cache[self._ctype]
+            except KeyError:
+                mask, sign_bit, is_signed = _sim_type_init(self._ctype)
+            v = v & mask
+            if is_signed and v >= sign_bit:
+                v -= mask + 1
         return _sim_val_make(v, self._ctype)
 
     # Reflected arithmetic: plain-int op SimVal. Apply full SIM_STRICT_ARITH so that
@@ -2797,15 +2851,24 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
                 value=self._make_deep_cast(node.value, ann_val, node),
             )
             return _ast.copy_location(new_node, node)
-        if isinstance(
-            ann_val, (_RegType, _FeedbackType)
-        ) and _is_compound_pypeline_type(ann_val.inner_ctype):
-            # Reg[T]/Feedback[T] where T is a struct/array: the read-back value is
-            # an immutable NamedTuple (or plain list), exactly like a bare compound
-            # local, so nested .field=/[i]= writes need the same lens-rewrite. The
-            # AnnAssign itself is left untouched — _build_reg_sim_func handles
-            # Reg/Feedback read/zero-init separately.
-            self._compound_declared[node.target.id] = ann_val.inner_ctype
+        if isinstance(ann_val, (_RegType, _FeedbackType)):
+            if _is_compound_pypeline_type(ann_val.inner_ctype):
+                # Reg[T]/Feedback[T] where T is a struct/array: the read-back value is
+                # an immutable NamedTuple (or plain list), exactly like a bare compound
+                # local, so nested .field=/[i]= writes need the same lens-rewrite. The
+                # AnnAssign itself is left untouched — _build_reg_sim_func handles
+                # Reg/Feedback read/zero-init separately.
+                self._compound_declared[node.target.id] = ann_val.inner_ctype
+            elif _is_scalar_pypeline_int(ann_val.inner_ctype):
+                # Reg[T]/Feedback[T] where T is scalar: the read-back value is a
+                # plain int/SimVal, exactly like a bare scalar local, so a later
+                # plain `var = expr` reassignment in the same body needs the same
+                # _sim_cast wrap. Without this, `var` can become an untyped/
+                # unmasked raw Python int on a later cycle, which then poisons any
+                # bitwise op combining it with a properly-typed sibling operand.
+                # The AnnAssign itself is left untouched — _build_reg_sim_func
+                # handles the actual read/zero-init separately.
+                self._declared_types[node.target.id] = ann_val.inner_ctype
             return node
         if not _is_scalar_pypeline_int(ann_val):
             return node  # Wire, Input, Output — skip
@@ -3031,18 +3094,23 @@ def _build_reg_sim_func(fn):
                         _merged_ns,
                     )
                     # Dict-style struct init {"field": val} → convert to NamedTuple
-                    # so that field access (pt.x) works in the simulated body.
+                    # so that field access (pt.x) works in the simulated body; this
+                    # must happen before _sim_cast_deep below, whose struct fast path
+                    # (`hasattr(ctype, "_fields")`) passes an already-NamedTuple value
+                    # through unchanged.
                     if isinstance(init_val, dict) and hasattr(
                         ann_val.inner_ctype, "_fields"
                     ):
                         init_val = ann_val.inner_ctype(**init_val)
-                    # str init {"boot"} for Reg[char_t[N]] → zero-padded char array,
-                    # mirroring the elaboration-side Reg[T] string encoding.
-                    elif (
-                        isinstance(init_val, str)
-                        and _array_elem_ctype(ann_val.inner_ctype) is not None
-                    ):
-                        init_val = _sim_cast_deep(init_val, ann_val.inner_ctype)
+                    # Always deep-cast: turns a scalar/array-of-scalar literal init
+                    # (e.g. `have: Reg[uint1_t] = 1`) into a properly width-masked,
+                    # typed SimVal instead of leaving it as a bare Python int/list —
+                    # otherwise it starts life on cycle 0 untyped and can poison a
+                    # bitwise op combining it with a typed sibling operand. Also
+                    # accepts a bare str for a char/uint8_t-array target (zero-padded),
+                    # subsuming the previous str-only special case. Idempotent/safe
+                    # for structs (passes through via the `_fields` fast path).
+                    init_val = _sim_cast_deep(init_val, ann_val.inner_ctype)
                     reg_zeros[stmt.target.id] = init_val
                 except Exception:
                     reg_zeros[stmt.target.id] = _make_sim_zero(ann_val.inner_ctype)
