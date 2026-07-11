@@ -62,6 +62,18 @@ def make_negative_offset(amount):
     return offset_adder
 
 
+def make_dot(coeffs):
+    n = len(coeffs)
+
+    def dot(arr):
+        acc = 0
+        for j in range(n):
+            acc = acc + arr[j] * coeffs[j]
+        return acc
+
+    return dot
+
+
 _module_level_lambda = lambda x: x + 1  # noqa: E731
 
 
@@ -71,6 +83,7 @@ MODULE_GLOBALS = {
     "make_quarter_round": make_quarter_round,
     "make_wrapper": make_wrapper,
     "make_negative_offset": make_negative_offset,
+    "make_dot": make_dot,
 }
 
 
@@ -271,6 +284,74 @@ def test_negative_int_closure_param_has_no_bare_minus():
     print("test_negative_int_closure_param_has_no_bare_minus PASS")
 
 
+def test_list_closure_param_is_readable_and_distinct():
+    # The FIR-library shape: a factory parameterized by a coefficient list
+    # (make_fir(coeffs)-style). Two instantiations with different coefficient
+    # lists must get distinct, readable canonical names instead of the
+    # elaborator rejecting list-valued closure params outright.
+    dot_a = make_dot([3, -5, 7, 2])
+    dot_b = make_dot([1, 1, -1, 4])
+    name_a = P._canonical_func_name(dot_a, _closure_ns(dot_a), MODULE_GLOBALS)
+    name_b = P._canonical_func_name(dot_b, _closure_ns(dot_b), MODULE_GLOBALS)
+    assert name_a == "dot_coeffs_3_neg5_7_2", name_a
+    assert name_b == "dot_coeffs_1_1_neg1_4", name_b
+    assert name_a != name_b
+    print("test_list_closure_param_is_readable_and_distinct PASS")
+
+
+def test_list_closure_param_same_values_dedups():
+    dot_a = make_dot([3, -5, 7, 2])
+    dot_a2 = make_dot([3, -5, 7, 2])
+    name_a = P._canonical_func_name(dot_a, _closure_ns(dot_a), MODULE_GLOBALS)
+    name_a2 = P._canonical_func_name(dot_a2, _closure_ns(dot_a2), MODULE_GLOBALS)
+    assert name_a == name_a2
+    print("test_list_closure_param_same_values_dedups PASS")
+
+
+def test_nested_list_closure_param_is_valid_identifier():
+    dot_2d = make_dot([[1, 2], [3, -4]])
+    name = P._canonical_func_name(dot_2d, _closure_ns(dot_2d), MODULE_GLOBALS)
+    assert name == "dot_coeffs_1_2_3_neg4", name
+    assert name.isidentifier(), name
+    print("test_nested_list_closure_param_is_valid_identifier PASS")
+
+
+def test_empty_list_closure_param_no_crash():
+    dot_empty = make_dot([])
+    name = P._canonical_func_name(dot_empty, _closure_ns(dot_empty), MODULE_GLOBALS)
+    assert name == "dot_coeffs_empty", name
+    print("test_empty_list_closure_param_no_crash PASS")
+
+
+def test_tuple_closure_param_encoded_same_as_list():
+    dot_list = make_dot([3, -5, 7, 2])
+    dot_tuple = make_dot((3, -5, 7, 2))
+    name_list = P._canonical_func_name(dot_list, _closure_ns(dot_list), MODULE_GLOBALS)
+    name_tuple = P._canonical_func_name(
+        dot_tuple, _closure_ns(dot_tuple), MODULE_GLOBALS
+    )
+    assert name_list == name_tuple == "dot_coeffs_3_neg5_7_2", (name_list, name_tuple)
+    print("test_tuple_closure_param_encoded_same_as_list PASS")
+
+
+def test_list_closure_param_unsupported_element_raises_clean_error():
+    # A list element that isn't an int/bool/nested list (e.g. a float) still
+    # can't be encoded into a VHDL identifier -- must raise a clean
+    # ElaborationError naming the offending element, not crash some other way.
+    dot_bad = make_dot([1, 2.5, 3])
+    try:
+        P._canonical_func_name(dot_bad, _closure_ns(dot_bad), MODULE_GLOBALS)
+    except P.ElaborationError as e:
+        assert "coeffs" in str(e), e
+        assert "2.5" in str(e), e
+        assert "index 1" in str(e), e
+        print(
+            f"test_list_closure_param_unsupported_element_raises_clean_error PASS  ({e})"
+        )
+        return
+    raise AssertionError("Expected ElaborationError, but none was raised")
+
+
 def test_ast_meta_src_file_and_line_point_to_true_definition():
     # Regression for the _elaborate_live_func ast_meta bug: for a factory
     # closure, Logic.ast_meta.src_file/.line must point at the closure's own
@@ -454,6 +535,12 @@ if __name__ == "__main__":
     test_cycle_guard_falls_back_to_hash_not_infinite_recursion()
     test_overflow_collapse_keeps_readable_prefix()
     test_negative_int_closure_param_has_no_bare_minus()
+    test_list_closure_param_is_readable_and_distinct()
+    test_list_closure_param_same_values_dedups()
+    test_nested_list_closure_param_is_valid_identifier()
+    test_empty_list_closure_param_no_crash()
+    test_tuple_closure_param_encoded_same_as_list()
+    test_list_closure_param_unsupported_element_raises_clean_error()
     test_ast_meta_src_file_and_line_point_to_true_definition()
     test_struct_factory_param_suffix_disambiguates_colliding_field_types()
     test_struct_factory_param_suffix_deterministic_regardless_of_order()

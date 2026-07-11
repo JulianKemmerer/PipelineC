@@ -112,6 +112,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "pylist_value_context_error_test.py"],
         )
     )
+    # Not run through the pipelinec CLI either, for the same reason as
+    # two_factory_wrappers_test.py: a naming collision between dot_a/dot_b
+    # would be silent (same signature on both sides), so it's checked
+    # in-process via PY_TO_LOGIC.PARSE_FILE + FuncLogicLookupTable inspection.
+    tests.append(
+        Test(
+            name="factory_closure_list_test",
+            category="elab",
+            cmd=[INST_DIR / "factory_closure_list_test.py"],
+        )
+    )
     return tests
 
 

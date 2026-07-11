@@ -1005,7 +1005,14 @@ middle-chain factories (nested definitions) are looked up as callables in the cl
 **Value encoding per parameter type:**
 
 - `_CTypeMeta` / `@struct` type → canonical C type name (brackets mangled: `[` → `_`, `]` removed)
-- `int` / `bool` → stringified value
+- `int` / `bool` → stringified value (negative ints use a `neg{n}` prefix instead of a
+  bare `-`, which is not legal inside a VHDL basic identifier, e.g. `-5` → `neg5`)
+- `list` / `tuple` of `int`/`bool` (nesting allowed) → each element encoded the same way
+  and joined with `_`, e.g. `[3, -5, 7, 2]` → `3_neg5_7_2`; an empty list/tuple encodes as
+  `empty`. This is what lets coefficient-list-parameterized factories (`make_fir(coeffs)`
+  and friends) get readable, distinct names per instantiation instead of being rejected.
+  An element that isn't an int/bool/nested list (e.g. a float or C type) raises a clean
+  `ElaborationError` naming the offending element, its type, and its index.
 - `None` → `"None"`
 - **callable (present in closure)** → a **readable, hierarchical name** reflecting which
   Python module/function the callable is defined in (`_callable_canonical_name`), not a
@@ -1094,6 +1101,11 @@ than discarding every descriptive part down to `autopipelined_a1b2c3d4`.
 
 # def make_singleton():  (0 params)
 # → "singleton"   (inner func name; no suffix)
+
+# make_dot.<locals>.dot  factory params: coeffs (a plain Python list)
+# coeffs IS in closure (read directly via coeffs[j] in the body)
+# → "dot_coeffs_3_neg5_7_2"           (for make_dot([3, -5, 7, 2]))
+# → "dot_coeffs_1_1_neg1_4"           (for make_dot([1, 1, -1, 4]) -- distinct instance)
 ```
 
 **Known limitation: missing-param hash can be misleading.** The "param absent from

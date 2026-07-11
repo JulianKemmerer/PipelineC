@@ -666,6 +666,11 @@ def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _dep
     For each factory parameter:
       - C type / @struct type → use canonical type name
       - int / bool             → use value string
+      - list / tuple            → each element encoded the same way (ints/bools,
+                                 or nested lists/tuples), joined with '_'; lets
+                                 e.g. coefficient-list-parameterized factories
+                                 (make_fir(coeffs), ...) get readable, distinct
+                                 names per instantiation
       - callable (in closure)  → readable, hierarchical name reflecting which
                                  module/function it's defined in, recursing into
                                  its own factory-closure naming if applicable
@@ -689,6 +694,31 @@ def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _dep
     for callable-valued closure params (mutual recursion); callers outside this
     module never need to pass them.
     """
+
+    def _encode_int_bool_for_name(val):
+        # A bare '-' is not legal inside a VHDL basic identifier, so a negative
+        # value uses a 'neg' prefix instead of str(val)'s '-5'.
+        return str(val) if val >= 0 else f"neg{-val}"
+
+    def _encode_list_for_name(var_name, val):
+        if not val:
+            return "empty"
+        parts = []
+        for i, elem in enumerate(val):
+            if isinstance(elem, (list, tuple)):
+                parts.append(_encode_list_for_name(var_name, elem))
+            elif isinstance(elem, (int, bool)):
+                parts.append(_encode_int_bool_for_name(elem))
+            else:
+                raise ElaborationError(
+                    f"Factory closure variable '{var_name}' is a list/tuple "
+                    f"containing unsupported element {elem!r} "
+                    f"(type: {type(elem).__name__}) at index {i}. List/tuple "
+                    f"closure parameters must contain only ints, bools, or "
+                    f"nested lists/tuples thereof."
+                )
+        return "_".join(parts)
+
     if ".<locals>." not in func.__qualname__:
         return None
     parts = func.__qualname__.split(".<locals>.")
@@ -752,12 +782,11 @@ def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _dep
                 s = s.replace("[", "_").replace("]", "")  # mangle brackets
             name_parts.append(f"{var_name}_{s}")
         elif isinstance(val, (int, bool)) and not isinstance(val, type):
-            # A bare '-' is not legal inside a VHDL basic identifier, so a
-            # negative value uses a 'neg' prefix instead of str(val)'s '-5'.
-            val_str = str(val) if val >= 0 else f"neg{-val}"
-            name_parts.append(f"{var_name}_{val_str}")
+            name_parts.append(f"{var_name}_{_encode_int_bool_for_name(val)}")
         elif val is None:
             name_parts.append(f"{var_name}_None")
+        elif isinstance(val, (list, tuple)):
+            name_parts.append(f"{var_name}_{_encode_list_for_name(var_name, val)}")
         elif callable(val):
             # Readable, hierarchical name reflecting the callable's own module/
             # function nesting (recursing into its own factory-closure naming
@@ -770,7 +799,8 @@ def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _dep
             raise ElaborationError(
                 f"Factory closure variable '{var_name}' has unsupported value "
                 f"{val!r} (type: {type(val).__name__}). "
-                f"Factory parameters must be C types, ints, bools, None, or callables."
+                f"Factory parameters must be C types, ints, bools, None, "
+                f"callables, or lists/tuples thereof."
             )
 
     # Factory params that were consumed by the factory (not in closure) are represented
