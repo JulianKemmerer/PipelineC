@@ -57,7 +57,8 @@ tool, see `export PATH=$PATH:$(pwd)/src` on the
 22. [AXI-Stream: `axis_t`](#22-axi-stream-axis_t)
 23. [FIFOs: `make_stream_fifo`](#23-fifos-make_stream_fifo)
 24. [Pipelined Stream Wrappers: `make_stream_pipeline`](#24-pipelined-stream-wrappers-make_stream_pipeline)
-25. [Limitations / Not Yet Supported](#25-limitations--not-yet-supported)
+25. [DSP: FIR Filters](#25-dsp-fir-filters)
+26. [Limitations / Not Yet Supported](#26-limitations--not-yet-supported)
 
 ---
 
@@ -2405,7 +2406,120 @@ pipeline — AUTOPIPELINE retiming plus the output FIFO — simulates via `sim_c
 
 ---
 
-## 25. Limitations / Not Yet Supported
+## 25 DSP: FIR Filters
+
+`include/pypeline/dsp/` is a vendor-neutral FIR filter library in the spirit of the
+AMD/Xilinx FIR Compiler and Intel/Altera FIR II IP wizards, built on the
+[fixed-point types](#fixed-point-types) and [`make_stream_pipeline`](#24-pipelined-stream-wrappers-make_stream_pipeline).
+Every filter is a **single feedforward combinational blob** — symmetric pre-adders,
+constant multiplies, a balanced adder tree, and the output rounding stage — that
+PipelineC AUTOPIPELINEs to whatever depth the target FPGA/fmax needs, wrapped in a
+valid/ready stream. **Pipeline depth is never hard-coded**, so the same source retargets
+any part instead of needing a per-vendor IP core.
+
+### `make_fir` — single-rate filter
+
+```python
+from fixed_point import make_fixed_t
+from dsp.fir import make_fir
+
+data_t  = make_fixed_t(1, 15)   # Q1.15 samples
+coeff_t = make_fixed_t(1, 15)   # Q1.15 coefficients
+
+fir, fir_t = make_fir(
+    [0.25, 0.5, 0.5, 0.25],     # float taps (quantized to coeff_t here) or raw ints
+    coeff_t, data_t,
+    out_t=data_t,               # None = full-precision accumulator output
+    rounding="round_half_even", # truncate | round_half_up | round_half_even | round_half_away
+    overflow="saturate",        # wrap | saturate
+)
+
+@MAIN(100.0)
+def top(stream_in: fir.in_stream_t, out_ready: uint1_t) -> fir_t:
+    return fir(stream_in, out_ready)
+```
+
+`fir_t` has the same `.stream_out` / `.ready_for_stream_in` field names as
+`make_stream_pipeline`, so filters chain like any stream pipeline instance. Remaining
+parameters:
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `gain` | `1` | Scales the float taps **before** quantization — zero hardware cost (needs `coeff_t` headroom) |
+| `symmetry` | `"auto"` | Detects symmetric/anti-symmetric **quantized** taps and folds them into pre-adders, halving the multipliers (like the vendor cores); `"none"` disables |
+| `skip_zero_taps` | `True` | Zero-coefficient taps are dropped at elaboration time — a half-band filter costs ~half the multipliers automatically |
+| `handshake` | `"elastic"` | `"elastic"` = valid/ready with an output FIFO and in-flight counter; `"valid_only"` = vendor-style free-running stream (no FIFO — downstream must always accept) |
+| `max_in_flight` | `64` | Elastic output FIFO depth; sustained 1 sample/cycle needs `max_in_flight >=` the tool-chosen pipeline latency |
+
+Accumulator sizing is **exact**: interval arithmetic over the actual quantized
+coefficient values and `data_t`'s range, so no intermediate can overflow and no bit is
+wasted. The `rounding`/`overflow` output stage is a fused
+[`make_fixed_resize`](#resizing-rounding--saturation) — the vendor "output precision
+control" feature.
+
+### `make_fir_decim` / `make_fir_interp` — integer rate change
+
+```python
+from dsp.fir_decim import make_fir_decim
+from dsp.fir_interp import make_fir_interp
+
+decim5, decim5_t = make_fir_decim(taps, coeff_t, 5, data_t, out_t=data_t)
+interp4, interp4_t = make_fir_interp(taps, coeff_t, 4, data_t, out_t=data_t)
+```
+
+Same interface and parameters as `make_fir`. `make_fir_decim` adds a phase counter in
+front of the blob: every accepted sample advances the window, but only every
+`decim`-th launches a computation (dropped phases never enter the pipeline), and the
+output runs at 1/decim of the input rate. `make_fir_interp` puts a backpressured
+zero-stuffer (1 input → `interp` beats: the sample then zeros) in front of a full-rate
+filter; `gain=None` defaults to `interp` to compensate the stuffing energy loss, folded
+into the taps for free. Output rate = `interp`× input rate — the filter's ready
+naturally throttles the input. (Elastic only — a rate expander cannot run open-loop.)
+
+### `dsp/fir_tb.py` — testbench library
+
+Reusable [`@sim_input`/`@sim_output`](#4-simulation) testbench machinery for any filter
+the library produces (native sim only — run via `pypeline_sim.py <file> --run N`):
+
+```python
+from dsp.fir_tb import make_fir_tb, quantize_samples, two_tone
+
+stim = quantize_samples(two_tone(256, cycles_a=8, cycles_b=96), data_t)
+tb = make_fir_tb(fir, stim, ready_pattern="random", name="my_fir", plot=True)
+
+@MAIN
+def my_fir_tb():
+    stream_in = tb.drive_in()     # holds each sample until the filter accepts it
+    out_ready = tb.drive_ready()  # "always" | "random" stalls | callable(cycle)
+    o = fir(stream_in, out_ready)
+    tb.observe(o)                 # checks against the exact golden model
+```
+
+Signal generators (`impulse`/`step`/`sine`/`two_tone`/`chirp`/`white_noise`), an exact
+integer golden model (`golden_fir` — convolution plus a bit-exact mirror of
+`make_fixed_resize`, so checks are `==` on raw ints, never float tolerance), and
+optional matplotlib plots (`plot=True` writes `<name>_tb.png`: input, quantized-tap
+frequency response, golden-vs-hardware output overlay; `PYPELINE_TB_SHOW=1` opens a
+window). The checker prints `ERROR: ...` on mismatch and `<name>: ... Test DONE!` on
+completion, and asserts if the run hasn't finished by `tb.deadline` cycles — pass
+`--run` greater than `tb.min_cycles`.
+
+Worked examples in `examples/pypeline/dsp/`: `fir_lowpass_tb.py` (31-tap windowed-sinc
++ two-tone), `fir_decim_tb.py` (the SDR FM radio's 49-tap 5× decimator, raw Q1.15
+ints), `fir_interp_tb.py` (4× interpolation of a sine), and `fm_radio_decim.py` (a
+synthesizable I/Q 5× decimator pair at 125 MHz — the pypeline port of
+`examples/sdr/fm_radio.c`'s front end). Tests:
+`src/tests/pypeline_tests/inst/fir_test.py`, `fir_decim_test.py`, `fir_interp_test.py`,
+`fir_sim_tb_test.py`.
+
+Roadmap (not yet implemented): polyphase interpolation/decimation, resource-folded
+II>1 "slow" filters (time-shared MACs for fclk >> fs, port of `include/dsp/slow_fir.h`),
+multichannel TDM, and runtime-reloadable coefficient banks (blocked on a RAM/ROM
+primitive).
+
+---
+
+## 26. Limitations / Not Yet Supported
 
 The table below consolidates all known limitations and unsupported features.
 

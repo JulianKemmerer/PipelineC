@@ -36,6 +36,9 @@ PLAIN_PYTHON_TEST_FILES = [
     "sim_model_test.py",
     "array_2d_order_test.py",
     "pylist_value_context_test.py",
+    "fir_test.py",
+    "fir_decim_test.py",
+    "fir_interp_test.py",
 ]
 # fmt: on
 
@@ -125,6 +128,15 @@ def get_tests() -> list:
             name="sim_input_test",
             category="sim",
             cmd=[PYPELINE_SIM, INST_DIR / "sim_input_test.py", "--run", "25"],
+        )
+    )
+    tests.append(
+        Test(
+            # dsp/fir_tb.py testbench-library end-to-end (@sim_input driver +
+            # @sim_output checker); --run must exceed both tbs' deadlines.
+            name="fir_sim_tb_test",
+            category="sim",
+            cmd=[PYPELINE_SIM, INST_DIR / "fir_sim_tb_test.py", "--run", "1400"],
         )
     )
     return tests

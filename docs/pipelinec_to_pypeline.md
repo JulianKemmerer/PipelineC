@@ -37,6 +37,8 @@ clock-crossing headers. pypeline uses ordinary Python imports.
 | `#include "axi/axis.h"` | `from stream.axis import make_axis_t` |
 | `#include "stream/stream.h"` | `from stream.stream import make_stream_t` |
 | `#include "global_func_inst.h"` | not needed — use Python directly (see §8) |
+| `#include "dsp/fir.h"` (macro-config FIR) | `from dsp.fir import make_fir` (see guide §25 "DSP: FIR Filters") |
+| `#include "dsp/fir_decim.h"` / `"dsp/fir_interp.h"` | `from dsp.fir_decim import make_fir_decim` / `from dsp.fir_interp import make_fir_interp` |
 | `#include "mymodule.h"` | `import mymodule` |
 
 Only **qualified imports** are supported in pypeline — `import mymodule` then

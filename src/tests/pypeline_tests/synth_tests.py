@@ -18,6 +18,7 @@ SYNTH_TEST_FILES = [
     ("sweep_two_mains_test.py", INST_DIR, []),
     ("sweep_fsm_autopipeline_test.py", INST_DIR, []),
     ("sweep_stateful_boundary_test.py", INST_DIR, []),
+    ("fir_sweep_test.py", INST_DIR, []),  # FIR blob retimes to a @MAIN goal
     ("valid_ready_mcp_test.py", INST_DIR, ["--comb"]),
     ("vga_donut.py", EXAMPLES_PYPELINE_DIR, ["--comb"]),
     ("vga_test_pattern.py", EXAMPLES_PYPELINE_DIR, ["--comb"]),
@@ -40,6 +41,10 @@ SYNTH_TEST_FILES = [
     ("sim_print_test.py", INST_DIR, ["--comb"]),
     ("two_factory_wrappers_mixed_test.py", INST_DIR, ["--comb"]),
     ("underscore_name_test.py", INST_DIR, ["--comb"]),
+    ("fir_test.py", INST_DIR, ["--comb"]),
+    ("fir_decim_test.py", INST_DIR, ["--comb"]),
+    ("fir_interp_test.py", INST_DIR, ["--comb"]),
+    ("fm_radio_decim.py", EXAMPLES_PYPELINE_DIR / "dsp", ["--comb"]),
 ]
 # fmt: on
 
