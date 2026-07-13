@@ -773,6 +773,26 @@ def _format_struct_param_value(val):
         return str(val) if val >= 0 else f"neg{-val}"
     if val is None:
         return "None"
+    if callable(val):
+        # Deterministic (no memory address): a function's default repr embeds
+        # its address, which would rename the struct on every design
+        # re-execution -- and the AUTOPIPELINE .latency pin-and-confirm loop
+        # re-executes designs in-process, matching entities across passes by
+        # name. module+qualname is enough identity for this suffix; the
+        # struct's structural distinctness is already carried by its field
+        # types in the canonical name.
+        import inspect
+
+        if getattr(val, "_is_autopipeline_pragma", False):
+            return "AUTOPIPELINE_" + _format_struct_param_value(val.func)
+        unwrapped = inspect.unwrap(val)
+        qual = getattr(unwrapped, "__qualname__", None)
+        if qual:
+            mod = getattr(unwrapped, "__module__", "") or ""
+            dotted = (f"{mod}.{qual}" if mod else qual).replace(".<locals>.", "_")
+            return _mangle_type(
+                dotted.replace(".", "_").replace("<", "_").replace(">", "_")
+            )
     return _hashlib.sha256(repr(val).encode()).hexdigest()[:8]
 
 
@@ -1116,64 +1136,168 @@ def sim_input(fn):
     return wrapper
 
 
-def autopipeline(call_result, depth: int = -1):
-    """Force pipelining through the wrapped function call (equivalent to
-    PipelineC's `#pragma AUTOPIPELINE <depth>`).
+# ─────────────────────────────────────────────
+# AUTOPIPELINE: tool-pipelined regions with .latency feedback
+# ─────────────────────────────────────────────
 
-    Wrap a single direct function call::
-
-        rv = autopipeline(some_func(x))        # auto depth
-        rv = autopipeline(some_func(x), 2)      # explicit depth
-        rv = autopipeline(some_func(x), depth=2)
-
-    Identity passthrough in proto-simulation. The elaborator unwraps this to
-    elaborate `some_func(x)` as the real submodule instance and tags it with
-    the given depth; `autopipeline(...)` itself produces no hardware. If the
-    wrapped call's *arguments* themselves contain function calls, those
-    nested calls are tagged first (same "next instantiation" semantics as
-    the underlying PipelineC C pragma).
-    """
-    return call_result
+# canonical_key -> discovered pipeline stage count, harvested from the
+# previous elaborate+sweep pass. Installed only by the pipelinec driver
+# between passes (SET_AUTOPIPELINE_LATENCY_CACHE). Always empty in native
+# Pypeline sim and in --comb/--no_synth/--yosys_json builds, so .latency
+# reads 0 there.
+_autopipeline_latency_cache: dict = {}
+# True once any AUTOPIPELINE .latency was read during the current design-file
+# execution. The pipelinec driver uses this to skip the pin-and-confirm pass
+# entirely: if no Python code consumed a latency value, the cache cannot have
+# influenced the elaborated design, so the bootstrap pass's result is final.
+_autopipeline_latency_was_read: bool = False
 
 
-autopipeline._is_autopipeline_pragma = True
+def SET_AUTOPIPELINE_LATENCY_CACHE(cache: dict) -> None:
+    """pipelinec-driver hook: install the previous pass's harvested
+    AUTOPIPELINE latencies (canonical_key -> stage count) so the next
+    design-file execution's AUTOPIPELINE(...) constructions resolve
+    .latency to real values."""
+    global _autopipeline_latency_cache
+    _autopipeline_latency_cache = dict(cache)
 
 
-def make_autopipeline(func, has_input_reg: bool, has_output_reg: bool):
-    """Factory wrapping a hardware function so its call is always elaborated as an
-    AUTOPIPELINE submodule instance (see `autopipeline`), optionally adding a plain
-    input and/or output register around it.
+def CLEAR_AUTOPIPELINE_LATENCY_READ_FLAG() -> None:
+    global _autopipeline_latency_was_read
+    _autopipeline_latency_was_read = False
 
-    `func` must already be @hw_func-decorated — make_autopipeline calls it directly
-    from inside its own @hw_func body, so any Reg[T]/Feedback[T] or bare struct/array
-    locals in func's own body need func's own @hw_func decoration to simulate
-    correctly (see is_hw_func).
 
-    Returns a new function with the same (in_type) -> out_type signature as `func`,
-    suitable for calling from a register/feedback context without needing to wrap
-    that outer call in `autopipeline(...)` — the AUTOPIPELINE tagging is internal to
-    the returned function's own body, on its call to `func`.
+def AUTOPIPELINE_LATENCY_WAS_READ() -> bool:
+    return _autopipeline_latency_was_read
+
+
+class AUTOPIPELINE:
+    """AUTOPIPELINE(func, depth=-1): let the synthesis tool insert pipeline
+    registers inside calls to `func` (equivalent to PipelineC's
+    `#pragma AUTOPIPELINE`), and expose the discovered stage count as
+    `.latency`::
+
+        MY_AP = AUTOPIPELINE(some_func)           # tool picks the depth
+        MY_AP = AUTOPIPELINE(some_func, depth=2)  # force exactly 2 stages
 
         @hw_func
-        def add(a: my_t, b: my_t) -> my_t: ...
+        def my_pipeline(i: my_struct_t) -> my_struct_t:
+            return MY_AP(i)        # some_func(i), autopipelined
 
-        autopipelined_add = make_autopipeline(add, has_input_reg=True, has_output_reg=True)
+        MY_AP.latency              # int: pipeline depth; 0 until known
 
-        def caller(x: my_t) -> my_t:
-            state: Reg[my_t]
-            ...
-            return autopipelined_add(x)   # no autopipeline(...) needed here
+    `func` must already be @hw_func-decorated. Calls through the instance are
+    an identity passthrough in proto-simulation (`MY_AP(x)` just runs
+    `func(x)`); in elaboration the call becomes a submodule instance of
+    `func` tagged for autopipelining, and AUTOPIPELINE itself produces no
+    hardware.
 
-    has_input_reg / has_output_reg add an unconditional, every-cycle pipeline
-    register (Reg[T], no enable) immediately before/after the AUTOPIPELINE call,
-    matching the registered-input/registered-output idiom used elsewhere (e.g.
-    vga_to_pmod8's Reg[T] read-before-write pattern).
+    .latency reads 0:
+      - always in native Pypeline sim (no synthesis ever runs),
+      - always in --comb / --no_synth / --yosys_json builds (no throughput
+        sweep ever runs),
+      - during the bootstrap elaboration pass of a real synthesizing build.
+    On a real build the pipelinec driver re-executes the design after the
+    throughput sweep with the discovered stage counts installed, so .latency
+    then resolves to the real value (see the pin-and-confirm loop in
+    docs/SYN_DESIGN.md).
+
+    CONSTRUCTION TIMING MATTERS: construct AUTOPIPELINE(...) once, eagerly,
+    as plain Python (typically at a factory function's own top level) and
+    capture the object by closure into whatever @hw_func body calls it —
+    that is what makes `.latency` visible to surrounding Python code (e.g.
+    FIFO sizing). Constructing it inline inside a @hw_func body still
+    pipelines correctly, but nothing outside that body can read `.latency`.
     """
-    if not is_hw_func(func):
-        raise TypeError(
-            f"make_autopipeline(func, ...): {func.__qualname__!r} must be "
-            f"@hw_func-decorated before being passed in"
-        )
+
+    # Duck-type marker probed by the elaborator (PY_TO_LOGIC._elab_call).
+    _is_autopipeline_pragma = True
+
+    def __init__(self, func, depth: int = -1):
+        if not is_hw_func(func):
+            raise TypeError(
+                f"AUTOPIPELINE(func, ...): "
+                f"{getattr(func, '__qualname__', func)!r} must be "
+                f"@hw_func-decorated before being passed in"
+            )
+        if not isinstance(depth, int):
+            raise TypeError(f"AUTOPIPELINE depth must be an int, got {depth!r}")
+        self.func = func
+        self.depth = depth
+        self._canonical_key = None
+        # Skip key computation entirely when the cache is empty (native sim,
+        # comb builds, bootstrap pass): keeps pure-sim runs from importing
+        # the compiler (see canonical_key).
+        if _autopipeline_latency_cache:
+            self._latency = _autopipeline_latency_cache.get(self.canonical_key, 0)
+        else:
+            self._latency = 0
+
+    @property
+    def latency(self) -> int:
+        global _autopipeline_latency_was_read
+        _autopipeline_latency_was_read = True
+        return self._latency
+
+    @property
+    def canonical_key(self) -> str:
+        if self._canonical_key is None:
+            # Lazy so pure native-sim runs never import the compiler; any
+            # context that needs the key (elaboration, non-empty cache) has
+            # PY_TO_LOGIC loaded already.
+            import PY_TO_LOGIC
+
+            self._canonical_key = PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func)
+        return self._canonical_key
+
+    def __call__(self, *args, **kwargs):
+        return self.func(*args, **kwargs)
+
+    def __repr__(self):
+        # AUTOPIPELINE objects get captured in factory closures (e.g.
+        # _autopipeline_with_io_regs), and closure cell reprs feed the
+        # canonical entity-name hashing in PY_TO_LOGIC. That makes two
+        # properties load-bearing here:
+        #   - deterministic (no memory address): an address-bearing default
+        #     repr would rename entities on every design re-execution,
+        #     breaking the pin-and-confirm pass's cross-pass matching;
+        #   - fully distinguishing: two AUTOPIPELINE objects wrapping
+        #     different factory-produced funcs must repr differently even
+        #     when the funcs share a qualname (the funcs' own closure values
+        #     included -- e.g. five make_stream_pipeline invocations all wrap
+        #     a 'func_stream' closure, each over a different user core), or
+        #     their wrapper entities collide into one FuncLogicLookupTable
+        #     entry and mis-wire.
+        # canonical_key (PY_TO_LOGIC.CANONICAL_CALLABLE_KEY) provides both;
+        # in pure native-sim runs the compiler isn't loaded (and nothing
+        # hashes reprs there), so fall back to a readable module.qualname.
+        import sys
+
+        if "PY_TO_LOGIC" in sys.modules:
+            inner = self.canonical_key
+        else:
+            import inspect
+
+            func = inspect.unwrap(self.func)
+            qual = getattr(func, "__qualname__", "?")
+            mod = getattr(func, "__module__", "?")
+            inner = f"{mod}.{qual}"
+        return f"AUTOPIPELINE({inner}, depth={self.depth})"
+
+
+def _autopipeline_with_io_regs(func, has_input_reg: bool, has_output_reg: bool):
+    """Internal helper: AUTOPIPELINE(func) plus optional unconditional
+    every-cycle Reg[T] input/output boundary registers around the call
+    (the registered-input/registered-output idiom).
+
+    Returns (wrapped_func, autopipeline_call): wrapped_func has func's own
+    (in_type) -> out_type signature; autopipeline_call is the AUTOPIPELINE
+    instance so callers can read .latency. Note .latency is func's own core
+    pipeline depth only — the boundary registers added here are NOT included
+    (callers account for them, e.g. total = has_input_reg + .latency +
+    has_output_reg).
+    """
+    ap = AUTOPIPELINE(func)
     (in_type,) = hw_arg_types(func)
     out_type = hw_return_type(func)
 
@@ -1184,7 +1308,7 @@ def make_autopipeline(func, has_input_reg: bool, has_output_reg: bool):
             in_reg: Reg[in_type]
             out_reg: Reg[out_type]
             rv: out_type = out_reg
-            out_reg = autopipeline(func(in_reg))
+            out_reg = ap(in_reg)
             in_reg = x
             return rv
 
@@ -1193,7 +1317,7 @@ def make_autopipeline(func, has_input_reg: bool, has_output_reg: bool):
         @hw_func
         def autopipelined(x: in_type) -> out_type:
             in_reg: Reg[in_type]
-            rv: out_type = autopipeline(func(in_reg))
+            rv: out_type = ap(in_reg)
             in_reg = x
             return rv
 
@@ -1203,16 +1327,16 @@ def make_autopipeline(func, has_input_reg: bool, has_output_reg: bool):
         def autopipelined(x: in_type) -> out_type:
             out_reg: Reg[out_type]
             rv: out_type = out_reg
-            out_reg = autopipeline(func(x))
+            out_reg = ap(x)
             return rv
 
     else:
 
         @hw_func
         def autopipelined(x: in_type) -> out_type:
-            return autopipeline(func(x))
+            return ap(x)
 
-    return autopipelined
+    return autopipelined, ap
 
 
 # ─────────────────────────────────────────────

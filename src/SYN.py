@@ -54,6 +54,14 @@ HIER_SYN_MODE = "leaf"
 # fewest-registers solution). 0 = accept the first met result (fastest).
 # --pipeline_min_effort cmd line flag.
 PIPELINE_MIN_EFFORT = 2
+# Max total elaborate+synthesize passes of the AUTOPIPELINE .latency
+# pin-and-confirm loop in the pipelinec driver (Pypeline designs only):
+# pass 1 discovers latencies with a full sweep; pass 2 re-elaborates with the
+# real values and, with the previous pipelining pinned as seeds, needs only
+# one confirmation synthesis. Passes beyond 2 happen only when a
+# .latency-derived design change breaks timing under the pinned pipelining
+# and the fallback sweep then lands on different latencies.
+AUTOPIPELINE_MAX_LATENCY_PASSES = 3
 
 
 def PART_SET_TOOL(part_str, allow_fail=False):
@@ -2769,6 +2777,193 @@ def WRITE_REGISTERS_ESTIMATE_FILE(
 
 # Todo just coarse for now until someone other than me care to squeeze performance?
 # Course then fine - knowhaimsayin
+def HARVEST_AUTOPIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
+    """Collect the discovered pipeline latency of every AUTOPIPELINE-tagged
+    submodule instance, grouped by the tag's canonical latency-cache key
+    (pypeline.AUTOPIPELINE.canonical_key, recorded per local submodule in
+    Logic.sub_inst_to_autopipeline_key by the Pypeline elaborator).
+
+    Returns (latencies, divergences):
+      latencies:   canonical_key -> latency (int) for keys whose instances
+                   all agree
+      divergences: canonical_key -> {full inst path -> latency} for keys
+                   whose instantiations were given different stage counts by
+                   the sweep -- legal per-instance in the framework, but
+                   unrepresentable as the single .latency int the design's
+                   Python reads, so the driver errors on these.
+    Pure in-memory walk over already-computed sweep results: no synthesis, no
+    file I/O -- a no-AUTOPIPELINE design pays only this walk (returns ({},{})).
+    """
+    key_to_inst_latencies = {}
+    for inst_name, logic in parser_state.LogicInstLookupTable.items():
+        if not logic.sub_inst_to_autopipeline_key:
+            continue
+        for local_sub, canonical_key in logic.sub_inst_to_autopipeline_key.items():
+            if canonical_key is None:
+                continue
+            sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + local_sub
+            sub_timing_params = TimingParamsLookupTable.get(sub_inst)
+            if sub_timing_params is None:
+                continue
+            latency = sub_timing_params.GET_TOTAL_LATENCY(
+                parser_state, TimingParamsLookupTable
+            )
+            key_to_inst_latencies.setdefault(canonical_key, {})[sub_inst] = latency
+    latencies = {}
+    divergences = {}
+    for canonical_key, inst_latencies in key_to_inst_latencies.items():
+        unique_latencies = set(inst_latencies.values())
+        if len(unique_latencies) > 1:
+            divergences[canonical_key] = dict(inst_latencies)
+        else:
+            latencies[canonical_key] = unique_latencies.pop()
+    return latencies, divergences
+
+
+def SEED_TIMING_PARAMS_FROM_PREVIOUS(
+    prev_parser_state,
+    prev_TimingParamsLookupTable,
+    parser_state,
+    TimingParamsLookupTable,
+):
+    """Carry the previous pass's sweep solution (slices + IO reg flags) into
+    this pass's fresh zero-clock TimingParamsLookupTable so the stage-count
+    discovery isn't redone: the pin-and-confirm loop then needs only one
+    confirmation synthesis instead of a full sweep.
+
+    Two-tier instance matching:
+      a) exact full instance path (same func there too), else
+      b) func name (entity name). Load-bearing, not a nicety: entity names
+         encode closure values, so a .latency-derived parameter change (e.g.
+         FIFO depth) renames its factory-closure entity and every instance
+         path underneath it -- exactly where the AUTOPIPELINE'd core lives.
+         The core func's own name is stable (its closure captures only the
+         user's func), so the func-name tier recovers its pipelining.
+    Instances with no match in either tier keep zero slices -- correct for
+    genuinely-new entities (the resized FIFO / widened counter: stateful,
+    never sliced).
+
+    Returns (TimingParamsLookupTable, unseeded_autopipeline_insts):
+    unseeded_autopipeline_insts lists AUTOPIPELINE-tagged instances whose
+    func didn't exist at all in the previous pass -- i.e. the set of
+    AUTOPIPELINE call sites changed between passes (Python control flow
+    branching on .latency's own value), which the driver makes a hard error.
+    """
+    # All func names that existed last pass (for the call-site-change check:
+    # a tagged func whose discovered latency was 0 legitimately has empty
+    # params and must NOT be flagged just for lacking a non-empty seed)
+    prev_func_names = set()
+    # func name -> representative non-empty previous TimingParams
+    prev_func_to_params = {}
+    for prev_inst, prev_params in prev_TimingParamsLookupTable.items():
+        prev_logic = prev_parser_state.LogicInstLookupTable.get(prev_inst)
+        if prev_logic is None:
+            continue
+        prev_func_names.add(prev_logic.func_name)
+        if (
+            prev_logic.func_name not in prev_func_to_params
+            and not prev_params.IS_EMPTY()
+        ):
+            prev_func_to_params[prev_logic.func_name] = prev_params
+
+    for inst_name, timing_params in TimingParamsLookupTable.items():
+        logic = parser_state.LogicInstLookupTable[inst_name]
+        prev_params = None
+        exact = prev_TimingParamsLookupTable.get(inst_name)
+        if exact is not None:
+            prev_logic = prev_parser_state.LogicInstLookupTable.get(inst_name)
+            if prev_logic is not None and prev_logic.func_name == logic.func_name:
+                prev_params = exact
+        if prev_params is None:
+            prev_params = prev_func_to_params.get(logic.func_name)
+        if prev_params is None or prev_params.IS_EMPTY():
+            continue
+        # Setters invalidate calcd_total_latency/hash_ext caches themselves
+        timing_params.SET_SLICES(prev_params._slices)
+        timing_params.SET_HAS_IN_REGS(prev_params._has_input_regs)
+        timing_params.SET_HAS_OUT_REGS(prev_params._has_output_regs)
+
+    unseeded = set()
+    for inst_name, logic in parser_state.LogicInstLookupTable.items():
+        if not logic.sub_inst_to_autopipeline_key:
+            continue
+        for local_sub, canonical_key in logic.sub_inst_to_autopipeline_key.items():
+            if canonical_key is None:
+                continue
+            sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + local_sub
+            sub_logic = parser_state.LogicInstLookupTable.get(sub_inst)
+            if sub_logic is None:
+                continue
+            if sub_logic.func_name not in prev_func_names:
+                unseeded.add(sub_inst)
+    return TimingParamsLookupTable, sorted(unseeded)
+
+
+def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
+    """Pin-and-confirm pass 2: with pipelining seeded from the previous
+    pass's sweep result (SEED_TIMING_PARAMS_FROM_PREVIOUS), run ONE
+    full-design synthesis and check timing instead of a fresh sweep.
+
+    Returns (multimain_timing_params, met). met=True is the expected cheap
+    path: the pinned stage counts still meet timing, so the .latency values
+    the design's Python consumed equal the stage counts actually built. On
+    timing failure, falls back to the full planned sweep -- which replans
+    from a fresh zero-clock table each iteration (informed by the disk-cached
+    measured path delays), so the seeded table can't corrupt it."""
+    PART_SET_TOOL(parser_state.part)
+    # Mirror the planned sweep's per-iteration write sequence for the seeded params
+    VHDL.WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params)
+    ancestor_insts = INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
+        multimain_timing_params.TimingParamsLookupTable, parser_state
+    )
+    WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(
+        multimain_timing_params.TimingParamsLookupTable, parser_state, ancestor_insts
+    )
+    VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
+    WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, False)
+    WRITE_REGISTERS_ESTIMATE_FILE(parser_state, multimain_timing_params)
+    print(
+        "Running one confirmation synthesis with pipelining pinned from the previous pass...",
+        flush=True,
+    )
+    timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
+        parser_state, multimain_timing_params
+    )
+    if len(timing_report.path_reports) == 0:
+        print(timing_report.orig_text)
+        print("Using a bad syn log file?")
+        sys.exit(-1)
+    import SWEEP
+
+    met = True
+    for reported_clock_group, path_report in timing_report.path_reports.items():
+        curr_mhz = 1000.0 / path_report.path_delay_ns
+        main_insts = SWEEP.GET_MAIN_INSTS_FOR_PATH_REPORT(
+            path_report, parser_state, multimain_timing_params
+        )
+        for main_inst in main_insts:
+            target_mhz = GET_TARGET_MHZ(main_inst, parser_state)
+            if target_mhz is None:
+                continue
+            passfail = "PASS" if curr_mhz >= target_mhz else "FAIL"
+            print(
+                f"{passfail} {parser_state.LogicInstLookupTable[main_inst].func_name}: "
+                f"{curr_mhz:.2f} MHz vs {target_mhz:.2f} MHz goal (confirmation run)",
+                flush=True,
+            )
+            if curr_mhz < target_mhz:
+                met = False
+    if met:
+        return multimain_timing_params, True
+    print(
+        "AUTOPIPELINE confirmation run failed timing; falling back to a full throughput sweep...",
+        flush=True,
+    )
+    return SWEEP.DO_PLANNED_THROUGHPUT_SWEEP(
+        parser_state, multimain_timing_params
+    ), False
+
+
 def DO_THROUGHPUT_SWEEP(
     parser_state,
     coarse_only=False,

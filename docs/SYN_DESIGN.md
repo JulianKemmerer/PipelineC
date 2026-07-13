@@ -549,6 +549,66 @@ rather than failing quietly:
 | `--full_hier_syn` | synthesize every hierarchy level for path delays (no estimates) |
 | `--pipeline_min_effort N` | extra full-design syn iterations allowed to reduce stages after timing is met (default 2; 0 = accept the first met result, fastest but possibly over-pipelined) |
 
+## 6.5 AUTOPIPELINE `.latency` pin-and-confirm loop (Pypeline designs only)
+
+Pypeline's `AUTOPIPELINE(func)` tag exposes the sweep's discovered stage count back to
+the design's Python as `.latency` (e.g. `make_stream_pipeline` sizes its output FIFO
+from it). The stage count only exists *after* the sweep, so the `pipelinec` driver
+wraps the parse+sweep sequence in an outer loop — a **pin-and-confirm** loop, not a
+repeat-the-sweep one:
+
+1. **Pass 1 (bootstrap, identical to a normal build):** `PARSE_FILE` with an empty
+   latency cache (`.latency` reads 0 everywhere) → path delays → full throughput
+   sweep → `SYN.HARVEST_AUTOPIPELINE_LATENCIES` walks the finished
+   TimingParamsLookupTable and groups each AUTOPIPELINE-tagged instance's
+   `GET_TOTAL_LATENCY` by the tag's canonical key (a pure in-memory walk; no
+   synthesis, no file I/O).
+2. **Early exits (the zero-added-cost invariant):** if there are no AUTOPIPELINE call
+   sites, or the design's Python never *read* any `.latency`
+   (`pypeline.AUTOPIPELINE_LATENCY_WAS_READ()`, a read-tracked property flag), the
+   loop ends here — the cache couldn't have influenced the elaborated design, so
+   pass 1's result is final. Cost is exactly the classic single parse + single
+   sweep. `.c` designs never enter the loop at all (`AUTOPIPELINE` is
+   Pypeline-only syntax).
+3. **Pass 2 (pin + confirm):** install the harvested latencies
+   (`pypeline.SET_AUTOPIPELINE_LATENCY_CACHE`), re-run `PARSE_FILE` (re-executes the
+   whole design import graph; `.latency` reads now resolve), rewrite the zero-clk
+   VHDL, re-run path delays (mostly disk-cached), then
+   `SYN.SEED_TIMING_PARAMS_FROM_PREVIOUS` carries pass 1's sweep solution (slices +
+   IO-reg flags) into the fresh zero-clk table. Matching is **two-tier**: exact
+   instance path first, else func (entity) name — the func-name tier is load-bearing
+   because entity names encode closure values, so a `.latency`-derived parameter
+   change (e.g. FIFO depth) renames its factory entity and every instance path
+   underneath, exactly where the AUTOPIPELINE'd core lives (the core's own name is
+   stable — its closure captures only the user's func). Then
+   `SYN.DO_SEEDED_CONFIRM_OR_SWEEP` runs **one** full-design synthesis: timing met
+   (the expected case — only FIFO/counter widths changed) means done, and the
+   `.latency` values the design consumed provably equal the stage counts built —
+   pinning makes cross-pass latency drift impossible by construction.
+4. **Fallback (rare):** if the confirmation fails timing, it falls back to a full
+   planned sweep (which replans from a fresh zero-clk table each iteration, so the
+   seeds can't corrupt it), harvests again, and loops back to step 3 with the new
+   numbers. Bounded by `SYN.AUTOPIPELINE_MAX_LATENCY_PASSES` (3 total passes); at
+   the cap the build fails loudly, advising an explicit `depth=N` pin at the
+   unstable call site.
+
+Hard errors (instead of silently-wrong hardware):
+- **Divergent `.latency`:** the same AUTOPIPELINE-tagged function instantiated at
+  multiple sites with *different* discovered stage counts — legal per-instance in
+  the framework, unrepresentable as the single `.latency` int the design's Python
+  read. Fix: give each call site its own factory-produced closure, or pin `depth=N`.
+- **Call-site set changed between passes:** an AUTOPIPELINE-tagged instance on pass
+  2 whose func didn't exist in pass 1 (detected as unseedable) — i.e. Python control
+  flow, or closure-captured values encoded in a tagged function's identity, depended
+  on `.latency`'s own value. Only sizing *outside* AUTOPIPELINE'd functions may
+  depend on it.
+- **No settling within the pass cap:** a `.latency`-derived change keeps perturbing
+  timing enough to change the discovered stage counts themselves.
+
+Repeated-`PARSE_FILE` support (sys.modules eviction of the design import graph,
+per-parse compiler-cache cleanup via `DEL_ALL_CACHES`) lives in `PY_TO_LOGIC.py` —
+see `PY_TO_LOGIC_DESIGN.md`'s AUTOPIPELINE section.
+
 ## 7. Test matrix
 
 Fast tests (no `PART()` → PYRTL software timing model, seconds per synth
@@ -558,12 +618,17 @@ run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
 |---|---|
 | `sweep_comb_test.py` | pure comb MAIN: planner places cuts, meets timing |
 | `sweep_two_mains_test.py` | two MAINs: per-main plans, no-attribution fallback |
-| `sweep_fsm_autopipeline_test.py` | Reg-FSM main + `make_autopipeline` region: cut domain is the tagged child, FSM latency stays 0 |
+| `sweep_fsm_autopipeline_test.py` | Reg-FSM main + AUTOPIPELINE region (via `_autopipeline_with_io_regs`): cut domain is the tagged child, FSM latency stays 0 |
 | `sweep_stateful_boundary_test.py` | comb→stateful→comb: cuts stop at the stateful boundary (Finding #1 regression) |
 | `sweep_floor_detect_test.py` | unreachable goal: floor predicted & blamed up front, sweep stops after a few syn runs, still exits 0 |
 | `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that autopipelining cannot help (planning time + failing report), one syn run, exits 0 |
-| `stream_pipeline_test.py` | end-to-end factory design (`make_stream_pipeline`) through the full sweep |
+| `autopipeline_latency_test.py` | end-to-end factory design (`make_stream_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6.5 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, one seeded confirmation syn passes with no fallback sweep and no pass 3, latency matches `sweep_history.json` |
+
+Unit/in-process coverage (registered in `elab_tests.py`):
+`autopipeline_harvest_test.py` (harvest grouping + divergence, seed two-tier matching
++ call-site-change detection, `CANONICAL_CALLABLE_KEY` determinism, latency
+cache/read-flag) and `double_parse_file_test.py` (repeated `PARSE_FILE` equivalence).
 
 Real-toolchain validation: the wireguard-fpga ChaCha20-Poly1305 build
-(`wireguard-fpga/3.build/pypeline_build/build_sim_pipe.sh`, Vivado) and the
+(`wireguard-fpga/3.build/pypeline_build/build_syn_tb_pipe*.sh`, Vivado) and the
 multi-clock streamsoc example (`examples/stream_soc/cpu/hardware/top.c`).

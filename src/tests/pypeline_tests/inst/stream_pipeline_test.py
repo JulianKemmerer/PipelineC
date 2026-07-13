@@ -28,7 +28,7 @@ def div_inv(x: uint8_t) -> uint8_t:
 
 
 uint8_stream_t = make_stream_t(uint8_t)
-stream_pipeline, stream_pipeline_t = make_stream_pipeline(div_inv, MAX_IN_FLIGHT=4)
+stream_pipeline, stream_pipeline_t = make_stream_pipeline(div_inv)
 
 
 @MAIN(50.0)

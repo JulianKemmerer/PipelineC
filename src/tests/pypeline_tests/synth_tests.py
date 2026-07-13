@@ -12,7 +12,10 @@ from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PIPELINEC, Test, main
 # fmt: off
 # (filename, source_dir, extra_args)
 SYNTH_TEST_FILES = [
-    ("stream_pipeline_test.py", INST_DIR, []),
+    # stream_pipeline_test.py's full-sweep build runs inside the
+    # autopipeline_latency_test wrapper (added in get_tests below), which also
+    # asserts on the AUTOPIPELINE .latency pin-and-confirm output -- not
+    # listed here so the same sweep isn't paid for twice.
     # Planned throughput sweep tests (full sweep, no --comb)
     ("sweep_comb_test.py", INST_DIR, []),
     ("sweep_two_mains_test.py", INST_DIR, []),
@@ -73,6 +76,18 @@ def get_tests() -> list:
             name="sweep_unpipelinable_test",
             category="synth",
             cmd=[INST_DIR / "sweep_unpipelinable_test.py"],
+            needs_out_dir=True,
+        )
+    )
+    # Full-sweep build of stream_pipeline_test.py plus assertions on the
+    # AUTOPIPELINE .latency pin-and-confirm loop (pass 2 runs, discovers a
+    # real >0 latency, one seeded confirmation syn passes with no fallback
+    # sweep and no pass 3, harvested latency appears in sweep_history.json).
+    tests.append(
+        Test(
+            name="autopipeline_latency_test",
+            category="synth",
+            cmd=[INST_DIR / "autopipeline_latency_test.py"],
             needs_out_dir=True,
         )
     )

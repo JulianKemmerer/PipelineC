@@ -123,6 +123,30 @@ def get_tests() -> list:
             cmd=[INST_DIR / "factory_closure_list_test.py"],
         )
     )
+    # Not run through the pipelinec CLI: calls PY_TO_LOGIC.PARSE_FILE twice in
+    # one process (what the AUTOPIPELINE pin-and-confirm driver loop does) and
+    # compares the resulting parser_states -- guards the sys.modules eviction
+    # and trim-memo clearing that only repeated in-process parses exercise.
+    tests.append(
+        Test(
+            name="double_parse_file_test",
+            category="elab",
+            cmd=[INST_DIR / "double_parse_file_test.py"],
+        )
+    )
+    # Not run through the pipelinec CLI: pure-unit tests for the AUTOPIPELINE
+    # .latency machinery (SYN.HARVEST_AUTOPIPELINE_LATENCIES grouping +
+    # divergence detection, SYN.SEED_TIMING_PARAMS_FROM_PREVIOUS two-tier
+    # matching + call-site-change detection, CANONICAL_CALLABLE_KEY
+    # determinism, latency cache/read-flag behavior) against hand-built
+    # fixtures -- no design build involved.
+    tests.append(
+        Test(
+            name="autopipeline_harvest_test",
+            category="elab",
+            cmd=[INST_DIR / "autopipeline_harvest_test.py"],
+        )
+    )
     return tests
 
 

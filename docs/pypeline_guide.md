@@ -47,7 +47,7 @@ tool, see `export PATH=$PATH:$(pwd)/src` on the
 12. [Parametric Hardware with Factory Functions](#12-parametric-hardware-with-factory-functions)
 13. [Custom Operators](#13-custom-operators)
 14. [Global Signals](#14-global-signals)
-15. [Forcing Pipelining: `autopipeline()`](#15-forcing-pipelining-autopipeline)
+15. [Forcing Pipelining: `AUTOPIPELINE(...)`](#15-forcing-pipelining-autopipeline)
 16. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#16-multi-cycle-paths-multi_cycle)
 17. [Raw VHDL Passthrough: `vhdl()`](#17-raw-vhdl-passthrough-vhdl)
 18. [Just-Wires Synthesis Hint: `@wires`](#18-just-wires-synthesis-hint-wires)
@@ -1674,7 +1674,7 @@ out_type = hw_return_type(func)   # the declared return type
 Both work whether `func` is undecorated or already `@hw_func`-decorated — but for
 factories that go on to *call* `func` from inside their own hardware function body
 (rather than just introspecting its annotations), `func` itself must already be
-`@hw_func`-decorated: `make_autopipeline`, `make_valid_ready_mcp`, and
+`@hw_func`-decorated: `AUTOPIPELINE`, `make_valid_ready_mcp`, and
 `make_stream_pipeline` all validate this with `is_hw_func(func)` and raise `TypeError`
 otherwise (see [§15](#15-forcing-pipelining-autopipeline) /
 [§16](#16-multi-cycle-paths-multi_cycle)). This matters because `_build_reg_sim_func`'s
@@ -1814,7 +1814,7 @@ my_wire: Wire[uint32_t] = 0  # error — initialisers are not allowed on Wire/In
 
 ---
 
-## 15 Forcing Pipelining: `autopipeline()`
+## 15 Forcing Pipelining: `AUTOPIPELINE(...)`
 
 By default, a function called from inside a register or feedback context must complete
 **combinationally, in the same cycle** as its caller — the synthesiser is not free to
@@ -1824,25 +1824,59 @@ stage (a multiplier, a divider, a deep arithmetic chain) from inside such a cont
 you're fine with it taking several cycles internally as long as it still produces a
 valid/ready style stream.
 
-`autopipeline()` tells the synthesiser it's allowed to insert pipeline registers inside
-one specific function call, overriding the normal "must stay combinational here" rule:
+`AUTOPIPELINE(func)` produces a callable tag object (the same all-caps factory style as
+`MULTI_CYCLE[...]`) that tells the synthesiser it's allowed to insert pipeline registers
+inside calls made through it, overriding the normal "must stay combinational here" rule —
+and, unlike a plain pragma, it exposes the **discovered stage count** back to your
+Python as `.latency`:
 
 ```python
-rv = autopipeline(some_func(x))          # let the synthesiser pick how many stages
-rv = autopipeline(some_func(x), 2)       # force exactly 2 pipeline stages
-rv = autopipeline(some_func(x), depth=2) # same, as a keyword argument
+MY_AP = AUTOPIPELINE(some_func)           # tool picks how many stages
+MY_AP = AUTOPIPELINE(some_func, depth=2)  # force exactly 2 pipeline stages
+
+@hw_func
+def my_pipeline(i: my_struct_t) -> my_struct_t:
+    return MY_AP(i)                       # some_func(i), autopipelined
+
+MY_AP.latency    # int: the pipeline depth the tool chose; 0 until known
 ```
 
-Wrap a single, direct function call — not a larger expression
-(`autopipeline(foo(x) + 1)` is not supported, only `autopipeline(foo(x))` is).
-In simulation, `autopipeline(...)` is a no-op: it just returns its argument unchanged, so
-`sim_call` behaves identically with or without it.
+`func` must already be `@hw_func`-decorated. In simulation, `MY_AP(x)` is an identity
+passthrough (it just runs `func(x)`), so `sim_call` behaves identically with or without
+it.
+
+### `.latency`: reading back the discovered pipeline depth
+
+`.latency` is an ordinary Python `int` you can use for elaboration-time sizing — most
+usefully to size FIFOs/counters that sit next to the free-running pipeline (this is
+exactly how `make_stream_pipeline` sizes its output FIFO automatically, see
+[§24](#24-elastic-autopipelined-streams-make_stream_pipeline)). It reads **0**:
+
+- always in native Pypeline sim (no synthesis ever runs),
+- always in `--comb` / `--no_synth` / `--yosys_json` builds (no throughput sweep runs),
+- during the bootstrap elaboration pass of a real synthesizing build.
+
+On a real build, the `pipelinec` driver's **pin-and-confirm** loop makes the value real:
+the design is first elaborated with `.latency` reading 0 and swept as usual; the
+discovered stage counts are then installed and the design re-elaborated, with the
+previous sweep's pipelining carried over as pinned seeds so only **one confirmation
+synthesis** runs (not a second sweep). When the confirmation passes timing — the normal
+case — the `.latency` your Python consumed is guaranteed equal to the stage count of
+the hardware actually built. Designs that never read `.latency` pay nothing: the loop
+exits after the ordinary single sweep. (See `docs/SYN_DESIGN.md` for the loop's
+details and failure modes.)
+
+**Construction timing matters**: construct `AUTOPIPELINE(...)` once, eagerly, as plain
+Python — typically at a factory function's own top level — and capture the object by
+closure into whatever `@hw_func` body calls it. That's what makes `.latency` readable
+by the surrounding Python. Constructing it inline inside a `@hw_func` body still
+pipelines correctly, but nothing outside that body can read its `.latency`.
 
 ### Example
 
 This mirrors the shape of `examples/autopipelined_submodules.c`: a free-running
 combinational pipeline stage, instantiated from inside a function that also has a
-register (so without `autopipeline()`, the call would have to be a single-cycle
+register (so without `AUTOPIPELINE`, the call would have to be a single-cycle
 combinational instance):
 
 ```python
@@ -1853,6 +1887,8 @@ def pipeline_stage(x: stream_t) -> stream_t:
     rv.valid = x.valid
     return rv
 
+PIPELINE_STAGE_AP = AUTOPIPELINE(pipeline_stage)
+
 @hw_func
 def wrapper(pipeline_in: stream_t) -> stream_t:
     # `ready_reg` makes this a register/feedback context — normally `pipeline_stage`
@@ -1860,9 +1896,9 @@ def wrapper(pipeline_in: stream_t) -> stream_t:
     ready_reg: Reg[uint1_t]
     ready_reg = ~ready_reg
 
-    # autopipeline() overrides that: the synthesiser may slice pipeline_stage's
+    # AUTOPIPELINE overrides that: the synthesiser may slice pipeline_stage's
     # logic across multiple cycles.
-    return autopipeline(pipeline_stage(pipeline_in))
+    return PIPELINE_STAGE_AP(pipeline_in)
 ```
 
 `Reg[T]` and bare struct/array locals (like `rv` above) only simulate correctly under
@@ -1871,52 +1907,26 @@ def wrapper(pipeline_in: stream_t) -> stream_t:
 
 See `src/tests/pypeline_tests/inst/autopipeline_test.py` for the full example.
 
-### Ready-made wrapper: `make_autopipeline`
+### Boundary registers around an AUTOPIPELINE'd call
 
-Wrapping a call in `autopipeline(...)` at every call site works, but it means every
-caller has to know and repeat that detail. `make_autopipeline(func, has_input_reg,
-has_output_reg)` builds a standalone wrapper function around `func` *once* — the
-`autopipeline(...)` call lives inside the wrapper's own body, so callers just call the
-returned function like any other hardware function, from a register/feedback context or
-otherwise:
+To register the pipeline's inputs/outputs at its boundary rather than leaving them
+combinational, wrap the call with plain unconditional `Reg[T]`s (the same pattern
+`make_stream_pipeline` uses internally):
 
 ```python
-from pypeline import hw_func, make_autopipeline
-
 @hw_func
-def pipeline_stage(x: stream_t) -> stream_t:
-    rv: stream_t
-    rv.data = x.data / ~x.data
-    rv.valid = x.valid
+def pipeline_stage_registered(x: stream_t) -> stream_t:
+    in_reg: Reg[stream_t]
+    out_reg: Reg[stream_t]
+    rv: stream_t = out_reg
+    out_reg = PIPELINE_STAGE_AP(in_reg)
+    in_reg = x
     return rv
-
-# Builds a new function with the same (stream_t) -> stream_t signature as pipeline_stage.
-# pipeline_stage must already be @hw_func-decorated -- make_autopipeline calls it
-# directly from inside its own hardware function body, so it needs its own decoration
-# to simulate correctly under sim_call (see §12).
-pipeline_stage_ap = make_autopipeline(pipeline_stage, has_input_reg=True, has_output_reg=True)
-
-@hw_func
-def wrapper(pipeline_in: stream_t) -> stream_t:
-    ready_reg: Reg[uint1_t]
-    ready_reg = ~ready_reg
-
-    # No autopipeline(...) needed here — it's already inside pipeline_stage_ap.
-    return pipeline_stage_ap(pipeline_in)
 ```
 
-`has_input_reg` / `has_output_reg` each add a plain `Reg[T]`, updated unconditionally
-every cycle, immediately before/after the `autopipeline(...)`-wrapped call — useful for
-registering the pipeline's inputs/outputs at its boundary rather than leaving them
-combinational. Pass `False` for either to omit that register entirely (not just disable
-it — the `Reg[T]` declaration itself is left out).
-
-`in_type`/`out_type` are inferred from `func`'s own annotations via `hw_arg_types`/
-`hw_return_type` (see [§12](#12-parametric-hardware-with-factory-functions)), the same
-way `make_valid_ready_mcp` infers its types — see
-`src/tests/pypeline_tests/inst/autopipeline_test.py` for the full example, which uses
-`make_autopipeline(test_pipeline, has_input_reg=True, has_output_reg=True)` in place of
-the raw `autopipeline(test_pipeline(...))` call shown above.
+Note `.latency` reports the AUTOPIPELINE'd core's own depth only — boundary registers
+you add around the call are yours to count (e.g. total latency here is
+`1 + PIPELINE_STAGE_AP.latency + 1`).
 
 ---
 
@@ -2358,10 +2368,13 @@ hardware, just not cycle-accurate internally. See `pypeline_sim_DESIGN.md`'s
 combinational hardware function in a free-running, fully-pipelined
 [`stream_t`](#21-validready-streams-stream_t) interface: an
 [AUTOPIPELINE'd](#15-forcing-pipelining-autopipeline) instance (with registered
-input/output) feeding a [`make_fifo`](#23-fifos-make_stream_fifo)-backed output FIFO sized
-`MAX_IN_FLIGHT`. It's the pypeline equivalent of PipelineC's
-`GLOBAL_VALID_READY_PIPELINE_INST` macro — minus the global wires, since this is one
-locally-instantiated function rather than two `MAIN`s joined by `Wire[T]`s.
+input/output) feeding a [`make_fifo`](#23-fifos-make_stream_fifo)-backed output FIFO.
+The FIFO and in-flight counter are **sized automatically** from the AUTOPIPELINE
+instance's `.latency` — the tool-discovered pipeline depth — so there is no
+`MAX_IN_FLIGHT` parameter to guess and hand-tune against synthesis results. It's the
+pypeline equivalent of PipelineC's `GLOBAL_VALID_READY_PIPELINE_INST` macro — minus the
+global wires, since this is one locally-instantiated function rather than two `MAIN`s
+joined by `Wire[T]`s.
 
 ```python
 from pypeline import hw_func, uint8_t, MAIN, uint1_t
@@ -2373,7 +2386,7 @@ def div_inv(x: uint8_t) -> uint8_t:
     return x / ~x
 
 uint8_stream_t = make_stream_t(uint8_t)
-stream_pipeline, stream_pipeline_t = make_stream_pipeline(div_inv, MAX_IN_FLIGHT=4)
+stream_pipeline, stream_pipeline_t = make_stream_pipeline(div_inv)
 
 @MAIN(50.0)
 def buffered_div_inv(
@@ -2382,16 +2395,25 @@ def buffered_div_inv(
     return stream_pipeline(stream_in, ready_for_stream_out)
 ```
 
-`make_stream_pipeline(func, MAX_IN_FLIGHT)` returns `(stream_pipeline_func, stream_pipeline_t)`:
+`make_stream_pipeline(func)` returns `(stream_pipeline_func, stream_pipeline_t)`:
 
 | | Type | Meaning |
 |---|---|---|
 | `stream_pipeline_func(stream_in, ready_for_stream_out)` | `(stream_t(in_type), uint1_t) -> stream_pipeline_t` | one pipelined instance of `func` |
 | `stream_pipeline_t.stream_out` | `stream_t(out_type)` | `func`'s result, after AUTOPIPELINE retiming and the output FIFO |
-| `stream_pipeline_t.ready_for_stream_in` | `uint1_t` | high while the pipeline can accept a new `stream_in` (tracks in-flight count against `MAX_IN_FLIGHT`) |
+| `stream_pipeline_t.ready_for_stream_in` | `uint1_t` | high while the pipeline can accept a new `stream_in` (tracks in-flight count against the FIFO depth) |
+
+The FIFO depth is `max(2, 1 + AUTOPIPELINE latency + 1)` — input reg + discovered core
+stages + output reg, i.e. every word that can be in flight at once, so downstream
+stalls can never overflow the FIFO and full 1-word/cycle throughput is sustained. On
+the bootstrap pass (and in native sim / `--comb` builds, where `.latency` stays 0) the
+depth floors at 2 — which in those contexts is exact, since the effective pipeline
+latency really is just the two boundary registers; on a real build the pin-and-confirm
+loop re-elaborates with the discovered latency (see
+[§15](#15-forcing-pipelining-autopipeline)).
 
 `in_type`/`out_type` are inferred from `func`'s own annotations via `hw_arg_types`/
-`hw_return_type`, the same way `make_autopipeline` and `make_valid_ready_mcp` do (see
+`hw_return_type`, the same way `make_valid_ready_mcp` does (see
 [§12](#12-parametric-hardware-with-factory-functions)). **`func` must already be
 `@hw_func`-decorated** — `make_stream_pipeline` calls `is_hw_func(func)` and raises
 `TypeError` immediately if it isn't, since `func` is called from inside an internal
@@ -2448,8 +2470,7 @@ parameters:
 | `gain` | `1` | Scales the float taps **before** quantization — zero hardware cost (needs `coeff_t` headroom) |
 | `symmetry` | `"auto"` | Detects symmetric/anti-symmetric **quantized** taps and folds them into pre-adders, halving the multipliers (like the vendor cores); `"none"` disables |
 | `skip_zero_taps` | `True` | Zero-coefficient taps are dropped at elaboration time — a half-band filter costs ~half the multipliers automatically |
-| `handshake` | `"elastic"` | `"elastic"` = valid/ready with an output FIFO and in-flight counter; `"valid_only"` = vendor-style free-running stream (no FIFO — downstream must always accept) |
-| `max_in_flight` | `64` | Elastic output FIFO depth; sustained 1 sample/cycle needs `max_in_flight >=` the tool-chosen pipeline latency |
+| `handshake` | `"elastic"` | `"elastic"` = valid/ready with an output FIFO and in-flight counter (FIFO sized automatically from the AUTOPIPELINE'd core's tool-discovered `.latency`, see [§24](#24-pipelined-stream-wrappers-make_stream_pipeline)); `"valid_only"` = vendor-style free-running stream (no FIFO — downstream must always accept) |
 
 Accumulator sizing is **exact**: interval arithmetic over the actual quantized
 coefficient values and `data_t`'s range, so no intermediate can overflow and no bit is
@@ -2533,7 +2554,7 @@ The table below consolidates all known limitations and unsupported features.
 | **`from module import *`** | Not supported | Only qualified imports (`import module`) are supported |
 | **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead |
 | **Hardware signals as loop conditions** | Not supported | `for`/`while` loop bounds must be compile-time Python integers (fully unrollable) |
-| **`autopipeline()` around expressions** | Not supported | Must wrap a single direct function call, not a larger expression |
+| **`AUTOPIPELINE(...).latency` before synthesis** | Reads `0` | Real value only exists after a synthesizing build's pin-and-confirm pass; native sim and `--comb`/`--no_synth`/`--yosys_json` builds always read 0 |
 | **Multiple/early `return` statements** | Not supported | A function may have at most one `return`, and it must be the function's final top-level statement; assign to a variable inside `if`/`else` branches and return it once at the end (see [§6 Control flow](#6-your-first-hardware-function)) |
 | **Enum types in `byte_length`/`make_type_to_bytes`/`make_type_from_bytes`** | Not supported | Raises `NotImplementedError`, including for an enum nested inside a struct or array field (see [§11 Types](#11-types)) |
 | **Explicit casts (`uint32_t(x)`, etc.)** | Not supported | Calling a type as a function around a wire/parameter inside a hardware function body fails at elaboration time; assign to an intermediate variable with an explicit type annotation instead (see [§11 Types](#11-types)) |

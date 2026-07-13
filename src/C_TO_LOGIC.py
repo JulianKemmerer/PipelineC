@@ -421,6 +421,11 @@ class Logic:
             None  # Auto pipeline flag for next func call
         )
         self.sub_inst_to_autopipeline_depth = {}  # Which instances tagged autopipeline?
+        # Pypeline frontend only: local inst name -> AUTOPIPELINE canonical
+        # latency-cache key (pypeline.AUTOPIPELINE.canonical_key). Empty for
+        # .c-originated logic (#pragma AUTOPIPELINE has no Python object to
+        # round-trip a discovered latency into).
+        self.sub_inst_to_autopipeline_key = {}
         self.ast_meta = None
         # Is this logic a c built in C function?
         self.is_c_built_in = False
@@ -531,6 +536,7 @@ class Logic:
         rv.mcp_tuples = set(self.mcp_tuples)
         rv.next_func_call_autopipeline_depth = self.next_func_call_autopipeline_depth
         rv.sub_inst_to_autopipeline_depth = dict(self.sub_inst_to_autopipeline_depth)
+        rv.sub_inst_to_autopipeline_key = dict(self.sub_inst_to_autopipeline_key)
         rv.ast_meta = self.ast_meta
         rv.is_c_built_in = self.is_c_built_in
         rv.is_vhdl_func = self.is_vhdl_func
@@ -9855,6 +9861,10 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
 
 def DEL_ALL_CACHES():
     # Clear all caches after parsing is done
+    # The trim/collapse memo is per-parse state: it records func NAMES already
+    # pruned, but a later parse rebuilds fresh (untrimmed) Logic objects under
+    # the same names and must not skip trimming them.
+    _TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE_done_cache.clear()
     global _other_partial_logic_cache
     global _REF_TOKS_TO_OWN_BRANCH_REF_TOKS_cache
     global _REF_TOKS_TO_ENTIRE_TREE_REF_TOKS_cache

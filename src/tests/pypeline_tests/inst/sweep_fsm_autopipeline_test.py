@@ -1,8 +1,8 @@
 # pyright: reportInvalidTypeForm=none
-# Planned throughput sweep test (c): stateful (Reg) main containing a
-# make_autopipeline region. The cut domain is the AUTOPIPELINE tagged child;
-# cuts descend through the stateful boundary via the tag override while the
-# FSM's own latency stays 0.
+# Planned throughput sweep test (c): stateful (Reg) main containing an
+# AUTOPIPELINE region (via _autopipeline_with_io_regs). The cut domain is the
+# AUTOPIPELINE tagged child; cuts descend through the stateful boundary via
+# the tag override while the FSM's own latency stays 0.
 import sys, os
 
 # Path for pypeline import
@@ -13,8 +13,8 @@ sys.path.insert(
 from typing import NamedTuple
 from pypeline import (
     MAIN,
+    _autopipeline_with_io_regs,
     hw_func,
-    make_autopipeline,
     struct,
     Reg,
     uint1_t,
@@ -47,8 +47,17 @@ def heavy_pipeline(x: stream_t) -> stream_t:
     return rv
 
 
-autopipelined_heavy_pipeline = make_autopipeline(
+autopipelined_heavy_pipeline, heavy_pipeline_ap = _autopipeline_with_io_regs(
     heavy_pipeline, has_input_reg=True, has_output_reg=True
+)
+# Reading .latency here makes this design a .latency consumer: a real
+# synthesizing build (synth_tests runs this file through a full sweep) then
+# exercises the pipelinec driver's pin-and-confirm pass. 0 on the bootstrap
+# pass and in native sim; the discovered core depth on the confirm pass.
+print(
+    "sweep_fsm_autopipeline_test: heavy_pipeline AUTOPIPELINE latency =",
+    heavy_pipeline_ap.latency,
+    "clks",
 )
 
 

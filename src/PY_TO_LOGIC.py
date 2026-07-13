@@ -578,6 +578,15 @@ def _callable_canonical_name(val, module_globals, _seen=None, _depth=0):
         return _callable_hash_fallback(val)
     _seen = _seen | {val_id}
 
+    # AUTOPIPELINE tag objects: their identity is the wrapped function's
+    # identity (plus any pinned depth) -- the instance itself has no
+    # distinguishing qualname/closure of its own (every instance would
+    # otherwise collapse to "pypeline_AUTOPIPELINE" via the class attrs).
+    if getattr(val, "_is_autopipeline_pragma", False):
+        inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
+        depth_suffix = f"_depth_{val.depth}" if getattr(val, "depth", -1) != -1 else ""
+        return _sanitize_vhdl_name(f"AUTOPIPELINE_{inner}{depth_suffix}")
+
     if isinstance(val, functools.partial):
         inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
         bound = []
@@ -630,6 +639,18 @@ def _callable_canonical_name(val, module_globals, _seen=None, _depth=0):
         return _sanitize_vhdl_name(_strip_qualname_markers(dotted))
 
     return _callable_hash_fallback(val)
+
+
+def CANONICAL_CALLABLE_KEY(func) -> str:
+    """Deterministic, per-source identity string for a live callable, stable
+    across repeated PARSE_FILE invocations of the same design (derived from
+    qualname/module/closure-cell values via _callable_canonical_name — never
+    id() or call order). Used by pypeline.AUTOPIPELINE to key the cross-pass
+    latency cache; only self-consistency between passes matters, not equality
+    with FuncLogicLookupTable's own keys."""
+    unwrapped = inspect.unwrap(func)
+    module_globals = getattr(unwrapped, "__globals__", None) or {}
+    return _callable_canonical_name(func, module_globals)
 
 
 def _collapse_overflow_name(full: str, inner_func_name: str) -> str:
@@ -700,6 +721,34 @@ def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _dep
         # value uses a 'neg' prefix instead of str(val)'s '-5'.
         return str(val) if val >= 0 else f"neg{-val}"
 
+    def _stable_val_repr(v):
+        # Deterministic per-value encoding for the closure-hash branches below
+        # (NOT raw repr(v)): closure cells routinely hold callables/factory
+        # closures whose default repr embeds a memory address, which would
+        # change the hash -- and therefore this entity's canonical name -- on
+        # every design re-execution. The AUTOPIPELINE .latency pin-and-confirm
+        # loop re-executes the design in-process and matches funcs across
+        # passes by these names, so they must be a pure function of the design
+        # source. Mirrors the readable per-cell branches' encodings.
+        if isinstance(v, type):
+            return getattr(v, "_pypeline_ctype_name", str(v))
+        if isinstance(v, (bool, int, str)) or v is None:
+            return repr(v)
+        if isinstance(v, (list, tuple)):
+            return "[" + ",".join(_stable_val_repr(e) for e in v) + "]"
+        if isinstance(v, dict):
+            return (
+                "{"
+                + ",".join(
+                    f"{_stable_val_repr(k)}:{_stable_val_repr(v[k])}"
+                    for k in sorted(v, key=repr)
+                )
+                + "}"
+            )
+        if callable(v):
+            return _callable_canonical_name(v, module_globals, _seen, _depth + 1)
+        return repr(v)  # last resort for unusual cell types
+
     def _encode_list_for_name(var_name, val):
         if not val:
             return "empty"
@@ -757,7 +806,7 @@ def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _dep
             # ALL factory params were consumed/derived — hash all closure vars.
             # e.g. make_vga_timing(spec=VGA_640_480) → inner_name_spec_a1b2c3d4
             closure_repr = repr(
-                sorted((k, repr(v)) for k, v in closure_ns.items())
+                sorted((k, _stable_val_repr(v)) for k, v in closure_ns.items())
             ).encode()
             h = hashlib.sha256(closure_repr).hexdigest()[:8]
             param_suffix = "_".join(sorted(factory_param_names))
@@ -812,7 +861,7 @@ def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _dep
             k: v for k, v in closure_ns.items() if k not in factory_param_names
         }
         derived_repr = repr(
-            sorted((k, repr(v)) for k, v in derived_ns.items())
+            sorted((k, _stable_val_repr(v)) for k, v in derived_ns.items())
         ).encode()
         missing_hash = hashlib.sha256(derived_repr).hexdigest()[:8]
         for mp in sorted(missing_params):
@@ -3732,26 +3781,21 @@ class FuncElaborator:
         return port_return, C_TO_LOGIC.BOOL_C_TYPE
 
     def _elab_call(self, expr):
-        # autopipeline(call_expr[, depth]) — elaborate the wrapped call as the
-        # real submodule instance and tag it with the given depth.
+        # AUTOPIPELINE(func) instance call: MY_AP(x) — elaborate func as the
+        # real submodule instance and tag it for autopipelining with the
+        # instance's depth and canonical latency-cache key. MY_AP resolves as
+        # an ordinary Python value (closure cell or global); depth/func/key
+        # are real attributes on the live object, so the callee needn't be
+        # written as a literal direct-call expression and the tag can't leak
+        # onto a nested call inside the arguments.
+        autopipeline_call = None
         autopipeline_probe = self._try_eval_const(expr.func)
         if getattr(autopipeline_probe, "_is_autopipeline_pragma", False):
-            if not expr.args or not isinstance(expr.args[0], ast.Call):
-                raise NotImplementedError(
-                    "autopipeline(...) must wrap a single direct function call, "
-                    f"got: {ast.dump(expr)}"
-                )
-            depth = -1
-            if len(expr.args) > 1:
-                depth = self._try_eval_const(expr.args[1])
-            else:
-                for kw in expr.keywords:
-                    if kw.arg == "depth":
-                        depth = self._try_eval_const(kw.value)
-            self.logic.next_func_call_autopipeline_depth = depth
-            return self._elab_call(expr.args[0])
+            autopipeline_call = autopipeline_probe
+            callee_name = getattr(autopipeline_call.func, "__name__", "autopipelined")
+            callee_def = self._elaborate_live_func(callee_name, autopipeline_call.func)
         # ── Resolve callee ──────────────────────────────────────────────────────
-        if isinstance(expr.func, ast.Attribute):
+        elif isinstance(expr.func, ast.Attribute):
             # Module-qualified call: pypeline_tests.abs_int32(a)
             if not isinstance(expr.func.value, ast.Name):
                 raise NotImplementedError(
@@ -3833,11 +3877,11 @@ class FuncElaborator:
             expr,
             self.src_file,
         )
-        if self.logic.next_func_call_autopipeline_depth is not None:
-            self.logic.sub_inst_to_autopipeline_depth[inst] = (
-                self.logic.next_func_call_autopipeline_depth
+        if autopipeline_call is not None:
+            self.logic.sub_inst_to_autopipeline_depth[inst] = autopipeline_call.depth
+            self.logic.sub_inst_to_autopipeline_key[inst] = (
+                autopipeline_call.canonical_key
             )
-            self.logic.next_func_call_autopipeline_depth = None
         return port_return, ret_typ
 
     def _elab_strlen_call(self, expr):
@@ -4076,7 +4120,7 @@ class FuncElaborator:
         closures) or the function's own module-qualified identity (plain
         top-level functions, via _top_level_func_key) -- never under
         module_level_name, which is just the call-site alias text (e.g. "func"
-        for every make_valid_ready_mcp / make_stream_pipeline / make_autopipeline
+        for every make_valid_ready_mcp / make_stream_pipeline / _autopipeline_with_io_regs
         wrapper) and must not be used as a table key: two different top-level
         functions reached through two differently-wrapped factories would
         otherwise collide on that shared alias.
@@ -5255,6 +5299,18 @@ def _process_imports(
             )
 
 
+# sys.modules keys present before the first PARSE_FILE ever executed a design
+# file. On repeat PARSE_FILE calls (the pipelinec driver's pin-and-confirm
+# loop), every module imported *as a consequence of* executing a design is
+# evicted so the whole design import graph re-executes: exec_module below only
+# re-runs the top file itself, and a sys.modules-cached sub-file would neither
+# re-register its @MAIN functions (registry is cleared each call) nor
+# reconstruct its AUTOPIPELINE objects against the current latency cache.
+# Compiler modules (pypeline, PY_TO_LOGIC, SYN, ...) predate the snapshot and
+# survive -- required, since the latency cache lives in pypeline module state.
+_modules_before_first_parse = None
+
+
 def PARSE_FILE(py_file):
     print("PY_TO_LOGIC parsing:", py_file)
 
@@ -5268,9 +5324,33 @@ def PARSE_FILE(py_file):
     pypeline._main_registry.clear()  # reset in case of multiple PARSE_FILE calls
     pypeline._main_mhz_registry.clear()
     pypeline._part_registry = None
+    pypeline.CLEAR_AUTOPIPELINE_LATENCY_READ_FLAG()
 
     # Make imports relative to the design file's directory work (e.g. 'import file_a')
     import sys
+
+    global _modules_before_first_parse
+    if _modules_before_first_parse is None:
+        _modules_before_first_parse = set(sys.modules)
+    else:
+        for mod_name in set(sys.modules) - _modules_before_first_parse:
+            del sys.modules[mod_name]
+        # Per-parse compiler caches must not leak into a re-parse; the C
+        # frontend runs this same cleanup at the end of its PARSE_FILE. Two
+        # concrete staleness bugs this prevents: (1) the trim/collapse memo
+        # (func-name keyed) would skip trimming freshly rebuilt Logic, leaking
+        # normally-pruned dead logic (e.g. built-in ops' unused clock-enable
+        # branch muxes, whose generated names GHDL rejects) into VHDL;
+        # (2) _other_partial_logic_cache would merge Logic objects mutated by
+        # the previous parse's trimming, changing same-named funcs' contents
+        # between parses.
+        import SYN
+
+        C_TO_LOGIC.DEL_ALL_CACHES()
+        SYN.DEL_ALL_CACHES()
+        # Not part of SYN.DEL_ALL_CACHES: cached zero-clk TimingParams hold
+        # references to the previous parse's Logic objects
+        SYN._GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache.clear()
 
     design_dir = os.path.dirname(os.path.abspath(py_file))
     if design_dir not in sys.path:
@@ -5324,7 +5404,7 @@ def PARSE_FILE(py_file):
     # Absolute source file -> module_prefix, so _elaborate_live_func can compute
     # the same FuncLogicLookupTable key for a top-level function reached via a
     # closure alias (e.g. the `func` parameter inside make_valid_ready_mcp /
-    # make_stream_pipeline / make_autopipeline) as Step 6/7 below use for that
+    # make_stream_pipeline / _autopipeline_with_io_regs) as Step 6/7 below use for that
     # same function reached directly. Pypeline-only, set dynamically here the
     # same way parser_state.module_alias_to_actual is (never declared in
     # C_TO_LOGIC.py's shared ParserState.__init__).

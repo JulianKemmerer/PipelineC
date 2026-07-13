@@ -67,7 +67,7 @@ def wide_round(x: wide_t) -> wide_t:
 uint32_stream_t = make_stream_t(uint32_t)
 wide_stream_t = make_stream_t(wide_t)
 scalar_mcp, scalar_mcp_t = make_valid_ready_mcp(scalar_round, 2)
-wide_pipeline, wide_pipeline_t = make_stream_pipeline(wide_round, MAX_IN_FLIGHT=4)
+wide_pipeline, wide_pipeline_t = make_stream_pipeline(wide_round)
 
 
 @MAIN(50.0)

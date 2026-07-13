@@ -24,9 +24,9 @@ Usage:
 from pypeline import (
     NamedTuple,
     Reg,
+    _autopipeline_with_io_regs,
     hw_arg_types,
     hw_func,
-    make_autopipeline,
     struct,
     uint1_t,
 )
@@ -63,7 +63,6 @@ def make_fir(
     symmetry="auto",
     skip_zero_taps=True,
     handshake="elastic",
-    max_in_flight=64,
 ):
     """Build a single-rate streaming FIR filter. Returns (fir, fir_t).
 
@@ -88,8 +87,8 @@ def make_fir(
                                vendor-style free-running mode: no FIFO or
                                in-flight counter; input must be consumable
                                downstream every cycle.
-    max_in_flight: elastic mode's output FIFO depth; sustained 1 sample/cycle
-               needs max_in_flight >= the tool-chosen pipeline latency.
+    Elastic mode's output FIFO is sized automatically from the AUTOPIPELINE'd
+    core's tool-discovered .latency (see make_stream_pipeline).
 
     The returned `fir` carries metadata attributes for dsp/fir_tb.py:
     .coeffs_q .data_t .coeff_t .out_t .accum_t .full_precision .rounding
@@ -113,7 +112,7 @@ def make_fir(
     in_stream_t = make_stream_t(data_t)
 
     if handshake == "elastic":
-        sp_func, sp_t = make_stream_pipeline(fir_core, max_in_flight)
+        sp_func, sp_t = make_stream_pipeline(fir_core)
         sp_in_stream_t = hw_arg_types(sp_func)[0]
         out_stream_t = sp_t.typeof("stream_out")
 
@@ -160,7 +159,7 @@ def make_fir(
             rv.valid = x.valid
             return rv
 
-        fir_core_ap = make_autopipeline(
+        fir_core_ap, _fir_core_ap_call = _autopipeline_with_io_regs(
             fir_core_stream, has_input_reg=True, has_output_reg=True
         )
 

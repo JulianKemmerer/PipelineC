@@ -104,7 +104,6 @@ def make_fir_interp(
     gain=None,
     symmetry="auto",
     skip_zero_taps=True,
-    max_in_flight=8,
 ):
     """Build an interpolate-by-`interp` streaming FIR. Returns
     (fir_interp, fir_interp_t) with the same elastic stream interface and
@@ -132,7 +131,6 @@ def make_fir_interp(
         symmetry=symmetry,
         skip_zero_taps=skip_zero_taps,
         handshake="elastic",
-        max_in_flight=max_in_flight,
     )
 
     in_stream_t = fir.in_stream_t

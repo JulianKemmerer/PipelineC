@@ -12,9 +12,9 @@ stream runs at 1/decim of the accepted-input rate.
 from pypeline import (
     NamedTuple,
     Reg,
+    _autopipeline_with_io_regs,
     hw_arg_types,
     hw_func,
-    make_autopipeline,
     make_uint_t,
     struct,
     uint1_t,
@@ -39,15 +39,15 @@ def make_fir_decim(
     symmetry="auto",
     skip_zero_taps=True,
     handshake="elastic",
-    max_in_flight=4,
 ):
     """Build a decimate-by-`decim` streaming FIR. Returns (fir_decim, fir_decim_t).
 
     Interface and parameters match dsp/fir.make_fir exactly (same stream
     types, same metadata attributes on the returned function); `decim` >= 1
     sets the integer rate reduction. Outputs fire on accepted samples
-    decim-1, 2*decim-1, ... (matching dsp/fir_tb.golden_fir). max_in_flight
-    can be small since only 1-in-decim samples enter the pipeline.
+    decim-1, 2*decim-1, ... (matching dsp/fir_tb.golden_fir). Elastic mode's
+    output FIFO is sized automatically from the AUTOPIPELINE'd core's
+    tool-discovered .latency (see make_stream_pipeline).
     """
     if not (isinstance(decim, int) and decim >= 1):
         raise ValueError(f"make_fir_decim: decim must be an int >= 1, got {decim!r}")
@@ -71,7 +71,7 @@ def make_fir_decim(
     LAST_PHASE = decim - 1
 
     if handshake == "elastic":
-        sp_func, sp_t = make_stream_pipeline(fir_core, max_in_flight)
+        sp_func, sp_t = make_stream_pipeline(fir_core)
         sp_in_stream_t = hw_arg_types(sp_func)[0]
         out_stream_t = sp_t.typeof("stream_out")
 
@@ -122,7 +122,7 @@ def make_fir_decim(
             rv.valid = x.valid
             return rv
 
-        fir_core_ap = make_autopipeline(
+        fir_core_ap, _fir_core_ap_call = _autopipeline_with_io_regs(
             fir_core_stream, has_input_reg=True, has_output_reg=True
         )
 

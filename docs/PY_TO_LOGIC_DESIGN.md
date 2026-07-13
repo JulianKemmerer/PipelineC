@@ -68,7 +68,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
   - [`PART(...)` — FPGA Target Device](#part--fpga-target-device)
   - [`@MAIN(mhz)` — Clock Frequency Constraint](#mainmhz--clock-frequency-constraint)
   - [Clock Domain Inference (`INFER_CLOCK_DOMAINS`)](#clock-domain-inference-infer_clock_domains)
-- [`autopipeline(call_expr, depth)` — Forced Submodule Pipelining](#autopipelinecall_expr-depth--forced-submodule-pipelining)
+- [`AUTOPIPELINE(func, depth)` — Forced Submodule Pipelining](#autopipelinefunc-depth--forced-submodule-pipelining)
 - [`MULTI_CYCLE[ncycles]` / `Reg[T, tag]` — Multi-Cycle Path Constraint](#multi_cyclencycles--regt-tag--multi-cycle-path-constraint)
 - [`@wires` — Just-Wires Synthesis Hint](#wires--just-wires-synthesis-hint)
 
@@ -918,7 +918,7 @@ name) — not the Python alias — to `_add_submodule_instance`, so all referenc
 canonical name when the callable itself is a factory-produced closure (`.<locals>.` in its
 `__qualname__`). Several factories instead take an *ordinary top-level function* as an
 argument and call it internally through their own closure variable — `make_valid_ready_mcp`,
-`make_stream_pipeline`, and `make_autopipeline` all name that variable `func`:
+`make_stream_pipeline`, and `_autopipeline_with_io_regs` all name that variable `func`:
 
 ```python
 divider_mcp, divider_mcp_t = make_valid_ready_mcp(divider, 16)   # divider: a plain top-level func
@@ -2798,7 +2798,7 @@ f-string's AST, driving the *existing* printf backend exactly as C's own `printf
 ### Recognition and dispatch
 
 `sim_print` is a real Python function (`pypeline.py`) stamped with a marker attribute,
-exactly like `autopipeline`'s `_is_autopipeline_pragma`:
+exactly like `AUTOPIPELINE`'s `_is_autopipeline_pragma`:
 
 ```python
 def sim_print(s):
@@ -3203,126 +3203,154 @@ C_TO_LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
 
 ---
 
-## `autopipeline(call_expr, depth)` — Forced Submodule Pipelining
+## `AUTOPIPELINE(func, depth)` — Forced Submodule Pipelining
 
 Python equivalent of PipelineC's `#pragma AUTOPIPELINE <depth>` (see
-`examples/autopipelined_submodules.c`). It forces the synthesizer to slice (insert
-pipeline registers) through one specific submodule call, even when that call sits inside
-a register/feedback context that would otherwise forbid added latency
-(`CAN_HAVE_ADDED_LATENCY` false there). The underlying mechanism is entirely in
-`C_TO_LOGIC.Logic()` and `SYN.py` and is shared, unmodified, with the C frontend:
+`examples/autopipelined_submodules.c`), plus a `.latency` feedback channel the C pragma
+doesn't have. It forces the synthesizer to slice (insert pipeline registers) through
+calls made through the tag object, even when the call sits inside a register/feedback
+context that would otherwise forbid added latency (`CAN_HAVE_ADDED_LATENCY` false
+there). The depth-tagging mechanism is in `C_TO_LOGIC.Logic()` and `SYN.py`, shared
+with the C frontend; the Pypeline frontend adds one field of its own:
 
 ```python
-# C_TO_LOGIC.py — already present on every Logic(), C and Python frontends alike
-self.next_func_call_autopipeline_depth = None   # single-use, forward-looking
-self.sub_inst_to_autopipeline_depth = {}        # inst_name -> depth, persists per Logic()
+# C_TO_LOGIC.py — present on every Logic(), C and Python frontends alike
+self.sub_inst_to_autopipeline_depth = {}  # inst_name -> depth, persists per Logic()
+# Pypeline frontend only: inst_name -> AUTOPIPELINE.canonical_key, so the
+# sweep's discovered latencies can be harvested per call site and fed back
+# into .latency (see SYN.HARVEST_AUTOPIPELINE_LATENCIES / SYN_DESIGN.md)
+self.sub_inst_to_autopipeline_key = {}
 ```
 
 `SYN.py`'s `GET_SUBMODULE_LATENCY` (reports zero latency for tagged instances) and
 `SUB_HAS_AUTOPIPELINE_IN_HIER` (the forced-slicing gate, checked even when
 `CAN_HAVE_ADDED_LATENCY` is false) consume `sub_inst_to_autopipeline_depth` generically
 by submodule-instance name — they have no dependency on which frontend produced the
-`Logic()`. Porting the feature to Pypeline therefore required **no changes to
-`C_TO_LOGIC.py` or `SYN.py`** — only teaching `PY_TO_LOGIC.py`'s elaborator to populate
-the same two fields.
+`Logic()`.
 
-### Syntax — wrapper call, not a bare pragma statement
-
-Unlike `PART(...)` / `@MAIN(mhz)` (which mirror C pragma syntax fairly literally),
-`autopipeline(...)` wraps the call it modifies, since this reads more naturally as
-targeted decoration of one expression rather than a floating, easy-to-misplace flag:
+### Syntax — a callable tag object, not a wrapper around a call expression
 
 ```python
-rv = autopipeline(some_func(x))          # auto depth (-1)
-rv = autopipeline(some_func(x), 2)       # explicit depth, positional
-rv = autopipeline(some_func(x), depth=2) # explicit depth, keyword
+MY_AP = AUTOPIPELINE(some_func)           # auto depth (-1)
+MY_AP = AUTOPIPELINE(some_func, depth=2)  # explicit depth
+rv = MY_AP(x)                             # some_func(x), autopipelined
+MY_AP.latency                             # int; see below
 ```
 
-`autopipeline` is defined in `pypeline.py` as a plain identity passthrough, stamped with
-a recognition flag exactly like `@sim_output`'s `_is_sim_output`:
+`AUTOPIPELINE` is a class in `pypeline.py` whose instances carry the wrapped `func`,
+the `depth`, a lazily-computed `canonical_key` (via `PY_TO_LOGIC.CANONICAL_CALLABLE_KEY`,
+built on `_callable_canonical_name` — deterministic per source, never `id()`/call
+order), and a `latency` read from the module-level cross-pass cache
+(`pypeline._autopipeline_latency_cache`, installed by the `pipelinec` driver's
+pin-and-confirm loop; empty in native sim and `--comb` builds, so `.latency` reads 0
+there). The class-level `_is_autopipeline_pragma` flag is the elaborator's duck-type
+probe, exactly like `@sim_output`'s `_is_sim_output`. `__call__` is an identity
+passthrough (`func(x)`), so proto-simulation needs no special-casing. `.latency` is a
+read-tracked property (any read flips `pypeline._autopipeline_latency_was_read`, which
+lets the driver skip the extra pass for designs that never consume the value), and
+`__repr__` is deliberately address-free *and fully distinguishing* (it embeds the
+wrapped func's canonical key when the compiler is loaded) because instances get
+captured in factory closures whose cell reprs feed canonical-name hashing.
 
-```python
-def autopipeline(call_result, depth: int = -1):
-    return call_result
+Canonical-name determinism across re-executions is load-bearing for the whole
+feature and required three hardening fixes in the naming machinery itself, all
+regression-tested by `double_parse_file_test.py`'s strict key-set equality:
+`_canonical_func_name`'s two closure-hash branches (all-params-missing and
+missing-params/derived-vars) encode cell values via `_stable_val_repr` — recursing
+into `_callable_canonical_name` for callables — instead of raw `repr(v)`, whose
+address content changed every execution; `_callable_canonical_name` special-cases
+`_is_autopipeline_pragma` objects to recurse into the wrapped `.func` (every
+instance would otherwise collapse to the same `pypeline_AUTOPIPELINE` token,
+colliding wrappers around different cores); and `pypeline.@struct`'s
+`_format_struct_param_value` encodes callable factory params by module+qualname
+instead of `sha256(repr(func))`.
 
-autopipeline._is_autopipeline_pragma = True
-```
-
-Because it's a real Python function, `rv = autopipeline(some_func(x))` runs correctly
-under proto-simulation (`sim_call`) with no special-casing — `autopipeline` just returns
-its argument.
+Unlike the older `autopipeline(some_func(x))` wrapper-call syntax this replaced,
+`depth`/`func` are genuine Python attributes resolved by genuine Python execution —
+nothing is re-parsed out of AST argument nodes, the callee doesn't have to be written
+as a literal direct-call expression, and the tag can't leak onto a nested call inside
+the arguments (the old "next instantiation" quirk).
 
 ### Elaboration (`FuncElaborator._elab_call`)
 
-Two additions to `_elab_call`, no other methods touched.
+One branch at the top of `_elab_call`, one tagging block at the bottom.
 
-**Unwrap at the top of `_elab_call`** — before the existing callee-resolution logic
-runs, check whether `expr.func` resolves to the flagged `autopipeline` callable:
+**Probe at the top** — before the existing callee-resolution logic runs, check whether
+`expr.func` resolves (closure cell or global, via `_try_eval_const`) to an
+`AUTOPIPELINE` instance; if so the callee `Logic` comes straight from the live object:
 
 ```python
 def _elab_call(self, expr):
+    autopipeline_call = None
     autopipeline_probe = self._try_eval_const(expr.func)
     if getattr(autopipeline_probe, "_is_autopipeline_pragma", False):
-        if not expr.args or not isinstance(expr.args[0], ast.Call):
-            raise NotImplementedError(
-                "autopipeline(...) must wrap a single direct function call, "
-                f"got: {ast.dump(expr)}"
-            )
-        depth = -1
-        if len(expr.args) > 1:
-            depth = self._try_eval_const(expr.args[1])
-        else:
-            for kw in expr.keywords:
-                if kw.arg == "depth":
-                    depth = self._try_eval_const(kw.value)
-        self.logic.next_func_call_autopipeline_depth = depth
-        return self._elab_call(expr.args[0])
-    # ── Resolve callee ── (unchanged)
-    ...
+        autopipeline_call = autopipeline_probe
+        callee_name = getattr(autopipeline_call.func, "__name__", "autopipelined")
+        callee_def = self._elaborate_live_func(callee_name, autopipeline_call.func)
+    elif ...:  # ── Resolve callee ── (unchanged)
 ```
 
-`expr.args[0]` must be a literal `ast.Call` node — `autopipeline(...)` only wraps a
-single direct function call, not an arbitrary expression. The wrapper itself never
-becomes a submodule instance; it recurses straight into `_elab_call` on the inner call,
-which performs the real instantiation.
+The tag object itself never becomes a submodule instance — `_elaborate_live_func`
+elaborates the wrapped `func` (with its usual canonical-name memoization), and the
+ordinary instance-construction tail runs with `expr.args` as the wrapped function's own
+real argument list.
 
-**Tag at the bottom of `_elab_call`** — immediately after `_add_submodule_instance(...)`,
-before the final `return`. This is the generic consumption point, reached by *every* call
-elaboration (mirroring the C consumption site in `C_AST_N_ARG_FUNC_INST_TO_LOGIC`, which
-reads and resets `parser_state.existing_logic.next_func_call_autopipeline_depth`):
+**Tag at the bottom** — immediately after `_add_submodule_instance(...)`, keyed to
+exactly the instance this call created:
 
 ```python
         _add_submodule_instance(...)
-        if self.logic.next_func_call_autopipeline_depth is not None:
-            self.logic.sub_inst_to_autopipeline_depth[inst] = (
-                self.logic.next_func_call_autopipeline_depth
+        if autopipeline_call is not None:
+            self.logic.sub_inst_to_autopipeline_depth[inst] = autopipeline_call.depth
+            self.logic.sub_inst_to_autopipeline_key[inst] = (
+                autopipeline_call.canonical_key
             )
-            self.logic.next_func_call_autopipeline_depth = None
         return port_return, ret_typ
 ```
 
-Both fields live on `self.logic` — the `FuncElaborator`'s own per-function `Logic()`
-object — so a pragma used inside one function body only affects calls elaborated within
-that same function, matching the C implementation's per-`Logic()` scoping exactly.
+Both dicts live on `self.logic` — the `FuncElaborator`'s own per-function `Logic()`
+object — so a tag used inside one function body only affects calls elaborated within
+that same function, matching the C implementation's per-`Logic()` scoping. (The C
+frontend's forward-looking `next_func_call_autopipeline_depth` field still exists for
+`#pragma AUTOPIPELINE`, but the Pypeline path no longer uses it.)
 
-**Caveat (shared with the C pragma, not a Pypeline-specific limitation):** if the
-wrapped call's *arguments* themselves contain function calls
-(`autopipeline(foo(bar(x)))`), those nested calls are elaborated — and therefore tagged —
-before `foo`'s own instance is created, since argument expressions are elaborated before
-`_add_submodule_instance` runs for the outer call. The flag is consumed by whichever
-submodule instantiation happens next during elaboration, exactly as in the C frontend,
-which has no special-casing for nested call arguments either. In practice the wrapped
-call's arguments are wires/locals, not nested calls, so this rarely matters.
+### Repeated `PARSE_FILE` support (the pin-and-confirm loop's foundation)
+
+The `pipelinec` driver re-runs `PARSE_FILE` after the throughput sweep so `.latency`
+reads resolve to real values (see `SYN_DESIGN.md`). `PARSE_FILE` therefore supports
+being called more than once per process:
+
+- **`sys.modules` eviction**: `exec_module` only re-executes the top design file;
+  modules imported as a consequence of executing a design (sub-file designs, library
+  modules) are snapshot-diffed and evicted before a re-parse, so the whole design
+  import graph re-executes — otherwise cached sub-files would neither re-register
+  their `@MAIN`s (the registry is cleared per parse) nor reconstruct their
+  `AUTOPIPELINE` objects against the current latency cache. Compiler modules predate
+  the snapshot and survive (required: the latency cache lives in `pypeline` module
+  state).
+- **Per-parse compiler cache cleanup**: the re-parse branch runs
+  `C_TO_LOGIC.DEL_ALL_CACHES()` + `SYN.DEL_ALL_CACHES()` (the same cleanup the C
+  frontend runs at the end of its own `PARSE_FILE`) plus the zero-clk TimingParams
+  cache. Two concrete staleness bugs this prevents: the func-name-keyed trim/collapse
+  memo would skip trimming freshly rebuilt Logic (leaking normally-pruned dead logic —
+  e.g. built-in ops' unused clock-enable branch muxes, whose generated names GHDL
+  rejects — into VHDL), and `_other_partial_logic_cache` would merge Logic objects
+  mutated by the previous parse's trimming.
+- The `.latency` read flag is reset at the top of every parse.
+
+`src/tests/pypeline_tests/inst/double_parse_file_test.py` regression-tests all of this
+in-process.
 
 ### Test coverage
 
 `src/tests/pypeline_tests/inst/autopipeline_test.py` is the Pypeline translation of
 `examples/autopipelined_submodules.c` (FIFO omitted; backpressure faked with a toggling
-`Reg[uint1_t]` instead). It wraps the comb `test_pipeline` submodule call inside
-`valid_ready_pipeline_test`, a function that also declares a register — giving
-`autopipeline(...)` a real register/feedback context to force pipelining through. This is
-a synthesis-only test, run by hand via `pipelinec ... --comb` (see `run_all.sh`), not
-part of the proto-simulation suite.
+`Reg[uint1_t]` instead), using a module-level `AUTOPIPELINE(test_pipeline)` tag called
+through inline `Reg[T]` boundary registers.
+`src/tests/pypeline_tests/inst/autopipeline_harvest_test.py` unit-tests the
+harvest/seed machinery and `CANONICAL_CALLABLE_KEY` determinism;
+`autopipeline_latency_test.py` asserts the full pin-and-confirm loop end-to-end
+against a real sweep.
 
 ---
 

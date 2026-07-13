@@ -608,40 +608,56 @@ def _register_main(func, mhz):
 so every `@MAIN` function automatically gets simulation type wrapping. Users do not need both
 `@MAIN` and `@hw_func` on the same function.
 
-### `autopipeline(call_result, depth=-1)` — Forced Submodule Pipelining
+### `AUTOPIPELINE(func, depth=-1)` — Forced Submodule Pipelining with `.latency`
 
-Python equivalent of PipelineC's `#pragma AUTOPIPELINE <depth>`. Wrap a single direct
-function call to force the synthesizer to slice (insert pipeline registers) through that
-call's submodule, even inside a register/feedback context that would otherwise forbid
-added latency:
-
-```python
-rv = autopipeline(some_func(x))          # auto depth
-rv = autopipeline(some_func(x), 2)       # explicit depth
-rv = autopipeline(some_func(x), depth=2)
-```
-
-At simulation time it is a plain identity passthrough:
+Python equivalent of PipelineC's `#pragma AUTOPIPELINE <depth>`, plus a feedback
+channel the C pragma doesn't have. `AUTOPIPELINE(func)` is a class (all-caps factory
+style, like `MULTI_CYCLE`) whose instances are callable tags: calls made through one
+force the synthesizer to slice (insert pipeline registers) through that call's
+submodule, even inside a register/feedback context that would otherwise forbid added
+latency — and the instance's `.latency` attribute reads back the stage count the
+synthesis sweep actually chose:
 
 ```python
-def autopipeline(call_result, depth: int = -1):
-    return call_result
-
-autopipeline._is_autopipeline_pragma = True
+MY_AP = AUTOPIPELINE(some_func)           # auto depth
+MY_AP = AUTOPIPELINE(some_func, depth=2)  # explicit depth
+rv = MY_AP(x)                             # some_func(x), autopipelined
+MY_AP.latency                             # int, 0 until known
 ```
 
-The `_is_autopipeline_pragma` flag is the only thing the elaborator inspects (mirroring
-`@sim_output`'s `_is_sim_output` flag). See
-[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#autopipelinecall_expr-depth--forced-submodule-pipelining)
-for how `PY_TO_LOGIC.FuncElaborator._elab_call` unwraps the call and tags the resulting
-submodule instance. The underlying `Logic()` fields
-(`next_func_call_autopipeline_depth`, `sub_inst_to_autopipeline_depth`) and the
-synthesis-side forced-slicing mechanism are shared, unmodified, with the C frontend.
+At simulation time `MY_AP(x)` is a plain identity passthrough (`func(x)`), and
+`.latency` stays 0 (the module-level latency cache it reads,
+`pypeline._autopipeline_latency_cache`, is only populated by the `pipelinec` driver's
+pin-and-confirm loop between real synthesizing passes — see `SYN_DESIGN.md`).
+`.latency` is a read-tracked property: any read flips a module flag
+(`AUTOPIPELINE_LATENCY_WAS_READ`) the driver uses to skip the extra pass entirely for
+designs that never consume the value. `AUTOPIPELINE.__repr__` is deliberately
+address-free *and fully distinguishing* (it embeds the wrapped func's canonical key
+when the compiler is loaded): instances get captured in factory closures whose cell
+reprs feed canonical entity-name hashing, so an address-bearing repr would rename
+entities on every design re-execution, while a repr hiding the wrapped func's
+identity would collide wrappers around different factory-produced cores (e.g. several
+`make_stream_pipeline` invocations in one design).
+
+The class-level `_is_autopipeline_pragma` flag is the only thing the elaborator
+duck-type probes (mirroring `@sim_output`'s `_is_sim_output` flag). See
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#autopipelinefunc-depth--forced-submodule-pipelining)
+for how `PY_TO_LOGIC.FuncElaborator._elab_call` elaborates the wrapped func and tags
+the resulting submodule instance. The `Logic()` depth field
+(`sub_inst_to_autopipeline_depth`) and the synthesis-side forced-slicing mechanism are
+shared, unmodified, with the C frontend; the Pypeline frontend additionally records
+`sub_inst_to_autopipeline_key` (instance -> `AUTOPIPELINE.canonical_key`) so the sweep's
+discovered latencies can be harvested per call site and fed back into `.latency`.
+
+The internal helper `_autopipeline_with_io_regs(func, has_input_reg, has_output_reg)`
+(used by `make_stream_pipeline` and the FIR library) wraps `AUTOPIPELINE(func)` with
+optional unconditional `Reg[T]` boundary registers and returns
+`(wrapped_func, autopipeline_call)` so library code can read `.latency`.
 
 ### `MULTI_CYCLE[ncycles]` — Multi-Cycle Path Tag
 
 Python equivalent of PipelineC's `#pragma MULTI_CYCLE <ncycles> <start_reg> <end_reg>`.
-Unlike `PART(...)` and `autopipeline(...)`, this is not a call at all — `MULTI_CYCLE` is a
+Unlike `PART(...)`, this is not a call at all — `MULTI_CYCLE` (like `AUTOPIPELINE`) is a
 subscriptable class (same idiom as `Reg`/`Feedback`/`Wire`), and the cycle count and two
 register endpoints are attached directly to the `Reg[T]` declarations they constrain:
 
@@ -699,7 +715,7 @@ def my_struct_to_bytes(x: my_struct_t) -> uint8_t[4]:
     ...
 ```
 
-Unlike `autopipeline(...)` (wraps a call expression) or `MULTI_CYCLE[...]` (tags a `Reg[T]`
+Unlike `AUTOPIPELINE(...)` (a callable tag for calls) or `MULTI_CYCLE[...]` (tags a `Reg[T]`
 declaration), `FUNC_WIRES` tags a *function definition* — the same shape as `@MAIN` and
 `@sim_output`. Implementation mirrors `_register_main`'s "implies `@hw_func`" pattern
 (see [`@MAIN` / `@MAIN(mhz)` — Three-Form Decorator](#main--mainmhz--three-form-decorator)
@@ -723,7 +739,7 @@ the module-level name, and the `_is_func_wires_pragma` flag survives either orde
 `_sim_type_wrap`'s `functools.wraps` merges `__dict__` from the wrapped object.
 
 The `_is_func_wires_pragma` flag is the only thing the elaborator inspects (mirroring
-`@sim_output`'s `_is_sim_output` flag and `autopipeline`'s `_is_autopipeline_pragma`
+`@sim_output`'s `_is_sim_output` flag and `AUTOPIPELINE`'s `_is_autopipeline_pragma`
 flag). See
 [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#wires--just-wires-synthesis-hint) for how
 `PY_TO_LOGIC.PARSE_FILE` / `FuncElaborator._elaborate_live_func` consume it and populate

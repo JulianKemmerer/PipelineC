@@ -38,7 +38,6 @@ fir_sweep, fir_sweep_t = make_fir(
     out_t=data_t,
     rounding="round_half_even",
     overflow="saturate",
-    max_in_flight=8,
 )
 
 

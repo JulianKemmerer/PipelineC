@@ -8,9 +8,9 @@ sys.path.insert(
 
 from typing import NamedTuple
 from pypeline import (
+    AUTOPIPELINE,
     MAIN,
     hw_func,
-    make_autopipeline,
     struct,
     Reg,
     uint1_t,
@@ -42,12 +42,27 @@ def test_pipeline(x: stream_t) -> stream_t:
     return rv
 
 
-# AUTOPIPELINE-wrapped test_pipeline, with its own input and output registers.
-# valid_ready_pipeline_test below calls this directly, with no autopipeline(...)
-# at that call site -- the AUTOPIPELINE tagging is internal to autopipelined_test_pipeline.
-autopipelined_test_pipeline = make_autopipeline(
-    test_pipeline, has_input_reg=True, has_output_reg=True
-)
+# The raw AUTOPIPELINE primitive: constructed once, eagerly, at module level
+# (plain Python) and captured by closure below -- which is what makes
+# .latency readable here. The tool picks the depth (no depth= arg).
+TEST_PIPELINE_AP = AUTOPIPELINE(test_pipeline)
+
+# .latency reads 0 until a real synthesizing build's pin-and-confirm pass
+# installs the discovered value; in native sim it stays 0 forever.
+print("autopipeline_test: TEST_PIPELINE_AP.latency =", TEST_PIPELINE_AP.latency)
+assert isinstance(TEST_PIPELINE_AP.latency, int)
+
+
+# Inline registered-input/registered-output idiom around the AUTOPIPELINE'd
+# call (what _autopipeline_with_io_regs builds for library code).
+@hw_func
+def autopipelined_test_pipeline(x: stream_t) -> stream_t:
+    in_reg: Reg[stream_t]
+    out_reg: Reg[stream_t]
+    rv: stream_t = out_reg
+    out_reg = TEST_PIPELINE_AP(in_reg)
+    in_reg = x
+    return rv
 
 
 @hw_func
@@ -84,6 +99,13 @@ def test_autopipelined_submodules_sim():
     print(f"test_autopipelined_submodules_sim out={out}")
 
 
+def test_latency_reads_zero_in_sim():
+    # Native sim never synthesizes, so the latency cache stays empty and
+    # .latency must read 0.
+    assert TEST_PIPELINE_AP.latency == 0
+
+
 if __name__ == "__main__":
     test_autopipelined_submodules_sim()
+    test_latency_reads_zero_in_sim()
     print("All autopipeline tests passed.")
