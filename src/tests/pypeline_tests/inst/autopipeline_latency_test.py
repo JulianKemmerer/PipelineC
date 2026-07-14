@@ -104,7 +104,7 @@ def main():
         sys.exit(1)
 
     # Cross-check against sweep_history.json: the harvested latency must be
-    # one of the deepest-pipeline depths the sweep actually built (the
+    # one of the pipeline-stage depths the sweep actually built (the
     # accepted iteration's depth -- not necessarily the max, since post-met
     # trim probes may appear in the history too).
     if args.out_dir:
@@ -112,7 +112,7 @@ def main():
         with open(history_path) as f:
             history = json.load(f)
         depths_seen = {
-            iteration.get("deepest_pipeline", 0)
+            iteration.get("pipeline_stages", 0)
             for iterations in history.values()
             for iteration in iterations
         }
@@ -120,7 +120,7 @@ def main():
         if harvested not in depths_seen:
             print(
                 f"FAIL: harvested latency {harvested} not among "
-                f"sweep_history deepest_pipeline depths {sorted(depths_seen)}"
+                f"sweep_history pipeline_stages depths {sorted(depths_seen)}"
             )
             sys.exit(1)
 

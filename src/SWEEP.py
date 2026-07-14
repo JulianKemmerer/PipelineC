@@ -1009,9 +1009,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             continue
         domains = COLLECT_CUT_DOMAINS(main_inst, parser_state)
         if len(domains) == 0:
-            main_func = parser_state.LogicInstLookupTable[main_inst].func_name
+            main_logic = parser_state.LogicInstLookupTable[main_inst]
+            # A zero-delay main (FUNC_WIRES rewiring, bit manipulation, clock
+            # crossing, ...) trivially meets any goal and has no timing path
+            # worth synthesizing - skip it silently (no as-written check, no
+            # "nothing autopipelining can help" note).
+            if SYN.LOGIC_IS_ZERO_DELAY(main_logic, parser_state, allow_none_delay=True):
+                continue
             print(
-                f"[sweep] {main_func} has a {target_mhz:.2f} MHz goal but "
+                f"[sweep] {main_logic.func_name} has a {target_mhz:.2f} MHz goal but "
                 "contains nothing autopipelining can help (no sliceable logic and "
                 "no AUTOPIPELINE regions) - the goal is met only if the design "
                 "meets timing as written (checked below).",
