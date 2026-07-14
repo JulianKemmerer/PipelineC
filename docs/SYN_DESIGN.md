@@ -35,7 +35,8 @@ Vocabulary used throughout (each defined in detail later):
 | unmet timing at the end | exit 0, results written, sim runs — silent | results written for debugging, then `ERROR: TIMING NOT MET` block + **non-zero exit**; sim/bitstream skipped |
 | reaction to failing timing | grow `best_guess_sweep_mult`, or step `hier_sweep_mult` down the hierarchy and coarse-sweep smaller modules (4 interacting multipliers) | escalation ladder: densify the attributed hotspot func → measure estimated delays for real when fmax stagnates → only then mini-sweep + lock the hotspot (measured, minimality-probed); global rescale when attribution is impossible |
 | unreachable goals | plateaued for many runs, then gave up | fmax *floor* predicted and blamed before any syn run; sweep stops at the floor |
-| slices vs latency | conflated in logs ("0 clks 53 slices") | reported separately: `cuts=N main_latency=M deepest_pipeline=D` |
+| slices vs latency | conflated in logs ("0 clks 53 slices") | reported separately: `cuts=N main_latency=M pipeline_stages=D` |
+| pipeline depth | only the top module's own latency (0 for a stream) | a `Pipeline depth summary` at *Writing Results* totals every register stage built, including inside decoupled sub-pipelines |
 | state | `SweepState` + 4 multipliers, pickled `.sweep` resume files | `MainSweepPlan` per main; no resume (syn log caching already makes re-runs cheap); history written to `sweep_history.json` |
 
 ## 2. How pipelines physically form (unchanged)
@@ -74,8 +75,36 @@ sliced at misaligned positions, IO regs, `make_stream_pipeline`-style
 factories with internal `autopipeline()` calls: wireguard's block_step
 accepted "1 slice" became 4 real stages). And an **autopipeline-tagged call
 site reports latency 0 to its container** (so FSMs keep their cycle
-accounting) — a stateful MAIN prints `main_latency=0` while a deep
-`deepest_pipeline` runs inside it. That is expected, not a bug.
+accounting) — a stateful MAIN prints `main_latency=0` while a deep pipeline
+runs inside it. That is expected, not a bug.
+
+**A module's latency is not its slice count.** A module's total latency is
+its own leaf slices *plus* the summed latencies of its submodule instances,
+so an entity named `foo_25CLK` can legitimately carry only 8 slices of its
+own (the other 17 stages live in submodules). `latency == slice count` holds
+*only* for a pure-comb, fully-sliceable region (nothing below it to add
+depth) — which is exactly the region `CHECK_CUTS_VS_LATENCY` marks `strict`.
+
+**Reporting how deep the design got pipelined.** Because a stream MAIN reads
+`main_latency=0` and the deepest single instance (one block_step) is far
+shallower than the whole pipeline, neither alone answers "how many stages did
+autopipelining build?". So the metric reported as `pipeline_stages=` per
+iteration and in the `Pipeline depth summary` at *Writing Results* is the
+**total register stages in a main's cut domains**:
+
+```
+total = (register stages sliced directly into the cut-domain roots)
+      + (latency of every decoupled autopipeline region instance in them)
+```
+
+The two parts never overlap: a domain root's own latency already zeroes its
+decoupled children (they report 0 to it), and the second term adds exactly
+those back. This equals the input-to-output depth when the regions sit in
+series, as in a stream pipeline (wireguard chacha: 0 monolithic + block_step
+3 clks x 10 = 30 stages — not the "3" a single-instance view would show).
+The summary is computed at *Writing Results* on the final, actually-emitted
+table, so it reflects any extra depth the AUTOPIPELINE pin-and-confirm
+re-elaboration (§6.5) added.
 
 Entity naming is also unchanged: each distinct (IO regs + leaf slices)
 combination hashes to its own VHDL entity `funcname_<latency>CLK_<hash>`.
@@ -341,6 +370,22 @@ leaf covers it. The old equivalent of all of the above was
 they'd hit (a cut at 0.5 here would have landed inside `acc` and been
 silently lost — the "Finding #1" bug class the invariant now guards).
 
+After applying cuts, `CHECK_CUTS_VS_LATENCY` compares the planned cut count
+against the leaf slices that actually materialized in the domain subtree.
+Its strictness follows the landscape:
+
+- **Zero leaf slices** while cuts were planned: always a hard error
+  (the Finding #1 class — every register vanished).
+- **Fully sliceable domain** (every delay unit legal — pure comb, a
+  register can go anywhere): fewer leaf slices than cuts is a hard error —
+  nothing in the domain may absorb a cut, so a shortfall means slicing
+  descent itself is broken. *More* slices than cuts is normal even here:
+  a cut is a stage-boundary line across the dataflow, and where it crosses
+  parallel branches each branch materializes its own leaf register.
+- **Domain with unsliceable spans** (atomic/locked segments): cuts
+  legitimately shift/merge around those spans on the way down, so a
+  shortfall is expected — a one-line `[sweep] note:` only, no warning.
+
 ### Floor
 
 *What fmax can this domain never exceed?* The longest run of illegal units
@@ -411,7 +456,7 @@ The history dumps to `<out_dir>/<top>/sweep_history.json`, one record per
 
 ```json
 {"iter": 1, "main": "my_main", "goal_mhz": 100.0, "achieved_mhz": 87.0,
- "cuts": 2, "main_latency": 2, "deepest_pipeline": 2,
+ "cuts": 2, "main_latency": 2, "pipeline_stages": 2,
  "predicted_stage_ns": 10.0, "bottleneck": "mul_add",
  "action": "densify(mul_add x1.75)"}
 ```
@@ -520,7 +565,7 @@ targeted densification of the correctly-attributed interior hotspot:
 
 ```
 [sweep] iter=1 main=encrypt_dataflow_encrypt_dataflow goal=80.00MHz
-        got=47.91MHz (20.87ns) cuts=12 main_latency=0 deepest_pipeline=12
+        got=47.91MHz (20.87ns) cuts=12 main_latency=0 pipeline_stages=12
         predicted_stage=12.51ns bottleneck=chacha20_chacha20_block_step
         action=densify(chacha20_chacha20_block_step x1.75)
 ```
@@ -536,7 +581,7 @@ design more finely):
 
 ```
 [sweep] iter=1 main=fft_2pt_pipeline_no_handshake goal=110.00MHz got=98.86MHz
-        (10.11ns) cuts=3 main_latency=4 deepest_pipeline=4 predicted_stage=9.10ns
+        (10.11ns) cuts=3 main_latency=4 pipeline_stages=4 predicted_stage=9.10ns
         bottleneck=fft_2pt_pipeline_no_handshake action=densify(fft_... x1.17)
 ```
 
@@ -557,14 +602,39 @@ Results were written for debugging; skipping simulation/bitstream.
 cocotb sim runs and passes, exit 0 — is how a failing wireguard build once
 went unnoticed.)
 
+**Pipeline depth summary.** Right after the *Writing Results* banner, one
+block reports how deeply each main ended up pipelined (total register stages,
+see §2), broken down by decoupled region — computed on the final emitted
+table so it includes any depth the §6.5 re-elaboration added:
+
+```
+[sweep] Pipeline depth summary:
+[sweep]   chacha20_pipeline_shared: 30 pipeline register stage(s) total
+[sweep]     chacha20_block_step: 3 clk(s) deep x 10 instance(s) = 30 stage(s)
+[sweep]     (decoupled regions above sum to the end-to-end pipeline depth
+             when in series, as in a stream pipeline)
+[sweep]   some_planless_main: not autopipelined (nothing sliceable; meets its
+             goal as written if at all)
+```
+
 **When autopipelining cannot help at all**, the tool also says so
 explicitly during the sweep:
 
 - a MAIN with a timing goal but nothing cuttable (no sliceable logic, no
-  AUTOPIPELINE regions) warns at planning time: *"contains nothing
-  autopipelining can help - the goal is met only if the design meets timing
-  as written"* — and again with path endpoints if its timing report fails
-  (which also feeds the `TIMING NOT MET` failure exit above);
+  AUTOPIPELINE regions) is noted at planning time (a plain message, not a
+  warning — this is a normal design shape): *"contains nothing autopipelining
+  can help - the goal is met only if the design meets timing as written
+  (checked below)"* — and then gets ONE standalone whole-module synthesis so
+  the user immediately sees whether "as written" holds:
+  `[sweep] F synthesized as written (standalone check): X MHz vs Y MHz goal
+  - PASS/FAIL`. The reported number is informational only — it is NEVER
+  stored as the func's delay (a stateful module's report is an internal
+  critical path, not the input-to-output through-delay estimates use — the
+  measurement frontier rule has no exceptions), and pass/fail for the build
+  still comes from the in-context full-design reports (a passing clock
+  group means every path in it met, including this main's). If its
+  in-context timing report fails, the warning repeats with path endpoints
+  and feeds the `TIMING NOT MET` failure exit above;
 - a failing path attributed to an unpipelinable func stops the sweep with
   the culprit named and the reason (`unpipelinable_hotspot`);
 - generic stops (`iteration_limit`, `no_legal_adjustment`) repeat the last
@@ -679,7 +749,8 @@ run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
 | `sweep_fsm_autopipeline_test.py` | Reg-FSM main + AUTOPIPELINE region (via `_autopipeline_with_io_regs`): cut domain is the tagged child, FSM latency stays 0 |
 | `sweep_stateful_boundary_test.py` | comb→stateful→comb: cuts stop at the stateful boundary (Finding #1 regression) |
 | `sweep_floor_detect_test.py` | unreachable goal: floor predicted & blamed up front, sweep stops after a few syn runs, results written, then `TIMING NOT MET` + non-zero exit |
-| `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that autopipelining cannot help (planning time + failing report), one syn run, `TIMING NOT MET` + non-zero exit |
+| `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that autopipelining cannot help (planning time + standalone as-written check FAIL + failing report), one full syn run, `TIMING NOT MET` + non-zero exit |
+| `sweep_planless_test.py` | stateful MAIN with a met goal but nothing cuttable: one standalone as-written check synthesis prints PASS, its critical path is NOT stored as the func delay, one full syn run, exit 0 |
 | `autopipeline_latency_test.py` | end-to-end factory design (`make_stream_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6.5 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, one seeded confirmation syn passes with no fallback sweep and no pass 3, latency matches `sweep_history.json` |
 
 Unit/in-process coverage (registered in `elab_tests.py`):

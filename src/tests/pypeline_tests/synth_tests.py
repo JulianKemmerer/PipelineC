@@ -79,6 +79,14 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    tests.append(
+        Test(
+            name="sweep_planless_test",
+            category="synth",
+            cmd=[INST_DIR / "sweep_planless_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # Full-sweep build of stream_pipeline_test.py plus assertions on the
     # AUTOPIPELINE .latency pin-and-confirm loop (pass 2 runs, discovers a
     # real >0 latency, one seeded confirmation syn passes with no fallback

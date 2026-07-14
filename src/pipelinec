@@ -14,6 +14,7 @@ import SIM
 
 # import CLANG_TO_LOGIC
 import SYN
+import SWEEP
 
 # Defaults
 default_c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"
@@ -394,6 +395,9 @@ if not args.no_synth:
     print(
         "================== Writing Results of Throughput Sweep ================================",
         flush=True,
+    )
+    SWEEP.PRINT_PIPELINE_DEPTH_SUMMARY(
+        parser_state, multimain_timing_params.TimingParamsLookupTable
     )
     SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
 

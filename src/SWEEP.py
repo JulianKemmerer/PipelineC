@@ -36,6 +36,7 @@ import os
 import re
 import sys
 from datetime import timedelta
+from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
 
 import C_TO_LOGIC
@@ -402,23 +403,138 @@ def CUTS_TO_SLICES(cuts, landscape):
     return [(u + 0.5) / float(landscape.total_units) for u in cuts]
 
 
-def GET_DEEPEST_PIPELINE_LATENCY(plan, TimingParamsLookupTable, parser_state):
-    # Deepest rebuilt pipeline anywhere under the plan's domains. The main's
-    # own latency is 0 whenever cuts pass through autopipeline tag boundaries
-    # (tagged submodules report latency 0 to their containers by design), so
-    # this is the physically meaningful depth to report.
-    deepest = 0
-    prefixes = [d + C_TO_LOGIC.SUBMODULE_MARKER for d in plan.domains]
-    for inst in TimingParamsLookupTable:
-        if inst in plan.domains or any(inst.startswith(p) for p in prefixes):
-            timing_params = TimingParamsLookupTable[inst]
-            if timing_params.IS_EMPTY():
+def SUMMARIZE_DOMAIN_PIPELINE(
+    main_inst, domains, TimingParamsLookupTable, parser_state
+):
+    """Describe how many pipeline register stages the sweep built into a
+    main's cut domains, and where.
+
+    A main's own GET_TOTAL_LATENCY only counts registers on its *monolithic*
+    (non-decoupled) input-to-output path: a flow-controlled/AUTOPIPELINE
+    submodule reports latency 0 to its container by design
+    (GET_SUBMODULE_LATENCY), so its stages are invisible there. Reporting only
+    the main latency (0 for a pure stream) or only the deepest single instance
+    (one block_step, not the whole chacha pipeline) both understate the depth.
+
+    So walk the domain subtrees and add up every decoupled region's own
+    latency alongside the monolithic part:
+      monolithic  = register stages sliced directly into the cut domain roots
+                    (the disjoint maximal sliceable regions - a pure-comb main
+                    is its own domain; unlabeled naturally-pipelinable logic is
+                    sliced here too). A domain root's own latency already
+                    excludes any decoupled child it contains.
+      regions     = func_name -> {count, latency, total} for each decoupled
+                    (autopipeline-tagged) region instance carrying latency
+      total_stages= monolithic + sum of every decoupled region instance's
+                    latency = total pipeline register rows inserted for the
+                    main (== input-to-output depth when the regions sit in
+                    series, as in a stream pipeline)
+    Returns (monolithic, regions, total_stages)."""
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    # Cut domains are disjoint maximal sliceable subtrees, so summing their
+    # own latencies never double counts. (A decoupled child inside a domain
+    # root reports 0 to it and is added separately below.)
+    monolithic = sum(
+        TimingParamsLookupTable[d].GET_TOTAL_LATENCY(
+            parser_state, TimingParamsLookupTable
+        )
+        for d in domains
+    )
+
+    def in_domain(inst):
+        return any(inst == d or inst.startswith(d + marker) for d in domains)
+
+    regions = {}
+    for inst_name, logic in parser_state.LogicInstLookupTable.items():
+        if not logic.sub_inst_to_autopipeline_depth:
+            continue
+        if not in_domain(inst_name):
+            continue
+        for local_sub in logic.sub_inst_to_autopipeline_depth:
+            sub_inst = inst_name + marker + local_sub
+            sub_timing_params = TimingParamsLookupTable.get(sub_inst)
+            if sub_timing_params is None:
                 continue
-            latency = timing_params.GET_TOTAL_LATENCY(
+            latency = sub_timing_params.GET_TOTAL_LATENCY(
                 parser_state, TimingParamsLookupTable
             )
-            deepest = max(deepest, latency)
-    return deepest
+            if latency <= 0:
+                continue
+            sub_func = parser_state.LogicInstLookupTable[sub_inst].func_name
+            region = regions.setdefault(
+                sub_func, {"count": 0, "latency": latency, "total": 0}
+            )
+            region["count"] += 1
+            region["latency"] = max(region["latency"], latency)
+            region["total"] += latency
+
+    total_stages = monolithic + sum(r["total"] for r in regions.values())
+    return monolithic, regions, total_stages
+
+
+def GET_DOMAIN_PIPELINE_STAGES(plan, TimingParamsLookupTable, parser_state):
+    # Total pipeline register stages built into the plan's domains (the
+    # physically meaningful "how deep did this get pipelined" number - see
+    # SUMMARIZE_DOMAIN_PIPELINE for why the main's own latency alone is not it).
+    _monolithic, _regions, total_stages = SUMMARIZE_DOMAIN_PIPELINE(
+        plan.main_inst, plan.domains, TimingParamsLookupTable, parser_state
+    )
+    return total_stages
+
+
+def PRINT_PIPELINE_DEPTH_SUMMARY(parser_state, TimingParamsLookupTable):
+    """Print, for every main, how deeply the FINAL emitted design was
+    autopipelined: total pipeline register stages and the decoupled regions
+    that carry them. Runs at 'Writing Results' on the actually-written table,
+    so it reflects the design as built regardless of which path produced it -
+    a full sweep, an AUTOPIPELINE confirmation pass, or the coarse sweep - and
+    picks up any deepening the pin-and-confirm re-elaboration introduced.
+    Recomputes each main's cut domains (path-independent). Mains with nothing
+    autopipelinable are noted in one line each."""
+    printed_header = False
+    for main_inst in parser_state.main_mhz:
+        main_func = parser_state.LogicInstLookupTable[main_inst].func_name
+        domains = COLLECT_CUT_DOMAINS(main_inst, parser_state)
+        if not printed_header:
+            print("[sweep] Pipeline depth summary:", flush=True)
+            printed_header = True
+        if len(domains) == 0:
+            print(
+                f"[sweep]   {main_func}: not autopipelined "
+                "(nothing sliceable; meets its goal as written if at all)",
+                flush=True,
+            )
+            continue
+        monolithic, regions, total_stages = SUMMARIZE_DOMAIN_PIPELINE(
+            main_inst, domains, TimingParamsLookupTable, parser_state
+        )
+        print(
+            f"[sweep]   {main_func}: {total_stages} pipeline register stage(s) total",
+            flush=True,
+        )
+        if monolithic > 0 and regions:
+            print(
+                f"[sweep]     {monolithic} in the domain's own (monolithic) pipeline",
+                flush=True,
+            )
+        for region_func in sorted(regions):
+            r = regions[region_func]
+            lat_str = (
+                f"{r['latency']}"
+                if r["total"] == r["latency"] * r["count"]
+                else f"up to {r['latency']}"
+            )
+            print(
+                f"[sweep]     {region_func}: {lat_str} clk(s) deep "
+                f"x {r['count']} instance(s) = {r['total']} stage(s)",
+                flush=True,
+            )
+        if regions:
+            print(
+                "[sweep]     (decoupled regions above sum to the end-to-end "
+                "pipeline depth when in series, as in a stream pipeline)",
+                flush=True,
+            )
 
 
 def PREDICTED_STAGE_NS(cuts, landscape):
@@ -434,12 +550,23 @@ def PREDICTED_STAGE_NS(cuts, landscape):
 
 
 def CHECK_CUTS_VS_LATENCY(
-    domain_root_inst, TimingParamsLookupTable, parser_state, n_cuts
+    domain_root_inst, TimingParamsLookupTable, parser_state, n_cuts, landscape=None
 ):
     """Every planned cut must materialize as at least one slice in some raw
     HDL leaf of the domain subtree - registers only physically exist as leaf
-    slices (or IO regs). Fewer leaf slices than cuts means cuts were silently
-    lost descending the hierarchy (the old Finding #1 failure mode).
+    slices (or IO regs). Zero leaf slices means every cut was silently lost
+    descending the hierarchy (the old Finding #1 failure mode) - always fatal.
+
+    Beyond that, strictness depends on the domain's landscape:
+    - Fully sliceable domain (every delay unit legal - pure comb, a register
+      can go anywhere): no planned cut may be LOST, so fewer leaf slices
+      than cuts means the slicing machinery is broken and the build stops.
+      MORE leaf slices than cuts is normal even here: a cut is a stage
+      boundary line across the dataflow, and where it crosses parallel
+      branches each branch materializes its own leaf register.
+    - Domain with unsliceable spans (atomic/locked segments): planned cuts
+      legitimately shift/merge around those spans on the way down, so a
+      shortfall is expected - one informational line only.
 
     Note the domain root's own rebuilt latency is NOT compared against the
     cut count: autopipeline tagged submodules report latency 0 to their
@@ -467,24 +594,35 @@ def CHECK_CUTS_VS_LATENCY(
             f"leaf slices materialized: cuts were lost descending the "
             f"hierarchy (sliceability model out of sync with SLICE_DOWN?)"
         )
-    if total_leaf_slices < n_cuts:
-        # A partial shortfall is usually dense planning beyond leaf register
-        # granularity: two cuts quantizing onto the same position in one
-        # small leaf collapse into a single register. Loud, not fatal - the
-        # refinement loop's timing feedback compensates.
-        print(
-            f"[sweep] WARNING: planned {n_cuts} cuts for {domain_root_inst} "
-            f"but only {total_leaf_slices} leaf slices materialized "
-            f"(adjacent cuts collapsed at leaf register granularity?). "
-            f"{len(sliced_leaves)} sliced leaves, first few:",
-            flush=True,
-        )
+    strict = landscape is not None and all(landscape.legal)
+    if strict and total_leaf_slices < n_cuts:
+        # Nothing in this domain may shift or absorb a cut - a shortfall
+        # means a planned stage boundary was lost and slicing descent is
+        # broken. (More slices than cuts is fine: parallel branch fan-out.)
+        leaf_lines = []
         for inst, slices in sliced_leaves[0:5]:
             # Leaf name only - full instance paths are hundreds of chars
             short = inst.split(C_TO_LOGIC.SUBMODULE_MARKER)[-1]
-            print(f"[sweep]   .../{short}: {slices}", flush=True)
+            leaf_lines.append(f"  .../{short}: {slices}")
         if len(sliced_leaves) > 5:
-            print(f"[sweep]   ... and {len(sliced_leaves) - 5} more", flush=True)
+            leaf_lines.append(f"  ... and {len(sliced_leaves) - 5} more")
+        raise Exception(
+            f"Planned {n_cuts} cuts for fully sliceable domain "
+            f"{domain_root_inst} but only {total_leaf_slices} leaf slices "
+            f"materialized - the domain is pure comb logic (a register can "
+            f"go anywhere) so no planned stage boundary may be lost. "
+            f"{len(sliced_leaves)} sliced leaves, first few:\n" + "\n".join(leaf_lines)
+        )
+    if not strict and total_leaf_slices < n_cuts:
+        # Expected drift: cuts shift/merge around the domain's unsliceable
+        # spans on the way down. The refinement loop's timing feedback
+        # compensates - informational only.
+        print(
+            f"[sweep] note: planned {n_cuts} cuts for {domain_root_inst}, "
+            f"{total_leaf_slices} leaf slices materialized "
+            f"(cuts shift/merge around unsliceable spans - expected)",
+            flush=True,
+        )
     return total_leaf_slices
 
 
@@ -808,12 +946,63 @@ def PRINT_FLOOR_REPORT(plan, parser_state):
         print(msg, flush=True)
 
 
+def RUN_AS_WRITTEN_CHECKS(goal_mains, parser_state):
+    """Planless goal-having mains (nothing autopipelining can help) still get
+    one standalone whole-module synthesis so the user can see whether the
+    module meets timing as written. The reported number is NOT stored as the
+    func's delay: a stateful module's report is an internal critical path,
+    not the input-to-output through-delay that estimates must use (see the
+    measurement frontier rule). Informational only - the in-context
+    full-design timing reports decide pass/fail for the build."""
+    if len(goal_mains) == 0:
+        return
+    zero_clk_tpl = SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+    num_processes = int(
+        open(C_TO_LOGIC.EXE_ABS_DIR() + "/../config/num_processes.cfg", "r").readline()
+    )
+    my_thread_pool = ThreadPool(processes=num_processes)
+    main_inst_to_async_result = {}
+    for main_inst, target_mhz in goal_mains:
+        main_logic = parser_state.LogicInstLookupTable[main_inst]
+        print(
+            f"Synthesizing function: {main_logic.func_name} (as-written timing check)",
+            flush=True,
+        )
+        main_inst_to_async_result[main_inst] = my_thread_pool.apply_async(
+            SYN.SYN_TOOL.SYN_AND_REPORT_TIMING,
+            (main_inst, main_logic, parser_state, zero_clk_tpl),
+        )
+    for main_inst, target_mhz in goal_mains:
+        main_logic = parser_state.LogicInstLookupTable[main_inst]
+        parsed_timing_report = main_inst_to_async_result[main_inst].get()
+        path_reports = list(parsed_timing_report.path_reports.values())
+        if len(path_reports) != 1 or path_reports[0].path_delay_ns is None:
+            print(
+                f"[sweep] WARNING: as-written check for {main_logic.func_name} "
+                "did not report a usable timing path",
+                flush=True,
+            )
+            continue
+        mhz = 1000.0 / path_reports[0].path_delay_ns
+        if mhz >= target_mhz:
+            verdict = "PASS"
+        else:
+            verdict = "FAIL: restructure the design or lower the clock goal"
+        print(
+            f"[sweep] {main_logic.func_name} synthesized as written "
+            f"(standalone check): {mhz:.2f} MHz vs {target_mhz:.2f} MHz goal "
+            f"- {verdict}",
+            flush=True,
+        )
+
+
 def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     """Replaces the old middle-out sweep. One full-design synthesis per
     iteration; landscape planning decides where registers go, timing report
     attribution decides what to change when timing fails."""
     # Build a plan per main that has a target and something cuttable
     plans = {}
+    planless_goal_mains = []
     for main_inst in parser_state.main_mhz:
         target_mhz = SYN.GET_TARGET_MHZ(main_inst, parser_state)
         if target_mhz is None:
@@ -822,16 +1011,21 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         if len(domains) == 0:
             main_func = parser_state.LogicInstLookupTable[main_inst].func_name
             print(
-                f"[sweep] WARNING: {main_func} has a {target_mhz:.2f} MHz goal but "
+                f"[sweep] {main_func} has a {target_mhz:.2f} MHz goal but "
                 "contains nothing autopipelining can help (no sliceable logic and "
                 "no AUTOPIPELINE regions) - the goal is met only if the design "
-                "meets timing as written.",
+                "meets timing as written (checked below).",
                 flush=True,
             )
+            planless_goal_mains.append((main_inst, target_mhz))
             continue
         plan = MainSweepPlan(main_inst, target_mhz)
         plan.domains = domains
         plans[main_inst] = plan
+
+    # One standalone synthesis each so the user sees whether "as written"
+    # holds - result is informational and never stored as the func's delay
+    RUN_AS_WRITTEN_CHECKS(planless_goal_mains, parser_state)
 
     # NOTE on budget calibration: cut counts are anchored to reality by the
     # "measurement frontier" in the presynth wave (SYN.FUNC_IS_TOPMOST_COMB):
@@ -924,7 +1118,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     raise Exception(
                         f"Planned cut produced a bad slice in {domain_root}: slice index {tpl} of {slices}"
                     )
-                CHECK_CUTS_VS_LATENCY(domain_root, tpl, parser_state, len(cuts))
+                CHECK_CUTS_VS_LATENCY(
+                    domain_root, tpl, parser_state, len(cuts), landscape
+                )
         if iteration == 1:
             for plan in plans.values():
                 PRINT_FLOOR_REPORT(plan, parser_state)
@@ -1003,7 +1199,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 plan.trim_pending = False
                 total_cuts = sum(len(c) for c in plan.cuts.values())
                 latency = tpl[main_inst].GET_TOTAL_LATENCY(parser_state, tpl)
-                deepest = GET_DEEPEST_PIPELINE_LATENCY(plan, tpl, parser_state)
+                deepest = GET_DOMAIN_PIPELINE_STAGES(plan, tpl, parser_state)
                 predicted_ns = 0.0
                 for domain_root, cuts in plan.cuts.items():
                     landscape = plan.landscapes.get(domain_root)
@@ -1241,7 +1437,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 print(
                     f"[sweep] iter={iteration} main={main_logic.func_name} "
                     f"goal={target_mhz:.2f}MHz got={curr_mhz:.2f}MHz ({path_report.path_delay_ns:.2f}ns) "
-                    f"cuts={total_cuts} main_latency={latency} deepest_pipeline={deepest} "
+                    f"cuts={total_cuts} main_latency={latency} pipeline_stages={deepest} "
                     f"predicted_stage={predicted_ns:.2f}ns"
                     f"{bottleneck_str} action={action}",
                     flush=True,
@@ -1254,7 +1450,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         "achieved_mhz": round(curr_mhz, 3),
                         "cuts": total_cuts,
                         "main_latency": latency,
-                        "deepest_pipeline": deepest,
+                        "pipeline_stages": deepest,
                         "predicted_stage_ns": round(predicted_ns, 3),
                         "bottleneck": hotspot_func,
                         "action": action,
@@ -1448,18 +1644,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         outcome = (
             "met timing" if plan.met_timing else f"stopped ({plan.stopped_reason})"
         )
-        final_latency = multimain_timing_params.TimingParamsLookupTable[
-            plan.main_inst
-        ].GET_TOTAL_LATENCY(
-            parser_state, multimain_timing_params.TimingParamsLookupTable
-        )
-        final_deepest = GET_DEEPEST_PIPELINE_LATENCY(
-            plan, multimain_timing_params.TimingParamsLookupTable, parser_state
+        _mono, _regions, total_stages = SUMMARIZE_DOMAIN_PIPELINE(
+            plan.main_inst,
+            plan.domains,
+            multimain_timing_params.TimingParamsLookupTable,
+            parser_state,
         )
         print(
-            f"[sweep] {main_func_name}: {outcome}, final main latency={final_latency} clks "
-            f"(deepest internal pipeline {final_deepest} clks), "
-            f"cuts={sum(len(c) for c in plan.cuts.values())}, "
+            f"[sweep] {main_func_name}: {outcome}, {total_stages} pipeline register "
+            f"stage(s) built, cuts={sum(len(c) for c in plan.cuts.values())}, "
             f"locked={len(plan.locked)} inst(s), iterations={iteration}",
             flush=True,
         )

@@ -4,6 +4,7 @@
 # AUTOPIPELINE regions and an unreachable 100 MHz goal) and asserts the tool
 # tells the user PLAINLY that autopipelining cannot help:
 #  - at planning time (main has a goal but nothing cuttable)
+#  - via the standalone as-written synthesis check (FAIL vs the goal)
 #  - when the timing report fails (named main + guidance)
 #  - without burning full-design synthesis runs on a hopeless sweep
 #  - and FAILS with a non zero exit + TIMING NOT MET error block
@@ -49,6 +50,13 @@ def main():
         sys.exit(1)
     if "contains nothing autopipelining can help" not in out:
         print("FAIL: no planning-time warning that autopipelining cannot help")
+        sys.exit(1)
+    if not re.search(
+        r"\[sweep\] sweep_unpipelinable_main synthesized as written "
+        r"\(standalone check\): \S+ MHz vs 100\.00 MHz goal - FAIL",
+        out,
+    ):
+        print("FAIL: no as-written standalone check FAIL line for the main")
         sys.exit(1)
     if "autopipelining cannot help it" not in out:
         print("FAIL: no failing-timing warning naming the main + guidance")
