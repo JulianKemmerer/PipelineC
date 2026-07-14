@@ -493,7 +493,13 @@ def PRINT_PIPELINE_DEPTH_SUMMARY(parser_state, TimingParamsLookupTable):
     autopipelinable are noted in one line each."""
     printed_header = False
     for main_inst in parser_state.main_mhz:
-        main_func = parser_state.LogicInstLookupTable[main_inst].func_name
+        main_logic = parser_state.LogicInstLookupTable[main_inst]
+        main_func = main_logic.func_name
+        # Zero-delay mains (FUNC_WIRES rewiring, bit manipulation, clock
+        # crossing, ...) carry no pipeline - omit them so the summary isn't
+        # buried under dozens of pmod-wire "connect" mains.
+        if SYN.LOGIC_IS_ZERO_DELAY(main_logic, parser_state, allow_none_delay=True):
+            continue
         domains = COLLECT_CUT_DOMAINS(main_inst, parser_state)
         if not printed_header:
             print("[sweep] Pipeline depth summary:", flush=True)
