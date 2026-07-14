@@ -5,6 +5,7 @@ import datetime
 import hashlib
 import math
 import os
+import re
 import sys
 from multiprocessing.pool import ThreadPool
 from pathlib import Path
@@ -419,7 +420,13 @@ class MultiMainTimingParams:
         # TODO some kind of params for clock crossing
 
     def GET_HASH_EXT(self, parser_state):
-        # Just hash all the slices #TODO fix to just mains
+        # Hash of each main's own hash ext, which (via
+        # RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES) covers the full
+        # design content: descendant func names + io regs + slices. Content
+        # awareness matters here: this hash names the multimain top synthesis
+        # log, and an existing log is replayed instead of re-synthesizing --
+        # a slices-only hash let the AUTOPIPELINE pass-2 confirmation run
+        # replay pass 1's log despite a resized (renamed) FIFO in the design.
         top_level_str = ""
         for main_func in sorted(parser_state.main_mhz.keys()):
             timing_params = self.TimingParamsLookupTable[main_func]
@@ -428,9 +435,7 @@ class MultiMainTimingParams:
             )
             top_level_str += hash_ext_i
         s = top_level_str
-        hash_ext = (
-            "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:4])
-        )  # 4 chars enough?
+        hash_ext = "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:8])
         return hash_ext
 
 
@@ -580,9 +585,28 @@ class TimingParams:
                     print(0 / 0, flush=True)
                     sys.exit(-1)
                 sub_logic = parser_state.LogicInstLookupTable[sub_inst]
+                # Each child contributes its FUNC NAME alongside its subtree
+                # tuple. Load-bearing, not informational: this tuple feeds
+                # BUILD_HASH_EXT, whose hash names both written VHDL entity
+                # files (VHDL.GET_ENTITY_NAME) and synthesis log files
+                # (per-func and multimain top), and existing files short-cut
+                # rewriting/re-synthesis. A rendered entity's CONTENT embeds
+                # its children's entity names, and canonical func names encode
+                # elaboration-time values (e.g. an AUTOPIPELINE
+                # .latency-derived FIFO depth) -- so identical slices with a
+                # renamed descendant must hash differently, or stale pass-1
+                # artifacts get served (the AUTOPIPELINE pass-2 confirmation
+                # replay + the shared wireguard GHDL "unit not found"
+                # mixed-name failure). The module's OWN name is deliberately
+                # NOT included: it already appears in every filename the hash
+                # is combined with, and leaving leaf tuples unchanged keeps
+                # previously cached leaf synthesis logs valid.
                 rv += (
-                    self.RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES(
-                        sub_inst, sub_logic, TimingParamsLookupTable, parser_state
+                    (
+                        sub_logic.func_name,
+                        self.RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES(
+                            sub_inst, sub_logic, TimingParamsLookupTable, parser_state
+                        ),
                     ),
                 )
         else:
@@ -682,8 +706,11 @@ def DEL_ALL_CACHES():
     _FUNC_SUBTREE_HAS_AUTOPIPELINE_cache = {}
     _FUNC_TO_INSTANTIATING_FUNCS_cache = None
     _FUNC_IS_TOPMOST_COMB_cache = {}
+    # Func-name keyed maps referencing Logic objects: a re-parse (AUTOPIPELINE
+    # pass 2) rebuilds same-named funcs as fresh objects, so entries would be
+    # stale (see GET_ZERO_ADDED_CLKS_PIPELINE_MAP's identity check).
+    _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache.clear()
     # _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache    = {}
-    # _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache = {}
 
 
 _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache = {}
@@ -761,19 +788,17 @@ _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache = {}
 def GET_ZERO_ADDED_CLKS_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
     key = Logic.func_name
 
-    # Try cache
-    try:
-        rv = _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache[key]
-        # print "_GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache",key
-
-        # Sanity?
-        if rv.logic != Logic:
-            print("Zero clock cache no mactho")
-            sys.exit(-1)
-
-        return rv
-    except:
-        pass
+    # Try cache. A same-named entry built against a DIFFERENT Logic object is
+    # simply stale (an AUTOPIPELINE pass-2 re-parse rebuilds same-named funcs
+    # as fresh objects): invalidate and rebuild below. (This used to print
+    # "Zero clock cache no mactho" and call sys.exit(-1) -- which a
+    # surrounding bare except accidentally swallowed, making it noisy
+    # dead code.)
+    rv = _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache.get(key)
+    if rv is not None:
+        if rv.logic is Logic:
+            return rv
+        del _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache[key]
 
     has_delay = True
     # Only need to check submodules, not self
@@ -2377,6 +2402,46 @@ def WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, is_final_top):
                 )
 
 
+def CHECK_VHDL_FILES_CONSISTENCY(vhdl_files_texts):
+    """Assert the final VHDL file list is referentially consistent: every
+    `entity work.X` instantiated inside a listed file is defined by some file
+    in the list. VHDL identifiers are case-insensitive, so compare casefolded.
+    Raises with the offending (file, unit) pairs -- this is how stale/mixed
+    entity references (an old file under a still-matching name whose child
+    entities have since been renamed) surface as a build error rather than a
+    downstream GHDL/Vivado analysis failure."""
+    file_paths = vhdl_files_texts.split()
+    defined_units = set()
+    file_to_refs = {}
+    entity_def_re = re.compile(r"^\s*entity\s+(\w+)\s+is", re.IGNORECASE | re.MULTILINE)
+    entity_ref_re = re.compile(r"entity\s+work\.(\w+)", re.IGNORECASE)
+    for file_path in file_paths:
+        try:
+            with open(file_path, "r") as vhd_f:
+                text = vhd_f.read()
+        except OSError:
+            raise Exception(f"vhdl_files.txt references a missing file: {file_path}")
+        for m in entity_def_re.finditer(text):
+            defined_units.add(m.group(1).casefold())
+        refs = {m.group(1).casefold() for m in entity_ref_re.finditer(text)}
+        if refs:
+            file_to_refs[file_path] = refs
+    missing = []
+    for file_path, refs in file_to_refs.items():
+        for ref in sorted(refs - defined_units):
+            missing.append((file_path, ref))
+    if missing:
+        for file_path, ref in missing:
+            print(
+                f"VHDL file list inconsistency: {file_path} instantiates "
+                f"'entity work.{ref}' but no listed file defines it"
+            )
+        raise Exception(
+            "Final VHDL file list is not self-consistent (stale/mixed entity "
+            "references above) -- refusing to hand it to simulation/synthesis."
+        )
+
+
 def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
     if multimain_timing_params is None:
         ZeroAddedClocksTimingParamsLookupTable = (
@@ -2387,19 +2452,28 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
             ZeroAddedClocksTimingParamsLookupTable
         )
 
+    # The final files/list must be computed 100% against the CURRENT
+    # parser_state: invalidate every cached hash/latency string in the final
+    # table first (subsumes the previous ancestors-only invalidation --
+    # ancestor treatment alone still folded children's stale cached strings,
+    # and any cache carried across an AUTOPIPELINE pass-2 re-elaboration may
+    # embed since-renamed child func names). One full lazy recompute at end
+    # of build.
+    for final_timing_params in multimain_timing_params.TimingParamsLookupTable.values():
+        final_timing_params.INVALIDATE_CACHE()
+
     is_final_top = True
     VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
 
-    # Ensure every entity the final file list will reference exists on disk:
-    # instances ABOVE modified (sliced/locked) ones carry changed hashes even
-    # with empty own timing params (their instantiated child names changed) -
-    # same treatment the sweep's per-iteration writes use. Matters ex. after
-    # an AUTOPIPELINE confirmation pass re-elaborates the design.
-    final_ancestors = INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
-        multimain_timing_params.TimingParamsLookupTable, parser_state
-    )
+    # Ensure every entity the final file list will reference exists on disk
+    # under its freshly-computed (content-aware) name: pass ALL insts as
+    # eligible; already-written entities are skipped by name dedup +
+    # skip-if-exists inside (sound now that entity hashes cover descendant
+    # func names, so same filename => same rendered content).
     WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(
-        multimain_timing_params.TimingParamsLookupTable, parser_state, final_ancestors
+        multimain_timing_params.TimingParamsLookupTable,
+        parser_state,
+        set(multimain_timing_params.TimingParamsLookupTable.keys()),
     )
 
     # Black boxes are different in final files
@@ -2416,6 +2490,13 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
     f = open(out_filepath, "w")
     f.write(out_text)
     f.close()
+
+    # Referential consistency: every entity instantiated inside a listed file
+    # must be defined by a file in the list. Catches any stale/mixed entity
+    # references (e.g. a file written by an earlier elaboration pass whose
+    # children have since been renamed) at build time with a clear message,
+    # instead of failing later inside GHDL/Vivado analysis.
+    CHECK_VHDL_FILES_CONSISTENCY(vhdl_files_texts)
 
     # TODO better GUI / tcl scripts support for other tools
     # ^ incorporate into GET_VHDL_FILES_TCL_TEXT_AND_TOP instead of hacky below?
@@ -2899,6 +2980,16 @@ def SEED_TIMING_PARAMS_FROM_PREVIOUS(
         timing_params.SET_HAS_IN_REGS(prev_params._has_input_regs)
         timing_params.SET_HAS_OUT_REGS(prev_params._has_output_regs)
 
+    # No cache computed against the previous pass's state may survive into
+    # this table: the SET_* setters above no-op (keeping cached
+    # hash_ext/calcd_total_latency strings) when the seeded value equals the
+    # current one, and cached hash chains embed child func names that pass-2
+    # re-elaboration may have renamed. Stale strings here leak pass-1 entity
+    # references into the final top/file list (the shared wireguard GHDL
+    # "unit not found" failure). Lazily recomputed against current state.
+    for timing_params in TimingParamsLookupTable.values():
+        timing_params.INVALIDATE_CACHE()
+
     unseeded = set()
     for inst_name, logic in parser_state.LogicInstLookupTable.items():
         if not logic.sub_inst_to_autopipeline_key:
@@ -2952,6 +3043,7 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
     import SWEEP
 
     met = True
+    confirmation_failures = []
     for reported_clock_group, path_report in timing_report.path_reports.items():
         curr_mhz = 1000.0 / path_report.path_delay_ns
         main_insts = SWEEP.GET_MAIN_INSTS_FOR_PATH_REPORT(
@@ -2969,6 +3061,18 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
             )
             if curr_mhz < target_mhz:
                 met = False
+                confirmation_failures.append(
+                    (
+                        parser_state.LogicInstLookupTable[main_inst].func_name,
+                        target_mhz,
+                        curr_mhz,
+                        "confirmation run",
+                    )
+                )
+    # Feed the driver's TIMING NOT MET exit gate: the confirmation's verdict
+    # is the pass-2 result when it holds; when it fails, the fallback sweep
+    # below sets its own sweep_timing_failures, which governs instead.
+    multimain_timing_params.sweep_timing_failures = confirmation_failures
     if met:
         return multimain_timing_params, True
     print(

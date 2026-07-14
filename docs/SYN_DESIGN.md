@@ -616,11 +616,33 @@ repeat-the-sweep one:
    because entity names encode closure values, so a `.latency`-derived parameter
    change (e.g. FIFO depth) renames its factory entity and every instance path
    underneath, exactly where the AUTOPIPELINE'd core lives (the core's own name is
-   stable — its closure captures only the user's func). Then
+   stable — its closure captures only the user's func). Seeding ends by
+   invalidating EVERY entry's cached hash/latency strings — cached hash
+   chains embed child func names, and any cache carried across the
+   re-elaboration boundary may reference since-renamed entities (the class
+   of bug behind the shared-wireguard GHDL "unit not found" failure). Then
    `SYN.DO_SEEDED_CONFIRM_OR_SWEEP` runs **one** full-design synthesis: timing met
    (the expected case — only FIFO/counter widths changed) means done, and the
    `.latency` values the design consumed provably equal the stage counts built —
-   pinning makes cross-pass latency drift impossible by construction.
+   pinning makes cross-pass latency drift impossible by construction. The
+   confirmation is guaranteed to be a REAL synthesis, not a cached-log
+   replay: timing hashes (`RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES`)
+   record each child's func name alongside its subtree, so a design whose
+   descendants renamed (resized FIFO) hashes differently from pass 1 even
+   with identical slices — both the multimain top log name and every entity
+   filename are content-aware, which also keeps the skip-if-exists entity
+   write sound ("same filename ⇒ same rendered content"). The module's own
+   name is deliberately not in its tuple (it's already in every filename),
+   so leaf tuples — and therefore previously cached leaf synthesis logs —
+   are unaffected. The confirmation's verdict feeds the driver's
+   TIMING-NOT-MET exit gate via `sweep_timing_failures` (empty on met; a
+   failed confirmation falls back to the full sweep, whose own result then
+   governs). `SYN.WRITE_FINAL_FILES` additionally invalidates the entire
+   final table before writing (final files computed 100% against current
+   state) and runs `CHECK_VHDL_FILES_CONSISTENCY`: every `entity work.X`
+   referenced inside a listed file must be defined by a listed file, turning
+   any stale/mixed entity references into an immediate build error instead
+   of a downstream GHDL/Vivado analysis failure.
 4. **Fallback (rare):** if the confirmation fails timing, it falls back to a full
    planned sweep (which replans from a fresh zero-clk table each iteration, so the
    seeds can't corrupt it), harvests again, and loops back to step 3 with the new

@@ -52,6 +52,11 @@ class FakeTimingParams:
     def SET_HAS_OUT_REGS(self, value):
         self._has_output_regs = value
 
+    def INVALIDATE_CACHE(self):
+        # SEED_TIMING_PARAMS_FROM_PREVIOUS unconditionally invalidates every
+        # entry so no cache computed against the previous pass survives
+        self.cache_invalidated = True
+
 
 def make_logic(func_name, autopipeline_subs=None):
     logic = C_TO_LOGIC.Logic()
@@ -141,6 +146,43 @@ def test_seed_two_tier_matching_and_unseeded_detection():
     assert seeded["main" + M + "wrap2" + M + "core"]._slices == [0.2, 0.4]
     # brand_new_func didn't exist last pass -> flagged (call-site set changed)
     assert unseeded == ["main" + M + "wrap2" + M + "newcore"], unseeded
+    # Every seeded entry's caches were invalidated (no pass-1-derived cached
+    # hash/name strings may cross the re-elaboration boundary)
+    for tp in seeded.values():
+        assert getattr(tp, "cache_invalidated", False)
+
+
+def test_hash_ext_is_content_aware():
+    # Two designs with IDENTICAL io regs + slices but a renamed child func
+    # must produce different hash exts: the hash names both written entity
+    # files (skip-if-exists) and synthesis log files (exists -> replay), so a
+    # slices-only hash serves stale artifacts after an AUTOPIPELINE pass-2
+    # rename (stale confirmation replay + shared-build GHDL failure).
+    def make_state(child_func_name):
+        ps = FakeParserState()
+        parent = make_logic("user_named_parent")
+        parent.submodule_instances = {"child0": child_func_name}
+        child = make_logic(child_func_name)
+        ps.LogicInstLookupTable["main"] = parent
+        ps.LogicInstLookupTable["main" + M + "child0"] = child
+        tpl = {
+            "main": SYN.TimingParams("main", parent),
+            "main" + M + "child0": SYN.TimingParams("main" + M + "child0", child),
+        }
+        return ps, parent, tpl
+
+    ps_a, parent_a, tpl_a = make_state("stream_pipeline_func_3fbe923e")
+    ps_b, parent_b, tpl_b = make_state("stream_pipeline_func_4f1dcd36")
+    hash_a = tpl_a["main"].BUILD_HASH_EXT("main", parent_a, tpl_a, ps_a)
+    hash_b = tpl_b["main"].BUILD_HASH_EXT("main", parent_b, tpl_b, ps_b)
+    assert hash_a != hash_b, (
+        "renamed child func did not change the parent hash ext "
+        f"({hash_a} == {hash_b})"
+    )
+    # And determinism: identical content -> identical hash
+    ps_c, parent_c, tpl_c = make_state("stream_pipeline_func_3fbe923e")
+    hash_c = tpl_c["main"].BUILD_HASH_EXT("main", parent_c, tpl_c, ps_c)
+    assert hash_a == hash_c
 
 
 def test_canonical_callable_key_deterministic():
@@ -182,6 +224,7 @@ if __name__ == "__main__":
     test_harvest_divergent_instances()
     test_harvest_no_autopipeline_is_empty()
     test_seed_two_tier_matching_and_unseeded_detection()
+    test_hash_ext_is_content_aware()
     test_canonical_callable_key_deterministic()
     test_autopipeline_latency_cache_and_read_flag()
     print("All AUTOPIPELINE harvest/seed unit tests passed.")

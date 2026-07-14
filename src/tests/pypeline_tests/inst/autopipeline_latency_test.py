@@ -74,6 +74,35 @@ def main():
         )
         sys.exit(1)
 
+    # The confirmation must be a REAL synthesis of the pass-2 design, not a
+    # replay of an existing log (all tools print "Reading log" on replay): a
+    # slices-only top hash used to collide with pass 1's accepted iteration,
+    # silently replaying its timing report despite the resized FIFO.
+    confirm_start = out.index("confirmation synthesis with pipelining pinned")
+    verdict_match = re.search(
+        r"^(PASS|FAIL) .* \(confirmation run\)$", out[confirm_start:], re.M
+    )
+    confirm_window = out[confirm_start : confirm_start + verdict_match.start()]
+    if "Reading log" in confirm_window:
+        print(
+            "FAIL: confirmation replayed an existing synthesis log instead "
+            "of synthesizing the re-elaborated design"
+        )
+        sys.exit(1)
+    if "Running:" not in confirm_window:
+        print("FAIL: no fresh synthesis run observed in the confirmation window")
+        sys.exit(1)
+
+    # Stale zero-clock pipeline-map cache noise must be gone (the mismatch
+    # branch used to print this once per stale func during pass 2, its
+    # sys.exit defused by a bare except)
+    if "Zero clock cache no mactho" in out:
+        print(
+            "FAIL: stale zero-clock pipeline-map cache consulted "
+            "('Zero clock cache no mactho' printed)"
+        )
+        sys.exit(1)
+
     # Cross-check against sweep_history.json: the harvested latency must be
     # one of the deepest-pipeline depths the sweep actually built (the
     # accepted iteration's depth -- not necessarily the max, since post-met
