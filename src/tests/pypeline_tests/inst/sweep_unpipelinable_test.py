@@ -6,7 +6,8 @@
 #  - at planning time (main has a goal but nothing cuttable)
 #  - when the timing report fails (named main + guidance)
 #  - without burning full-design synthesis runs on a hopeless sweep
-#  - while still exiting successfully with the design as written
+#  - and FAILS with a non zero exit + TIMING NOT MET error block
+#    (results still written for debugging first)
 import argparse
 import os
 import re
@@ -35,8 +36,16 @@ def main():
     out = result.stdout
     print(out)
 
-    if result.returncode != 0:
-        print("FAIL: pipelinec exited nonzero", result.returncode)
+    # Timing is NOT met by design here: the build must FAIL (non zero exit)
+    # so users cannot miss it - but only after writing results for debugging
+    if result.returncode == 0:
+        print("FAIL: pipelinec exited zero despite unmet timing goal")
+        sys.exit(1)
+    if "ERROR: TIMING NOT MET" not in out:
+        print("FAIL: no TIMING NOT MET error block")
+        sys.exit(1)
+    if "Writing Results of Throughput Sweep" not in out:
+        print("FAIL: results were not written before failing")
         sys.exit(1)
     if "contains nothing autopipelining can help" not in out:
         print("FAIL: no planning-time warning that autopipelining cannot help")

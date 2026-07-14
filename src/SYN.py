@@ -673,11 +673,15 @@ def DEL_ALL_CACHES():
     global _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache
     global _FUNC_SUBTREE_HAS_STATE_cache
     global _FUNC_SUBTREE_HAS_AUTOPIPELINE_cache
+    global _FUNC_TO_INSTANTIATING_FUNCS_cache
+    global _FUNC_IS_TOPMOST_COMB_cache
     # global _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache
 
     _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache = {}
     _FUNC_SUBTREE_HAS_STATE_cache = {}
     _FUNC_SUBTREE_HAS_AUTOPIPELINE_cache = {}
+    _FUNC_TO_INSTANTIATING_FUNCS_cache = None
+    _FUNC_IS_TOPMOST_COMB_cache = {}
     # _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache    = {}
     # _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache = {}
 
@@ -2386,6 +2390,18 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
     is_final_top = True
     VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
 
+    # Ensure every entity the final file list will reference exists on disk:
+    # instances ABOVE modified (sliced/locked) ones carry changed hashes even
+    # with empty own timing params (their instantiated child names changed) -
+    # same treatment the sweep's per-iteration writes use. Matters ex. after
+    # an AUTOPIPELINE confirmation pass re-elaborates the design.
+    final_ancestors = INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
+        multimain_timing_params.TimingParamsLookupTable, parser_state
+    )
+    WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(
+        multimain_timing_params.TimingParamsLookupTable, parser_state, final_ancestors
+    )
+
     # Black boxes are different in final files
     WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, is_final_top)
 
@@ -3131,6 +3147,16 @@ def DO_THROUGHPUT_SWEEP(
         is_final_top = False
         VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
 
+        # Record unmet timing so the build fails with non zero exit (a coarse
+        # sweep with no user target uses INF_MHZ = characterization, no gate)
+        if target_mhz != INF_MHZ and not inst_sweep_state.met_timing:
+            achieved = inst_sweep_state.last_mhz
+            if len(inst_sweep_state.mhz_to_latency) > 0:
+                achieved = max(inst_sweep_state.mhz_to_latency.keys())
+            multimain_timing_params.sweep_timing_failures = [
+                (main_func, target_mhz, achieved, "coarse_sweep_not_met")
+            ]
+
         return multimain_timing_params
 
     # Planned sweep: static slice landscape analysis + one full design syn per
@@ -3221,9 +3247,15 @@ def SET_INITIAL_COARSE_LATENCY_GUESS(
     if starting_guess_latency is None:
         if logic.delay is None or logic.delay_is_estimated:
             # Leaf presynth mode no longer force-synthesizes mains - measure
-            # on demand (critical path is the right quantity for a count)
-            MEASURE_DELAYS([logic.func_name], parser_state, allow_stateful_subtree=True)
+            # on demand (stateful-subtree funcs are skipped by MEASURE_DELAYS
+            # and use their estimated delay for the initial guess; the coarse
+            # loop grows from below and self-corrects)
+            MEASURE_DELAYS([logic.func_name], parser_state)
             logic = parser_state.FuncLogicLookupTable[logic.func_name]
+            if logic.delay is None:
+                # No estimate either - derive one now
+                ESTIMATE_HIER_PATH_DELAYS([logic.func_name], parser_state)
+                logic = parser_state.FuncLogicLookupTable[logic.func_name]
         target_path_delay_ns = 1000.0 / target_mhz
         path_delay_ns = float(logic.delay) / DELAY_UNIT_MULT
         if path_delay_ns > 0.0:
@@ -3842,6 +3874,55 @@ def FUNC_SUBTREE_HAS_AUTOPIPELINE(func_name, parser_state):
     return rv
 
 
+_FUNC_TO_INSTANTIATING_FUNCS_cache = None
+
+
+def _GET_FUNC_TO_INSTANTIATING_FUNCS(parser_state):
+    # Reverse map: func name -> set of func names that instantiate it
+    global _FUNC_TO_INSTANTIATING_FUNCS_cache
+    if _FUNC_TO_INSTANTIATING_FUNCS_cache is None:
+        rv = {}
+        for func_name, logic in parser_state.FuncLogicLookupTable.items():
+            for sub_func_name in logic.submodule_instances.values():
+                if sub_func_name not in rv:
+                    rv[sub_func_name] = set()
+                rv[sub_func_name].add(func_name)
+        _FUNC_TO_INSTANTIATING_FUNCS_cache = rv
+    return _FUNC_TO_INSTANTIATING_FUNCS_cache
+
+
+_FUNC_IS_TOPMOST_COMB_cache = {}
+
+
+def FUNC_IS_TOPMOST_COMB(func_name, parser_state):
+    # The "measurement frontier": the largest fully-combinational subtrees.
+    # A func with no Reg/Feedback anywhere below it, instantiated by a func
+    # that DOES have state in its subtree (or being a main itself). Only for
+    # such modules does a per-module synthesis run measure the input to
+    # output through-delay (nothing internal to hide a path in) - so these
+    # are the modules that get real synthesis to calibrate the estimated
+    # delays of everything above them.
+    if func_name in _FUNC_IS_TOPMOST_COMB_cache:
+        return _FUNC_IS_TOPMOST_COMB_cache[func_name]
+    logic = parser_state.FuncLogicLookupTable[func_name]
+    rv = False
+    if (
+        len(logic.submodule_instances) > 0
+        and logic.vhdl_module_text is None
+        and func_name not in parser_state.func_marked_blackbox
+        and not FUNC_SUBTREE_HAS_STATE(func_name, parser_state)
+    ):
+        if func_name in parser_state.main_mhz:
+            rv = True
+        else:
+            parents = _GET_FUNC_TO_INSTANTIATING_FUNCS(parser_state).get(
+                func_name, set()
+            )
+            rv = any(FUNC_SUBTREE_HAS_STATE(p, parser_state) for p in parents)
+    _FUNC_IS_TOPMOST_COMB_cache[func_name] = rv
+    return rv
+
+
 _FUNC_SUBTREE_HAS_STATE_cache = {}
 
 
@@ -3891,6 +3972,15 @@ def FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state):
     #   decision).
     if FUNC_SUBTREE_HAS_STATE(logic.func_name, parser_state):
         return FUNC_SUBTREE_HAS_AUTOPIPELINE(logic.func_name, parser_state)
+    # Fully combinational subtree from here down
+    if FUNC_IS_TOPMOST_COMB(logic.func_name, parser_state):
+        # The measurement frontier: this func gets ONE real synthesis run -
+        # its measured input-to-output through delay calibrates the
+        # estimated delays of everything above it (the "budget anchor" that
+        # keeps first plans at the fewest-stages guess). Interior comb funcs
+        # below stay estimated; the landscape rescales their relative
+        # geometry into this measured total.
+        return False
     if not FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
         logic.func_name, parser_state
     ):
@@ -3980,26 +4070,22 @@ def ESTIMATE_HIER_PATH_DELAYS(funcs_to_estimate, parser_state, quiet=False):
         parser_state.FuncLogicLookupTable[logic_func_name] = logic
 
 
-def MEASURE_DELAYS(func_names, parser_state, allow_stateful_subtree=False):
+def MEASURE_DELAYS(func_names, parser_state):
     # Fallback from estimated to measured delays: really synthesize the given
     # funcs (estimates only guide slice placement - when they prove inaccurate,
     # ex. because of optimizations that only happen in synthesis, the only way
     # to get the true delay is to synthesize, not estimate harder).
     # Afterwards re-estimates any still-estimated ancestor funcs with the new
     # measured child delays and invalidates stale pipeline map caches.
-    # allow_stateful_subtree: funcs with Reg/Feedback anywhere below normally
-    # keep estimated delays (their synthesized number is an internal critical
-    # path, not the through-delay geometry needs - see
-    # FUNC_PATH_DELAY_IS_ESTIMABLE). Callers that want the critical path
-    # quantity on purpose (cut domain root budget anchors, mini sweep initial
-    # guesses - "how much comb must registers subdivide") pass True.
+    # Funcs with Reg/Feedback anywhere below are skipped - NO exceptions:
+    # their synthesized number is an internal critical path, not the
+    # through-delay geometry needs (see FUNC_PATH_DELAY_IS_ESTIMABLE);
+    # callers fall back to the estimated delay.
     funcs_to_measure = []
     for func_name in func_names:
         logic = parser_state.FuncLogicLookupTable[func_name]
-        if (
-            not allow_stateful_subtree
-            and len(logic.submodule_instances) > 0
-            and FUNC_SUBTREE_HAS_STATE(func_name, parser_state)
+        if len(logic.submodule_instances) > 0 and FUNC_SUBTREE_HAS_STATE(
+            func_name, parser_state
         ):
             continue
         if logic.delay is None or logic.delay_is_estimated:

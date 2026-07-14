@@ -396,6 +396,31 @@ if not args.no_synth:
         flush=True,
     )
     SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
+
+    # The build must FAIL if any timing goal was not met - results above are
+    # still written (useful for debugging) but simulation and bitstream
+    # generation are skipped and the exit code is non zero
+    timing_failures = getattr(multimain_timing_params, "sweep_timing_failures", None)
+    if timing_failures:
+        print(
+            "================== TIMING NOT MET ================================",
+            flush=True,
+        )
+        for main_func_name, goal_mhz, achieved_mhz, why in timing_failures:
+            achieved_str = (
+                f"{achieved_mhz:.2f} MHz" if achieved_mhz is not None else "unknown"
+            )
+            print(
+                f"ERROR: TIMING NOT MET: {main_func_name} achieved {achieved_str} "
+                f"vs {goal_mhz:.2f} MHz goal ({why})",
+                flush=True,
+            )
+        print(
+            "Results were written for debugging; skipping simulation/bitstream.",
+            flush=True,
+        )
+        sys.exit(1)
+
     if SYN.PIN_CONSTRAINTS_FILE:
         print("================== Generating Bitstream ==================", flush=True)
         SYN.SYN_TOOL.SYN_AND_REPORT_TIMING(

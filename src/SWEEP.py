@@ -476,12 +476,15 @@ def CHECK_CUTS_VS_LATENCY(
             f"[sweep] WARNING: planned {n_cuts} cuts for {domain_root_inst} "
             f"but only {total_leaf_slices} leaf slices materialized "
             f"(adjacent cuts collapsed at leaf register granularity?). "
-            "Sliced leaves:",
+            f"{len(sliced_leaves)} sliced leaves, first few:",
             flush=True,
         )
-        for inst, slices in sliced_leaves:
-            leaf = inst[len(prefix) :] if inst.startswith(prefix) else inst
-            print(f"[sweep]   {leaf}: {slices}", flush=True)
+        for inst, slices in sliced_leaves[0:5]:
+            # Leaf name only - full instance paths are hundreds of chars
+            short = inst.split(C_TO_LOGIC.SUBMODULE_MARKER)[-1]
+            print(f"[sweep]   .../{short}: {slices}", flush=True)
+        if len(sliced_leaves) > 5:
+            print(f"[sweep]   ... and {len(sliced_leaves) - 5} more", flush=True)
     return total_leaf_slices
 
 
@@ -641,9 +644,10 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     # The coarse sweep's initial guess divides this func's delay by the
     # target period and only ever grows from there - an inflated estimated
     # delay would over-pipeline the lock from the start. Measure for real
-    # (critical path is the right quantity for a cut count guess).
+    # (MEASURE_DELAYS skips stateful-subtree funcs; those keep the estimate
+    # for the guess and the coarse loop self-corrects from below).
     if func_logic.delay_is_estimated:
-        SYN.MEASURE_DELAYS([hotspot_func], parser_state, allow_stateful_subtree=True)
+        SYN.MEASURE_DELAYS([hotspot_func], parser_state)
     print(
         f"[sweep] Isolated coarse sweep of hotspot: {hotspot_func} "
         f"(goal {plan.target_mhz:.2f} MHz)",
@@ -829,35 +833,22 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         plan.domains = domains
         plans[main_inst] = plan
 
-    # Anchor the plan budgets to reality: measure each cut domain root's true
-    # delay with one synthesis run (leaf-sum estimates over-estimate badly -
-    # they can't see cross-boundary optimizations - and budgeting cuts against
-    # an inflated delay axis over-pipelines massively). The landscape keeps
-    # its estimated geometry for WHERE delay lives; the measured root total
-    # calibrates HOW MANY cuts. This makes the first plan the fewest-stages
-    # guess (usually just missing timing) and the loop adds stages from
-    # synthesis feedback - never the other way around.
-    root_funcs_to_measure = set()
-    for plan in plans.values():
-        for domain_root in plan.domains:
-            root_logic = parser_state.LogicInstLookupTable[domain_root]
-            if root_logic.delay_is_estimated:
-                root_funcs_to_measure.add(root_logic.func_name)
-    if len(root_funcs_to_measure) > 0:
-        print(
-            "[sweep] Measuring cut domain root delays (calibrates stage budgets):",
-            flush=True,
-        )
-        # allow_stateful_subtree: the anchor wants the critical path (how
-        # much comb must registers subdivide), not the through-delay
-        SYN.MEASURE_DELAYS(
-            sorted(root_funcs_to_measure), parser_state, allow_stateful_subtree=True
-        )
+    # NOTE on budget calibration: cut counts are anchored to reality by the
+    # "measurement frontier" in the presynth wave (SYN.FUNC_IS_TOPMOST_COMB):
+    # the topmost fully-combinational funcs get one real synthesis run each,
+    # so the estimated delays of everything above them (stateful containers,
+    # domain roots, mains - which are NEVER synthesized per-module, their
+    # synthesized number would be an internal critical path, not an
+    # input-to-output through delay) are built from measured totals. No
+    # domain-root synthesis happens here.
 
     best_tpl = None
     best_score = None
     measured_fallback_done = False
     iteration = 0
+    # main_inst -> (curr_mhz, met, target_mhz) for goal-having mains with no
+    # plan (nothing cuttable) - their failing reports must still fail the build
+    planless_results = {}
     # Post-met stage trimming state (--pipeline_min_effort)
     trim_iters_used = 0
     met_snapshot_tpl = None
@@ -995,6 +986,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     evaluated_plans.add(main_inst)
                 if main_inst not in plans:
                     # Nothing cuttable for this main
+                    planless_results[main_inst] = (curr_mhz, met, target_mhz)
                     if not met:
                         print(
                             f"[sweep] WARNING: {main_logic.func_name} fails timing "
@@ -1055,11 +1047,21 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         and hard_floor < target_mhz
                         and curr_mhz >= FLOOR_TOLERANCE * hard_floor
                     )
+                    # A soft floor built from ESTIMATED spans is not evidence
+                    # enough to give up: measure the real delays first (the
+                    # ladder's escalation - fallback, minisweep - broke
+                    # identical plateaus before). Only stop at a soft floor
+                    # once no estimates are in play.
+                    any_estimates_in_play = any(
+                        l.delay_is_estimated
+                        for l in parser_state.FuncLogicLookupTable.values()
+                    )
                     at_soft_floor = (
                         soft_floor is not None
                         and soft_floor < target_mhz
                         and curr_mhz >= FLOOR_TOLERANCE * soft_floor
                         and plan.same_mhz_count >= 1
+                        and (measured_fallback_done or not any_estimates_in_play)
                     )
                     if at_hard_floor or at_soft_floor:
                         floor = hard_floor if at_hard_floor else soft_floor
@@ -1478,5 +1480,37 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         print(f"[sweep] History: {history_path}", flush=True)
     except Exception as e:
         print("[sweep] Could not write sweep history:", e)
+
+    # Record unmet timing goals so the build can FAIL (non zero exit) instead
+    # of silently writing results and running simulation on a design that
+    # does not meet its clocks (pipelinec gates on this after writing files)
+    timing_failures = []
+    for plan in plans.values():
+        if plan.met_timing:
+            continue
+        main_func_name = parser_state.LogicInstLookupTable[plan.main_inst].func_name
+        achieved = None
+        for h in plan.history:
+            if h.get("achieved_mhz") is not None:
+                if achieved is None or h["achieved_mhz"] > achieved:
+                    achieved = h["achieved_mhz"]
+        why = plan.stopped_reason or "unknown"
+        if plan.unpipelinable_blame is not None:
+            blamed_func, blame_reason = plan.unpipelinable_blame
+            why += f": {blamed_func}, {blame_reason}"
+        timing_failures.append((main_func_name, plan.target_mhz, achieved, why))
+    # Mains with a goal but no plan (nothing cuttable) whose last timing
+    # report failed also count
+    for main_inst, (pl_curr, pl_met, pl_target) in planless_results.items():
+        if not pl_met:
+            timing_failures.append(
+                (
+                    parser_state.LogicInstLookupTable[main_inst].func_name,
+                    pl_target,
+                    pl_curr,
+                    "nothing_autopipelinable",
+                )
+            )
+    multimain_timing_params.sweep_timing_failures = timing_failures
 
     return multimain_timing_params

@@ -21,7 +21,7 @@ Vocabulary used throughout (each defined in detail later):
 | **segment** | one leaf-most piece of that axis (sliceable / atomic / locked) |
 | **floor** | the fmax that no amount of added registers can beat (longest un-cuttable stretch) |
 | **plan** | per-MAIN sweep state: domains, landscapes, cuts, learned scale factors, locks |
-| **anchor** | the one real synthesis run of a domain root whose measured delay calibrates how many cuts the first plan gets |
+| **measurement frontier** | the topmost fully-combinational funcs — the only hierarchical modules ever synthesized per-module; their measured through-delays calibrate the estimates of everything above (and thus how many cuts the first plan gets) |
 | **lock** | a mini-sweep result frozen onto all instances of a func (`params_are_fixed`); planning treats it as a pre-pipelined black box |
 | **trim** | post-met iterations that retry with fewer cuts to prove the stage count is minimal |
 
@@ -30,8 +30,9 @@ Vocabulary used throughout (each defined in detail later):
 | | old middle-out sweep | new planned sweep |
 |---|---|---|
 | where do registers go? | evenly spaced "best guess" slices over the whole delay, count grown by a multiplier when timing failed | cuts placed by a static delay model (the *landscape*) that knows where delay lives and where cuts are legal |
-| how many stages? | however many the growing multiplier reached when timing first passed | fewest-stages first: budgets anchored to the *measured* domain root delay start at the theoretical minimum (usually just missing timing) and stages are added only from synthesis feedback; met-with-slack results get trimmed (`--pipeline_min_effort`) |
-| how many syn runs? | every hierarchy level synthesized up front, including MAINs + a full-design run per guess + per-module coarse sweeps when guesses plateaued (wireguard: ~16 full runs) | leaf functions + topmost untagged stateful modules + one run per cut domain root (everything else estimated, MAINs not force-synthesized) + one full-design run per iteration, max 12 (+ trim/probe runs) |
+| how many stages? | however many the growing multiplier reached when timing first passed | fewest-stages first: budgets calibrated by the *measurement frontier* (topmost fully-comb funcs, measured) start at the theoretical minimum (usually just missing timing) and stages are added only from synthesis feedback; met-with-slack results get trimmed (`--pipeline_min_effort`) |
+| how many syn runs? | every hierarchy level synthesized up front, including MAINs + a full-design run per guess + per-module coarse sweeps when guesses plateaued (wireguard: ~16 full runs) | leaf functions + the measurement frontier (topmost fully-comb funcs) + topmost untagged stateful modules (everything else estimated — never MAINs, never anything with state inside) + one full-design run per iteration, max 12 (+ trim/probe runs) |
+| unmet timing at the end | exit 0, results written, sim runs — silent | results written for debugging, then `ERROR: TIMING NOT MET` block + **non-zero exit**; sim/bitstream skipped |
 | reaction to failing timing | grow `best_guess_sweep_mult`, or step `hier_sweep_mult` down the hierarchy and coarse-sweep smaller modules (4 interacting multipliers) | escalation ladder: densify the attributed hotspot func → measure estimated delays for real when fmax stagnates → only then mini-sweep + lock the hotspot (measured, minimality-probed); global rescale when attribution is impossible |
 | unreachable goals | plateaued for many runs, then gave up | fmax *floor* predicted and blamed before any syn run; sweep stops at the floor |
 | slices vs latency | conflated in logs ("0 clks 53 slices") | reported separately: `cuts=N main_latency=M deepest_pipeline=D` |
@@ -90,15 +91,18 @@ New (default `HIER_SYN_MODE == "leaf"`): only functions whose delay
 
 - raw HDL leaves (adders, muxes, raw VHDL text modules, ...), heavily
   disk-cached across builds;
-- hierarchical *comb* functions with no sliceable path to raw leaves.
+- hierarchical *comb* functions with no sliceable path to raw leaves;
+- the **measurement frontier**: topmost *fully-combinational* funcs (see
+  below).
 
 **MAINs are no longer force-synthesized** (they were in the old flow, to
-seed coarse sweep guesses). Sliceable mains are cut domain roots and get
-measured on demand by the sweep's budget anchor; a stateful main's
-whole-design zero-clk critical path — which includes the regions about to
-be pipelined — feeds no planning decision, wastes a near-whole-design syn
-run, and used to print as a bogus `Design likely limited to X MHz` report.
-`--coarse` measures its main lazily when needed.
+seed coarse sweep guesses). A fully-comb main IS the measurement frontier
+and gets measured there; a main with state anywhere below is always
+estimated — its whole-design zero-clk critical path (which includes the
+regions about to be pipelined, and internal reg-involved paths) feeds no
+planning decision, wastes a near-whole-design syn run, and used to print
+as a bogus `Design likely limited to X MHz` report. `--coarse` measures its
+main lazily when needed (estimate used if the main has state below).
 
 **Modules with Reg/Feedback state in their subtree** (recursive —
 `FUNC_SUBTREE_HAS_STATE`): a per-module synthesis run of such a module
@@ -125,11 +129,18 @@ The design-level fmax cap stateful modules impose is real, but it shows up
 empirically in full-design timing reports (and stops the sweep via the
 empirical floor), not in the geometry model.
 
-Deliberate exceptions that DO measure chain-resident stateful modules: the
-cut domain root budget anchor and the mini-sweep initial guess — there the
-question is "how much comb must registers subdivide," and the critical
-path (whatever kind) is the right answer for a *count*, while geometry
-positions still come from estimates.
+**There are no exceptions**: nothing with state in its subtree is ever
+synthesized per-module — a domain root like wireguard's `encrypt_dataflow`
+(Reg/Feedback in its FIFOs/interlocks) is estimated, not measured. The
+calibration that used to come from measuring domain roots comes instead
+from the **measurement frontier** (`FUNC_IS_TOPMOST_COMB`): the topmost
+fully-combinational funcs — the largest subtrees with no Reg/Feedback
+anywhere inside, where measured == input→output through-delay *by
+construction* — each get one real synthesis run in the presynth wave.
+Estimates above the frontier are built from those measured totals (plus
+measured atomic spans), so first plans stay at the fewest-stages guess;
+interior comb funcs below the frontier stay estimated, and the landscape
+rescales their relative geometry into the measured frontier total.
 
 Hierarchical functions on the pipelining path are **estimated** instead:
 `delay = zero-clk pipeline map total` (the critical topological path through
@@ -138,14 +149,15 @@ written to the disk cache. Estimates over-estimate badly — they can't see
 cross-boundary synthesis optimizations (wireguard: leaf-sum 1128 ns vs
 ~150 ns synthesized, mostly collapsed carry chains).
 
-That inflation is why **cut domain roots are measured, not estimated**: the
-sweep runs one real synthesis per unique domain root before planning. The
-landscape keeps its estimated geometry (*where* delay lives, relatively),
-but the measured root total calibrates *how many* cuts — so the first plan
-is the fewest-stages guess (`~measured_delay / target_period`), which
-typically just misses timing, and stages are added from synthesis feedback.
-Under-pipelining and iterating up is the default; over-pipelining to meet
-timing fast is what makes people distrust HLS tools.
+That inflation is why the **measurement frontier** exists (previous
+paragraph): the topmost fully-comb funcs are measured so the estimated
+totals above them are realistic. The landscape keeps estimated geometry
+(*where* delay lives, relatively) while measured frontier totals calibrate
+*how many* cuts — the first plan is the fewest-stages guess
+(`~real_delay / target_period`), which typically just misses timing, and
+stages are added from synthesis feedback. Under-pipelining and iterating up
+is the default; over-pipelining to meet timing fast is what makes people
+distrust HLS tools.
 
 **Estimates are never allowed to be why a sweep fails**:
 - `MEASURE_DELAYS(funcs)` really synthesizes given functions and replaces
@@ -186,19 +198,26 @@ via synthesis + disk cache, hierarchical funcs estimated, `acc` measured
 whole as a topmost stateful span):
 
 ```
-my_main                    estimated 25 ns   (sliceable comb -> cut domain root)
- |- mul_add    [inst 1]    estimated 10 ns
- |    |- MULT              measured   6 ns   (raw HDL leaf)
- |    '- ADD               measured   4 ns   (raw HDL leaf)
+my_main                    estimated 25 ns   (state below via acc -> NEVER
+ |                                            synthesized; estimate built
+ |                                            from measured parts)
+ |- mul_add    [inst 1]    MEASURED  10 ns   (topmost fully-comb func = the
+ |    |                                       measurement frontier: one real
+ |    |                                       syn run, through-delay by
+ |    |                                       construction)
+ |    |- MULT              measured   6 ns   (raw HDL leaf, geometry only)
+ |    '- ADD               measured   4 ns   (raw HDL leaf, geometry only)
  |- acc                    measured   5 ns   (stateful, no tags: atomic span,
  |                                            interior never synthesized)
- '- mul_add    [inst 2]    estimated 10 ns
+ '- mul_add    [inst 2]    MEASURED  10 ns   (same func, same one syn run)
 ```
 
-Being a cut domain root, `my_main` then gets one real synthesis run (the
-budget *anchor*, Section 3) before planning — assume it also measures 25 ns
-to keep the numbers simple (on real designs the measured total is usually
-much smaller than the estimate, and the cut count scales down accordingly).
+`my_main`'s 25 ns estimate is the sum of measured frontier totals and the
+measured atomic span, so the cut budget below is calibrated to reality
+without ever synthesizing a module that has state inside it (on real
+designs the frontier measurement is what deflates the wildly-inflated
+leaf-sum estimates — wireguard's chacha comb subtree estimates ~1090 ns
+but measures ~150 ns).
 
 ### Cut domain
 
@@ -453,12 +472,14 @@ The history dumps to `<out_dir>/<top>/sweep_history.json`, one record per
    and replan with true geometry (mini-sweeps are gated off until this has
    happened);
 3. still attributed to the same func 3× → isolated **mini-sweep**: measure
-   the hotspot's own delay first (the coarse initial guess divides delay by
-   target period — an inflated estimate would over-pipeline the lock from
-   the start), coarse-sweep upward from the real guess, then **bisect
-   downward** (`MINISWEEP_TRIM_PROBES` single-latency runs) between the
-   last failing and first passing latency before locking — the lock lands
-   on the proven-minimal latency, never the first passing overshoot.
+   the hotspot's own delay first if it is fully comb (the coarse initial
+   guess divides delay by target period — an inflated estimate would
+   over-pipeline the lock from the start; a hotspot with state below keeps
+   its estimate, the loop self-corrects), coarse-sweep upward from that
+   guess, then **bisect downward** (`MINISWEEP_TRIM_PROBES` single-latency
+   runs) between the last failing and first passing latency before locking
+   — the lock lands on the proven-minimal latency, never the first passing
+   overshoot.
 
 A same-fmax comparison uses a *relative* tolerance (1% of target):
 62.92 → 62.99 MHz is the same result, not progress.
@@ -519,16 +540,31 @@ design more finely):
         bottleneck=fft_2pt_pipeline_no_handshake action=densify(fft_... x1.17)
 ```
 
-Non-met endings are warnings, not errors: the build completes with the best
-pipeline found (largest worst-case achieved/target ratio across iterations).
+**Unmet timing fails the build.** The best pipeline found (largest
+worst-case achieved/target ratio across iterations) is still written out —
+those results are useful for debugging — but then the build prints an
+unmissable per-main error block and exits non-zero; simulation and
+bitstream generation are skipped:
 
-**When autopipelining cannot help at all**, the tool says so explicitly
-rather than failing quietly:
+```
+================== TIMING NOT MET ================================
+ERROR: TIMING NOT MET: encrypt_dataflow achieved 73.01 MHz vs 80.00 MHz
+       goal (unpipelinable_hotspot: poly1305_mac_instance, feedback_vars)
+Results were written for debugging; skipping simulation/bitstream.
+```
+
+(A silent version of exactly this — sweep stops unmet, results written,
+cocotb sim runs and passes, exit 0 — is how a failing wireguard build once
+went unnoticed.)
+
+**When autopipelining cannot help at all**, the tool also says so
+explicitly during the sweep:
 
 - a MAIN with a timing goal but nothing cuttable (no sliceable logic, no
   AUTOPIPELINE regions) warns at planning time: *"contains nothing
   autopipelining can help - the goal is met only if the design meets timing
-  as written"* — and again with path endpoints if its timing report fails;
+  as written"* — and again with path endpoints if its timing report fails
+  (which also feeds the `TIMING NOT MET` failure exit above);
 - a failing path attributed to an unpipelinable func stops the sweep with
   the culprit named and the reason (`unpipelinable_hotspot`);
 - generic stops (`iteration_limit`, `no_legal_adjustment`) repeat the last
@@ -620,8 +656,8 @@ run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
 | `sweep_two_mains_test.py` | two MAINs: per-main plans, no-attribution fallback |
 | `sweep_fsm_autopipeline_test.py` | Reg-FSM main + AUTOPIPELINE region (via `_autopipeline_with_io_regs`): cut domain is the tagged child, FSM latency stays 0 |
 | `sweep_stateful_boundary_test.py` | comb→stateful→comb: cuts stop at the stateful boundary (Finding #1 regression) |
-| `sweep_floor_detect_test.py` | unreachable goal: floor predicted & blamed up front, sweep stops after a few syn runs, still exits 0 |
-| `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that autopipelining cannot help (planning time + failing report), one syn run, exits 0 |
+| `sweep_floor_detect_test.py` | unreachable goal: floor predicted & blamed up front, sweep stops after a few syn runs, results written, then `TIMING NOT MET` + non-zero exit |
+| `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that autopipelining cannot help (planning time + failing report), one syn run, `TIMING NOT MET` + non-zero exit |
 | `autopipeline_latency_test.py` | end-to-end factory design (`make_stream_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6.5 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, one seeded confirmation syn passes with no fallback sweep and no pass 3, latency matches `sweep_history.json` |
 
 Unit/in-process coverage (registered in `elab_tests.py`):
