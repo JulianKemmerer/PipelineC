@@ -2739,7 +2739,7 @@ re-`exec`ing.
 Tests: `src/tests/pypeline_tests/inst/type_bytes_test.py`, covering scalar/array/
 struct/nested-struct/array-of-struct round trips in both endiannesses, the
 byte-rounding rule, enum rejection, `@wires` tagging, and a regression proof mirroring
-wireguard-fpga's `chacha20_state`/`u320_t` shapes (registered in both `sim_tests.py`
+wireguard-fpga's `chacha20_state`/`u320_t` shapes (registered in both `native_sim_tests.py`
 and `elab_tests.py`).
 
 ---
@@ -4288,7 +4288,7 @@ top.py  (single-file or multi-file entry point)
 
 `src/tests/pypeline_tests/` drives `pipelinec` against design files in `inst/` to exercise
 the elaboration mechanics, pragmas, and syntax extensions described above end-to-end. Two
-scripts cover the `pipelinec` side of the suite (a third, `sim_tests.py`, covers pure-Python
+scripts cover the `pipelinec` side of the suite (a third, `native_sim_tests.py`, covers pure-Python
 simulation — see [pypeline_sim_DESIGN.md § Tests](pypeline_sim_DESIGN.md#tests)):
 
 - **`elab_tests.py`** — runs `pipelinec --comb --no_synth` (elaboration only, no

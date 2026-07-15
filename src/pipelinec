@@ -11,6 +11,7 @@ import C_TO_LOGIC
 import PY_TO_LOGIC
 import OPEN_TOOLS
 import SIM
+import pypeline_sim
 
 # import CLANG_TO_LOGIC
 import SYN
@@ -74,9 +75,11 @@ parser.add_argument(
 )
 parser.add_argument(
     "--run",
-    type=int,
+    type=pypeline_sim.parse_run_arg,
     default=10,
-    help="Argument for simulator run command. Default = '10' clock cycles.",
+    help="Argument for simulator run command: number of clock cycles, or 'all' to "
+    "run until sim_finish() is called (subject to a safety cap). Default = '10' "
+    "clock cycles.",
 )
 parser.add_argument(
     "--cocotb",

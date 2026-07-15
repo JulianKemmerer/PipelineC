@@ -2,6 +2,7 @@ import os
 import sys
 
 import C_TO_LOGIC
+import pypeline_sim
 import SIM
 import SYN
 import VHDL
@@ -98,7 +99,33 @@ def DUMP_PIPELINEC_DEBUG(dut):\n"""
         f.write(py_text)
         f.close()
 
-        # Testbench just does 10 clocks and done
+        # Testbench just does N clocks and done -- or, for --run all, an unbounded
+        # loop relying on sim_finish()'s std.env.finish to end the GHDL simulation
+        # itself (confirmed empirically: std.env.finish terminates the whole GHDL
+        # process immediately, regardless of what the cocotb-side loop has left to
+        # do, so a large/unbounded Python-side loop bound is harmless -- it's simply
+        # never fully iterated). A safety cap still applies so a design that never
+        # calls sim_finish() fails loudly instead of hanging the GHDL process
+        # indefinitely (VHDL sim is much slower per-cycle than native sim, so this
+        # cap is intentionally smaller than pypeline_sim.py's native --run all cap).
+        run_all = args.run == pypeline_sim.RUN_ALL
+        run_all_safety_cap = 1_000_000
+        if run_all:
+            remaining_cycles_expr = f"range({run_all_safety_cap})"
+        else:
+            remaining_cycles_expr = f"range({args.run - 1})"
+        # Only reached if the loop above completed all its iterations without
+        # sim_finish()'s std.env.finish having already terminated the GHDL process --
+        # for --run all that means sim_finish() was never called, a design bug.
+        run_all_cap_check = (
+            f"""
+    raise RuntimeError(
+        "--run all exceeded {run_all_safety_cap} cycles without sim_finish() ever "
+        "being called -- likely a design bug, not a slow-but-working simulation."
+    )"""
+            if run_all
+            else ""
+        )
         py_basename = "test_" + SYN.TOP_LEVEL_MODULE
         py_text = f'''
 import cocotb
@@ -117,7 +144,7 @@ async def my_first_test(dut):
     dut.{clock_name}.value = 1
     await Timer({(ns/2):.3f}, units="ns")
     print("^End Clock: ", cycle, flush=True)
-    for i in range({args.run-1}):
+    for i in {remaining_cycles_expr}:
         dut.{clock_name}.value = 0
         await Timer({(ns/2):.3f}, units="ns")
         print("")
@@ -125,6 +152,7 @@ async def my_first_test(dut):
         DUMP_PIPELINEC_DEBUG(dut)
         dut.{clock_name}.value = 1
         await Timer({(ns/2):.3f}, units="ns")
+{run_all_cap_check}
 '''
         py_filepath = COCOTB_OUT_DIR + "/" + py_basename + ".py"
         f = open(py_filepath, "w")
@@ -170,4 +198,49 @@ include $(shell cocotb-config --makefiles)/Makefile.sim
     bash_cmd = "make"
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=makefile_dir)
     print(log_text, flush=True)
+    CHECK_COCOTB_LOG_PASS_FAIL(log_text, args)
     sys.exit(0)
+
+
+def CHECK_COCOTB_LOG_PASS_FAIL(log_text, args):
+    """cocotb's own regression-manager PASS/FAIL summary is not reflected in `make`'s
+    process returncode for every failure mode: a real VHDL assertion failure (from
+    sim_assert) makes GHDL itself error out, which does propagate as a non-zero `make`
+    exit -- but a Python-level exception raised inside the generated cocotb test body
+    (e.g. --run all's safety-cap RuntimeError) does not, since GHDL considers the
+    simulation to have completed normally right up until that Python exception fires.
+    So `make` returning 0 is not sufficient evidence of success; check cocotb's own
+    "TESTS=N PASS=N FAIL=N" summary line explicitly.
+
+    A FAIL is expected and OK exactly when it's `--run all` and the failure is GHDL's
+    own "Simulator shutdown prematurely" scheduler message (cocotb's generic framing
+    for "the simulator ended before I expected it to") -- that's what a clean,
+    intentional sim_finish()/std.env.finish() stop looks like, confirmed empirically:
+    GHDL prints "simulation finished @<t>ns" and terminates immediately, which cocotb
+    (having no way to know the stop was intentional) reports as this same premature-
+    shutdown FAIL text. Any other FAIL (including a Python traceback from a genuine bug
+    like the safety cap firing, or any other in-test exception) is a real failure.
+    """
+    import re
+
+    m = re.search(r"TESTS=(\d+)\s+PASS=(\d+)\s+FAIL=(\d+)", log_text)
+    if m is None:
+        raise Exception(
+            "Could not find cocotb's 'TESTS=N PASS=N FAIL=N' summary line in the "
+            "simulation log -- cannot confirm the cocotb test actually passed."
+        )
+    num_tests, num_pass, num_fail = (int(g) for g in m.groups())
+    if num_fail == 0 and num_pass == num_tests:
+        return  # genuine clean pass
+    run_all = getattr(args, "run", None) == pypeline_sim.RUN_ALL
+    if (
+        run_all
+        and "Simulator shutdown prematurely" in log_text
+        and "my_first_test failed" not in log_text
+    ):
+        # Expected: sim_finish()/std.env.finish() stopped the simulation cleanly.
+        return
+    raise Exception(
+        f"cocotb reported real test failures (TESTS={num_tests} PASS={num_pass} "
+        f"FAIL={num_fail}) -- see the simulation log above."
+    )

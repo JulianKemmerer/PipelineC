@@ -1112,7 +1112,7 @@ dynamically-produced types like factory structs.
 and elaboration paths described above against real `.py` design files in `inst/`. The suite
 is split across three scripts, run together via `run_all.py`:
 
-- **`sim_tests.py`** — plain `python3 <file>` simulation tests (no elaboration). See
+- **`native_sim_tests.py`** — plain `python3 <file>` simulation tests (no elaboration). See
   [pypeline_sim_DESIGN.md § Tests](pypeline_sim_DESIGN.md#tests) for what these cover.
 - **`elab_tests.py`** / **`synth_tests.py`** — `pipelinec` elaboration and synthesis runs
   against the same design files. See
@@ -1129,5 +1129,5 @@ These scripts replace the old `run_all.sh`: each test gets its own tmp output di
 (default worker count = `cpu_count() // 2`), and all paths are resolved relative to the
 repository root (`common.REPO_ROOT`) rather than hardcoded — the suite runs unmodified on
 any checkout. A summary table reports PASS/FAIL per test, with output directories of any
-failed test printed for inspection. `sim_tests.py`, `elab_tests.py`, and `synth_tests.py`
+failed test printed for inspection. `native_sim_tests.py`, `elab_tests.py`, and `synth_tests.py`
 can each also be run standalone.

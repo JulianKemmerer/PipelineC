@@ -1,8 +1,10 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Plain `python3 <file>` simulation tests (no pipelinec elaboration/synthesis).
+"""Native (Python-only) simulation tests -- no VHDL/GHDL involved. See
+vhdl_sim_tests.py for the subset of self-checking designs also run through real
+VHDL simulation (--cocotb --ghdl).
 
-Run standalone: python3 sim_tests.py [-j N]
+Run standalone: python3 native_sim_tests.py [-j N]
 """
 
 import sys
@@ -48,7 +50,7 @@ def get_tests() -> list:
     tests = [
         Test(
             name=filename[: -len(".py")],
-            category="sim",
+            category="native_sim",
             cmd=[INST_DIR / filename],
         )
         for filename in PLAIN_PYTHON_TEST_FILES
@@ -56,28 +58,28 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="global_wires_sim_test",
-            category="sim",
+            category="native_sim",
             cmd=[PYPELINE_SIM, INST_DIR / "global_wires_sim_test.py", "--run", "10"],
         )
     )
     tests.append(
         Test(
             name="sim_model_convergence_test",
-            category="sim",
+            category="native_sim",
             cmd=[PYPELINE_SIM, INST_DIR / "sim_model_test.py", "--run", "20"],
         )
     )
     tests.append(
         Test(
             name="fifo_sim_model_convergence_test",
-            category="sim",
+            category="native_sim",
             cmd=[PYPELINE_SIM, INST_DIR / "fifo_sim_model_test.py", "--run", "16"],
         )
     )
     tests.append(
         Test(
             name="pipelinec_native_sim_test",
-            category="sim",
+            category="native_sim",
             cmd=[
                 PIPELINEC,
                 INST_DIR / "global_wires_sim_test.py",
@@ -90,7 +92,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="wire_discovery_passthrough_sim_test",
-            category="sim",
+            category="native_sim",
             cmd=[
                 PYPELINE_SIM,
                 INST_DIR / "wire_discovery_passthrough_sim_test.py",
@@ -102,7 +104,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="wire_discovery_passthrough_native_sim_test",
-            category="sim",
+            category="native_sim",
             cmd=[
                 PIPELINEC,
                 INST_DIR / "wire_discovery_passthrough_sim_test.py",
@@ -115,7 +117,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="sim_output_direct_wire_test",
-            category="sim",
+            category="native_sim",
             cmd=[
                 PYPELINE_SIM,
                 INST_DIR / "sim_output_direct_wire_test.py",
@@ -127,7 +129,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="sim_input_test",
-            category="sim",
+            category="native_sim",
             cmd=[PYPELINE_SIM, INST_DIR / "sim_input_test.py", "--run", "25"],
         )
     )
@@ -136,12 +138,56 @@ def get_tests() -> list:
             # dsp/fir_tb.py testbench-library end-to-end (@sim_input driver +
             # @sim_output checker); --run must exceed both tbs' deadlines.
             name="fir_sim_tb_test",
-            category="sim",
+            category="native_sim",
             cmd=[PYPELINE_SIM, INST_DIR / "fir_sim_tb_test.py", "--run", "1400"],
+        )
+    )
+    # Self-checking sim_assert/sim_finish designs -- no external Python
+    # sim_call/assert harness needed. Same source files are also registered in
+    # vhdl_sim_tests.py under --cocotb --ghdl, proving native and VHDL sim agree.
+    tests.append(
+        Test(
+            name="self_check_counter_test",
+            category="native_sim",
+            cmd=[
+                PIPELINEC,
+                INST_DIR / "self_check_counter_test.py",
+                "--sim",
+                "--run",
+                "all",
+            ],
+        )
+    )
+    tests.append(
+        Test(
+            name="self_check_fifo_test",
+            category="native_sim",
+            cmd=[
+                PIPELINEC,
+                INST_DIR / "self_check_fifo_test.py",
+                "--sim",
+                "--run",
+                "all",
+            ],
+        )
+    )
+    tests.append(
+        Test(
+            name="self_check_bit_math_test",
+            category="native_sim",
+            cmd=[
+                PIPELINEC,
+                INST_DIR / "self_check_bit_math_test.py",
+                "--sim",
+                "--run",
+                "all",
+            ],
         )
     )
     return tests
 
 
 if __name__ == "__main__":
-    sys.exit(main(get_tests, "PipelineC pypeline sim tests (plain python3 calls)."))
+    sys.exit(
+        main(get_tests, "PipelineC pypeline native (Python-only) simulation tests.")
+    )

@@ -1,6 +1,7 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Shared infra for sim_tests.py / elab_tests.py / synth_tests.py / run_all.py."""
+"""Shared infra for native_sim_tests.py / vhdl_sim_tests.py / elab_tests.py /
+synth_tests.py / run_all.py."""
 
 import argparse
 import dataclasses
@@ -65,7 +66,7 @@ EXAMPLES_PYPELINE_DIR = REPO_ROOT / "examples" / "pypeline"
 @dataclasses.dataclass
 class Test:
     name: str
-    category: str  # "sim" | "elab" | "synth"
+    category: str  # "native_sim" | "vhdl_sim" | "elab" | "synth"
     cmd: list  # argv, without python interpreter or --out_dir
     needs_out_dir: bool = False
 
@@ -101,7 +102,7 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
     if test.needs_out_dir:
         cmd += ["--out_dir", str(test_dir)]
 
-    _log(f"[RUN ] {test.category:6s} {test.name}  log: {out_log}")
+    _log(f"[RUN ] {test.category:10s} {test.name}  log: {out_log}")
 
     start = time.monotonic()
     # Hand the log file directly to the child process so output is written
@@ -122,7 +123,7 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
     result = TestResult(test, returncode, duration, test_dir)
     status = "PASS" if result.passed else "FAIL"
     _log(
-        f"[{status}] {test.category:6s} {test.name}  ({duration:.1f}s)  log: {out_log}"
+        f"[{status}] {test.category:10s} {test.name}  ({duration:.1f}s)  log: {out_log}"
     )
     return result
 
@@ -162,7 +163,7 @@ def print_summary(results: list) -> int:
     for r in results:
         status = "PASS" if r.passed else "FAIL"
         print(
-            f"[{status}] {r.test.category:6s} {r.test.name:{name_width}s} ({r.duration:.1f}s)"
+            f"[{status}] {r.test.category:10s} {r.test.name:{name_width}s} ({r.duration:.1f}s)"
         )
         if not r.passed:
             failed.append(r)

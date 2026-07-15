@@ -11,6 +11,11 @@ from common import INST_DIR, PIPELINEC, Test, main
 
 # fmt: off
 NO_SYNTH_TEST_FILES = [
+    # Only files not already elaborated for free as part of synth_tests.py
+    # (which runs full elaboration + synthesis, a superset of --no_synth) belong
+    # here -- e.g. designs that don't synthesize well/fast, or aren't in
+    # synth_tests.py's SYNTH_TEST_FILES for some other reason. Anything also
+    # listed there should NOT be duplicated here.
     "autopipeline_test.py",
     "global_wires_test.py",
     "clock_domain_inference_test.py",
@@ -19,14 +24,7 @@ NO_SYNTH_TEST_FILES = [
     "import_test.py",
     "func_wires_test.py",
     "dangling_logic_test.py",
-    "stream_pipeline_test.py",
-    "enum_test.py",
-    "char_array_test.py",
-    "sim_print_test.py",
-    "sim_assert_finish_test.py",
-    "two_factory_wrappers_mixed_test.py",
     "type_bytes_test.py",
-    "float_ops_test.py",
     "sim_input_output_elab_test.py",
     "array_2d_order_test.py",
     "pylist_value_context_test.py",

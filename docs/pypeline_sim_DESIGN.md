@@ -1022,7 +1022,7 @@ output ended up a mix of two convergence passes. This exact composition is what 
 `include/pypeline/dsp/fir_interp.py`'s window state (`fir_ready: Feedback[uint1_t]` driven
 from `make_stream_pipeline`'s `Reg`-backed ready signal), producing `[15, 75, 45, 0, 0]`
 instead of the correct impulse response `[15, 30, 45, 30, 15]`. Regression coverage:
-`inst/feedback_reeval_test.py` (`sim_tests.py`).
+`inst/feedback_reeval_test.py` (`native_sim_tests.py`).
 
 ---
 
@@ -1665,7 +1665,7 @@ dict lookups. Further speedup would require C extension code or a numpy-vectoris
 
 ## Tests
 
-`src/tests/pypeline_tests/sim_tests.py` covers the simulation behaviors described in this
+`src/tests/pypeline_tests/native_sim_tests.py` covers the simulation behaviors described in this
 document directly — `Reg[T]`/`Feedback[T]`/`Wire[T]` simulation, bit-accurate arithmetic
 (`SIM_STRICT_ARITH`), and `sim_call()` — by running the plain-`python3` test files under
 `inst/` (e.g. `pypeline_test.py`, `bit_math_test.py`, `reg_init_test.py`), each of which
@@ -1699,8 +1699,8 @@ The `pipelinec --sim --run N` § above is covered by `pipelinec_native_sim_test`
 `global_wires_sim_test` entry already covers.
 
 ```
-python3 src/tests/pypeline_tests/sim_tests.py            # just the sim tests
-python3 src/tests/pypeline_tests/sim_tests.py -j 4
+python3 src/tests/pypeline_tests/native_sim_tests.py            # just the sim tests
+python3 src/tests/pypeline_tests/native_sim_tests.py -j 4
 python3 src/tests/pypeline_tests/run_all.py --category sim
 ```
 

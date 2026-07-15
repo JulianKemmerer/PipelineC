@@ -1,15 +1,17 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""Run all pypeline tests (sim + elab + synth) in parallel.
+"""Run all pypeline tests (native_sim + vhdl_sim + elab + synth) in parallel.
 
-Replaces the old run_all.sh. Run standalone: python3 run_all.py [-j N] [--category sim elab synth]
+Replaces the old run_all.sh. Run standalone:
+python3 run_all.py [-j N] [--category native_sim vhdl_sim elab synth]
 """
 
 import sys
 
 import elab_tests
-import sim_tests
+import native_sim_tests
 import synth_tests
+import vhdl_sim_tests
 from common import (
     filter_tests,
     make_arg_parser,
@@ -19,14 +21,17 @@ from common import (
 )
 
 CATEGORY_MODULES = {
-    "sim": sim_tests,
+    "native_sim": native_sim_tests,
+    "vhdl_sim": vhdl_sim_tests,
     "elab": elab_tests,
     "synth": synth_tests,
 }
 
 
 def main() -> int:
-    parser = make_arg_parser("Run all PipelineC pypeline tests (sim + elab + synth).")
+    parser = make_arg_parser(
+        "Run all PipelineC pypeline tests (native_sim + vhdl_sim + elab + synth)."
+    )
     parser.add_argument(
         "--category",
         choices=sorted(CATEGORY_MODULES),

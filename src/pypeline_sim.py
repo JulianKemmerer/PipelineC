@@ -30,6 +30,7 @@ _sim_wire_state.
 
 import argparse
 import importlib.util
+import itertools
 import sys
 import os
 import time
@@ -40,8 +41,32 @@ sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
 import pypeline
 
+# Sentinel for --run all: run cycles indefinitely, relying on sim_finish() to stop
+# the simulation, instead of a fixed pre-guessed cycle count.
+RUN_ALL = "all"
 
-def run_sim(design_file: str, num_cycles: int, sim_mode: str = "strict") -> None:
+# Safety cap for --run all so a design that never calls sim_finish() (a bug) fails
+# loudly instead of hanging forever.
+_RUN_ALL_SAFETY_CAP = 10_000_000
+
+
+def parse_run_arg(s: str):
+    """argparse type= callable for --run: accepts a positive int cycle count, or the
+    literal string "all" (case-insensitive) meaning run until sim_finish() is called."""
+    if s.strip().lower() == RUN_ALL:
+        return RUN_ALL
+    try:
+        n = int(s)
+    except ValueError:
+        raise argparse.ArgumentTypeError(
+            f"--run must be a positive integer or 'all', got {s!r}"
+        )
+    if n <= 0:
+        raise argparse.ArgumentTypeError(f"--run must be positive, got {n}")
+    return n
+
+
+def run_sim(design_file: str, num_cycles, sim_mode: str = "strict") -> None:
     # Apply sim mode before importing the design: @hw_func decorators read these
     # flags at decoration time, so they must be set before _import_design runs.
     if sim_mode == "strict":
@@ -77,20 +102,39 @@ def run_sim(design_file: str, num_cycles: int, sim_mode: str = "strict") -> None
     # exception-based hardware-function detection via _try_eval_const).
     pypeline._sim_active = True
     t0 = time.perf_counter()
-    for cycle in range(num_cycles):
+    run_all = num_cycles == RUN_ALL
+    cycle_iter = itertools.count() if run_all else range(num_cycles)
+    finished = False
+    cycles_run = 0
+    for cycle in cycle_iter:
+        if run_all and cycle >= _RUN_ALL_SAFETY_CAP:
+            raise RuntimeError(
+                f"--run all exceeded {_RUN_ALL_SAFETY_CAP} cycles without "
+                f"sim_finish() ever being called -- likely a design bug (a design "
+                f"that should terminate but never does), not a slow-but-working "
+                f"simulation."
+            )
         print("Clock: ", cycle, flush=True)
+        cycles_run = cycle + 1
         try:
             _run_clock_cycle(mains, cycle)
         except pypeline.SimFinish:
             print("")
             print(f"sim_finish() called — stopping early at cycle {cycle}")
+            finished = True
             break
         print("")
+    if run_all and not finished:
+        raise RuntimeError(
+            "--run all: cycle loop ended without sim_finish() ever being called "
+            "(unreachable in normal operation -- itertools.count() only stops via "
+            "the safety cap above, which raises separately)."
+        )
     elapsed = time.perf_counter() - t0
     print(
-        f"{num_cycles} cycles in {elapsed:.3f}s"
-        f"  ({elapsed / num_cycles * 1000:.2f} ms/cycle,"
-        f" {num_cycles / elapsed:.1f} cycles/s)"
+        f"{cycles_run} cycles in {elapsed:.3f}s"
+        f"  ({elapsed / cycles_run * 1000:.2f} ms/cycle,"
+        f" {cycles_run / elapsed:.1f} cycles/s)"
     )
 
 
@@ -212,9 +256,10 @@ def main() -> None:
     parser.add_argument(
         "--run",
         metavar="N",
-        type=int,
+        type=parse_run_arg,
         required=True,
-        help="Number of clock cycles to simulate.",
+        help="Number of clock cycles to simulate, or 'all' to run until sim_finish() "
+        "is called (subject to a safety cap).",
     )
     parser.add_argument(
         "--mode",
