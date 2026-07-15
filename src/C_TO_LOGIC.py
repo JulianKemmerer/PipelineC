@@ -53,7 +53,22 @@ ONE_HOT_EQ_LOGIC_NAME = "ONE_HOT_EQ"
 BOOL_C_TYPE = "uint1_t"
 VHDL_FUNC_NAME = "__vhdl__"
 PRINTF_FUNC_NAME = "printf"
+SIM_ASSERT_FUNC_NAME = "sim_assert"
+SIM_FINISH_FUNC_NAME = "sim_finish"
 STRLEN_FUNC_NAME = "strlen"
+
+
+def IS_SIM_CTRL_FUNC_NAME(func_name):
+    """True for printf/sim_print, sim_assert, and sim_finish submodule instances: all are
+    void, simulation-console-facing builtins that need CLOCK_ENABLE and a clk-gated process
+    to fire once per enabled cycle, and whose outputs never drive anything."""
+    return (
+        func_name.startswith(PRINTF_FUNC_NAME)
+        or func_name.startswith(SIM_ASSERT_FUNC_NAME)
+        or func_name.startswith(SIM_FINISH_FUNC_NAME)
+    )
+
+
 ACCUM_FUNC_NAME = "accum"
 COMPOUND_NULL = "COMPOUND_NULL"
 # Unary Operators
@@ -442,6 +457,9 @@ class Logic:
         # and Pypeline frontends populate the per-instance dict; VHDL.GET_PRINTF_MODULE_TEXT
         # reads this instead of Logic.c_ast_node.
         self.printf_format_string = None
+        # Quoted sim_assert message string for a sim_assert-builtin instance's own standalone
+        # Logic(), mirroring printf_format_string above. None if no message was given.
+        self.sim_assert_msg = None
         # Is this logic the input or output of a clock crossing?
         self.is_clock_crossing = False
         # TODO 'new style' is_? checks like below replacing SW_LIB stuff eventually
@@ -456,6 +474,9 @@ class Logic:
         # copies the entry for a given instance onto that instance's own standalone
         # Logic.printf_format_string above)
         self.submodule_instance_to_printf_format_string = {}
+        # inst_name -> quoted sim_assert message string (or None), for sim_assert-builtin
+        # submodule instances, mirroring submodule_instance_to_printf_format_string above.
+        self.submodule_instance_to_sim_assert_msg = {}
         self.submodule_instance_to_input_port_names = {}
         self.ref_submodule_instance_to_input_port_driven_ref_toks = {}
         self.ref_submodule_instance_to_ref_toks = {}
@@ -543,6 +564,7 @@ class Logic:
         rv.is_vhdl_expr = self.is_vhdl_expr
         rv.vhdl_module_text = self.vhdl_module_text
         rv.printf_format_string = self.printf_format_string
+        rv.sim_assert_msg = self.sim_assert_msg
         rv.is_new_style_bit_manip = self.is_new_style_bit_manip
         rv.is_clock_crossing = self.is_clock_crossing
         rv.submodule_instance_to_ast_meta = self.DEEPCOPY_DICT_COPY(
@@ -551,6 +573,9 @@ class Logic:
         rv.submodule_instance_to_printf_format_string = dict(
             self.submodule_instance_to_printf_format_string
         )  # IMMUTABLE (plain strings)
+        rv.submodule_instance_to_sim_assert_msg = dict(
+            self.submodule_instance_to_sim_assert_msg
+        )  # IMMUTABLE (plain strings or None)
         rv.submodule_instance_to_input_port_names = self.DEEPCOPY_DICT_LIST(
             self.submodule_instance_to_input_port_names
         )
@@ -705,6 +730,20 @@ class Logic:
         else:
             self.printf_format_string = logic_b.printf_format_string
 
+        # sim_assert message string keep whichever is set (same pattern as printf_format_string)
+        if (self.sim_assert_msg is not None) and (logic_b.sim_assert_msg is not None):
+            if self.sim_assert_msg != logic_b.sim_assert_msg:
+                print("Cannot merge comb logic with mismatching sim_assert_msg !")
+                print(self.func_name, self.sim_assert_msg)
+                print(logic_b.func_name, logic_b.sim_assert_msg)
+                sys.exit(-1)
+            else:
+                self.sim_assert_msg = self.sim_assert_msg
+        elif self.sim_assert_msg is not None:
+            self.sim_assert_msg = self.sim_assert_msg
+        else:
+            self.sim_assert_msg = logic_b.sim_assert_msg
+
         # TODO refactor all the above copypasta
 
         # Dont do the same dumb above code - probably dont need it?
@@ -817,6 +856,10 @@ class Logic:
         self.submodule_instance_to_printf_format_string = UNIQUE_KEY_DICT_MERGE(
             self.submodule_instance_to_printf_format_string,
             logic_b.submodule_instance_to_printf_format_string,
+        )
+        self.submodule_instance_to_sim_assert_msg = UNIQUE_KEY_DICT_MERGE(
+            self.submodule_instance_to_sim_assert_msg,
+            logic_b.submodule_instance_to_sim_assert_msg,
         )
         self.submodule_instance_to_input_port_names = LIST_VAL_UNIQUE_KEY_DICT_MERGE(
             self.submodule_instance_to_input_port_names,
@@ -1149,8 +1192,8 @@ class Logic:
                 sys.exit(-1)
             # Otherwise proceed checking for inputs
             submodule_func_name = self.submodule_instances[submodule_inst]
-            # Printf allow output(and outputs) not to not to drive anything
-            if submodule_func_name.startswith(PRINTF_FUNC_NAME):
+            # Printf/sim_assert/sim_finish allow output(and outputs) not to not to drive anything
+            if IS_SIM_CTRL_FUNC_NAME(submodule_func_name):
                 return True
             if submodule_func_name not in FuncLogicLookupTable:
                 print("self.func_name", self.func_name)
@@ -1260,8 +1303,8 @@ class Logic:
             # Skip ripping up vhdl text submodules modules
             if submodule_func_name == VHDL_FUNC_NAME:
                 return
-            # Also skip ripping up printfs
-            if submodule_func_name.startswith(PRINTF_FUNC_NAME):
+            # Also skip ripping up printfs/sim_asserts/sim_finishes
+            if IS_SIM_CTRL_FUNC_NAME(submodule_func_name):
                 return
 
             # Do the output ports drive anything now?
@@ -1648,6 +1691,10 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
                 submodule_inst
             ]
         )
+    if submodule_inst in containing_func_logic.submodule_instance_to_sim_assert_msg:
+        submodule_logic.sim_assert_msg = (
+            containing_func_logic.submodule_instance_to_sim_assert_msg[submodule_inst]
+        )
 
     # It looks like the c parser doesnt let you look up type from name...
     # Probably would be complicated
@@ -1714,7 +1761,7 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
             # Fine if vhdl func or other build in stuff like printf?
             if submodule_logic.func_name == VHDL_FUNC_NAME:
                 pass
-            elif submodule_logic.func_name.startswith(PRINTF_FUNC_NAME):
+            elif IS_SIM_CTRL_FUNC_NAME(submodule_logic.func_name):
                 pass
             else:
                 print(
@@ -7551,7 +7598,7 @@ def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
         i_need = (
             len(logic.state_regs) > 0
             or logic.uses_nonvolatile_state_regs
-            or logic.func_name.startswith(PRINTF_FUNC_NAME)
+            or IS_SIM_CTRL_FUNC_NAME(logic.func_name)
         )
 
     # Check submodules too
@@ -7568,7 +7615,7 @@ def LOGIC_NEEDS_CLOCK_ENABLE(logic, parser_state):
                 needs = needs or LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state)
                 if needs:
                     break
-            elif submodule_logic_name.startswith(PRINTF_FUNC_NAME):
+            elif IS_SIM_CTRL_FUNC_NAME(submodule_logic_name):
                 needs = True
                 break
 
@@ -9660,8 +9707,8 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
         submodule_dups = {}
         for submodule_inst in func_logic.submodule_instances:
             submodule_func_name = func_logic.submodule_instances[submodule_inst]
-            # Skip printf
-            if submodule_func_name == PRINTF_FUNC_NAME:
+            # Skip printf/sim_assert/sim_finish (each instance is distinct, not a dedup candidate)
+            if IS_SIM_CTRL_FUNC_NAME(submodule_func_name):
                 continue
             if submodule_func_name not in parser_state.FuncLogicLookupTable:
                 continue

@@ -429,6 +429,34 @@ def print_name(name: char_t[16]):
 See `docs/pypeline_sim_DESIGN.md` and `docs/PY_TO_LOGIC_DESIGN.md` for the simulation and
 elaboration mechanics.
 
+### `sim_assert` / `sim_finish` — simulation control
+
+Two more `sim_print`-style builtins for controlling simulation itself, elaborating to real
+hardware just like `sim_print` does:
+
+```python
+from pypeline import sim_assert, sim_finish
+
+n: Reg[uint8_t]
+sim_assert(n < 100, f"n grew too large: {n}")   # msg is optional
+sim_assert(ready)                                # bare condition -> default message
+
+if n >= 3:
+    sim_finish()
+```
+
+`sim_assert(cond, msg=None)` checks `cond` every cycle it executes while enabled — a failing
+condition raises `AssertionError` in native Python simulation and elaborates to a VHDL `assert
+... report ... severity failure;` that halts a real GHDL simulation immediately. `msg` follows
+the same f-string interpolation rules as `sim_print`'s argument.
+
+`sim_finish()` takes no arguments and signals "stop simulating now": it raises a `SimFinish`
+exception in native simulation (caught by `pypeline_sim.py`'s `--run` CLI loop to end the run
+cleanly) and elaborates to VHDL's `std.env.finish;`, halting a real GHDL simulation.
+
+See `docs/pypeline_sim_DESIGN.md` and `docs/PY_TO_LOGIC_DESIGN.md` for the simulation and
+elaboration mechanics.
+
 ### `@sim_model` — Python simulation models for hardware functions
 
 `sim_model(target)` attaches a Python model to any `@hw_func`/`@MAIN` function: whenever

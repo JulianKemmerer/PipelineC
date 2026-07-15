@@ -1388,6 +1388,45 @@ Correctness under both simulation layers follows directly from the existing
 `sim_call()` (`_sim_converging` stays `False` there), fires only in the final pass under
 `pypeline_sim.py`.
 
+### `sim_assert` / `sim_finish` — simulation control builtins
+
+Two more dual-mode builtins alongside `sim_print`, same `_sim_converging`-gated shape and same
+"real Python function stamped with a marker attribute" pattern — see `PY_TO_LOGIC_DESIGN.md`'s
+"`sim_assert` / `sim_finish` — simulation control builtins" section for the elaboration/VHDL
+side.
+
+```python
+def sim_assert(cond, msg=None):
+    if _sim_converging:
+        return SimVal(0)
+    assert cond, (msg if msg is not None else "sim_assert failed")
+    return SimVal(0)
+
+sim_assert._is_sim_assert = True
+
+
+class SimFinish(Exception):
+    """Raised by sim_finish() to signal that simulation should stop now."""
+
+
+def sim_finish():
+    if _sim_converging:
+        return SimVal(0)
+    raise SimFinish()
+
+sim_finish._is_sim_finish = True
+```
+
+`sim_assert` is just a gated Python `assert` — a failing condition raises `AssertionError`
+exactly like it would outside simulation, with the same optional message. `sim_finish` can't
+"just return" the way `sim_print`/`sim_assert` do, since stopping simulation is a control-flow
+event, not a value or side effect the caller can react to — it raises `SimFinish`, a dedicated
+exception (not `sys.exit`) so callers can catch it deliberately. `src/pypeline_sim.py`'s
+`run_sim()` CLI driver catches `SimFinish` around its per-cycle `_run_clock_cycle(...)` call and
+breaks out of the run loop cleanly (prints an early-stop message, still prints the final
+elapsed-time summary) instead of treating it as a crash; `sim_call()`-based tests instead
+typically assert `SimFinish` is raised directly (see `sim_assert_finish_test.py`).
+
 ### Invocation via `pipelinec --sim --run N`
 
 `pypeline_sim.py`'s multi-MAIN runner is also reachable through the main compiler driver,

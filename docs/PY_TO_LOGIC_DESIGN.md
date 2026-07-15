@@ -82,6 +82,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
 - [Type-to-Bytes Conversion (`byte_length`, `make_type_to_bytes`, `make_type_from_bytes`)](#type-to-bytes-conversion-byte_length-make_type_to_bytes-make_type_from_bytes)
 - [Raw VHDL Passthrough (`vhdl(...)`)](#raw-vhdl-passthrough-vhdl)
 - [`sim_print` — printf-style Console Output](#sim_print--printf-style-console-output)
+- [`sim_assert` / `sim_finish` — simulation control builtins](#sim_assert--sim_finish--simulation-control-builtins)
 - [Custom Operator Registration](#custom-operator-registration)
 
 **Reference**
@@ -3042,6 +3043,98 @@ independently, via `C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE`'s existing
 special case — `or Logic.func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME)` — so printf
 submodules now get a `clk` port declared and wired via the same generic
 port-declaration/instantiation machinery every other clocked module already uses.
+
+(Note: `LOGIC_NEEDS_CLOCK`'s printf-only check above has since been generalized to
+`C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(Logic.func_name)`, covering `sim_assert`/`sim_finish` too —
+see the next section.)
+
+---
+
+## `sim_assert` / `sim_finish` — simulation control builtins
+
+Two more simulation-only builtins, modeled directly on `sim_print` above: `sim_assert(cond,
+msg=None)` checks a condition every enabled cycle, and `sim_finish()` signals "stop simulating
+now." Both are Pypeline-only (no C-frontend support) and reuse `sim_print`'s printf-family
+plumbing — naming convention, manual `CLOCK_ENABLE` wiring, `LOGIC_NEEDS_CLOCK` clock-port
+forcing, and the raw-HDL/void-output special cases in `C_TO_LOGIC.py`/`VHDL.py`.
+
+```python
+from pypeline import sim_assert, sim_finish
+
+sim_assert(n < 100, f"n grew too large: {n}")   # msg is optional, like sim_print's argument
+sim_assert(ready)                                # bare condition, default message
+if n >= 3:
+    sim_finish()
+```
+
+### Shared printf-family naming: `IS_SIM_CTRL_FUNC_NAME`
+
+`C_TO_LOGIC.py` gained `SIM_ASSERT_FUNC_NAME = "sim_assert"` and `SIM_FINISH_FUNC_NAME =
+"sim_finish"` alongside the existing `PRINTF_FUNC_NAME = "printf"`, plus a helper —
+`IS_SIM_CTRL_FUNC_NAME(func_name)` — that's `True` for any of the three prefixes. Every place
+that used to special-case `func_name.startswith(PRINTF_FUNC_NAME)` for "this is a void,
+simulation-console-facing builtin that needs `CLOCK_ENABLE`/`clk` and whose output never drives
+anything" now calls `IS_SIM_CTRL_FUNC_NAME` instead — `LOGIC_NEEDS_CLOCK` and
+`C_BUILT_IN_FUNC_IS_RAW_HDL` in `VHDL.py`, `LOGIC_NEEDS_CLOCK_ENABLE` and the various
+void-output/no-ripup checks in `C_TO_LOGIC.py`. C-frontend-specific printf parsing
+(`C_AST_PRINTF_FUNC_CALL_TO_LOGIC` and friends) was left untouched — `sim_assert`/`sim_finish`
+have no C-callable form.
+
+### Elaboration: `_elab_sim_assert_stmt` / `_elab_sim_finish_stmt`
+
+`PY_TO_LOGIC.py`'s f-string-walking logic from `_elab_sim_print_stmt` was factored out into a
+shared helper, `_build_sim_fmt_string(arg, stmt, builtin_name)`, which both `sim_print` and
+`sim_assert`'s optional `msg` argument now call — same interpolation rules (bare `{expr}` for
+ints, `char_t[N]` auto-`%s`, `hex(...)`/`chr(...)` markers), just parameterized by the calling
+builtin's name for error messages.
+
+`_elab_sim_assert_stmt` elaborates `cond` as a required hardware expression, converting it to
+`uint1_t` the same way `if cond:` does (`_elab_if`: non-bool values compared `!= 0`), builds the
+optional message via `_build_sim_fmt_string`, and stores it in a new frontend-agnostic dict on
+`Logic` — `submodule_instance_to_sim_assert_msg` — mirroring
+`submodule_instance_to_printf_format_string`. `_elab_sim_finish_stmt` takes no arguments and
+just instantiates a void submodule with no message dict entry needed.
+
+### VHDL codegen: `GET_SIM_ASSERT_MODULE_TEXT` / `GET_SIM_FINISH_MODULE_TEXT`
+
+Both mirror `GET_PRINTF_MODULE_TEXT`'s clocked-process shape (a plain `process(clk)` gated on
+`rising_edge(clk)` + `CLOCK_ENABLE(0) = '1'`, not a `postponed process` — see the previous
+section for why):
+
+```vhdl
+process(clk) is
+begin
+  if rising_edge(clk) then
+    if CLOCK_ENABLE(0) = '1' then
+      assert cond(0) = '1' report <msg> severity failure;   -- sim_assert
+      -- or:
+      std.env.finish;                                        -- sim_finish
+    end if;
+  end if;
+end process;
+```
+
+`sim_assert`'s message re-derives the same VHDL string-concatenation expression
+`GET_PRINTF_MODULE_TEXT` builds (via `C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS` +
+`C_CONST_STR_TO_VHDL_CONST_STR`), then strips the auto-appended trailing-newline concatenation
+(`&LF&""`) that `_build_sim_fmt_string` always adds — `assert ... report` messages shouldn't end
+with a literal newline the way a `sim_print` line does. No message given (`msg=None`) falls back
+to a literal `"sim_assert failed"`.
+
+`std.env.finish` (VHDL-2008) needed a new `use std.env.all;` in the per-entity `use` clause
+preamble (`VHDL.py`, alongside the pre-existing unconditional `use std.textio.all;`) — added
+unconditionally rather than gated, since every entity file already unconditionally includes
+`use std.textio.all;` for the (currently unrelated) `write(output, ...)` machinery, so this
+follows the same precedent.
+
+### Native simulation: `SimFinish` and the CLI run loop
+
+`sim_assert`'s native-sim body is a plain Python `assert cond, msg`; `sim_finish`'s is `raise
+SimFinish()`, a dedicated exception (`pypeline.py`) rather than `sys.exit` — this lets test code
+catch it and lets the CLI run loop distinguish "simulation asked to stop" from a crash.
+`src/pypeline_sim.py`'s `run_sim()` wraps its per-cycle `_run_clock_cycle(...)` call in `try:
+... except pypeline.SimFinish:`, breaking out of the `for cycle in range(num_cycles):` loop with
+an early-stop message instead of propagating the exception as an error.
 
 ---
 

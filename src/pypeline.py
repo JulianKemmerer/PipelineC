@@ -2380,6 +2380,52 @@ sim_print._is_sim_print = True
 
 
 # ─────────────────────────────────────────────
+# sim_assert -- simulation-only condition check
+# (intercepted by PY_TO_LOGIC elaborator; also a real callable for simulation)
+# ─────────────────────────────────────────────
+
+
+def sim_assert(cond, msg=None):
+    """Simulation-only assertion: checks `cond` during simulation (once per cycle, using
+    converged wire values -- same semantics as sim_print) and elaborates to a real VHDL
+    `assert ... report ... severity failure;` statement in hardware, which halts GHDL
+    simulation immediately on failure.
+
+    `msg` is optional, an f-string or plain string literal like sim_print's argument.
+    """
+    if _sim_converging:
+        return SimVal(0)
+    assert cond, msg if msg is not None else "sim_assert failed"
+    return SimVal(0)
+
+
+sim_assert._is_sim_assert = True
+
+
+# ─────────────────────────────────────────────
+# sim_finish -- simulation-only stop signal
+# (intercepted by PY_TO_LOGIC elaborator; also a real callable for simulation)
+# ─────────────────────────────────────────────
+
+
+class SimFinish(Exception):
+    """Raised by sim_finish() to signal that simulation should stop now."""
+
+
+def sim_finish():
+    """Simulation-only stop signal: raises SimFinish during simulation (caught by the
+    native-sim run loop to end the run cleanly) and elaborates to a real VHDL
+    `std.env.finish;` statement in hardware, halting GHDL simulation.
+    """
+    if _sim_converging:
+        return SimVal(0)
+    raise SimFinish()
+
+
+sim_finish._is_sim_finish = True
+
+
+# ─────────────────────────────────────────────
 # Sim infrastructure: _sim_cast, _sim_type_wrap / hw_func, sim_call
 # ─────────────────────────────────────────────
 

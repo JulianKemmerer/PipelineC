@@ -2176,7 +2176,7 @@ def C_BUILT_IN_FUNC_IS_RAW_HDL(
     if (
         logic_func_name == C_TO_LOGIC.VHDL_FUNC_NAME
         or SW_LIB.IS_BIT_MANIP_NAME(logic_func_name)
-        or logic_func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME)
+        or C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(logic_func_name)
         or logic_func_name.startswith(C_TO_LOGIC.ACCUM_FUNC_NAME)
         or logic_func_name.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX + "_")
         or (
@@ -4585,7 +4585,7 @@ def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
     i_need_clk = (
         LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
         or Logic.vhdl_module_text is not None
-        or Logic.func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME)
+        or C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(Logic.func_name)
     )
     needs_clk = i_need_clk
     # No need ot check subs if self needs already
@@ -4671,6 +4671,91 @@ if """
   --report """
         + vhdl_format_string
         + """;
+end if;\n"""
+    )
+    text += "end if;\n"
+    text += "end process;\n"
+    text += "-- synthesis translate_on\n"
+    return text
+
+
+def GET_SIM_ASSERT_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
+    msg_format_string = Logic.sim_assert_msg
+    cond_port = WIRE_TO_VHDL_NAME("cond", Logic)
+
+    text = ""
+    if msg_format_string is not None:
+        formats = C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS(msg_format_string)
+        vhdl_msg_string = C_CONST_STR_TO_VHDL_CONST_STR(msg_format_string)
+        for i, f in enumerate(formats):
+            vhdl_arg_str = (
+                '"&'
+                + f.vhdl_to_string_toks[0]
+                + "arg"
+                + str(i)
+                + f.vhdl_to_string_toks[1]
+                + '&"'
+            )
+            vhdl_msg_string = vhdl_msg_string.replace(f.specifier, vhdl_arg_str, 1)
+        # _build_sim_fmt_string always auto-appends a trailing newline (like sim_print),
+        # which C_CONST_STR_TO_VHDL_CONST_STR renders as a trailing `&LF&""` concatenation
+        # -- strip it since an `assert ... report` message shouldn't end with one.
+        if vhdl_msg_string.endswith('&LF&""'):
+            vhdl_msg_string = vhdl_msg_string[: -len('&LF&""')]
+
+        text += """
+  function to_string(bytes : byte_array_t) return string is
+    variable rv : string(1 to bytes'length) := (others => NUL);
+  begin
+    for i in 0 to bytes'length -1 loop
+      rv(i+1) := character'val(to_integer(bytes(i)));
+    end loop;
+    return rv;
+  end function;
+  """
+    else:
+        vhdl_msg_string = '"sim_assert failed"'
+
+    text += "\nbegin\n"
+    # Clocked process, fires once per enabled clock cycle (matches native sim's
+    # sim_assert semantics) -- see GET_PRINTF_MODULE_TEXT for why this must be a
+    # plain process(clk), not a postponed process.
+    text += "-- synthesis translate_off\n"
+    text += "process(clk) is \nbegin\n"
+    text += "if rising_edge(clk) then\n"
+    text += (
+        """
+if """
+        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+        + """(0) = '1' then
+  assert """
+        + cond_port
+        + """(0) = '1' report """
+        + vhdl_msg_string
+        + """ severity failure;
+end if;\n"""
+    )
+    text += "end if;\n"
+    text += "end process;\n"
+    text += "-- synthesis translate_on\n"
+    return text
+
+
+def GET_SIM_FINISH_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
+    text = ""
+    text += "\nbegin\n"
+    # Clocked process, fires once per enabled clock cycle (matches native sim's
+    # sim_finish semantics) -- see GET_PRINTF_MODULE_TEXT for why this must be a
+    # plain process(clk), not a postponed process.
+    text += "-- synthesis translate_off\n"
+    text += "process(clk) is \nbegin\n"
+    text += "if rising_edge(clk) then\n"
+    text += (
+        """
+if """
+        + C_TO_LOGIC.CLOCK_ENABLE_NAME
+        + """(0) = '1' then
+  std.env.finish;
 end if;\n"""
     )
     text += "end if;\n"
@@ -5134,6 +5219,7 @@ def WRITE_LOGIC_ENTITY(
     rv += "--   Output regs?: " + str(timing_params._has_output_regs) + "\n"
     rv += "library std;\n"
     rv += "use std.textio.all;\n"
+    rv += "use std.env.all;\n"
     rv += "library ieee;" + "\n"
     rv += "use ieee.std_logic_1164.all;" + "\n"
     rv += "use ieee.numeric_std.all;" + "\n"
@@ -5252,6 +5338,14 @@ def WRITE_LOGIC_ENTITY(
     # Printf another special case woo?
     elif Logic.func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME):
         rv += GET_PRINTF_MODULE_TEXT(
+            inst_name, Logic, parser_state, TimingParamsLookupTable
+        )
+    elif Logic.func_name.startswith(C_TO_LOGIC.SIM_ASSERT_FUNC_NAME):
+        rv += GET_SIM_ASSERT_MODULE_TEXT(
+            inst_name, Logic, parser_state, TimingParamsLookupTable
+        )
+    elif Logic.func_name.startswith(C_TO_LOGIC.SIM_FINISH_FUNC_NAME):
+        rv += GET_SIM_FINISH_MODULE_TEXT(
             inst_name, Logic, parser_state, TimingParamsLookupTable
         )
     else:

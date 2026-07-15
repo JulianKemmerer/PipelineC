@@ -32,6 +32,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "enum_test.py",
     "char_array_test.py",
     "sim_print_test.py",
+    "sim_assert_finish_test.py",
     "type_bytes_test.py",
     "sim_model_test.py",
     "array_2d_order_test.py",

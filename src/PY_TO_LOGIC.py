@@ -2011,6 +2011,10 @@ class FuncElaborator:
                 pass  # @sim_input call (direct-write or discarded-return form) — sim-only, skip in hardware
             elif getattr(callee, "_is_sim_print", False):
                 self._elab_sim_print_stmt(stmt)
+            elif getattr(callee, "_is_sim_assert", False):
+                self._elab_sim_assert_stmt(stmt)
+            elif getattr(callee, "_is_sim_finish", False):
+                self._elab_sim_finish_stmt(stmt)
             elif (
                 isinstance(stmt.value.func, ast.Name)
                 and stmt.value.func.id == _VHDL_TEXT_FUNC_NAME
@@ -2091,15 +2095,46 @@ class FuncElaborator:
                 f'string literal, e.g. sim_print(f"n={{n}} hex={{hex(n)}}") '
                 f"(at {_loc_str(self.src_file, stmt)})"
             )
-        arg = call.args[0]
+        fmt_c_quoted, input_ports = self._build_sim_fmt_string(
+            call.args[0], stmt, "sim_print"
+        )
+        func_base_name = (
+            f"{C_TO_LOGIC.PRINTF_FUNC_NAME}_{_loc_str(self.src_file, stmt)}"
+        )
+        inst = self._inst(func_base_name, call)
+        _add_submodule_instance(
+            self.logic,
+            inst,
+            func_base_name,
+            input_ports,
+            ast_node=call,
+            src_file=self.src_file,
+        )
+        self.logic.submodule_instance_to_printf_format_string[inst] = fmt_c_quoted
+        # Manual CE wiring, mirroring C_TO_LOGIC.C_AST_PRINTF_FUNC_CALL_TO_LOGIC's own
+        # explicit CE connection -- LOGIC_NEEDS_CLOCK_ENABLE (the generic path used by
+        # _elab_call) only fires for a callee already resolved in FuncLogicLookupTable,
+        # never true for this built-in at its own call-site elaboration time. Kept as a
+        # separate wire connect (not part of input_ports/submodule_instance_to_input_port_names)
+        # to match C's own input_port_names, which also excludes CE.
+        ce_port_wire = _port_wire(inst, C_TO_LOGIC.CLOCK_ENABLE_NAME)
+        _add_wire(self.logic, ce_port_wire, C_TO_LOGIC.BOOL_C_TYPE)
+        _connect(self.logic, self.logic.clock_enable_wires[-1], ce_port_wire)
+
+    def _build_sim_fmt_string(self, arg, stmt, builtin_name):
+        """Shared f-string/interpolation walker used by sim_print and sim_assert's
+        optional message argument. Returns (fmt_c_quoted, input_ports) -- fmt_c_quoted
+        has a trailing "\\n" auto-appended (matching print()), and input_ports is a list
+        of (port_name, wire, ctype) tuples ready for _add_submodule_instance.
+        """
         if isinstance(arg, ast.Constant) and isinstance(arg.value, str):
             parts = [arg]
         elif isinstance(arg, ast.JoinedStr):
             parts = arg.values
         else:
             raise ElaborationError(
-                f"sim_print(...) argument must be an f-string or plain string literal "
-                f"(at {_loc_str(self.src_file, stmt)})"
+                f"{builtin_name}(...) argument must be an f-string or plain string "
+                f"literal (at {_loc_str(self.src_file, stmt)})"
             )
 
         fmt_pieces = []
@@ -2110,19 +2145,19 @@ class FuncElaborator:
                 continue
             if not isinstance(part, ast.FormattedValue):
                 raise ElaborationError(
-                    f"sim_print: unsupported f-string element "
+                    f"{builtin_name}: unsupported f-string element "
                     f"(at {_loc_str(self.src_file, stmt)})"
                 )
             if part.conversion not in (-1, None):
                 raise ElaborationError(
-                    f"sim_print: !r/!s/!a conversions are not supported "
+                    f"{builtin_name}: !r/!s/!a conversions are not supported "
                     f"(at {_loc_str(self.src_file, stmt)})"
                 )
             is_hex = False
             if part.format_spec is not None:
                 if not self._is_hex_format_spec(part.format_spec):
                     raise ElaborationError(
-                        f"sim_print: only plain {{expr}} and hex {{expr:x}}/{{expr:X}} "
+                        f"{builtin_name}: only plain {{expr}} and hex {{expr:x}}/{{expr:X}} "
                         f"interpolation are supported (at {_loc_str(self.src_file, stmt)})"
                     )
                 is_hex = True
@@ -2137,9 +2172,9 @@ class FuncElaborator:
                 wrapper_name = value_expr.func.id
             if wrapper_name == "char_array_to_str":
                 raise ElaborationError(
-                    f"sim_print: char_array_to_str(...) no longer exists -- a char "
+                    f"{builtin_name}: char_array_to_str(...) no longer exists -- a char "
                     f"array now formats as %s automatically, just use the bare "
-                    f'value directly, e.g. sim_print(f"{{name}}") '
+                    f'value directly, e.g. {builtin_name}(f"{{name}}") '
                     f"(at {_loc_str(self.src_file, stmt)})"
                 )
             if wrapper_name == "hex":
@@ -2164,7 +2199,7 @@ class FuncElaborator:
             elif wrapper_name == "chr":
                 spec = "%c"
             else:
-                spec = self._sim_print_infer_spec(arg_typ, stmt)
+                spec = self._sim_print_infer_spec(arg_typ, stmt, builtin_name)
 
             input_ports.append((f"arg{len(input_ports)}", arg_wire, arg_typ))
             fmt_pieces.append(spec)
@@ -2172,28 +2207,7 @@ class FuncElaborator:
         fmt_c_quoted = _py_str_to_c_quoted(
             "".join(fmt_pieces) + "\n"
         )  # auto-appended, like print()
-        func_base_name = (
-            f"{C_TO_LOGIC.PRINTF_FUNC_NAME}_{_loc_str(self.src_file, stmt)}"
-        )
-        inst = self._inst(func_base_name, call)
-        _add_submodule_instance(
-            self.logic,
-            inst,
-            func_base_name,
-            input_ports,
-            ast_node=call,
-            src_file=self.src_file,
-        )
-        self.logic.submodule_instance_to_printf_format_string[inst] = fmt_c_quoted
-        # Manual CE wiring, mirroring C_TO_LOGIC.C_AST_PRINTF_FUNC_CALL_TO_LOGIC's own
-        # explicit CE connection -- LOGIC_NEEDS_CLOCK_ENABLE (the generic path used by
-        # _elab_call) only fires for a callee already resolved in FuncLogicLookupTable,
-        # never true for this built-in at its own call-site elaboration time. Kept as a
-        # separate wire connect (not part of input_ports/submodule_instance_to_input_port_names)
-        # to match C's own input_port_names, which also excludes CE.
-        ce_port_wire = _port_wire(inst, C_TO_LOGIC.CLOCK_ENABLE_NAME)
-        _add_wire(self.logic, ce_port_wire, C_TO_LOGIC.BOOL_C_TYPE)
-        _connect(self.logic, self.logic.clock_enable_wires[-1], ce_port_wire)
+        return fmt_c_quoted, input_ports
 
     def _is_hex_format_spec(self, format_spec_node):
         # format_spec is itself a JoinedStr; only a bare static "x"/"X" is recognized.
@@ -2205,7 +2219,7 @@ class FuncElaborator:
         v = format_spec_node.values[0]
         return isinstance(v, ast.Constant) and v.value in ("x", "X")
 
-    def _sim_print_infer_spec(self, ctype, stmt):
+    def _sim_print_infer_spec(self, ctype, stmt, builtin_name="sim_print"):
         m = _INT_CTYPE_RE.match(ctype) if isinstance(ctype, str) else None
         if m:
             return "%u" if m.group(1) == "u" else "%d"
@@ -2217,19 +2231,110 @@ class FuncElaborator:
         is_uint8_array = _is_array(ctype) and ctype[: ctype.index("[")] == "uint8_t"
         if is_char_scalar:
             raise ElaborationError(
-                f"sim_print: bare {{expr}} for a single char value would print "
+                f"{builtin_name}: bare {{expr}} for a single char value would print "
                 f"differently in simulation than in hardware -- wrap it explicitly: "
                 f"chr(expr) (at {_loc_str(self.src_file, stmt)})"
             )
         if is_uint8_array:
             raise ElaborationError(
-                f"sim_print: bare {{expr}} for a uint8_t array has no string "
+                f"{builtin_name}: bare {{expr}} for a uint8_t array has no string "
                 f"formatting support (at {_loc_str(self.src_file, stmt)})"
             )
         raise ElaborationError(
-            f"sim_print: unsupported type {ctype!r} for interpolation "
+            f"{builtin_name}: unsupported type {ctype!r} for interpolation "
             f"(at {_loc_str(self.src_file, stmt)})"
         )
+
+    def _elab_sim_assert_stmt(self, stmt):
+        """sim_assert(cond, msg=None) — simulation-only condition check. `cond` is a
+        required hardware expression (elaborated and, if not already uint1_t, compared
+        != 0 the same way `if cond:` does — see _elab_if). `msg` is optional, an
+        f-string or plain string literal like sim_print's argument, reusing the same
+        f-string walker (_build_sim_fmt_string). Elaborates to a printf-family submodule
+        instance (see C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME) whose VHDL body is a clocked
+        `assert ... report ... severity failure;` (VHDL.GET_SIM_ASSERT_MODULE_TEXT).
+        """
+        call = stmt.value
+        if len(call.args) not in (1, 2) or call.keywords:
+            raise ElaborationError(
+                f"sim_assert(cond, msg=None) takes one or two positional arguments "
+                f"(at {_loc_str(self.src_file, stmt)})"
+            )
+        cond_wire, cond_type = self._elab_expr(call.args[0])
+        if cond_type != C_TO_LOGIC.BOOL_C_TYPE:
+            zero_wire, zero_type = self._elab_python_value(0, stmt)
+            if _ctype_is_int(cond_type) and _ctype_is_int(zero_type):
+                eff_l, eff_r, _ = _arith_promote(cond_type, zero_type)
+            else:
+                eff_l, eff_r = cond_type, zero_type
+            neq_func = _bin_func_name(C_TO_LOGIC.BIN_OP_NEQ_NAME, eff_l, eff_r)
+            neq_inst = self._inst(
+                f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.BIN_OP_NEQ_NAME}_sim_assert_cond",
+                stmt,
+            )
+            _add_submodule_instance(
+                self.logic,
+                neq_inst,
+                neq_func,
+                [("a", cond_wire, eff_l), ("b", zero_wire, eff_r)],
+                ast_node=stmt,
+                src_file=self.src_file,
+            )
+            cond_wire = _port_wire(neq_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            cond_type = C_TO_LOGIC.BOOL_C_TYPE
+
+        input_ports = [("cond", cond_wire, cond_type)]
+        msg_c_quoted = None
+        if len(call.args) == 2:
+            msg_c_quoted, msg_input_ports = self._build_sim_fmt_string(
+                call.args[1], stmt, "sim_assert"
+            )
+            input_ports += msg_input_ports
+
+        func_base_name = (
+            f"{C_TO_LOGIC.SIM_ASSERT_FUNC_NAME}_{_loc_str(self.src_file, stmt)}"
+        )
+        inst = self._inst(func_base_name, call)
+        _add_submodule_instance(
+            self.logic,
+            inst,
+            func_base_name,
+            input_ports,
+            ast_node=call,
+            src_file=self.src_file,
+        )
+        self.logic.submodule_instance_to_sim_assert_msg[inst] = msg_c_quoted
+        # Manual CE wiring -- see _elab_sim_print_stmt for why this is needed.
+        ce_port_wire = _port_wire(inst, C_TO_LOGIC.CLOCK_ENABLE_NAME)
+        _add_wire(self.logic, ce_port_wire, C_TO_LOGIC.BOOL_C_TYPE)
+        _connect(self.logic, self.logic.clock_enable_wires[-1], ce_port_wire)
+
+    def _elab_sim_finish_stmt(self, stmt):
+        """sim_finish() — simulation-only stop signal, no arguments. Elaborates to a
+        printf-family submodule instance whose VHDL body is a clocked
+        `std.env.finish;` (VHDL.GET_SIM_FINISH_MODULE_TEXT).
+        """
+        call = stmt.value
+        if len(call.args) != 0 or call.keywords:
+            raise ElaborationError(
+                f"sim_finish() takes no arguments (at {_loc_str(self.src_file, stmt)})"
+            )
+        func_base_name = (
+            f"{C_TO_LOGIC.SIM_FINISH_FUNC_NAME}_{_loc_str(self.src_file, stmt)}"
+        )
+        inst = self._inst(func_base_name, call)
+        _add_submodule_instance(
+            self.logic,
+            inst,
+            func_base_name,
+            [],
+            ast_node=call,
+            src_file=self.src_file,
+        )
+        # Manual CE wiring -- see _elab_sim_print_stmt for why this is needed.
+        ce_port_wire = _port_wire(inst, C_TO_LOGIC.CLOCK_ENABLE_NAME)
+        _add_wire(self.logic, ce_port_wire, C_TO_LOGIC.BOOL_C_TYPE)
+        _connect(self.logic, self.logic.clock_enable_wires[-1], ce_port_wire)
 
     def _elab_assign(self, stmt):
         target = stmt.targets[0]
