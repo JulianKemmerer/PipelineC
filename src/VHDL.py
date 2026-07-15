@@ -4585,6 +4585,7 @@ def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
     i_need_clk = (
         LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
         or Logic.vhdl_module_text is not None
+        or Logic.func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME)
     )
     needs_clk = i_need_clk
     # No need ot check subs if self needs already
@@ -4652,15 +4653,13 @@ def GET_PRINTF_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTab
   """
 
     text += "\nbegin\n"
-    # Process for sensitive to each arg
+    # Clocked process, fires once per enabled clock cycle regardless of whether
+    # the arg values changed since last cycle (matches native sim's semantics:
+    # a sim_print/printf statement prints every time it executes while enabled,
+    # not only when its printed values differ from the previous cycle).
     text += "-- synthesis translate_off\n"
-    text += "-- Postponed so only prints once?\n"
-    text += "postponed process(CLOCK_ENABLE,\n"
-    # List all inputs
-    for input_port in Logic.inputs:
-        text += " " + input_port + ",\n"
-    text = text.strip("\n").strip(",")
-    text += ") is \nbegin\n"
+    text += "process(clk) is \nbegin\n"
+    text += "if rising_edge(clk) then\n"
     text += (
         """
 if """
@@ -4674,7 +4673,8 @@ if """
         + """;
 end if;\n"""
     )
-    text += "end postponed process;\n"
+    text += "end if;\n"
+    text += "end process;\n"
     text += "-- synthesis translate_on\n"
     return text
 

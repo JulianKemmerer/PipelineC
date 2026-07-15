@@ -45,6 +45,25 @@ def print_name(name: char_t[8]) -> uint8_t:
     return strlen(name)
 
 
+def print_a():
+    sim_print("Prints same thing every cycle")
+
+
+def print_b(i: uint8_t):
+    sim_print(f"Prints different thing every cycle {i}")
+
+
+@MAIN
+def main_a_b():
+    i: Reg[uint8_t]
+    if i < 10:
+        print_a()
+        print_b(i)
+        i += 1
+    else:
+        i = 0
+
+
 # ── simulation tests ─────────────────────────────────────────────────────────
 
 

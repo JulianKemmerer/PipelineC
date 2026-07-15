@@ -3008,6 +3008,41 @@ No format-spec or wrapper function maps to a float specifier — `sim_print` has
 `%f`. Pypeline has no native Python-float representation for its bit-packed float type
 (`make_float_t`), so there's no natural wrapper function (analogous to `hex`/`chr`) to add yet.
 
+### VHDL console output is clocked, not value-change-triggered
+
+`GET_PRINTF_MODULE_TEXT` (`VHDL.py`) used to emit a VHDL `postponed process(CLOCK_ENABLE,
+arg0, arg1, ...)` for a printf/`sim_print` submodule's console `write(output, ...)` statement.
+A `postponed process` only re-executes at the end of a delta-cycle when something in its
+sensitivity list actually transitions — so if `CLOCK_ENABLE` stayed `'1'` across consecutive
+clock cycles but none of the printed argument signals changed value, the process never got a
+new event and silently skipped printing. This didn't match native simulation, which prints
+every time the `sim_print`/`printf` statement executes while enabled, regardless of whether the
+printed values repeat from the previous cycle (like a real register clocking every enabled
+cycle, not just on value change).
+
+The fix replaces the `postponed process` with an ordinary clocked process gated only by
+`rising_edge(clk)` and `CLOCK_ENABLE(0) = '1'`, with no argument signals in its sensitivity
+list, so it fires once per enabled clock cycle unconditionally:
+
+```vhdl
+process(clk) is
+begin
+  if rising_edge(clk) then
+    if CLOCK_ENABLE(0) = '1' then
+      write(output, ...);
+    end if;
+  end if;
+end process;
+```
+
+Since printf submodules previously had no timing latency or state regs, `LOGIC_NEEDS_CLOCK`
+(`VHDL.py`) never declared a `clk` port for them (`CLOCK_ENABLE` was already available
+independently, via `C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE`'s existing
+`func_name.startswith(PRINTF_FUNC_NAME)` special case). `LOGIC_NEEDS_CLOCK` gained a matching
+special case — `or Logic.func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME)` — so printf
+submodules now get a `clk` port declared and wired via the same generic
+port-declaration/instantiation machinery every other clocked module already uses.
+
 ---
 
 ## Custom Operator Registration
