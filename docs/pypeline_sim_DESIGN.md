@@ -1388,6 +1388,37 @@ Correctness under both simulation layers follows directly from the existing
 `sim_call()` (`_sim_converging` stays `False` there), fires only in the final pass under
 `pypeline_sim.py`.
 
+### `sim_print(..., debug=True)` — tagged prints for `pypeline_sim_debug.py`
+
+`sim_print`'s optional `debug` keyword (default `False`) is not a distinct dual-mode builtin
+mechanism of its own — when `debug=True`, it prefixes the message with a
+`[SIM DEBUG PRINT: <file> line <N>]` tag (using the caller's frame, `sys._getframe(1)`) before
+falling through to the same `print(s)`:
+
+```python
+def sim_print(s, debug=False):
+    if _sim_converging:
+        return SimVal(0)
+    if debug:
+        frame = sys._getframe(1)
+        tag = f"[SIM DEBUG PRINT: {os.path.basename(frame.f_code.co_filename)} line {frame.f_lineno}]"
+        s = f"{tag}: {s}"
+    print(s)
+    return SimVal(0)
+
+sim_print._is_sim_print = True
+```
+
+It inherits `sim_print`'s own `_sim_converging` gating and hex/format behavior for free. The
+elaboration side (`PY_TO_LOGIC_DESIGN.md`'s "`sim_print(..., debug=True)`" section) builds the
+*same* tag text from `stmt.lineno`/`self.src_file` at elaboration time, rather than from a
+runtime frame — both sides read line/file off the same source, so the tag is guaranteed
+byte-identical between native and VHDL sim. That byte-identical tagging (plus `sim_print`'s
+pre-existing format-string-sharing between native and VHDL rendering) is what lets
+`pypeline_sim_debug.py` (`src/pypeline_sim_debug.py`) diff `debug=True` lines between the two
+sims as plain strings, with no per-value normalization needed. See `docs/pypeline_guide.md`'s
+`sim_print(..., debug=True)` section for usage.
+
 ### `sim_assert` / `sim_finish` — simulation control builtins
 
 Two more dual-mode builtins alongside `sim_print`, same `_sim_converging`-gated shape and same

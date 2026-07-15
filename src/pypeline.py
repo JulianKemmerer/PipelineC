@@ -2388,13 +2388,13 @@ def hex(value):
 # ─────────────────────────────────────────────
 
 
-def sim_print(s):
+def sim_print(s, debug=False):
     """printf-style console output: prints during simulation (once per cycle, using
     converged wire values -- same @sim_output-style semantics) and elaborates to a real
     VHDL write(output, ...) statement in hardware.
 
-    Takes exactly one argument, matching how it's normally written -- an f-string or a
-    plain string literal, e.g.::
+    Takes exactly one positional argument, matching how it's normally written -- an
+    f-string or a plain string literal, e.g.::
 
         sim_print(f"n={n} hex={hex(n)} ch={chr(n)}")
         sim_print("starting up")
@@ -2405,9 +2405,25 @@ def sim_print(s):
     format string from the f-string's AST (see PY_TO_LOGIC.py's _elab_sim_print_stmt).
     Since Python evaluates the f-string before this function is ever called, the
     simulation side is just a plain print() of the already-formatted text.
+
+    debug=True (must be a compile-time-constant literal True/False) prefixes the message
+    with a "[SIM DEBUG PRINT: <file> line <N>]" tag identifying the call site, for use with
+    pypeline_sim_debug.py (a tool that diffs sim_print(debug=True) output cycle-by-cycle
+    between native and VHDL sim -- ordinary sim_print(...) output, debug=False, is not
+    compared by that tool). The tag is deliberately just file+line, no type info: the
+    format string is already shared between native and VHDL rendering (see hex() above and
+    PY_TO_LOGIC.py's _build_sim_fmt_string), so the two sims' output for identical source is
+    guaranteed to render identically -- no per-type normalization is needed downstream.
     """
     if _sim_converging:
         return SimVal(0)
+    if debug:
+        import os as _os
+        import sys as _sys2
+
+        frame = _sys2._getframe(1)
+        tag = f"[SIM DEBUG PRINT: {_os.path.basename(frame.f_code.co_filename)} line {frame.f_lineno}]"
+        s = f"{tag}: {s}"
     print(s)
     return SimVal(0)
 

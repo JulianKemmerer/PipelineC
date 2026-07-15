@@ -457,6 +457,47 @@ cleanly) and elaborates to VHDL's `std.env.finish;`, halting a real GHDL simulat
 See `docs/pypeline_sim_DESIGN.md` and `docs/PY_TO_LOGIC_DESIGN.md` for the simulation and
 elaboration mechanics.
 
+### `sim_print(..., debug=True)` — tagged prints for `pypeline_sim_debug.py`
+
+`sim_print(s, debug=True)` behaves identically to plain `sim_print(s)`, except the printed
+message is prefixed with a `[SIM DEBUG PRINT: <file> line <N>]` tag identifying the call site.
+`debug` must be a compile-time-constant `True`/`False` literal:
+
+```python
+from pypeline import sim_print, hex
+
+n: Reg[uint8_t]
+sim_print(f"n={n} hex={hex(n)}", debug=True)
+# prints: [SIM DEBUG PRINT: my_design.py line 42]: n=3 hex=03
+```
+
+Use `debug=True` for prints you want compared cycle-by-cycle between a native Python sim and a
+VHDL (cocotb+GHDL) sim by the `pypeline_sim_debug.py` tool — see below. Plain `sim_print(...)`
+(`debug=False`, the default) output is deliberately ignored by that tool: not every console line
+is useful for cycle-accuracy debugging, and tagging only the ones that are keeps the diff signal
+clean. `hex(...)`/`chr(...)`/plain `{expr}` interpolation rules are unaffected by `debug`; using
+`from pypeline import hex` (not Python's builtin) matters here more than usual, since only
+Pypeline's `hex()` is guaranteed to render identically in both native and VHDL sim (see its
+docstring in `pypeline.py`).
+
+#### `pypeline_sim_debug.py` — native-vs-VHDL cycle diff tool
+
+`src/pypeline_sim_debug.py` runs a testbench both ways — native sim, and `--cocotb --ghdl` VHDL
+sim — and diffs their `sim_print(..., debug=True)` output cycle by cycle. It exists to localize
+*cycle-timing* mismatches (data correct, but arriving on the wrong clock cycle) that ordinary
+`sim_assert`s don't catch. Invoke it exactly like `pipelinec ... --sim ...`; it adds `--cocotb
+--ghdl` itself for the VHDL run:
+
+```
+pypeline_sim_debug.py ./src/my_design_tb.py --sim --comb --run all
+```
+
+It reports the first cycle where the two runs' (order-independent) sets of debug-tagged lines
+differ, plus the total count of mismatching cycles/lines, and exits non-zero on any mismatch. To
+narrow down *where* in a design a cycle-timing bug originates, add `debug=True` at successive
+points along the suspect data path and re-run — the tool reports the first point at which native
+and VHDL disagree.
+
 ### `@sim_model` — Python simulation models for hardware functions
 
 `sim_model(target)` attaches a Python model to any `@hw_func`/`@MAIN` function: whenever

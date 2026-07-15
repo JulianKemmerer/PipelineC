@@ -82,6 +82,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
 - [Type-to-Bytes Conversion (`byte_length`, `make_type_to_bytes`, `make_type_from_bytes`)](#type-to-bytes-conversion-byte_length-make_type_to_bytes-make_type_from_bytes)
 - [Raw VHDL Passthrough (`vhdl(...)`)](#raw-vhdl-passthrough-vhdl)
 - [`sim_print` — printf-style Console Output](#sim_print--printf-style-console-output)
+- [`sim_print(..., debug=True)` — tagged prints for `pypeline_sim_debug.py`](#sim_print-debugtrue--tagged-prints-for-pypeline_sim_debugpy)
 - [`sim_assert` / `sim_finish` — simulation control builtins](#sim_assert--sim_finish--simulation-control-builtins)
 - [Custom Operator Registration](#custom-operator-registration)
 
@@ -3047,6 +3048,32 @@ port-declaration/instantiation machinery every other clocked module already uses
 (Note: `LOGIC_NEEDS_CLOCK`'s printf-only check above has since been generalized to
 `C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(Logic.func_name)`, covering `sim_assert`/`sim_finish` too —
 see the next section.)
+
+---
+
+## `sim_print(..., debug=True)` — tagged prints for `pypeline_sim_debug.py`
+
+`sim_print`'s optional `debug` keyword reuses `sim_print`'s elaboration machinery entirely —
+same one-positional-argument f-string/literal constraint, same
+`_build_sim_fmt_string`/`_sim_print_infer_spec` walker, same submodule-instance + CE-wiring
+shape. `_elab_sim_print_stmt` first resolves `debug` from the call's keywords (via
+`_try_eval_const`, raising `ElaborationError` unless it's a compile-time-constant `True`/`False`
+literal); when `True`, it splices a synthetic `ast.Constant` tag node —
+`"[SIM DEBUG PRINT: <file> line <N>]: "`, built from `os.path.basename(self.src_file)` and
+`stmt.lineno` — as the first element of the message's `JoinedStr.values`, so the tag participates
+in the same f-string walk as the rest of the message (and thus renders through the same shared
+printf backend as everything else). `debug=False` (the default) is a no-op at this stage.
+
+The `debug` keyword is stripped before the "exactly one argument" check that already existed for
+`sim_print`'s message — any other keyword, or a non-constant `debug` value, is still a hard
+`ElaborationError`, same as before this keyword existed.
+
+The tag must render **byte-for-byte identically** between native sim (built from
+`sys._getframe(1)` at runtime, `pypeline.py`) and VHDL sim (built from `stmt.lineno`/
+`self.src_file` at elaboration time, here) — both read line/file off the same source, so this
+holds by construction. That byte-identical tagging is the basis for `pypeline_sim_debug.py`'s
+plain-string diff between the two sims' console output (see `pypeline_sim_DESIGN.md`'s
+"`sim_print(..., debug=True)`" section and `docs/pypeline_guide.md`).
 
 ---
 

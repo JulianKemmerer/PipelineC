@@ -2068,13 +2068,14 @@ class FuncElaborator:
         self.logic.uses_nonvolatile_state_regs = True
 
     def _elab_sim_print_stmt(self, stmt):
-        """sim_print(...) — printf-style console output. Takes exactly one argument (an
-        f-string or plain string literal), matching ordinary Python print()-like usage —
-        there is no C-style printf(fmt, *args) form exposed to the user. This method walks
-        the argument's AST and reconstructs an internal %-style format string + typed
-        argument list, then drives the *existing*, unmodified C_TO_LOGIC/VHDL printf
-        backend (Logic.printf_format_string / submodule_instance_to_printf_format_string,
-        see C_TO_LOGIC.py) exactly as C's own printf(...) does.
+        """sim_print(s, debug=False) — printf-style console output. Takes exactly one
+        positional argument (an f-string or plain string literal), matching ordinary
+        Python print()-like usage — there is no C-style printf(fmt, *args) form exposed
+        to the user. This method walks the argument's AST and reconstructs an internal
+        %-style format string + typed argument list, then drives the *existing*,
+        unmodified C_TO_LOGIC/VHDL printf backend (Logic.printf_format_string /
+        submodule_instance_to_printf_format_string, see C_TO_LOGIC.py) exactly as C's
+        own printf(...) does.
 
         Bare {expr} interpolation is inferred for plain scalar ints (%d/%u) and for
         char_t[N] arrays specifically (%s) — Python's own str(int)/str(CharArray)
@@ -2087,17 +2088,51 @@ class FuncElaborator:
         %c-vs-%d rendering is ambiguous, and a plain list has no custom __str__, so
         Python's default formatting would print the wrong thing in simulation even
         though it would be correct in hardware.
+
+        debug=True (a compile-time-constant literal True/False keyword) prefixes the
+        rendered message with a "[SIM DEBUG PRINT: <file> line <N>]" tag identifying this
+        call site, matching the tag native sim's sim_print(debug=True) (pypeline.py)
+        builds from the caller's frame. The tag text must match byte-for-byte between
+        native and VHDL sim (both are derived from the same source file/line), which is
+        what lets pypeline_sim_debug.py diff the two sims' output as plain strings.
         """
         call = stmt.value
-        if len(call.args) != 1 or call.keywords:
+        debug = False
+        remaining_keywords = []
+        for kw in call.keywords:
+            if kw.arg == "debug":
+                debug_val = self._try_eval_const(kw.value)
+                if not isinstance(debug_val, bool):
+                    raise ElaborationError(
+                        f"sim_print(..., debug=...) must be a compile-time-constant "
+                        f"True/False literal (at {_loc_str(self.src_file, stmt)})"
+                    )
+                debug = debug_val
+            else:
+                remaining_keywords.append(kw)
+        if len(call.args) != 1 or remaining_keywords:
             raise ElaborationError(
-                f"sim_print(...) takes exactly one argument -- an f-string or plain "
-                f'string literal, e.g. sim_print(f"n={{n}} hex={{hex(n)}}") '
+                f"sim_print(...) takes exactly one positional argument -- an f-string "
+                f'or plain string literal, e.g. sim_print(f"n={{n}} hex={{hex(n)}}") '
+                f"(plus an optional debug=True/False keyword) "
                 f"(at {_loc_str(self.src_file, stmt)})"
             )
-        fmt_c_quoted, input_ports = self._build_sim_fmt_string(
-            call.args[0], stmt, "sim_print"
-        )
+
+        arg = call.args[0]
+        if debug:
+            tag = (
+                f"[SIM DEBUG PRINT: {os.path.basename(self.src_file)} "
+                f"line {stmt.lineno}]: "
+            )
+            tag_node = ast.Constant(value=tag)
+            ast.copy_location(tag_node, arg)
+            if isinstance(arg, ast.JoinedStr):
+                arg = ast.JoinedStr(values=[tag_node] + arg.values)
+            else:
+                arg = ast.JoinedStr(values=[tag_node, arg])
+            ast.copy_location(arg, call.args[0])
+
+        fmt_c_quoted, input_ports = self._build_sim_fmt_string(arg, stmt, "sim_print")
         func_base_name = (
             f"{C_TO_LOGIC.PRINTF_FUNC_NAME}_{_loc_str(self.src_file, stmt)}"
         )
