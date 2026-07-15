@@ -356,6 +356,49 @@ MUX_uint32_t
 MUX_point2d_t          ← compound-type MUX is valid
 ```
 
+### Bare (Void) Call Statements
+
+`_elab_stmt`'s `ast.Expr(ast.Call(...))` branch used to only recognize a fixed whitelist of
+special markers (`_is_sim_output`, `_is_sim_input`, `_is_sim_print`, bare-name `vhdl`) and
+unconditionally raised `NotImplementedError` for anything else — there was no fallback that
+elaborated a bare call to an *ordinary* Pypeline hardware function:
+
+```python
+foo()          # bare statement, result discarded -- used to always raise NotImplementedError
+x = foo()      # assignment form always worked fine, via _elab_call
+```
+
+The fallback now calls `self._elab_call(stmt.value)` and discards the result:
+
+```python
+else:
+    self._elab_call(stmt.value)
+```
+
+This covers both a genuinely `void` callee (no `->` annotation) *and* a non-void function
+called purely for its side effects — ordinary, legal Python either way. If the callee can't be
+resolved at all, `_elab_call` itself still raises `NotImplementedError` ("Call to unknown
+function ..."), so invalid code is still rejected — this only removes the artificial rejection
+of an otherwise-resolvable bare call.
+
+`_elab_call` itself needed a matching fix: it used to unconditionally do
+`ret_typ = callee_def.wire_to_c_type[RETURN_WIRE_NAME]`, a `KeyError` for a void callee (`_setup_outputs`
+never adds `RETURN_WIRE_NAME` to `wire_to_c_type` when a function has no `->` annotation). Now:
+
+```python
+ret_typ = callee_def.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME)
+port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME) if ret_typ is not None else None
+```
+
+`_add_submodule_instance(..., port_return, ret_typ, ...)` already tolerates
+`output_wire=None`/`output_type=None` (added for `sim_print`'s own printf submodule instance —
+see "`sim_print` — printf-style Console Output" above), so passing `None`/`None` for a void
+callee here simply skips registering a `return_output` wire, with no further changes needed.
+
+This gap was found via (but is not specific to) `sim_print`: `sim_print_test.py`'s `main_a_b`
+calls two plain helper functions, `print_a()` and `print_b(i)` — each containing a
+`sim_print(...)` call — as bare statements from inside an `if` branch.
+
 ---
 
 ## Reference Tokens — the Core Addressing System

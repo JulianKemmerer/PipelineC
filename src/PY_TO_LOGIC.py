@@ -2017,7 +2017,12 @@ class FuncElaborator:
             ):
                 self._elab_vhdl_text_stmt(stmt)
             else:
-                raise NotImplementedError(f"Unsupported statement: {ast.dump(stmt)}")
+                # Bare call statement to an ordinary Pypeline hardware function -- elaborate
+                # it as a real submodule instance and discard any return value, matching
+                # plain Python call semantics (also covers void functions, which have no
+                # return value to discard). If the callee can't be resolved, _elab_call
+                # itself raises NotImplementedError.
+                self._elab_call(stmt.value)
         else:
             raise NotImplementedError(f"Unsupported statement: {ast.dump(stmt)}")
 
@@ -3847,8 +3852,15 @@ class FuncElaborator:
                         f"Call to unknown function '{callee_name}'"
                     )
         inst = self._inst(callee_name, expr)
-        ret_typ = callee_def.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
-        port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        # A void callee (no -> annotation) has no RETURN_WIRE_NAME entry in wire_to_c_type --
+        # tolerate that instead of KeyError, so a bare `foo()` statement call to a void
+        # function can elaborate (see _elab_stmt's bare-call fallback below).
+        ret_typ = callee_def.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME)
+        port_return = (
+            _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            if ret_typ is not None
+            else None
+        )
         input_ports = []
         for arg_expr, port_name in zip(expr.args, callee_def.inputs):
             if isinstance(arg_expr, ast.Constant) and isinstance(arg_expr.value, str):
