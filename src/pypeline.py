@@ -346,11 +346,17 @@ class SimVal(int):
         return obj
 
     def __getitem__(self, key):
-        """Bit slice: x[bit] → uint1 value, x[hi:lo] → (hi-lo+1)-bit value."""
+        """Bit slice: x[bit] → uint1 value, x[hi:lo] → (hi-lo+1)-bit value.
+
+        The slice result carries a uintN_t ctype sized to the slice width (not the
+        original operand's ctype) -- this is what lets hex(x[hi:lo]) know how many
+        hex digits to zero-pad to, matching VHDL's %X rendering of the same slice.
+        """
         if isinstance(key, int):
-            return SimVal((int(self) >> key) & 1)
+            return SimVal((int(self) >> key) & 1, make_uint_t(1))
         hi, lo = key.start, key.stop  # hardware convention: x[hi:lo]
-        return SimVal((int(self) >> lo) & ((1 << (hi - lo + 1)) - 1))
+        width = hi - lo + 1
+        return SimVal((int(self) >> lo) & ((1 << width) - 1), make_uint_t(width))
 
     def _dispatch_unary(self, op_name, fallback):
         if self._ctype is not None:
@@ -2344,6 +2350,36 @@ def sim_model(target, copy_state=True):
         return model
 
     return _attach
+
+
+# ─────────────────────────────────────────────
+# hex -- printf-style hex formatting for sim_print/sim_assert f-strings
+# (intercepted structurally by PY_TO_LOGIC as a %X marker; this is the real
+# callable used when the surrounding code actually runs in native simulation)
+# ─────────────────────────────────────────────
+
+_builtin_hex = hex
+
+
+def hex(value):
+    """hex(x) for use inside sim_print/sim_assert f-strings: renders zero-padded
+    hex digits with no "0x" prefix, matching VHDL's %X rendering of the same
+    value -- e.g. hex(uint8_t value 7) -> "07", not Python's default "0x7".
+
+    Width is taken from the value's ctype (SimVal instances, including bit-slice
+    results like x[hi:lo] -- see SimVal.__getitem__) when known; otherwise (a
+    plain Python int with no ctype) falls back to Python's own hex(), matching
+    the pre-existing behavior for non-hardware values.
+    """
+    ctype = getattr(value, "_ctype", None)
+    if ctype is None:
+        return _builtin_hex(value)
+    try:
+        width = ctype.width
+    except (AttributeError, NotImplementedError):
+        return _builtin_hex(value)
+    nibbles = (width + 3) // 4
+    return f"{int(value):0{nibbles}X}"
 
 
 # ─────────────────────────────────────────────

@@ -138,6 +138,20 @@ async def my_first_test(dut):
     """Try accessing the design."""
     # Do first cycle print a little different
     # to work around 'metavalue detected' warnings from ieee libs
+    #
+    # Drive the clock to '0' before its first rising edge (with no wait/print of
+    # its own) so VHDL's rising_edge() -- which requires clk'last_value = '0',
+    # not just any transition into '1' -- actually fires on this first pulse.
+    # Without this, clk's initial value is 'U' (undefined), so the U->1
+    # transition below does NOT satisfy rising_edge(), silently skipping every
+    # clocked process for what this script labels "Clock: 0": registers only
+    # take their first real clock edge one full loop iteration later, at what
+    # gets printed as "Clock: 1" -- a one-cycle-late log label vs. native sim.
+    dut.{clock_name}.value = 0
+    # Settle the '0' with a real (if tiny) time advance -- a delta-only
+    # NextTimeStep() was not enough to get GHDL/VPI to commit the '0' before
+    # the '1' assignment below; an actual Timer wait is.
+    await Timer(0.001, units="ns")
     cycle = 0
     print("Clock: ", cycle, flush=True)
     DUMP_PIPELINEC_DEBUG(dut)
