@@ -2547,6 +2547,23 @@ SIM_TRACE_LOCATIONS: bool = False
 # Global wire simulation state.
 _sim_wire_state: dict = {}  # wire name → current value (int or struct/array instance)
 _sim_converging: bool = False  # True during delta-cycle convergence passes
+
+
+def _sim_set_converging(value: bool) -> bool:
+    """Set _sim_converging, returning its previous value -- a save/restore helper
+    used by _build_reg_sim_func's generated Feedback[T] convergence loop (which
+    execs into its own separate globals dict, so a bare assignment there would
+    not reach this module's real flag) to suppress sim_print/sim_assert/
+    sim_finish/@sim_output during the loop's non-final internal iterations,
+    matching the top-level per-cycle driver's own convergence-then-final-pass
+    behavior one level deeper.
+    """
+    global _sim_converging
+    old = _sim_converging
+    _sim_converging = value
+    return old
+
+
 _sim_reg_write_buffer = None  # None = direct commit; dict = buffered mode
 _sim_current_main = None  # MAIN fn currently executing (for reader tracking)
 _sim_wire_readers: dict = {}  # wire name → set of MAINs that have read it
@@ -3392,6 +3409,17 @@ def _build_reg_sim_func(fn):
         for name in feedback_names:
             new_stmts.append(_ast.parse(f"{name} = __fb_zero_{name}__").body[0])
         new_stmts.append(_ast.parse("__fb_iters = 0").body[0])
+        new_stmts.append(_ast.parse("__fb_final_pass = False").body[0])
+        # Suppress sim_print/sim_assert/sim_finish/@sim_output (via the shared
+        # _sim_converging flag) for every convergence iteration except the
+        # final, already-settled one -- see _sim_set_converging's docstring.
+        # __fb_entry_converging remembers what the flag actually was on entry
+        # (may already be True if this call is itself nested inside an outer
+        # suppressed pass), restored below before the real final iteration and
+        # unconditionally on exit.
+        new_stmts.append(
+            _ast.parse("__fb_entry_converging = _sim_set_converging(True)").body[0]
+        )
 
     # When feedback is present, the return statement must live OUTSIDE the
     # convergence loop so that the loop can iterate to a fixed point before
@@ -3425,6 +3453,13 @@ def _build_reg_sim_func(fn):
         # Snapshot all feedback variables before running the body this pass.
         for name in feedback_names:
             loop_body.append(_ast.parse(f"__fb_snap_{name} = {name}").body[0])
+        # Only unsuppress (restore the caller's real flag) on the extra,
+        # already-converged final iteration -- see comment at __fb_entry_converging.
+        loop_body.append(
+            _ast.parse(
+                "if __fb_final_pass: _sim_set_converging(__fb_entry_converging)"
+            ).body[0]
+        )
 
     # Original function body (both Reg[T] and Feedback[T] AnnAssigns removed;
     # trailing return extracted above when feedback is present).
@@ -3432,10 +3467,15 @@ def _build_reg_sim_func(fn):
 
     # Convergence check (feedback present) or unconditional single-pass break.
     if feedback_names:
+        # Two-phase: once the snapshot matches (fixed point reached), don't
+        # break immediately -- loop back for exactly one more, now-unsuppressed
+        # iteration (numerically a no-op, since the feedback vars are already
+        # settled) so side-effecting calls in the body see the real flag.
+        loop_body.append(_ast.parse("if __fb_final_pass: break").body[0])
         conditions = " and ".join(
             f"{name} == __fb_snap_{name}" for name in feedback_names
         )
-        loop_body.append(_ast.parse(f"if {conditions}: break").body[0])
+        loop_body.append(_ast.parse(f"if {conditions}: __fb_final_pass = True").body[0])
     else:
         loop_body.append(_ast.parse("break").body[0])
 
@@ -3445,12 +3485,19 @@ def _build_reg_sim_func(fn):
         orelse=[],
     )
 
-    # Wrap in try/finally for register commits (only when reg_names non-empty).
-    if reg_names:
-        finally_stmts = [
-            _ast.parse(f'_sim_reg_write(__ip__, "{name}", {name})').body[0]
-            for name in reg_names
-        ]
+    # Wrap in try/finally for register commits (reg_names non-empty) and/or to
+    # unconditionally restore _sim_converging (feedback_names non-empty) --
+    # e.g. on the _SIM_FEEDBACK_MAX_ITER RuntimeError path, which must not
+    # leave the flag stuck suppressed for the rest of the simulation.
+    finally_stmts = [
+        _ast.parse(f'_sim_reg_write(__ip__, "{name}", {name})').body[0]
+        for name in reg_names
+    ]
+    if feedback_names:
+        finally_stmts.append(
+            _ast.parse("_sim_set_converging(__fb_entry_converging)").body[0]
+        )
+    if finally_stmts:
         new_stmts.append(
             _ast.Try(body=[while_loop], handlers=[], orelse=[], finalbody=finally_stmts)
         )
@@ -3484,6 +3531,7 @@ def _build_reg_sim_func(fn):
         _SIM_FEEDBACK_MAX_ITER=_SIM_FEEDBACK_MAX_ITER,
         _sim_wire_read=_sim_wire_read,
         _sim_wire_write=_sim_wire_write,
+        _sim_set_converging=_sim_set_converging,
     )
     for _name, _zero in reg_zeros.items():
         new_globals[f"__reg_zero_{_name}__"] = _zero
