@@ -26,7 +26,7 @@ architecture rtl of pipelinec_fifo_fwft is
 
   constant ADDR_WIDTH : integer := DEPTH_LOG2;
   type mem_type is array (natural range <>) of std_logic_vector(DATA_WIDTH-1 downto 0);
-  signal mem              : mem_type(2**ADDR_WIDTH-1 downto 0):= (others => (others => '0'));
+  signal mem              : mem_type(2**ADDR_WIDTH-1 downto 0) := (others => (others => '0'));
   signal wr_ptr_reg       : unsigned(ADDR_WIDTH downto 0) := (others => '0');
   signal wr_ptr_cur_reg   : unsigned(ADDR_WIDTH downto 0) := (others => '0');
   signal rd_ptr_reg       : unsigned(ADDR_WIDTH downto 0) := (others => '0');
@@ -41,6 +41,10 @@ architecture rtl of pipelinec_fifo_fwft is
   signal data_out_pipe : std_logic_vector(DATA_WIDTH-1 downto 0);
   signal pipe_ready       : std_logic;
   signal por : std_logic := '1';
+  attribute KEEP : string;
+  attribute DONT_TOUCH : string;
+  attribute KEEP of por : signal is "TRUE";
+  attribute DONT_TOUCH of por : signal is "TRUE";
   signal ready_out_internal : std_logic;
   function make_mask return unsigned is
     variable rv : unsigned(ADDR_WIDTH downto 0) := (others => '0');
@@ -61,7 +65,7 @@ begin
   -- overflow within packet
   full_wr <= '1' when wr_ptr_reg = (wr_ptr_cur_reg xor mask) else '0';
 
-  ready_out_internal <= not full and not por;
+  ready_out_internal <= not full; -- and not por;
   ready_out <= ready_out_internal;
   
   valid_out_pipe <= valid_out_pipe_reg;
@@ -71,17 +75,16 @@ begin
   process (clk)
   begin
     if rising_edge(clk) then
-      if por = '1' then
-        wr_ptr_reg <= (others => '0');
-        wr_ptr_cur_reg <= (others => '0');
-      else
-        if ready_out_internal = '1' and valid_in = '1' then
-          -- transfer in
-          -- normal FIFO mode
-          mem(to_integer(wr_ptr_reg(ADDR_WIDTH-1 downto 0))) <= data_in;
-          wr_ptr_reg <= wr_ptr_reg + 1;
-        end if;
+      if ready_out_internal = '1' and valid_in = '1' then
+        -- transfer in
+        -- normal FIFO mode
+        mem(to_integer(wr_ptr_reg(ADDR_WIDTH-1 downto 0))) <= data_in;
+        wr_ptr_reg <= wr_ptr_reg + 1;
       end if;
+      --if por = '1' then
+      --  wr_ptr_reg <= (others => '0');
+      --  wr_ptr_cur_reg <= (others => '0');
+      --end if;
     end if;
   end process;
  
@@ -89,26 +92,26 @@ begin
   process (clk)
   begin
     if rising_edge(clk) then
-      if por = '1' then
-        rd_ptr_reg <= (others => '0');
+      if ready_in = '1' then
+        -- output ready; invalidate stage
         valid_out_pipe_reg <= '0';
-      else
-        if ready_in = '1' then
-          -- output ready; invalidate stage
-          valid_out_pipe_reg <= '0';
-        end if;     
-        
-        if ready_in = '1' or valid_out_pipe_reg = '0' then
-          -- output ready or bubble in pipeline; read new data from FIFO
-          valid_out_pipe_reg <= '0';
-          data_out_pipe_reg <= mem(to_integer(rd_ptr_reg(ADDR_WIDTH-1 downto 0)));
-          if empty = '0' and pipe_ready = '1' then
-            -- not empty, increment pointer
-            valid_out_pipe_reg <= '1';
-            rd_ptr_reg <= rd_ptr_reg + 1;
-          end if;
+      end if;     
+      
+      if ready_in = '1' or valid_out_pipe_reg = '0' then
+        -- output ready or bubble in pipeline; read new data from FIFO
+        valid_out_pipe_reg <= '0';
+        data_out_pipe_reg <= mem(to_integer(rd_ptr_reg(ADDR_WIDTH-1 downto 0)));
+        if empty = '0' and pipe_ready = '1' then
+          -- not empty, increment pointer
+          valid_out_pipe_reg <= '1';
+          rd_ptr_reg <= rd_ptr_reg + 1;
         end if;
       end if;
+
+      --if por = '1' then
+      --  rd_ptr_reg <= (others => '0');
+      --  valid_out_pipe_reg <= '0';
+      --end if;
     end if;
   end process;
 
