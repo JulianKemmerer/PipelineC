@@ -4585,7 +4585,7 @@ def LOGIC_NEEDS_CLOCK(inst_name, Logic, parser_state, TimingParamsLookupTable):
     i_need_clk = (
         LOGIC_NEEDS_REGS(inst_name, Logic, parser_state, TimingParamsLookupTable)
         or Logic.vhdl_module_text is not None
-        or C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(Logic.func_name)
+        or (Logic.is_c_built_in and C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(Logic.func_name))
     )
     needs_clk = i_need_clk
     # No need ot check subs if self needs already
@@ -5336,15 +5336,29 @@ def WRITE_LOGIC_ENTITY(
     elif Logic.vhdl_module_text is not None:
         rv += Logic.vhdl_module_text
     # Printf another special case woo?
-    elif Logic.func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME):
+    # `is_c_built_in` guard is required, not just the name-prefix check: these
+    # generated entity names are always "printf_<coord>..."/"sim_assert_<coord>..."/
+    # "sim_finish_<coord>..." (see PY_TO_LOGIC.py's _elab_sim_print_stmt etc.), but a
+    # user is free to name their own @MAIN/@hw_func anything, including e.g.
+    # `printf_something_else` -- without this guard, that real user function's own
+    # Logic gets misrouted into GET_PRINTF_MODULE_TEXT (which expects an actual
+    # generated printf submodule with `printf_format_string` set) and crashes with a
+    # TypeError deep in PRTINTF_STRING_TO_FORMATS on `format_string=None`.
+    elif Logic.is_c_built_in and Logic.func_name.startswith(
+        C_TO_LOGIC.PRINTF_FUNC_NAME
+    ):
         rv += GET_PRINTF_MODULE_TEXT(
             inst_name, Logic, parser_state, TimingParamsLookupTable
         )
-    elif Logic.func_name.startswith(C_TO_LOGIC.SIM_ASSERT_FUNC_NAME):
+    elif Logic.is_c_built_in and Logic.func_name.startswith(
+        C_TO_LOGIC.SIM_ASSERT_FUNC_NAME
+    ):
         rv += GET_SIM_ASSERT_MODULE_TEXT(
             inst_name, Logic, parser_state, TimingParamsLookupTable
         )
-    elif Logic.func_name.startswith(C_TO_LOGIC.SIM_FINISH_FUNC_NAME):
+    elif Logic.is_c_built_in and Logic.func_name.startswith(
+        C_TO_LOGIC.SIM_FINISH_FUNC_NAME
+    ):
         rv += GET_SIM_FINISH_MODULE_TEXT(
             inst_name, Logic, parser_state, TimingParamsLookupTable
         )

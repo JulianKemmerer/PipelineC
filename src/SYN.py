@@ -3766,7 +3766,9 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
         return False  # No idea what user has in there
     elif logic.is_vhdl_func or logic.is_vhdl_expr:
         return True
-    elif logic.func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME):
+    elif logic.is_c_built_in and logic.func_name.startswith(
+        C_TO_LOGIC.PRINTF_FUNC_NAME
+    ):
         return True
     elif (SYN_TOOL is GOWIN) and logic.func_name.startswith(
         f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.UNARY_OP_NOT_NAME}_"
