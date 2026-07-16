@@ -460,15 +460,17 @@ elaboration mechanics.
 ### `sim_print(..., debug=True)` — tagged prints for `pypeline_sim_debug.py`
 
 `sim_print(s, debug=True)` behaves identically to plain `sim_print(s)`, except the printed
-message is prefixed with a `[SIM DEBUG PRINT: <file> line <N>]` tag identifying the call site.
-`debug` must be a compile-time-constant `True`/`False` literal:
+message is prefixed with a `[SIM DEBUG PRINT: <abs path>:<N>]` tag identifying the call site.
+`debug` must be a compile-time-constant `True`/`False` literal. The tag uses an absolute path
+(not just a filename), formatted as `path:line` — most terminals and editors recognize that
+shape and let you click straight to the call site:
 
 ```python
 from pypeline import sim_print, hex
 
 n: Reg[uint8_t]
 sim_print(f"n={n} hex={hex(n)}", debug=True)
-# prints: [SIM DEBUG PRINT: my_design.py line 42]: n=3 hex=03
+# prints: [SIM DEBUG PRINT: /home/me/proj/my_design.py:42]: n=3 hex=03
 ```
 
 Use `debug=True` for prints you want compared cycle-by-cycle between a native Python sim and a
@@ -483,7 +485,8 @@ docstring in `pypeline.py`).
 #### `pypeline_sim_debug.py` — native-vs-VHDL cycle diff tool
 
 `src/pypeline_sim_debug.py` runs a testbench both ways — native sim, and `--cocotb --ghdl` VHDL
-sim — and diffs their `sim_print(..., debug=True)` output cycle by cycle. It exists to localize
+sim, concurrently (the slow GHDL run doesn't have to wait on the fast native run first or vice
+versa) — and diffs their `sim_print(..., debug=True)` output cycle by cycle. It exists to localize
 *cycle-timing* mismatches (data correct, but arriving on the wrong clock cycle) that ordinary
 `sim_assert`s don't catch. Invoke it exactly like `pipelinec ... --sim ...`; it adds `--cocotb
 --ghdl` itself for the VHDL run:

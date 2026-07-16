@@ -2407,11 +2407,13 @@ def sim_print(s, debug=False):
     simulation side is just a plain print() of the already-formatted text.
 
     debug=True (must be a compile-time-constant literal True/False) prefixes the message
-    with a "[SIM DEBUG PRINT: <file> line <N>]" tag identifying the call site, for use with
-    pypeline_sim_debug.py (a tool that diffs sim_print(debug=True) output cycle-by-cycle
+    with a "[SIM DEBUG PRINT: <abs file path>:<N>]" tag identifying the call site, for use
+    with pypeline_sim_debug.py (a tool that diffs sim_print(debug=True) output cycle-by-cycle
     between native and VHDL sim -- ordinary sim_print(...) output, debug=False, is not
-    compared by that tool). The tag is deliberately just file+line, no type info: the
-    format string is already shared between native and VHDL rendering (see hex() above and
+    compared by that tool). The tag uses an absolute path + ":<line>" (not just a basename)
+    so terminals/editors that recognize "path:line" text can turn it into a clickable jump
+    to the call site. The tag is deliberately just file+line, no type info: the format
+    string is already shared between native and VHDL rendering (see hex() above and
     PY_TO_LOGIC.py's _build_sim_fmt_string), so the two sims' output for identical source is
     guaranteed to render identically -- no per-type normalization is needed downstream.
     """
@@ -2422,7 +2424,7 @@ def sim_print(s, debug=False):
         import sys as _sys2
 
         frame = _sys2._getframe(1)
-        tag = f"[SIM DEBUG PRINT: {_os.path.basename(frame.f_code.co_filename)} line {frame.f_lineno}]"
+        tag = f"[SIM DEBUG PRINT: {_os.path.abspath(frame.f_code.co_filename)}:{frame.f_lineno}]"
         s = f"{tag}: {s}"
     print(s)
     return SimVal(0)

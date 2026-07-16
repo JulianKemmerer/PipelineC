@@ -3059,10 +3059,12 @@ same one-positional-argument f-string/literal constraint, same
 shape. `_elab_sim_print_stmt` first resolves `debug` from the call's keywords (via
 `_try_eval_const`, raising `ElaborationError` unless it's a compile-time-constant `True`/`False`
 literal); when `True`, it splices a synthetic `ast.Constant` tag node —
-`"[SIM DEBUG PRINT: <file> line <N>]: "`, built from `os.path.basename(self.src_file)` and
+`"[SIM DEBUG PRINT: <abs path>:<N>]: "`, built from `os.path.abspath(self.src_file)` and
 `stmt.lineno` — as the first element of the message's `JoinedStr.values`, so the tag participates
 in the same f-string walk as the rest of the message (and thus renders through the same shared
-printf backend as everything else). `debug=False` (the default) is a no-op at this stage.
+printf backend as everything else). `debug=False` (the default) is a no-op at this stage. The
+absolute path (rather than a bare basename) is deliberate: `path:line` text is recognized by most
+terminals/editors as a clickable jump target.
 
 The `debug` keyword is stripped before the "exactly one argument" check that already existed for
 `sim_print`'s message — any other keyword, or a non-constant `debug` value, is still a hard
@@ -3070,10 +3072,12 @@ The `debug` keyword is stripped before the "exactly one argument" check that alr
 
 The tag must render **byte-for-byte identically** between native sim (built from
 `sys._getframe(1)` at runtime, `pypeline.py`) and VHDL sim (built from `stmt.lineno`/
-`self.src_file` at elaboration time, here) — both read line/file off the same source, so this
-holds by construction. That byte-identical tagging is the basis for `pypeline_sim_debug.py`'s
-plain-string diff between the two sims' console output (see `pypeline_sim_DESIGN.md`'s
-"`sim_print(..., debug=True)`" section and `docs/pypeline_guide.md`).
+`self.src_file` at elaboration time, here) — both read line/file off the same source and both
+resolve to an absolute path against the same process cwd (`pypeline_sim_debug.py` launches both
+subprocesses from one unchanged working directory), so this holds by construction. That
+byte-identical tagging is the basis for `pypeline_sim_debug.py`'s plain-string diff between the
+two sims' console output (see `pypeline_sim_DESIGN.md`'s "`sim_print(..., debug=True)`" section
+and `docs/pypeline_guide.md`).
 
 ---
 

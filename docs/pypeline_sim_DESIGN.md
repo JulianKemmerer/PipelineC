@@ -1392,8 +1392,10 @@ Correctness under both simulation layers follows directly from the existing
 
 `sim_print`'s optional `debug` keyword (default `False`) is not a distinct dual-mode builtin
 mechanism of its own — when `debug=True`, it prefixes the message with a
-`[SIM DEBUG PRINT: <file> line <N>]` tag (using the caller's frame, `sys._getframe(1)`) before
-falling through to the same `print(s)`:
+`[SIM DEBUG PRINT: <abs path>:<N>]` tag (using the caller's frame, `sys._getframe(1)`) before
+falling through to the same `print(s)`. The path is made absolute (`os.path.abspath`, not just a
+basename) so the tag reads as clickable `path:line` text in terminals/editors that recognize
+that shape:
 
 ```python
 def sim_print(s, debug=False):
@@ -1401,7 +1403,7 @@ def sim_print(s, debug=False):
         return SimVal(0)
     if debug:
         frame = sys._getframe(1)
-        tag = f"[SIM DEBUG PRINT: {os.path.basename(frame.f_code.co_filename)} line {frame.f_lineno}]"
+        tag = f"[SIM DEBUG PRINT: {os.path.abspath(frame.f_code.co_filename)}:{frame.f_lineno}]"
         s = f"{tag}: {s}"
     print(s)
     return SimVal(0)

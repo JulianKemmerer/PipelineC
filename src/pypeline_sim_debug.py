@@ -19,6 +19,7 @@ debugging. See docs/pypeline_guide.md.
 """
 
 import argparse
+import concurrent.futures
 import os
 import re
 import subprocess
@@ -101,8 +102,14 @@ def main():
         native_args += ["--out_dir", native_out_dir]
         vhdl_args += ["--out_dir", vhdl_out_dir]
 
-    native_stdout = _run_pipelinec(native_args, "native")
-    vhdl_stdout = _run_pipelinec(vhdl_args, "VHDL/cocotb")
+    # Native sim is fast; VHDL/cocotb+GHDL sim is slow -- run both concurrently
+    # (they're independent subprocesses writing to separate --out_dirs) rather
+    # than paying their combined wall-clock time serially.
+    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+        native_future = pool.submit(_run_pipelinec, native_args, "native")
+        vhdl_future = pool.submit(_run_pipelinec, vhdl_args, "VHDL/cocotb")
+        native_stdout = native_future.result()
+        vhdl_stdout = vhdl_future.result()
 
     native_cycles = _cycles_of_debug_lines(native_stdout)
     vhdl_cycles = _cycles_of_debug_lines(vhdl_stdout)

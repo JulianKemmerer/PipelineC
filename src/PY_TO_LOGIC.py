@@ -2090,11 +2090,14 @@ class FuncElaborator:
         though it would be correct in hardware.
 
         debug=True (a compile-time-constant literal True/False keyword) prefixes the
-        rendered message with a "[SIM DEBUG PRINT: <file> line <N>]" tag identifying this
-        call site, matching the tag native sim's sim_print(debug=True) (pypeline.py)
-        builds from the caller's frame. The tag text must match byte-for-byte between
-        native and VHDL sim (both are derived from the same source file/line), which is
-        what lets pypeline_sim_debug.py diff the two sims' output as plain strings.
+        rendered message with a "[SIM DEBUG PRINT: <abs file path>:<N>]" tag identifying
+        this call site, matching the tag native sim's sim_print(debug=True) (pypeline.py)
+        builds from the caller's frame. An absolute path + ":<line>" (not just a basename)
+        is used so terminals/editors that recognize "path:line" text can turn it into a
+        clickable jump to the call site. The tag text must match byte-for-byte between
+        native and VHDL sim (both are derived from the same source file/line, resolved to
+        an absolute path against the same process cwd), which is what lets
+        pypeline_sim_debug.py diff the two sims' output as plain strings.
         """
         call = stmt.value
         debug = False
@@ -2120,10 +2123,7 @@ class FuncElaborator:
 
         arg = call.args[0]
         if debug:
-            tag = (
-                f"[SIM DEBUG PRINT: {os.path.basename(self.src_file)} "
-                f"line {stmt.lineno}]: "
-            )
+            tag = f"[SIM DEBUG PRINT: {os.path.abspath(self.src_file)}:{stmt.lineno}]: "
             tag_node = ast.Constant(value=tag)
             ast.copy_location(tag_node, arg)
             if isinstance(arg, ast.JoinedStr):
