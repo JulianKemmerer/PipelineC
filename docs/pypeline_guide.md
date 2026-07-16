@@ -501,6 +501,15 @@ narrow down *where* in a design a cycle-timing bug originates, add `debug=True` 
 points along the suspect data path and re-run — the tool reports the first point at which native
 and VHDL disagree.
 
+Full raw stdout from both runs is always saved — match or mismatch — to `<out_dir>/native.log`
+and `<out_dir>/vhdl.log` (`--out_dir` defaults to a fresh `./pypeline_sim_debug_out_<design>_<pid>`
+directory if not given), so a divergence can be inspected afterward without re-running either sim
+— the GHDL run in particular is slow. On mismatch, the tool also prints a side-by-side dump of
+both runs' debug-tagged lines for `--context` cycles before and after the first divergence
+(default 10, matching what you'd otherwise get by grepping `Clock:`/`SIM DEBUG PRINT` out of both
+logs by hand); pass `--context 0` to suppress it. The mismatch report always ends with the two log
+paths printed to the screen.
+
 ### `@sim_model` — Python simulation models for hardware functions
 
 `sim_model(target)` attaches a Python model to any `@hw_func`/`@MAIN` function: whenever
