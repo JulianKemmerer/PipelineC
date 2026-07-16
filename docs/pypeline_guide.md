@@ -510,6 +510,15 @@ both runs' debug-tagged lines for `--context` cycles before and after the first 
 logs by hand); pass `--context 0` to suppress it. The mismatch report always ends with the two log
 paths printed to the screen.
 
+Any hardware function that pairs a hand-written [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions)
+with raw `vhdl(...)` text (rather than letting the elaborator derive both from one
+description) is exactly where native sim and real VHDL can silently diverge in cycle
+timing — the two implementations are maintained independently, and nothing checks they
+agree. `debug=True` + `pypeline_sim_debug.py` is the tool for finding and localizing that
+class of bug: add debug prints at successive points along a suspect data path (bisecting
+the hierarchy, narrowest first at the two ends of a call, then walking inward) and re-run;
+the first cycle where native and VHDL disagree pinpoints the boundary responsible.
+
 ### `@sim_model` — Python simulation models for hardware functions
 
 `sim_model(target)` attaches a Python model to any `@hw_func`/`@MAIN` function: whenever

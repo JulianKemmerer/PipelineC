@@ -53,7 +53,12 @@ def driver_main():
 
 @sim_output
 def check_fifo_ready(cycle, ready):
-    expected = 1 if int(cycle) < CAPACITY else 0
+    # CAPACITY words fit in the addressed memory that data_in_ready
+    # backpressures against, plus one more word fits in the FWFT output
+    # register (see _FifoFwftModel's extra register stage / fifo_test.py's
+    # test_fifo_backpressure_at_capacity) -- with no pops, CAPACITY + 1
+    # pushes are accepted before ready deasserts.
+    expected = 1 if int(cycle) < CAPACITY + 1 else 0
     assert int(ready) == expected, (
         f"cycle {int(cycle)}: fifo_ready={int(ready)} expected={expected} "
         f"(sim model pushed more than once per cycle?)"

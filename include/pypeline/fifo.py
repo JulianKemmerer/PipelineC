@@ -71,24 +71,39 @@ generic map(
 
     @sim_model(fifo)
     class _FifoFwftModel:
-        # Functional (not cycle-accurate) FWFT model. self.q holds queued
-        # words, index 0 = oldest/next-to-pop. Outputs reflect queue state as
-        # of entry to this call (i.e. as committed at the last clock edge);
-        # push/pop below only affect the *next* commit, so a same-cycle push
-        # is never visible via data_out this same cycle, and a same-cycle pop
-        # never frees capacity for a same-cycle push -- matching the real
-        # FIFO's independent read/write pointers.
+        # Functional (not cycle-accurate in the address/pointer sense, but
+        # cycle-accurate in observable timing) FWFT model, mirroring
+        # pipelinec_fifo_fwft.vhd's structure exactly: self.q models the
+        # addressed memory (mem/wr_ptr_reg/rd_ptr_reg -- what data_in_ready's
+        # capacity check is based on), and self.out_valid/self.out_data model
+        # the *separate* one-word output register (valid_out_pipe_reg/
+        # data_out_pipe_reg) sitting between mem and the data_out/
+        # data_out_valid pins. That output register is what gives the real
+        # FIFO its 2-cycle push-to-valid latency (one cycle for the push to
+        # land in mem, one more for the read process to load it into the
+        # output register) instead of the 1 cycle you'd get by exposing
+        # self.q[0] directly -- see docs/pypeline_guide.md.
         def __init__(self):
             self.q = deque()
+            self.out_valid = 0
+            self.out_data = sim_zero(data_t)
             self.empty_data = sim_zero(data_t)
 
         def __call__(self, ready_for_data_out, data_in, data_in_valid):
-            data_out_valid = 1 if self.q else 0
-            data_out = self.q[0] if self.q else self.empty_data
+            data_out_valid = self.out_valid
+            data_out = self.out_data if self.out_valid else self.empty_data
             data_in_ready = 1 if len(self.q) < capacity else 0
 
-            if int(ready_for_data_out) and data_out_valid:
-                self.q.popleft()
+            # consume <=> VHDL's "ready_in = '1' or valid_out_pipe_reg = '0'":
+            # the output register reloads whenever the consumer takes the
+            # current word, or whenever it's not currently holding one.
+            consume = int(ready_for_data_out) or not self.out_valid
+            if consume:
+                if self.q:
+                    self.out_data = self.q.popleft()
+                    self.out_valid = 1
+                else:
+                    self.out_valid = 0
             if int(data_in_valid) and data_in_ready:
                 self.q.append(data_in)
 

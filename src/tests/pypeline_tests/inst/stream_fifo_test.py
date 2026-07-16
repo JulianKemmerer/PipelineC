@@ -39,7 +39,11 @@ def test_stream_fifo_order_and_backpressure():
     .out_stream/.in_ready) -- FIFO push/pop/backpressure correctness itself
     is exhaustively covered by fifo_test.py against the shared _FifoFwftModel."""
     sim_reset()
-    values = list(range(1, 1 + CAPACITY))
+    # CAPACITY words fit in the addressed memory the backpressure check is
+    # based on, plus one more in the FWFT output register (see fifo_test.py's
+    # test_fifo_backpressure_at_capacity) -- CAPACITY + 1 pushes are accepted
+    # with no pops before backpressure kicks in.
+    values = list(range(1, 1 + CAPACITY + 1))
     for v in values:
         r = sim_call(stream_fifo_test_top, 0, uint32_stream_t(data=v, valid=1))
         assert int(r.in_ready) == 1
