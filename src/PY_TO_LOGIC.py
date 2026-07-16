@@ -2133,8 +2133,19 @@ class FuncElaborator:
             ast.copy_location(arg, call.args[0])
 
         fmt_c_quoted, input_ports = self._build_sim_fmt_string(arg, stmt, "sim_print")
+        # Type-signature suffix (mirrors C_TO_LOGIC.BUILD_FUNC_NAME's pattern) --
+        # required because a sim_print(...) inside a Python for-loop is unrolled
+        # into multiple elaboration passes over the SAME source line, each with
+        # its own inst name (via loop_instance_prefix) but, without this suffix,
+        # the SAME entity name -- so if the loop var (or another literal) is
+        # interpolated directly, different iterations infer different minimal
+        # literal widths for what would otherwise be one shared entity's port.
+        type_sig = "".join(
+            f"_{ctype.replace('[', '_').replace(']', '')}"
+            for (_, _, ctype) in input_ports
+        )
         func_base_name = (
-            f"{C_TO_LOGIC.PRINTF_FUNC_NAME}_{_loc_str(self.src_file, stmt)}"
+            f"{C_TO_LOGIC.PRINTF_FUNC_NAME}_{_loc_str(self.src_file, stmt)}{type_sig}"
         )
         inst = self._inst(func_base_name, call)
         _add_submodule_instance(
@@ -2326,9 +2337,14 @@ class FuncElaborator:
             )
             input_ports += msg_input_ports
 
-        func_base_name = (
-            f"{C_TO_LOGIC.SIM_ASSERT_FUNC_NAME}_{_loc_str(self.src_file, stmt)}"
+        # Type-signature suffix -- see the matching comment in _elab_sim_print_stmt
+        # for why this is required (unrolled-loop call sites at the same source
+        # line, differing literal widths for cond/msg args).
+        type_sig = "".join(
+            f"_{ctype.replace('[', '_').replace(']', '')}"
+            for (_, _, ctype) in input_ports
         )
+        func_base_name = f"{C_TO_LOGIC.SIM_ASSERT_FUNC_NAME}_{_loc_str(self.src_file, stmt)}{type_sig}"
         inst = self._inst(func_base_name, call)
         _add_submodule_instance(
             self.logic,

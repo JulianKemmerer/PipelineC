@@ -2888,9 +2888,11 @@ trap.
    submodule port's type directly — there is no format-implied placeholder type to
    reconcile, unlike the C frontend's historical `%s` handling (see the `%s` real-size fix
    below).
-5. Builds the func/instance name (`f"{C_TO_LOGIC.PRINTF_FUNC_NAME}_{coord}"`, mirroring
-   `C_TO_LOGIC.py`'s own `PRINTF_FUNC_NAME + "_" + coord` construction) and calls
-   `_add_submodule_instance(...)` with `output_wire=None, output_type=None` — see below.
+5. Builds the func/instance name (`f"{C_TO_LOGIC.PRINTF_FUNC_NAME}_{coord}{type_sig}"`,
+   mirroring `C_TO_LOGIC.py`'s own `PRINTF_FUNC_NAME + "_" + coord` construction, plus a
+   type-signature suffix — see "Entity naming: why source coordinates alone aren't enough"
+   below) and calls `_add_submodule_instance(...)` with `output_wire=None, output_type=None` —
+   see below.
 6. Populates `self.logic.submodule_instance_to_printf_format_string[inst]` with the quoted,
    C-escaped format string (`_py_str_to_c_quoted`, converting the internally-built string back
    into the raw-quoted-with-C-escapes convention `PRTINTF_STRING_TO_FORMATS` expects — the
@@ -2903,6 +2905,50 @@ trap.
    of `submodule_instance_to_input_port_names` — matching C's own `input_port_names`, which
    also excludes CE (`GET_PRINTF_MODULE_TEXT`'s sensitivity list already hardcodes
    `CLOCK_ENABLE` once).
+
+### Entity naming: why source coordinates alone aren't enough
+
+`func_base_name` (the printf submodule's VHDL **entity** name, as opposed to its per-call-site
+**instance** name) originally was just `f"{PRINTF_FUNC_NAME}_{coord}"` — file+line+column,
+unique per `sim_print`/`sim_assert` *statement* in the source. That's sufficient for an ordinary
+C `for` loop, where the same AST node is only ever elaborated once. It is **not** sufficient for
+Pypeline's own compile-time Python `for` loops, which are unrolled by re-visiting the same AST
+statement once per loop iteration (`_elab_for`, via `loop_instance_prefix` — see the "Python
+`for` loop unrolling" section) — each unrolled visit gets its own unique **instance** name, but
+without a type-signature suffix they'd all share the *same* entity, even when a literal
+interpolated in the message (e.g. the loop variable itself, `sim_print(f"lane {i}")` inside
+`for i in range(16):`) elaborates to a different minimal literal width on each iteration (`i=0/1`
+→ `uint1_t`, `i=2/3` → `uint2_t`, etc.). One shared entity ending up with N differently-typed
+`argN` ports (whichever iteration happened to define it) is invisible in native sim (which
+doesn't care about VHDL port widths) but fails real synthesis — this exact bug shipped once in
+wireguard-fpga's `encrypt_tb.py`/`decrypt_tb.py`, which had `sim_print(f"... lane {i} ...")`
+inside `for i in range(16):`, and failed Vivado RTL elaboration with a port-width mismatch on
+first real build.
+
+The fix: both `_elab_sim_print_stmt` and `_elab_sim_assert_stmt` append a `type_sig` suffix to
+`func_base_name`, built from the already-elaborated `input_ports` list right before use —
+
+```python
+type_sig = "".join(
+    f"_{ctype.replace('[', '_').replace(']', '')}" for (_, _, ctype) in input_ports
+)
+```
+
+— mirroring `C_TO_LOGIC.BUILD_FUNC_NAME`'s existing type-suffix pattern for ordinary submodule
+entities (same bracket-sanitization, same `"_" + ctype` per-argument join) rather than inventing
+a new mechanism. Call sites that share identical argument types (the overwhelming common case —
+most `sim_print`/`sim_assert` calls aren't inside a literal-varying unrolled loop) still
+correctly collapse onto one shared entity, unchanged from before; only call sites whose argument
+types actually differ now get their own entity. Verified via a minimal `for i in range(16): if
+n==i: sim_print(f"lane {i} matched")` repro: pre-fix, one shared (broken) entity; post-fix, four
+correctly-typed entities (`uint1_t`/`uint2_t`/`uint3_t`/`uint4_t`, one per distinct literal width
+actually used across the 16 iterations), and the build succeeds.
+
+The C-frontend printf path (`C_AST_PRINTF_FUNC_CALL_TO_LOGIC`) deliberately does **not** get this
+suffix (`base_name_is_name = True`, with a comment noting the coordinate string was assumed
+sufficient) — a safe assumption there, since real C has no equivalent compile-time loop
+unrolling revisiting one AST node with varying literal types. `sim_finish()` takes no arguments
+and is unaffected either way.
 
 ### Why a bare `char_t` scalar / `uint8_t[N]` array still need an explicit wrapper
 
@@ -3125,6 +3171,13 @@ optional message via `_build_sim_fmt_string`, and stores it in a new frontend-ag
 `Logic` — `submodule_instance_to_sim_assert_msg` — mirroring
 `submodule_instance_to_printf_format_string`. `_elab_sim_finish_stmt` takes no arguments and
 just instantiates a void submodule with no message dict entry needed.
+
+Like `sim_print` (see "Entity naming: why source coordinates alone aren't enough" above),
+`_elab_sim_assert_stmt`'s `func_base_name` gets the same `type_sig` suffix built from its full
+`input_ports` list (`cond`'s type plus any message-arg types) — a `sim_assert(cond, f"... {i}
+...")` inside an unrolled Python loop is exposed to the identical entity-sharing/port-width-
+mismatch bug as `sim_print`, fixed the same way. `sim_finish()` takes no arguments and needs no
+suffix.
 
 ### VHDL codegen: `GET_SIM_ASSERT_MODULE_TEXT` / `GET_SIM_FINISH_MODULE_TEXT`
 
