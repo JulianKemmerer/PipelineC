@@ -3766,9 +3766,14 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
         return False  # No idea what user has in there
     elif logic.is_vhdl_func or logic.is_vhdl_expr:
         return True
-    elif logic.is_c_built_in and logic.func_name.startswith(
-        C_TO_LOGIC.PRINTF_FUNC_NAME
-    ):
+    elif logic.is_c_built_in and C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(logic.func_name):
+        # printf/sim_print, sim_assert, and sim_finish submodules are all void,
+        # simulation-console-facing builtins with no real output to measure a delay
+        # to -- without this, sim_assert_.../sim_finish_... fall through to the
+        # `else` branch below and get fed to real synthesis for pre-pipelining path
+        # delay measurement, which produces an all-zero utilization report (nothing
+        # to synthesize) that VIVADO.py's ParsedTimingReport then rejects as a "Bad
+        # synthesis log?" instead of the zero-delay short-circuit sim_print already got.
         return True
     elif (SYN_TOOL is GOWIN) and logic.func_name.startswith(
         f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.UNARY_OP_NOT_NAME}_"
