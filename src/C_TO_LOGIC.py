@@ -427,6 +427,31 @@ class Logic:
         self.state_regs = {}  # name -> variable info
         self.write_only_global_wires = {}  # name -> variable info (from list of global vars)
         self.read_only_global_wires = {}  # name -> variable info (from list of global vars)
+        # global_wire_driven_paths: write_only_global_wires name -> set of driven
+        # struct-field path tuples (e.g. {(), } for a whole-wire write, {("x",)} for
+        # a `.x` field write). Populated by Pypeline's PY_TO_LOGIC.py elaborator only
+        # (empty/absent for C-frontend Logic objects) -- lets multiple @MAIN functions
+        # split non-overlapping fields of one compound global Wire[T]/Output[T]. See
+        # VHDL.py's "Directly connected global wires" top-level wiring and
+        # docs/PY_TO_LOGIC_DESIGN.md's Global Wires section.
+        self.global_wire_driven_paths = {}
+        # global_wire_dynamic_index_writes: set of write_only_global_wires names this
+        # function writes via a variable (non-constant) array index -- such writes
+        # aren't tracked leaf-by-leaf in global_wire_driven_paths, so combining one
+        # with a second writer function of the same wire can't be safely validated;
+        # see global_wire_driven_paths above.
+        self.global_wire_dynamic_index_writes = set()
+        # readback_global_wires: write_only_global_wires name -> name of the extra
+        # internal input wire (<name>_PYPELINE_READBACK) created when this function
+        # both writes AND reads the same global wire. The readback wire is registered in
+        # read_only_global_wires (so the normal global_to_module record/port/read-
+        # stage machinery feeds it) and drives the implicit whole-wire first alias:
+        # the top level (VHDL.py "Directly connected global wires") feeds it with
+        # zeros in the regions this function itself drives (read-before-own-write
+        # = 0) and with the OTHER writers' live values everywhere else, giving
+        # flattened-leaf semantics for a writer reading foreign leaves. Pypeline
+        # frontend only; empty for C-frontend Logic objects.
+        self.readback_global_wires = {}
         self.uses_nonvolatile_state_regs = False
         self.submodule_instances = {}  # instance name -> logic func_name
         self.next_user_inst_name = None  # User name for func
@@ -547,6 +572,11 @@ class Logic:
         )  # self.DEEPCOPY_DICT_COPY(self.state_regs)
         rv.read_only_global_wires = dict(self.read_only_global_wires)
         rv.write_only_global_wires = dict(self.write_only_global_wires)
+        rv.global_wire_driven_paths = {
+            k: set(v) for k, v in self.global_wire_driven_paths.items()
+        }
+        rv.global_wire_dynamic_index_writes = set(self.global_wire_dynamic_index_writes)
+        rv.readback_global_wires = dict(self.readback_global_wires)
         rv.feedback_vars = set(self.feedback_vars)
         rv.uses_nonvolatile_state_regs = self.uses_nonvolatile_state_regs
         rv.submodule_instances = dict(

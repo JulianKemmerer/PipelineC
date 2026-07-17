@@ -1701,32 +1701,90 @@ module-prefixed hardware name. See **Multi-File Import Support** for details.
 ### Read side — behaves like a module input
 
 When a function **reads** a global wire (`main_a_in` on the RHS), the elaborator lazily
-initialises it on first use:
+initialises it on first use, via `_declare_global_read_wire`:
 
-- Checks that this function has not already written the same wire (error if so).
-- Stores `parser_state.global_vars[name]` into `logic.read_only_global_wires[name]`
-  (both point to the same `VariableInfo` object).
-- Adds the base wire to `logic.wires` / `logic.wire_to_c_type` with no driver.
-- Adds `env[name] = (name, c_type)`.
+- If this function's body pre-scan (`_prescan_written_globals`, see below) found that
+  this function writes this wire *somewhere* in its body, delegates straight to the
+  write-declaration path (`_declare_global_write_wire`) instead — though in practice
+  written wires are already declared before the body is elaborated (see the hoisting
+  note below), so this delegate is a belt-and-braces no-op via that function's
+  already-declared guard.
+- Otherwise: stores `parser_state.global_vars[name]` into
+  `logic.read_only_global_wires[name]` (both point to the same `VariableInfo` object),
+  adds the base wire to `logic.wires` / `logic.wire_to_c_type` with no driver, and adds
+  `env[name] = (name, c_type)`.
 
 Subsequent reads of the base name return the base wire directly, exactly like a module
 input. Partial-path reads (`wire.field`, `wire[i]`) are handled by `_elab_ref_read`,
 which calls the same lazy init if the base var is not yet in `env`.
 
-### Write side — behaves like a module output
+### Write side — hoisted declaration, implicit zero-init or readback-init alias
 
-When a function **writes** a global wire (`main_a_out = ...` on the LHS), the elaborator
-lazily initialises it on first use:
+Write-declaration is **hoisted**: `elaborate()` calls `_declare_global_write_wire` for
+every wire in the pre-scan's written set *before* elaborating the body (sorted, for
+canonical wire/alias naming), so the base wire and its implicit first alias exist from
+function start — like a C global. This matters for a wire whose first textual touch
+sits inside an `if` branch: pre-hoisting, the lazy mid-branch declare left the branch
+merge with no pre-branch base value to mux against, and elaboration crashed with "No
+covering wire found" at `_connect_final_state_wires`. (The lazy call sites in
+`_elab_assign` remain, but hit the already-declared guard and return immediately.)
 
-- Checks that this function has not already read the same wire (error if so).
-- Stores `parser_state.global_vars[name]` into `logic.write_only_global_wires[name]`.
-- Adds the base wire to `logic.wires` / `logic.wire_to_c_type` with **no driver**,
-  analogous to a module output port — the combinatorial driver is the final alias.
-- Adds `env[name] = (name, c_type)`.
+`_declare_global_write_wire`:
 
-All writes create aliases in `wire_aliases_over_time` via `_write_ref`, as for any
-variable. At the end of elaboration `_connect_final_state_wires` follows the alias chain
-and connects the final alias back to the base wire (`wire_driven_by[name] = final_alias`).
+- No-ops if already declared (the hoist makes all later calls redundant).
+- Errors if the wire is an `Input` (`Input[T]` is read-only).
+- Stores `parser_state.global_vars[name]` into `logic.write_only_global_wires[name]`,
+  adds the base wire to `logic.wires` / `logic.wire_to_c_type` with **no driver**
+  (analogous to a module output port — the combinatorial driver is the final alias),
+  and adds `env[name] = (name, c_type)`.
+- Immediately creates an **implicit first alias**, via the same
+  `_write_ref((name,), init_wire, c_type, node)` call any real write uses. What drives
+  it depends on whether the pre-scan's *read* set also contains this wire:
+  - **Write-only function**: zeros — a normal typed `0` constant for scalar wires
+    (`C_TO_LOGIC.COMPOUND_NULL` is not a legal RHS for a plain integer signal in the
+    VHDL backend), `C_TO_LOGIC.BUILD_CONST_WIRE(C_TO_LOGIC.COMPOUND_NULL, ...)` for
+    struct/array wires — exactly mirroring `_declare_var`'s treatment of a local
+    variable's first declaration.
+  - **Function that also reads the wire**: a fresh internal input wire
+    `<name>_PYPELINE_READBACK` (single underscores — consecutive underscores are
+    illegal VHDL), registered in `logic.read_only_global_wires` under that synthetic
+    key (so the whole existing `global_to_module` record-field / entity read-stage /
+    `LOGIC_NEEDS_GLOBAL_TO_MODULE` machinery feeds it for free) and recorded in
+    `logic.readback_global_wires[name]`. The top level (`VHDL.py`) feeds it with
+    zeros in this function's own driven regions and other writers' live values in
+    foreign regions, so one init wire serves both "own read-before-write = 0" and
+    "foreign leaf = other writer's value" with no own/foreign distinction needed
+    during elaboration. For a single-writer wire the feed is all zeros — identical
+    semantics to the zeros init.
+
+The implicit first alias is what makes all of the following true, with **no special
+casing anywhere else in the compiler** — they are ordinary consequences of the existing
+alias-chain read machinery (`_read_ref` / `_find_covering_wire`, which already falls
+back to the most recent covering alias — or the base wire itself if none covers a given
+leaf):
+
+- **Undriven leaves of a partially-written compound wire read as zero.** If the writer
+  only ever assigns `main_a_out.x`, a read of `main_a_out.y` (from any function) resolves
+  through the alias chain to the implicit init alias, since no later alias covers `.y`.
+- **A writer's own read-before-write returns zero, not an error.** A read of `.x` before
+  the writer's own assignment to `.x` resolves to the implicit init alias (the only alias
+  that covers `.x` at that point in program order); the write afterward creates a newer
+  alias that later reads (still within the writer) will find instead.
+- **A writer reading a leaf another function drives sees that function's live value**
+  (readback init: the covering alias reads the readback input, whose foreign regions
+  the top level wires to the owning writers).
+- **Conditional writes default to zero.** `if en: w.x = v` merges the branch's write
+  against the pre-branch value — the implicit init alias — so the leaf lowers to
+  `en ? v : 0` (or `en ? v : <foreign/readback value>` resolved per region at top level).
+
+All real writes create further aliases in `wire_aliases_over_time` via `_write_ref`, as
+for any variable — write-after-write and read-after-write both resolve through the same
+temporal alias-chain lookup every local variable uses. At the end of elaboration
+`_connect_final_state_wires` follows the alias chain to the *last* alias (whichever one
+that is — the implicit init alias if the wire was never really written on some path, or
+the most recent real write) and connects it back to the base wire
+(`wire_driven_by[name] = final_alias`) — exactly like `Feedback[T]`. The write side is
+completely unaffected by readback: the base wire still drives `module_to_global.<name>`.
 
 ### Const-path bypass
 
@@ -1734,17 +1792,70 @@ In `_elab_assign`, the early-return path that caches a pure-Python constant into
 `const_env` is **skipped** for global wire names. This prevents `main_a_out = 0` from
 being silently cached as an elaboration constant instead of driving the hardware wire.
 
+### Pre-scan: `_prescan_written_globals`
+
+Run once at the very top of `elaborate()`, before any statement is really elaborated;
+returns `(written, read)` sets of resolved global-wire keys, stored as
+`self._written_globals` / `self._read_globals`. A side-effect-free `ast.walk` over the
+function body (via the same `_resolve_global_wire` / `_resolve_module_wire_name`
+helpers used for real, later, when each touch is actually elaborated):
+
+- **written**: every `Assign`/`AugAssign`/`AnnAssign` write target rooted at a wire.
+  Mirrors `_elab_assign`'s sim-input-return-value skip (`wire = some_sim_input_fn()`,
+  the `@sim_input` return-value form, is a pure elaboration no-op and must not count
+  as a write) so a design combining `@sim_input`/`@sim_output` with global wires
+  isn't misclassified.
+- **read**: every wire-resolving `Name`/`Attribute` in `Load` context that is NOT
+  merely the base chain of a write target. This distinction matters because Python
+  puts the base `Name` of `w.x = e` in Load context — naive Load-scanning would
+  classify every field writer as a reader (and give it a needless readback input).
+  The scan first collects the identity set of target-chain nodes (excluding
+  subscript index expressions, which are genuine reads — `w.arr[w.sel] = e` DOES
+  read `w`), then counts the remaining Loads. `AugAssign` targets count as both
+  written and read (`w.x += e` reads `w.x`).
+
+The written set drives the hoisted write-declaration in `elaborate()` (see "Write
+side" above) and `_declare_global_read_wire`'s delegate; the read set decides whether
+`_declare_global_write_wire` creates the `<name>_PYPELINE_READBACK` input. Both fix
+the same class of ordering bug: without the pre-scan, a read that happened to come
+first in program order was classified as a genuine cross-function global read
+(`read_only_global_wires`) and a *later* write to that same name was then silently
+dropped — `_connect_final_state_wires` never saw the write's final alias, so the
+write vanished from the generated hardware with no error.
+
+### `AugAssign` on ref targets (not just bare names)
+
+`_elab_aug_assign` desugars `t = t op rhs`, reusing the same target AST node as both the
+write target and the embedded read expression — safe because the elaborator dispatches
+purely on node type, never `node.ctx` (Store vs Load is never inspected). This works
+unmodified for `Attribute`/`Subscript` targets, including global-wire fields
+(`main_a_out.x += ~main_a_in.x`), not just plain `Name` targets.
+
 ### Constraints
 
-- A function cannot both read and write the same global wire — `ElaborationError`.
 - `Wire[T]` inside a function body — `ElaborationError`.
 - `Wire[T]` with an initializer at declaration — `ElaborationError`.
-- After all functions are elaborated, each global wire must appear in exactly one
-  function's `write_only_global_wires`. Zero writers or multiple writers → `ElaborationError`.
-- The writing function must have exactly one instance in the fully-elaborated submodule
-  hierarchy (`FuncToInstances[writer]` must contain exactly one key). Multiple instances
-  would mean multiple hardware drivers for the same wire → `ElaborationError`.
-- Global wires can be read from any number of functions (including non-`@MAIN` functions).
+- Writing an `Input[T]` — `ElaborationError`.
+- After all functions are elaborated, each global wire must appear in **at least one**
+  function's `write_only_global_wires`; zero writers → `ElaborationError`. Multiple
+  writer functions are legal iff their recorded driven paths
+  (`Logic.global_wire_driven_paths` — static struct fields and constant array
+  indices, any nesting depth) are pairwise non-overlapping across writers
+  (`_check_no_overlapping_driven_paths`: conflict iff one path is a prefix of the
+  other, `()` = whole wire conflicting with everything). Overlap →
+  `ElaborationError` naming both functions and paths. A multi-writer wire written
+  through a *variable* array index by any writer
+  (`Logic.global_wire_dynamic_index_writes`) → `ElaborationError`.
+- Each writing function must have exactly one instance in the fully-elaborated
+  submodule hierarchy (`FuncToInstances[writer]` must contain exactly one key).
+  Multiple instances would mean multiple hardware drivers for the same leaves →
+  `ElaborationError`. Writers may sit anywhere in the hierarchy (helper functions
+  called from a `@MAIN`), not only in `@MAIN` bodies.
+- Global wires can be read from any number of functions (including non-`@MAIN`
+  functions), including their own writer functions (see readback above).
+- The writer function itself may also read the wire it writes (see "Write side" above) —
+  this is no longer an error; only a genuinely different function attempting to write a
+  wire another function already writes remains an error (the exactly-one-writer rule).
 
 ### Implementation mapping
 

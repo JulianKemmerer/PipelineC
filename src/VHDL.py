@@ -308,6 +308,72 @@ def CLK_EXT_STR(main_func, parser_state):
     return CLK_MHZ_GROUP_TEXT(mhz, group)
 
 
+def GLOBAL_WIRE_SUB_C_TYPE(c_type, path_tok, parser_state):
+    """One step of a global-wire driven-path walk: struct field (str token) or
+    constant array index (int token) -> the sub-element's c type string."""
+    if isinstance(path_tok, str):
+        return parser_state.struct_to_field_type_dict[c_type][path_tok]
+    elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+    sub_t = elem_t
+    for d in dims[1:]:
+        sub_t += f"[{d}]"
+    return sub_t
+
+
+def BUILD_MULTI_WRITER_REGIONS(base_c_type, writer_to_driven_paths, parser_state):
+    """Split a multi-writer global wire's type tree into the coarsest list of
+    regions each owned by exactly one writer function (or by nobody -> zeros).
+
+    writer_to_driven_paths: {writer_func_name: set(path_tuple)}, each path tuple
+    struct-field strs / constant array index ints, root->leaf (PY_TO_LOGIC's
+    Logic.global_wire_driven_paths, already validated pairwise non-overlapping
+    across writers by _check_no_overlapping_driven_paths). Returns a list of
+    (vhdl_suffix, region_c_type, owner_func_or_None) covering every leaf of
+    base_c_type exactly once: a claimed path becomes one region at exactly its
+    own depth; structs/arrays with claims strictly below recurse per field /
+    per constant element; subtrees nobody claims become owner=None for the
+    caller to zero-fill. Per-region concurrent sub-element assignment from
+    distinct writer instances is legal VHDL because every region suffix is a
+    distinct static prefix (the INST_ARRAY per-element global wiring above is
+    the in-repo precedent)."""
+    regions = []
+
+    def recurse(c_type, path, suffix):
+        for writer, paths in writer_to_driven_paths.items():
+            if path in paths:
+                regions.append((suffix, c_type, writer))
+                return
+        n = len(path)
+        has_deeper = any(
+            len(p) > n and p[:n] == path
+            for paths in writer_to_driven_paths.values()
+            for p in paths
+        )
+        if not has_deeper:
+            regions.append((suffix, c_type, None))
+            return
+        if C_TO_LOGIC.C_TYPE_IS_STRUCT(c_type, parser_state):
+            for field, field_type in parser_state.struct_to_field_type_dict[
+                c_type
+            ].items():
+                recurse(field_type, path + (field,), suffix + "." + field)
+        elif C_TO_LOGIC.C_TYPE_IS_ARRAY(c_type):
+            elem_t, dims = C_TO_LOGIC.C_ARRAY_TYPE_TO_ELEM_TYPE_AND_DIMS(c_type)
+            sub_t = elem_t
+            for d in dims[1:]:
+                sub_t += f"[{d}]"
+            for i in range(dims[0]):
+                recurse(sub_t, path + (i,), suffix + f"({i})")
+        else:
+            raise Exception(
+                f"Global wire driven paths descend below scalar type {c_type} "
+                f"at {path}? Should be unreachable after PY_TO_LOGIC validation."
+            )
+
+    recurse(base_c_type, (), "")
+    return regions
+
+
 def WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top=False):
     text = ""
     text += "library ieee;" + "\n"
@@ -1253,12 +1319,55 @@ begin
                 write_funcs.add(func_name)
             if var_name in func_logic.write_only_global_wires:
                 write_funcs.add(func_name)
-        if len(write_funcs) > 1:
-            raise Exception(
-                f"More than one function trying to write to global {var_name}: {write_funcs}!"
-            )
+
+        def _inst_text(func_inst, vname=var_name):
+            # Start with main func then apply hier instances, ending at vname --
+            # e.g. "main_a.some_sub_inst.main_ab_out" -- shared by write-,
+            # read-, and readback-side text assembly below.
+            toks = func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+            t = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(func_inst, parser_state)
+            for tok in toks[1:]:
+                t += "." + WIRE_TO_VHDL_NAME(tok)
+            return t + "." + vname
+
         rw_func_insts = set()
-        if len(write_funcs) > 0:
+        # multi_writer_regions: None for the single-writer/no-writer path (byte-
+        # identical to the original single-writer emission below); else the
+        # BUILD_MULTI_WRITER_REGIONS list of (vhdl_suffix, region_c_type,
+        # owner_func_or_None) covering the wire's whole type tree -- arbitrary
+        # struct/array nesting, one region per maximal single-owner subtree,
+        # owner None meaning "no writer claims this subtree -> zero-fill".
+        multi_writer_regions = None
+        writer_write_text = {}  # writer func name -> "module_to_global.<inst path>"
+        if len(write_funcs) > 1:
+            # Multiple writer functions of one compound global: legal iff each
+            # writer's driven leaf paths (recorded by Pypeline's elaborator in
+            # global_wire_driven_paths; absent/empty for legacy C-frontend Logic
+            # objects, which never support this) are pairwise disjoint --
+            # PY_TO_LOGIC.py's post-elaboration validation
+            # (_check_no_overlapping_driven_paths) already guarantees this by the
+            # time we get here.
+            writer_to_driven_paths = {}
+            for write_func in write_funcs:
+                write_insts = parser_state.FuncToInstances[write_func]
+                if len(write_insts) > 1:
+                    raise Exception(
+                        f"More than one instance trying to write to global {var_name}: {write_insts}!"
+                    )
+                write_func_inst = list(write_insts)[0]
+                rw_func_insts.add(write_func_inst)
+                writer_write_text[write_func] = "module_to_global." + _inst_text(
+                    write_func_inst
+                )
+                func_logic = parser_state.FuncLogicLookupTable[write_func]
+                writer_to_driven_paths[write_func] = getattr(
+                    func_logic, "global_wire_driven_paths", {}
+                ).get(var_name, set())
+            multi_writer_regions = BUILD_MULTI_WRITER_REGIONS(
+                var_info.type_name, writer_to_driven_paths, parser_state
+            )
+            write_text = None  # unused in the multi-writer path below
+        elif len(write_funcs) > 0:
             write_func = list(write_funcs)[0]
 
             # Find the one write inst
@@ -1269,20 +1378,7 @@ begin
                 )
             write_func_inst = list(write_insts)[0]
             rw_func_insts.add(write_func_inst)
-
-            # Assemble driver write wire text
-            write_func_inst_toks = write_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
-            # Start with main func then apply hier instances
-            write_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
-                write_func_inst, parser_state
-            )
-            for write_func_inst_tok in write_func_inst_toks[
-                1 : len(write_func_inst_toks)
-            ]:
-                write_func_inst_str = WIRE_TO_VHDL_NAME(write_func_inst_tok)
-                write_text += "." + write_func_inst_str
-            write_text += "." + var_name
-            write_text = "module_to_global." + write_text
+            write_text = "module_to_global." + _inst_text(write_func_inst)
         else:
             # If not write side driving this global wire then last chance
             # is it being a top level input
@@ -1295,7 +1391,14 @@ begin
 
         # One reader of the wire might be an output port
         if var_name in parser_state.output_wires:
-            text += var_name + " <= " + write_text + ";\n"
+            if multi_writer_regions is not None:
+                for suffix, region_type, owner in multi_writer_regions:
+                    if owner is not None:
+                        text += f"{var_name}{suffix} <= {writer_write_text[owner]}{suffix};\n"
+                    else:
+                        text += f"{var_name}{suffix} <= {C_TYPE_STR_TO_VHDL_NULL_STR(region_type, parser_state)};\n"
+            else:
+                text += var_name + " <= " + write_text + ";\n"
 
         # Find the many read funcs
         read_funcs = set()
@@ -1328,19 +1431,70 @@ begin
 
         # Write lines connecting write side to many read sides
         for read_func_inst in read_insts:
-            # Assemble driven read wire text
-            read_func_inst_toks = read_func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
-            # Start with main func then apply hier instances
-            read_text = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
-                read_func_inst, parser_state
-            )
-            for read_func_inst_tok in read_func_inst_toks[1 : len(read_func_inst_toks)]:
-                read_func_inst_str = WIRE_TO_VHDL_NAME(read_func_inst_tok)
-                read_text += "." + read_func_inst_str
-            read_text += "." + var_name
-            text += "global_to_module." + read_text + " <= " + write_text + ";\n"
+            read_text = "global_to_module." + _inst_text(read_func_inst)
+            if multi_writer_regions is not None:
+                for suffix, region_type, owner in multi_writer_regions:
+                    if owner is not None:
+                        text += f"{read_text}{suffix} <= {writer_write_text[owner]}{suffix};\n"
+                    else:
+                        text += f"{read_text}{suffix} <= {C_TYPE_STR_TO_VHDL_NULL_STR(region_type, parser_state)};\n"
+            else:
+                text += f"{read_text} <= {write_text};\n"
+
+        # Feed writer functions that also read back their own wire
+        # (readback_global_wires): their <var>_PYPELINE_READBACK global_to_module input
+        # gets zeros in the regions THAT writer itself drives (its own
+        # read-before-write must return zero) and the owning writer's live value
+        # in regions other writers drive -- flattened-leaf semantics for a
+        # writer reading foreign leaves. Single-writer wires: whole-wire zeros
+        # (there are no foreign writers).
+        for write_func in sorted(write_funcs):
+            func_logic = parser_state.FuncLogicLookupTable[write_func]
+            rb_field = getattr(func_logic, "readback_global_wires", {}).get(var_name)
+            if rb_field is None:
+                continue
+            write_func_inst = list(parser_state.FuncToInstances[write_func])[0]
+            rb_text = "global_to_module." + _inst_text(write_func_inst, rb_field)
+            if multi_writer_regions is not None:
+                for suffix, region_type, owner in multi_writer_regions:
+                    if owner is not None and owner != write_func:
+                        text += f"{rb_text}{suffix} <= {writer_write_text[owner]}{suffix};\n"
+                    else:
+                        text += f"{rb_text}{suffix} <= {C_TYPE_STR_TO_VHDL_NULL_STR(region_type, parser_state)};\n"
+            else:
+                text += f"{rb_text} <= {C_TYPE_STR_TO_VHDL_NULL_STR(var_info.type_name, parser_state)};\n"
 
         text += "\n"
+
+    # Readback feeds for UNSHARED wires: a global wire used ONLY by its single
+    # writer function (which also reads it back) has GLOBAL_VAR_IS_SHARED False,
+    # so the direct-connect loop above skipped it -- but the writer's entity
+    # still has a <var>_PYPELINE_READBACK global_to_module input that must be driven
+    # (all zeros: no other writers exist, and own regions read zero by
+    # definition).
+    for var_name, var_info in parser_state.global_vars.items():
+        if var_name in shared_global_vars:
+            continue
+        for func_name in var_info.used_in_funcs:
+            if func_name not in parser_state.FuncLogicLookupTable:
+                continue
+            func_logic = parser_state.FuncLogicLookupTable[func_name]
+            rb_field = getattr(func_logic, "readback_global_wires", {}).get(var_name)
+            if rb_field is None:
+                continue
+            if func_name not in parser_state.FuncToInstances:
+                continue
+            for func_inst in parser_state.FuncToInstances[func_name]:
+                toks = func_inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+                t = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                    func_inst, parser_state
+                )
+                for tok in toks[1:]:
+                    t += "." + WIRE_TO_VHDL_NAME(tok)
+                text += (
+                    f"global_to_module.{t}.{rb_field} <= "
+                    f"{C_TYPE_STR_TO_VHDL_NULL_STR(var_info.type_name, parser_state)};\n"
+                )
 
     # WRITE SIDE connections for instance array special multi driver global wires, etc
     write_inst_array_vars = set()

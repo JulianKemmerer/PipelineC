@@ -793,18 +793,96 @@ to module-level `Wire[T]`/`Input[T]`/`Output[T]` names to call the sim wire stat
 | Original AST | Transformed AST |
 |---|---|
 | `Name(id='wire', ctx=Load)` | `_sim_wire_read('wire')` |
-| `wire = expr` (Assign) | `_sim_wire_write('wire', expr)` (Expr stmt, no local binding) |
+| `wire = expr` (Assign, whole-wire) | `_sim_wire_write('wire', expr)` (Expr stmt, no local binding) |
 | `wire: T = expr` (AnnAssign with value) | `_sim_wire_write('wire', expr)` |
 | `module_alias.wire` (Attribute, Load) | `_sim_wire_read('wire')` |
-| `module_alias.wire = expr` (Attribute, Store) | `_sim_wire_write('wire', expr)` |
+| `module_alias.wire = expr` (Attribute, Store, whole-wire) | `_sim_wire_write('wire', expr)` |
+| `wire.field = expr` / `wire[i] = expr` (any nesting, incl. `module_alias.wire.field = expr`) | `_sim_wire_lens_write('wire', [path...], expr)` |
+| `wire += expr` (AugAssign, whole-wire) | `_sim_wire_write('wire', _sim_wire_read('wire') + expr)` |
+| `wire.field += expr` (AugAssign, field/index) | `_sim_wire_lens_write('wire', [path...], _sim_wire_lens_read('wire', [path...]) + expr)` |
 
 Module-level wire declarations (`wire: Wire[T]` with no value) are `AnnAssign` nodes with
 `value=None` and are left untouched.
 
 For cross-module wire access (`board_vga.vga_pmod = ...`), `_build_reg_sim_func` also scans
 all module objects in `fn.__globals__` for `Wire[T]`/`Input[T]`/`Output[T]` annotations and
-builds a `module_wire_attrs` dict `{(alias_name, attr_name): bare_wire_name}`. This is passed
-to `_GlobalWireRewriter` alongside the bare `global_wire_names` set.
+builds a `module_wire_attrs` dict `{(alias_name, attr_name): bare_wire_name}` **and** a
+parallel `module_wire_ctypes` dict of the same shape holding each wire's `inner_ctype` (read
+straight off the `_WireType`/`_InputType`/`_OutputType` annotation object). Both are passed to
+`_GlobalWireRewriter` alongside the bare `global_wire_names`/`wire_ctypes` maps. Every
+discovered wire's ctype is also registered globally in `_sim_wire_ctype` (keyed by the
+qualified `<module>.<wire>` sim name) so `_sim_wire_lens_read`/`_sim_wire_lens_write` can
+build a typed zero value for a compound wire before any whole-wire write has ever landed in
+`_sim_wire_state`.
+
+### Field/index lens writes: `_sim_wire_lens_write` / `_sim_wire_lens_read`
+
+A target chain rooted at a wire (`wire.field`, `wire[i].field`, `module.wire.field`, at any
+nesting depth) is detected by `_wire_chain_to_path`, which walks the `Attribute`/`Subscript`
+chain down to its base and — if the base resolves to a global wire — returns the qualified
+sim key, the root-to-leaf path (as AST nodes: `Constant(field_name)` for attribute steps, the
+raw slice node for subscript steps, so a dynamic index expression is evaluated at sim runtime
+exactly as written), and the statically-resolved leaf ctype (walking the wire's declared
+struct/array type through the path). This mirrors `_TypedAnnAssignRewriter._chain_to_path`
+exactly, except the root is resolved against `wire_names`/`module_wire_attrs` instead of a
+local `_compound_declared` map — the two rewriters compose in sequence (`_GlobalWireRewriter`
+runs first) without conflict, since each only ever rewrites chains rooted in its own kind of
+name.
+
+```python
+def _sim_wire_lens_read(name: str, path: list)                      # lens-get into the wire's current (or zero-default) value; records reader dependency
+def _sim_wire_lens_write(name: str, path: list, value, claim_key)   # lens-set: _sim_wire_state[name] = _sim_lens_set(current_or_zero, path, value); records the concrete path under claim_key
+```
+
+Both reuse `_sim_lens_set` (the same struct-`_replace`/list-copy mechanism
+`_TypedAnnAssignRewriter` uses for local compound variables — see below) and
+`_sim_wire_current_or_zero`, which returns `_sim_wire_state[name]` if present, else a fresh
+`_make_sim_zero(ctype)` built from the registered `_sim_wire_ctype[name]`. A leaf write is
+`_sim_cast_deep`-wrapped when the leaf ctype was staticaly resolvable, exactly like a local
+compound variable's field write — but since a ctype object can't be embedded directly as an
+`ast.Constant` value (Python's compiler only accepts literal types there), the rewriter stashes
+it in a `leaf_ctypes_out` out-dict under a synthetic `__wire_leaf_ctype_<line>_<col>__` name and
+references that name instead, exactly mirroring `_TypedAnnAssignRewriter`'s
+`__sim_ann_<line>_<col>__` mechanism (see below); the decoration site merges `leaf_ctypes_out`
+into the rewritten function's exec namespace alongside `ann_ctypes_out`.
+
+### Per-invocation zero-reset via runtime claim tracking
+
+`_sim_wire_state` is one persistent module-level dict shared across *every* invocation of a
+function within a simulated clock cycle — not just across cycles. In particular, `_run_clock_cycle`
+runs each `@MAIN` at least twice per cycle: once (or more) during the convergence pass, then once
+more in the final `@sim_output`-enabling pass. Without correction, a function that both reads and
+writes the same wire would see, on its second invocation, the *first* invocation's already-written
+value as if it were "read before write", and a conditionally-skipped write would leave last
+cycle's value latched — the opposite of the zero default elaboration gives an undriven leaf
+(see `PY_TO_LOGIC_DESIGN.md`'s Global Wires section).
+
+The reset is scoped by **runtime claim tracking**, not static analysis. Every rewritten write
+call carries the writing function's qualified name as `claim_key`
+(`f"{fn.__module__}.{fn.__qualname__}"`, baked in as an `ast.Constant` by
+`_GlobalWireRewriter`): `_sim_wire_write(name, value, claim_key)` records a whole-wire `()`
+claim, `_sim_wire_lens_write(name, path, value, claim_key)` records the **concrete** path
+written this call (field strs, indices normalized to ints) into the module-level
+`_sim_wire_claims[claim_key][name]` set. When the rewriter saw any write in the body
+(`written_wire_names` non-empty), the decoration site injects a single
+`_sim_wire_reset_claims(claim_key)` statement at the very top of the rewritten body: it zeros
+exactly the claimed leaves — the whole wire for a `()` claim, else one
+`_sim_lens_set(..., _make_sim_zero(leaf_ctype))` per claimed path (leaf ctype resolved by
+walking `_sim_wire_ctype[name]` along the path via `_sim_ctype_at_path`).
+
+Runtime claims are what make the reset exact for every write shape elaboration supports
+statically *and* the ones it can't: static nested paths, unrolled `for i in range(...)` loops
+(a real Python loop with a variable index at sim time — the claims accumulate the concrete
+indices actually touched), and genuinely dynamic indices. Claims grow monotonically and are
+never dropped between cycles, matching hardware, where the mux-to-zero structure exists for
+every leaf the function ever writes, every cycle; they are cleared with the rest of the wire
+state by `sim_reset()`/`sim_wire_reset()`. Resetting only the invoking function's own claimed
+leaves — never the whole wire — is what lets multiple writer functions share one compound wire:
+a whole-wire reset would transiently clobber a different writer's already-committed leaves
+within the same cycle's convergence loop. (Cross-writer readback needs no extra sim machinery
+at all: a writer's read of a foreign leaf is an ordinary `_sim_wire_read`/`_sim_wire_lens_read`
+of the shared state, which also registers the reader for convergence re-queueing when the
+foreign writer's value changes.)
 
 ---
 

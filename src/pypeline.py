@@ -2546,6 +2546,11 @@ SIM_TRACE_LOCATIONS: bool = False
 
 # Global wire simulation state.
 _sim_wire_state: dict = {}  # wire name → current value (int or struct/array instance)
+_sim_wire_ctype: dict = {}  # wire name → inner ctype (for zero defaults / leaf casting)
+# claim_key (writer function's qualified name) → {wire name → set of concrete
+# written path tuples} -- runtime-recorded driven leaves, reset to zero at the
+# top of each of that function's invocations (see _sim_wire_reset_claims).
+_sim_wire_claims: dict = {}
 _sim_converging: bool = False  # True during delta-cycle convergence passes
 
 
@@ -2769,15 +2774,110 @@ def _sim_wire_read(name: str):
     return _sim_wire_state[name]
 
 
-def _sim_wire_write(name: str, value) -> None:
-    """Set the current global wire value (struct types preserved, not converted to int)."""
+def _sim_wire_write(name: str, value, claim_key=None) -> None:
+    """Set the current global wire value (struct types preserved, not converted to int).
+    claim_key (the writing function's qualified name, baked in by
+    _GlobalWireRewriter) records a whole-wire () claim for that function's
+    per-invocation zero-reset (see _sim_wire_reset_claims)."""
     _sim_wire_state[name] = value
+    if claim_key is not None:
+        _sim_wire_claims.setdefault(claim_key, {}).setdefault(name, set()).add(())
+
+
+def _sim_wire_current_or_zero(name: str):
+    """Return the wire's current value, or its typed zero if never written yet this
+    run (e.g. a compound wire read/written leaf-by-leaf before any whole-wire write
+    has occurred) -- mirrors hardware's implicit zero-init base wire."""
+    if name in _sim_wire_state:
+        return _sim_wire_state[name]
+    ctype = _sim_wire_ctype.get(name)
+    return _make_sim_zero(ctype) if ctype is not None else None
+
+
+def _sim_wire_lens_read(name: str, path: list):
+    """Read a nested field/index of a global wire's current value (or its zero
+    default if unwritten so far), registering the calling MAIN as a reader exactly
+    like _sim_wire_read (needed so convergence requeues on a foreign writer's
+    leaf change)."""
+    if _sim_current_main is not None:
+        _sim_wire_readers.setdefault(name, set()).add(_sim_current_main)
+    obj = _sim_wire_current_or_zero(name)
+    for elem in path:
+        obj = getattr(obj, elem) if isinstance(elem, str) else obj[int(elem)]
+    return obj
+
+
+def _sim_wire_lens_write(name: str, path: list, value, claim_key=None) -> None:
+    """Write a nested field/index of a global wire's value, preserving every other
+    leaf (own or another writer's) untouched -- the sim-side flattened-leaf model
+    for compound-type Wire[T]/Output[T] partial/field writes.
+    claim_key (the writing function's qualified name, baked in by
+    _GlobalWireRewriter) records the concrete path written -- field names as
+    strs, indices normalized to ints, so dynamic indices claim exactly the
+    element(s) actually touched -- for that function's per-invocation
+    zero-reset (see _sim_wire_reset_claims)."""
+    base = _sim_wire_current_or_zero(name)
+    _sim_wire_state[name] = _sim_lens_set(base, path, value)
+    if claim_key is not None:
+        _sim_wire_claims.setdefault(claim_key, {}).setdefault(name, set()).add(
+            tuple(p if isinstance(p, str) else int(p) for p in path)
+        )
+
+
+def _sim_ctype_at_path(ctype, path):
+    """Walk a wire's ctype along a claim path (field strs / index ints); None if
+    any step can't be resolved (unannotated field etc.)."""
+    for p in path:
+        if ctype is None:
+            return None
+        if isinstance(p, str):
+            ctype = ctype.__annotations__.get(p) if hasattr(ctype, "_fields") else None
+        else:
+            ctype = _array_elem_ctype(ctype)
+    return ctype
+
+
+def _sim_wire_reset_claims(claim_key) -> None:
+    """Zero every (wire, path) this function has ever written, at the start of
+    each invocation -- the sim-side equivalent of elaboration's implicit
+    zero-init first alias, scoped to exactly the leaves this function drives.
+
+    Needed because _sim_wire_state is one persistent dict shared across
+    repeated invocations of the same function within a cycle (the convergence
+    pass, then the final @sim_output pass): without this, a "read own wire
+    before this invocation's write" would see the *previous* invocation's
+    already-written value instead of zero, and a conditionally-skipped write
+    would leave last cycle's value latched instead of reading zero. Claims are
+    recorded at runtime by _sim_wire_write/_sim_wire_lens_write with the
+    concrete paths actually written (so unrolled loops, nested paths, and
+    dynamic indices all reset exactly what they touched), and grow
+    monotonically -- matching hardware, where the mux-to-zero structure exists
+    for every leaf the function ever writes, every cycle. Resetting only this
+    function's own claimed paths (never the whole wire) is essential so one
+    writer's reset can't transiently clobber a different writer's
+    already-committed leaves of the same wire within one cycle's convergence
+    loop."""
+    for wire_name, paths in _sim_wire_claims.get(claim_key, {}).items():
+        ctype = _sim_wire_ctype.get(wire_name)
+        if () in paths:
+            if ctype is not None:
+                _sim_wire_state[wire_name] = _make_sim_zero(ctype)
+            continue
+        for path in paths:
+            leaf_ctype = _sim_ctype_at_path(ctype, path)
+            if leaf_ctype is None:
+                continue
+            base = _sim_wire_current_or_zero(wire_name)
+            _sim_wire_state[wire_name] = _sim_lens_set(
+                base, list(path), _make_sim_zero(leaf_ctype)
+            )
 
 
 def sim_reset():
     """Clear all simulated register and wire state."""
     _sim_reg_state.clear()
     _sim_wire_state.clear()
+    _sim_wire_claims.clear()
     _sim_input_cache.clear()
 
 
@@ -2799,6 +2899,7 @@ def _sim_reg_flush_buffer():
 def sim_wire_reset():
     """Clear all global wire simulation state."""
     _sim_wire_state.clear()
+    _sim_wire_claims.clear()
 
 
 class _GlobalWireRewriter(_ast.NodeTransformer):
@@ -2827,10 +2928,55 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
     would get rebuilt even if its own body never touches a wire.
     """
 
-    def __init__(self, wire_names, module_wire_attrs=None):
+    def __init__(
+        self,
+        wire_names,
+        module_wire_attrs=None,
+        wire_ctypes=None,
+        module_wire_ctypes=None,
+        leaf_ctypes_out=None,
+        claim_key=None,
+    ):
         self._wire_names = dict(wire_names)
         self._module_wire_attrs = module_wire_attrs or {}
+        self._wire_ctypes = wire_ctypes or {}  # bare_name -> inner_ctype
+        self._module_wire_ctypes = (
+            module_wire_ctypes or {}
+        )  # (alias, attr) -> inner_ctype
+        # leaf_ctypes_out: filled in-place, synthetic __wire_leaf_ctype_L_C__ name ->
+        # ctype object -- ctype objects can't be embedded directly as ast.Constant
+        # values (Python's compiler only accepts literal types there), so field/index
+        # lens writes reference a synthetic global name instead, exactly like
+        # _TypedAnnAssignRewriter's __sim_ann_L_C__ mechanism.
+        self._leaf_ctypes_out = leaf_ctypes_out if leaf_ctypes_out is not None else {}
+        # written_wire_names: qualified sim keys of every wire this function
+        # writes anywhere in its body (whole-wire or any field/index lens write).
+        # Non-empty => the decoration site injects a one-line
+        # `_sim_wire_reset_claims(<claim_key>)` prologue at the top of the
+        # rewritten body. The actual per-leaf reset bookkeeping happens at
+        # RUNTIME: every rewritten write call carries claim_key (this function's
+        # qualified name) and records the concrete path it wrote into
+        # _sim_wire_claims, so the prologue zeros exactly the leaves this
+        # function has driven -- static fields, nested paths, unrolled-loop or
+        # dynamic indices alike -- never a whole compound wire another writer
+        # partially owns (see _sim_wire_reset_claims for the full semantics).
+        self.written_wire_names: set = set()
+        self._claim_key = claim_key
         self.modified = False
+
+    def _record_whole_write(self, wire_name, ctype):
+        self.written_wire_names.add(wire_name)
+
+    def _record_field_write(self, wire_name, path_nodes, leaf_ctype, root_ctype):
+        self.written_wire_names.add(wire_name)
+
+    def _claim_key_const(self):
+        return _ast.Constant(value=self._claim_key)
+
+    def _leaf_ctype_name(self, ctype, node):
+        key = f"__wire_leaf_ctype_{node.lineno}_{node.col_offset}__"
+        self._leaf_ctypes_out[key] = ctype
+        return _ast.Name(id=key, ctx=_ast.Load())
 
     def visit_Name(self, node):
         if node.id in self._wire_names and isinstance(node.ctx, _ast.Load):
@@ -2863,47 +3009,219 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
             )
         return self.generic_visit(node)
 
+    def _wire_root(self, node):
+        """If node is exactly a bare wire Name or a module.wire Attribute (the two
+        whole-wire root shapes), return (qualified_sim_key, inner_ctype). Else None.
+        """
+        if isinstance(node, _ast.Name) and node.id in self._wire_names:
+            return self._wire_names[node.id], self._wire_ctypes.get(node.id)
+        if isinstance(node, _ast.Attribute) and isinstance(node.value, _ast.Name):
+            key = (node.value.id, node.attr)
+            if key in self._module_wire_attrs:
+                return self._module_wire_attrs[key], self._module_wire_ctypes.get(key)
+        return None
+
+    def _wire_chain_to_path(self, target):
+        """Walk a Store-context Attribute/Subscript chain down to its base and, if
+        the base is a global wire (bare name or module.wire), return
+        (qualified_sim_key, path_nodes, leaf_ctype, root_ctype). path_nodes are AST
+        nodes (Constant(field_name) for attribute steps, the raw slice for subscript
+        steps), root-to-leaf order, mirroring _TypedAnnAssignRewriter._chain_to_path.
+        Returns (None, None, None, None) if the chain isn't rooted at a wire (e.g. a
+        plain local compound variable -- left untouched for _TypedAnnAssignRewriter
+        to handle in the pass that runs after this one).
+        """
+        path = []
+        kinds = []
+        node = target
+        while isinstance(node, (_ast.Attribute, _ast.Subscript)):
+            root = self._wire_root(node.value)
+            if root is not None:
+                if isinstance(node, _ast.Attribute):
+                    path.append(_ast.Constant(value=node.attr))
+                    kinds.append(("attr", node.attr))
+                else:
+                    slc = node.slice
+                    if isinstance(slc, _ast.Index):  # py3.8 compat
+                        slc = slc.value
+                    path.append(slc)
+                    kinds.append(("idx", None))
+                path.reverse()
+                kinds.reverse()
+                leaf_ctype = root[1]
+                for kind, field_name in kinds:
+                    if leaf_ctype is None:
+                        break
+                    if kind == "attr":
+                        leaf_ctype = (
+                            leaf_ctype.__annotations__.get(field_name)
+                            if hasattr(leaf_ctype, "_fields")
+                            else None
+                        )
+                    else:
+                        leaf_ctype = _array_elem_ctype(leaf_ctype)
+                return root[0], path, leaf_ctype, root[1]
+            if isinstance(node, _ast.Attribute):
+                path.append(_ast.Constant(value=node.attr))
+                kinds.append(("attr", node.attr))
+                node = node.value
+            else:
+                slc = node.slice
+                if isinstance(slc, _ast.Index):  # py3.8 compat
+                    slc = slc.value
+                path.append(slc)
+                kinds.append(("idx", None))
+                node = node.value
+        return None, None, None, None
+
+    def _build_lens_write(
+        self, wire_name, path_nodes, leaf_ctype, value_node, ref_node
+    ):
+        """Build `_sim_wire_lens_write(wire_name, [path...], value)` (optionally
+        _sim_cast_deep-wrapped), (re-)visiting path_nodes/value_node from scratch so
+        nested wire reads are rewritten and no AST node is shared between call sites.
+        """
+        visited_path = [self.visit(_copy.deepcopy(p)) for p in path_nodes]
+        visited_value = self.visit(value_node)
+        if leaf_ctype is not None:
+            visited_value = _ast.Call(
+                func=_ast.Name(id="_sim_cast_deep", ctx=_ast.Load()),
+                args=[visited_value, self._leaf_ctype_name(leaf_ctype, ref_node)],
+                keywords=[],
+            )
+        return _ast.Expr(
+            value=_ast.Call(
+                func=_ast.Name(id="_sim_wire_lens_write", ctx=_ast.Load()),
+                args=[
+                    _ast.Constant(value=wire_name),
+                    _ast.List(elts=visited_path, ctx=_ast.Load()),
+                    visited_value,
+                    self._claim_key_const(),
+                ],
+                keywords=[],
+            )
+        )
+
+    def _build_lens_read(self, wire_name, path_nodes):
+        visited_path = [self.visit(_copy.deepcopy(p)) for p in path_nodes]
+        return _ast.Call(
+            func=_ast.Name(id="_sim_wire_lens_read", ctx=_ast.Load()),
+            args=[
+                _ast.Constant(value=wire_name),
+                _ast.List(elts=visited_path, ctx=_ast.Load()),
+            ],
+            keywords=[],
+        )
+
     def visit_Assign(self, node):
-        node = self.generic_visit(node)  # transform RHS and any non-wire targets
-        if (
-            len(node.targets) == 1
-            and isinstance(node.targets[0], _ast.Name)
-            and node.targets[0].id in self._wire_names
-        ):
-            self.modified = True
-            wire_name = self._wire_names[node.targets[0].id]
-            return _ast.copy_location(
-                _ast.Expr(
+        if len(node.targets) == 1:
+            target = node.targets[0]
+            root = self._wire_root(target)
+            if root is not None:
+                # Whole-wire write: wire = expr  /  module.wire = expr
+                self.modified = True
+                wire_name = root[0]
+                self._record_whole_write(wire_name, root[1])
+                new_node = _ast.Expr(
                     value=_ast.Call(
                         func=_ast.Name(id="_sim_wire_write", ctx=_ast.Load()),
-                        args=[_ast.Constant(value=wire_name), node.value],
+                        args=[
+                            _ast.Constant(value=wire_name),
+                            self.visit(node.value),
+                            self._claim_key_const(),
+                        ],
                         keywords=[],
                     )
-                ),
-                node,
-            )
-        # Cross-module write: module_alias.wire_name = expr
-        if (
-            len(node.targets) == 1
-            and isinstance(node.targets[0], _ast.Attribute)
-            and isinstance(node.targets[0].value, _ast.Name)
-        ):
-            target = node.targets[0]
-            key = (target.value.id, target.attr)
-            if key in self._module_wire_attrs:
-                self.modified = True
-                wire_name = self._module_wire_attrs[key]
-                return _ast.copy_location(
-                    _ast.Expr(
-                        value=_ast.Call(
-                            func=_ast.Name(id="_sim_wire_write", ctx=_ast.Load()),
-                            args=[_ast.Constant(value=wire_name), node.value],
-                            keywords=[],
-                        )
-                    ),
-                    node,
                 )
-        return node
+                return _ast.copy_location(new_node, node)
+            if isinstance(target, (_ast.Attribute, _ast.Subscript)):
+                wire_name, path_nodes, leaf_ctype, root_ctype = (
+                    self._wire_chain_to_path(target)
+                )
+                if wire_name is not None:
+                    # Field/index write on a global wire: wire.x = expr, wire.arr[i] = expr,
+                    # module.wire.field = expr, ... -- flattened-leaf lens write, preserving
+                    # every other leaf (own earlier writes or another writer's leaves).
+                    self.modified = True
+                    self._record_field_write(
+                        wire_name, path_nodes, leaf_ctype, root_ctype
+                    )
+                    return _ast.copy_location(
+                        self._build_lens_write(
+                            wire_name, path_nodes, leaf_ctype, node.value, node
+                        ),
+                        node,
+                    )
+        return self.generic_visit(node)
+
+    def visit_AugAssign(self, node):
+        target = node.target
+        root = self._wire_root(target)
+        if root is not None:
+            # wire += expr  /  module.wire += expr
+            self.modified = True
+            wire_name = root[0]
+            self._record_whole_write(wire_name, root[1])
+            new_val = _ast.BinOp(
+                left=_ast.Call(
+                    func=_ast.Name(id="_sim_wire_read", ctx=_ast.Load()),
+                    args=[_ast.Constant(value=wire_name)],
+                    keywords=[],
+                ),
+                op=node.op,
+                right=self.visit(node.value),
+            )
+            new_node = _ast.Expr(
+                value=_ast.Call(
+                    func=_ast.Name(id="_sim_wire_write", ctx=_ast.Load()),
+                    args=[
+                        _ast.Constant(value=wire_name),
+                        new_val,
+                        self._claim_key_const(),
+                    ],
+                    keywords=[],
+                )
+            )
+            return _ast.copy_location(new_node, node)
+        if isinstance(target, (_ast.Attribute, _ast.Subscript)):
+            wire_name, path_nodes, leaf_ctype, root_ctype = self._wire_chain_to_path(
+                target
+            )
+            if wire_name is not None:
+                self.modified = True
+                self._record_field_write(wire_name, path_nodes, leaf_ctype, root_ctype)
+                read_call = self._build_lens_read(wire_name, path_nodes)
+                new_val = _ast.BinOp(
+                    left=read_call, op=node.op, right=self.visit(node.value)
+                )
+                # new_val already fully built (embeds a lens-read call, not a raw
+                # source expr) -- build the write directly instead of routing through
+                # _build_lens_write's self.visit(value_node), which is only meant for
+                # unvisited source expressions.
+                visited_path = [self.visit(_copy.deepcopy(p)) for p in path_nodes]
+                cast_val = (
+                    _ast.Call(
+                        func=_ast.Name(id="_sim_cast_deep", ctx=_ast.Load()),
+                        args=[new_val, self._leaf_ctype_name(leaf_ctype, node)],
+                        keywords=[],
+                    )
+                    if leaf_ctype is not None
+                    else new_val
+                )
+                new_node = _ast.Expr(
+                    value=_ast.Call(
+                        func=_ast.Name(id="_sim_wire_lens_write", ctx=_ast.Load()),
+                        args=[
+                            _ast.Constant(value=wire_name),
+                            _ast.List(elts=visited_path, ctx=_ast.Load()),
+                            cast_val,
+                            self._claim_key_const(),
+                        ],
+                        keywords=[],
+                    )
+                )
+                return _ast.copy_location(new_node, node)
+        return self.generic_visit(node)
 
     def visit_AnnAssign(self, node):
         # Annotated assignment with a value inside a function body, e.g. x: T = expr.
@@ -2916,11 +3234,16 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
         ):
             self.modified = True
             wire_name = self._wire_names[node.target.id]
+            self._record_whole_write(wire_name, self._wire_ctypes.get(node.target.id))
             return _ast.copy_location(
                 _ast.Expr(
                     value=_ast.Call(
                         func=_ast.Name(id="_sim_wire_write", ctx=_ast.Load()),
-                        args=[_ast.Constant(value=wire_name), node.value],
+                        args=[
+                            _ast.Constant(value=wire_name),
+                            node.value,
+                            self._claim_key_const(),
+                        ],
                         keywords=[],
                     )
                 ),
@@ -3257,19 +3580,63 @@ def _build_reg_sim_func(fn):
         for name, ann in fn.__globals__.get("__annotations__", {}).items()
         if isinstance(ann, (_WireType, _InputType, _OutputType))
     }
+    global_wire_ctypes = {
+        name: ann.inner_ctype
+        for name, ann in fn.__globals__.get("__annotations__", {}).items()
+        if isinstance(ann, (_WireType, _InputType, _OutputType))
+    }
     # Also build a map for cross-module wire access (module_alias.wire_name).
     # Scans all module objects in fn.__globals__ for wire annotations.
     module_wire_attrs = {}
+    module_wire_ctypes = {}
     for _alias, _obj in fn.__globals__.items():
         if not isinstance(_obj, _types.ModuleType):
             continue
         for _wname, _ann in getattr(_obj, "__annotations__", {}).items():
             if isinstance(_ann, (_WireType, _InputType, _OutputType)):
                 module_wire_attrs[(_alias, _wname)] = f"{_obj.__name__}.{_wname}"
+                module_wire_ctypes[(_alias, _wname)] = _ann.inner_ctype
+    # Register every discovered wire's ctype globally (keyed by qualified sim name)
+    # so _sim_wire_lens_read/_sim_wire_lens_write can build a typed zero default for
+    # a compound wire before any whole-wire write has ever landed in _sim_wire_state.
+    for _bare_name, _qual_key in global_wire_names.items():
+        _sim_wire_ctype[_qual_key] = global_wire_ctypes[_bare_name]
+    for _mod_key, _qual_key in module_wire_attrs.items():
+        _sim_wire_ctype[_qual_key] = module_wire_ctypes[_mod_key]
+    wire_leaf_ctypes_out: dict = {}
     _wire_rewriter_modified = False
     if global_wire_names or module_wire_attrs:
-        _wire_rewriter = _GlobalWireRewriter(global_wire_names, module_wire_attrs)
+        _wire_claim_key = f"{fn.__module__}.{fn.__qualname__}"
+        _wire_rewriter = _GlobalWireRewriter(
+            global_wire_names,
+            module_wire_attrs,
+            global_wire_ctypes,
+            module_wire_ctypes,
+            wire_leaf_ctypes_out,
+            _wire_claim_key,
+        )
         _wire_rewriter.visit(func_def)
+        # If this function writes any wire, inject a one-line prologue that zeros
+        # every (wire, path) this function has claimed so far
+        # (_sim_wire_reset_claims) -- each invocation starts from the same
+        # implicit zero-init elaboration gives it, scoped to exactly this
+        # function's own driven leaves so the reset can never clobber a
+        # different writer's already-committed leaves of a shared wire within
+        # one cycle's convergence loop. The claimed-path bookkeeping itself is
+        # runtime: every rewritten write call carries _wire_claim_key and
+        # records the concrete path written (static fields, nested paths,
+        # unrolled-loop and dynamic indices all land as the exact elements
+        # touched).
+        if _wire_rewriter.written_wire_names:
+            func_def.body[0:0] = [
+                _ast.Expr(
+                    value=_ast.Call(
+                        func=_ast.Name(id="_sim_wire_reset_claims", ctx=_ast.Load()),
+                        args=[_ast.Constant(value=_wire_claim_key)],
+                        keywords=[],
+                    )
+                )
+            ]
         _ast.fix_missing_locations(func_def)
         _wire_rewriter_modified = _wire_rewriter.modified
 
@@ -3531,6 +3898,9 @@ def _build_reg_sim_func(fn):
         _SIM_FEEDBACK_MAX_ITER=_SIM_FEEDBACK_MAX_ITER,
         _sim_wire_read=_sim_wire_read,
         _sim_wire_write=_sim_wire_write,
+        _sim_wire_lens_read=_sim_wire_lens_read,
+        _sim_wire_lens_write=_sim_wire_lens_write,
+        _sim_wire_reset_claims=_sim_wire_reset_claims,
         _sim_set_converging=_sim_set_converging,
     )
     for _name, _zero in reg_zeros.items():
@@ -3538,6 +3908,8 @@ def _build_reg_sim_func(fn):
     for _name, _zero in feedback_zeros.items():
         new_globals[f"__fb_zero_{_name}__"] = _zero
     for _key, _ctype_obj in ann_ctypes_out.items():
+        new_globals[_key] = _ctype_obj
+    for _key, _ctype_obj in wire_leaf_ctypes_out.items():
         new_globals[_key] = _ctype_obj
     # Inject function signature annotation type names that only appear in annotations
     # (not the body), so Python doesn't capture them in co_freevars — but exec still

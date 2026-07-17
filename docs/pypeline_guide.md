@@ -1869,10 +1869,116 @@ def a_b_connect():
 ```
 
 Rules:
-- Each `Wire[T]` must have **exactly one** writer function.
+- Each `Wire[T]` must have **exactly one** writer function (with exactly one instance
+  in the design hierarchy).
 - Any number of functions may read it.
-- A function cannot both read and write the same wire.
 - `Wire[T]` is **not** a register — it carries no value across clock cycles.
+
+### Reading and writing the same wire in its writer function
+
+A function may both read and write the same wire it drives — it behaves exactly like
+a normal local variable: writes and reads interleave in program order, and the value
+every *other* function sees that cycle is whatever this function's value is at the end
+of its body.
+
+```python
+w: Wire[uint8_t]
+
+@MAIN
+def writer():
+    w = 0
+    w += 1   # read-after-write: normal local semantics — w is now 1
+```
+
+Reading a leaf **before** this function has written it (even earlier in the very same
+statement list) returns **zero** — the implicit "driven with zeros" default every
+writer function starts with, the same default an undriven struct/array field gets
+(see below). It is not an elaboration error.
+
+```python
+point_out: Wire[point_t]   # point_t has fields .x, .y
+
+@MAIN
+def writer():
+    # point_out.x has not been written yet this function -- reads as 0.
+    point_out.x = point_out.x + 1   # writes 0 + 1 = 1
+```
+
+Only the sole writer function of a wire may read it this way. A function that merely
+*reads* a wire it does not also write still cannot write to it (and a different
+function may not write a wire another function already writes — see the exactly-one-
+writer rule above).
+
+### Partially-driven compound wires read undriven fields as zero
+
+If a `Wire[T]`'s single writer function only assigns some fields of a struct (or some
+elements of an array), the untouched fields/elements read as zero everywhere the wire
+is read — exactly as if the writer had first assigned the whole wire to a zero value,
+then overwritten the fields it actually drives.
+
+```python
+point_out: Wire[point_t]   # point_t has fields .x, .y
+
+@MAIN
+def writer():
+    point_out.x = 5   # .y is never assigned
+
+@MAIN
+def reader():
+    v = point_out   # v.x == 5, v.y == 0
+```
+
+### Splitting a compound wire across multiple writer functions
+
+A `Wire[T]`/`Output[T]` of compound type (struct or array, nested arbitrarily) may be
+driven by **more than one** writer function, as long as the set of scalar leaves each
+writer drives is disjoint from every other writer's. Conceptually the wire behaves
+**as if flattened into one independent global wire per scalar leaf**: each leaf is
+driven by whichever function writes it, leaves nobody drives read as zero, and every
+reader (including the writers themselves) sees each leaf's live value.
+
+```python
+main_ab_in:  Wire[uint1_t]   # input into main_a and into main_b
+main_ab_out: Wire[point_t]   # output .x from main_a and .y from main_b
+
+@MAIN
+def main_a():
+    main_ab_out.x = ~main_ab_in
+
+@MAIN
+def main_b():
+    main_ab_out.y = ~main_ab_in
+
+@MAIN
+def a_b_connect():
+    main_ab_in = main_ab_out.x ^ main_ab_out.y
+```
+
+What a writer may claim:
+- **Any static path**, at any nesting depth: a top-level field (`w.x = ...`), a nested
+  leaf (`w.a.x = ...`), a whole subtree (`w.a = some_point`), or a constant-indexed
+  array element (`w.arr[2] = ...`, including indices from unrolled `for i in range(...)`
+  loops — constant indices stay precise, so one writer covering `arr[0..1]` leaves
+  `arr[2..3]` free for another).
+- Writes may be **conditional** (`if en: w.x = v`): on cycles the write doesn't
+  execute, that leaf reads zero — the clock-enable idiom.
+- The writer may sit **anywhere in the hierarchy** — a helper function called (even
+  several levels deep) from a `@MAIN`, not just a `@MAIN` body itself.
+- A writer may also **read** the wire: leaves it drives itself follow normal
+  local-variable semantics (read-before-write is zero, write-then-read is the new
+  value), and leaves ANOTHER function drives read that function's live value.
+
+Restrictions:
+- Two writers claiming overlapping territory — the same leaf, or one claiming a
+  subtree enclosing another's claim, or one whole-wire write plus any other writer —
+  is an `ElaborationError` naming both functions and paths.
+- Writes through a **variable** (non-constant) array index are not supported when the
+  wire has more than one writer function.
+- Each writer function must still have exactly one instance in the design hierarchy.
+- Leaves no writer claims read as zero, exactly like the single-writer partial-write
+  case above.
+- All writers (and readers) of a split wire must share the same clock domain, exactly
+  like any other shared global wire.
 
 ### `Input[T]` / `Output[T]` — top-level FPGA ports
 

@@ -538,10 +538,120 @@ Python source order than its first use. No flip-flop is inferred; no initial val
 
 Declares a **shared combinatorial wire** at module level, visible across `@MAIN` functions.
 - Valid only at module (global) scope — error if used inside a function body
-- Exactly one writer function; any number of readers
-- A function cannot both read and write the same wire
+- At least one writer function; any number of readers; each writer function must have
+  exactly one instance in the design hierarchy. Compound-typed wires (structs and
+  arrays, nested arbitrarily) may be split across **multiple** writer functions with
+  pairwise-disjoint driven leaves — see "Splitting a compound wire across writers"
+  below. A writer may live anywhere in the hierarchy (a helper called from a `@MAIN`),
+  not only in a `@MAIN` body.
 - No initializer allowed at declaration
 - In single-function simulation (`sim_call`): limited support; multi-MAIN simulation via `pypeline_sim.py` is the intended path
+
+**The flattened-leaf model.** A compound global wire behaves exactly as if flattened
+into one independent global wire per scalar leaf (each leaf = one scalar reachable
+through struct fields / array indices): each leaf is driven by whichever function
+writes it, leaves nobody drives read zero, and every reader — including the writer
+functions themselves — sees each leaf's live value. All of the semantics below follow
+from this one model.
+
+**Reading and writing the same wire, in its writer function.** The writer function
+may read the wire it writes. For leaves it drives itself: normal local-variable
+semantics — writes/reads interleave in program order, read-before-write returns
+**zero**, and the value everyone else sees that cycle is the value at the end of the
+writer's body. For leaves a **different** function drives: the read returns that
+function's live value (a real cross-function read, not local zeros).
+
+**Partial (field/element) writes and the implicit zero default.** A `Wire[T]` (or
+`Output[T]`) of struct/array type does not need every field/element assigned by its
+writer(s). Every leaf no function ever touches — and, within a writer, every own leaf
+read before it is written — resolves to zero, as if the wire had been implicitly
+assigned a whole-value zero immediately on entry to each writer, before its real
+assignments. Writes may also be conditional (`if en: w.x = v`): on cycles the branch
+doesn't execute, the leaf reads its zero default — the write lowers to a mux whose
+else-value is the implicit zero init. Mechanically: `elaborate()` **hoists**
+write-declaration of every pre-scanned written wire to before the body (so a wire
+whose first textual touch is inside an `if` still has its base declared ahead of the
+branch merge), and `_declare_global_write_wire` in `PY_TO_LOGIC.py` gives the base an
+implicit first alias using the exact same alias-chain mechanism `_declare_var` uses
+for an ordinary local variable (see
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#global-wires)). That first alias is
+driven by zeros (`0` / `C_TO_LOGIC.COMPOUND_NULL`) for a write-only function, or by
+an internal **readback input wire** (below) for a function that also reads the wire.
+
+**Readback: a writer that also reads its wire.** When the pre-scan finds a function
+both writes and reads the same wire, `_declare_global_write_wire` creates an extra
+input wire `<name>_PYPELINE_READBACK` of the same type, registers it in the function's
+`read_only_global_wires` (so the existing `global_to_module` record-field / entity
+read-stage machinery feeds it with zero extra plumbing) and in
+`Logic.readback_global_wires`, and uses it as the implicit first alias's driver. The
+top level (`VHDL.py`) then feeds that readback record field per region: **zeros in the
+regions this function itself drives** (own read-before-write = 0, conditional own
+writes default to 0) and **the owning writer's live `module_to_global` value in
+foreign regions** — which is precisely the flattened-leaf readback semantics, decided
+entirely at the top level with no own/foreign distinction needed during elaboration.
+For a single-writer wire every region is its own, so the feed is all zeros; if the
+wire is used by nobody else (`GLOBAL_VAR_IS_SHARED` false), a dedicated pass still
+emits the all-zeros readback feed. The write side is untouched: the final alias still
+drives the base wire and `module_to_global.<name>` exactly as before.
+
+**Splitting a compound wire across writers.** Any static path may be claimed by a
+writer, at any depth: nested struct leaves (`w.a.x = ...`), whole subtrees
+(`w.a = some_point` — note a struct *literal* RHS is decomposed by
+`_elab_compound_init` into per-leaf writes, so only a struct-typed variable/expression
+RHS records the interior path itself), and constant array indices (`w.arr[2] = ...`,
+including unrolled-loop indices, which elaboration resolves to precise int tokens).
+`_write_ref` records each driven path in
+`C_TO_LOGIC.Logic.global_wire_driven_paths[wire_name]` — a set of path tuples of
+field-name strs / index ints, `()` meaning "whole wire" — skipping the implicit
+zero-init write itself (that's a fallback default, not a claimed leaf). A
+variable-index write instead marks the wire in
+`Logic.global_wire_dynamic_index_writes`, since its concrete driven path can't be
+known until runtime and so can't be safely combined with a second writer.
+
+Post-elaboration validation (`PY_TO_LOGIC.py`, end of `PARSE_FILE`) requires at least
+one writer per `Wire`/`Output`, each with exactly one hierarchy instance, and — when
+there is more than one writer — runs `_check_no_overlapping_driven_paths` over every
+writer's driven-path set: two paths from different writers conflict iff one is a
+prefix of the other (so `()` conflicts with everything, equal paths conflict, and a
+whole-subtree claim conflicts with any deeper claim inside it), which is exactly
+"these two writers' claimed leaf territory overlaps," independent of nesting shape.
+Any writer of a multi-writer wire found in `global_wire_dynamic_index_writes` is
+rejected outright.
+
+On the VHDL side, `VHDL.py`'s "Directly connected global wires" top-level wiring keeps
+today's single whole-wire assignment **byte-identical** when a wire has exactly one
+writer and no readback (protecting every existing C-frontend and Pypeline design).
+When a wire has more than one writer, `BUILD_MULTI_WRITER_REGIONS` recursively splits
+the wire's type tree against all writers' driven-path sets into the coarsest list of
+`(vhdl_suffix, region_c_type, owner_or_None)` regions — an exactly-claimed path
+becomes one region at its own depth, structs/arrays with claims strictly below recurse
+per field / per constant element, unclaimed subtrees get `owner=None` — and, for every
+reader instance, the `Output[T]` port case, and each writer's readback feed, emits one
+concurrent VHDL assignment per region:
+`global_to_module.<reader>.<var><suffix> <= module_to_global.<owner>.<var><suffix>;`
+for an owned region (array steps render as `(i)`, struct steps as `.field`), or
+`... <= <zero constant for that region's type>;` (`C_TYPE_STR_TO_VHDL_NULL_STR`) for
+an unclaimed region — and, in a writer's own readback feed, for that writer's own
+regions too. Per-region concurrent assignment to distinct static sub-elements of a
+shared record/array signal is not a new VHDL pattern here — it mirrors the existing
+`INST_ARRAY` multiple-write-instance mechanism (`(i)` sub-element assignment from
+distinct writer instances), generalized over the whole type tree. The per-function
+`<func>_module_to_global_t` record type is unchanged either way — a writer's own
+internal variable still holds the *whole* wire value (implicit zeros in the leaves it
+doesn't drive included); only the *top-level* wiring harvests just each writer's own
+claimed regions.
+
+Native sim mirrors the per-writer zero default with **runtime claim tracking** rather
+than static analysis: every rewritten write call carries the writing function's
+qualified name (`claim_key`) and records the concrete path it wrote — static fields,
+nested paths, unrolled-loop and dynamic indices all land as the exact elements touched
+— into `_sim_wire_claims`; a one-line prologue (`_sim_wire_reset_claims`) zeros
+exactly those claimed leaves at the top of each of that function's invocations.
+Resetting only the function's own claims (never the whole wire) is essential for
+multi-writer wires: a whole-wire reset would transiently wipe a different writer's
+already-committed leaves within the same simulated cycle's convergence loop, since
+`_sim_wire_state` is shared, persistent process state, not per-invocation-scoped. See
+[`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md).
 
 ### `Input[T]` / `_InputType`
 

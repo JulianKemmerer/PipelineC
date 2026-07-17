@@ -23,6 +23,19 @@ VHDL_SIM_TEST_FILES = [
     ("self_check_counter_test.py", INST_DIR, "all"),
     ("self_check_fifo_test.py", INST_DIR, "all"),
     ("self_check_bit_math_test.py", INST_DIR, "all"),
+    ("global_wire_partial_field_test.py", INST_DIR, "all"),
+    ("global_wire_read_write_test.py", INST_DIR, "all"),
+    ("global_wire_split_driver_test.py", INST_DIR, "all"),
+    # Flattened-leaf semantics probes (multi-writer review pass): cross-writer
+    # readback, 3-writer nested struct splits, hierarchy-buried writers,
+    # conditional (clock-enable style) field drivers, constant-index array
+    # element splits -- the same self-checking designs as their native_sim
+    # registrations, proven against real GHDL.
+    ("global_wire_readback_test.py", INST_DIR, "all"),
+    ("global_wire_nested_split_test.py", INST_DIR, "all"),
+    ("global_wire_hier_writer_test.py", INST_DIR, "all"),
+    ("global_wire_cond_driver_test.py", INST_DIR, "all"),
+    ("global_wire_array_split_test.py", INST_DIR, "all"),
 ]
 # fmt: on
 

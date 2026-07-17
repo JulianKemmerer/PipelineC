@@ -111,6 +111,19 @@ def get_tests() -> list:
             cmd=[INST_DIR / "pylist_value_context_error_test.py"],
         )
     )
+    # Not run through the pipelinec CLI either: checks the *type* and message
+    # of the ElaborationErrors global Wire[T] multi-writer split-field driving
+    # raises (overlapping fields, writing an Input), plus a positive case
+    # (disjoint constant-indexed array writes from two writers must NOT error)
+    # -- needs direct in-process PARSE_FILE + exception inspection, same
+    # pattern as pylist_value_context_error_test.py above.
+    tests.append(
+        Test(
+            name="global_wire_errors_test",
+            category="elab",
+            cmd=[INST_DIR / "global_wire_errors_test.py"],
+        )
+    )
     # Not run through the pipelinec CLI either, for the same reason as
     # two_factory_wrappers_test.py: a naming collision between dot_a/dot_b
     # would be silent (same signature on both sides), so it's checked

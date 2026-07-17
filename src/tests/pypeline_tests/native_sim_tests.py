@@ -184,6 +184,71 @@ def get_tests() -> list:
             ],
         )
     )
+    tests.append(
+        Test(
+            name="global_wire_partial_field_test",
+            category="native_sim",
+            cmd=[
+                PIPELINEC,
+                INST_DIR / "global_wire_partial_field_test.py",
+                "--sim",
+                "--run",
+                "all",
+            ],
+        )
+    )
+    tests.append(
+        Test(
+            name="global_wire_read_write_test",
+            category="native_sim",
+            cmd=[
+                PIPELINEC,
+                INST_DIR / "global_wire_read_write_test.py",
+                "--sim",
+                "--run",
+                "all",
+            ],
+        )
+    )
+    tests.append(
+        Test(
+            name="global_wire_split_driver_test",
+            category="native_sim",
+            cmd=[
+                PIPELINEC,
+                INST_DIR / "global_wire_split_driver_test.py",
+                "--sim",
+                "--run",
+                "all",
+            ],
+        )
+    )
+    # Flattened-leaf semantics probes added by the multi-writer review pass:
+    # cross-writer readback, 3-writer nested struct splits, hierarchy-buried
+    # writers, conditionally (clock-enable style) driven fields, and
+    # constant-index array element splits. Each also runs through real GHDL in
+    # vhdl_sim_tests.py so native sim and hardware are held to the same golden
+    # behavior.
+    for fname in [
+        "global_wire_readback_test.py",
+        "global_wire_nested_split_test.py",
+        "global_wire_hier_writer_test.py",
+        "global_wire_cond_driver_test.py",
+        "global_wire_array_split_test.py",
+    ]:
+        tests.append(
+            Test(
+                name=fname[: -len(".py")],
+                category="native_sim",
+                cmd=[
+                    PIPELINEC,
+                    INST_DIR / fname,
+                    "--sim",
+                    "--run",
+                    "all",
+                ],
+            )
+        )
     return tests
 
 

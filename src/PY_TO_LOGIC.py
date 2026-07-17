@@ -1795,6 +1795,14 @@ class FuncElaborator:
         self._mangled_names: set = set()  # python names that have triggered a warning
         # MULTI_CYCLE[...] tag tracking: _MultiCycleTag -> [start_name, end_name]
         self._multi_cycle_pending: dict = {}
+        # written_globals: global wire keys this function's body ever appears as a
+        # write target for, computed by a side-effect-free pre-scan before any real
+        # elaboration happens (see _prescan_written_globals). Lets the very first
+        # touch of a global -- whether it's textually a read or a write -- take the
+        # write-declaration path (implicit zero-init alias chain, local-variable
+        # read-before-write-returns-zero semantics) whenever this function ever
+        # writes that wire anywhere in its body, regardless of program order.
+        self._written_globals: set = set()
 
     def _inst(self, op_full_name, node):
         """Build a unique submodule instance name, prepending any active loop prefix."""
@@ -1908,6 +1916,94 @@ class FuncElaborator:
         except Exception:
             return None
 
+    def _prescan_written_globals(self):
+        """Side-effect-free pre-pass over the function body: which global wires
+        (by their parser_state.global_vars key) does this function ever appear
+        as a write target for, anywhere in its body -- and which does it ever
+        READ (any Load that is not just the base chain of a write target)?
+
+        Returns (written, read) as two sets of global-var keys. The read set is
+        what decides whether a written wire also needs a readback input wire
+        (see _declare_global_write_wire): a write target like `w.x = e` puts its
+        base Name `w` in Load ctx, so naive Load-scanning would classify every
+        field writer as a reader -- the store-chain node set below excludes
+        exactly those base-chain nodes (while still counting reads inside a
+        target's subscript index expressions, e.g. the `w.sel` in
+        `w.arr[w.sel] = e`).
+
+        Runs before any real elaboration, so it must not call anything that
+        mutates self.logic/self.env or registers wires -- only the pure
+        name-resolution helpers (_resolve_global_wire / _resolve_module_wire_name),
+        which are safe to call speculatively here because both are called again,
+        for real, once elaboration actually reaches each write.
+        """
+        written = set()
+        read = set()
+        store_chain_nodes = set()  # id(node) of target-chain nodes (not slices)
+
+        def resolve(node):
+            """Global-wire key for a bare Name or module.attr Attribute, else None."""
+            if isinstance(node, ast.Name):
+                return self._resolve_global_wire(node.id)
+            if isinstance(node, ast.Attribute) and isinstance(node.value, ast.Name):
+                return self._resolve_module_wire_name(node.value.id, node.attr)
+            return None
+
+        def visit_target(node, into):
+            store_chain_nodes.add(id(node))
+            if isinstance(node, ast.Name):
+                key = self._resolve_global_wire(node.id)
+                if key is not None:
+                    into.add(key)
+            elif isinstance(node, ast.Attribute):
+                if isinstance(node.value, ast.Name):
+                    mangled = self._resolve_module_wire_name(node.value.id, node.attr)
+                    if mangled is not None:
+                        into.add(mangled)
+                        store_chain_nodes.add(id(node.value))
+                        return
+                visit_target(node.value, into)
+            elif isinstance(node, ast.Subscript):
+                # The slice/index expression is a genuine READ context -- do not
+                # add it to the store chain (ast.walk visits it normally below).
+                visit_target(node.value, into)
+
+        for node in ast.walk(self.func_def):
+            if isinstance(node, ast.Assign):
+                # Mirror _elab_assign's sim-only-call skip: `wire = some_sim_input_fn()`
+                # (the @sim_input return-value form) is a pure elaboration no-op --
+                # it never actually declares/drives the hardware wire -- so it must
+                # not count as a write here, else a later real read of that Input
+                # would be wrongly routed into the write-declaration path and
+                # rejected as "Input is read-only". _try_eval_const is pure/safe to
+                # call speculatively (no hardware side effects).
+                if isinstance(node.value, ast.Call):
+                    ctor_callee = self._try_eval_const(node.value.func)
+                    if getattr(ctor_callee, "_is_sim_input", False) or getattr(
+                        ctor_callee, "_is_sim_output", False
+                    ):
+                        continue
+                for t in node.targets:
+                    visit_target(t, written)
+            elif isinstance(node, ast.AugAssign):
+                # An augmented target both writes and reads the wire.
+                visit_target(node.target, written)
+                visit_target(node.target, read)
+            elif isinstance(node, ast.AnnAssign) and node.value is not None:
+                visit_target(node.target, written)
+
+        # Second pass: every wire-resolving Load not on a store chain is a read.
+        for node in ast.walk(self.func_def):
+            if id(node) in store_chain_nodes:
+                continue
+            if isinstance(node, (ast.Name, ast.Attribute)) and isinstance(
+                getattr(node, "ctx", None), ast.Load
+            ):
+                key = resolve(node)
+                if key is not None:
+                    read.add(key)
+        return written, read
+
     def elaborate(self):
         self.logic.ast_meta = pypeline_ast.ASTMeta(
             src_file=self.src_file,
@@ -1916,8 +2012,19 @@ class FuncElaborator:
             end_col=getattr(self.func_def, "end_col_offset", None),
             raw=self.func_def,
         )
+        self._written_globals, self._read_globals = self._prescan_written_globals()
         self._setup_inputs()
         self._setup_outputs()
+        # Hoist write-declaration of every global wire this function writes
+        # anywhere in its body to before the body is elaborated -- like a C
+        # global, the wire (and its implicit zero-init first alias) must exist
+        # from function start. Without this, a wire whose first textual touch
+        # sits inside an if-branch would be lazily declared mid-branch and the
+        # branch-merge machinery never sees a pre-branch base value to mux
+        # against ("No covering wire found" at _connect_final_state_wires).
+        # Sorted for canonical (source-deterministic) wire/alias naming.
+        for wire_key in sorted(self._written_globals):
+            self._declare_global_write_wire(wire_key)
         for stmt in self.func_def.body:
             self._elab_stmt(stmt)
         for tag, (start_name, end_name) in self._multi_cycle_pending.items():
@@ -2472,7 +2579,7 @@ class FuncElaborator:
                 global_key = self._resolve_global_wire(python_name)
                 if global_key is not None:
                     if global_key not in self.env:
-                        self._declare_global_write_wire(global_key)
+                        self._declare_global_write_wire(global_key, target)
                     self._elab_compound_init(global_key, stmt.value, stmt.value)
                 elif hw_name in self.env:
                     self._elab_compound_init(hw_name, stmt.value, stmt.value)
@@ -2495,7 +2602,7 @@ class FuncElaborator:
                 mangled = self._resolve_module_wire_name(target.value.id, target.attr)
                 if mangled is not None:
                     if mangled not in self.env:
-                        self._declare_global_write_wire(mangled)
+                        self._declare_global_write_wire(mangled, target)
                     if compound_pyval is not None:
                         self._elab_compound_init_from_pyval(
                             mangled, compound_pyval, stmt.value
@@ -2523,7 +2630,7 @@ class FuncElaborator:
                     base_var not in self.env
                     and base_var in self.parser_state.global_vars
                 ):
-                    self._declare_global_write_wire(base_var)
+                    self._declare_global_write_wire(base_var, target)
                 if base_var in self.env:
                     if compound_pyval is not None:
                         self._elab_compound_init_from_pyval(
@@ -2565,7 +2672,7 @@ class FuncElaborator:
             mangled = self._resolve_module_wire_name(target.value.id, target.attr)
             if mangled is not None:
                 if mangled not in self.env:
-                    self._declare_global_write_wire(mangled)
+                    self._declare_global_write_wire(mangled, target)
                 self._write_ref((mangled,), rhs_wire, rhs_type, stmt.value)
                 return
         ref_toks = self._parse_ref_toks(target)
@@ -2574,11 +2681,11 @@ class FuncElaborator:
         # Variable indices on LHS → VAR_REF_ASSIGN
         if _has_variable_index(ref_toks):
             if base_var not in self.env and base_var in self.parser_state.global_vars:
-                self._declare_global_write_wire(base_var)
+                self._declare_global_write_wire(base_var, target)
             self._emit_var_ref_assign(ref_toks, rhs_wire, rhs_type, stmt.value)
             return
         if base_var not in self.env and base_var in self.parser_state.global_vars:
-            self._declare_global_write_wire(base_var)
+            self._declare_global_write_wire(base_var, target)
         elif len(ref_toks) == 1 and base_var not in self.env:
             base_var = self._hw_name(
                 base_var
@@ -2798,16 +2905,18 @@ class FuncElaborator:
             _connect(self.logic, assembled_wire, ret_wire_name)
 
     def _elab_aug_assign(self, stmt):
-        """b += 1  etc.
-        If target is in const_env: update the Python value directly.
-        Otherwise convert to hardware assign: b = b op rhs.
+        """b += 1  etc. (also b.field += 1, b[i] += 1, global_wire.field += 1, ...)
+        If target is a plain Name in const_env: update the Python value directly.
+        Otherwise convert to hardware assign: t = t op rhs, reusing the same target
+        AST node as both the write target and the embedded read expression -- the
+        elaborator dispatches purely on node type, never node.ctx, so this is safe
+        for Name/Attribute/Subscript targets alike (including global wires and
+        their fields: main_a_out.x += ~main_a_in.x elaborates as
+        main_a_out.x = main_a_out.x + ~main_a_in.x, with main_a_out.x's own prior
+        write -- or its implicit zero-init if none yet -- as the read side).
         """
-        if not isinstance(stmt.target, ast.Name):
-            raise NotImplementedError(
-                f"AugAssign on non-Name targets not yet supported: {ast.dump(stmt)}"
-            )
-        name = stmt.target.id
-        if name in self.const_env:
+        name = stmt.target.id if isinstance(stmt.target, ast.Name) else None
+        if name is not None and name in self.const_env:
             rhs_val = self._try_eval_const(stmt.value)
             if rhs_val is None:
                 raise ElaborationError(
@@ -4584,6 +4693,13 @@ class FuncElaborator:
         """
         base_var = ref_toks[0]
         _, base_type = self.env[base_var]
+        if base_var in self.logic.write_only_global_wires:
+            # Variable-index writes aren't tracked in global_wire_driven_paths (only
+            # static leaf paths are), so a wire written this way can't be safely
+            # combined with a second writer function -- flag it so the multi-writer
+            # split-field validation can reject that combination with a clear error
+            # instead of silently under-counting this writer's claimed leaves.
+            self.logic.global_wire_dynamic_index_writes.add(base_var)
 
         # ── Output type: leaf_scalar_type[var_dim_0][var_dim_1]... ──
         output_type = _var_ref_assign_output_type(
@@ -4755,8 +4871,14 @@ class FuncElaborator:
         )
         return output_wire, c_type
 
-    def _write_ref(self, ref_toks, rhs_wire, rhs_type, node):
-        """Write to a path: create mangled alias, record in env and metadata."""
+    def _write_ref(self, ref_toks, rhs_wire, rhs_type, node, record_driven_path=True):
+        """Write to a path: create mangled alias, record in env and metadata.
+
+        record_driven_path=False is used only by _declare_global_write_wire's
+        synthetic implicit-zeros first write -- that's a fallback default, not a
+        real driven leaf, and must not count toward this function's claimed field
+        paths (see global_wire_driven_paths / multi-writer split-field validation).
+        """
         env_key = _ref_toks_to_env_key(ref_toks)
         base_var = ref_toks[0]
         _, base_type = self.env[base_var]
@@ -4772,6 +4894,11 @@ class FuncElaborator:
         self.logic.alias_to_driven_ref_toks[alias] = ref_toks
         self.env[env_key] = (alias, lhs_type)
         self._invalidate_descendant_env(env_key)
+        if record_driven_path and base_var in self.logic.write_only_global_wires:
+            if not _has_variable_index(ref_toks):
+                self.logic.global_wire_driven_paths.setdefault(base_var, set()).add(
+                    ref_toks[1:]
+                )
 
     def _invalidate_descendant_env(self, env_key):
         """Drop self.env entries for paths strictly nested under env_key.
@@ -4871,15 +4998,24 @@ class FuncElaborator:
         """Lazily initialize a global Wire[T] as read-only for this function.
 
         Behaves like a module input: base wire added with no driver, reads return
-        the base wire name directly. Errors if this function already writes the wire.
+        the base wire name directly.
+
+        If the pre-scan (_prescan_written_globals, run before elaboration starts)
+        found that this function writes this wire *somewhere* in its body -- even
+        if the first textual touch we're elaborating right now is a read --
+        delegate to the write-declaration path instead. This makes read-before-write
+        of a wire this function writes behave exactly like a local variable: the
+        base wire gets an implicit zero-init alias, so the read sees zero (not an
+        error), and the later write is not silently dropped (previously: once a
+        wire was in read_only_global_wires, a write reaching the same env-populated
+        name would skip _declare_global_write_wire entirely and the write's final
+        alias would never get connected to the base wire).
         Points logic.read_only_global_wires[name] to the same VariableInfo object
         as parser_state.global_vars[name].
         """
-        if name in self.logic.write_only_global_wires:
-            raise ElaborationError(
-                f"Global wire '{name}' is already written in '{self.func_name}'; "
-                f"cannot also read it"
-            )
+        if name in self._written_globals:
+            self._declare_global_write_wire(name)
+            return
         var_info = self.parser_state.global_vars[name]
         c_type = var_info.type_name
         self.logic.read_only_global_wires[name] = var_info
@@ -4887,24 +5023,43 @@ class FuncElaborator:
         _add_wire(self.logic, name, c_type)
         self.env[name] = (name, c_type)
 
-    def _declare_global_write_wire(self, name):
-        """Lazily initialize a global Wire[T] as write-only for this function.
+    def _declare_global_write_wire(self, name, node=None):
+        """Initialize a global Wire[T] as written by this function (called from
+        elaborate()'s hoisted-declare loop for every pre-scanned written wire;
+        the remaining lazy call sites are no-ops via the guard below).
 
-        Base wire has NO driver — the final alias is connected back in
-        _connect_final_state_wires, exactly like Feedback[T]. Errors if this
-        function already reads the wire.
+        Base wire gets an implicit first alias, exactly like a local variable's
+        first declaration (_declare_var) -- so any read of a leaf this function
+        hasn't written yet (whether that's a leaf this function never writes, or
+        one it writes later in program order) resolves through the normal
+        alias-chain fallback instead of referencing an undriven wire. The *final*
+        alias (last write in program order) is what _connect_final_state_wires
+        connects back to the base wire at the end of elaboration -- exactly like
+        Feedback[T] -- so later real writes correctly override the implicit init.
+
+        What drives that implicit first alias depends on whether this function
+        also READS the wire (pre-scanned into self._read_globals):
+
+        - write-only function: zeros (COMPOUND_NULL / typed 0), so undriven
+          leaves are zero. No input port needed; unchanged legacy behavior.
+        - function that also reads the wire: a fresh internal readback input
+          wire, <name>_PYPELINE_READBACK, registered in read_only_global_wires so the
+          existing global_to_module record/read-stage machinery feeds it. The
+          top level (VHDL.py) drives it with zeros in the regions THIS function
+          itself claims (so read-before-own-write still returns zero) and with
+          the other writers' live values in foreign regions -- flattened-leaf
+          semantics: a writer reading a leaf another function drives sees that
+          function's real value, not local zeros.
+
         Points logic.write_only_global_wires[name] to the same VariableInfo object
         as parser_state.global_vars[name].
         """
+        if name in self.logic.write_only_global_wires:
+            return  # already declared (hoisted at elaborate() start)
         if name in self.parser_state.input_wires:
             raise ElaborationError(
                 f"Global Input '{name}' is read-only and cannot be written "
                 f"in '{self.func_name}'"
-            )
-        if name in self.logic.read_only_global_wires:
-            raise ElaborationError(
-                f"Global wire '{name}' is already read in '{self.func_name}'; "
-                f"cannot also write it"
             )
         var_info = self.parser_state.global_vars[name]
         c_type = var_info.type_name
@@ -4912,6 +5067,34 @@ class FuncElaborator:
         var_info.used_in_funcs.add(self.func_name)
         _add_wire(self.logic, name, c_type)
         self.env[name] = (name, c_type)
+        ast_node = node or self.func_def
+        if name in self._read_globals:
+            # Suffix must stay a legal VHDL identifier: single underscores only
+            # (consecutive underscores are illegal VHDL).
+            readback_wire = name + "_PYPELINE_READBACK"
+            _add_wire(self.logic, readback_wire, c_type)
+            self.logic.read_only_global_wires[readback_wire] = var_info
+            self.logic.readback_global_wires[name] = readback_wire
+            init_wire = readback_wire
+        elif _is_scalar(c_type, self.parser_state):
+            # Scalar globals: a COMPOUND_NULL const wire isn't a legal RHS for a
+            # plain integer signal in the VHDL backend (that marker string is only
+            # recognized for struct/array types) -- use a normal typed 0 constant,
+            # exactly like any other scalar zero literal elaborated elsewhere.
+            init_wire, _ = self._elab_python_value(0, ast_node)
+        else:
+            init_wire = C_TO_LOGIC.BUILD_CONST_WIRE(
+                C_TO_LOGIC.COMPOUND_NULL,
+                pypeline_ast.ASTMeta(
+                    src_file=self.src_file,
+                    line=ast_node.lineno,
+                    col=ast_node.col_offset,
+                    end_col=getattr(ast_node, "end_col_offset", None),
+                    raw=ast_node,
+                ),
+            )
+            _add_wire(self.logic, init_wire, c_type)
+        self._write_ref((name,), init_wire, c_type, ast_node, record_driven_path=False)
 
 
 # ─────────────────────────────────────────────
@@ -5692,20 +5875,79 @@ def PARSE_FILE(py_file):
                     f"got: {writers}"
                 )
         else:
-            # Wire[T] and Output[T]: exactly one writer, exactly one instance.
+            # Wire[T] and Output[T]: at least one writer; each writer exactly one
+            # instance. Multiple writers are allowed iff each one's driven struct-
+            # field leaf paths (global_wire_driven_paths) are pairwise non-overlapping
+            # (see _check_no_overlapping_driven_paths) -- e.g. main_a driving only
+            # `.x` and main_b driving only `.y` of the same compound Wire[T].
             kind = "Output" if wire_name in parser_state.output_wires else "Wire"
-            if len(writers) != 1:
+            if len(writers) == 0:
                 raise ElaborationError(
-                    f"Global {kind} '{wire_name}' must be written by exactly 1 function, "
-                    f"got {len(writers)}: {writers}"
+                    f"Global {kind} '{wire_name}' must be written by at least 1 "
+                    f"function, got 0"
                 )
-            writer = writers[0]
-            instances = parser_state.FuncToInstances.get(writer, set())
-            if len(instances) != 1:
-                raise ElaborationError(
-                    f"Global {kind} '{wire_name}' is written by '{writer}', which has "
-                    f"{len(instances)} instance(s) in the hierarchy (must be exactly 1): "
-                    f"{instances}"
-                )
+            for writer in writers:
+                instances = parser_state.FuncToInstances.get(writer, set())
+                if len(instances) != 1:
+                    raise ElaborationError(
+                        f"Global {kind} '{wire_name}' is written by '{writer}', which "
+                        f"has {len(instances)} instance(s) in the hierarchy (must be "
+                        f"exactly 1): {instances}"
+                    )
+            if len(writers) > 1:
+                for writer in writers:
+                    writer_logic = parser_state.FuncLogicLookupTable[writer]
+                    if wire_name in writer_logic.global_wire_dynamic_index_writes:
+                        raise ElaborationError(
+                            f"Global {kind} '{wire_name}' is written by more than one "
+                            f"function ({writers}) and '{writer}' writes it through a "
+                            f"variable array index -- variable-index writes are not "
+                            f"supported when a wire has multiple writer functions"
+                        )
+                writer_paths = {
+                    writer: parser_state.FuncLogicLookupTable[
+                        writer
+                    ].global_wire_driven_paths.get(wire_name, set())
+                    for writer in writers
+                }
+                conflict = _check_no_overlapping_driven_paths(writer_paths)
+                if conflict is not None:
+                    (writer_a, path_a), (writer_b, path_b) = conflict
+                    raise ElaborationError(
+                        f"Global {kind} '{wire_name}' has multiple writer functions "
+                        f"with overlapping driven fields: '{writer_a}' drives "
+                        f"{path_a or '(whole wire)'} and '{writer_b}' drives "
+                        f"{path_b or '(whole wire)'} -- each writer's fields must be "
+                        f"disjoint"
+                    )
 
     return parser_state
+
+
+def _check_no_overlapping_driven_paths(writer_paths):
+    """writer_paths: {writer_func_name: set(path_tuple)}, one entry per writer of a
+    single global wire, each set the writer's driven struct-field leaf paths
+    (empty tuple () means the whole wire).
+
+    Two paths conflict iff one is a prefix of the other (including equal, and
+    including the empty-tuple whole-wire case, which is a prefix of everything) --
+    this exactly captures "these two writers touch overlapping struct-field
+    territory", regardless of struct nesting depth.
+
+    Returns None if every pair of paths from DIFFERENT writers is conflict-free,
+    else ((writer_a, path_a), (writer_b, path_b)) for one offending pair.
+    """
+
+    def _is_prefix(a, b):
+        return a == b[: len(a)] if len(a) <= len(b) else False
+
+    items = [(writer, path) for writer, paths in writer_paths.items() for path in paths]
+    for i in range(len(items)):
+        writer_a, path_a = items[i]
+        for j in range(i + 1, len(items)):
+            writer_b, path_b = items[j]
+            if writer_a == writer_b:
+                continue
+            if _is_prefix(path_a, path_b) or _is_prefix(path_b, path_a):
+                return (writer_a, path_a), (writer_b, path_b)
+    return None
