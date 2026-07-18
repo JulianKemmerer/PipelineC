@@ -159,6 +159,20 @@ def get_tests() -> list:
             cmd=[INST_DIR / "autopipeline_harvest_test.py"],
         )
     )
+    # Not run through the pipelinec CLI either: in-process PARSE_FILE
+    # regression test for the _loc_str() multiline-instance-collision bug
+    # (missing node.end_lineno let same-width, different-line BinOp operands
+    # collide into the same submodule instance name and raise "Duplicate
+    # submodule instance name") -- checks that a multi-line chained-XOR
+    # expression designed to collide under the old end_col_offset-only
+    # scheme elaborates cleanly.
+    tests.append(
+        Test(
+            name="loc_str_multiline_binop_test",
+            category="elab",
+            cmd=[INST_DIR / "loc_str_multiline_binop_test.py"],
+        )
+    )
     return tests
 
 

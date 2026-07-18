@@ -873,12 +873,17 @@ def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _dep
 
 def _loc_str(src_file, node):
     file_base = os.path.basename(src_file).replace(".", "_")
-    end = (
-        f"_e{node.end_col_offset}"
+    end_line = (
+        f"_el{node.end_lineno}"
+        if hasattr(node, "end_lineno") and node.end_lineno is not None
+        else ""
+    )
+    end_col = (
+        f"_ec{node.end_col_offset}"
         if hasattr(node, "end_col_offset") and node.end_col_offset is not None
         else ""
     )
-    return f"{file_base}_l{node.lineno}_c{node.col_offset}{end}"
+    return f"{file_base}_l{node.lineno}_c{node.col_offset}{end_line}{end_col}"
 
 
 def _inst_name(op_full_name, src_file, node):
