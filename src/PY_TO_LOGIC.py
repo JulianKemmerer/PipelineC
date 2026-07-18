@@ -4705,7 +4705,14 @@ class FuncElaborator:
         output_type = _var_ref_assign_output_type(
             ref_toks, base_type, self.parser_state
         )
-        elem_c_type = rhs_type  # scalar type of the value being written
+        # Use the LHS array's declared element type (not the RHS's own
+        # elaborated type) so output_type (built from base_type) and
+        # elem_c_type agree structurally -- matches the plain-assignment
+        # convention where the target's declared type wins and VHDL's
+        # implicit resize() reconciles any width/signedness difference.
+        _, elem_c_type = _get_var_ref_elem_positions(
+            ref_toks, base_type, self.parser_state
+        )
 
         # ── Covering wires (same machinery as CONST/VAR_REF_RD) ──
         all_concrete_leaves = _get_var_ref_leaves(

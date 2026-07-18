@@ -235,6 +235,7 @@ def get_tests() -> list:
         "global_wire_hier_writer_test.py",
         "global_wire_cond_driver_test.py",
         "global_wire_array_split_test.py",
+        "global_wire_dynamic_index_write_test.py",
     ]:
         tests.append(
             Test(

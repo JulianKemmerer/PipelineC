@@ -36,6 +36,7 @@ VHDL_SIM_TEST_FILES = [
     ("global_wire_hier_writer_test.py", INST_DIR, "all"),
     ("global_wire_cond_driver_test.py", INST_DIR, "all"),
     ("global_wire_array_split_test.py", INST_DIR, "all"),
+    ("global_wire_dynamic_index_write_test.py", INST_DIR, "all"),
 ]
 # fmt: on
 

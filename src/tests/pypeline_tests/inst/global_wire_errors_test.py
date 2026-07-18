@@ -20,7 +20,7 @@ import PY_TO_LOGIC
 _HEADER = """
 import sys, os
 sys.path.insert(0, {repo_root!r})
-from pypeline import MAIN, NamedTuple, Wire, struct, uint1_t, uint8_t
+from pypeline import MAIN, NamedTuple, Reg, Wire, struct, uint1_t, uint8_t
 
 @struct
 class point_t(NamedTuple):
@@ -167,17 +167,93 @@ def writer_b():
     )
 
 
-# NOTE: a would-be test_dynamic_index_write_rejected_with_multiple_writers here
-# (variable-index write to a global array Wire[T] combined with a second
-# writer -- the new global_wire_dynamic_index_writes guard added alongside
-# multi-writer support) is not exercisable today: `arr_w[i] = ...` on a global
-# array wire crashes in _build_var_ref_assign_logic with "VAR_REF_ASSIGN
-# position count mismatch" even with a SINGLE writer, before any code from
-# this change ever runs -- confirmed pre-existing by re-running the same
-# design against an unmodified PY_TO_LOGIC.py (git stash). Tracked as a
-# separate, unrelated pre-existing bug; the guard code itself
-# (PY_TO_LOGIC.py's global_wire_dynamic_index_writes check in the >1-writer
-# validation) is defensive and inert until that bug is fixed.
+def test_dynamic_index_write_rejected_with_multiple_writers():
+    # A genuinely runtime (non-unrolled) variable-index write to a global
+    # array Wire[T] can't be safely combined with a second writer -- the
+    # dynamic index isn't tracked in global_wire_driven_paths (only static
+    # leaf paths are), so overlap can't be proven disjoint. This exercises
+    # PY_TO_LOGIC.py's global_wire_dynamic_index_writes guard, set by
+    # _emit_var_ref_assign and checked in the >1-writer validation.
+    #
+    # Previously unexercisable: `arr_w[i] = ...` on a global array wire (with
+    # i a real runtime value, e.g. from a Reg) crashed
+    # _build_var_ref_assign_logic with "VAR_REF_ASSIGN position count
+    # mismatch" even with a SINGLE writer, before this guard's own code ever
+    # ran -- see the elem_c_type fix in _emit_var_ref_assign (elem_c_type
+    # must be the array's declared element type, not the RHS expression's
+    # own elaborated type, so output_type and elem_c_type stay structurally
+    # consistent for _get_elem_positions).
+    src = """
+arr_w: Wire[uint8_t[4]]
+
+@MAIN
+def writer_a():
+    n: Reg[uint8_t]
+    idx: uint8_t = n & 3
+    arr_w[idx] = n
+    n += 1
+
+@MAIN
+def writer_b():
+    arr_w[0] = 2
+"""
+    _expect_elaboration_error(
+        src, "dynamic_index_multi_writer_test.py", ["arr_w", "writer_a", "writer_b"]
+    )
+
+
+def test_dynamic_index_write_global_wire_positive_case():
+    # Regression test for the VAR_REF_ASSIGN "position count mismatch" bug:
+    # a genuinely runtime (non-unrolled) variable-index write to a global
+    # array Wire[T], SINGLE writer, must elaborate cleanly. Pre-fix this
+    # crashed unconditionally (before the multi-writer guard above could
+    # ever even run) because _emit_var_ref_assign set elem_c_type from the
+    # RHS's own elaborated type instead of the array's declared element
+    # type.
+    src = """
+arr_w: Wire[uint8_t[4]]
+
+@MAIN
+def writer():
+    n: Reg[uint8_t]
+    idx: uint8_t = n & 3
+    arr_w[idx] = 1
+    n += 1
+"""
+    try:
+        _parse(src, "dynamic_index_write_global_wire_test.py")
+    except PY_TO_LOGIC.ElaborationError as e:
+        raise AssertionError(
+            f"dynamic_index_write_global_wire_test.py: expected clean "
+            f"elaboration (single-writer runtime-index array write), got "
+            f"ElaborationError: {e}"
+        )
+    print("dynamic_index_write_global_wire_test.py PASS (no error, as expected)")
+
+
+def test_dynamic_index_write_local_var_positive_case():
+    # Same bug, but on a LOCAL array variable rather than a global Wire[T] --
+    # confirms the root cause (RHS-type vs LHS-declared-element-type
+    # mismatch in _emit_var_ref_assign) is not global-wire-specific: it
+    # reproduced identically for a local uint8_t[N] variable pre-fix.
+    src = """
+@MAIN
+def writer():
+    n: Reg[uint8_t]
+    arr: uint8_t[4] = [0, 0, 0, 0]
+    idx: uint8_t = n & 3
+    arr[idx] = 1
+    n += 1
+"""
+    try:
+        _parse(src, "dynamic_index_write_local_var_test.py")
+    except PY_TO_LOGIC.ElaborationError as e:
+        raise AssertionError(
+            f"dynamic_index_write_local_var_test.py: expected clean "
+            f"elaboration (runtime-index local array write), got "
+            f"ElaborationError: {e}"
+        )
+    print("dynamic_index_write_local_var_test.py PASS (no error, as expected)")
 
 
 def test_writing_input_still_errors():
@@ -232,6 +308,9 @@ if __name__ == "__main__":
     test_nested_leaf_overlap()
     test_field_vs_enclosing_subtree_overlap()
     test_array_element_overlap()
+    test_dynamic_index_write_rejected_with_multiple_writers()
+    test_dynamic_index_write_global_wire_positive_case()
+    test_dynamic_index_write_local_var_positive_case()
     test_writing_input_still_errors()
     test_unrolled_loop_precision_positive_case()
     print("All global_wire_errors tests passed.")
