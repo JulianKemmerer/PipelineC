@@ -111,10 +111,12 @@ def main():
         "--out_dir",
         type=str,
         default=None,
-        help="Base output directory. pipelinec build outputs go in "
-        "'<out_dir>/native' and '<out_dir>/vhdl'; full raw sim stdout is always "
-        "saved to '<out_dir>/native.log' and '<out_dir>/vhdl.log'. Default: a "
-        "new './pypeline_sim_debug_out_<design>_<pid>' directory.",
+        help="Base output directory. For non---comb designs, pipelinec builds "
+        "once directly into <out_dir> and both sims reuse it; for --comb "
+        "designs, pipelinec build outputs go in '<out_dir>/native' and "
+        "'<out_dir>/vhdl'. Full raw sim stdout is always saved to "
+        "'<out_dir>/native.log' and '<out_dir>/vhdl.log'. Default: a new "
+        "'./pypeline_sim_debug_out_<design>_<pid>' directory.",
     )
     parser.add_argument(
         "--context",
@@ -140,28 +142,51 @@ def main():
         c_file_base = os.path.basename(_find_c_file(pipelinec_args))
         out_dir = f"./pypeline_sim_debug_out_{c_file_base}_{os.getpid()}"
     os.makedirs(out_dir, exist_ok=True)
-    native_out_dir = os.path.join(out_dir, "native")
-    vhdl_out_dir = os.path.join(out_dir, "vhdl")
     native_log_path = os.path.join(out_dir, "native.log")
     vhdl_log_path = os.path.join(out_dir, "vhdl.log")
-
-    native_args = list(pipelinec_args) + ["--out_dir", native_out_dir]
-    vhdl_args = list(pipelinec_args) + ["--cocotb", "--ghdl", "--out_dir", vhdl_out_dir]
 
     serial = not any(
         a in ("--comb", "--sim_comb", "--no_synth") for a in pipelinec_args
     )
     if serial:
-        # Non---comb: BOTH invocations run a full synthesis sweep (the native
-        # one now builds first and then sims with emulated latencies). Run
-        # them sequentially, native first: the two builds share the
-        # repo-level path-delay / pipeline-min-period caches, so the second
-        # (VHDL) build reuses the first's warm results -- guaranteeing both
-        # converge to the same discovered latencies (a prerequisite for a
-        # meaningful cycle diff) and avoiding concurrent cache writes.
-        native_stdout = _run_pipelinec(native_args, "native")
-        vhdl_stdout = _run_pipelinec(vhdl_args, "VHDL/cocotb")
+        # Non---comb: build once (no --sim) into the shared out_dir, doing
+        # the full throughput sweep + AUTOPIPELINE pin-and-confirm just a
+        # single time. Then point BOTH the native and VHDL sim invocations
+        # at that same now-populated out_dir and run them concurrently --
+        # each re-runs pipelinec's build path internally, but with the sweep
+        # already warm (existing VHDL/log/timing-params results in out_dir,
+        # plus the repo-level path-delay / pipeline-min-period caches) it
+        # converges fast, and both are guaranteed to converge to the same
+        # discovered latencies as the build phase (same inputs, same warm
+        # out_dir/caches) -- a prerequisite for a meaningful cycle diff.
+        # --sim/--sim_comb (if the user passed one, per this script's own
+        # usage) must be stripped for the build-only phase.
+        no_sim_args = [a for a in pipelinec_args if a not in ("--sim", "--sim_comb")]
+        build_args = no_sim_args + ["--out_dir", out_dir]
+        _run_pipelinec(build_args, "build")
+        native_args = no_sim_args + ["--sim", "--out_dir", out_dir]
+        vhdl_args = no_sim_args + [
+            "--cocotb",
+            "--ghdl",
+            "--sim",
+            "--out_dir",
+            out_dir,
+        ]
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            native_future = pool.submit(_run_pipelinec, native_args, "native")
+            vhdl_future = pool.submit(_run_pipelinec, vhdl_args, "VHDL/cocotb")
+            native_stdout = native_future.result()
+            vhdl_stdout = vhdl_future.result()
     else:
+        native_out_dir = os.path.join(out_dir, "native")
+        vhdl_out_dir = os.path.join(out_dir, "vhdl")
+        native_args = list(pipelinec_args) + ["--out_dir", native_out_dir]
+        vhdl_args = list(pipelinec_args) + [
+            "--cocotb",
+            "--ghdl",
+            "--out_dir",
+            vhdl_out_dir,
+        ]
         # Comb: native sim is fast; VHDL/cocotb+GHDL sim is slow -- run both
         # concurrently (they're independent subprocesses writing to separate
         # --out_dirs) rather than paying their combined wall-clock time
