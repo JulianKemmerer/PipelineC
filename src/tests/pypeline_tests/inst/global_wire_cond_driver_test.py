@@ -13,7 +13,7 @@ pre-fix, the lazy write-declare ran mid-branch and elaboration crashed with
 write-declaration of every pre-scanned written wire to elaborate() start so
 the branch merge always has the implicit zero-init base to mux against.
 
-Registered in native_sim_tests.py (--sim --run all) and vhdl_sim_tests.py
+Registered in native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
 (--sim --comb --cocotb --ghdl --run all).
 """
 

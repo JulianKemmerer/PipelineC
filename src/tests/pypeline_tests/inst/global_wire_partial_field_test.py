@@ -5,7 +5,7 @@
 if implicitly driven with zeros before the writer's real assignments, exactly
 like a local variable's implicit zero-init.
 
-Registered in both native_sim_tests.py (--sim --run all) and vhdl_sim_tests.py
+Registered in both native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
 (--sim --comb --cocotb --ghdl --run all) so native sim and the generated VHDL
 are both checked against the same golden behavior.
 """

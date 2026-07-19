@@ -59,6 +59,7 @@ assert (REPO_ROOT / "src" / "pipelinec").is_file(), (
 
 PIPELINEC = REPO_ROOT / "src" / "pipelinec"
 PYPELINE_SIM = REPO_ROOT / "src" / "pypeline_sim.py"
+PYPELINE_SIM_DEBUG = REPO_ROOT / "src" / "pypeline_sim_debug.py"
 INST_DIR = REPO_ROOT / "src" / "tests" / "pypeline_tests" / "inst"
 EXAMPLES_PYPELINE_DIR = REPO_ROOT / "examples" / "pypeline"
 

@@ -11,7 +11,7 @@ This is the direct hardware realization of the guide's example:
     main_ab_in: Wire[uint1_t]    # input into main_a and into main_b
     main_ab_out: Wire[point_t]   # output .x from main_a and .y from main_b
 
-Registered in both native_sim_tests.py (--sim --run all) and
+Registered in both native_sim_tests.py (--sim --comb --run all) and
 vhdl_sim_tests.py (--sim --comb --cocotb --ghdl --run all) so native sim and
 the generated VHDL are both checked against the same golden behavior.
 """

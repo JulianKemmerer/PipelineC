@@ -148,14 +148,29 @@ def main():
     native_args = list(pipelinec_args) + ["--out_dir", native_out_dir]
     vhdl_args = list(pipelinec_args) + ["--cocotb", "--ghdl", "--out_dir", vhdl_out_dir]
 
-    # Native sim is fast; VHDL/cocotb+GHDL sim is slow -- run both concurrently
-    # (they're independent subprocesses writing to separate --out_dirs) rather
-    # than paying their combined wall-clock time serially.
-    with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
-        native_future = pool.submit(_run_pipelinec, native_args, "native")
-        vhdl_future = pool.submit(_run_pipelinec, vhdl_args, "VHDL/cocotb")
-        native_stdout = native_future.result()
-        vhdl_stdout = vhdl_future.result()
+    serial = not any(
+        a in ("--comb", "--sim_comb", "--no_synth") for a in pipelinec_args
+    )
+    if serial:
+        # Non---comb: BOTH invocations run a full synthesis sweep (the native
+        # one now builds first and then sims with emulated latencies). Run
+        # them sequentially, native first: the two builds share the
+        # repo-level path-delay / pipeline-min-period caches, so the second
+        # (VHDL) build reuses the first's warm results -- guaranteeing both
+        # converge to the same discovered latencies (a prerequisite for a
+        # meaningful cycle diff) and avoiding concurrent cache writes.
+        native_stdout = _run_pipelinec(native_args, "native")
+        vhdl_stdout = _run_pipelinec(vhdl_args, "VHDL/cocotb")
+    else:
+        # Comb: native sim is fast; VHDL/cocotb+GHDL sim is slow -- run both
+        # concurrently (they're independent subprocesses writing to separate
+        # --out_dirs) rather than paying their combined wall-clock time
+        # serially.
+        with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
+            native_future = pool.submit(_run_pipelinec, native_args, "native")
+            vhdl_future = pool.submit(_run_pipelinec, vhdl_args, "VHDL/cocotb")
+            native_stdout = native_future.result()
+            vhdl_stdout = vhdl_future.result()
 
     # Always saved, match or mismatch -- so a divergence can be inspected later
     # without re-running either sim (GHDL especially is slow).

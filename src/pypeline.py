@@ -1147,9 +1147,12 @@ def sim_input(fn):
 # ─────────────────────────────────────────────
 
 # canonical_key -> discovered pipeline stage count, harvested from the
-# previous elaborate+sweep pass. Installed only by the pipelinec driver
-# between passes (SET_AUTOPIPELINE_LATENCY_CACHE). Always empty in native
-# Pypeline sim and in --comb/--no_synth/--yosys_json builds, so .latency
+# previous elaborate+sweep pass. Installed only by the pipelinec driver:
+# between pin-and-confirm passes (SET_AUTOPIPELINE_LATENCY_CACHE), and again
+# before a non---comb `--sim` run's native-sim design import so both
+# .latency reads and the AUTOPIPELINE delay-line emulation see the built
+# stage counts. Always empty in plain native Pypeline sim (pypeline_sim.py
+# run directly) and in --comb/--no_synth/--yosys_json builds, so .latency
 # reads 0 there.
 _autopipeline_latency_cache: dict = {}
 # True once any AUTOPIPELINE .latency was read during the current design-file
@@ -1196,17 +1199,23 @@ class AUTOPIPELINE:
     an identity passthrough in proto-simulation (`MY_AP(x)` just runs
     `func(x)`); in elaboration the call becomes a submodule instance of
     `func` tagged for autopipelining, and AUTOPIPELINE itself produces no
-    hardware.
+    hardware. Under a pipelinec non---comb `--sim` build's native simulation
+    the call site instead emulates the built pipeline: an N-deep output delay
+    line (N = .latency, installed from the final harvest) makes
+    out(t) = func(in(t-N)), cycle-accurate against the generated VHDL (see
+    _sim_delay_line below).
 
     .latency reads 0:
-      - always in native Pypeline sim (no synthesis ever runs),
+      - always in plain native Pypeline sim (pypeline_sim.py run directly --
+        no synthesis ever runs),
       - always in --comb / --no_synth / --yosys_json builds (no throughput
         sweep ever runs),
       - during the bootstrap elaboration pass of a real synthesizing build.
     On a real build the pipelinec driver re-executes the design after the
     throughput sweep with the discovered stage counts installed, so .latency
     then resolves to the real value (see the pin-and-confirm loop in
-    docs/SYN_DESIGN.md).
+    docs/SYN_DESIGN.md) -- including in the native simulation a non---comb
+    `--sim` build launches at the end.
 
     CONSTRUCTION TIMING MATTERS: construct AUTOPIPELINE(...) once, eagerly,
     as plain Python (typically at a factory function's own top level) and
@@ -1257,7 +1266,54 @@ class AUTOPIPELINE:
         return self._canonical_key
 
     def __call__(self, *args, **kwargs):
+        if _sim_active and self._latency > 0:
+            # Native sim with a pinned latency (pipelinec non---comb --sim
+            # builds install the harvested stage counts before the sim's
+            # design import): emulate the N-stage pipeline with a per-call-site
+            # output delay line instead of the zero-latency identity.
+            # canonical_key is already computed (cache was non-empty at
+            # __init__) and distinguishes two different AUTOPIPELINE objects
+            # called from the same source line (e.g. a loop over
+            # factory-produced APs whose funcs share a __qualname__).
+            _sim_inst_stack.append(
+                (
+                    "AUTOPIPELINE:" + self.canonical_key,
+                    _sim_capture_call_loc(_sys._getframe(1)),
+                )
+            )
+            try:
+                return self._sim_delay_line(args, kwargs)
+            finally:
+                _sim_inst_stack.pop()
         return self.func(*args, **kwargs)
+
+    def _sim_delay_line(self, args, kwargs):
+        """Native-sim emulation of this call site as an N-stage pipeline:
+        out(t) = func(in(t - N)), N = self._latency.
+
+        Follows _call_sim_model's commit discipline: read the delay line
+        committed at the last clock edge, buffered-write the shifted copy, so
+        under convergence every re-evaluation this cycle reads the same
+        committed line (output is input-independent -- no convergence churn)
+        and only the final pass's buffered write lands at
+        _sim_reg_flush_buffer. Warm-up matches hardware's empty pipeline:
+        the first N outputs are typed zeros of func's return type.
+
+        Deepcopies guard aliasing: the pushed result may alias caller objects
+        (e.g. func returning an input), and committed[0] is returned to every
+        re-evaluation in the cycle -- caller mutation of either must not
+        corrupt the committed line.
+        """
+        inst_path = _sim_current_inst_path()
+        committed = _sim_reg_read(inst_path, _SIM_AP_DELAY_KEY, None)
+        if committed is None:
+            out_t = hw_return_type(self.func)
+            committed = [sim_zero(out_t) for _ in range(self._latency)]
+        now = self.func(*args, **kwargs)
+        _sim_reg_write(
+            inst_path, _SIM_AP_DELAY_KEY, committed[1:] + [_copy.deepcopy(now)]
+        )
+        return _copy.deepcopy(committed[0])
 
     def __repr__(self):
         # AUTOPIPELINE objects get captured in factory closures (e.g.
@@ -2425,9 +2481,42 @@ def sim_print(s, debug=False):
 
         frame = _sys2._getframe(1)
         tag = f"[SIM DEBUG PRINT: {_os.path.abspath(frame.f_code.co_filename)}:{frame.f_lineno}]"
+        # A debug=True print exists only to be cycle-compared against VHDL by
+        # pypeline_sim_debug.py. If it fires from inside pipelined combinational
+        # logic -- a naturally-pipelined pure MAIN, or an AUTOPIPELINE core --
+        # its cycle CANNOT match: native sim runs that comb at stage-0 timing
+        # while the VHDL fires it at whatever pipeline stage retiming placed it.
+        # Fail loudly rather than emit a print that will silently mis-compare
+        # (see pypeline_sim_DESIGN.md's Limitations). Only triggers under a
+        # pipelined build; plain native/--comb sim has no pipelined context.
+        _sim_check_debug_probe_not_in_pipeline(
+            f"{frame.f_code.co_filename}:{frame.f_lineno}"
+        )
         s = f"{tag}: {s}"
     print(s)
     return SimVal(0)
+
+
+def _sim_check_debug_probe_not_in_pipeline(loc: str) -> None:
+    """Raise if a sim_print(debug=True) is executing inside pipelined comb
+    (a pipelined pure MAIN, or an AUTOPIPELINE core's func evaluation)."""
+    in_pipelined_main = (
+        _sim_current_main is not None and _sim_current_main in _sim_pipelined_main_info
+    )
+    in_autopipeline_core = any(
+        isinstance(entry[0], str) and entry[0].startswith("AUTOPIPELINE:")
+        for entry in _sim_inst_stack
+    )
+    if in_pipelined_main or in_autopipeline_core:
+        where = "a pipelined pure MAIN" if in_pipelined_main else "an AUTOPIPELINE core"
+        raise RuntimeError(
+            f"sim_print(debug=True) at {loc} executed inside {where}. Its cycle "
+            f"cannot be compared against VHDL: native sim runs pipelined comb at "
+            f"stage-0 timing while the VHDL fires it at its retimed pipeline "
+            f"stage. Move debug=True probes into a stateful (0-latency) MAIN "
+            f"that reads the pipeline's output wires (plain sim_print(...) "
+            f"without debug=True is fine anywhere -- it is not cycle-compared)."
+        )
 
 
 sim_print._is_sim_print = True
@@ -2571,6 +2660,17 @@ def _sim_set_converging(value: bool) -> bool:
 
 _sim_reg_write_buffer = None  # None = direct commit; dict = buffered mode
 _sim_current_main = None  # MAIN fn currently executing (for reader tracking)
+# Naturally-pipelined pure MAINs (sliced by the sweep without AUTOPIPELINE)
+# under pipelinec non---comb --sim: main_fn -> {"latency": int, "queue":
+# deque of per-cycle write-set lists, "collector": this cycle's list of
+# (wire_name, lens_path_tuple, value) entries}. Populated only by
+# pypeline_sim.run_sim when the driver hands it a nonzero main latency;
+# empty dict = feature off (one truthiness test on the wire-write hot paths).
+# Such a MAIN's global-wire writes are diverted into "collector" and applied
+# to _sim_wire_state N cycles later (write-side latency emulation: the wire
+# values other MAINs read at cycle t are what the MAIN computed at t-N,
+# matching hardware where its outputs cross N pipeline register stages).
+_sim_pipelined_main_info: dict = {}
 _sim_wire_readers: dict = {}  # wire name → set of MAINs that have read it
 _sim_active: bool = False  # True only while pypeline_sim.py is driving a simulation run
 _sim_input_cache: dict = {}  # id(@sim_input wrapper) → cached result for the current cycle
@@ -2778,7 +2878,22 @@ def _sim_wire_write(name: str, value, claim_key=None) -> None:
     """Set the current global wire value (struct types preserved, not converted to int).
     claim_key (the writing function's qualified name, baked in by
     _GlobalWireRewriter) records a whole-wire () claim for that function's
-    per-invocation zero-reset (see _sim_wire_reset_claims)."""
+    per-invocation zero-reset (see _sim_wire_reset_claims).
+
+    When the executing MAIN is a pipelined pure MAIN (see
+    _sim_pipelined_main_info), the write is diverted into its per-cycle
+    collector instead of _sim_wire_state -- pypeline_sim applies it N cycles
+    later. Claim recording still happens: the diverted reset-claims path
+    relies on _sim_wire_claims to know which leaves to zero."""
+    if _sim_pipelined_main_info:
+        info = _sim_pipelined_main_info.get(_sim_current_main)
+        if info is not None:
+            info["collector"].append((name, (), value))
+            if claim_key is not None:
+                _sim_wire_claims.setdefault(claim_key, {}).setdefault(name, set()).add(
+                    ()
+                )
+            return
     _sim_wire_state[name] = value
     if claim_key is not None:
         _sim_wire_claims.setdefault(claim_key, {}).setdefault(name, set()).add(())
@@ -2815,12 +2930,26 @@ def _sim_wire_lens_write(name: str, path: list, value, claim_key=None) -> None:
     _GlobalWireRewriter) records the concrete path written -- field names as
     strs, indices normalized to ints, so dynamic indices claim exactly the
     element(s) actually touched -- for that function's per-invocation
-    zero-reset (see _sim_wire_reset_claims)."""
+    zero-reset (see _sim_wire_reset_claims).
+
+    Diverted into the executing pipelined MAIN's collector exactly like
+    _sim_wire_write (lens path preserved so partial/field writes replay
+    leaf-wise N cycles later without clobbering other writers' leaves)."""
+    norm_path = tuple(p if isinstance(p, str) else int(p) for p in path)
+    if _sim_pipelined_main_info:
+        info = _sim_pipelined_main_info.get(_sim_current_main)
+        if info is not None:
+            info["collector"].append((name, norm_path, value))
+            if claim_key is not None:
+                _sim_wire_claims.setdefault(claim_key, {}).setdefault(name, set()).add(
+                    norm_path
+                )
+            return
     base = _sim_wire_current_or_zero(name)
     _sim_wire_state[name] = _sim_lens_set(base, path, value)
     if claim_key is not None:
         _sim_wire_claims.setdefault(claim_key, {}).setdefault(name, set()).add(
-            tuple(p if isinstance(p, str) else int(p) for p in path)
+            norm_path
         )
 
 
@@ -2856,21 +2985,55 @@ def _sim_wire_reset_claims(claim_key) -> None:
     function's own claimed paths (never the whole wire) is essential so one
     writer's reset can't transiently clobber a different writer's
     already-committed leaves of the same wire within one cycle's convergence
-    loop."""
+    loop.
+
+    When the executing MAIN is pipelined (_sim_pipelined_main_info), the
+    zeroing diverts into its collector as zero-valued entries instead of
+    touching _sim_wire_state -- otherwise each of that MAIN's invocations
+    would wipe the N-cycles-old write-set pypeline_sim applied at the start
+    of this cycle. Ordered replay of the collector (zeros first, then this
+    invocation's writes; later invocations append again) reproduces the
+    reset -> write -> final-pass-wins semantics inside the delayed view."""
+    info = (
+        _sim_pipelined_main_info.get(_sim_current_main)
+        if _sim_pipelined_main_info
+        else None
+    )
     for wire_name, paths in _sim_wire_claims.get(claim_key, {}).items():
         ctype = _sim_wire_ctype.get(wire_name)
         if () in paths:
             if ctype is not None:
-                _sim_wire_state[wire_name] = _make_sim_zero(ctype)
+                if info is not None:
+                    info["collector"].append((wire_name, (), _make_sim_zero(ctype)))
+                else:
+                    _sim_wire_state[wire_name] = _make_sim_zero(ctype)
             continue
         for path in paths:
             leaf_ctype = _sim_ctype_at_path(ctype, path)
             if leaf_ctype is None:
                 continue
+            if info is not None:
+                info["collector"].append((wire_name, path, _make_sim_zero(leaf_ctype)))
+                continue
             base = _sim_wire_current_or_zero(wire_name)
             _sim_wire_state[wire_name] = _sim_lens_set(
                 base, list(path), _make_sim_zero(leaf_ctype)
             )
+
+
+def _sim_apply_delayed_writes(entries) -> None:
+    """Replay one popped pipelined-MAIN write-set (list of (wire_name,
+    lens_path, value) entries, in recorded order) onto _sim_wire_state --
+    called by pypeline_sim at the start of the cycle N cycles after the set
+    was collected. Ordered replay reproduces the original invocation
+    sequence (reset zeros, then writes; final pass last), so the net state
+    equals what the MAIN would have written live."""
+    for name, path, value in entries:
+        if path == ():
+            _sim_wire_state[name] = value
+        else:
+            base = _sim_wire_current_or_zero(name)
+            _sim_wire_state[name] = _sim_lens_set(base, list(path), value)
 
 
 def sim_reset():
@@ -4005,6 +4168,11 @@ def _sim_cast_call_arg(pt, v):
 # class/callable model instance (a name no real register can have).
 _SIM_MODEL_REG_KEY = "__sim_model__"
 
+# Reserved _sim_reg_state key holding an AUTOPIPELINE call site's committed
+# output delay line: a list of the last N results, oldest first (see
+# AUTOPIPELINE._sim_delay_line).
+_SIM_AP_DELAY_KEY = "__sim_autopipeline_delay__"
+
 
 def _sim_capture_call_loc(caller_f):
     """Capture a call-site location tuple from a caller frame, honoring
@@ -4217,6 +4385,7 @@ def _sim_type_wrap(fn):
 
         wrapper._is_hw_func = True
         wrapper._sim_model_cell = _model_cell
+        wrapper._pypeline_has_state = has_state
         return wrapper
 
     if not has_state:
@@ -4297,6 +4466,7 @@ def _sim_type_wrap(fn):
 
     wrapper._is_hw_func = True
     wrapper._sim_model_cell = _model_cell
+    wrapper._pypeline_has_state = has_state
     return wrapper
 
 

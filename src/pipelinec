@@ -208,11 +208,19 @@ C_TO_LOGIC.MULT_STYLE = args.mult
 OPEN_TOOLS.YOSYS_JSON_ONLY = args.yosys_json
 # Sim tool selection
 SIM.SET_SIM_TOOL(args, c_file)
-# Native Pypeline (.py) simulation runs directly against the design's Python
-# source -- no VHDL elaboration or synthesis needed. If SIM.py selected it
-# (no other simulator explicitly requested) and simulation was actually
-# requested, run it now and skip straight to done.
-if SIM.SIM_TOOL is SIM.pypeline_sim and (args.sim or args.sim_comb):
+# Comb-only native Pypeline (.py) simulation runs directly against the
+# design's Python source -- no VHDL elaboration or synthesis needed. If
+# SIM.py selected the native simulator (explicit --native or no other
+# simulator requested) and comb simulation was requested, run it now and
+# skip straight to done. A non---comb native --sim run instead falls
+# through to the full build (sweep + AUTOPIPELINE pin-and-confirm), and
+# the sim launches at the end with the discovered latencies emulated --
+# the same no---comb-means-pipelined rule the VHDL simulators follow.
+if (
+    SIM.SIM_TOOL is SIM.pypeline_sim
+    and (args.sim or args.sim_comb)
+    and (args.comb or args.no_synth)
+):
     SIM.DO_OPTIONAL_SIM(True, None, args, source_file=c_file)
     sys.exit(0)
 # AXIS XO file switch
@@ -271,7 +279,14 @@ if SYN.SYN_TOOL is None:
 if args.comb:
     SYN.WRITE_FINAL_FILES(None, parser_state)
     # Here is a good point to check basic single cycle/comb logic functionality before pipelining with synth tools
-    SIM.DO_OPTIONAL_SIM(args.sim_comb, parser_state, args, source_file=c_file)
+    # (A native non---comb --sim run degraded to comb by the no-synth-tool
+    # fallback above still sims here -- zero latency, warning already printed.)
+    SIM.DO_OPTIONAL_SIM(
+        args.sim_comb or (SIM.SIM_TOOL is SIM.pypeline_sim and args.sim),
+        parser_state,
+        args,
+        source_file=c_file,
+    )
 
 if not args.no_synth:
     if not args.comb and not args.yosys_json:
@@ -377,11 +392,17 @@ if not args.no_synth:
                 )
                 if divergences:
                     autopipeline_divergence_exit(divergences)
-                if met or new_latencies == latencies:
-                    # Pinned pipelining still meets timing (or the fallback
-                    # sweep landed back on the same stage counts): the
-                    # .latency values this pass's Python consumed equal the
-                    # stage counts actually built.
+                if new_latencies == latencies:
+                    # The .latency values this pass's Python consumed equal
+                    # the stage counts actually built -- converged. (Meeting
+                    # timing alone is NOT sufficient to stop: realizing the
+                    # seeded fractional slices hierarchically -- e.g. into
+                    # pipelined built-in div/mult entities with their own
+                    # stage granularity -- can change an instance's total
+                    # latency even on a passing confirmation run, and exiting
+                    # then would build VHDL whose actual depth contradicts
+                    # every .latency-derived constant baked into it, and
+                    # desync the native simulator's latency emulation.)
                     break
                 last_change_desc = ", ".join(
                     f"{key}: {latencies.get(key)} -> {new_latencies.get(key)} clks"
@@ -389,8 +410,10 @@ if not args.no_synth:
                     if latencies.get(key) != new_latencies.get(key)
                 )
                 print(
-                    "AUTOPIPELINE: fallback sweep changed discovered latencies "
-                    f"({last_change_desc}); re-elaborating...",
+                    "AUTOPIPELINE: "
+                    + ("slice realization" if met else "fallback sweep")
+                    + f" changed discovered latencies ({last_change_desc}); "
+                    "re-elaborating...",
                     flush=True,
                 )
                 latencies = new_latencies

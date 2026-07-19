@@ -3236,6 +3236,14 @@ byte-identical tagging is the basis for `pypeline_sim_debug.py`'s plain-string d
 two sims' console output (see `pypeline_sim_DESIGN.md`'s "`sim_print(..., debug=True)`" section
 and `docs/pypeline_guide.md`).
 
+Byte-identical *content* is necessary but not sufficient for a clean **pipelined** (non-`--comb`)
+diff: there the native sim emulates the built pipeline latencies (see `pypeline_sim_DESIGN.md`
+§"Pipelined native sim") and the *cycle* a tagged print lands on is subject to that emulation's
+fidelity limits — valid-gate every probe (VHDL pipeline regs are `'U'` during warm-up), keep
+probes in stateful (0-latency) MAINs rather than inside pipelined comb, and bundle a pipelined
+MAIN's co-timed outputs into one struct wire. `--comb` compares (zero added latency) have none of
+these constraints. The full list is in `pypeline_sim_DESIGN.md`'s Limitations subsection.
+
 ---
 
 ## `sim_assert` / `sim_finish` — simulation control builtins

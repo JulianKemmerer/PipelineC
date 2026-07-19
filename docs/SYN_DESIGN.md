@@ -668,7 +668,11 @@ repeat-the-sweep one:
    sweep → `SYN.HARVEST_AUTOPIPELINE_LATENCIES` walks the finished
    TimingParamsLookupTable and groups each AUTOPIPELINE-tagged instance's
    `GET_TOTAL_LATENCY` by the tag's canonical key (a pure in-memory walk; no
-   synthesis, no file I/O).
+   synthesis, no file I/O). The harvest invalidates every entry's memoized
+   latency/hash first (same rationale as `WRITE_FINAL_FILES`): the planner
+   mutates submodule `_slices` after container totals were first memoized,
+   and a stale memo here would feed `.latency` (and the native simulator's
+   delay lines) a number contradicting the entities actually written.
 2. **Early exits (the zero-added-cost invariant):** if there are no AUTOPIPELINE call
    sites, or the design's Python never *read* any `.latency`
    (`pypeline.AUTOPIPELINE_LATENCY_WAS_READ()`, a read-tracked property flag), the
@@ -691,10 +695,17 @@ repeat-the-sweep one:
    chains embed child func names, and any cache carried across the
    re-elaboration boundary may reference since-renamed entities (the class
    of bug behind the shared-wireguard GHDL "unit not found" failure). Then
-   `SYN.DO_SEEDED_CONFIRM_OR_SWEEP` runs **one** full-design synthesis: timing met
-   (the expected case — only FIFO/counter widths changed) means done, and the
-   `.latency` values the design consumed provably equal the stage counts built —
-   pinning makes cross-pass latency drift impossible by construction. The
+   `SYN.DO_SEEDED_CONFIRM_OR_SWEEP` runs **one** full-design synthesis. The loop
+   stops only when the post-confirmation harvest **equals** the values this pass's
+   Python consumed — meeting timing alone is not sufficient: realizing the seeded
+   fractional slices hierarchically (e.g. into pipelined built-in div/mult entities
+   with their own stage granularity) can change an instance's total latency even on
+   a passing confirmation, and exiting then would build VHDL whose actual depth
+   contradicts every `.latency`-derived constant baked into it (and desync the
+   native simulator's latency emulation). When the totals change, the loop simply
+   re-elaborates with the fresh numbers (an extra pass, typically converging
+   immediately since the per-instance slices are already in place); on exit the
+   `.latency` values the design consumed provably equal the stage counts built. The
    confirmation is guaranteed to be a REAL synthesis, not a cached-log
    replay: timing hashes (`RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES`)
    record each child's func name alongside its subtree, so a design whose
@@ -737,6 +748,11 @@ Repeated-`PARSE_FILE` support (sys.modules eviction of the design import graph,
 per-parse compiler-cache cleanup via `DEL_ALL_CACHES`) lives in `PY_TO_LOGIC.py` —
 see `PY_TO_LOGIC_DESIGN.md`'s AUTOPIPELINE section.
 
+The converged harvest has one more consumer: a non-`--comb` `--sim` run hands it
+(plus the final per-MAIN latencies) to the native simulator at the end of the build,
+which re-imports the design with the cache installed and emulates every latency —
+see `pypeline_sim_DESIGN.md` §"Pipelined native sim".
+
 ## 7. Test matrix
 
 Fast tests (no `PART()` → PYRTL software timing model, seconds per synth
@@ -751,7 +767,7 @@ run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
 | `sweep_floor_detect_test.py` | unreachable goal: floor predicted & blamed up front, sweep stops after a few syn runs, results written, then `TIMING NOT MET` + non-zero exit |
 | `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that autopipelining cannot help (planning time + standalone as-written check FAIL + failing report), one full syn run, `TIMING NOT MET` + non-zero exit |
 | `sweep_planless_test.py` | stateful MAIN with a met goal but nothing cuttable: one standalone as-written check synthesis prints PASS, its critical path is NOT stored as the func delay, one full syn run, exit 0 |
-| `autopipeline_latency_test.py` | end-to-end factory design (`make_stream_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6.5 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, one seeded confirmation syn passes with no fallback sweep and no pass 3, latency matches `sweep_history.json` |
+| `autopipeline_latency_test.py` | end-to-end factory design (`make_stream_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6.5 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, seeded confirmation syn passes with no fallback sweep, loop settles within the pass cap (extra realization passes allowed) |
 
 Unit/in-process coverage (registered in `elab_tests.py`):
 `autopipeline_harvest_test.py` (harvest grouping + divergence, seed two-tier matching

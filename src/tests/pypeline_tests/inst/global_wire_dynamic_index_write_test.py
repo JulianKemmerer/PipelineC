@@ -21,7 +21,7 @@ Only one element of arr_w is written each cycle (idx = n & 3); every other
 element must read as zero that cycle (implicit zero-init, same convention
 as global_wire_array_split_test.py's constant-index case).
 
-Registered in native_sim_tests.py (--sim --run all) and vhdl_sim_tests.py
+Registered in native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
 (--sim --comb --cocotb --ghdl --run all).
 """
 

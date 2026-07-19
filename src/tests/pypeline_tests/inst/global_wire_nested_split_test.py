@@ -19,7 +19,7 @@ single whole-field struct write, while main_b claims individual nested leaves
 (w2.b.x) and a scalar field (w2.tag) -- regions at different depths of the
 same type tree ((w2.b.y is claimed by nobody and must read zero).
 
-Registered in native_sim_tests.py (--sim --run all), vhdl_sim_tests.py
+Registered in native_sim_tests.py (--sim --comb --run all), vhdl_sim_tests.py
 (--sim --comb --cocotb --ghdl --run all), and synth_tests.py (--comb) so the
 per-region VHDL is also proven through real synthesis.
 

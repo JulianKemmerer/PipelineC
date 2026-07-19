@@ -735,10 +735,13 @@ rv = MY_AP(x)                             # some_func(x), autopipelined
 MY_AP.latency                             # int, 0 until known
 ```
 
-At simulation time `MY_AP(x)` is a plain identity passthrough (`func(x)`), and
+At plain simulation time `MY_AP(x)` is a plain identity passthrough (`func(x)`), and
 `.latency` stays 0 (the module-level latency cache it reads,
-`pypeline._autopipeline_latency_cache`, is only populated by the `pipelinec` driver's
-pin-and-confirm loop between real synthesizing passes — see `SYN_DESIGN.md`).
+`pypeline._autopipeline_latency_cache`, is only populated by the `pipelinec` driver —
+between the pin-and-confirm loop's real synthesizing passes, and again before a
+non-`--comb` `--sim` run's native-sim design import, where `.latency` then reads the
+built stage count and `MY_AP(x)` emulates the N-stage pipeline with a per-call-site
+delay line — see `SYN_DESIGN.md` and `pypeline_sim_DESIGN.md` §"Pipelined native sim").
 `.latency` is a read-tracked property: any read flips a module flag
 (`AUTOPIPELINE_LATENCY_WAS_READ`) the driver uses to skip the extra pass entirely for
 designs that never consume the value. `AUTOPIPELINE.__repr__` is deliberately

@@ -2890,7 +2890,20 @@ def HARVEST_AUTOPIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
                    Python reads, so the driver errors on these.
     Pure in-memory walk over already-computed sweep results: no synthesis, no
     file I/O -- a no-AUTOPIPELINE design pays only this walk (returns ({},{})).
+
+    Every cached latency/hash in the table is invalidated first (same
+    rationale as WRITE_FINAL_FILES): the sweep planner mutates submodule
+    _slices after container totals were first memoized, so a memoized
+    GET_TOTAL_LATENCY here can be stale -- e.g. a container whose memo was
+    computed before its built-in div submodules received their own slices
+    reports only its own cut count while the entity actually written (and
+    confirmed by synthesis) is the deeper fresh total. The harvested value
+    feeds .latency AND the native simulator's delay lines, both of which must
+    match the VHDL actually built.
     """
+    if TimingParamsLookupTable:
+        for timing_params in TimingParamsLookupTable.values():
+            timing_params.INVALIDATE_CACHE()
     key_to_inst_latencies = {}
     for inst_name, logic in parser_state.LogicInstLookupTable.items():
         if not logic.sub_inst_to_autopipeline_key:

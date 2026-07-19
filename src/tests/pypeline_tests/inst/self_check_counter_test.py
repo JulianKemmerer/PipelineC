@@ -5,7 +5,7 @@ no external Python sim_call/assert harness needed. Pass/fail is entirely
 determined by whether the simulation halts cleanly (sim_finish, no assertion
 failure) vs. aborts (sim_assert failure) vs. runs forever without finishing.
 
-Registered in both native_sim_tests.py (--sim --run all) and vhdl_sim_tests.py
+Registered in both native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
 (--sim --comb --cocotb --ghdl --run all) -- same source file, two run modes,
 proving native and VHDL sim agree. Modeled after wireguard-fpga's syn_tb
 testbenches (fixed expected-value checks via sim_assert, sim_finish() on

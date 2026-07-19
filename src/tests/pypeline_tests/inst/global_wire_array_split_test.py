@@ -13,7 +13,7 @@ variable index): runtime claim tracking records the concrete indices each
 function actually touched, so each writer's per-invocation reset zeros
 exactly its own elements and never the other writer's.
 
-Registered in native_sim_tests.py (--sim --run all) and vhdl_sim_tests.py
+Registered in native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
 (--sim --comb --cocotb --ghdl --run all).
 """
 

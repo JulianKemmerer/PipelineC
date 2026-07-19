@@ -6,7 +6,7 @@ the function is what every other function sees that cycle, and reading a
 leaf before it has been written (even within the writer itself) returns zero
 (the writer's own implicit zero-init), not an elaboration error.
 
-Registered in both native_sim_tests.py (--sim --run all) and vhdl_sim_tests.py
+Registered in both native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
 (--sim --comb --cocotb --ghdl --run all).
 """
 

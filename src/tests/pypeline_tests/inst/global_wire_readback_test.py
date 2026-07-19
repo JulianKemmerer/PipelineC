@@ -17,7 +17,7 @@ readback input is fed all zeros by the dedicated unshared feed pass in
 VHDL.py (read-before-write zero, write-then-read new value, exactly like a
 local variable).
 
-Registered in native_sim_tests.py (--sim --run all) and vhdl_sim_tests.py
+Registered in native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
 (--sim --comb --cocotb --ghdl --run all).
 """
 

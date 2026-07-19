@@ -477,7 +477,9 @@ Use `debug=True` for prints you want compared cycle-by-cycle between a native Py
 VHDL (cocotb+GHDL) sim by the `pypeline_sim_debug.py` tool — see below. Plain `sim_print(...)`
 (`debug=False`, the default) output is deliberately ignored by that tool: not every console line
 is useful for cycle-accuracy debugging, and tagging only the ones that are keeps the diff signal
-clean. `hex(...)`/`chr(...)`/plain `{expr}` interpolation rules are unaffected by `debug`; using
+clean. In a `--comb` compare (zero pipeline latency) any `debug=True` print is fair game; in a
+**pipelined** (non-`--comb`) compare there are extra rules on *where* such prints may live — see
+the three constraints in the `pypeline_sim_debug.py` section below. `hex(...)`/`chr(...)`/plain `{expr}` interpolation rules are unaffected by `debug`; using
 `from pypeline import hex` (not Python's builtin) matters here more than usual, since only
 Pypeline's `hex()` is guaranteed to render identically in both native and VHDL sim (see its
 docstring in `pypeline.py`).
@@ -485,15 +487,33 @@ docstring in `pypeline.py`).
 #### `pypeline_sim_debug.py` — native-vs-VHDL cycle diff tool
 
 `src/pypeline_sim_debug.py` runs a testbench both ways — native sim, and `--cocotb --ghdl` VHDL
-sim, concurrently (the slow GHDL run doesn't have to wait on the fast native run first or vice
-versa) — and diffs their `sim_print(..., debug=True)` output cycle by cycle. It exists to localize
+sim — and diffs their `sim_print(..., debug=True)` output cycle by cycle. It exists to localize
 *cycle-timing* mismatches (data correct, but arriving on the wrong clock cycle) that ordinary
 `sim_assert`s don't catch. Invoke it exactly like `pipelinec ... --sim ...`; it adds `--cocotb
 --ghdl` itself for the VHDL run:
 
 ```
-pypeline_sim_debug.py ./src/my_design_tb.py --sim --comb --run all
+pypeline_sim_debug.py ./src/my_design_tb.py --sim --comb --run all   # comb compare
+pypeline_sim_debug.py ./src/my_design_tb.py --sim --run all          # PIPELINED compare
 ```
+
+`--comb` runs compare zero-latency native sim against comb VHDL, concurrently (the slow
+GHDL run doesn't have to wait on the fast native run). Without `--comb`, **both** runs
+do a full synthesis build first — the native side then emulates the discovered pipeline
+latencies (see `docs/pypeline_sim_DESIGN.md` §"Pipelined native sim") — and the tool
+runs them sequentially, native first, so the second build reuses the first's warm
+path-delay caches and both converge on identical latencies. Three constraints on a
+pipelined (non-`--comb`) compare — see the design doc's Limitations subsection for the
+full list:
+- **Valid-gate every probe.** VHDL pipeline registers read `'U'` during warm-up; native
+  delay lines start at typed zeros — an un-gated data print can never match there. Gate on
+  a valid bit carried through the same pipeline.
+- **Probe from stateful code, not inside the pipelined comb.** A print inside a pipelined
+  region fires at stage-0 timing natively but at its retimed stage in VHDL.
+- **Bundle co-timed outputs of a pipelined pure MAIN into one struct wire.** Native delays
+  every wire a pipelined MAIN writes by that MAIN's total latency, but VHDL emerges each
+  *separate* wire at its own cone depth — so a shallow side wire alongside a deep one
+  diverges. Fields of one struct wire emerge together in both and match.
 
 It reports the first cycle where the two runs' (order-independent) sets of debug-tagged lines
 differ, plus the total count of mismatching cycles/lines, and exits non-zero on any mismatch. To
@@ -2048,19 +2068,26 @@ usefully to size FIFOs/counters that sit next to the free-running pipeline (this
 exactly how `make_stream_pipeline` sizes its output FIFO automatically, see
 [§24](#24-elastic-autopipelined-streams-make_stream_pipeline)). It reads **0**:
 
-- always in native Pypeline sim (no synthesis ever runs),
+- always in plain native Pypeline sim (`pypeline_sim.py` run directly, or
+  `pipelinec --sim --comb` — no synthesis ever runs),
 - always in `--comb` / `--no_synth` / `--yosys_json` builds (no throughput sweep runs),
 - during the bootstrap elaboration pass of a real synthesizing build.
 
 On a real build, the `pipelinec` driver's **pin-and-confirm** loop makes the value real:
 the design is first elaborated with `.latency` reading 0 and swept as usual; the
 discovered stage counts are then installed and the design re-elaborated, with the
-previous sweep's pipelining carried over as pinned seeds so only **one confirmation
-synthesis** runs (not a second sweep). When the confirmation passes timing — the normal
-case — the `.latency` your Python consumed is guaranteed equal to the stage count of
-the hardware actually built. Designs that never read `.latency` pay nothing: the loop
-exits after the ordinary single sweep. (See `docs/SYN_DESIGN.md` for the loop's
-details and failure modes.)
+previous sweep's pipelining carried over as pinned seeds so only a **seeded confirmation
+synthesis** runs per pass (not a fresh sweep). The loop repeats until the stage counts
+harvested from the built result equal the values the design's Python consumed — an extra
+pass is normal when realizing the seeded slices hierarchically (e.g. into pipelined
+built-in div entities with their own stage granularity) changes the total — so on exit
+the `.latency` your Python consumed is guaranteed equal to the stage count of the
+hardware actually built. Designs that never read `.latency` pay nothing: the loop exits
+after the ordinary single sweep. (See `docs/SYN_DESIGN.md` for the loop's details and
+failure modes.) A non-`--comb` `pipelinec --sim` run then launches native simulation
+with those same latencies installed **and emulated** — `.latency` reads the real value
+during the sim's design import too, and every AUTOPIPELINE call site behaves as an
+N-stage pipeline (see §"Pipelined native sim" in `docs/pypeline_sim_DESIGN.md`).
 
 **Construction timing matters**: construct `AUTOPIPELINE(...)` once, eagerly, as plain
 Python — typically at a factory function's own top level — and capture the object by
@@ -2602,11 +2629,13 @@ def buffered_div_inv(
 The FIFO depth is `max(2, 1 + AUTOPIPELINE latency + 1)` — input reg + discovered core
 stages + output reg, i.e. every word that can be in flight at once, so downstream
 stalls can never overflow the FIFO and full 1-word/cycle throughput is sustained. On
-the bootstrap pass (and in native sim / `--comb` builds, where `.latency` stays 0) the
-depth floors at 2 — which in those contexts is exact, since the effective pipeline
-latency really is just the two boundary registers; on a real build the pin-and-confirm
-loop re-elaborates with the discovered latency (see
-[§15](#15-forcing-pipelining-autopipeline)).
+the bootstrap pass (and in plain native sim / `--comb` builds, where `.latency` stays
+0) the depth floors at 2 — which in those contexts is exact, since the effective
+pipeline latency really is just the two boundary registers; on a real build the
+pin-and-confirm loop re-elaborates with the discovered latency (see
+[§15](#15-forcing-pipelining-autopipeline)), and a non-`--comb` `pipelinec --sim` run's
+native simulation imports the design with the same latency installed — so the FIFO is
+sized identically and the AUTOPIPELINE call site is emulated at the same depth.
 
 `in_type`/`out_type` are inferred from `func`'s own annotations via `hw_arg_types`/
 `hw_return_type`, the same way `make_valid_ready_mcp` does (see
@@ -2750,7 +2779,7 @@ The table below consolidates all known limitations and unsupported features.
 | **`from module import *`** | Not supported | Only qualified imports (`import module`) are supported |
 | **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead |
 | **Hardware signals as loop conditions** | Not supported | `for`/`while` loop bounds must be compile-time Python integers (fully unrollable) |
-| **`AUTOPIPELINE(...).latency` before synthesis** | Reads `0` | Real value only exists after a synthesizing build's pin-and-confirm pass; native sim and `--comb`/`--no_synth`/`--yosys_json` builds always read 0 |
+| **`AUTOPIPELINE(...).latency` before synthesis** | Reads `0` | Real value only exists after a synthesizing build's pin-and-confirm pass; plain native sim and `--comb`/`--no_synth`/`--yosys_json` builds always read 0 (a non-`--comb` `pipelinec --sim` run's native sim reads the built value) |
 | **Multiple/early `return` statements** | Not supported | A function may have at most one `return`, and it must be the function's final top-level statement; assign to a variable inside `if`/`else` branches and return it once at the end (see [§6 Control flow](#6-your-first-hardware-function)) |
 | **Enum types in `byte_length`/`make_type_to_bytes`/`make_type_from_bytes`** | Not supported | Raises `NotImplementedError`, including for an enum nested inside a struct or array field (see [§11 Types](#11-types)) |
 | **Explicit casts (`uint32_t(x)`, etc.)** | Not supported | Calling a type as a function around a wire/parameter inside a hardware function body fails at elaboration time; assign to an intermediate variable with an explicit type annotation instead (see [§11 Types](#11-types)) |

@@ -7,7 +7,14 @@ Run standalone: python3 synth_tests.py [-j N]
 
 import sys
 
-from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PIPELINEC, Test, main
+from common import (
+    EXAMPLES_PYPELINE_DIR,
+    INST_DIR,
+    PIPELINEC,
+    PYPELINE_SIM_DEBUG,
+    Test,
+    main,
+)
 
 # fmt: off
 # (filename, source_dir, extra_args)
@@ -101,6 +108,67 @@ def get_tests() -> list:
             name="autopipeline_latency_test",
             category="synth",
             cmd=[INST_DIR / "autopipeline_latency_test.py"],
+            needs_out_dir=True,
+        )
+    )
+    # Pipelined (non---comb) NATIVE simulation: full build first, then the
+    # native sim runs with the discovered latencies emulated. Self-checking
+    # elastic stream design -- proves build -> harvest -> latency-emulated
+    # native sim end to end (including the .latency-sized FIFO).
+    tests.append(
+        Test(
+            name="native_pipelined_sim_test",
+            category="synth",
+            cmd=[
+                PIPELINEC,
+                INST_DIR / "self_check_stream_pipeline_test.py",
+                "--sim",
+                "--run",
+                "all",
+            ],
+            needs_out_dir=True,
+        )
+    )
+    # Cycle-accuracy of the pipelined native sim vs real pipelined VHDL
+    # (cocotb+GHDL): pypeline_sim_debug.py runs both (sequentially, warm
+    # path-delay caches => identical discovered latencies) and exits 0 only
+    # if every sim_print(debug=True) line matches cycle for cycle.
+    # native_vs_vhdl_ap_test: AUTOPIPELINE call-site delay-line emulation.
+    # native_vs_vhdl_pipelined_main_test: naturally-pipelined pure MAIN
+    # write-side delay emulation.
+    tests.append(
+        Test(
+            name="native_vs_vhdl_pipelined_ap_test",
+            category="synth",
+            cmd=[
+                PYPELINE_SIM_DEBUG,
+                INST_DIR / "native_vs_vhdl_ap_test.py",
+                "--sim",
+                "--run",
+                "all",
+            ],
+            needs_out_dir=True,
+        )
+    )
+    # --pipeline_min_effort 0: the design pairs the sliceable pure MAIN with
+    # an unsliceable stateful checker in the same (wire-shared) clock domain;
+    # PYRTL's no-attribution timing blames every co-domain main during the
+    # post-met trim attempts' intentional failing iterations, and the
+    # trim-restore path only restores the planned main's met status --
+    # accepting the first met result avoids that sticky spurious failure.
+    tests.append(
+        Test(
+            name="native_vs_vhdl_pipelined_main_test",
+            category="synth",
+            cmd=[
+                PYPELINE_SIM_DEBUG,
+                INST_DIR / "native_vs_vhdl_pipelined_main_test.py",
+                "--sim",
+                "--run",
+                "all",
+                "--pipeline_min_effort",
+                "0",
+            ],
             needs_out_dir=True,
         )
     )

@@ -1547,28 +1547,268 @@ typically assert `SimFinish` is raised directly (see `sim_assert_finish_test.py`
 python3 src/pipelinec my_design.py --sim --run 1000
 ```
 
-is equivalent to `python3 src/pypeline_sim.py my_design.py --run 1000` whenever no other
-simulator backend flag (`--cocotb`, `--edaplay`, `--modelsim`, `--cxxrtl`, `--verilator`) is
-given. This is implemented entirely in `src/SIM.py`:
+is equivalent to `python3 src/pypeline_sim.py my_design.py --run 1000` **plus a full build
+first when `--comb` is absent** (see the next section). Simulator selection is implemented in
+`src/SIM.py`:
 
 - `SET_SIM_TOOL(cmd_line_args, source_file)` defaults `SIM_TOOL` to the `pypeline_sim` module
   itself (used as a module-identity sentinel, the same pattern as `COCOTB`/`EDAPLAY`/etc.) when
-  `source_file` ends in `.py` and none of the explicit backend flags were passed. `.c` sources
-  keep defaulting to `EDAPLAY` — behavior is unchanged there.
-- `DO_OPTIONAL_SIM(...)` calls `pypeline_sim.run_sim(source_file, args.run)` in-process (no
-  subprocess) when `SIM_TOOL is pypeline_sim`.
+  `source_file` ends in `.py` and none of the explicit backend flags were passed. Native sim is
+  thus the *implicit* default for a `.py` design — there is no `--native` flag, because absence
+  of every other simulator flag already selects it. `.c` sources keep defaulting to `EDAPLAY` —
+  behavior is unchanged there.
+- `DO_OPTIONAL_SIM(...)` calls `pypeline_sim.run_sim(...)` in-process (no subprocess) when
+  `SIM_TOOL is pypeline_sim`, passing the final per-MAIN latencies
+  (`SIM.GET_MAIN_FUNC_LATENCIES`) and the converged AUTOPIPELINE harvest
+  (`SYN.HARVEST_AUTOPIPELINE_LATENCIES`) whenever a build's `parser_state`/timing params are
+  available — all zeros/None on the comb path.
 - `src/pipelinec` checks `SIM.SIM_TOOL is SIM.pypeline_sim` right after tool selection and, if
-  simulation was requested (`--sim`/`--sim_comb`), calls `DO_OPTIONAL_SIM` and exits immediately
-  — **no VHDL elaboration or synthesis happens on this path**, since the native simulator runs
-  directly against the design's Python source and has no use for generated VHDL. This mirrors
-  how `pypeline_sim.py` already works standalone.
+  **comb** simulation was requested (`--sim --comb`/`--sim_comb`, or `--no_synth`), calls
+  `DO_OPTIONAL_SIM` and exits immediately — **no VHDL elaboration or synthesis happens on this
+  path**, mirroring how `pypeline_sim.py` works standalone. A non-`--comb` `--sim` run instead
+  falls through to the full build (path-delay measurement → throughput sweep → AUTOPIPELINE
+  pin-and-confirm), and the native sim launches at the end with the discovered latencies
+  emulated — the same "no `--comb` means pipelined" rule the VHDL simulators follow. (If no
+  synthesis tool is installed, the run degrades to the comb zero-latency sim with a warning.)
 
 Explicitly requesting `--cocotb --ghdl` (or any other backend) on a `.py` design is unaffected
 and still goes through the full elaboration → VHDL → cocotb path described elsewhere in this
-document and in `PY_TO_LOGIC_DESIGN.md` — the two simulation systems remain independent, this
-just makes the native one the default when nothing else is requested. There is currently no
-`pipelinec` equivalent of `pypeline_sim.py`'s `--mode` flag; the native path always runs at the
-default `strict` accuracy.
+document and in `PY_TO_LOGIC_DESIGN.md` — the two simulation systems remain independent. There
+is currently no `pipelinec` equivalent of `pypeline_sim.py`'s `--mode` flag; the native path
+always runs at the default `strict` accuracy.
+
+### Pipelined native sim (non-`--comb` `pipelinec --sim`)
+
+Plain native sim runs the design's combinational Python at zero pipeline latency (only explicit
+`Reg[T]`/FIFO state advances). A non-`--comb` `pipelinec --sim` run instead does the **full
+build first** — path-delay measurement, the throughput sweep, and the AUTOPIPELINE
+pin-and-confirm loop (`SYN_DESIGN.md` §6.5) — and then launches native sim with the discovered
+per-instance pipeline latencies **emulated by delay lines wrapped around the unchanged
+combinational Python**. Because the sliced/autopipelined logic is purely combinational, delaying
+its outputs by N cycles is an exact model of the N register stages the sweep inserted — so the
+native run stays cycle-accurate against the generated VHDL. This is verified end-to-end by
+`src/pypeline_sim_debug.py` (which no longer needs `--comb`); the wireguard-fpga
+encrypt/decrypt/shared syn testbenches all `MATCH` their pipelined GHDL builds cycle-for-cycle.
+
+This section documents **how it is implemented**. Everything below lives in `src/pypeline.py`,
+`src/pypeline_sim.py`, `src/SIM.py`, `src/SYN.py`, and `src/pipelinec`.
+
+#### End-to-end control flow
+
+1. `src/pipelinec`: the native-sim short-circuit (which normally runs the sim and exits before
+   any elaboration) is now gated on `args.comb or args.no_synth`. A non-`--comb` `--sim` run
+   therefore *falls through* to the full build path, exactly like a cocotb build would.
+2. The build runs to completion, ending at `SYN.WRITE_FINAL_FILES` with the converged
+   `multimain_timing_params`.
+3. `SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params, ...)` dispatches
+   to the `pypeline_sim` branch, which builds two latency maps and hands them to `run_sim`:
+   - `main_latencies = SIM.GET_MAIN_FUNC_LATENCIES(parser_state, multimain_timing_params)` —
+     `{main hw name → GET_TOTAL_LATENCY}` for every `@MAIN`.
+   - `autopipeline_latencies, _ = SYN.HARVEST_AUTOPIPELINE_LATENCIES(parser_state, tpl)` —
+     `{AUTOPIPELINE canonical_key → stage count}`. Harvested here (not read from
+     `pypeline._autopipeline_latency_cache`) so it is populated even for designs whose Python
+     never read `.latency`, where the pin-and-confirm loop never ran. Divergences are already a
+     fatal driver error for any non-`--comb` `.py` build, so they are ignored here.
+4. `run_sim(source_file, args.run, main_latencies=…, autopipeline_latencies=…)` installs the
+   AUTOPIPELINE cache, re-imports the design fresh in sim mode, wires up the two emulation
+   mechanisms, and runs the ordinary multi-MAIN cycle loop.
+
+#### Cache install + module eviction (`run_sim`, `pypeline_sim.py`)
+
+Before importing the design, `run_sim`:
+- calls `pypeline.SET_AUTOPIPELINE_LATENCY_CACHE(autopipeline_latencies)` — so every
+  `AUTOPIPELINE(func)` object *constructed during the import* captures its real `._latency` (set
+  in `__init__` from the cache). This is what makes `.latency`-derived structure — most
+  importantly `make_stream_pipeline`'s `fifo_depth = max(2, 1 + latency + 1)` — elaborate to the
+  *same* shape the VHDL build's pin-and-confirm final pass produced. Get this wrong and the
+  native FIFO would be a different depth than the hardware and diverge immediately.
+- calls `_evict_design_modules()`, which deletes from `sys.modules` every module imported since
+  `PY_TO_LOGIC._modules_before_first_parse` (the snapshot taken at the first `PARSE_FILE`). The
+  build already imported the design's submodules **in non-sim mode** (with `_sim_active` False
+  and an empty/older cache); without eviction, `_import_design`'s re-import would silently reuse
+  those stale modules and the `@hw_func` decorators would never rebuild their sim bodies. The
+  helper is a self-guarding no-op in every other context (pure native runs never import
+  `PY_TO_LOGIC`; the comb short-circuit runs before any parse, leaving the snapshot `None`).
+
+#### Mechanism A — AUTOPIPELINE call sites (`AUTOPIPELINE._sim_delay_line`, `pypeline.py`)
+
+When `_sim_active and self._latency > 0`, `AUTOPIPELINE.__call__` stops being an identity
+passthrough and routes through a per-call-site output **delay line** modelling
+`out(t) = func(in(t − N))`, N = `self._latency`:
+
+```
+inst_path = _sim_current_inst_path()
+committed  = _sim_reg_read(inst_path, _SIM_AP_DELAY_KEY, None)
+if committed is None:                       # power-on: empty pipeline
+    committed = [sim_zero(hw_return_type(self.func)) for _ in range(N)]
+now = self.func(*args, **kwargs)            # the ordinary comb result, this cycle's inputs
+_sim_reg_write(inst_path, _SIM_AP_DELAY_KEY, committed[1:] + [deepcopy(now)])
+return deepcopy(committed[0])               # value pushed N cycles ago
+```
+
+Key implementation points:
+- **Instance identity.** `__call__` pushes `("AUTOPIPELINE:" + self.canonical_key, call_loc)`
+  onto `_sim_inst_stack` (the same stack `Reg[T]` and `@sim_model` use), so each call site gets
+  its own delay line keyed by `_sim_current_inst_path()`. `canonical_key` distinguishes two
+  *different* AUTOPIPELINE objects invoked from the same source line (e.g. a loop over
+  factory-produced pipelines whose inner funcs share a `__qualname__`); it is already computed
+  because a non-empty cache forced it in `__init__`.
+- **Convergence safety.** The read (`_sim_reg_read`) always returns the state committed at the
+  last clock edge, never the write buffer; the write (`_sim_reg_write`) goes into the buffer
+  while the per-cycle buffer is open. So during a cycle's delta-convergence the output
+  (`committed[0]`) is input-independent — it cannot cause churn — and re-evaluations only rewrite
+  the buffered shift, last-write-wins. `_sim_reg_flush_buffer` commits the **final pass's** shift
+  as the clock edge. This is the identical discipline `_call_sim_model` uses for class models.
+- **Warm-up.** The first N outputs are typed zeros of `func`'s return type, matching hardware's
+  empty pipeline.
+- **Aliasing.** Both the pushed `now` and the returned `committed[0]` are `deepcopy`d: `func` may
+  return an object aliasing its input, and `committed[0]` is handed to every re-evaluation in the
+  cycle, so caller mutation must not corrupt the committed line.
+- The surrounding elastic handshake of `make_stream_pipeline` (its `ready`/in-flight `Reg[T]` and
+  output FIFO) is **not** emulated here — those are ordinary stateful sim constructs that native
+  sim already models exactly. Only the feed-forward AUTOPIPELINE core inside gets the delay line.
+
+#### Mechanism B — naturally-pipelined pure MAINs (write-side delay)
+
+A **pure** `@MAIN` (no `Reg[T]`/`Feedback[T]` — checked via the `wrapper._pypeline_has_state`
+flag set in `_sim_type_wrap`) that the sweep sliced to latency N > 0 gets *write-side* delay
+emulation. `run_sim` maps each final MAIN hw name back to its registry function via
+`PY_TO_LOGIC._hw_func_name(prefix, fn.__name__)` (prefix `None` for the top file loaded as
+`"pypeline_design"`, else the sub-module name with dots→underscores — the same mangling
+elaboration uses) and fills:
+
+```
+pypeline._sim_pipelined_main_info[fn] = {"latency": N, "queue": deque(), "collector": []}
+```
+
+(An empty dict = feature off, one truthiness test on the wire-write hot paths. Stateful MAINs
+are skipped — see Limitations.) The delay is applied to the MAIN's **global-wire writes**:
+
+- While a pipelined MAIN executes (`_sim_current_main` is it), `_sim_wire_write` /
+  `_sim_wire_lens_write` append `(wire_name, lens_path, value)` to that MAIN's `collector`
+  instead of touching `_sim_wire_state`. The lens path is preserved so partial/field writes
+  replay leaf-wise later without clobbering another writer's leaves of the same wire.
+- `_sim_wire_reset_claims` (the per-invocation zeroing that models hardware's implicit
+  mux-to-zero for every leaf a function drives) **also** diverts into the collector as
+  zero-valued entries. This is essential: it must **not** touch `_sim_wire_state`, or it would
+  wipe the N-cycles-old values `_sim_apply_delayed_writes` placed there this cycle.
+- Claim *recording* (`_sim_wire_claims`) stays live even when diverted, because the diverted
+  reset path reads it to know which leaves to zero.
+
+The per-cycle sequence in `_run_clock_cycle` (`pypeline_sim.py`):
+
+1. **Apply** — for each pipelined MAIN whose queue holds ≥ N sets, `popleft()` the oldest and
+   replay it onto `_sim_wire_state` via `_sim_apply_delayed_writes` (ordered lens-sets). During
+   warm-up (queue shorter than N) nothing is applied, so the wires hold their typed-zero reset
+   values — hardware's empty pipeline. This runs *before* convergence; the delayed values are
+   cycle-constant and every MAIN starts queued each cycle, so no requeue is needed.
+2. Convergence loop and final pass run as usual. Reads of the pipelined MAIN's output wires see
+   the step-1 delayed values; the MAIN's own writes this cycle go into its collector.
+   `_sim_current_main` is now set around the **final pass** too (previously only the convergence
+   loop set it), so final-pass writes divert correctly.
+3. `_sim_reg_flush_buffer()` — the clock edge for ordinary `Reg[T]`.
+4. **Push** — append `deepcopy(collector)` to each pipelined MAIN's queue and clear the
+   collector. The deepcopy prevents later-cycle mutation from aliasing queued values.
+
+Ordered replay makes conditional/partial writes exact: within a cycle the collector accumulates
+`[reset-zeros, writes]` from every convergence iteration and the final pass, in order, so the
+last (final-pass) `[reset-all-claimed-leaves, then-actual-writes]` fully determines the replayed
+state — a leaf whose write condition ended up false is left at its reset zero, matching the
+hardware mux.
+
+**Why write-side, not read-side.** Delaying writes (rather than shadowing each reader N cycles
+back) needs no read-set discovery or snapshotting, and it keeps `sim_assert`s *inside* the
+pipelined MAIN evaluating on real current values (no spurious warm-up failures). The cost is the
+per-wire-uniformity assumption in Limitations below.
+
+#### Driver-side correctness fixes this required
+
+Two pre-existing behaviours in the build had to change so that the latency the native sim
+emulates provably equals the latency the VHDL was built with:
+
+- **`HARVEST_AUTOPIPELINE_LATENCIES` invalidates every `TimingParams` memo first.** The sweep
+  planner mutates submodule `_slices` *after* container totals were first memoized, so a stale
+  memoized `GET_TOTAL_LATENCY` could report e.g. 10 while the entity actually written (and
+  confirmed by synthesis) is 26 clocks. The harvest now clears all caches before walking.
+- **The pin-and-confirm loop no longer stops on "timing met" alone.** It stops only when the
+  post-confirmation harvest *equals* the latencies this pass's Python consumed. Realizing the
+  seeded fractional slices hierarchically (into pipelined built-in `div`/`mult` entities with
+  their own stage granularity) can change an instance's total latency even on a *passing*
+  confirmation; stopping then would emit VHDL whose real depth contradicts every
+  `.latency`-derived constant baked into it — and desync this emulation. An extra pass (typically
+  pass 3) re-elaborates with the realized numbers and converges.
+
+#### Limitations (read before trusting a pipelined cycle diff)
+
+The emulation is a **black-box output-delay** model of a feed-forward, initiation-interval-1
+pipeline. It is exact within that model, but the following are genuine boundaries. Two of them
+are **detected and turned into hard errors** (loud `sys.exit`/`RuntimeError` — the design is
+refused rather than silently mis-simulated); the rest are constraints on how you write probes:
+
+- **Feed-forward II=1 only.** The model assumes the sliced/autopipelined logic accepts one input
+  per cycle with no internal stall. This is exactly what AUTOPIPELINE and the sweep produce
+  (combinational logic cut into register stages), so it always holds for their output — but the
+  delay line is not a general model of a hand-built multi-cycle or back-pressured pipeline.
+- **Warm-up data is not comparable.** VHDL's added pipeline registers are declared with no
+  initializer and read `'U'` in GHDL during the first N cycles; native delay lines start at typed
+  zeros. Any `sim_print(debug=True)` used for a pipelined cycle diff must be **valid-gated** — a
+  valid bit carried through the same pipeline gates false in both sims during warm-up (`'U'` in
+  VHDL, `0` in native), so gated probes agree from the first meaningful cycle; an un-gated data
+  print can never match during warm-up.
+- **[HARD ERROR] A pipelined pure MAIN writing more than one separate global wire.** Mechanism
+  B delays *all* of a pure MAIN's output wires by that MAIN's single total latency N. But the
+  generated VHDL emerges each **separate** write-only global wire at *its own* "fully driven
+  last" stage — its own cone depth — not at the module's total latency. So a pure pipelined MAIN
+  that writes two separate wires of different depth (e.g. a deep `heavy(heavy(x))` result wire
+  and a shallow passthrough wire) would **diverge** on the shallower wire: native over-delays it
+  to N, VHDL emerges it earlier. Verified empirically — for a MAIN with a depth-10 deep wire and
+  a ~0-depth shallow wire, at the cycle the deep wire's `seq=0` emerges, native reports `shallow
+  seq=0` while VHDL reports `shallow seq=10` (a 10-cycle skew, exactly N − depth\_shallow). Since
+  native sim has no per-wire stage information at sim time, it cannot tell a divergent pair from
+  two coincidentally-equal-depth wires, so `SIM.CHECK_PIPELINED_NATIVE_SIM_SUPPORTED` **refuses
+  the design** (`sys.exit`) whenever a pipelined pure MAIN writes more than one global wire —
+  conservative, but never silently wrong. **Fields carried in one struct wire are fine and are
+  the fix**: VHDL registers the whole struct together to its deepest field's stage, so all
+  fields emerge aligned in both sims (this is exactly what the shipped
+  `native_vs_vhdl_pipelined_main_test` does — data + seq + valid in one struct — and it matches
+  cleanly). Bundle a pipelined MAIN's co-timed outputs into one struct wire (which also aligns
+  them in hardware), or build with `--comb`. A precise (non-conservative) version would export
+  each wire's end-stage from the pipeline map and give it its own delay line — left as future
+  work. Mechanism A does not have this issue: an AUTOPIPELINE core is a single function whose
+  whole return value, struct included, is delayed together.
+- **[HARD ERROR] `sim_print(debug=True)` inside a pipelined comb region.** A `debug=True` print
+  fires in native sim at the cycle its inputs arrive (stage 0), but in VHDL at whatever pipeline
+  stage the retiming placed that logic — so it cannot be cycle-compared. If such a print executes
+  inside a naturally-pipelined pure MAIN or an AUTOPIPELINE core, native sim raises a
+  `RuntimeError` (`_sim_check_debug_probe_not_in_pipeline`) naming the call site, rather than
+  emit a line that would silently mis-compare. **Cycle-accurate probes must live in stateful
+  (0-latency) MAINs** reading the pipeline's output wires. (`sim_assert` inside pipelined comb is
+  *not* an error — it checks content, which is correct in both sims, not cycle alignment; and
+  plain `sim_print(...)` without `debug=True` is fine anywhere, since it is never cycle-compared.)
+- **Stateful MAINs are not delayed.** A MAIN with `Reg[T]`/`Feedback[T]` is never sliced by the
+  sweep (its state fixes its own cycle timing); if the build ever reports a nonzero latency for
+  one, `run_sim` ignores it with a warning rather than stacking a write delay on top of the
+  MAIN's explicit registers. `@sim_input`/`@sim_output` stimulus should likewise be driven from
+  stateful MAINs — inside a pipelined MAIN it would be delayed with everything else.
+- **Same source line, multiple AUTOPIPELINE instances.** Two calls of the *same* AUTOPIPELINE
+  object on one physical source line share one delay line (identical `_sim_inst_stack` key)
+  unless `SIM_TRACE_LOCATIONS=True` restores column-level call identity — the same pre-existing
+  limitation multi-instance `Reg[T]` designs already carry.
+- **`sim_finish` cycle prints are racy across sims.** GHDL gives no ordering guarantee between a
+  write process and `std.env.finish` on the same clock edge, so a design must not emit
+  `debug=True` prints on the cycle it calls `sim_finish()` — quiesce prints one cycle earlier
+  (the shipped `native_vs_vhdl_*` test designs gate their final prints with a `done` register).
+  This is a testbench-authoring rule, not a native-sim inaccuracy, but it governs whether a diff
+  reads clean.
+
+#### `pypeline_sim_debug.py` under non-`--comb`
+
+For non-`--comb` args the tool runs its two `pipelinec` invocations **sequentially** (native
+first) instead of concurrently: both do a full synthesis build, and running native first leaves
+the repo-level path-delay / pipeline-min-period caches warm, so the second (VHDL) build reuses
+them and both converge on identical latencies (a prerequisite for a meaningful cycle diff), with
+no concurrent cache writes. It detects this by scanning the forwarded args for
+`--comb`/`--sim_comb`/`--no_synth`; comb runs keep the original concurrent thread pool.
 
 ---
 
@@ -1805,9 +2045,15 @@ per cycle under wire convergence.
 
 The `pipelinec --sim --run N` § above is covered by `pipelinec_native_sim_test`, which reruns
 `global_wires_sim_test.py` through `pipelinec`'s CLI (`pipelinec inst/global_wires_sim_test.py
---sim --run 10`) instead of invoking `pypeline_sim.py` directly — this isolates the
+--sim --comb --run 10`) instead of invoking `pypeline_sim.py` directly — this isolates the
 `SIM.SET_SIM_TOOL`/`DO_OPTIONAL_SIM` dispatch wiring from the simulator itself, which the other
-`global_wires_sim_test` entry already covers.
+`global_wires_sim_test` entry already covers. (Every native_sim-category `pipelinec` invocation
+passes `--comb` — without it, `--sim` now triggers a full build first.) The pipelined native
+sim § is covered in the synth category: `native_pipelined_sim_test` (non-`--comb` build +
+latency-emulated native self-checks of `self_check_stream_pipeline_test.py`) and the two
+`pypeline_sim_debug.py` cycle-diff tests `native_vs_vhdl_pipelined_ap_test` /
+`native_vs_vhdl_pipelined_main_test`, which MATCH-compare emulated native sim against real
+pipelined GHDL for an AUTOPIPELINE call site and a naturally-pipelined pure MAIN respectively.
 
 ```
 python3 src/tests/pypeline_tests/native_sim_tests.py            # just the sim tests

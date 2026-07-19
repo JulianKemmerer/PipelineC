@@ -12,7 +12,7 @@ and VHDL.py's _inst_text assembles the full hierarchical record path
 global_to_module/module_to_global record ports threaded down through mid's
 entity automatically (LOGIC_NEEDS_* recursion).
 
-Registered in native_sim_tests.py (--sim --run all) and vhdl_sim_tests.py
+Registered in native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
 (--sim --comb --cocotb --ghdl --run all).
 """
 
