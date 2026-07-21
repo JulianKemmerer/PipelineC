@@ -1,6 +1,6 @@
 # Pypeline HDL
 
-Pypeline is the Python front end for [PypelineC](../README.md).
+[Pypeline](pypeline_guide.md) is the Python front end for [PypelineC](../README.md).
 
 We are happy to help, reach out: [PipelineC Discord](https://discord.gg/Aupm3DDrK2), [Mastodon](http://fosstodon.org/@pypelinec), [BlueSky](https://bsky.app/profile/pypelinec.bsky.social), [Discussions](https://github.com/JulianKemmerer/PipelineC/discussions) :)
 
@@ -62,7 +62,7 @@ counter=2 led=0
 
 ```
 # Build/synthesize for real hardware
-pypelinec ./examples/pypeline/blink.py
+pypelinec ./examples/pypeline/blink.py --comb --no_synth
 ```
 
 Example console output: (final product is VHDL/Verilog files)
@@ -89,6 +89,19 @@ port(
 end top;
 ```
 
+## Next Steps
+
+* Read the [Pypeline language guide](pypeline_guide.md) — start to finish, it walks
+  through a full worked example ([VGA test pattern](../examples/pypeline/vga_test_pattern.py))
+  and then covers every language feature in its own section.
+* [Set up your tools](https://github.com/JulianKemmerer/PipelineC/wiki/Running-the-Tool)
+  for simulation, synthesis, and bitstream generation. (Native Python simulation needs
+  no toolchain at all — see the guide's [Simulation](pypeline_guide.md#4-simulation)
+  section.)
+* See the [examples/pypeline](../examples/pypeline) directory for more code, and
+  [include/pypeline](../include/pypeline) for the reusable library (VGA, DSP/FIR,
+  AXI-Stream, fixed/floating point, board support, etc).
+
 ## Pure functions can be pipelined!
 **Quickly render basic un-pipelined combinatorial logic VHDL:**
 ```
@@ -111,19 +124,7 @@ pypelinec ./examples/pypeline/pipeline.py # Default no-arguments autopipelines w
 pypelinec ./examples/pypeline/pipeline.py --coarse --sweep --start N --stop N
 ```
 
-
 # Overview
-
-* Read the [Pypeline language guide](pypeline_guide.md) — start to finish, it walks
-  through a full worked example ([VGA test pattern](../examples/pypeline/vga_test_pattern.py))
-  and then covers every language feature in its own section.
-* [Set up your tools](https://github.com/JulianKemmerer/PipelineC/wiki/Running-the-Tool)
-  for simulation, synthesis, and bitstream generation. (Native Python simulation needs
-  no toolchain at all — see the guide's [Simulation](pypeline_guide.md#4-simulation)
-  section.)
-* See the [examples/pypeline](../examples/pypeline) directory for more code, and
-  [include/pypeline](../include/pypeline) for the reusable library (VGA, DSP/FIR,
-  AXI-Stream, fixed/floating point, board support, etc).
 
 [Is this HLS?](https://github.com/JulianKemmerer/PipelineC/wiki/Is-this-HLS%3F)
 
