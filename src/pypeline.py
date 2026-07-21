@@ -137,51 +137,15 @@ class PypelineEnum(_IntEnum):
         return count  # 0, 1, 2, …
 
 
-# ── unsigned integer types ────────────────────
-uint1_t = make_uint_t(1)
-uint2_t = make_uint_t(2)
-uint3_t = make_uint_t(3)
-uint4_t = make_uint_t(4)
-uint5_t = make_uint_t(5)
-uint6_t = make_uint_t(6)
-uint7_t = make_uint_t(7)
-uint8_t = make_uint_t(8)
-uint9_t = make_uint_t(9)
-uint10_t = make_uint_t(10)
-uint11_t = make_uint_t(11)
-uint12_t = make_uint_t(12)
-uint13_t = make_uint_t(13)
-uint14_t = make_uint_t(14)
-uint15_t = make_uint_t(15)
-uint16_t = make_uint_t(16)
-uint17_t = make_uint_t(17)
-uint18_t = make_uint_t(18)
-uint24_t = make_uint_t(24)
-uint32_t = make_uint_t(32)
-uint33_t = make_uint_t(33)
-uint34_t = make_uint_t(34)
-uint48_t = make_uint_t(48)
-uint64_t = make_uint_t(64)
+# ── unsigned integer types (every width 1-64) ─
+for _w in range(1, 65):
+    globals()[f"uint{_w}_t"] = make_uint_t(_w)
+del _w
 
-# ── signed integer types ──────────────────────
-int2_t = make_int_t(2)
-int3_t = make_int_t(3)
-int4_t = make_int_t(4)
-int5_t = make_int_t(5)
-int6_t = make_int_t(6)
-int7_t = make_int_t(7)
-int8_t = make_int_t(8)
-int9_t = make_int_t(9)
-int10_t = make_int_t(10)
-int11_t = make_int_t(11)
-int12_t = make_int_t(12)
-int13_t = make_int_t(13)
-int14_t = make_int_t(14)
-int15_t = make_int_t(15)
-int16_t = make_int_t(16)
-int32_t = make_int_t(32)
-int33_t = make_int_t(33)
-int64_t = make_int_t(64)
+# ── signed integer types (every width 1-64) ───
+for _w in range(1, 65):
+    globals()[f"int{_w}_t"] = make_int_t(_w)
+del _w
 
 # ── char type (8-bit; distinct C-type-string "char", not "uint8_t") ──────────
 char_t = _make_ctype("char")
@@ -3853,7 +3817,16 @@ def _build_reg_sim_func(fn):
                 compile(_ast.Expression(body=stmt.annotation), "<ann>", "eval"),
                 _merged_ns,
             )
-        except Exception:
+        except Exception as _ann_exc:
+            if (
+                isinstance(stmt.annotation, _ast.Subscript)
+                and isinstance(stmt.annotation.value, _ast.Name)
+                and stmt.annotation.value.id in ("Reg", "Feedback")
+            ):
+                raise NotImplementedError(
+                    f"Could not resolve {stmt.annotation.value.id}[...] annotation type "
+                    f"for '{stmt.target.id}': {_ast.dump(stmt.annotation)}"
+                ) from _ann_exc
             continue
         if isinstance(ann_val, _RegType):
             reg_names.append(stmt.target.id)
