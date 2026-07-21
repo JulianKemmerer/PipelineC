@@ -13,7 +13,7 @@ A hardware description language (HDL) adding high level synthesis(HLS)-like auto
 
 If a computation can be written as a [pure function](https://en.wikipedia.org/wiki/Combinational_logic) without side effects (i.e. no registers/static variables) then it can be autopipelined. Conceptually similar to technologies like [Intel's variable latency Hyper-Pipelining](https://www.intel.com/content/www/us/en/programmable/documentation/jbr1444752564689.html#esc1445881961208) and [Xilinx's retiming options](https://www.xilinx.com/support/answers/65410.html). Sharing some of the compiler driven pipelining design goals of [Google's XLS Project](https://google.github.io/xls/), the [DFiantHDL language](https://dfianthdl.github.io/), and certain [CIRCT](https://circt.llvm.org/) dialects as well.
 
-PypelineC consists of **Pypeline** (new, Python based) and **PipelineC** (legacy, C based). Pypeline is a work in progress in becoming feature complete with PipelineC, but already has many new features that PipelineC lacks.
+PypelineC consists of [**Pypeline**](docs/README.md) (new, Python based) and [**PipelineC**](https://github.com/JulianKemmerer/PipelineC/wiki) (legacy, C based). Pypeline is a work in progress in becoming feature complete with PipelineC, but already has many new features that PipelineC lacks.
 
 **Example code for blinking an LED:**
 
@@ -81,7 +81,7 @@ uint1_t blink()
 
 | | Pypeline | PipelineC |
 |---|---|---|
-| Getting started | [/docs directory](docs/README.md) | [GitHub wiki](https://github.com/JulianKemmerer/PipelineC/wiki) |
+| **Getting started** | [/docs directory](docs/README.md) | [GitHub wiki](https://github.com/JulianKemmerer/PipelineC/wiki) |
 | Easy to understand software-like syntax | [Yes](docs/pypeline_guide.md#1-what-is-pypeline) | Yes |
 | Timing feedback from synthesis+pnr tools | [Yes](docs/pypeline_guide.md#5-top-level-entry-points) | Yes |
 | Automatic pipelining of comb. logic | [Yes](docs/pypeline_guide.md#1-what-is-pypeline) | Yes |
