@@ -6,12 +6,13 @@ We are happy to help, reach out: [PipelineC Discord](https://discord.gg/Aupm3DDr
 
 # Quick Start
 
-Clone the repo and add its `src/` and `include/pypeline` directories to your
-`PYTHONPATH`:
+Clone the repo, add its `src/` and `include/pypeline` directories to your
+`PYTHONPATH`, and add `src/` to your `PATH` for the `pypelinec` command:
 ```
 git clone https://github.com/JulianKemmerer/PipelineC.git
 cd PipelineC/
 export PYTHONPATH=$PYTHONPATH:$(pwd)/src:$(pwd)/include/pypeline
+export PATH=$PATH:$(pwd)/src
 ```
 Any Python file can now do `from pypeline import *` and run native Python based simulations.
 
@@ -42,7 +43,7 @@ def blink() -> uint1_t:
 
 ```
 # Simulate in native Python sim - no toolchain needed
-python3 src/pypeline_sim.py examples/pypeline/blink.py --run 10
+pypelinec examples/pypeline/blink.py --sim --comb --run 10
 ```
 
 Example console output:
@@ -60,9 +61,7 @@ counter=2 led=0
 ```
 
 ```
-# Also add 'pypelinec' to PATH to build/synthesize for real hardware
-export PATH=$PATH:$(pwd)/src
-
+# Build/synthesize for real hardware
 pypelinec ./examples/pypeline/blink.py
 ```
 

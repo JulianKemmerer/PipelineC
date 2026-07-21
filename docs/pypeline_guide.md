@@ -144,7 +144,7 @@ after convergence.
 ### Running the simulation
 
 ```
-python3 src/pypeline_sim.py examples/pypeline/vga_test_pattern.py --run 420000
+pypelinec examples/pypeline/vga_test_pattern.py --sim --comb --run 420000
 ```
 
 One frame of 640×480 video at 25 MHz = 800 × 525 = 420 000 cycles.
@@ -272,20 +272,33 @@ r = sim_call(dual_accum, 10, 5)   # sum_a: 0+10=10, sum_b: 0+5=5 → 15
 r = sim_call(dual_accum, 10, 5)   # sum_a: 10+10=20, sum_b: 5+5=10 → 30
 ```
 
-### `pypeline_sim.py` — multi-MAIN designs
+### `pypelinec --sim` — multi-MAIN designs
 
 Designs that use `Wire[T]` global signals (see [Global Signals](#14-global-signals))
 require running multiple `@MAIN` functions together.
-Use the `pypeline_sim.py` CLI:
+Use the `pypelinec` CLI:
 
 ```
-python3 src/pypeline_sim.py my_design.py --run 1000
+pypelinec my_design.py --sim --comb --run 1000
 ```
 
 This runs 1000 simulated clock cycles, with delta-cycle convergence each cycle to resolve
-global wires before committing register values.
+global wires before committing register values. `pypelinec` detects the `.py` design and
+defaults to the native simulator (implemented in `src/pypeline_sim.py`), skipping VHDL
+elaboration/synthesis entirely, whenever no other simulator is explicitly selected (no
+`--cocotb`, `--edaplay`, `--modelsim`, `--cxxrtl`, or `--verilator` flag). `--sim --comb` is
+comb-only, no autopipelining pass first. Dropping `--comb` (just `--sim`)
+instead builds the final (maybe autopipelined) version first and then native-sims that with
+its discovered pipeline latencies emulated — see [§15](#15-forcing-pipelining-autopipeline).
+Explicitly passing `--cocotb --ghdl` (etc.) still elaborates the design to VHDL and simulates
+that instead.
 
-A `--mode` flag trades simulation accuracy for speed:
+For lower-level control — a `--mode` flag that trades simulation accuracy for speed — call
+the native simulator's own script directly instead of through `pypelinec`:
+
+```
+python3 src/pypeline_sim.py my_design.py --run 1000 --mode raw
+```
 
 | Mode | Description |
 |---|---|
@@ -293,22 +306,8 @@ A `--mode` flag trades simulation accuracy for speed:
 | `loose` | SimVal objects preserved (bit-indexing works) but no bit-width masking on arithmetic |
 | `raw` | Maximum speed (~9× faster than strict) — plain Python ints throughout; use for structural tests where precise overflow behaviour is not needed |
 
-```
-python3 src/pypeline_sim.py my_design.py --run 1000 --mode raw
-```
-
-You can also reach the same simulator through the main compiler driver, without naming it:
-
-```
-python3 src/pypelinec my_design.py --sim --run 1000
-```
-
-This is equivalent to the `pypeline_sim.py` invocation above whenever no other simulator is
-explicitly selected (no `--cocotb`, `--edaplay`, `--modelsim`, `--cxxrtl`, or `--verilator`
-flag) — `pypelinec` detects the `.py` design and defaults to the native simulator, skipping
-VHDL elaboration/synthesis entirely. Explicitly passing `--cocotb --ghdl` (etc.) still
-elaborates the design to VHDL and simulates that instead; there's no `--mode` passthrough from
-`pypelinec` yet, so this path always runs at `strict` accuracy.
+There's no `--mode` passthrough from `pypelinec` yet, so the `pypelinec --sim`/`--sim --comb`
+path above always runs at `strict` accuracy.
 
 ### `@sim_output` — side effects once per cycle
 
@@ -2698,7 +2697,7 @@ naturally throttles the input. (Elastic only — a rate expander cannot run open
 ### `dsp/fir_tb.py` — testbench library
 
 Reusable [`@sim_input`/`@sim_output`](#4-simulation) testbench machinery for any filter
-the library produces (native sim only — run via `pypeline_sim.py <file> --run N`):
+the library produces (native sim only — run via `pypelinec <file> --sim --comb --run N`):
 
 ```python
 from dsp.fir_tb import make_fir_tb, quantize_samples, two_tone

@@ -12,7 +12,7 @@ filter's ready naturally throttles the input to one sample per 4 cycles.
 
 Run the simulation (writes fir_interp4_tb.png; PYPELINE_TB_SHOW=1 for a window):
 
-    python3 src/pypeline_sim.py examples/pypeline/dsp/fir_interp_tb.py --run 1600
+    pypelinec examples/pypeline/dsp/fir_interp_tb.py --sim --comb --run 1600
 """
 
 import math

@@ -14,8 +14,9 @@ Three layers, all reusable on their own:
     asserts on mismatch) with optional matplotlib plots.
 
 @sim_input/@sim_output only exist in the native simulator, so a testbench
-@MAIN built from these pieces runs under `pypeline_sim.py <file> --run N`
-(or `pipelinec <file> --sim --run N`) -- never under GHDL/cocotb.
+@MAIN built from these pieces runs under `pypelinec <file> --sim --comb --run N`
+(or, calling the native simulator directly, `python3 src/pypeline_sim.py <file> --run N`)
+-- never under GHDL/cocotb.
 
 Minimal testbench skeleton (see also src/tests/pypeline_tests/inst/
 fir_sim_tb_test.py):

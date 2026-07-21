@@ -3,9 +3,9 @@
 """VGA donut — hardware design + simulation display.
 
 Hardware: compiles with pipelinec to drive a VGA monitor via the Arty A7 PMOD connectors.
-Simulation: run with pypeline_sim.py for a live matplotlib display.
+Simulation: run with pypelinec --sim for a live matplotlib display.
 
-    python3 src/pypeline_sim.py examples/pypeline/vga_donut.py --run <cycles>
+    pypelinec examples/pypeline/vga_donut.py --sim --comb --run <cycles>
 
 Cycles per frame by resolution:
     640x480   (VGA_640_480)  : 800  x 525  =   420 000

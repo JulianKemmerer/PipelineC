@@ -10,7 +10,7 @@ backpressure freezes the sample window exactly.
 
 Run the simulation (writes fir_decim5_tb.png; PYPELINE_TB_SHOW=1 for a window):
 
-    python3 src/pypeline_sim.py examples/pypeline/dsp/fir_decim_tb.py --run 1800
+    pypelinec examples/pypeline/dsp/fir_decim_tb.py --sim --comb --run 1800
 """
 
 import sys, os
