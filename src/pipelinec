@@ -18,17 +18,17 @@ import SYN
 import SWEEP
 
 # Defaults
-default_c_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.c"
+default_src_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.py"
 default_top_module = "top"
 
 # Parse args
-parser = argparse.ArgumentParser(description="PipelineC:")
+parser = argparse.ArgumentParser(description="PypelineC:")
 parser.add_argument(
-    "c_file",
+    "src_file",
     type=str,
-    default=default_c_file,
+    default=default_src_file,
     nargs="?",
-    help=f"C file containing main functions. Default is {default_c_file}.",
+    help=f"Source file containing main functions. Default is {default_src_file}.",
 )
 parser.add_argument(
     "--top",
@@ -177,8 +177,8 @@ if args.sim_comb:
     args.sim = True
     args.comb = True
 
-# Resolve C file arg
-c_file = os.path.abspath(args.c_file)
+# Resolve source file arg
+src_file = os.path.abspath(args.src_file)
 pins_file = os.path.abspath(args.pins) if args.pins else None
 
 # Apply arguments to global modules
@@ -198,16 +198,16 @@ if args.out_dir is not None:
     SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath(args.out_dir)
 else:
     # Or create a unique dir for this run in current dir
-    c_filename = os.path.basename(c_file)
+    src_filename = os.path.basename(src_file)
     SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath(
-        "./" + SYN.OUTPUT_DIR_NAME + "_" + c_filename + "_" + str(os.getpid())
+        "./" + SYN.OUTPUT_DIR_NAME + "_" + src_filename + "_" + str(os.getpid())
     )
 # Multiplier style
 C_TO_LOGIC.MULT_STYLE = args.mult
 # Open tools flag to not run nextpnr
 OPEN_TOOLS.YOSYS_JSON_ONLY = args.yosys_json
 # Sim tool selection
-SIM.SET_SIM_TOOL(args, c_file)
+SIM.SET_SIM_TOOL(args, src_file)
 # Comb-only native Pypeline (.py) simulation runs directly against the
 # design's Python source -- no VHDL elaboration or synthesis needed. If
 # SIM.py selected the native simulator (explicit --native or no other
@@ -221,7 +221,7 @@ if (
     and (args.sim or args.sim_comb)
     and (args.comb or args.no_synth)
 ):
-    SIM.DO_OPTIONAL_SIM(True, None, args, source_file=c_file)
+    SIM.DO_OPTIONAL_SIM(True, None, args, source_file=src_file)
     sys.exit(0)
 # AXIS XO file switch
 SYN.WRITE_AXIS_XO_FILE = args.xo_axis
@@ -232,12 +232,12 @@ SYN.PIN_CONSTRAINTS_FILE = pins_file
 try:
     print(
         """
-██████╗ ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
-██╔══██╗██║██╔══██╗██╔════╝██║     ██║████╗  ██║██╔════╝██╔════╝
-██████╔╝██║██████╔╝█████╗  ██║     ██║██╔██╗ ██║█████╗  ██║     
-██╔═══╝ ██║██╔═══╝ ██╔══╝  ██║     ██║██║╚██╗██║██╔══╝  ██║     
-██║     ██║██║     ███████╗███████╗██║██║ ╚████║███████╗╚██████╗
-╚═╝     ╚═╝╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
+██████╗ ██╗   ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
+██╔══██╗╚██╗ ██╔╝██╔══██╗██╔════╝██║     ██║████╗  ██║██╔════╝██╔════╝
+██████╔╝ ╚████╔╝ ██████╔╝█████╗  ██║     ██║██╔██╗ ██║█████╗  ██║     
+██╔═══╝   ╚██╔╝  ██╔═══╝ ██╔══╝  ██║     ██║██║╚██╗██║██╔══╝  ██║     
+██║        ██║   ██║     ███████╗███████╗██║██║ ╚████║███████╗╚██████╗
+╚═╝        ╚═╝   ╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
 """,
         flush=True,
     )
@@ -251,11 +251,11 @@ print(
     flush=True,
 )
 # Do parsing
-print("Parsing file:", c_file, flush=True)
-if c_file.endswith(".c"):
-    parser_state = C_TO_LOGIC.PARSE_FILE(c_file)
-elif c_file.endswith(".py"):
-    parser_state = PY_TO_LOGIC.PARSE_FILE(c_file)
+print("Parsing file:", src_file, flush=True)
+if src_file.endswith(".c"):
+    parser_state = C_TO_LOGIC.PARSE_FILE(src_file)
+elif src_file.endswith(".py"):
+    parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
 
 
 print(
@@ -285,7 +285,7 @@ if args.comb:
         args.sim_comb or (SIM.SIM_TOOL is SIM.pypeline_sim and args.sim),
         parser_state,
         args,
-        source_file=c_file,
+        source_file=src_file,
     )
 
 if not args.no_synth:
@@ -317,7 +317,7 @@ if not args.no_synth:
     # one confirmation synthesis is needed instead of a fresh sweep.
     # A design with no AUTOPIPELINE call sites, or one that never reads
     # .latency, pays nothing beyond the in-memory harvest walk below.
-    if c_file.endswith(".py") and not args.comb and not args.yosys_json:
+    if src_file.endswith(".py") and not args.comb and not args.yosys_json:
         import pypeline
 
         def autopipeline_divergence_exit(divergences):
@@ -363,7 +363,7 @@ if not args.no_synth:
                 prev_parser_state = parser_state
                 prev_tpl = multimain_timing_params.TimingParamsLookupTable
                 pypeline.SET_AUTOPIPELINE_LATENCY_CACHE(latencies)
-                parser_state = PY_TO_LOGIC.PARSE_FILE(c_file)
+                parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
                 C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
                 parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
                 seeded_tpl, unseeded_ap_insts = SYN.SEED_TIMING_PARAMS_FROM_PREVIOUS(
@@ -463,7 +463,7 @@ if not args.no_synth:
 
     # Start simulation on final VHDL
     SIM.DO_OPTIONAL_SIM(
-        args.sim, parser_state, args, multimain_timing_params, source_file=c_file
+        args.sim, parser_state, args, multimain_timing_params, source_file=src_file
     )
 
 print("Done.", flush=True)
