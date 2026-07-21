@@ -11,14 +11,77 @@
 
 A hardware description language (HDL) adding high level synthesis(HLS)-like automatic pipelining as a language construct/compiler feature. 
 
-If a computation can be written as a [pure function](https://en.wikipedia.org/wiki/Combinational_logic) without side effects (i.e. no global/static variables) then it can be autopipelined. Conceptually similar to technologies like [Intel's variable latency Hyper-Pipelining](https://www.intel.com/content/www/us/en/programmable/documentation/jbr1444752564689.html#esc1445881961208) and [Xilinx's retiming options](https://www.xilinx.com/support/answers/65410.html). Sharing some of the compiler driven pipelining design goals of [Google's XLS Project](https://google.github.io/xls/), the [DFiantHDL language](https://dfianthdl.github.io/), and certain [CIRCT](https://circt.llvm.org/) dialects as well.
+If a computation can be written as a [pure function](https://en.wikipedia.org/wiki/Combinational_logic) without side effects (i.e. no registers/static variables) then it can be autopipelined. Conceptually similar to technologies like [Intel's variable latency Hyper-Pipelining](https://www.intel.com/content/www/us/en/programmable/documentation/jbr1444752564689.html#esc1445881961208) and [Xilinx's retiming options](https://www.xilinx.com/support/answers/65410.html). Sharing some of the compiler driven pipelining design goals of [Google's XLS Project](https://google.github.io/xls/), the [DFiantHDL language](https://dfianthdl.github.io/), and certain [CIRCT](https://circt.llvm.org/) dialects as well.
 
 PypelineC consists of **Pypeline** (new, Python based) and **PipelineC** (legacy, C based). Pypeline is a work in progress in becoming feature complete with PipelineC, but already has many new features that PipelineC lacks.
+
+**Example code for blinking an LED:**
+
+<table>
+<tr>
+<th>Pypeline (<a href="examples/pypeline/blink.py">examples/pypeline/blink.py</a>)</th>
+<th>PipelineC (<a href="examples/blink.c">examples/blink.c</a>)</th>
+</tr>
+<tr>
+<td valign="top">
+
+```python
+# 'Called'/'Executing' every 40ns (25MHz)
+@MAIN(25.0)
+def blink() -> uint1_t:
+    # 25000000 iterations * 40ns each = 1 sec
+    counter: Reg[uint32_t] = 0
+
+    # LED on/off state
+    led: Reg[uint1_t] = 0
+
+    # If reached 1 second
+    if counter == (25000000 - 1):
+        led = ~led  # Toggle led
+        counter = 0  # Reset counter
+    else:
+        counter += 1 # one 40ns increment
+
+    return led
+```
+
+</td>
+<td valign="top">
+
+```c
+// 'Called'/'Executing' every 40ns (25MHz)
+#pragma MAIN_MHZ blink 25.0
+uint1_t blink()
+{
+  // 25000000 iterations * 40ns each = 1sec
+  static uint25_t counter = 0;
+
+  // LED on off state
+  static uint1_t led = 0;
+
+  // If reached 1 second
+  if(counter==(25000000-1))
+  {
+    // Toggle led
+    led = !led;
+    // Reset counter
+    counter = 0;
+  }
+  else
+  {
+    counter += 1; // one 40ns increment
+  }
+  return led;
+}
+```
+
+</td>
+</tr>
+</table>
 
 | | Pypeline | PipelineC |
 |---|---|---|
 | Getting started | [/docs directory](docs/README.md) | [GitHub wiki](https://github.com/JulianKemmerer/PipelineC/wiki) |
-| Example code | see below | see below |
 | Easy to understand software-like syntax | [Yes](docs/pypeline_guide.md#1-what-is-pypeline) | Yes |
 | Timing feedback from synthesis+pnr tools | [Yes](docs/pypeline_guide.md#5-top-level-entry-points) | Yes |
 | Automatic pipelining of comb. logic | [Yes](docs/pypeline_guide.md#1-what-is-pypeline) | Yes |
@@ -40,62 +103,6 @@ PypelineC consists of **Pypeline** (new, Python based) and **PipelineC** (legacy
 | Derived FSM style code | No | Yes |
 | Documentation | Comprehensive, planned | Ad-hoc, organic |
 | Compiler tests | Many, Automated | Limited, Hand-run |
-
-**Example code:** [blink an LED](https://github.com/JulianKemmerer/PipelineC/wiki/Example:-Blink-LEDs)
-
-Pypeline ([examples/pypeline/blink.py](examples/pypeline/blink.py)):
-```python
-from pypeline import *
-
-# 'Called'/'Executing' every 40ns (25MHz)
-@MAIN(25.0)
-def blink() -> uint1_t:
-    # Count to 25000000 iterations * 40ns each = 1 sec
-    counter: Reg[uint32_t] = 0
-
-    # LED on/off state
-    led: Reg[uint1_t] = 0
-
-    # If reached 1 second
-    if counter == (25000000 - 1):
-        led = ~led  # Toggle led
-        counter = 0  # Reset counter
-    else:
-        counter = counter + 1  # one 40ns increment
-
-    return led
-```
-
-PipelineC ([examples/blink.c](examples/blink.c)):
-```c
-#include "uintN_t.h"  // uintN_t types for any N
-
-// 'Called'/'Executing' every 30ns (33.33MHz)
-#pragma MAIN_MHZ blink 33.33
-uint1_t blink()
-{
-  // Count to 33333333 iterations * 30ns each ~= 1sec
-  static uint25_t counter;
-
-  // LED on off state
-  static uint1_t led;
-
-  // If reached 1 second
-  if(counter==(33333333-1))
-  {
-    // Toggle led
-    led = !led;
-    // Reset counter
-    counter = 0;
-  }
-  else
-  {
-    counter += 1; // one 30ns increment
-  }
-  return led;
-}
-```
-
 
 
 Tools:
