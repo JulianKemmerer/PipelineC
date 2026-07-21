@@ -2,7 +2,7 @@
 
 Pypeline is the Python front end for [PypelineC](../README.md).
 
-We are happy to help, reach out: [PipelineC Discord](https://discord.gg/Aupm3DDrK2), [Mastodon](http://fosstodon.org/@pipelinec), [BlueSky](https://bsky.app/profile/pipelinec.bsky.social), [Discussions](https://github.com/JulianKemmerer/PipelineC/discussions) :)
+We are happy to help, reach out: [PipelineC Discord](https://discord.gg/Aupm3DDrK2), [Mastodon](http://fosstodon.org/@pypelinec), [BlueSky](https://bsky.app/profile/pypelinec.bsky.social), [Discussions](https://github.com/JulianKemmerer/PipelineC/discussions) :)
 
 # Quick Start
 
@@ -60,10 +60,10 @@ counter=2 led=0
 ```
 
 ```
-# Also add 'pipelinec' to PATH to build/synthesize for real hardware
+# Also add 'pypelinec' to PATH to build/synthesize for real hardware
 export PATH=$PATH:$(pwd)/src
 
-pipelinec ./examples/pypeline/blink.py
+pypelinec ./examples/pypeline/blink.py
 ```
 
 Example console output: (final product is VHDL/Verilog files)
@@ -93,7 +93,7 @@ end top;
 ## Pure functions can be pipelined!
 **Quickly render basic un-pipelined combinatorial logic VHDL:**
 ```
-pipelinec ./examples/pypeline/pipeline.py --comb
+pypelinec ./examples/pypeline/pipeline.py --comb
 ```
 **To produce a pipeline that meets timing at operating frequency `F`**:
 
@@ -104,12 +104,12 @@ pipelinec ./examples/pypeline/pipeline.py --comb
 
 * Since `my_pipeline` is a pure function the Pypeline tool will autopipeline the function to meet the target operating frequency.
 ```
-pipelinec ./examples/pypeline/pipeline.py # Default no-arguments autopipelines when possible.
+pypelinec ./examples/pypeline/pipeline.py # Default no-arguments autopipelines when possible.
 ```
 
 **To produce a pipeline of user selected `N` clock cycles** (N+1 total stages) run this command:
 ```
-pipelinec ./examples/pypeline/pipeline.py --coarse --sweep --start N --stop N
+pypelinec ./examples/pypeline/pipeline.py --coarse --sweep --start N --stop N
 ```
 
 
