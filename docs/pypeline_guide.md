@@ -1,39 +1,12 @@
-# pypeline User Guide
+# Pypeline HDL Language Guide
 
-pypeline is the Python front-end for PipelineC.
-You write hardware designs in ordinary Python; the compiler translates them to VHDL and
-synthesises them for an FPGA.
+Pypeline is the Python front-end for PipelineC.
 
-## Installation
-
-Clone the repo and add its `src/` and `include/pypeline` directories to your
-`PYTHONPATH`:
-
-    git clone https://github.com/JulianKemmerer/PipelineC.git
-    cd PipelineC/
-    export PYTHONPATH=$PYTHONPATH:$(pwd)/src:$(pwd)/include/pypeline
-
-That's it — no `pip install`, no build step. Any Python file can now do:
-
-    from pypeline import *
-
-Add the `export PYTHONPATH=...` line to your shell's startup file (e.g.
-`~/.bashrc`) to make it permanent across sessions.
-
-Verify it worked by running the worked example from [§2](#2-worked-example-vga-test-pattern)
-in native simulation — a matplotlib window pops up and fills in a VGA test-pattern
-frame buffer live, cycle by cycle:
-
-    python3 src/pypeline_sim.py examples/pypeline/vga_test_pattern.py --run 420000
-
-(To also build/synthesize designs for an FPGA with the `pipelinec` command-line
-tool, see `export PATH=$PATH:$(pwd)/src` on the
-[wiki](https://github.com/JulianKemmerer/PipelineC/wiki).)
+For getting started information see the [README](README.md).
 
 ## Table of Contents
 
-- [Installation](#installation)
-1. [What is pypeline?](#1-what-is-pypeline)
+1. [What is Pypeline?](#1-what-is-pypeline)
 2. [Worked Example: VGA Test Pattern](#2-worked-example-vga-test-pattern)
 3. [Digital Logic Basics](#3-digital-logic-basics)
 4. [Simulation](#4-simulation)
@@ -64,20 +37,20 @@ tool, see `export PATH=$PATH:$(pwd)/src` on the
 
 ## 1 What is pypeline?
 
-pypeline lets you describe digital hardware using Python syntax.
+Pypeline lets you describe digital hardware using Python syntax.
 A design file is a regular Python module.
 Module-level code (constants, type definitions, helper factories) runs as plain Python at
 compile time.
 Functions whose arguments and return value carry type annotations describe hardware
 circuits; the compiler translates their bodies into logic and emits VHDL via the
-PipelineC backend.
+PypelineC backend.
 
 The mental model: **a hardware-annotated function is a circuit module**,
 not a subroutine.
 Its inputs and outputs are wires, its local variables are signals, and every line of its
 body describes combinational or sequential logic.
 
-Pure (combinational) functions are automatically pipelined by PipelineC to meet timing —
+Pure (combinational) functions can be automatically pipelined by PypelineC to meet timing —
 you write the dataflow, the tool inserts pipeline registers wherever needed to hit the
 target clock frequency.
 
@@ -179,7 +152,7 @@ A matplotlib window appears and fills in as the simulation runs.
 
 ### Synthesising for the FPGA
 
-Run pipelinec on the design file (see the main PipelineC documentation for build steps).
+Run `pypelinec` on the design file (see the main PipelineC documentation for build steps).
 The `PART()` call and `@MAIN(mhz)` frequency constraint are forwarded to Vivado.
 
 ---
@@ -327,15 +300,15 @@ python3 src/pypeline_sim.py my_design.py --run 1000 --mode raw
 You can also reach the same simulator through the main compiler driver, without naming it:
 
 ```
-python3 src/pipelinec my_design.py --sim --run 1000
+python3 src/pypelinec my_design.py --sim --run 1000
 ```
 
 This is equivalent to the `pypeline_sim.py` invocation above whenever no other simulator is
 explicitly selected (no `--cocotb`, `--edaplay`, `--modelsim`, `--cxxrtl`, or `--verilator`
-flag) — `pipelinec` detects the `.py` design and defaults to the native simulator, skipping
+flag) — `pypelinec` detects the `.py` design and defaults to the native simulator, skipping
 VHDL elaboration/synthesis entirely. Explicitly passing `--cocotb --ghdl` (etc.) still
 elaborates the design to VHDL and simulates that instead; there's no `--mode` passthrough from
-`pipelinec` yet, so this path always runs at `strict` accuracy.
+`pypelinec` yet, so this path always runs at `strict` accuracy.
 
 ### `@sim_output` — side effects once per cycle
 
@@ -489,7 +462,7 @@ docstring in `pypeline.py`).
 `src/pypeline_sim_debug.py` runs a testbench both ways — native sim, and `--cocotb --ghdl` VHDL
 sim — and diffs their `sim_print(..., debug=True)` output cycle by cycle. It exists to localize
 *cycle-timing* mismatches (data correct, but arriving on the wrong clock cycle) that ordinary
-`sim_assert`s don't catch. Invoke it exactly like `pipelinec ... --sim ...`; it adds `--cocotb
+`sim_assert`s don't catch. Invoke it exactly like `pypelinec ... --sim ...`; it adds `--cocotb
 --ghdl` itself for the VHDL run:
 
 ```
@@ -2069,11 +2042,11 @@ exactly how `make_stream_pipeline` sizes its output FIFO automatically, see
 [§24](#24-elastic-autopipelined-streams-make_stream_pipeline)). It reads **0**:
 
 - always in plain native Pypeline sim (`pypeline_sim.py` run directly, or
-  `pipelinec --sim --comb` — no synthesis ever runs),
+  `pypelinec --sim --comb` — no synthesis ever runs),
 - always in `--comb` / `--no_synth` / `--yosys_json` builds (no throughput sweep runs),
 - during the bootstrap elaboration pass of a real synthesizing build.
 
-On a real build, the `pipelinec` driver's **pin-and-confirm** loop makes the value real:
+On a real build, the `pypelinec` driver's **pin-and-confirm** loop makes the value real:
 the design is first elaborated with `.latency` reading 0 and swept as usual; the
 discovered stage counts are then installed and the design re-elaborated, with the
 previous sweep's pipelining carried over as pinned seeds so only a **seeded confirmation
@@ -2084,7 +2057,7 @@ built-in div entities with their own stage granularity) changes the total — so
 the `.latency` your Python consumed is guaranteed equal to the stage count of the
 hardware actually built. Designs that never read `.latency` pay nothing: the loop exits
 after the ordinary single sweep. (See `docs/SYN_DESIGN.md` for the loop's details and
-failure modes.) A non-`--comb` `pipelinec --sim` run then launches native simulation
+failure modes.) A non-`--comb` `pypelinec --sim` run then launches native simulation
 with those same latencies installed **and emulated** — `.latency` reads the real value
 during the sim's design import too, and every AUTOPIPELINE call site behaves as an
 N-stage pipeline (see §"Pipelined native sim" in `docs/pypeline_sim_DESIGN.md`).
@@ -2534,7 +2507,7 @@ their internal `for i in range(n)` loop at elaboration time (see
 the per-width duplication older, non-generic AXIS implementations require.
 
 See `src/tests/pypeline_tests/inst/axis_test.py` for a complete worked example, including
-synthesis through `pipelinec`.
+synthesis through `pypelinec`.
 
 ---
 
@@ -2633,7 +2606,7 @@ the bootstrap pass (and in plain native sim / `--comb` builds, where `.latency` 
 0) the depth floors at 2 — which in those contexts is exact, since the effective
 pipeline latency really is just the two boundary registers; on a real build the
 pin-and-confirm loop re-elaborates with the discovered latency (see
-[§15](#15-forcing-pipelining-autopipeline)), and a non-`--comb` `pipelinec --sim` run's
+[§15](#15-forcing-pipelining-autopipeline)), and a non-`--comb` `pypelinec --sim` run's
 native simulation imports the design with the same latency installed — so the FIFO is
 sized identically and the AUTOPIPELINE call site is emulated at the same depth.
 
@@ -2779,7 +2752,7 @@ The table below consolidates all known limitations and unsupported features.
 | **`from module import *`** | Not supported | Only qualified imports (`import module`) are supported |
 | **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead |
 | **Hardware signals as loop conditions** | Not supported | `for`/`while` loop bounds must be compile-time Python integers (fully unrollable) |
-| **`AUTOPIPELINE(...).latency` before synthesis** | Reads `0` | Real value only exists after a synthesizing build's pin-and-confirm pass; plain native sim and `--comb`/`--no_synth`/`--yosys_json` builds always read 0 (a non-`--comb` `pipelinec --sim` run's native sim reads the built value) |
+| **`AUTOPIPELINE(...).latency` before synthesis** | Reads `0` | Real value only exists after a synthesizing build's pin-and-confirm pass; plain native sim and `--comb`/`--no_synth`/`--yosys_json` builds always read 0 (a non-`--comb` `pypelinec --sim` run's native sim reads the built value) |
 | **Multiple/early `return` statements** | Not supported | A function may have at most one `return`, and it must be the function's final top-level statement; assign to a variable inside `if`/`else` branches and return it once at the end (see [§6 Control flow](#6-your-first-hardware-function)) |
 | **Enum types in `byte_length`/`make_type_to_bytes`/`make_type_from_bytes`** | Not supported | Raises `NotImplementedError`, including for an enum nested inside a struct or array field (see [§11 Types](#11-types)) |
 | **Explicit casts (`uint32_t(x)`, etc.)** | Not supported | Calling a type as a function around a wire/parameter inside a hardware function body fails at elaboration time; assign to an intermediate variable with an explicit type annotation instead (see [§11 Types](#11-types)) |
