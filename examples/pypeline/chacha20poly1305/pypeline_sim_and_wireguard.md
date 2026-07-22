@@ -69,7 +69,7 @@ The original `poly1305.h`'s 320-bit limb math (ported line-for-line into
 
 The old fixed-vector testbenches never caught this, the same incorrect software C code was used as the reference model for test vectors and as PipelineC code for the hardware design.
 The design was internally self-consistent just not RFC 8439-conformant.
-Pypeline testbenches can easily check every random packet against the `cryptography`
+Pypeline testbenches can easily generate and check random packets against the `cryptography` Python
 package's real ChaCha20-Poly1305 implementation to find bugs like these.
 
 ## The New Pypeline Testbenches
@@ -139,9 +139,12 @@ def check_out():
     pkt = enc_state["packets"][enc_state["out_packet_idx"]]
     expected = enc_state["out_remaining"]
     for i in range(16):
-        if i < len(expected) and out.data.frag.data[i] != expected[i]:
-            sim_print(f"ERROR: ciphertext mismatch at byte {i}: "
-                      f"expected {hex(expected[i])} got {hex(out.data.frag.data[i])}")
+        if i < len(expected):
+            sim_assert(
+                out.data.frag.data[i] == expected[i],
+                f"Encrypt: Ciphertext mismatch at byte {i}: "
+                f"expected {hex(expected[i])} got {hex(out.data.frag.data[i])}",
+            )
     ...
 ```
 
@@ -159,7 +162,7 @@ source layout.
 
 Additionally, if a mismatch between native Python based simulation and generated VHDL is supected
 then [`pypeline_sim_debug.py`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#pypeline_sim_debugpy--native-vs-vhdl-cycle-diff-tool) can be used. It compares `sim_print(..., debug=True)`-tagged output between native the simulator and real cocotb+GHDL. This confirms that not only have no `sim_assert`s failed but also that both simulations 
-produce idential *cycle-accurate* behavior.
+produce identical *cycle-accurate* behavior.
 
 ## A Tiny Practical Example
 
