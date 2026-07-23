@@ -126,6 +126,90 @@ pypelinec ./examples/pypeline/pipeline.py --coarse --sweep --start N --stop N
 
 # Overview
 
+Consider the following generic register + combinatorial logic, compared across Pypeline,
+VHDL, and Verilog:
+
+<table>
+<tr>
+<th>Pypeline</th>
+<th>VHDL</th>
+<th>Verilog</th>
+</tr>
+<tr>
+<td valign="top">
+
+```python
+def some_func_name(input: some_type_t) -> some_type_t:
+    the_reg: Reg[some_type_t]
+
+    # ... Do work with 'input', 'the_reg'
+    # ... and other variables, functions, etc ...
+    the_reg = work(the_reg, input)
+
+    return the_reg
+```
+
+</td>
+<td valign="top">
+
+```vhdl
+-- Combinatorial logic with a storage register
+signal the_reg : some_type_t;
+signal the_wire : some_type_t;
+process(input_wire, the_reg) is -- inputs sync to clk
+  variable input_variable: some_type_t;
+  variable the_reg_variable : some_type_t;
+begin
+  input_variable := input_wire;
+  the_reg_variable := the_reg;
+
+  -- ... Do work with 'input_variable', 'the_reg_variable'
+  -- and other variables, functions, etc and it kinda looks like C ...
+  the_reg_variable := work(input_variable, the_reg_variable);
+
+  the_wire <= the_reg_variable;
+end process;
+the_reg <= the_wire when rising_edge(clk);
+output_wire <= the_wire;
+```
+
+</td>
+<td valign="top">
+
+```sv
+// Combinatorial logic with a storage register
+some_type_t the_reg;
+some_type_t the_wire;
+always@(input_wire, the_reg) begin // inputs sync to clk
+  some_type_t input_variable;
+  some_type_t the_reg_variable;
+
+  input_variable = input_wire;
+  the_reg_variable = the_reg;
+
+  // ... Do work with 'input_variable', 'the_reg_variable'
+  // and other variables, functions, etc and it kinda looks like C ...
+  the_reg_variable = work(input_variable, the_reg_variable);
+
+  the_wire <= the_reg_variable;
+end
+always_ff@(posedge clk) begin
+  the_reg <= the_wire;
+end
+assign output_wire = the_wire;
+```
+
+</td>
+</tr>
+</table>
+
+<img alt="schematic of generic hdl" src="https://github.com/user-attachments/assets/e68811e2-591f-462d-88e7-22723233f33b" />
+
+Pypeline functions are a single clock domain, rising edge assumed. Function arguments are
+input ports, the return value is the output port (both type-annotated). Function bodies are
+combinatorial logic dataflow graphs; a `Reg[T]`-annotated local variable is the only thing
+that turns a function into a stateful process like the VHDL/Verilog above.
+
 [Is this HLS?](https://github.com/JulianKemmerer/PipelineC/wiki/Is-this-HLS%3F)
 
 Functions = combinatorial logic to be pipelined (a single Python function describes an
