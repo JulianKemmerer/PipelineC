@@ -73,8 +73,10 @@ fir_ref, fir_ref_t = make_fir(
 
 
 @MAIN(100.0)
-def decim3_main(stream_in: decim3.in_stream_t, out_ready: uint1_t) -> decim3_t:
-    return decim3(stream_in, out_ready)
+def decim3_main(
+    stream_in: decim3.in_stream_t, stream_out: decim3.out_fb_t
+) -> decim3_t:
+    return decim3(stream_in, stream_out)
 
 
 @MAIN(100.0)
@@ -97,8 +99,12 @@ def _drive_elastic(
         v = 1 if have else 0
         d = inputs_q[idx] if have else 0
         rdy = 1 if out_ready_fn(cycle) else 0
-        r = sim_call(fir, in_stream_t(data=fir.data_t(val=d), valid=v), rdy)
-        if v and int(r.ready_for_stream_in):
+        r = sim_call(
+            fir,
+            in_stream_t(data=fir.data_t(val=d), valid=v),
+            fir.out_fb_t(ready=rdy),
+        )
+        if v and int(r.stream_in.ready):
             idx += 1
         if int(r.stream_out.valid) and rdy:
             outputs.append(int(r.stream_out.data.val))

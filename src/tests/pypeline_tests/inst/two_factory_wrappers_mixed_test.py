@@ -71,10 +71,14 @@ wide_pipeline, wide_pipeline_t = make_stream_pipeline(wide_round)
 
 
 @MAIN(50.0)
-def scalar_main(stream_in: uint32_stream_t, ready: uint1_t) -> scalar_mcp_t:
-    return scalar_mcp(stream_in, ready)
+def scalar_main(
+    stream_in: uint32_stream_t, stream_out: scalar_mcp.out_fb_t
+) -> scalar_mcp_t:
+    return scalar_mcp(stream_in, stream_out)
 
 
 @MAIN(50.0)
-def wide_main(stream_in: wide_stream_t, ready: uint1_t) -> wide_pipeline_t:
-    return wide_pipeline(stream_in, ready)
+def wide_main(
+    stream_in: wide_stream_t, stream_out: wide_pipeline.out_fb_t
+) -> wide_pipeline_t:
+    return wide_pipeline(stream_in, stream_out)

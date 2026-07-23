@@ -187,7 +187,7 @@ def make_traffic_t(include_yellow=True):
 traffic_t = make_traffic_t(include_yellow=True)
 ```
 
-See [pypeline_guide.md §3d](pypeline_guide.md#3d-enum-types) for the full API.
+See [pypeline_guide.md §11 (Enum types)](pypeline_guide.md#enum-types) for the full API.
 
 ### 3f. Char Array (String) Types
 
@@ -491,10 +491,10 @@ name_in_ready:    Wire[uint1_t]      # read by the upstream producer
 def name_main():
     result = name_pipeline_func(name_in, name_out_ready)
     name_out      = result.stream_out
-    name_in_ready = result.ready_for_stream_in
+    name_in_ready = result.stream_in.ready
 ```
 
-See [pypeline_guide.md §24](pypeline_guide.md#24-pipelined-stream-wrappers-make_stream_pipeline).
+See [pypeline_guide.md §25](pypeline_guide.md#25-pipelined-stream-wrappers-make_stream_pipeline).
 
 ### 8d. GLOBAL_STREAM_FIFO — synchronous FIFO
 
@@ -524,7 +524,7 @@ def fifo_name_main():
     fifo_name_in_ready = result.in_ready
 ```
 
-See [pypeline_guide.md §23](pypeline_guide.md#23-fifos-make_stream_fifo).
+See [pypeline_guide.md §24](pypeline_guide.md#24-fifos-make_stream_fifo).
 
 ### 8e. GLOBAL_VALID_READY_MCP_INST — multi-cycle path pipeline
 
@@ -639,8 +639,8 @@ if my_stream_in.valid & downstream_ready:
     # process my_stream_in.data
 ```
 
-See [pypeline_guide.md §21](pypeline_guide.md#21-validready-streams-stream_t) and
-[§22](pypeline_guide.md#22-axi-stream-axis_t).
+See [pypeline_guide.md §22](pypeline_guide.md#22-bidirectional-ports-interface) and
+[§23](pypeline_guide.md#23-axi-stream-axis_t).
 
 ---
 
@@ -738,7 +738,7 @@ The following PipelineC features do not yet have a pypeline equivalent.
 | `Reg[char_t[N]] = <initializer>` (register power-on value for a char array, e.g. equivalent of C's `static char name[16] = "boot";`) | Not supported for hardware elaboration — raises `ElaborationError`. `Reg[char_t[N]]` with no initializer (zero-init) works normally. See [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) |
 | C-style casts (`(uint32_t)x`) | No pypeline equivalent — calling a type as a function around a wire/parameter inside a hardware function body fails at elaboration time. Assign to an intermediate variable with an explicit type annotation instead (see [§3d Casting](#3d-casting)) |
 
-See also the [Limitations](pypeline_guide.md#25-limitations--not-yet-supported) section
+See also the [Limitations](pypeline_guide.md#28-limitations--not-yet-supported) section
 of the pypeline guide.
 
 ---

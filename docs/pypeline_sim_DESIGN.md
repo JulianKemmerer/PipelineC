@@ -1102,6 +1102,32 @@ from `make_stream_pipeline`'s `Reg`-backed ready signal), producing `[15, 75, 45
 instead of the correct impulse response `[15, 30, 45, 30, 15]`. Regression coverage:
 `inst/feedback_reeval_test.py` (`native_sim_tests.py`).
 
+**Interface-function-generated instances simulate through this exact path.** A function annotated
+with a whole `@interface` (see `docs/PY_TO_LOGIC_DESIGN.md`) compiles to an ordinary `@hw_func`
+whose body threads each backward edge through a `Feedback[T]` — so the generated function needs no
+sim-specific handling: it is `_build_reg_sim_func`-wrapped and converges like any hand-written
+`Feedback` design. This includes *feedforward* loops (an FSM consuming a value produced by a call
+emitted after it), which become a `Feedback` on the forward value and converge the same way.
+Because the same generated artifact is what elaborates, native sim and VHDL stay in lockstep by
+construction. An **array** interface port (fan-out) is no different: each element's reverse value
+gets its own `Feedback`, and they are assembled into a local array immediately before the call.
+Coverage: `inst/interface_func_test.py`, `inst/interface_func_loop_test.py`,
+`inst/interface_boundary_test.py` (both style crossings, plus plain non-interface signals
+crossing them) and `inst/interface_array_port_test.py` (`native_sim_tests.py`), all checked
+against hand-written explicit twins.
+
+**Annotation re-evaluation.** `_build_reg_sim_func` re-`exec`s the function definition, so its
+parameter and return annotations are re-evaluated in a rebuilt namespace. A name used *only* in
+an annotation is not captured as a free variable, which used to make factory-local types
+invisible here (`x: some_fb_t[n]` → `NameError` on `some_fb_t`, even though `n`, used in the body,
+resolved). Each parameter's already-resolved annotation object is now bound to a generated name
+and substituted into the AST, which works for every annotation form rather than bare names only.
+
+Note the limit of that guarantee: it covers the *wiring*, not port **types**. Native sim is
+duck-typed, so passing a bare `uint1_t` where a module expects an interface's `{ready}` struct
+simulates fine and is caught only by VHDL type-checking — run the synth/vhdl_sim tiers after a
+port-shape change.
+
 ---
 
 ## `sim_model` — Python Simulation Models

@@ -28,7 +28,13 @@ from pypeline import (
     uint1_t,
 )
 
-from stream.stream import make_stream_t
+from interface.interface import (
+    interface,
+    make_interface_feedback_type,
+    make_interface_type,
+)
+from interface.interface_func import make_hw_func_from_interface_func
+from stream.stream import make_stream_interface
 
 from dsp.fir import make_fir
 
@@ -41,25 +47,28 @@ def make_zero_stuffer(data_t, factor):
     throughput is exactly factor cycles per input.
 
     Returns (zero_stuffer, zero_stuffer_t):
-        zero_stuffer(stream_in: stream_t(data_t), ready_for_stream_out: uint1_t)
-            -> zero_stuffer_t{stream_out: stream_t(data_t), ready_for_stream_in}
+        zero_stuffer(stream_in: stream_t, stream_out: stream_fb_t)
+            -> zero_stuffer_t{stream_in: stream_fb_t, stream_out: stream_t}
+    i.e. one stream `@interface` per port, split into its two halves.
     """
     if not (isinstance(factor, int) and factor >= 1):
         raise ValueError(
             f"make_zero_stuffer: factor must be an int >= 1, got {factor!r}"
         )
-    stream_t = make_stream_t(data_t)
+    stream_if = make_stream_interface(data_t)
+    stream_t = make_interface_type(stream_if)
+    stream_fb_t = make_interface_feedback_type(stream_if)
     count_t = make_uint_t(max(1, (factor - 1).bit_length()))
     LAST = factor - 1
 
     @struct
     class zero_stuffer_t(NamedTuple):
-        stream_out: stream_t
-        ready_for_stream_in: uint1_t
+        stream_in: stream_fb_t  # input port's reverse half travels out
+        stream_out: stream_t  # output port's feedforward half travels out
 
     @hw_func
     def zero_stuffer(
-        stream_in: stream_t, ready_for_stream_out: uint1_t
+        stream_in: stream_t, stream_out: stream_fb_t
     ) -> zero_stuffer_t:
         held: Reg[data_t]
         have: Reg[uint1_t]
@@ -73,9 +82,9 @@ def make_zero_stuffer(data_t, factor):
         else:
             o.stream_out.data = zero
 
-        beat: uint1_t = have & ready_for_stream_out
+        beat: uint1_t = have & stream_out.ready
         last_beat: uint1_t = beat & (count == LAST)
-        o.ready_for_stream_in = ~have | last_beat
+        o.stream_in.ready = ~have | last_beat
 
         if beat:
             if count == LAST:
@@ -83,13 +92,16 @@ def make_zero_stuffer(data_t, factor):
                 count = 0
             else:
                 count += 1
-        accepted: uint1_t = stream_in.valid & o.ready_for_stream_in
+        accepted: uint1_t = stream_in.valid & o.stream_in.ready
         if accepted:
             held = stream_in.data
             have = 1
             count = 0
         return o
 
+    zero_stuffer.stream_if = stream_if
+    zero_stuffer.in_stream_t = stream_t
+    zero_stuffer.in_fb_t = stream_fb_t
     return zero_stuffer, zero_stuffer_t
 
 
@@ -136,26 +148,21 @@ def make_fir_interp(
     in_stream_t = fir.in_stream_t
     out_stream_t = fir.out_stream_t
 
-    @struct
-    class fir_interp_t(NamedTuple):
-        stream_out: out_stream_t
-        ready_for_stream_in: uint1_t
+    # Name the single output port `stream_out`, so the generated module's ports
+    # read the same as its hand-written siblings (fir, fir_decim).
+    @interface
+    class fir_interp_ports(NamedTuple):
+        stream_out: fir.out_if
 
-    @hw_func
-    def fir_interp(
-        stream_in: in_stream_t, ready_for_stream_out: uint1_t
-    ) -> fir_interp_t:
-        # stuffer -> fir dataflow with fir's (register-driven) ready fed back
-        # to the stuffer through a combinational Feedback wire.
-        fir_ready: Feedback[uint1_t]
-        st = stuffer(stream_in, fir_ready)
-        f = fir(st.stream_out, ready_for_stream_out)
-        fir_ready = f.ready_for_stream_in
+    # An interface function: only the feedforward direction is written, and the
+    # reverse (`ready`) wiring between stuffer and fir -- previously a hand-held
+    # Feedback[uint1_t] -- is generated.
+    def fir_interp_wiring(stream_in: stuffer.stream_if) -> fir_interp_ports:
+        st = stuffer(stream_in)
+        f = fir(st.stream_out)
+        return fir_interp_ports(stream_out=f.stream_out)
 
-        o: fir_interp_t
-        o.stream_out = f.stream_out
-        o.ready_for_stream_in = st.ready_for_stream_in
-        return o
+    fir_interp, fir_interp_t = make_hw_func_from_interface_func(fir_interp_wiring)
 
     fir_interp.coeffs_q = fir.coeffs_q
     fir_interp.data_t = data_t
@@ -171,4 +178,8 @@ def make_fir_interp(
     fir_interp.handshake = "elastic"
     fir_interp.in_stream_t = in_stream_t
     fir_interp.out_stream_t = out_stream_t
+    fir_interp.in_fb_t = stuffer.in_fb_t
+    fir_interp.out_fb_t = fir.out_fb_t
+    fir_interp.in_if = stuffer.stream_if
+    fir_interp.out_if = fir.out_if
     return fir_interp, fir_interp_t

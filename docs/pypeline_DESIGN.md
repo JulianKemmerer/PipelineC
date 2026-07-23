@@ -1231,6 +1231,22 @@ is split across three scripts, run together via `run_all.py`:
   against the same design files. See
   [PY_TO_LOGIC_DESIGN.md § Tests](PY_TO_LOGIC_DESIGN.md#tests) for details.
 
+The bidirectional-port mechanism `@interface`
+(`include/pypeline/interface/interface.py`) reuses this module's compound-type introspection
+(`_array_elem_ctype`/`_array_len`, `@struct` `_fields`/`__annotations__`) to split an interface
+into its two one-directional structs, and `_enclosing_factory_param_suffix` to name generated
+modules deterministically. It exposes no new pypeline.py API — the generated function is an
+ordinary `@hw_func` + `@struct` pair, and `make_stream_t(data_t, feedback_t=uint1_t)` is now just
+the feedforward half of `make_stream_interface(...)`. Library modules that carry backpressure
+declare interface ports: `stream/stream_pipeline.py`, `stream/stream_fifo.py`,
+`multi_cycle_path.py`, `dsp/`, and all of `axi/axis.py` (whose `make_axis_broadcast_interlock`
+uses an *array* interface port for fan-out). `fifo.py`'s raw `make_fifo` deliberately does not —
+its three loose signals are literally the wrapped VHDL entity's ports. See
+[PY_TO_LOGIC_DESIGN.md § `@interface`](PY_TO_LOGIC_DESIGN.md#interface--generated-reverse-wiring)
+and tests `inst/interface_test.py`, `inst/interface_func*_test.py`,
+`inst/interface_boundary_test.py`, `inst/interface_array_port_test.py`,
+`inst/interface_mixing_rules_test.py`.
+
 ```
 python3 src/tests/pypeline_tests/run_all.py            # run everything, in parallel
 python3 src/tests/pypeline_tests/run_all.py -j 4        # cap parallelism at 4 workers

@@ -278,5 +278,5 @@ increasing the depth/latency of the pipeline. All functions (ex. including float
 point operations) are broken down into subpipelines thus allowing for fine grained
 control of synthesis results.
 
-See the guide's [Limitations / Not Yet Supported](pypeline_guide.md#26-limitations--not-yet-supported)
+See the guide's [Limitations / Not Yet Supported](pypeline_guide.md#28-limitations--not-yet-supported)
 section for the current list of known gaps.

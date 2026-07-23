@@ -17,8 +17,8 @@ Usage:
     )
 
     @MAIN(100.0)
-    def top(stream_in: fir.in_stream_t, ready_for_stream_out: uint1_t) -> fir_t:
-        return fir(stream_in, ready_for_stream_out)
+    def top(stream_in: fir.in_stream_t, stream_out: fir.out_fb_t) -> fir_t:
+        return fir(stream_in, stream_out)
 """
 
 from pypeline import (
@@ -32,7 +32,8 @@ from pypeline import (
 )
 
 from fixed_point import quantize_coeffs
-from stream.stream import make_stream_t
+from interface.interface import make_interface_feedback_type, make_interface_type
+from stream.stream import make_stream_interface, make_stream_t
 from stream.stream_pipeline import make_stream_pipeline
 
 from dsp.fir_common import make_fir_core
@@ -77,11 +78,12 @@ def make_fir(
     symmetry:  "auto" (fold symmetric/anti-symmetric quantized coeffs into
                pre-adders, halving multipliers) | "none"
     skip_zero_taps: drop zero-coefficient taps at elaboration time (half-band).
-    handshake: "elastic"    -> fir(stream_in: stream_t(data_t),
-                                   ready_for_stream_out: uint1_t) -> fir_t
-                               with fir_t{stream_out, ready_for_stream_in}
-                               (same field names as make_stream_pipeline, so
-                               filters chain like stream_pipeline instances).
+    handshake: "elastic"    -> fir(stream_in: in_stream_t,
+                                   stream_out: out_fb_t) -> fir_t
+                               with fir_t{stream_in, stream_out} -- the two
+                               halves of a stream @interface per port, same
+                               shape as make_stream_pipeline, so filters chain
+                               and drop into interface functions unchanged.
                "valid_only" -> fir(stream_in: stream_t(data_t))
                                    -> stream_t(out_t)
                                vendor-style free-running mode: no FIFO or
@@ -109,20 +111,23 @@ def make_fir(
     )
 
     win_t = data_t[n_taps]
-    in_stream_t = make_stream_t(data_t)
+    in_if = make_stream_interface(data_t)
+    in_stream_t = make_interface_type(in_if)
+    in_fb_t = make_interface_feedback_type(in_if)
 
     if handshake == "elastic":
         sp_func, sp_t = make_stream_pipeline(fir_core)
         sp_in_stream_t = hw_arg_types(sp_func)[0]
         out_stream_t = sp_t.typeof("stream_out")
+        out_fb_t = hw_arg_types(sp_func)[1]
 
         @struct
         class fir_t(NamedTuple):
-            stream_out: out_stream_t
-            ready_for_stream_in: uint1_t
+            stream_in: in_fb_t  # input port's reverse half travels out
+            stream_out: out_stream_t  # output port's feedforward half travels out
 
         @hw_func
-        def fir(stream_in: in_stream_t, ready_for_stream_out: uint1_t) -> fir_t:
+        def fir(stream_in: in_stream_t, stream_out: out_fb_t) -> fir_t:
             # Combinational window including the current sample; the shift
             # commits only on accepted samples so backpressure freezes it.
             window: Reg[win_t]
@@ -134,15 +139,15 @@ def make_fir(
             sp_in: sp_in_stream_t
             sp_in.data = shifted
             sp_in.valid = stream_in.valid
-            sp_o = sp_func(sp_in, ready_for_stream_out)
+            sp_o = sp_func(sp_in, stream_out)
 
-            accepted: uint1_t = stream_in.valid & sp_o.ready_for_stream_in
+            accepted: uint1_t = stream_in.valid & sp_o.stream_in.ready
             if accepted:
                 window = shifted
 
             o: fir_t
             o.stream_out = sp_o.stream_out
-            o.ready_for_stream_in = sp_o.ready_for_stream_in
+            o.stream_in.ready = sp_o.stream_in.ready
             return o
 
     elif handshake == "valid_only":
@@ -197,4 +202,9 @@ def make_fir(
     fir.handshake = handshake
     fir.in_stream_t = in_stream_t
     fir.out_stream_t = out_stream_t
+    # Reverse halves of the two ports (elastic only -- valid_only is one-way).
+    fir.in_fb_t = in_fb_t if handshake == "elastic" else None
+    fir.out_fb_t = out_fb_t if handshake == "elastic" else None
+    fir.in_if = in_if
+    fir.out_if = sp_func.out_if if handshake == "elastic" else None
     return fir, fir_t

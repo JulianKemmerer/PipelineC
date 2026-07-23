@@ -519,6 +519,11 @@ def _recover_annotation_closure_vars(func_def, func_for_source, closure_ns):
     (top-level closures) and _callable_canonical_name (nested/recursive
     closures) so the same function gets the same closure_ns -- and therefore
     the same canonical name -- regardless of which caller reaches it first.
+
+    Deliberately limited to bare-name annotations: closure_ns feeds
+    _canonical_func_name, so anything added here renames entities. The element
+    types of subscripted annotations are supplied separately, and for
+    elaboration only, by _annotation_elem_type_ns.
     """
     ann_dict = getattr(func_for_source, "__annotations__", {})
     for ast_arg in func_def.args.args:
@@ -530,6 +535,37 @@ def _recover_annotation_closure_vars(func_def, func_for_source, closure_ns):
         var_name = func_def.returns.id
         if var_name not in closure_ns and "return" in ann_dict:
             closure_ns[var_name] = ann_dict["return"]
+
+
+def _annotation_elem_type_ns(func_def, func_for_source):
+    """`{base_name: element_type}` for subscripted annotations like `v: elem_t[n]`.
+
+    A name used *only* inside an annotation is not captured as a closure cell, so
+    a factory-local element type would be unresolvable when the annotation is
+    re-evaluated during elaboration (an array interface port, `axis_out:
+    axis_fb[n]`, is the case that surfaced this). The already-resolved array type
+    in __annotations__ knows its element, so recover the name from there.
+
+    Kept out of closure_ns and merged at lowest priority: it must never rename an
+    entity or shadow a name that genuinely resolves.
+    """
+    ann_dict = getattr(func_for_source, "__annotations__", {})
+    out = {}
+
+    def add(ann_node, key):
+        if (
+            isinstance(ann_node, ast.Subscript)
+            and isinstance(ann_node.value, ast.Name)
+            and key in ann_dict
+        ):
+            elem = getattr(ann_dict[key], "_elem_ctype", None)
+            if elem is not None:
+                out.setdefault(ann_node.value.id, elem)
+
+    for ast_arg in func_def.args.args:
+        add(ast_arg.annotation, ast_arg.arg)
+    add(func_def.returns, "return")
+    return out
 
 
 def _parsed_func_def(func_for_source):
@@ -4477,7 +4513,16 @@ class FuncElaborator:
             if isinstance(func_for_source, _types_mod.FunctionType)
             else {}
         )
-        merged_globals = {**func_own_globals, **self.module_globals, **closure_ns}
+        # Lowest priority: element types of subscripted annotations, which exist
+        # only so such an annotation can be re-evaluated (see
+        # _annotation_elem_type_ns). Never shadows a name that already resolves.
+        ann_elem_ns = _annotation_elem_type_ns(func_def, func_for_source)
+        merged_globals = {
+            **ann_elem_ns,
+            **func_own_globals,
+            **self.module_globals,
+            **closure_ns,
+        }
 
         # Register any struct/enum types found in closure vars that were created
         # inside a factory (not visible to _discover_structs/enums_from_module).
@@ -5151,6 +5196,11 @@ def _register_struct_recursive(obj, parser_state, visited=None):
         and hasattr(obj, "__annotations__")
     ):
         return
+    # An @interface is a bidirectional declaration, not a hardware struct: its
+    # Feedback[T] fields have no C type. Only the one-directional structs it
+    # derives (make_interface_type / make_interface_feedback_type) are real.
+    if getattr(obj, "_pypeline_is_interface", False):
+        return
     c_name = getattr(obj, "_pypeline_ctype_name", obj.__name__)
     if c_name in visited:
         return
@@ -5797,8 +5847,25 @@ def PARSE_FILE(py_file):
                 # invisible to hardware. "Can simply be ignored during elaboration"
                 # must hold regardless of whether the function carries annotations.
                 _top_level_callee = fglobals.get(node.name)
-                if getattr(_top_level_callee, "_is_sim_output", False) or getattr(
-                    _top_level_callee, "_is_sim_input", False
+                if (
+                    getattr(_top_level_callee, "_is_sim_output", False)
+                    or getattr(_top_level_callee, "_is_sim_input", False)
+                    # An interface function's raw body is written in the
+                    # feedforward direction only (submodule calls with their
+                    # reverse args omitted) and is NOT directly elaboratable -- it
+                    # is compiled to an ordinary hw_func via
+                    # make_hw_func_from_interface_func (see
+                    # include/pypeline/interface/interface_func.py), and only that
+                    # generated function is ever elaborated (reached on demand via
+                    # _elaborate_live_func). Such a function is recognized by
+                    # annotating with a whole @interface, which is not a hardware
+                    # type. Skip it the same way @sim_output/@sim_input are.
+                    or any(
+                        getattr(_t, "_pypeline_is_interface", False)
+                        for _t in (
+                            getattr(_top_level_callee, "__annotations__", None) or {}
+                        ).values()
+                    )
                 ):
                     continue
                 all_func_defs.append((node, file_path, fglobals, mod_prefix))

@@ -15,6 +15,7 @@ Usage in user design files:
 import hashlib as _hashlib
 import typing
 import functools as _functools
+import warnings as _warnings
 from enum import IntEnum as _IntEnum, auto as _auto
 
 # If a fully-expanded struct canonical name exceeds this length it is replaced
@@ -825,6 +826,21 @@ def struct(cls):
     cls.typeof = classmethod(_typeof)
     parts = []
     for field, ann in cls.__annotations__.items():
+        # A plain struct has one direction, so a reverse (Feedback) field or a
+        # whole interface has no meaning inside it -- reject at declaration
+        # rather than emitting a nonsense C type name that fails much later in
+        # VHDL writing. (Duck-typed so pypeline needn't import the interface lib.)
+        if isinstance(ann, _FeedbackType):
+            raise TypeError(
+                f"@struct {cls.__name__!r} field {field!r} is Feedback[...]; a "
+                "reverse-direction field is only meaningful in an @interface"
+            )
+        if getattr(ann, "_pypeline_is_interface", False):
+            raise TypeError(
+                f"@struct {cls.__name__!r} field {field!r} is an @interface; use "
+                "@interface for bundles that contain interfaces, or a derived "
+                "make_interface_type()/make_interface_feedback_type() struct here"
+            )
         if isinstance(ann, type):
             # Use canonical name for struct-typed fields if already computed
             ann_str = getattr(ann, "_pypeline_ctype_name", ann.__name__)
@@ -1685,6 +1701,13 @@ class _FeedbackType:
 
     def __repr__(self):
         return str(self)
+
+    def __call__(self, *args, **kwargs):
+        # Never meant to be constructed -- defined only so that typing's
+        # _type_check (which merely requires callable()) accepts Feedback[T] as a
+        # NamedTuple field annotation, which is how @interface marks a reverse
+        # field. Local-variable use (`f: Feedback[T]`) never goes through typing.
+        raise TypeError("Feedback[T] is a direction annotation, not a constructible type")
 
 
 class _FeedbackMeta(type):
@@ -4014,6 +4037,22 @@ def _build_reg_sim_func(fn):
     func_def.body = new_stmts
     func_def.decorator_list = []  # strip decorators to avoid re-wrapping on exec
 
+    # Annotations are re-evaluated by the exec below, but a name that appears
+    # *only* in an annotation is not a free variable, so a factory-local type
+    # would not be in scope here (e.g. `x: some_fb_t[n]` -> NameError on some_fb_t).
+    # Bind each already-resolved annotation object to a generated name and refer
+    # to that, which works for every annotation form, not just bare names.
+    _sig_anns = getattr(orig_fn, "__annotations__", {})
+    _ann_objs = {}
+    for _arg in func_def.args.args:
+        if _arg.annotation is not None and _arg.arg in _sig_anns:
+            _nm = f"__ann_arg_{_arg.arg}__"
+            _ann_objs[_nm] = _sig_anns[_arg.arg]
+            _arg.annotation = _ast.Name(id=_nm, ctx=_ast.Load())
+    if func_def.returns is not None and "return" in _sig_anns:
+        _ann_objs["__ann_return__"] = _sig_anns["return"]
+        func_def.returns = _ast.Name(id="__ann_return__", ctx=_ast.Load())
+
     _ast.fix_missing_locations(tree)
 
     src_file = getattr(getattr(orig_fn, "__code__", None), "co_filename", "<sim_reg>")
@@ -4047,19 +4086,7 @@ def _build_reg_sim_func(fn):
         new_globals[_key] = _ctype_obj
     for _key, _ctype_obj in wire_leaf_ctypes_out.items():
         new_globals[_key] = _ctype_obj
-    # Inject function signature annotation type names that only appear in annotations
-    # (not the body), so Python doesn't capture them in co_freevars — but exec still
-    # needs them when it re-evaluates the def statement's annotation expressions.
-    _sig_anns = getattr(orig_fn, "__annotations__", {})
-    for _arg in func_def.args.args:
-        if _arg.annotation and isinstance(_arg.annotation, _ast.Name):
-            _type_name = _arg.annotation.id
-            if _type_name not in new_globals and _arg.arg in _sig_anns:
-                new_globals[_type_name] = _sig_anns[_arg.arg]
-    if func_def.returns and isinstance(func_def.returns, _ast.Name):
-        _ret_name = func_def.returns.id
-        if _ret_name not in new_globals and "return" in _sig_anns:
-            new_globals[_ret_name] = _sig_anns["return"]
+    new_globals.update(_ann_objs)  # the pre-resolved signature annotations
     exec(code, new_globals)  # noqa: S102
     return new_globals.get(orig_fn.__name__), bool(reg_names or feedback_names)
 
@@ -4207,6 +4234,98 @@ def _call_sim_model(model_entry, args, kwargs):
     return result
 
 
+class InterfacePortWarning(UserWarning):
+    """A hw_func declares one half of an interface port but not its matching
+    other half. The two halves of a port share the port's name -- the
+    feedforward half on one side of the signature (an argument or a return
+    field) and the reverse half on the other -- so a lone half is usually an
+    unfinished port. The exception is an intentionally valid-only / data-only
+    signal (a stream with no backpressure), which the message calls out; silence
+    those with the standard filter:
+
+        warnings.filterwarnings("ignore", category=InterfacePortWarning)
+    """
+
+
+_INTERFACE_PORT_WARNED = set()
+
+
+def _interface_half_of(t):
+    """`(interface, role, is_array)` if `t` is a derived interface half (or an
+    array of one), else `(None, None, False)`.
+
+    getattr-only on the tags the interface library stamps on its derived structs
+    (`_pypeline_interface_role` = "fwd"/"fb", `_pypeline_interface` = the source
+    interface), so pypeline.py keeps its zero dependency on that library."""
+    if t is None:
+        return None, None, False
+    role = getattr(t, "_pypeline_interface_role", None)
+    if role is not None:
+        return getattr(t, "_pypeline_interface", None), role, False
+    elem = _array_elem_ctype(t)
+    if elem is not None:
+        role = getattr(elem, "_pypeline_interface_role", None)
+        if role is not None:
+            return getattr(elem, "_pypeline_interface", None), role, True
+    return None, None, False
+
+
+def _warn_partial_interface_ports(fn, ann, params, ret_t):
+    """Emit an `InterfacePortWarning` for each interface port that declares only
+    one of its two halves.
+
+    Presence-based and side-aware: an input port's feedforward half is an
+    argument and its reverse half a return field (an output port is the
+    reverse), so the missing half's side follows from where the present half
+    sits. One-directional interfaces (no reverse fields at all, or no forward
+    fields) are complete with a single half and never warn -- checked via the
+    interface's own `_pypeline_iface_derived` memo. Deduped per
+    (module, qualname, port) so re-elaboration does not repeat it."""
+    ports = {}  # name -> {"fwd": side|None, "fb": side|None, "iface": iface}
+
+    def note(name, t, side):
+        iface, role, _ = _interface_half_of(t)
+        if iface is not None:
+            ports.setdefault(name, {"fwd": None, "fb": None, "iface": iface})[role] = side
+
+    for p in params:
+        note(p, ann.get(p), "arg")
+    ret_fields = getattr(ret_t, "_fields", ()) if ret_t is not None else ()
+    ret_anns = getattr(ret_t, "__annotations__", {}) if ret_fields else {}
+    for f in ret_fields:
+        note(f, ret_anns.get(f), "ret")
+
+    for name, e in ports.items():
+        derived = getattr(e["iface"], "_pypeline_iface_derived", {})
+        if derived.get("fwd") is None or derived.get("fb") is None:
+            continue  # one-directional interface: a single half is complete
+        if (e["fwd"] is None) == (e["fb"] is None):
+            continue  # both halves present (or, wrongly, both on one side)
+        present_role = "fwd" if e["fwd"] is not None else "fb"
+        present_side = e[present_role]
+        # the missing half travels the opposite way, so it sits on the other side
+        where = "return field" if present_side == "arg" else "argument"
+        key = (
+            getattr(fn, "__module__", ""),
+            getattr(fn, "__qualname__", repr(fn)),
+            name,
+        )
+        if key in _INTERFACE_PORT_WARNED:
+            continue
+        _INTERFACE_PORT_WARNED.add(key)
+        present_word = "feedforward" if present_role == "fwd" else "reverse"
+        missing_word = "reverse" if present_role == "fwd" else "feedforward"
+        iname = getattr(e["iface"], "__name__", repr(e["iface"]))
+        _warnings.warn(
+            f"hw_func {getattr(fn, '__qualname__', fn)!r}: interface port {name!r} "
+            f"(interface {iname}) declares only its {present_word} half; add its "
+            f"{missing_word} half as a {where} named {name!r}. Ignore if {name!r} "
+            "is an intentional valid-only / data-only signal.",
+            InterfacePortWarning,
+            stacklevel=3,
+        )
+
+
 def _sim_type_wrap(fn):
     """Wrap a pypeline hardware function for bit-accurate simulation.
 
@@ -4239,6 +4358,9 @@ def _sim_type_wrap(fn):
     except (ValueError, TypeError):
         params = []
     ret_t = ann.get("return")
+
+    # Warn (once) if a port declares only one of its two interface halves.
+    _warn_partial_interface_ports(fn, ann, params, ret_t)
 
     # Scan source for Reg[T]/Feedback[T] annotations and build register-aware sim body.
     # Returns (fn_or_None, has_state) where has_state=True means the body calls

@@ -20,7 +20,8 @@ from pypeline import (
     uint1_t,
 )
 
-from stream.stream import make_stream_t
+from interface.interface import make_interface_feedback_type, make_interface_type
+from stream.stream import make_stream_interface, make_stream_t
 from stream.stream_pipeline import make_stream_pipeline
 
 from dsp.fir import _quantize_arg_coeffs
@@ -66,7 +67,9 @@ def make_fir_decim(
     )
 
     win_t = data_t[n_taps]
-    in_stream_t = make_stream_t(data_t)
+    in_if = make_stream_interface(data_t)
+    in_stream_t = make_interface_type(in_if)
+    in_fb_t = make_interface_feedback_type(in_if)
     phase_t = make_uint_t(max(1, (decim - 1).bit_length()))
     LAST_PHASE = decim - 1
 
@@ -74,15 +77,16 @@ def make_fir_decim(
         sp_func, sp_t = make_stream_pipeline(fir_core)
         sp_in_stream_t = hw_arg_types(sp_func)[0]
         out_stream_t = sp_t.typeof("stream_out")
+        out_fb_t = hw_arg_types(sp_func)[1]
 
         @struct
         class fir_decim_t(NamedTuple):
-            stream_out: out_stream_t
-            ready_for_stream_in: uint1_t
+            stream_in: in_fb_t  # input port's reverse half travels out
+            stream_out: out_stream_t  # output port's feedforward half travels out
 
         @hw_func
         def fir_decim(
-            stream_in: in_stream_t, ready_for_stream_out: uint1_t
+            stream_in: in_stream_t, stream_out: out_fb_t
         ) -> fir_decim_t:
             window: Reg[win_t]
             phase: Reg[phase_t]
@@ -95,9 +99,9 @@ def make_fir_decim(
             sp_in: sp_in_stream_t
             sp_in.data = shifted
             sp_in.valid = stream_in.valid & (phase == LAST_PHASE)
-            sp_o = sp_func(sp_in, ready_for_stream_out)
+            sp_o = sp_func(sp_in, stream_out)
 
-            accepted: uint1_t = stream_in.valid & sp_o.ready_for_stream_in
+            accepted: uint1_t = stream_in.valid & sp_o.stream_in.ready
             if accepted:
                 window = shifted
                 if phase == LAST_PHASE:
@@ -107,7 +111,7 @@ def make_fir_decim(
 
             o: fir_decim_t
             o.stream_out = sp_o.stream_out
-            o.ready_for_stream_in = sp_o.ready_for_stream_in
+            o.stream_in.ready = sp_o.stream_in.ready
             return o
 
     elif handshake == "valid_only":
@@ -165,4 +169,8 @@ def make_fir_decim(
     fir_decim.handshake = handshake
     fir_decim.in_stream_t = in_stream_t
     fir_decim.out_stream_t = out_stream_t
+    # Reverse halves of the two ports (elastic only -- valid_only is one-way).
+    fir_decim.in_fb_t = in_fb_t if handshake == "elastic" else None
+    fir_decim.out_fb_t = out_fb_t if handshake == "elastic" else None
+    fir_decim.stream_if = in_if
     return fir_decim, fir_decim_t

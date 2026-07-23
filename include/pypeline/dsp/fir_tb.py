@@ -29,7 +29,7 @@ fir_sim_tb_test.py):
     def my_fir_tb():
         stream_in = tb.drive_in()
         out_ready = tb.drive_ready()
-        o = fir(stream_in, out_ready)
+        o = fir(stream_in, out_ready)   # out_ready is fir.out_fb_t
         tb.observe(o)
 
 Shared testbench state lives in dicts mutated in place (never rebound):
@@ -262,12 +262,16 @@ def make_fir_tb(
             return 1 if rng.random() < 0.7 else 0
         return 1 if ready_pattern(st["cycle"]) else 0
 
+    # drive_ready() yields the output port's *reverse half* so it can be passed
+    # straight into the filter's stream_out port.
+    out_fb_t = fir.out_fb_t
+
     if elastic:
 
         @sim_input
-        def drive_ready() -> uint1_t:
+        def drive_ready() -> out_fb_t:
             st["ready_now"] = _ready_value()
-            return st["ready_now"]
+            return out_fb_t(ready=st["ready_now"])
 
     else:
 
@@ -310,7 +314,7 @@ def make_fir_tb(
         @sim_output
         def observe(o):
             _announce()
-            if st["presented_valid"] and int(o.ready_for_stream_in):
+            if st["presented_valid"] and int(o.stream_in.ready):
                 st["in_hist"].append(stimulus_q[st["idx"]])
                 st["idx"] += 1
             if int(o.stream_out.valid) and st["ready_now"]:

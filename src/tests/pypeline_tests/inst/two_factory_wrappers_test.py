@@ -56,13 +56,13 @@ b_mcp, b_mcp_t = make_valid_ready_mcp(round_b, 2)
 
 
 @MAIN(50.0)
-def a_main(stream_in: uint32_stream_t, ready: uint1_t) -> a_mcp_t:
-    return a_mcp(stream_in, ready)
+def a_main(stream_in: uint32_stream_t, stream_out: a_mcp.out_fb_t) -> a_mcp_t:
+    return a_mcp(stream_in, stream_out)
 
 
 @MAIN(50.0)
-def b_main(stream_in: uint32_stream_t, ready: uint1_t) -> b_mcp_t:
-    return b_mcp(stream_in, ready)
+def b_main(stream_in: uint32_stream_t, stream_out: b_mcp.out_fb_t) -> b_mcp_t:
+    return b_mcp(stream_in, stream_out)
 
 
 def test_two_factory_wrappers_distinct_logic():

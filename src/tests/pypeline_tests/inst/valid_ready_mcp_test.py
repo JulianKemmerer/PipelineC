@@ -74,9 +74,11 @@ def mcp_divider_test_fsm() -> uint1_t:
     in_stream.data = my_struct_t(x=x, y=y)
     in_stream.valid = 1
 
-    f = divider_mcp(in_stream, 1)
+    out_rdy: divider_mcp.out_fb_t
+    out_rdy.ready = 1
+    f = divider_mcp(in_stream, out_rdy)
 
-    if f.ready_for_stream_in:
+    if f.stream_in.ready:
         x = x + 2
         y = y + 1
         if x == 0:
@@ -107,8 +109,8 @@ def test_divider_mcp_handshake():
         stream_in = my_struct_stream_t(
             data=my_struct_t(x=x, y=y), valid=0 if launched else 1
         )
-        out = sim_call(divider_mcp, stream_in, 1)
-        if not launched and out.ready_for_stream_in:
+        out = sim_call(divider_mcp, stream_in, divider_mcp.out_fb_t(ready=1))
+        if not launched and out.stream_in.ready:
             launched = True
             accepted_cycle = cycle
         if out.stream_out.valid:

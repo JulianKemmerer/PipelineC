@@ -77,10 +77,14 @@ q_decim_5x, q_decim_5x_t = make_fir_decim(
 
 
 @MAIN(125.0)
-def i_chan(stream_in: i_decim_5x.in_stream_t, out_ready: uint1_t) -> i_decim_5x_t:
-    return i_decim_5x(stream_in, out_ready)
+def i_chan(
+    stream_in: i_decim_5x.in_stream_t, stream_out: i_decim_5x.out_fb_t
+) -> i_decim_5x_t:
+    return i_decim_5x(stream_in, stream_out)
 
 
 @MAIN(125.0)
-def q_chan(stream_in: q_decim_5x.in_stream_t, out_ready: uint1_t) -> q_decim_5x_t:
-    return q_decim_5x(stream_in, out_ready)
+def q_chan(
+    stream_in: q_decim_5x.in_stream_t, stream_out: q_decim_5x.out_fb_t
+) -> q_decim_5x_t:
+    return q_decim_5x(stream_in, stream_out)

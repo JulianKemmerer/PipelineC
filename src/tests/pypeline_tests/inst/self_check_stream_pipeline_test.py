@@ -43,7 +43,8 @@ from pypeline import (
     uint16_t,
 )
 
-from stream.stream import make_stream_t
+from interface.interface import make_interface_feedback_type, make_interface_type
+from stream.stream import make_stream_interface
 from stream.stream_pipeline import make_stream_pipeline
 
 
@@ -52,7 +53,9 @@ def div_inv(x: uint8_t) -> uint8_t:
     return x / ~x
 
 
-uint8_stream_t = make_stream_t(uint8_t)
+uint8_stream_if = make_stream_interface(uint8_t)
+uint8_stream_t = make_interface_type(uint8_stream_if)
+uint8_stream_fb_t = make_interface_feedback_type(uint8_stream_if)
 stream_pipeline, stream_pipeline_t = make_stream_pipeline(div_inv)
 
 
@@ -86,7 +89,7 @@ def self_check_stream_pipeline() -> stream_pipeline_t:
     out_count: Reg[uint16_t]
 
     # Present the next input value (constant mux over the repeating pattern),
-    # held until accepted per ready_for_stream_in.
+    # held until accepted per stream_in.ready.
     x: uint8_t = IN0
     in_sel: uint8_t = in_count & 3
     if in_sel == 1:
@@ -99,10 +102,11 @@ def self_check_stream_pipeline() -> stream_pipeline_t:
     stream_in: uint8_stream_t
     stream_in.valid = in_count < NUM_OUTPUTS
     stream_in.data = x
-    ready1: uint1_t = 1
+    ready1: uint8_stream_fb_t
+    ready1.ready = 1
     o: stream_pipeline_t = stream_pipeline(stream_in, ready1)
 
-    if stream_in.valid & o.ready_for_stream_in:
+    if stream_in.valid & o.stream_in.ready:
         in_count += 1
 
     if o.stream_out.valid:

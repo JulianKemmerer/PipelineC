@@ -62,7 +62,7 @@ def test_bogus_reg_type_raises():
 
     src = (
         "import sys\n"
-        f"sys.path.insert(0, {str(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__)))))!r})\n"
+        f"sys.path.insert(0, {str(os.path.dirname(os.path.dirname(os.path.dirname(os.path.dirname(os.path.abspath(__file__))))))!r})\n"
         "from pypeline import MAIN, Reg, uint32_t\n"
         "@MAIN\n"
         "def bogus() -> uint32_t:\n"

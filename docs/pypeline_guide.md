@@ -26,12 +26,14 @@ For getting started information see the [README](README.md).
 18. [Just-Wires Synthesis Hint: `@wires`](#18-just-wires-synthesis-hint-wires)
 19. [Keep-Tagged Lanes: `kept_data_bus_t`](#19-keep-tagged-lanes-kept_data_bus_t)
 20. [N-Dimensional Stream Fragments: `ndarray_fragment_t`](#20-n-dimensional-stream-fragments-ndarray_fragment_t)
-21. [Valid/Ready Streams: `stream_t`](#21-validready-streams-stream_t)
-22. [AXI-Stream: `axis_t`](#22-axi-stream-axis_t)
-23. [FIFOs: `make_stream_fifo`](#23-fifos-make_stream_fifo)
-24. [Pipelined Stream Wrappers: `make_stream_pipeline`](#24-pipelined-stream-wrappers-make_stream_pipeline)
-25. [DSP: FIR Filters](#25-dsp-fir-filters)
-26. [Limitations / Not Yet Supported](#26-limitations--not-yet-supported)
+21. [Streams: `stream_t`](#21-streams-stream_t)
+22. [Bidirectional Ports: `@interface`](#22-bidirectional-ports-interface)
+23. [AXI-Stream: `axis_t`](#23-axi-stream-axis_t)
+24. [FIFOs: `make_stream_fifo`](#24-fifos-make_stream_fifo)
+25. [Pipelined Stream Wrappers: `make_stream_pipeline`](#25-pipelined-stream-wrappers-make_stream_pipeline)
+26. [Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#26-multi-cycle-stream-wrapper-make_valid_ready_mcp)
+27. [DSP: FIR Filters](#27-dsp-fir-filters)
+28. [Limitations / Not Yet Supported](#28-limitations--not-yet-supported)
 
 ---
 
@@ -411,7 +413,7 @@ from pypeline import sim_assert, sim_finish
 
 n: Reg[uint8_t]
 sim_assert(n < 100, f"n grew too large: {n}")   # msg is optional
-sim_assert(ready)                                # bare condition -> default message
+sim_assert(n != 0)                               # bare condition -> default message
 
 if n >= 3:
     sim_finish()
@@ -2009,8 +2011,8 @@ By default, a function called from inside a register or feedback context must co
 split its logic across multiple clock cycles. That's normally what you want for a small
 state machine. But sometimes you want to call a large, otherwise-combinational pipeline
 stage (a multiplier, a divider, a deep arithmetic chain) from inside such a context, and
-you're fine with it taking several cycles internally as long as it still produces a
-valid/ready style stream.
+you're fine with it taking several cycles internally — its result simply appears a fixed
+number of cycles later.
 
 `AUTOPIPELINE(func)` produces a callable tag object (the same all-caps factory style as
 `MULTI_CYCLE[...]`) that tells the synthesiser it's allowed to insert pipeline registers
@@ -2038,7 +2040,7 @@ it.
 `.latency` is an ordinary Python `int` you can use for elaboration-time sizing — most
 usefully to size FIFOs/counters that sit next to the free-running pipeline (this is
 exactly how `make_stream_pipeline` sizes its output FIFO automatically, see
-[§24](#24-elastic-autopipelined-streams-make_stream_pipeline)). It reads **0**:
+[§25](#25-pipelined-stream-wrappers-make_stream_pipeline)). It reads **0**:
 
 - always in plain native Pypeline sim (`pypeline_sim.py` run directly, or
   `pypelinec --sim --comb` — no synthesis ever runs),
@@ -2076,20 +2078,19 @@ combinational instance):
 
 ```python
 @hw_func
-def pipeline_stage(x: stream_t) -> stream_t:
-    rv: stream_t
-    rv.data = x.data / ~x.data   # some multi-cycle-worthy combinational logic
-    rv.valid = x.valid
-    return rv
+def pipeline_stage(x: uint32_t) -> uint32_t:
+    return x / ~x   # some deep/slow, multi-cycle-worthy combinational logic
 
 PIPELINE_STAGE_AP = AUTOPIPELINE(pipeline_stage)
 
 @hw_func
-def wrapper(pipeline_in: stream_t) -> stream_t:
-    # `ready_reg` makes this a register/feedback context — normally `pipeline_stage`
-    # would have to complete combinationally within this same cycle.
-    ready_reg: Reg[uint1_t]
-    ready_reg = ~ready_reg
+def wrapper(pipeline_in: uint32_t) -> uint32_t:
+    # `phase` is just some placeholder state — a stand-in for any small FSM
+    # running alongside the pipeline. It is what makes this a register/feedback
+    # context, so that without AUTOPIPELINE the `pipeline_stage` call would be
+    # forced to complete combinationally within this same cycle.
+    phase: Reg[uint2_t]
+    phase = phase + 1
 
     # AUTOPIPELINE overrides that: the synthesiser may slice pipeline_stage's
     # logic across multiple cycles.
@@ -2110,10 +2111,10 @@ combinational, wrap the call with plain unconditional `Reg[T]`s (the same patter
 
 ```python
 @hw_func
-def pipeline_stage_registered(x: stream_t) -> stream_t:
-    in_reg: Reg[stream_t]
-    out_reg: Reg[stream_t]
-    rv: stream_t = out_reg
+def pipeline_stage_registered(x: uint32_t) -> uint32_t:
+    in_reg: Reg[uint32_t]
+    out_reg: Reg[uint32_t]
+    rv: uint32_t = out_reg
     out_reg = PIPELINE_STAGE_AP(in_reg)
     in_reg = x
     return rv
@@ -2166,50 +2167,15 @@ without a `PART()` target it has no effect. See
 `examples/mcp/mcp_test.c`) for the full example, including the `PART(...)` call needed to
 target a real device.
 
-### Ready-made valid/ready wrapper: `make_valid_ready_mcp`
+### Wrapping a whole slow function
 
-Wiring up the launch/capture registers and a cycle counter by hand, as above, is the
-right tool when a multi-cycle path sits between two registers you're already managing
-yourself inside a larger function. For the common case of wrapping one slow
-combinational function in its own standalone valid/ready stream interface,
-`include/pypeline/multi_cycle_path.py`'s `make_valid_ready_mcp` builds exactly that FSM
-for you — the pypeline equivalent of PipelineC's `DECL_VALID_READY_MCP_FUNC` macro:
-
-```python
-from pypeline import hw_func
-from stream.stream import make_stream_t
-from multi_cycle_path import make_valid_ready_mcp
-
-@hw_func
-def divider(i: my_struct_t) -> uint32_t:
-    return i.x / i.y
-
-divider_mcp, divider_mcp_t = make_valid_ready_mcp(divider, 16)   # 16-cycle MCP
-
-my_struct_stream_t = make_stream_t(my_struct_t)
-
-@MAIN(100.0)
-def top(stream_in: my_struct_stream_t, ready_for_stream_out: uint1_t) -> divider_mcp_t:
-    return divider_mcp(stream_in, ready_for_stream_out)
-```
-
-`make_valid_ready_mcp(func, ncycles)` infers `in_type`/`out_type` from `func`'s own
-parameter/return type annotations (unlike the C macro, which takes them as separate
-arguments) and returns `(func_mcp, func_mcp_t)`:
-
-| | Type | Meaning |
-|---|---|---|
-| `func_mcp(stream_in, ready_for_stream_out)` | `(stream_t(in_type), uint1_t) -> func_mcp_t` | one MCP-wrapped instance of `func` |
-| `func_mcp_t.stream_out` | `stream_t(out_type)` | `func`'s result, valid `ncycles + 1` cycles after launch |
-| `func_mcp_t.ready_for_stream_in` | `uint1_t` | high while the FSM is idle and ready to accept a new `stream_in` |
-
-Internally it's the same `MULTI_CYCLE[ncycles]` / `Reg[T, MC.start]` / `Reg[T, MC.end]`
-pattern shown above, with `launch`/`capture` registers and a `cycles_since_launch`
-counter driving the handshake. Like `MULTI_CYCLE[...]` itself, the relaxed timing only
-matters during real FPGA synthesis (requires `PART()` + Vivado); simulation always sees
-`func`'s result settle the same cycle it's computed. See
-`src/tests/pypeline_tests/inst/valid_ready_mcp_test.py` (translated from
-`examples/mcp/mcp_divider.c`) for the full example.
+The launch/capture pattern above is the right tool when a multi-cycle path sits between
+two registers you are already managing yourself inside a larger function. When the slow
+logic is instead a whole standalone function, `make_valid_ready_mcp` wraps it in exactly
+this FSM for you and presents the result as a valid/ready stream. Its ports are stream
+[interfaces](#22-bidirectional-ports-interface), so it is covered later alongside the
+other function-to-stream wrapper — see
+[§26 `make_valid_ready_mcp`](#26-multi-cycle-stream-wrapper-make_valid_ready_mcp).
 
 ---
 
@@ -2360,9 +2326,9 @@ def make_lane(b: bus4_t, i: int) -> uint8_t:
 `data_t` doesn't have to be a byte — it can be any pypeline type, including a struct. The
 result is only literally AXI-Stream-shaped when `data_t` is `uint8_t`; with another element
 type it's the same per-lane keep-masking generalized to a stream of structs (see
-[§22 AXI-Stream](#22-axi-stream-axis_t)).
+[§23 AXI-Stream](#23-axi-stream-axis_t)).
 
-This layer has no handshake (`valid`) and no end-of-transfer flag (`eod`/`tlast`) of its
+This layer has no `valid` bit and no end-of-transfer flag (`eod`/`tlast`) of its
 own — those are added by the layers above it.
 
 ---
@@ -2402,36 +2368,37 @@ def track_position(frag: video_frag_t, x: uint16_t, y: uint16_t) -> ...:
 The field is named `.frag` rather than `.data` specifically so that nesting
 `ndarray_fragment_t` inside [`kept_data_bus_t`](#19-keep-tagged-lanes-kept_data_bus_t)
 (which already has a `.data` array field) and inside
-[`stream_t`](#21-validready-streams-stream_t) (which already has a `.data` payload field)
+[`stream_t`](#21-streams-stream_t) (which already has a `.data` payload field)
 doesn't produce an ambiguous `.data.data.data` chain.
 
 `frag_t` can be anything — a single struct (one whole element per transfer, as above) or a
 [`kept_data_bus_t`](#19-keep-tagged-lanes-kept_data_bus_t) (multiple byte/element lanes per
-transfer, the AXI-Stream case — see [§22](#22-axi-stream-axis_t)).
+transfer, the AXI-Stream case — see [§23](#23-axi-stream-axis_t)).
 
 ---
 
-## 21 Valid/Ready Streams: `stream_t`
+## 21 Streams: `stream_t`
 
-`stream_t`, from `include/pypeline/stream/stream.py`, adds the final piece needed for a
-standard streaming interface: a `.valid` bit marking whether this cycle's payload is
-actually being transferred. Pair it with a plain `uint1_t ready` signal at the call site
-for a full valid/ready handshake (pypeline doesn't bundle `ready` into the struct itself,
-since `ready` flows in the opposite direction along the stream).
+A stream carries a payload forward, one beat per clock, tagged with a **valid** bit that says
+whether this cycle's payload is really there. `stream_t`, from
+`include/pypeline/stream/stream.py`, is exactly that pair — data flowing **forward only**, with
+nothing travelling back:
 
 ```python
 from stream.stream import make_stream_t
 
 uint32_stream_t = make_stream_t(uint32_t)
 
-def consume(s: uint32_stream_t, downstream_ready: uint1_t) -> uint1_t:
-    accepted: uint1_t = s.valid & downstream_ready
-    if accepted:
-        ...  # use s.data
-    return accepted   # this stage's ready_for_input, computed however is appropriate
+@hw_func
+def scale_by_two(s: uint32_stream_t) -> uint32_stream_t:
+    o: uint32_stream_t
+    o.data = s.data * 2
+    o.valid = s.valid      # a valid input this cycle produces a valid output
+    return o
 ```
 
-`make_stream_t(data_t)` returns a struct with two fields:
+`make_stream_t(data_t)` returns a `@struct` with two fields — so `make_stream_t(uint32_t)` is
+the struct `{data: uint32_t, valid: uint1_t}`:
 
 | Field | Type | Meaning |
 |---|---|---|
@@ -2441,11 +2408,294 @@ def consume(s: uint32_stream_t, downstream_ready: uint1_t) -> uint1_t:
 `data_t` is typically an [`ndarray_fragment_t`](#20-n-dimensional-stream-fragments-ndarray_fragment_t)
 (giving end-of-dimension flags) or a [`kept_data_bus_t`](#19-keep-tagged-lanes-kept_data_bus_t)
 (giving per-lane keep flags), but it can be any type — `make_stream_t(uint32_t)` above is a
-plain valid-only stream of integers with no `eod`/`keep` layer at all.
+plain stream of integers with no `eod`/`keep` layer at all.
+
+Use `stream_t` on its own wherever data only flows forward: a free-running pipeline stage, or a
+value built and passed along whose consumer can always accept it. When a consumer must instead
+be able to say "not this cycle" — apply **backpressure** — the payload needs a companion signal
+travelling the *opposite* way. A signal flowing the other direction does not belong in the same
+struct as the data, so the next section introduces the general way pypeline bundles
+opposite-direction signals into one port — the **`@interface`** — out of which the valid/ready
+stream falls as the feedforward `stream_t` plus a reverse `ready`.
 
 ---
 
-## 22 AXI-Stream: `axis_t`
+## 22 Bidirectional Ports: `@interface`
+
+Real interfaces are rarely one-directional. A valid/ready stream sends `data`/`valid`
+downstream but takes `ready` back; a credit-based bus sends a payload and receives credits; a
+request/acknowledge pair goes both ways. An **`@interface`** bundles the signals of one port
+that travel together, *regardless of direction*: plain fields are **feedforward** (out along the
+port), and fields wrapped in `Feedback[T]` are **reverse** (back along it). Nothing about the
+mechanism is stream-specific — the reverse channel can be any number of fields of any type:
+
+```python
+from interface.interface import (
+    interface, make_interface_type, make_interface_feedback_type,
+)
+
+@interface
+class bus_if(NamedTuple):
+    payload: uint32_t
+    go:      uint1_t
+    credit:  Feedback[uint4_t]   # reverse — any width, not just a ready bit
+    halt:    Feedback[uint1_t]
+```
+
+### The two halves
+
+An interface is not itself a hardware type — a hardware function never takes a whole `bus_if` as
+a port. It is a recipe for two ordinary `@struct`s, one per direction, which *are* hardware
+types:
+
+```python
+bus_if_t          = make_interface_type(bus_if)           # feedforward half: {payload, go}
+bus_if_feedback_t = make_interface_feedback_type(bus_if)  # reverse half:     {credit, halt}
+```
+
+- `make_interface_type(iface)` gathers the plain fields into the **feedforward** struct.
+- `make_interface_feedback_type(iface)` gathers the `Feedback[T]` fields — *unwrapped* to their
+  inner type (`Feedback[uint4_t]` → `uint4_t`) — into the **reverse** struct.
+
+### Ports: two halves under one name
+
+Because the two halves travel opposite ways, a module carries a port as **both** halves — one as
+an argument, one as a return field — paired only by sharing the **same name**. There is no
+naming convention (no `ready_for_`/`_ready`/`_rdy` affix); the port name is whatever you choose.
+Direction follows from which side holds the feedforward half:
+
+- an **input** port takes the feedforward half as an argument and returns the reverse half;
+- an **output** port does the opposite.
+
+```python
+@struct
+class x_to_y_t(NamedTuple):
+    x: bus_if_feedback_t   # input port x: its reverse half (credit/halt) travels out
+    y: bus_if_t            # output port y: its feedforward half (payload/go) travels out
+
+@hw_func
+def x_to_y(x: bus_if_t, y: bus_if_feedback_t) -> x_to_y_t:
+    o: x_to_y_t
+    o.y = x    # feedforward: pass x's payload/go out on y
+    o.x = y    # feedback:    pass y's credit/halt back on x
+    return o
+```
+
+### The stream interface: valid/ready handshaking
+
+A valid/ready stream is the most common interface, and the one the whole streaming library is
+built on. It is a **flat** interface — `data`, `valid`, and `ready` are *sibling* fields, mirroring
+the three real wire groups of a valid/ready bus, not a stream nested next to a separate ready:
+
+```python
+from stream.stream import make_stream_interface
+
+# make_stream_interface(uint32_t) is literally this interface:
+@interface
+class uint32_stream_if(NamedTuple):
+    data:  uint32_t
+    valid: uint1_t
+    ready: Feedback[uint1_t]   # the one reverse field
+```
+
+so its two halves are:
+
+```python
+uint32_stream_if   = make_stream_interface(uint32_t)
+uint32_stream_t    = make_interface_type(uint32_stream_if)           # {data, valid}
+uint32_stream_fb_t = make_interface_feedback_type(uint32_stream_if)  # {ready}
+```
+
+**And here is the identity worth pinning down:** the feedforward half of the stream interface
+*is* the plain stream from [§21](#21-streams-stream_t). `make_stream_t(data_t)` is defined as
+exactly `make_interface_type(make_stream_interface(data_t))` — the very same type object. A
+standalone `stream_t` and "the feedforward half of a stream interface" are not two things to
+reconcile; they are one thing, precisely because the interface's feedforward fields *are*
+`data` + `valid`. That is what makes the valid-only stream of §21 and the payload of a
+backpressured stream port the same type, and what lets `o.stream_out.data` work with no
+`.stream.` indirection. (A *nested* interface — a `stream:` field of `make_stream_t(...)` plus a
+separate `ready` — is a legal alternative, but there the feedforward half would be `{stream:
+{data, valid}}`, reached as `.stream.data`; the library deliberately flattens instead.)
+
+A module gives a stream port the same two-halves-one-name treatment as any interface — an
+**input** stream returns its `ready`, an **output** stream takes one:
+
+```python
+@struct
+class relay_t(NamedTuple):
+    stream_in:  uint32_stream_fb_t   # input port: ready travels back out
+    stream_out: uint32_stream_t      # output port: data+valid travel out
+
+@hw_func
+def relay(stream_in: uint32_stream_t, stream_out: uint32_stream_fb_t) -> relay_t:
+    o: relay_t
+    o.stream_out = stream_in               # forward the data+valid downstream
+    o.stream_in.ready = stream_out.ready   # forward the backpressure upstream
+    return o
+```
+
+**Naming convention.** The three names of one stream family share a prefix and differ only by
+suffix, so the type names read as exactly what they are:
+
+| Suffix | Built by | Is | Example |
+|---|---|---|---|
+| `_if` | `make_stream_interface(T)` | the whole interface, both directions | `uint32_stream_if` |
+| `_t` / `_stream_t` | `make_interface_type(…)` = `make_stream_t(T)` | the feedforward half — a standalone stream `{data, valid}` | `uint32_stream_t` |
+| `_fb_t` | `make_interface_feedback_type(…)` | the reverse half — `{ready}` | `uint32_stream_fb_t` |
+
+The feedforward half keeps the honest `_t`/`_stream_t` name rather than an `_if_t`, precisely
+because it genuinely *is* a usable standalone stream on its own — the valid-only case of §21.
+
+The reverse channel is not limited to a one-bit `ready`: `make_stream_interface(data_t,
+feedback_t=...)` widens it to a credit count or a struct of flags, just as `bus_if` above
+carries `credit`/`halt`. Every streaming building block that follows —
+[AXI-Stream](#23-axi-stream-axis_t), [FIFOs](#24-fifos-make_stream_fifo),
+[pipelined wrappers](#25-pipelined-stream-wrappers-make_stream_pipeline), and the
+[FIR filters](#27-dsp-fir-filters) — declares its ports as these two interface halves.
+
+### Interface functions: write feedforward, get the reverse wired
+
+Wiring handshake modules together normally means hand-threading the reverse signal back
+through a `Feedback[T]` while the forward data flows on. A function whose annotations use a
+whole `@interface` is an **interface function**: you write only the feedforward connections
+and the reverse direction is generated. No decorator is needed — a whole interface is not a
+valid hardware type, so annotating with one is unambiguous.
+
+```python
+from interface.interface_func import make_hw_func_from_interface_func
+
+def two_in_series(stream_in: chan) -> chan:
+    a = inc2(stream_in)
+    b = inc5(a.stream_out)
+    return b.stream_out
+
+two_series, two_series_t = make_hw_func_from_interface_func(two_in_series)
+```
+
+Instantiation stays explicit, so the boundary where real hardware enters a design is always
+visible. The generated pair is an ordinary `(hw_func, struct_t)`, identical in shape to what a
+hand-written module declares — which is why the two compose freely in either direction.
+
+**The wiring rule, in full:** calls are emitted in source order, and an edge gets a
+`Feedback[T]` whenever the value's source is emitted *after* the destination that consumes
+it. This is direction-agnostic. It inserts a feedback on a reverse edge (ordinary
+backpressure) and equally on a *feedforward* edge — which is what lets an FSM consume a value
+produced by a pipeline called after it:
+
+```python
+def merge(axis_in: chan) -> chan:
+    f = fsm(axis_in, p.stream_out)   # consumes a value produced by a later call
+    p = pipe(f.to_pipe)
+    return f.axis_out
+```
+
+That loop is the shape of an FSM+datapath merge (see wireguard's `chacha20_instance`), and it
+generates both feedbacks — one carrying the feedforward value backward, one the reverse value.
+
+**Plain values pass through.** Non-interface args and return fields (config, keys, flags) are
+ordinary feedforward wires: they appear verbatim with no reverse companion. Statements that
+touch no interface value are copied through as-is, so plain computation between calls is fine —
+including reading a *non-interface* field off a call result (a status flag, a count). Unlike an
+interface, a plain value may fan out freely.
+
+**Multiple ports.** Return an `@interface` bundle whose fields are interfaces to expose more
+than one output port; a bare interface return becomes a single port named `out_port`. Bundles
+may mix interface fields and plain fields; every field must be assigned in the return.
+
+**Limitations.** An interface function body is straight-line wiring only. `if`/`for`/`while`
+and conditional expressions are rejected — steer interfaces with an explicit mux/demux module
+instead. Each interface is point-to-point: fan-out of one interface is rejected (use an explicit
+duplicator — see array ports below), as is a dangling output or passing an input straight
+through to an output. Modules whose reverse signal is *computed* from state (a FIFO's ready
+from occupancy, an FSM's from state) are written by hand as ordinary `@hw_func`s — the sugar
+wires such modules together, it does not replace them.
+
+### Crossing between the two styles
+
+Designs mix the two: hand-written modules for anything stateful, generated wiring between them.
+Both directions of that boundary are ordinary, and neither reinvents a naming convention.
+
+**Manual → implied: a hand-written `@hw_func` (or a `@MAIN`) instantiates an interface function.**
+No name matching is involved at all — the generated pair is an ordinary `(hw_func, struct_t)`,
+so you call it like any module: reverse halves go in as arguments, and come back out as named
+return fields. The shape follows from the interface function's own signature:
+
+| | contents | order |
+|---|---|---|
+| **args** | plain params verbatim; interface params as their feedforward half; then one feedback-half arg per **output** port | declaration order, then return-bundle order |
+| **return fields** | feedforward half per **output** port; then plain return-bundle fields; then feedback half per **input** port | bundle order, then param order |
+
+Every port keeps the name you gave it, and a half is omitted when that direction is empty.
+Reverse halves are whole structs, so assign them whole — and build one as its own local, since a
+struct constructor elaborates only as a whole assignment's right-hand side, not nested inside a
+call's arguments:
+
+```python
+@MAIN(80.0)
+def encrypt_dataflow():
+    axis_out_rev: axis128_fb_t = axis128_fb_t(ready=ports.axis_out_ready)
+    r = encrypt_dataflow_core(
+        ports.axis_in, ports.key, ports.nonce, ports.aad, ports.aad_len,
+        axis_out_rev,                             # reverse half of the output port
+    )
+    ports.axis_in_ready = r.axis_in.ready         # implied feedback -> explicit
+    ports.axis_out = r.axis_out
+```
+
+**Implied → manual: an interface function instantiates a hand-written module.** Here names *do*
+matter, in one narrow structural sense: **the two halves of a port share the port's name**, one
+on the argument side and one on the return side. The name itself is yours; there is no `_ready`
+or `ready_for_` affix anywhere in the mechanism. Direction comes from whichever side holds the
+feedforward half. Declaring only one half is a hard error *when such a module is instantiated by
+an interface function*, naming the port and the missing side — that shape used to mis-wire
+silently. As an earlier, more local heads-up, `@hw_func` also emits an `InterfacePortWarning` at
+decoration time whenever a signature declares one half of a port without the other, so the
+mistake surfaces even for a module no interface function has composed yet. The one legitimate
+lone half is an intentional [valid-only stream](#21-streams-stream_t) (data + valid,
+no backpressure); the warning names that exception, and standard `warnings.filterwarnings("ignore",
+category=InterfacePortWarning)` silences it where you mean it:
+
+```python
+@struct
+class gate_t(NamedTuple):
+    stream_in: chan_fb_t      # input port's reverse half travels out
+    stream_out: chan_t      # output port's feedforward half travels out
+    passed: uint8_t         # plain status, no reverse companion
+
+@hw_func
+def gate(stream_in: chan_t, limit: uint8_t, stream_out: chan_fb_t) -> gate_t:
+    o: gate_t
+    count: Reg[uint8_t]
+    open_: uint1_t = count < limit          # backpressure computed from state
+    o.stream_in.ready = stream_out.ready & open_
+    ...
+```
+
+That is the *only* change a stateful module needs to become callable from an interface function —
+its body keeps using `.ready` explicitly. `src/tests/pypeline_tests/inst/interface_boundary_test.py`
+exercises both crossings against a hand-written twin, plain signals included.
+
+### Array ports: fan-out
+
+An interface is point-to-point, so forking a stream needs a module that owns the fork. Its output
+is an **array port**: `axis_out: axis_t[n]` on the return side paired with `axis_out: axis_fb_t[n]`
+on the argument side. Each element is an independent interface with its own backpressure, so
+handing `bcast.axis_out[i]` to each sink is the whole wiring — the reverse array is assembled and
+fed back for you. `make_axis_broadcast_interlock` (§23) is the ready-made one:
+
+```python
+def fork_wiring(axis_in: axis_if) -> fork_ports:
+    d = bcast(axis_in)                    # no sink_ready array to build by hand
+    f = hold_fast(d.axis_out[0])
+    s = hold_slow(d.axis_out[1])
+    return fork_ports(fast=f.axis_out, slow=s.axis_out)
+```
+
+Array ports are an output-side feature; an array *input* port is rejected with a clear error.
+
+---
+
+## 23 AXI-Stream: `axis_t`
 
 `include/pypeline/axi/axis.py` composes the three layers above into a single factory for
 the common case — a complete AXI-Stream-equivalent type:
@@ -2466,8 +2716,25 @@ def axis32_passthrough(x: axis32_t) -> axis32_t:
 ```python
 bus_t = make_kept_data_bus_t(elem_t, n)
 fragment_t = make_ndarray_fragment_t(bus_t, ndims)
-return make_stream_t(fragment_t)
+return make_interface_type(make_stream_interface(fragment_t))
 ```
+
+i.e. the *feedforward half* (`{data, valid}`). A module that needs backpressure takes both
+halves as ports instead, built from `make_axis_interface(n, elem_t=uint8_t, ndims=1)` — the
+same three layers, stopping at the interface:
+
+```python
+from axi.axis import make_axis_interface
+from interface.interface import make_interface_type, make_interface_feedback_type
+
+axis32_if = make_axis_interface(4)
+axis32_t  = make_interface_type(axis32_if)           # {data, valid}
+axis32_fb_t = make_interface_feedback_type(axis32_if)  # {ready}
+```
+
+`make_axis_broadcast_interlock(axis_if, n)`, `make_dwidth_widen` and `make_dwidth_narrow` all
+declare their ports this way — see [Crossing between the two
+styles](#crossing-between-the-two-styles).
 
 so for an `axis32_t` value `x`:
 
@@ -2510,39 +2777,46 @@ synthesis through `pypelinec`.
 
 ---
 
-## 23 FIFOs: `make_stream_fifo`
+## 24 FIFOs: `make_stream_fifo`
 
 `include/pypeline/stream/stream_fifo.py`'s `make_stream_fifo` wraps a single-clock-domain FIFO
-in pypeline's standard [`stream_t`](#21-validready-streams-stream_t) valid/ready shape, so you
+in pypeline's standard valid/ready
+[stream interface](#the-stream-interface-validready-handshaking), so you
 don't have to unpack/repack `.data`/`.valid` by hand. (It's a thin layer over
 `include/pypeline/fifo.py`'s lower-level `make_fifo` — most users should just use
 `make_stream_fifo` directly and never need to touch `make_fifo` itself.)
 
 ```python
-from pypeline import uint32_t, MAIN, uint1_t
-from stream.stream import make_stream_t
+from pypeline import uint32_t, MAIN
 from stream.stream_fifo import make_stream_fifo
 
-uint32_stream_t = make_stream_t(uint32_t)
 stream_fifo, stream_fifo_t = make_stream_fifo(uint32_t, 256)   # 256-deep FIFO of uint32_t
+uint32_stream_t = stream_fifo.stream_t
+uint32_stream_fb_t = stream_fifo.stream_fb_t
 
 @MAIN
-def buffered(out_ready: uint1_t, in_stream: uint32_stream_t) -> stream_fifo_t:
-    return stream_fifo(out_ready, in_stream)
+def buffered(in_stream: uint32_stream_t, out_stream: uint32_stream_fb_t) -> stream_fifo_t:
+    return stream_fifo(in_stream, out_stream)
 ```
 
-`make_stream_fifo(data_t, depth, mode="fwft")` returns `(stream_fifo_func, stream_fifo_t)`:
+`make_stream_fifo(data_t, depth, mode="fwft")` returns `(stream_fifo_func, stream_fifo_t)`. It
+has one input port `in_stream` and one output port `out_stream`, each declared as the two
+halves of the same [interface](#22-bidirectional-ports-interface):
 
 | | Type | Meaning |
 |---|---|---|
-| `stream_fifo_func(out_ready, in_stream)` | `(uint1_t, stream_t) -> stream_fifo_t` | one FIFO instance |
+| `stream_fifo_func(in_stream, out_stream)` | `(stream_t, stream_fb_t) -> stream_fifo_t` | one FIFO instance |
 | `stream_fifo_t.out_stream` | `stream_t` | the FIFO's output: `.data`/`.valid` |
-| `stream_fifo_t.in_ready` | `uint1_t` | backpressure for `in_stream` — high while the FIFO has room |
+| `stream_fifo_t.in_stream` | `stream_fb_t` | backpressure for `in_stream` — `.ready` high while the FIFO has room |
 
-`in_stream` is built with `make_stream_t(data_t)` exactly as in [§21](#21-validready-streams-stream_t).
-`out_ready` is the downstream consumer's readiness for `stream_fifo_t.out_stream`, following the
-same convention `stream_t` itself uses — `ready` flows opposite to the stream and isn't bundled
-into the struct, so you wire it in from whatever's downstream.
+The interface and both halves hang off the returned function as `.stream_if` / `.stream_t` /
+`.stream_fb_t`, so callers don't rebuild them. Because the ports are interfaces, an
+[interface function](#interface-functions-write-feedforward-get-the-reverse-wired) can drop a
+FIFO into a chain with `f = stream_fifo(upstream.out_stream)` and no ready wiring at all.
+
+`make_fifo` itself is deliberately **not** migrated: its `data_in`/`data_in_valid`/
+`data_in_ready` signals are literally the wrapped VHDL entity's ports, and `make_stream_fifo`
+is its interface face.
 
 `depth` must be `>= 2`. `mode` only accepts `"fwft"` (first-word-fall-through) for now — the
 only underlying FIFO implementation currently available.
@@ -2557,13 +2831,13 @@ hardware, just not cycle-accurate internally. See `pypeline_sim_DESIGN.md`'s
 
 ---
 
-## 24 Pipelined Stream Wrappers: `make_stream_pipeline`
+## 25 Pipelined Stream Wrappers: `make_stream_pipeline`
 
 `include/pypeline/stream/stream_pipeline.py`'s `make_stream_pipeline` wraps a single
 combinational hardware function in a free-running, fully-pipelined
-[`stream_t`](#21-validready-streams-stream_t) interface: an
+[stream interface](#the-stream-interface-validready-handshaking): an
 [AUTOPIPELINE'd](#15-forcing-pipelining-autopipeline) instance (with registered
-input/output) feeding a [`make_fifo`](#23-fifos-make_stream_fifo)-backed output FIFO.
+input/output) feeding a [`make_fifo`](#24-fifos-make_stream_fifo)-backed output FIFO.
 The FIFO and in-flight counter are **sized automatically** from the AUTOPIPELINE
 instance's `.latency` — the tool-discovered pipeline depth — so there is no
 `MAX_IN_FLIGHT` parameter to guess and hand-tune against synthesis results. It's the
@@ -2585,18 +2859,18 @@ stream_pipeline, stream_pipeline_t = make_stream_pipeline(div_inv)
 
 @MAIN(50.0)
 def buffered_div_inv(
-    stream_in: uint8_stream_t, ready_for_stream_out: uint1_t
+    stream_in: stream_pipeline.in_stream_t, stream_out: stream_pipeline.out_fb_t
 ) -> stream_pipeline_t:
-    return stream_pipeline(stream_in, ready_for_stream_out)
+    return stream_pipeline(stream_in, stream_out)
 ```
 
 `make_stream_pipeline(func)` returns `(stream_pipeline_func, stream_pipeline_t)`:
 
 | | Type | Meaning |
 |---|---|---|
-| `stream_pipeline_func(stream_in, ready_for_stream_out)` | `(stream_t(in_type), uint1_t) -> stream_pipeline_t` | one pipelined instance of `func` |
+| `stream_pipeline_func(stream_in, stream_out)` | `(in_stream_t, out_fb_t) -> stream_pipeline_t` | one pipelined instance of `func`; ports are the two halves of a stream `@interface` |
 | `stream_pipeline_t.stream_out` | `stream_t(out_type)` | `func`'s result, after AUTOPIPELINE retiming and the output FIFO |
-| `stream_pipeline_t.ready_for_stream_in` | `uint1_t` | high while the pipeline can accept a new `stream_in` (tracks in-flight count against the FIFO depth) |
+| `stream_pipeline_t.stream_in.ready` | `uint1_t` | high while the pipeline can accept a new `stream_in` (tracks in-flight count against the FIFO depth) |
 
 The FIFO depth is `max(2, 1 + AUTOPIPELINE latency + 1)` — input reg + discovered core
 stages + output reg, i.e. every word that can be in flight at once, so downstream
@@ -2610,7 +2884,8 @@ native simulation imports the design with the same latency installed — so the 
 sized identically and the AUTOPIPELINE call site is emulated at the same depth.
 
 `in_type`/`out_type` are inferred from `func`'s own annotations via `hw_arg_types`/
-`hw_return_type`, the same way `make_valid_ready_mcp` does (see
+`hw_return_type`, the same way
+[`make_valid_ready_mcp`](#26-multi-cycle-stream-wrapper-make_valid_ready_mcp) does (see
 [§12](#12-parametric-hardware-with-factory-functions)). **`func` must already be
 `@hw_func`-decorated** — `make_stream_pipeline` calls `is_hw_func(func)` and raises
 `TypeError` immediately if it isn't, since `func` is called from inside an internal
@@ -2625,11 +2900,58 @@ pipeline — AUTOPIPELINE retiming plus the output FIFO — simulates via `sim_c
 
 ---
 
-## 25 DSP: FIR Filters
+## 26 Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`
+
+[`make_stream_pipeline`](#25-pipelined-stream-wrappers-make_stream_pipeline) above trades
+area for throughput: a free-running pipeline that accepts a new word every cycle.
+`make_valid_ready_mcp`, from `include/pypeline/multi_cycle_path.py`, is the other
+function-to-stream wrapper. It takes a single slow combinational function and gives it a
+[`MULTI_CYCLE[...]`](#16-multi-cycle-paths-multi_cycle) launch/capture FSM, presenting the
+result as a valid/ready [stream interface](#the-stream-interface-validready-handshaking) — one
+result every `ncycles + 1` cycles rather than one per cycle. It is the pypeline equivalent of
+PipelineC's `DECL_VALID_READY_MCP_FUNC` macro:
+
+```python
+from pypeline import hw_func, MAIN
+from multi_cycle_path import make_valid_ready_mcp
+
+@hw_func
+def divider(i: my_struct_t) -> uint32_t:
+    return i.x / i.y
+
+divider_mcp, divider_mcp_t = make_valid_ready_mcp(divider, 16)   # 16-cycle MCP
+
+@MAIN(100.0)
+def top(stream_in: divider_mcp.in_stream_t, stream_out: divider_mcp.out_fb_t) -> divider_mcp_t:
+    return divider_mcp(stream_in, stream_out)
+```
+
+`make_valid_ready_mcp(func, ncycles)` infers `in_type`/`out_type` from `func`'s own
+parameter/return type annotations (unlike the C macro, which takes them as separate
+arguments) and returns `(func_mcp, func_mcp_t)`. Its ports are the two halves of a stream
+`@interface`, exactly like `make_stream_pipeline`'s:
+
+| | Type | Meaning |
+|---|---|---|
+| `func_mcp(stream_in, stream_out)` | `(in_stream_t, out_fb_t) -> func_mcp_t` | one MCP-wrapped instance of `func` |
+| `func_mcp_t.stream_out` | `stream_t(out_type)` | `func`'s result, valid `ncycles + 1` cycles after launch |
+| `func_mcp_t.stream_in.ready` | `uint1_t` | high while the FSM is idle and ready to accept a new `stream_in` |
+
+Internally it is the same `MULTI_CYCLE[ncycles]` / `Reg[T, MC.start]` / `Reg[T, MC.end]`
+pattern from [§16](#16-multi-cycle-paths-multi_cycle), with `launch`/`capture` registers and a
+`cycles_since_launch` counter driving the handshake. Like `MULTI_CYCLE[...]` itself, the
+relaxed timing only matters during real FPGA synthesis (requires `PART()` + Vivado);
+simulation always sees `func`'s result settle the same cycle it is computed. See
+`src/tests/pypeline_tests/inst/valid_ready_mcp_test.py` (translated from
+`examples/mcp/mcp_divider.c`) for the full example.
+
+---
+
+## 27 DSP: FIR Filters
 
 `include/pypeline/dsp/` is a vendor-neutral FIR filter library in the spirit of the
 AMD/Xilinx FIR Compiler and Intel/Altera FIR II IP wizards, built on the
-[fixed-point types](#fixed-point-types) and [`make_stream_pipeline`](#24-pipelined-stream-wrappers-make_stream_pipeline).
+[fixed-point types](#fixed-point-types) and [`make_stream_pipeline`](#25-pipelined-stream-wrappers-make_stream_pipeline).
 Every filter is a **single feedforward combinational blob** — symmetric pre-adders,
 constant multiplies, a balanced adder tree, and the output rounding stage — that
 PipelineC AUTOPIPELINEs to whatever depth the target FPGA/fmax needs, wrapped in a
@@ -2654,11 +2976,11 @@ fir, fir_t = make_fir(
 )
 
 @MAIN(100.0)
-def top(stream_in: fir.in_stream_t, out_ready: uint1_t) -> fir_t:
-    return fir(stream_in, out_ready)
+def top(stream_in: fir.in_stream_t, stream_out: fir.out_fb_t) -> fir_t:
+    return fir(stream_in, stream_out)
 ```
 
-`fir_t` has the same `.stream_out` / `.ready_for_stream_in` field names as
+`fir_t` has the same `.stream_out` / `.stream_in` port fields as
 `make_stream_pipeline`, so filters chain like any stream pipeline instance. Remaining
 parameters:
 
@@ -2667,7 +2989,7 @@ parameters:
 | `gain` | `1` | Scales the float taps **before** quantization — zero hardware cost (needs `coeff_t` headroom) |
 | `symmetry` | `"auto"` | Detects symmetric/anti-symmetric **quantized** taps and folds them into pre-adders, halving the multipliers (like the vendor cores); `"none"` disables |
 | `skip_zero_taps` | `True` | Zero-coefficient taps are dropped at elaboration time — a half-band filter costs ~half the multipliers automatically |
-| `handshake` | `"elastic"` | `"elastic"` = valid/ready with an output FIFO and in-flight counter (FIFO sized automatically from the AUTOPIPELINE'd core's tool-discovered `.latency`, see [§24](#24-pipelined-stream-wrappers-make_stream_pipeline)); `"valid_only"` = vendor-style free-running stream (no FIFO — downstream must always accept) |
+| `handshake` | `"elastic"` | `"elastic"` = valid/ready with an output FIFO and in-flight counter (FIFO sized automatically from the AUTOPIPELINE'd core's tool-discovered `.latency`, see [§25](#25-pipelined-stream-wrappers-make_stream_pipeline)); `"valid_only"` = vendor-style free-running stream (no FIFO — downstream must always accept) |
 
 Accumulator sizing is **exact**: interval arithmetic over the actual quantized
 coefficient values and `data_t`'s range, so no intermediate can overflow and no bit is
@@ -2737,7 +3059,7 @@ primitive).
 
 ---
 
-## 26. Limitations / Not Yet Supported
+## 28. Limitations / Not Yet Supported
 
 The table below consolidates all known limitations and unsupported features.
 
@@ -2755,6 +3077,7 @@ The table below consolidates all known limitations and unsupported features.
 | **Multiple/early `return` statements** | Not supported | A function may have at most one `return`, and it must be the function's final top-level statement; assign to a variable inside `if`/`else` branches and return it once at the end (see [§6 Control flow](#6-your-first-hardware-function)) |
 | **Enum types in `byte_length`/`make_type_to_bytes`/`make_type_from_bytes`** | Not supported | Raises `NotImplementedError`, including for an enum nested inside a struct or array field (see [§11 Types](#11-types)) |
 | **Explicit casts (`uint32_t(x)`, etc.)** | Not supported | Calling a type as a function around a wire/parameter inside a hardware function body fails at elaboration time; assign to an intermediate variable with an explicit type annotation instead (see [§11 Types](#11-types)) |
+| **Control flow inside an interface function** | Rejected | `if`/`for`/`while` and conditional expressions in an interface-function body raise an `InterfaceError`; route conditional steering through an explicit handshake mux/demux module instead (see [§22 `@interface`](#22-bidirectional-ports-interface)). Interfaces are also point-to-point: fan-out of a single interface, dangling outputs and input-to-output bypass are rejected — fan out through a module with an [array port](#array-ports-fan-out) instead. Array *input* ports are not supported. Compile-time `for`/`while` unrolling in ordinary `@hw_func`s is unaffected |
 
 Coming from PipelineC? See also [docs/pipelinec_to_pypeline.md](pipelinec_to_pypeline.md)
 for a pattern-by-pattern translation reference.

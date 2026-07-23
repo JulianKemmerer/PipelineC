@@ -1375,6 +1375,137 @@ constants in the backend. The rest of VHDL generation (comparison operators,
 `wire_to_c_type` propagation, `enum_info_dict` lookup) is already handled by the existing
 C_TO_LOGIC backend — no changes to VHDL generation are needed.
 
+## `@interface` — Generated Reverse Wiring
+
+`@interface` (`include/pypeline/interface/interface.py`) declares a bundle of signals with
+per-field direction: plain fields are feedforward, `Feedback[T]` fields are reverse. It is a
+pure library construct — it derives two ordinary `@struct`s (one per direction) via
+`make_interface_type` / `make_interface_feedback_type`, and only those reach the elaborator.
+A whole interface is never a hardware type.
+
+A function annotated with a whole `@interface` is an **interface function**: its body wires
+only the feedforward direction. `make_hw_func_from_interface_func(f)`
+(`include/pypeline/interface/interface_func.py`) runs at import time, analyzes `f`'s AST, and
+**generates real source** for an ordinary reverse-threaded `@hw_func` (plus its port struct),
+which it `exec`s into a synthetic module registered in `sys.modules` + `linecache`. Both
+native simulation and elaboration consume that one artifact, so they cannot disagree. Python
+3.8 compatible: no `ast.unparse` — statements are emitted from templates or copied verbatim
+with `ast.get_source_segment`.
+
+**Port introspection is structural, not name-based.** A port's two halves share a name across
+args and return fields; whichever side holds the feedforward half sets the direction
+(`callee_ports`). This replaced an earlier `ready_for_<name>` prefix convention, which real
+code had already outgrown — wireguard's `chacha20_fsm` mixed `ready_for_from_pipeline`
+(prefix) with `to_pipeline_ready` (suffix). Because pairing is by the port's own name plus the
+interface the two halves derive from, port names are arbitrary and hand-written modules,
+generated modules, and multi-output modules all introspect identically.
+
+Declaring only one half of a port is a **hard error** that names the port and the missing side.
+That shape — an interface-typed `axis_in` next to a leftover scalar `axis_in_ready` — used to be
+half-recognized and then failed much later with an unrecognizable message (or, worse, dropped
+the reverse connection silently). The diagnostic *quotes* a likely legacy scalar
+(`<port>_ready`, `ready_for_<port>`, `<port>_rdy`) to say what to replace, but no affix is ever
+consulted to decide a connection; reviving a naming convention was considered and rejected.
+
+That error fires at *composition* (`callee_ports`, reached only when an interface function
+instantiates the module). A complementary, earlier signal lives in `pypeline.py`'s `@hw_func`
+itself: `_warn_partial_interface_ports` emits an `InterfacePortWarning` at decoration time for a
+signature that declares one half of a port without the other, catching it even for a module no
+interface function has composed yet. It is a **warning**, not an error, because the identical
+shape is a legitimate valid-only stream (the feedforward half used as plain data with no
+backpressure — `make_stream_t`, `dsp/fir.py`'s `handshake="valid_only"`, the dwidth chunk
+helpers); the message names that exception and the standard `warnings` filter silences it. The
+check is `getattr`-only on the interface tags and consults `_pypeline_iface_derived` to skip
+genuinely one-directional interfaces, so pypeline.py keeps its zero dependency on the interface
+library.
+
+**Array ports (fan-out).** A port may be `T[n]` where `T` is a derived half, paired with the
+other half's `T'[n]` under the same name. Each element is an independent interface: producers
+and consumers are tracked per element (`var.field[i]`), each element must be consumed exactly
+once, and the reverse array is assembled into a local immediately before the call. This is what
+`make_axis_broadcast_interlock` exposes, and it is the only supported way to fan out an
+interface. Array ports are output-side only — an array input port raises, since there is no
+body syntax that could build an array of interface values.
+
+**Naming determinism.** The generated function and struct names fold in
+`_enclosing_factory_param_suffix`, so an interface function defined inside a factory is named
+for that factory's parameters. Without it, `make_encrypt_dataflow_core(A)` and `(B)` produce
+identical canonical names for different hardware. The frame walk skips this module's own frames
+so a nested interface function still resolves to its real factory rather than to the pass. A
+long suffix is hashed — the generated module's name becomes a *directory* name during synthesis,
+and a factory with many parameters (`dsp/fir_interp`) overflows the filesystem limit otherwise.
+
+Every name the pass introduces (injected type aliases, feedback locals, the function and its
+struct) also carries an 8-hex tag derived from the interface function's module + qualname +
+factory suffix. Two generated modules would otherwise both define `if_t1`, `if_t2`, … — and
+because `_elaborate_live_func` merges `{**func_own_globals, **self.module_globals,
+**closure_ns}`, a *caller's* globals outrank the callee's own. A generated module calling another
+generated module then resolved the caller's same-numbered type, silently giving a local the wrong
+port type; it surfaced only as an unrelatable "Cant support this assignment in vhdl?" during VHDL
+writing. Interface functions nest in real designs (wireguard's dataflow cores call
+`poly1305_mac_instance`), so the tag is load-bearing, and being a hash of identity it keeps
+generated source byte-identical across runs.
+
+**Subscripted annotations on factory-local types.** A name used only inside an annotation is not
+captured as a closure cell, so `axis_out: axis_fb_t[n]` could not be re-evaluated during
+elaboration. `_annotation_elem_type_ns` recovers the element type from the already-resolved array
+in `__annotations__` and merges it at *lowest* priority. It is deliberately kept out of
+`closure_ns`: that dict feeds `_canonical_func_name`, so adding to it renames entities.
+(`pypeline.py`'s `_build_reg_sim_func` had the same problem on the simulation side and now
+substitutes pre-resolved annotation objects into the AST it re-`exec`s.)
+
+**The wiring rule.** Calls are emitted in source order over the full dataflow graph; an edge
+gets a `Feedback[T]` iff the value's source is emitted *after* the destination consuming it.
+This is direction-agnostic — it fires on a reverse edge (ordinary backpressure) and equally on
+a feedforward edge, which is what makes FSM+datapath loops expressible (wireguard's
+`chacha20_instance` / `poly1305_mac_instance`, whose two hand-threaded `Feedback`s the pass
+now reproduces exactly).
+
+**Core touchpoints.** Interfaces are library-level, but three small changes were needed:
+
+1. **Top-level sweep skip (Step 5 of `PARSE_FILE`).** A raw interface function sits at module
+   level with a body that omits its callees' reverse args, so it is not directly elaboratable.
+   The unconditional sweep skips any function whose annotations include a whole `@interface`,
+   the same way `@sim_output`/`@sim_input` are skipped. Only the generated function elaborates
+   (reached on demand via `_elaborate_live_func`).
+2. **Struct discovery (`_register_struct_recursive`).** An `@interface` is a NamedTuple
+   subclass, so module-namespace discovery would otherwise register it as a hardware struct —
+   but its `Feedback[T]` fields have no C type. Interfaces are skipped; only their derived
+   one-directional structs are real.
+3. **`@struct` validation (`pypeline.py`).** A plain struct has one direction, so a
+   `Feedback[...]` field or a whole interface inside it is meaningless and is rejected at
+   declaration rather than producing a nonsense C type name that fails later in VHDL writing.
+   (`_FeedbackType` also gained a `__call__` so `typing.NamedTuple`\'s `_type_check`, which
+   only requires `callable()`, accepts `Feedback[T]` as a field annotation on Python 3.8.)
+
+**Rejections.** Straight-line wiring only: `if`/`for`/`while`/`with` and conditional
+expressions raise; interfaces are point-to-point so fan-out of one interface, dangling outputs,
+input-to-output bypass, and use of an interface value outside a module call all raise with a
+specific message. A plain statement *may* read a non-interface field off a call result (a status
+flag, a count) — only the interface ports themselves are off limits — and every plain field of a
+return bundle must be assigned. Modules whose reverse signal is computed from state stay
+hand-written; the pass wires such modules together rather than replacing them.
+
+**Crossing the two styles.** Both directions are ordinary. A hand-written `@hw_func` or `@MAIN`
+instantiating a generated instance matches nothing by name — it is a plain hw_func call, whose
+port shape is: args = params (interface ones as their feedforward half) then one feedback-half
+arg per output port; return = feedforward half per output port, then plain bundle fields, then
+feedback half per input port. Going the other way, a hand-written module becomes callable by
+declaring both halves of each port under the port's name; its body keeps computing `.ready`
+explicitly.
+
+**Caveat for port renames.** Interface port names become VHDL identifiers, so they can collide
+with other VHDL names — notably enum literals (a port named `poly_key` collided with the
+`POLY_KEY` member of a `chacha20_state_t` enum, which Vivado resolved to the literal). Such
+collisions are invisible to native sim and to elaboration; only real synthesis catches them.
+
+Tests: `inst/interface_test.py` (the primitive, on a deliberately non-stream interface),
+`inst/interface_func_test.py`, `inst/interface_func_loop_test.py`,
+`inst/interface_boundary_test.py` (both style crossings + plain signals across them),
+`inst/interface_array_port_test.py` (array fan-out through the real axis broadcast),
+`inst/interface_mixing_rules_test.py` (the hard errors, plain-statement rules, factory naming).
+
+
 ## Char Array Support
 
 Unlike enum types, char arrays need **no discovery/registration pass** — `"char[16]"` is

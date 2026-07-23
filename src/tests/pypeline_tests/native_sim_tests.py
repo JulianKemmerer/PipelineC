@@ -43,6 +43,13 @@ PLAIN_PYTHON_TEST_FILES = [
     "fir_test.py",
     "fir_decim_test.py",
     "fir_interp_test.py",
+    "interface_test.py",
+    "interface_func_test.py",
+    "interface_func_loop_test.py",
+    "interface_boundary_test.py",
+    "interface_array_port_test.py",
+    "interface_mixing_rules_test.py",
+    "interface_hw_func_pairing_warn_test.py",
 ]
 # fmt: on
 

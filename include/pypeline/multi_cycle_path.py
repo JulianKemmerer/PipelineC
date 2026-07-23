@@ -12,7 +12,8 @@ from pypeline import (
     is_hw_func,
 )
 
-from stream.stream import make_stream_t
+from interface.interface import make_interface_feedback_type, make_interface_type
+from stream.stream import make_stream_interface
 
 
 def make_valid_ready_mcp(func, ncycles: int):
@@ -26,8 +27,8 @@ def make_valid_ready_mcp(func, ncycles: int):
         def divider(i: my_struct_t) -> uint32_t: ...
 
     Returns (func_mcp, func_mcp_t):
-        func_mcp(stream_in: stream_t(in_type), ready_for_stream_out: uint1_t) -> func_mcp_t
-        func_mcp_t fields: .stream_out (stream_t(out_type)), .ready_for_stream_in (uint1_t)
+        func_mcp(stream_in: in_stream_t, stream_out: out_fb_t) -> func_mcp_t
+        func_mcp_t fields: .stream_in (in_fb_t), .stream_out (out_stream_t)
     """
     if not is_hw_func(func):
         raise TypeError(
@@ -37,16 +38,20 @@ def make_valid_ready_mcp(func, ncycles: int):
     (in_type,) = hw_arg_types(func)
     out_type = hw_return_type(func)
 
-    in_stream_t = make_stream_t(in_type)
-    out_stream_t = make_stream_t(out_type)
+    in_if = make_stream_interface(in_type)
+    out_if = make_stream_interface(out_type)
+    in_stream_t = make_interface_type(in_if)
+    in_fb_t = make_interface_feedback_type(in_if)
+    out_stream_t = make_interface_type(out_if)
+    out_fb_t = make_interface_feedback_type(out_if)
 
     @struct
     class func_mcp_t(NamedTuple):
-        stream_out: out_stream_t
-        ready_for_stream_in: uint1_t
+        stream_in: in_fb_t  # input port's reverse half travels out
+        stream_out: out_stream_t  # output port's feedforward half travels out
 
     @hw_func
-    def func_mcp(stream_in: in_stream_t, ready_for_stream_out: uint1_t) -> func_mcp_t:
+    def func_mcp(stream_in: in_stream_t, stream_out: out_fb_t) -> func_mcp_t:
         # Start/capture regs spanning the multi-cycle path
         MC = MULTI_CYCLE[ncycles]
         launch: Reg[in_type, MC.start]
@@ -61,18 +66,24 @@ def make_valid_ready_mcp(func, ncycles: int):
         # Output side first, for same-cycle output/input handshake
         if cycles_since_launch == (ncycles + 1):
             o.stream_out.valid = 1
-            if o.stream_out.valid & ready_for_stream_out:
+            if o.stream_out.valid & stream_out.ready:
                 cycles_since_launch = 0
         elif cycles_since_launch > 0:
             cycles_since_launch += 1
 
         if cycles_since_launch == 0:
-            o.ready_for_stream_in = 1
-            if stream_in.valid & o.ready_for_stream_in:
+            o.stream_in.ready = 1
+            if stream_in.valid & o.stream_in.ready:
                 launch = stream_in.data
                 cycles_since_launch = 1
 
         capture = capture_next
         return o
 
+    func_mcp.in_if = in_if
+    func_mcp.out_if = out_if
+    func_mcp.in_stream_t = in_stream_t
+    func_mcp.in_fb_t = in_fb_t
+    func_mcp.out_stream_t = out_stream_t
+    func_mcp.out_fb_t = out_fb_t
     return func_mcp, func_mcp_t

@@ -16,8 +16,9 @@ sys.path.insert(
         "pypeline",
     ),
 )
-from pypeline import MAIN, sim_call, sim_reset, uint1_t, uint8_t, hw_return_type
+from pypeline import MAIN, sim_call, sim_reset, uint8_t, hw_return_type
 
+from interface.interface import make_interface_feedback_type, make_interface_type
 from axi.axis import (
     make_split_to_chunks,
     make_assemble_chunks,
@@ -34,9 +35,14 @@ RATIO = 4  # wide_n = N * RATIO = 16
     wide_bus_t,
     narrow_frag_t,
     wide_frag_t,
-    narrow_axis_t,
-    wide_axis_t,
+    narrow_axis_if,
+    wide_axis_if,
 ) = _make_dwidth_types(uint8_t, N, RATIO)
+
+narrow_axis_t = make_interface_type(narrow_axis_if)
+narrow_axis_fb_t = make_interface_feedback_type(narrow_axis_if)
+wide_axis_t = make_interface_type(wide_axis_if)
+wide_axis_fb_t = make_interface_feedback_type(wide_axis_if)
 
 chunks_t = narrow_axis_t[RATIO]
 
@@ -68,16 +74,16 @@ def assemble_chunks_main(chunks: chunks_t) -> wide_frag_t:
 
 @MAIN
 def dwidth_widen_main(
-    narrow_in: narrow_axis_t, wide_out_ready: uint1_t
+    narrow_in: narrow_axis_t, wide_out: wide_axis_fb_t
 ) -> dwidth_widen_result_t:
-    return dwidth_widen(narrow_in, wide_out_ready)
+    return dwidth_widen(narrow_in, wide_out)
 
 
 @MAIN
 def dwidth_narrow_main(
-    wide_in: wide_axis_t, narrow_out_ready: uint1_t
+    wide_in: wide_axis_t, narrow_out: narrow_axis_fb_t
 ) -> dwidth_narrow_result_t:
-    return dwidth_narrow(wide_in, narrow_out_ready)
+    return dwidth_narrow(wide_in, narrow_out)
 
 
 def mk_narrow(data, keep, eod0, valid):
@@ -119,19 +125,19 @@ def test_widen_full_beats():
             eod0=1 if i == 3 else 0,
             valid=1,
         )
-        r = sim_call(dwidth_widen, nin, 1)
-        assert int(r.narrow_in_ready) == 1, f"expected ready to accept beat {i}"
+        r = sim_call(dwidth_widen, nin, wide_axis_fb_t(ready=1))
+        assert int(r.narrow_in.ready) == 1, f"expected ready to accept beat {i}"
         assert (
             int(r.wide_out.valid) == 0
         ), f"unexpected wide_out before accumulation done (i={i})"
 
     idle = mk_narrow(data=[0] * N, keep=[0] * N, eod0=0, valid=0)
     r = sim_call(
-        dwidth_widen, idle, 1
+        dwidth_widen, idle, wide_axis_fb_t(ready=1)
     )  # one extra cycle for the 4th beat to incorporate
     assert int(r.wide_out.valid) == 0
 
-    r = sim_call(dwidth_widen, idle, 1)
+    r = sim_call(dwidth_widen, idle, wide_axis_fb_t(ready=1))
     assert int(r.wide_out.valid) == 1
     assert list(r.wide_out.data.frag.data) == list(range(16))
     assert list(r.wide_out.data.frag.keep) == [1] * 16
@@ -144,21 +150,21 @@ def test_widen_partial_final_beat():
     wide output covering just those 2 beats worth of data."""
     sim_reset()
     nin0 = mk_narrow(data=[10, 11, 12, 13], keep=[1, 1, 1, 1], eod0=0, valid=1)
-    r = sim_call(dwidth_widen, nin0, 1)
-    assert int(r.narrow_in_ready) == 1
+    r = sim_call(dwidth_widen, nin0, wide_axis_fb_t(ready=1))
+    assert int(r.narrow_in.ready) == 1
 
     nin1 = mk_narrow(data=[20, 21, 0, 0], keep=[1, 1, 0, 0], eod0=1, valid=1)
-    r = sim_call(dwidth_widen, nin1, 1)
-    assert int(r.narrow_in_ready) == 1
+    r = sim_call(dwidth_widen, nin1, wide_axis_fb_t(ready=1))
+    assert int(r.narrow_in.ready) == 1
     assert int(r.wide_out.valid) == 0
 
     idle = mk_narrow(data=[0] * N, keep=[0] * N, eod0=0, valid=0)
     r = sim_call(
-        dwidth_widen, idle, 1
+        dwidth_widen, idle, wide_axis_fb_t(ready=1)
     )  # one extra cycle for the 2nd beat to incorporate
     assert int(r.wide_out.valid) == 0
 
-    r = sim_call(dwidth_widen, idle, 1)
+    r = sim_call(dwidth_widen, idle, wide_axis_fb_t(ready=1))
     assert int(r.wide_out.valid) == 1, "expected the short packet to flush out"
     assert list(r.wide_out.data.frag.data) == [10, 11, 12, 13, 20, 21, 0, 0] + [0] * 8
     assert list(r.wide_out.data.frag.keep) == [1, 1, 1, 1, 1, 1, 0, 0] + [0] * 8
@@ -179,11 +185,11 @@ def test_widen_back_to_back_packets():
             eod0=1 if i == 7 else 0,
             valid=1,
         )
-        r = sim_call(dwidth_widen, nin, 1)
+        r = sim_call(dwidth_widen, nin, wide_axis_fb_t(ready=1))
         if r.wide_out.valid:
             wide_outs.append(r.wide_out)
     for _ in range(2):
-        r = sim_call(dwidth_widen, idle, 1)
+        r = sim_call(dwidth_widen, idle, wide_axis_fb_t(ready=1))
         if r.wide_out.valid:
             wide_outs.append(r.wide_out)
 
@@ -202,12 +208,12 @@ def test_narrow_full_beat_drain():
     win = mk_wide(data=list(range(16)), keep=[1] * 16, eod0=1, valid=1)
     win_idle = mk_wide(data=[0] * 16, keep=[0] * 16, eod0=0, valid=0)
 
-    r = sim_call(dwidth_narrow, win, 1)
-    assert int(r.wide_in_ready) == 1
+    r = sim_call(dwidth_narrow, win, narrow_axis_fb_t(ready=1))
+    assert int(r.wide_in.ready) == 1
 
     drained = []
     for _ in range(5):
-        r = sim_call(dwidth_narrow, win_idle, 1)
+        r = sim_call(dwidth_narrow, win_idle, narrow_axis_fb_t(ready=1))
         if r.narrow_out.valid:
             drained.append(
                 (list(r.narrow_out.data.frag.data), int(r.narrow_out.data.eod[0]))
@@ -245,22 +251,22 @@ def test_widen_narrow_round_trip():
 
     wide_outs = []
     for nin in original:
-        r = sim_call(dwidth_widen, nin, 1)
+        r = sim_call(dwidth_widen, nin, wide_axis_fb_t(ready=1))
         if r.wide_out.valid:
             wide_outs.append(r.wide_out)
     for _ in range(2):
-        r = sim_call(dwidth_widen, idle_n, 1)
+        r = sim_call(dwidth_widen, idle_n, wide_axis_fb_t(ready=1))
         if r.wide_out.valid:
             wide_outs.append(r.wide_out)
     assert len(wide_outs) == 1
 
     drained = []
     win = wide_outs[0]
-    r = sim_call(dwidth_narrow, win, 1)
+    r = sim_call(dwidth_narrow, win, narrow_axis_fb_t(ready=1))
     if r.narrow_out.valid:
         drained.append(r.narrow_out)
     for _ in range(5):
-        r = sim_call(dwidth_narrow, idle_w, 1)
+        r = sim_call(dwidth_narrow, idle_w, narrow_axis_fb_t(ready=1))
         if r.narrow_out.valid:
             drained.append(r.narrow_out)
 

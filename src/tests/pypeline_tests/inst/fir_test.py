@@ -85,23 +85,31 @@ fir_vonly, fir_vonly_t = make_fir(
 
 
 @MAIN(100.0)
-def fir_sym_main(stream_in: fir_sym.in_stream_t, out_ready: uint1_t) -> fir_sym_t:
-    return fir_sym(stream_in, out_ready)
+def fir_sym_main(
+    stream_in: fir_sym.in_stream_t, stream_out: fir_sym.out_fb_t
+) -> fir_sym_t:
+    return fir_sym(stream_in, stream_out)
 
 
 @MAIN(100.0)
-def fir_hb_main(stream_in: fir_hb.in_stream_t, out_ready: uint1_t) -> fir_hb_t:
-    return fir_hb(stream_in, out_ready)
+def fir_hb_main(
+    stream_in: fir_hb.in_stream_t, stream_out: fir_hb.out_fb_t
+) -> fir_hb_t:
+    return fir_hb(stream_in, stream_out)
 
 
 @MAIN(100.0)
-def fir_anti_main(stream_in: fir_anti.in_stream_t, out_ready: uint1_t) -> fir_anti_t:
-    return fir_anti(stream_in, out_ready)
+def fir_anti_main(
+    stream_in: fir_anti.in_stream_t, stream_out: fir_anti.out_fb_t
+) -> fir_anti_t:
+    return fir_anti(stream_in, stream_out)
 
 
 @MAIN(100.0)
-def fir_full_main(stream_in: fir_full.in_stream_t, out_ready: uint1_t) -> fir_full_t:
-    return fir_full(stream_in, out_ready)
+def fir_full_main(
+    stream_in: fir_full.in_stream_t, stream_out: fir_full.out_fb_t
+) -> fir_full_t:
+    return fir_full(stream_in, stream_out)
 
 
 @MAIN(100.0)
@@ -127,8 +135,12 @@ def _drive_elastic(
         v = 1 if have else 0
         d = inputs_q[idx] if have else 0
         rdy = 1 if out_ready_fn(cycle) else 0
-        r = sim_call(fir, in_stream_t(data=fir.data_t(val=d), valid=v), rdy)
-        if v and int(r.ready_for_stream_in):
+        r = sim_call(
+            fir,
+            in_stream_t(data=fir.data_t(val=d), valid=v),
+            fir.out_fb_t(ready=rdy),
+        )
+        if v and int(r.stream_in.ready):
             idx += 1
         if int(r.stream_out.valid) and rdy:
             outputs.append(int(r.stream_out.data.val))

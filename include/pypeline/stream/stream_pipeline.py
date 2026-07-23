@@ -13,7 +13,11 @@ from pypeline import (
 )
 
 from fifo import make_fifo
-from stream.stream import make_stream_t
+from interface.interface import (
+    make_interface_feedback_type,
+    make_interface_type,
+)
+from stream.stream import make_stream_interface
 
 
 def make_stream_pipeline(func):
@@ -38,9 +42,12 @@ def make_stream_pipeline(func):
         @hw_func
         def fft_2pt_w_omega_lut(i: fft_2pt_w_omega_lut_in_t) -> fft_2pt_out_t: ...
 
-    Returns (stream_pipeline_func, stream_pipeline_t):
-        stream_pipeline_func(stream_in: stream_t(in_type), ready_for_stream_out: uint1_t) -> stream_pipeline_t
-        stream_pipeline_t fields: .stream_out (stream_t(out_type)), .ready_for_stream_in (uint1_t)
+    Ports are declared as the two halves of a stream `@interface`, so this
+    composes inside an interface function with no adapter:
+        stream_pipeline_func(stream_in: in_stream_t, stream_out: out_fb_t) -> stream_pipeline_t
+        stream_pipeline_t fields: .stream_out (out_stream_t), .stream_in (in_fb_t)
+    i.e. input port `stream_in` takes its feedforward half as an arg and returns
+    its reverse half; output port `stream_out` does the reverse.
     """
     if not is_hw_func(func):
         raise TypeError(
@@ -50,8 +57,12 @@ def make_stream_pipeline(func):
     (in_type,) = hw_arg_types(func)
     out_type = hw_return_type(func)
 
-    in_stream_t = make_stream_t(in_type)
-    out_stream_t = make_stream_t(out_type)
+    in_if = make_stream_interface(in_type)
+    out_if = make_stream_interface(out_type)
+    in_stream_t = make_interface_type(in_if)
+    in_fb_t = make_interface_feedback_type(in_if)
+    out_stream_t = make_interface_type(out_if)
+    out_fb_t = make_interface_feedback_type(out_if)
 
     # Thread .valid alongside .data so the AUTOPIPELINE retiming balances
     # valid through the same number of stages it picks for func's data path.
@@ -78,12 +89,12 @@ def make_stream_pipeline(func):
 
     @struct
     class stream_pipeline_t(NamedTuple):
-        stream_out: out_stream_t
-        ready_for_stream_in: uint1_t
+        stream_in: in_fb_t  # input port's reverse half travels out
+        stream_out: out_stream_t  # output port's feedforward half travels out
 
     @hw_func
     def stream_pipeline(
-        stream_in: in_stream_t, ready_for_stream_out: uint1_t
+        stream_in: in_stream_t, stream_out: out_fb_t
     ) -> stream_pipeline_t:
         o: stream_pipeline_t
 
@@ -92,24 +103,24 @@ def make_stream_pipeline(func):
         # Registered ready (matches the macro's static in_ready_reg): read old value,
         # written for next cycle further down.
         ready_reg: Reg[uint1_t]
-        o.ready_for_stream_in = ready_reg
+        o.stream_in.ready = ready_reg
 
         # Free-flowing pipeline input, gated by ready.
         no_handshake_in: in_stream_t
-        no_handshake_in.valid = stream_in.valid & o.ready_for_stream_in
+        no_handshake_in.valid = stream_in.valid & o.stream_in.ready
         no_handshake_in.data = stream_in.data
         no_handshake_out: out_stream_t = autopipelined_func(no_handshake_in)
 
         # Free-flowing pipeline output into the FIFO; FIFO never overflows because
         # ready already accounted for in_flight < fifo_depth.
         f = fifo_func(
-            ready_for_stream_out, no_handshake_out.data, no_handshake_out.valid
+            stream_out.ready, no_handshake_out.data, no_handshake_out.valid
         )
         o.stream_out = out_stream_t(data=f.data_out, valid=f.data_out_valid)
 
         # Update in-flight count / next-cycle ready from accept/retire this cycle.
-        accepted: uint1_t = stream_in.valid & o.ready_for_stream_in
-        retired: uint1_t = o.stream_out.valid & ready_for_stream_out
+        accepted: uint1_t = stream_in.valid & o.stream_in.ready
+        retired: uint1_t = o.stream_out.valid & stream_out.ready
 
         ready_reg = in_flight < fifo_depth
         if accepted & ~retired:
@@ -121,4 +132,12 @@ def make_stream_pipeline(func):
 
         return o
 
+    # The port interfaces (and their two halves), so callers can declare
+    # matching ports / write interface functions over this module.
+    stream_pipeline.in_if = in_if
+    stream_pipeline.out_if = out_if
+    stream_pipeline.in_stream_t = in_stream_t
+    stream_pipeline.in_fb_t = in_fb_t
+    stream_pipeline.out_stream_t = out_stream_t
+    stream_pipeline.out_fb_t = out_fb_t
     return stream_pipeline, stream_pipeline_t
