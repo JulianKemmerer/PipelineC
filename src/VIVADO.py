@@ -76,19 +76,6 @@ class ParsedTimingReport:
             if "inferred exception to break timing loop" in syn_output_line:
                 print(syn_output_line)
 
-            # Constant outputs?
-
-            # Unconnected ports are maybe problem?
-            if ("design " in syn_output_line) and (
-                " has unconnected port " in syn_output_line
-            ):
-                if syn_output_line.endswith("unconnected port clk"):
-                    # Clock NOT OK to disconnect
-                    print("WARNING: Disconnected clock!?", syn_output_line)
-                    # sys.exit(-1)
-                # else:
-                #  print syn_output_line
-
             # No driver?
             if ("Net " in syn_output_line) and (
                 " does not have driver" in syn_output_line
