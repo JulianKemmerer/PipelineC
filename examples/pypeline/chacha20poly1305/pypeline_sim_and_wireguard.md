@@ -55,17 +55,7 @@ cycle, with no VHDL/GHDL/cocotb required.
 
 Moving to Pypeline's random, reference-model-checked testbenches actually turned up a real bug that has since been fixed.
 The original `poly1305.h`'s 320-bit limb math (ported line-for-line into
-`poly1305.py`) had three interlocking bugs:
-
-1. `uint320_mul` truncated each 64x64-bit limb-pair product to its low 64
-   bits, silently discarding the high word.
-2. `uint320_mod_prime` used the wrong "bits below 2^130" mask when folding
-   limb 2 down (`0x3FFFFFFFFFF` instead of `0x3` — 2^130 is bit 2 of limb 2,
-   not bit 41).
-3. `uint320_mod_prime` discarded limbs 3 and 4 outright instead of folding
-   them back into the result — harmless while bug 1 kept products
-   artificially small, but a real bug once the multiply is fixed and
-   products actually reach limb 3.
+`poly1305.py`) had three interlocking bugs. See details in [`wireguard-fpga/3.build/pypeline_build/README.md`](https://github.com/chili-chips-ba/wireguard-fpga/tree/main/3.build/pypeline_build#fixed-poly1305-320-bit-math-is-now-rfc-8439-correct).
 
 The old fixed-vector testbenches never caught this, the same incorrect software C code was used as the reference model for test vectors and as PipelineC code for the hardware design.
 The design was internally self-consistent just not RFC 8439-conformant.
@@ -197,23 +187,6 @@ in `pypeline_sim_DESIGN.md` for the mechanics.
 
 If a mismatch between native Python based simulation and generated VHDL is suspected
 then [`pypeline_sim_debug.py`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#pypeline_sim_debugpy--native-vs-vhdl-cycle-diff-tool) can be used. It compares `sim_print(..., debug=True)`-tagged output between the native simulator and real cocotb+GHDL. This confirms that not only have no `sim_assert`s failed but also that both simulations produce identical *cycle-accurate* behavior.
-
-## A Tiny Practical Example
-
-The smallest possible loop on this design looks like:
-
-```bash
-cd 3.build/pypeline_build
-export PYPELINEC=/path/to/PipelineC/src/pypelinec
-./build.py --enc --sim --comb --native
-```
-
-That's a full encrypt-side correctness check: 10 random packets, RFC
-8439-verified against a real Python crypto library, zero-latency
-combinational timing. No VHDL generated at all, simulation starts immediately and finishes in seconds.
-For the underlying language mechanics (`@sim_input`/`@sim_output`, `sim_assert`,
-`sim_print`), see the
-[`pypeline_guide.md` Simulation section](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#4-simulation).
 
 ## Next Steps
 
