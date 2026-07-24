@@ -16,9 +16,9 @@ def make_stream_fifo(data_t, depth: int, mode: str = "fwft"):
         stream_fifo_func(in_stream: stream_t, out_stream: stream_fb_t) -> stream_fifo_t
         stream_fifo_t fields: .out_stream (stream_t), .in_stream (stream_fb_t)
     """
-    stream_if = make_stream_interface(data_t)
-    stream_t = make_interface_type(stream_if)
-    stream_fb_t = make_interface_feedback_type(stream_if)
+    stream_intrf = make_stream_interface(data_t)
+    stream_t = make_interface_type(stream_intrf)
+    stream_fb_t = make_interface_feedback_type(stream_intrf)
     fifo_func, fifo_t = make_fifo(data_t, depth, mode)
 
     @struct
@@ -34,7 +34,7 @@ def make_stream_fifo(data_t, depth: int, mode: str = "fwft"):
         o.in_stream.ready = r.data_in_ready
         return o
 
-    stream_fifo.stream_if = stream_if
+    stream_fifo.stream_intrf = stream_intrf
     stream_fifo.stream_t = stream_t
     stream_fifo.stream_fb_t = stream_fb_t
     return stream_fifo, stream_fifo_t

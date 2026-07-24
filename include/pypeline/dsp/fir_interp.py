@@ -55,9 +55,9 @@ def make_zero_stuffer(data_t, factor):
         raise ValueError(
             f"make_zero_stuffer: factor must be an int >= 1, got {factor!r}"
         )
-    stream_if = make_stream_interface(data_t)
-    stream_t = make_interface_type(stream_if)
-    stream_fb_t = make_interface_feedback_type(stream_if)
+    stream_intrf = make_stream_interface(data_t)
+    stream_t = make_interface_type(stream_intrf)
+    stream_fb_t = make_interface_feedback_type(stream_intrf)
     count_t = make_uint_t(max(1, (factor - 1).bit_length()))
     LAST = factor - 1
 
@@ -99,7 +99,7 @@ def make_zero_stuffer(data_t, factor):
             count = 0
         return o
 
-    zero_stuffer.stream_if = stream_if
+    zero_stuffer.stream_intrf = stream_intrf
     zero_stuffer.in_stream_t = stream_t
     zero_stuffer.in_fb_t = stream_fb_t
     return zero_stuffer, zero_stuffer_t
@@ -152,12 +152,12 @@ def make_fir_interp(
     # read the same as its hand-written siblings (fir, fir_decim).
     @interface
     class fir_interp_ports(NamedTuple):
-        stream_out: fir.out_if
+        stream_out: fir.out_intrf
 
     # An interface function: only the feedforward direction is written, and the
     # reverse (`ready`) wiring between stuffer and fir -- previously a hand-held
     # Feedback[uint1_t] -- is generated.
-    def fir_interp_wiring(stream_in: stuffer.stream_if) -> fir_interp_ports:
+    def fir_interp_wiring(stream_in: stuffer.stream_intrf) -> fir_interp_ports:
         st = stuffer(stream_in)
         f = fir(st.stream_out)
         return fir_interp_ports(stream_out=f.stream_out)
@@ -180,6 +180,6 @@ def make_fir_interp(
     fir_interp.out_stream_t = out_stream_t
     fir_interp.in_fb_t = stuffer.in_fb_t
     fir_interp.out_fb_t = fir.out_fb_t
-    fir_interp.in_if = stuffer.stream_if
-    fir_interp.out_if = fir.out_if
+    fir_interp.in_intrf = stuffer.stream_intrf
+    fir_interp.out_intrf = fir.out_intrf
     return fir_interp, fir_interp_t

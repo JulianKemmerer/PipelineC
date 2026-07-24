@@ -111,9 +111,9 @@ def make_fir(
     )
 
     win_t = data_t[n_taps]
-    in_if = make_stream_interface(data_t)
-    in_stream_t = make_interface_type(in_if)
-    in_fb_t = make_interface_feedback_type(in_if)
+    in_intrf = make_stream_interface(data_t)
+    in_stream_t = make_interface_type(in_intrf)
+    in_fb_t = make_interface_feedback_type(in_intrf)
 
     if handshake == "elastic":
         sp_func, sp_t = make_stream_pipeline(fir_core)
@@ -205,6 +205,6 @@ def make_fir(
     # Reverse halves of the two ports (elastic only -- valid_only is one-way).
     fir.in_fb_t = in_fb_t if handshake == "elastic" else None
     fir.out_fb_t = out_fb_t if handshake == "elastic" else None
-    fir.in_if = in_if
-    fir.out_if = sp_func.out_if if handshake == "elastic" else None
+    fir.in_intrf = in_intrf
+    fir.out_intrf = sp_func.out_intrf if handshake == "elastic" else None
     return fir, fir_t

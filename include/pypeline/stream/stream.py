@@ -20,21 +20,21 @@ def make_stream_interface(data_t, feedback_t=uint1_t):
 
     A module declares its ports with the two derived halves:
 
-        stream_if = make_stream_interface(uint32_t)
-        s_t  = make_interface_type(stream_if)           # {data, valid}
-        s_fb_t = make_interface_feedback_type(stream_if)  # {ready}
+        stream_intrf = make_stream_interface(uint32_t)
+        s_t  = make_interface_type(stream_intrf)           # {data, valid}
+        s_fb_t = make_interface_feedback_type(stream_intrf)  # {ready}
 
     An input port puts `s_t` in an arg and `s_fb_t` in a return field of the same
     name; an output port does the reverse.
     """
 
     @interface
-    class stream_if(NamedTuple):
+    class stream_intrf(NamedTuple):
         data: data_t
         valid: uint1_t
         ready: Feedback[feedback_t]
 
-    return stream_if
+    return stream_intrf
 
 
 def make_stream_t(data_t, feedback_t=uint1_t):

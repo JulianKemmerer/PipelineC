@@ -57,12 +57,12 @@ def make_stream_pipeline(func):
     (in_type,) = hw_arg_types(func)
     out_type = hw_return_type(func)
 
-    in_if = make_stream_interface(in_type)
-    out_if = make_stream_interface(out_type)
-    in_stream_t = make_interface_type(in_if)
-    in_fb_t = make_interface_feedback_type(in_if)
-    out_stream_t = make_interface_type(out_if)
-    out_fb_t = make_interface_feedback_type(out_if)
+    in_intrf = make_stream_interface(in_type)
+    out_intrf = make_stream_interface(out_type)
+    in_stream_t = make_interface_type(in_intrf)
+    in_fb_t = make_interface_feedback_type(in_intrf)
+    out_stream_t = make_interface_type(out_intrf)
+    out_fb_t = make_interface_feedback_type(out_intrf)
 
     # Thread .valid alongside .data so the AUTOPIPELINE retiming balances
     # valid through the same number of stages it picks for func's data path.
@@ -134,8 +134,8 @@ def make_stream_pipeline(func):
 
     # The port interfaces (and their two halves), so callers can declare
     # matching ports / write interface functions over this module.
-    stream_pipeline.in_if = in_if
-    stream_pipeline.out_if = out_if
+    stream_pipeline.in_intrf = in_intrf
+    stream_pipeline.out_intrf = out_intrf
     stream_pipeline.in_stream_t = in_stream_t
     stream_pipeline.in_fb_t = in_fb_t
     stream_pipeline.out_stream_t = out_stream_t

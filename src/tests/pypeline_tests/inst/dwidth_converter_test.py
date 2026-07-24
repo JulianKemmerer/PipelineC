@@ -35,14 +35,14 @@ RATIO = 4  # wide_n = N * RATIO = 16
     wide_bus_t,
     narrow_frag_t,
     wide_frag_t,
-    narrow_axis_if,
-    wide_axis_if,
+    narrow_axis_intrf,
+    wide_axis_intrf,
 ) = _make_dwidth_types(uint8_t, N, RATIO)
 
-narrow_axis_t = make_interface_type(narrow_axis_if)
-narrow_axis_fb_t = make_interface_feedback_type(narrow_axis_if)
-wide_axis_t = make_interface_type(wide_axis_if)
-wide_axis_fb_t = make_interface_feedback_type(wide_axis_if)
+narrow_axis_t = make_interface_type(narrow_axis_intrf)
+narrow_axis_fb_t = make_interface_feedback_type(narrow_axis_intrf)
+wide_axis_t = make_interface_type(wide_axis_intrf)
+wide_axis_fb_t = make_interface_feedback_type(wide_axis_intrf)
 
 chunks_t = narrow_axis_t[RATIO]
 

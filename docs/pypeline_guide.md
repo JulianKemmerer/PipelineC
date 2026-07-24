@@ -2435,7 +2435,7 @@ from interface.interface import (
 )
 
 @interface
-class bus_if(NamedTuple):
+class bus_intrf(NamedTuple):
     payload: uint32_t
     go:      uint1_t
     credit:  Feedback[uint4_t]   # reverse — any width, not just a ready bit
@@ -2444,13 +2444,13 @@ class bus_if(NamedTuple):
 
 ### The two halves
 
-An interface is not itself a hardware type — a hardware function never takes a whole `bus_if` as
+An interface is not itself a hardware type — a hardware function never takes a whole `bus_intrf` as
 a port. It is a recipe for two ordinary `@struct`s, one per direction, which *are* hardware
 types:
 
 ```python
-bus_if_t          = make_interface_type(bus_if)           # feedforward half: {payload, go}
-bus_if_feedback_t = make_interface_feedback_type(bus_if)  # reverse half:     {credit, halt}
+bus_t    = make_interface_type(bus_intrf)           # feedforward half: {payload, go}
+bus_fb_t = make_interface_feedback_type(bus_intrf)  # reverse half:     {credit, halt}
 ```
 
 - `make_interface_type(iface)` gathers the plain fields into the **feedforward** struct.
@@ -2461,23 +2461,32 @@ bus_if_feedback_t = make_interface_feedback_type(bus_if)  # reverse half:     {c
 
 Because the two halves travel opposite ways, a module carries a port as **both** halves — one as
 an argument, one as a return field — paired only by sharing the **same name**. There is no
-naming convention (no `ready_for_`/`_ready`/`_rdy` affix); the port name is whatever you choose.
-Direction follows from which side holds the feedforward half:
+required naming convention (no `ready_for_`/`_ready`/`_rdy` affix); the port name is whatever you
+choose. Direction follows from which side holds the feedforward half:
 
 - an **input** port takes the feedforward half as an argument and returns the reverse half;
 - an **output** port does the opposite.
 
+**Recommended: suffix the port variable with `_if`.** Because one name legitimately means two
+different types depending on which side you're reading (an argument of the feedforward type, a
+return field of the reverse type — or vice versa for an output port), a bare port name like
+`axis_in` or `poly_key_out` reads as if it were two different same-named signals instead of one
+bidirectional port. Suffixing the *variable* with `_if` (`axis_in_if`, `key_if`, `to_pipeline_if`)
+marks it as one port, and — since it's a different suffix from the `_intrf` on the `@interface`
+*type* itself — the two never collide. When a module has two same-shaped ports going opposite
+ways, name them accordingly: `data_in_if`/`data_out_if`, `axis_in_if`/`axis_out_if`.
+
 ```python
 @struct
 class x_to_y_t(NamedTuple):
-    x: bus_if_feedback_t   # input port x: its reverse half (credit/halt) travels out
-    y: bus_if_t            # output port y: its feedforward half (payload/go) travels out
+    x_if: bus_fb_t   # input port x_if: its reverse half (credit/halt) travels out
+    y_if: bus_t      # output port y_if: its feedforward half (payload/go) travels out
 
 @hw_func
-def x_to_y(x: bus_if_t, y: bus_if_feedback_t) -> x_to_y_t:
+def x_to_y(x_if: bus_t, y_if: bus_fb_t) -> x_to_y_t:
     o: x_to_y_t
-    o.y = x    # feedforward: pass x's payload/go out on y
-    o.x = y    # feedback:    pass y's credit/halt back on x
+    o.y_if = x_if    # feedforward: pass x_if's payload/go out on y_if
+    o.x_if = y_if    # feedback:    pass y_if's credit/halt back on x_if
     return o
 ```
 
@@ -2492,7 +2501,7 @@ from stream.stream import make_stream_interface
 
 # make_stream_interface(uint32_t) is literally this interface:
 @interface
-class uint32_stream_if(NamedTuple):
+class uint32_stream_intrf(NamedTuple):
     data:  uint32_t
     valid: uint1_t
     ready: Feedback[uint1_t]   # the one reverse field
@@ -2501,9 +2510,9 @@ class uint32_stream_if(NamedTuple):
 so its two halves are:
 
 ```python
-uint32_stream_if   = make_stream_interface(uint32_t)
-uint32_stream_t    = make_interface_type(uint32_stream_if)           # {data, valid}
-uint32_stream_fb_t = make_interface_feedback_type(uint32_stream_if)  # {ready}
+uint32_stream_intrf   = make_stream_interface(uint32_t)
+uint32_stream_t    = make_interface_type(uint32_stream_intrf)           # {data, valid}
+uint32_stream_fb_t = make_interface_feedback_type(uint32_stream_intrf)  # {ready}
 ```
 
 **And here is the identity worth pinning down:** the feedforward half of the stream interface
@@ -2523,14 +2532,14 @@ A module gives a stream port the same two-halves-one-name treatment as any inter
 ```python
 @struct
 class relay_t(NamedTuple):
-    stream_in:  uint32_stream_fb_t   # input port: ready travels back out
-    stream_out: uint32_stream_t      # output port: data+valid travel out
+    stream_in_if:  uint32_stream_fb_t   # input port: ready travels back out
+    stream_out_if: uint32_stream_t      # output port: data+valid travel out
 
 @hw_func
-def relay(stream_in: uint32_stream_t, stream_out: uint32_stream_fb_t) -> relay_t:
+def relay(stream_in_if: uint32_stream_t, stream_out_if: uint32_stream_fb_t) -> relay_t:
     o: relay_t
-    o.stream_out = stream_in               # forward the data+valid downstream
-    o.stream_in.ready = stream_out.ready   # forward the backpressure upstream
+    o.stream_out_if = stream_in_if               # forward the data+valid downstream
+    o.stream_in_if.ready = stream_out_if.ready   # forward the backpressure upstream
     return o
 ```
 
@@ -2539,7 +2548,7 @@ suffix, so the type names read as exactly what they are:
 
 | Suffix | Built by | Is | Example |
 |---|---|---|---|
-| `_if` | `make_stream_interface(T)` | the whole interface, both directions | `uint32_stream_if` |
+| `_intrf` | `make_stream_interface(T)` | the whole interface, both directions | `uint32_stream_intrf` |
 | `_t` / `_stream_t` | `make_interface_type(…)` = `make_stream_t(T)` | the feedforward half — a standalone stream `{data, valid}` | `uint32_stream_t` |
 | `_fb_t` | `make_interface_feedback_type(…)` | the reverse half — `{ready}` | `uint32_stream_fb_t` |
 
@@ -2547,7 +2556,7 @@ The feedforward half keeps the honest `_t`/`_stream_t` name rather than an `_if_
 because it genuinely *is* a usable standalone stream on its own — the valid-only case of §21.
 
 The reverse channel is not limited to a one-bit `ready`: `make_stream_interface(data_t,
-feedback_t=...)` widens it to a credit count or a struct of flags, just as `bus_if` above
+feedback_t=...)` widens it to a credit count or a struct of flags, just as `bus_intrf` above
 carries `credit`/`halt`. Every streaming building block that follows —
 [AXI-Stream](#23-axi-stream-axis_t), [FIFOs](#24-fifos-make_stream_fifo),
 [pipelined wrappers](#25-pipelined-stream-wrappers-make_stream_pipeline), and the
@@ -2658,16 +2667,16 @@ category=InterfacePortWarning)` silences it where you mean it:
 ```python
 @struct
 class gate_t(NamedTuple):
-    stream_in: chan_fb_t      # input port's reverse half travels out
-    stream_out: chan_t      # output port's feedforward half travels out
-    passed: uint8_t         # plain status, no reverse companion
+    stream_in_if: chan_fb_t      # input port's reverse half travels out
+    stream_out_if: chan_t        # output port's feedforward half travels out
+    passed: uint8_t              # plain status, no reverse companion
 
 @hw_func
-def gate(stream_in: chan_t, limit: uint8_t, stream_out: chan_fb_t) -> gate_t:
+def gate(stream_in_if: chan_t, limit: uint8_t, stream_out_if: chan_fb_t) -> gate_t:
     o: gate_t
     count: Reg[uint8_t]
     open_: uint1_t = count < limit          # backpressure computed from state
-    o.stream_in.ready = stream_out.ready & open_
+    o.stream_in_if.ready = stream_out_if.ready & open_
     ...
 ```
 
@@ -2684,8 +2693,8 @@ handing `bcast.axis_out[i]` to each sink is the whole wiring — the reverse arr
 fed back for you. `make_axis_broadcast_interlock` (§23) is the ready-made one:
 
 ```python
-def fork_wiring(axis_in: axis_if) -> fork_ports:
-    d = bcast(axis_in)                    # no sink_ready array to build by hand
+def fork_wiring(axis_in_if: axis_intrf) -> fork_ports:
+    d = bcast(axis_in_if)                 # no sink_ready array to build by hand
     f = hold_fast(d.axis_out[0])
     s = hold_slow(d.axis_out[1])
     return fork_ports(fast=f.axis_out, slow=s.axis_out)
@@ -2727,12 +2736,12 @@ same three layers, stopping at the interface:
 from axi.axis import make_axis_interface
 from interface.interface import make_interface_type, make_interface_feedback_type
 
-axis32_if = make_axis_interface(4)
-axis32_t  = make_interface_type(axis32_if)           # {data, valid}
-axis32_fb_t = make_interface_feedback_type(axis32_if)  # {ready}
+axis32_intrf = make_axis_interface(4)
+axis32_t  = make_interface_type(axis32_intrf)           # {data, valid}
+axis32_fb_t = make_interface_feedback_type(axis32_intrf)  # {ready}
 ```
 
-`make_axis_broadcast_interlock(axis_if, n)`, `make_dwidth_widen` and `make_dwidth_narrow` all
+`make_axis_broadcast_interlock(axis_intrf, n)`, `make_dwidth_widen` and `make_dwidth_narrow` all
 declare their ports this way — see [Crossing between the two
 styles](#crossing-between-the-two-styles).
 
@@ -2809,7 +2818,7 @@ halves of the same [interface](#22-bidirectional-ports-interface):
 | `stream_fifo_t.out_stream` | `stream_t` | the FIFO's output: `.data`/`.valid` |
 | `stream_fifo_t.in_stream` | `stream_fb_t` | backpressure for `in_stream` — `.ready` high while the FIFO has room |
 
-The interface and both halves hang off the returned function as `.stream_if` / `.stream_t` /
+The interface and both halves hang off the returned function as `.stream_intrf` / `.stream_t` /
 `.stream_fb_t`, so callers don't rebuild them. Because the ports are interfaces, an
 [interface function](#interface-functions-write-feedforward-get-the-reverse-wired) can drop a
 FIFO into a chain with `f = stream_fifo(upstream.out_stream)` and no ready wiring at all.

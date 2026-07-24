@@ -15,9 +15,9 @@ def make_axis_interface(n, elem_t=uint8_t, ndims=1):
     keep-per-lane shape generalized to a per-lane struct stream.
 
     Usage:
-        axis32_if = make_axis_interface(4)
-        axis32_t  = make_interface_type(axis32_if)           # {data, valid}
-        axis32_fb_t = make_interface_feedback_type(axis32_if)  # {ready}
+        axis32_intrf = make_axis_interface(4)
+        axis32_t  = make_interface_type(axis32_intrf)           # {data, valid}
+        axis32_fb_t = make_interface_feedback_type(axis32_intrf)  # {ready}
     """
     bus_t = make_kept_data_bus_t(elem_t, n)
     fragment_t = make_ndarray_fragment_t(bus_t, ndims)
@@ -33,7 +33,7 @@ def make_axis_t(n, elem_t=uint8_t, ndims=1):
     return make_interface_type(make_axis_interface(n, elem_t, ndims))
 
 
-def make_axis_broadcast_interlock(axis_if, n):
+def make_axis_broadcast_interlock(axis_intrf, n):
     """Combinatorially broadcasts one axis stream to n sink streams.
 
     Named 'interlock' rather than 'fork' because it is pure combinational
@@ -54,8 +54,8 @@ def make_axis_broadcast_interlock(axis_if, n):
           .axis_out (axis_t[n]) - one forked copy of axis_in per sink
           .axis_in  (axis_fb_t)   - reverse half of the source port
     """
-    axis_t = make_interface_type(axis_if)
-    axis_fb_t = make_interface_feedback_type(axis_if)
+    axis_t = make_interface_type(axis_intrf)
+    axis_fb_t = make_interface_feedback_type(axis_intrf)
 
     @struct
     class axis_broadcast_interlock_t(NamedTuple):
@@ -79,7 +79,7 @@ def make_axis_broadcast_interlock(axis_if, n):
         o.axis_in.ready = all_sinks_ready
         return o
 
-    axis_broadcast_interlock.axis_if = axis_if
+    axis_broadcast_interlock.axis_intrf = axis_intrf
     axis_broadcast_interlock.axis_t = axis_t
     axis_broadcast_interlock.axis_fb_t = axis_fb_t
     return axis_broadcast_interlock, axis_broadcast_interlock_t
@@ -121,15 +121,15 @@ def _make_dwidth_types(elem_t, narrow_n, ratio):
     wide_bus_t = make_kept_data_bus_t(elem_t, wide_n)
     narrow_frag_t = make_ndarray_fragment_t(narrow_bus_t, 1)
     wide_frag_t = make_ndarray_fragment_t(wide_bus_t, 1)
-    narrow_axis_if = make_stream_interface(narrow_frag_t)
-    wide_axis_if = make_stream_interface(wide_frag_t)
+    narrow_axis_intrf = make_stream_interface(narrow_frag_t)
+    wide_axis_intrf = make_stream_interface(wide_frag_t)
     return (
         narrow_bus_t,
         wide_bus_t,
         narrow_frag_t,
         wide_frag_t,
-        narrow_axis_if,
-        wide_axis_if,
+        narrow_axis_intrf,
+        wide_axis_intrf,
     )
 
 
@@ -206,19 +206,19 @@ def make_dwidth_widen(elem_t, narrow_n, ratio):
     """Combines `ratio` narrow beats into one wide beat.
     Generalizes axis128_to_axis512. Returns (dwidth_widen, narrow_axis_t, wide_axis_t);
     the interfaces and reverse halves hang off the function as
-    `.narrow_in_if` / `.wide_out_if` / `.narrow_in_fb_t` / `.wide_out_fb_t`."""
+    `.narrow_in_intrf` / `.wide_out_intrf` / `.narrow_in_fb_t` / `.wide_out_fb_t`."""
     (
         narrow_bus_t,
         wide_bus_t,
         narrow_frag_t,
         wide_frag_t,
-        narrow_axis_if,
-        wide_axis_if,
+        narrow_axis_intrf,
+        wide_axis_intrf,
     ) = _make_dwidth_types(elem_t, narrow_n, ratio)
-    narrow_axis_t = make_interface_type(narrow_axis_if)
-    narrow_axis_fb_t = make_interface_feedback_type(narrow_axis_if)
-    wide_axis_t = make_interface_type(wide_axis_if)
-    wide_axis_fb_t = make_interface_feedback_type(wide_axis_if)
+    narrow_axis_t = make_interface_type(narrow_axis_intrf)
+    narrow_axis_fb_t = make_interface_feedback_type(narrow_axis_intrf)
+    wide_axis_t = make_interface_type(wide_axis_intrf)
+    wide_axis_fb_t = make_interface_feedback_type(wide_axis_intrf)
     wide_n = narrow_n * ratio
     chunks_t = narrow_axis_t[ratio]
 
@@ -271,8 +271,8 @@ def make_dwidth_widen(elem_t, narrow_n, ratio):
 
         return o
 
-    dwidth_widen.narrow_in_if = narrow_axis_if
-    dwidth_widen.wide_out_if = wide_axis_if
+    dwidth_widen.narrow_in_intrf = narrow_axis_intrf
+    dwidth_widen.wide_out_intrf = wide_axis_intrf
     dwidth_widen.narrow_in_fb_t = narrow_axis_fb_t
     dwidth_widen.wide_out_fb_t = wide_axis_fb_t
     return dwidth_widen, narrow_axis_t, wide_axis_t
@@ -282,19 +282,19 @@ def make_dwidth_narrow(elem_t, narrow_n, ratio):
     """Splits one wide beat into `ratio` narrow beats, one per cycle.
     Generalizes axis512_to_axis128. Returns (dwidth_narrow, wide_axis_t, narrow_axis_t);
     the interfaces and reverse halves hang off the function as
-    `.wide_in_if` / `.narrow_out_if` / `.wide_in_fb_t` / `.narrow_out_fb_t`."""
+    `.wide_in_intrf` / `.narrow_out_intrf` / `.wide_in_fb_t` / `.narrow_out_fb_t`."""
     (
         narrow_bus_t,
         wide_bus_t,
         narrow_frag_t,
         wide_frag_t,
-        narrow_axis_if,
-        wide_axis_if,
+        narrow_axis_intrf,
+        wide_axis_intrf,
     ) = _make_dwidth_types(elem_t, narrow_n, ratio)
-    narrow_axis_t = make_interface_type(narrow_axis_if)
-    narrow_axis_fb_t = make_interface_feedback_type(narrow_axis_if)
-    wide_axis_t = make_interface_type(wide_axis_if)
-    wide_axis_fb_t = make_interface_feedback_type(wide_axis_if)
+    narrow_axis_t = make_interface_type(narrow_axis_intrf)
+    narrow_axis_fb_t = make_interface_feedback_type(narrow_axis_intrf)
+    wide_axis_t = make_interface_type(wide_axis_intrf)
+    wide_axis_fb_t = make_interface_feedback_type(wide_axis_intrf)
     wide_n = narrow_n * ratio
     chunks_t = narrow_axis_t[ratio]
 
@@ -343,8 +343,8 @@ def make_dwidth_narrow(elem_t, narrow_n, ratio):
 
         return o
 
-    dwidth_narrow.wide_in_if = wide_axis_if
-    dwidth_narrow.narrow_out_if = narrow_axis_if
+    dwidth_narrow.wide_in_intrf = wide_axis_intrf
+    dwidth_narrow.narrow_out_intrf = narrow_axis_intrf
     dwidth_narrow.wide_in_fb_t = wide_axis_fb_t
     dwidth_narrow.narrow_out_fb_t = narrow_axis_fb_t
     return dwidth_narrow, wide_axis_t, narrow_axis_t

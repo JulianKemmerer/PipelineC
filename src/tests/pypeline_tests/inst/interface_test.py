@@ -54,89 +54,89 @@ from interface.interface import (
 
 # ── a neutral bus: two feedforward fields, a multi-bit + a 1-bit reverse field ──
 @interface
-class bus_if(NamedTuple):
+class bus_intrf(NamedTuple):
     payload: uint32_t
     go: uint1_t
     credit: Feedback[uint4_t]
     nack: Feedback[uint1_t]
 
 
-bus_if_t = make_interface_type(bus_if)
-bus_if_feedback_t = make_interface_feedback_type(bus_if)
+bus_t = make_interface_type(bus_intrf)
+bus_fb_t = make_interface_feedback_type(bus_intrf)
 
 
 def test_derived_types_split_by_direction():
-    assert bus_if_t._fields == ("payload", "go")
-    assert bus_if_feedback_t._fields == ("credit", "nack")
+    assert bus_t._fields == ("payload", "go")
+    assert bus_fb_t._fields == ("credit", "nack")
     # Feedback[T] fields are unwrapped to their inner type
-    assert bus_if_feedback_t.__annotations__["credit"] is uint4_t
-    assert bus_if_feedback_t.__annotations__["nack"] is uint1_t
-    assert bus_if_t.__annotations__["payload"] is uint32_t
+    assert bus_fb_t.__annotations__["credit"] is uint4_t
+    assert bus_fb_t.__annotations__["nack"] is uint1_t
+    assert bus_t.__annotations__["payload"] is uint32_t
     # back-tags let introspection recover the interface + direction
-    assert interface_of(bus_if_t) is bus_if
-    assert interface_of(bus_if_feedback_t) is bus_if
-    assert interface_role(bus_if_t) == FWD
-    assert interface_role(bus_if_feedback_t) == FB
-    assert is_interface(bus_if) and not is_interface(bus_if_t)
+    assert interface_of(bus_t) is bus_intrf
+    assert interface_of(bus_fb_t) is bus_intrf
+    assert interface_role(bus_t) == FWD
+    assert interface_role(bus_fb_t) == FB
+    assert is_interface(bus_intrf) and not is_interface(bus_t)
 
 
 def test_derivation_is_memoized_and_deterministic():
-    assert make_interface_type(bus_if) is bus_if_t
-    assert make_interface_feedback_type(bus_if) is bus_if_feedback_t
+    assert make_interface_type(bus_intrf) is bus_t
+    assert make_interface_feedback_type(bus_intrf) is bus_fb_t
     # canonical names are pure functions of the declaration
-    assert bus_if_t._pypeline_ctype_name == "bus_if_t_payload_uint32_t_go_uint1_t"
+    assert bus_t._pypeline_ctype_name == "bus_intrf_t_payload_uint32_t_go_uint1_t"
     assert (
-        bus_if_feedback_t._pypeline_ctype_name
-        == "bus_if_feedback_t_credit_uint4_t_nack_uint1_t"
+        bus_fb_t._pypeline_ctype_name
+        == "bus_intrf_feedback_t_credit_uint4_t_nack_uint1_t"
     )
 
 
 # ── nesting: interfaces inside interfaces, arrays of interfaces, plain mixed in ──
 @interface
-class outer_if(NamedTuple):
-    lanes: bus_if[2]
-    side: bus_if
+class outer_intrf(NamedTuple):
+    lanes: bus_intrf[2]
+    side: bus_intrf
     tag: uint8_t  # plain -> feedforward only, pruned from the feedback half
 
 
 def test_nested_and_mixed_bundle():
-    ofwd = make_interface_type(outer_if)
-    ofb = make_interface_feedback_type(outer_if)
+    ofwd = make_interface_type(outer_intrf)
+    ofb = make_interface_feedback_type(outer_intrf)
     # plain field rides along feedforward and contributes nothing reverse
     assert ofwd._fields == ("lanes", "side", "tag")
     assert ofb._fields == ("lanes", "side")
-    assert ofwd.__annotations__["side"] is bus_if_t
-    assert ofb.__annotations__["side"] is bus_if_feedback_t
+    assert ofwd.__annotations__["side"] is bus_t
+    assert ofb.__annotations__["side"] is bus_fb_t
     assert ofwd.__annotations__["tag"] is uint8_t
 
 
 # ── one-directional interfaces ──
 @interface
-class oneway_if(NamedTuple):
+class oneway_intrf(NamedTuple):
     d: uint16_t
 
 
 @interface
-class rev_only_if(NamedTuple):
+class rev_only_intrf(NamedTuple):
     r: Feedback[uint1_t]
 
 
 def test_one_directional_interfaces():
-    assert make_interface_feedback_type(oneway_if) is None
-    assert make_interface_type(oneway_if) is not None
-    assert make_interface_type(rev_only_if) is None
-    assert make_interface_feedback_type(rev_only_if) is not None
+    assert make_interface_feedback_type(oneway_intrf) is None
+    assert make_interface_type(oneway_intrf) is not None
+    assert make_interface_type(rev_only_intrf) is None
+    assert make_interface_feedback_type(rev_only_intrf) is not None
 
 
 # ── the explicit hw_func form: y <- x, both directions wired by hand ──
 @struct
 class x_to_y_t(NamedTuple):
-    x: bus_if_feedback_t  # input x's reverse travels out
-    y: bus_if_t  # output y's feedforward travels out
+    x: bus_fb_t  # input x's reverse travels out
+    y: bus_t  # output y's feedforward travels out
 
 
 @hw_func
-def x_to_y_hw_func(x: bus_if_t, y: bus_if_feedback_t) -> x_to_y_t:
+def x_to_y_hw_func(x: bus_t, y: bus_fb_t) -> x_to_y_t:
     o: x_to_y_t
     # Each direction carries a little real logic (rather than being a pure wire
     # rename) so synthesis sees a non-zero critical path on both paths.
@@ -148,7 +148,7 @@ def x_to_y_hw_func(x: bus_if_t, y: bus_if_feedback_t) -> x_to_y_t:
 
 
 @MAIN
-def top_x_to_y(x: bus_if_t, y: bus_if_feedback_t) -> x_to_y_t:
+def top_x_to_y(x: bus_t, y: bus_fb_t) -> x_to_y_t:
     return x_to_y_hw_func(x, y)
 
 
@@ -157,8 +157,8 @@ def test_explicit_split_struct_hw_func_simulates():
     for payload, go, credit, nack in [(7, 1, 3, 0), (0, 0, 0, 1), (0xDEAD, 1, 15, 1)]:
         r = sim_call(
             top_x_to_y,
-            bus_if_t(payload=payload, go=go),
-            bus_if_feedback_t(credit=credit, nack=nack),
+            bus_t(payload=payload, go=go),
+            bus_fb_t(credit=credit, nack=nack),
         )
         # feedforward flows x -> y, feedback flows y -> x, independently
         assert int(r.y.payload) == (payload + 1) & 0xFFFFFFFF
@@ -193,7 +193,7 @@ def test_plain_struct_rejects_directional_fields():
     )
     _expect(
         lambda: struct(
-            type("bad_if_t", (NamedTuple,), {"__annotations__": {"x": bus_if}})
+            type("bad_if_t", (NamedTuple,), {"__annotations__": {"x": bus_intrf}})
         ),
         TypeError,
         "use @interface for bundles",
@@ -204,19 +204,19 @@ def test_interface_declaration_errors():
     # A raw (undecorated) NamedTuple sidesteps @struct's check, so @interface
     # still validates nested plain types itself -- including several levels down.
     raw_fb = type("raw_fb", (NamedTuple,), {"__annotations__": {"x": Feedback[uint1_t]}})
-    raw_if = type("raw_if", (NamedTuple,), {"__annotations__": {"x": bus_if}})
-    raw_deep = type("raw_deep", (NamedTuple,), {"__annotations__": {"inner": raw_if}})
+    raw_intrf = type("raw_intrf", (NamedTuple,), {"__annotations__": {"x": bus_intrf}})
+    raw_deep = type("raw_deep", (NamedTuple,), {"__annotations__": {"inner": raw_intrf}})
 
-    _expect(_iface_from("a_if", {"f": raw_if}), InterfaceError, "use @interface")
-    _expect(_iface_from("e_if", {"f": raw_deep}), InterfaceError, "use @interface")
+    _expect(_iface_from("a_intrf", {"f": raw_intrf}), InterfaceError, "use @interface")
+    _expect(_iface_from("e_intrf", {"f": raw_deep}), InterfaceError, "use @interface")
     _expect(
-        _iface_from("b_if", {"f": raw_fb}),
+        _iface_from("b_intrf", {"f": raw_fb}),
         InterfaceError,
         "only allowed in an @interface",
     )
-    _expect(_iface_from("c_if", {}), InterfaceError, "has no fields")
+    _expect(_iface_from("c_intrf", {}), InterfaceError, "has no fields")
     _expect(
-        lambda: interface(type("d_if", (object,), {})),
+        lambda: interface(type("d_intrf", (object,), {})),
         InterfaceError,
         "must be applied to a NamedTuple",
     )

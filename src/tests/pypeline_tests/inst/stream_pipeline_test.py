@@ -28,9 +28,9 @@ def div_inv(x: uint8_t) -> uint8_t:
     return x / ~x
 
 
-uint8_stream_if = make_stream_interface(uint8_t)
-uint8_stream_t = make_interface_type(uint8_stream_if)
-uint8_stream_fb_t = make_interface_feedback_type(uint8_stream_if)
+uint8_stream_intrf = make_stream_interface(uint8_t)
+uint8_stream_t = make_interface_type(uint8_stream_intrf)
+uint8_stream_fb_t = make_interface_feedback_type(uint8_stream_intrf)
 stream_pipeline, stream_pipeline_t = make_stream_pipeline(div_inv)
 
 

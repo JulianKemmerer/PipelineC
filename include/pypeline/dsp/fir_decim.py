@@ -67,9 +67,9 @@ def make_fir_decim(
     )
 
     win_t = data_t[n_taps]
-    in_if = make_stream_interface(data_t)
-    in_stream_t = make_interface_type(in_if)
-    in_fb_t = make_interface_feedback_type(in_if)
+    in_intrf = make_stream_interface(data_t)
+    in_stream_t = make_interface_type(in_intrf)
+    in_fb_t = make_interface_feedback_type(in_intrf)
     phase_t = make_uint_t(max(1, (decim - 1).bit_length()))
     LAST_PHASE = decim - 1
 
@@ -172,5 +172,5 @@ def make_fir_decim(
     # Reverse halves of the two ports (elastic only -- valid_only is one-way).
     fir_decim.in_fb_t = in_fb_t if handshake == "elastic" else None
     fir_decim.out_fb_t = out_fb_t if handshake == "elastic" else None
-    fir_decim.stream_if = in_if
+    fir_decim.stream_intrf = in_intrf
     return fir_decim, fir_decim_t

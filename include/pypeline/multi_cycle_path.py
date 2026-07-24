@@ -38,12 +38,12 @@ def make_valid_ready_mcp(func, ncycles: int):
     (in_type,) = hw_arg_types(func)
     out_type = hw_return_type(func)
 
-    in_if = make_stream_interface(in_type)
-    out_if = make_stream_interface(out_type)
-    in_stream_t = make_interface_type(in_if)
-    in_fb_t = make_interface_feedback_type(in_if)
-    out_stream_t = make_interface_type(out_if)
-    out_fb_t = make_interface_feedback_type(out_if)
+    in_intrf = make_stream_interface(in_type)
+    out_intrf = make_stream_interface(out_type)
+    in_stream_t = make_interface_type(in_intrf)
+    in_fb_t = make_interface_feedback_type(in_intrf)
+    out_stream_t = make_interface_type(out_intrf)
+    out_fb_t = make_interface_feedback_type(out_intrf)
 
     @struct
     class func_mcp_t(NamedTuple):
@@ -80,8 +80,8 @@ def make_valid_ready_mcp(func, ncycles: int):
         capture = capture_next
         return o
 
-    func_mcp.in_if = in_if
-    func_mcp.out_if = out_if
+    func_mcp.in_intrf = in_intrf
+    func_mcp.out_intrf = out_intrf
     func_mcp.in_stream_t = in_stream_t
     func_mcp.in_fb_t = in_fb_t
     func_mcp.out_stream_t = out_stream_t

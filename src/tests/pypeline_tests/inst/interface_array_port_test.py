@@ -49,11 +49,11 @@ from interface.interface_func import make_hw_func_from_interface_func
 from axi.axis import make_axis_interface, make_axis_broadcast_interlock
 
 N_LANES = 2
-axis_if = make_axis_interface(2)  # 2 byte lanes, keep+eod
-axis_t = make_interface_type(axis_if)
-axis_fb_t = make_interface_feedback_type(axis_if)
+axis_intrf = make_axis_interface(2)  # 2 byte lanes, keep+eod
+axis_t = make_interface_type(axis_intrf)
+axis_fb_t = make_interface_feedback_type(axis_intrf)
 
-bcast, bcast_t = make_axis_broadcast_interlock(axis_if, N_LANES)
+bcast, bcast_t = make_axis_broadcast_interlock(axis_intrf, N_LANES)
 
 
 def test_array_port_is_introspected_as_one_port_of_n_elements():
@@ -101,11 +101,11 @@ hold_slow = make_hold(3)
 
 @interface
 class fork_ports(NamedTuple):
-    fast: axis_if
-    slow: axis_if
+    fast: axis_intrf
+    slow: axis_intrf
 
 
-def fork_wiring(axis_in: axis_if) -> fork_ports:
+def fork_wiring(axis_in: axis_intrf) -> fork_ports:
     d = bcast(axis_in)  # reverse array assembled and fed back in for us
     f = hold_fast(d.axis_out[0])
     s = hold_slow(d.axis_out[1])
