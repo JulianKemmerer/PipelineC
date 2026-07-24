@@ -74,6 +74,8 @@ package's real ChaCha20-Poly1305 implementation to find bugs like these.
 
 ## The New Pypeline Testbenches
 
+### Applying Inputs and Checking Outputs
+
 The port lives at [`wireguard-fpga/3.build/pypeline_build/`](https://github.com/chili-chips-ba/wireguard-fpga/blob/main/3.build/pypeline_build/), and each of the
 three design variants (encrypt-only, decrypt-only, and the shared
 encrypt+decrypt build) has **two independent testbench styles** sharing
@@ -155,12 +157,45 @@ Running any of the builds is one line, via the port's [`build.py`](https://githu
 ./build.py --enc --sim --syn_tb --comb     # fixed vectors through cocotb/GHDL
 ```
 
+Both of those are `--comb` runs without added pipelining.
+Dropping `--comb` gets an autopipelined cycle accurate simulation instead:
+
+```bash
+./build.py --enc --sim --native            # pipelined native sim (slow!)
+```
+
 See the [`pypeline_guide.md` Simulation section](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#4-simulation)
 for the full menu of flags, and the port's own
 [`3.build/pypeline_build/README.md`](https://github.com/chili-chips-ba/wireguard-fpga/blob/main/3.build/pypeline_build/README.md) for the complete command reference and
 source layout.
 
-Additionally, if a mismatch between native Python based simulation and generated VHDL is suspected
+### Cycle Accuracy
+
+The old PipelineC design had no way to inspect how many cycles any of the
+design's automatically pipelined functions actually elaborated to after synthesis iterations.
+That latency information only existed after a real VHDL build invisible to any C-level user code being written.
+
+Pypeline improves on that in two ways:
+First,  [`AUTOPIPELINE(...)`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#15-forcing-pipelining-autopipeline) lets
+design code (and testbenches) read back the real, synthesis-discovered
+pipeline depth of an autopipelined function — see
+["`.latency`: reading back the discovered pipeline depth"](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#latency-reading-back-the-discovered-pipeline-depth).
+Second, a non-`--comb` `pypelinec --sim` build uses that same discovered
+latency to drive the native simulator: it builds the full autopipelined
+design first (through the real synthesis tool, to find each submodule's
+true latency), then native-simulates that design with those latencies
+emulated, cycle by cycle.
+
+That emulation isn't a full gate-level pipeline model though, it's an
+approximation: each pipelined call runs as an instantaneous (zero-cycle)
+Python function call, with its result pushed through a shift-register-style
+delay line to reproduce the right number of cycles of latency before the
+result appears. That's cheap enough to make pipelined native sim practical,
+but it's still an emulation of timing, not a real per-stage register model
+— see ["Pipelined native sim"](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_sim_DESIGN.md#pipelined-native-sim-non---comb-pipelinec---sim)
+in `pypeline_sim_DESIGN.md` for the mechanics.
+
+If a mismatch between native Python based simulation and generated VHDL is suspected
 then [`pypeline_sim_debug.py`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#pypeline_sim_debugpy--native-vs-vhdl-cycle-diff-tool) can be used. It compares `sim_print(..., debug=True)`-tagged output between the native simulator and real cocotb+GHDL. This confirms that not only have no `sim_assert`s failed but also that both simulations produce identical *cycle-accurate* behavior.
 
 ## A Tiny Practical Example
