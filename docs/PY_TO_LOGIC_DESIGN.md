@@ -1461,6 +1461,36 @@ a feedforward edge, which is what makes FSM+datapath loops expressible (wireguar
 `chacha20_instance` / `poly1305_mac_instance`, whose two hand-threaded `Feedback`s the pass
 now reproduces exactly).
 
+**Keyword arguments at call sites.** Both an interface function's own body (calls compiled by
+`make_hw_func_from_interface_func`) and ordinary submodule calls elaborated directly by
+`PY_TO_LOGIC` accept keyword arguments, mirroring Python's own binding rules: positional args
+fill the callee's caller-visible parameters left to right, keyword args bind by name, and the
+two may be mixed. An unknown name, a name bound both positionally and by keyword, a missing
+required argument, or `*args`/`**kwargs` unpacking is a clear error naming the callee and the
+call site — not a downstream `KeyError`.
+
+- In `interface_func.py`, `_bind_call_args` does this for calls inside an interface function
+  body. Only a callee's feedforward parameters (`fwd_params`) are caller-suppliable; the reverse
+  halves of its output ports (`fb_params`) are synthesized by the pass, so naming one by keyword
+  is rejected. This is a source-parsing change only — the *generated* call
+  ([interface_func.py:~750](include/pypeline/interface/interface_func.py)) is still emitted
+  positionally in callee-declaration order regardless of how the caller wrote it, so native sim
+  and VHDL elaboration consume an unchanged artifact either way.
+- In `PY_TO_LOGIC.py`'s generic submodule-call elaborator (`_elab_call`, around line 4171), the
+  binding was previously `zip(expr.args, callee_def.inputs)` — **positional only**; `expr.keywords`
+  was never read. A keyword-argument call to an ordinary (non-interface) `hw_func`/`@MAIN` left
+  the matching input ports with no driver, surfacing much later and unrelatably as a `KeyError` in
+  `TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE`'s `wire_driven_by` lookup (duplicate-submodule detection,
+  `C_TO_LOGIC.py:9758`) — a Layer-2-only failure, invisible to native sim (Layer 1, plain Python,
+  which always handled keywords) and only reachable once autopipelining/VHDL generation actually
+  walked the wiring. Found via wireguard's `chacha20_pipeline_shared.py`'s
+  `pipeline_func(stream_in=..., stream_out=...)`, whose `stream_in` input had no driver. Fixed the
+  same way as the interface-function layer: bind positional-then-keyword by the callee's input-port
+  name (VHDL port maps are named, not positional, so binding order never matters downstream).
+  Regression test: `keyword_call_test.py` (elab tier, `--no_synth`) — an all-keyword call, the same
+  call with arguments in reversed source order, and a mixed positional+keyword call, each checked
+  both for correct elaboration and (via `sim_call`) for landing on the intended port.
+
 **Core touchpoints.** Interfaces are library-level, but three small changes were needed:
 
 1. **Top-level sweep skip (Step 5 of `PARSE_FILE`).** A raw interface function sits at module

@@ -4168,7 +4168,31 @@ class FuncElaborator:
             else None
         )
         input_ports = []
-        for arg_expr, port_name in zip(expr.args, callee_def.inputs):
+        # Bind call arguments to the callee's input ports, mirroring Python:
+        # positional args fill inputs left to right, keyword args bind by the
+        # callee's input-port name, and the two may be mixed. (Previously only
+        # positional args were wired -- a keyword-argument call left the matching
+        # inputs undriven, surfacing later as a KeyError in wire_driven_by.)
+        bound_args = list(zip(callee_def.inputs, expr.args))  # (port_name, arg_expr)
+        positional_ports = {p for p, _ in bound_args}
+        for kw in expr.keywords:
+            if kw.arg is None:
+                raise ElaborationError(
+                    f"call to '{callee_name}' uses **kwargs unpacking, which is not "
+                    "supported"
+                )
+            if kw.arg not in callee_def.inputs:
+                raise ElaborationError(
+                    f"call to '{callee_name}' got an unexpected keyword argument "
+                    f"'{kw.arg}'"
+                )
+            if kw.arg in positional_ports:
+                raise ElaborationError(
+                    f"call to '{callee_name}' got multiple values for argument "
+                    f"'{kw.arg}'"
+                )
+            bound_args.append((kw.arg, kw.value))
+        for port_name, arg_expr in bound_args:
             if isinstance(arg_expr, ast.Constant) and isinstance(arg_expr.value, str):
                 port_typ = callee_def.wire_to_c_type.get(port_name)
                 arg_wire, arg_typ = self._elab_str_literal(

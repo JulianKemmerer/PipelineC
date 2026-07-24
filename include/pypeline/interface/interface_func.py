@@ -24,6 +24,12 @@ that consumes it. That is direction-agnostic -- it inserts a feedback on a
 reverse edge (ordinary backpressure) and equally on a feedforward edge (a loop
 where a later call feeds an earlier one).
 
+Call sites bind like ordinary Python (`_bind_call_args`): positional args fill
+the callee's caller-visible (feedforward) params left-to-right, keyword args bind
+by name, the two may be mixed. The reverse halves of the callee's output ports
+are synthesized here and are never passed by hand, so naming one is an error --
+as are an unknown name, a name given twice, or a missing feedforward arg.
+
 Mechanism: the pass analyzes the AST and *generates real source*, exec'd into a
 synthetic module registered in `sys.modules` + `linecache`, so native simulation
 and PY_TO_LOGIC elaboration consume one artifact and cannot disagree. Python 3.8
@@ -429,6 +435,53 @@ def _classify_callee(ports, params, ret_fields):
     return fwd_params, fb_params, out_fields
 
 
+def _bind_call_args(call, fwd_params, fb_params, ref, src, lineno):
+    """Bind a callee call's positional + keyword args to the callee's
+    feedforward parameter names, mirroring Python's own call semantics.
+
+    Only `fwd_params` are caller-suppliable: the reverse (feedback) halves of a
+    callee's output ports (`fb_params`) are synthesized by this pass, so naming
+    one is an error. Returns `{param_name: normalized_source_text}` covering
+    every `fwd_param` exactly once -- which is all the rest of the pass needs,
+    since it re-emits the call positionally in callee-declaration order, keyed by
+    name (so the caller's arg order and positional/keyword mix are immaterial
+    downstream).
+    """
+
+    def err(msg):
+        raise InterfaceFuncError(f"call to {ref} {msg} (at line {lineno})")
+
+    pos = call.args
+    if any(isinstance(n, ast.Starred) for n in pos):
+        err("uses *args unpacking, unsupported for an interface-function call")
+    if len(pos) > len(fwd_params):
+        err(
+            f"passes {len(pos)} positional feedforward args but the module takes "
+            f"{len(fwd_params)}"
+        )
+    bound = {p: _norm(ast.get_source_segment(src, n)) for p, n in zip(fwd_params, pos)}
+    filled_positionally = set(fwd_params[: len(pos)])
+    fb = set(fb_params)
+    for kw in call.keywords:
+        name = kw.arg
+        if name is None:
+            err("uses **kwargs unpacking, unsupported for an interface-function call")
+        if name in filled_positionally:
+            err(f"got multiple values for argument {name!r}")
+        if name not in fwd_params:
+            if name in fb:
+                err(
+                    f"passes {name!r} by keyword, but it is a reverse (feedback) "
+                    "port supplied automatically -- drop it"
+                )
+            err(f"got an unexpected keyword argument {name!r}")
+        bound[name] = _norm(ast.get_source_segment(src, kw.value))
+    missing = [p for p in fwd_params if p not in bound]
+    if missing:
+        err(f"is missing feedforward argument(s) {missing}")
+    return bound
+
+
 def make_hw_func_from_interface_func(f):
     """Compile an interface function into an ordinary `(hw_func, struct_t)` pair.
 
@@ -519,12 +572,6 @@ def make_hw_func_from_interface_func(f):
                 else ast.get_source_segment(src, stmt.value.func)
             )
             fwd_params, fb_params, out_fields = _classify_callee(cports, cparams, cret)
-            arg_nodes = stmt.value.args
-            if len(arg_nodes) != len(fwd_params):
-                raise InterfaceFuncError(
-                    f"call to {ref} passes {len(arg_nodes)} feedforward args but the "
-                    f"module takes {len(fwd_params)} (at line {stmt.lineno})"
-                )
             calls.append(
                 {
                     "var": var,
@@ -534,10 +581,9 @@ def make_hw_func_from_interface_func(f):
                     "fwd_params": fwd_params,
                     "fb_params": fb_params,
                     "out_fields": out_fields,
-                    "args": {
-                        p: _norm(ast.get_source_segment(src, n))
-                        for p, n in zip(fwd_params, arg_nodes)
-                    },
+                    "args": _bind_call_args(
+                        stmt.value, fwd_params, fb_params, ref, src, stmt.lineno
+                    ),
                     "lineno": stmt.lineno,
                 }
             )

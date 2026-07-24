@@ -28,6 +28,7 @@ NO_SYNTH_TEST_FILES = [
     "sim_input_output_elab_test.py",
     "array_2d_order_test.py",
     "pylist_value_context_test.py",
+    "keyword_call_test.py",
 ]
 # fmt: on
 

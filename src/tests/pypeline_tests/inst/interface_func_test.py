@@ -368,6 +368,101 @@ def fork_mod(stream_in: chan_t, a: chan_fb_t, b: chan_fb_t) -> fork_t:
     return o
 
 
+# ── keyword arguments at call sites ──
+# Same wiring as the positional `series`/`with_plain` above, written with
+# keywords. Callee param names are arbitrary (structural pairing), so a keyword
+# binds by the callee's declared name; the reverse halves of output ports are
+# synthesized and must not be named.
+def series_kw(stream_in: chan) -> chan:
+    a = inc2(stream_in=stream_in)  # all-keyword
+    b = inc5(stream_in=a.stream_out)
+    return b.stream_out
+
+
+series_kw_inst, series_kw_inst_t = make_hw_func_from_interface_func(series_kw)
+
+
+@MAIN
+def top_sugar_kw(stream_in: chan_t, out_port: chan_fb_t) -> series_kw_inst_t:
+    return series_kw_inst(stream_in, out_port)
+
+
+def with_mixed(a: chan, k: uint8_t) -> chan:
+    kk: uint8_t = k + 1
+    m = scale(a, k=kk)  # mixed: positional interface arg, keyword plain arg
+    return m.stream_out
+
+
+mixed_inst, mixed_inst_t = make_hw_func_from_interface_func(with_mixed)
+
+
+@MAIN
+def top_mixed(a: chan_t, k: uint8_t, out_port: chan_fb_t) -> mixed_inst_t:
+    return mixed_inst(a, k, out_port)
+
+
+def test_all_keyword_matches_positional_twin():
+    """An all-keyword call site wires identically to the hand-written twin the
+    positional `series` was checked against."""
+    sim_reset()
+    for data, valid, rdy in [(10, 1, 1), (0, 0, 1), (200, 1, 0), (7, 1, 1)]:
+        kw = sim_call(top_sugar_kw, chan_t(data=data, valid=valid), chan_fb_t(ready=rdy))
+        tw = sim_call(top_twin, chan_t(data=data, valid=valid), chan_fb_t(ready=rdy))
+        assert int(kw.out_port.data) == int(tw.stream_out.data) == (data + 7) & 0xFF
+        assert int(kw.out_port.valid) == int(tw.stream_out.valid) == valid
+        assert int(kw.stream_in.ready) == int(tw.stream_in.ready) == rdy
+
+
+def test_mixed_positional_and_keyword():
+    sim_reset()
+    r = sim_call(top_mixed, chan_t(data=10, valid=1), 4, chan_fb_t(ready=1))
+    assert int(r.out_port.data) == 15  # 10 + (4 + 1)
+    assert int(r.a.ready) == 1
+
+
+def test_keyword_rejections():
+    def unknown_kw(s: chan) -> chan:
+        a = inc2(stream_in=s, bogus=s)
+        return a.stream_out
+
+    def feedback_kw(s: chan) -> chan:
+        a = inc2(stream_in=s, stream_out=s)  # naming a synthesized reverse half
+        return a.stream_out
+
+    def duplicate_arg(s: chan) -> chan:
+        a = inc2(s, stream_in=s)  # positional + keyword for the same param
+        return a.stream_out
+
+    def missing_arg(a: chan, k: uint8_t) -> chan:
+        kk: uint8_t = k + 1
+        m = scale(k=kk)  # stream_in never supplied
+        return m.stream_out
+
+    def too_many_positional(s: chan) -> chan:
+        a = inc2(s, s, s)
+        return a.stream_out
+
+    _expect(
+        lambda: make_hw_func_from_interface_func(unknown_kw),
+        "unexpected keyword argument",
+    )
+    _expect(
+        lambda: make_hw_func_from_interface_func(feedback_kw), "reverse (feedback) port"
+    )
+    _expect(
+        lambda: make_hw_func_from_interface_func(duplicate_arg),
+        "multiple values for argument",
+    )
+    _expect(
+        lambda: make_hw_func_from_interface_func(missing_arg),
+        "missing feedforward argument",
+    )
+    _expect(
+        lambda: make_hw_func_from_interface_func(too_many_positional),
+        "positional feedforward args but the module takes",
+    )
+
+
 if __name__ == "__main__":
     test_ports_introspected_structurally()
     test_chain_matches_hand_written_twin()
@@ -376,4 +471,7 @@ if __name__ == "__main__":
     test_plain_values_pass_through()
     test_composition_and_memoization()
     test_rejections()
-    print("OK: interface functions (chain, bundles, plain, compose, rejections)")
+    test_all_keyword_matches_positional_twin()
+    test_mixed_positional_and_keyword()
+    test_keyword_rejections()
+    print("OK: interface functions (chain, bundles, plain, compose, keywords, rejections)")
