@@ -2,10 +2,10 @@
 
 Hey folks this is Julian, author of [PypelineC](https://github.com/JulianKemmerer/PipelineC) HDL (PipelineC now with a Python front end).
 I want to extend a big thank you to [ChiliCHIPS](https://github.com/chili-chips-ba)
-for letting me use the [wireguard-fpga](https://github.com/chili-chips-ba/wireguard-fpga)
+for letting me participate in the [wireguard-fpga](https://github.com/chili-chips-ba/wireguard-fpga)
 project as a real-world testbed for both [original PipelineC](https://github.com/JulianKemmerer/PipelineC/wiki/Example%3A-ChaCha20%E2%80%90Poly1305-for-WireGuard/) and [new Pypeline](https://github.com/chili-chips-ba/wireguard-fpga/blob/main/3.build/pypeline_build/README.md).
 It's very valuable to exercise the language with a full scale real design that has realistic goals and tests.
-This write-up details how the verification setup for was improved by moving to Pypeline.
+This write-up details how the verification setup was improved by moving to Pypeline.
 
 Questions? Comments? Reach out, see links from the [Pypeline getting started page](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/README.md).
 
@@ -38,9 +38,9 @@ cocotb+GHDL. That flow works, but falls short in several ways:
 - **No cycle-accurate latency modeling without slow full autopipelined VHDL generation.** There's no
   way to reason about auto-pipelined timing without going through synthesis and using an HDL simulator.
 - **String search pass/fail.** Correctness came down to scanning console output
-  for `ERROR` lines, rather than more programatic pass/fail signal.
+  for `ERROR` lines, rather than a more programmatic pass/fail signal.
 - **Fixed vectors only.** A handful of hand-picked test strings, computed
-  once using project's hand rolled implementaiton as golden model,
+  once using the project's hand-rolled implementation as the golden model,
   with no easy path to broader or randomized coverage.
 
 ## Turning the Page: From C to Python
@@ -118,7 +118,7 @@ def drive_in_word() -> axis128_t:
 ```
 
 The output-checking side is the mirror image: a `@sim_output` reads the
-DUT's output stream and comparesg each byte against the packet the input
+DUT's output stream and compares each byte against the packet the input
 side generated earlier.
 
 Both styles replaced "scan the log for `ERROR`" with a hard pass/fail
@@ -127,7 +127,7 @@ bytes, exact per-lane `keep` pattern, packet framing, and the tampered-tag
 packets' `is_verified_out`), and the whole run ends in `sim_finish()`. A
 failing check raises `AssertionError` in native sim - or, downstream, a real
 VHDL `assert ... severity failure` under cocotb/GHDL - so the process exits
-non-zero on its own. No more looking for special string in the output text.
+non-zero on its own. No more looking for special strings in the output text.
 
 ```python
 @sim_output
@@ -160,9 +160,8 @@ for the full menu of flags, and the port's own
 [`3.build/pypeline_build/README.md`](https://github.com/chili-chips-ba/wireguard-fpga/blob/main/3.build/pypeline_build/README.md) for the complete command reference and
 source layout.
 
-Additionally, if a mismatch between native Python based simulation and generated VHDL is supected
-then [`pypeline_sim_debug.py`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#pypeline_sim_debugpy--native-vs-vhdl-cycle-diff-tool) can be used. It compares `sim_print(..., debug=True)`-tagged output between native the simulator and real cocotb+GHDL. This confirms that not only have no `sim_assert`s failed but also that both simulations 
-produce identical *cycle-accurate* behavior.
+Additionally, if a mismatch between native Python based simulation and generated VHDL is suspected
+then [`pypeline_sim_debug.py`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#pypeline_sim_debugpy--native-vs-vhdl-cycle-diff-tool) can be used. It compares `sim_print(..., debug=True)`-tagged output between the native simulator and real cocotb+GHDL. This confirms that not only have no `sim_assert`s failed but also that both simulations produce identical *cycle-accurate* behavior.
 
 ## A Tiny Practical Example
 
@@ -183,12 +182,14 @@ For the underlying language mechanics (`@sim_input`/`@sim_output`, `sim_assert`,
 
 ## Next Steps
 
-This is a work in progess, possible next steps:
+This is a work in progress, possible next steps:
 
 - Waveform (e.g. VCD) output for native sim, not just console text.
 - A shared valid/ready (AXI-Stream-like) handshaking testbench harness, so
   designs like this one don't each hand-roll their own streaming generators and checkers.
 - Finer-grained control over how deep into a design's hierarchy native vs. VHDL sim comparisons can reach.
+- Integrate mainstream design verification methodology: UVM, UVVM, formal techniques, etc
+- Add LLM MCP or skills to further facilitate testbench generation, execution, and post-processing of sim outcomes.
 - Reach out if you have ideas or otherwise want to contribute!
 
 Thanks for your time!
