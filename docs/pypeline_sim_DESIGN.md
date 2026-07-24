@@ -369,6 +369,25 @@ three cross-checked codebase explorations plus direct source reads while debuggi
 `dsp/fir_interp.py`'s zero-stuffer (`~have | last_beat`); see `project-uint1-field-mask-bug`
 memory for the full repro and cycle-by-cycle trace.
 
+**Bug fixed 2026-07-24:** `_typed_new` (struct constructor kwargs, see
+[pypeline_DESIGN.md](pypeline_DESIGN.md#the-struct-decorator)) had the same class of
+unsound "trust the existing ctype tag" shortcut, but for the *constructor* path rather than
+bitwise dunders: it only cast a scalar-int kwarg to the field's declared `ftype` when the
+value wasn't already a typed `SimVal` (`if type(v) is not SimVal or v._ctype is None`). This
+assumed any already-typed `SimVal` must already be typed *to this field* — false whenever
+arithmetic promotes width, e.g. `uint4_t + int` yields a `SimVal` tagged `uint5_t`, not
+`uint4_t`. So `p_t(c=a.c+1)` at `uint4_t` max (`a.c=15`) constructed a field holding the raw,
+unmasked `16` tagged `uint5_t`, while the corresponding field-assignment form
+`o.c = a.c+1` correctly wrapped to `0` (assignment always recasts unconditionally via
+`_sim_cast_deep`, regardless of the RHS's existing ctype). Fixed by making the constructor
+path unconditionally call `_sim_cast(v, ftype)` too — `_sim_cast`'s own fast path already
+no-ops when the ctype already matches `ftype` exactly, so this costs nothing in the common
+already-correctly-typed case. Native-sim-only divergence: VHDL elaboration
+(`PY_TO_LOGIC.py`) never calls `_typed_new` — it detects struct-construction call nodes
+structurally and generates per-field VHDL assignments directly from annotated types, so
+hardware codegen was never affected. Regression test:
+`src/tests/pypeline_tests/inst/struct_ctor_narrow_test.py`.
+
 ### `_TypedAnnAssignRewriter` — Truncation at Every Typed Assignment
 
 An `ast.NodeTransformer` applied by `_build_reg_sim_func` to the function body AST.

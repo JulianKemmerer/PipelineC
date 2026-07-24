@@ -295,11 +295,22 @@ instances. This enables `left.exp` in `float_add` to carry the correct `_ctype` 
 for float32) so `concat(x_hidden, left.man)` can infer field widths without being told. Two
 code paths:
 
-- **Normal sim mode** (`SIM_RAW_INTS=False`): wraps scalar fields with `_int_new(SimVal, ...)` +
-  `_obj_setattr(obj, "_ctype", ftype)` (bypasses `SimVal.__new__` Python overhead). A field
-  whose type is an array of a scalar pypeline int (e.g. `keep: uint1_t[n]`) and whose value
-  is a plain Python `list` (e.g. a list-literal argument) has each element cast individually
-  via `_sim_cast(e, elem_ctype)`, using the element ctype resolved by `_array_elem_ctype`
+- **Normal sim mode** (`SIM_RAW_INTS=False`): scalar fields are cast via `_sim_cast(v, ftype)`
+  — mask/sign-extend to the field's declared bit width, exactly like a hardware-typed
+  assignment. This runs *unconditionally*, even when `v` already carries some other `_ctype`:
+  `_sim_cast` itself short-circuits to a no-op only when the value's ctype already matches
+  `ftype` exactly. This matters because arithmetic on a struct field's value can promote its
+  width (e.g. `uint4_t + int` yields a `uint5_t`-tagged `SimVal`) — a value carrying *any*
+  ctype is not the same as a value already typed to *this* field, so recasting down to `ftype`
+  is required. (Bug fixed 2026-07-24: an earlier version skipped the cast whenever `v` was
+  already a typed `SimVal`, so `p_t(c=a.c+1)` at `uint4_t` max silently returned `16` instead
+  of wrapping to `0` — divergent from field assignment (`o.c = a.c+1`), which always recasts
+  via `_sim_cast_deep` regardless of the RHS's existing ctype. See
+  [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#regt-simulation--stateful-registers-across-clock-cycles).)
+  A field whose type is an array of a scalar pypeline int (e.g. `keep: uint1_t[n]`) and whose
+  value is a plain Python `list` (e.g. a list-literal argument) has each element cast
+  individually via `_sim_cast(e, elem_ctype)`, using the element ctype resolved by
+  `_array_elem_ctype`
   (see [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#regt-simulation--stateful-registers-across-clock-cycles)).
 - **Raw sim mode** (`SIM_RAW_INTS=True`): wraps scalar fields with `_RawField(int(v))` —
   `int` subclass keeping C-level arithmetic, with `__getitem__` for bit-slicing. Scalar array

@@ -888,11 +888,14 @@ def struct(cls):
                     and isinstance(v, int)  # covers int, SimVal, IntEnum members
                     and _is_scalar_pypeline_int(ftype)
                 ):
-                    if type(v) is not SimVal or v._ctype is None:
-                        # Inline allocation: bypass SimVal.__new__ Python call frame.
-                        obj = _int_new(SimVal, int(v))
-                        _obj_setattr(obj, "_ctype", ftype)
-                        v = obj
+                    # Always mask/sign-extend to the field's declared bit width,
+                    # same as a hardware-typed assignment (`_sim_cast`), so e.g.
+                    # p_t(c=a.c+1) wraps identically to `o.c = a.c+1`. A value
+                    # already carrying *some* ctype (e.g. arithmetic promoting
+                    # uint4_t+int to uint5_t) must still be recast down to
+                    # ftype -- `_sim_cast` itself short-circuits the no-op case
+                    # where the ctype already matches ftype exactly.
+                    v = _sim_cast(v, ftype)
                 elif ftype is not None and (type(v) is list or isinstance(v, str)):
                     # Array-of-scalar field passed a raw Python list (e.g. a list
                     # literal) or, for a char/uint8_t array field, a bare Python str:
