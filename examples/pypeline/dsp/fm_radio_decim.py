@@ -78,13 +78,13 @@ q_decim_5x, q_decim_5x_t = make_fir_decim(
 
 @MAIN(125.0)
 def i_chan(
-    stream_in_if: i_decim_5x.in_stream_t, stream_out_if: i_decim_5x.out_fb_t
+    stream_in_if: i_decim_5x.in_fwd_t, stream_out_if: i_decim_5x.out_fb_t
 ) -> i_decim_5x_t:
     return i_decim_5x(stream_in_if, stream_out_if)
 
 
 @MAIN(125.0)
 def q_chan(
-    stream_in_if: q_decim_5x.in_stream_t, stream_out_if: q_decim_5x.out_fb_t
+    stream_in_if: q_decim_5x.in_fwd_t, stream_out_if: q_decim_5x.out_fb_t
 ) -> q_decim_5x_t:
     return q_decim_5x(stream_in_if, stream_out_if)

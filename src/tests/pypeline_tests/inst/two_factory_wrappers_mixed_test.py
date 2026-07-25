@@ -64,21 +64,21 @@ def wide_round(x: wide_t) -> wide_t:
     return rv
 
 
-uint32_stream_t = make_stream_interface(uint32_t).fwd_t
-wide_stream_t = make_stream_interface(wide_t).fwd_t
+uint32_stream_intrf = make_stream_interface(uint32_t)
+wide_stream_intrf = make_stream_interface(wide_t)
 scalar_mcp, scalar_mcp_t = make_valid_ready_mcp(scalar_round, 2)
 wide_pipeline, wide_pipeline_t = make_stream_pipeline(wide_round)
 
 
 @MAIN(50.0)
 def scalar_main(
-    stream_in_if: uint32_stream_t, stream_out_if: scalar_mcp.out_fb_t
+    stream_in_if: uint32_stream_intrf.fwd_t, stream_out_if: scalar_mcp.out_fb_t
 ) -> scalar_mcp_t:
     return scalar_mcp(stream_in_if, stream_out_if)
 
 
 @MAIN(50.0)
 def wide_main(
-    stream_in_if: wide_stream_t, stream_out_if: wide_pipeline.out_fb_t
+    stream_in_if: wide_stream_intrf.fwd_t, stream_out_if: wide_pipeline.out_fb_t
 ) -> wide_pipeline_t:
     return wide_pipeline(stream_in_if, stream_out_if)

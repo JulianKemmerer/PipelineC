@@ -373,12 +373,24 @@ def _var_ref_assign_func_name(output_type, base_type, ref_toks, covering_ref_tok
 # ─────────────────────────────────────────────
 
 
-def _inner_ctype_to_str(inner_ctype):
-    """Convert a Reg/Wire/Input/Output inner type to its C-type name string.
-    _CTypeMeta types (make_uint_t, etc.) have __str__ returning the C name.
-    @struct NamedTuple types are plain Python classes — use _pypeline_ctype_name.
+def _inner_ctype_to_str(inner_ctype, parser_state=None):
+    """Convert a Reg/Wire/Input/Output/Feedback inner type to its C-type name
+    string. _CTypeMeta types (make_uint_t, etc.) have __str__ returning the C
+    name. @struct NamedTuple types are plain Python classes — use
+    _pypeline_ctype_name.
+
+    If `parser_state` is given, also registers a struct/enum inner type --
+    unlike a plain annotation (`x: some_t`), a `Reg[T]`/`Wire[T]`/`Feedback[T]`
+    declaration is never routed through `_annotation_to_ctype`'s eval_ns path,
+    so a struct reached only via attribute access (e.g. `some_intrf.fwd_t`,
+    never bound to its own module-level name) would otherwise never get
+    registered in struct_to_field_type_dict at all.
     """
     if isinstance(inner_ctype, type):
+        if parser_state is not None:
+            _register_struct_recursive(inner_ctype, parser_state)
+            if getattr(inner_ctype, "_pypeline_is_enum", False):
+                _register_enum(inner_ctype, parser_state)
         return (
             getattr(inner_ctype, "_pypeline_ctype_name", None)
             or getattr(inner_ctype, "_pypeline_ctype_canonical", None)
@@ -561,6 +573,43 @@ def _annotation_elem_type_ns(func_def, func_for_source):
             elem = getattr(ann_dict[key], "_elem_ctype", None)
             if elem is not None:
                 out.setdefault(ann_node.value.id, elem)
+
+    for ast_arg in func_def.args.args:
+        add(ast_arg.annotation, ast_arg.arg)
+    add(func_def.returns, "return")
+    return out
+
+
+def _annotation_attr_base_ns(func_def, func_for_source):
+    """`{base_name: interface}` for dotted-attribute annotations like
+    `v: some_intrf.fwd_t` (also `.fb_t`/`.stream_t`).
+
+    A name used *only* inside an annotation is not captured as a closure
+    cell (see _recover_annotation_closure_vars, deliberately limited to
+    bare-name annotations so it never affects canonical naming), so
+    `some_intrf` is unresolvable when the annotation is re-evaluated from
+    source during elaboration -- `_annotation_to_ctype` then silently falls
+    back to the bare attribute name ('fwd_t'/'fb_t'/'stream_t') as if it
+    were the type itself. The already-resolved value in __annotations__
+    carries a `_pypeline_interface` back-reference (stamped by
+    `@interface`), so recover `some_intrf` from there.
+
+    Kept out of closure_ns and merged at lowest priority, like
+    _annotation_elem_type_ns: it must never rename an entity or shadow a
+    name that genuinely resolves.
+    """
+    ann_dict = getattr(func_for_source, "__annotations__", {})
+    out = {}
+
+    def add(ann_node, key):
+        if (
+            isinstance(ann_node, ast.Attribute)
+            and isinstance(ann_node.value, ast.Name)
+            and key in ann_dict
+        ):
+            base = getattr(ann_dict[key], "_pypeline_interface", None)
+            if base is not None:
+                out.setdefault(ann_node.value.id, base)
 
     for ast_arg in func_def.args.args:
         add(ast_arg.annotation, ast_arg.arg)
@@ -2740,9 +2789,7 @@ class FuncElaborator:
         # Detect Reg[T] annotation — hardware state register
         ann_val = self._try_eval_const(stmt.annotation)
         if isinstance(ann_val, _RegType):
-            inner_ctype = _inner_ctype_to_str(ann_val.inner_ctype)
-            if getattr(ann_val.inner_ctype, "_pypeline_is_enum", False):
-                _register_enum(ann_val.inner_ctype, self.parser_state)
+            inner_ctype = _inner_ctype_to_str(ann_val.inner_ctype, self.parser_state)
             init_py_val = None
             if stmt.value is not None:
                 # KNOWN LIMITATION: Reg[T] initializers where T's leaf scalar type is
@@ -2786,7 +2833,7 @@ class FuncElaborator:
                 raise ElaborationError(
                     f"Feedback wire '{var_name}' cannot have an initializer", stmt
                 )
-            inner_ctype = _inner_ctype_to_str(ann_val.inner_ctype)
+            inner_ctype = _inner_ctype_to_str(ann_val.inner_ctype, self.parser_state)
             self._declare_feedback_var(var_name, inner_ctype, stmt.target)
             return
         # Normal local variable
@@ -4541,8 +4588,10 @@ class FuncElaborator:
         # only so such an annotation can be re-evaluated (see
         # _annotation_elem_type_ns). Never shadows a name that already resolves.
         ann_elem_ns = _annotation_elem_type_ns(func_def, func_for_source)
+        ann_attr_base_ns = _annotation_attr_base_ns(func_def, func_for_source)
         merged_globals = {
             **ann_elem_ns,
+            **ann_attr_base_ns,
             **func_own_globals,
             **self.module_globals,
             **closure_ns,
@@ -5341,7 +5390,7 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
             reg_name = f"{name_prefix}_{bare_name}" if name_prefix else bare_name
         var_info = C_TO_LOGIC.VariableInfo()
         var_info.name = reg_name
-        var_info.type_name = _inner_ctype_to_str(ann_val.inner_ctype)
+        var_info.type_name = _inner_ctype_to_str(ann_val.inner_ctype, parser_state)
         parser_state.global_vars[reg_name] = var_info
         if kind == "Input":
             parser_state.input_wires.add(reg_name)

@@ -228,7 +228,7 @@ def make_fir_tb(
         deadline = 4 * (n_in + n_out) + 256
 
     elastic = fir.handshake == "elastic"
-    in_stream_t = fir.in_stream_t
+    in_stream_t = fir.in_fwd_t if fir.handshake == "elastic" else fir.in_stream_t
     data_t = fir.data_t
 
     rng = random.Random(seed)
@@ -246,7 +246,7 @@ def make_fir_tb(
     }
 
     if elastic:
-        in_plain_t = in_stream_t.typeof("stream")
+        in_plain_t = fir.in_intrf.stream_t
 
         @sim_input
         def drive_in() -> in_stream_t:

@@ -17,8 +17,10 @@ all expressed the same way.
 Hardware functions never take an interface directly -- they take the two ordinary
 `@struct`s it derives, one per direction, as attributes on the interface itself:
 
-    my_intrf.fwd_t   # feedforward fields
-    my_intrf.fb_t    # Feedback fields, unwrapped (None if the interface has none)
+    my_intrf.fwd_t     # feedforward fields
+    my_intrf.fb_t      # Feedback fields, unwrapped (None if the interface has none)
+    my_intrf.stream_t  # the plain {data, valid} half nested at .fwd_t.stream,
+                        # if this is a stream-shaped interface (None otherwise)
 
 Because the halves travel opposite ways, an *input* interface puts its
 feedforward half in an arg and its feedback half in a return field, and an
@@ -27,12 +29,22 @@ which is how they are paired (see `interface_func`) -- by convention that name
 ends in `_if` (enforced by a lint in `interface_func.callee_ports` and
 `pypeline._check_partial_interface_ports`).
 
-`.fwd_t`/`.fb_t` are memoized per interface and named deterministically from the
-interface's own canonical name, so repeated derivation yields identical
-definitions (canonical-name determinism). A plain valid-only stream
-(`stream.make_stream_t`) never needs an interface at all -- it is just a
-`{data, valid}` struct -- and `make_stream_interface(T).fwd_t` is literally
-that same struct, not a separately-derived twin.
+Naming convention, two distinct suffixes:
+  - `_intrf`: a variable holding the `@interface` class itself, e.g.
+    `axis_intrf` -- always accessed directly (`axis_intrf.fwd_t`,
+    `axis_intrf.stream_t`), never re-aliased to a shorter local name. A short
+    alias reintroduces the exact ambiguity `.fwd_t`/`.fb_t` exist to remove:
+    a reader can no longer tell from the name alone whether a type is a
+    paired port half or a standalone struct.
+  - `_if`: an argument/field name holding an *instance* of one port half
+    (typed `some_intrf.fwd_t` or `some_intrf.fb_t`).
+
+`.fwd_t`/`.fb_t`/`.stream_t` are memoized per interface and named
+deterministically from the interface's own canonical name, so repeated
+derivation yields identical definitions (canonical-name determinism). A plain
+valid-only stream (`stream.make_stream_t`) never needs an interface at all --
+it is just a `{data, valid}` struct -- and `make_stream_interface(T).stream_t`
+is literally that same struct, not a separately-derived twin.
 """
 
 import sys as _sys
@@ -165,7 +177,10 @@ def interface(cls):
     `.fb_t` on the class itself -- the only supported way to get a port's two
     halves (there is no public `make_interface_type`/`make_interface_feedback_type`;
     a plain valid-only stream doesn't need an interface at all, see
-    `stream.make_stream_t`)."""
+    `stream.make_stream_t`). Also attaches `.stream_t`, the plain `{data, valid}`
+    struct nested at `.fwd_t.stream` -- populated only for stream-shaped
+    interfaces (built via `make_stream_interface`/`make_axis_interface`),
+    `None` otherwise."""
     if not hasattr(cls, "_fields"):
         raise InterfaceError(
             f"@interface must be applied to a NamedTuple class (got {_tname(cls)!r})"
@@ -188,4 +203,19 @@ def interface(cls):
         )
     cls.fwd_t = fwd
     cls.fb_t = fb
+    cls.stream_t = (
+        fwd.typeof("stream")
+        if fwd is not None and "stream" in fwd._fields
+        else None
+    )
+    # .fwd_t/.fb_t already carry a _pypeline_interface back-reference (set by
+    # _derive, above). Stamp .stream_t the same way -- it isn't a _derive
+    # product, but PY_TO_LOGIC's annotation-closure recovery
+    # (_annotation_attr_base_ns) needs the same uniform back-reference to
+    # reconstruct `some_intrf` from a resolved `some_intrf.stream_t` value
+    # when `some_intrf` itself was used only in a dotted-attribute
+    # annotation, never in a function body statement (so Python never
+    # captured it as a closure cell).
+    if cls.stream_t is not None:
+        cls.stream_t._pypeline_interface = cls
     return cls

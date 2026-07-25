@@ -67,25 +67,21 @@ def make_fir_decim(
 
     win_t = data_t[n_taps]
     in_intrf = make_stream_interface(data_t)
-    in_stream_t = in_intrf.fwd_t
-    in_fb_t = in_intrf.fb_t
     phase_t = make_uint_t(max(1, (decim - 1).bit_length()))
     LAST_PHASE = decim - 1
 
     if handshake == "elastic":
         sp_func, sp_t = make_stream_pipeline(fir_core)
         sp_in_stream_t = hw_arg_types(sp_func)[0]
-        out_stream_t = sp_t.typeof("stream_out_if")
-        out_fb_t = hw_arg_types(sp_func)[1]
 
         @struct
         class fir_decim_t(NamedTuple):
-            stream_in_if: in_fb_t  # input port's reverse half travels out
-            stream_out_if: out_stream_t  # output port's feedforward half travels out
+            stream_in_if: in_intrf.fb_t  # input port's reverse half travels out
+            stream_out_if: sp_func.out_intrf.fwd_t  # output port's feedforward half travels out
 
         @hw_func
         def fir_decim(
-            stream_in_if: in_stream_t, stream_out_if: out_fb_t
+            stream_in_if: in_intrf.fwd_t, stream_out_if: sp_func.out_intrf.fb_t
         ) -> fir_decim_t:
             window: Reg[win_t]
             phase: Reg[phase_t]
@@ -116,7 +112,7 @@ def make_fir_decim(
     elif handshake == "valid_only":
         # A genuinely one-directional input type -- see dsp/fir.make_fir's
         # identical valid_only branch.
-        in_plain_t = make_stream_t(data_t)
+        in_stream_t = make_stream_t(data_t)
         win_stream_t = make_stream_t(win_t)
         out_stream_t = make_stream_t(out_t_actual)
         fir_decim_t = out_stream_t
@@ -133,7 +129,7 @@ def make_fir_decim(
         )
 
         @hw_func
-        def fir_decim(stream_in_if: in_plain_t) -> out_stream_t:
+        def fir_decim(stream_in_if: in_stream_t) -> out_stream_t:
             window: Reg[win_t]
             phase: Reg[phase_t]
             shifted: win_t
@@ -169,10 +165,13 @@ def make_fir_decim(
     fir_decim.interp = 1
     fir_decim.n_taps = n_taps
     fir_decim.handshake = handshake
-    fir_decim.in_stream_t = in_stream_t if handshake == "elastic" else in_plain_t
-    fir_decim.out_stream_t = out_stream_t
+    fir_decim.in_fwd_t = in_intrf.fwd_t if handshake == "elastic" else None
+    fir_decim.in_stream_t = in_stream_t if handshake == "valid_only" else None
+    fir_decim.out_fwd_t = sp_func.out_intrf.fwd_t if handshake == "elastic" else None
+    fir_decim.out_stream_t = out_stream_t if handshake == "valid_only" else None
     # Reverse halves of the two ports (elastic only -- valid_only is one-way).
-    fir_decim.in_fb_t = in_fb_t if handshake == "elastic" else None
-    fir_decim.out_fb_t = out_fb_t if handshake == "elastic" else None
+    fir_decim.in_fb_t = in_intrf.fb_t if handshake == "elastic" else None
+    fir_decim.out_fb_t = sp_func.out_intrf.fb_t if handshake == "elastic" else None
     fir_decim.stream_intrf = in_intrf
+    fir_decim.in_intrf = in_intrf
     return fir_decim, fir_decim_t

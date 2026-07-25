@@ -74,7 +74,7 @@ fir_ref, fir_ref_t = make_fir(
 
 @MAIN(100.0)
 def decim3_main(
-    stream_in_if: decim3.in_stream_t, stream_out_if: decim3.out_fb_t
+    stream_in_if: decim3.in_fwd_t, stream_out_if: decim3.out_fb_t
 ) -> decim3_t:
     return decim3(stream_in_if, stream_out_if)
 
@@ -90,7 +90,6 @@ _MAX_CYCLES = 3000
 def _drive_elastic(
     fir, inputs_q, out_ready_fn=lambda c: True, present_fn=lambda c: True
 ):
-    in_stream_t = fir.in_stream_t
     idx = 0
     outputs = []
     expected_n = len(golden_fir(fir, inputs_q))
@@ -101,7 +100,7 @@ def _drive_elastic(
         rdy = 1 if out_ready_fn(cycle) else 0
         r = sim_call(
             fir,
-            in_stream_t(stream=in_stream_t.typeof("stream")(data=fir.data_t(val=d), valid=v)),
+            fir.in_fwd_t(stream=fir.in_intrf.stream_t(data=fir.data_t(val=d), valid=v)),
             fir.out_fb_t(ready=rdy),
         )
         if v and int(r.stream_in_if.ready):
@@ -150,7 +149,6 @@ def test_decim3_input_gaps():
 def test_decim2_valid_only():
     sim_reset()
     stim = _rand_stim(50, seed=44)
-    in_stream_t = decim2_vonly.in_stream_t
     outputs = []
     expected = golden_fir(decim2_vonly, stim)
     for cycle in range(_MAX_CYCLES):
@@ -158,7 +156,7 @@ def test_decim2_valid_only():
             v, d = 1, stim[cycle]
         else:
             v, d = 0, 0
-        r = sim_call(decim2_vonly, in_stream_t(data=data_t(val=d), valid=v))
+        r = sim_call(decim2_vonly, decim2_vonly.in_stream_t(data=data_t(val=d), valid=v))
         if int(r.valid):
             outputs.append(int(r.data.val))
         if len(outputs) >= len(expected):

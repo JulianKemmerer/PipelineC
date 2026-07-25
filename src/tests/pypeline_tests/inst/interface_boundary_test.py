@@ -59,27 +59,23 @@ from interface.interface_func import make_hw_func_from_interface_func
 
 
 @interface
-class chan(NamedTuple):
+class chan_intrf(NamedTuple):
     data: uint8_t
     valid: uint1_t
     ready: Feedback[uint1_t]
-
-
-chan_t = chan.fwd_t
-chan_fb_t = chan.fb_t
 
 
 # ── the hand-written half: ready is computed from a register, so this can never
 #    be sugar. Note the plain `limit` input and the plain `passed` output ──
 @struct
 class gate_t(NamedTuple):
-    stream_in_if: chan_fb_t  # input port's reverse half travels out
-    stream_out_if: chan_t  # output port's feedforward half travels out
+    stream_in_if: chan_intrf.fb_t  # input port's reverse half travels out
+    stream_out_if: chan_intrf.fwd_t  # output port's feedforward half travels out
     passed: uint8_t  # plain status, no reverse companion
 
 
 @hw_func
-def gate(stream_in_if: chan_t, limit: uint8_t, stream_out_if: chan_fb_t) -> gate_t:
+def gate(stream_in_if: chan_intrf.fwd_t, limit: uint8_t, stream_out_if: chan_intrf.fb_t) -> gate_t:
     o: gate_t
     count: Reg[uint8_t]
     # closes once `limit` beats have gone through: backpressure from state
@@ -97,11 +93,11 @@ def gate(stream_in_if: chan_t, limit: uint8_t, stream_out_if: chan_fb_t) -> gate
 #    direction between them is generated, and `limit` fans out as a plain value ──
 @interface
 class gated_ports(NamedTuple):
-    stream_out_if: chan
+    stream_out_if: chan_intrf
     passed: uint8_t  # plain field riding along in a mixed bundle
 
 
-def gated_wiring(stream_in_if: chan, limit: uint8_t) -> gated_ports:
+def gated_wiring(stream_in_if: chan_intrf, limit: uint8_t) -> gated_ports:
     a = gate(stream_in_if, limit)
     b = gate(a.stream_out_if, limit)
     return gated_ports(stream_out_if=b.stream_out_if, passed=b.passed)
@@ -114,10 +110,10 @@ def test_generated_port_shape_is_the_documented_one():
     """args = params (interface ones as their feedforward half) then one
     feedback arg per output port; return = feedforward per output port, then
     plain bundle fields, then feedback per input port. All named by port."""
-    assert hw_arg_types(gated) == (chan_t, uint8_t, chan_fb_t)
+    assert hw_arg_types(gated) == (chan_intrf.fwd_t, uint8_t, chan_intrf.fb_t)
     assert list(gated_t._fields) == ["stream_out_if", "passed", "stream_in_if"]
-    assert gated_t.__annotations__["stream_out_if"] is chan_t
-    assert gated_t.__annotations__["stream_in_if"] is chan_fb_t
+    assert gated_t.__annotations__["stream_out_if"] is chan_intrf.fwd_t
+    assert gated_t.__annotations__["stream_in_if"] is chan_intrf.fb_t
     assert gated_t.__annotations__["passed"] is uint8_t
     assert hw_return_type(gated) is gated_t
 
@@ -140,8 +136,8 @@ def wrapper(
     o: wrapper_t
     # Build each half as a local -- a struct constructor is only elaboratable as
     # a whole assignment's right-hand side, not nested in a call's arguments.
-    fwd_in: chan_t = chan_t(data=in_data, valid=in_valid)
-    rev_out: chan_fb_t = chan_fb_t(ready=downstream_ready)
+    fwd_in: chan_intrf.fwd_t = chan_intrf.fwd_t(data=in_data, valid=in_valid)
+    rev_out: chan_intrf.fb_t = chan_intrf.fb_t(ready=downstream_ready)
     r = gated(
         fwd_in,  # feedforward half in
         limit,  # plain value straight through
@@ -160,9 +156,9 @@ def wrapper_twin(
     in_data: uint8_t, in_valid: uint1_t, limit: uint8_t, downstream_ready: uint1_t
 ) -> wrapper_t:
     o: wrapper_t
-    b_ready: Feedback[chan_fb_t]  # b is called after a, so a's ready comes back
-    fwd_in: chan_t = chan_t(data=in_data, valid=in_valid)
-    rev_out: chan_fb_t = chan_fb_t(ready=downstream_ready)
+    b_ready: Feedback[chan_intrf.fb_t]  # b is called after a, so a's ready comes back
+    fwd_in: chan_intrf.fwd_t = chan_intrf.fwd_t(data=in_data, valid=in_valid)
+    rev_out: chan_intrf.fb_t = chan_intrf.fb_t(ready=downstream_ready)
     a = gate(fwd_in, limit, b_ready)
     b = gate(a.stream_out_if, limit, rev_out)
     b_ready = b.stream_in_if

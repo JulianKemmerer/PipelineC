@@ -86,28 +86,28 @@ fir_vonly, fir_vonly_t = make_fir(
 
 @MAIN(100.0)
 def fir_sym_main(
-    stream_in_if: fir_sym.in_stream_t, stream_out_if: fir_sym.out_fb_t
+    stream_in_if: fir_sym.in_fwd_t, stream_out_if: fir_sym.out_fb_t
 ) -> fir_sym_t:
     return fir_sym(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
 def fir_hb_main(
-    stream_in_if: fir_hb.in_stream_t, stream_out_if: fir_hb.out_fb_t
+    stream_in_if: fir_hb.in_fwd_t, stream_out_if: fir_hb.out_fb_t
 ) -> fir_hb_t:
     return fir_hb(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
 def fir_anti_main(
-    stream_in_if: fir_anti.in_stream_t, stream_out_if: fir_anti.out_fb_t
+    stream_in_if: fir_anti.in_fwd_t, stream_out_if: fir_anti.out_fb_t
 ) -> fir_anti_t:
     return fir_anti(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
 def fir_full_main(
-    stream_in_if: fir_full.in_stream_t, stream_out_if: fir_full.out_fb_t
+    stream_in_if: fir_full.in_fwd_t, stream_out_if: fir_full.out_fb_t
 ) -> fir_full_t:
     return fir_full(stream_in_if, stream_out_if)
 
@@ -126,7 +126,6 @@ def _drive_elastic(
     """Present inputs_q in order (held until accepted), drive consumer ready
     per out_ready_fn(cycle) and input availability per present_fn(cycle);
     return the consumed output sequence (raw ints)."""
-    in_stream_t = fir.in_stream_t
     idx = 0
     outputs = []
     expected_n = len(golden_fir(fir, inputs_q))
@@ -137,7 +136,7 @@ def _drive_elastic(
         rdy = 1 if out_ready_fn(cycle) else 0
         r = sim_call(
             fir,
-            in_stream_t(stream=in_stream_t.typeof("stream")(data=fir.data_t(val=d), valid=v)),
+            fir.in_fwd_t(stream=fir.in_intrf.stream_t(data=fir.data_t(val=d), valid=v)),
             fir.out_fb_t(ready=rdy),
         )
         if v and int(r.stream_in_if.ready):
@@ -153,7 +152,6 @@ def _drive_elastic(
 
 
 def _drive_valid_only(fir, inputs_q):
-    in_stream_t = fir.in_stream_t
     outputs = []
     expected_n = len(golden_fir(fir, inputs_q))
     for cycle in range(_MAX_CYCLES):
@@ -161,7 +159,7 @@ def _drive_valid_only(fir, inputs_q):
             v, d = 1, inputs_q[cycle]
         else:
             v, d = 0, 0
-        r = sim_call(fir, in_stream_t(data=fir.data_t(val=d), valid=v))
+        r = sim_call(fir, fir.in_stream_t(data=fir.data_t(val=d), valid=v))
         if int(r.valid):
             outputs.append(int(r.data.val))
         if len(outputs) >= expected_n:

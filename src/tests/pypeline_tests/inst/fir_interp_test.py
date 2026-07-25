@@ -48,7 +48,7 @@ stuffer2, stuffer2_t = make_zero_stuffer(data_t, 2)
 
 @MAIN(100.0)
 def interp3_main(
-    stream_in_if: interp3.in_stream_t, stream_out_if: interp3.out_fb_t
+    stream_in_if: interp3.in_fwd_t, stream_out_if: interp3.out_fb_t
 ) -> interp3_t:
     return interp3(stream_in_if, stream_out_if)
 
@@ -59,7 +59,6 @@ _MAX_CYCLES = 4000
 def _drive_elastic(
     fir, inputs_q, out_ready_fn=lambda c: True, present_fn=lambda c: True
 ):
-    in_stream_t = fir.in_stream_t
     idx = 0
     outputs = []
     expected_n = len(golden_fir(fir, inputs_q))
@@ -70,7 +69,7 @@ def _drive_elastic(
         rdy = 1 if out_ready_fn(cycle) else 0
         r = sim_call(
             fir,
-            in_stream_t(stream=in_stream_t.typeof("stream")(data=fir.data_t(val=d), valid=v)),
+            fir.in_fwd_t(stream=fir.in_intrf.stream_t(data=fir.data_t(val=d), valid=v)),
             fir.out_fb_t(ready=rdy),
         )
         if v and int(r.stream_in_if.ready):
@@ -92,8 +91,6 @@ def _rand_stim(n, seed):
 def test_zero_stuffer_beats():
     # 1 input -> [sample, 0] beat pairs, in order, under random backpressure.
     sim_reset()
-    stream_t = hw_arg_types(stuffer2)[0]
-    plain_t = stream_t.typeof("stream")
     stim = [10, -20, 30]
     stall_rng = random.Random(7)
     idx = 0
@@ -104,7 +101,9 @@ def test_zero_stuffer_beats():
         rdy = 1 if stall_rng.random() < 0.6 else 0
         r = sim_call(
             stuffer2,
-            stream_t(stream=plain_t(data=data_t(val=d), valid=v)),
+            stuffer2.stream_intrf.fwd_t(
+                stream=stuffer2.stream_intrf.stream_t(data=data_t(val=d), valid=v)
+            ),
             stuffer2.in_fb_t(ready=rdy),
         )
         if v and int(r.stream_in_if.ready):

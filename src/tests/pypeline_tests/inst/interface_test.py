@@ -59,32 +59,28 @@ class bus_intrf(NamedTuple):
     nack: Feedback[uint1_t]
 
 
-bus_t = bus_intrf.fwd_t
-bus_fb_t = bus_intrf.fb_t
-
-
 def test_derived_types_split_by_direction():
-    assert bus_t._fields == ("payload", "go")
-    assert bus_fb_t._fields == ("credit", "nack")
+    assert bus_intrf.fwd_t._fields == ("payload", "go")
+    assert bus_intrf.fb_t._fields == ("credit", "nack")
     # Feedback[T] fields are unwrapped to their inner type
-    assert bus_fb_t.__annotations__["credit"] is uint4_t
-    assert bus_fb_t.__annotations__["nack"] is uint1_t
-    assert bus_t.__annotations__["payload"] is uint32_t
+    assert bus_intrf.fb_t.__annotations__["credit"] is uint4_t
+    assert bus_intrf.fb_t.__annotations__["nack"] is uint1_t
+    assert bus_intrf.fwd_t.__annotations__["payload"] is uint32_t
     # back-tags let introspection recover the interface + direction
-    assert interface_of(bus_t) is bus_intrf
-    assert interface_of(bus_fb_t) is bus_intrf
-    assert interface_role(bus_t) == FWD
-    assert interface_role(bus_fb_t) == FB
-    assert is_interface(bus_intrf) and not is_interface(bus_t)
+    assert interface_of(bus_intrf.fwd_t) is bus_intrf
+    assert interface_of(bus_intrf.fb_t) is bus_intrf
+    assert interface_role(bus_intrf.fwd_t) == FWD
+    assert interface_role(bus_intrf.fb_t) == FB
+    assert is_interface(bus_intrf) and not is_interface(bus_intrf.fwd_t)
 
 
 def test_derivation_is_memoized_and_deterministic():
-    assert bus_intrf.fwd_t is bus_t
-    assert bus_intrf.fb_t is bus_fb_t
+    assert bus_intrf.fwd_t is bus_intrf.fwd_t
+    assert bus_intrf.fb_t is bus_intrf.fb_t
     # canonical names are pure functions of the declaration
-    assert bus_t._pypeline_ctype_name == "bus_intrf_t_payload_uint32_t_go_uint1_t"
+    assert bus_intrf.fwd_t._pypeline_ctype_name == "bus_intrf_t_payload_uint32_t_go_uint1_t"
     assert (
-        bus_fb_t._pypeline_ctype_name
+        bus_intrf.fb_t._pypeline_ctype_name
         == "bus_intrf_feedback_t_credit_uint4_t_nack_uint1_t"
     )
 
@@ -98,14 +94,12 @@ class outer_intrf(NamedTuple):
 
 
 def test_nested_and_mixed_bundle():
-    ofwd = outer_intrf.fwd_t
-    ofb = outer_intrf.fb_t
     # plain field rides along feedforward and contributes nothing reverse
-    assert ofwd._fields == ("lanes", "side", "tag")
-    assert ofb._fields == ("lanes", "side")
-    assert ofwd.__annotations__["side"] is bus_t
-    assert ofb.__annotations__["side"] is bus_fb_t
-    assert ofwd.__annotations__["tag"] is uint8_t
+    assert outer_intrf.fwd_t._fields == ("lanes", "side", "tag")
+    assert outer_intrf.fb_t._fields == ("lanes", "side")
+    assert outer_intrf.fwd_t.__annotations__["side"] is bus_intrf.fwd_t
+    assert outer_intrf.fb_t.__annotations__["side"] is bus_intrf.fb_t
+    assert outer_intrf.fwd_t.__annotations__["tag"] is uint8_t
 
 
 # ── one-directional interfaces ──
@@ -129,12 +123,12 @@ def test_one_directional_interfaces():
 # ── the explicit hw_func form: y <- x, both directions wired by hand ──
 @struct
 class x_to_y_t(NamedTuple):
-    x_if: bus_fb_t  # input x_if's reverse travels out
-    y_if: bus_t  # output y_if's feedforward travels out
+    x_if: bus_intrf.fb_t  # input x_if's reverse travels out
+    y_if: bus_intrf.fwd_t  # output y_if's feedforward travels out
 
 
 @hw_func
-def x_to_y_hw_func(x_if: bus_t, y_if: bus_fb_t) -> x_to_y_t:
+def x_to_y_hw_func(x_if: bus_intrf.fwd_t, y_if: bus_intrf.fb_t) -> x_to_y_t:
     o: x_to_y_t
     # Each direction carries a little real logic (rather than being a pure wire
     # rename) so synthesis sees a non-zero critical path on both paths.
@@ -146,7 +140,7 @@ def x_to_y_hw_func(x_if: bus_t, y_if: bus_fb_t) -> x_to_y_t:
 
 
 @MAIN
-def top_x_to_y(x_if: bus_t, y_if: bus_fb_t) -> x_to_y_t:
+def top_x_to_y(x_if: bus_intrf.fwd_t, y_if: bus_intrf.fb_t) -> x_to_y_t:
     return x_to_y_hw_func(x_if, y_if)
 
 
@@ -155,8 +149,8 @@ def test_explicit_split_struct_hw_func_simulates():
     for payload, go, credit, nack in [(7, 1, 3, 0), (0, 0, 0, 1), (0xDEAD, 1, 15, 1)]:
         r = sim_call(
             top_x_to_y,
-            bus_t(payload=payload, go=go),
-            bus_fb_t(credit=credit, nack=nack),
+            bus_intrf.fwd_t(payload=payload, go=go),
+            bus_intrf.fb_t(credit=credit, nack=nack),
         )
         # feedforward flows x -> y, feedback flows y -> x, independently
         assert int(r.y_if.payload) == (payload + 1) & 0xFFFFFFFF

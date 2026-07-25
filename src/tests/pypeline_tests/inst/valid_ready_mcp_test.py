@@ -57,7 +57,7 @@ def divider(i: my_struct_t) -> uint32_t:
     return i.x / safe_y
 
 
-my_struct_stream_t = make_stream_interface(my_struct_t).fwd_t
+my_struct_intrf = make_stream_interface(my_struct_t)
 
 divider_mcp, divider_mcp_t = make_valid_ready_mcp(divider, 16)
 
@@ -70,7 +70,7 @@ def mcp_divider_test_fsm() -> uint1_t:
     y: Reg[uint32_t] = 1
     result: Reg[uint32_t]
 
-    in_stream_if: my_struct_stream_t
+    in_stream_if: my_struct_intrf.fwd_t
     in_stream_if.stream.data = my_struct_t(x=x, y=y)
     in_stream_if.stream.valid = 1
 
@@ -106,8 +106,8 @@ def test_divider_mcp_handshake():
     accepted_cycle = None
     result = None
     for cycle in range(NCYCLES + 5):
-        stream_in_if = my_struct_stream_t(
-            stream=my_struct_stream_t.typeof("stream")(
+        stream_in_if = my_struct_intrf.fwd_t(
+            stream=my_struct_intrf.stream_t(
                 data=my_struct_t(x=x, y=y), valid=0 if launched else 1
             )
         )

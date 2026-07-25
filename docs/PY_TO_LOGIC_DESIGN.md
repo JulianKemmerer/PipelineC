@@ -1379,15 +1379,59 @@ C_TO_LOGIC backend — no changes to VHDL generation are needed.
 
 `@interface` (`include/pypeline/interface/interface.py`) declares a bundle of signals with
 per-field direction: plain fields are feedforward, `Feedback[T]` fields are reverse. It is a
-pure library construct — it derives two ordinary `@struct`s (one per direction), attached
-directly onto the class as `.fwd_t` / `.fb_t` (there is no public `make_interface_type` /
-`make_interface_feedback_type`), and only those reach the elaborator. A whole interface is
-never a hardware type. The with-ready stream interface (`stream.make_stream_interface`) nests
-a plain `stream.make_stream_t(data_t)` as its forward field rather than re-declaring
-`data`/`valid` itself, so `.fwd_t` is `{stream: {data, valid}}` and a real port's payload is
-reached as `.stream.data`/`.stream.valid` — this makes a standalone valid-only stream and the
-forward half of a with-ready one the same underlying type, crossable with a single `.stream`
-field access instead of a per-field copy.
+pure library construct — it derives ordinary `@struct`s attached directly onto the class as
+`.fwd_t` / `.fb_t` (there is no public `make_interface_type` / `make_interface_feedback_type`),
+and only those reach the elaborator. A whole interface is never a hardware type. The with-ready
+stream interface (`stream.make_stream_interface`) nests a plain `stream.make_stream_t(data_t)`
+as its forward field rather than re-declaring `data`/`valid` itself, so `.fwd_t` is
+`{stream: {data, valid}}` and a real port's payload is reached as `.stream.data`/`.stream.valid`
+— this makes a standalone valid-only stream and the forward half of a with-ready one the same
+underlying type, crossable with a single `.stream` field access instead of a per-field copy.
+A third attribute, `.stream_t`, gives that nested plain type directly off the interface
+(`some_intrf.stream_t`, `None` for non-stream-shaped interfaces) — it replaces the older
+`<fwd_t value>.typeof("stream")` idiom, since the shortcut conceptually belongs on the interface,
+not on one of its derived structs.
+
+Every use site accesses `.fwd_t`/`.fb_t`/`.stream_t` directly off the `@interface`-holding
+variable — never through a bound local alias (`chan_t = chan_intrf.fwd_t`). Convention: a
+variable holding the interface class itself is suffixed `_intrf`; a variable holding one
+*instance* of a port half is suffixed `_if` — the two suffixes never collide, so a reader (and
+the elaborator, see below) can always tell which kind of name they're looking at.
+
+**Elaborating a dotted-attribute annotation from inside a factory closure** needs one extra
+step beyond a bare-name annotation, because of how Python resolves annotations. A parameter
+annotation like `stream_in_if: in_intrf.fwd_t`, when `in_intrf` is a factory-local variable used
+*only* in annotations (never in the function's own body statements), is evaluated by Python at
+`def`-time in the *enclosing* scope — so `in_intrf` never becomes one of the inner function's own
+closure cells (`co_freevars`/`__closure__`). When `_elaborate_live_func` later re-parses that
+function from source to elaborate a fresh instantiation, its own merged eval namespace has no
+`in_intrf` to resolve the annotation against. `_recover_annotation_closure_vars` already covers
+the bare-name case (`stream_in_if: stream_t`) by pulling the pre-resolved value straight out of
+`func.__annotations__`, but is deliberately restricted to `ast.Name` annotations — it feeds
+`closure_ns`, which also drives canonical entity naming, and extending it to attribute chains
+would rename entities. `_annotation_attr_base_ns` (kept out of `closure_ns`, merged at lowest
+priority into `_elaborate_live_func`'s namespace, alongside `_annotation_elem_type_ns`'s
+subscript-element recovery) instead handles exactly the `ast.Attribute` case: it recovers
+`{base_name: interface}` using a `_pypeline_interface` back-reference that `@interface` stamps
+onto every `.fwd_t`/`.fb_t`/`.stream_t` it derives, pointing back at the owning interface class.
+Without this, `_annotation_to_ctype`'s eval() raises on the missing name, its broad exception
+handler falls through to a "static" fallback that returns the bare attribute name (`ann.attr`,
+e.g. the literal string `"fwd_t"`) as if it were the resolved ctype, and elaboration proceeds
+with a silently wrong type until a later nested field access fails — worth knowing since that
+fallback exists for other legitimate reasons (annotations that generally can't be `eval`'d) and
+gives no direct signal that *this* is what happened.
+
+Relatedly, `Reg[T]`/`Feedback[T]` local declarations and global `Wire[T]`/`Input[T]`/`Output[T]`
+declarations resolve their inner type via `_inner_ctype_to_str`, a different, narrower path than
+a plain `x: some_t` local annotation (which goes through `_annotation_to_ctype`'s eval_ns branch
+and, as a side effect, registers any struct/enum type it evaluates to via
+`_register_struct_recursive`/`_register_enum`). `_inner_ctype_to_str` used to skip that
+registration entirely, so a struct reached only through one of these three declaration forms —
+never separately bound to a name that some other annotation would register — could reach
+elaboration with its fields never entered into `struct_to_field_type_dict`, surfacing later as a
+`KeyError` keyed on the *whole struct's canonical name* (not a single field, unlike the
+attribute-annotation case above) the first time a nested field read needed it. Fixed by having
+`_inner_ctype_to_str` optionally accept `parser_state` and perform the same registration.
 
 A function annotated with a whole `@interface` is an **interface function**: its body wires
 only the feedforward direction. `make_hw_func_from_interface_func(f)`

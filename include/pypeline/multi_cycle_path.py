@@ -26,8 +26,8 @@ def make_valid_ready_mcp(func, ncycles: int):
         def divider(i: my_struct_t) -> uint32_t: ...
 
     Returns (func_mcp, func_mcp_t):
-        func_mcp(stream_in_if: in_stream_t, stream_out_if: out_fb_t) -> func_mcp_t
-        func_mcp_t fields: .stream_in_if (in_fb_t), .stream_out_if (out_stream_t)
+        func_mcp(stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t) -> func_mcp_t
+        func_mcp_t fields: .stream_in_if (in_intrf.fb_t), .stream_out_if (out_intrf.fwd_t)
     """
     if not is_hw_func(func):
         raise TypeError(
@@ -39,18 +39,14 @@ def make_valid_ready_mcp(func, ncycles: int):
 
     in_intrf = make_stream_interface(in_type)
     out_intrf = make_stream_interface(out_type)
-    in_stream_t = in_intrf.fwd_t
-    in_fb_t = in_intrf.fb_t
-    out_stream_t = out_intrf.fwd_t
-    out_fb_t = out_intrf.fb_t
 
     @struct
     class func_mcp_t(NamedTuple):
-        stream_in_if: in_fb_t  # input port's reverse half travels out
-        stream_out_if: out_stream_t  # output port's feedforward half travels out
+        stream_in_if: in_intrf.fb_t  # input port's reverse half travels out
+        stream_out_if: out_intrf.fwd_t  # output port's feedforward half travels out
 
     @hw_func
-    def func_mcp(stream_in_if: in_stream_t, stream_out_if: out_fb_t) -> func_mcp_t:
+    def func_mcp(stream_in_if: in_intrf.fwd_t, stream_out_if: out_intrf.fb_t) -> func_mcp_t:
         # Start/capture regs spanning the multi-cycle path
         MC = MULTI_CYCLE[ncycles]
         launch: Reg[in_type, MC.start]
@@ -81,8 +77,8 @@ def make_valid_ready_mcp(func, ncycles: int):
 
     func_mcp.in_intrf = in_intrf
     func_mcp.out_intrf = out_intrf
-    func_mcp.in_stream_t = in_stream_t
-    func_mcp.in_fb_t = in_fb_t
-    func_mcp.out_stream_t = out_stream_t
-    func_mcp.out_fb_t = out_fb_t
+    func_mcp.in_fwd_t = in_intrf.fwd_t
+    func_mcp.in_fb_t = in_intrf.fb_t
+    func_mcp.out_fwd_t = out_intrf.fwd_t
+    func_mcp.out_fb_t = out_intrf.fb_t
     return func_mcp, func_mcp_t

@@ -46,16 +46,20 @@ def make_stream_interface(data_t, feedback_t=uint1_t):
     `feedback_t` defaults to `uint1_t` (the usual ready bit); a stream whose
     backpressure is wider (a credit count, a struct of flags) sets it here.
 
-    A module declares its ports with the two derived halves:
+    A module declares its ports off the interface directly -- never re-aliased
+    to a shorter local name, so a reader can always tell a paired port half
+    from a standalone stream type by the name alone:
 
         stream_intrf = make_stream_interface(uint32_t)
-        s_t    = stream_intrf.fwd_t   # {stream: {data, valid}}
-        s_fb_t = stream_intrf.fb_t    # {ready}
+        stream_intrf.fwd_t    # {stream: {data, valid}}
+        stream_intrf.fb_t     # {ready}
+        stream_intrf.stream_t # {data, valid} -- the plain type nested at .fwd_t.stream
 
-    An input port puts `s_t` in an arg and `s_fb_t` in a return field of the same
-    name (ending in `_if`); an output port does the reverse. Field access on a
-    real port is `port.stream.data` / `port.stream.valid` (not `port.data` --
-    that flat shape is reserved for a standalone `make_stream_t(data_t)` value).
+    An input port puts `stream_intrf.fwd_t` in an arg and `stream_intrf.fb_t`
+    in a return field of the same name (ending in `_if`); an output port does
+    the reverse. Field access on a real port is `port.stream.data` /
+    `port.stream.valid` (not `port.data` -- that flat shape is reserved for a
+    standalone `make_stream_t(data_t)` value).
     """
 
     @interface

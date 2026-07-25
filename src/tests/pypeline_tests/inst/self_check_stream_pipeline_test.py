@@ -53,8 +53,6 @@ def div_inv(x: uint8_t) -> uint8_t:
 
 
 uint8_stream_intrf = make_stream_interface(uint8_t)
-uint8_stream_t = uint8_stream_intrf.fwd_t
-uint8_stream_fb_t = uint8_stream_intrf.fb_t
 stream_pipeline, stream_pipeline_t = make_stream_pipeline(div_inv)
 
 
@@ -86,7 +84,7 @@ MAX_CYCLES = 200  # generous flush bound; a stuck pipeline fails loudly
 # `stream_in_if` field, the reverse half of a port this function doesn't
 # externally have, would be a lone half with no argument to pair with.)
 @MAIN(50.0)
-def self_check_stream_pipeline() -> stream_pipeline.out_stream_t:
+def self_check_stream_pipeline() -> stream_pipeline.out_fwd_t:
     cycle: Reg[uint16_t]
     in_count: Reg[uint16_t]
     out_count: Reg[uint16_t]
@@ -102,10 +100,10 @@ def self_check_stream_pipeline() -> stream_pipeline.out_stream_t:
     elif in_sel == 3:
         x = IN3
 
-    stream_in_if: uint8_stream_t
+    stream_in_if: uint8_stream_intrf.fwd_t
     stream_in_if.stream.valid = in_count < NUM_OUTPUTS
     stream_in_if.stream.data = x
-    ready1: uint8_stream_fb_t
+    ready1: uint8_stream_intrf.fb_t
     ready1.ready = 1
     o: stream_pipeline_t = stream_pipeline(stream_in_if, ready1)
 

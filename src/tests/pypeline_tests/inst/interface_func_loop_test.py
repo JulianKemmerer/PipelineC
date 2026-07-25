@@ -47,28 +47,24 @@ from interface.interface_func import make_hw_func_from_interface_func
 
 
 @interface
-class chan(NamedTuple):
+class chan_intrf(NamedTuple):
     data: uint8_t
     valid: uint1_t
     ready: Feedback[uint1_t]
 
 
-chan_t = chan.fwd_t
-chan_fb_t = chan.fb_t
-
-
 # ── a multi-output element: 2 input ports, 2 output ports ──
 @struct
 class fsm_t(NamedTuple):
-    axis_in_if: chan_fb_t  # reverse of input port axis_in_if
-    from_pipe_if: chan_fb_t  # reverse of input port from_pipe_if
-    axis_out_if: chan_t  # feedforward of output port axis_out_if
-    to_pipe_if: chan_t  # feedforward of output port to_pipe_if
+    axis_in_if: chan_intrf.fb_t  # reverse of input port axis_in_if
+    from_pipe_if: chan_intrf.fb_t  # reverse of input port from_pipe_if
+    axis_out_if: chan_intrf.fwd_t  # feedforward of output port axis_out_if
+    to_pipe_if: chan_intrf.fwd_t  # feedforward of output port to_pipe_if
 
 
 @hw_func
 def fsm(
-    axis_in_if: chan_t, from_pipe_if: chan_t, axis_out_if: chan_fb_t, to_pipe_if: chan_fb_t
+    axis_in_if: chan_intrf.fwd_t, from_pipe_if: chan_intrf.fwd_t, axis_out_if: chan_intrf.fb_t, to_pipe_if: chan_intrf.fb_t
 ) -> fsm_t:
     """Routes input out to the pipeline and the pipeline's result to the output."""
     o: fsm_t
@@ -84,12 +80,12 @@ def fsm(
 # ── the datapath the FSM loops through (registered, so the loop is breakable) ──
 @struct
 class pipe_t(NamedTuple):
-    stream_in_if: chan_fb_t
-    stream_out_if: chan_t
+    stream_in_if: chan_intrf.fb_t
+    stream_out_if: chan_intrf.fwd_t
 
 
 @hw_func
-def pipe(stream_in_if: chan_t, stream_out_if: chan_fb_t) -> pipe_t:
+def pipe(stream_in_if: chan_intrf.fwd_t, stream_out_if: chan_intrf.fb_t) -> pipe_t:
     o: pipe_t
     o.stream_out_if.data = stream_in_if.data + 1
     o.stream_out_if.valid = stream_in_if.valid
@@ -98,7 +94,7 @@ def pipe(stream_in_if: chan_t, stream_out_if: chan_fb_t) -> pipe_t:
 
 
 # ── the sugar: `p` is referenced before it is assigned, i.e. a feedforward loop ──
-def merge(axis_in_if: chan) -> chan:
+def merge(axis_in_if: chan_intrf) -> chan_intrf:
     f = fsm(axis_in_if, p.stream_out_if)  # consumes a value produced by a later call
     p = pipe(f.to_pipe_if)
     return f.axis_out_if
@@ -108,22 +104,22 @@ merge_inst, merge_inst_t = make_hw_func_from_interface_func(merge)
 
 
 @MAIN
-def top_loop(axis_in_if: chan_t, out_port_if: chan_fb_t) -> merge_inst_t:
+def top_loop(axis_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t) -> merge_inst_t:
     return merge_inst(axis_in_if, out_port_if)
 
 
 # ── hand-written explicit twin: both Feedbacks written out by hand ──
 @struct
 class merge_twin_t(NamedTuple):
-    axis_in_if: chan_fb_t  # reverse of input port axis_in_if
-    out_port_if: chan_t  # feedforward of output port out_port_if, named to match its
+    axis_in_if: chan_intrf.fb_t  # reverse of input port axis_in_if
+    out_port_if: chan_intrf.fwd_t  # feedforward of output port out_port_if, named to match its
     # own arg (unlike fsm_t's "axis_out_if", which names the FSM's own port)
 
 
 @hw_func
-def merge_twin(axis_in_if: chan_t, out_port_if: chan_fb_t) -> merge_twin_t:
-    pipe_out: Feedback[chan_t]  # feedforward fed backward -- the loop
-    pipe_in_rev: Feedback[chan_fb_t]  # reverse fed backward -- backpressure
+def merge_twin(axis_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t) -> merge_twin_t:
+    pipe_out: Feedback[chan_intrf.fwd_t]  # feedforward fed backward -- the loop
+    pipe_in_rev: Feedback[chan_intrf.fb_t]  # reverse fed backward -- backpressure
     f = fsm(axis_in_if, pipe_out, out_port_if, pipe_in_rev)
     p = pipe(f.to_pipe_if, f.from_pipe_if)
     pipe_out = p.stream_out_if
@@ -135,7 +131,7 @@ def merge_twin(axis_in_if: chan_t, out_port_if: chan_fb_t) -> merge_twin_t:
 
 
 @MAIN
-def top_twin(axis_in_if: chan_t, out_port_if: chan_fb_t) -> merge_twin_t:
+def top_twin(axis_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t) -> merge_twin_t:
     return merge_twin(axis_in_if, out_port_if)
 
 
@@ -152,8 +148,8 @@ def test_generated_wiring_has_both_feedback_directions():
 def test_loop_matches_hand_written_twin():
     sim_reset()
     for data, valid, rdy in [(10, 1, 1), (0, 0, 1), (200, 1, 0), (7, 1, 1), (255, 1, 1)]:
-        s = sim_call(top_loop, chan_t(data=data, valid=valid), chan_fb_t(ready=rdy))
-        t = sim_call(top_twin, chan_t(data=data, valid=valid), chan_fb_t(ready=rdy))
+        s = sim_call(top_loop, chan_intrf.fwd_t(data=data, valid=valid), chan_intrf.fb_t(ready=rdy))
+        t = sim_call(top_twin, chan_intrf.fwd_t(data=data, valid=valid), chan_intrf.fb_t(ready=rdy))
         # data makes it round the loop through the +1 datapath
         assert int(s.out_port_if.data) == int(t.out_port_if.data) == (data + 1) & 0xFF
         assert int(s.out_port_if.valid) == int(t.out_port_if.valid) == valid

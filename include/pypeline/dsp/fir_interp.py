@@ -43,8 +43,8 @@ def make_zero_stuffer(data_t, factor):
     throughput is exactly factor cycles per input.
 
     Returns (zero_stuffer, zero_stuffer_t):
-        zero_stuffer(stream_in_if: stream_t, stream_out_if: stream_fb_t)
-            -> zero_stuffer_t{stream_in_if: stream_fb_t, stream_out_if: stream_t}
+        zero_stuffer(stream_in_if: stream_intrf.fwd_t, stream_out_if: stream_intrf.fb_t)
+            -> zero_stuffer_t{stream_in_if: stream_intrf.fb_t, stream_out_if: stream_intrf.fwd_t}
     i.e. one stream `@interface` per port, split into its two halves.
     """
     if not (isinstance(factor, int) and factor >= 1):
@@ -52,19 +52,17 @@ def make_zero_stuffer(data_t, factor):
             f"make_zero_stuffer: factor must be an int >= 1, got {factor!r}"
         )
     stream_intrf = make_stream_interface(data_t)
-    stream_t = stream_intrf.fwd_t
-    stream_fb_t = stream_intrf.fb_t
     count_t = make_uint_t(max(1, (factor - 1).bit_length()))
     LAST = factor - 1
 
     @struct
     class zero_stuffer_t(NamedTuple):
-        stream_in_if: stream_fb_t  # input port's reverse half travels out
-        stream_out_if: stream_t  # output port's feedforward half travels out
+        stream_in_if: stream_intrf.fb_t  # input port's reverse half travels out
+        stream_out_if: stream_intrf.fwd_t  # output port's feedforward half travels out
 
     @hw_func
     def zero_stuffer(
-        stream_in_if: stream_t, stream_out_if: stream_fb_t
+        stream_in_if: stream_intrf.fwd_t, stream_out_if: stream_intrf.fb_t
     ) -> zero_stuffer_t:
         held: Reg[data_t]
         have: Reg[uint1_t]
@@ -96,8 +94,8 @@ def make_zero_stuffer(data_t, factor):
         return o
 
     zero_stuffer.stream_intrf = stream_intrf
-    zero_stuffer.in_stream_t = stream_t
-    zero_stuffer.in_fb_t = stream_fb_t
+    zero_stuffer.in_fwd_t = stream_intrf.fwd_t
+    zero_stuffer.in_fb_t = stream_intrf.fb_t
     return zero_stuffer, zero_stuffer_t
 
 
@@ -141,9 +139,6 @@ def make_fir_interp(
         handshake="elastic",
     )
 
-    in_stream_t = fir.in_stream_t
-    out_stream_t = fir.out_stream_t
-
     # Name the single output port `stream_out_if`, so the generated module's
     # ports read the same as its hand-written siblings (fir, fir_decim).
     @interface
@@ -172,8 +167,8 @@ def make_fir_interp(
     fir_interp.interp = interp
     fir_interp.n_taps = fir.n_taps
     fir_interp.handshake = "elastic"
-    fir_interp.in_stream_t = in_stream_t
-    fir_interp.out_stream_t = out_stream_t
+    fir_interp.in_fwd_t = fir.in_fwd_t
+    fir_interp.out_fwd_t = fir.out_fwd_t
     fir_interp.in_fb_t = stuffer.in_fb_t
     fir_interp.out_fb_t = fir.out_fb_t
     fir_interp.in_intrf = stuffer.stream_intrf
