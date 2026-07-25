@@ -4237,20 +4237,19 @@ def _call_sim_model(model_entry, args, kwargs):
     return result
 
 
-class InterfacePortWarning(UserWarning):
+class InterfacePortError(Exception):
     """A hw_func declares one half of an interface port but not its matching
     other half. The two halves of a port share the port's name -- the
     feedforward half on one side of the signature (an argument or a return
-    field) and the reverse half on the other -- so a lone half is usually an
-    unfinished port. The exception is an intentionally valid-only / data-only
-    signal (a stream with no backpressure), which the message calls out; silence
-    those with the standard filter:
+    field) and the reverse half on the other -- so a lone half is (almost)
+    always an unfinished port, and this is a hard error.
 
-        warnings.filterwarnings("ignore", category=InterfacePortWarning)
+    The one legitimate lone-half shape is an intentional valid-only /
+    data-only signal (a stream with no backpressure). Build that with a
+    genuinely one-directional type instead of a lone half of a with-ready
+    interface -- e.g. `stream.make_stream_t(data_t)` / `axi.make_axis_t(n)`,
+    which have no reverse half at all and so are exempt by construction.
     """
-
-
-_INTERFACE_PORT_WARNED = set()
 
 
 def _interface_half_of(t):
@@ -4273,17 +4272,18 @@ def _interface_half_of(t):
     return None, None, False
 
 
-def _warn_partial_interface_ports(fn, ann, params, ret_t):
-    """Emit an `InterfacePortWarning` for each interface port that declares only
-    one of its two halves.
+def _check_partial_interface_ports(fn, ann, params, ret_t):
+    """Raise `InterfacePortError` for the first interface port that declares
+    only one of its two halves.
 
     Presence-based and side-aware: an input port's feedforward half is an
     argument and its reverse half a return field (an output port is the
     reverse), so the missing half's side follows from where the present half
     sits. One-directional interfaces (no reverse fields at all, or no forward
-    fields) are complete with a single half and never warn -- checked via the
-    interface's own `_pypeline_iface_derived` memo. Deduped per
-    (module, qualname, port) so re-elaboration does not repeat it."""
+    fields) are complete with a single half and never error -- checked via the
+    interface's own `_pypeline_iface_derived` memo. A genuinely valid-only
+    stream (e.g. `stream.make_stream_t(...)`) has no reverse half to pair, so
+    it falls into that exemption."""
     ports = {}  # name -> {"fwd": side|None, "fb": side|None, "iface": iface}
 
     def note(name, t, side):
@@ -4299,6 +4299,14 @@ def _warn_partial_interface_ports(fn, ann, params, ret_t):
         note(f, ret_anns.get(f), "ret")
 
     for name, e in ports.items():
+        if not name.endswith("_if"):
+            _warnings.warn(
+                f"hw_func {getattr(fn, '__qualname__', fn)!r}: interface port "
+                f"{name!r} does not end in '_if' -- by convention, an "
+                "arg/return-field name that pairs a port's two halves should "
+                "(e.g. 'stream_in_if')",
+                stacklevel=3,
+            )
         derived = getattr(e["iface"], "_pypeline_iface_derived", {})
         if derived.get("fwd") is None or derived.get("fb") is None:
             continue  # one-directional interface: a single half is complete
@@ -4308,24 +4316,16 @@ def _warn_partial_interface_ports(fn, ann, params, ret_t):
         present_side = e[present_role]
         # the missing half travels the opposite way, so it sits on the other side
         where = "return field" if present_side == "arg" else "argument"
-        key = (
-            getattr(fn, "__module__", ""),
-            getattr(fn, "__qualname__", repr(fn)),
-            name,
-        )
-        if key in _INTERFACE_PORT_WARNED:
-            continue
-        _INTERFACE_PORT_WARNED.add(key)
         present_word = "feedforward" if present_role == "fwd" else "reverse"
         missing_word = "reverse" if present_role == "fwd" else "feedforward"
         iname = getattr(e["iface"], "__name__", repr(e["iface"]))
-        _warnings.warn(
+        raise InterfacePortError(
             f"hw_func {getattr(fn, '__qualname__', fn)!r}: interface port {name!r} "
             f"(interface {iname}) declares only its {present_word} half; add its "
-            f"{missing_word} half as a {where} named {name!r}. Ignore if {name!r} "
-            "is an intentional valid-only / data-only signal.",
-            InterfacePortWarning,
-            stacklevel=3,
+            f"{missing_word} half as a {where} named {name!r}. If {name!r} is "
+            "meant to be an intentional valid-only / data-only signal, build it "
+            "as a genuinely one-directional type instead (e.g. "
+            "stream.make_stream_t(...) / axi.make_axis_t(...))."
         )
 
 
@@ -4362,8 +4362,8 @@ def _sim_type_wrap(fn):
         params = []
     ret_t = ann.get("return")
 
-    # Warn (once) if a port declares only one of its two interface halves.
-    _warn_partial_interface_ports(fn, ann, params, ret_t)
+    # Hard error if a port declares only one of its two interface halves.
+    _check_partial_interface_ports(fn, ann, params, ret_t)
 
     # Scan source for Reg[T]/Feedback[T] annotations and build register-aware sim body.
     # Returns (fn_or_None, has_state) where has_state=True means the body calls

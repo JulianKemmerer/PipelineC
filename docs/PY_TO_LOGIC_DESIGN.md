@@ -1379,9 +1379,15 @@ C_TO_LOGIC backend — no changes to VHDL generation are needed.
 
 `@interface` (`include/pypeline/interface/interface.py`) declares a bundle of signals with
 per-field direction: plain fields are feedforward, `Feedback[T]` fields are reverse. It is a
-pure library construct — it derives two ordinary `@struct`s (one per direction) via
-`make_interface_type` / `make_interface_feedback_type`, and only those reach the elaborator.
-A whole interface is never a hardware type.
+pure library construct — it derives two ordinary `@struct`s (one per direction), attached
+directly onto the class as `.fwd_t` / `.fb_t` (there is no public `make_interface_type` /
+`make_interface_feedback_type`), and only those reach the elaborator. A whole interface is
+never a hardware type. The with-ready stream interface (`stream.make_stream_interface`) nests
+a plain `stream.make_stream_t(data_t)` as its forward field rather than re-declaring
+`data`/`valid` itself, so `.fwd_t` is `{stream: {data, valid}}` and a real port's payload is
+reached as `.stream.data`/`.stream.valid` — this makes a standalone valid-only stream and the
+forward half of a with-ready one the same underlying type, crossable with a single `.stream`
+field access instead of a per-field copy.
 
 A function annotated with a whole `@interface` is an **interface function**: its body wires
 only the feedforward direction. `make_hw_func_from_interface_func(f)`
@@ -1409,15 +1415,18 @@ consulted to decide a connection; reviving a naming convention was considered an
 
 That error fires at *composition* (`callee_ports`, reached only when an interface function
 instantiates the module). A complementary, earlier signal lives in `pypeline.py`'s `@hw_func`
-itself: `_warn_partial_interface_ports` emits an `InterfacePortWarning` at decoration time for a
+itself: `_check_partial_interface_ports` raises `InterfacePortError` at decoration time for a
 signature that declares one half of a port without the other, catching it even for a module no
-interface function has composed yet. It is a **warning**, not an error, because the identical
-shape is a legitimate valid-only stream (the feedforward half used as plain data with no
-backpressure — `make_stream_t`, `dsp/fir.py`'s `handshake="valid_only"`, the dwidth chunk
-helpers); the message names that exception and the standard `warnings` filter silences it. The
-check is `getattr`-only on the interface tags and consults `_pypeline_iface_derived` to skip
-genuinely one-directional interfaces, so pypeline.py keeps its zero dependency on the interface
-library.
+interface function has composed yet -- also a **hard error**, not a warning. The identical shape
+is legitimate for a valid-only stream, but that case no longer overlaps with the check at all:
+a valid-only signal is built with `make_stream_t`/`axi.make_axis_t` (`dsp/fir.py`'s
+`handshake="valid_only"`, the dwidth chunk helpers), which is a genuinely one-directional plain
+struct with no `@interface` and no reverse half to omit, so the check's own
+`_pypeline_iface_derived`-based exemption for one-directional interfaces covers it structurally
+-- there is no suppressible-warning escape hatch to reach for. Both checks (`callee_ports` here
+and `_check_partial_interface_ports`) also warn -- non-fatally -- when a paired port name doesn't
+end in `_if`, the codebase-wide naming convention for a port that shares a name between an arg
+and a return field.
 
 **Array ports (fan-out).** A port may be `T[n]` where `T` is a derived half, paired with the
 other half's `T'[n]` under the same name. Each element is an independent interface: producers

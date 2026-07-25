@@ -15,19 +15,24 @@ all expressed the same way.
         credit:  Feedback[uint4_t]   # reverse
 
 Hardware functions never take an interface directly -- they take the two ordinary
-`@struct`s it derives, one per direction:
+`@struct`s it derives, one per direction, as attributes on the interface itself:
 
-    my_intrf_t          = make_interface_type(my_intrf)           # feedforward fields
-    my_intrf_feedback_t = make_interface_feedback_type(my_intrf)  # Feedback fields, unwrapped
+    my_intrf.fwd_t   # feedforward fields
+    my_intrf.fb_t    # Feedback fields, unwrapped (None if the interface has none)
 
 Because the halves travel opposite ways, an *input* interface puts its
 feedforward half in an arg and its feedback half in a return field, and an
 *output* interface does the reverse. Both halves of one port share the same name,
-which is how they are paired (see `interface_func`).
+which is how they are paired (see `interface_func`) -- by convention that name
+ends in `_if` (enforced by a lint in `interface_func.callee_ports` and
+`pypeline._check_partial_interface_ports`).
 
-Derived types are memoized per interface and named deterministically from the
+`.fwd_t`/`.fb_t` are memoized per interface and named deterministically from the
 interface's own canonical name, so repeated derivation yields identical
-definitions (canonical-name determinism).
+definitions (canonical-name determinism). A plain valid-only stream
+(`stream.make_stream_t`) never needs an interface at all -- it is just a
+`{data, valid}` struct -- and `make_stream_interface(T).fwd_t` is literally
+that same struct, not a separately-derived twin.
 """
 
 import sys as _sys
@@ -116,7 +121,7 @@ def _split_field(ann, where):
     if isinstance(ann, _FeedbackType):
         return (None, ann.inner_ctype)
     if is_interface(ann):
-        return (make_interface_type(ann), make_interface_feedback_type(ann))
+        return (ann.fwd_t, ann.fb_t)
     elem = _array_elem_ctype(ann)
     if elem is not None:
         f, b = _split_field(elem, where)
@@ -150,24 +155,17 @@ def _derive(iface, role):
     return cls
 
 
-def make_interface_type(iface):
-    """The `@struct` of `iface`'s feedforward fields (None if it has none)."""
-    return _derive(iface, FWD)
-
-
-def make_interface_feedback_type(iface):
-    """The `@struct` of `iface`'s `Feedback` fields, unwrapped to their inner
-    types (None if it has none)."""
-    return _derive(iface, FB)
-
-
 # ─────────────────────────────────────────────────────────────────────────────
 # The decorator
 # ─────────────────────────────────────────────────────────────────────────────
 def interface(cls):
     """Mark a NamedTuple as an interface: plain fields feedforward, `Feedback[T]`
     fields reverse. Derives (and validates) both direction structs eagerly, so a
-    bad declaration fails where it is written."""
+    bad declaration fails where it is written, and attaches them as `.fwd_t`/
+    `.fb_t` on the class itself -- the only supported way to get a port's two
+    halves (there is no public `make_interface_type`/`make_interface_feedback_type`;
+    a plain valid-only stream doesn't need an interface at all, see
+    `stream.make_stream_t`)."""
     if not hasattr(cls, "_fields"):
         raise InterfaceError(
             f"@interface must be applied to a NamedTuple class (got {_tname(cls)!r})"
@@ -182,10 +180,12 @@ def interface(cls):
     )
     cls._pypeline_iface_derived = {}
 
-    fwd = make_interface_type(cls)
-    fb = make_interface_feedback_type(cls)
+    fwd = _derive(cls, FWD)
+    fb = _derive(cls, FB)
     if fwd is None and fb is None:
         raise InterfaceError(
             f"@interface {_tname(cls)!r} is empty: no feedforward and no Feedback fields"
         )
+    cls.fwd_t = fwd
+    cls.fb_t = fb
     return cls

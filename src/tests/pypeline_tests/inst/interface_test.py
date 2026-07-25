@@ -41,8 +41,6 @@ from pypeline import (
 
 from interface.interface import (
     interface,
-    make_interface_type,
-    make_interface_feedback_type,
     interface_of,
     interface_role,
     is_interface,
@@ -61,8 +59,8 @@ class bus_intrf(NamedTuple):
     nack: Feedback[uint1_t]
 
 
-bus_t = make_interface_type(bus_intrf)
-bus_fb_t = make_interface_feedback_type(bus_intrf)
+bus_t = bus_intrf.fwd_t
+bus_fb_t = bus_intrf.fb_t
 
 
 def test_derived_types_split_by_direction():
@@ -81,8 +79,8 @@ def test_derived_types_split_by_direction():
 
 
 def test_derivation_is_memoized_and_deterministic():
-    assert make_interface_type(bus_intrf) is bus_t
-    assert make_interface_feedback_type(bus_intrf) is bus_fb_t
+    assert bus_intrf.fwd_t is bus_t
+    assert bus_intrf.fb_t is bus_fb_t
     # canonical names are pure functions of the declaration
     assert bus_t._pypeline_ctype_name == "bus_intrf_t_payload_uint32_t_go_uint1_t"
     assert (
@@ -100,8 +98,8 @@ class outer_intrf(NamedTuple):
 
 
 def test_nested_and_mixed_bundle():
-    ofwd = make_interface_type(outer_intrf)
-    ofb = make_interface_feedback_type(outer_intrf)
+    ofwd = outer_intrf.fwd_t
+    ofb = outer_intrf.fb_t
     # plain field rides along feedforward and contributes nothing reverse
     assert ofwd._fields == ("lanes", "side", "tag")
     assert ofb._fields == ("lanes", "side")
@@ -122,34 +120,34 @@ class rev_only_intrf(NamedTuple):
 
 
 def test_one_directional_interfaces():
-    assert make_interface_feedback_type(oneway_intrf) is None
-    assert make_interface_type(oneway_intrf) is not None
-    assert make_interface_type(rev_only_intrf) is None
-    assert make_interface_feedback_type(rev_only_intrf) is not None
+    assert oneway_intrf.fb_t is None
+    assert oneway_intrf.fwd_t is not None
+    assert rev_only_intrf.fwd_t is None
+    assert rev_only_intrf.fb_t is not None
 
 
 # ── the explicit hw_func form: y <- x, both directions wired by hand ──
 @struct
 class x_to_y_t(NamedTuple):
-    x: bus_fb_t  # input x's reverse travels out
-    y: bus_t  # output y's feedforward travels out
+    x_if: bus_fb_t  # input x_if's reverse travels out
+    y_if: bus_t  # output y_if's feedforward travels out
 
 
 @hw_func
-def x_to_y_hw_func(x: bus_t, y: bus_fb_t) -> x_to_y_t:
+def x_to_y_hw_func(x_if: bus_t, y_if: bus_fb_t) -> x_to_y_t:
     o: x_to_y_t
     # Each direction carries a little real logic (rather than being a pure wire
     # rename) so synthesis sees a non-zero critical path on both paths.
-    o.y.payload = x.payload + 1  # feedforward
-    o.y.go = x.go
-    o.x.credit = y.credit + 1  # feedback (narrows back into uint4_t)
-    o.x.nack = y.nack
+    o.y_if.payload = x_if.payload + 1  # feedforward
+    o.y_if.go = x_if.go
+    o.x_if.credit = y_if.credit + 1  # feedback (narrows back into uint4_t)
+    o.x_if.nack = y_if.nack
     return o
 
 
 @MAIN
-def top_x_to_y(x: bus_t, y: bus_fb_t) -> x_to_y_t:
-    return x_to_y_hw_func(x, y)
+def top_x_to_y(x_if: bus_t, y_if: bus_fb_t) -> x_to_y_t:
+    return x_to_y_hw_func(x_if, y_if)
 
 
 def test_explicit_split_struct_hw_func_simulates():
@@ -161,10 +159,10 @@ def test_explicit_split_struct_hw_func_simulates():
             bus_fb_t(credit=credit, nack=nack),
         )
         # feedforward flows x -> y, feedback flows y -> x, independently
-        assert int(r.y.payload) == (payload + 1) & 0xFFFFFFFF
-        assert int(r.y.go) == go
-        assert int(r.x.credit) == (credit + 1) & 0xF
-        assert int(r.x.nack) == nack
+        assert int(r.y_if.payload) == (payload + 1) & 0xFFFFFFFF
+        assert int(r.y_if.go) == go
+        assert int(r.x_if.credit) == (credit + 1) & 0xF
+        assert int(r.x_if.nack) == nack
 
 
 # ── declaration errors ──
@@ -220,9 +218,13 @@ def test_interface_declaration_errors():
         InterfaceError,
         "must be applied to a NamedTuple",
     )
-    _expect(
-        lambda: make_interface_type(x_to_y_t), InterfaceError, "is not an @interface"
-    )
+    # A plain @struct is not an @interface, so it never gets .fwd_t/.fb_t --
+    # there is no public derivation function left to call directly on it.
+    try:
+        x_to_y_t.fwd_t
+        raise AssertionError("expected AttributeError")
+    except AttributeError:
+        pass
 
 
 if __name__ == "__main__":

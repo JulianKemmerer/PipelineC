@@ -37,11 +37,7 @@ from pypeline import (
     sim_call,
     sim_reset,
 )
-from interface.interface import (
-    interface,
-    make_interface_type,
-    make_interface_feedback_type,
-)
+from interface.interface import interface
 from interface.interface_func import (
     InterfaceError,
     callee_ports,
@@ -56,8 +52,8 @@ class chan(NamedTuple):
     ready: Feedback[uint1_t]
 
 
-chan_t = make_interface_type(chan)
-chan_fb_t = make_interface_feedback_type(chan)
+chan_t = chan.fwd_t
+chan_fb_t = chan.fb_t
 
 
 def make_inc(k):
@@ -65,15 +61,15 @@ def make_inc(k):
 
     @struct
     class inc_t(NamedTuple):
-        stream_in: chan_fb_t  # input port's reverse half travels out
-        stream_out: chan_t  # output port's feedforward half travels out
+        stream_in_if: chan_fb_t  # input port's reverse half travels out
+        stream_out_if: chan_t  # output port's feedforward half travels out
 
     @hw_func
-    def inc(stream_in: chan_t, stream_out: chan_fb_t) -> inc_t:
+    def inc(stream_in_if: chan_t, stream_out_if: chan_fb_t) -> inc_t:
         o: inc_t
-        o.stream_out.data = stream_in.data + k
-        o.stream_out.valid = stream_in.valid
-        o.stream_in.ready = stream_out.ready
+        o.stream_out_if.data = stream_in_if.data + k
+        o.stream_out_if.valid = stream_in_if.valid
+        o.stream_in_if.ready = stream_out_if.ready
         return o
 
     return inc, inc_t
@@ -88,41 +84,49 @@ def test_ports_introspected_structurally():
     convention is consulted, so port names are arbitrary."""
     ports, _params, _ret = callee_ports(inc2)
     assert {n: p.direction for n, p in ports.items()} == {
-        "stream_in": "in",
-        "stream_out": "out",
+        "stream_in_if": "in",
+        "stream_out_if": "out",
     }
 
 
 # ── two-stage chain: sugar vs hand-written explicit twin ──
-def series(stream_in: chan) -> chan:
-    a = inc2(stream_in)
-    b = inc5(a.stream_out)
-    return b.stream_out
+def series(stream_in_if: chan) -> chan:
+    a = inc2(stream_in_if)
+    b = inc5(a.stream_out_if)
+    return b.stream_out_if
 
 
 series_inst, series_inst_t = make_hw_func_from_interface_func(series)
 
 
 @MAIN
-def top_sugar(stream_in: chan_t, out_port: chan_fb_t) -> series_inst_t:
-    return series_inst(stream_in, out_port)
+def top_sugar(stream_in_if: chan_t, out_port_if: chan_fb_t) -> series_inst_t:
+    return series_inst(stream_in_if, out_port_if)
+
+
+@struct
+class series_twin_t(NamedTuple):
+    stream_in_if: chan_fb_t  # input port's reverse half travels out
+    out_port_if: chan_t  # output port's feedforward half travels out, named to
+    # match its own arg (unlike inc5_t's "stream_out_if", which names its
+    # source-module's port instead)
 
 
 @hw_func
-def series_twin(stream_in: chan_t, out_port: chan_fb_t) -> inc5_t:
+def series_twin(stream_in_if: chan_t, out_port_if: chan_fb_t) -> series_twin_t:
     rev: Feedback[chan_fb_t]
-    a = inc2(stream_in, rev)
-    b = inc5(a.stream_out, out_port)
-    rev = b.stream_in
-    o: inc5_t
-    o.stream_out = b.stream_out
-    o.stream_in = a.stream_in
+    a = inc2(stream_in_if, rev)
+    b = inc5(a.stream_out_if, out_port_if)
+    rev = b.stream_in_if
+    o: series_twin_t
+    o.out_port_if = b.stream_out_if
+    o.stream_in_if = a.stream_in_if
     return o
 
 
 @MAIN
-def top_twin(stream_in: chan_t, out_port: chan_fb_t) -> inc5_t:
-    return series_twin(stream_in, out_port)
+def top_twin(stream_in_if: chan_t, out_port_if: chan_fb_t) -> series_twin_t:
+    return series_twin(stream_in_if, out_port_if)
 
 
 def test_chain_matches_hand_written_twin():
@@ -130,30 +134,32 @@ def test_chain_matches_hand_written_twin():
     for data, valid, rdy in [(10, 1, 1), (0, 0, 1), (200, 1, 0), (7, 1, 1)]:
         s = sim_call(top_sugar, chan_t(data=data, valid=valid), chan_fb_t(ready=rdy))
         t = sim_call(top_twin, chan_t(data=data, valid=valid), chan_fb_t(ready=rdy))
-        assert int(s.out_port.data) == int(t.stream_out.data) == (data + 7) & 0xFF
-        assert int(s.out_port.valid) == int(t.stream_out.valid) == valid
-        assert int(s.stream_in.ready) == int(t.stream_in.ready) == rdy
+        assert int(s.out_port_if.data) == int(t.out_port_if.data) == (data + 7) & 0xFF
+        assert int(s.out_port_if.valid) == int(t.out_port_if.valid) == valid
+        assert int(s.stream_in_if.ready) == int(t.stream_in_if.ready) == rdy
 
 
 # ── multiple in/out via an interface bundle ──
 @interface
 class pair(NamedTuple):
-    x: chan
-    y: chan
+    x_if: chan
+    y_if: chan
 
 
-def two_lanes(a: chan, b: chan) -> pair:
-    p = inc2(a)
-    q = inc5(b)
-    return pair(x=p.stream_out, y=q.stream_out)
+def two_lanes(a_if: chan, b_if: chan) -> pair:
+    p = inc2(a_if)
+    q = inc5(b_if)
+    return pair(x_if=p.stream_out_if, y_if=q.stream_out_if)
 
 
 lanes_inst, lanes_inst_t = make_hw_func_from_interface_func(two_lanes)
 
 
 @MAIN
-def top_lanes(a: chan_t, b: chan_t, x: chan_fb_t, y: chan_fb_t) -> lanes_inst_t:
-    return lanes_inst(a, b, x, y)
+def top_lanes(
+    a_if: chan_t, b_if: chan_t, x_if: chan_fb_t, y_if: chan_fb_t
+) -> lanes_inst_t:
+    return lanes_inst(a_if, b_if, x_if, y_if)
 
 
 def test_multi_in_out_bundle():
@@ -165,10 +171,10 @@ def test_multi_in_out_bundle():
         chan_fb_t(ready=1),
         chan_fb_t(ready=0),
     )
-    assert int(r.x.data) == 12 and int(r.x.valid) == 1
-    assert int(r.y.data) == 25 and int(r.y.valid) == 0
+    assert int(r.x_if.data) == 12 and int(r.x_if.valid) == 1
+    assert int(r.y_if.data) == 25 and int(r.y_if.valid) == 0
     # each lane's reverse half is routed back independently
-    assert int(r.a.ready) == 1 and int(r.b.ready) == 0
+    assert int(r.a_if.ready) == 1 and int(r.b_if.ready) == 0
 
 
 # ── a non-uint1_t reverse channel, and >1 reverse field ──
@@ -180,76 +186,76 @@ class credit_chan(NamedTuple):
     halt: Feedback[uint1_t]
 
 
-cc_t = make_interface_type(credit_chan)
-cc_fb_t = make_interface_feedback_type(credit_chan)
+cc_t = credit_chan.fwd_t
+cc_fb_t = credit_chan.fb_t
 
 
 @struct
 class cpass_t(NamedTuple):
-    stream_in: cc_fb_t
-    stream_out: cc_t
+    stream_in_if: cc_fb_t
+    stream_out_if: cc_t
 
 
 @hw_func
-def cpass(stream_in: cc_t, stream_out: cc_fb_t) -> cpass_t:
+def cpass(stream_in_if: cc_t, stream_out_if: cc_fb_t) -> cpass_t:
     o: cpass_t
-    o.stream_out.data = stream_in.data + 1
-    o.stream_out.valid = stream_in.valid
-    o.stream_in.credit = stream_out.credit
-    o.stream_in.halt = stream_out.halt
+    o.stream_out_if.data = stream_in_if.data + 1
+    o.stream_out_if.valid = stream_in_if.valid
+    o.stream_in_if.credit = stream_out_if.credit
+    o.stream_in_if.halt = stream_out_if.halt
     return o
 
 
-def credit_series(s: credit_chan) -> credit_chan:
-    a = cpass(s)
-    b = cpass(a.stream_out)
-    return b.stream_out
+def credit_series(s_if: credit_chan) -> credit_chan:
+    a = cpass(s_if)
+    b = cpass(a.stream_out_if)
+    return b.stream_out_if
 
 
 cs_inst, cs_inst_t = make_hw_func_from_interface_func(credit_series)
 
 
 @MAIN
-def top_credit(s: cc_t, out_port: cc_fb_t) -> cs_inst_t:
-    return cs_inst(s, out_port)
+def top_credit(s_if: cc_t, out_port_if: cc_fb_t) -> cs_inst_t:
+    return cs_inst(s_if, out_port_if)
 
 
 def test_multi_field_non_bit_reverse():
     sim_reset()
     r = sim_call(top_credit, cc_t(data=5, valid=1), cc_fb_t(credit=2, halt=1))
-    assert int(r.out_port.data) == 7
+    assert int(r.out_port_if.data) == 7
     # the whole multi-field reverse bundle is threaded back, not just one bit
-    assert int(r.s.credit) == 2 and int(r.s.halt) == 1
+    assert int(r.s_if.credit) == 2 and int(r.s_if.halt) == 1
 
 
 # ── plain (non-interface) values: params, and a plain intermediate statement ──
 @struct
 class scale_t(NamedTuple):
-    stream_in: chan_fb_t
-    stream_out: chan_t
+    stream_in_if: chan_fb_t
+    stream_out_if: chan_t
 
 
 @hw_func
-def scale(stream_in: chan_t, k: uint8_t, stream_out: chan_fb_t) -> scale_t:
+def scale(stream_in_if: chan_t, k: uint8_t, stream_out_if: chan_fb_t) -> scale_t:
     o: scale_t
-    o.stream_out.data = stream_in.data + k
-    o.stream_out.valid = stream_in.valid
-    o.stream_in.ready = stream_out.ready
+    o.stream_out_if.data = stream_in_if.data + k
+    o.stream_out_if.valid = stream_in_if.valid
+    o.stream_in_if.ready = stream_out_if.ready
     return o
 
 
-def with_plain(a: chan, k: uint8_t) -> chan:
+def with_plain(a_if: chan, k: uint8_t) -> chan:
     kk: uint8_t = k + 1  # plain statement: copied through verbatim
-    m = scale(a, kk)
-    return m.stream_out
+    m = scale(a_if, kk)
+    return m.stream_out_if
 
 
 plain_inst, plain_inst_t = make_hw_func_from_interface_func(with_plain)
 
 
 @MAIN
-def top_plain(a: chan_t, k: uint8_t, out_port: chan_fb_t) -> plain_inst_t:
-    return plain_inst(a, k, out_port)
+def top_plain(a_if: chan_t, k: uint8_t, out_port_if: chan_fb_t) -> plain_inst_t:
+    return plain_inst(a_if, k, out_port_if)
 
 
 def test_plain_values_pass_through():
@@ -257,28 +263,28 @@ def test_plain_values_pass_through():
     assert "k" not in plain_inst_t._fields
     sim_reset()
     r = sim_call(top_plain, chan_t(data=10, valid=1), 4, chan_fb_t(ready=1))
-    assert int(r.out_port.data) == 15  # 10 + (4+1)
-    assert int(r.a.ready) == 1
+    assert int(r.out_port_if.data) == 15  # 10 + (4+1)
+    assert int(r.a_if.ready) == 1
 
 
 # ── composition: an interface function calling another ──
-def inner(s: chan) -> chan:
-    a = inc2(s)
-    return a.stream_out
+def inner(s_if: chan) -> chan:
+    a = inc2(s_if)
+    return a.stream_out_if
 
 
-def outer(s: chan) -> chan:
-    x = inner(s)
-    y = inc5(x.out_port)
-    return y.stream_out
+def outer(s_if: chan) -> chan:
+    x = inner(s_if)
+    y = inc5(x.out_port_if)
+    return y.stream_out_if
 
 
 outer_inst, outer_inst_t = make_hw_func_from_interface_func(outer)
 
 
 @MAIN
-def top_compose(s: chan_t, out_port: chan_fb_t) -> outer_inst_t:
-    return outer_inst(s, out_port)
+def top_compose(s_if: chan_t, out_port_if: chan_fb_t) -> outer_inst_t:
+    return outer_inst(s_if, out_port_if)
 
 
 def test_composition_and_memoization():
@@ -287,7 +293,7 @@ def test_composition_and_memoization():
     assert a1 is a2, "one definition, many instances"
     sim_reset()
     r = sim_call(top_compose, chan_t(data=1, valid=1), chan_fb_t(ready=1))
-    assert int(r.out_port.data) == 8 and int(r.s.ready) == 1
+    assert int(r.out_port_if.data) == 8 and int(r.s_if.ready) == 1
 
 
 # ── rejections ──
@@ -303,23 +309,23 @@ def _expect(fn, needle):
 def test_rejections():
     def fan_out(a: chan) -> pair:
         p = inc2(a)
-        q = inc2(p.stream_out)
-        r = inc5(p.stream_out)
-        return pair(x=q.stream_out, y=r.stream_out)
+        q = inc2(p.stream_out_if)
+        r = inc5(p.stream_out_if)
+        return pair(x=q.stream_out_if, y=r.stream_out_if)
 
     def dangling(s: chan) -> chan:
         f = fork_mod(s)
-        return f.a
+        return f.a_if
 
     def control_flow(a: chan) -> chan:
         if a.valid:
             pass
         p = inc2(a)
-        return p.stream_out
+        return p.stream_out_if
 
     def ternary(a: chan) -> chan:
         p = inc2(a if a.valid else a)
-        return p.stream_out
+        return p.stream_out_if
 
     def bypass(a: chan) -> chan:
         return a
@@ -327,7 +333,7 @@ def test_rejections():
     def iface_in_plain_stmt(a: chan) -> chan:
         z: uint8_t = a.data + 1
         p = scale(a, z)
-        return p.stream_out
+        return p.stream_out_if
 
     _expect(
         lambda: make_hw_func_from_interface_func(fan_out), "consumed more than once"
@@ -352,19 +358,19 @@ def test_rejections():
 # a two-output element used only by the `dangling` rejection above
 @struct
 class fork_t(NamedTuple):
-    stream_in: chan_fb_t
-    a: chan_t
-    b: chan_t
+    stream_in_if: chan_fb_t
+    a_if: chan_t
+    b_if: chan_t
 
 
 @hw_func
-def fork_mod(stream_in: chan_t, a: chan_fb_t, b: chan_fb_t) -> fork_t:
+def fork_mod(stream_in_if: chan_t, a_if: chan_fb_t, b_if: chan_fb_t) -> fork_t:
     o: fork_t
-    o.a.data = stream_in.data
-    o.a.valid = stream_in.valid
-    o.b.data = stream_in.data
-    o.b.valid = stream_in.valid
-    o.stream_in.ready = a.ready & b.ready
+    o.a_if.data = stream_in_if.data
+    o.a_if.valid = stream_in_if.valid
+    o.b_if.data = stream_in_if.data
+    o.b_if.valid = stream_in_if.valid
+    o.stream_in_if.ready = a_if.ready & b_if.ready
     return o
 
 
@@ -373,32 +379,32 @@ def fork_mod(stream_in: chan_t, a: chan_fb_t, b: chan_fb_t) -> fork_t:
 # keywords. Callee param names are arbitrary (structural pairing), so a keyword
 # binds by the callee's declared name; the reverse halves of output ports are
 # synthesized and must not be named.
-def series_kw(stream_in: chan) -> chan:
-    a = inc2(stream_in=stream_in)  # all-keyword
-    b = inc5(stream_in=a.stream_out)
-    return b.stream_out
+def series_kw(stream_in_if: chan) -> chan:
+    a = inc2(stream_in_if=stream_in_if)  # all-keyword
+    b = inc5(stream_in_if=a.stream_out_if)
+    return b.stream_out_if
 
 
 series_kw_inst, series_kw_inst_t = make_hw_func_from_interface_func(series_kw)
 
 
 @MAIN
-def top_sugar_kw(stream_in: chan_t, out_port: chan_fb_t) -> series_kw_inst_t:
-    return series_kw_inst(stream_in, out_port)
+def top_sugar_kw(stream_in_if: chan_t, out_port_if: chan_fb_t) -> series_kw_inst_t:
+    return series_kw_inst(stream_in_if, out_port_if)
 
 
-def with_mixed(a: chan, k: uint8_t) -> chan:
+def with_mixed(a_if: chan, k: uint8_t) -> chan:
     kk: uint8_t = k + 1
-    m = scale(a, k=kk)  # mixed: positional interface arg, keyword plain arg
-    return m.stream_out
+    m = scale(a_if, k=kk)  # mixed: positional interface arg, keyword plain arg
+    return m.stream_out_if
 
 
 mixed_inst, mixed_inst_t = make_hw_func_from_interface_func(with_mixed)
 
 
 @MAIN
-def top_mixed(a: chan_t, k: uint8_t, out_port: chan_fb_t) -> mixed_inst_t:
-    return mixed_inst(a, k, out_port)
+def top_mixed(a_if: chan_t, k: uint8_t, out_port_if: chan_fb_t) -> mixed_inst_t:
+    return mixed_inst(a_if, k, out_port_if)
 
 
 def test_all_keyword_matches_positional_twin():
@@ -408,39 +414,39 @@ def test_all_keyword_matches_positional_twin():
     for data, valid, rdy in [(10, 1, 1), (0, 0, 1), (200, 1, 0), (7, 1, 1)]:
         kw = sim_call(top_sugar_kw, chan_t(data=data, valid=valid), chan_fb_t(ready=rdy))
         tw = sim_call(top_twin, chan_t(data=data, valid=valid), chan_fb_t(ready=rdy))
-        assert int(kw.out_port.data) == int(tw.stream_out.data) == (data + 7) & 0xFF
-        assert int(kw.out_port.valid) == int(tw.stream_out.valid) == valid
-        assert int(kw.stream_in.ready) == int(tw.stream_in.ready) == rdy
+        assert int(kw.out_port_if.data) == int(tw.out_port_if.data) == (data + 7) & 0xFF
+        assert int(kw.out_port_if.valid) == int(tw.out_port_if.valid) == valid
+        assert int(kw.stream_in_if.ready) == int(tw.stream_in_if.ready) == rdy
 
 
 def test_mixed_positional_and_keyword():
     sim_reset()
     r = sim_call(top_mixed, chan_t(data=10, valid=1), 4, chan_fb_t(ready=1))
-    assert int(r.out_port.data) == 15  # 10 + (4 + 1)
-    assert int(r.a.ready) == 1
+    assert int(r.out_port_if.data) == 15  # 10 + (4 + 1)
+    assert int(r.a_if.ready) == 1
 
 
 def test_keyword_rejections():
     def unknown_kw(s: chan) -> chan:
-        a = inc2(stream_in=s, bogus=s)
-        return a.stream_out
+        a = inc2(stream_in_if=s, bogus=s)
+        return a.stream_out_if
 
     def feedback_kw(s: chan) -> chan:
-        a = inc2(stream_in=s, stream_out=s)  # naming a synthesized reverse half
-        return a.stream_out
+        a = inc2(stream_in_if=s, stream_out_if=s)  # naming a synthesized reverse half
+        return a.stream_out_if
 
     def duplicate_arg(s: chan) -> chan:
-        a = inc2(s, stream_in=s)  # positional + keyword for the same param
-        return a.stream_out
+        a = inc2(s, stream_in_if=s)  # positional + keyword for the same param
+        return a.stream_out_if
 
     def missing_arg(a: chan, k: uint8_t) -> chan:
         kk: uint8_t = k + 1
-        m = scale(k=kk)  # stream_in never supplied
-        return m.stream_out
+        m = scale(k=kk)  # stream_in_if never supplied
+        return m.stream_out_if
 
     def too_many_positional(s: chan) -> chan:
         a = inc2(s, s, s)
-        return a.stream_out
+        return a.stream_out_if
 
     _expect(
         lambda: make_hw_func_from_interface_func(unknown_kw),

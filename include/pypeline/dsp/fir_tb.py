@@ -27,9 +27,9 @@ fir_sim_tb_test.py):
 
     @MAIN
     def my_fir_tb():
-        stream_in = tb.drive_in()
+        stream_in_if = tb.drive_in()
         out_ready = tb.drive_ready()
-        o = fir(stream_in, out_ready)   # out_ready is fir.out_fb_t
+        o = fir(stream_in_if, out_ready)   # out_ready is fir.out_fb_t
         tb.observe(o)
 
 Shared testbench state lives in dicts mutated in place (never rebound):
@@ -245,15 +245,30 @@ def make_fir_tb(
         "out_hist": [],  # consumed output samples (raw ints)
     }
 
-    @sim_input
-    def drive_in() -> in_stream_t:
-        # (observe() advanced st["idx"] at the end of the previous cycle if
-        # that cycle's presented sample was accepted.)
-        if st["idx"] < n_in:
-            st["presented_valid"] = 1
-            return in_stream_t(data=data_t(val=stimulus_q[st["idx"]]), valid=1)
-        st["presented_valid"] = 0
-        return in_stream_t(data=data_t(val=0), valid=0)
+    if elastic:
+        in_plain_t = in_stream_t.typeof("stream")
+
+        @sim_input
+        def drive_in() -> in_stream_t:
+            # (observe() advanced st["idx"] at the end of the previous cycle if
+            # that cycle's presented sample was accepted.)
+            if st["idx"] < n_in:
+                st["presented_valid"] = 1
+                return in_stream_t(
+                    stream=in_plain_t(data=data_t(val=stimulus_q[st["idx"]]), valid=1)
+                )
+            st["presented_valid"] = 0
+            return in_stream_t(stream=in_plain_t(data=data_t(val=0), valid=0))
+
+    else:
+
+        @sim_input
+        def drive_in() -> in_stream_t:
+            if st["idx"] < n_in:
+                st["presented_valid"] = 1
+                return in_stream_t(data=data_t(val=stimulus_q[st["idx"]]), valid=1)
+            st["presented_valid"] = 0
+            return in_stream_t(data=data_t(val=0), valid=0)
 
     def _ready_value():
         if ready_pattern == "always":
@@ -314,11 +329,11 @@ def make_fir_tb(
         @sim_output
         def observe(o):
             _announce()
-            if st["presented_valid"] and int(o.stream_in.ready):
+            if st["presented_valid"] and int(o.stream_in_if.ready):
                 st["in_hist"].append(stimulus_q[st["idx"]])
                 st["idx"] += 1
-            if int(o.stream_out.valid) and st["ready_now"]:
-                _check_beat(o.stream_out)
+            if int(o.stream_out_if.stream.valid) and st["ready_now"]:
+                _check_beat(o.stream_out_if.stream)
             st["cycle"] += 1
             assert st["done"] or st["cycle"] < deadline, (
                 f"{name}: not done after {st['cycle']} cycles "

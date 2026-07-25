@@ -86,35 +86,35 @@ fir_vonly, fir_vonly_t = make_fir(
 
 @MAIN(100.0)
 def fir_sym_main(
-    stream_in: fir_sym.in_stream_t, stream_out: fir_sym.out_fb_t
+    stream_in_if: fir_sym.in_stream_t, stream_out_if: fir_sym.out_fb_t
 ) -> fir_sym_t:
-    return fir_sym(stream_in, stream_out)
+    return fir_sym(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
 def fir_hb_main(
-    stream_in: fir_hb.in_stream_t, stream_out: fir_hb.out_fb_t
+    stream_in_if: fir_hb.in_stream_t, stream_out_if: fir_hb.out_fb_t
 ) -> fir_hb_t:
-    return fir_hb(stream_in, stream_out)
+    return fir_hb(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
 def fir_anti_main(
-    stream_in: fir_anti.in_stream_t, stream_out: fir_anti.out_fb_t
+    stream_in_if: fir_anti.in_stream_t, stream_out_if: fir_anti.out_fb_t
 ) -> fir_anti_t:
-    return fir_anti(stream_in, stream_out)
+    return fir_anti(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
 def fir_full_main(
-    stream_in: fir_full.in_stream_t, stream_out: fir_full.out_fb_t
+    stream_in_if: fir_full.in_stream_t, stream_out_if: fir_full.out_fb_t
 ) -> fir_full_t:
-    return fir_full(stream_in, stream_out)
+    return fir_full(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
-def fir_vonly_main(stream_in: fir_vonly.in_stream_t) -> fir_vonly_t:
-    return fir_vonly(stream_in)
+def fir_vonly_main(stream_in_if: fir_vonly.in_stream_t) -> fir_vonly_t:
+    return fir_vonly(stream_in_if)
 
 
 _MAX_CYCLES = 3000
@@ -137,13 +137,13 @@ def _drive_elastic(
         rdy = 1 if out_ready_fn(cycle) else 0
         r = sim_call(
             fir,
-            in_stream_t(data=fir.data_t(val=d), valid=v),
+            in_stream_t(stream=in_stream_t.typeof("stream")(data=fir.data_t(val=d), valid=v)),
             fir.out_fb_t(ready=rdy),
         )
-        if v and int(r.stream_in.ready):
+        if v and int(r.stream_in_if.ready):
             idx += 1
-        if int(r.stream_out.valid) and rdy:
-            outputs.append(int(r.stream_out.data.val))
+        if int(r.stream_out_if.stream.valid) and rdy:
+            outputs.append(int(r.stream_out_if.stream.data.val))
         if idx >= len(inputs_q) and len(outputs) >= expected_n:
             return outputs
     raise AssertionError(

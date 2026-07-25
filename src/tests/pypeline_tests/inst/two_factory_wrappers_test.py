@@ -18,7 +18,7 @@ sys.path.insert(
 )
 from pypeline import MAIN, hw_func, uint1_t, uint32_t
 
-from stream.stream import make_stream_t
+from stream.stream import make_stream_interface
 from multi_cycle_path import make_valid_ready_mcp
 
 # Regression test for a closure-callable name collision in FuncLogicLookupTable:
@@ -50,19 +50,19 @@ def round_b(x: uint32_t) -> uint32_t:
     return (x * 2) + 3
 
 
-uint32_stream_t = make_stream_t(uint32_t)
+uint32_stream_t = make_stream_interface(uint32_t).fwd_t
 a_mcp, a_mcp_t = make_valid_ready_mcp(round_a, 2)
 b_mcp, b_mcp_t = make_valid_ready_mcp(round_b, 2)
 
 
 @MAIN(50.0)
-def a_main(stream_in: uint32_stream_t, stream_out: a_mcp.out_fb_t) -> a_mcp_t:
-    return a_mcp(stream_in, stream_out)
+def a_main(stream_in_if: uint32_stream_t, stream_out_if: a_mcp.out_fb_t) -> a_mcp_t:
+    return a_mcp(stream_in_if, stream_out_if)
 
 
 @MAIN(50.0)
-def b_main(stream_in: uint32_stream_t, stream_out: b_mcp.out_fb_t) -> b_mcp_t:
-    return b_mcp(stream_in, stream_out)
+def b_main(stream_in_if: uint32_stream_t, stream_out_if: b_mcp.out_fb_t) -> b_mcp_t:
+    return b_mcp(stream_in_if, stream_out_if)
 
 
 def test_two_factory_wrappers_distinct_logic():

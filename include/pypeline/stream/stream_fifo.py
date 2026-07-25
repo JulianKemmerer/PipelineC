@@ -2,8 +2,7 @@
 from pypeline import struct, NamedTuple, hw_func
 
 from fifo import make_fifo
-from interface.interface import make_interface_feedback_type, make_interface_type
-from stream.stream import make_stream_interface
+from stream.stream import make_stream_interface, make_stream_t
 
 
 def make_stream_fifo(data_t, depth: int, mode: str = "fwft"):
@@ -13,25 +12,26 @@ def make_stream_fifo(data_t, depth: int, mode: str = "fwft"):
     signals are literally the wrapped VHDL entity's ports.
 
     Returns (stream_fifo_func, stream_fifo_t):
-        stream_fifo_func(in_stream: stream_t, out_stream: stream_fb_t) -> stream_fifo_t
-        stream_fifo_t fields: .out_stream (stream_t), .in_stream (stream_fb_t)
+        stream_fifo_func(in_stream_if: stream_t, out_stream_if: stream_fb_t) -> stream_fifo_t
+        stream_fifo_t fields: .out_stream_if (stream_t), .in_stream_if (stream_fb_t)
     """
     stream_intrf = make_stream_interface(data_t)
-    stream_t = make_interface_type(stream_intrf)
-    stream_fb_t = make_interface_feedback_type(stream_intrf)
+    stream_t = stream_intrf.fwd_t
+    stream_fb_t = stream_intrf.fb_t
+    plain_t = make_stream_t(data_t)
     fifo_func, fifo_t = make_fifo(data_t, depth, mode)
 
     @struct
     class stream_fifo_t(NamedTuple):
-        out_stream: stream_t
-        in_stream: stream_fb_t
+        out_stream_if: stream_t
+        in_stream_if: stream_fb_t
 
     @hw_func
-    def stream_fifo(in_stream: stream_t, out_stream: stream_fb_t) -> stream_fifo_t:
+    def stream_fifo(in_stream_if: stream_t, out_stream_if: stream_fb_t) -> stream_fifo_t:
         o: stream_fifo_t
-        r = fifo_func(out_stream.ready, in_stream.data, in_stream.valid)
-        o.out_stream = stream_t(data=r.data_out, valid=r.data_out_valid)
-        o.in_stream.ready = r.data_in_ready
+        r = fifo_func(out_stream_if.ready, in_stream_if.stream.data, in_stream_if.stream.valid)
+        o.out_stream_if.stream = plain_t(data=r.data_out, valid=r.data_out_valid)
+        o.in_stream_if.ready = r.data_in_ready
         return o
 
     stream_fifo.stream_intrf = stream_intrf

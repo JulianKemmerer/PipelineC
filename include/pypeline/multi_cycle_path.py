@@ -12,7 +12,6 @@ from pypeline import (
     is_hw_func,
 )
 
-from interface.interface import make_interface_feedback_type, make_interface_type
 from stream.stream import make_stream_interface
 
 
@@ -27,8 +26,8 @@ def make_valid_ready_mcp(func, ncycles: int):
         def divider(i: my_struct_t) -> uint32_t: ...
 
     Returns (func_mcp, func_mcp_t):
-        func_mcp(stream_in: in_stream_t, stream_out: out_fb_t) -> func_mcp_t
-        func_mcp_t fields: .stream_in (in_fb_t), .stream_out (out_stream_t)
+        func_mcp(stream_in_if: in_stream_t, stream_out_if: out_fb_t) -> func_mcp_t
+        func_mcp_t fields: .stream_in_if (in_fb_t), .stream_out_if (out_stream_t)
     """
     if not is_hw_func(func):
         raise TypeError(
@@ -40,18 +39,18 @@ def make_valid_ready_mcp(func, ncycles: int):
 
     in_intrf = make_stream_interface(in_type)
     out_intrf = make_stream_interface(out_type)
-    in_stream_t = make_interface_type(in_intrf)
-    in_fb_t = make_interface_feedback_type(in_intrf)
-    out_stream_t = make_interface_type(out_intrf)
-    out_fb_t = make_interface_feedback_type(out_intrf)
+    in_stream_t = in_intrf.fwd_t
+    in_fb_t = in_intrf.fb_t
+    out_stream_t = out_intrf.fwd_t
+    out_fb_t = out_intrf.fb_t
 
     @struct
     class func_mcp_t(NamedTuple):
-        stream_in: in_fb_t  # input port's reverse half travels out
-        stream_out: out_stream_t  # output port's feedforward half travels out
+        stream_in_if: in_fb_t  # input port's reverse half travels out
+        stream_out_if: out_stream_t  # output port's feedforward half travels out
 
     @hw_func
-    def func_mcp(stream_in: in_stream_t, stream_out: out_fb_t) -> func_mcp_t:
+    def func_mcp(stream_in_if: in_stream_t, stream_out_if: out_fb_t) -> func_mcp_t:
         # Start/capture regs spanning the multi-cycle path
         MC = MULTI_CYCLE[ncycles]
         launch: Reg[in_type, MC.start]
@@ -59,22 +58,22 @@ def make_valid_ready_mcp(func, ncycles: int):
         capture_next = func(launch)
 
         o: func_mcp_t
-        o.stream_out.data = capture
+        o.stream_out_if.stream.data = capture
 
         # FSM logic exposing the valid/ready interface
         cycles_since_launch: Reg[uint8_t]
         # Output side first, for same-cycle output/input handshake
         if cycles_since_launch == (ncycles + 1):
-            o.stream_out.valid = 1
-            if o.stream_out.valid & stream_out.ready:
+            o.stream_out_if.stream.valid = 1
+            if o.stream_out_if.stream.valid & stream_out_if.ready:
                 cycles_since_launch = 0
         elif cycles_since_launch > 0:
             cycles_since_launch += 1
 
         if cycles_since_launch == 0:
-            o.stream_in.ready = 1
-            if stream_in.valid & o.stream_in.ready:
-                launch = stream_in.data
+            o.stream_in_if.ready = 1
+            if stream_in_if.stream.valid & o.stream_in_if.ready:
+                launch = stream_in_if.stream.data
                 cycles_since_launch = 1
 
         capture = capture_next

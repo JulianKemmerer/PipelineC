@@ -13,11 +13,7 @@ from pypeline import (
 )
 
 from fifo import make_fifo
-from interface.interface import (
-    make_interface_feedback_type,
-    make_interface_type,
-)
-from stream.stream import make_stream_interface
+from stream.stream import make_stream_interface, make_stream_t
 
 
 def make_stream_pipeline(func):
@@ -44,10 +40,10 @@ def make_stream_pipeline(func):
 
     Ports are declared as the two halves of a stream `@interface`, so this
     composes inside an interface function with no adapter:
-        stream_pipeline_func(stream_in: in_stream_t, stream_out: out_fb_t) -> stream_pipeline_t
-        stream_pipeline_t fields: .stream_out (out_stream_t), .stream_in (in_fb_t)
-    i.e. input port `stream_in` takes its feedforward half as an arg and returns
-    its reverse half; output port `stream_out` does the reverse.
+        stream_pipeline_func(stream_in_if: in_stream_t, stream_out_if: out_fb_t) -> stream_pipeline_t
+        stream_pipeline_t fields: .stream_out_if (out_stream_t), .stream_in_if (in_fb_t)
+    i.e. input port `stream_in_if` takes its feedforward half as an arg and returns
+    its reverse half; output port `stream_out_if` does the reverse.
     """
     if not is_hw_func(func):
         raise TypeError(
@@ -59,16 +55,24 @@ def make_stream_pipeline(func):
 
     in_intrf = make_stream_interface(in_type)
     out_intrf = make_stream_interface(out_type)
-    in_stream_t = make_interface_type(in_intrf)
-    in_fb_t = make_interface_feedback_type(in_intrf)
-    out_stream_t = make_interface_type(out_intrf)
-    out_fb_t = make_interface_feedback_type(out_intrf)
+    in_stream_t = in_intrf.fwd_t
+    in_fb_t = in_intrf.fb_t
+    out_stream_t = out_intrf.fwd_t
+    out_fb_t = out_intrf.fb_t
+
+    # Plain valid-only twins for func_stream/autopipelined_func below -- they
+    # are purely combinational data-threading (no ready anywhere), not stream
+    # ports, so they use genuinely one-directional types rather than a lone
+    # half of the with-ready in_stream_t/out_stream_t (those are reserved for
+    # stream_pipeline's own real ports further down).
+    in_plain_t = make_stream_t(in_type)
+    out_plain_t = make_stream_t(out_type)
 
     # Thread .valid alongside .data so the AUTOPIPELINE retiming balances
     # valid through the same number of stages it picks for func's data path.
     @hw_func
-    def func_stream(x: in_stream_t) -> out_stream_t:
-        rv: out_stream_t
+    def func_stream(x: in_plain_t) -> out_plain_t:
+        rv: out_plain_t
         rv.data = func(x.data)
         rv.valid = x.valid
         return rv
@@ -89,12 +93,12 @@ def make_stream_pipeline(func):
 
     @struct
     class stream_pipeline_t(NamedTuple):
-        stream_in: in_fb_t  # input port's reverse half travels out
-        stream_out: out_stream_t  # output port's feedforward half travels out
+        stream_in_if: in_fb_t  # input port's reverse half travels out
+        stream_out_if: out_stream_t  # output port's feedforward half travels out
 
     @hw_func
     def stream_pipeline(
-        stream_in: in_stream_t, stream_out: out_fb_t
+        stream_in_if: in_stream_t, stream_out_if: out_fb_t
     ) -> stream_pipeline_t:
         o: stream_pipeline_t
 
@@ -103,24 +107,24 @@ def make_stream_pipeline(func):
         # Registered ready (matches the macro's static in_ready_reg): read old value,
         # written for next cycle further down.
         ready_reg: Reg[uint1_t]
-        o.stream_in.ready = ready_reg
+        o.stream_in_if.ready = ready_reg
 
         # Free-flowing pipeline input, gated by ready.
-        no_handshake_in: in_stream_t
-        no_handshake_in.valid = stream_in.valid & o.stream_in.ready
-        no_handshake_in.data = stream_in.data
-        no_handshake_out: out_stream_t = autopipelined_func(no_handshake_in)
+        no_handshake_in: in_plain_t
+        no_handshake_in.valid = stream_in_if.stream.valid & o.stream_in_if.ready
+        no_handshake_in.data = stream_in_if.stream.data
+        no_handshake_out: out_plain_t = autopipelined_func(no_handshake_in)
 
         # Free-flowing pipeline output into the FIFO; FIFO never overflows because
         # ready already accounted for in_flight < fifo_depth.
         f = fifo_func(
-            stream_out.ready, no_handshake_out.data, no_handshake_out.valid
+            stream_out_if.ready, no_handshake_out.data, no_handshake_out.valid
         )
-        o.stream_out = out_stream_t(data=f.data_out, valid=f.data_out_valid)
+        o.stream_out_if.stream = out_plain_t(data=f.data_out, valid=f.data_out_valid)
 
         # Update in-flight count / next-cycle ready from accept/retire this cycle.
-        accepted: uint1_t = stream_in.valid & o.stream_in.ready
-        retired: uint1_t = o.stream_out.valid & stream_out.ready
+        accepted: uint1_t = stream_in_if.stream.valid & o.stream_in_if.ready
+        retired: uint1_t = o.stream_out_if.stream.valid & stream_out_if.ready
 
         ready_reg = in_flight < fifo_depth
         if accepted & ~retired:

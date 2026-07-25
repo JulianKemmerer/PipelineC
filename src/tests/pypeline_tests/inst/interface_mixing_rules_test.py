@@ -42,11 +42,7 @@ from pypeline import (
     sim_call,
     sim_reset,
 )
-from interface.interface import (
-    interface,
-    make_interface_type,
-    make_interface_feedback_type,
-)
+from interface.interface import interface
 from interface.interface_func import (
     InterfaceFuncError,
     make_hw_func_from_interface_func,
@@ -61,8 +57,8 @@ class chan(NamedTuple):
     ready: Feedback[uint1_t]
 
 
-chan_t = make_interface_type(chan)
-chan_fb_t = make_interface_feedback_type(chan)
+chan_t = chan.fwd_t
+chan_fb_t = chan.fb_t
 
 
 def _expect(fn, needle):
@@ -75,15 +71,22 @@ def _expect(fn, needle):
 
 
 # ── a legacy module: interface-typed ports, but the reverse halves are still
-#    loose scalars under the old names ──
+#    loose scalars under the old names -- deliberately NOT `_if`-suffixed:
+#    this fixture's whole point is a port that predates the `_if` convention,
+#    matched against a legacy `_ready` scalar by the old bare name ──
 @struct
 class legacy_t(NamedTuple):
     stream_in_ready: uint1_t
     stream_out: chan_t
 
 
-@hw_func
 def legacy(stream_in: chan_t, stream_out_ready: uint1_t) -> legacy_t:
+    """Deliberately not `@hw_func`-decorated: this fixture is only ever
+    introspected structurally (via `callee_ports`/`make_hw_func_from_interface_func`
+    below), never simulated or elaborated as a real submodule, so it must not
+    go through `@hw_func`'s own def-site half-pairing check -- the whole point
+    of this fixture is to reach the richer, composition-time error instead
+    (see the module docstring)."""
     o: legacy_t
     o.stream_out = stream_in
     o.stream_in_ready = stream_out_ready
@@ -98,8 +101,8 @@ def test_legacy_scalar_ready_ports_are_rejected_by_name():
 
 
 def test_half_migrated_module_cannot_be_instantiated():
-    def wiring(stream_in: chan) -> chan:
-        a = legacy(stream_in)
+    def wiring(stream_in_if: chan) -> chan:
+        a = legacy(stream_in_if)
         return a.stream_out
 
     _expect(lambda: make_hw_func_from_interface_func(wiring), "declares only its")
@@ -108,16 +111,16 @@ def test_half_migrated_module_cannot_be_instantiated():
 # ── array ports are an output-side (fan-out) feature ──
 @struct
 class arr_in_t(NamedTuple):
-    sinks: chan_fb_t[2]
-    stream_out: chan_t
+    sinks_if: chan_fb_t[2]
+    stream_out_if: chan_t
 
 
 @hw_func
-def arr_in(sinks: chan_t[2], stream_out: chan_fb_t) -> arr_in_t:
+def arr_in(sinks_if: chan_t[2], stream_out_if: chan_fb_t) -> arr_in_t:
     o: arr_in_t
-    o.stream_out = sinks[0]
-    o.sinks[0].ready = stream_out.ready
-    o.sinks[1].ready = 0
+    o.stream_out_if = sinks_if[0]
+    o.sinks_if[0].ready = stream_out_if.ready
+    o.sinks_if[1].ready = 0
     return o
 
 
@@ -128,61 +131,61 @@ def test_array_input_port_is_rejected_clearly():
 # ── a plain field in a mixed return bundle must actually be driven ──
 @struct
 class pass_t(NamedTuple):
-    stream_in: chan_fb_t
-    stream_out: chan_t
+    stream_in_if: chan_fb_t
+    stream_out_if: chan_t
     tag: uint8_t
 
 
 @hw_func
-def passthru(stream_in: chan_t, stream_out: chan_fb_t) -> pass_t:
+def passthru(stream_in_if: chan_t, stream_out_if: chan_fb_t) -> pass_t:
     o: pass_t
-    o.stream_out = stream_in
-    o.stream_in = stream_out
-    o.tag = stream_in.data
+    o.stream_out_if = stream_in_if
+    o.stream_in_if = stream_out_if
+    o.tag = stream_in_if.data
     return o
 
 
 @interface
 class tagged_ports(NamedTuple):
-    stream_out: chan
+    stream_out_if: chan
     tag: uint8_t
 
 
 def test_unassigned_plain_bundle_field_is_rejected():
-    def wiring(stream_in: chan) -> tagged_ports:
-        a = passthru(stream_in)
-        return tagged_ports(stream_out=a.stream_out)
+    def wiring(stream_in_if: chan) -> tagged_ports:
+        a = passthru(stream_in_if)
+        return tagged_ports(stream_out_if=a.stream_out_if)
 
     _expect(lambda: make_hw_func_from_interface_func(wiring), "never assigned")
 
 
 # ── plain statements: non-interface fields of a call result are readable,
 #    the interface ports themselves are not ──
-def plain_reads_wiring(stream_in: chan) -> tagged_ports:
-    a = passthru(stream_in)
+def plain_reads_wiring(stream_in_if: chan) -> tagged_ports:
+    a = passthru(stream_in_if)
     doubled: uint8_t = a.tag + a.tag  # plain field of a call result: fine
-    return tagged_ports(stream_out=a.stream_out, tag=doubled)
+    return tagged_ports(stream_out_if=a.stream_out_if, tag=doubled)
 
 
 plain_reads, plain_reads_t = make_hw_func_from_interface_func(plain_reads_wiring)
 
 
 @MAIN
-def top_plain_reads(stream_in: chan_t, stream_out: chan_fb_t) -> plain_reads_t:
-    return plain_reads(stream_in, stream_out)
+def top_plain_reads(stream_in_if: chan_t, stream_out_if: chan_fb_t) -> plain_reads_t:
+    return plain_reads(stream_in_if, stream_out_if)
 
 
 def test_plain_statement_may_read_non_interface_fields():
     sim_reset()
     r = sim_call(top_plain_reads, chan_t(data=7, valid=1), chan_fb_t(ready=1))
     assert int(r.tag) == 14
-    assert int(r.stream_out.data) == 7 and int(r.stream_in.ready) == 1
+    assert int(r.stream_out_if.data) == 7 and int(r.stream_in_if.ready) == 1
 
 
 def test_plain_statement_may_not_touch_an_interface():
-    def wiring(stream_in: chan) -> chan:
-        a = passthru(stream_in)
-        alias = a.stream_out  # an interface, outside of a call
+    def wiring(stream_in_if: chan) -> chan:
+        a = passthru(stream_in_if)
+        alias = a.stream_out_if  # an interface, outside of a call
         return alias
 
     _expect(
@@ -196,20 +199,20 @@ def test_plain_statement_may_not_touch_an_interface():
 def make_bump(step):
     @struct
     class bump_t(NamedTuple):
-        stream_in: chan_fb_t
-        stream_out: chan_t
+        stream_in_if: chan_fb_t
+        stream_out_if: chan_t
 
     @hw_func
-    def bump(stream_in: chan_t, stream_out: chan_fb_t) -> bump_t:
+    def bump(stream_in_if: chan_t, stream_out_if: chan_fb_t) -> bump_t:
         o: bump_t
-        o.stream_out.data = stream_in.data + step
-        o.stream_out.valid = stream_in.valid
-        o.stream_in.ready = stream_out.ready
+        o.stream_out_if.data = stream_in_if.data + step
+        o.stream_out_if.valid = stream_in_if.valid
+        o.stream_in_if.ready = stream_out_if.ready
         return o
 
-    def wiring(stream_in: chan) -> chan:
-        a = bump(stream_in)
-        return a.stream_out
+    def wiring(stream_in_if: chan) -> chan:
+        a = bump(stream_in_if)
+        return a.stream_out_if
 
     return make_hw_func_from_interface_func(wiring)
 
@@ -219,13 +222,13 @@ bump9, bump9_t = make_bump(9)
 
 
 @MAIN
-def top_bump3(stream_in: chan_t, out_port: chan_fb_t) -> bump3_t:
-    return bump3(stream_in, out_port)
+def top_bump3(stream_in_if: chan_t, out_port_if: chan_fb_t) -> bump3_t:
+    return bump3(stream_in_if, out_port_if)
 
 
 @MAIN
-def top_bump9(stream_in: chan_t, out_port: chan_fb_t) -> bump9_t:
-    return bump9(stream_in, out_port)
+def top_bump9(stream_in_if: chan_t, out_port_if: chan_fb_t) -> bump9_t:
+    return bump9(stream_in_if, out_port_if)
 
 
 def test_factory_instances_are_named_apart():
@@ -235,7 +238,7 @@ def test_factory_instances_are_named_apart():
     sim_reset()
     r3 = sim_call(top_bump3, chan_t(data=10, valid=1), chan_fb_t(ready=1))
     r9 = sim_call(top_bump9, chan_t(data=10, valid=1), chan_fb_t(ready=1))
-    assert int(r3.out_port.data) == 13 and int(r9.out_port.data) == 19
+    assert int(r3.out_port_if.data) == 13 and int(r9.out_port_if.data) == 19
 
 
 if __name__ == "__main__":

@@ -54,11 +54,7 @@ from pypeline import (
     hw_arg_types,
     hw_return_type,
 )
-from interface.interface import (
-    interface,
-    make_interface_type,
-    make_interface_feedback_type,
-)
+from interface.interface import interface
 from interface.interface_func import make_hw_func_from_interface_func
 
 
@@ -69,29 +65,29 @@ class chan(NamedTuple):
     ready: Feedback[uint1_t]
 
 
-chan_t = make_interface_type(chan)
-chan_fb_t = make_interface_feedback_type(chan)
+chan_t = chan.fwd_t
+chan_fb_t = chan.fb_t
 
 
 # ── the hand-written half: ready is computed from a register, so this can never
 #    be sugar. Note the plain `limit` input and the plain `passed` output ──
 @struct
 class gate_t(NamedTuple):
-    stream_in: chan_fb_t  # input port's reverse half travels out
-    stream_out: chan_t  # output port's feedforward half travels out
+    stream_in_if: chan_fb_t  # input port's reverse half travels out
+    stream_out_if: chan_t  # output port's feedforward half travels out
     passed: uint8_t  # plain status, no reverse companion
 
 
 @hw_func
-def gate(stream_in: chan_t, limit: uint8_t, stream_out: chan_fb_t) -> gate_t:
+def gate(stream_in_if: chan_t, limit: uint8_t, stream_out_if: chan_fb_t) -> gate_t:
     o: gate_t
     count: Reg[uint8_t]
     # closes once `limit` beats have gone through: backpressure from state
     accepting: uint1_t = count < limit
-    o.stream_out.data = stream_in.data + 1
-    o.stream_out.valid = stream_in.valid & accepting
-    o.stream_in.ready = stream_out.ready & accepting
-    if stream_in.valid & o.stream_in.ready:
+    o.stream_out_if.data = stream_in_if.data + 1
+    o.stream_out_if.valid = stream_in_if.valid & accepting
+    o.stream_in_if.ready = stream_out_if.ready & accepting
+    if stream_in_if.valid & o.stream_in_if.ready:
         count += 1
     o.passed = count
     return o
@@ -101,14 +97,14 @@ def gate(stream_in: chan_t, limit: uint8_t, stream_out: chan_fb_t) -> gate_t:
 #    direction between them is generated, and `limit` fans out as a plain value ──
 @interface
 class gated_ports(NamedTuple):
-    stream_out: chan
+    stream_out_if: chan
     passed: uint8_t  # plain field riding along in a mixed bundle
 
 
-def gated_wiring(stream_in: chan, limit: uint8_t) -> gated_ports:
-    a = gate(stream_in, limit)
-    b = gate(a.stream_out, limit)
-    return gated_ports(stream_out=b.stream_out, passed=b.passed)
+def gated_wiring(stream_in_if: chan, limit: uint8_t) -> gated_ports:
+    a = gate(stream_in_if, limit)
+    b = gate(a.stream_out_if, limit)
+    return gated_ports(stream_out_if=b.stream_out_if, passed=b.passed)
 
 
 gated, gated_t = make_hw_func_from_interface_func(gated_wiring)
@@ -119,9 +115,9 @@ def test_generated_port_shape_is_the_documented_one():
     feedback arg per output port; return = feedforward per output port, then
     plain bundle fields, then feedback per input port. All named by port."""
     assert hw_arg_types(gated) == (chan_t, uint8_t, chan_fb_t)
-    assert list(gated_t._fields) == ["stream_out", "passed", "stream_in"]
-    assert gated_t.__annotations__["stream_out"] is chan_t
-    assert gated_t.__annotations__["stream_in"] is chan_fb_t
+    assert list(gated_t._fields) == ["stream_out_if", "passed", "stream_in_if"]
+    assert gated_t.__annotations__["stream_out_if"] is chan_t
+    assert gated_t.__annotations__["stream_in_if"] is chan_fb_t
     assert gated_t.__annotations__["passed"] is uint8_t
     assert hw_return_type(gated) is gated_t
 
@@ -151,9 +147,9 @@ def wrapper(
         limit,  # plain value straight through
         rev_out,  # reverse half of the output port
     )
-    o.upstream_ready = r.stream_in.ready  # implied feedback -> explicit
-    o.out_data = r.stream_out.data
-    o.out_valid = r.stream_out.valid
+    o.upstream_ready = r.stream_in_if.ready  # implied feedback -> explicit
+    o.out_data = r.stream_out_if.data
+    o.out_valid = r.stream_out_if.valid
     o.passed = r.passed  # plain status back across the boundary
     return o
 
@@ -168,11 +164,11 @@ def wrapper_twin(
     fwd_in: chan_t = chan_t(data=in_data, valid=in_valid)
     rev_out: chan_fb_t = chan_fb_t(ready=downstream_ready)
     a = gate(fwd_in, limit, b_ready)
-    b = gate(a.stream_out, limit, rev_out)
-    b_ready = b.stream_in
-    o.upstream_ready = a.stream_in.ready
-    o.out_data = b.stream_out.data
-    o.out_valid = b.stream_out.valid
+    b = gate(a.stream_out_if, limit, rev_out)
+    b_ready = b.stream_in_if
+    o.upstream_ready = a.stream_in_if.ready
+    o.out_data = b.stream_out_if.data
+    o.out_valid = b.stream_out_if.valid
     o.passed = b.passed
     return o
 

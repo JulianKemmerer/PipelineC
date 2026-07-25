@@ -3,8 +3,7 @@ from pypeline import hw_func, struct, NamedTuple, Reg, uint1_t, uint8_t, make_ui
 
 from kept_data_bus import make_kept_data_bus_t
 from ndarray import make_ndarray_fragment_t
-from interface.interface import make_interface_feedback_type, make_interface_type
-from stream.stream import make_stream_interface
+from stream.stream import make_stream_interface, make_stream_t
 
 
 def make_axis_interface(n, elem_t=uint8_t, ndims=1):
@@ -16,8 +15,8 @@ def make_axis_interface(n, elem_t=uint8_t, ndims=1):
 
     Usage:
         axis32_intrf = make_axis_interface(4)
-        axis32_t  = make_interface_type(axis32_intrf)           # {data, valid}
-        axis32_fb_t = make_interface_feedback_type(axis32_intrf)  # {ready}
+        axis32_t  = axis32_intrf.fwd_t   # {stream: {data, valid}}
+        axis32_fb_t = axis32_intrf.fb_t  # {ready}
     """
     bus_t = make_kept_data_bus_t(elem_t, n)
     fragment_t = make_ndarray_fragment_t(bus_t, ndims)
@@ -25,12 +24,16 @@ def make_axis_interface(n, elem_t=uint8_t, ndims=1):
 
 
 def make_axis_t(n, elem_t=uint8_t, ndims=1):
-    """The feedforward half of `make_axis_interface(...)` — `{data, valid}`.
+    """A genuinely one-directional (valid-only) axis stream: `{data, valid}`
+    with no `ready`/reverse half. See `stream.make_stream_t` -- this is that
+    over the same fragment type `make_axis_interface(...)` composes from.
 
     Usage:
         axis32_t = make_axis_t(4)
     """
-    return make_interface_type(make_axis_interface(n, elem_t, ndims))
+    bus_t = make_kept_data_bus_t(elem_t, n)
+    fragment_t = make_ndarray_fragment_t(bus_t, ndims)
+    return make_stream_t(fragment_t)
 
 
 def make_axis_broadcast_interlock(axis_intrf, n):
@@ -48,35 +51,35 @@ def make_axis_broadcast_interlock(axis_intrf, n):
     the entire wiring.
 
     Returns (axis_broadcast_interlock, axis_broadcast_interlock_t):
-        axis_broadcast_interlock(axis_in: axis_t, axis_out: axis_fb_t[n])
+        axis_broadcast_interlock(axis_in_if: axis_t, axis_out_if: axis_fb_t[n])
             -> axis_broadcast_interlock_t
         axis_broadcast_interlock_t fields:
-          .axis_out (axis_t[n]) - one forked copy of axis_in per sink
-          .axis_in  (axis_fb_t)   - reverse half of the source port
+          .axis_out_if (axis_t[n]) - one forked copy of axis_in_if per sink
+          .axis_in_if  (axis_fb_t)   - reverse half of the source port
     """
-    axis_t = make_interface_type(axis_intrf)
-    axis_fb_t = make_interface_feedback_type(axis_intrf)
+    axis_t = axis_intrf.fwd_t
+    axis_fb_t = axis_intrf.fb_t
 
     @struct
     class axis_broadcast_interlock_t(NamedTuple):
-        axis_out: axis_t[n]
-        axis_in: axis_fb_t
+        axis_out_if: axis_t[n]
+        axis_in_if: axis_fb_t
 
     @hw_func
     def axis_broadcast_interlock(
-        axis_in: axis_t, axis_out: axis_fb_t[n]
+        axis_in_if: axis_t, axis_out_if: axis_fb_t[n]
     ) -> axis_broadcast_interlock_t:
         o: axis_broadcast_interlock_t
         all_sinks_ready: uint1_t = 1
         for i in range(n):
-            all_sinks_ready = all_sinks_ready & axis_out[i].ready
+            all_sinks_ready = all_sinks_ready & axis_out_if[i].ready
         for i in range(n):
-            out_i: axis_t = axis_in
-            out_i.valid = 0
-            if all_sinks_ready | ~axis_out[i].ready:
-                out_i.valid = axis_in.valid
-            o.axis_out[i] = out_i
-        o.axis_in.ready = all_sinks_ready
+            out_i: axis_t = axis_in_if
+            out_i.stream.valid = 0
+            if all_sinks_ready | ~axis_out_if[i].ready:
+                out_i.stream.valid = axis_in_if.stream.valid
+            o.axis_out_if[i] = out_i
+        o.axis_in_if.ready = all_sinks_ready
         return o
 
     axis_broadcast_interlock.axis_intrf = axis_intrf
@@ -133,9 +136,13 @@ def _make_dwidth_types(elem_t, narrow_n, ratio):
     )
 
 
-def make_split_to_chunks(narrow_n, ratio, narrow_axis_t, wide_frag_t):
-    """wide_frag_t -> narrow_axis_t[ratio]. Generalizes axis512_to_axis128_array."""
-    chunks_t = narrow_axis_t[ratio]
+def make_split_to_chunks(narrow_n, ratio, narrow_chunk_t, wide_frag_t):
+    """wide_frag_t -> narrow_chunk_t[ratio]. Generalizes axis512_to_axis128_array.
+
+    `narrow_chunk_t` is plain valid-only data (e.g. `stream.make_stream_t(...)`),
+    not a real port -- this is a purely combinational data-reshuffling helper,
+    not a stream endpoint, so it never pairs with a reverse half."""
+    chunks_t = narrow_chunk_t[ratio]
 
     @hw_func
     def split_to_chunks(wide: wide_frag_t) -> chunks_t:
@@ -155,9 +162,12 @@ def make_split_to_chunks(narrow_n, ratio, narrow_axis_t, wide_frag_t):
     return split_to_chunks
 
 
-def make_assemble_chunks(narrow_n, ratio, narrow_axis_t, wide_frag_t):
-    """narrow_axis_t[ratio] -> wide_frag_t. Generalizes axis128_array_to_axis512."""
-    chunks_t = narrow_axis_t[ratio]
+def make_assemble_chunks(narrow_n, ratio, narrow_chunk_t, wide_frag_t):
+    """narrow_chunk_t[ratio] -> wide_frag_t. Generalizes axis128_array_to_axis512.
+
+    `narrow_chunk_t` is plain valid-only data, not a real port -- see
+    `make_split_to_chunks`."""
+    chunks_t = narrow_chunk_t[ratio]
 
     @hw_func
     def assemble_chunks(chunks: chunks_t) -> wide_frag_t:
@@ -177,8 +187,8 @@ def make_assemble_chunks(narrow_n, ratio, narrow_axis_t, wide_frag_t):
 
 def make_shift_into_top(elem_t, n):
     """arr: elem_t[n], new_elem: elem_t -> elem_t[n]. Generalizes ARRAY_1SHIFT_INTO_TOP.
-    elem_t is the array element type (here always a narrow_axis_t) — generic and reused
-    by both widen and narrow."""
+    elem_t is the array element type (here always a valid-only narrow chunk type) —
+    generic and reused by both widen and narrow."""
     arr_t = elem_t[n]
 
     @hw_func
@@ -191,9 +201,9 @@ def make_shift_into_top(elem_t, n):
     return shift_into_top
 
 
-def _make_null_chunk(narrow_n, narrow_bus_t, narrow_frag_t, narrow_axis_t):
-    """Zero-valued, invalid narrow_axis_t — a compound-init constant, not a bare declare."""
-    return narrow_axis_t(
+def _make_null_chunk(narrow_n, narrow_bus_t, narrow_frag_t, narrow_chunk_t):
+    """Zero-valued, invalid narrow_chunk_t — a compound-init constant, not a bare declare."""
+    return narrow_chunk_t(
         data=narrow_frag_t(
             frag=narrow_bus_t(data=[0] * narrow_n, keep=[0] * narrow_n),
             eod=[0],
@@ -215,59 +225,64 @@ def make_dwidth_widen(elem_t, narrow_n, ratio):
         narrow_axis_intrf,
         wide_axis_intrf,
     ) = _make_dwidth_types(elem_t, narrow_n, ratio)
-    narrow_axis_t = make_interface_type(narrow_axis_intrf)
-    narrow_axis_fb_t = make_interface_feedback_type(narrow_axis_intrf)
-    wide_axis_t = make_interface_type(wide_axis_intrf)
-    wide_axis_fb_t = make_interface_feedback_type(wide_axis_intrf)
+    narrow_axis_t = narrow_axis_intrf.fwd_t
+    narrow_axis_fb_t = narrow_axis_intrf.fb_t
+    wide_axis_t = wide_axis_intrf.fwd_t
+    wide_axis_fb_t = wide_axis_intrf.fb_t
+    # narrow_axis_t.typeof("stream") is exactly make_stream_t(narrow_frag_t) --
+    # split_to_chunks/assemble_chunks/shift_into_top are purely combinational,
+    # not stream ports, so they work on that plain valid-only chunk type
+    # directly (a real port's `.stream` field IS one, no conversion needed).
+    narrow_chunk_t = make_stream_t(narrow_frag_t)
     wide_n = narrow_n * ratio
-    chunks_t = narrow_axis_t[ratio]
+    chunks_t = narrow_chunk_t[ratio]
 
-    split_to_chunks = make_split_to_chunks(narrow_n, ratio, narrow_axis_t, wide_frag_t)
-    assemble_chunks = make_assemble_chunks(narrow_n, ratio, narrow_axis_t, wide_frag_t)
-    shift_into_top = make_shift_into_top(narrow_axis_t, ratio)
+    split_to_chunks = make_split_to_chunks(narrow_n, ratio, narrow_chunk_t, wide_frag_t)
+    assemble_chunks = make_assemble_chunks(narrow_n, ratio, narrow_chunk_t, wide_frag_t)
+    shift_into_top = make_shift_into_top(narrow_chunk_t, ratio)
 
     @struct
     class dwidth_widen_result_t(NamedTuple):
-        wide_out: wide_axis_t
-        narrow_in: narrow_axis_fb_t
+        wide_out_if: wide_axis_t
+        narrow_in_if: narrow_axis_fb_t
 
     @hw_func
     def dwidth_widen(
-        narrow_in: narrow_axis_t, wide_out: wide_axis_fb_t
+        narrow_in_if: narrow_axis_t, wide_out_if: wide_axis_fb_t
     ) -> dwidth_widen_result_t:
         o: dwidth_widen_result_t
         narrow_in_reg: Reg[narrow_axis_t]
         wide_out_reg: Reg[wide_axis_t]
 
-        o.wide_out = wide_out_reg
-        if o.wide_out.valid & wide_out.ready:
-            wide_out_reg.valid = 0
+        o.wide_out_if = wide_out_reg
+        if o.wide_out_if.stream.valid & wide_out_if.ready:
+            wide_out_reg.stream.valid = 0
             for i in range(wide_n):
-                wide_out_reg.data.frag.keep[i] = 0
-            wide_out_reg.data.eod[0] = 0
+                wide_out_reg.stream.data.frag.keep[i] = 0
+            wide_out_reg.stream.data.eod[0] = 0
 
-        out_reg_ready: uint1_t = ~wide_out_reg.valid
-        if narrow_in_reg.valid & out_reg_ready:
-            chunks: chunks_t = split_to_chunks(wide_out_reg.data)
-            chunks = shift_into_top(chunks, narrow_in_reg)
-            last_cycle: uint1_t = narrow_in_reg.data.eod[0]
-            narrow_in_reg.valid = 0
+        out_reg_ready: uint1_t = ~wide_out_reg.stream.valid
+        if narrow_in_reg.stream.valid & out_reg_ready:
+            chunks: chunks_t = split_to_chunks(wide_out_reg.stream.data)
+            chunks = shift_into_top(chunks, narrow_in_reg.stream)
+            last_cycle: uint1_t = narrow_in_reg.stream.data.eod[0]
+            narrow_in_reg.stream.valid = 0
             for i in range(narrow_n):
-                narrow_in_reg.data.frag.keep[i] = 0
-            narrow_in_reg.data.eod[0] = 0
+                narrow_in_reg.stream.data.frag.keep[i] = 0
+            narrow_in_reg.stream.data.eod[0] = 0
             if last_cycle:
-                null_chunk: narrow_axis_t = _make_null_chunk(
-                    narrow_n, narrow_bus_t, narrow_frag_t, narrow_axis_t
+                null_chunk: narrow_chunk_t = _make_null_chunk(
+                    narrow_n, narrow_bus_t, narrow_frag_t, narrow_chunk_t
                 )
                 for i in range(ratio - 1):
                     if ~chunks[0].valid:
                         chunks = shift_into_top(chunks, null_chunk)
-            wide_out_reg.data = assemble_chunks(chunks)
-            wide_out_reg.valid = chunks[0].valid
+            wide_out_reg.stream.data = assemble_chunks(chunks)
+            wide_out_reg.stream.valid = chunks[0].valid
 
-        o.narrow_in.ready = ~narrow_in_reg.valid
-        if narrow_in.valid & o.narrow_in.ready:
-            narrow_in_reg = narrow_in
+        o.narrow_in_if.ready = ~narrow_in_reg.stream.valid
+        if narrow_in_if.stream.valid & o.narrow_in_if.ready:
+            narrow_in_reg = narrow_in_if
 
         return o
 
@@ -291,55 +306,57 @@ def make_dwidth_narrow(elem_t, narrow_n, ratio):
         narrow_axis_intrf,
         wide_axis_intrf,
     ) = _make_dwidth_types(elem_t, narrow_n, ratio)
-    narrow_axis_t = make_interface_type(narrow_axis_intrf)
-    narrow_axis_fb_t = make_interface_feedback_type(narrow_axis_intrf)
-    wide_axis_t = make_interface_type(wide_axis_intrf)
-    wide_axis_fb_t = make_interface_feedback_type(wide_axis_intrf)
+    narrow_axis_t = narrow_axis_intrf.fwd_t
+    narrow_axis_fb_t = narrow_axis_intrf.fb_t
+    wide_axis_t = wide_axis_intrf.fwd_t
+    wide_axis_fb_t = wide_axis_intrf.fb_t
+    # See make_dwidth_widen.
+    narrow_chunk_t = make_stream_t(narrow_frag_t)
     wide_n = narrow_n * ratio
-    chunks_t = narrow_axis_t[ratio]
+    chunks_t = narrow_chunk_t[ratio]
 
-    split_to_chunks = make_split_to_chunks(narrow_n, ratio, narrow_axis_t, wide_frag_t)
-    assemble_chunks = make_assemble_chunks(narrow_n, ratio, narrow_axis_t, wide_frag_t)
-    shift_into_top = make_shift_into_top(narrow_axis_t, ratio)
+    split_to_chunks = make_split_to_chunks(narrow_n, ratio, narrow_chunk_t, wide_frag_t)
+    assemble_chunks = make_assemble_chunks(narrow_n, ratio, narrow_chunk_t, wide_frag_t)
+    shift_into_top = make_shift_into_top(narrow_chunk_t, ratio)
 
     @struct
     class dwidth_narrow_result_t(NamedTuple):
-        narrow_out: narrow_axis_t
-        wide_in: wide_axis_fb_t
+        narrow_out_if: narrow_axis_t
+        wide_in_if: wide_axis_fb_t
 
     @hw_func
     def dwidth_narrow(
-        wide_in: wide_axis_t, narrow_out: narrow_axis_fb_t
+        wide_in_if: wide_axis_t, narrow_out_if: narrow_axis_fb_t
     ) -> dwidth_narrow_result_t:
         o: dwidth_narrow_result_t
         wide_in_reg: Reg[wide_axis_t]
         narrow_out_reg: Reg[narrow_axis_t]
 
-        o.narrow_out = narrow_out_reg
-        if o.narrow_out.valid & narrow_out.ready:
-            narrow_out_reg.valid = 0
+        o.narrow_out_if = narrow_out_reg
+        if o.narrow_out_if.stream.valid & narrow_out_if.ready:
+            narrow_out_reg.stream.valid = 0
             for i in range(narrow_n):
-                narrow_out_reg.data.frag.keep[i] = 0
-            narrow_out_reg.data.eod[0] = 0
+                narrow_out_reg.stream.data.frag.keep[i] = 0
+            narrow_out_reg.stream.data.eod[0] = 0
 
-        out_reg_ready: uint1_t = ~narrow_out_reg.valid
-        if wide_in_reg.valid & out_reg_ready:
-            chunks: chunks_t = split_to_chunks(wide_in_reg.data)
-            narrow_out_reg = chunks[0]
-            null_chunk: narrow_axis_t = _make_null_chunk(
-                narrow_n, narrow_bus_t, narrow_frag_t, narrow_axis_t
+        out_reg_ready: uint1_t = ~narrow_out_reg.stream.valid
+        if wide_in_reg.stream.valid & out_reg_ready:
+            chunks: chunks_t = split_to_chunks(wide_in_reg.stream.data)
+            narrow_out_reg.stream = chunks[0]
+            null_chunk: narrow_chunk_t = _make_null_chunk(
+                narrow_n, narrow_bus_t, narrow_frag_t, narrow_chunk_t
             )
             chunks = shift_into_top(chunks, null_chunk)
-            wide_in_reg.data = assemble_chunks(chunks)
+            wide_in_reg.stream.data = assemble_chunks(chunks)
             if ~chunks[0].valid:
-                wide_in_reg.valid = 0
+                wide_in_reg.stream.valid = 0
                 for i in range(wide_n):
-                    wide_in_reg.data.frag.keep[i] = 0
-                wide_in_reg.data.eod[0] = 0
+                    wide_in_reg.stream.data.frag.keep[i] = 0
+                wide_in_reg.stream.data.eod[0] = 0
 
-        o.wide_in.ready = ~wide_in_reg.valid
-        if wide_in.valid & o.wide_in.ready:
-            wide_in_reg = wide_in
+        o.wide_in_if.ready = ~wide_in_reg.stream.valid
+        if wide_in_if.stream.valid & o.wide_in_if.ready:
+            wide_in_reg = wide_in_if
 
         return o
 

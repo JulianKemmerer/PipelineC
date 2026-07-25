@@ -18,7 +18,6 @@ sys.path.insert(
 )
 from pypeline import MAIN, hw_func, uint1_t, uint8_t, sim_call, sim_reset
 
-from interface.interface import make_interface_feedback_type, make_interface_type
 from stream.stream import make_stream_interface
 from stream.stream_pipeline import make_stream_pipeline
 
@@ -29,16 +28,16 @@ def div_inv(x: uint8_t) -> uint8_t:
 
 
 uint8_stream_intrf = make_stream_interface(uint8_t)
-uint8_stream_t = make_interface_type(uint8_stream_intrf)
-uint8_stream_fb_t = make_interface_feedback_type(uint8_stream_intrf)
+uint8_stream_t = uint8_stream_intrf.fwd_t
+uint8_stream_fb_t = uint8_stream_intrf.fb_t
 stream_pipeline, stream_pipeline_t = make_stream_pipeline(div_inv)
 
 
 @MAIN(50.0)
 def stream_pipeline_test_top(
-    stream_in: uint8_stream_t, stream_out: uint8_stream_fb_t
+    stream_in_if: uint8_stream_t, stream_out_if: uint8_stream_fb_t
 ) -> stream_pipeline_t:
-    return stream_pipeline(stream_in, stream_out)
+    return stream_pipeline(stream_in_if, stream_out_if)
 
 
 # Generous safety bound so a real bug (dropped/stuck data) fails fast with a
@@ -48,10 +47,11 @@ _MAX_CYCLES = 200
 
 def _drive(input_values, out_ready_fn):
     """Feed input_values into stream_pipeline_test_top in order (holding each
-    value steady until accepted, per stream_in.ready), driving out_ready
-    per out_ready_fn(cycle), and return the list of stream_out.data values
-    observed on cycles where both valid and out_ready held -- i.e. the actual
-    accepted output sequence, independent of the pipeline's internal latency.
+    value steady until accepted, per stream_in_if.ready), driving out_ready
+    per out_ready_fn(cycle), and return the list of stream_out_if.stream.data
+    values observed on cycles where both valid and out_ready held -- i.e. the
+    actual accepted output sequence, independent of the pipeline's internal
+    latency.
     """
     idx = 0
     outputs = []
@@ -61,13 +61,17 @@ def _drive(input_values, out_ready_fn):
         out_ready = 1 if out_ready_fn(cycle) else 0
         r = sim_call(
             stream_pipeline_test_top,
-            uint8_stream_t(data=present_data, valid=present_valid),
+            uint8_stream_t(
+                stream=uint8_stream_t.typeof("stream")(
+                    data=present_data, valid=present_valid
+                )
+            ),
             uint8_stream_fb_t(ready=out_ready),
         )
-        if present_valid and int(r.stream_in.ready):
+        if present_valid and int(r.stream_in_if.ready):
             idx += 1
-        if int(r.stream_out.valid) and out_ready:
-            outputs.append(int(r.stream_out.data))
+        if int(r.stream_out_if.stream.valid) and out_ready:
+            outputs.append(int(r.stream_out_if.stream.data))
         if idx >= len(input_values) and len(outputs) >= len(input_values):
             return outputs
     raise AssertionError(

@@ -30,7 +30,7 @@ from pypeline import (
     uint32_t,
 )
 
-from stream.stream import make_stream_t
+from stream.stream import make_stream_interface
 from multi_cycle_path import make_valid_ready_mcp
 
 # Translated from examples/mcp/mcp_divider.c — Arty A7-35T, MULTI_CYCLE
@@ -57,7 +57,7 @@ def divider(i: my_struct_t) -> uint32_t:
     return i.x / safe_y
 
 
-my_struct_stream_t = make_stream_t(my_struct_t)
+my_struct_stream_t = make_stream_interface(my_struct_t).fwd_t
 
 divider_mcp, divider_mcp_t = make_valid_ready_mcp(divider, 16)
 
@@ -70,25 +70,25 @@ def mcp_divider_test_fsm() -> uint1_t:
     y: Reg[uint32_t] = 1
     result: Reg[uint32_t]
 
-    in_stream: my_struct_stream_t
-    in_stream.data = my_struct_t(x=x, y=y)
-    in_stream.valid = 1
+    in_stream_if: my_struct_stream_t
+    in_stream_if.stream.data = my_struct_t(x=x, y=y)
+    in_stream_if.stream.valid = 1
 
     out_rdy: divider_mcp.out_fb_t
     out_rdy.ready = 1
-    f = divider_mcp(in_stream, out_rdy)
+    f = divider_mcp(in_stream_if, out_rdy)
 
-    if f.stream_in.ready:
+    if f.stream_in_if.ready:
         x = x + 2
         y = y + 1
         if x == 0:
             x = 2
             y = 1
 
-    if f.stream_out.valid:
-        result = f.stream_out.data
+    if f.stream_out_if.stream.valid:
+        result = f.stream_out_if.stream.data
 
-    return f.stream_out.data == 2
+    return f.stream_out_if.stream.data == 2
 
 
 # ── simulation tests ─────────────────────────────────────────────────────────
@@ -106,15 +106,17 @@ def test_divider_mcp_handshake():
     accepted_cycle = None
     result = None
     for cycle in range(NCYCLES + 5):
-        stream_in = my_struct_stream_t(
-            data=my_struct_t(x=x, y=y), valid=0 if launched else 1
+        stream_in_if = my_struct_stream_t(
+            stream=my_struct_stream_t.typeof("stream")(
+                data=my_struct_t(x=x, y=y), valid=0 if launched else 1
+            )
         )
-        out = sim_call(divider_mcp, stream_in, divider_mcp.out_fb_t(ready=1))
-        if not launched and out.stream_in.ready:
+        out = sim_call(divider_mcp, stream_in_if, divider_mcp.out_fb_t(ready=1))
+        if not launched and out.stream_in_if.ready:
             launched = True
             accepted_cycle = cycle
-        if out.stream_out.valid:
-            result = int(out.stream_out.data)
+        if out.stream_out_if.stream.valid:
+            result = int(out.stream_out_if.stream.data)
             assert launched
             assert (
                 cycle - accepted_cycle == NCYCLES + 1

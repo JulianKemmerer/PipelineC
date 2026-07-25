@@ -74,14 +74,14 @@ fir_ref, fir_ref_t = make_fir(
 
 @MAIN(100.0)
 def decim3_main(
-    stream_in: decim3.in_stream_t, stream_out: decim3.out_fb_t
+    stream_in_if: decim3.in_stream_t, stream_out_if: decim3.out_fb_t
 ) -> decim3_t:
-    return decim3(stream_in, stream_out)
+    return decim3(stream_in_if, stream_out_if)
 
 
 @MAIN(100.0)
-def decim2_vonly_main(stream_in: decim2_vonly.in_stream_t) -> decim2_vonly_t:
-    return decim2_vonly(stream_in)
+def decim2_vonly_main(stream_in_if: decim2_vonly.in_stream_t) -> decim2_vonly_t:
+    return decim2_vonly(stream_in_if)
 
 
 _MAX_CYCLES = 3000
@@ -101,13 +101,13 @@ def _drive_elastic(
         rdy = 1 if out_ready_fn(cycle) else 0
         r = sim_call(
             fir,
-            in_stream_t(data=fir.data_t(val=d), valid=v),
+            in_stream_t(stream=in_stream_t.typeof("stream")(data=fir.data_t(val=d), valid=v)),
             fir.out_fb_t(ready=rdy),
         )
-        if v and int(r.stream_in.ready):
+        if v and int(r.stream_in_if.ready):
             idx += 1
-        if int(r.stream_out.valid) and rdy:
-            outputs.append(int(r.stream_out.data.val))
+        if int(r.stream_out_if.stream.valid) and rdy:
+            outputs.append(int(r.stream_out_if.stream.data.val))
         if idx >= len(inputs_q) and len(outputs) >= expected_n:
             return outputs
     raise AssertionError(

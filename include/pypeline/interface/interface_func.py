@@ -43,6 +43,7 @@ import linecache
 import sys
 import textwrap
 import types
+import warnings as _warnings
 
 from pypeline import (
     Feedback,
@@ -61,13 +62,11 @@ from interface.interface import (
     interface_of,
     interface_role,
     is_interface,
-    make_interface_feedback_type,
-    make_interface_type,
 )
 
 IN = "in"
 OUT = "out"
-_DEFAULT_OUT = "out_port"  # port name given to a bare (unbundled) interface return
+_DEFAULT_OUT = "out_port_if"  # port name given to a bare (unbundled) interface return
 # NOTE: must be a legal VHDL identifier -- "out" is a VHDL reserved word.
 _MAX_SUFFIX_LEN = 48  # beyond this a factory-parameter suffix is hashed, see _factory_suffix
 
@@ -95,8 +94,8 @@ class _Port:
         self.iface = iface
         self.direction = direction
         self.n = n
-        self.elem_fwd_t = make_interface_type(iface)
-        self.elem_fb_t = make_interface_feedback_type(iface)
+        self.elem_fwd_t = iface.fwd_t
+        self.elem_fb_t = iface.fb_t
         self.fwd_t = self.elem_fwd_t
         self.fb_t = self.elem_fb_t
         if n is not None:
@@ -227,6 +226,13 @@ def callee_ports(fn):
             raise InterfaceFuncError(
                 f"input port {name!r} of {_qn(fn)!r} is an array of interfaces; "
                 "array ports are supported on outputs (fan-out) only"
+            )
+        if not name.endswith("_if"):
+            _warnings.warn(
+                f"port {name!r} of {_qn(fn)!r} does not end in '_if' -- by "
+                "convention, an arg/return-field name that pairs a port's two "
+                "halves should (e.g. 'stream_in_if')",
+                stacklevel=2,
             )
         ports[name] = port
     return ports, params, ret_fields

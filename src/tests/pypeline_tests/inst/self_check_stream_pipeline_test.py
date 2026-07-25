@@ -43,7 +43,6 @@ from pypeline import (
     uint16_t,
 )
 
-from interface.interface import make_interface_feedback_type, make_interface_type
 from stream.stream import make_stream_interface
 from stream.stream_pipeline import make_stream_pipeline
 
@@ -54,8 +53,8 @@ def div_inv(x: uint8_t) -> uint8_t:
 
 
 uint8_stream_intrf = make_stream_interface(uint8_t)
-uint8_stream_t = make_interface_type(uint8_stream_intrf)
-uint8_stream_fb_t = make_interface_feedback_type(uint8_stream_intrf)
+uint8_stream_t = uint8_stream_intrf.fwd_t
+uint8_stream_fb_t = uint8_stream_intrf.fb_t
 stream_pipeline, stream_pipeline_t = make_stream_pipeline(div_inv)
 
 
@@ -79,17 +78,21 @@ NUM_OUTPUTS = 12  # the 4-value pattern, three times over
 MAX_CYCLES = 200  # generous flush bound; a stuck pipeline fails loudly
 
 
-# Returns the stream output as a real top-level port: without any output,
-# the sweep's per-iteration top synthesis (yosys/PYRTL timing check) prunes
-# the entire design as unobserved and the timing analysis fails.
+# Returns just the stream_out half as a real top-level port: without any
+# output, the sweep's per-iteration top synthesis (yosys/PYRTL timing check)
+# prunes the entire design as unobserved and the timing analysis fails.
+# (Not the whole stream_pipeline_t: this MAIN takes no arguments -- it drives
+# its own stream_in_if from local constants -- so stream_pipeline_t's own
+# `stream_in_if` field, the reverse half of a port this function doesn't
+# externally have, would be a lone half with no argument to pair with.)
 @MAIN(50.0)
-def self_check_stream_pipeline() -> stream_pipeline_t:
+def self_check_stream_pipeline() -> stream_pipeline.out_stream_t:
     cycle: Reg[uint16_t]
     in_count: Reg[uint16_t]
     out_count: Reg[uint16_t]
 
     # Present the next input value (constant mux over the repeating pattern),
-    # held until accepted per stream_in.ready.
+    # held until accepted per stream_in_if.ready.
     x: uint8_t = IN0
     in_sel: uint8_t = in_count & 3
     if in_sel == 1:
@@ -99,17 +102,17 @@ def self_check_stream_pipeline() -> stream_pipeline_t:
     elif in_sel == 3:
         x = IN3
 
-    stream_in: uint8_stream_t
-    stream_in.valid = in_count < NUM_OUTPUTS
-    stream_in.data = x
+    stream_in_if: uint8_stream_t
+    stream_in_if.stream.valid = in_count < NUM_OUTPUTS
+    stream_in_if.stream.data = x
     ready1: uint8_stream_fb_t
     ready1.ready = 1
-    o: stream_pipeline_t = stream_pipeline(stream_in, ready1)
+    o: stream_pipeline_t = stream_pipeline(stream_in_if, ready1)
 
-    if stream_in.valid & o.stream_in.ready:
+    if stream_in_if.stream.valid & o.stream_in_if.ready:
         in_count += 1
 
-    if o.stream_out.valid:
+    if o.stream_out_if.stream.valid:
         expected: uint8_t = EXP0
         out_sel: uint8_t = out_count & 3
         if out_sel == 1:
@@ -119,8 +122,8 @@ def self_check_stream_pipeline() -> stream_pipeline_t:
         elif out_sel == 3:
             expected = EXP3
         sim_assert(
-            o.stream_out.data == expected,
-            f"output {out_count}: expected {expected} got {o.stream_out.data}",
+            o.stream_out_if.stream.data == expected,
+            f"output {out_count}: expected {expected} got {o.stream_out_if.stream.data}",
         )
         sim_assert(out_count < NUM_OUTPUTS, f"too many outputs: {out_count}")
         if out_count == NUM_OUTPUTS - 1:
@@ -133,4 +136,4 @@ def self_check_stream_pipeline() -> stream_pipeline_t:
         f"in={in_count} out={out_count}",
     )
     cycle += 1
-    return o
+    return o.stream_out_if

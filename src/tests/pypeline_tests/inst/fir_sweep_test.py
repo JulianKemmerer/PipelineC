@@ -43,6 +43,6 @@ fir_sweep, fir_sweep_t = make_fir(
 
 @MAIN(100.0)
 def fir_sweep_main(
-    stream_in: fir_sweep.in_stream_t, stream_out: fir_sweep.out_fb_t
+    stream_in_if: fir_sweep.in_stream_t, stream_out_if: fir_sweep.out_fb_t
 ) -> fir_sweep_t:
-    return fir_sweep(stream_in, stream_out)
+    return fir_sweep(stream_in_if, stream_out_if)
