@@ -1421,6 +1421,28 @@ with a silently wrong type until a later nested field access fails — worth kno
 fallback exists for other legitimate reasons (annotations that generally can't be `eval`'d) and
 gives no direct signal that *this* is what happened.
 
+**A same-named local variable in two different factory closures can still shadow a correct
+recovery, one level up.** `_elaborate_live_func`'s merged namespace used to include
+`self.module_globals` — the *calling* `FuncElaborator`'s own already-merged namespace — as a
+fallback so names imported at the top of a closure's defining file stayed reachable. But when
+elaboration of one factory closure is reached *from inside* another's (e.g. `make_stream_pipeline`'s
+returned function, called while elaborating `make_fir`'s), `self` at that point is the *caller's*
+`FuncElaborator`, and its `module_globals` already contains the caller's own `_annotation_attr_base_ns`
+recovery. If both factories happen to name their own interface variable identically — a likely
+coincidence given the `_intrf` naming convention above (`fir.py`'s own `in_intrf`, scalar
+per-sample data, vs. `stream_pipeline.py`'s internal `in_intrf`, the windowed/array-shaped data
+`fir_core` actually operates on) — the caller's stale `in_intrf` was merged at *higher* priority
+than the callee's own correctly-recovered one, silently overriding it. The callee's `stream_in_if`
+parameter then elaborated with the caller's (wrong) interface type, producing a scalar-typed
+`CONST_REF_RD` wire feeding an array-typed field — an elaboration-time mistake invisible until
+VHDL writing, where `TYPE_RESOLVE_ASSIGNMENT_RHS` (`VHDL.py`) has no array/scalar broadcast branch
+and hard-fails with "Cant support this assignment in vhdl?". Fixed by keeping a separate,
+never-mutated `parser_state.top_level_module_globals` (the true design-file globals, set once in
+`PARSE_FILE`) and using that in place of `self.module_globals` here — `func_own_globals`
+(`func_for_source.__globals__`, the closure's *own* defining module) already covers the original
+"names imported at the top of the file" intent without risking a nested caller's recovered,
+closure-local names leaking into the callee.
+
 Relatedly, `Reg[T]`/`Feedback[T]` local declarations and global `Wire[T]`/`Input[T]`/`Output[T]`
 declarations resolve their inner type via `_inner_ctype_to_str`, a different, narrower path than
 a plain `x: some_t` local annotation (which goes through `_annotation_to_ctype`'s eval_ns branch

@@ -4574,7 +4574,7 @@ class FuncElaborator:
         # Include the defining module's globals so that names imported at the top of
         # the closure's source file (e.g. vga_pos_t imported in vga/timing.py) are
         # accessible when evaluating AST names during elaboration.
-        # Priority: closure_ns > self.module_globals > func's own module globals.
+        # Priority: closure_ns > top_level_module_globals > func's own module globals.
         import types as _types_mod
 
         # Use func_for_source (the unwrapped original) not func (which may be a
@@ -4589,11 +4589,25 @@ class FuncElaborator:
         # _annotation_elem_type_ns). Never shadows a name that already resolves.
         ann_elem_ns = _annotation_elem_type_ns(func_def, func_for_source)
         ann_attr_base_ns = _annotation_attr_base_ns(func_def, func_for_source)
+        # NOTE: deliberately the *true*, unpolluted top-level design-file globals
+        # (parser_state.top_level_module_globals), not self.module_globals. When
+        # this elaboration is reached via a nested _elaborate_live_func call (e.g.
+        # elaborating make_stream_pipeline's returned closure from inside
+        # make_fir's), self here is the *caller's* FuncElaborator, whose own
+        # module_globals is that caller's already-merged_globals -- including its
+        # own ann_attr_base_ns/ann_elem_ns recovery for identically-named local
+        # variables (e.g. two different factories both naming a local `in_intrf`
+        # for their own, differently-shaped stream interface). Merging that in
+        # here at higher priority than this callee's own (correct) ann_attr_base_ns
+        # would let the caller's `in_intrf` silently shadow the callee's, corrupting
+        # the callee's annotation resolution -- exactly the bug that produced a
+        # scalar CONST_REF_RD wire driving an array-typed field in the FIR/
+        # stream_pipeline VHDL codegen (see docs/PY_TO_LOGIC_DESIGN.md).
         merged_globals = {
             **ann_elem_ns,
             **ann_attr_base_ns,
             **func_own_globals,
-            **self.module_globals,
+            **getattr(self.parser_state, "top_level_module_globals", {}),
             **closure_ns,
         }
 
@@ -5849,6 +5863,10 @@ def PARSE_FILE(py_file):
     module_globals = vars(module)
     parser_state = C_TO_LOGIC.ParserState()
     parser_state.module_alias_to_actual = {}  # local alias -> actual module name
+    # The true, unpolluted top-level design-file globals -- distinct from any
+    # FuncElaborator's own (possibly closure/annotation-recovery-augmented)
+    # module_globals. See _elaborate_live_func for why the distinction matters.
+    parser_state.top_level_module_globals = module_globals
 
     # ── Apply pypeline pragmas (PART, MAIN_MHZ) from the live module ──
     if pypeline._part_registry is not None:
