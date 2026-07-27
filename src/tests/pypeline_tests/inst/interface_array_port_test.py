@@ -111,13 +111,13 @@ fork, fork_t = make_hw_func_from_interface_func(fork_wiring)
 @hw_func
 def fork_twin(axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: axis_intrf.fb_t) -> fork_t:
     o: fork_t
-    f_ready: Feedback[axis_intrf.fb_t]
-    s_ready: Feedback[axis_intrf.fb_t]
-    d = bcast(axis_in_if, [f_ready, s_ready])
+    f_ready: Feedback[uint1_t]
+    s_ready: Feedback[uint1_t]
+    d = bcast(axis_in_if, [axis_intrf.fb_t(ready=f_ready), axis_intrf.fb_t(ready=s_ready)])
     f = hold_fast(d.axis_out_if[0], fast_if)
     s = hold_slow(d.axis_out_if[1], slow_if)
-    f_ready = f.axis_in_if
-    s_ready = s.axis_in_if
+    f_ready = f.axis_in_if.ready
+    s_ready = s.axis_in_if.ready
     o.fast_if = f.axis_out_if
     o.slow_if = s.axis_out_if
     o.axis_in_if = d.axis_in_if

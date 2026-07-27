@@ -118,12 +118,24 @@ class merge_twin_t(NamedTuple):
 
 @hw_func
 def merge_twin(axis_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t) -> merge_twin_t:
-    pipe_out: Feedback[chan_intrf.fwd_t]  # feedforward fed backward -- the loop
-    pipe_in_rev: Feedback[chan_intrf.fb_t]  # reverse fed backward -- backpressure
-    f = fsm(axis_in_if, pipe_out, out_port_if, pipe_in_rev)
+    # chan_intrf is a hand-declared @interface with plain data/valid fields
+    # (not built via make_stream_interface, so it has no nested .stream_t) --
+    # feed back its two scalar fields individually instead of the paired
+    # .fwd_t/.fb_t type, and construct '.fwd_t'/'.fb_t' inline only at the
+    # point each meets a real port (the fsm(...) call below).
+    pipe_out_data: Feedback[uint8_t]  # feedforward fed backward -- the loop
+    pipe_out_valid: Feedback[uint1_t]
+    pipe_in_rev: Feedback[uint1_t]  # reverse fed backward -- backpressure
+    f = fsm(
+        axis_in_if,
+        chan_intrf.fwd_t(data=pipe_out_data, valid=pipe_out_valid),
+        out_port_if,
+        chan_intrf.fb_t(ready=pipe_in_rev),
+    )
     p = pipe(f.to_pipe_if, f.from_pipe_if)
-    pipe_out = p.stream_out_if
-    pipe_in_rev = p.stream_in_if
+    pipe_out_data = p.stream_out_if.data
+    pipe_out_valid = p.stream_out_if.valid
+    pipe_in_rev = p.stream_in_if.ready
     o: merge_twin_t
     o.axis_in_if = f.axis_in_if
     o.out_port_if = f.axis_out_if

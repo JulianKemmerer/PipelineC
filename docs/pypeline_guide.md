@@ -937,30 +937,40 @@ buf: Reg[chan_intrf.stream_t]
 o.stream_out_if.stream = buf   # wrap only where it meets the real port field
 ```
 
-`Feedback[T]` is not restricted this way — it stands in for a real port value produced
-later in the same function body (§9), not internal state, so `Feedback[chan_intrf.fwd_t]`
-is a legitimate, common pattern.
-
-**This restriction isn't specific to `Reg[T]`** — no plain local variable, anywhere in a
-hardware function body, may be declared with an `@interface`'s `.fwd_t`/`.fb_t` type
-either, for the same reason: `.fwd_t`/`.fb_t` is reserved for hw_func signature args/
-return-struct fields, `Feedback[T]`, and inline constructor-call *expressions* at the
-exact point a value crosses into a real port — never as any other local's own declared
-type, even a scratch value built up over several statements before being handed to a
-submodule call or a `Wire[...]`. Construct the `.fwd_t`/`.fb_t` value inline instead:
+**This restriction isn't specific to `Reg[T]`** — nothing except a hw_func signature
+arg/return-struct field, or an inline constructor-call *expression* at the exact point a
+value crosses into a real port, may ever hold an `@interface`'s `.fwd_t`/`.fb_t` type:
+not a plain local variable (even one built up over several statements, or assigned via a
+bare `x = intrf.fwd_t(...)` with no type annotation at all), not `Feedback[T]`, and not a
+global `Wire[T]`/`Input[T]`/`Output[T]`. None of these are themselves a port — a local is
+scratch space, `Feedback[T]` is a same-cycle forward reference to a value that meets a
+port *elsewhere*, and a global `Wire`/`Input`/`Output` is plain wiring between `@MAIN`s or
+a flattened top-level chip signal — so none of them ever need (or should imply) the
+`.fwd_t`/`.fb_t` pairing signal. Use `.stream_t` (or a bare `uint1_t` for a lone
+ready/valid signal) everywhere one of these needs to carry the value, and construct
+`.fwd_t`/`.fb_t` inline only at the point it meets a real port:
 
 ```python
 # Wrong -- ElaborationError: a local variable cannot be declared with .fwd_t/.fb_t
 dwidth_conv_data_in: axis128_intrf.fwd_t = axis128_null()
 ...
-in_to_block = axis128_to_axis512(narrow_in_if=dwidth_conv_data_in, wide_out_if=block_in_ready)
+in_to_block = axis128_to_axis512(narrow_in_if=dwidth_conv_data_in, wide_out_if=...)
 
-# Right -- build up the plain .stream_t locally, wrap only at the call site
-dwidth_conv_data_in: axis128_intrf.stream_t = axis128_null().stream
+# Also wrong -- same error, just without the type annotation
+dwidth_conv_data_in = axis128_intrf.fwd_t(stream=axis128_stream_null())
+
+# Also wrong -- Feedback[T] and global Wire[T] are restricted the same way
+block_in_ready: Feedback[axis512_intrf.fb_t]
+encrypt_pipeline_in: Wire[chacha20_loop_body_stream_intrf.fwd_t]
+
+# Right -- build up the plain .stream_t/uint1_t locally, wrap only at the call site
+dwidth_conv_data_in: axis128_intrf.stream_t = axis128_stream_null()
+block_in_ready: Feedback[uint1_t]
+encrypt_pipeline_in: Wire[chacha20_loop_body_stream_intrf.stream_t]
 ...
 in_to_block = axis128_to_axis512(
     narrow_in_if=axis128_intrf.fwd_t(stream=dwidth_conv_data_in),
-    wide_out_if=block_in_ready,
+    wide_out_if=axis512_intrf.fb_t(ready=block_in_ready),
 )
 ```
 
@@ -970,6 +980,23 @@ needed at all when there's nothing to build up over multiple statements:
 
 ```python
 r = gated(chan_intrf.fwd_t(data=in_data, valid=in_valid), limit, chan_intrf.fb_t(ready=downstream_ready))
+```
+
+**A plain (non-hw_func) Python function may not return a `.fwd_t`/`.fb_t` value either**
+— that just hides the same construction behind a call boundary instead of at a real port
+crossing, indistinguishable from any of the banned patterns above once the caller uses the
+result:
+
+```python
+# Wrong -- ElaborationError: a plain function cannot return .fwd_t/.fb_t
+def axis128_null():
+    return axis128_intrf.fwd_t(stream=axis128_stream_null())
+
+# Right -- return the plain stream_t; wrap inline at each call site that needs it
+def axis128_stream_null():
+    return axis128_intrf.stream_t(data=axis128_frag_null(), valid=0)
+...
+o.axis_out_if.stream = axis128_stream_null()  # port field already fwd_t-typed
 ```
 
 ### Read / write semantics
@@ -1067,6 +1094,22 @@ def feedback_nand(a: uint1_t, b: uint1_t) -> uint1_t:
 
 In the generated VHDL, all signals are concurrent — "source order" is irrelevant.
 The compiler resolves the combinational loop correctly.
+
+Like `Reg[T]` (§8), `Feedback[T]` may never use an `@interface`'s `.fwd_t`/`.fb_t`
+port-pairing type as `T` — a `Feedback` wire is not itself a port either, so it never
+needs (or should imply) that pairing. Feed back the plain `.stream_t` (or a bare
+`uint1_t` for a lone ready/valid signal) instead, and construct `.fwd_t`/`.fb_t` inline
+only at the point it meets a real port:
+
+```python
+# Wrong -- ElaborationError
+block_in_ready: Feedback[axis512_intrf.fb_t]
+
+# Right
+block_in_ready: Feedback[uint1_t]
+...
+in_to_block = axis128_to_axis512(..., wide_out_if=axis512_intrf.fb_t(ready=block_in_ready))
+```
 
 **`Feedback[T]` vs `Reg[T]`:**
 
@@ -2717,20 +2760,20 @@ return fields. The shape follows from the interface function's own signature:
 | **return fields** | feedforward half per **output** port; then plain return-bundle fields; then feedback half per **input** port | bundle order, then param order |
 
 Every port keeps the name you gave it, and a half is omitted when that direction is empty.
-Reverse halves are whole structs, so assign them whole — and build one as its own local, since a
-struct constructor elaborates only as a whole assignment's right-hand side, not nested inside a
-call's arguments:
+Reverse halves are whole structs — construct them inline, directly in the call arguments, at
+the exact point they cross into the real port (never as their own local variable first; see
+§8's `.fwd_t`/`.fb_t` restriction):
 
 ```python
 @MAIN(80.0)
 def encrypt_dataflow():
-    axis_out_rev: axis128_intrf.fb_t = axis128_intrf.fb_t(ready=ports.axis_out_ready)
     r = encrypt_dataflow_core(
-        ports.axis_in, ports.key, ports.nonce, ports.aad, ports.aad_len,
-        axis_out_rev,                             # reverse half of the output port
+        axis_in_if=axis128_intrf.fwd_t(stream=ports.axis_in),  # forward half, inline
+        key=ports.key, nonce=ports.nonce, aad=ports.aad, aad_len=ports.aad_len,
+        axis_out_if=axis128_intrf.fb_t(ready=ports.axis_out_ready),  # reverse half, inline
     )
     ports.axis_in_ready = r.axis_in_if.ready      # implied feedback -> explicit
-    ports.axis_out = r.axis_out_if
+    ports.axis_out = r.axis_out_if.stream         # ports.axis_out is a plain Wire[.stream_t]
 ```
 
 **Implied → manual: an interface function instantiates a hand-written module.** Here names *do*

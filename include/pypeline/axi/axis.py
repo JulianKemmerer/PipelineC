@@ -464,7 +464,7 @@ def make_axis_byte_source(axis_intrf, n, max_bytes, use_keep_mask=False):
                         keep_mask[i] = keep_mask[i + n]
                         buf[i] = buf[i + n]
 
-            o.stream_out_if = axis_intrf.fwd_t(stream=outw)
+            o.stream_out_if.stream = outw
             o.idle = remaining == 0
             return o
 
@@ -502,7 +502,7 @@ def make_axis_byte_source(axis_intrf, n, max_bytes, use_keep_mask=False):
                     for i in range(max_bytes - n):
                         buf[i] = buf[i + n]
 
-            o.stream_out_if = axis_intrf.fwd_t(stream=outw)
+            o.stream_out_if.stream = outw
             o.idle = remaining == 0
             return o
 

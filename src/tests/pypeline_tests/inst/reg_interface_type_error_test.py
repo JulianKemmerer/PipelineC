@@ -12,10 +12,11 @@ import PY_TO_LOGIC
 # check: `Reg[some_intrf.fwd_t]`/`Reg[some_intrf.fb_t]` must be a hard
 # ElaborationError (a register is internal state, never a port, so it never
 # needs -- or should imply -- the .fwd_t/.fb_t port-pairing signal), while
-# `Reg[some_intrf.stream_t]` (the plain, never-paired data+valid half) and
-# `Feedback[some_intrf.fwd_t]` (a real forward-referenced port value, not
-# internal state -- deliberately exempt) must both elaborate cleanly. Checked
-# in-process via PY_TO_LOGIC.PARSE_FILE, same pattern as
+# `Reg[some_intrf.stream_t]` (the plain, never-paired data+valid half) must
+# elaborate cleanly, and this file also covers the identical restriction on
+# `Feedback[some_intrf.fwd_t]`/`.fb_t` (a Feedback wire is not itself a port
+# either, so it is banned the same way -- only `Feedback[some_intrf.stream_t]`
+# is clean). Checked in-process via PY_TO_LOGIC.PARSE_FILE, same pattern as
 # global_wire_errors_test.py/pylist_value_context_error_test.py, since the
 # check is "which ElaborationError (if any) is raised."
 
@@ -116,9 +117,11 @@ def m():
     _expect_clean(src, "reg_stream_t_test.py")
 
 
-def test_feedback_fwd_t_is_clean():
-    # Feedback[T] is a real forward-referenced port value, not internal
-    # state -- deliberately exempt from this check.
+def test_feedback_fwd_t_errors():
+    # Feedback[T] is a real forward-referenced port value, not internal state
+    # like Reg[T] -- but it is not itself a port either, so it is banned from
+    # using an @interface's .fwd_t/.fb_t port-pairing type too (see
+    # local_var_interface_type_error_test.py for the dedicated coverage).
     src = """
 @MAIN
 def m():
@@ -126,7 +129,19 @@ def m():
     x: uint1_t = r.stream.valid
     r = chan_intrf.fwd_t(stream=chan_intrf.stream_t(data=0, valid=0))
 """
-    _expect_clean(src, "feedback_fwd_t_test.py")
+    _expect_elaboration_error(src, "feedback_fwd_t_test.py", ["r", "stream_t"])
+
+
+def test_feedback_stream_t_is_clean():
+    # The correct replacement: feed back the plain stream value.
+    src = """
+@MAIN
+def m():
+    r: Feedback[chan_intrf.stream_t]
+    x: uint1_t = r.valid
+    r = chan_intrf.stream_t(data=0, valid=0)
+"""
+    _expect_clean(src, "feedback_stream_t_test.py")
 
 
 if __name__ == "__main__":
@@ -134,5 +149,6 @@ if __name__ == "__main__":
     test_reg_fb_t_errors()
     test_reg_fwd_t_array_errors()
     test_reg_stream_t_is_clean()
-    test_feedback_fwd_t_is_clean()
+    test_feedback_fwd_t_errors()
+    test_feedback_stream_t_is_clean()
     print("All reg_interface_type_error tests passed.")

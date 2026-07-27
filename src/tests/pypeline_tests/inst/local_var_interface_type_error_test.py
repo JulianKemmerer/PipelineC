@@ -11,14 +11,15 @@ import PY_TO_LOGIC
 # In-process regression tests for the "no plain local variable may be declared
 # with an @interface's .fwd_t/.fb_t port-pairing type" check (the same
 # _pypeline_interface_role-based mechanism as the shipped Reg[T] restriction,
-# generalized in _elab_ann_assign to any local AnnAssign, not just Reg[T]).
-# `.fwd_t`/`.fb_t` may still appear as: hw_func signature args/return-struct
-# fields (parsed elsewhere, not via this AnnAssign path -- never even reaches
-# this check), Feedback[T] (existing, separate exemption), and inline
+# generalized in _elab_ann_assign to any local AnnAssign, not just Reg[T]) --
+# and the identical restriction on Feedback[T] (also checked here; a Feedback
+# wire is not itself a port either). `.fwd_t`/`.fb_t` may still appear as:
+# hw_func signature args/return-struct fields (parsed elsewhere, not via this
+# AnnAssign path -- never even reaches this check), and inline
 # `intrf.fwd_t(...)`/`intrf.fb_t(...)` constructor-call *expressions* at a real
 # port crossing (a call argument, or an assignment RHS) -- never as any other
-# local's own declared type. Checked in-process via PY_TO_LOGIC.PARSE_FILE,
-# same pattern as reg_interface_type_error_test.py.
+# local's or Feedback wire's own declared type. Checked in-process via
+# PY_TO_LOGIC.PARSE_FILE, same pattern as reg_interface_type_error_test.py.
 
 _HEADER = """
 import sys, os
@@ -120,20 +121,58 @@ def m() -> uint1_t:
     _expect_clean(src, "local_stream_t_test.py")
 
 
-def test_feedback_fwd_t_is_still_clean():
-    # Feedback[T] remains exempt under the generalized check too.
+def test_feedback_fwd_t_errors():
+    # Feedback[T] is no longer exempt: a Feedback wire is not itself a port
+    # either, so T may not be an @interface's .fwd_t/.fb_t port-pairing type.
     src = """
 @MAIN
 def m() -> uint1_t:
     r: Feedback[chan_intrf.fwd_t]
-    x: chan_intrf.fb_t = chan_intrf.fb_t(ready=1)
     r = chan_intrf.fwd_t(stream=chan_intrf.stream_t(data=0, valid=0))
-    return x.ready
+    return r.stream.valid
 """
-    # x itself is a plain local declared as .fb_t -- this must still error
-    # (proves Feedback[T]'s exemption doesn't accidentally widen to cover
-    # every other local declaration in the same function).
-    _expect_elaboration_error(src, "feedback_fwd_t_test.py", ["x", "stream_t"])
+    _expect_elaboration_error(src, "feedback_fwd_t_test.py", ["r", "stream_t"])
+
+
+def test_feedback_fb_t_errors():
+    src = """
+@MAIN
+def m() -> uint1_t:
+    r: Feedback[chan_intrf.fb_t]
+    r = chan_intrf.fb_t(ready=1)
+    return r.ready
+"""
+    _expect_elaboration_error(src, "feedback_fb_t_test.py", ["r", "stream_t"])
+
+
+def test_feedback_stream_t_is_clean():
+    # The correct replacement: feed back the plain stream/scalar value, and
+    # construct '.fwd_t'/'.fb_t' inline only at the point it meets a real port.
+    src = """
+@MAIN
+def m() -> uint1_t:
+    r: Feedback[chan_intrf.stream_t]
+    x: chan_intrf.stream_t
+    x.valid = 1
+    r = x
+    fb = consumer(stream_in_if=chan_intrf.fwd_t(stream=r))
+    return fb.stream_in_if.ready
+"""
+    _expect_clean(src, "feedback_stream_t_test.py")
+
+
+def test_unannotated_local_fwd_t_assign_errors():
+    # The same ban, but via a bare 'x = intrf.fwd_t(...)' assignment with no
+    # type annotation at all -- must not be a loophole around the annotated
+    # form's check (a plain assignment RHS that is itself a struct-constructor
+    # call takes a different elaboration code path than AnnAssign).
+    src = """
+@MAIN
+def m() -> uint1_t:
+    bad = chan_intrf.fwd_t(stream=chan_intrf.stream_t(data=0, valid=0))
+    return bad.stream.valid
+"""
+    _expect_elaboration_error(src, "unannotated_local_fwd_t_assign_test.py", ["bad", "stream_t"])
 
 
 def test_inline_ctor_call_argument_is_clean():
@@ -152,6 +191,9 @@ if __name__ == "__main__":
     test_local_fwd_t_errors()
     test_local_fb_t_errors()
     test_local_stream_t_is_clean()
-    test_feedback_fwd_t_is_still_clean()
+    test_feedback_fwd_t_errors()
+    test_feedback_fb_t_errors()
+    test_feedback_stream_t_is_clean()
+    test_unannotated_local_fwd_t_assign_errors()
     test_inline_ctor_call_argument_is_clean()
     print("All local_var_interface_type_error tests passed.")

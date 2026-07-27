@@ -200,6 +200,33 @@ def get_tests() -> list:
             cmd=[INST_DIR / "local_var_interface_type_error_test.py"],
         )
     )
+    # Not run through the pipelinec CLI either: same in-process PARSE_FILE +
+    # ElaborationError-inspection pattern as local_var_interface_type_error_test.py,
+    # but for global Wire[T]/Input[T]/Output[T] declarations -- none of these
+    # are themselves a paired port-pairing construct, so none may ever be
+    # declared with an @interface's .fwd_t/.fb_t port-pairing type (use
+    # .stream_t plus a separate Wire/Input/Output[uint1_t] instead).
+    tests.append(
+        Test(
+            name="global_wire_interface_type_error_test",
+            category="elab",
+            cmd=[INST_DIR / "global_wire_interface_type_error_test.py"],
+        )
+    )
+    # Not run through the pipelinec CLI either: same in-process PARSE_FILE +
+    # ElaborationError-inspection pattern, but for a plain (non-hw_func)
+    # Python function's return value -- it may never be an @interface's
+    # .fwd_t/.fb_t port-pairing type, since that would hide the pairing
+    # construction behind a function call boundary instead of at a real port
+    # crossing. The sanctioned replacement is a helper returning .stream_t,
+    # with '.fwd_t(...)'/'.fb_t(...)' constructed inline at each call site.
+    tests.append(
+        Test(
+            name="indirect_interface_pairing_return_error_test",
+            category="elab",
+            cmd=[INST_DIR / "indirect_interface_pairing_return_error_test.py"],
+        )
+    )
     return tests
 
 

@@ -110,10 +110,10 @@ class series_twin_t(NamedTuple):
 
 @hw_func
 def series_twin(stream_in_if: chan_intrf.fwd_t, out_port_if: chan_intrf.fb_t) -> series_twin_t:
-    rev: Feedback[chan_intrf.fb_t]
-    a = inc2(stream_in_if, rev)
+    rev: Feedback[uint1_t]
+    a = inc2(stream_in_if, chan_intrf.fb_t(ready=rev))
     b = inc5(a.stream_out_if, out_port_if)
-    rev = b.stream_in_if
+    rev = b.stream_in_if.ready
     o: series_twin_t
     o.out_port_if = b.stream_out_if
     o.stream_in_if = a.stream_in_if

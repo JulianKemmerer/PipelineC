@@ -113,6 +113,29 @@ class _Port:
         return f"<port {self.name}{arr} {self.direction}>"
 
 
+_plain_shape_cache = {}
+
+
+def _plain_shape_of(paired_t):
+    """A plain struct with the identical fields as an @interface's derived
+    `.fwd_t`/`.fb_t` (or an element thereof), but without the
+    `_pypeline_interface_role` marker that makes the paired type -- safe to
+    use as `Feedback[T]`/`Wire[T]`/a plain local's type, since none of
+    `paired_t`'s own fields can themselves be an interface or `Feedback[...]`
+    (interface.py's `_reject_nested` already guarantees that when `.fwd_t`/
+    `.fb_t` were derived). Memoized per paired type so repeated calls reuse
+    the same class object (canonical-name determinism)."""
+    if paired_t is None:
+        return None
+    cached = _plain_shape_cache.get(paired_t)
+    if cached is not None:
+        return cached
+    fields = [(n, paired_t.__annotations__[n]) for n in paired_t._fields]
+    plain_t = struct(NamedTuple(f"{paired_t.__name__}_plain", fields))
+    _plain_shape_cache[paired_t] = plain_t
+    return plain_t
+
+
 def is_interface_func(f):
     """True if any annotation of `f` is a whole `@interface`."""
     fn = inspect.unwrap(f) if callable(f) else f
@@ -729,20 +752,44 @@ def make_hw_func_from_interface_func(f):
     L.append("@hw_func")
     L.append(f"def {fname_}({', '.join(sig)}) -> {out_struct}:")
 
+    def _ctor(paired_t_name, fields, value_expr):
+        """Construct the real paired type inline, field by field, from a
+        plain-shape value -- the paired type itself is never a Feedback[T]'s
+        (or any other local's) declared type, only ever this inline expression
+        at the point it meets a real port (PY_TO_LOGIC.py's _elab_ann_assign/
+        _discover_global_wires checks)."""
+        args = ", ".join(f"{fn}={value_expr}.{fn}" for fn in fields)
+        return f"{paired_t_name}({args})"
+
     body = []
+    fb_fwd_paired = {}  # text -> (paired_t injected name, paired_t fields)
     for text, v in fb_fwd.items():
         i = consumer[text][1]
         p = consumer[text][2]
-        body.append(f"{v}: Feedback[{em.inj(calls[i]['ports'][p].fwd_t, 't')}]")
+        port = calls[i]["ports"][p]
+        if port.n is not None:
+            raise InterfaceFuncError(
+                f"a feedforward loop through an array port ({p!r}) is not "
+                "supported -- array ports are only wired for reverse (fan-out) "
+                "feedback today"
+            )
+        paired_t = port.fwd_t
+        plain_name = em.inj(_plain_shape_of(paired_t), "t")
+        fb_fwd_paired[text] = (em.inj(paired_t, "t"), paired_t._fields)
+        body.append(f"{v}: Feedback[{plain_name}]")
+    fb_rev_paired = {}  # text -> (paired_t injected name, paired_t fields)
     for text, v in fb_rev.items():
         _, j, f_, k = producer[text]
         # one element of an array port carries the element's half, not the array's
         port = calls[j]["ports"][f_]
-        body.append(f"{v}: Feedback[{em.inj(port.elem_fb_t, 't')}]")
+        plain_name = em.inj(_plain_shape_of(port.elem_fb_t), "t")
+        fb_rev_paired[text] = (em.inj(port.elem_fb_t, "t"), port.elem_fb_t._fields)
+        body.append(f"{v}: Feedback[{plain_name}]")
 
     def fwd_value(text):
         if text in fb_fwd:
-            return fb_fwd[text]
+            paired_name, fields = fb_fwd_paired[text]
+            return _ctor(paired_name, fields, fb_fwd[text])
         return text
 
     def fb_elem_value(call_idx, portname, k):
@@ -753,7 +800,8 @@ def make_hw_func_from_interface_func(f):
         if cons[0] == "return":
             return cons[1]  # our own feedback arg, available at entry
         if text in fb_rev:
-            return fb_rev[text]
+            paired_name, fields = fb_rev_paired[text]
+            return _ctor(paired_name, fields, fb_rev[text])
         return _norm(f"{calls[cons[1]]['var']}.{cons[2]}")
 
     for kind, payload in body_plan:
@@ -780,11 +828,19 @@ def make_hw_func_from_interface_func(f):
             pos.append(f"[{', '.join(elems)}]")
         body.append(f"{c['var']} = {c['ref']}({', '.join(pos)})")
 
+    # Drive each Feedback var from the plain-shape fields of the real paired
+    # value that produced it (field-by-field -- the two are structurally
+    # identical but distinct ctypes, so a whole-value assignment would not
+    # type-check).
     for text, v in fb_fwd.items():
-        body.append(f"{v} = {text}")
+        _, fields = fb_fwd_paired[text]
+        for fn in fields:
+            body.append(f"{v}.{fn} = {text}.{fn}")
     for text, v in fb_rev.items():
         i, p = consumer[text][1], consumer[text][2]
-        body.append(f"{v} = {calls[i]['var']}.{p}")
+        _, fields = fb_rev_paired[text]
+        for fn in fields:
+            body.append(f"{v}.{fn} = {calls[i]['var']}.{p}.{fn}")
 
     ovar = em.gensym("o")
     body.append(f"{ovar}: {out_struct}")

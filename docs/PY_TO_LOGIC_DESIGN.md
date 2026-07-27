@@ -1466,33 +1466,86 @@ state that happens to look like stream data. The check unwraps one array dimensi
 `_derive` on `.fwd_t`/`.fb_t`, deliberately *not* on `.stream_t` even though `.stream_t` also
 carries a `_pypeline_interface` back-reference (for the annotation-closure recovery
 described above) — `_pypeline_interface_role` is what distinguishes "a real paired half" from
-"the plain type that happens to know which interface it came from." `Feedback[T]` is
-deliberately exempt from this check: it stands in for a real, forward-referenced port value
-produced later in the same function body (the loop-composition pattern), not internal state,
-so `Feedback[some_intrf.fwd_t]` is legitimate and common.
+"the plain type that happens to know which interface it came from."
+
+**`Feedback[T]` is banned the same way, not exempt.** An earlier version of this check treated
+`Feedback[some_intrf.fwd_t]` as legitimate, reasoning that a Feedback wire stands in for a real,
+forward-referenced port value rather than internal state. In practice this just relocated the
+same problem: a Feedback wire is not itself a port either (nothing else ever binds to it as a
+port), so allowing the paired type there let `.fwd_t`/`.fb_t` values sit in a named variable
+across statements — exactly what the rest of this restriction exists to prevent. `_elab_ann_assign`'s
+`_FeedbackType` branch now runs the identical `_pypeline_interface_role` check (right after
+computing `inner_ctype`'s array-unwrapped element) and raises the same shape of
+`ElaborationError` naming `Feedback[uint1_t]` (for a bare ready/valid signal) or
+`Feedback[some_intrf.stream_t]` (for a stream) as the replacement. Every real design that used
+to declare `foo_ready: Feedback[some_intrf.fb_t]` now declares `foo_ready: Feedback[uint1_t]`
+and constructs `some_intrf.fb_t(ready=foo_ready)` inline at the one real call site that needs
+the paired type (mirroring the existing `f(port=intrf.fwd_t(stream=x))` idiom below) — the same
+mechanical transform applies to a `.fwd_t`-typed Feedback feeding back a whole stream.
 
 **Generalized beyond `Reg[T]`**: the same `_pypeline_interface_role` check also fires for
 *any* plain local `AnnAssign` in `_elab_ann_assign` — not just `Reg[T]`-wrapped ones — right
 after the `Feedback[T]`/`Wire`/`Input`/`Output[T]` branches and before the "normal local
 variable" fallthrough. A plain local is not a port either, so the same reasoning applies
-uniformly; the exemptions are identical (`Feedback[T]`, and — since these are parsed by
-entirely different code, never reaching `_elab_ann_assign` at all — hw_func signature
-args and return-struct fields). This generalization required one companion fix in
-`_elab_call`: previously, an `intrf.fwd_t(...)`/`intrf.fb_t(...)` (or any NamedTuple
-struct) constructor call was only elaborable as a whole assignment's right-hand side
-(`_elab_ann_assign`/`_elab_assign` special-case it via `_elab_compound_init` before
-general expression elaboration ever sees it) — as a call *argument*, the same constructor
-call fell through to `_elab_call`'s plain-Name-call/module-qualified-call resolution and
-raised `NotImplementedError` (`'intrf' is not a module in call 'intrf.fwd_t'`), since
-`_elab_call` had no struct-constructor awareness of its own. Fixed by detecting, in the
-argument-binding loop (`for port_name, arg_expr in bound_args`), whether `arg_expr` is an
-`ast.Call` whose callee resolves (via `_try_eval_const`) to something with `_fields`
-(i.e. a NamedTuple/struct type) — if so, a synthetic call-site-unique wire name is
-declared (`_declare_var`, zero-init, same as any local) and populated via the same
-`_elab_compound_init` walk used for variable initializers, then used as the argument's
-wire. This makes `f(port=intrf.fwd_t(stream=x))` elaborate with no local variable ever
-declared, which is what makes banning local `.fwd_t`/`.fb_t` declarations practical rather
-than just moving the boilerplate around.
+uniformly; the only exemptions are hw_func signature args and return-struct fields (parsed by
+entirely different code, never reaching `_elab_ann_assign` at all) and an inline
+`intrf.fwd_t(...)`/`intrf.fb_t(...)` constructor-call *expression* used directly as a call
+argument or return value — never stored in any local, `Reg[T]`, `Feedback[T]`, or global
+`Wire[T]` first. This generalization required one companion fix in `_elab_call`: previously,
+an `intrf.fwd_t(...)`/`intrf.fb_t(...)` (or any NamedTuple struct) constructor call was only
+elaborable as a whole assignment's right-hand side (`_elab_ann_assign`/`_elab_assign`
+special-case it via `_elab_compound_init` before general expression elaboration ever sees it)
+— as a call *argument*, the same constructor call fell through to `_elab_call`'s
+plain-Name-call/module-qualified-call resolution and raised `NotImplementedError`
+(`'intrf' is not a module in call 'intrf.fwd_t'`), since `_elab_call` had no
+struct-constructor awareness of its own. Fixed by detecting, in the argument-binding loop
+(`for port_name, arg_expr in bound_args`), whether `arg_expr` is an `ast.Call` whose callee
+resolves (via `_try_eval_const`) to something with `_fields` (i.e. a NamedTuple/struct type)
+— if so, a synthetic call-site-unique wire name is declared (`_declare_var`, zero-init, same
+as any local) and populated via the same `_elab_compound_init` walk used for variable
+initializers, then used as the argument's wire. This makes `f(port=intrf.fwd_t(stream=x))`
+elaborate with no local variable ever declared, which is what makes banning local
+`.fwd_t`/`.fb_t` declarations practical rather than just moving the boilerplate around.
+
+**Closing the bare-assignment loophole.** `_elab_ann_assign` only ever sees an *annotated*
+declaration (`x: T = ...` or `x: T`); a bare `x = intrf.fwd_t(...)` (no annotation at all) is a
+plain `ast.Assign`, handled by `_elab_assign`'s own struct-constructor-call path (the one that
+also backs `x = MyStruct(field=val)` compound-init and infers `x`'s ctype from the callee's
+name) — a different code path that never consulted `_pypeline_interface_role` at all, so it was
+a live loophole around the entire restriction above: nothing stopped `x = intrf.fwd_t(...)`
+followed by ordinary reuse of `x` across several statements, even though `x: intrf.fwd_t = ...`
+right next to it would hard-error. `_elab_assign` now runs the identical
+`_pypeline_interface_role` check in two places: once early, when the RHS folds to a plain
+Python constant via `_try_eval_const` and gets cached into `const_env` (the common case for a
+directly-constructed `.fwd_t`/`.fb_t` value, since its inner fields are themselves usually
+constants), and again in the struct-constructor-call branch that declares a brand-new hardware
+variable, for the same RHS shape when it does *not* fold to a pure constant (e.g. it closes
+over a live wire). Both raise the same `ElaborationError` as the annotated form.
+
+**A plain (non-hw_func) Python function may not return a `.fwd_t`/`.fb_t` value either**,
+even though nothing stores it in a local *inside that function*. A helper like
+`def foo_null(): return intrf.fwd_t(stream=...)`, called as `x = foo_null()` or
+`o.field = foo_null()`, hides the exact same paired-type construction behind a call boundary
+instead of at a real port crossing — indistinguishable, from the caller's side, from any other
+banned pattern above. Checked in `_try_eval_const` itself (`_check_no_indirect_interface_pairing_return`,
+run on every successfully-evaluated `ast.Call`), so it fires no matter which caller invoked
+`_try_eval_const` for whatever reason. The one exemption: a call whose `func` is literally a
+`.fwd_t`/`.fb_t` attribute access (`intrf.fwd_t(...)`/`intrf.fb_t(...)` itself) — the sanctioned
+inline-construction idiom, which must keep working as a call argument or return expression.
+Everything else — any named function, however many layers of indirection — must return
+`.stream_t` (or `uint1_t` for a bare ready/valid signal) instead, with the paired type
+constructed inline by the caller, at the real port crossing.
+
+**Global `Wire[T]`/`Input[T]`/`Output[T]` are banned from `.fwd_t`/`.fb_t` the same way**,
+checked in `_discover_global_wires` (not `_elab_ann_assign`, since these are module-level
+declarations, never inside a function body). None of the three are themselves a paired-port
+construct: a `Wire` is plain internal wiring between two `@MAIN`s, and `Input`/`Output` are
+single flattened top-level chip signals — so allowing any of them to carry `.fwd_t`/`.fb_t`
+would just relocate the same "paired value living somewhere other than a real port crossing"
+problem to module scope. The fix is the same shape as everywhere else: split into a plain
+`Wire[intrf.stream_t]` (or `Input`/`Output`) plus a separate `Wire[uint1_t]` for the
+ready/valid half, and construct `.fwd_t`/`.fb_t` inline only where a real hw_func port
+actually needs it.
 
 A function annotated with a whole `@interface` is an **interface function**: its body wires
 only the feedforward direction. `make_hw_func_from_interface_func(f)`

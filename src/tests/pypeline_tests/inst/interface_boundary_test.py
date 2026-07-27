@@ -155,10 +155,10 @@ def wrapper_twin(
     in_data: uint8_t, in_valid: uint1_t, limit: uint8_t, downstream_ready: uint1_t
 ) -> wrapper_t:
     o: wrapper_t
-    b_ready: Feedback[chan_intrf.fb_t]  # b is called after a, so a's ready comes back
-    a = gate(chan_intrf.fwd_t(data=in_data, valid=in_valid), limit, b_ready)
+    b_ready: Feedback[uint1_t]  # b is called after a, so a's ready comes back
+    a = gate(chan_intrf.fwd_t(data=in_data, valid=in_valid), limit, chan_intrf.fb_t(ready=b_ready))
     b = gate(a.stream_out_if, limit, chan_intrf.fb_t(ready=downstream_ready))
-    b_ready = b.stream_in_if
+    b_ready = b.stream_in_if.ready
     o.upstream_ready = a.stream_in_if.ready
     o.out_data = b.stream_out_if.data
     o.out_valid = b.stream_out_if.valid

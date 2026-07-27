@@ -2003,9 +2003,58 @@ class FuncElaborator:
         try:
             expr = ast.Expression(body=node)
             ast.fix_missing_locations(expr)
-            return eval(compile(expr, "<const_eval>", "eval"), self._make_eval_ns())
+            val = eval(compile(expr, "<const_eval>", "eval"), self._make_eval_ns())
         except Exception:
             return None
+        if isinstance(node, ast.Call):
+            self._check_no_indirect_interface_pairing_return(node, val)
+        return val
+
+    def _check_no_indirect_interface_pairing_return(self, call_node, val):
+        """A plain (non-hw_func) Python function may never return an
+        @interface's .fwd_t/.fb_t port-pairing value -- that would let a
+        function body hide the pairing construction behind a call boundary,
+        defeating the "construct .fwd_t/.fb_t only inline, at a real port
+        crossing" discipline enforced elsewhere (_elab_ann_assign,
+        _discover_global_wires). The one exemption is the sanctioned inline
+        constructor call itself, `intrf.fwd_t(...)`/`intrf.fb_t(...)` --
+        recognized here as a direct `.fwd_t`/`.fb_t` attribute-call, which is
+        exactly the idiom callers are supposed to use instead.
+        """
+        if isinstance(call_node.func, ast.Attribute) and call_node.func.attr in (
+            "fwd_t",
+            "fb_t",
+        ):
+            return
+        elem = _array_elem_ctype(val) or val
+        owning_intrf = (
+            getattr(elem, "_pypeline_interface", None)
+            if getattr(elem, "_pypeline_interface_role", None) is not None
+            else None
+        )
+        if owning_intrf is not None:
+            func_desc = self._describe_callee_expr(call_node.func)
+            raise ElaborationError(
+                f"'{func_desc}(...)': a plain function cannot return an "
+                f"@interface's '.fwd_t'/'.fb_t' port-pairing type -- that hides "
+                f"the pairing construction behind a function boundary instead of "
+                f"at a real port crossing. Make '{func_desc}' return "
+                f"'{owning_intrf.__name__}.stream_t' instead, and construct the "
+                f"'.fwd_t'/'.fb_t' value inline at the call site instead, e.g. "
+                f"'{owning_intrf.__name__}.fwd_t(stream={func_desc}())'.",
+                call_node,
+            )
+
+    @staticmethod
+    def _describe_callee_expr(func_node):
+        """Best-effort human-readable name for an ast.Call's func expression
+        (ast.unparse isn't available on Python 3.8, the oldest supported
+        version), for use only in error message text."""
+        if isinstance(func_node, ast.Name):
+            return func_node.id
+        if isinstance(func_node, ast.Attribute):
+            return f"{FuncElaborator._describe_callee_expr(func_node.value)}.{func_node.attr}"
+        return "this function"
 
     def _prescan_written_globals(self):
         """Side-effect-free pre-pass over the function body: which global wires
@@ -2625,6 +2674,35 @@ class FuncElaborator:
             ):
                 const_val = self._try_eval_const(stmt.value)
                 if const_val is not None:
+                    # A bare 'x = <anything evaluating to a .fwd_t/.fb_t value>'
+                    # (no type annotation) is the same "local variable of an
+                    # @interface's paired port-pairing type" pattern
+                    # _elab_ann_assign bans for the annotated form -- including
+                    # the direct 'x = intrf.fwd_t(...)' constructor-call shape,
+                    # which _try_eval_const's own indirect-return check
+                    # deliberately exempts (since that's the sanctioned idiom at
+                    # a real port crossing, e.g. as a call argument) but which is
+                    # not sanctioned when the whole point is to stash it in a
+                    # plain local instead.
+                    elem = _array_elem_ctype(const_val) or const_val
+                    owning_intrf = (
+                        getattr(elem, "_pypeline_interface", None)
+                        if getattr(elem, "_pypeline_interface_role", None) is not None
+                        else None
+                    )
+                    if owning_intrf is not None:
+                        raise ElaborationError(
+                            f"'{python_name}': a local variable cannot be declared "
+                            f"with an @interface's .fwd_t/.fb_t port-pairing type -- "
+                            f"that type is reserved for hw_func signature args/return "
+                            f"fields and inline constructor-call expressions at a "
+                            f"real port crossing (e.g. 'f(port=intrf.fwd_t(stream=x))'). "
+                            f"Use '{owning_intrf.__name__}.stream_t' instead (or the "
+                            f"plain make_stream_t(...) type your data actually is), "
+                            f"and construct the '.fwd_t'/'.fb_t' value inline only at "
+                            f"the point it meets a real port.",
+                            stmt.value,
+                        )
                     self.const_env[python_name] = (
                         const_val  # const_env uses Python names
                     )
@@ -2675,6 +2753,28 @@ class FuncElaborator:
                 elif hw_name in self.env:
                     self._elab_compound_init(hw_name, stmt.value, stmt.value)
                 else:
+                    # A brand-new local declared via a bare struct-constructor-call
+                    # assignment (no type annotation at all, e.g. 'x = intrf.fwd_t(...)')
+                    # is exactly the same "local variable of an @interface's paired
+                    # .fwd_t/.fb_t type" pattern _elab_ann_assign already bans for the
+                    # annotated form -- ban it here too so it can't be smuggled in
+                    # just by omitting the annotation.
+                    if (
+                        getattr(callee, "_pypeline_interface_role", None) is not None
+                    ):
+                        owning_intrf = getattr(callee, "_pypeline_interface", None)
+                        raise ElaborationError(
+                            f"'{python_name}': a local variable cannot be declared "
+                            f"with an @interface's .fwd_t/.fb_t port-pairing type -- "
+                            f"that type is reserved for hw_func signature args/return "
+                            f"fields and inline constructor-call expressions at a real "
+                            f"port crossing (e.g. 'f(port=intrf.fwd_t(stream=x))'). Use "
+                            f"'{owning_intrf.__name__}.stream_t' instead (or the plain "
+                            f"make_stream_t(...) type your data actually is), and "
+                            f"construct the '.fwd_t'/'.fb_t' value inline only at the "
+                            f"point it meets a real port.",
+                            stmt.value,
+                        )
                     struct_ctype = (
                         getattr(callee, "_pypeline_ctype_name", None) or callee.__name__
                     )
@@ -2855,6 +2955,31 @@ class FuncElaborator:
                 raise ElaborationError(
                     f"Feedback wire '{var_name}' cannot have an initializer", stmt
                 )
+            # Same restriction as Reg[T]/local variables/global Wire: Feedback[T]
+            # is not itself a port either (it's a same-cycle forward-reference to
+            # a value that meets a real port elsewhere), so T may not be an
+            # @interface's .fwd_t/.fb_t port-pairing type. Feed back the plain
+            # scalar/stream value instead (e.g. Feedback[uint1_t] for a ready
+            # signal, or Feedback[intrf.stream_t] for a stream), and construct
+            # '.fwd_t'/'.fb_t' inline only at the point it meets a real port.
+            elem = _array_elem_ctype(ann_val.inner_ctype) or ann_val.inner_ctype
+            owning_intrf = (
+                getattr(elem, "_pypeline_interface", None)
+                if getattr(elem, "_pypeline_interface_role", None) is not None
+                else None
+            )
+            if owning_intrf is not None:
+                raise ElaborationError(
+                    f"'{var_name}': Feedback[T] cannot use an @interface's "
+                    f"'.fwd_t'/'.fb_t' port-pairing type as T -- a Feedback wire "
+                    f"is not itself a port either, so it never needs (or should "
+                    f"imply) pairing. Feed back the plain scalar/stream value "
+                    f"instead (e.g. 'Feedback[uint1_t]' for a ready signal, or "
+                    f"'Feedback[{owning_intrf.__name__}.stream_t]' for a stream), "
+                    f"and construct the '.fwd_t'/'.fb_t' value inline only at the "
+                    f"point it meets a real port.",
+                    stmt.annotation,
+                )
             inner_ctype = _inner_ctype_to_str(ann_val.inner_ctype, self.parser_state)
             self._declare_feedback_var(var_name, inner_ctype, stmt.target)
             return
@@ -2863,7 +2988,8 @@ class FuncElaborator:
         # either -- same reasoning as the Reg[T] restriction above, generalized: a
         # plain local is not a port, so it never needs (or should imply) pairing.
         # Only hw_func signature args/return-struct fields (parsed elsewhere, not via
-        # this AnnAssign path), Feedback[T] (handled above), and an inline
+        # this AnnAssign path), Feedback[T] (handled above, itself now similarly
+        # restricted), and an inline
         # `intrf.fwd_t(...)`/`intrf.fb_t(...)` constructor-call expression at a real
         # port crossing (handled by _elab_call's synthetic-var path, never reaching
         # this AnnAssign code at all) may use .fwd_t/.fb_t.
@@ -5454,6 +5580,29 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
         if node.value is not None:
             raise ElaborationError(
                 f"Global {kind} '{node.target.id}' cannot have an initializer"
+            )
+        # Mirrors _elab_ann_assign's local-variable ban on .fwd_t/.fb_t: a
+        # global Wire/Input/Output is not itself a paired-port-pairing
+        # construct -- Wire is plain internal wiring, and Input/Output are
+        # single flattened top-level chip signals -- so none of them ever
+        # need (or should imply) the .fwd_t/.fb_t pairing. Use .stream_t plus
+        # a separate ready/valid Wire/Input/Output, and construct
+        # '.fwd_t'/'.fb_t' inline only at a real port crossing.
+        elem = _array_elem_ctype(ann_val.inner_ctype) or ann_val.inner_ctype
+        owning_intrf = (
+            getattr(elem, "_pypeline_interface", None)
+            if getattr(elem, "_pypeline_interface_role", None) is not None
+            else None
+        )
+        if owning_intrf is not None:
+            raise ElaborationError(
+                f"Global {kind} '{node.target.id}' cannot use an @interface's "
+                f"'.fwd_t'/'.fb_t' port-pairing type -- a global {kind} is not "
+                f"itself a paired port-pairing construct, so it never needs (or "
+                f"should imply) pairing. Use '{owning_intrf.__name__}.stream_t' "
+                f"instead (plus a separate {kind}[uint1_t] for the ready/valid "
+                f"half you actually need), and construct the '.fwd_t'/'.fb_t' "
+                f"value inline only at the point it meets a real port."
             )
         bare_name = node.target.id
         safe_name = _sanitize_vhdl_name(bare_name)
