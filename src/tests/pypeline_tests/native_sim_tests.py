@@ -31,6 +31,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "stream_fifo_test.py",
     "axis_test.py",
     "dwidth_converter_test.py",
+    "axis_byte_stream_test.py",
     "func_wires_test.py",
     "if_test.py",
     "enum_test.py",

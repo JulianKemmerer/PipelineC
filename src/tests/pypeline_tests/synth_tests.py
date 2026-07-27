@@ -46,6 +46,7 @@ SYNTH_TEST_FILES = [
     ("stream_fifo_test.py", INST_DIR, ["--comb"]),
     ("axis_test.py", INST_DIR, ["--comb"]),
     ("dwidth_converter_test.py", INST_DIR, ["--comb"]),
+    ("axis_byte_stream_test.py", INST_DIR, ["--comb"]),
     ("enum_test.py", INST_DIR, ["--comb"]),
     ("char_array_test.py", INST_DIR, ["--comb"]),
     ("sim_print_test.py", INST_DIR, ["--comb"]),

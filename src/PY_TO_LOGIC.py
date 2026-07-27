@@ -2858,6 +2858,34 @@ class FuncElaborator:
             inner_ctype = _inner_ctype_to_str(ann_val.inner_ctype, self.parser_state)
             self._declare_feedback_var(var_name, inner_ctype, stmt.target)
             return
+        # A plain local variable (not Reg[T]/Feedback[T]/Wire/Input/Output[T] above)
+        # may never be declared with an @interface's .fwd_t/.fb_t port-pairing type
+        # either -- same reasoning as the Reg[T] restriction above, generalized: a
+        # plain local is not a port, so it never needs (or should imply) pairing.
+        # Only hw_func signature args/return-struct fields (parsed elsewhere, not via
+        # this AnnAssign path), Feedback[T] (handled above), and an inline
+        # `intrf.fwd_t(...)`/`intrf.fb_t(...)` constructor-call expression at a real
+        # port crossing (handled by _elab_call's synthetic-var path, never reaching
+        # this AnnAssign code at all) may use .fwd_t/.fb_t.
+        elem = _array_elem_ctype(ann_val) or ann_val
+        owning_intrf = (
+            getattr(elem, "_pypeline_interface", None)
+            if getattr(elem, "_pypeline_interface_role", None) is not None
+            else None
+        )
+        if owning_intrf is not None:
+            raise ElaborationError(
+                f"'{var_name}': a local variable cannot be declared with an "
+                f"@interface's .fwd_t/.fb_t port-pairing type -- that type is "
+                f"reserved for hw_func signature args/return fields, Feedback[T], "
+                f"and inline constructor-call expressions at a real port crossing "
+                f"(e.g. 'f(port=intrf.fwd_t(stream=x))'). Use "
+                f"'{owning_intrf.__name__}.stream_t' instead (or the plain "
+                f"make_stream_t(...) type your data actually is), and construct the "
+                f"'.fwd_t'/'.fb_t' value inline only at the point it meets a real "
+                f"port.",
+                stmt.annotation,
+            )
         # Normal local variable
         typ = _annotation_to_ctype(
             stmt.annotation, self._make_eval_ns(), self.parser_state
@@ -4267,6 +4295,37 @@ class FuncElaborator:
                 arg_wire, arg_typ = self._elab_str_literal(
                     arg_expr.value, port_typ, arg_expr
                 )
+            elif isinstance(arg_expr, ast.List) or (
+                isinstance(arg_expr, ast.Call)
+                and hasattr(self._try_eval_const(arg_expr.func), "_fields")
+            ):
+                # Inline NamedTuple/struct constructor (or a list literal building
+                # an array, e.g. an array of already-declared Feedback[intrf.fb_t]
+                # values: f(port=[fb_a, fb_b])) as a call argument -- reuses the
+                # same declare-then-_elab_compound_init mechanism used for a
+                # variable initializer (_elab_ann_assign), just against a
+                # synthetic, call-site-unique base name instead of a user-written
+                # local, so callers never need to pre-declare a .fwd_t/.fb_t-typed
+                # (or array-of-.fwd_t/.fb_t-typed) local just to pass one as a
+                # port argument.
+                port_typ = callee_def.wire_to_c_type.get(port_name)
+                # Deliberately NOT CONST_PREFIX-based: any wire name starting with
+                # C_TO_LOGIC.CONST_PREFIX is special-cased elsewhere as a literal
+                # constant value wire (its suffix is parsed as the literal's text),
+                # which this synthetic variable name is not.
+                synth_name = f"INLINE_CTOR_{_loc_str(self.src_file, arg_expr)}"
+                self._declare_var(synth_name, port_typ, arg_expr)
+                self._elab_compound_init(synth_name, arg_expr, arg_expr)
+                # Compound (non-scalar) values are stored as a base wire plus
+                # per-field aliases (wire_aliases_over_time), not a single flat
+                # wire -- reading the base name directly (as opposed to through
+                # _elab_name's _read_ref path) would bind the port to the
+                # pre-write zero-init value, not the constructed one. Mirror
+                # _elab_name's own scalar/compound split here.
+                if _is_scalar(port_typ, self.parser_state):
+                    arg_wire, arg_typ = synth_name, port_typ
+                else:
+                    arg_wire, arg_typ = self._read_ref((synth_name,), port_typ, arg_expr)
             else:
                 arg_wire, arg_typ = self._elab_expr(arg_expr)
             input_ports.append((port_name, arg_wire, arg_typ))

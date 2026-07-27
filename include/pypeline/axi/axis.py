@@ -1,5 +1,14 @@
 # pyright: reportInvalidTypeForm=none
-from pypeline import hw_func, struct, NamedTuple, Reg, uint1_t, uint8_t, make_uint_t
+from pypeline import (
+    hw_func,
+    struct,
+    NamedTuple,
+    Reg,
+    uint1_t,
+    uint8_t,
+    uint32_t,
+    make_uint_t,
+)
 
 from kept_data_bus import make_kept_data_bus_t
 from ndarray import make_ndarray_fragment_t
@@ -71,11 +80,11 @@ def make_axis_broadcast_interlock(axis_intrf, n):
         for i in range(n):
             all_sinks_ready = all_sinks_ready & axis_out_if[i].ready
         for i in range(n):
-            out_i: axis_intrf.fwd_t = axis_in_if
-            out_i.stream.valid = 0
+            out_i: axis_intrf.stream_t = axis_in_if.stream
+            out_i.valid = 0
             if all_sinks_ready | ~axis_out_if[i].ready:
-                out_i.stream.valid = axis_in_if.stream.valid
-            o.axis_out_if[i] = out_i
+                out_i.valid = axis_in_if.stream.valid
+            o.axis_out_if[i] = axis_intrf.fwd_t(stream=out_i)
         o.axis_in_if.ready = all_sinks_ready
         return o
 
@@ -354,3 +363,212 @@ def make_dwidth_narrow(elem_t, narrow_n, ratio):
     dwidth_narrow.wide_in_fb_t = wide_axis_intrf.fb_t
     dwidth_narrow.narrow_out_fb_t = narrow_axis_intrf.fb_t
     return dwidth_narrow, wide_axis_intrf.fwd_t, narrow_axis_intrf.fwd_t
+
+
+# ── Testbench-oriented byte-stream generator/checker ────────────────────────
+#
+# Every hand-written axis testbench (see wireguard-fpga's *_syn_tb.py files)
+# ends up rebuilding the same shape: a fixed-width byte buffer + "bytes
+# remaining" register, `keep[i] = remaining > i` per lane, `eod` set on the
+# last beat, and -- once `stream.valid & <reverse ready>` holds, i.e. a
+# transfer actually fires this cycle -- shifting the buffer down by the lane
+# width (source side) or appending the kept lanes into an accumulating buffer
+# (sink side). `make_axis_byte_source`/`make_axis_byte_sink` below factor that
+# out; `n` is the interface's lane count (the same `n` passed to
+# `make_axis_interface(n, ...)` that built `axis_intrf`), `max_bytes` the
+# largest frame either side needs to hold.
+#
+# Neither factory generates or checks backpressure patterns -- both drive
+# their own `ready`/consume-every-beat behavior unconditionally, matching
+# every existing testbench in this codebase (none of them exercise randomized
+# backpressure either). A caller wanting stalls drives the interface's
+# reverse half itself, same as with any other consumer.
+
+
+def make_axis_byte_source(axis_intrf, n, max_bytes, use_keep_mask=False):
+    """Synthesizable byte-stream generator. Load a byte array + length once
+    (while idle), then emits one `axis_intrf.stream_t` word per cycle with
+    `keep[i] = remaining > i`, `eod[0]` set on the last beat, shifting the
+    internal buffer down by `n` bytes each cycle the emitted word is actually
+    accepted (`stream.valid & stream_out_if.ready`). Generalizes the input-side
+    FSM block duplicated across wireguard-fpga's `*_syn_tb.py` testbenches
+    (e.g. `encrypt_syn_tb.py`'s plaintext-streaming block).
+
+    `use_keep_mask=True` adds a `load_keep_mask: uint1_t[max_bytes]` input,
+    latched alongside `load_data`/`load_len`, that overrides the default
+    `keep[i] = remaining > i` derivation with an explicit per-byte mask --
+    needed whenever a frame is really *multiple concatenated sub-messages*
+    with a hard beat boundary between them (e.g. wireguard's ciphertext-then-
+    auth-tag framing: the tag must always start on a fresh beat, so a
+    non-block-aligned ciphertext's last beat needs trailing padding bytes
+    marked keep=0, not folded into "still remaining" and marked keep=1 like
+    ordinary single-message data would be). `load_len` still spans the padded
+    total length (so `eod` still lands on the true final beat); the mask only
+    changes which bytes within that span read as kept.
+
+    Returns (axis_byte_source, axis_byte_source_t):
+        axis_byte_source(load: uint1_t, load_data: uint8_t[max_bytes],
+                          load_len: uint32_t, [load_keep_mask: uint1_t[max_bytes],]
+                          stream_out_if: axis_intrf.fb_t)
+            -> axis_byte_source_t
+        axis_byte_source_t fields:
+          .stream_out_if (axis_intrf.fwd_t) - the generated stream (paired
+            with the `stream_out_if` arg above, per the usual port-pairing
+            naming convention: same name, opposite half, arg vs. return field)
+          .idle (uint1_t) - no frame in flight; safe to `load` a new one
+    """
+    buf_t = uint8_t[max_bytes]
+    mask_t = uint1_t[max_bytes]
+
+    @struct
+    class axis_byte_source_t(NamedTuple):
+        stream_out_if: axis_intrf.fwd_t
+        idle: uint1_t
+
+    if use_keep_mask:
+
+        @hw_func
+        def axis_byte_source(
+            load: uint1_t,
+            load_data: buf_t,
+            load_len: uint32_t,
+            load_keep_mask: mask_t,
+            stream_out_if: axis_intrf.fb_t,
+        ) -> axis_byte_source_t:
+            o: axis_byte_source_t
+            buf: Reg[buf_t]
+            remaining: Reg[uint32_t]
+            keep_mask: Reg[mask_t]
+
+            if load & (remaining == 0):
+                buf = load_data
+                remaining = load_len
+                keep_mask = load_keep_mask
+
+            outw: axis_intrf.stream_t
+            outw.valid = remaining > 0
+            outw.data.eod[0] = remaining <= n
+            for i in range(n):
+                outw.data.frag.keep[i] = 0
+                outw.data.frag.data[i] = 0
+                if remaining > i:
+                    outw.data.frag.keep[i] = keep_mask[i]
+                    outw.data.frag.data[i] = buf[i]
+
+            if outw.valid & stream_out_if.ready:
+                if outw.data.eod[0]:
+                    remaining = 0
+                else:
+                    remaining = remaining - n
+                    for i in range(max_bytes - n):
+                        keep_mask[i] = keep_mask[i + n]
+                        buf[i] = buf[i + n]
+
+            o.stream_out_if = axis_intrf.fwd_t(stream=outw)
+            o.idle = remaining == 0
+            return o
+
+    else:
+
+        @hw_func
+        def axis_byte_source(
+            load: uint1_t,
+            load_data: buf_t,
+            load_len: uint32_t,
+            stream_out_if: axis_intrf.fb_t,
+        ) -> axis_byte_source_t:
+            o: axis_byte_source_t
+            buf: Reg[buf_t]
+            remaining: Reg[uint32_t]
+
+            if load & (remaining == 0):
+                buf = load_data
+                remaining = load_len
+
+            outw: axis_intrf.stream_t
+            outw.valid = remaining > 0
+            outw.data.eod[0] = remaining <= n
+            for i in range(n):
+                outw.data.frag.keep[i] = remaining > i
+                outw.data.frag.data[i] = 0
+                if remaining > i:
+                    outw.data.frag.data[i] = buf[i]
+
+            if outw.valid & stream_out_if.ready:
+                if outw.data.eod[0]:
+                    remaining = 0
+                else:
+                    remaining = remaining - n
+                    for i in range(max_bytes - n):
+                        buf[i] = buf[i + n]
+
+            o.stream_out_if = axis_intrf.fwd_t(stream=outw)
+            o.idle = remaining == 0
+            return o
+
+    axis_byte_source.axis_intrf = axis_intrf
+    return axis_byte_source, axis_byte_source_t
+
+
+def make_axis_byte_sink(axis_intrf, n, max_bytes):
+    """Synthesizable byte-stream checker/collector. Drives its own `ready`
+    statically high (see this section's docstring), appending kept lanes into
+    an internal buffer each accepted beat. On `eod`, `frame_valid` pulses for
+    one cycle carrying the completed `frame_data`/`frame_len`, ready for a
+    caller's own `sim_assert`/compare against an expected frame -- generalizes
+    the output-side per-lane `sim_assert` + shift-down-expected-array block
+    duplicated across wireguard-fpga's `*_syn_tb.py` testbenches (e.g.
+    `encrypt_syn_tb.py`'s ciphertext-checking block).
+
+    Returns (axis_byte_sink, axis_byte_sink_t):
+        axis_byte_sink(stream_in_if: axis_intrf.fwd_t) -> axis_byte_sink_t
+        axis_byte_sink_t fields:
+          .stream_in_if (axis_intrf.fb_t) - reverse half of the sunk port
+          .frame_valid (uint1_t) - pulses for one cycle when a frame completes
+          .frame_data (uint8_t[max_bytes]), .frame_len (uint32_t)
+    """
+    buf_t = uint8_t[max_bytes]
+
+    @struct
+    class axis_byte_sink_t(NamedTuple):
+        stream_in_if: axis_intrf.fb_t
+        frame_valid: uint1_t
+        frame_data: buf_t
+        frame_len: uint32_t
+
+    @hw_func
+    def axis_byte_sink(stream_in_if: axis_intrf.fwd_t) -> axis_byte_sink_t:
+        o: axis_byte_sink_t
+        buf: Reg[buf_t]
+        count: Reg[uint32_t]
+
+        o.stream_in_if.ready = 1
+        o.frame_valid = 0
+        o.frame_data = buf
+        o.frame_len = count
+
+        if stream_in_if.stream.valid & o.stream_in_if.ready:
+            # Unconditional write at every lane (even unkept trailing lanes on
+            # the last beat of a packet) -- safe, since bytes beyond the final
+            # frame_len are never read by a caller; this avoids a conditional
+            # dynamic-indexed array write inside a for-loop, which hits an
+            # unrelated elaborator limitation in branch-coverage inference for
+            # array writes (var-ref coverage) when nested inside a loop.
+            for i in range(n):
+                buf[count + i] = stream_in_if.stream.data.frag.data[i]
+            new_count: uint32_t = count
+            for i in range(n):
+                if stream_in_if.stream.data.frag.keep[i]:
+                    new_count = new_count + 1
+            if stream_in_if.stream.data.eod[0]:
+                o.frame_valid = 1
+                o.frame_data = buf
+                o.frame_len = new_count
+                count = 0
+            else:
+                count = new_count
+
+        return o
+
+    axis_byte_sink.axis_intrf = axis_intrf
+    return axis_byte_sink, axis_byte_sink_t

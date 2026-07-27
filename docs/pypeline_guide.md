@@ -941,6 +941,37 @@ o.stream_out_if.stream = buf   # wrap only where it meets the real port field
 later in the same function body (§9), not internal state, so `Feedback[chan_intrf.fwd_t]`
 is a legitimate, common pattern.
 
+**This restriction isn't specific to `Reg[T]`** — no plain local variable, anywhere in a
+hardware function body, may be declared with an `@interface`'s `.fwd_t`/`.fb_t` type
+either, for the same reason: `.fwd_t`/`.fb_t` is reserved for hw_func signature args/
+return-struct fields, `Feedback[T]`, and inline constructor-call *expressions* at the
+exact point a value crosses into a real port — never as any other local's own declared
+type, even a scratch value built up over several statements before being handed to a
+submodule call or a `Wire[...]`. Construct the `.fwd_t`/`.fb_t` value inline instead:
+
+```python
+# Wrong -- ElaborationError: a local variable cannot be declared with .fwd_t/.fb_t
+dwidth_conv_data_in: axis128_intrf.fwd_t = axis128_null()
+...
+in_to_block = axis128_to_axis512(narrow_in_if=dwidth_conv_data_in, wide_out_if=block_in_ready)
+
+# Right -- build up the plain .stream_t locally, wrap only at the call site
+dwidth_conv_data_in: axis128_intrf.stream_t = axis128_null().stream
+...
+in_to_block = axis128_to_axis512(
+    narrow_in_if=axis128_intrf.fwd_t(stream=dwidth_conv_data_in),
+    wide_out_if=block_in_ready,
+)
+```
+
+An `intrf.fwd_t(...)`/`intrf.fb_t(...)` constructor call is also valid directly as a call
+argument (not just as a whole assignment's right-hand side) — no local variable is
+needed at all when there's nothing to build up over multiple statements:
+
+```python
+r = gated(chan_intrf.fwd_t(data=in_data, valid=in_valid), limit, chan_intrf.fb_t(ready=downstream_ready))
+```
+
 ### Read / write semantics
 
 Registers use **blocking assignment** semantics, just like ordinary software variables.
@@ -2842,6 +2873,104 @@ the per-width duplication older, non-generic AXIS implementations require.
 
 See `src/tests/pypeline_tests/inst/axis_test.py` for a complete worked example, including
 synthesis through `pypelinec`.
+
+### Testbench byte-stream generator/checker
+
+Every hand-written axis testbench ends up rebuilding the same shape: a fixed-width byte
+buffer + "bytes remaining" counter, `keep[i] = remaining > i` per lane, `eod` set on the
+last beat, and — once a transfer actually fires (`stream.valid & <reverse ready>`) —
+shifting the buffer down by the lane width (generating) or appending the kept lanes into
+an accumulating buffer (checking). `make_axis_byte_source`/`make_axis_byte_sink` factor
+that out into reusable, synthesizable `@hw_func`s:
+
+```python
+from axi.axis import make_axis_interface, make_axis_byte_source, make_axis_byte_sink
+
+axis128_intrf = make_axis_interface(16)
+byte_source, byte_source_t = make_axis_byte_source(axis128_intrf, 16, MAX_FRAME_BYTES)
+byte_sink, byte_sink_t = make_axis_byte_sink(axis128_intrf, 16, MAX_FRAME_BYTES)
+
+# byte_source(load, load_data, load_len, stream_out_if) -> byte_source_t
+#   .stream_out_if (fwd_t) - the generated stream; .idle - safe to `load` a new frame
+# byte_sink(stream_in_if) -> byte_sink_t
+#   .stream_in_if (fb_t) - reverse half; .frame_valid/.frame_data/.frame_len - one
+#   pulse per completed frame, ready for a single sim_assert/compare
+```
+
+Neither factory generates or checks backpressure — both drive their own
+`ready`/consume-every-beat behavior unconditionally, the same as every hand-written
+testbench in this codebase. A caller wanting stalls drives the interface's reverse half
+itself.
+
+`make_axis_byte_source(..., use_keep_mask=True)` adds a `load_keep_mask` input
+overriding the default `keep[i] = remaining > i` derivation with an explicit per-byte
+mask — needed whenever a frame is really *multiple concatenated sub-messages* with a
+hard beat boundary between them (e.g. a protocol where a fixed-size trailer must always
+start on a fresh beat, so a non-block-aligned leading segment needs its last beat padded
+with not-kept bytes rather than letting the trailer merge into the leftover lanes).
+`AxisSimSource.send(frame, keep_mask=...)` is the same idea for native sim.
+
+For native (non-synthesizable) `--sim` testbenches driven via `@sim_input`/`@sim_output`,
+`include/pypeline/axi/axis_sim.py`'s `AxisSimSource`/`AxisSimSink` cover the same ground in
+plain Python — API-inspired by cocotb's `cocotbext-axi` (queue-backed `send()`/`recv()`, a
+`set_pause_generator()` backpressure hook) but not that library itself: Pypeline's native
+sim is a synchronous, non-async, delta-cycle-converging function-call model, incompatible
+with cocotbext-axi's `async def`/cocotb-scheduler-based classes.
+
+```python
+from axi.axis_sim import AxisSimSource, AxisSimSink
+
+src = AxisSimSource(axis128_intrf, 16)
+snk = AxisSimSink(axis128_intrf, 16)
+src.send(b"...")                       # queue a frame
+
+@sim_input
+def drive_in_word():
+    return src.step(some_ports.axis_in_ready)
+
+@sim_output
+def check_out():
+    snk.step(some_ports.axis_out)
+    frame = snk.recv_nowait()          # None until a full frame has arrived
+    if frame is not None:
+        ...
+```
+
+`axis_sim.py` also has `Scoreboard` — not AXIS-specific, just factored out because every
+testbench in this codebase reinvented the same "dict of expected packets + a manually-
+incremented index" bookkeeping around its own checker. `expect(value, **meta)` queues an
+expected value plus arbitrary caller metadata (packet index, a tamper flag, whatever);
+`check(got)` pops the oldest expectation and compares, returning
+`{"passed": bool, "expected": ..., "got": ..., **meta}`. `AxisSimSink` takes one directly
+(`AxisSimSink(axis_intrf, n, scoreboard=sb)`), so `check_nowait()` combines "pop a
+completed frame" and "check it" in one call:
+
+```python
+from axi.axis_sim import AxisSimSource, AxisSimSink, Scoreboard
+
+sb = Scoreboard()
+src = AxisSimSource(axis128_intrf, 16)
+snk = AxisSimSink(axis128_intrf, 16, scoreboard=sb)
+
+@sim_input
+def drive_in_word():
+    if src.idle():
+        frame, meta = generate_next_frame()   # whatever's genuinely testbench-specific
+        sb.expect(frame, **meta)
+        src.send(frame)
+    return src.step(some_ports.axis_in_ready)
+
+@sim_output
+def check_out():
+    snk.step(some_ports.axis_out)
+    result = snk.check_nowait()            # None until a full frame has arrived
+    if result is not None and not result["passed"]:
+        sim_print(f"ERROR: mismatch, packet {result['idx']}")
+```
+
+See `src/tests/pypeline_tests/inst/axis_byte_stream_test.py` for a complete worked
+example of both, including a partial-final-beat (non-multiple-of-lane-width) frame length
+and `set_pause_generator`.
 
 ---
 

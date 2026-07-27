@@ -113,10 +113,7 @@ def fork_twin(axis_in_if: axis_intrf.fwd_t, fast_if: axis_intrf.fb_t, slow_if: a
     o: fork_t
     f_ready: Feedback[axis_intrf.fb_t]
     s_ready: Feedback[axis_intrf.fb_t]
-    sink_fb: axis_intrf.fb_t[N_LANES]
-    sink_fb[0] = f_ready
-    sink_fb[1] = s_ready
-    d = bcast(axis_in_if, sink_fb)
+    d = bcast(axis_in_if, [f_ready, s_ready])
     f = hold_fast(d.axis_out_if[0], fast_if)
     s = hold_slow(d.axis_out_if[1], slow_if)
     f_ready = f.axis_in_if

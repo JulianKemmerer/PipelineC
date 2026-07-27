@@ -1471,6 +1471,29 @@ deliberately exempt from this check: it stands in for a real, forward-referenced
 produced later in the same function body (the loop-composition pattern), not internal state,
 so `Feedback[some_intrf.fwd_t]` is legitimate and common.
 
+**Generalized beyond `Reg[T]`**: the same `_pypeline_interface_role` check also fires for
+*any* plain local `AnnAssign` in `_elab_ann_assign` — not just `Reg[T]`-wrapped ones — right
+after the `Feedback[T]`/`Wire`/`Input`/`Output[T]` branches and before the "normal local
+variable" fallthrough. A plain local is not a port either, so the same reasoning applies
+uniformly; the exemptions are identical (`Feedback[T]`, and — since these are parsed by
+entirely different code, never reaching `_elab_ann_assign` at all — hw_func signature
+args and return-struct fields). This generalization required one companion fix in
+`_elab_call`: previously, an `intrf.fwd_t(...)`/`intrf.fb_t(...)` (or any NamedTuple
+struct) constructor call was only elaborable as a whole assignment's right-hand side
+(`_elab_ann_assign`/`_elab_assign` special-case it via `_elab_compound_init` before
+general expression elaboration ever sees it) — as a call *argument*, the same constructor
+call fell through to `_elab_call`'s plain-Name-call/module-qualified-call resolution and
+raised `NotImplementedError` (`'intrf' is not a module in call 'intrf.fwd_t'`), since
+`_elab_call` had no struct-constructor awareness of its own. Fixed by detecting, in the
+argument-binding loop (`for port_name, arg_expr in bound_args`), whether `arg_expr` is an
+`ast.Call` whose callee resolves (via `_try_eval_const`) to something with `_fields`
+(i.e. a NamedTuple/struct type) — if so, a synthetic call-site-unique wire name is
+declared (`_declare_var`, zero-init, same as any local) and populated via the same
+`_elab_compound_init` walk used for variable initializers, then used as the argument's
+wire. This makes `f(port=intrf.fwd_t(stream=x))` elaborate with no local variable ever
+declared, which is what makes banning local `.fwd_t`/`.fb_t` declarations practical rather
+than just moving the boilerplate around.
+
 A function annotated with a whole `@interface` is an **interface function**: its body wires
 only the feedforward direction. `make_hw_func_from_interface_func(f)`
 (`include/pypeline/interface/interface_func.py`) runs at import time, analyzes `f`'s AST, and

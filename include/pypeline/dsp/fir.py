@@ -25,7 +25,6 @@ from pypeline import (
     NamedTuple,
     Reg,
     _autopipeline_with_io_regs,
-    hw_arg_types,
     hw_func,
     struct,
     uint1_t,
@@ -115,7 +114,6 @@ def make_fir(
 
     if handshake == "elastic":
         sp_func, sp_t = make_stream_pipeline(fir_core)
-        sp_in_stream_t = hw_arg_types(sp_func)[0]
 
         @struct
         class fir_t(NamedTuple):
@@ -132,10 +130,10 @@ def make_fir(
             for i in range(1, n_taps):
                 shifted[i] = window[i - 1]
 
-            sp_in: sp_in_stream_t
-            sp_in.stream.data = shifted
-            sp_in.stream.valid = stream_in_if.stream.valid
-            sp_o = sp_func(sp_in, stream_out_if)
+            sp_in: sp_func.in_intrf.stream_t
+            sp_in.data = shifted
+            sp_in.valid = stream_in_if.stream.valid
+            sp_o = sp_func(sp_func.in_intrf.fwd_t(stream=sp_in), stream_out_if)
 
             accepted: uint1_t = stream_in_if.stream.valid & sp_o.stream_in_if.ready
             if accepted:

@@ -770,13 +770,14 @@ def make_hw_func_from_interface_func(f):
             if port.n is None:
                 pos.append(fb_elem_value(payload, p, None))
                 continue
-            # an array port's reverse half is assembled element-by-element into
-            # a local, since each fork is back-pressured by a different module
-            tmp = em.gensym("fbarr")
-            body.append(f"{tmp}: {em.inj(port.fb_t, 't')}")
-            for k in range(port.n):
-                body.append(f"{tmp}[{k}] = {fb_elem_value(payload, p, k)}")
-            pos.append(tmp)
+            # an array port's reverse half is assembled element-by-element,
+            # since each fork is back-pressured by a different module -- built
+            # as an inline list literal directly in the call argument (no local
+            # variable of the array-of-.fb_t type is ever declared, since a
+            # plain local may never be declared with an @interface's .fwd_t/
+            # .fb_t type -- see PY_TO_LOGIC.py's _elab_ann_assign check).
+            elems = [fb_elem_value(payload, p, k) for k in range(port.n)]
+            pos.append(f"[{', '.join(elems)}]")
         body.append(f"{c['var']} = {c['ref']}({', '.join(pos)})")
 
     for text, v in fb_fwd.items():

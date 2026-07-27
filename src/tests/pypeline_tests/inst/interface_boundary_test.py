@@ -134,14 +134,13 @@ def wrapper(
     in_data: uint8_t, in_valid: uint1_t, limit: uint8_t, downstream_ready: uint1_t
 ) -> wrapper_t:
     o: wrapper_t
-    # Build each half as a local -- a struct constructor is only elaboratable as
-    # a whole assignment's right-hand side, not nested in a call's arguments.
-    fwd_in: chan_intrf.fwd_t = chan_intrf.fwd_t(data=in_data, valid=in_valid)
-    rev_out: chan_intrf.fb_t = chan_intrf.fb_t(ready=downstream_ready)
+    # .fwd_t/.fb_t may never be a local variable's declared type -- construct
+    # each half inline, directly in the call arguments, at the exact point it
+    # crosses into a real port.
     r = gated(
-        fwd_in,  # feedforward half in
+        chan_intrf.fwd_t(data=in_data, valid=in_valid),  # feedforward half in
         limit,  # plain value straight through
-        rev_out,  # reverse half of the output port
+        chan_intrf.fb_t(ready=downstream_ready),  # reverse half of the output port
     )
     o.upstream_ready = r.stream_in_if.ready  # implied feedback -> explicit
     o.out_data = r.stream_out_if.data
@@ -157,10 +156,8 @@ def wrapper_twin(
 ) -> wrapper_t:
     o: wrapper_t
     b_ready: Feedback[chan_intrf.fb_t]  # b is called after a, so a's ready comes back
-    fwd_in: chan_intrf.fwd_t = chan_intrf.fwd_t(data=in_data, valid=in_valid)
-    rev_out: chan_intrf.fb_t = chan_intrf.fb_t(ready=downstream_ready)
-    a = gate(fwd_in, limit, b_ready)
-    b = gate(a.stream_out_if, limit, rev_out)
+    a = gate(chan_intrf.fwd_t(data=in_data, valid=in_valid), limit, b_ready)
+    b = gate(a.stream_out_if, limit, chan_intrf.fb_t(ready=downstream_ready))
     b_ready = b.stream_in_if
     o.upstream_ready = a.stream_in_if.ready
     o.out_data = b.stream_out_if.data

@@ -187,6 +187,19 @@ def get_tests() -> list:
             cmd=[INST_DIR / "reg_interface_type_error_test.py"],
         )
     )
+    # Not run through the pipelinec CLI either: same in-process PARSE_FILE +
+    # ElaborationError-inspection pattern as reg_interface_type_error_test.py,
+    # but for the generalized check -- no plain local variable (not just
+    # Reg[T]) may be declared with an @interface's .fwd_t/.fb_t type. Also
+    # covers the companion feature this generalization required: constructing
+    # a .fwd_t/.fb_t value inline as a call argument (no local at all).
+    tests.append(
+        Test(
+            name="local_var_interface_type_error_test",
+            category="elab",
+            cmd=[INST_DIR / "local_var_interface_type_error_test.py"],
+        )
+    )
     return tests
 
 

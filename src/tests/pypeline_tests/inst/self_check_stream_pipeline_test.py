@@ -100,14 +100,15 @@ def self_check_stream_pipeline() -> stream_pipeline.out_fwd_t:
     elif in_sel == 3:
         x = IN3
 
-    stream_in_if: uint8_stream_intrf.fwd_t
-    stream_in_if.stream.valid = in_count < NUM_OUTPUTS
-    stream_in_if.stream.data = x
-    ready1: uint8_stream_intrf.fb_t
-    ready1.ready = 1
-    o: stream_pipeline_t = stream_pipeline(stream_in_if, ready1)
+    stream_in_if: uint8_stream_intrf.stream_t
+    stream_in_if.valid = in_count < NUM_OUTPUTS
+    stream_in_if.data = x
+    o: stream_pipeline_t = stream_pipeline(
+        uint8_stream_intrf.fwd_t(stream=stream_in_if),
+        uint8_stream_intrf.fb_t(ready=1),
+    )
 
-    if stream_in_if.stream.valid & o.stream_in_if.ready:
+    if stream_in_if.valid & o.stream_in_if.ready:
         in_count += 1
 
     if o.stream_out_if.stream.valid:

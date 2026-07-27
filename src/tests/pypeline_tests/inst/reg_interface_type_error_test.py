@@ -123,8 +123,7 @@ def test_feedback_fwd_t_is_clean():
 @MAIN
 def m():
     r: Feedback[chan_intrf.fwd_t]
-    x: chan_intrf.fb_t
-    x.ready = r.stream.valid
+    x: uint1_t = r.stream.valid
     r = chan_intrf.fwd_t(stream=chan_intrf.stream_t(data=0, valid=0))
 """
     _expect_clean(src, "feedback_fwd_t_test.py")
