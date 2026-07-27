@@ -920,6 +920,27 @@ def counter(increment: uint1_t) -> uint32_t:
     return count
 ```
 
+**`Reg[T]` may never use an `@interface`'s `.fwd_t`/`.fb_t` (§22)** — a hard
+`ElaborationError`, not a style preference. `.fwd_t`/`.fb_t` signal "this value is one
+half of a genuine bidirectional port pairing"; a register is internal state, never a
+port, so it never needs (or should imply) that. Use `.stream_t` instead — the plain
+`{data, valid}` type with no pairing implication — and only wrap/unwrap via `.stream`
+at the point the register's value actually meets a real port field:
+
+```python
+# Wrong -- ElaborationError: Reg[T] cannot use an @interface's .fwd_t/.fb_t
+buf: Reg[chan_intrf.fwd_t]
+
+# Right
+buf: Reg[chan_intrf.stream_t]
+...
+o.stream_out_if.stream = buf   # wrap only where it meets the real port field
+```
+
+`Feedback[T]` is not restricted this way — it stands in for a real port value produced
+later in the same function body (§9), not internal state, so `Feedback[chan_intrf.fwd_t]`
+is a legitimate, common pattern.
+
 ### Read / write semantics
 
 Registers use **blocking assignment** semantics, just like ordinary software variables.

@@ -24,6 +24,7 @@ from pypeline import (
     _int_ctype,
     _arith_promote,
     _arith_output_ctype,
+    _array_elem_ctype,
 )
 
 # Recognized by name in FuncElaborator._elab_stmt as a raw-VHDL-passthrough statement.
@@ -2789,6 +2790,27 @@ class FuncElaborator:
         # Detect Reg[T] annotation — hardware state register
         ann_val = self._try_eval_const(stmt.annotation)
         if isinstance(ann_val, _RegType):
+            elem = _array_elem_ctype(ann_val.inner_ctype) or ann_val.inner_ctype
+            # _pypeline_interface_role (set only on .fwd_t/.fb_t, by @interface's
+            # _derive) distinguishes a real port-pairing half from .stream_t, which
+            # also carries a _pypeline_interface back-reference (for PY_TO_LOGIC's
+            # annotation-closure recovery) but is never itself a paired port type.
+            owning_intrf = (
+                getattr(elem, "_pypeline_interface", None)
+                if getattr(elem, "_pypeline_interface_role", None) is not None
+                else None
+            )
+            if owning_intrf is not None:
+                raise ElaborationError(
+                    f"'{var_name}': Reg[T] cannot use an @interface's .fwd_t/.fb_t "
+                    f"port-pairing type as T -- a register is internal state, never "
+                    f"a port, so it never needs (or should imply) pairing. Use "
+                    f"'{owning_intrf.__name__}.stream_t' instead (or the plain "
+                    f"make_stream_t(...) type your data actually is), and unwrap/wrap "
+                    f"via '.stream' only at the point this register's value actually "
+                    f"meets a real port field.",
+                    stmt.annotation,
+                )
             inner_ctype = _inner_ctype_to_str(ann_val.inner_ctype, self.parser_state)
             init_py_val = None
             if stmt.value is not None:

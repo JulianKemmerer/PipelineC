@@ -174,6 +174,19 @@ def get_tests() -> list:
             cmd=[INST_DIR / "loc_str_multiline_binop_test.py"],
         )
     )
+    # Not run through the pipelinec CLI either: checks the *type* and message of
+    # the ElaborationError raised by Reg[T] where T is an @interface's .fwd_t/
+    # .fb_t (a register is internal state, never a port, so it never needs -- or
+    # should imply -- the port-pairing signal), plus positive cases
+    # (Reg[.stream_t], Feedback[.fwd_t] must both stay clean) -- same in-process
+    # PARSE_FILE + exception-inspection pattern as global_wire_errors_test.py.
+    tests.append(
+        Test(
+            name="reg_interface_type_error_test",
+            category="elab",
+            cmd=[INST_DIR / "reg_interface_type_error_test.py"],
+        )
+    )
     return tests
 
 

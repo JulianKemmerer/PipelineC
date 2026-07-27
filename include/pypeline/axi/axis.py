@@ -244,25 +244,25 @@ def make_dwidth_widen(elem_t, narrow_n, ratio):
         narrow_in_if: narrow_axis_intrf.fwd_t, wide_out_if: wide_axis_intrf.fb_t
     ) -> dwidth_widen_result_t:
         o: dwidth_widen_result_t
-        narrow_in_reg: Reg[narrow_axis_intrf.fwd_t]
-        wide_out_reg: Reg[wide_axis_intrf.fwd_t]
+        narrow_in_reg: Reg[narrow_axis_intrf.stream_t]
+        wide_out_reg: Reg[wide_axis_intrf.stream_t]
 
-        o.wide_out_if = wide_out_reg
+        o.wide_out_if.stream = wide_out_reg
         if o.wide_out_if.stream.valid & wide_out_if.ready:
-            wide_out_reg.stream.valid = 0
+            wide_out_reg.valid = 0
             for i in range(wide_n):
-                wide_out_reg.stream.data.frag.keep[i] = 0
-            wide_out_reg.stream.data.eod[0] = 0
+                wide_out_reg.data.frag.keep[i] = 0
+            wide_out_reg.data.eod[0] = 0
 
-        out_reg_ready: uint1_t = ~wide_out_reg.stream.valid
-        if narrow_in_reg.stream.valid & out_reg_ready:
-            chunks: chunks_t = split_to_chunks(wide_out_reg.stream.data)
-            chunks = shift_into_top(chunks, narrow_in_reg.stream)
-            last_cycle: uint1_t = narrow_in_reg.stream.data.eod[0]
-            narrow_in_reg.stream.valid = 0
+        out_reg_ready: uint1_t = ~wide_out_reg.valid
+        if narrow_in_reg.valid & out_reg_ready:
+            chunks: chunks_t = split_to_chunks(wide_out_reg.data)
+            chunks = shift_into_top(chunks, narrow_in_reg)
+            last_cycle: uint1_t = narrow_in_reg.data.eod[0]
+            narrow_in_reg.valid = 0
             for i in range(narrow_n):
-                narrow_in_reg.stream.data.frag.keep[i] = 0
-            narrow_in_reg.stream.data.eod[0] = 0
+                narrow_in_reg.data.frag.keep[i] = 0
+            narrow_in_reg.data.eod[0] = 0
             if last_cycle:
                 null_chunk: narrow_chunk_t = _make_null_chunk(
                     narrow_n, narrow_bus_t, narrow_frag_t, narrow_chunk_t
@@ -270,12 +270,12 @@ def make_dwidth_widen(elem_t, narrow_n, ratio):
                 for i in range(ratio - 1):
                     if ~chunks[0].valid:
                         chunks = shift_into_top(chunks, null_chunk)
-            wide_out_reg.stream.data = assemble_chunks(chunks)
-            wide_out_reg.stream.valid = chunks[0].valid
+            wide_out_reg.data = assemble_chunks(chunks)
+            wide_out_reg.valid = chunks[0].valid
 
-        o.narrow_in_if.ready = ~narrow_in_reg.stream.valid
+        o.narrow_in_if.ready = ~narrow_in_reg.valid
         if narrow_in_if.stream.valid & o.narrow_in_if.ready:
-            narrow_in_reg = narrow_in_if
+            narrow_in_reg = narrow_in_if.stream
 
         return o
 
@@ -318,34 +318,34 @@ def make_dwidth_narrow(elem_t, narrow_n, ratio):
         wide_in_if: wide_axis_intrf.fwd_t, narrow_out_if: narrow_axis_intrf.fb_t
     ) -> dwidth_narrow_result_t:
         o: dwidth_narrow_result_t
-        wide_in_reg: Reg[wide_axis_intrf.fwd_t]
-        narrow_out_reg: Reg[narrow_axis_intrf.fwd_t]
+        wide_in_reg: Reg[wide_axis_intrf.stream_t]
+        narrow_out_reg: Reg[narrow_axis_intrf.stream_t]
 
-        o.narrow_out_if = narrow_out_reg
+        o.narrow_out_if.stream = narrow_out_reg
         if o.narrow_out_if.stream.valid & narrow_out_if.ready:
-            narrow_out_reg.stream.valid = 0
+            narrow_out_reg.valid = 0
             for i in range(narrow_n):
-                narrow_out_reg.stream.data.frag.keep[i] = 0
-            narrow_out_reg.stream.data.eod[0] = 0
+                narrow_out_reg.data.frag.keep[i] = 0
+            narrow_out_reg.data.eod[0] = 0
 
-        out_reg_ready: uint1_t = ~narrow_out_reg.stream.valid
-        if wide_in_reg.stream.valid & out_reg_ready:
-            chunks: chunks_t = split_to_chunks(wide_in_reg.stream.data)
-            narrow_out_reg.stream = chunks[0]
+        out_reg_ready: uint1_t = ~narrow_out_reg.valid
+        if wide_in_reg.valid & out_reg_ready:
+            chunks: chunks_t = split_to_chunks(wide_in_reg.data)
+            narrow_out_reg = chunks[0]
             null_chunk: narrow_chunk_t = _make_null_chunk(
                 narrow_n, narrow_bus_t, narrow_frag_t, narrow_chunk_t
             )
             chunks = shift_into_top(chunks, null_chunk)
-            wide_in_reg.stream.data = assemble_chunks(chunks)
+            wide_in_reg.data = assemble_chunks(chunks)
             if ~chunks[0].valid:
-                wide_in_reg.stream.valid = 0
+                wide_in_reg.valid = 0
                 for i in range(wide_n):
-                    wide_in_reg.stream.data.frag.keep[i] = 0
-                wide_in_reg.stream.data.eod[0] = 0
+                    wide_in_reg.data.frag.keep[i] = 0
+                wide_in_reg.data.eod[0] = 0
 
-        o.wide_in_if.ready = ~wide_in_reg.stream.valid
+        o.wide_in_if.ready = ~wide_in_reg.valid
         if wide_in_if.stream.valid & o.wide_in_if.ready:
-            wide_in_reg = wide_in_if
+            wide_in_reg = wide_in_if.stream
 
         return o
 

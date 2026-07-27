@@ -1455,6 +1455,22 @@ elaboration with its fields never entered into `struct_to_field_type_dict`, surf
 attribute-annotation case above) the first time a nested field read needed it. Fixed by having
 `_inner_ctype_to_str` optionally accept `parser_state` and perform the same registration.
 
+`Reg[T]` additionally rejects `T` being one of an `@interface`'s derived `.fwd_t`/`.fb_t`
+types outright — a **hard error**, checked in `_elab_ann_assign` right where the `_RegType`
+branch is detected, before `_inner_ctype_to_str` is even called. A register is internal
+state, never a port, so it never needs (or should imply) `.fwd_t`/`.fb_t`'s port-pairing
+signal; `.stream_t` (or a bare `make_stream_t(...)`) is always the correct type for register
+state that happens to look like stream data. The check unwraps one array dimension first
+(`_array_elem_ctype`, so `Reg[some_intrf.fwd_t[n]]` is caught too), then looks for
+`_pypeline_interface_role` on the (possibly-unwrapped) type — set only by `@interface`'s
+`_derive` on `.fwd_t`/`.fb_t`, deliberately *not* on `.stream_t` even though `.stream_t` also
+carries a `_pypeline_interface` back-reference (for the annotation-closure recovery
+described above) — `_pypeline_interface_role` is what distinguishes "a real paired half" from
+"the plain type that happens to know which interface it came from." `Feedback[T]` is
+deliberately exempt from this check: it stands in for a real, forward-referenced port value
+produced later in the same function body (the loop-composition pattern), not internal state,
+so `Feedback[some_intrf.fwd_t]` is legitimate and common.
+
 A function annotated with a whole `@interface` is an **interface function**: its body wires
 only the feedforward direction. `make_hw_func_from_interface_func(f)`
 (`include/pypeline/interface/interface_func.py`) runs at import time, analyzes `f`'s AST, and
