@@ -1,11 +1,16 @@
 # Exploring Pypeline Native Simulation with ChaCha20-Poly1305 Cryptography
 
-Hey folks this is Julian, author of [PypelineC](https://github.com/JulianKemmerer/PipelineC) HDL (PipelineC now with a Python front end).
+Hey folks this is Julian, author of [PypelineC](https://github.com/JulianKemmerer/PipelineC).
+
+**PypelineC = Pypeline + PipelineC.** PipelineC is the original C-like hardware
+description language built around automatic pipelining. Pypeline is a newer
+Python front end for that same compiler and pipelining engine: same
+underlying tool, different (and now preferred) surface syntax. PypelineC is
+the umbrella name for the whole project, covering both front ends.
+
 I want to extend a big thank you to [ChiliCHIPS](https://github.com/chili-chips-ba)
 for letting me participate in the [wireguard-fpga](https://github.com/chili-chips-ba/wireguard-fpga)
-project as a real-world testbed for both [original PipelineC](https://github.com/JulianKemmerer/PipelineC/wiki/Example%3A-ChaCha20%E2%80%90Poly1305-for-WireGuard/) and [new Pypeline](https://github.com/chili-chips-ba/wireguard-fpga/blob/main/3.build/pypeline_build/README.md).
-It's very valuable to exercise the language with a full scale real design that has realistic goals and tests.
-This write-up details how the verification setup was improved by moving to Pypeline.
+project as a real-world testbed for both [original PipelineC](https://github.com/JulianKemmerer/PipelineC/wiki/Example%3A-ChaCha20%E2%80%90Poly1305-for-WireGuard/) and [new Pypeline](https://github.com/chili-chips-ba/wireguard-fpga/blob/main/3.build/pypeline_build/README.md). It's very valuable to exercise the language with a full scale real design that has realistic goals and tests. This write-up details how the verification setup was improved by moving to Pypeline.
 
 Questions? Comments? Reach out, see links from the [Pypeline getting started page](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/README.md).
 
@@ -33,7 +38,7 @@ The original [`pipelinec_build/`](https://github.com/chili-chips-ba/wireguard-fp
 testbenches with a handful of manually generated test vectors, that are run through
 cocotb+GHDL. That flow works, but falls short in several ways:
 
-- **No native simulation.** PipelineC has no built in C-based(or Python) simulator, so
+- **No native simulation.** PipelineC has no built in C-based (or Python-based) simulator, so
   simulations required generating VHDL and using a wrapper cocotb+GHDL testbench.
 - **No cycle-accurate latency modeling without slow full autopipelined VHDL generation.** There's no
   way to reason about auto-pipelined timing without going through synthesis and using an HDL simulator.
@@ -58,7 +63,7 @@ The original `poly1305.h`'s 320-bit limb math (ported line-for-line into
 `poly1305.py`) had three interlocking bugs. See details in [`wireguard-fpga/3.build/pypeline_build/README.md`](https://github.com/chili-chips-ba/wireguard-fpga/tree/main/3.build/pypeline_build#fixed-poly1305-320-bit-math-is-now-rfc-8439-correct).
 
 The old fixed-vector testbenches never caught this, the same incorrect software C code was used as the reference model for test vectors and as PipelineC code for the hardware design.
-The design was internally self-consistent just not RFC 8439-conformant.
+The design was internally self-consistent, but far from RFC 8439-conformant.
 Pypeline testbenches can easily generate and check random packets against the `cryptography` Python
 package's real ChaCha20-Poly1305 implementation to find bugs like these.
 
@@ -77,16 +82,30 @@ the same DUT-facing wires:
   ([`aead_ref_model.py`](https://github.com/chili-chips-ba/wireguard-fpga/blob/main/3.build/pypeline_build/src/chacha20poly1305/aead_ref_model.py)) at elaboration time and baked into fixed-size
   shift register buffers. Because this testbench is itself synthesizable
   Pypeline, it can be run through cocotb+GHDL using real
-  generated VHDL, or even loaded onto an FPGA for hardware testing.
+  generated VHDL, or even loaded onto an FPGA for hardware testing. That's the
+  point of keeping it synthesizable at all: it's the one testbench style that
+  travels all the way from a quick native-sim check up through real VHDL and
+  onto real silicon, unmodified.
 - **Non-synthesizable** ([`encrypt_tb.py`](https://github.com/chili-chips-ba/wireguard-fpga/blob/main/3.build/pypeline_build/src/chacha20poly1305/encrypt_tb.py) / [`decrypt_tb.py`](https://github.com/chili-chips-ba/wireguard-fpga/blob/main/3.build/pypeline_build/src/chacha20poly1305/decrypt_tb.py)): uses Pypeline's
   `@sim_input`/`@sim_output` decorators to generate stimulus and check
   outputs as arbitrary live Python, cycle by cycle, during simulation. Each
-  run generates 10 large random-length packets per direction on the
-  fly, calling the same reference model lazily, once per packet, right when
-  that packet's random plaintext is generated - no fixed-size arrays, no
-  elaboration-time pre-baking. `@sim_input`/`@sim_output` calls are
-  invisible to the hardware elaborator, so this style **only runs under
-  Pypeline's native simulator**.
+  run generates 10 packets per direction on the fly, calling the same
+  reference model lazily, once per packet, right when that packet's random
+  plaintext is generated - no fixed-size arrays, no elaboration-time
+  pre-baking. `@sim_input`/`@sim_output` calls are invisible to the hardware
+  elaborator, so this style **only runs under Pypeline's native simulator**.
+
+  This is where a small taste of constrained-random stimulus generation shows
+  up: packet length isn't just `random.randrange`d freely, it's *constrained*
+  to a `[1, 1024]`-byte range, with a handful of lengths (16, 17, 64, 128 —
+  the partial-final-word and block-boundary corner cases) stratified in and
+  guaranteed to appear every run before the rest fill in uniformly at random.
+  It's a modest version of the same idea SystemVerilog/UVM random-constrained
+  stimulus is built on — where a full functional-coverage model would
+  declaratively describe the scenarios to hit and let the tool solve for
+  stimulus that reaches them, here the "coverage model" is just this one
+  hand-picked length list. Growing that connection for real is a good
+  candidate for Next Steps.
 
 Here's a taste of what driving stimulus looks like - ordinary Python, run
 live during simulation, not hardware:
@@ -111,7 +130,10 @@ def drive_in_word() -> axis128_t:
 
 The output-checking side is the mirror image: a `@sim_output` reads the
 DUT's output stream and compares each byte against the packet the input
-side generated earlier.
+side generated earlier — in other words, a scoreboard, just written as a
+plain Python dict of in-flight expected packets rather than a dedicated
+class/framework. It's ad hoc per testbench today; a shared, reusable
+scoreboard abstraction is another good candidate for Next Steps.
 
 Both styles replaced "scan the log for `ERROR`" with a hard pass/fail
 signal: every check is a `sim_assert(...)` (correct ciphertext/plaintext
@@ -194,10 +216,14 @@ This is a work in progress, possible next steps:
 
 - Waveform (e.g. VCD) output for native sim, not just console text.
 - A shared valid/ready (AXI-Stream-like) handshaking testbench harness, so
-  designs like this one don't each hand-roll their own streaming generators and checkers.
-- Finer-grained control over how deep into a design's hierarchy native vs. VHDL sim comparisons can reach.
+  designs like this one don't each hand-roll their own streaming generators
+  and checkers — including a reusable scoreboard abstraction, rather than
+  each testbench's own ad hoc dict-of-expected-packets, as here.
 - Integrate mainstream design verification methodology: UVM, UVVM, formal techniques, etc
+  - A real declarative functional-coverage model driving constrained-random stimulus.
+- Finer-grained control over how deep into a design's hierarchy native vs. VHDL sim comparisons can reach.
 - Add LLM MCP or skills to further facilitate testbench generation, execution, and post-processing of sim outcomes.
-- Reach out if you have ideas or otherwise want to contribute!
+
+Reach out if you have ideas or otherwise want to contribute!
 
 Thanks for your time!
