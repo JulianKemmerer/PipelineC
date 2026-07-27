@@ -107,33 +107,32 @@ the same DUT-facing wires:
   hand-picked length list. Growing that connection for real is a good
   candidate for Next Steps.
 
-Here's a taste of what driving stimulus looks like - ordinary Python, run
-live during simulation, not hardware:
+Here's a taste of what driving stimulus looks like: ordinary Python, run
+live during simulation. Both the streaming generator/checker and the
+expected-vs-actual scoreboard bookkeeping come from a shared, reusable Pypeline testbench
+library ([`include/pypeline/axi/axis.py`](https://github.com/JulianKemmerer/PipelineC/blob/master/include/pypeline/axi/axis.py)/[`axis_sim.py`](https://github.com/JulianKemmerer/PipelineC/blob/master/include/pypeline/axi/axis_sim.py),
+documented in [`pypeline_guide.md`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#23-axi-stream-axis_t)).
 
 ```python
+scoreboard = Scoreboard()
+src = AxisSimSource(axis128_intrf, 16)
+snk = AxisSimSink(axis128_intrf, 16, scoreboard=scoreboard)
+
 @sim_input
-def drive_in_word() -> axis128_t:
-    if enc_state["in_plaintext"] is None:
+def drive_in_word() -> axis128_intrf.fwd_t:
+    if enc_state["in_packet_idx"] < common.NUM_RANDOM_PACKETS and src.idle():
         # Starting a new packet: pick a length, generate random plaintext,
         # and compute the expected ciphertext+tag right now, once, lazily.
-        length = next_packet_length(enc_state["rng"], enc_state["in_packet_idx"])
+        idx = enc_state["in_packet_idx"]
+        length = common.next_packet_length(enc_state["rng"], idx)
         plaintext = bytes(enc_state["rng"].randrange(256) for _ in range(length))
         ciphertext, tag = generate_encrypt_vector(KEY, NONCE, AAD, plaintext)
-        enc_state["packets"].append({"plaintext": plaintext, "ciphertext": ciphertext, "tag": tag})
-        enc_state["in_plaintext"] = plaintext
+        scoreboard.expect(ciphertext + tag, idx=idx)
+        src.send(ciphertext + tag)
+        enc_state["in_packet_idx"] += 1
 
-    remaining = enc_state["in_plaintext"]
-    chunk = remaining[:16]
-    eod = 1 if len(remaining) <= 16 else 0
-    return build_axis_word(chunk, eod)
+    return src.step(chacha20poly1305_encrypt_ports.axis_in_ready)
 ```
-
-The output-checking side is the mirror image: a `@sim_output` reads the
-DUT's output stream and compares each byte against the packet the input
-side generated earlier — in other words, a scoreboard, just written as a
-plain Python dict of in-flight expected packets rather than a dedicated
-class/framework. It's ad hoc per testbench today; a shared, reusable
-scoreboard abstraction is another good candidate for Next Steps.
 
 Both styles replaced "scan the log for `ERROR`" with a hard pass/fail
 signal: every check is a `sim_assert(...)` (correct ciphertext/plaintext
@@ -143,23 +142,19 @@ failing check raises `AssertionError` in native sim - or, downstream, a real
 VHDL `assert ... severity failure` under cocotb/GHDL - so the process exits
 non-zero on its own. No more looking for special strings in the output text.
 
+The output-checking side is the mirror image: pop a completed frame off the
+sink, check it against the scoreboard, and report whatever comes back:
+
 ```python
 @sim_output
 def check_out():
-    out = ports.axis_out
-    if not out.valid:
+    snk.step(chacha20poly1305_encrypt_ports.axis_out)
+    result = snk.check_nowait()
+    if result is None:
         return
-
-    pkt = enc_state["packets"][enc_state["out_packet_idx"]]
-    expected = enc_state["out_remaining"]
-    for i in range(16):
-        if i < len(expected):
-            sim_assert(
-                out.data.frag.data[i] == expected[i],
-                f"Encrypt: Ciphertext mismatch at byte {i}: "
-                f"expected {hex(expected[i])} got {hex(out.data.frag.data[i])}",
-            )
-    ...
+    if not result["passed"]:
+        sim_print(f"ERROR: Encrypt: mismatch, packet {result['idx']}")
+    sim_print(f"Encrypt: Test {result['idx']} DONE!")
 ```
 
 Running any of the builds is one line, via the port's [`build.py`](https://github.com/chili-chips-ba/wireguard-fpga/blob/main/3.build/pypeline_build/build.py):
@@ -215,13 +210,11 @@ then [`pypeline_sim_debug.py`](https://github.com/JulianKemmerer/PipelineC/blob/
 This is a work in progress, possible next steps:
 
 - Waveform (e.g. VCD) output for native sim, not just console text.
-- A shared valid/ready (AXI-Stream-like) handshaking testbench harness, so
-  designs like this one don't each hand-roll their own streaming generators
-  and checkers — including a reusable scoreboard abstraction, rather than
-  each testbench's own ad hoc dict-of-expected-packets, as here.
+- Randomized backpressure test coverage: none of these testbenches drive randomized `ready` yet, only static 1.
 - Integrate mainstream design verification methodology: UVM, UVVM, formal techniques, etc
   - A real declarative functional-coverage model driving constrained-random stimulus.
 - Finer-grained control over how deep into a design's hierarchy native vs. VHDL sim comparisons can reach.
+- Explore use of manually specified pipeline depths instead of automatically determined.
 - Add LLM MCP or skills to further facilitate testbench generation, execution, and post-processing of sim outcomes.
 
 Reach out if you have ideas or otherwise want to contribute!
