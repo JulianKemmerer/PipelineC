@@ -16,6 +16,10 @@ Questions? Comments? Reach out, see links from the [Pypeline getting started pag
 
 ## What Is This Design?
 
+<p align="center">
+  <img width="80%" src="https://raw.githubusercontent.com/chili-chips-ba/wireguard-fpga/refs/heads/main/0.doc/Wireguard/wireguard-fpga-muxed-Architecture-HW-SW-Partitioning.webp">
+</p>
+
 `wireguard-fpga` is an open-source, FPGA-based implementation of the
 WireGuard protocol, see the project's own
 [README](https://github.com/chili-chips-ba/wireguard-fpga/blob/main/README.md).
