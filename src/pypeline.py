@@ -1752,6 +1752,25 @@ class _WireMeta(type):
         return _WireType(inner_type)
 
 
+def _wire_ann_inner_ctype(ann):
+    """The ctype a Wire/Input/Output annotation's `.inner_ctype` actually
+    denotes: for `Wire[SomeInterface]` (the bare @interface class, not
+    .fwd_t/.fb_t/.stream_t), that's sugar for `Wire[SomeInterface.wire_t]` --
+    a flat, non-directional struct (Feedback[T] fields unwrapped to plain T)
+    that's a real, flattenable, multi-writer struct ctype. Only Wire gets
+    this sugar -- Input/Output are chip-boundary signals, a different use
+    case that hasn't come up. Every native-sim/sim_call code path that reads
+    a Wire/Input/Output annotation's ctype must go through this, not
+    `ann.inner_ctype` directly, so it agrees with PY_TO_LOGIC's real-VHDL
+    path (PY_TO_LOGIC._discover_global_wires does the same substitution)."""
+    inner_ctype = ann.inner_ctype
+    if isinstance(ann, _WireType) and getattr(
+        inner_ctype, "_pypeline_is_interface", False
+    ):
+        return inner_ctype.wire_t
+    return inner_ctype
+
+
 class Wire(metaclass=_WireMeta):
     """Marks a module-level variable as a global combinatorial wire.
 
@@ -3734,7 +3753,7 @@ def _build_reg_sim_func(fn):
         if isinstance(ann, (_WireType, _InputType, _OutputType))
     }
     global_wire_ctypes = {
-        name: ann.inner_ctype
+        name: _wire_ann_inner_ctype(ann)
         for name, ann in fn.__globals__.get("__annotations__", {}).items()
         if isinstance(ann, (_WireType, _InputType, _OutputType))
     }
@@ -3748,7 +3767,7 @@ def _build_reg_sim_func(fn):
         for _wname, _ann in getattr(_obj, "__annotations__", {}).items():
             if isinstance(_ann, (_WireType, _InputType, _OutputType)):
                 module_wire_attrs[(_alias, _wname)] = f"{_obj.__name__}.{_wname}"
-                module_wire_ctypes[(_alias, _wname)] = _ann.inner_ctype
+                module_wire_ctypes[(_alias, _wname)] = _wire_ann_inner_ctype(_ann)
     # Register every discovered wire's ctype globally (keyed by qualified sim name)
     # so _sim_wire_lens_read/_sim_wire_lens_write can build a typed zero default for
     # a compound wire before any whole-wire write has ever landed in _sim_wire_state.

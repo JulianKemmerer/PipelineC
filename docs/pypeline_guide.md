@@ -974,6 +974,32 @@ in_to_block = axis128_to_axis512(
 )
 ```
 
+**A global stream+ready pair doesn't need to be two separate Wires at all** —
+`Wire[SomeInterface]` (the bare `@interface` class, not `.fwd_t`/`.fb_t`/`.stream_t`) is sugar
+for one compound Wire holding both halves, with `.stream` and `.ready` independently
+driven/read from different functions exactly like any other flattened multi-writer struct
+Wire:
+
+```python
+# Also fine, and usually clearer than two separate Wires -- one compound Wire
+# instead of an independently-named stream Wire + ready Wire for the same port
+encrypt_pipeline_in_if: Wire[chacha20_loop_body_stream_intrf]
+
+@hw_func
+def drive_in():
+    encrypt_pipeline_in_if.stream = ...   # written by one function
+
+@hw_func
+def drive_ready():
+    encrypt_pipeline_in_if.ready = ...    # written by another
+
+...
+x = encrypt_pipeline_in_if.stream.data    # read by a third
+```
+
+`Wire[SomeInterface.fwd_t]`/`Wire[SomeInterface.fb_t]` remain banned exactly as above — only
+the bare interface class gets this sugar.
+
 An `intrf.fwd_t(...)`/`intrf.fb_t(...)` constructor call is also valid directly as a call
 argument (not just as a whole assignment's right-hand side) — no local variable is
 needed at all when there's nothing to build up over multiple statements:

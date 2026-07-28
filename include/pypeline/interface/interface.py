@@ -167,6 +167,30 @@ def _derive(iface, role):
     return cls
 
 
+def _derive_wire(iface):
+    """The flat, non-directional struct backing `Wire[SomeInterface]` (the
+    bare interface class used directly as a global Wire's type): one plain
+    field per interface field, `Feedback[T]` fields unwrapped to plain `T`
+    exactly like `.fb_t` unwraps them -- direction only matters at a real
+    port crossing, and a Wire is not one, so both halves are just ordinary
+    struct fields here, each independently multi-writer-flattenable like any
+    other plain @struct field."""
+    memo = iface._pypeline_iface_derived
+    if "wire" in memo:
+        return memo["wire"]
+    memo["wire"] = None  # recursion guard
+    where = f"@interface {iface._pypeline_iface_canonical}"
+    fields = []
+    for fname in iface._fields:
+        f, b = _split_field(iface.__annotations__[fname], where)
+        chosen = f if f is not None else b
+        fields.append((fname, chosen))
+    name = f"{iface._pypeline_iface_canonical}_wire_t"
+    cls = struct(NamedTuple(name, fields))
+    memo["wire"] = cls
+    return cls
+
+
 # ─────────────────────────────────────────────────────────────────────────────
 # The decorator
 # ─────────────────────────────────────────────────────────────────────────────
@@ -218,4 +242,5 @@ def interface(cls):
     # captured it as a closure cell).
     if cls.stream_t is not None:
         cls.stream_t._pypeline_interface = cls
+    cls.wire_t = _derive_wire(cls)
     return cls

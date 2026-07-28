@@ -139,10 +139,51 @@ def m():
     _expect_clean(src, "global_wire_stream_t_test.py")
 
 
+def test_bare_interface_wire_is_clean_and_multi_writer():
+    # Wire[SomeInterface] (the bare @interface class) is sugar for
+    # Wire[SomeInterface.wire_t] -- a flat, non-directional struct that gets
+    # full flattened multi-writer support for free: .stream written by one
+    # function, .ready written by another, both read by a third.
+    src = """
+good_if: Wire[chan_intrf]
+
+@hw_func
+def drive_stream():
+    good_if.stream = chan_intrf.stream_t(data=0, valid=1)
+
+@hw_func
+def drive_ready():
+    good_if.ready = 1
+
+@MAIN
+@wires
+def m() -> uint1_t:
+    drive_stream()
+    drive_ready()
+    return good_if.stream.valid & good_if.ready
+"""
+    _expect_clean(src, "bare_interface_wire_test.py")
+
+
+def test_bare_interface_wire_fwd_t_still_errors():
+    # The bare-class sugar must not weaken the existing .fwd_t/.fb_t ban.
+    src = """
+bad: Wire[chan_intrf.fwd_t]
+
+@MAIN
+@wires
+def m():
+    bad = chan_intrf.fwd_t(stream=chan_intrf.stream_t(data=0, valid=0))
+"""
+    _expect_elaboration_error(src, "bare_interface_wire_fwd_t_test.py", ["bad", "stream_t"])
+
+
 if __name__ == "__main__":
     test_global_wire_fwd_t_errors()
     test_global_wire_fb_t_errors()
     test_global_input_fwd_t_errors()
     test_global_output_fb_t_errors()
     test_global_wire_stream_t_is_clean()
+    test_bare_interface_wire_is_clean_and_multi_writer()
+    test_bare_interface_wire_fwd_t_still_errors()
     print("All global_wire_interface_type_error tests passed.")

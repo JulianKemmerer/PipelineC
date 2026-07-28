@@ -5581,6 +5581,17 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
             raise ElaborationError(
                 f"Global {kind} '{node.target.id}' cannot have an initializer"
             )
+        # Wire[SomeInterface] (the bare @interface class, not .fwd_t/.fb_t/
+        # .stream_t) is sugar for Wire[SomeInterface.wire_t] -- a flat,
+        # non-directional struct (Feedback[T] fields unwrapped to plain T)
+        # that gets full flattened multi-writer support for free, since it's
+        # an ordinary @struct once derived. Only Wire gets this sugar: a
+        # bare interface as a chip-boundary Input/Output isn't a use case
+        # that's come up yet.
+        if kind == "Wire" and getattr(
+            ann_val.inner_ctype, "_pypeline_is_interface", False
+        ):
+            ann_val.inner_ctype = ann_val.inner_ctype.wire_t
         # Mirrors _elab_ann_assign's local-variable ban on .fwd_t/.fb_t: a
         # global Wire/Input/Output is not itself a paired-port-pairing
         # construct -- Wire is plain internal wiring, and Input/Output are

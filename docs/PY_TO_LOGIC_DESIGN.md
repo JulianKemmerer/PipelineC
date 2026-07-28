@@ -1542,10 +1542,30 @@ declarations, never inside a function body). None of the three are themselves a 
 construct: a `Wire` is plain internal wiring between two `@MAIN`s, and `Input`/`Output` are
 single flattened top-level chip signals — so allowing any of them to carry `.fwd_t`/`.fb_t`
 would just relocate the same "paired value living somewhere other than a real port crossing"
-problem to module scope. The fix is the same shape as everywhere else: split into a plain
-`Wire[intrf.stream_t]` (or `Input`/`Output`) plus a separate `Wire[uint1_t]` for the
-ready/valid half, and construct `.fwd_t`/`.fb_t` inline only where a real hw_func port
-actually needs it.
+problem to module scope. Split into a plain `Wire[intrf.stream_t]` (or `Input`/`Output`) plus
+a separate `Wire[uint1_t]` for the ready/valid half, and construct `.fwd_t`/`.fb_t` inline only
+where a real hw_func port actually needs it — or, better, use the compound-Wire sugar below,
+which keeps the two halves as one Wire instead of two independently-named globals.
+
+**`Wire[SomeInterface]` — the bare `@interface` class itself, not `.fwd_t`/`.fb_t`/`.stream_t` —
+is sugar for a single compound Wire holding both halves.** A global stream+ready pair used to
+require two separate globals (`foo: Wire[intrf.stream_t]` plus `foo_ready: Wire[uint1_t]`),
+disconnected in name even though they're one logical port. `@interface` derives a fourth
+attribute alongside `.fwd_t`/`.fb_t`/`.stream_t` — `.wire_t` — a flat, non-directional struct
+with one field per interface field (`Feedback[T]` fields unwrapped to plain `T`, exactly like
+`.fb_t` unwraps them; direction only matters at a real port crossing, and a Wire is not one).
+`_discover_global_wires` recognizes a bare interface class in `Wire[...]`'s inner ctype
+(`is_interface(t)` true, i.e. `_pypeline_is_interface` set but no `_pypeline_interface_role`)
+and substitutes `.wire_t` transparently — `Wire[intrf.fwd_t]`/`Wire[intrf.fb_t]` stay banned
+exactly as above; only the bare class gets the sugar. Because `.wire_t` is built via the same
+`struct(NamedTuple(...))` call `.fwd_t`/`.fb_t` already use, it is an ordinary `@struct` once
+derived and gets full flattened multi-writer support for free — `foo_if.stream` written by one
+function, `foo_if.ready` written by another, both read by a third, no new flattening logic
+needed. Native sim's independent module-scanning paths (`pypeline_sim._discover_wire_names`,
+`pypeline.py`'s per-function `_GlobalWireRewriter` setup) do not go through
+`_discover_global_wires` and so needed the identical substitution added separately — both now
+funnel through the shared `pypeline._wire_ann_inner_ctype(ann)` helper, so the real-VHDL path
+and every native-sim path agree on what a `Wire[SomeInterface]` annotation actually denotes.
 
 A function annotated with a whole `@interface` is an **interface function**: its body wires
 only the feedforward direction. `make_hw_func_from_interface_func(f)`

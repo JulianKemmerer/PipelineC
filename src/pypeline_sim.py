@@ -318,7 +318,7 @@ def _discover_wire_names(module) -> list:
             ):
                 qualified = f"{mod.__name__}.{name}"
                 if qualified not in result_keys:
-                    result.append((qualified, ann.inner_ctype))
+                    result.append((qualified, pypeline._wire_ann_inner_ctype(ann)))
                     result_keys.add(qualified)
         for attr in vars(mod).values():
             if isinstance(attr, types.ModuleType):
