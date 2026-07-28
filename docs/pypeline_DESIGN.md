@@ -778,6 +778,51 @@ The internal helper `_autopipeline_with_io_regs(func, has_input_reg, has_output_
 optional unconditional `Reg[T]` boundary registers and returns
 `(wrapped_func, autopipeline_call)` so library code can read `.latency`.
 
+### `AUTOFSM(func)` — Resource-Shared State Machines with `.latency`
+
+The resource-minimizing dual of `AUTOPIPELINE`. Where `AUTOPIPELINE(func)` builds
+one full copy of `func`'s hardware cut into pipeline stages (initiation interval
+1, maximum area), `AUTOFSM(func)` builds a state machine holding ONE copy of each
+distinct operation and runs `func` over several cycles (initiation interval N,
+minimum area). Twelve identical adds become one adder used in twelve states.
+
+```python
+UPDATE = AUTOFSM(next_state)     # pure single-argument @hw_func
+o = UPDATE(req)                  # req/o are {data, valid}: UPDATE.in_stream_t / .out_stream_t
+UPDATE.latency                   # fixed in->out cycle count; 0 until a real build
+```
+
+Structurally a sibling of `AUTOPIPELINE`, and deliberately so: a duck-type marker
+the elaborator probes for (`_is_autofsm_pragma`), a module-global cache the
+`pipelinec` driver installs between passes (`SET_AUTOFSM_SCHEDULE_CACHE`,
+carrying `canonical_key -> schedule dict` instead of `-> stage count`), a
+snapshot taken at construction so one design execution sees one consistent view,
+a `canonical_key` computed lazily via `PY_TO_LOGIC.CANONICAL_CALLABLE_KEY`, and
+an address-free `__repr__` for the same entity-naming-determinism reason.
+
+The differences worth knowing:
+
+- **The call site's submodule is not `func`.** It is a generated wrapper: a
+  combinational passthrough when no schedule is installed, and the generated FSM
+  when one is. Both are built by `src/AUTOFSM.py` and elaborated as ordinary
+  Pypeline source.
+- **`.latency` is not read-tracked.** AUTOPIPELINE can skip its second pass when
+  no Python consumed the value; an AUTOFSM schedule always changes the hardware,
+  so the second pass is unconditional.
+- **`in_stream_t` / `out_stream_t`** are auto-generated `{data, valid}` structs
+  built by the pypeline.py-local `_make_autofsm_stream_t`. It is a deliberate
+  twin of `include/pypeline/stream/stream.py`'s `make_stream_t` rather than an
+  import of it: `pypeline.py` is the base module every design imports and keeps
+  zero dependency on the `include/pypeline` library. The two are structurally
+  identical and duck-type compatible.
+- **`max_latency=`** is reserved for the planned latency cap and raises
+  `NotImplementedError` rather than being accepted and ignored.
+- **Native simulation** models the generated FSM's registers directly
+  (`_sim_fsm`, keyed on `_SIM_AUTOFSM_STATE_KEY`), following the same
+  committed-read / buffered-write discipline as `_sim_delay_line`.
+
+Full design in [`AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md).
+
 ### `MULTI_CYCLE[ncycles]` — Multi-Cycle Path Tag
 
 Python equivalent of PipelineC's `#pragma MULTI_CYCLE <ncycles> <start_reg> <end_reg>`.
@@ -1198,6 +1243,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `_sim_cast(val, ctype)` | Cast a Python int/SimVal to a pypeline ctype: mask to bit width, two's-complement sign |
 | `_sim_val_make(v, ctype)` | Fast `SimVal` allocation bypassing Python `__new__`; checks flyweight cache first |
 | `_SIM_CONST_CACHE` | Flyweight cache: `(int_value, ctype)` → `SimVal` for values 0–15 per ctype |
+| `AUTOFSM(func)` | Tag object: implements a pure single-argument function as a resource-shared FSM; `.latency`, `.in_stream_t`, `.out_stream_t`; see AUTOFSM_DESIGN.md |
 | `hw_func` | Decorator for inner hardware functions; adds sim-mode type casting and register state management |
 | `hw_arg_types(func)` | Returns a hardware function's parameter types, in declaration order, as a tuple — reads through `__wrapped__`/`__annotations__` so it works on `@hw_func`-wrapped or plain functions alike |
 | `hw_return_type(func)` | Returns a hardware function's declared return type — same unwrapping as `hw_arg_types` |

@@ -15,6 +15,7 @@ from common import INST_DIR, PIPELINEC, PYPELINE_SIM, Test, main
 PLAIN_PYTHON_TEST_FILES = [
     "stream_pipeline_test.py",
     "autopipeline_test.py",
+    "autofsm_test.py",
     "valid_ready_mcp_test.py",
     "float32_add_test.py",
     "float_ops_test.py",
@@ -178,6 +179,25 @@ def get_tests() -> list:
             cmd=[
                 PIPELINEC,
                 INST_DIR / "self_check_fifo_test.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "all",
+            ],
+        )
+    )
+    # AUTOFSM in --comb mode: the call site is still the combinational
+    # passthrough (latency 0), so this also proves the self-checking testbench
+    # is latency-agnostic -- the same source is correct whether the FSM is
+    # scheduled or not, which is what lets it be reused unchanged in
+    # vhdl_sim_tests.py and in the full-build synth tests.
+    tests.append(
+        Test(
+            name="self_check_autofsm_comb_test",
+            category="native_sim",
+            cmd=[
+                PIPELINEC,
+                INST_DIR / "self_check_autofsm_test.py",
                 "--sim",
                 "--comb",
                 "--run",

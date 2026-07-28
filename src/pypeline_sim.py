@@ -73,17 +73,20 @@ def run_sim(
     sim_mode: str = "strict",
     main_latencies=None,
     autopipeline_latencies=None,
+    autofsm_schedules=None,
 ) -> None:
     """Run the native simulation.
 
-    main_latencies / autopipeline_latencies are passed only by the pipelinec
-    driver after a non---comb build (SIM.DO_OPTIONAL_SIM): {main hw name ->
-    total latency} from the final TimingParams, and {AUTOPIPELINE
-    canonical_key -> stage count} from the converged harvest. They make the
-    native sim emulate the built pipeline latencies -- AUTOPIPELINE call
-    sites via per-call-site delay lines (AUTOPIPELINE._sim_delay_line) and
-    naturally-pipelined pure MAINs via write-side delay
-    (pypeline._sim_pipelined_main_info). Plain native runs leave both None:
+    main_latencies / autopipeline_latencies / autofsm_schedules are passed only
+    by the pipelinec driver after a non---comb build (SIM.DO_OPTIONAL_SIM):
+    {main hw name -> total latency} from the final TimingParams, {AUTOPIPELINE
+    canonical_key -> stage count} from the converged harvest, and {AUTOFSM
+    canonical_key -> schedule} from the installed cache. They make the native
+    sim emulate what was actually built -- AUTOPIPELINE call sites via
+    per-call-site delay lines (AUTOPIPELINE._sim_delay_line), AUTOFSM call
+    sites via a register-level model of the generated FSM (AUTOFSM._sim_fsm),
+    and naturally-pipelined pure MAINs via write-side delay
+    (pypeline._sim_pipelined_main_info). Plain native runs leave them all None:
     zero latency everywhere, as always.
     """
     # Apply sim mode before importing the design: @hw_func decorators read these
@@ -107,6 +110,10 @@ def run_sim(
     # must elaborate identically to the VHDL build's pin-and-confirm pass.
     if autopipeline_latencies:
         pypeline.SET_AUTOPIPELINE_LATENCY_CACHE(autopipeline_latencies)
+    # Same reasoning for AUTOFSM: the tag captures ._schedule/._latency at
+    # construction, and .latency-derived Python sizing must match the build's.
+    if autofsm_schedules:
+        pypeline.SET_AUTOFSM_SCHEDULE_CACHE(autofsm_schedules)
     _evict_design_modules()
     module = _import_design(design_file)
 

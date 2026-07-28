@@ -697,6 +697,7 @@ def DEL_ALL_CACHES():
     global _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache
     global _FUNC_SUBTREE_HAS_STATE_cache
     global _FUNC_SUBTREE_HAS_AUTOPIPELINE_cache
+    global _FUNC_SUBTREE_HAS_AUTOFSM_cache
     global _FUNC_TO_INSTANTIATING_FUNCS_cache
     global _FUNC_IS_TOPMOST_COMB_cache
     # global _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache
@@ -704,6 +705,7 @@ def DEL_ALL_CACHES():
     _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache = {}
     _FUNC_SUBTREE_HAS_STATE_cache = {}
     _FUNC_SUBTREE_HAS_AUTOPIPELINE_cache = {}
+    _FUNC_SUBTREE_HAS_AUTOFSM_cache = {}
     _FUNC_TO_INSTANTIATING_FUNCS_cache = None
     _FUNC_IS_TOPMOST_COMB_cache = {}
     # Func-name keyed maps referencing Logic objects: a re-parse (AUTOPIPELINE
@@ -3998,6 +4000,37 @@ def FUNC_SUBTREE_HAS_AUTOPIPELINE(func_name, parser_state):
     return rv
 
 
+_FUNC_SUBTREE_HAS_AUTOFSM_cache = {}
+
+
+def FUNC_SUBTREE_HAS_AUTOFSM(func_name, parser_state):
+    # Does this func (or anything below it) contain an AUTOFSM-tagged call site?
+    # Such funcs need their subtree delays resolved for the same reason
+    # AUTOPIPELINE ones do, though for a different consumer: not the slicer, but
+    # AUTOFSM's scheduler, which decides how many operations fit in one state
+    # from the per-operation delays measured/estimated here. Without this, a
+    # stateful MAIN containing an AUTOFSM would be an atomic span and NOTHING
+    # inside it would ever be measured (see FUNC_PATH_DELAY_IS_ESTIMABLE).
+    #
+    # Note this is only ever true on the bootstrap pass, where the call site is
+    # still the combinational passthrough. Once scheduled, the tag lives on the
+    # calling func while the generated FSM entity below it holds state and is
+    # correctly treated as an atomic span -- one whole-module synthesis whose
+    # measured register-to-register path IS its worst state's delay.
+    if func_name in _FUNC_SUBTREE_HAS_AUTOFSM_cache:
+        return _FUNC_SUBTREE_HAS_AUTOFSM_cache[func_name]
+    logic = parser_state.FuncLogicLookupTable[func_name]
+    rv = len(logic.sub_inst_to_autofsm_key) > 0
+    if not rv:
+        for sub_func_name in logic.submodule_instances.values():
+            if sub_func_name in parser_state.FuncLogicLookupTable:
+                if FUNC_SUBTREE_HAS_AUTOFSM(sub_func_name, parser_state):
+                    rv = True
+                    break
+    _FUNC_SUBTREE_HAS_AUTOFSM_cache[func_name] = rv
+    return rv
+
+
 _FUNC_TO_INSTANTIATING_FUNCS_cache = None
 
 
@@ -4079,6 +4112,17 @@ def FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state):
         return False
     if logic.func_name in parser_state.func_marked_blackbox:
         return False
+    # Explicitly forced to be estimated rather than synthesized. Used by
+    # AUTOFSM for the combinational passthrough it wraps a tagged function in
+    # on the bootstrap pass: that wrapper looks exactly like a measurement
+    # frontier (fully combinational, inside a stateful caller) and would
+    # therefore get one whole-blob synthesis run -- of precisely the giant
+    # parallel logic the user asked NOT to build, which for something like a
+    # float64 polynomial does not finish in reasonable time. Nothing needs that
+    # number: the scheduler works from the individual operations' delays
+    # underneath, which are measured and cached as usual.
+    if logic.func_name in getattr(parser_state, "func_force_estimated", ()):
+        return True
     # Modules with Reg/Feedback state anywhere in their subtree: a
     # per-module synthesis run reports the module's internal critical path
     # (often register to register, possibly deep inside a nested FSM) - a
@@ -4095,7 +4139,9 @@ def FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state):
     #   them is synthesized or estimated (their interior delays feed no
     #   decision).
     if FUNC_SUBTREE_HAS_STATE(logic.func_name, parser_state):
-        return FUNC_SUBTREE_HAS_AUTOPIPELINE(logic.func_name, parser_state)
+        return FUNC_SUBTREE_HAS_AUTOPIPELINE(
+            logic.func_name, parser_state
+        ) or FUNC_SUBTREE_HAS_AUTOFSM(logic.func_name, parser_state)
     # Fully combinational subtree from here down
     if FUNC_IS_TOPMOST_COMB(logic.func_name, parser_state):
         # The measurement frontier: this func gets ONE real synthesis run -

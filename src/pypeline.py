@@ -1385,6 +1385,298 @@ def _autopipeline_with_io_regs(func, has_input_reg: bool, has_output_reg: bool):
 
 
 # ─────────────────────────────────────────────
+# AUTOFSM: tool-scheduled resource-shared FSM regions
+# ─────────────────────────────────────────────
+
+# canonical_key -> schedule dict, harvested from the previous elaborate pass by
+# AUTOFSM.HARVEST_AUTOFSM_SCHEDULES and installed by the pipelinec driver
+# (SET_AUTOFSM_SCHEDULE_CACHE) before the design file is re-executed, and again
+# before a non---comb `--sim` run's native-sim design import so both .latency
+# reads and the FSM's native-sim emulation see the built state count. Always
+# empty in plain native Pypeline sim (pypeline_sim.py run directly) and in
+# --comb/--no_synth/--yosys_json builds, so .latency reads 0 and the call site
+# stays a zero-latency combinational passthrough there.
+#
+# Schedule dict shape (plain picklable data; see docs/AUTOFSM_DESIGN.md):
+#   {"version", "key", "entity", "n_states", "latency", "budget_scale",
+#    "at_floor", "floor_ns", "node_to_state", "fu_of_node", "fus",
+#    "fu_order", "descended", "entity_delays_snapshot", ...}
+_autofsm_schedule_cache: dict = {}
+
+
+def SET_AUTOFSM_SCHEDULE_CACHE(cache: dict) -> None:
+    """pipelinec-driver hook: install the previous pass's harvested AUTOFSM
+    schedules (canonical_key -> schedule dict) so the next design-file
+    execution's AUTOFSM(...) constructions resolve .latency to real values and
+    their call sites elaborate to the generated FSM instead of a passthrough."""
+    global _autofsm_schedule_cache
+    _autofsm_schedule_cache = dict(cache)
+
+
+def AUTOFSM_SCHEDULE_CACHE() -> dict:
+    return _autofsm_schedule_cache
+
+
+# Native-sim state key for an AUTOFSM call site's emulated FSM registers,
+# mirroring _SIM_AP_DELAY_KEY's role for AUTOPIPELINE delay lines.
+_SIM_AUTOFSM_STATE_KEY = "__sim_autofsm_state__"
+
+
+def _make_autofsm_stream_t(data_t):
+    """Build the plain `{data, valid}` struct AUTOFSM uses at its call-site
+    boundary. Deliberately a pypeline.py-local twin of
+    include/pypeline/stream/stream.py's make_stream_t rather than an import of
+    it: pypeline.py is the base module every design imports and must keep zero
+    dependency on the include/pypeline library (which designs put on sys.path
+    themselves). The two produce structurally identical, duck-type-compatible
+    types -- a make_stream_t(T) value can be passed straight into an AUTOFSM
+    call site and vice versa -- they just carry different canonical type names.
+    """
+
+    @struct
+    class autofsm_stream_t(NamedTuple):
+        data: data_t
+        valid: uint1_t
+
+    return autofsm_stream_t
+
+
+class AUTOFSM:
+    """AUTOFSM(func): implement a pure combinational function as a
+    resource-shared finite state machine -- the resource-minimizing dual of
+    AUTOPIPELINE.
+
+    Where AUTOPIPELINE(func) builds an initiation-interval-1 pipeline (one full
+    copy of func's hardware, cut into N register stages), AUTOFSM(func) builds
+    an ~N-state FSM holding ONE shared copy of each distinct operation, executed
+    over N clock cycles::
+
+        MY_FSM = AUTOFSM(some_pure_func)      # tool picks the state count
+
+        @MAIN(100.0)
+        def top():
+            s: MY_FSM.in_stream_t             # {data, valid}
+            s.data = x
+            s.valid = start_pulse
+            o = MY_FSM(s)                     # o: {data, valid}
+            if o.valid:
+                result_reg = o.data
+            ...
+        MY_FSM.latency                        # int: fixed in->out cycle count; 0 until known
+
+    Twelve identical adders in `func` (whether written as a Python loop that
+    elaborates unrolled, or as twelve separate lines) become ONE adder used in
+    twelve different states. The cost is latency and operand multiplexers; the
+    win is area. The tool picks the state count so that the chain of operations
+    executed in any single state fits the design's clock period -- if a timing
+    report blames the FSM, the driver shrinks the per-state delay budget and
+    reschedules into more states, the same way the throughput sweep adds
+    pipeline stages for AUTOPIPELINE.
+
+    Contract at the call site (fixed latency, one computation in flight):
+      - `func` must be @hw_func-decorated, pure (no Reg/Feedback/global wires
+        anywhere in its call subtree), and take exactly ONE annotated argument
+        (bundle multiple inputs in an @struct) with an annotated return type.
+      - The argument is a `{data, valid}` struct -- use `MY_FSM.in_stream_t`,
+        or any structurally identical type (e.g. make_stream_t(in_t)).
+      - An input is accepted only when the FSM is idle; `valid` pulses asserted
+        while it is busy are IGNORED (no backpressure signal in this version --
+        space inputs at least .latency cycles apart, which .latency itself lets
+        surrounding Python compute).
+      - The result appears with a one-cycle `valid` pulse exactly .latency
+        cycles after the accepted input cycle; `.data` holds the last result
+        between pulses. Initiation interval == .latency.
+
+    .latency reads 0 (and the call site is a zero-latency combinational
+    passthrough, `o.data = func(s.data)`, `o.valid = s.valid`):
+      - always in plain native Pypeline sim (pypeline_sim.py run directly),
+      - always in --comb / --no_synth / --yosys_json builds,
+      - during the bootstrap elaboration pass of a real synthesizing build.
+    On a real build the pipelinec driver measures the function's operation
+    delays, schedules it, and re-executes the design with the schedule
+    installed, so .latency then resolves to the real value -- including in the
+    native simulation a non---comb `--sim` build launches at the end, where the
+    call site emulates the built FSM cycle-accurately.
+
+    CONSTRUCTION TIMING MATTERS, exactly as for AUTOPIPELINE: construct
+    AUTOFSM(...) once, eagerly, as plain Python (typically at module or factory
+    top level) and capture it by closure into the @hw_func body that calls it --
+    that is what makes .latency visible to the surrounding Python.
+
+    See docs/AUTOFSM_DESIGN.md for the scheduler, the generated FSM's shape,
+    and the driver's schedule-and-confirm loop.
+    """
+
+    # Duck-type marker probed by the elaborator (PY_TO_LOGIC._elab_call).
+    _is_autofsm_pragma = True
+
+    def __init__(self, func, max_latency=None):
+        if not is_hw_func(func):
+            raise TypeError(
+                f"AUTOFSM(func): {getattr(func, '__qualname__', func)!r} must be "
+                f"@hw_func-decorated before being passed in"
+            )
+        if max_latency is not None:
+            # Reserved for the planned "don't always trade all the latency for
+            # area" knob; rejected rather than silently ignored (the AUTOPIPELINE
+            # depth= parameter's fate -- accepted, stored, never consumed -- is
+            # exactly the trap being avoided here).
+            raise NotImplementedError(
+                "AUTOFSM(func, max_latency=...): capping the FSM latency is not "
+                "implemented yet; omit max_latency to let the tool minimize "
+                "resources"
+            )
+        arg_types = hw_arg_types(func)
+        if len(arg_types) != 1:
+            raise TypeError(
+                f"AUTOFSM(func): {getattr(func, '__qualname__', func)!r} must take "
+                f"exactly one annotated argument (got {len(arg_types)}); bundle "
+                f"multiple inputs into a single @struct type"
+            )
+        self.func = func
+        self.in_type = arg_types[0]
+        self.out_type = hw_return_type(func)
+        if self.out_type is None:
+            raise TypeError(
+                f"AUTOFSM(func): {getattr(func, '__qualname__', func)!r} must have "
+                f"an annotated return type"
+            )
+        self.in_stream_t = _make_autofsm_stream_t(self.in_type)
+        self.out_stream_t = _make_autofsm_stream_t(self.out_type)
+        self._canonical_key = None
+        self._generated = None  # memoized generated hw_func for this pass
+        # Snapshot the installed schedule at construction time, mirroring
+        # AUTOPIPELINE's latency snapshot: the driver installs the cache before
+        # re-executing the design, so every construction in one pass sees one
+        # consistent view. Skip key computation entirely when the cache is empty
+        # (native sim, comb builds, bootstrap pass) so pure-sim runs never import
+        # the compiler.
+        if _autofsm_schedule_cache:
+            self._schedule = _autofsm_schedule_cache.get(self.canonical_key)
+        else:
+            self._schedule = None
+        self._latency = self._schedule["latency"] if self._schedule else 0
+
+    @property
+    def latency(self) -> int:
+        return self._latency
+
+    @property
+    def schedule(self):
+        """The installed schedule dict for this call site, or None before one
+        has been computed. Read by the elaborator; designs use .latency."""
+        return self._schedule
+
+    @property
+    def canonical_key(self) -> str:
+        if self._canonical_key is None:
+            # Lazy so pure native-sim runs never import the compiler; any
+            # context that needs the key (elaboration, non-empty cache) has
+            # PY_TO_LOGIC loaded already.
+            import PY_TO_LOGIC
+
+            self._canonical_key = PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func)
+        return self._canonical_key
+
+    def __call__(self, s):
+        data = getattr(s, "data", None)
+        valid = getattr(s, "valid", None)
+        if data is None or valid is None:
+            raise TypeError(
+                f"AUTOFSM call argument must be a {{data, valid}} struct (e.g. "
+                f"MY_FSM.in_stream_t), got {type(s).__name__}"
+            )
+        if _sim_active and self._latency > 1:
+            # Native sim with a pinned schedule (pipelinec non---comb --sim builds
+            # install the harvested schedules before the sim's design import):
+            # emulate the built FSM's registers instead of the zero-latency
+            # passthrough. canonical_key is already computed (cache was non-empty
+            # at __init__) and distinguishes two different AUTOFSM objects called
+            # from the same source line.
+            _sim_inst_stack.append(
+                (
+                    "AUTOFSM:" + self.canonical_key,
+                    _sim_capture_call_loc(_sys._getframe(1)),
+                )
+            )
+            try:
+                return self._sim_fsm(data, valid)
+            finally:
+                _sim_inst_stack.pop()
+        return self.out_stream_t(data=self.func(data), valid=valid)
+
+    def _sim_fsm(self, data, valid):
+        """Native-sim emulation of this call site as the generated FSM: a
+        register-level model of exactly the state/output registers the generated
+        hardware declares (see AUTOFSM.GENERATE_FSM_SOURCE), so the two are
+        cycle-accurate against each other by construction rather than by a
+        separate timing argument.
+
+        Follows _call_sim_model's / _sim_delay_line's commit discipline: the
+        returned value is computed only from state committed at the last clock
+        edge (so every re-evaluation during this cycle's convergence returns the
+        same thing -- no convergence churn), and the next state is written into
+        the buffer, where last-write-wins and only the final pass's write lands
+        at _sim_reg_flush_buffer.
+        """
+        n_states = self._latency - 1
+        inst_path = _sim_current_inst_path()
+        st = _sim_reg_read(inst_path, _SIM_AUTOFSM_STATE_KEY, None)
+        if st is None:
+            # Warm-up matches hardware reset: idle, no result yet, typed zeros.
+            st = {
+                "st": 0,
+                "in": sim_zero(self.in_type),
+                "out_data": sim_zero(self.out_type),
+                "out_valid": 0,
+            }
+        # Outputs are the committed registers (registered outputs in hardware).
+        out = self.out_stream_t(data=st["out_data"], valid=st["out_valid"])
+        # Next-state, mirroring the generated body's write order.
+        nxt = {
+            "st": st["st"],
+            "in": st["in"],
+            "out_data": st["out_data"],
+            "out_valid": 0,
+        }
+        if st["st"] == 0:
+            if valid:
+                nxt["in"] = _copy.deepcopy(data)
+                nxt["st"] = 1
+        elif st["st"] >= n_states:
+            # Last execution state: the whole function's result lands in the
+            # output registers. (The native model computes func() in one go
+            # rather than per-state; the FSM's per-state decomposition is a
+            # hardware implementation detail with identical cycle-level
+            # behavior at the boundary.)
+            nxt["out_data"] = _copy.deepcopy(self.func(st["in"]))
+            nxt["out_valid"] = 1
+            nxt["st"] = 0
+        else:
+            nxt["st"] = st["st"] + 1
+        _sim_reg_write(inst_path, _SIM_AUTOFSM_STATE_KEY, nxt)
+        return out
+
+    def __repr__(self):
+        # Same determinism requirement as AUTOPIPELINE.__repr__ (see the long
+        # comment there): these objects get captured in factory closures whose
+        # cell reprs feed canonical entity-name hashing, so the repr must be
+        # address-free and fully distinguishing.
+        import sys
+
+        if "PY_TO_LOGIC" in sys.modules:
+            inner = self.canonical_key
+        else:
+            import inspect
+
+            func = inspect.unwrap(self.func)
+            qual = getattr(func, "__qualname__", "?")
+            mod = getattr(func, "__module__", "?")
+            inner = f"{mod}.{qual}"
+        return f"AUTOFSM({inner})"
+
+
+# ─────────────────────────────────────────────
 # Operator overloading registry
 # ─────────────────────────────────────────────
 

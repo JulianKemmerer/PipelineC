@@ -62,6 +62,7 @@ def DO_OPTIONAL_SIM(
             # (pipelinec's autopipeline_divergence_exit), so ignore them here.
             main_latencies = None
             ap_latencies = None
+            autofsm_schedules = None
             if parser_state is not None:
                 main_latencies = GET_MAIN_FUNC_LATENCIES(
                     parser_state, multimain_timing_params
@@ -74,11 +75,19 @@ def DO_OPTIONAL_SIM(
                     ap_latencies, _divergences = SYN.HARVEST_AUTOPIPELINE_LATENCIES(
                         parser_state, multimain_timing_params.TimingParamsLookupTable
                     )
+                # The AUTOFSM schedules the build actually used. Taken from
+                # pypeline's installed cache rather than re-derived: the schedule
+                # in force is by definition the one the final elaboration read,
+                # and re-scheduling here could disagree with what was built.
+                import pypeline
+
+                autofsm_schedules = pypeline.AUTOFSM_SCHEDULE_CACHE() or None
             pypeline_sim.run_sim(
                 source_file,
                 args.run,
                 main_latencies=main_latencies,
                 autopipeline_latencies=ap_latencies,
+                autofsm_schedules=autofsm_schedules,
             )
     else:
         print("WARNING: Unknown simulation tool:", SIM_TOOL.__name__)

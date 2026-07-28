@@ -460,7 +460,7 @@ def my_inst_main():
     my_inst_out = my_inst_pipeline(my_inst_in)
 ```
 
-See [pypeline_guide.md §15](pypeline_guide.md#15-forcing-pipelining-autopipeline).
+See [pypeline_guide.md §15](pypeline_guide.md#15-tool-chosen-implementation-autopipeline-and-autofsm).
 
 ### 8c. GLOBAL_VALID_READY_PIPELINE_INST — stream pipeline with FIFO
 
@@ -655,7 +655,7 @@ Most PipelineC `#pragma` annotations have a direct pypeline equivalent.
 | `#pragma MAIN_MHZ func 100.0` | `@MAIN(100.0)` decorator | [§5](pypeline_guide.md#5-top-level-entry-points) |
 | `#pragma FEEDBACK x` | `x: Feedback[T]` annotation | [§9](pypeline_guide.md#9-feedback-wires-feedbackt) |
 | `#pragma FUNC_WIRES func` | `@wires` decorator on the function | [§18](pypeline_guide.md#18-just-wires-synthesis-hint-wires) |
-| `#pragma AUTOPIPELINE` on a call | `result = autopipeline(func(args))` | [§15](pypeline_guide.md#15-forcing-pipelining-autopipeline) |
+| `#pragma AUTOPIPELINE` on a call | `result = autopipeline(func(args))` | [§15](pypeline_guide.md#15-tool-chosen-implementation-autopipeline-and-autofsm) |
 | `#pragma INST_ARRAY` | factory function + Python list/loop | [§12](pypeline_guide.md#12-parametric-hardware-with-factory-functions) |
 | `#pragma MULTI_CYCLE N` | `MC = MULTI_CYCLE[N]` | [§16](pypeline_guide.md#16-multi-cycle-paths-multi_cycle) |
 

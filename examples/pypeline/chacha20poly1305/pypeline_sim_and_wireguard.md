@@ -187,7 +187,7 @@ design's automatically pipelined functions actually elaborated to after synthesi
 That latency information only existed after a real VHDL build invisible to any C-level user code being written.
 
 Pypeline improves on that in two ways:
-First,  [`AUTOPIPELINE(...)`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#15-forcing-pipelining-autopipeline) lets
+First,  [`AUTOPIPELINE(...)`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#15-tool-chosen-implementation-autopipeline-and-autofsm) lets
 design code (and testbenches) read back the real, synthesis-discovered
 pipeline depth of an autopipelined function — see
 ["`.latency`: reading back the discovered pipeline depth"](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#latency-reading-back-the-discovered-pipeline-depth).

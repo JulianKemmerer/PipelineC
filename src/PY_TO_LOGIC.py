@@ -673,6 +673,13 @@ def _callable_canonical_name(val, module_globals, _seen=None, _depth=0):
         depth_suffix = f"_depth_{val.depth}" if getattr(val, "depth", -1) != -1 else ""
         return _sanitize_vhdl_name(f"AUTOPIPELINE_{inner}{depth_suffix}")
 
+    # AUTOFSM tag objects: same reasoning as AUTOPIPELINE above -- identity is
+    # the wrapped pure function's identity, since the tag itself has no
+    # distinguishing qualname/closure of its own.
+    if getattr(val, "_is_autofsm_pragma", False):
+        inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
+        return _sanitize_vhdl_name(f"AUTOFSM_{inner}")
+
     if isinstance(val, functools.partial):
         inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
         bound = []
@@ -4323,11 +4330,30 @@ class FuncElaborator:
         # written as a literal direct-call expression and the tag can't leak
         # onto a nested call inside the arguments.
         autopipeline_call = None
-        autopipeline_probe = self._try_eval_const(expr.func)
-        if getattr(autopipeline_probe, "_is_autopipeline_pragma", False):
-            autopipeline_call = autopipeline_probe
+        autofsm_call = None
+        tag_probe = self._try_eval_const(expr.func)
+        if getattr(tag_probe, "_is_autopipeline_pragma", False):
+            autopipeline_call = tag_probe
             callee_name = getattr(autopipeline_call.func, "__name__", "autopipelined")
             callee_def = self._elaborate_live_func(callee_name, autopipeline_call.func)
+        elif getattr(tag_probe, "_is_autofsm_pragma", False):
+            # AUTOFSM(func) instance call: MY_FSM(s) -- the submodule instantiated
+            # here is NOT func itself but a generated wrapper around it, whose
+            # shape depends on whether a schedule has been computed yet:
+            #   no schedule (bootstrap pass, --comb, --no_synth): a combinational
+            #     passthrough, so func's own sub-entities all exist in the design
+            #     and SYN can measure/estimate their delays for the scheduler;
+            #   schedule installed: the real resource-shared FSM, generated from
+            #     the schedule joined with a fresh elaboration of func.
+            # Either way the instance is tagged so the driver can find it.
+            import AUTOFSM as _AUTOFSM_MOD
+
+            autofsm_call = tag_probe
+            generated = _AUTOFSM_MOD.BUILD_AUTOFSM_FUNC(
+                autofsm_call, self.parser_state, self
+            )
+            callee_name = generated.__name__
+            callee_def = self._elaborate_live_func(callee_name, generated)
         # ── Resolve callee ──────────────────────────────────────────────────────
         elif isinstance(expr.func, ast.Attribute):
             # Module-qualified call: pypeline_tests.abs_int32(a)
@@ -4478,6 +4504,8 @@ class FuncElaborator:
             self.logic.sub_inst_to_autopipeline_key[inst] = (
                 autopipeline_call.canonical_key
             )
+        if autofsm_call is not None:
+            self.logic.sub_inst_to_autofsm_key[inst] = autofsm_call.canonical_key
         return port_return, ret_typ
 
     def _elab_strlen_call(self, expr):
@@ -4767,6 +4795,19 @@ class FuncElaborator:
             canonical
             if canonical is not None
             else self._top_level_func_key(func_for_source)
+        )
+
+        # Remember which live Python callable produced this entity, so AUTOFSM's
+        # code generator can emit a direct call to it when binding that entity as
+        # a shared functional unit -- instead of trying to reconstruct the Python
+        # syntax that originally created the instance. Direct calls also sidestep
+        # scoped operator registrations (e.g. the float library registers "SR"
+        # only within float_add's scope), which re-emitted operator syntax would
+        # mis-dispatch. setdefault: first writer wins, matching the dedup below.
+        # Records `func`, not `func_for_source` -- the @hw_func wrapper is what
+        # ordinary design code calls, and what generated source must call.
+        getattr(self.parser_state, "pypeline_entity_callables", {}).setdefault(
+            key, func
         )
 
         existing = self.parser_state.FuncLogicLookupTable.get(key)
@@ -6108,6 +6149,16 @@ def PARSE_FILE(py_file):
     # FuncElaborator's own (possibly closure/annotation-recovery-augmented)
     # module_globals. See _elaborate_live_func for why the distinction matters.
     parser_state.top_level_module_globals = module_globals
+    # AUTOFSM side tables, populated as a side effect of ordinary elaboration and
+    # consumed only by src/AUTOFSM.py's scheduler/code generator (see
+    # docs/AUTOFSM_DESIGN.md). Pypeline-only, set dynamically here the same way
+    # module_alias_to_actual / file_to_module_prefix are.
+    #   pypeline_entity_callables: entity func_name -> live Python callable that
+    #     produced it, so a shared functional unit can be emitted as a direct call.
+    #   pypeline_const_wire_values: func_name -> {const wire name -> Python value},
+    #     so a constant operand can be re-emitted as a literal.
+    parser_state.pypeline_entity_callables = {}
+    parser_state.pypeline_const_wire_values = {}
 
     # ── Apply pypeline pragmas (PART, MAIN_MHZ) from the live module ──
     if pypeline._part_registry is not None:
@@ -6225,6 +6276,15 @@ def PARSE_FILE(py_file):
             stub = C_TO_LOGIC.Logic()
             stub.func_name = hw_name
             parser_state.FuncLogicLookupTable[hw_name] = stub
+        # Record the live callable behind this entity (see the matching
+        # setdefault in _elaborate_live_func, which covers functions reached
+        # only through a closure alias). Done here in the stub pass rather than
+        # during Step 7 so the table is complete BEFORE any elaboration runs --
+        # AUTOFSM code generation happens mid-elaboration and needs to look up
+        # units that may not have been elaborated yet.
+        _live = _fg.get(node.name)
+        if callable(_live):
+            parser_state.pypeline_entity_callables.setdefault(hw_name, _live)
 
     # ── Step 7: elaborate all functions ──
     for node, file_path, fglobals, mod_prefix in all_func_defs:

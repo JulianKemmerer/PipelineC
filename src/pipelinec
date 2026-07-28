@@ -64,6 +64,16 @@ parser.add_argument(
     help="infer|fabric : Global multiplier style. Default to 'inferring' multiplier DSP primitives. Alternatively implement multipliers in FPGA fabric.",
 )
 parser.add_argument(
+    "--autofsm_budget_scale",
+    type=float,
+    default=None,
+    help="Fraction of the clock period an AUTOFSM state's operation chain may "
+    "fill by the delay model's reckoning (default 0.9). Lower = smaller, more "
+    "numerous states = more timing margin at the cost of latency. Timing "
+    "failures blamed on an AUTOFSM shrink this automatically; set it explicitly "
+    "to start tighter (or, above 1.0, deliberately looser).",
+)
+parser.add_argument(
     "--sim",
     help="Start simulation using final (maybe autopipelined) versions of functions.",
     action="store_true",
@@ -288,7 +298,18 @@ if args.comb:
         source_file=src_file,
     )
 
-if not args.no_synth:
+def run_sweep_and_autopipeline(parser_state):
+    """Measure delays, run the throughput sweep, then converge AUTOPIPELINE
+    .latency feedback -- i.e. everything between "here is an elaborated design"
+    and "here is a pipelined design whose Python agrees with what was built".
+
+    Factored out of the module-level flow because AUTOFSM wraps this whole thing
+    in an outer loop of its own (schedule the FSMs -> re-elaborate -> build; if
+    an FSM is blamed for missing timing, reschedule it into more states and go
+    again). Returns the final (parser_state, multimain_timing_params): the
+    AUTOPIPELINE loop below re-parses the design internally, so the parser_state
+    handed in is not necessarily the one that comes back out.
+    """
     if not args.comb and not args.yosys_json:
         print(
             "================== Adding Timing Information from Synthesis Tool ================================",
@@ -417,6 +438,136 @@ if not args.no_synth:
                     flush=True,
                 )
                 latencies = new_latencies
+
+    return parser_state, multimain_timing_params
+
+
+def run_autofsm_schedule_passes(parser_state):
+    """AUTOFSM schedule-and-confirm loop, wrapping the sweep + AUTOPIPELINE flow.
+
+    An AUTOFSM call site elaborates to a combinational passthrough until a
+    schedule exists for it, so the bootstrap parse above deliberately built a
+    design with the raw combinational blob inline. That design is only useful
+    for MEASURING -- ADD_PATH_DELAY_TO_LOOKUP populates the per-operation delays
+    the scheduler needs -- so the sweep is skipped for it entirely (it would
+    just fail timing on a blob nobody intends to build).
+
+    Each pass then: schedule -> install -> re-execute the design (so call sites
+    now elaborate to the real FSM, and any .latency-derived Python sizing sees
+    real values) -> full sweep + AUTOPIPELINE convergence. If timing fails and
+    an AUTOFSM is to blame, shrink its per-state budget so the next schedule
+    uses more, smaller states, and go again -- the direct analogue of the sweep
+    adding pipeline stages, and the reason an AUTOFSM can be tuned by iteration
+    rather than by hand.
+    """
+    import AUTOFSM
+    import pypeline
+
+    budget_scales = {}
+    if args.autofsm_budget_scale is not None:
+        for key in AUTOFSM.COLLECT_AUTOFSM_KEYS(parser_state):
+            budget_scales[key] = args.autofsm_budget_scale
+    prev_schedules = None
+    for schedule_pass in range(1, AUTOFSM.MAX_SCHEDULE_PASSES + 1):
+        print(
+            f"================== AUTOFSM Pass {schedule_pass}: Scheduling "
+            f"Shared-Resource FSMs ================================",
+            flush=True,
+        )
+        parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
+        schedules = AUTOFSM.HARVEST_AUTOFSM_SCHEDULES(
+            parser_state, budget_scales, prev_schedules
+        )
+        for key in sorted(schedules):
+            print(AUTOFSM.DESCRIBE_SCHEDULE(key, schedules[key]), flush=True)
+            for fu_line in AUTOFSM.DESCRIBE_FUS(schedules[key]):
+                print(fu_line, flush=True)
+        prev_schedules = schedules
+
+        pypeline.SET_AUTOFSM_SCHEDULE_CACHE(schedules)
+        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
+        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
+        AUTOFSM.DUMP_GENERATED_SOURCE(parser_state, SYN.SYN_OUTPUT_DIRECTORY)
+        parser_state, multimain_timing_params = run_sweep_and_autopipeline(parser_state)
+
+        failures = getattr(multimain_timing_params, "sweep_timing_failures", None)
+        if not failures:
+            break
+        blamed = AUTOFSM.BLAMED_AUTOFSM_KEYS(
+            parser_state, multimain_timing_params, schedules
+        )
+        if not blamed:
+            print(
+                "AUTOFSM: timing was missed but no AUTOFSM region is implicated; "
+                "adding states cannot help.",
+                flush=True,
+            )
+            break
+        if all(schedules[key]["at_floor"] for key in blamed):
+            print(
+                "AUTOFSM: every implicated FSM is already at its floor -- its "
+                "slowest state is a single indivisible operation, so no number "
+                "of extra states can make the clock: "
+                + ", ".join(sorted(blamed)),
+                flush=True,
+            )
+            break
+        if schedule_pass == AUTOFSM.MAX_SCHEDULE_PASSES:
+            print(
+                f"AUTOFSM: still missing timing after "
+                f"{AUTOFSM.MAX_SCHEDULE_PASSES} schedule passes.",
+                flush=True,
+            )
+            break
+        # Tighten until the schedule ACTUALLY changes. One step of the tighten
+        # factor does not always move an operation across a state boundary, and
+        # rebuilding a byte-identical design to discover that would waste a
+        # whole synthesis run -- so keep shrinking the budget (a cheap pure
+        # computation) until the plan differs, then go build that.
+        changed = False
+        for _attempt in range(AUTOFSM.MAX_TIGHTEN_STEPS):
+            for key in blamed:
+                budget_scales[key] = (
+                    budget_scales.get(key, AUTOFSM.DEFAULT_BUDGET_SCALE)
+                    * AUTOFSM.BUDGET_TIGHTEN_FACTOR
+                )
+            trial = AUTOFSM.HARVEST_AUTOFSM_SCHEDULES(
+                parser_state, budget_scales, schedules
+            )
+            if not AUTOFSM.SCHEDULES_EQUAL(trial, schedules):
+                changed = True
+                break
+        if not changed:
+            print(
+                "AUTOFSM: shrinking the per-state budget no longer changes the "
+                "schedule; adding states cannot help further.",
+                flush=True,
+            )
+            break
+        for key in sorted(blamed):
+            print(
+                f"AUTOFSM {key}: timing missed; tightened per-state budget to "
+                f"{budget_scales[key]:.3f} of the clock period, rescheduling "
+                f"into more states...",
+                flush=True,
+            )
+    return parser_state, multimain_timing_params
+
+
+if not args.no_synth:
+    _autofsm_possible = (
+        src_file.endswith(".py") and not args.comb and not args.yosys_json
+    )
+    if _autofsm_possible:
+        import AUTOFSM as _AUTOFSM
+
+        _autofsm_possible = _AUTOFSM.DESIGN_HAS_AUTOFSM(parser_state)
+    if _autofsm_possible:
+        parser_state, multimain_timing_params = run_autofsm_schedule_passes(
+            parser_state
+        )
+    else:
+        parser_state, multimain_timing_params = run_sweep_and_autopipeline(parser_state)
 
     print(
         "================== Writing Results of Throughput Sweep ================================",

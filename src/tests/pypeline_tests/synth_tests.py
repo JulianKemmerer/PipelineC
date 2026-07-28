@@ -118,6 +118,83 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # ── AUTOFSM: pure function -> resource-shared FSM ──
+    # Full build of autofsm_test.py plus assertions on the schedule: several
+    # same-kind operations folded onto fewer shared units, latency matching the
+    # state count, and exactly ONE instance of each shared unit in the
+    # generated VHDL (the sharing claim, checked in the output rather than
+    # trusted from the scheduler's own report).
+    tests.append(
+        Test(
+            name="autofsm_latency_test",
+            category="synth",
+            cmd=[INST_DIR / "autofsm_latency_test.py"],
+            needs_out_dir=True,
+        )
+    )
+    # The reason AUTOFSM exists: builds the same design as parallel
+    # combinational logic and as a scheduled FSM, and compares yosys cell
+    # counts. Guards against a regression that keeps working and meeting timing
+    # while quietly no longer sharing anything.
+    tests.append(
+        Test(
+            name="autofsm_resources_compare_test",
+            category="synth",
+            cmd=[INST_DIR / "autofsm_resources_compare_test.py"],
+            needs_out_dir=True,
+        )
+    )
+    # Synthesis iterations that find a critical path inside an AUTOFSM and fix
+    # it: a deliberately loose starting budget over-packs the states, the first
+    # build misses the clock, and the driver must tighten the budget and
+    # reschedule until it passes -- the AUTOFSM analogue of the sweep adding
+    # pipeline stages.
+    tests.append(
+        Test(
+            name="autofsm_timing_iter_test",
+            category="synth",
+            cmd=[INST_DIR / "autofsm_timing_iter_test.py"],
+            needs_out_dir=True,
+        )
+    )
+    # Full build + latency-emulated native sim of the self-checking AUTOFSM
+    # design: proves the native FSM model agrees with the schedule the build
+    # produced (the design's sim_asserts hold at the real .latency, and it
+    # reaches sim_finish).
+    tests.append(
+        Test(
+            name="autofsm_native_sim_test",
+            category="synth",
+            cmd=[
+                PIPELINEC,
+                INST_DIR / "self_check_autofsm_test.py",
+                "--sim",
+                "--run",
+                "all",
+            ],
+            needs_out_dir=True,
+        )
+    )
+    # The same self-checking design built and run through real GHDL: the
+    # generated FSM HARDWARE computes what the pure function did. Non---comb, so
+    # this exercises the scheduled FSM rather than the bootstrap passthrough --
+    # the strongest correctness evidence in the AUTOFSM suite.
+    tests.append(
+        Test(
+            name="autofsm_vhdl_sim_test",
+            category="synth",
+            cmd=[
+                PIPELINEC,
+                INST_DIR / "self_check_autofsm_test.py",
+                "--sim",
+                "--cocotb",
+                "--ghdl",
+                "--run",
+                "all",
+            ],
+            needs_out_dir=True,
+        )
+    )
     # Pipelined (non---comb) NATIVE simulation: full build first, then the
     # native sim runs with the discovered latencies emulated. Self-checking
     # elastic stream design -- proves build -> harvest -> latency-emulated

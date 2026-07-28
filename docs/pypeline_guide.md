@@ -20,7 +20,7 @@ For getting started information see the [README](README.md).
 12. [Parametric Hardware with Factory Functions](#12-parametric-hardware-with-factory-functions)
 13. [Custom Operators](#13-custom-operators)
 14. [Global Signals](#14-global-signals)
-15. [Forcing Pipelining: `AUTOPIPELINE(...)`](#15-forcing-pipelining-autopipeline)
+15. [Tool-Chosen Implementation: `AUTOPIPELINE(...)` and `AUTOFSM(...)`](#15-tool-chosen-implementation-autopipeline-and-autofsm)
 16. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#16-multi-cycle-paths-multi_cycle)
 17. [Raw VHDL Passthrough: `vhdl()`](#17-raw-vhdl-passthrough-vhdl)
 18. [Just-Wires Synthesis Hint: `@wires`](#18-just-wires-synthesis-hint-wires)
@@ -291,7 +291,7 @@ elaboration/synthesis entirely, whenever no other simulator is explicitly select
 `--cocotb`, `--edaplay`, `--modelsim`, `--cxxrtl`, or `--verilator` flag). `--sim --comb` is
 comb-only, no autopipelining pass first. Dropping `--comb` (just `--sim`)
 instead builds the final (maybe autopipelined) version first and then native-sims that with
-its discovered pipeline latencies emulated — see [§15](#15-forcing-pipelining-autopipeline).
+its discovered pipeline latencies emulated — see [§15](#15-tool-chosen-implementation-autopipeline-and-autofsm).
 Explicitly passing `--cocotb --ghdl` (etc.) still elaborates the design to VHDL and simulates
 that instead.
 
@@ -1881,7 +1881,7 @@ factories that go on to *call* `func` from inside their own hardware function bo
 (rather than just introspecting its annotations), `func` itself must already be
 `@hw_func`-decorated: `AUTOPIPELINE`, `make_valid_ready_mcp`, and
 `make_stream_pipeline` all validate this with `is_hw_func(func)` and raise `TypeError`
-otherwise (see [§15](#15-forcing-pipelining-autopipeline) /
+otherwise (see [§15](#15-tool-chosen-implementation-autopipeline-and-autofsm) /
 [§16](#16-multi-cycle-paths-multi_cycle)). This matters because `_build_reg_sim_func`'s
 AST rewriting — which makes `Reg[T]`/`Feedback[T]` and bare struct/array locals
 simulate correctly under `sim_call` — only runs once, at `@hw_func` decoration time, on
@@ -2125,7 +2125,7 @@ my_wire: Wire[uint32_t] = 0  # error — initialisers are not allowed on Wire/In
 
 ---
 
-## 15 Forcing Pipelining: `AUTOPIPELINE(...)`
+## 15 Tool-Chosen Implementation: `AUTOPIPELINE(...)` and `AUTOFSM(...)`
 
 By default, a function called from inside a register or feedback context must complete
 **combinationally, in the same cycle** as its caller — the synthesiser is not free to
@@ -2244,6 +2244,101 @@ def pipeline_stage_registered(x: uint32_t) -> uint32_t:
 Note `.latency` reports the AUTOPIPELINE'd core's own depth only — boundary registers
 you add around the call are yours to count (e.g. total latency here is
 `1 + PIPELINE_STAGE_AP.latency + 1`).
+
+### `AUTOFSM(...)`: the opposite trade-off
+
+`AUTOPIPELINE` spends area to get throughput: one full copy of your function's
+hardware, sliced into stages, accepting a new input every cycle. `AUTOFSM` spends
+time to get area: **one copy of each distinct operation**, reused across several
+cycles.
+
+```python
+@hw_func
+def next_state(s: state_t) -> state_t:    # pure: no Reg, no Feedback, no globals
+    ...
+
+UPDATE = AUTOFSM(next_state)              # tool picks how many states
+
+@MAIN(40.0)
+def top() -> state_t:
+    state: Reg[state_t]
+    req: UPDATE.in_stream_t               # auto-generated {data, valid} struct
+    req.data = state
+    req.valid = start_pulse
+    resp = UPDATE(req)                    # resp: {data, valid}
+    if resp.valid:
+        state = resp.data
+    return state
+
+UPDATE.latency                            # fixed in→out cycle count; 0 until known
+```
+
+Twelve identical adds in `next_state` — whether written as a Python loop that
+elaborates unrolled, or as twelve separate lines — become **one** adder used in
+twelve different states. Nothing in your source says how many states to use or
+what shares what: the build measures your operations' delays, schedules them
+against the clock goal, and prints what it did:
+
+```
+AUTOFSM pypeline_design_next_state: 28 ops -> 9 shared unit(s), 8 states,
+        latency 9 clks, budget 22.50 ns/state (scale 0.900), worst state 13.10 ns
+  BIN_OP_PLUS_int16_t_int16_t x12 -> 1 unit
+  ...
+```
+
+This is the right tool when a computation has a lot of *slack* — something that
+runs once per video frame, or once per packet, while a million cycles go by.
+Parallel combinational logic for such a thing is hardware sitting idle almost
+all of the time.
+
+**The contract**
+
+- `func` must be `@hw_func`, **pure** (no `Reg`/`Feedback`/global wires anywhere
+  in its call subtree), and take exactly **one** annotated argument with an
+  annotated return type. Bundle several inputs into an `@struct` — the same rule
+  `make_stream_pipeline` and `make_valid_ready_mcp` follow.
+- The argument is a `{data, valid}` struct: use `MY_FSM.in_stream_t`, or any
+  structurally identical type (`make_stream_t(in_t)` works).
+- An input is accepted **only while the FSM is idle**. A `valid` pulse asserted
+  while it is busy is IGNORED — there is no `ready` signal in this version.
+  Space requests at least `.latency` cycles apart; that is what `.latency` is
+  for.
+- The result arrives with a one-cycle `valid` pulse exactly `.latency` cycles
+  after the accepted input. `.data` holds the last result in between. Initiation
+  interval == `.latency`.
+- Construct `AUTOFSM(...)` once, eagerly, at module or factory level and capture
+  it by closure — same rule and same reason as `AUTOPIPELINE`.
+
+**Write the caller to react to `valid`, not to count cycles.** `.latency` is 0
+in plain native sim and in `--comb`/`--no_synth` builds (where the call site is
+a zero-latency passthrough) and a real number in a full build. Code that waits
+for `resp.valid` is correct in both, and stays correct when the tool changes its
+mind about the state count:
+
+```python
+busy: Reg[uint1_t]
+req.valid = 0
+if busy == 0:
+    req.valid = 1
+    busy = 1
+resp = MY_FSM(req)
+if resp.valid:
+    result = resp.data
+    busy = 0
+```
+
+**If the FSM misses timing**, the build says so, shrinks its per-state budget,
+reschedules into smaller states and tries again — the same iteration you get
+from the sweep adding pipeline stages. `--autofsm_budget_scale` sets the
+starting point (default `0.9` of the clock period) if you want to begin tighter
+or looser. One thing it cannot fix: a single indivisible operation slower than
+your clock (a float64 multiply, say). That is reported as `AT FLOOR`, because no
+number of extra states makes one multiplier faster.
+
+Working examples: `examples/pypeline/autofsm_donut_update.py` (per-frame
+rotation math) and `examples/pypeline/float_sine_autofsm.py` (a float64
+polynomial onto one multiplier). Full design notes in
+[`docs/AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md).
 
 ---
 
@@ -3102,7 +3197,7 @@ hardware, just not cycle-accurate internally. See `pypeline_sim_DESIGN.md`'s
 `include/pypeline/stream/stream_pipeline.py`'s `make_stream_pipeline` wraps a single
 combinational hardware function in a free-running, fully-pipelined
 [stream interface](#the-stream-interface-validready-handshaking): an
-[AUTOPIPELINE'd](#15-forcing-pipelining-autopipeline) instance (with registered
+[AUTOPIPELINE'd](#15-tool-chosen-implementation-autopipeline-and-autofsm) instance (with registered
 input/output) feeding a [`make_fifo`](#24-fifos-make_stream_fifo)-backed output FIFO.
 The FIFO and in-flight counter are **sized automatically** from the AUTOPIPELINE
 instance's `.latency` — the tool-discovered pipeline depth — so there is no
@@ -3145,7 +3240,7 @@ the bootstrap pass (and in plain native sim / `--comb` builds, where `.latency` 
 0) the depth floors at 2 — which in those contexts is exact, since the effective
 pipeline latency really is just the two boundary registers; on a real build the
 pin-and-confirm loop re-elaborates with the discovered latency (see
-[§15](#15-forcing-pipelining-autopipeline)), and a non-`--comb` `pypelinec --sim` run's
+[§15](#15-tool-chosen-implementation-autopipeline-and-autofsm)), and a non-`--comb` `pypelinec --sim` run's
 native simulation imports the design with the same latency installed — so the FIFO is
 sized identically and the AUTOPIPELINE call site is emulated at the same depth.
 
@@ -3156,7 +3251,7 @@ sized identically and the AUTOPIPELINE call site is emulated at the same depth.
 `@hw_func`-decorated** — `make_stream_pipeline` calls `is_hw_func(func)` and raises
 `TypeError` immediately if it isn't, since `func` is called from inside an internal
 AUTOPIPELINE'd wrapper and needs its own decoration for any `Reg[T]`/bare struct-array
-locals in its body to simulate correctly (see [§15](#15-forcing-pipelining-autopipeline)).
+locals in its body to simulate correctly (see [§15](#15-tool-chosen-implementation-autopipeline-and-autofsm)).
 
 **Simulates end-to-end.** Since `make_fifo`'s internal FIFO now carries a
 [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions), the whole

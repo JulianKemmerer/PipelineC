@@ -57,6 +57,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "two_factory_wrappers_test.py"],
         )
     )
+    # AUTOFSM scheduler/code-generator unit tests: also in-process, because
+    # what they assert (the exact schedule, register allocation, byte-identical
+    # generated source across re-elaborations) is not visible in a build log
+    # and would otherwise only be checked indirectly by full synthesis runs.
+    tests.append(
+        Test(
+            name="autofsm_unit_test",
+            category="elab",
+            cmd=[INST_DIR / "autofsm_unit_test.py"],
+        )
+    )
     # Not run through the pipelinec CLI either, for the same reason: it's a silent
     # miscompile (stale self.env entry after a coarser-granularity write) with no
     # ElaborationError on either side of the fix, so it's checked in-process via

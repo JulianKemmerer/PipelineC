@@ -97,7 +97,8 @@ uint1_t blink()
 | Multiple clock domains / Clock domain crossings | No | Yes |
 | Parameterized/Template Functions+Types | [Yes](docs/pypeline_guide.md#12-parametric-hardware-with-factory-functions) | No |
 | Operator overloading | [Yes](docs/pypeline_guide.md#13-custom-operators) | Yes (hacky) |
-| User visible automatic pipeline depths | [Yes](docs/pypeline_guide.md#15-forcing-pipelining-autopipeline) | No |
+| User visible automatic pipeline depths | [Yes](docs/pypeline_guide.md#15-tool-chosen-implementation-autopipeline-and-autofsm) | No |
+| Automatic resource sharing (pure func → shared-resource FSM) | [Yes](docs/pypeline_guide.md#autofsm-the-opposite-trade-off) | No |
 | SoC system bus helpers | No | Yes |
 | Generates software Helper Code | No | Yes |
 | Derived FSM style code | No | Yes |

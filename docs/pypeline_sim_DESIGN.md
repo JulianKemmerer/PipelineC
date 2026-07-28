@@ -1794,6 +1794,8 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   per cycle with no internal stall. This is exactly what AUTOPIPELINE and the sweep produce
   (combinational logic cut into register stages), so it always holds for their output — but the
   delay line is not a general model of a hand-built multi-cycle or back-pressured pipeline.
+  (An `AUTOFSM` call site has initiation interval N, not 1, and is deliberately *not* modelled
+  by this delay line — it gets its own register-level model instead; see below.)
 - **Warm-up data is not comparable.** VHDL's added pipeline registers are declared with no
   initializer and read `'U'` in GHDL during the first N cycles; native delay lines start at typed
   zeros. Any `sim_print(debug=True)` used for a pipelined cycle diff must be **valid-gated** — a
@@ -1845,6 +1847,55 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   (the shipped `native_vs_vhdl_*` test designs gate their final prints with a `done` register).
   This is a testbench-authoring rule, not a native-sim inaccuracy, but it governs whether a diff
   reads clean.
+
+#### AUTOFSM call sites (non-`--comb` `--sim`)
+
+`AUTOFSM(func)` produces a resource-shared state machine with initiation interval
+N and a fixed N-cycle latency (see [`AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md)),
+which the output-delay model above cannot represent. It is emulated separately by
+`AUTOFSM._sim_fsm` in `pypeline.py`.
+
+Rather than modelling the FSM's *behaviour* abstractly, the emulation models the
+generated hardware's **registers** — the same state register, input latch and
+output registers the code generator declares — and steps them the same way:
+
+```python
+out = out_stream_t(data=st["out_data"], valid=st["out_valid"])   # committed regs
+nxt = {"st": st["st"], "in": st["in"], "out_data": st["out_data"], "out_valid": 0}
+if st["st"] == 0:
+    if valid:                       # accept only while idle => II == latency
+        nxt["in"] = deepcopy(data)
+        nxt["st"] = 1
+elif st["st"] >= n_states:          # last execution state: result lands in the regs
+    nxt["out_data"] = deepcopy(self.func(st["in"]))
+    nxt["out_valid"] = 1
+    nxt["st"] = 0
+else:
+    nxt["st"] = st["st"] + 1
+```
+
+Cycle accuracy against the VHDL is therefore structural rather than an argument
+to be checked separately. The commit discipline is the same as
+`_sim_delay_line`'s and `_call_sim_model`'s: the returned value comes only from
+state committed at the last clock edge (so repeated evaluation during
+convergence cannot churn), the next state is written into the buffer (last write
+wins, only the final pass lands at `_sim_reg_flush_buffer`), warm-up is typed
+zeros from `sim_zero`, and both directions are deep-copied against aliasing.
+
+The whole function is evaluated in one go in the last state rather than
+per-state: the FSM's decomposition into states is a hardware implementation
+detail, invisible at the call-site boundary this model has to match.
+
+Schedules reach the simulator exactly the way AUTOPIPELINE latencies do —
+`SIM.DO_OPTIONAL_SIM` → `run_sim(autofsm_schedules=...)` →
+`SET_AUTOFSM_SCHEDULE_CACHE` **before** `_import_design`, because the tag
+captures its schedule at construction and any `.latency`-derived Python sizing
+must elaborate the same way it did for the build. With no schedule installed
+(plain native sim, `--comb`) the call site is a zero-latency passthrough.
+
+`self_check_autofsm_test.py` is run in both native and GHDL simulation, at
+latency 0 and at real latency, which is what checks this model against the
+hardware in practice.
 
 #### `pypeline_sim_debug.py` under non-`--comb`
 

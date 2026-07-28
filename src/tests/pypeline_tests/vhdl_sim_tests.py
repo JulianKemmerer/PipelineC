@@ -23,6 +23,10 @@ VHDL_SIM_TEST_FILES = [
     ("self_check_counter_test.py", INST_DIR, "all"),
     ("self_check_fifo_test.py", INST_DIR, "all"),
     ("self_check_bit_math_test.py", INST_DIR, "all"),
+    # AUTOFSM through real GHDL in --comb mode (passthrough). The scheduled
+    # FSM hardware is exercised by the non---comb autofsm_vhdl_sim_test in
+    # synth_tests.py, which cannot live here (this list is --comb only).
+    ("self_check_autofsm_test.py", INST_DIR, "all"),
     ("global_wire_partial_field_test.py", INST_DIR, "all"),
     ("global_wire_read_write_test.py", INST_DIR, "all"),
     ("global_wire_split_driver_test.py", INST_DIR, "all"),

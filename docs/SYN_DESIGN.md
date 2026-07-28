@@ -753,6 +753,73 @@ The converged harvest has one more consumer: a non-`--comb` `--sim` run hands it
 which re-imports the design with the cache installed and emulates every latency —
 see `pypeline_sim_DESIGN.md` §"Pipelined native sim".
 
+## 6.6 AUTOFSM schedule-and-confirm loop (Pypeline designs only)
+
+`AUTOFSM(func)` is the resource-minimizing dual of AUTOPIPELINE: instead of
+cutting one copy of a function's hardware into pipeline stages, it keeps ONE
+copy of each distinct operation and runs the function over several cycles. Full
+design in [`AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md); what matters here is how it
+sits around everything above.
+
+**Loop nesting.** `run_sweep_and_autopipeline` in `src/pipelinec` is the whole
+of §5 + §6.5 factored into one function. When a design contains AUTOFSM call
+sites, `run_autofsm_schedule_passes` wraps it:
+
+```
+bootstrap parse (AUTOFSM call sites are combinational passthroughs)
+for each schedule pass:
+    ADD_PATH_DELAY_TO_LOOKUP          <- measure the operations, do NOT sweep
+    schedule + bind each AUTOFSM
+    install schedules, re-PARSE_FILE  <- call sites become the generated FSMs
+    run_sweep_and_autopipeline        <- §5 sweep + §6.5 AUTOPIPELINE loop
+    timing met, or nothing/only-floors blamed?  -> done
+    otherwise shrink the blamed FSMs' per-state budget and go again
+```
+
+The bootstrap design is deliberately **not** swept: it holds the raw
+combinational blob nobody intends to build, so sweeping it would fail timing
+pointlessly. It exists only to be measured.
+
+**Why a generated FSM needs no sweep support.** It holds non-volatile `Reg`
+state, so `CAN_HAVE_ADDED_LATENCY` is already False: the sweep treats it as an
+unsliceable atomic block whose measured delay is a soft floor (§4's
+`state_regs` reason), and `CALC_TOTAL_LATENCY` reports 0 added latency to its
+container. Everything it needs was already there.
+
+**Two delay-model changes** (`SYN.py`), both about *which* functions get delays:
+
+- **`FUNC_SUBTREE_HAS_AUTOFSM`**, consulted alongside
+  `FUNC_SUBTREE_HAS_AUTOPIPELINE` in `FUNC_PATH_DELAY_IS_ESTIMABLE`. A stateful
+  MAIN with no AUTOPIPELINE anywhere is an atomic span, so *nothing inside it*
+  is measured — which would leave the AUTOFSM scheduler seeing zero delays and
+  putting the entire function in one state. Only ever true on the bootstrap
+  pass; once scheduled, the tag sits on the calling function and the FSM entity
+  below it is correctly an atomic span (its one whole-module synthesis measures
+  the register-to-register path, i.e. its worst state — exactly the number
+  timing attribution needs).
+- **`parser_state.func_force_estimated`**, a new escape hatch checked at the top
+  of `FUNC_PATH_DELAY_IS_ESTIMABLE`. The bootstrap passthrough looks exactly
+  like a measurement frontier (§3) and would otherwise get one whole-blob
+  synthesis of precisely the parallel logic the user asked *not* to build — for
+  a float64 polynomial, that does not finish in reasonable time. Nothing
+  consumes that number: the scheduler works from the individual operations
+  underneath, measured and disk-cached as usual.
+
+**Timing attribution.** `AUTOFSM.BLAMED_AUTOFSM_KEYS` reads
+`sweep_timing_failures`. When the sweep attributed a blamed function, a
+generated FSM entity is exactly the unsliceable atomic block it names. With no
+attribution (PYRTL reports no path detail) it falls back to blaming every
+AUTOFSM under the failing MAIN — over-blaming costs one extra pass,
+under-blaming would silently give up.
+
+**Convergence** is easier than §6.5's. A schedule is a pure function of (the
+function's Logic graphs, its operations' delays, the budget scale) and is
+independent of the surrounding design, so nothing can oscillate: only an
+explicit tightening changes the answer, and tightening is monotonic and capped
+(`MAX_SCHEDULE_PASSES`). The loop also stops early when every blamed region is
+`at_floor` — one indivisible operation too slow for the clock, which no number
+of extra states can fix.
+
 ## 7. Test matrix
 
 Fast tests (no `PART()` → PYRTL software timing model, seconds per synth
@@ -769,10 +836,17 @@ run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
 | `sweep_planless_test.py` | stateful MAIN with a met goal but nothing cuttable: one standalone as-written check synthesis prints PASS, its critical path is NOT stored as the func delay, one full syn run, exit 0 |
 | `autopipeline_latency_test.py` | end-to-end factory design (`make_stream_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6.5 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, seeded confirmation syn passes with no fallback sweep, loop settles within the pass cap (extra realization passes allowed) |
 
+| `autofsm_latency_test.py` | §6.6 end-to-end: schedule pass runs, several same-kind operations fold onto fewer shared units, latency == states + 1, and exactly ONE instance of each shared unit appears in the generated VHDL |
+| `autofsm_resources_compare_test.py` | §6.6 area: same design built `--comb` (no sharing) and scheduled, compared by yosys cell count — guards the reason the feature exists |
+| `autofsm_timing_iter_test.py` | §6.6 iteration: a deliberately over-packed first schedule misses the clock, the FSM is blamed, its budget is tightened, and a later build passes — with no source change |
+
 Unit/in-process coverage (registered in `elab_tests.py`):
 `autopipeline_harvest_test.py` (harvest grouping + divergence, seed two-tier matching
 + call-site-change detection, `CANONICAL_CALLABLE_KEY` determinism, latency
-cache/read-flag) and `double_parse_file_test.py` (repeated `PARSE_FILE` equivalence).
+cache/read-flag), `autofsm_unit_test.py` (scheduler binding/dependency/register
+invariants, budget→states, floors, byte-identical generated source across
+re-elaborations) and `double_parse_file_test.py` (repeated `PARSE_FILE`
+equivalence, including an AUTOFSM design).
 
 Real-toolchain validation: the wireguard-fpga ChaCha20-Poly1305 build
 (`wireguard-fpga/3.build/pypeline_build/build_syn_tb_pipe*.sh`, Vivado) and the

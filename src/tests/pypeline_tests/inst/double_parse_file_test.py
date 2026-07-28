@@ -91,8 +91,18 @@ def test_fir_design_reparses():
     parse_twice_and_compare(os.path.join(INST_DIR, "fir_sweep_test.py"))
 
 
+def test_autofsm_design_reparses():
+    # AUTOFSM tagging: the driver's schedule-and-confirm loop re-parses the
+    # design between passes, and AUTOFSM leans hard on that being reproducible
+    # -- the generated FSM's entity name is a hash of the schedule, whose node
+    # ids come from source coordinates. Any re-parse instability here would
+    # rename the entity every pass and break cross-pass matching.
+    parse_twice_and_compare(os.path.join(INST_DIR, "autofsm_test.py"))
+
+
 if __name__ == "__main__":
     test_multi_file_design_reparses()
     test_stream_pipeline_design_reparses()
     test_fir_design_reparses()
+    test_autofsm_design_reparses()
     print("All double PARSE_FILE tests passed.")

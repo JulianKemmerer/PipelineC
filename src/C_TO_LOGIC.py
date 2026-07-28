@@ -466,6 +466,15 @@ class Logic:
         # .c-originated logic (#pragma AUTOPIPELINE has no Python object to
         # round-trip a discovered latency into).
         self.sub_inst_to_autopipeline_key = {}
+        # Pypeline frontend only: local inst name -> AUTOFSM canonical schedule-cache
+        # key (pypeline.AUTOFSM.canonical_key). Marks the call site whose submodule
+        # is the generated resource-shared FSM entity (or, before a schedule exists,
+        # the combinational passthrough placeholder). Empty for .c-originated logic.
+        # Unlike sub_inst_to_autopipeline_key this never changes how SYN/SWEEP treat
+        # the instance -- the generated FSM entity is stateful, hence already atomic
+        # and zero-added-latency -- it exists so the driver can find AUTOFSM call
+        # sites to schedule. See docs/AUTOFSM_DESIGN.md.
+        self.sub_inst_to_autofsm_key = {}
         self.ast_meta = None
         # Is this logic a c built in C function?
         self.is_c_built_in = False
@@ -588,6 +597,7 @@ class Logic:
         rv.next_func_call_autopipeline_depth = self.next_func_call_autopipeline_depth
         rv.sub_inst_to_autopipeline_depth = dict(self.sub_inst_to_autopipeline_depth)
         rv.sub_inst_to_autopipeline_key = dict(self.sub_inst_to_autopipeline_key)
+        rv.sub_inst_to_autofsm_key = dict(self.sub_inst_to_autofsm_key)
         rv.ast_meta = self.ast_meta
         rv.is_c_built_in = self.is_c_built_in
         rv.is_vhdl_func = self.is_vhdl_func

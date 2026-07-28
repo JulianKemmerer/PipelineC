@@ -69,6 +69,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
   - [`@MAIN(mhz)` — Clock Frequency Constraint](#mainmhz--clock-frequency-constraint)
   - [Clock Domain Inference (`INFER_CLOCK_DOMAINS`)](#clock-domain-inference-infer_clock_domains)
 - [`AUTOPIPELINE(func, depth)` — Forced Submodule Pipelining](#autopipelinefunc-depth--forced-submodule-pipelining)
+- [`AUTOFSM(func)` — Resource-Shared State Machines](#autofsmfunc--resource-shared-state-machines)
 - [`MULTI_CYCLE[ncycles]` / `Reg[T, tag]` — Multi-Cycle Path Constraint](#multi_cyclencycles--regt-tag--multi-cycle-path-constraint)
 - [`@wires` — Just-Wires Synthesis Hint](#wires--just-wires-synthesis-hint)
 
@@ -4035,6 +4036,88 @@ object — so a tag used inside one function body only affects calls elaborated 
 that same function, matching the C implementation's per-`Logic()` scoping. (The C
 frontend's forward-looking `next_func_call_autopipeline_depth` field still exists for
 `#pragma AUTOPIPELINE`, but the Pypeline path no longer uses it.)
+
+## `AUTOFSM(func)` — Resource-Shared State Machines
+
+`AUTOFSM(func)` implements a pure combinational function as a state machine
+holding ONE copy of each distinct operation, instead of the parallel logic the
+source literally describes. Full design in
+[`AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md); this section covers only what the
+elaborator does.
+
+### Elaboration (`FuncElaborator._elab_call`)
+
+The probe sits in the same `if`-chain as AUTOPIPELINE's, one `elif` below it,
+and duck-types on `_is_autofsm_pragma`. The difference is what gets
+instantiated: **not** the tagged function, but a generated wrapper around it,
+whose shape depends on whether a schedule has been computed yet.
+
+```python
+        elif getattr(tag_probe, "_is_autofsm_pragma", False):
+            import AUTOFSM as _AUTOFSM_MOD
+
+            autofsm_call = tag_probe
+            generated = _AUTOFSM_MOD.BUILD_AUTOFSM_FUNC(
+                autofsm_call, self.parser_state, self
+            )
+            callee_name = generated.__name__
+            callee_def = self._elaborate_live_func(callee_name, generated)
+```
+
+- **No schedule installed** (bootstrap pass, `--comb`, `--no_synth`): a
+  combinational passthrough, `o.data = func(s.data); o.valid = s.valid`. Its job
+  is to put `func` — and every operation inside it — into the design so
+  `SYN.ADD_PATH_DELAY_TO_LOOKUP` measures the delays the scheduler needs.
+- **Schedule installed**: the generated FSM, produced by joining the schedule
+  with a fresh elaboration of `func`. `BUILD_AUTOFSM_FUNC` receives the
+  elaborator itself so it can call `_elaborate_live_func` on the tagged function
+  — code generation reads that function's `Logic` graph, and on this pass
+  nothing else would elaborate it (the passthrough that did so on the bootstrap
+  pass is gone).
+
+Tagging mirrors AUTOPIPELINE's, immediately after `_add_submodule_instance`:
+
+```python
+        if autofsm_call is not None:
+            self.logic.sub_inst_to_autofsm_key[inst] = autofsm_call.canonical_key
+```
+
+Unlike `sub_inst_to_autopipeline_key`, this changes nothing about how SYN or
+SWEEP treat the instance — a generated FSM entity holds `Reg` state, so it is
+already atomic and zero-added-latency. The tag exists so the driver can *find*
+AUTOFSM call sites, and so `SYN.FUNC_SUBTREE_HAS_AUTOFSM` can open up delay
+measurement inside the stateful container that holds one (see
+[`SYN_DESIGN.md`](SYN_DESIGN.md) §6.6).
+
+`_callable_canonical_name` gains an `AUTOFSM_<inner>` case beside the
+`AUTOPIPELINE_<inner>` one, for the same reason: the tag object has no
+distinguishing qualname of its own, so its identity is the wrapped function's.
+
+### Side tables for code generation
+
+Code generation re-emits operations as Python source, which needs two things the
+`Logic` graph does not carry. Both are populated as a side effect of ordinary
+elaboration and initialized in `PARSE_FILE`:
+
+| `parser_state` field | contents | written by |
+|---|---|---|
+| `pypeline_entity_callables` | entity name → the live Python callable that produced it | `PARSE_FILE` step 6 (top-level `@hw_func`s, before any elaboration runs) and `_elaborate_live_func` (anything reached only through a closure alias) |
+| `pypeline_const_wire_values` | func name → {constant wire → Python value} | reserved for constants that cannot be recovered from the wire name |
+
+`setdefault` in both writers: first writer wins, matching
+`_elaborate_live_func`'s own dedup. Live callables are kept off `Logic` entirely
+(no `DEEPCOPY`/pickle hazard). The top-level recording happens in the *stub*
+pass rather than during elaboration because AUTOFSM code generation runs
+mid-elaboration and may need a unit that has not been elaborated yet.
+
+### Determinism requirements
+
+Node ids in a schedule are local instance names — operation name plus
+`_loc_str` source coordinates — and the generated entity's name is a hash of the
+schedule. So the same design must re-parse to byte-identical generated source,
+or entity names would churn between the driver's passes and cross-pass matching
+would break. This rides on exactly the guarantees the next section describes,
+and `double_parse_file_test.py` covers an AUTOFSM design for it.
 
 ### Repeated `PARSE_FILE` support (the pin-and-confirm loop's foundation)
 
