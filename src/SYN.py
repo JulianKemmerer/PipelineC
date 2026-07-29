@@ -1495,7 +1495,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 wires_driven_by_so_far[output] is None
             ):
                 if print_debug:
-                    print("Pipeline not done output.", output)
+                    print("Pipeline not done, output seems never driven:", output)
                 return False
             if print_debug:
                 print("Output driven ", output, "<=", wires_driven_by_so_far[output])
@@ -1505,7 +1505,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 wires_driven_by_so_far[feedback_var] is None
             ):
                 if print_debug:
-                    print("Pipeline not done feedback var.", feedback_var)
+                    print("Pipeline not done, feedback var seems never driven:", feedback_var)
                 return False
             if print_debug:
                 print(
@@ -1528,7 +1528,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                             print("Register holds value (never written):", state_reg)
                         continue
                     if print_debug:
-                        print("Pipeline not done state_reg.", state_reg)
+                        print("Pipeline not done, state_reg seems never driven:", state_reg)
                     return False
                 if print_debug:
                     print(
@@ -1543,7 +1543,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 wires_driven_by_so_far[global_wire] is None
             ):
                 if print_debug:
-                    print("Pipeline not done write only global.", global_wire)
+                    print("Pipeline not done, write only global seems never driven:", global_wire)
                 return False
             if print_debug:
                 print(
@@ -1566,7 +1566,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                     ):
                         if print_debug:
                             print(
-                                "Pipeline not done volatile global.",
+                                "Pipeline not done, volatile global seems never driven:",
                                 volatile_global_wire,
                             )
                         return False
@@ -1584,7 +1584,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 wire, parser_state.FuncLogicLookupTable
             ):
                 if print_debug:
-                    print("Pipeline not done wire.", wire)
+                    print("Pipeline not done, wire seems never driven:", wire)
                 return False
             if print_debug:
                 driven_by = None
@@ -1607,8 +1607,9 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     while not PIPELINE_DONE():
         # Print stuff and set debug if obviously wrong
         if stage_num >= 5000:
-            print("Pipeline too long? Past hard coded limit probably...")
-            print("inst_name", inst_name)
+            # Pipeline too long? Past hard coded limit probably...
+            print("Pipelining is failing to construct inputs->stages->outputs...")
+            print("for inst_name:", inst_name)
             bad_inf_loop = True
             print_debug = True
         if stage_num >= 5001:
@@ -1616,7 +1617,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         if est_total_latency is not None:
             if stage_num >= max_possible_latency_with_extra:
                 print("Something is wrong here, infinite loop probably...")
-                print("inst_name", inst_name)
+                print("for inst_name:", inst_name)
                 # print 0/0
                 sys.exit(-1)
             elif stage_num >= max_possible_latency + 1:
