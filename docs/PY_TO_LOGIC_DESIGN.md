@@ -2696,15 +2696,43 @@ my_point: point2d_t = {"dim": {1: 1, 0: 0}}     # int-keyed dict (C-style)
 
 `_elab_ann_assign` checks whether the RHS is an `ast.Call` whose callee evaluates
 (`_try_eval_const`) to a NamedTuple class (has `_fields`). If so, `_elab_compound_init`
-is called with the `ast.Call` node. The `ast.Call` branch in `_elab_compound_init` iterates
-over the keyword arguments and recurses with `path_toks + (kw.arg,)` for each field:
+is called with the `ast.Call` node. The `ast.Call` branch in `_elab_compound_init` zips
+**positional** args against `callee._fields` (in declaration order) first, then iterates
+the **keyword** arguments, recursing with `path_toks + (fname,)` / `path_toks + (kw.arg,)`
+for each field — matching Python's own NamedTuple call semantics, so positional-only,
+keyword-only, and mixed positional+keyword constructor calls all wire every field:
 
 ```
 point2d_t(dim=[v0, v1])  on  my_point: point2d_t
   ├─ kw "dim" → path_toks = ("dim",)
   ├─ list index 0, v0 → _write_ref(("my_point","dim",0), v0_wire, ...)
   └─ list index 1, v1 → _write_ref(("my_point","dim",1), v1_wire, ...)
+
+pair_t(a_val, active)  on a struct return  (positional form)
+  ├─ field "a" (1st declared field) → path_toks = ("a",)
+  └─ field "b" (2nd declared field) → path_toks = ("b",)
 ```
+
+Before this positional-arg support was added, the `ast.Call` branch only ever iterated
+`init_node.keywords` — an all-positional constructor call (`pair_t(a_val, active)`) would
+silently iterate zero times, leaving every field (and, for a `return` statement, the
+function's entire `return_output` wire) permanently undriven. Because nothing raised an
+error at the point the field went unwritten, this surfaced only much later and far away:
+`SYN.py`'s pipeline-stage scheduler (`PIPELINE_DONE()`) would spin for `stage_num >= 5000`
+iterations waiting for `return_output` to become driven and then hard `sys.exit(-1)`, with
+no traceback pointing at the actual defect. Two things now guard against a regression of
+this shape: the positional-arg zip above (the actual fix), and a safety-net check at the
+end of `elaborate()` (see below) that raises a clear `ElaborationError` immediately if a
+function's `return_output` wire is left undriven, rather than letting the bug surface only
+inside the scheduler's stage-count cap.
+
+When the `ast.Call` callee does **not** resolve to a NamedTuple (e.g. a plain
+elaboration-time helper function called inline as a field initializer, like
+`fwd_t(stream=make_null_stream())`), `_elab_compound_init` falls through: it first tries
+`_try_eval_const` on the **whole call** and, if that fully const-folds to a
+`dict`/`list`/`tuple`, decomposes it via `_elab_compound_init_from_pyval` (same as the
+"Compound Init from Python Function Call" path below); otherwise it falls through further
+to the generic `_elab_expr` handling in the final `else` branch.
 
 `_try_eval_const` resolves the callee name against `{**module_globals, **const_env}`,
 so struct types defined in factory closures (like `float_t` inside `make_float_adder`)

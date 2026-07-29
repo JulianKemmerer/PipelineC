@@ -2183,6 +2183,19 @@ class FuncElaborator:
                     self.func_def,
                 )
         self._connect_final_state_wires()
+        if (
+            self._return_type is not None
+            and self.logic.vhdl_module_text is None
+            and C_TO_LOGIC.RETURN_WIRE_NAME not in self.logic.wire_driven_by
+        ):
+            raise ElaborationError(
+                f"Function '{self.func_name}' has return type "
+                f"'{self._return_type}' but its return value was never wired "
+                f"to a driver (return_output undriven) — this usually means a "
+                f"'return' statement's expression failed to elaborate all of "
+                f"its parts",
+                self.func_def,
+            )
         return self.logic
 
     def _connect_final_state_wires(self):
@@ -3073,8 +3086,18 @@ class FuncElaborator:
                     context_node,
                     path_toks + (_sanitize_ref_tok(key),),
                 )
-        elif isinstance(init_node, ast.Call):
-            # NamedTuple struct constructor: MyStruct(field=val, ...)
+        elif isinstance(init_node, ast.Call) and hasattr(
+            self._try_eval_const(init_node.func), "_fields"
+        ):
+            # NamedTuple struct constructor: MyStruct(val, ..., field=val, ...)
+            callee = self._try_eval_const(init_node.func)
+            for fname, arg_node in zip(callee._fields, init_node.args):
+                self._elab_compound_init(
+                    base_name,
+                    arg_node,
+                    context_node,
+                    path_toks + (_sanitize_ref_tok(fname),),
+                )
             for kw in init_node.keywords:
                 self._elab_compound_init(
                     base_name,
@@ -3082,6 +3105,16 @@ class FuncElaborator:
                     context_node,
                     path_toks + (_sanitize_ref_tok(kw.arg),),
                 )
+        elif isinstance(init_node, ast.Call) and isinstance(
+            (const_val := self._try_eval_const(init_node)), (dict, list, tuple)
+        ):
+            # Plain (non-struct-ctor) call that fully const-folds to a compound
+            # Python value, e.g. a helper `def make_x(): return x_t(...)` used
+            # as a field initializer -- decompose the resulting pyval directly
+            # rather than trying to elaborate the call as hardware.
+            self._elab_compound_init_from_pyval(
+                base_name, const_val, context_node, path_toks
+            )
         else:
             rhs_wire, rhs_type = self._elab_expr(init_node)
             self._write_ref((base_name,) + path_toks, rhs_wire, rhs_type, context_node)

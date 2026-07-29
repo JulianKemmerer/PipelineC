@@ -863,8 +863,10 @@ def struct(cls):
     _orig_new = cls.__new__
 
     def _typed_new(klass, *args, **kwargs):
-        if args and not kwargs:
-            kwargs = dict(zip(klass._fields, args))
+        if args:
+            positional = dict(zip(klass._fields, args))
+            positional.update(kwargs)
+            kwargs = positional
         typed = {}
         if SIM_RAW_INTS:
             for fname, v in kwargs.items():

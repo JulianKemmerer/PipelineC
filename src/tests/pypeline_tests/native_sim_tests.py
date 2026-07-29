@@ -221,6 +221,20 @@ def get_tests() -> list:
     )
     tests.append(
         Test(
+            name="struct_ctor_positional_test",
+            category="native_sim",
+            cmd=[
+                PIPELINEC,
+                INST_DIR / "struct_ctor_positional_test.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "all",
+            ],
+        )
+    )
+    tests.append(
+        Test(
             name="global_wire_partial_field_test",
             category="native_sim",
             cmd=[

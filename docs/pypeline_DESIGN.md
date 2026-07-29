@@ -292,8 +292,11 @@ a list of bare `0`s.
 **3. Overrides `__new__`** with `_typed_new` to wrap scalar integer fields — and scalar
 *array* fields, element-wise — in typed simulation values when constructing struct
 instances. This enables `left.exp` in `float_add` to carry the correct `_ctype` (`uint8_t`
-for float32) so `concat(x_hidden, left.man)` can infer field widths without being told. Two
-code paths:
+for float32) so `concat(x_hidden, left.man)` can infer field widths without being told.
+`_typed_new` first normalizes positional args to keyword args by zipping them against
+`klass._fields`, then updates with any explicit keyword args — supporting positional-only,
+keyword-only, and mixed positional+keyword struct construction identically (mirroring
+Python's own `NamedTuple.__new__` semantics). Two code paths:
 
 - **Normal sim mode** (`SIM_RAW_INTS=False`): scalar fields are cast via `_sim_cast(v, ftype)`
   — mask/sign-extend to the field's declared bit width, exactly like a hardware-typed
