@@ -32,7 +32,7 @@ For getting started information see the [README](README.md).
 24. [FIFOs: `make_stream_fifo`](#24-fifos-make_stream_fifo)
 25. [Pipelined Stream Wrappers: `make_stream_pipeline`](#25-pipelined-stream-wrappers-make_stream_pipeline)
 26. [Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#26-multi-cycle-stream-wrapper-make_valid_ready_mcp)
-27. [DSP: FIR Filters](#27-dsp-fir-filters)
+27. [DSP: Filters & Signal Conditioning](#27-dsp-filters--signal-conditioning)
 28. [Limitations / Not Yet Supported](#28-limitations--not-yet-supported)
 
 ---
@@ -2806,7 +2806,7 @@ feedback_t=...)` widens it to a credit count or a struct of flags, just as `bus_
 carries `credit`/`halt`. Every streaming building block that follows —
 [AXI-Stream](#23-axi-stream-axis_t), [FIFOs](#24-fifos-make_stream_fifo),
 [pipelined wrappers](#25-pipelined-stream-wrappers-make_stream_pipeline), and the
-[FIR filters](#27-dsp-fir-filters) — declares its ports as these two interface halves.
+[DSP blocks](#27-dsp-filters--signal-conditioning) — declares its ports as these two interface halves.
 
 ### Interface functions: write feedforward, get the reverse wired
 
@@ -3308,7 +3308,7 @@ simulation always sees `func`'s result settle the same cycle it is computed. See
 
 ---
 
-## 27 DSP: FIR Filters
+## 27 DSP: Filters & Signal Conditioning
 
 `include/pypeline/dsp/` is a vendor-neutral FIR filter library in the spirit of the
 AMD/Xilinx FIR Compiler and Intel/Altera FIR II IP wizards, built on the
@@ -3413,10 +3413,112 @@ synthesizable I/Q 5× decimator pair at 125 MHz — the pypeline port of
 `src/tests/pypeline_tests/inst/fir_test.py`, `fir_decim_test.py`, `fir_interp_test.py`,
 `fir_sim_tb_test.py`.
 
-Roadmap (not yet implemented): polyphase interpolation/decimation, resource-folded
+FIR roadmap (not yet implemented): polyphase interpolation/decimation, resource-folded
 II>1 "slow" filters (time-shared MACs for fclk >> fs, port of `include/dsp/slow_fir.h`),
 multichannel TDM, and runtime-reloadable coefficient banks (blocked on a RAM/ROM
 primitive).
+
+### `make_magnitude` — complex-sample power (I²+Q²)
+
+```python
+from fixed_point import make_fixed_t
+from dsp.magnitude import make_magnitude
+
+data_t = make_fixed_t(16, 0)   # int16_t I/Q rails
+magnitude, magnitude_t = make_magnitude(data_t)   # out_t=None: full-precision uint32_t power
+
+@MAIN(125.0)
+def top(stream_in_if: magnitude.in_fwd_t, stream_out_if: magnitude.out_fb_t) -> magnitude_t:
+    return magnitude(stream_in_if, stream_out_if)
+```
+
+One pure feedforward blob (two squares, an add, a fused output resize) autopipelined
+and wrapped in a stream, the same shape as `make_fir`'s core. `make_complex_t(data_t)`
+(a plain `{i, q}` struct) is `magnitude`'s input type, exposed as `.complex_t`/
+`.in_data_t`. `out_t=None` gives the exact, lossless power type — for
+`make_fixed_t(16, 0)` (`int16_t`) that comes out as `make_fixed_t(32, 0, signed=False)`
+(`uint32_t`), the format an RF pulse detector's threshold comparisons run in.
+`rounding`/`overflow`/`handshake` mean exactly what they do for `make_fir`.
+
+### `make_dc_block` — leaky-integrator DC removal
+
+```python
+from dsp.dc_block import make_dc_block
+
+dc_block, dc_block_t = make_dc_block(data_t, k=10, out_t=data_t, overflow="saturate")
+```
+
+```
+y[n] = x[n] - mean[n]
+mean[n] = mean[n-1] + (x_ext[n] - mean[n-1]) >> k
+```
+
+A one-pole highpass: subtract a running leaky-integrator estimate of the signal's DC
+level. `mean` is carried with `k` **extra fractional bits** beyond `data_t` — the
+standard trick that lets the `>> k` update step keep producing a real (if small)
+increment every cycle instead of sticking at 0 once `|x - mean|` drops below one
+`data_t` LSB (the classic integer-leaky-integrator dead-zone/limit-cycle). Passband is
+flat, unlike the classic `y = x - x_prev + R*y_prev` pole/zero blocker (~2× gain at
+Nyquist). `k` sets the pole at `1 - 2^-k`, i.e. a settling time constant of roughly
+`2^k` samples. `.mean_t`/`.diff_t`/`.k` are exposed as metadata; the running mean is
+itself a useful noise-floor estimate. The mean-update recursion is an inherent IIR
+loop, so — unlike `make_fir`/`make_magnitude`/`make_moving_avg` — only the feedforward
+output resize is autopipelined, not the whole block.
+
+### `make_moving_avg` — boxcar smoother
+
+```python
+from dsp.moving_avg import make_moving_avg
+
+moving_avg, moving_avg_t = make_moving_avg(data_t, 16, out_t=data_t, overflow="saturate")
+```
+
+Average of the last `n` samples (window includes the current sample, matching
+`golden_fir`'s convention), kept as a running sum — O(1) adders instead of the O(n) an
+equivalent all-ones `make_fir` would cost, with no rounding drift (the sum is exact
+integer arithmetic). `normalize=True` (default) divides by `n` for free: since `n` is a
+power of two, the divide is just a binary-point relabelling (`log2(n)` extra
+fractional bits) fused into the same output resize stage every other `dsp/` block
+uses — non-power-of-two `n` needs a real reciprocal multiply and isn't implemented
+(pass `normalize=False` for the raw running-sum boxcar instead, any `n`). `.n`/
+`.normalize`/`.sum_t`/`.avg_t` are exposed as metadata. The delay line is registers,
+not BRAM (no RAM primitive in this codebase yet — the same limitation blocking the FIR
+library's coefficient-bank roadmap item above), so a large `n` × wide `data_t` costs
+flops accordingly.
+
+### `dsp/dsp_tb.py` — testbench library for magnitude/dc_block/moving_avg
+
+Same `@sim_input`/`@sim_output` shape as `dsp/fir_tb.py`, re-exporting its signal
+generators and `golden_resize` so a testbench needs one import line:
+
+```python
+from dsp.dsp_tb import make_block_tb, golden_magnitude, quantize_samples, sine
+
+expected = golden_magnitude(magnitude, iq_pairs)   # or golden_dc_block / golden_moving_avg
+tb = make_block_tb(magnitude, iq_pairs, expected, name="my_magnitude")
+
+@MAIN
+def my_magnitude_tb():
+    stream_in = tb.drive_in()
+    out_ready = tb.drive_ready()
+    o = magnitude(stream_in, out_ready)
+    tb.observe(o)
+```
+
+`golden_magnitude`/`golden_dc_block`/`golden_moving_avg` are exact integer golden
+models (bit-exact `golden_resize` mirror, same convention as `golden_fir`).
+`make_block_tb` handles both `handshake` modes off the block's own metadata, and takes
+`in_value`/`out_value` callables for blocks whose port data isn't a bare
+`data_t(val=raw)` (e.g. magnitude's `complex_t(i=..., q=...)`), plus an optional
+`on_done(state)` hook for a behavioural check beyond exact golden matching (worked
+examples in `examples/pypeline/dsp/`: `magnitude_tb.py` checks a pulse's power
+envelope is visible, `dc_block_tb.py` checks the settled output mean, `moving_avg_tb.py`
+checks noise variance reduction). Tests:
+`src/tests/pypeline_tests/inst/magnitude_test.py`, `dc_block_test.py`,
+`moving_avg_test.py`.
+
+Roadmap (not yet implemented): a reciprocal-multiply path for non-power-of-two
+`make_moving_avg` window lengths, and a BRAM-backed delay line for large windows.
 
 ---
 

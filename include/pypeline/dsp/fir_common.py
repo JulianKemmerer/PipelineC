@@ -92,7 +92,7 @@ def build_terms(coeffs_q, symmetry, skip_zero_taps):
     return A, B, SGN, C
 
 
-def _data_range(data_t):
+def data_range(data_t):
     """Representable raw-integer range of a fixed_t's .val field."""
     total = data_t.int_bits + data_t.frac_bits
     if data_t.signed:
@@ -100,10 +100,20 @@ def _data_range(data_t):
     return 0, (1 << total) - 1
 
 
-def _signed_bits_for(lo, hi):
+def signed_bits_for(lo, hi):
     """Smallest signed two's-complement width holding every value in [lo, hi]."""
     b = 1
     while lo < -(1 << (b - 1)) or hi > (1 << (b - 1)) - 1:
+        b += 1
+    return b
+
+
+def unsigned_bits_for(hi):
+    """Smallest unsigned width holding every value in [0, hi]. hi must be >= 0."""
+    if hi < 0:
+        raise ValueError(f"unsigned_bits_for: hi must be >= 0, got {hi!r}")
+    b = 1
+    while hi > (1 << b) - 1:
         b += 1
     return b
 
@@ -114,7 +124,7 @@ def accum_bounds(A, B, SGN, C, data_t):
     adder tree also fits these bounds (each term's max contribution is >= 0
     and min contribution is <= 0), so one accumulator type is safe throughout.
     """
-    xmin, xmax = _data_range(data_t)
+    xmin, xmax = data_range(data_t)
     lo = 0
     hi = 0
     for j in range(len(C)):
@@ -188,7 +198,7 @@ def make_fir_core(
     NT = len(A)
 
     lo, hi = accum_bounds(A, B, SGN, CQ, data_t)
-    acc_bits = _signed_bits_for(lo, hi)
+    acc_bits = signed_bits_for(lo, hi)
     acc_frac = data_t.frac_bits + coeff_t.frac_bits
     accum_t = make_fixed_t(acc_bits - acc_frac, acc_frac, signed=True)
     accum_val_t = accum_t.typeof("val")

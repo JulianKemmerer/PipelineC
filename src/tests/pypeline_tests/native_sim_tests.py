@@ -9,7 +9,7 @@ Run standalone: python3 native_sim_tests.py [-j N]
 
 import sys
 
-from common import INST_DIR, PIPELINEC, PYPELINE_SIM, Test, main
+from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PIPELINEC, PYPELINE_SIM, Test, main
 
 # fmt: off
 PLAIN_PYTHON_TEST_FILES = [
@@ -46,6 +46,9 @@ PLAIN_PYTHON_TEST_FILES = [
     "fir_test.py",
     "fir_decim_test.py",
     "fir_interp_test.py",
+    "magnitude_test.py",
+    "dc_block_test.py",
+    "moving_avg_test.py",
     "interface_test.py",
     "interface_func_test.py",
     "interface_func_loop_test.py",
@@ -155,6 +158,21 @@ def get_tests() -> list:
             cmd=[PYPELINE_SIM, INST_DIR / "fir_sim_tb_test.py", "--run", "1400"],
         )
     )
+    # dsp/dsp_tb.py testbench-library end-to-end examples (each file drives two
+    # @MAINs -- elastic + valid_only -- so --run must exceed both tbs' deadlines).
+    DSP_DIR = EXAMPLES_PYPELINE_DIR / "dsp"
+    for fname, run_n in [
+        ("magnitude_tb.py", 1000),
+        ("dc_block_tb.py", 4000),
+        ("moving_avg_tb.py", 3000),
+    ]:
+        tests.append(
+            Test(
+                name=fname[: -len(".py")],
+                category="native_sim",
+                cmd=[PIPELINEC, DSP_DIR / fname, "--sim", "--comb", "--run", str(run_n)],
+            )
+        )
     # Self-checking sim_assert/sim_finish designs -- no external Python
     # sim_call/assert harness needed. Same source files are also registered in
     # vhdl_sim_tests.py under --cocotb --ghdl, proving native and VHDL sim agree.
