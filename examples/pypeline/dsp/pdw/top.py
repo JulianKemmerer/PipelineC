@@ -18,8 +18,13 @@ to real top-level ports:
     Q = tdata[31:16]. Named `tx0_` since this drives the first TX port
     (TX1 in the README's diagram, i.e. TX RF Out index 0).
 
+`pdw_main` can consume either the real RX1 ADC input or pulse_gen_main's own
+generated sample directly (internal loopback, no external cable needed),
+selected at runtime by `pulse_loopback_en` -- see the `pulse_gen_sample` Wire
+and `pdw_main` below.
+
 As more of the PDW pipeline gets built, this file is where subsequent
-stages get wired in and where TX2/RX1/host-DMA ports will eventually live.
+stages get wired in and where TX2/host-DMA ports will eventually live.
 """
 
 import os
@@ -34,7 +39,18 @@ sys.path.insert(
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "pulse_detect"),
 )
 
-from pypeline import MAIN, PART, Input, Output, concat, int16_t, uint1_t, uint16_t, uint32_t
+from pypeline import (
+    MAIN,
+    PART,
+    Input,
+    Output,
+    Wire,
+    concat,
+    int16_t,
+    uint1_t,
+    uint16_t,
+    uint32_t,
+)
 
 from pulse_gen import make_pulse_gen
 from pulse_detect import make_detect_pulses
@@ -52,6 +68,11 @@ pulse_gen_amplitude: Input[int16_t]
 tx0_m_axis_tdata: Output[uint32_t]
 tx0_m_axis_tvalid: Output[uint1_t]
 
+# Published by pulse_gen_main, read by pdw_main -- lets pdw_main loop back the
+# actual generated sample internally (see pulse_loopback_en below) without
+# instantiating a second, independently-counting pulse_gen.
+pulse_gen_sample: Wire[pulse_gen.iq_t]
+
 
 @MAIN(125.0)
 def pulse_gen_main():
@@ -64,17 +85,19 @@ def pulse_gen_main():
     q_bits: uint16_t = o.data.q[15:0]
     tx0_m_axis_tdata = concat(q_bits, i_bits)
     tx0_m_axis_tvalid = o.valid
+    pulse_gen_sample = o.data
 
 
 # ---------------------------------------------------------------------------
 # pdw_main -- Path A "TIME-ALIGNED DETECT & DELAY MODULE" front end
 # (detect_pulses: magnitude -> dc_block -> moving_avg -> pulse_detect, see
-# pulse_detect/pulse_detect.py). Standalone @MAIN, not yet wired to pulse_gen_main's
-# pulse_gen/TX1 output above -- only the candidate PDW output stream (data +
-# ready) is exposed as real top-level ports for now, per instruction. Path B
-# (the raw-I/Q delay-line FIFO) and the Qualified Storage & PDW Engine are
-# still out of scope; gate_valid/gate_last/overflow are computed but left
-# unconnected to any port.
+# pulse_detect/pulse_detect.py). Standalone @MAIN; its input sample is muxed
+# between the real RX1 ADC input and pulse_gen_main's own generated sample
+# (internal loopback) via `pulse_loopback_en` -- only the candidate PDW
+# output stream (data + ready) is exposed as real top-level ports for now,
+# per instruction. Path B (the raw-I/Q delay-line FIFO) and the Qualified
+# Storage & PDW Engine are still out of scope; gate_valid/gate_last/overflow
+# are computed but left unconnected to any port.
 # ---------------------------------------------------------------------------
 detect_pulses, detect_pulses_t = make_detect_pulses()
 
@@ -93,6 +116,11 @@ threshold_high: Input[uint32_t]
 threshold_low: Input[uint32_t]
 max_width: Input[uint32_t]
 
+# Loopback select: 1 = feed pdw_main from pulse_gen_main's own generated
+# sample (internal, no external cable needed); 0 = feed from the real RX1
+# ADC input below. See README.md section 1 "Stimulus & External Loopback".
+pulse_loopback_en: Input[uint1_t]
+
 # Candidate PDW output -- the only boundary this task exposes as real ports.
 candidate_pdw_valid: Output[uint1_t]
 candidate_pdw_pulse_width: Output[uint32_t]
@@ -108,8 +136,18 @@ def pdw_main():
     rx1_tdata: uint32_t = rx1_s_axis_tdata
     i_val: int16_t = rx1_tdata[15:0]
     q_val: int16_t = rx1_tdata[31:16]
-    sample: detect_pulses.complex_t = detect_pulses.complex_t(
+    rx_sample: detect_pulses.complex_t = detect_pulses.complex_t(
         i=detect_pulses.rail_t(val=i_val), q=detect_pulses.rail_t(val=q_val)
+    )
+    # Internal loopback: bypass the external TX1->cable->RX1 path and use
+    # pulse_gen_main's own generated sample directly (see pulse_gen_sample
+    # Wire above).
+    loopback_sample: detect_pulses.complex_t = detect_pulses.complex_t(
+        i=detect_pulses.rail_t(val=pulse_gen_sample.i),
+        q=detect_pulses.rail_t(val=pulse_gen_sample.q),
+    )
+    sample: detect_pulses.complex_t = (
+        loopback_sample if pulse_loopback_en else rx_sample
     )
     stream_in_if: detect_pulses.in_stream_t = detect_pulses.in_stream_t(sample, 1)
 
