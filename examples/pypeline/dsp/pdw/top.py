@@ -18,10 +18,11 @@ to real top-level ports:
     Q = tdata[31:16]. Named `tx0_` since this drives the first TX port
     (TX1 in the README's diagram, i.e. TX RF Out index 0).
 
-`pdw_main` can consume either the real RX1 ADC input or pulse_gen_main's own
-generated sample directly (internal loopback, no external cable needed),
-selected at runtime by `pulse_loopback_en` -- see the `pulse_gen_sample` Wire
-and `pdw_main` below. `pdw_main` also exposes the detector's bounded pulse
+`pdw_main` can consume either the real RX0 ADC input (`rx0_s_axis_tdata`/
+`rx0_s_axis_tvalid`) or pulse_gen_main's own generated sample+valid directly
+(internal loopback, no external cable needed), selected at runtime by
+`pulse_loopback_en` -- see the `pulse_gen_sample`/`pulse_gen_valid` Wires and
+`pdw_main` below. `pdw_main` also exposes the detector's bounded pulse
 sample stream (Path A gate x Path B delay line, see `detect_pulses.gated_out`)
 as a flattened AXI-Stream master output, `rx0_m_axis_*` (RX-side naming, same
 tdata packing convention as tx0/rx1) -- `rx0_m_axis_tready` is a real port for
@@ -78,6 +79,7 @@ tx0_m_axis_tvalid: Output[uint1_t]
 # actual generated sample internally (see pulse_loopback_en below) without
 # instantiating a second, independently-counting pulse_gen.
 pulse_gen_sample: Wire[pulse_gen.iq_t]
+pulse_gen_valid: Wire[uint1_t]
 
 
 @MAIN(125.0)
@@ -92,14 +94,15 @@ def pulse_gen_main():
     tx0_m_axis_tdata = concat(q_bits, i_bits)
     tx0_m_axis_tvalid = o.valid
     pulse_gen_sample = o.data
+    pulse_gen_valid = o.valid
 
 
 # ---------------------------------------------------------------------------
 # pdw_main -- Path A "TIME-ALIGNED DETECT & DELAY MODULE" front end
 # (detect_pulses: magnitude -> dc_block -> moving_avg -> pulse_detect, see
-# pulse_detect/pulse_detect.py). Standalone @MAIN; its input sample is muxed
-# between the real RX1 ADC input and pulse_gen_main's own generated sample
-# (internal loopback) via `pulse_loopback_en` -- only the candidate PDW
+# pulse_detect/pulse_detect.py). Standalone @MAIN; its input sample+valid are
+# muxed between the real RX0 ADC input and pulse_gen_main's own generated
+# sample+valid (internal loopback) via `pulse_loopback_en` -- only the candidate PDW
 # output stream (data + ready) AND the gated pulse sample stream (data/
 # valid/last, flattened to rx0_m_axis_*) are exposed as real top-level ports.
 # The Qualified Storage & PDW Engine is still out of scope; `overflow` and
@@ -108,11 +111,12 @@ def pulse_gen_main():
 # ---------------------------------------------------------------------------
 detect_pulses, detect_pulses_t = make_detect_pulses()
 
-# Raw RX1 ADC input -- flattened AXI-Stream-style slave port, same tdata
+# Raw RX0 ADC input -- flattened AXI-Stream-style slave port, same tdata
 # packing convention as pulse_gen_main's tx0 output above (Q=tdata[31:16],
-# I=tdata[15:0]). Fixed-rate ADC feed (always valid), matching pulse_gen's
-# TX-side convention.
-rx1_s_axis_tdata: Input[uint32_t]
+# I=tdata[15:0]). Named rx0_ (first/only RX port), matching rx0_m_axis_*'s
+# indexing below and tx0_'s.
+rx0_s_axis_tdata: Input[uint32_t]
+rx0_s_axis_tvalid: Input[uint1_t]
 
 # Path A config regs (README section 2 host regs). Typed uint32_t at the
 # port boundary and cast to detect_pulses.power_t inside pdw_main -- see
@@ -153,13 +157,13 @@ def pdw_main():
     # Full-width bit-slice reinterprets raw tdata bits as the declared target
     # type (int16_t here) -- the mirror image of pulse_gen_main's uint16_t reinterpret
     # above (I = tdata[15:0], Q = tdata[31:16]).
-    rx1_tdata: uint32_t = rx1_s_axis_tdata
-    i_val: int16_t = rx1_tdata[15:0]
-    q_val: int16_t = rx1_tdata[31:16]
+    rx0_tdata: uint32_t = rx0_s_axis_tdata
+    i_val: int16_t = rx0_tdata[15:0]
+    q_val: int16_t = rx0_tdata[31:16]
     rx_sample: detect_pulses.complex_t = detect_pulses.complex_t(
         i=detect_pulses.rail_t(val=i_val), q=detect_pulses.rail_t(val=q_val)
     )
-    # Internal loopback: bypass the external TX1->cable->RX1 path and use
+    # Internal loopback: bypass the external TX1->cable->RX0 path and use
     # pulse_gen_main's own generated sample directly (see pulse_gen_sample
     # Wire above).
     loopback_sample: detect_pulses.complex_t = detect_pulses.complex_t(
@@ -169,7 +173,12 @@ def pdw_main():
     sample: detect_pulses.complex_t = (
         loopback_sample if pulse_loopback_en else rx_sample
     )
-    stream_in_if: detect_pulses.in_stream_t = detect_pulses.in_stream_t(sample, 1)
+    sample_valid: uint1_t = (
+        pulse_gen_valid if pulse_loopback_en else rx0_s_axis_tvalid
+    )
+    stream_in_if: detect_pulses.in_stream_t = detect_pulses.in_stream_t(
+        sample, sample_valid
+    )
 
     o = detect_pulses(
         stream_in_if,
