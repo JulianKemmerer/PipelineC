@@ -173,6 +173,22 @@ def get_tests() -> list:
                 cmd=[PIPELINEC, DSP_DIR / fname, "--sim", "--comb", "--run", str(run_n)],
             )
         )
+    # PDW project: hysteresis SM / candidate-PDW extractor (3 @MAINs --
+    # elastic, valid_only, and a CW/jamming max_width-cap check).
+    tests.append(
+        Test(
+            name="pulse_detect_tb",
+            category="native_sim",
+            cmd=[
+                PIPELINEC,
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_detect" / "pulse_detect_tb.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "500",
+            ],
+        )
+    )
     # Self-checking sim_assert/sim_finish designs -- no external Python
     # sim_call/assert harness needed. Same source files are also registered in
     # vhdl_sim_tests.py under --cocotb --ghdl, proving native and VHDL sim agree.

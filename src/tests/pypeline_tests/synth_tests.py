@@ -66,6 +66,11 @@ SYNTH_TEST_FILES = [
     ("interface_array_port_test.py", INST_DIR, ["--comb"]),
     ("interface_mixing_rules_test.py", INST_DIR, ["--comb"]),
     ("fm_radio_decim.py", EXAMPLES_PYPELINE_DIR / "dsp", ["--comb"]),
+    (
+        "pulse_detect_synth_top.py",
+        EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_detect",
+        ["--comb"],
+    ),
     # Structurally richest multi-writer global wire design (3 writers splitting
     # nested struct leaves + a mixed-depth whole-subtree claim + readback):
     # proves the per-region top-level VHDL through real synthesis, not just GHDL.
