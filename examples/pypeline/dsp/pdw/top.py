@@ -29,10 +29,15 @@ sys.path.insert(
     0,
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "pulse_gen"),
 )
+sys.path.insert(
+    0,
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "pulse_detect"),
+)
 
 from pypeline import MAIN, PART, Input, Output, concat, int16_t, uint1_t, uint16_t, uint32_t
 
 from pulse_gen import make_pulse_gen
+from pulse_detect import make_detect_pulses
 
 PART("xc7a100tcsg324-1")  # Artix-7 100T, same part as board/arty/part100t.py
 
@@ -49,7 +54,7 @@ tx0_m_axis_tvalid: Output[uint1_t]
 
 
 @MAIN(125.0)
-def pdw_top():
+def pulse_gen_main():
     o = pulse_gen(pulse_gen_pri, pulse_gen_width, pulse_gen_amplitude)
     # concat() requires unsigned args -- full-width bit-slice reinterprets
     # each int16_t field's raw bits as uint16_t. concat()'s first arg is
@@ -59,3 +64,63 @@ def pdw_top():
     q_bits: uint16_t = o.data.q[15:0]
     tx0_m_axis_tdata = concat(q_bits, i_bits)
     tx0_m_axis_tvalid = o.valid
+
+
+# ---------------------------------------------------------------------------
+# pdw_main -- Path A "TIME-ALIGNED DETECT & DELAY MODULE" front end
+# (detect_pulses: magnitude -> dc_block -> moving_avg -> pulse_detect, see
+# pulse_detect/pulse_detect.py). Standalone @MAIN, not yet wired to pulse_gen_main's
+# pulse_gen/TX1 output above -- only the candidate PDW output stream (data +
+# ready) is exposed as real top-level ports for now, per instruction. Path B
+# (the raw-I/Q delay-line FIFO) and the Qualified Storage & PDW Engine are
+# still out of scope; gate_valid/gate_last/overflow are computed but left
+# unconnected to any port.
+# ---------------------------------------------------------------------------
+detect_pulses, detect_pulses_t = make_detect_pulses()
+
+# Raw RX1 ADC input -- flattened AXI-Stream-style slave port, same tdata
+# packing convention as pulse_gen_main's tx0 output above (Q=tdata[31:16],
+# I=tdata[15:0]). Fixed-rate ADC feed (always valid), matching pulse_gen's
+# TX-side convention.
+rx1_s_axis_tdata: Input[uint32_t]
+
+# Path A config regs (README section 2 host regs). Typed uint32_t at the
+# port boundary and cast to detect_pulses.power_t inside pdw_main -- see
+# make_detect_pulses' docstring for why that type is NOT a fixed
+# make_fixed_t(32, 0) (it's whatever moving_avg's full-precision output
+# widens to).
+threshold_high: Input[uint32_t]
+threshold_low: Input[uint32_t]
+max_width: Input[uint32_t]
+
+# Candidate PDW output -- the only boundary this task exposes as real ports.
+candidate_pdw_valid: Output[uint1_t]
+candidate_pdw_pulse_width: Output[uint32_t]
+candidate_pdw_peak_power: Output[uint32_t]
+candidate_pdw_ready: Input[uint1_t]
+
+
+@MAIN(125.0)
+def pdw_main():
+    # Full-width bit-slice reinterprets raw tdata bits as the declared target
+    # type (int16_t here) -- the mirror image of pulse_gen_main's uint16_t reinterpret
+    # above (I = tdata[15:0], Q = tdata[31:16]).
+    rx1_tdata: uint32_t = rx1_s_axis_tdata
+    i_val: int16_t = rx1_tdata[15:0]
+    q_val: int16_t = rx1_tdata[31:16]
+    sample: detect_pulses.complex_t = detect_pulses.complex_t(
+        i=detect_pulses.rail_t(val=i_val), q=detect_pulses.rail_t(val=q_val)
+    )
+    stream_in_if: detect_pulses.in_stream_t = detect_pulses.in_stream_t(sample, 1)
+
+    o = detect_pulses(
+        stream_in_if,
+        detect_pulses.out_fb_t(ready=candidate_pdw_ready),
+        detect_pulses.power_t(val=threshold_high),
+        detect_pulses.power_t(val=threshold_low),
+        max_width,
+    )
+
+    candidate_pdw_valid = o.pdw_out_if.stream.valid
+    candidate_pdw_pulse_width = o.pdw_out_if.stream.data.pulse_width
+    candidate_pdw_peak_power = o.pdw_out_if.stream.data.peak_power.val
