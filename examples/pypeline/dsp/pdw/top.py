@@ -21,7 +21,13 @@ to real top-level ports:
 `pdw_main` can consume either the real RX1 ADC input or pulse_gen_main's own
 generated sample directly (internal loopback, no external cable needed),
 selected at runtime by `pulse_loopback_en` -- see the `pulse_gen_sample` Wire
-and `pdw_main` below.
+and `pdw_main` below. `pdw_main` also exposes the detector's bounded pulse
+sample stream (Path A gate x Path B delay line, see `detect_pulses.gated_out`)
+as a flattened AXI-Stream master output, `rx0_m_axis_*` (RX-side naming, same
+tdata packing convention as tx0/rx1) -- `rx0_m_axis_tready` is a real port for
+a future consumer to drive but isn't wired to anything internally yet (the
+gate stream has no backpressure of its own; see pulse_detect.py's own
+"gate_ready" TODO).
 
 As more of the PDW pipeline gets built, this file is where subsequent
 stages get wired in and where TX2/host-DMA ports will eventually live.
@@ -94,10 +100,11 @@ def pulse_gen_main():
 # pulse_detect/pulse_detect.py). Standalone @MAIN; its input sample is muxed
 # between the real RX1 ADC input and pulse_gen_main's own generated sample
 # (internal loopback) via `pulse_loopback_en` -- only the candidate PDW
-# output stream (data + ready) is exposed as real top-level ports for now,
-# per instruction. Path B (the raw-I/Q delay-line FIFO) and the Qualified
-# Storage & PDW Engine are still out of scope; gate_valid/gate_last/overflow
-# are computed but left unconnected to any port.
+# output stream (data + ready) AND the gated pulse sample stream (data/
+# valid/last, flattened to rx0_m_axis_*) are exposed as real top-level ports.
+# The Qualified Storage & PDW Engine is still out of scope; `overflow` and
+# rx0_m_axis_tready's backpressure are computed/declared but left
+# unconnected (see pulse_detect.py's own TODOs on both).
 # ---------------------------------------------------------------------------
 detect_pulses, detect_pulses_t = make_detect_pulses()
 
@@ -126,6 +133,19 @@ candidate_pdw_valid: Output[uint1_t]
 candidate_pdw_pulse_width: Output[uint32_t]
 candidate_pdw_peak_power: Output[uint32_t]
 candidate_pdw_ready: Input[uint1_t]
+
+# Bounded pulse sample stream (Path A gate x Path B delay line), flattened
+# AXI-Stream master -- same tdata packing convention as tx0/rx1 above
+# (Q=tdata[31:16], I=tdata[15:0]). Named rx0_ to match rx1_s_axis_tdata's
+# RX-side naming (this is the RX1 datapath's own detected-pulse output).
+# tready is a real port for a future consumer (DMA/TX2) to drive, but is NOT
+# wired to anything internally yet -- gated_sample_t has no backpressure of
+# its own (see pulse_detect.py's "gate_ready / backpressure on the gate
+# stream" TODO); this is that same still-open TODO, not a new one.
+rx0_m_axis_tdata: Output[uint32_t]
+rx0_m_axis_tvalid: Output[uint1_t]
+rx0_m_axis_tlast: Output[uint1_t]
+rx0_m_axis_tready: Input[uint1_t]
 
 
 @MAIN(125.0)
@@ -162,3 +182,9 @@ def pdw_main():
     candidate_pdw_valid = o.pdw_out_if.stream.valid
     candidate_pdw_pulse_width = o.pdw_out_if.stream.data.pulse_width
     candidate_pdw_peak_power = o.pdw_out_if.stream.data.peak_power.val
+
+    gated_i_bits: uint16_t = o.gated_out.data.i.val[15:0]
+    gated_q_bits: uint16_t = o.gated_out.data.q.val[15:0]
+    rx0_m_axis_tdata = concat(gated_q_bits, gated_i_bits)
+    rx0_m_axis_tvalid = o.gated_out.valid
+    rx0_m_axis_tlast = o.gated_out.last
