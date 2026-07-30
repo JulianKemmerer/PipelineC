@@ -13,20 +13,6 @@ Run the simulation:
     pypelinec examples/pypeline/dsp/dc_block_tb.py --sim --comb --run 4000
 """
 
-import sys, os
-
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..",
-        "..",
-        "..",
-        "include",
-        "pypeline",
-    ),
-)
-
 from pypeline import MAIN
 
 from fixed_point import make_fixed_t

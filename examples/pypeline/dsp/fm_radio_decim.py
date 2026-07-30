@@ -19,20 +19,6 @@ For a simulation testbench with plots, see fir_decim_tb.py next to this file
 (same filter, driven by dsp/fir_tb.py's @sim_input/@sim_output machinery).
 """
 
-import sys, os
-
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..",
-        "..",
-        "..",
-        "include",
-        "pypeline",
-    ),
-)
-
 from pypeline import MAIN, uint1_t
 
 import board.arty.part100t  # sets PART for the Arty A7-100T; swap for other boards

@@ -14,18 +14,6 @@ responsible for supplying them, the same way fir_decim is called from
 fm_radio_decim.py.
 """
 
-import os
-import sys
-
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..", "..", "..", "..", "..",
-        "include", "pypeline",
-    ),
-)
-
 from pypeline import NamedTuple, Reg, hw_func, int16_t, struct, uint1_t, uint32_t
 
 from stream.stream import make_stream_t

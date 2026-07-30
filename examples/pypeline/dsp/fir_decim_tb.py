@@ -13,20 +13,6 @@ Run the simulation (writes fir_decim5_tb.png; PYPELINE_TB_SHOW=1 for a window):
     pypelinec examples/pypeline/dsp/fir_decim_tb.py --sim --comb --run 1800
 """
 
-import sys, os
-
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..",
-        "..",
-        "..",
-        "include",
-        "pypeline",
-    ),
-)
-
 from pypeline import MAIN
 
 from fixed_point import make_fixed_t

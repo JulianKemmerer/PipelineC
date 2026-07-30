@@ -6,15 +6,18 @@ We are happy to help, reach out: [PipelineC Discord](https://discord.gg/Aupm3DDr
 
 # Quick Start
 
-Clone the repo, add its `src/` and `include/pypeline` directories to your
-`PYTHONPATH`, and add `src/` to your `PATH` for the `pypelinec` command:
+Clone the repo and add its `src/` directory to your `PATH` for the `pypelinec` command:
 ```
 git clone https://github.com/JulianKemmerer/PipelineC.git
 cd PipelineC/
-export PYTHONPATH=$PYTHONPATH:$(pwd)/src:$(pwd)/include/pypeline
 export PATH=$PATH:$(pwd)/src
 ```
-Any Python file can now do `from pypeline import *` and run native Python based simulations.
+Any Python file can now do `from pypeline import *`, be run through `pypelinec` (for real
+builds or native `--sim`), and use the reusable `include/pypeline` library
+(`from stream import ...`, `from dsp.fir import ...`, etc.) — `pypelinec` bootstraps both
+onto `sys.path` automatically, no `PYTHONPATH` setup needed. (The one exception —
+running a design file directly with `python3` instead of through `pypelinec` — is covered
+in the [simulation design doc](pypeline_sim_DESIGN.md#sim_callfunc-args--simulation-entry-point).)
 
 Typical [blinking an LED](../examples/pypeline/blink.py) code:
 ```python

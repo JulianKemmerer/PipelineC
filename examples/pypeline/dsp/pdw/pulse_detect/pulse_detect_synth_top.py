@@ -18,7 +18,7 @@ Synthesize (requires Vivado):
 
 from pypeline import MAIN, PART, Input, uint32_t
 
-from pulse_detect import make_pulse_detect  # inserts include/pypeline onto sys.path
+from pulse_detect import make_pulse_detect
 
 from fixed_point import make_fixed_t
 

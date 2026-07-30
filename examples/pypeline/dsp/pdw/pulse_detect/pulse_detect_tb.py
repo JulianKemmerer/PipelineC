@@ -35,7 +35,7 @@ Run:
 
 from pypeline import MAIN, Reg, sim_assert, uint1_t, uint3_t, uint32_t
 
-from pulse_detect import make_pulse_detect  # inserts include/pypeline onto sys.path
+from pulse_detect import make_pulse_detect
 
 from fixed_point import make_fixed_t
 

@@ -13,16 +13,8 @@ Cycles per frame by resolution:
     1920x1080 (VGA_1920_1080): 2200 x 1125 = 2 475 000
 """
 
-import sys, os
 import atexit
 import math
-
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "..", "include", "pypeline"
-    ),
-)
 
 from pypeline import *
 

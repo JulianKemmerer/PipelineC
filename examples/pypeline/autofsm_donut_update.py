@@ -27,14 +27,6 @@ math so the example is about AUTOFSM, and vga_donut.py stays the reference
 full-rate rendering design.
 """
 
-import os
-import sys
-
-sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../.."))
-sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../include/pypeline")
-)
-
 from pypeline import (
     AUTOFSM,
     MAIN,

@@ -9,15 +9,7 @@ Simulation: run with pypelinec --sim for a live matplotlib display.
 One frame = 800 x 525 = 420 000 cycles (640x480 @ 25 MHz pixel clock).
 """
 
-import sys, os
 import atexit
-
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "..", "include", "pypeline"
-    ),
-)
 
 from pypeline import *
 

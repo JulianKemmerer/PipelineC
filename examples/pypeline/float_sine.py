@@ -5,18 +5,8 @@ Fixes round-to-nearest quadrant calculation, odd/even polynomial evaluation, and
 Zero functional casting: all type conversions use annotated assignments or direct wire slicing.
 """
 
-import math, sys, os
+import math
 from typing import NamedTuple
-
-sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src")
-)
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "..", "include", "pypeline"
-    ),
-)
 
 from pypeline import (
     hw_func,

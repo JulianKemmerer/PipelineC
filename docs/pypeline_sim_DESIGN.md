@@ -270,6 +270,27 @@ its own single `_sim_reg_begin_buffer()`/`_sim_reg_flush_buffer()` pair, and nev
 `_sim_active` between cycles, so `sim_call(main_fn)` always sees `prev_active == True` there
 and skips this branch — no double-buffering conflict.
 
+### `sys.path` bootstrap — and the one case it doesn't cover
+
+Both `pypelinec` (real builds, via `PY_TO_LOGIC.py`) and `pypelinec --sim` (native sim, via
+`pypeline_sim.py`'s `_import_design`) insert two directories onto `sys.path` before importing
+the design file: the design file's own directory (so its local sibling imports work) and the
+repo's `include/pypeline` directory (so `from stream import ...`, `from dsp.fir import ...`,
+etc. resolve without any manual setup). This means a normal install only needs the repo's
+`src/` directory on `PATH` for the `pypelinec` command — see the [Quick Start](README.md).
+Invoking `pypeline_sim.py` directly (`python3 src/pypeline_sim.py my_design.py --run 1000`)
+goes through the same `_import_design` bootstrap and needs no separate setup either.
+
+**The one case that does need manual `PYTHONPATH`** is `sim_call`-style usage as described
+above: running a design file itself as a plain script (`python3 my_design.py`), calling
+`sim_call(func, ...)` directly rather than going through `pypelinec`/`pypeline_sim.py`.
+There's no bootstrap step in that path, so the design file never gets `include/pypeline`
+added to `sys.path` on its own. If you do this, set:
+```
+export PYTHONPATH=$PYTHONPATH:$(pwd)/src:$(pwd)/include/pypeline
+```
+first, or add an equivalent `sys.path.insert(...)` at the top of the design file.
+
 ---
 
 ## Bit-Accurate Arithmetic
@@ -1319,10 +1340,10 @@ all MAINs sharing wires must converge together each clock cycle.
 
 ## `pypeline_sim.py` — Multi-MAIN Clock-Cycle Simulation
 
-CLI tool for running multi-MAIN designs:
+CLI tool for running multi-MAIN designs. Normal usage goes through the `pypelinec` wrapper:
 
 ```
-python3 src/pypeline_sim.py my_design.py --run 1000
+pypelinec my_design.py --sim --comb --run 1000
 ```
 
 Imports the design file (triggering all `@MAIN`/`@hw_func` decorations, populating

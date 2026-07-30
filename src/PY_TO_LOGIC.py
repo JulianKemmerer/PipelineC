@@ -6171,6 +6171,14 @@ def PARSE_FILE(py_file):
     if design_dir not in sys.path:
         sys.path.insert(0, design_dir)
 
+    # Bootstrap the reusable include/pypeline library onto sys.path so designs
+    # can `from stream import ...`, `from dsp.fir import ...`, etc. without
+    # requiring PYTHONPATH to be set up manually.
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _include_pypeline = os.path.join(_repo_root, "include", "pypeline")
+    if _include_pypeline not in sys.path:
+        sys.path.insert(0, _include_pypeline)
+
     spec = importlib.util.spec_from_file_location("pypeline_design", py_file)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)

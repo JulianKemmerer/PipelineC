@@ -60,18 +60,7 @@ TODOs, all owned by Path B / the storage engine, not this block:
     status_flags register exists.
 """
 
-import os
-import sys
 from enum import IntEnum
-
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..", "..", "..", "..", "..",
-        "include", "pypeline",
-    ),
-)
 
 from pypeline import (
     NamedTuple,

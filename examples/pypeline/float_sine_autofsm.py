@@ -32,19 +32,6 @@ AUTOFSM takes exactly one argument, so the polynomial's four inputs are bundled
 into one struct here.
 """
 
-import os
-import sys
-
-sys.path.insert(
-    0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "src")
-)
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)), "..", "..", "include", "pypeline"
-    ),
-)
-
 from typing import NamedTuple
 
 from pypeline import (
