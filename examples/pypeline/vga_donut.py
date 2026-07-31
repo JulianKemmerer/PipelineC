@@ -33,7 +33,7 @@ from vga.timing import (
 )
 
 # ── CONFIG ──────────────────────────────────────────────────────────────────
-RESOLUTION = VGA_1280_720  # swapable
+RESOLUTION = VGA_640_480 #VGA_1280_720  # swapable
 CALC_FRAC_BITS = 4  # Extra CORDIC precision bits (0 = blocky/minimum, 4-8 = smooth)
 NCORDIC = 7  # CORDIC iterations per call  (6 = original; 8+ = smoother)
 NITERS = 20  # ray-march steps             (16 = original; 24+ = smoother)
@@ -294,6 +294,73 @@ length_cordic = make_length_cordic(calc_t, NCORDIC)
 donut = make_donut(calc_t, coord_t, length_cordic, NITERS, TORUS_R1I, TORUS_R2I, SCALE)
 
 
+@struct
+class orientation_t(NamedTuple):
+    """The torus orientation carried from frame to frame (Q1.14 fixed point,
+    16384 == 1.0), plus the bouncing screen position and its velocity."""
+    sB: int16_t
+    cB: int16_t
+    sA: int16_t
+    cA: int16_t
+    sAsB: int16_t
+    cAsB: int16_t
+    sAcB: int16_t
+    cAcB: int16_t
+    pos_x: int16_t
+    pos_y: int16_t
+    vel_x: int16_t
+    vel_y: int16_t
+
+
+@hw_func
+def next_orientation(s: orientation_t) -> orientation_t:
+    """Pure state -> next-state math for one frame: two magic-circle DDA
+    rotations plus the position bounce.
+    """
+    # Rotation pass 1 (shift 5): the A axis.
+    new_cA: int16_t = s.cA - (s.sA >> 5)
+    new_sA: int16_t = s.sA + (new_cA >> 5)
+    new_cAsB: int16_t = s.cAsB - (s.sAsB >> 5)
+    new_sAsB: int16_t = s.sAsB + (new_cAsB >> 5)
+    new_cAcB: int16_t = s.cAcB - (s.sAcB >> 5)
+    new_sAcB: int16_t = s.sAcB + (new_cAcB >> 5)
+    # Rotation pass 2 (shift 6): the B axis, chaining pass 1's results.
+    new_cB: int16_t = s.cB - (s.sB >> 6)
+    new_sB: int16_t = s.sB + (new_cB >> 6)
+    new_cAcB2: int16_t = new_cAcB - (new_cAsB >> 6)
+    new_cAsB2: int16_t = new_cAsB + (new_cAcB2 >> 6)
+    new_sAcB2: int16_t = new_sAcB - (new_sAsB >> 6)
+    new_sAsB2: int16_t = new_sAsB + (new_sAcB2 >> 6)
+
+    new_pos_x: int16_t = s.pos_x
+    new_pos_y: int16_t = s.pos_y
+    new_vel_x: int16_t = s.vel_x
+    new_vel_y: int16_t = s.vel_y
+    if BOUNCE:
+        # Bounce the centre off the edges of its box.
+        new_pos_x: int16_t = s.pos_x + s.vel_x
+        new_pos_y: int16_t = s.pos_y + s.vel_y
+        if (new_pos_x > FRAME_WIDTH // 2 + BOUNCE_MAX_X) or (new_pos_x < FRAME_WIDTH // 2 - BOUNCE_MAX_X):
+            new_vel_x = -s.vel_x
+        if (new_pos_y > FRAME_HEIGHT // 2 + BOUNCE_MAX_Y) or (new_pos_y < FRAME_HEIGHT // 2 - BOUNCE_MAX_Y):
+            new_vel_y = -s.vel_y
+
+    return orientation_t(
+        sB=new_sB,
+        cB=new_cB,
+        sA=new_sA,
+        cA=new_cA,
+        sAsB=new_sAsB2,
+        cAsB=new_cAsB2,
+        sAcB=new_sAcB2,
+        cAcB=new_cAcB2,
+        pos_x=new_pos_x,
+        pos_y=new_pos_y,
+        vel_x=new_vel_x,
+        vel_y=new_vel_y,
+    )
+
+
 @hw_func
 def full_update(sig: vga_timing_signals_t) -> full_state_t:
     state: Reg[full_state_t] = full_state_t(
@@ -335,57 +402,41 @@ def full_update(sig: vga_timing_signals_t) -> full_state_t:
     )
 
     if sig.end_of_frame:
-        # Magic-circle DDA rotation: R(s, x, y): x = x-(y>>s); y = y+(x>>s)
-        # Pass 1: R(5,...) — cA axis
-        new_cA: int16_t = state.cA - (state.sA >> 5)
-        new_sA: int16_t = state.sA + (new_cA >> 5)
-        new_cAsB: int16_t = state.cAsB - (state.sAsB >> 5)
-        new_sAsB: int16_t = state.sAsB + (new_cAsB >> 5)
-        new_cAcB: int16_t = state.cAcB - (state.sAcB >> 5)
-        new_sAcB: int16_t = state.sAcB + (new_cAcB >> 5)
-        # Pass 2: R(6,...) — cB axis, using pass-1 results where applicable
-        new_cB: int16_t = state.cB - (state.sB >> 6)
-        new_sB: int16_t = state.sB + (new_cB >> 6)
-        new_cAcB2: int16_t = new_cAcB - (new_cAsB >> 6)
-        new_cAsB2: int16_t = new_cAsB + (new_cAcB2 >> 6)
-        new_sAcB2: int16_t = new_sAcB - (new_sAsB >> 6)
-        new_sAsB2: int16_t = new_sAsB + (new_sAcB2 >> 6)
-
-        new_pos_x: int16_t = state.pos_x
-        new_pos_y: int16_t = state.pos_y
-        if BOUNCE:
-            new_pos_x = state.pos_x + bounce_vel_x
-            new_pos_y = state.pos_y + bounce_vel_y
-            new_vel_x: int16_t = bounce_vel_x
-            new_vel_y: int16_t = bounce_vel_y
-            if (new_pos_x > FRAME_WIDTH // 2 + BOUNCE_MAX_X) or (
-                new_pos_x < FRAME_WIDTH // 2 - BOUNCE_MAX_X
-            ):
-                new_vel_x = -bounce_vel_x
-            if (new_pos_y > FRAME_HEIGHT // 2 + BOUNCE_MAX_Y) or (
-                new_pos_y < FRAME_HEIGHT // 2 - BOUNCE_MAX_Y
-            ):
-                new_vel_y = -bounce_vel_y
-            bounce_vel_x = new_vel_x
-            bounce_vel_y = new_vel_y
-
+        o: orientation_t = orientation_t(
+            sB=state.sB,
+            cB=state.cB,
+            sA=state.sA,
+            cA=state.cA,
+            sAsB=state.sAsB,
+            cAsB=state.cAsB,
+            sAcB=state.sAcB,
+            cAcB=state.cAcB,
+            pos_x=state.pos_x,
+            pos_y=state.pos_y,
+            vel_x=bounce_vel_x,
+            vel_y=bounce_vel_y,
+        )
+        o = next_orientation(o)
         state = full_state_t(
-            sB=new_sB,
-            cB=new_cB,
-            sA=new_sA,
-            cA=new_cA,
-            sAsB=new_sAsB2,
-            cAsB=new_cAsB2,
-            sAcB=new_sAcB2,
-            cAcB=new_cAcB2,
+            sB=o.sB,
+            cB=o.cB,
+            sA=o.sA,
+            cA=o.cA,
+            sAsB=o.sAsB,
+            cAsB=o.cAsB,
+            sAcB=o.sAcB,
+            cAcB=o.cAcB,
             yincC=state.cA >> 8,
             yincS=state.sA >> 8,
             xincX=state.cB >> 8,
             xincY=state.sAsB >> 8,
             xincZ=state.cAsB >> 8,
-            pos_x=new_pos_x,
-            pos_y=new_pos_y,
+            pos_x=o.pos_x,
+            pos_y=o.pos_y,
         )
+        if BOUNCE:
+            bounce_vel_x = o.vel_x
+            bounce_vel_y = o.vel_y
 
     return out_state
 
