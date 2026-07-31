@@ -694,6 +694,65 @@ class SimVal(int):
             return int(o) >> int(self)
         return SimVal(int(o) >> int(self))
 
+    # Comparisons, DIV and MOD: no built-in fast path exists for these (unlike
+    # +/-/* which always have an inferred lowering) -- when nothing is
+    # registered they simply fall back to plain int comparison/division, same
+    # result as before this dispatch existed. When a soft impl IS registered
+    # (default-flip library, or a user's own), route through it so sim agrees
+    # structurally with the generated hardware. Gated by
+    # _registered_binary_op_names so an unregistered design pays one set
+    # lookup, same pattern as __rshift__/__lshift__.
+    def __lt__(self, o):
+        v = int(self) < int(o)
+        if SIM_RAW_INTS:
+            return v
+        if self._ctype is not None and "LT" in _registered_binary_op_names:
+            return self._dispatch_binary("LT", o, v)
+        return v
+
+    def __le__(self, o):
+        v = int(self) <= int(o)
+        if SIM_RAW_INTS:
+            return v
+        if self._ctype is not None and "LTE" in _registered_binary_op_names:
+            return self._dispatch_binary("LTE", o, v)
+        return v
+
+    def __gt__(self, o):
+        v = int(self) > int(o)
+        if SIM_RAW_INTS:
+            return v
+        if self._ctype is not None and "GT" in _registered_binary_op_names:
+            return self._dispatch_binary("GT", o, v)
+        return v
+
+    def __ge__(self, o):
+        v = int(self) >= int(o)
+        if SIM_RAW_INTS:
+            return v
+        if self._ctype is not None and "GTE" in _registered_binary_op_names:
+            return self._dispatch_binary("GTE", o, v)
+        return v
+
+    def __truediv__(self, o):
+        ov = int(o)
+        v = int(self) // ov if (int(self) < 0) == (ov < 0) else -(-int(self) // ov)
+        if SIM_RAW_INTS:
+            return v
+        if self._ctype is not None and "DIV" in _registered_binary_op_names:
+            return self._dispatch_binary("DIV", o, v, preserve_ctype=True)
+        return _sim_val_make(v, self._ctype) if self._ctype is not None else SimVal(v)
+
+    def __mod__(self, o):
+        ov = int(o)
+        d = int(self) // ov if (int(self) < 0) == (ov < 0) else -(-int(self) // ov)
+        v = int(self) - d * ov
+        if SIM_RAW_INTS:
+            return v
+        if self._ctype is not None and "MOD" in _registered_binary_op_names:
+            return self._dispatch_binary("MOD", o, v, preserve_ctype=True)
+        return _sim_val_make(v, self._ctype) if self._ctype is not None else SimVal(v)
+
 
 class _RawField(int):
     """Bare int subclass used for struct fields in SIM_RAW_INTS mode.
