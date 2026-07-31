@@ -3,3 +3,5 @@ __pycache__/
 *.pyo
 lextab.py
 yacctab.py
+.Xil/
+.vscode/
