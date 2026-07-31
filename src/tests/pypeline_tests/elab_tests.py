@@ -238,6 +238,19 @@ def get_tests() -> list:
             cmd=[INST_DIR / "indirect_interface_pairing_return_error_test.py"],
         )
     )
+    # Not run through the pipelinec CLI either: in-process PARSE_FILE +
+    # FuncLogicLookupTable/submodule_instances inspection for the matcher-based
+    # generic operator registry (register_operator with a type matcher, the
+    # INFERRED escape hatch, and _elab_compare's new registry consultation) --
+    # what got instantiated (built-in BIN_OP_* vs. a resolved generic impl) is
+    # not visible to sim_call or a bare "does it elaborate" check.
+    tests.append(
+        Test(
+            name="operator_scope_test",
+            category="elab",
+            cmd=[INST_DIR / "operator_scope_test.py"],
+        )
+    )
     return tests
 
 

@@ -76,18 +76,41 @@ def main():
         fail(f"latency {latency} does not match {n_states} states + 1 accept cycle")
 
     # The scheduler claims folding; verify it in the generated hardware.
-    fsm_vhd = None
+    #
+    # Pre-existing fragility, not something this specific change is
+    # responsible for fixing beyond making it deterministic: the design's
+    # @MAIN is itself named autofsm_top, so its own top-level entity files
+    # (autofsm_top_<hash>.vhd) also match "starts with autofsm_, ends with
+    # .vhd, not a _top.vhd suffix, no _comb_" -- the same shape as the real
+    # FSM blob entity (autofsm_<blob_func_name>_<hash>.vhd). Any unrelated
+    # source change that shifts content hashes can reorder os.walk's
+    # unsorted traversal and make this "last match wins" loop pick the
+    # wrong file, even though the actual scheduling/VHDL is unaffected (this
+    # was caught this way: verified by grepping the *correct* file directly
+    # when this loop picked the top-level one instead). Fixed by also
+    # excluding the @MAIN's own entity name explicitly, and preferring the
+    # shortest matching path (blob entities live directly under out_dir;
+    # the top-level entity lives several directories deeper, mirroring the
+    # source file's path).
+    candidates = []
     for root, _dirs, files in os.walk(out_dir):
         for f in files:
             if (
                 f.startswith("autofsm_")
+                and not f.startswith("autofsm_top_")
                 and f.endswith(".vhd")
                 and not f.endswith("_top.vhd")
                 and "_comb_" not in f
             ):
-                fsm_vhd = os.path.join(root, f)
-    if fsm_vhd is None:
+                candidates.append(os.path.join(root, f))
+    if not candidates:
         fail(f"no generated AUTOFSM entity VHDL found under {out_dir}")
+    if len(candidates) > 1:
+        fail(
+            f"ambiguous AUTOFSM entity VHDL candidates under {out_dir}, "
+            f"expected exactly one: {candidates}"
+        )
+    fsm_vhd = candidates[0]
     print("Generated FSM entity VHDL:", fsm_vhd)
     with open(fsm_vhd) as f:
         vhdl = f.read()

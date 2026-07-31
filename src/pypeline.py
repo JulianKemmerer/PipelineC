@@ -249,6 +249,37 @@ def _arith_output_ctype(op: str, eff_l_type: str, eff_r_type: str, result_signed
     return make_int_t(out_w) if result_signed else make_uint_t(out_w)
 
 
+_ARITH_RESULT_TYPE_OP_ALIAS = {
+    "PLUS": "add",
+    "MINUS": "sub",
+    "INFERRED_MULT": "mul",
+    "MULT": "mul",
+    "DIV": "div",
+    "MOD": "mod",
+}
+
+
+def arith_result_type(op: str, l_type, r_type):
+    """Public wrapper over the same sign-promotion/full-precision-width rules
+    the built-in inferred path uses, for library operator implementations that
+    must produce a result identically shaped to what the built-in path would
+    have produced (so switching an op's implementation never changes an
+    existing design's wire widths).
+
+    op:      "PLUS" | "MINUS" | "INFERRED_MULT" | "DIV" | "MOD" (or the short
+             aliases "add" | "sub" | "mul" | "div" | "mod")
+    l_type:  C type of the left operand (e.g. uint32_t)
+    r_type:  C type of the right operand
+
+    Returns (eff_l_type, eff_r_type, out_type): the effective (sign-promoted)
+    input types and the full-precision output ctype OBJECT.
+    """
+    short_op = _ARITH_RESULT_TYPE_OP_ALIAS.get(op, op)
+    eff_l, eff_r, result_signed = _arith_promote(_ctype_str(l_type), _ctype_str(r_type))
+    out_t = _arith_output_ctype(short_op, eff_l, eff_r, result_signed)
+    return _reconstruct_int_ctype(eff_l), _reconstruct_int_ctype(eff_r), out_t
+
+
 # ─────────────────────────────────────────────
 # NamedTuple with automatic subscript support
 # ─────────────────────────────────────────────
@@ -325,7 +356,12 @@ class SimVal(int):
 
     def _dispatch_unary(self, op_name, fallback):
         if self._ctype is not None:
-            fn = _unary_operator_registry.get((op_name, _ctype_str(self._ctype)))
+            l_str = _ctype_str(self._ctype)
+            fn = _unary_operator_registry.get((op_name, l_str))
+            if fn is None:
+                fn = _resolve_generic_unary_operator(op_name, l_str)
+            if fn is INFERRED:
+                fn = None
             if callable(fn):
                 result = fn(self)
                 if type(result) is not SimVal or result._ctype is None:
@@ -369,8 +405,18 @@ class SimVal(int):
         if self._ctype is not None:
             l_str = _ctype_str(self._ctype)
             rc = other._ctype if type(other) is SimVal else None
-            fn = rc and _operator_registry.get((op_name, l_str, _ctype_str(rc)))
-            fn = fn or _left_operator_registry.get((op_name, l_str))
+            r_str = _ctype_str(rc) if rc else None
+            fn = None
+            if r_str:
+                fn = _operator_registry.get((op_name, l_str, r_str))
+                if fn is None:
+                    fn = _resolve_generic_operator(op_name, l_str, r_str)
+            if fn is None or fn is INFERRED:
+                fn = _left_operator_registry.get((op_name, l_str))
+                if fn is None:
+                    fn = _resolve_generic_left_operator(op_name, l_str)
+            if fn is INFERRED:
+                fn = None
             if callable(fn):
                 result = fn(self, other)
                 if type(result) is not SimVal or result._ctype is None:
@@ -924,6 +970,14 @@ def struct(cls):
     )
     cls.__truediv__ = lambda self, other: _struct_dispatch_binary_op("DIV", self, other)
     cls.__neg__ = lambda self: _struct_dispatch_unary_op("NEGATE", self)
+    # Comparisons: no built-in fallback exists for structs (NamedTuple's default
+    # lexicographic tuple ordering is not a meaningful hardware comparison), so
+    # these are TypeErrors unless registered -- matching _elab_compare, which
+    # now also consults the operator registry (see PY_TO_LOGIC._elab_compare).
+    cls.__lt__ = lambda self, other: _struct_dispatch_binary_op("LT", self, other)
+    cls.__le__ = lambda self, other: _struct_dispatch_binary_op("LTE", self, other)
+    cls.__gt__ = lambda self, other: _struct_dispatch_binary_op("GT", self, other)
+    cls.__ge__ = lambda self, other: _struct_dispatch_binary_op("GTE", self, other)
 
     return cls
 
@@ -1723,16 +1777,206 @@ _scoped_unary_operator_registry: dict = {}
 _scoped_funcs: set = set()
 
 
-def register_operator(op: str, left_type, right_type, func, scope=None) -> None:
-    """Register a hardware function as the implementation of a variable binary operator.
-    Matches on both left and right operand types (exact match).
+# ─────────────────────────────────────────────
+# Generic (matcher-based) operator registrations
+#
+# Exact registrations (register_operator(op, uint32_t, uint32_t, impl)) require
+# one call per concrete type pair. A library implementation (e.g. a soft adder)
+# needs to cover every width a design happens to promote to, so register_* also
+# accept a *type matcher* in place of a concrete type -- and, in that case, a
+# *factory* (called lazily with the concrete type objects) in place of a
+# finished hw_func. Matches are resolved on miss and memoized back into the
+# ordinary exact dicts, so the hot path stays a single dict lookup.
+# ─────────────────────────────────────────────
 
-    op:         "SL" (<<) or "SR" (>>)
-    left_type:  C type of the left operand (e.g. uint32_t)
-    right_type: C type of the right operand / shift amount (e.g. uint6_t)
-    func:       callable hardware function object.
-    scope:      if provided, registration is active only while elaborating that callable.
+
+class _IntTypeMatcher:
+    """Matches integer ctypes by signedness/max-width predicate.
+    Deterministic repr (no object id) -- these can end up embedded in factory
+    closures, and canonical entity-name hashing must stay a pure function of
+    source (see docs: project_canonical_name_determinism)."""
+
+    __slots__ = ("_name", "_signed", "_max_width")
+
+    def __init__(self, name, signed, max_width=None):
+        self._name = name
+        self._signed = signed  # True / False / None (None = either signedness)
+        self._max_width = max_width
+
+    def matches(self, ctype_str) -> bool:
+        if not _ctype_is_int(ctype_str):
+            return False
+        is_signed, width = _ctype_info(ctype_str)
+        if self._signed is not None and is_signed != self._signed:
+            return False
+        if self._max_width is not None and width > self._max_width:
+            return False
+        return True
+
+    def __repr__(self):
+        return self._name
+
+
+any_uint_t = _IntTypeMatcher("any_uint_t", signed=False)
+any_int_t = _IntTypeMatcher("any_int_t", signed=True)
+any_integer_t = _IntTypeMatcher("any_integer_t", signed=None)
+
+
+def uint_upto(n: int):
+    """Matcher: any uintW_t with W <= n."""
+    return _IntTypeMatcher(f"uint_upto_{n}", signed=False, max_width=n)
+
+
+def int_upto(n: int):
+    """Matcher: any intW_t with W <= n."""
+    return _IntTypeMatcher(f"int_upto_{n}", signed=True, max_width=n)
+
+
+class _ExactTypeMatcher:
+    """Wraps a concrete type as a matcher, so register_operator can mix one
+    matcher side with one exact side (e.g. any_uint_t on the left, a fixed
+    shift-amount type on the right)."""
+
+    __slots__ = ("_s",)
+
+    def __init__(self, t):
+        self._s = _ctype_str(t)
+
+    def matches(self, ctype_str) -> bool:
+        return ctype_str == self._s
+
+    def __repr__(self):
+        return self._s
+
+
+def _is_type_matcher(x) -> bool:
+    return isinstance(x, _IntTypeMatcher)
+
+
+def _as_matcher(x):
+    return x if _is_type_matcher(x) else _ExactTypeMatcher(x)
+
+
+def _reconstruct_int_ctype(ctype_str: str):
+    """Rebuild a ctype OBJECT (make_uint_t/make_int_t) from its canonical
+    string. Only used to hand a generic-registration factory concrete type
+    objects -- exact (non-matcher) registrations never need this."""
+    is_signed, width = _ctype_info(ctype_str)
+    return make_int_t(width) if is_signed else make_uint_t(width)
+
+
+class _InferredSentinel:
+    """Registered as an operator impl to mean "fall through to the built-in
+    inferred path" -- the escape hatch for overriding one narrower case out of
+    a broader generic registration (e.g. keep one hot function's multiply on
+    a DSP while everything else in the design is soft), and the mechanism a
+    soft library implementation uses to pin down its own internal recursion
+    (e.g. a soft adder's carry chain must not recursively call itself)."""
+
+    def __repr__(self):
+        return "INFERRED"
+
+
+INFERRED = _InferredSentinel()
+
+# Generic (matcher-based) registrations. Lists, most-recently-registered last;
+# resolution scans in reverse so a later registration overrides an earlier,
+# broader one for overlapping matchers (e.g. register_soft_mult() then
+# register_soft_mult_karatsuba() -- the karatsuba registration wins).
+_generic_operator_registry: list = []  # [(op, l_matcher, r_matcher, factory_or_INFERRED)]
+_generic_left_operator_registry: list = []  # [(op, l_matcher, factory_or_INFERRED)]
+_generic_unary_operator_registry: list = []  # [(op, matcher, factory_or_INFERRED)]
+# Memoization of resolved generic lookups, keyed on the concrete type string(s).
+_generic_operator_cache: dict = {}
+_generic_left_operator_cache: dict = {}
+_generic_unary_operator_cache: dict = {}
+# Scoped counterparts, mirroring _scoped_operator_registry etc.
+_scoped_generic_operator_registry: dict = {}  # id(scope) -> [(op, lm, rm, factory)]
+_scoped_generic_left_operator_registry: dict = {}
+_scoped_generic_unary_operator_registry: dict = {}
+
+
+def _resolve_generic_operator(op, l_str, r_str):
+    """Consult the generic binary registry. Returns a callable, INFERRED, or
+    None (no generic registration matches)."""
+    key = (op, l_str, r_str)
+    if key in _generic_operator_cache:
+        return _generic_operator_cache[key]
+    impl = None
+    for entry_op, lm, rm, factory in reversed(_generic_operator_registry):
+        if entry_op == op and lm.matches(l_str) and rm.matches(r_str):
+            impl = (
+                factory
+                if factory is INFERRED
+                else factory(_reconstruct_int_ctype(l_str), _reconstruct_int_ctype(r_str))
+            )
+            break
+    _generic_operator_cache[key] = impl
+    if impl is not None and impl is not INFERRED:
+        _operator_registry[key] = impl
+        _registered_binary_op_names.add(op)
+    return impl
+
+
+def _resolve_generic_left_operator(op, l_str):
+    key = (op, l_str)
+    if key in _generic_left_operator_cache:
+        return _generic_left_operator_cache[key]
+    impl = None
+    for entry_op, lm, factory in reversed(_generic_left_operator_registry):
+        if entry_op == op and lm.matches(l_str):
+            impl = factory if factory is INFERRED else factory(_reconstruct_int_ctype(l_str))
+            break
+    _generic_left_operator_cache[key] = impl
+    if impl is not None and impl is not INFERRED:
+        _left_operator_registry[key] = impl
+        _registered_binary_op_names.add(op)
+    return impl
+
+
+def _resolve_generic_unary_operator(op, t_str):
+    key = (op, t_str)
+    if key in _generic_unary_operator_cache:
+        return _generic_unary_operator_cache[key]
+    impl = None
+    for entry_op, m, factory in reversed(_generic_unary_operator_registry):
+        if entry_op == op and m.matches(t_str):
+            impl = factory if factory is INFERRED else factory(_reconstruct_int_ctype(t_str))
+            break
+    _generic_unary_operator_cache[key] = impl
+    if impl is not None and impl is not INFERRED:
+        _unary_operator_registry[key] = impl
+        _registered_unary_op_names.add(op)
+    return impl
+
+
+def register_operator(op: str, left_type, right_type, func, scope=None) -> None:
+    """Register a hardware function (or factory) as the implementation of a
+    binary operator.
+
+    op:         operator name string, e.g. "PLUS" (+), "GT" (>), "SL" (<<).
+    left_type:  C type of the left operand (e.g. uint32_t), OR a type matcher
+                (any_uint_t / any_int_t / any_integer_t / uint_upto(n) /
+                int_upto(n)) to cover many concrete types with one call.
+    right_type: C type of the right operand, or a type matcher (as above).
+    func:       callable hardware function object for an exact (concrete-type)
+                registration; a factory func(left_type, right_type) -> hw_func
+                for a matcher-based (generic) registration; or INFERRED to
+                explicitly fall through to the built-in inferred path (an
+                escape hatch for overriding one case out of a broader generic
+                registration).
+    scope:      if provided, registration is active only while elaborating that
+                callable (and its callees).
     """
+    if _is_type_matcher(left_type) or _is_type_matcher(right_type):
+        entry = (op, _as_matcher(left_type), _as_matcher(right_type), func)
+        if scope is None:
+            _generic_operator_registry.append(entry)
+            _generic_operator_cache.clear()
+        else:
+            _scoped_funcs.add(id(scope))
+            _scoped_generic_operator_registry.setdefault(id(scope), []).append(entry)
+        return
     key = (op, _ctype_str(left_type), _ctype_str(right_type))
     if scope is None:
         _operator_registry[key] = func
@@ -1743,15 +1987,28 @@ def register_operator(op: str, left_type, right_type, func, scope=None) -> None:
 
 
 def register_left_operator(op: str, left_type, func, scope=None) -> None:
-    """Register a hardware function as the implementation of a binary operator,
-    matching only on the left operand type. The right operand type is derived
-    from the registered function (e.g. shift amount derived from value width).
+    """Register a hardware function (or factory) as the implementation of a
+    binary operator, matching only on the left operand type. The right
+    operand type is derived from the registered function (e.g. shift amount
+    derived from value width).
 
-    op:        "SL" (<<) or "SR" (>>)
-    left_type: C type of the left operand (e.g. uint32_t)
-    func:      callable hardware function object.
-    scope:     if provided, registration is active only while elaborating that callable.
+    op:        operator name string, e.g. "SL" (<<) or "SR" (>>).
+    left_type: C type of the left operand (e.g. uint32_t), or a type matcher.
+    func:      callable hardware function object (exact registration), a
+               factory func(left_type) -> hw_func (matcher registration), or
+               INFERRED.
+    scope:     if provided, registration is active only while elaborating that
+               callable (and its callees).
     """
+    if _is_type_matcher(left_type):
+        entry = (op, left_type, func)
+        if scope is None:
+            _generic_left_operator_registry.append(entry)
+            _generic_left_operator_cache.clear()
+        else:
+            _scoped_funcs.add(id(scope))
+            _scoped_generic_left_operator_registry.setdefault(id(scope), []).append(entry)
+        return
     key = (op, _ctype_str(left_type))
     if scope is None:
         _left_operator_registry[key] = func
@@ -1762,13 +2019,26 @@ def register_left_operator(op: str, left_type, func, scope=None) -> None:
 
 
 def register_unary_operator(op: str, operand_type, func, scope=None) -> None:
-    """Register a hardware function as the implementation of a unary operator.
+    """Register a hardware function (or factory) as the implementation of a
+    unary operator.
 
-    op:           "NEGATE" (-) or "NOT" (~)
-    operand_type: C type of the operand (e.g. uint32_t)
-    func:         callable hardware function object.
-    scope:        if provided, registration is active only while elaborating that callable.
+    op:           operator name string, e.g. "NEGATE" (-) or "NOT" (~).
+    operand_type: C type of the operand (e.g. uint32_t), or a type matcher.
+    func:         callable hardware function object (exact registration), a
+                  factory func(operand_type) -> hw_func (matcher registration),
+                  or INFERRED.
+    scope:        if provided, registration is active only while elaborating
+                  that callable (and its callees).
     """
+    if _is_type_matcher(operand_type):
+        entry = (op, operand_type, func)
+        if scope is None:
+            _generic_unary_operator_registry.append(entry)
+            _generic_unary_operator_cache.clear()
+        else:
+            _scoped_funcs.add(id(scope))
+            _scoped_generic_unary_operator_registry.setdefault(id(scope), []).append(entry)
+        return
     key = (op, _ctype_str(operand_type))
     if scope is None:
         _unary_operator_registry[key] = func
@@ -1809,8 +2079,17 @@ def _struct_dispatch_binary_op(op_name, left, right):
     """
     l_str = left._pypeline_ctype_name
     r_str = getattr(right, "_pypeline_ctype_name", None)
-    fn = r_str and _operator_registry.get((op_name, l_str, r_str))
-    fn = fn or _left_operator_registry.get((op_name, l_str))
+    fn = None
+    if r_str:
+        fn = _operator_registry.get((op_name, l_str, r_str))
+        if fn is None:
+            fn = _resolve_generic_operator(op_name, l_str, r_str)
+    if fn is None or fn is INFERRED:
+        fn = _left_operator_registry.get((op_name, l_str))
+        if fn is None:
+            fn = _resolve_generic_left_operator(op_name, l_str)
+    if fn is INFERRED:
+        fn = None
     if not callable(fn):
         raise TypeError(
             f"No {op_name!r} operator registered for {l_str!r} and "
@@ -1823,6 +2102,10 @@ def _struct_dispatch_unary_op(op_name, operand):
     """Look up and call a registered operator for a @struct-typed unary op."""
     l_str = operand._pypeline_ctype_name
     fn = _unary_operator_registry.get((op_name, l_str))
+    if fn is None:
+        fn = _resolve_generic_unary_operator(op_name, l_str)
+    if fn is INFERRED:
+        fn = None
     if not callable(fn):
         raise TypeError(f"No {op_name!r} operator registered for {l_str!r}")
     return _struct_dispatch_call(fn, (operand,))
@@ -1868,11 +2151,35 @@ def _push_scoped_registrations(func):
         if key[0] not in _registered_unary_op_names:
             _registered_unary_op_names.add(key[0])
             saved.append((_registered_unary_op_names, key[0], _SCOPED_SET_ADD))
+    # Generic (matcher-based) scoped entries: appended to the live list (stack
+    # discipline -- nested push/pop always fully completes before this pop
+    # runs, so popping the last N entries is always correct), and the
+    # memoization cache is cleared since availability just changed.
+    generic_entries = _scoped_generic_operator_registry.get(func_id, [])
+    if generic_entries:
+        _generic_operator_registry.extend(generic_entries)
+        _generic_operator_cache.clear()
+        saved.append((_generic_operator_registry, len(generic_entries), _SCOPED_GENERIC_POP))
+    generic_left_entries = _scoped_generic_left_operator_registry.get(func_id, [])
+    if generic_left_entries:
+        _generic_left_operator_registry.extend(generic_left_entries)
+        _generic_left_operator_cache.clear()
+        saved.append(
+            (_generic_left_operator_registry, len(generic_left_entries), _SCOPED_GENERIC_POP)
+        )
+    generic_unary_entries = _scoped_generic_unary_operator_registry.get(func_id, [])
+    if generic_unary_entries:
+        _generic_unary_operator_registry.extend(generic_unary_entries)
+        _generic_unary_operator_cache.clear()
+        saved.append(
+            (_generic_unary_operator_registry, len(generic_unary_entries), _SCOPED_GENERIC_POP)
+        )
     return saved
 
 
 _SCOPED_MISSING = object()  # sentinel for _pop_scoped_registrations; created once
 _SCOPED_SET_ADD = object()  # sentinel: this saved entry is a set .add() to undo
+_SCOPED_GENERIC_POP = object()  # sentinel: this saved entry is N generic-list entries to pop
 _EMPTY_SAVED = []  # returned by _push_scoped_registrations when nothing to push
 
 
@@ -1881,6 +2188,15 @@ def _pop_scoped_registrations(saved):
     for registry, key, old_val in saved:
         if old_val is _SCOPED_SET_ADD:
             registry.discard(key)
+        elif old_val is _SCOPED_GENERIC_POP:
+            n = key  # here `key` holds the count of entries appended by push
+            del registry[len(registry) - n :]
+            if registry is _generic_operator_registry:
+                _generic_operator_cache.clear()
+            elif registry is _generic_left_operator_registry:
+                _generic_left_operator_cache.clear()
+            else:
+                _generic_unary_operator_cache.clear()
         elif old_val is None:
             registry.pop(key, _SCOPED_MISSING)
         else:

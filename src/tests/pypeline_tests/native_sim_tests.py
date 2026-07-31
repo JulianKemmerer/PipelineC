@@ -56,6 +56,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "interface_array_port_test.py",
     "interface_mixing_rules_test.py",
     "interface_hw_func_pairing_error_test.py",
+    "soft_ops_test.py",
 ]
 # fmt: on
 

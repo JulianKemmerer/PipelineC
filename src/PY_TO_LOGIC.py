@@ -4117,6 +4117,10 @@ class FuncElaborator:
         import pypeline as _pypeline
 
         impl_name = _pypeline._unary_operator_registry.get((op_name, typ))
+        if impl_name is None:
+            impl_name = _pypeline._resolve_generic_unary_operator(op_name, typ)
+        if impl_name is _pypeline.INFERRED:
+            impl_name = None
         if impl_name is not None:
             callee_def = self._resolve_registered_impl(impl_name, expr)
             inst = self._inst(
@@ -4240,8 +4244,14 @@ class FuncElaborator:
                 key = (op_name, l_type, r_type)
                 impl_name = _pypeline._operator_registry.get(key)
                 if impl_name is None:
+                    impl_name = _pypeline._resolve_generic_operator(op_name, l_type, r_type)
+                if impl_name is None or impl_name is _pypeline.INFERRED:
                     # Fall back to left-only match (right type derived from left)
                     impl_name = _pypeline._left_operator_registry.get((op_name, l_type))
+                    if impl_name is None:
+                        impl_name = _pypeline._resolve_generic_left_operator(op_name, l_type)
+                if impl_name is _pypeline.INFERRED:
+                    impl_name = None
                 if impl_name is None:
                     raise NotImplementedError(
                         f"Variable shift ({l_type} {op_name} {r_type}) has no registered"
@@ -4280,7 +4290,13 @@ class FuncElaborator:
 
         _gen_impl = _pypeline._operator_registry.get((op_name, l_type, r_type))
         if _gen_impl is None:
+            _gen_impl = _pypeline._resolve_generic_operator(op_name, l_type, r_type)
+        if _gen_impl is None or _gen_impl is _pypeline.INFERRED:
             _gen_impl = _pypeline._left_operator_registry.get((op_name, l_type))
+            if _gen_impl is None:
+                _gen_impl = _pypeline._resolve_generic_left_operator(op_name, l_type)
+        if _gen_impl is _pypeline.INFERRED:
+            _gen_impl = None
         if _gen_impl is not None:
             _callee = self._resolve_registered_impl(_gen_impl, expr)
             _inst = self._inst(
@@ -4334,6 +4350,40 @@ class FuncElaborator:
         op_name = BIN_OP_MAP[type(expr.ops[0])]
         left_wire, l_type = self._elab_expr(expr.left)
         right_wire, r_type = self._elab_expr(expr.comparators[0])
+
+        # Registered operator check — comparisons are overloadable like any
+        # other binary op (e.g. a soft int comparator, or float32_t < float32_t,
+        # neither of which any built-in inferred path can produce).
+        import pypeline as _pypeline
+
+        _gen_impl = _pypeline._operator_registry.get((op_name, l_type, r_type))
+        if _gen_impl is None:
+            _gen_impl = _pypeline._resolve_generic_operator(op_name, l_type, r_type)
+        if _gen_impl is None or _gen_impl is _pypeline.INFERRED:
+            _gen_impl = _pypeline._left_operator_registry.get((op_name, l_type))
+            if _gen_impl is None:
+                _gen_impl = _pypeline._resolve_generic_left_operator(op_name, l_type)
+        if _gen_impl is _pypeline.INFERRED:
+            _gen_impl = None
+        if _gen_impl is not None:
+            _callee = self._resolve_registered_impl(_gen_impl, expr)
+            _inst = self._inst(
+                _gen_impl if isinstance(_gen_impl, str) else _gen_impl.__name__, expr
+            )
+            _ret_type = _callee.wire_to_c_type[C_TO_LOGIC.RETURN_WIRE_NAME]
+            _port_ret = _port_wire(_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            _add_submodule_instance(
+                self.logic,
+                _inst,
+                _callee.func_name,
+                list(zip(_callee.inputs, [left_wire, right_wire], [l_type, r_type])),
+                _port_ret,
+                _ret_type,
+                expr,
+                self.src_file,
+            )
+            return _port_ret, _ret_type
+
         # Sign-promote so the VHDL backend compares matching-sign types.
         if _ctype_is_int(l_type) and _ctype_is_int(r_type):
             eff_l_type, eff_r_type, _ = _arith_promote(l_type, r_type)
