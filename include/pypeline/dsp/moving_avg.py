@@ -150,6 +150,8 @@ def make_moving_avg(
             o.stream_in_if.ready = sp_o.stream_in_if.ready
             return o
 
+        _core_ap = None  # no AUTOPIPELINE core in elastic mode (make_stream_pipeline)
+
     elif handshake == "valid_only":
         in_stream_t = make_stream_t(data_t)
         avg_stream_t = make_stream_t(avg_t)
@@ -166,6 +168,7 @@ def make_moving_avg(
         moving_avg_core_ap, _moving_avg_core_ap_call = _autopipeline_with_io_regs(
             moving_avg_core_stream, has_input_reg=True, has_output_reg=True
         )
+        _core_ap = _moving_avg_core_ap_call
 
         @hw_func
         def moving_avg(stream_in_if: in_stream_t) -> out_stream_t:
@@ -209,4 +212,17 @@ def make_moving_avg(
     moving_avg.out_fb_t = out_intrf.fb_t if handshake == "elastic" else None
     moving_avg.in_intrf = in_intrf if handshake == "elastic" else None
     moving_avg.out_intrf = out_intrf if handshake == "elastic" else None
+
+    # Latency metadata (valid_only mode only -- see magnitude.py's identical
+    # comment for why this is a lazy accessor rather than an eager attribute).
+    # The window shift-register update is combinational-in (reads committed
+    # Reg state, no pipeline stages of its own), so it adds no latency beyond
+    # the io-reg-wrapped output resize's AUTOPIPELINE core.
+    moving_avg.core_ap = _core_ap
+    moving_avg.io_reg_latency = 2 if handshake == "valid_only" else None  # in + out reg
+    moving_avg.get_latency = (
+        (lambda: moving_avg.io_reg_latency + moving_avg.core_ap.latency)
+        if handshake == "valid_only"
+        else None
+    )
     return moving_avg, moving_avg_t

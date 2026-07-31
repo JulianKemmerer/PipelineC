@@ -131,6 +131,8 @@ def make_dc_block(
             o.stream_in_if.ready = sp_o.stream_in_if.ready
             return o
 
+        _core_ap = None  # no AUTOPIPELINE core in elastic mode (make_stream_pipeline)
+
     elif handshake == "valid_only":
         in_stream_t = make_stream_t(data_t)
         diff_stream_t = make_stream_t(diff_t)
@@ -147,6 +149,7 @@ def make_dc_block(
         dc_block_core_ap, _dc_block_core_ap_call = _autopipeline_with_io_regs(
             dc_block_core_stream, has_input_reg=True, has_output_reg=True
         )
+        _core_ap = _dc_block_core_ap_call
 
         @hw_func
         def dc_block(stream_in_if: in_stream_t) -> out_stream_t:
@@ -185,4 +188,17 @@ def make_dc_block(
     dc_block.out_fb_t = out_intrf.fb_t if handshake == "elastic" else None
     dc_block.in_intrf = in_intrf if handshake == "elastic" else None
     dc_block.out_intrf = out_intrf if handshake == "elastic" else None
+
+    # Latency metadata (valid_only mode only -- see magnitude.py's identical
+    # comment for why this is a lazy accessor rather than an eager attribute).
+    # Note: the IIR mean update itself is purely combinational-in (reads the
+    # committed Reg, no pipeline stages of its own), so it adds no latency
+    # beyond the io-reg-wrapped output resize's AUTOPIPELINE core.
+    dc_block.core_ap = _core_ap
+    dc_block.io_reg_latency = 2 if handshake == "valid_only" else None  # in + out reg
+    dc_block.get_latency = (
+        (lambda: dc_block.io_reg_latency + dc_block.core_ap.latency)
+        if handshake == "valid_only"
+        else None
+    )
     return dc_block, dc_block_t

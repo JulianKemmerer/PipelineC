@@ -491,4 +491,27 @@ def make_detect_pulses(rail_t=None, dc_k=10, ma_n=4, width_t=uint32_t, delay_dep
     detect_pulses.in_stream_t = in_stream_t
     detect_pulses.out_fb_t = detect_fsm.out_fb_t
     detect_pulses.out_fwd_t = detect_fsm.out_fwd_t
+
+    # The three DSP sub-instances, exposed so a caller (a golden-model
+    # testbench) can drive dsp_tb.golden_magnitude/golden_dc_block/
+    # golden_moving_avg directly off the SAME instances this factory built,
+    # rather than reconstructing a second, potentially-diverging set.
+    detect_pulses.magnitude = magnitude
+    detect_pulses.dc_block = dc_block
+    detect_pulses.moving_avg = moving_avg
+
+    # Latency metadata -- lazy accessors (see magnitude.py's identical
+    # comment for why): only meaningful/read under --comb native sim, where
+    # AUTOPIPELINE.latency == 0. pdw_latency/gate_latency are fixed Reg
+    # stages inside the FSM (not affected by autopipelining, since the FSM
+    # itself is never autopipelined -- see make_pulse_detect_fsm's own
+    # docstring on why it's a genuine recurrence). delay_line_latency is the
+    # FWFT FIFO's inherent push-to-valid latency (NOT delay_depth -- see
+    # make_delay_line's docstring); it does not change with delay_depth.
+    detect_pulses.pdw_latency = 1
+    detect_pulses.gate_latency = 2
+    detect_pulses.delay_line_latency = 2
+    detect_pulses.get_dsp_latency = lambda: (
+        magnitude.get_latency() + dc_block.get_latency() + moving_avg.get_latency()
+    )
     return detect_pulses, detect_pulses_t

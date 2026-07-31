@@ -110,6 +110,8 @@ def make_magnitude(
             o.stream_in_if.ready = sp_o.stream_in_if.ready
             return o
 
+        _core_ap = None  # no AUTOPIPELINE core in elastic mode (make_stream_pipeline)
+
     elif handshake == "valid_only":
         in_stream_t = make_stream_t(complex_t)
         out_stream_t = make_stream_t(out_t_actual)
@@ -130,6 +132,7 @@ def make_magnitude(
         def magnitude(stream_in_if: in_stream_t) -> out_stream_t:
             return magnitude_core_ap(stream_in_if)
 
+        _core_ap = _magnitude_core_ap_call
     else:
         raise ValueError(
             f"make_magnitude: unsupported handshake {handshake!r}, "
@@ -153,4 +156,19 @@ def make_magnitude(
     magnitude.out_fb_t = out_intrf.fb_t if handshake == "elastic" else None
     magnitude.in_intrf = in_intrf if handshake == "elastic" else None
     magnitude.out_intrf = out_intrf if handshake == "elastic" else None
+
+    # Latency metadata (valid_only mode only -- elastic's make_stream_pipeline
+    # has its own elastic-FIFO-based depth, not a fixed cycle latency). Lazy
+    # accessor, not an eager attribute: reading .latency off an AUTOPIPELINE
+    # object is what engages pipelinec's pin-and-confirm loop, so evaluating
+    # it here at factory-call time would affect every existing build that
+    # merely constructs a magnitude instance. Only a testbench that actually
+    # calls get_latency() (under --comb, where .latency == 0) pays for it.
+    magnitude.core_ap = _core_ap
+    magnitude.io_reg_latency = 2 if handshake == "valid_only" else None  # in + out reg
+    magnitude.get_latency = (
+        (lambda: magnitude.io_reg_latency + magnitude.core_ap.latency)
+        if handshake == "valid_only"
+        else None
+    )
     return magnitude, magnitude_t

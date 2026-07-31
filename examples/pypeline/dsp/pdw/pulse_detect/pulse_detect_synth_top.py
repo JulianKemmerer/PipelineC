@@ -18,7 +18,7 @@ Synthesize (requires Vivado):
 
 from pypeline import MAIN, PART, Input, uint32_t
 
-from pulse_detect import make_pulse_detect
+from pulse_detect import make_pulse_detect_fsm
 
 from fixed_point import make_fixed_t
 
@@ -26,7 +26,7 @@ PART("xc7a100tcsg324-1")  # Artix-7 100T, same part as board/arty/part100t.py
 
 power_t = make_fixed_t(32, 0, signed=False)  # README's uint32_t power format
 
-pulse_detect, pulse_detect_t = make_pulse_detect(power_t)
+pulse_detect, pulse_detect_t = make_pulse_detect_fsm(power_t)
 
 # Runtime-configurable knobs (README section 2's host regs, as if from config
 # regs -- see pulse_gen_synth_top.py for the same convention).

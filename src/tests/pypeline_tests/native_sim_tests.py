@@ -189,6 +189,28 @@ def get_tests() -> list:
             ],
         )
     )
+    # PDW project: top-level testbench (top.py) -- exact golden model of the
+    # whole pulse_gen -> detect_pulses chain, several pulse settings incl.
+    # filtered-out ones and the CW/max_width cap. See pdw_tb.py's own
+    # docstring: PATH_B_SKEW there currently reproduces TODAY'S known Path B
+    # misalignment (pulse_detect.py's delay_line TODO) -- this test is
+    # expected to be GREEN as shipped, and is expected to go RED the moment
+    # PATH_B_SKEW is flipped to 0 (the correct alignment), until the
+    # hardware fix lands.
+    tests.append(
+        Test(
+            name="pdw_tb",
+            category="native_sim",
+            cmd=[
+                PIPELINEC,
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_tb.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "6200",
+            ],
+        )
+    )
     # Self-checking sim_assert/sim_finish designs -- no external Python
     # sim_call/assert harness needed. Same source files are also registered in
     # vhdl_sim_tests.py under --cocotb --ghdl, proving native and VHDL sim agree.

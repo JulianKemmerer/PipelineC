@@ -35,7 +35,7 @@ Run:
 
 from pypeline import MAIN, Reg, sim_assert, uint1_t, uint3_t, uint32_t
 
-from pulse_detect import make_pulse_detect
+from pulse_detect import make_pulse_detect_fsm
 
 from fixed_point import make_fixed_t
 
@@ -61,7 +61,7 @@ data_t = make_fixed_t(32, 0, signed=False)  # README's uint32_t power format
 # ---------------------------------------------------------------------------
 # 1. Elastic handshake, stuttered consumer ready
 # ---------------------------------------------------------------------------
-pulse_detect_e, pulse_detect_e_t = make_pulse_detect(data_t)
+pulse_detect_e, pulse_detect_e_t = make_pulse_detect_fsm(data_t)
 
 
 @MAIN(125.0)
@@ -163,7 +163,7 @@ def pulse_detect_elastic_tb():
 # ---------------------------------------------------------------------------
 # 2. valid_only input handshake -- same waveform, always-accepting input
 # ---------------------------------------------------------------------------
-pulse_detect_vo, pulse_detect_vo_t = make_pulse_detect(data_t, handshake="valid_only")
+pulse_detect_vo, pulse_detect_vo_t = make_pulse_detect_fsm(data_t, handshake="valid_only")
 
 
 @MAIN(125.0)
@@ -255,7 +255,7 @@ def pulse_detect_valid_only_tb():
 #    candidate via its own CW-rejection rule (pulse_width == max_width).
 # ---------------------------------------------------------------------------
 CW_MAX_WIDTH = 32
-pulse_detect_cw, pulse_detect_cw_t = make_pulse_detect(data_t)
+pulse_detect_cw, pulse_detect_cw_t = make_pulse_detect_fsm(data_t)
 
 
 @MAIN(125.0)
