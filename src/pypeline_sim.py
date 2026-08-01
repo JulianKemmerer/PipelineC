@@ -369,6 +369,16 @@ def _import_design(path: str):
     _include_pypeline = os.path.join(_repo_root, "include", "pypeline")
     if _include_pypeline not in sys.path:
         sys.path.insert(0, _include_pypeline)
+    # Mirror PY_TO_LOGIC.PARSE_FILE's default soft-operator registration (int
+    # NEGATE/compare/DIV/MOD, variable shift) so native sim executes the same
+    # soft implementations hardware does for these -- structural fidelity,
+    # not just golden-value correctness. Pure native runs never import
+    # PY_TO_LOGIC, so this is the only place that registration happens for
+    # them; the pipelinec --sim (non---comb) flow gets it from PARSE_FILE
+    # too, and operators.soft de-dupes so registering it twice is harmless.
+    import operators.soft as _pypeline_default_soft_ops
+
+    _pypeline_default_soft_ops.register_sw_lib_replacements()
     spec.loader.exec_module(module)
     return module
 

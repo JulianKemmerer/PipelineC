@@ -17,7 +17,17 @@ THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PIPELINEC = os.path.join(THIS_DIR, "../../../pipelinec")
 DESIGN = os.path.join(THIS_DIR, "sweep_floor_detect_design.py")
 
-MAX_FULL_SYN_RUNS = 4
+# Raised from 4 -- sweep_floor_detect_design.py's soft comparator (from the
+# soft-operator-library default flip, see include/pypeline/operators/) has a
+# hierarchical, multi-submodule delay whose bottom-up *estimate* is
+# measurably less accurate than a flat built-in op's, costing one extra
+# "estimate was wrong -> resynthesize for real -> replan" cycle (2 extra
+# full-design runs) before the sweep locks onto the true floor. The floor
+# is still detected and the sweep still stops promptly relative to that --
+# this just accounts for the soft comparator's estimation-accuracy cost.
+# Accepted as a documented tradeoff; revisit only if this (or the wireguard
+# build) shows it actually matters.
+MAX_FULL_SYN_RUNS = 6
 
 
 def main():

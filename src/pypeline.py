@@ -2009,6 +2009,59 @@ def _resolve_generic_unary_operator(op, t_str):
     return impl
 
 
+# MUX registry: keyed by the muxed (iftrue/iffalse) type only, since MUX has
+# a single fixed shape (cond: uint1_t, iftrue/iffalse: T) -> T rather than an
+# operator string. Mirrors the unary-operator registry structure exactly.
+_mux_registry: dict = {}  # type_str -> name_or_callable
+_scoped_mux_registry: dict = {}
+_generic_mux_registry: list = []  # [(matcher, factory_or_INFERRED)]
+_generic_mux_cache: dict = {}
+_scoped_generic_mux_registry: dict = {}
+_registered_mux_type_names: set = set()  # type strings with an active exact/generic reg
+
+
+def _resolve_generic_mux(t_str):
+    if t_str in _generic_mux_cache:
+        return _generic_mux_cache[t_str]
+    impl = None
+    for m, factory in reversed(_generic_mux_registry):
+        if m.matches(t_str):
+            impl = factory if factory is INFERRED else factory(_reconstruct_int_ctype(t_str))
+            break
+    _generic_mux_cache[t_str] = impl
+    if impl is not None and impl is not INFERRED:
+        _mux_registry[t_str] = impl
+        _registered_mux_type_names.add(t_str)
+    return impl
+
+
+def register_mux_impl(type_, func, scope=None) -> None:
+    """Register a hardware function (or factory) as the implementation of
+    MUX(cond, iftrue, iffalse) for integer type `type_` (or a type matcher).
+
+    Only applies where the elaborator already routes MUX through a lookup
+    (currently: the VAR_REF_RD binary mux tree, used for variable array
+    indexing). Struct/array MUX stays inferred (pure wiring) regardless of
+    what is registered here.
+    """
+    if _is_type_matcher(type_):
+        entry = (type_, func)
+        if scope is None:
+            _generic_mux_registry.append(entry)
+            _generic_mux_cache.clear()
+        else:
+            _scoped_funcs.add(id(scope))
+            _scoped_generic_mux_registry.setdefault(id(scope), []).append(entry)
+        return
+    key = _ctype_str(type_)
+    if scope is None:
+        _mux_registry[key] = func
+        _registered_mux_type_names.add(key)
+    else:
+        _scoped_funcs.add(id(scope))
+        _scoped_mux_registry.setdefault(id(scope), {})[key] = func
+
+
 def register_operator(op: str, left_type, right_type, func, scope=None) -> None:
     """Register a hardware function (or factory) as the implementation of a
     binary operator.
@@ -2210,6 +2263,12 @@ def _push_scoped_registrations(func):
         if key[0] not in _registered_unary_op_names:
             _registered_unary_op_names.add(key[0])
             saved.append((_registered_unary_op_names, key[0], _SCOPED_SET_ADD))
+    for key, val in _scoped_mux_registry.get(func_id, {}).items():
+        saved.append((_mux_registry, key, _mux_registry.get(key)))
+        _mux_registry[key] = val
+        if key not in _registered_mux_type_names:
+            _registered_mux_type_names.add(key)
+            saved.append((_registered_mux_type_names, key, _SCOPED_SET_ADD))
     # Generic (matcher-based) scoped entries: appended to the live list (stack
     # discipline -- nested push/pop always fully completes before this pop
     # runs, so popping the last N entries is always correct), and the
@@ -2233,6 +2292,11 @@ def _push_scoped_registrations(func):
         saved.append(
             (_generic_unary_operator_registry, len(generic_unary_entries), _SCOPED_GENERIC_POP)
         )
+    generic_mux_entries = _scoped_generic_mux_registry.get(func_id, [])
+    if generic_mux_entries:
+        _generic_mux_registry.extend(generic_mux_entries)
+        _generic_mux_cache.clear()
+        saved.append((_generic_mux_registry, len(generic_mux_entries), _SCOPED_GENERIC_POP))
     return saved
 
 

@@ -1914,7 +1914,39 @@ from pypeline import register_operator, register_left_operator, register_unary_o
 
 `op` strings: `"PLUS"` (`+`), `"MINUS"` (`-`), `"INFERRED_MULT"` (`*` — not
 `"MULT"`/`"TIMES"`), `"DIV"` (`/` — not `"DIVIDE"`), `"SL"` (`<<`), `"SR"` (`>>`),
-`"NEGATE"` (unary `-`).
+`"NEGATE"` (unary `-`), `"GT"`/`"GTE"`/`"LT"`/`"LTE"` (`>`/`>=`/`<`/`<=`), `"EQ"`/`"NEQ"`
+(`==`/`!=`).
+
+`lhs_t`/`rhs_t`/`operand_t` can also be a **type matcher** — `any_uint_t`, `any_int_t`,
+`any_integer_t`, `uint_upto(n)`, `int_upto(n)` — instead of one concrete type, letting a
+single registration cover every width. In that case `impl` must be a **factory**
+`func(lhs_t[, rhs_t]) -> hw_func`, called once per concrete type (pair) actually used and
+memoized afterward:
+
+```python
+from pypeline import register_operator, any_integer_t
+
+register_operator("PLUS", any_integer_t, any_integer_t, make_soft_add)
+```
+
+A shipped library of such factories lives in `include/pypeline/operators/` — soft
+(bitwise-primitive) implementations for every integer operator that doesn't already have a
+built-in lowering, plus alternate flavors (ripple vs. carry-select add, shift-add vs.
+Karatsuba multiply, subtract vs. bitwise-magnitude compare):
+
+```python
+from operators.soft import register_soft_ops
+register_soft_ops()                  # whole design, soft all the way to bitwise leaves
+register_soft_ops(scope=my_func)     # only my_func's own body
+
+from operators.soft import register_soft_mult_karatsuba
+register_soft_mult_karatsuba()       # swap in a different flavor; last registration wins
+```
+
+Five operator families — int unary negate, int `>`/`>=`/`<`/`<=`, `/`, `%`, and
+variable-amount shift — are registered soft **by default** (before your design file is even
+imported), since they have no other inferred/raw-VHDL lowering. Register something more
+specific in your own design and it overrides the default, same as any other registration.
 
 The `floating_point` library (see [§11 Floating-point types](#floating-point-types))
 already does this registration for you for its predefined types:

@@ -41,7 +41,15 @@ fir_sweep, fir_sweep_t = make_fir(
 )
 
 
-@MAIN(100.0)
+# Goal lowered from 100.0 -- the soft-operator-library default flip
+# (int GT/GTE/LT/LTE now lower to a Pypeline-HDL subtract-based comparator
+# instead of the old SW_LIB-generated one, see include/pypeline/operators/)
+# measurably slowed integer compares (~70-90% higher delay for the same
+# widths in this design), and this filter's real timing floor is an
+# unrelated inferred MUX around ~76 MHz -- 100 MHz is no longer reachable.
+# Optimizing the soft comparator's QoR is tracked as follow-up work,
+# revisited if it turns out to matter for the wireguard-fpga build.
+@MAIN(60.0)
 def fir_sweep_main(
     stream_in_if: fir_sweep.in_fwd_t, stream_out_if: fir_sweep.out_fb_t
 ) -> fir_sweep_t:

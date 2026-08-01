@@ -3745,6 +3745,17 @@ The `op_str` values map to Python operators:
 | `"PLUS"` | `+` (addition) |
 | `"MINUS"` | `-` (subtraction) |
 | `"NEGATE"` | `-` (unary negation) |
+| `"GT"` `"GTE"` `"LT"` `"LTE"` | `>` `>=` `<` `<=` |
+| `"EQ"` `"NEQ"` | `==` `!=` |
+
+`lhs`/`rhs`/`operand` may also be a **type matcher** (`any_uint_t`, `any_int_t`,
+`any_integer_t`, `uint_upto(n)`, `int_upto(n)`) instead of a concrete type — in that case
+`impl` must be a **factory** `func(lhs_type[, rhs_type]) -> hw_func`, called lazily the first
+time a given concrete type (pair) is seen and memoized back into the exact registry
+afterward. See `pypeline_DESIGN.md`'s "Generic (Matcher-Based) Registrations" for the full
+resolution order and the `INFERRED` escape-hatch sentinel. This is what
+`include/pypeline/operators/` (the soft-operator library) uses throughout, since a soft
+adder can't be registered per concrete width.
 
 ### Binary operator lookup in `_elab_binop`
 
@@ -3787,6 +3798,25 @@ def add_floats(a: float32_t, b: float32_t) -> float32_t:
       - `NEGATE` on floats: output type = operand type
       - Function name always encodes the **input** type (e.g. `UNARY_OP_NEGATE_uint8_t`)
 ```
+
+### Comparison operator lookup in `_elab_compare`
+
+Previously `_elab_compare` consulted no registry at all — `<`/`<=`/`>`/`>=` could not be
+overloaded for any type, struct or int. It now mirrors `_elab_binop`'s exact/generic lookup,
+inserted before the sign-promotion/built-in-compare-emission code:
+
+```
+1. lhs_wire, l_type = _elab_expr(left)
+   rhs_wire, r_type = _elab_expr(right)
+2. Exact match:  _operator_registry.get((op, l_type, r_type))
+3. Generic match: _resolve_registered_impl / _resolve_generic_operator (matcher scan + memoize)
+4. Left match:   _left_operator_registry.get((op, l_type)) / generic left match
+5. If found and not INFERRED: resolve impl, emit submodule instance
+6. Otherwise: fall through to the built-in sign-promote-and-compare path (unchanged)
+```
+
+This is what lets `include/pypeline/operators/soft_cmp.py` (and, for structs,
+`floating_point.py`'s `register_float_ops`) provide `>` `>=` `<` `<=` for the first time.
 
 ### Scoped operator registrations
 
@@ -4742,6 +4772,20 @@ in `FuncLogicLookupTable` and as VHDL component entity names:
 | Bit select | `BIT_SELECT_<type>_<pos>` | `BIT_SELECT_uint32_t_15` |
 | Bit slice | `BIT_SLICE_<type>_<hi>_<lo>` | `BIT_SLICE_uint32_t_15_0` |
 | Bit slice assign | `BIT_SLICE_ASSIGN_<type>_<hi>_<lo>` | |
+
+A registered soft-operator-library implementation is a plain `@hw_func`, so it does **not**
+follow the `BIN_OP_*`/`UNARY_OP_*`/`MUX_*` naming convention above — its entity name is
+whatever `_canonical_func_name` derives from the factory (e.g.
+`soft_sub_cmp_greater_True_l_t_uint8_t_r_t_uint8_t_..._1CLK_<hash>`). Two integration points
+key off the built-in naming convention and were not updated as part of this library:
+`DEVICE_MODELS.func_name_to_op_and_widths` (delay estimation falls back to per-entity
+synthesis instead of a fast model lookup for soft-op entities — slower sweeps, not incorrect
+ones) and the `path_delay_cache` (new entries accumulate under the new names; old
+`BIN_OP_LT*`/`GT*`/etc. entries for int types simply stop being hit once a soft comparator is
+registered for that scope). `AUTOFSM.DECODE_OP` does **not** need updating — it already falls
+back to `parser_state.pypeline_entity_callables` for any entity name it doesn't recognize as
+one of the built-in prefixes, which is exactly how it already handles any live-callable
+submodule instance; soft-op entities are instantiated the same way.
 
 In `CONST_REF_RD`, `VAR_REF_RD`, and `VAR_REF_ASSIGN` names:
 - Array brackets in type strings are replaced with `_`

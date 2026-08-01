@@ -2083,6 +2083,21 @@ def __rshift__(self, o):
 `__rshift__` runs ~1.95 M times/1000 cycles in the CORDIC benchmark. **~3.3 s saved.**
 Unary dispatch bypass: **~0.15 s saved.**
 
+The same fast-path-set gate now also covers `__lt__`/`__le__`/`__gt__`/`__ge__` (ops
+`"LT"`/`"LTE"`/`"GT"`/`"GTE"`) and `__truediv__`/`__mod__` (ops `"DIV"`/`"MOD"`), added when
+the soft-operator library made these dispatchable for the first time (see
+`pypeline_DESIGN.md`'s Operator Registry / Soft Operator Library sections). Structural
+fidelity was chosen over raw sim speed for these: when `PY_TO_LOGIC.PARSE_FILE` or
+`pypeline_sim.py`'s `_import_design` runs (i.e. anywhere outside a bare unit test that
+imports `pypeline` directly and never touches a design file), the default soft replacements
+for int `NEGATE`/compare/`DIV`/`MOD`/variable-shift are registered globally before the
+design is elaborated or simulated — so native sim for those ops now runs the same unrolled
+per-bit Pypeline HDL hardware runs, not a single Python operator. Full `run_all.py -j 4`
+wall time was re-measured after this change and showed no regression outside normal run
+variance — the fast-path-set check keeps unregistered ops on the direct-computation branch,
+and the categories most exercising these ops (`native_sim`, `elab`) stayed in the same few-
+seconds-per-test range as before.
+
 ### 4. `_push_scoped_registrations` Short-Circuit
 
 Called for every `@hw_func` invocation even when most functions have no scoped registrations.
@@ -2175,7 +2190,7 @@ pipelined GHDL for an AUTOPIPELINE call site and a naturally-pipelined pure MAIN
 ```
 python3 src/tests/pypeline_tests/native_sim_tests.py            # just the sim tests
 python3 src/tests/pypeline_tests/native_sim_tests.py -j 4
-python3 src/tests/pypeline_tests/run_all.py --category sim
+python3 src/tests/pypeline_tests/run_all.py --category native_sim
 ```
 
 Aside from `pipelinec_native_sim_test` above (which exits before elaboration even though it

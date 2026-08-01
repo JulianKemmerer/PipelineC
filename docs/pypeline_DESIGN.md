@@ -951,9 +951,14 @@ register_unary_operator(op, operand_t, impl, scope=None)
 | `"SL"` | `<<` |
 | `"SR"` | `>>` |
 | `"NEGATE"` | `-` (unary) |
+| `"GT"` `"GTE"` `"LT"` `"LTE"` | `>` `>=` `<` `<=` |
+| `"EQ"` `"NEQ"` | `==` `!=` |
 
 (`BIN_OP_MAP` in `PY_TO_LOGIC.py` is the source of truth mapping each `ast`
-operator node type to its op string.)
+operator node type to its op string.) Comparison operators are consulted by
+`PY_TO_LOGIC._elab_compare` the same way `_elab_binop` consults `PLUS`/`MINUS`/etc
+-- previously `_elab_compare` never looked at the registry at all, so no type
+(struct or int) could override `<`/`<=`/`>`/`>=`; that gap is closed.
 
 ### Global Registries
 
@@ -965,6 +970,73 @@ _unary_operator_registry: dict[(op, operand_type), impl]         # unary
 
 The elaborator tries exact match first, then left match. `impl` is either a string
 (module-level callable name) or a callable.
+
+### Generic (Matcher-Based) Registrations
+
+`left_type`/`right_type`/`operand_type` above may also be a **type matcher** instead of a
+concrete type, letting one registration cover many concrete widths -- essential for a soft
+adder, which cannot be registered per-width:
+
+```python
+from pypeline import any_uint_t, any_int_t, any_integer_t, uint_upto, int_upto, INFERRED
+
+register_operator("PLUS", any_integer_t, any_integer_t, make_soft_add)
+#                        matcher implies factory semantics: make_soft_add(l_t, r_t) is
+#                        called with the concrete types the first time that pair is seen,
+#                        and returns a @hw_func -- the result is memoized back into the
+#                        exact dict, so every later occurrence is an O(1) hit again.
+```
+
+Matchers: `any_uint_t`, `any_int_t`, `any_integer_t` (either signedness), `uint_upto(n)` /
+`int_upto(n)` (width-bounded). Each has a small, deterministic `__repr__` so it never leaks
+an object address into a canonical entity name.
+
+Resolution order (all four registries -- binary, left, unary, MUX -- follow the same shape):
+1. Exact dict hit (`_operator_registry[(op, l, r)]`, etc.) -- unchanged, O(1).
+2. **New:** scan the matching generic list, **most-recently-registered first**
+   (`reversed()`), so a later `register_soft_mult_karatsuba()` overrides an earlier
+   `register_soft_mult()` for the same matcher. First match wins; its factory is called
+   with the concrete type(s) and the result is memoized into the exact dict (step 1 above
+   short-circuits on every subsequent lookup for that same concrete pair).
+3. Built-in inferred path (unchanged).
+
+**`INFERRED`** is a reserved sentinel that can be registered like any other impl; resolving
+to it falls through to the built-in path instead of instantiating anything. This is the
+escape hatch for "everything of this op/type is soft except this one case" -- e.g. pin one
+function's multiply back onto a DSP block while the rest of the design goes soft:
+
+```python
+register_operator("INFERRED_MULT", any_integer_t, any_integer_t, INFERRED, scope=hot_func)
+```
+
+The generic registries and their memoization caches:
+
+```python
+_generic_operator_registry:       list[(op, l_matcher, r_matcher, factory_or_INFERRED)]
+_generic_left_operator_registry:  list[(op, l_matcher, factory_or_INFERRED)]
+_generic_unary_operator_registry: list[(op, matcher, factory_or_INFERRED)]
+_generic_operator_cache / _generic_left_operator_cache / _generic_unary_operator_cache
+```
+
+`_resolve_generic_operator(op, l_str, r_str)` (and its left/unary counterparts) implement
+the scan-and-memoize step above; `_elab_binop`/`_elab_compare`/`_elab_unary` call them as a
+fallback after an exact-dict miss, and `SimVal._dispatch_binary`/`_dispatch_unary` do the
+same in native sim.
+
+### MUX Registry
+
+`MUX(cond, iftrue, iffalse)` has its own small registry, `register_mux_impl(type_, func,
+scope=None)`, keyed by the muxed type alone (there's no operator string -- MUX has one fixed
+shape). It applies only where the elaborator already routes MUX through a lookup: the
+VAR_REF_RD binary mux tree built for variable-index array reads
+(`_build_binary_mux_tree` in `PY_TO_LOGIC.py`). Struct/array MUX elsewhere (ternary
+expressions, `if`/`else` value muxing, VAR_REF_ASSIGN's per-slot writeback mux) stays
+inferred -- pure wiring, not routed through this registry.
+
+```python
+_mux_registry: dict[type_str, impl]                       # exact
+_generic_mux_registry: list[(matcher, factory_or_INFERRED)]  # generic, same scan/memoize shape
+```
 
 ### Scoped Registrations
 
@@ -1018,8 +1090,10 @@ as an accidental side effect of the fast-path-set optimization.
 
 The registries above are also consulted by `@struct`-decorated types directly, not just
 `SimVal`: `struct()` gives every decorated class `__add__` / `__sub__` / `__mul__` /
-`__truediv__` (bound to `_struct_dispatch_binary_op`) and `__neg__` (bound to
-`_struct_dispatch_unary_op`), so `a + b` on two registered struct instances works the same
+`__truediv__` (bound to `_struct_dispatch_binary_op`), `__neg__` (bound to
+`_struct_dispatch_unary_op`), and `__lt__` / `__le__` / `__gt__` / `__ge__` (also
+`_struct_dispatch_binary_op`, ops `"LT"`/`"LTE"`/`"GT"`/`"GTE"`), so `a + b` or `a < b` on
+two registered struct instances works the same
 whether it's elaborated to hardware or executed as plain Python (`sim_call` or otherwise).
 Unlike `SimVal`'s int fallback, there's no meaningful default for `+` on a struct with
 nothing registered — an unregistered pair raises `TypeError` naming the op and both
@@ -1032,6 +1106,83 @@ arguments/return values and honors `Reg[T]` state (via its "AST-rewritten sim bo
 `PY_TO_LOGIC_DESIGN.md`) while `_sim_active` is already `True` — a bare `a + b` at module
 scope, with no enclosing `sim_call`, would otherwise silently run the impl's raw,
 un-rewritten source.
+
+---
+
+## Soft Operator Library (`include/pypeline/operators/`)
+
+Ordinary user-level Pypeline HDL, shipped in the repo, implementing integer operators via
+bitwise primitives instead of relying on an inferred/fabric lowering. It is not a new
+compiler concept — every file here calls the exact same `register_operator` /
+`register_left_operator` / `register_unary_operator` / `register_mux_impl` API described
+above, using generic (matcher-based) registrations so one call covers every width.
+
+```
+soft_add.py    make_soft_ripple_add, make_soft_carry_select_add, make_soft_sub
+soft_mult.py   make_soft_shift_add_mult, make_soft_karatsuba_mult
+soft_div.py    make_soft_div, make_soft_mod           (restoring division, unsigned)
+soft_cmp.py    make_soft_sub_cmp(op)                  (widen/subtract/sign-bit, default)
+               make_soft_bitwise_cmp(op)              (MSB-first magnitude compare, alt)
+soft_shift.py  make_soft_barrel_sl, make_soft_barrel_sr
+soft_misc.py   make_soft_negate, make_soft_eq(negate), make_soft_mux
+soft.py        activation layer -- register_soft_*() functions, register_soft_ops()
+```
+
+Composability falls out of the registry itself: a soft multiply's internal adds, a soft
+divide's internal compares/subtracts, all resolve through the same generic-matcher lookup —
+no special-casing needed for nested soft ops.
+
+### Activation
+
+Nothing in this package changes hardware behavior merely by being imported (unlike
+`floating_point.py`'s float16/32/64_t side effect). Register explicitly, globally or
+`scope=`d to one function:
+
+```python
+from operators.soft import register_soft_ops
+register_soft_ops()                # whole design, all the way to bitwise leaves
+register_soft_ops(scope=my_func)   # only my_func's own body
+
+from operators.soft import register_soft_mult, register_soft_mult_karatsuba
+register_soft_mult()               # shift-and-add (default flavor)
+register_soft_mult_karatsuba()     # overrides it -- last registration wins
+```
+
+`register_inferred_ops(mult=True, scope=hot_func)` is the escape hatch: pin one op back to
+the built-in inferred path (via the `INFERRED` sentinel) for one scope, overriding a broader
+soft registration everywhere else.
+
+### Default replacements (SW_LIB removal)
+
+Five operator families never had an inferred/raw-VHDL lowering and used to reach
+`C_TO_LOGIC.BUILD_LOGIC_AS_C_CODE` — `SW_LIB.py`'s C generation, shelled out through `cpp`
+and pycparser: int unary `NEGATE`, int `GT`/`GTE`/`LT`/`LTE`, `DIV`, `MOD`, and
+variable-amount shift (`SL`/`SR` with a non-constant right operand). `PY_TO_LOGIC.PARSE_FILE`
+and `pypeline_sim.py`'s `_import_design` both call
+`operators.soft.register_sw_lib_replacements()` once per process, globally, *before* the
+design file itself is imported — so a later, more specific registration in the design
+(an exact pin, a different flavor, or `INFERRED`) still wins, since generic resolution
+always scans most-recently-registered-first. This function is idempotent (guarded by a
+module-level flag) so `PY_TO_LOGIC.PARSE_FILE`'s repeated-parse callers (AUTOPIPELINE's
+pin-and-confirm loop, `double_parse_file_test`) don't grow the generic registry lists
+unboundedly.
+
+`C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD`, armed by `PY_TO_LOGIC.PARSE_FILE` right after that
+registration, makes `BUILD_LOGIC_AS_C_CODE` raise (naming the offending entity) if a
+Pypeline build ever reaches it anyway — the permanent enforcement that this path stays dead
+for Pypeline. `SW_LIB.py` itself is untouched: the C frontend still needs it, and `VHDL.py`
+/ `RAW_VHDL.py` / `SYN.py` still import it for cheap name predicates
+(`IS_BIT_MANIP`, `IS_MEM`, `IS_AUTO_GENERATED`, RAM helpers) that were never C generation.
+
+Constant-amount shifts are unaffected — those already lower to a built-in `CONST_SL`/`CONST_SR`
+submodule directly in `_elab_binop` and never consult the operator registry at all.
+
+### What is *not* routed through the registry
+
+MUX outside the VAR_REF_RD binary mux tree (ternary expressions, `if`/`else` value muxing,
+VAR_REF_ASSIGN's per-slot writeback mux) stays inferred unconditionally — see the MUX
+Registry note above. `register_soft_ops()` therefore does not make every design
+zero-inferred-ops; it makes arithmetic/compare/shift/negate zero-inferred-ops.
 
 ---
 
@@ -1064,12 +1215,24 @@ High index first, matching Verilog/VHDL convention.
 
 ### Operator Dispatch
 
-`SimVal.__neg__`, `__rshift__`, `__lshift__` check the operator registries for custom
-implementations before falling back to Python arithmetic.
+`SimVal.__neg__`, `__invert__`, `__rshift__`, `__lshift__`, `__lt__`, `__le__`, `__gt__`,
+`__ge__`, `__truediv__`, `__mod__` all check the operator registries for custom
+implementations before falling back to Python arithmetic. `+`/`-`/`*`/bitwise are handled
+separately (see Hardware-Accurate Arithmetic below) — they always have an inferred
+lowering, so there's no equivalent "nothing registered" fallback gap for them to close.
 
 Fast-path: check `_registered_binary_op_names` / `_registered_unary_op_names` sets first.
 If the op name is not in the set, skip registry lookup entirely and compute the result
-directly (with `_ctype` preserved for shifts).
+directly (with `_ctype` preserved for shifts/DIV/MOD).
+
+Before the soft-operator-library work, `<`/`<=`/`>`/`>=` fell straight through to `int`'s own
+comparison (silently never consulting the registry, matching `_elab_compare`'s gap at the
+time), and `__truediv__` didn't exist on `SimVal` at all — plain int `/` returned a Python
+**float** via `int.__truediv__`, not an integer sim value, since only `@struct` types had a
+registered `DIV` dunder. Both are now real dispatch points, gated by the same
+`_registered_binary_op_names` fast path as everything else — an unregistered design computes
+the identical result it always did (a bare comparison, or now truncating integer division
+instead of a float), just through an explicit code path instead of an inherited one.
 
 ### Hardware-Accurate Arithmetic (`SIM_STRICT_ARITH=True`)
 
@@ -1310,7 +1473,7 @@ and tests `inst/interface_test.py`, `inst/interface_func*_test.py`,
 ```
 python3 src/tests/pypeline_tests/run_all.py            # run everything, in parallel
 python3 src/tests/pypeline_tests/run_all.py -j 4        # cap parallelism at 4 workers
-python3 src/tests/pypeline_tests/run_all.py --category sim
+python3 src/tests/pypeline_tests/run_all.py --category native_sim
 ```
 
 These scripts replace the old `run_all.sh`: each test gets its own tmp output directory

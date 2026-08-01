@@ -1,5 +1,5 @@
-"""Soft unary negate and soft eq/neq (bitwise xor-reduce)."""
-from pypeline import hw_func, uint1_t
+"""Soft unary negate, soft eq/neq (bitwise xor-reduce), and soft MUX."""
+from pypeline import hw_func, uint1_t, bit_dup
 
 
 def make_soft_negate(t):
@@ -53,3 +53,19 @@ def make_soft_eq(negate=False):
         return soft_eq
 
     return factory
+
+
+def make_soft_mux(t):
+    """MUX(cond, iftrue, iffalse) via bitwise select: broadcast cond to the
+    full width with bit_dup, then (mask & iftrue) | (~mask & iffalse) --
+    integer types only (register_mux_impl's caller, the VAR_REF_RD binary
+    mux tree, only ever looks this up for scalar leaf types)."""
+    width = len(t)
+
+    @hw_func
+    def soft_mux(cond: uint1_t, iftrue: t, iffalse: t) -> t:
+        mask: t = bit_dup(cond, width)
+        result: t = (mask & iftrue) | (~mask & iffalse)
+        return result
+
+    return soft_mux

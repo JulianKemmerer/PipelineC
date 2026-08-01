@@ -1854,6 +1854,13 @@ def BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
 
 _other_partial_logic_cache = {}
 
+# Set by PY_TO_LOGIC.PARSE_FILE around a Pypeline build so BUILD_LOGIC_AS_C_CODE
+# below raises instead of silently falling back to the SW_LIB/cpp/pycparser C
+# generation path. Pypeline builds no longer emit anything that reaches this
+# function (integer NEGATE/compare/DIV/MOD/variable-shift now have Pypeline HDL
+# lowerings available) -- this is the enforcement that it stays that way.
+PYPELINE_NO_SW_LIB_GUARD = False
+
 
 def BUILD_LOGIC_AS_C_CODE(
     partially_complete_logic_local_inst_name,
@@ -1861,6 +1868,13 @@ def BUILD_LOGIC_AS_C_CODE(
     parser_state,
     containing_func_logic,
 ):
+    if PYPELINE_NO_SW_LIB_GUARD:
+        raise Exception(
+            f"Pypeline build reached the SW_LIB/cpp/pycparser C-generation path "
+            f"for '{partially_complete_logic.func_name}' -- this should be "
+            f"unreachable from Pypeline. Register a soft/Pypeline-HDL "
+            f"implementation for whichever operator produced this entity."
+        )
     # Cache the other partial logic
     cache_tok = partially_complete_logic.func_name
     # SHOULDNT NEED INPUT TYPES SINCE FUNC NAME IS UNIQUE

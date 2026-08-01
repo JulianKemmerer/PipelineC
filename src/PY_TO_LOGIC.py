@@ -1327,14 +1327,21 @@ def _add_submodule_instance(
 # ─────────────────────────────────────────────
 
 
-def _build_binary_mux_tree(logic, leaves, select_wire, select_type, leaf_type, counter):
+def _build_binary_mux_tree(
+    logic, leaves, select_wire, select_type, leaf_type, counter, elaborator=None
+):
     """Recursively build a trimmed binary mux tree.
 
     Splits at largest pow2 < n so left is a complete binary tree.
     Absolute bit extraction works correctly for all subtree index ranges.
 
-    leaf_type: C type of each leaf wire (scalar type at this mux level).
-    counter:   mutable [int] for unique internal instance naming.
+    leaf_type:   C type of each leaf wire (scalar type at this mux level).
+    counter:     mutable [int] for unique internal instance naming.
+    elaborator:  the FuncElaborator (self) building the enclosing VAR_REF_RD
+                 def, if any -- needed to resolve a user-registered MUX impl
+                 (pypeline.register_mux_impl) into a real Logic() entity.
+                 None means "fall back to the built-in inferred MUX", same as
+                 before this parameter existed.
     Returns output wire name.
     """
     n = len(leaves)
@@ -1363,13 +1370,47 @@ def _build_binary_mux_tree(logic, leaves, select_wire, select_type, leaf_type, c
     )
 
     left_wire = _build_binary_mux_tree(
-        logic, leaves[:split], select_wire, select_type, leaf_type, counter
+        logic, leaves[:split], select_wire, select_type, leaf_type, counter, elaborator
     )
     right_wire = _build_binary_mux_tree(
-        logic, leaves[split:], select_wire, select_type, leaf_type, counter
+        logic, leaves[split:], select_wire, select_type, leaf_type, counter, elaborator
     )
 
     # MUX(bit, right, left): bit=1 -> index >= split -> select right
+    mux_impl = None
+    if elaborator is not None:
+        import pypeline as _pypeline
+
+        mux_impl = _pypeline._mux_registry.get(leaf_type)
+        if mux_impl is None:
+            mux_impl = _pypeline._resolve_generic_mux(leaf_type)
+        if mux_impl is _pypeline.INFERRED:
+            mux_impl = None
+
+    if mux_impl is not None:
+        callee_def = elaborator._resolve_registered_impl(mux_impl, None)
+        mux_inst = f"{callee_def.func_name}[var_ref_internal_{counter[0]}]"
+        counter[0] += 1
+        mux_output = _port_wire(mux_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+        input_ports = list(
+            zip(
+                callee_def.inputs,
+                [bit_wire, right_wire, left_wire],
+                [C_TO_LOGIC.BOOL_C_TYPE, leaf_type, leaf_type],
+            )
+        )
+        _add_submodule_instance(
+            logic,
+            mux_inst,
+            callee_def.func_name,
+            input_ports,
+            mux_output,
+            leaf_type,
+            None,
+            None,
+        )
+        return mux_output
+
     mux_suffix = leaf_type.replace("[", "_").replace("]", "")
     mux_func = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_{mux_suffix}"
     mux_inst = f"{mux_func}[var_ref_internal_{counter[0]}]"
@@ -1424,7 +1465,14 @@ def _emit_internal_const_ref_rd(
 
 
 def _build_var_ref_rd_logic(
-    func_name, c_type, base_type, ref_toks, covering_wires, var_dim_info, parser_state
+    func_name,
+    c_type,
+    base_type,
+    ref_toks,
+    covering_wires,
+    var_dim_info,
+    parser_state,
+    elaborator=None,
 ):
     """Build the Logic() object for a VAR_REF_RD function definition.
 
@@ -1518,7 +1566,7 @@ def _build_var_ref_rd_logic(
             leaf_type_for_group = output_leaf_types[group_idx % output_leaf_count]
             group = [current_wires[k * stride + group_idx] for k in range(dim_size)]
             result = _build_binary_mux_tree(
-                logic, group, port_name, select_type, leaf_type_for_group, counter
+                logic, group, port_name, select_type, leaf_type_for_group, counter, elaborator
             )
             next_wires.append(result)
         current_wires = next_wires
@@ -5316,6 +5364,7 @@ class FuncElaborator:
                 covering_wires,
                 var_dim_info,
                 self.parser_state,
+                self,
             )
             self.parser_state.FuncLogicLookupTable[func_name] = logic_def
 
@@ -6228,6 +6277,24 @@ def PARSE_FILE(py_file):
     _include_pypeline = os.path.join(_repo_root, "include", "pypeline")
     if _include_pypeline not in sys.path:
         sys.path.insert(0, _include_pypeline)
+
+    # Register the default soft-operator replacements for the operator
+    # families that have no inferred lowering (int NEGATE/compare/DIV/MOD,
+    # variable-amount shift) -- this is what keeps BUILD_LOGIC_AS_C_CODE
+    # (SW_LIB/cpp/pycparser) unreachable from Pypeline below. Global and
+    # registered once per process (operators.soft de-dupes internally), so
+    # repeated PARSE_FILE calls (AUTOPIPELINE's pin-and-confirm loop,
+    # double_parse_file_test) don't grow the registry unboundedly. Any
+    # later, more specific registration in the design file itself (an exact
+    # type pin, a different flavor, or INFERRED) still wins -- the registry
+    # always resolves most-recently-registered-first.
+    import operators.soft as _pypeline_default_soft_ops
+
+    _pypeline_default_soft_ops.register_sw_lib_replacements()
+    # Pypeline builds must never reach the SW_LIB/cpp/pycparser C-generation
+    # path (BUILD_LOGIC_AS_C_CODE) now that the replacements above are in
+    # place. Arm the guard for the duration of this parse.
+    C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD = True
 
     spec = importlib.util.spec_from_file_location("pypeline_design", py_file)
     module = importlib.util.module_from_spec(spec)

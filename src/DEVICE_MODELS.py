@@ -16,7 +16,15 @@ ops = {}
 
 
 def part_supported(part_str):
-    return part_str == "xc7a35ticsg324-1l"
+    # DEVICE_MODELS is deprecated for now: soft-operator-library entities
+    # (include/pypeline/operators/) aren't named BIN_OP_*/UNARY_OP_*, so
+    # func_name_to_op_and_widths can't recognize them -- estimation silently
+    # falls back to real per-entity synthesis for those, producing
+    # inconsistent (sometimes-modeled, sometimes-not) delay estimates within
+    # the same design and destabilizing AUTOPIPELINE/throughput-sweep
+    # planning. Always return False so every function goes through real
+    # synthesis or the path_delay_cache uniformly until this is revisited.
+    return False
 
 
 def estimate_int_timing(integer_op, widths_vector):
