@@ -195,6 +195,36 @@ class ParsedTimingReport:
             raise Exception(f"Bad synthesis log?:{syn_output}")
 
 
+class ParsedUtilizationReport:
+    """Diagnostic-only resource counts from the report_utilization output
+    already present in every Vivado synthesis log (never LUT/FF/DSP parsed
+    anywhere else in this codebase -- see docs/operator_qor_report.md). Used
+    by src/tests/pypeline_tests/op_qor_bench.py to explain surprising timing
+    results (e.g. a soft adder that looks fast because synthesis optimized
+    an operator away); never used to decide a QoR winner -- that is timing
+    (ParsedTimingReport.path_delay_ns) only."""
+
+    def __init__(self, syn_output):
+        self.slice_luts = None
+        self.slice_registers = None
+        self.carry4 = None
+        lines = syn_output.split("\n")
+        for line in lines:
+            stripped = line.strip()
+            if stripped.startswith("| Slice LUTs"):
+                toks = [t.strip() for t in stripped.strip("|").split("|")]
+                if len(toks) >= 2 and toks[1].isdigit():
+                    self.slice_luts = int(toks[1])
+            elif stripped.startswith("| Slice Registers"):
+                toks = [t.strip() for t in stripped.strip("|").split("|")]
+                if len(toks) >= 2 and toks[1].isdigit():
+                    self.slice_registers = int(toks[1])
+            elif stripped.startswith("| CARRY4"):
+                toks = [t.strip() for t in stripped.strip("|").split("|")]
+                if len(toks) >= 2 and toks[1].isdigit():
+                    self.carry4 = int(toks[1])
+
+
 class PathReport:
     def __init__(self, single_timing_report):
         # SINGLE TIMING REPORT STUFF  (single path report)

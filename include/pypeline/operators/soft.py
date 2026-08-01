@@ -28,7 +28,7 @@ from pypeline import (
 from operators.soft_add import make_soft_ripple_add, make_soft_carry_select_add, make_soft_sub
 from operators.soft_mult import make_soft_shift_add_mult, make_soft_karatsuba_mult
 from operators.soft_div import make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod
-from operators.soft_cmp import make_soft_sub_cmp, make_soft_bitwise_cmp
+from operators.soft_cmp import make_soft_sub_cmp, make_soft_sub_cmp_swapped, make_soft_bitwise_cmp
 from operators.soft_shift import make_soft_barrel_sl, make_soft_barrel_sr
 from operators.soft_misc import make_soft_negate, make_soft_eq, make_soft_mux
 
@@ -78,9 +78,13 @@ def register_soft_mod(scope=None):
 
 
 def register_soft_cmp(scope=None):
-    """Default comparator flavor: widen, subtract, take the sign bit."""
+    """Default comparator flavor: widen, subtract (operand order swapped per
+    op), take the sign bit -- one subtract, no extra EQ+MUX for any of the
+    four ops. QoR-confirmed (docs/SYN_DESIGN.md) to strictly dominate the
+    un-swapped make_soft_sub_cmp for GT/LTE and match it for GTE/LT, across
+    every measured width and pipeline cut count."""
     for op in ("GT", "GTE", "LT", "LTE"):
-        register_operator(op, any_integer_t, any_integer_t, make_soft_sub_cmp(op), scope=scope)
+        register_operator(op, any_integer_t, any_integer_t, make_soft_sub_cmp_swapped(op), scope=scope)
 
 
 def register_soft_cmp_bitwise(scope=None):

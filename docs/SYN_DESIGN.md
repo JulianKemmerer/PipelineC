@@ -851,3 +851,123 @@ equivalence, including an AUTOFSM design).
 Real-toolchain validation: the wireguard-fpga ChaCha20-Poly1305 build
 (`wireguard-fpga/3.build/pypeline_build/build_syn_tb_pipe*.sh`, Vivado) and the
 multi-clock streamsoc example (`examples/stream_soc/cpu/hardware/top.c`).
+
+## 8. Operator QoR: raw VHDL vs. soft-operator-library implementations
+
+`src/tests/pypeline_tests/op_qor_bench.py` measures pipelined (sliced) fmax
+for every candidate implementation of `PLUS`/`MINUS`/`INFERRED_MULT`/
+`GT`/`GTE`/`LT`/`LTE`/`EQ`/`NEQ`, across a width matrix including
+wireguard-fpga's actual instantiated widths (mixed `uint32×uint3`,
+`uint32×uint4`, `uint16×uint1`, `uint8×uint1`, plus `uint8/16/32/64` same-width
+pairs). It exists because the soft-operator-library default flip (NEGATE,
+compares, DIV, MOD, variable shift moved off SW_LIB/cpp onto ordinary
+Pypeline HDL) was never QoR-validated, and wireguard-fpga was seen missing
+timing with pipeline depth no longer helping (40→52 stages barely moved
+fmax) -- suggesting some operator's sliced delay had stopped responding to
+added pipeline depth.
+
+**The decision metric is pipelined per-stage delay at n_cuts ≥ 1, not comb
+delay at n_cuts = 0.** An implementation that wins combinationally can lose
+once sliced (or vice versa) -- synthesis collapses a comb blob in ways that
+vanish the moment registers are inserted, and a 30-40 stage pipeline never
+sees the n_cuts=0 number. Area/utilization is recorded (Vivado runs only)
+purely as a free diagnostic, never as a tiebreaker.
+
+### Harness
+
+One `pipelinec <design>.py --coarse --sweep --start 0 --stop N` invocation
+per `(op, impl, widths)` combination sweeps every cut count 0..N inside a
+single process (`--sweep` forces the dumb +1-clock-per-step path instead of
+the delay-report-based incremental guess `--coarse` normally uses without
+it, so the sweep visits every latency, not just a jumped-to guess), parsing
+every printed `Current: ... latency=N clks cuts=N slices` line rather than
+spawning one subprocess per cut count. `bench_main` never gets an explicit
+MHz goal, so the sweep never "meets timing" early and always walks the full
+requested range (or stops on its own once an operator can no longer be
+sliced further -- itself a real data point: that cut count is the
+operator's floor). Two tools:
+
+- **`--tool pyrtl`** (default): no `PART()` call, so `PART_SET_TOOL(None)`
+  falls back to PyRTL's software gate-delay estimate -- no real synthesis,
+  seconds per case instead of minutes. Used for the full matrix sweep.
+  `INFERRED_MULT` raw-vs-soft comparisons are skipped under this tool:
+  PyRTL's generic gate model has no notion of DSP-slice inference, so it
+  can't judge that tradeoff (see "Known blind spot" below, which turned
+  out to generalize beyond MULT).
+- **`--tool vivado`**: `PART("xc7a200tffg1156-2")` (wireguard-fpga's actual
+  part), real OOC synthesis, minutes per case. Ground truth / fallback for
+  anything the pyrtl model's blind spot makes unsafe to decide from.
+
+Results land in `op_qor_results_<tool>.csv`, one row per `(op, impl, widths,
+n_cuts)`, resumable (skips any `(tool, op, impl, l_type, r_type)` whose sweep
+already has rows). The harness never writes to `path_delay_cache/` -- it
+parses `pipelinec`'s own summary line directly.
+
+### Known blind spot: primitive-aware operators
+
+PyRTL's timing estimate is a generic synchronous-gate-delay model with no
+awareness of FPGA-specific fast-path primitives. This was expected to matter
+for `INFERRED_MULT` (DSP slice inference), and does: soft multiplier variants
+are only compared against each other under `--tool pyrtl`, never against
+`raw_default`, and `INFERRED_MULT` is left on the built-in inferred path
+regardless of any soft-mult finding, because wireguard-fpga specifically
+needs its multiplies to stay inferred.
+
+**The same blind spot turned out to apply to `PLUS`/`MINUS`.** The pyrtl
+sweep shows `soft_carry_select` beating `raw_default` by a wide and growing
+margin at every measured cut count (e.g. `uint64 + uint64` at 13 cuts:
+304.89 MHz soft_carry_select vs. 118.67 MHz raw_default) -- but Xilinx's
+CARRY4 primitive gives the raw hand-pipelined adder a dedicated fast-carry
+chain that a generic gate-delay model cannot represent, so a carry-select
+network built from ordinary LUTs+muxes looks better in the model than it is
+likely to be on real Artix-7 hardware. **`PLUS`/`MINUS` were deliberately
+left on their current default (raw) rather than flipped from this data
+alone** -- `soft_carry_select`/`soft_ripple` are flagged as candidates to
+re-check against real Vivado numbers only if the wireguard build still
+misses timing after the comparator fix below.
+
+### Comparator finding: operand-swap fix (implemented)
+
+`GT`/`GTE`/`LT`/`LTE` are pure LUT logic with no FPGA-primitive dependency,
+so the pyrtl model is trustworthy here. `make_soft_sub_cmp` (the previous
+default, `include/pypeline/operators/soft_cmp.py`) computes one fixed
+`diff = a - b` and derives all four ops from it, which forces an extra
+`is_zero` (EQ + MUX) term for `GT`/`LTE` specifically (their arithmetic:
+`GT = (1-neg) & (1-is_zero)`, `LTE = neg | is_zero`; `GTE`/`LT` need only the
+sign bit and were already cheap: `GTE = 1-neg`, `LT = neg`).
+`make_soft_sub_cmp_swapped` swaps operand order per op instead
+(`a>b ≡ neg(b-a)`, `a>=b ≡ !neg(a-b)`, `a<b ≡ neg(a-b)`, `a<=b ≡ !neg(b-a)`),
+so every op needs only one subtract and one sign-bit read -- matching the
+structure the old SW_LIB C generator actually used
+(`GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE`).
+
+Data confirms this at every measured width and cut count, not just
+combinationally -- e.g. `uint64 > uint64`:
+
+| n_cuts | soft_default (old) | soft_fixed (swapped) |
+|---|---|---|
+| 0 | 37.53 MHz | 78.18 MHz |
+| 7 | 78.20 MHz | 80.03 MHz |
+| 14 | 86.65 MHz | 93.24 MHz |
+
+and is numerically *identical* for `GTE`/`LT` at every width/cut (the swap
+is a no-op there — the un-swapped default was already the cheap case). One
+exception noted, not acted on: at the widest/most-sliced point measured
+(`GT uint64×uint64`, 14 cuts), `soft_bitwise` edges out `soft_fixed` (94.58
+vs. 93.24 MHz) — inconsistent across widths and a poor performer everywhere
+else in the sweep, so not enough to justify a MSB-first-bitwise default.
+
+**Shipped:** `soft.py:register_soft_cmp` now registers
+`make_soft_sub_cmp_swapped` for all four ops (previously `make_soft_sub_cmp`).
+`make_soft_sub_cmp` itself is unchanged and kept for QoR comparison. No
+change to `GT`/`GTE`/`LT`/`LTE` being soft by default, or to `EQ`/`NEQ`/
+`MINUS`, which the same sweep confirms are correctly already raw-HDL by
+default (`raw_default` beats `soft_default` for both at essentially every
+measured width/cut count).
+
+### Next step if wireguard still misses timing
+
+Re-run the `PLUS`/`MINUS`/`INFERRED_MULT` comparisons with `--tool vivado`
+on the real part before concluding anything from the pyrtl numbers above --
+the CARRY4/DSP blind spot means those two operator families are the ones
+still genuinely open.

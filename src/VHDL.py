@@ -2323,9 +2323,34 @@ def C_TYPES_ARE_TYPE(c_types, the_type):
     return True
 
 
+# Benchmark-only escape hatch for src/tests/pypeline_tests/op_qor_bench.py:
+# when set, routes integer GT/GTE/LT/LTE to the (otherwise dead,
+# RAW_VHDL.py:3050-3665) sliced hand-pipelined comparator generators instead
+# of a soft-operator-library implementation, so the QoR bench can measure
+# "revived raw sliced" head to head against the soft flavors. Never set
+# outside that harness -- it does not change canonical entity names (only
+# what VHDL gets generated for the same name), so mixing settings within one
+# process/output directory would produce inconsistent cached artifacts.
+FORCE_RAW_INT_CMP_FOR_QOR_BENCH = os.environ.get("PYPELINE_FORCE_RAW_INT_CMP") == "1"
+
+
 def C_BUILT_IN_FUNC_IS_RAW_HDL(
     logic_func_name, input_c_types, output_c_type, parser_state
 ):
+    if (
+        FORCE_RAW_INT_CMP_FOR_QOR_BENCH
+        and C_TYPES_ARE_INTEGERS(input_c_types)
+        and any(
+            logic_func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + op)
+            for op in (
+                C_TO_LOGIC.BIN_OP_GTE_NAME,
+                C_TO_LOGIC.BIN_OP_LTE_NAME,
+                C_TO_LOGIC.BIN_OP_LT_NAME,
+                C_TO_LOGIC.BIN_OP_GT_NAME,
+            )
+        )
+    ):
+        return True
     # IS RAW VHDL
     if (
         logic_func_name == C_TO_LOGIC.VHDL_FUNC_NAME
