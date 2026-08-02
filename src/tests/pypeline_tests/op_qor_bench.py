@@ -76,6 +76,15 @@ def csv_path(tool):
 CSV_FIELDS = [
     "tool", "op", "impl", "l_type", "r_type", "n_cuts",
     "path_delay_ns", "fmax_mhz", "logic_levels",
+    # est_top_ns / est_op_ns: what ESTIMATE_HIER_PATH_DELAYS predicted for the
+    # whole bench_main and for the operator entity itself, BEFORE any slicing.
+    # These are what the slicer places cuts from, so est vs measured is the
+    # estimation error that decides whether cuts land where the delay actually
+    # is. A soft (hierarchical) implementation is a topological SUM of leaf
+    # delays with no cross-module optimization, so it can over-predict badly
+    # where a single raw leaf had one measured number -- which shows up here as
+    # est_top_ns >> path_delay_ns at n_cuts=0.
+    "est_top_ns", "est_op_ns",
     "slice_luts", "slice_registers", "carry4",
     "error",
 ]
@@ -103,7 +112,12 @@ def build_cases(tool):
         stop = max_useful_cuts(l_bits, r_bits)
         if stop < 0:
             continue
-        for op, impls in (("PLUS", PLUS_MINUS_IMPLS), ("MINUS", PLUS_MINUS_IMPLS)):
+        # MINUS has no distinct soft implementation: make_soft_sub computes
+        # a + ~b + 1 using whatever PLUS is currently registered (inferred,
+        # by default) -- same netlist as raw_default MINUS, confirmed
+        # identical in measured data (see docs/SYN_DESIGN.md). Only
+        # raw_default is a real, distinct measurement for MINUS.
+        for op, impls in (("PLUS", PLUS_MINUS_IMPLS), ("MINUS", ["raw_default"])):
             for impl in impls:
                 cases.append(dict(tool=tool, op=op, impl=impl, l_bits=l_bits, r_bits=r_bits,
                                    signed=False, stop=stop))
@@ -155,7 +169,7 @@ def gen_source(case):
     lines.append(f'sys.path.insert(0, {INCLUDE_PYPELINE_DIR!r})')
     lines.append('from pypeline import (')
     lines.append('    hw_func, MAIN, PART, uint1_t,')
-    lines.append('    make_uint_t, make_int_t,')
+    lines.append('    make_uint_t, make_int_t, arith_result_type,')
     lines.append('    any_integer_t, register_operator, INFERRED,')
     lines.append(')')
     if tool == "vivado":
@@ -192,7 +206,13 @@ def gen_source(case):
         else:
             raise ValueError(impl)
     else:
-        out_t = "l_t"
+        # Full-precision result width, exactly what arith_result_type gives the
+        # real inferred path. Declaring l_t here instead would TRUNCATE and let
+        # synthesis prune the discarded high bits -- fatal for INFERRED_MULT
+        # (uint32*uint32 -> uint64: half the product, and a totally different
+        # DSP inference decision) and it drops PLUS's carry-out bit.
+        lines.append(f'_el, _er, out_t = arith_result_type({op!r}, l_t, r_t)')
+        out_t = "out_t"
         if impl == "raw_default":
             pass
         elif impl == "soft_ripple" and op == "PLUS":
@@ -239,6 +259,13 @@ RESULT_LINE_RE = re.compile(
     r"Current:\s*([\d.]+)\s*\(MHz\)\(([\d.]+)\s*ns\)\s*latency=(\d+)\s*clks\s*cuts=(\d+)\s*slices"
 )
 
+# "Function: <name> estimated path delay: 13.600 ns (derived from submodules)"
+# Printed once per function before the sweep starts -- the numbers the cut
+# placer actually works from.
+ESTIMATE_LINE_RE = re.compile(
+    r"Function:\s*(\S+)\s+estimated path delay:\s*([\d.]+)\s*ns"
+)
+
 
 def run_single_case(case):
     env = os.environ.copy()
@@ -246,6 +273,16 @@ def run_single_case(case):
         env["PYPELINE_FORCE_RAW_INT_CMP"] = "1"
 
     work_dir = tempfile.mkdtemp(prefix="op_qor_bench_")
+    # NOTE: this shares the repo's path_delay_cache/ with normal builds, so a
+    # run does add entries there. They are real measurements of real entities,
+    # so that is harmless for the implementations reachable by default. The one
+    # case to keep in mind is raw_revived_sliced: FORCE_RAW_INT_CMP_FOR_QOR_BENCH
+    # emits a raw comparator under the same canonical BIN_OP_GT_*/BIN_OP_GTE_*
+    # name a soft build would use. Nothing reads those today (compares are soft
+    # by default, so a build never asks for a BIN_OP_GT_* delay), and if compares
+    # were ever flipped back to raw the cached value would be a measurement of
+    # exactly that raw implementation anyway. Delete the cache dir if a run's
+    # slice placement ever needs to start from a known-empty state.
     src_path = os.path.join(work_dir, "case.py")
     try:
         source = gen_source(case)
@@ -264,10 +301,13 @@ def run_single_case(case):
     # ever set on bench_main, so it never "meets timing" early and the sweep
     # runs the full requested range, or stops naturally if it can't slice
     # further -- both are real data, not harness bugs).
+    # --stop is EXCLUSIVE: SYN.py stops once coarse_latency >= stop_at_latency,
+    # so `--stop N` measures cut counts 0..N-1. Pass stop+1 to actually measure
+    # the intended top cut count -- which is the most decision-relevant point.
     cmd = [
         sys.executable, PIPELINEC, src_path,
         "--out_dir", out_dir, "--top", "bench_main",
-        "--coarse", "--sweep", "--start", "0", "--stop", str(stop),
+        "--coarse", "--sweep", "--start", "0", "--stop", str(stop + 1),
     ]
     # No timeout: real (or pyrtl) synthesis runs legitimately take a while.
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
@@ -278,6 +318,20 @@ def run_single_case(case):
         tail = (stdout + "\n" + proc.stderr)[-2000:]
         return [{"n_cuts": None, "error": f"no result line found (rc={proc.returncode}): {tail}"}]
 
+    # Pre-slicing estimates the cut placer works from. bench_main is the whole
+    # design; the operator entity is whichever other function carries the op
+    # (op_under_test for an inferred/raw impl, the soft factory's hw_func name
+    # for a soft one) -- take the largest non-bench_main estimate, which is the
+    # operator itself since nothing else in this design has depth.
+    est_top_ns = None
+    est_op_ns = None
+    for e_match in ESTIMATE_LINE_RE.finditer(stdout):
+        e_name, e_val = e_match.group(1), float(e_match.group(2))
+        if e_name.endswith("bench_main") or e_name == "op_under_test":
+            est_top_ns = e_val
+        elif est_op_ns is None or e_val > est_op_ns:
+            est_op_ns = e_val
+
     results = []
     for match in matches:
         fmax_mhz = float(match.group(1))
@@ -286,7 +340,8 @@ def run_single_case(case):
         got_cuts = int(match.group(4))
         row = {
             "n_cuts": got_cuts, "path_delay_ns": path_delay_ns, "fmax_mhz": fmax_mhz,
-            "logic_levels": None, "slice_luts": None, "slice_registers": None,
+            "logic_levels": None, "est_top_ns": est_top_ns, "est_op_ns": est_op_ns,
+            "slice_luts": None, "slice_registers": None,
             "carry4": None, "error": None,
         }
         if got_latency != got_cuts:
@@ -361,8 +416,13 @@ def run_case_subprocess(case):
     return case, results
 
 
-def main_driver(tool, jobs=1):
+def main_driver(tool, jobs=1, ops=None, widths=None):
     cases = build_cases(tool)
+    if ops:
+        op_set = set(ops)
+        cases = [c for c in cases if c["op"] in op_set]
+    if widths:
+        cases = [c for c in cases if (c["l_bits"], c["r_bits"]) in widths]
     done = load_done_keys(tool)
     todo = [c for c in cases if case_key(c) not in done]
     print(f"[{tool}] {len(cases)} total cases, {len(done)} already done, {len(todo)} to run.", flush=True)
@@ -396,6 +456,10 @@ if __name__ == "__main__":
     parser.add_argument("--case", default=None, help="JSON case dict; runs one sweep and prints JSON result list")
     parser.add_argument("--tool", choices=["pyrtl", "vivado"], default="pyrtl",
                          help="pyrtl = fast software timing estimate (no PART); vivado = real synthesis on xc7a200tffg1156-2")
+    parser.add_argument("--ops", default=None,
+                         help="Comma-separated op filter, e.g. PLUS,MINUS (default: all)")
+    parser.add_argument("--widths", default=None,
+                         help="Comma-separated l:r width-pair filter, e.g. 32:32 (default: all)")
     parser.add_argument("-j", "--jobs", type=int, default=1,
                          help="Run this many subprocesses concurrently")
     args = parser.parse_args()
@@ -404,4 +468,11 @@ if __name__ == "__main__":
         results = run_single_case(case)
         print(json.dumps(results))
     else:
-        main_driver(tool=args.tool, jobs=args.jobs)
+        ops = args.ops.split(",") if args.ops else None
+        widths = None
+        if args.widths:
+            widths = set()
+            for pair in args.widths.split(","):
+                l_s, r_s = pair.split(":")
+                widths.add((int(l_s), int(r_s)))
+        main_driver(tool=args.tool, jobs=args.jobs, ops=ops, widths=widths)
