@@ -44,7 +44,11 @@ from pypeline import (
 )
 
 from operators.soft_add import make_soft_ripple_add, make_soft_carry_select_add, make_soft_sub
-from operators.soft_mult import make_soft_shift_add_mult, make_soft_karatsuba_mult
+from operators.soft_mult import (
+    make_soft_shift_add_mult,
+    make_soft_karatsuba_mult,
+    make_tree_add_shifted,
+)
 from operators.soft_div import make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod
 from operators.soft_cmp import make_soft_sub_cmp
 from operators.soft_shift import make_soft_barrel_sl, make_soft_barrel_sr
@@ -126,6 +130,33 @@ def test_soft_mult_asymmetric():
             got_rl = sim_call(mult_rl, SimVal(b, rt), SimVal(a, lt))
             check(f"soft_mult_asymmetric_rl({b},{a})", got_rl, a * b)
     print("test_soft_mult_asymmetric passed")
+
+
+def test_tree_add_shifted():
+    """make_tree_add_shifted directly, against the Python reference
+    sum(t << i for i, t in enumerate(terms)). Exercised independently of the
+    multiplier because its per-level shift/width/leftover bookkeeping is where a
+    mistake would hide: odd leaf counts take the leftover path, and levels whose
+    node width saturates at out_t exercise the width cap. Leaf counts include
+    non-powers-of-two on purpose."""
+    leaf_t = make_uint_t(6)
+    lo, hi = 0, 63
+    for n_leaves in (2, 3, 5, 6, 9, 16):
+        # Widest possible sum for this leaf count, so out_t never truncates.
+        max_sum = sum(hi << i for i in range(n_leaves))
+        out_t = make_uint_t(max_sum.bit_length())
+        tree = make_tree_add_shifted(n_leaves, leaf_t, out_t)
+        cases = [
+            [0] * n_leaves,
+            [hi] * n_leaves,
+            [(i * 7 + 1) % 64 for i in range(n_leaves)],
+            [hi if i % 2 else lo for i in range(n_leaves)],
+        ]
+        for terms in cases:
+            want = sum(t << i for i, t in enumerate(terms))
+            got = sim_call(tree, terms)
+            check(f"tree_add_shifted(n={n_leaves},{terms})", got, want)
+    print("test_tree_add_shifted passed")
 
 
 def test_soft_karatsuba_mult():
@@ -224,6 +255,35 @@ def test_soft_div_mod_registration():
     print("test_soft_div_mod_registration passed")
 
 
+def test_soft_mult_registration_unsigned_only():
+    """register_soft_mult/register_soft_mult_karatsuba must register for
+    any_uint_t x any_uint_t ONLY. Regression test for the same bug class
+    test_soft_div_mod_registration guards for DIV: both soft multipliers sum
+    `a << i` over the set bits of b treating b as unsigned, so for a signed b
+    (whose MSB has weight -2**(n-1)) the final partial product would have to be
+    subtracted, not added. An earlier version registered them for any_integer_t,
+    so a signed multiply silently elaborated to wrong hardware -- int5_t
+    (-16)*(-16) gave -256 instead of 256. Signed must stay unregistered so it
+    falls through to the built-in inferred HDL `*`, which is correct for signed
+    (unlike DIV, which has no inferred lowering and so raises via the
+    PYPELINE_NO_SW_LIB_GUARD guard instead)."""
+    import operators.soft as soft_lib
+
+    for register in (soft_lib.register_soft_mult, soft_lib.register_soft_mult_karatsuba):
+        register()
+        assert _resolve_generic_operator("INFERRED_MULT", "uint10_t", "uint10_t") is not None, (
+            f"{register.__name__}: unsigned MULT should resolve to a soft multiplier"
+        )
+        assert _resolve_generic_operator("INFERRED_MULT", "int10_t", "int10_t") is None, (
+            f"{register.__name__}: signed MULT must NOT match a soft multiplier -- "
+            "the shift-and-add partial-product sum is only correct for unsigned operands"
+        )
+        assert _resolve_generic_operator("INFERRED_MULT", "int10_t", "uint10_t") is None, (
+            f"{register.__name__}: mixed-signedness MULT must NOT match a soft multiplier"
+        )
+    print("test_soft_mult_registration_unsigned_only passed")
+
+
 def test_soft_cmp():
     ut = make_uint_t(6)
     for op, pyop in (("GT", lambda a, b: a > b), ("GTE", lambda a, b: a >= b),
@@ -285,10 +345,12 @@ if __name__ == "__main__":
     test_soft_negate()
     test_soft_mult()
     test_soft_mult_asymmetric()
+    test_tree_add_shifted()
     test_soft_karatsuba_mult()
     test_soft_div_mod()
     test_soft_signed_div_mod()
     test_soft_div_mod_registration()
+    test_soft_mult_registration_unsigned_only()
     test_soft_cmp()
     test_soft_eq()
     test_soft_shift()

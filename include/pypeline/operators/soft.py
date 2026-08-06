@@ -48,14 +48,38 @@ def register_soft_sub(scope=None):
 
 
 def register_soft_mult(scope=None):
+    """make_soft_shift_add_mult registered for any_uint_t x any_uint_t only.
+
+    Signed (and mixed-signedness) multiply is deliberately left unregistered.
+    Both soft multipliers sum `a << i` over the set bits of b treating b as
+    UNSIGNED, but for a signed b the MSB carries weight -2**(n-1), so the final
+    partial product would have to be subtracted rather than added. Registering
+    these for any_integer_t (as an earlier version did) silently emitted wrong
+    hardware for signed operands -- e.g. int5_t (-16) * (-16) elaborated to -256
+    instead of 256.
+
+    Unlike the DIV/MOD split (where no inferred lowering exists, so signed hits
+    the PYPELINE_NO_SW_LIB_GUARD guard and raises loudly), INFERRED_MULT *does*
+    have a built-in lowering: an unregistered signed multiply falls through to
+    the HDL `*` operator, which is correct for signed. So the failure mode here
+    is not an error but a silent fallback to an inferred (DSP/LUT) multiplier --
+    verified: a signed @MAIN elaborates to BIN_OP_INFERRED_MULT_int16_t_int16_t
+    with zero soft-mult entities. Worth knowing if you called register_soft_ops
+    specifically to keep hard multipliers out of a design: signed operands will
+    still get one until a signed soft multiplier exists. When one is written,
+    register it here for any_int_t the way make_soft_signed_div is.
+    """
     register_operator(
-        "INFERRED_MULT", any_integer_t, any_integer_t, make_soft_shift_add_mult, scope=scope
+        "INFERRED_MULT", any_uint_t, any_uint_t, make_soft_shift_add_mult, scope=scope
     )
 
 
 def register_soft_mult_karatsuba(scope=None):
+    """See register_soft_mult -- same unsigned-only restriction, same reason
+    (make_soft_karatsuba_mult bottoms out in make_soft_shift_add_mult and
+    inherits its unsigned-only partial-product summation)."""
     register_operator(
-        "INFERRED_MULT", any_integer_t, any_integer_t, make_soft_karatsuba_mult, scope=scope
+        "INFERRED_MULT", any_uint_t, any_uint_t, make_soft_karatsuba_mult, scope=scope
     )
 
 
