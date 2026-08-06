@@ -27,7 +27,11 @@ from pypeline import (
 
 from operators.soft_add import make_soft_ripple_add, make_soft_carry_select_add, make_soft_sub
 from operators.soft_mult import make_soft_shift_add_mult, make_soft_karatsuba_mult
-from operators.soft_div import make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod
+from operators.soft_div import (
+    make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod,
+    make_soft_radix4_div, make_soft_radix4_mod,
+    make_soft_signed_radix4_div, make_soft_signed_radix4_mod,
+)
 from operators.soft_cmp import make_soft_sub_cmp, make_soft_sub_cmp_swapped, make_soft_bitwise_cmp
 from operators.soft_shift import make_soft_barrel_sl, make_soft_barrel_sr
 from operators.soft_misc import make_soft_negate, make_soft_eq, make_soft_mux
@@ -99,6 +103,27 @@ def register_soft_mod(scope=None):
     """See register_soft_div -- same unsigned/signed split."""
     register_operator("MOD", any_uint_t, any_uint_t, make_soft_mod, scope=scope)
     register_operator("MOD", any_int_t, any_int_t, make_soft_signed_mod, scope=scope)
+
+
+def register_soft_div_radix4(scope=None):
+    """Alternate DIV flavor: radix-4 restoring division (2 quotient bits per
+    step instead of 1, half the steps of register_soft_div's plain restoring
+    divider). QoR-confirmed (docs/SYN_DESIGN.md, the latchup_div exploration)
+    at 1.63x the fmax of the plain restoring divider under PyRTL estimates --
+    by a wide margin the best of several structural variants tried there.
+    Same unsigned/signed split as register_soft_div; last registration for
+    an overlapping matcher wins, so calling this after register_soft_div
+    (or as part of a fresh register_soft_ops-style call) overrides DIV's
+    flavor for this scope without touching MOD unless register_soft_mod_radix4
+    is also called."""
+    register_operator("DIV", any_uint_t, any_uint_t, make_soft_radix4_div, scope=scope)
+    register_operator("DIV", any_int_t, any_int_t, make_soft_signed_radix4_div, scope=scope)
+
+
+def register_soft_mod_radix4(scope=None):
+    """See register_soft_div_radix4 -- same radix-4 flavor, for MOD."""
+    register_operator("MOD", any_uint_t, any_uint_t, make_soft_radix4_mod, scope=scope)
+    register_operator("MOD", any_int_t, any_int_t, make_soft_signed_radix4_mod, scope=scope)
 
 
 def register_soft_cmp(scope=None):

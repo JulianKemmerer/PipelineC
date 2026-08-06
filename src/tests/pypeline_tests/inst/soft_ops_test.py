@@ -49,7 +49,11 @@ from operators.soft_mult import (
     make_soft_karatsuba_mult,
     make_tree_add_shifted,
 )
-from operators.soft_div import make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod
+from operators.soft_div import (
+    make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod,
+    make_soft_radix4_div, make_soft_radix4_mod,
+    make_soft_signed_radix4_div, make_soft_signed_radix4_mod,
+)
 from operators.soft_cmp import make_soft_sub_cmp
 from operators.soft_shift import make_soft_barrel_sl, make_soft_barrel_sr
 from operators.soft_misc import make_soft_negate, make_soft_eq
@@ -225,6 +229,51 @@ def test_soft_signed_div_mod():
     print("test_soft_signed_div_mod passed")
 
 
+def test_soft_radix4_div_mod():
+    """make_soft_radix4_div/mod: 2-quotient-bits-per-step restoring divider,
+    against the same golden a//b, a%b as test_soft_div_mod. Even width (6,
+    exercises only 2-bit steps) and odd width (7, exercises the leading
+    1-bit step) both covered -- the odd-width path is the one most likely to
+    have an off-by-one in the elaboration-time step-list construction."""
+    for width in (6, 7):
+        ut = make_uint_t(width)
+        div = make_soft_radix4_div(ut, ut)
+        mod = make_soft_radix4_mod(ut, ut)
+        n = 1 << width
+        for a in range(0, n, 3):
+            for b in range(1, n, 5):
+                got_q = sim_call(div, SimVal(a, ut), SimVal(b, ut))
+                got_r = sim_call(mod, SimVal(a, ut), SimVal(b, ut))
+                check(f"soft_radix4_div_w{width}({a},{b})", got_q, a // b)
+                check(f"soft_radix4_mod_w{width}({a},{b})", got_r, a % b)
+    print("test_soft_radix4_div_mod passed")
+
+
+def test_soft_signed_radix4_div_mod():
+    """Signed radix-4 divider: same C-style truncating convention as
+    test_soft_signed_div_mod, same abs-then-fix-sign wrapper, radix-4
+    unsigned core instead of the plain restoring one."""
+    st = make_int_t(6)
+    div = make_soft_signed_radix4_div(st, st)
+    mod = make_soft_signed_radix4_mod(st, st)
+
+    def c_trunc_div(a, b):
+        q = abs(a) // abs(b)
+        return -q if (a < 0) != (b < 0) else q
+
+    def c_trunc_mod(a, b):
+        r = abs(a) % abs(b)
+        return -r if (a < 0) != (b < 0) else r
+
+    for a in range(-32, 32, 3):
+        for b in list(range(-32, 0, 5)) + list(range(1, 32, 5)):
+            got_q = sim_call(div, SimVal(a, st), SimVal(b, st))
+            got_r = sim_call(mod, SimVal(a, st), SimVal(b, st))
+            check(f"soft_signed_radix4_div({a},{b})", got_q, c_trunc_div(a, b))
+            check(f"soft_signed_radix4_mod({a},{b})", got_r, c_trunc_mod(a, b))
+    print("test_soft_signed_radix4_div_mod passed")
+
+
 def test_soft_div_mod_registration():
     """register_soft_div/register_soft_mod split unsigned (any_uint_t ->
     make_soft_div/make_soft_mod) from signed (any_int_t ->
@@ -349,6 +398,8 @@ if __name__ == "__main__":
     test_soft_karatsuba_mult()
     test_soft_div_mod()
     test_soft_signed_div_mod()
+    test_soft_radix4_div_mod()
+    test_soft_signed_radix4_div_mod()
     test_soft_div_mod_registration()
     test_soft_mult_registration_unsigned_only()
     test_soft_cmp()
