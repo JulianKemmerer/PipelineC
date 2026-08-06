@@ -1011,8 +1011,17 @@ def _unary_func_name(op_name, typ):
     return f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{op_name}_{typ}"
 
 
-def _bin_func_name(op_name, l_type, r_type):
-    return f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}_{l_type}_{r_type}"
+def _bin_func_name(op_name, l_type, r_type, parser_state=None):
+    name = f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}_{l_type}_{r_type}"
+    if parser_state is not None:
+        # See the pypeline_builtin_op_info note in PARSE_FILE: AUTOFSM needs the
+        # (op, operand types) of a built-in operator to ask the soft-operator
+        # library for a decomposable equivalent, and reading that back out of
+        # the name would be re-deriving a formatting decision.
+        getattr(parser_state, "pypeline_builtin_op_info", {}).setdefault(
+            name, (op_name, [l_type, r_type])
+        )
+    return name
 
 
 # ─────────────────────────────────────────────
@@ -1264,6 +1273,23 @@ def _register_bit_manip_logic(
         logic.is_new_style_bit_manip = True
         parser_state.FuncLogicLookupTable[func_name] = logic
     return parser_state.FuncLogicLookupTable[func_name]
+
+
+def _record_bit_manip_render(parser_state, func_name, builtin, consts=()):
+    """Remember which Python construct produced a bit-manip entity.
+
+    The entity name encodes widths and constant positions but not WHICH
+    primitive made it -- `uint8_uint1_3` could be a bit-slice assign or a
+    bit_assign() call, and `int16_0_0` is a bit read. AUTOFSM has to re-emit
+    these as Python source when it decomposes a function (soft adders are
+    mostly bit reads and bit_assigns), and guessing from the name is not
+    something a code generator should be doing. See the pypeline_bit_manip_info
+    note in PARSE_FILE. First writer wins, matching the idempotent registration
+    above.
+    """
+    getattr(parser_state, "pypeline_bit_manip_info", {}).setdefault(
+        func_name, (builtin, tuple(consts))
+    )
 
 
 # ─────────────────────────────────────────────
@@ -3922,6 +3948,7 @@ class FuncElaborator:
         _register_bit_manip_logic(
             func_name, ["x"], [base_type], out_type, self.parser_state
         )
+        _record_bit_manip_render(self.parser_state, func_name, "__slice__", (high, low))
 
         inst = self._inst(func_name, expr)
         port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
@@ -3966,6 +3993,7 @@ class FuncElaborator:
             _register_bit_manip_logic(
                 func_name, ["x", "y"], [acc_type, elt_type], out_type, self.parser_state
             )
+            _record_bit_manip_render(self.parser_state, func_name, "concat", ())
             inst = self._inst(func_name, elt)
             port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
             _add_submodule_instance(
@@ -4040,6 +4068,7 @@ class FuncElaborator:
         _register_bit_manip_logic(
             func_name, ["inp", "x"], [base_type, rhs_type], base_type, self.parser_state
         )
+        _record_bit_manip_render(self.parser_state, func_name, "bit_assign", (low,))
 
         inst = self._inst(func_name, target)
         result_wire = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
@@ -4379,7 +4408,9 @@ class FuncElaborator:
             eff_l_type, eff_r_type = l_type, r_type
             out_type = l_type
 
-        func_name = _bin_func_name(op_name, eff_l_type, eff_r_type)
+        func_name = _bin_func_name(
+            op_name, eff_l_type, eff_r_type, self.parser_state
+        )
         inst = self._inst(f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}", expr)
         port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
@@ -4437,7 +4468,9 @@ class FuncElaborator:
             eff_l_type, eff_r_type, _ = _arith_promote(l_type, r_type)
         else:
             eff_l_type, eff_r_type = l_type, r_type
-        func_name = _bin_func_name(op_name, eff_l_type, eff_r_type)
+        func_name = _bin_func_name(
+            op_name, eff_l_type, eff_r_type, self.parser_state
+        )
         inst = self._inst(f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}", expr)
         port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
         _add_submodule_instance(
@@ -4693,9 +4726,16 @@ class FuncElaborator:
                     f"{callee_name}: '{label}' must be an integer type, got {typ!r}"
                 )
 
-        def _emit(func_name, port_names, in_types, out_type, port_wires):
+        def _emit(func_name, port_names, in_types, out_type, port_wires, consts=()):
             _register_bit_manip_logic(
                 func_name, port_names, in_types, out_type, self.parser_state
+            )
+            # See the pypeline_builtin_op_info / pypeline_bit_manip_info note in
+            # PARSE_FILE. The entity name encodes widths and constant arguments
+            # but not WHICH primitive produced it (bit_dup's uint1_8 and
+            # bit_assign's uint8_uint1_3 are both just names), so record it.
+            _record_bit_manip_render(
+                self.parser_state, func_name, callee_name, consts
             )
             inst = self._inst(func_name, expr)
             port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
@@ -4731,7 +4771,9 @@ class FuncElaborator:
                 raise ElaborationError(f"bit_dup: n must be ≥ 1, got {n}")
             _, xw = _ctype_info(x_type)
             prefix = x_type.replace("_t", "")
-            return _emit(f"{prefix}_{n}", ["x"], [x_type], f"uint{xw * n}_t", [x_wire])
+            return _emit(
+                f"{prefix}_{n}", ["x"], [x_type], f"uint{xw * n}_t", [x_wire], (n,)
+            )
 
         elif callee_name == "rotl":
             if len(args) != 2:
@@ -4740,7 +4782,9 @@ class FuncElaborator:
             _require_uint(x_wire, x_type, "x")
             n = _require_const(args[1], "n")
             _, xw = _ctype_info(x_type)
-            return _emit(f"rotl{xw}_{n}", ["x"], [x_type], f"uint{xw}_t", [x_wire])
+            return _emit(
+                f"rotl{xw}_{n}", ["x"], [x_type], f"uint{xw}_t", [x_wire], (n,)
+            )
 
         elif callee_name == "rotr":
             if len(args) != 2:
@@ -4749,7 +4793,9 @@ class FuncElaborator:
             _require_uint(x_wire, x_type, "x")
             n = _require_const(args[1], "n")
             _, xw = _ctype_info(x_type)
-            return _emit(f"rotr{xw}_{n}", ["x"], [x_type], f"uint{xw}_t", [x_wire])
+            return _emit(
+                f"rotr{xw}_{n}", ["x"], [x_type], f"uint{xw}_t", [x_wire], (n,)
+            )
 
         elif callee_name == "bswap":
             if len(args) != 1:
@@ -4778,6 +4824,7 @@ class FuncElaborator:
                 [base_type, x_type],
                 base_type,
                 [base_wire, x_wire],
+                (pos,),
             )
 
         elif callee_name in ("array_to_uint_be", "array_to_uint_le"):
@@ -6315,8 +6362,20 @@ def PARSE_FILE(py_file):
     #     produced it, so a shared functional unit can be emitted as a direct call.
     #   pypeline_const_wire_values: func_name -> {const wire name -> Python value},
     #     so a constant operand can be re-emitted as a literal.
+    #   pypeline_builtin_op_info: built-in operator entity -> (op name, [operand
+    #     C types]). A built-in operator has no Python source, so AUTOFSM cannot
+    #     take it apart -- but the soft-operator library CAN supply an equivalent
+    #     that it can, which is what lets the area search descend past the
+    #     operator level. Recorded rather than parsed back out of the entity
+    #     name: the name is a formatting decision, this is the actual semantics.
+    #   pypeline_bit_manip_info: bit-manip entity -> (builtin name, trailing
+    #     constant args), so AUTOFSM can re-emit e.g. bit_assign(base, x, 5).
+    #     Without it a soft adder's body -- which is mostly bit_assign -- could
+    #     not be regenerated, and descending into one would silently fail.
     parser_state.pypeline_entity_callables = {}
     parser_state.pypeline_const_wire_values = {}
+    parser_state.pypeline_builtin_op_info = {}
+    parser_state.pypeline_bit_manip_info = {}
 
     # ── Apply pypeline pragmas (PART, MAIN_MHZ) from the live module ──
     if pypeline._part_registry is not None:

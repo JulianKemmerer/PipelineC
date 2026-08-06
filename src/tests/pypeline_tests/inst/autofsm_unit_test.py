@@ -262,12 +262,161 @@ def main():
             and tag.out_stream_t._fields == ("data", "valid"),
             "in/out stream types are {data, valid}",
         )
+        check(
+            pypeline.AUTOFSM(tag.func, max_latency=5).max_latency == 5,
+            "max_latency is accepted and stored",
+        )
+        bad = 0
+        for value in (1, 0, -3):
+            try:
+                pypeline.AUTOFSM(tag.func, max_latency=value)
+            except ValueError:
+                bad += 1
         try:
-            pypeline.AUTOFSM(tag.func, max_latency=5)
-            capped = False
-        except NotImplementedError:
-            capped = True
-        check(capped, "max_latency is rejected rather than silently ignored")
+            pypeline.AUTOFSM(tag.func, max_latency="8")
+        except TypeError:
+            bad += 1
+        check(bad == 4, "max_latency below 2, or non-int, is rejected at construction")
+        check(
+            repr(pypeline.AUTOFSM(tag.func, max_latency=5))
+            != repr(pypeline.AUTOFSM(tag.func)),
+            "the cap is part of the tag's repr (it feeds canonical entity names)",
+        )
+
+        print("[max_latency caps the schedule]")
+        # The cap is a HARD constraint. Sharing everything onto one adder needs
+        # one state per add; meeting a tighter cap therefore requires giving
+        # back some sharing, which is exactly the trade the user asked for by
+        # setting a cap at all.
+        ps4, key4, tag4 = parse_design(tmp, mhz=25.0, name="d4")
+        fake_delays(ps4, key4, tag4)
+        uncapped = schedule_with(ps4, key4, tag4, 0.9)
+        tag4.max_latency = 3
+        capped = schedule_with(ps4, key4, tag4, 0.9)
+        check(
+            uncapped["latency"] > capped["latency"] <= 3,
+            f"a max_latency=3 cap is met ({uncapped['latency']} -> "
+            f"{capped['latency']} clks)",
+        )
+        check(
+            not capped["latency_infeasible"],
+            "meeting the cap is not reported as infeasible",
+        )
+        check(
+            len(capped["fus"]) > len(uncapped["fus"]),
+            f"the cap was met by unsharing ({len(uncapped['fus'])} -> "
+            f"{len(capped['fus'])} units), the only thing that can buy latency",
+        )
+        check(
+            all(fu == entity or fu.startswith(entity + "#")
+                for fu, entity in capped["fus"].items()),
+            "every extra unit id maps back to the entity it is a copy of",
+        )
+        check(
+            capped["max_latency"] == 3 and uncapped["max_latency"] is None,
+            "the cap is recorded in the schedule (a cached schedule built under "
+            "a different cap must not be reused)",
+        )
+
+        print("[operand multiplexers are array reads, not if/elif chains]")
+        name4, src4, _g4 = AUTOFSM.GENERATE_FSM_SOURCE(tag, sched, ps)
+        check(
+            "_af_mux" in src4,
+            "a shared unit's operands go through a generated mux entity",
+        )
+        check(
+            src4.count("_c0[") == 3 and src4.count("_c1[") == 3,
+            "each unit input port becomes one 3-entry array (one per user)",
+        )
+        # Forcing latency 2 unshares completely: three adders, one use each.
+        # A unit with a single user needs no selection at all, and paying for a
+        # multiplexer there would be pure loss.
+        tag4.max_latency = 2
+        unshared = schedule_with(ps4, key4, tag4, 0.9)
+        _n5, src5, _g5 = AUTOFSM.GENERATE_FSM_SOURCE(tag4, unshared, ps4)
+        check(
+            len(unshared["fus"]) == 3 and "_af_mux" not in src5,
+            "a unit with a single user gets no multiplexer at all",
+        )
+
+        print("[area model and the minimum-area sweep]")
+        ps6, key6, tag6 = parse_design(tmp, mhz=25.0, name="d6")
+        fake_delays(ps6, key6, tag6)
+        base = schedule_with(ps6, key6, tag6, 0.9)
+        base_area = AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps6, base)
+        check(base_area > 0, f"a schedule has a positive estimated area ({base_area:.0f})")
+        # Opening a 16-bit adder into gates: three shared gates instead of one
+        # shared adder, but 150-odd states' worth of registers and multiplexers
+        # to pay for them. The model has to see that as WORSE, or the search
+        # would decompose everything down to NAND.
+        adder = "BIN_OP_PLUS_int16_t_int16_t"
+        check(
+            adder in getattr(ps6, "pypeline_autofsm_soft_equiv", {}),
+            "a soft-operator equivalent was prepared for the built-in adder "
+            "(this is what lets descent go below the operator level at all)",
+        )
+        gates = AUTOFSM.BUILD_SCHEDULE(ps6, key6, tag6, 0.9, None, (adder,))
+        check(
+            len(gates["nodes"]) > 10 * len(base["nodes"]),
+            f"opening the adder really decomposes it ({len(base['nodes'])} -> "
+            f"{len(gates['nodes'])} operations)",
+        )
+        check(
+            all(not e.startswith("BIN_OP_PLUS") for e in gates["fus"].values()),
+            f"the adder is gone, replaced by its gates: "
+            f"{sorted(set(gates['fus'].values()))}",
+        )
+        check(
+            AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps6, gates) > base_area,
+            "sharing gates instead of adders is estimated as BIGGER, not "
+            "smaller -- the multiplexers and registers outweigh the units",
+        )
+        swept = AUTOFSM.SWEEP_MIN_AREA_SCHEDULE(ps6, key6, tag6, 0.9)
+        check(
+            swept["est_area"] <= swept["est_area_anchor"],
+            "the sweep never returns something its own model calls worse than "
+            "the plain schedule it started from",
+        )
+        check(
+            swept["opened"] == [],
+            "the sweep declines to open the adder into gates (its own model "
+            "says that costs more than it saves)",
+        )
+        check(
+            swept["est_area"] <= swept["est_area_anchor"],
+            "the sweep's answer is never estimated worse than sharing "
+            "everything at the written grain",
+        )
+        # THE calibration invariant, and the one the search gets wrong most
+        # expensively if the AREA_* constants drift: an adder bit costs several
+        # times what a multiplexer bit or a flip-flop does, so three adds
+        # sharing one adder is smaller than three adders -- even counting the
+        # multiplexers, the registers and the extra states. Confirmed against
+        # real yosys cell counts by autofsm_area_sweep_compare_test.py; asserted
+        # here because that test needs a full synthesis run and this does not.
+        all_unshared = AUTOFSM.BUILD_SCHEDULE(
+            ps6, key6, tag6, 0.9, None, (), None, (("BIN_OP_PLUS_int16_t_int16_t", 3),)
+        )
+        check(
+            len(all_unshared["fus"]) == 3
+            and AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps6, all_unshared)
+            > AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps6, base),
+            f"building three adders is estimated as BIGGER than sharing one "
+            f"({AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps6, base):.0f} shared vs "
+            f"{AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps6, all_unshared):.0f} unshared)",
+        )
+        check(
+            swept["unshared"] == [],
+            "...so the sweep leaves them shared",
+        )
+        ps7, key7, tag7 = parse_design(tmp, mhz=25.0, name="d6")
+        fake_delays(ps7, key7, tag7)
+        swept7 = AUTOFSM.SWEEP_MIN_AREA_SCHEDULE(ps7, key7, tag7, 0.9)
+        check(
+            AUTOFSM.SCHEDULES_EQUAL({key7: swept7}, {key6: swept}),
+            "the sweep is deterministic across re-elaborations (its result "
+            "names the generated entity, so it has to be)",
+        )
 
     if FAILURES:
         print(f"\n{len(FAILURES)} AUTOFSM unit check(s) FAILED")

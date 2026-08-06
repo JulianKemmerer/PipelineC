@@ -152,6 +152,31 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # The minimum-area search, built both ways and compared on yosys cell
+    # counts. This is the ONLY place a real area number enters the picture: the
+    # search itself ranks candidates with an internal model, because timing is
+    # the only quantity every synthesis backend reports in a parseable form.
+    # So this test is where that model is held to account.
+    tests.append(
+        Test(
+            name="autofsm_area_sweep_compare_test",
+            category="synth",
+            cmd=[INST_DIR / "autofsm_area_sweep_compare_test.py"],
+            needs_out_dir=True,
+        )
+    )
+    # max_latency= as a HARD constraint, both halves: a cap the tool can meet
+    # is met (by unsharing, the only thing that shortens a schedule), and a cap
+    # it cannot meet fails the build with a message naming the latency actually
+    # needed -- rather than quietly returning a slower FSM.
+    tests.append(
+        Test(
+            name="autofsm_max_latency_test",
+            category="synth",
+            cmd=[INST_DIR / "autofsm_max_latency_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # Synthesis iterations that find a critical path inside an AUTOFSM and fix
     # it: a deliberately loose starting budget over-packs the states, the first
     # build misses the clock, and the driver must tighten the budget and

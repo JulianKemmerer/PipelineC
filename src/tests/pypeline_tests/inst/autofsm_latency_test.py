@@ -92,12 +92,17 @@ def main():
     # shortest matching path (blob entities live directly under out_dir;
     # the top-level entity lives several directories deeper, mirroring the
     # source file's path).
+    #
+    # Also excluded: autofsm_operand_mux_*, the generated operand multiplexer
+    # entities (include/pypeline/operators/autofsm_mux.py). They are named
+    # autofsm_* too, but they are what the FSM is BUILT FROM, not the FSM.
     candidates = []
     for root, _dirs, files in os.walk(out_dir):
         for f in files:
             if (
                 f.startswith("autofsm_")
                 and not f.startswith("autofsm_top_")
+                and not f.startswith("autofsm_operand_mux")
                 and f.endswith(".vhd")
                 and not f.endswith("_top.vhd")
                 and "_comb_" not in f
@@ -115,14 +120,36 @@ def main():
     with open(fsm_vhd) as f:
         vhdl = f.read()
 
-    # One instance per shared arithmetic unit. The state-decode comparators and
-    # operand multiplexers the FSM itself adds are expected to appear many
-    # times -- they are the cost of sharing, not the thing being shared.
+    # The generated hardware must contain exactly as many copies of each shared
+    # unit as the schedule says it does -- no more (sharing that did not
+    # happen), and no fewer (a unit quietly dropped).
+    #
+    # Checked against the schedule's own per-unit report rather than a
+    # hardcoded 1, because the area search may deliberately build a SECOND copy
+    # of a cheap unit when its operand multiplexer would cost more than the
+    # unit does. That is the search working, not sharing regressing -- the
+    # units-fewer-than-operations check above is what guards against the
+    # latter. (The state-decode comparators and operand multiplexers the FSM
+    # adds around all this appear many times; they are the price of sharing,
+    # not the thing being shared.)
+    units_claimed = {}
+    for line in out.splitlines():
+        fu = re.match(r"^  (\S+) x(\d+) -> 1 unit", line)
+        if fu:
+            units_claimed[fu.group(1)] = units_claimed.get(fu.group(1), 0) + 1
+    if not units_claimed:
+        fail("the schedule summary listed no shared units")
     for unit in ("BIN_OP_PLUS_int16_t_int16_t", "BIN_OP_MINUS_int16_t_int16_t"):
+        want = units_claimed.get(unit)
+        if want is None:
+            fail(f"the schedule did not bind any {unit} unit")
         n = len(re.findall(r"entity work\.%s_" % re.escape(unit), vhdl))
-        if n != 1:
-            fail(f"expected exactly 1 shared {unit} instance in the FSM, found {n}")
-        print(f"  {unit}: 1 instance (shared)")
+        if n != want:
+            fail(
+                f"the schedule claims {want} shared {unit} unit(s) but the "
+                f"generated FSM instantiates {n}"
+            )
+        print(f"  {unit}: {n} instance(s), matching the schedule")
 
     if "ERROR: TIMING NOT MET" in out:
         fail("build did not meet timing")

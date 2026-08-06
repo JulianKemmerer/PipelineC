@@ -804,6 +804,39 @@ container. Everything it needs was already there.
   a float64 polynomial, that does not finish in reasonable time. Nothing
   consumes that number: the scheduler works from the individual operations
   underneath, measured and disk-cached as usual.
+- **`_AUTOFSM_MUX_ENTITIES`**, folded into `ADD_PATH_DELAY_TO_LOOKUP`'s
+  `funcs_to_synth` list. A generated FSM holds state, so it is an atomic span:
+  one whole-module synthesis for its register-to-register path, and nothing
+  inside it measured. That is right for its fmax number and wrong for its
+  operand multiplexers, whose real delay is the single most load-bearing input
+  to AUTOFSM's decision about how finely to share — the thing it otherwise has
+  to guess at with a flat constant. Those few entities are therefore named
+  explicitly and collected for measurement in their own right. They are small —
+  one 3-to-8-way multiplexer per shared unit input port — so this is a handful
+  of quick runs, not a meaningful build cost.
+
+  They live under `include/pypeline/operators/` intending
+  `_IS_PYPELINE_OPERATOR_LIBRARY_CODE` to classify them as non-user code and so
+  make each shape cacheable in `path_delay_cache`. That predicate does not
+  currently fire, for these or for the soft-operator library it was written for:
+  it calls `inspect.getsourcefile` on the callable in
+  `pypeline_entity_callables`, which is deliberately the `@hw_func` **wrapper**
+  (see `_elaborate_live_func`), and a wrapper's source file is `pypeline.py`.
+  An `inspect.unwrap` at that lookup would fix it. Nothing is wrong with the
+  delays meanwhile — they are measured every build instead of once.
+
+**Scheduling inside the pass loop.** Each pass now runs AUTOFSM's minimum-area
+search rather than a single greedy schedule
+([`AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md) §3.7). It is pure computation over
+already-measured delays — no synthesis, no tool output — and it is bounded by
+move and DAG-size caps rather than a wall clock, because the schedule has to
+stay a pure function of the source. `--autofsm_no_area_sweep` restores the
+greedy schedule. The search is forbidden from returning a schedule whose worst
+state is longer than the greedy one's, so it can never spend the timing margin
+this loop exists to defend; when a `max_latency=` cap cannot be met the driver
+exits nonzero rather than building something slower than the source asked for.
+`MAX_SCHEDULE_PASSES` is 6 rather than 4, since a pass may now also be spent
+absorbing a freshly measured multiplexer delay.
 
 **Timing attribution.** `AUTOFSM.BLAMED_AUTOFSM_KEYS` reads
 `sweep_timing_failures`. When the sweep attributed a blamed function, a

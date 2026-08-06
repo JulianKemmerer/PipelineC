@@ -818,8 +818,14 @@ The differences worth knowing:
   import of it: `pypeline.py` is the base module every design imports and keeps
   zero dependency on the `include/pypeline` library. The two are structurally
   identical and duck-type compatible.
-- **`max_latency=`** is reserved for the planned latency cap and raises
-  `NotImplementedError` rather than being accepted and ignored.
+- **`max_latency=`** caps the in→out latency, validated at construction (`int`,
+  `>= 2`, since latency is states + 1 accept cycle) so the error names the
+  user's own construction site. It is part of `__repr__` — these objects get
+  captured in factory closures whose reprs feed canonical entity-name hashing,
+  so two tags differing only in their cap must not collide. It is also recorded
+  in the schedule dict, and a cached schedule whose recorded cap differs from
+  the tag's is treated as a miss: building hardware that violates the cap the
+  source asks for is not an acceptable failure mode.
 - **Native simulation** models the generated FSM's registers directly
   (`_sim_fsm`, keyed on `_SIM_AUTOFSM_STATE_KEY`), following the same
   committed-read / buffered-write discipline as `_sim_delay_line`.

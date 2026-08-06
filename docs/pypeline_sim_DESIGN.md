@@ -1914,6 +1914,16 @@ captures its schedule at construction and any `.latency`-derived Python sizing
 must elaborate the same way it did for the build. With no schedule installed
 (plain native sim, `--comb`) the call site is a zero-latency passthrough.
 
+Nothing in this model changed when AUTOFSM gained its area search, latency cap
+and finer decomposition, and that is by design: every one of those decides *what
+hardware implements the function*, and this model deliberately does not describe
+the hardware — it describes the boundary. The call site accepts while idle,
+pulses `valid` `.latency` cycles later, and computes `func`. Which operations
+share which unit, how many states that takes and how far down the operator
+hierarchy the scheduler went are all invisible from here. The only thing the
+simulator reads out of a schedule is `latency`, and a `max_latency=` cap changes
+nothing except which number that is.
+
 `self_check_autofsm_test.py` is run in both native and GHDL simulation, at
 latency 0 and at real latency, which is what checks this model against the
 hardware in practice.

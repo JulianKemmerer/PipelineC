@@ -74,6 +74,15 @@ parser.add_argument(
     "to start tighter (or, above 1.0, deliberately looser).",
 )
 parser.add_argument(
+    "--autofsm_no_area_sweep",
+    help="Skip AUTOFSM's minimum-area search and use the plain greedy schedule "
+    "(one shared unit per operation as written, opened up only where an "
+    "operation is too slow to fit a state). The search is on by default and can "
+    "only improve on this by its own cost model, so this is for A/B comparison "
+    "and for debugging a schedule the search complicated.",
+    action="store_true",
+)
+parser.add_argument(
     "--sim",
     help="Start simulation using final (maybe autopipelined) versions of functions.",
     action="store_true",
@@ -476,12 +485,25 @@ def run_autofsm_schedule_passes(parser_state):
         )
         parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
         schedules = AUTOFSM.HARVEST_AUTOFSM_SCHEDULES(
-            parser_state, budget_scales, prev_schedules
+            parser_state,
+            budget_scales,
+            prev_schedules,
+            area_sweep=not args.autofsm_no_area_sweep,
         )
         for key in sorted(schedules):
             print(AUTOFSM.DESCRIBE_SCHEDULE(key, schedules[key]), flush=True)
             for fu_line in AUTOFSM.DESCRIBE_FUS(schedules[key]):
                 print(fu_line, flush=True)
+        # A max_latency= cap is a hard constraint, so failing to meet it fails
+        # the build. Silently returning a slower FSM would defeat the point of
+        # asking for the cap in the first place.
+        infeasible = [k for k in sorted(schedules) if schedules[k]["latency_infeasible"]]
+        if infeasible:
+            for key in infeasible:
+                print(
+                    AUTOFSM.LATENCY_INFEASIBLE_MESSAGE(key, schedules[key]), flush=True
+                )
+            sys.exit(-1)
         prev_schedules = schedules
 
         pypeline.SET_AUTOFSM_SCHEDULE_CACHE(schedules)
@@ -532,7 +554,10 @@ def run_autofsm_schedule_passes(parser_state):
                     * AUTOFSM.BUDGET_TIGHTEN_FACTOR
                 )
             trial = AUTOFSM.HARVEST_AUTOFSM_SCHEDULES(
-                parser_state, budget_scales, schedules
+                parser_state,
+                budget_scales,
+                schedules,
+                area_sweep=not args.autofsm_no_area_sweep,
             )
             if not AUTOFSM.SCHEDULES_EQUAL(trial, schedules):
                 changed = True

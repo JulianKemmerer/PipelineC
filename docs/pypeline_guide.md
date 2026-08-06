@@ -2367,6 +2367,44 @@ or looser. One thing it cannot fix: a single indivisible operation slower than
 your clock (a float64 multiply, say). That is reported as `AT FLOOR`, because no
 number of extra states makes one multiplier faster.
 
+**Capping the latency.** `AUTOFSM(func, max_latency=N)` says the result must
+arrive within N cycles. Sharing everything onto one unit of each kind is the
+smallest design and the slowest, so a cap is met the only way it can be — by
+building a second copy of whatever is forcing the states:
+
+```python
+UPDATE = AUTOFSM(next_state, max_latency=8)
+```
+
+It is a hard constraint. If no schedule meeting your clock goal fits in N
+cycles, the build fails and tells you the latency it actually needs, rather than
+handing back something slower than you asked for.
+
+**The build also looks for the smallest FSM it can find**, and prints what it
+decided:
+
+```
+AUTOFSM pypeline_design_next_state: 28 ops -> 9 shared unit(s), 8 states, ...
+  area search: -7.8% area vs sharing everything (estimated 260 against 282),
+               3 kind(s) opened up, 1 kind(s) given extra unit(s),
+               110 candidate schedule(s) tried
+```
+
+Sharing is not free: every shared unit needs a multiplexer picking its operands
+per state, and more states means more registers holding values in between. For
+an expensive unit — a multiplier, a wide adder — sharing wins easily. For a
+cheap one, the multiplexer can cost more than a second copy of the unit would,
+and the search will decline to share it. It also goes the other way, breaking an
+operation down into smaller pieces when several different operations turn out to
+be built from the same ones and can then share those instead. If soft-operator
+implementations are available (`include/pypeline/operators/`) it can follow that
+all the way down to logic gates — and will normally decide, correctly, that
+gates are far too small a thing to share.
+
+The search never returns something bigger or slower than plain share-everything,
+so there is nothing to turn on. `--autofsm_no_area_sweep` turns it *off*, which
+is useful mainly for comparing the two.
+
 Working examples: `examples/pypeline/autofsm_donut_update.py` (per-frame
 rotation math) and `examples/pypeline/float_sine_autofsm.py` (a float64
 polynomial onto one multiplier). Full design notes in

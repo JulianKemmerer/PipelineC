@@ -4161,8 +4161,27 @@ elaboration and initialized in `PARSE_FILE`:
 |---|---|---|
 | `pypeline_entity_callables` | entity name → the live Python callable that produced it | `PARSE_FILE` step 6 (top-level `@hw_func`s, before any elaboration runs) and `_elaborate_live_func` (anything reached only through a closure alias) |
 | `pypeline_const_wire_values` | func name → {constant wire → Python value} | reserved for constants that cannot be recovered from the wire name |
+| `pypeline_builtin_op_info` | built-in operator entity → (op name, operand c types) | `_bin_func_name`, at the two `_elab_binop` / `_elab_compare` sites that build a built-in operator instance |
+| `pypeline_bit_manip_info` | bit-manipulation entity → (which builtin produced it, its constant arguments) | `_record_bit_manip_render`, beside every `_register_bit_manip_logic` call |
 
-`setdefault` in both writers: first writer wins, matching
+The last two exist because AUTOFSM's area search decomposes operations, and both
+answer a question the entity NAME cannot be trusted for:
+
+- **`pypeline_builtin_op_info`.** A built-in operator has no Python source, so
+  AUTOFSM cannot take it apart — but the soft-operator library can supply an
+  equivalent that it can, and asking for the right factory needs the operator
+  and its operand types. `BIN_OP_PLUS_uint32_t_uint32_t` does encode both, but
+  parsing that back out is re-deriving a formatting decision; recording it is
+  the same pattern `pypeline_entity_callables` already uses.
+- **`pypeline_bit_manip_info`.** The name of a bit-manip entity encodes widths
+  and constant positions but not which primitive produced it — `uint8_uint1_3`
+  is either a bit-slice assign or a `bit_assign()` call, and `int16_0_0` is a
+  bit read. AUTOFSM has to re-emit these as source when it decomposes
+  something, and a soft adder's body is almost entirely bit reads and
+  `bit_assign`s: without this table, descending into one would fail to
+  regenerate and silently fall back to keeping the operation atomic.
+
+`setdefault` in every writer: first writer wins, matching
 `_elaborate_live_func`'s own dedup. Live callables are kept off `Logic` entirely
 (no `DEEPCOPY`/pickle hazard). The top-level recording happens in the *stub*
 pass rather than during elaboration because AUTOFSM code generation runs

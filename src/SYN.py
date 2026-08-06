@@ -3990,6 +3990,43 @@ def _FUNC_NEEDS_SUBMODULE_DELAYS(func_name, parser_state):
     return HIER_SYN_MODE == "leaf" and FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state)
 
 
+def _AUTOFSM_MUX_ENTITIES(parser_state):
+    # Operand multiplexers inside generated AUTOFSM state machines.
+    #
+    # A generated FSM holds state, so it is an ATOMIC SPAN here: one
+    # whole-module synthesis for its register-to-register path, and nothing
+    # inside it is measured (see FUNC_PATH_DELAY_IS_ESTIMABLE). That is right
+    # for its fmax number and wrong for its multiplexers, whose real delay is
+    # the single most load-bearing input to AUTOFSM's decision about HOW FINELY
+    # to share -- the thing v1 had to guess at with a flat constant. So these
+    # few entities are collected for measurement in their own right. They are
+    # small (one 3-to-8-way mux per shared unit input port), so this is a
+    # handful of quick runs.
+    #
+    # They live under include/pypeline/operators/ intending
+    # _IS_PYPELINE_OPERATOR_LIBRARY_CODE to classify them as non-user code and
+    # so make each shape cacheable in path_delay_cache. NOTE that predicate does
+    # not currently fire, for these or for the soft-operator library it was
+    # written for: it calls inspect.getsourcefile on the callable recorded in
+    # pypeline_entity_callables, which is deliberately the @hw_func WRAPPER (see
+    # _elaborate_live_func), and a wrapper's source file is pypeline.py. An
+    # inspect.unwrap at that lookup would fix it. Delays are correct meanwhile;
+    # they are just measured every build instead of once.
+    cached = getattr(parser_state, "_autofsm_mux_entities_cache", None)
+    if cached is not None:
+        return cached
+    rv = set()
+    if getattr(parser_state, "pypeline_autofsm_mux_callables", None):
+        try:
+            import AUTOFSM
+
+            rv = AUTOFSM.AUTOFSM_MEASURE_ENTITIES(parser_state)
+        except Exception:
+            rv = set()
+    parser_state._autofsm_mux_entities_cache = rv
+    return rv
+
+
 def RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(func_names, parser_state):
     funcs_to_synth = []
     for func_name in func_names:
@@ -4368,6 +4405,16 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
     funcs_to_synth = RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(
         parser_state.main_mhz.keys(), parser_state
     )
+    # ...plus AUTOFSM's operand multiplexers, which the walk above cannot reach
+    # (see _AUTOFSM_MUX_ENTITIES). Their own subtrees first, so the list stays
+    # bottom-up ordered.
+    _autofsm_muxes = sorted(_AUTOFSM_MUX_ENTITIES(parser_state))
+    if _autofsm_muxes:
+        for extra in RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(
+            _autofsm_muxes, parser_state
+        ) + _autofsm_muxes:
+            if extra not in funcs_to_synth:
+                funcs_to_synth.append(extra)
 
     # Record stats on functions with globals
     main_to_min_mhz = {}

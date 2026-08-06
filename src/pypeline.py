@@ -1567,6 +1567,7 @@ class AUTOFSM:
     over N clock cycles::
 
         MY_FSM = AUTOFSM(some_pure_func)      # tool picks the state count
+        MY_FSM = AUTOFSM(some_pure_func, max_latency=8)   # ...but never past 8
 
         @MAIN(100.0)
         def top():
@@ -1587,6 +1588,19 @@ class AUTOFSM:
     report blames the FSM, the driver shrinks the per-state delay budget and
     reschedules into more states, the same way the throughput sweep adds
     pipeline stages for AUTOPIPELINE.
+
+    `max_latency=N` caps that: the tool may spend at most N cycles in->out
+    (N-1 execution states plus the accept cycle). Use it when the surrounding
+    design has a real deadline -- a result needed before the next frame, a
+    protocol turnaround -- and you would rather have a bigger FSM than a late
+    one. It is a HARD constraint, not a hint: if no schedule meeting the clock
+    goal fits inside N cycles the build FAILS with a message naming the FSM and
+    the latency it actually needs, rather than quietly returning a slower or
+    a timing-missing design. Omit it to let the tool minimize resources
+    without a deadline. Note that the tool also searches for the SMALLEST
+    design it can (see the area sweep in docs/AUTOFSM_DESIGN.md), so a
+    generous cap is not the same thing as no cap: sharing more finely costs
+    latency, and the cap bounds how much of it the search may spend.
 
     Contract at the call site (fixed latency, one computation in flight):
       - `func` must be @hw_func-decorated, pure (no Reg/Feedback/global wires
@@ -1632,15 +1646,22 @@ class AUTOFSM:
                 f"@hw_func-decorated before being passed in"
             )
         if max_latency is not None:
-            # Reserved for the planned "don't always trade all the latency for
-            # area" knob; rejected rather than silently ignored (the AUTOPIPELINE
-            # depth= parameter's fate -- accepted, stored, never consumed -- is
-            # exactly the trap being avoided here).
-            raise NotImplementedError(
-                "AUTOFSM(func, max_latency=...): capping the FSM latency is not "
-                "implemented yet; omit max_latency to let the tool minimize "
-                "resources"
-            )
+            # Validated here rather than at schedule time so the error names the
+            # user's own construction site. Latency is n_states + 1 (the extra
+            # cycle is the accept cycle) and an FSM has at least one execution
+            # state, so 2 is the smallest latency any schedule can have.
+            if not isinstance(max_latency, int) or isinstance(max_latency, bool):
+                raise TypeError(
+                    f"AUTOFSM(func, max_latency=...): must be an int, got "
+                    f"{type(max_latency).__name__}"
+                )
+            if max_latency < 2:
+                raise ValueError(
+                    f"AUTOFSM(func, max_latency={max_latency}): the smallest "
+                    f"possible FSM latency is 2 (one accept cycle plus at least "
+                    f"one execution state)"
+                )
+        self.max_latency = max_latency
         arg_types = hw_arg_types(func)
         if len(arg_types) != 1:
             raise TypeError(
@@ -1668,6 +1689,15 @@ class AUTOFSM:
         # the compiler.
         if _autofsm_schedule_cache:
             self._schedule = _autofsm_schedule_cache.get(self.canonical_key)
+            # A schedule built under a different latency cap is not this tag's
+            # schedule. The cap is a constructor constant, so this can only
+            # happen if the design changed between passes -- treat it as a miss
+            # (back to the bootstrap passthrough) rather than silently building
+            # hardware that violates the cap the source asks for.
+            if self._schedule is not None and self._schedule.get(
+                "max_latency"
+            ) != max_latency:
+                self._schedule = None
         else:
             self._schedule = None
         self._latency = self._schedule["latency"] if self._schedule else 0
@@ -1788,6 +1818,8 @@ class AUTOFSM:
             qual = getattr(func, "__qualname__", "?")
             mod = getattr(func, "__module__", "?")
             inner = f"{mod}.{qual}"
+        if self.max_latency is not None:
+            inner += f",max_latency={self.max_latency}"
         return f"AUTOFSM({inner})"
 
 

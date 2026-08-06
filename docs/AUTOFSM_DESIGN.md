@@ -126,9 +126,18 @@ This mirrors AUTOPIPELINE exactly, and it is why a well-written AUTOFSM
 testbench reacts to `resp.valid` rather than counting cycles: the same source is
 then correct at latency 0 and at latency 17.
 
-`max_latency=` is reserved for the planned "don't trade all the latency for
-area" cap and currently raises `NotImplementedError` rather than being silently
-ignored.
+**`max_latency=N`** caps the FSM's in→out latency at N cycles (N−1 execution
+states plus the accept cycle). It is a **hard constraint**: if no schedule
+meeting the clock goal fits inside N cycles the build fails, with a message
+naming the FSM and the latency it actually needs. The tool meets a cap the only
+way a cap can be met — by giving back sharing and building a second (third, …)
+copy of whatever unit is forcing the states. Note that "no cap" and "generous
+cap" are not the same thing: the area search spends latency to buy area (§3.7),
+and the cap bounds how much of it the search may spend.
+
+```python
+UPDATE = AUTOFSM(next_state, max_latency=8)   # never more than 8 cycles
+```
 
 ---
 
@@ -178,12 +187,25 @@ Three classifications:
 - **delay exceeds a state's budget → descend**, inlining the operation's body
   into this DAG so something too slow for one state can be split across several.
 
-Descent only enters entities with a recorded live Python callable — i.e. things
-that came from Python source that can be regenerated. A built-in operator
-entity is atomic no matter how slow, because its innards are the C/VHDL support
-library, not Python. Descent is also **best-effort**: a body that cannot be
-regenerated falls back to keeping the operation atomic (reported as a floor),
-rather than failing the build.
+There is a fourth reason to descend that has nothing to do with delay: the area
+search may pass an `opened` set of entities it wants taken apart because doing
+so is estimated to make the design smaller (§3.7). Both paths go through the
+same code; the budget test and the `opened` set are simply OR-ed.
+
+Descent enters an entity if it has a recorded live Python callable — i.e. it
+came from Python source that can be regenerated — or if it is a built-in
+operator for which the soft-operator library supplied an equivalent that does
+(§3.7). Descent is **best-effort**: a body that cannot be regenerated falls back
+to keeping the operation atomic (reported as a floor) rather than failing the
+build.
+
+Also skipped while walking: submodule instances whose names contain
+`CLOCK_ENABLE`. Those are clock-gating plumbing the backend adds to a `Logic`
+when it gates submodules inside an `if`, and they only appear on passes where
+that backend step has already run over these objects — which the driver's later
+reschedules see, because they reuse a parser state a full build has been
+through. They are not data operations, and tracing their operands looks for
+drivers a pure function does not have.
 
 `_trace_operand` also records the **cast chain**: every intermediate wire type
 between producer and consumer. Assigning a wire narrows to the destination's
@@ -196,30 +218,145 @@ something the pure function does not.
 `SCHEDULE_DAG` is a list scheduler. Per state, it walks the ready operations in
 longest-remaining-chain order and places one if:
 
-1. **its unit is free this state** — one operation per unit per state;
+1. **some copy of its unit is free this state** — one operation per unit per
+   state is exactly what makes a unit shareable rather than duplicated;
 2. **the chain still fits the budget** —
-   `chain_start + delay + MUX_PENALTY_DU ≤ budget_du`, where
-   `budget_du = period_ns × 10 × budget_scale`;
+   `chain_start + delay + mux_delay ≤ budget_du`, where
+   `budget_du = period_ns × 10 × budget_scale` and `mux_delay` is the real,
+   measured delay of that unit's operand multiplexer at its actual fold count
+   (§3.2b — v1 charged a flat `MUX_PENALTY_DU` here instead);
 3. **the units' emission order stays acyclic** — generated source declares units
    in a fixed order, so if unit A feeds unit B in one state, B can never feed A
    in another.
+
+Ready operations are tracked incrementally, through a priority heap fed by a
+per-node count of unplaced predecessors. Rescanning every unplaced operation
+after every placement is quadratic per state — invisible when a DAG held a few
+dozen operations, and fatal now the area search routinely scores candidates
+holding thousands.
 
 If nothing at all fits an empty state, the cheapest ready operation is forced in
 alone and the schedule is flagged **`at_floor`**: one indivisible operation that
 no number of extra states can speed up. The driver stops tightening when it sees
 this, instead of looping to its pass cap.
 
-Constants: `DEFAULT_BUDGET_SCALE = 0.9` (the delay model does not account for the
-multiplexers sharing adds, so leave headroom), `MUX_PENALTY_DU = 10` (1.0 ns
-charged per operation for its operand mux and writeback enable),
-`BUDGET_TIGHTEN_FACTOR = 0.75`, `MAX_SCHEDULE_PASSES = 4`. Override the starting
-budget with `--autofsm_budget_scale`.
+**Copies.** Binding is normally one unit per entity, but `SCHEDULE_DAG` accepts
+a per-entity copy count, and `schedule["fus"]` maps unit id → entity as an
+explicit indirection rather than assuming the two are the same string. Two
+things use it: a `max_latency` cap that sharing alone cannot meet (an entity
+used F times with R copies needs at least ⌈F/R⌉ states, so a cap of S states
+forces R ≥ ⌈F/S⌉ — computed directly, not searched for), and the area search's
+unshare move (§3.7).
+
+Constants: `DEFAULT_BUDGET_SCALE = 0.9` (the delay model does not account for
+everything the FSM's own control adds, so leave headroom),
+`BUDGET_TIGHTEN_FACTOR = 0.75`, `MAX_SCHEDULE_PASSES = 6`. `MUX_PENALTY_DU = 10`
+survives only as the seed for a mux shape nothing has ever measured. Override
+the starting budget with `--autofsm_budget_scale`.
 
 Determinism is load-bearing: node ids come from source coordinates, ties break
 on node id, and the schedule is a pure function of (Logic graphs, delays,
-budget_scale). Independence from the surrounding design is what makes the
-driver's loop converge trivially — only an explicit tightening can change the
-answer, so there is no fixed-point search.
+budget_scale, the search's grain and binding choices). Independence from the
+surrounding design is what makes the driver's loop converge trivially — only an
+explicit tightening can change the answer, so there is no fixed-point search.
+The area search is bounded by move and DAG-size caps, never by a wall clock,
+for the same reason.
+
+### 3.2b Operand multiplexers
+
+Sharing a unit means selecting its operands per state, and that multiplexer is
+the entire cost side of the sharing trade. v1 modelled it as a flat
+`MUX_PENALTY_DU = 10` (1.0 ns) per scheduled operation — wrong in both
+directions at once, over-charging a unit with two users and badly under-charging
+one with twenty, which is exactly the range the area search explores.
+
+v2 makes it a **real entity**, in `include/pypeline/operators/autofsm_mux.py`:
+
+```python
+@hw_func
+def autofsm_operand_mux(sel: uint3_t, choices: int16_t[6]) -> int16_t:
+    return choices[sel]
+```
+
+Three things follow from that shape.
+
+**It is an array read, not an if/elif chain.** A variable array index elaborates
+to the balanced binary `VAR_REF_RD` selection tree — log2(N) deep. The nested
+if/elif form v1 emitted inline elaborates to a *priority* chain, N−1 deep.
+
+**One canonical entity per (element type, fold count).** The factory is
+memoized, so the entity name is a pure function of (type, n), stable across the
+driver's repeated re-elaborations, and — because the callable identity is stable
+too — reverse-lookupable in `pypeline_entity_callables` to find the delay that
+was measured for it.
+
+**It gets measured.** A generated FSM holds state, so SYN treats it as one
+atomic span and never looks inside it (`FUNC_PATH_DELAY_IS_ESTIMABLE`). That is
+right for the FSM's own fmax number and wrong for its multiplexers, so
+`AUTOFSM._REGISTER_MUX_ENTITIES` and `SYN._AUTOFSM_MUX_ENTITIES` name these few
+entities and `ADD_PATH_DELAY_TO_LOOKUP` collects them for measurement in their
+own right. They are small — one 3-to-8-way mux per shared unit input port — so
+this is a handful of quick synthesis runs, not a meaningful build cost.
+**The entity AUTOFSM measures is the entity AUTOFSM instantiates.**
+
+The module lives under `include/pypeline/operators/` so that
+`SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE` classifies it as shipped library code
+rather than user code, which is what makes a measured delay eligible for
+`path_delay_cache`. *Note:* that predicate currently looks at
+`inspect.getsourcefile` of the callable recorded in `pypeline_entity_callables`,
+which is the `@hw_func` **wrapper** — whose source file is `pypeline.py`, not
+the library module. So it does not fire today, for these multiplexers or for the
+soft-operator library it was written for, and both are re-measured each build
+rather than read from disk. One `inspect.unwrap` at that lookup fixes it; the
+delays are correct either way, this is purely build time.
+
+Real numbers matter here: on the PYRTL flow a 6-way `int16_t` mux measures
+4.29 ns against the 1.0 ns v1 assumed — a 4× error in the one term that decides
+how much sharing is worth doing.
+
+Generated code, per unit input port:
+
+```
+u0_sel: uint2_t = 0            # narrow fold-index decode: still an if/elif
+if st == 4:
+    u0_sel = 1
+elif st == 6:
+    u0_sel = 2
+u0_c0: int16_t[3]              # the wide data path: one array per port
+u0_c0[0] = <state 1's operand>
+u0_c0[1] = <state 4's operand>
+u0_c0[2] = <state 6's operand>
+u0_a0: int16_t = _af_mux0(u0_sel, u0_c0)
+```
+
+A port with a single user gets no multiplexer at all. A port type that cannot be
+arrayed falls back to v1's inline form.
+
+### 3.2c Register allocation
+
+With everything folded onto a few units, **registers are routinely a larger part
+of the design than the units they feed** — on the donut example the model puts
+several times more area in registers than in the shared arithmetic.
+
+`ALLOCATE_REGISTERS` runs the classic left-edge allocation over live ranges, so
+values that are never live at the same time share a register. A value's range
+starts the state *after* the one that computes it, because writeback happens at
+the end of a state and reads see the snapshot committed at the last clock edge —
+that off-by-one is what lets a value written in state 5 reuse the register
+another value was last read from in state 5.
+
+Two values may share a register only if they have the same c type **and come
+from the same functional unit**. The type rule is obvious. The same-unit rule is
+what makes this free: the register's data input is then that unit's output local
+in every state that writes it, so the register only gains a wider write enable —
+no data path is added. Allowing cross-unit sharing puts a multiplexer directly
+in front of a flip-flop, usually on the critical path; measured on the donut,
+that cost 42.4 → 37.5 MHz in exchange for a handful of flip-flops. Registers are
+cheap and the clock period is not.
+
+`ALLOCATE_REGISTERS` is used by both the code generator (which declares the
+registers) and the area model (which prices them), so the model cannot drift
+from what gets built.
 
 ### 3.3 Code generation
 
@@ -380,6 +517,150 @@ Schedules reach the simulator the same way AUTOPIPELINE latencies do:
 captures its schedule at construction and any `.latency`-derived Python sizing
 must match what was built.
 
+### 3.7 The minimum-area search
+
+`SWEEP_MIN_AREA_SCHEDULE` runs on every AUTOFSM build unless
+`--autofsm_no_area_sweep` is given.
+
+#### What it searches over
+
+Two axes, which are the two directions off v1's schedule:
+
+| move | what it changes | what it buys | what it costs |
+|---|---|---|---|
+| **open** an entity | one operation becomes its constituent operations | fewer distinct units; different entities may converge on the same smaller pieces and share them | more operations → more states, registers, multiplexers |
+| **unshare** an entity | one more physical copy of a unit | narrower multiplexers; fewer states, so fewer registers | one more unit |
+
+v1 could do neither deliberately. It opened an operation only when it was too
+slow to fit a state — a correctness last resort, not a search — and it shared
+everything unconditionally, which for anything cheaper than its own multiplexer
+(a one-bit OR, say) is a straight loss.
+
+#### Descending past the operator level
+
+v1's descent bottomed out at built-in operators: a `BIN_OP_PLUS_uint32_t_uint32_t`
+has no Python source, so there is nothing to re-express. v2 asks the
+soft-operator library (`include/pypeline/operators/`) for an equivalent that
+does — `make_soft_ripple_add`, `make_soft_shift_add_mult`,
+`make_soft_sub_cmp_swapped`, … — whose own leaves are inferred bitwise
+operations. Descent can therefore continue all the way down to gates.
+
+Candidates are prepared during the bootstrap elaboration
+(`PREPARE_SOFT_EQUIVALENTS`), the one moment a live elaborator, the design's
+module globals and the tagged function are all in hand at once. They land in
+`FuncLogicLookupTable` **uninstantiated** — candidates, not hardware. Nothing is
+built unless the search picks it. Two supporting details that are easy to get
+wrong:
+
+- Built-in operator `Logic` objects are created lazily while walking the
+  *instance* tree from the MAINs, so a candidate's bitwise leaves have no
+  `Logic` at all until `_RESOLVE_BUILTIN_SUBMODULES` materializes them. Without
+  that they look like zero delay and zero area, and decomposition looks **free**.
+- Their delays come from `path_delay_cache` via `_resolve_delay_du`: a candidate
+  is never instantiated so never measured, but its leaves are the universal
+  bitwise operators every design uses, so real measurements are normally already
+  on disk.
+
+`PY_TO_LOGIC` grew two side tables for this, both populated as a side effect of
+ordinary elaboration:
+
+- **`pypeline_builtin_op_info`** — entity → (op name, operand c types), so
+  AUTOFSM can ask the library for the right factory without parsing entity
+  names.
+- **`pypeline_bit_manip_info`** — entity → which builtin produced it, so
+  `bit_assign`, bit reads/slices and `concat` can be re-emitted as source. A
+  soft adder's body is mostly those; without this, descending into one would
+  fail to regenerate and silently fall back to atomic.
+
+#### The search itself
+
+```
+anchor = the plain share-everything schedule      # candidate zero and incumbent
+repeat up to MAX_SWEEP_MOVES times:
+    for each openable entity:   reschedule the WHOLE function with it opened
+    for each shared entity:     reschedule the WHOLE function with one more unit
+    take the cheapest feasible result, even if it is worse than the incumbent
+    if it beats the best-so-far by > SWEEP_MIN_IMPROVEMENT: it becomes the best
+    else after MAX_SWEEP_UPHILL consecutive non-improvements: stop
+return the best
+```
+
+Four deliberate properties:
+
+**Local proposal, global evaluation.** Each move names one entity, but every
+candidate is scored by rescheduling the whole function. Opening or unsharing A
+changes how B and C pack into states, how many values cross state boundaries and
+how wide everyone's multiplexers get; scoring A on its own numbers would miss
+all of it.
+
+**Bounded uphill walking.** Opening one operation usually costs area by itself —
+one shared unit becomes its unshared guts. The payoff comes when a *second*
+operation is opened and the two turn out to be built from the same pieces, which
+then share. A search that stopped at the first non-improving move could never
+reach that, because the win is only visible from the far side of the move that
+pays for it.
+
+**The anchor guarantee.** The share-everything schedule is the incumbent, and
+the result is the best point ever seen. A mis-ranking costs an opportunity,
+never a regression — which is what makes it safe to leave on by default.
+
+**The search may not spend timing margin.** A candidate whose worst state is
+longer than the anchor's is rejected outright, even though it still "fits the
+budget" by the delay model's reckoning. The budget is a guess at how much of the
+clock period the FSM's own control will leave, and a schedule that eats the
+difference is buying area with margin that may not be there. This is not
+hypothetical: on the donut example the search found a real 8% area saving by
+opening three comparators onto a shared subtractor, pushed the worst state from
+13.7 ns to 17.1 ns, and turned a design that met 40 MHz into one that missed at
+36 MHz. Trading latency for timing is the **driver's** job (§3.4 — it tightens
+the per-state budget and reschedules); the search's job is area at
+equal-or-better timing, and nothing else.
+
+#### Why area is estimated and timing is measured
+
+**Only timing is parseable from every synthesis backend.** Vivado, Quartus,
+PYRTL and the rest all report a critical path, and the driver already closes a
+loop around it. There is no equally portable utilization number, so there is no
+version of this search that can depend on one. Area is therefore a
+tool-independent internal model — the `AREA_*` constants at the top of
+`src/AUTOFSM.py` — that only ever *ranks* candidates against each other. yosys
+cell counts appear only inside the test suite, to calibrate the model and to
+prove before/after numbers; never inside the search.
+
+The model has five terms, which are exactly the things sharing trades between:
+
+- **units** — one copy of each bound entity, however many operations use it. The
+  term sharing shrinks, and the reason AUTOFSM exists.
+- **glue** — every unscheduled (zero-delay) operation, counted once per use,
+  because glue is re-rendered wherever needed rather than shared. Free when it
+  really is wiring, emphatically not otherwise. Counting it is what stops
+  decomposition from looking free.
+- **multiplexers** — one per unit input port, sized by fold count. The term
+  sharing grows, and the reason sharing more finely eventually stops paying.
+- **registers** — cross-state values after allocation, plus the output and state
+  registers.
+- **state decode**.
+
+The constants are normalised so one bit of an adder is 1.0, with ratios taken
+from real yosys cell counts (a 16-bit add ≈ 100 cells ≈ 6.25 cells/bit; a
+flip-flop, a 2-input gate and a 2:1 mux bit ≈ 1 cell each ≈ 0.16). **The single
+most important ratio is arithmetic against multiplexer-and-register**, because
+that is the entire sharing trade. An early cut of this model priced a 16-bit
+adder the same as a 16-bit register, duly decided that unsharing cheap adders was
+a win, and produced a design real synthesis measured 4.5% *worse*. An adder bit
+is about six of the things sharing costs, not one.
+`autofsm_area_sweep_compare_test.py` is where that correspondence is held to
+account.
+
+#### Where the stopping point comes from
+
+Nothing in the code says "stop when the multiplexer delay exceeds the unit
+delay". That behaviour falls out of the cost model. Walk the granularity axis far
+enough and a 16-bit adder becomes 150-odd gates sharing three one-bit units
+across 150-odd states — three tiny units, and multiplexers and registers costing
+an order of magnitude more than the adder did. The estimate turns back up and
+the search stops.
+
 ---
 
 ## 4. Results
@@ -391,18 +672,41 @@ and `examples/pypeline/`):
 |---|---|---|---|---|
 | `autofsm_resources_test.py` — 6 multiplies + 5 adds | 11 | **2** | 6 | 7 |
 | `autofsm_donut_update.py` — donut per-frame rotation | 28 | **9** | 8 | 9 |
-| `float_sine_autofsm.py` — float64 degree-5 Horner | 19 | **4** | 16 | 17 |
+| `float_sine_autofsm.py` — float64 degree-5 Horner | 19 | **4** | 14 | 15 |
 
 Area, same design built both ways (yosys cell count, whole-design top):
 
 ```
 combinational (--comb, no sharing):    12117 cells
-resource-shared FSM              :      3605 cells      3.36x smaller
+resource-shared FSM              :      3392 cells      3.57x smaller
 ```
 
+**v1 → v2**, same designs, same flow:
+
+| design | v1 cells | v2 cells | change | note |
+|---|---|---|---|---|
+| `autofsm_resources_test.py` | 3605 | **3392** | **−5.9%** | array multiplexers + register allocation |
+| `autofsm_donut_update.py` | 2680 | 2745 | +2.4% | still meets its 40 MHz goal (41.4 vs 42.3 MHz) |
+| `autofsm_test.py` (blob) | — | 758 | — | the search evaluates 24 candidates and correctly declines all of them |
+
+Worth being straight about what moved and what did not. The **codegen** changes
+(measured array multiplexers, register allocation) are where the area came from.
+The **search** declines to move on most of these designs — which is the right
+answer: v1's share-everything binding really is close to optimal when every
+shared unit is an expensive multiply or a wide add. The search earns its keep by
+(a) proving that, cheaply and per-design, instead of assuming it, and (b) being
+there for the designs where it is not true — cheap operations behind wide
+multiplexers, or several composite units built from the same smaller pieces.
+
 Timing iteration, starting from a deliberately over-packed schedule
-(`--autofsm_budget_scale 1.5`): first build 33.03 MHz vs a 40 MHz goal (FAIL) →
+(`--autofsm_budget_scale 1.5`): first build 30.46 MHz vs a 40 MHz goal (FAIL) →
 budget tightened → 44.23 MHz (PASS), with no source change.
+
+Latency capping: `AUTOFSM(add_chain, max_latency=4)` on five dependent adds that
+would otherwise share one adder over 5 states (latency 6) builds 3 adders over 2
+states (latency 3) instead. `max_latency=2` on the same design fails the build
+with *"the shortest schedule … needs 2 states (latency 3) … raise max_latency to
+at least 3"*.
 
 ---
 
@@ -413,8 +717,10 @@ budget tightened → 44.23 MHz (PASS), with no source change.
 | `autofsm_test.py` | native_sim, (synth via wrapper) | the pure function's semantics, and the passthrough behaviour when unscheduled |
 | `autofsm_unit_test.py` | elab | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, register allocation, budget → states, floors, determinism, schedule is carryable data |
 | `self_check_autofsm_test.py` | native_sim, vhdl_sim, synth ×2 | the FSM computes what the function did — in native sim, in GHDL, at latency 0 and at real latency |
-| `autofsm_latency_test.py` | synth | end-to-end schedule; exactly ONE instance of each shared unit in the generated VHDL |
+| `autofsm_latency_test.py` | synth | end-to-end schedule; the generated VHDL instantiates exactly as many copies of each shared unit as the schedule claims |
 | `autofsm_resources_compare_test.py` | synth | the FSM is actually smaller than the logic it replaces |
+| `autofsm_area_sweep_compare_test.py` | synth | the area search does not make designs bigger, and its cost model agrees with yosys about which of two schedules is smaller — the calibration guard |
+| `autofsm_max_latency_test.py` | synth | a meetable `max_latency` is met by unsharing; an unmeetable one fails the build naming the latency actually needed |
 | `autofsm_timing_iter_test.py` | synth | a critical path inside an FSM is found and fixed by rescheduling |
 | `double_parse_file_test.py` | elab | re-parsing an AUTOFSM design is reproducible |
 
@@ -432,34 +738,47 @@ latency, which is what lets it be reused unchanged across four registrations.
   backpressure — `valid` while busy is ignored.
 - The function must be pure: no `Reg`, `Feedback` or global wires anywhere in
   its subtree. Dynamic (non-constant) array indexing is not supported yet.
-- Share-all binding: exactly one unit per entity. There is no knob to keep two
-  adders for speed.
-- An operation bigger than a state that cannot be decomposed sets a floor. That
-  is honest — a float64 multiplier is not divisible by scheduling — but it means
-  the clock goal must be reachable by the slowest single operation.
+- An operation bigger than a state that cannot be decomposed *and* has no
+  soft-operator equivalent sets a floor. That is honest — a float64 multiplier
+  is not divisible by scheduling — but it means the clock goal must be reachable
+  by the slowest single operation.
 - Control overhead grows with the number of folded operations, because the
   operand multiplexers do. At tens of operations this is a clear win; at
   thousands the multiplexers would dominate (see "loop-preserving FSMs" below).
+- The area model is a model. It ranks candidates in abstract units calibrated
+  against yosys cell counts, which is not the same thing as LUTs on the part you
+  are targeting — on an FPGA, flip-flops come paired with the LUTs in front of
+  them and are far cheaper than a cell count suggests. The anchor guarantee
+  bounds the damage of a mis-ranking to a missed opportunity.
 
 **Future work**
 
-- **`max_latency`**: cap the latency instead of always minimizing area. The
-  scheduler already takes a budget; this needs the inverse search (fewest units
-  that fit a latency bound) plus a real pinning mechanism.
+- **Width subsumption in binding.** A 32-bit adder can serve a 16-bit add with
+  pad/truncate adapters on its ports; today those are two entities and therefore
+  two units. The seams are already in place: `schedule["fus"]` maps unit id →
+  entity as an explicit indirection rather than assuming they are the same
+  string, per-node operand cast chains are the adapter mechanism, and the area
+  model already prices "one bigger unit plus waste" against "two units".
+- **Per-node grain**, rather than per-entity. Opening an operation today opens
+  every use of it, because every use must stay bound to one unit for sharing to
+  mean anything.
+- **Soft-operator flavor search.** One fixed flavor per operator today (ripple
+  adder, shift-add multiplier, subtract comparator); the library ships several,
+  and which one decomposes best is a second search axis.
+- **Cross-unit register sharing under a timing model.** Today registers merge
+  only within one producing unit, because merging across units puts a
+  multiplexer in front of a flip-flop and cost the donut example 5 MHz. With a
+  per-path timing estimate the safe cases could be taken.
 - **Multiple concurrent AUTOFSM threads sharing units.** Two FSMs that both need
   a float multiplier could share one, with arbitration. The binding step already
   keys on entity, so the scheduler generalizes; what is missing is the arbiter
   and a cross-FSM resource model.
-- **K units per entity**, so a design can buy back speed with area between the
-  current "one unit" and full parallelism.
-- **Register sharing.** Values with disjoint live ranges could share a register
-  (classic left-edge allocation); today each cross-state value gets its own.
-- **Loop-preserving FSMs.** v1 schedules the *unrolled* graph, so control logic
+- **Loop-preserving FSMs.** AUTOFSM schedules the *unrolled* graph, so control
   grows with the folded-operation count. The fix is real loop back-edges:
   schedule the body once, add an index register, and index operands from arrays.
   A user-facing sequential/`__clk()`-style layer for Pypeline would be the
   natural emission target for that — but note the dependency direction: such a
-  layer does **not** help v1, because per-state code regions would create one
-  instance per call site and defeat the single-call-site sharing trick. v1's
-  emission helpers are reusable substrate for building it later, not the other
-  way round.
+  layer does **not** help AUTOFSM as it stands, because per-state code regions
+  would create one instance per call site and defeat the single-call-site
+  sharing trick. AUTOFSM's emission helpers are reusable substrate for building
+  it later, not the other way round.
