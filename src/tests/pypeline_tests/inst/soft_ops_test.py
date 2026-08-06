@@ -44,7 +44,7 @@ from pypeline import (
 )
 
 from operators.soft_add import make_soft_ripple_add, make_soft_carry_select_add, make_soft_sub
-from operators.soft_mult import make_soft_shift_add_mult
+from operators.soft_mult import make_soft_shift_add_mult, make_soft_karatsuba_mult
 from operators.soft_div import make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod
 from operators.soft_cmp import make_soft_sub_cmp
 from operators.soft_shift import make_soft_barrel_sl, make_soft_barrel_sr
@@ -109,6 +109,27 @@ def test_soft_mult():
         got = sim_call(mult, SimVal(a, ut), SimVal(b, ut))
         check(f"soft_mult({a},{b})", got, a * b)
     print("test_soft_mult passed")
+
+
+def test_soft_karatsuba_mult():
+    """Regression test for a bug caught by manual audit: odd-bit-width splits
+    in the recursion (e.g. the 16-bit case recurses into a 9-bit middle-term
+    multiply) undersized mid_t by one bit, truncating a_lo+a_hi and
+    corrupting the result -- e.g. uint16_t 65535*1 elaborated to 67043327
+    instead of 65535. threshold=4 forces recursion (and odd splits) even for
+    the smaller 8-bit sweep below."""
+    ut8 = make_uint_t(8)
+    mult8 = make_soft_karatsuba_mult(ut8, ut8, threshold=4)
+    for a, b in itertools.product(range(0, 256, 7), range(0, 256, 11)):
+        got = sim_call(mult8, SimVal(a, ut8), SimVal(b, ut8))
+        check(f"soft_karatsuba_mult8({a},{b})", got, a * b)
+
+    ut16 = make_uint_t(16)
+    mult16 = make_soft_karatsuba_mult(ut16, ut16)
+    for a, b in [(65535, 1), (1, 65535), (65535, 65535), (0, 65535), (12345, 6789)]:
+        got = sim_call(mult16, SimVal(a, ut16), SimVal(b, ut16))
+        check(f"soft_karatsuba_mult16({a},{b})", got, a * b)
+    print("test_soft_karatsuba_mult passed")
 
 
 def test_soft_div_mod():
@@ -246,6 +267,7 @@ if __name__ == "__main__":
     test_soft_sub()
     test_soft_negate()
     test_soft_mult()
+    test_soft_karatsuba_mult()
     test_soft_div_mod()
     test_soft_signed_div_mod()
     test_soft_div_mod_registration()

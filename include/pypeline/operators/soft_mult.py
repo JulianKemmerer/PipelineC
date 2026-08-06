@@ -41,7 +41,7 @@ def make_soft_karatsuba_mult(l_t, r_t, threshold=8):
     half = n_bits // 2
     lo_t = make_uint_t(half)
     hi_t = make_uint_t(n_bits - half)
-    mid_t = make_uint_t(half + 1)
+    mid_t = make_uint_t(max(half, n_bits - half) + 1)
 
     mult_lo = make_soft_karatsuba_mult(lo_t, lo_t, threshold)
     mult_hi = make_soft_karatsuba_mult(hi_t, hi_t, threshold)
