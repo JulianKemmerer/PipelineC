@@ -111,6 +111,23 @@ def test_soft_mult():
     print("test_soft_mult passed")
 
 
+def test_soft_mult_asymmetric():
+    """Non-square operand widths, both orders -- make_soft_shift_add_mult's
+    tree is sized by r_bits with eff_l_t-wide leaves, so unequal left/right
+    widths are the case most likely to expose a tree sizing mistake."""
+    lt = make_uint_t(12)
+    rt = make_uint_t(5)
+    mult_lr = make_soft_shift_add_mult(lt, rt)
+    mult_rl = make_soft_shift_add_mult(rt, lt)
+    for a in range(0, 4096, 137):
+        for b in range(0, 32, 3):
+            got_lr = sim_call(mult_lr, SimVal(a, lt), SimVal(b, rt))
+            check(f"soft_mult_asymmetric_lr({a},{b})", got_lr, a * b)
+            got_rl = sim_call(mult_rl, SimVal(b, rt), SimVal(a, lt))
+            check(f"soft_mult_asymmetric_rl({b},{a})", got_rl, a * b)
+    print("test_soft_mult_asymmetric passed")
+
+
 def test_soft_karatsuba_mult():
     """Regression test for a bug caught by manual audit: odd-bit-width splits
     in the recursion (e.g. the 16-bit case recurses into a 9-bit middle-term
@@ -267,6 +284,7 @@ if __name__ == "__main__":
     test_soft_sub()
     test_soft_negate()
     test_soft_mult()
+    test_soft_mult_asymmetric()
     test_soft_karatsuba_mult()
     test_soft_div_mod()
     test_soft_signed_div_mod()
