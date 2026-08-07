@@ -93,108 +93,224 @@ make_soft_signed_div = _make_signed(want_remainder=False)
 make_soft_signed_mod = _make_signed(want_remainder=True)
 
 
-def _make_radix4_restoring(want_remainder):
-    """Radix-4 restoring divider: 2 quotient bits per step instead of 1,
-    halving the step count of _make_restoring for the same per-step shape
-    (one widened compare-and-subtract, now against 3 precomputed multiples
-    of the divisor instead of 1). Measured on latchup.app's 32-bit divider
-    (docs: div_qor_bench exploration) at 1.63x the fmax of the plain
-    restoring divider under PyRTL estimates -- by a wide margin the best
-    lever of everything tried there (loop-body-as-its-own-func, killing the
-    redundant compare+subtract, non-restoring, un-normalized signed-digit).
+# Op codes for the elaboration-time multiple-build plan below. PY_TO_LOGIC's
+# factory-closure canonical-naming pass only accepts ints/bools/None/callables
+# /lists-tuples-thereof as closure values -- a plan dict, or string op names
+# inside tuples, both raise ElaborationError (confirmed by hitting both while
+# building this). So the plan is a plain tuple of (op_code, a, b) int-triples,
+# list-index m -> multiple m's build step (index 0 unused padding).
+_OP_BASE, _OP_SHL1, _OP_ADD, _OP_SUB = 0, 1, 2, 3
+
+
+def _build_multiples(top):
+    """Elaboration-time only. Returns a tuple indexed 0..top (index 0 unused)
+    of (op_code, a, b) build steps for each multiple m in 1..top of the
+    divisor, chosen by a min-depth DP: d[2j] = d[j] << 1 is free (a constant
+    shift, pure rewiring -- not a chained adder), else d[m] = d[a] +/- d[b]
+    minimizing max(depth[a], depth[b]) + 1. Subtraction matters: e.g.
+    d[15] = (d[1]<<4) - d[1] is depth 1, where a naive d[m] = d[m-1] + d[1]
+    chain is depth 3 -- and that chain sits directly on the critical path,
+    ahead of every step's compare."""
+    depth = {1: 0}
+    plan = {1: (_OP_BASE, 0, 0)}
+    for m in range(2, top + 1):
+        best = None
+        if m % 2 == 0 and (m // 2) in depth:
+            cand = (depth[m // 2], (_OP_SHL1, m // 2, 0))
+            if best is None or cand[0] < best[0]:
+                best = cand
+        for a in range(1, m):
+            b = m - a
+            if a in depth and b in depth:
+                d = max(depth[a], depth[b]) + 1
+                cand = (d, (_OP_ADD, a, b))
+                if best is None or cand[0] < best[0]:
+                    best = cand
+        for a in range(m + 1, top + 1):
+            b = a - m
+            if a in depth and b in depth:
+                d = max(depth[a], depth[b]) + 1
+                cand = (d, (_OP_SUB, a, b))
+                if best is None or cand[0] < best[0]:
+                    best = cand
+        assert best is not None, f"no build plan found for multiple {m}"
+        depth[m] = best[0]
+        plan[m] = best[1]
+    return tuple(plan.get(m, (_OP_BASE, 0, 0)) for m in range(top + 1))
+
+
+def _make_radix_restoring(bits_per_step, want_remainder):
+    """Radix-2**bits_per_step restoring divider: bits_per_step quotient bits
+    per step instead of 1, cutting the step count of _make_restoring by that
+    factor for a deeper per-step shape (one widened compare-and-subtract per
+    step, now against 2**bits_per_step - 1 precomputed multiples of the
+    divisor instead of 1).
+
+    bits_per_step=2 (the make_soft_radix4_div/mod default below) measured
+    best of an autopipelined-fmax sweep across bits_per_step in {1..6} and
+    seven algorithmic variants including non-restoring and a signed-digit/
+    carry-save-shaped design (docs: div_fmax_sweep exploration) -- 34.1 MHz
+    at 16 pipeline stages under PyRTL estimates on latchup.app's 32-bit
+    divider, vs. 22.4-22.9 MHz for every radix-2 shape tried and 25.5 MHz for
+    non-restoring. bits_per_step=3 was close behind (33.0 MHz); 1 gave no
+    benefit over plain radix-2; 4+ elaborates and sims correctly (see
+    div_variants2.py) but wasn't benchmarked here -- PyRTL synthesis of the
+    2**4-1=15-way precompute/priority-select didn't finish in 5 minutes, so
+    it's reported as unmeasured, not as ranked last.
+
+    This function replaces an earlier bits_per_step=2-only version that had
+    two real defects, not just cosmetic ones: `d2 = d1 + d1` (a full adder
+    where `d1 << 1` is pure rewiring) and n_bits+8 guard bits (n_bits+
+    bits_per_step is provably sufficient). Fixing both was the single
+    biggest lever in the sweep -- the old shape measured 26.6 MHz at 16
+    stages under the same harness, so the defects cost ~28% fmax on their
+    own, independent of any radix choice.
 
     Unsigned-only, same as _make_restoring -- make_soft_signed_radix4_div/mod
     below wrap this with the same abs-then-fix-sign structure
     make_soft_signed_div/mod use.
 
-    Odd bit widths take one leading radix-2 (single-bit) step so every
-    remaining step is a clean 2-bit group -- this is what n_bits % 2 tests
-    for below, entirely at elaboration time (n_bits is a closure constant,
-    so the Python if/while here shapes which HDL gets generated, not
-    hardware itself)."""
+    A partial leading step of n_bits % bits_per_step bits runs first when
+    n_bits isn't a multiple of bits_per_step, so every remaining step is a
+    clean bits_per_step-bit group -- entirely at elaboration time (n_bits and
+    bits_per_step are closure constants, so the Python here shapes which HDL
+    gets generated, not hardware itself)."""
+    k = bits_per_step
+    top = (1 << k) - 1
+    plan = _build_multiples(top)
+
     def factory(l_t, r_t):
         eff_l_t, eff_r_t, out_t = arith_result_type("DIV", l_t, r_t)
         n_bits = len(eff_l_t)
-        # 8 guard bits: generous, not tightly optimized (matching this
-        # library's existing bias toward simple-and-clearly-correct over
-        # minimal width -- see make_soft_ripple_add's plain bitwise leaves).
-        # 3x the widest possible divisor (2**n_bits - 1) needs n_bits+2 bits;
-        # +8 leaves headroom to spare.
-        wide_t = make_uint_t(n_bits + 8)
-        two_t = make_uint_t(2)
+        # n_bits+k guard bits are provably sufficient: rem < 2**n_bits after
+        # every step's subtract, so rem<<k | bits < 2**(n_bits+k), and
+        # (2**k-1)*divisor < 2**(n_bits+k) too (divisor < 2**n_bits).
+        wide_t = make_uint_t(n_bits + k)
+        kbits_t = make_uint_t(k) if k > 1 else uint1_t
 
-        # Elaboration-time step list: 2-bit (hi, lo) groups from the MSB
-        # down, with a leading 1-bit group first when n_bits is odd.
+        # Elaboration-time step list: k-bit (hi..lo) groups from the MSB
+        # down, with a leading (n_bits % k)-bit group first when it's nonzero.
         steps = []
         idx = n_bits - 1
-        if n_bits % 2 == 1:
-            steps.append((idx,))
-            idx -= 1
-        while idx >= 1:
-            steps.append((idx, idx - 1))
-            idx -= 2
+        if n_bits % k != 0:
+            lead = n_bits % k
+            steps.append(tuple(range(idx, idx - lead, -1)))
+            idx -= lead
+        while idx >= k - 1:
+            steps.append(tuple(range(idx, idx - k, -1)))
+            idx -= k
 
         @hw_func
-        def radix4_div(a: l_t, b: r_t) -> out_t:
+        def radix_div(a: l_t, b: r_t) -> out_t:
             ae: eff_l_t = a
             be: eff_r_t = b
-            d1: wide_t = be
-            d2: wide_t = d1 + d1
-            d3: wide_t = d2 + d1
-            rem: wide_t = 0
+            # d[0] unused; d[1..top] the precomputed multiples of the
+            # divisor. A real hardware array (not a python list of wires)
+            # with elaboration-time-constant indices.
+            d: wide_t[top + 1]
+            d[1] = be
+            for m in range(2, top + 1):
+                # Not tuple-unpacking (op, a, b = plan[m]) -- the elaborator
+                # tries to emit the whole tuple as one hardware value first.
+                # plan is a closure constant and m a constant loop index, so
+                # this indexing is elaboration-time-free either way.
+                op = plan[m][0]
+                pa = plan[m][1]
+                pb = plan[m][2]
+                if op == _OP_SHL1:
+                    d[m] = d[pa] << 1
+                elif op == _OP_ADD:
+                    d[m] = d[pa] + d[pb]
+                elif op == _OP_SUB:
+                    d[m] = d[pa] - d[pb]
+
+            rem: eff_l_t = 0
             quot: eff_l_t = 0
-            for step in steps:
-                if len(step) == 1:
-                    k = step[0]
-                    rem = (rem << 1) | ae[k]
+            # Loop over an int index, not the step tuple itself -- the
+            # elaborator names each unrolled loop instance from the loop
+            # variable's repr, and a tuple repr like "(31,)" contains
+            # characters that aren't legal in a VHDL identifier.
+            for step_idx in range(len(steps)):
+                step_bits = steps[step_idx]
+                sw = len(step_bits)
+                if sw == 1:
+                    i = step_bits[0]
+                    rem_ext: wide_t = concat(rem[n_bits - 2:0], ae[i])
+                    rem_new: wide_t = rem_ext
                     qbit: uint1_t = 0
-                    if rem >= d1:
-                        rem = rem - d1
+                    if rem_ext >= d[1]:
+                        rem_new = rem_ext - d[1]
                         qbit = 1
-                    quot = bit_assign(quot, qbit, k)
+                    rem = rem_new[n_bits - 1:0]
+                    quot = bit_assign(quot, qbit, i)
                 else:
-                    hi, lo = step
-                    bits2: two_t = concat(ae[hi], ae[lo])
-                    rem = (rem << 2) | bits2
-                    q2: two_t = 0
-                    if rem >= d3:
-                        rem = rem - d3
-                        q2 = 3
-                    elif rem >= d2:
-                        rem = rem - d2
-                        q2 = 2
-                    elif rem >= d1:
-                        rem = rem - d1
-                        q2 = 1
-                    quot = bit_assign(quot, q2[1], hi)
-                    quot = bit_assign(quot, q2[0], lo)
+                    bits_k: kbits_t = 0
+                    for j in range(sw):
+                        bit_i = step_bits[j]
+                        bits_k = bit_assign(bits_k, ae[bit_i], sw - 1 - j)
+                    rem_ext: wide_t = concat(rem[n_bits - 1 - sw:0], bits_k)
+                    rem_new: wide_t = rem_ext
+                    qk: kbits_t = 0
+                    # `break` isn't supported by the elaborator; a `decided`
+                    # flag gives the same first-match-from-the-top priority
+                    # select without it -- same pattern make_soft_bitwise_cmp
+                    # (soft_cmp.py) uses for its MSB-first magnitude scan.
+                    decided: uint1_t = 0
+                    for m in range(top, 0, -1):
+                        ge: uint1_t = 0
+                        if rem_ext >= d[m]:
+                            ge = 1
+                        take: uint1_t = (1 - decided) & ge
+                        if take:
+                            rem_new = rem_ext - d[m]
+                            qk = m
+                            decided = 1
+                    rem = rem_new[n_bits - 1:0]
+                    for j in range(sw):
+                        bit_i = step_bits[j]
+                        quot = bit_assign(quot, qk[sw - 1 - j], bit_i)
+
             result: out_t = 0
             if want_remainder:
-                rem_narrow: eff_l_t = rem
-                result = rem_narrow
+                result = rem
             else:
                 result = quot
             return result
 
-        return radix4_div
+        return radix_div
 
     return factory
 
 
-make_soft_radix4_div = _make_radix4_restoring(want_remainder=False)
-make_soft_radix4_mod = _make_radix4_restoring(want_remainder=True)
+def make_soft_radix_div(bits_per_step):
+    """Generalized radix-2**bits_per_step unsigned divider factory. See
+    _make_radix_restoring's docstring for the sweep this is based on and its
+    measured/unmeasured range. make_soft_radix4_div below is the
+    bits_per_step=2 instance, the one actually measured best."""
+    return _make_radix_restoring(bits_per_step, want_remainder=False)
 
 
-def _make_signed_radix4(want_remainder):
+def make_soft_radix_mod(bits_per_step):
+    """See make_soft_radix_div -- same radix family, for the remainder."""
+    return _make_radix_restoring(bits_per_step, want_remainder=True)
+
+
+make_soft_radix4_div = make_soft_radix_div(2)
+make_soft_radix4_mod = make_soft_radix_mod(2)
+
+
+def _make_signed_radix(bits_per_step, want_remainder):
     def factory(l_t, r_t):
         eff_l_t, eff_r_t, out_t = arith_result_type("DIV", l_t, r_t)
         width = max(len(eff_l_t), len(eff_r_t))
         signed_t = make_int_t(width)
         unsigned_t = make_uint_t(width)
-        unsigned_impl = _make_radix4_restoring(want_remainder)(unsigned_t, unsigned_t)
+        unsigned_impl = _make_radix_restoring(bits_per_step, want_remainder)(
+            unsigned_t, unsigned_t
+        )
 
         @hw_func
-        def signed_radix4_div(a: l_t, b: r_t) -> out_t:
+        def signed_radix_div(a: l_t, b: r_t) -> out_t:
             ae: signed_t = a
             be: signed_t = b
             l_sign: uint1_t = ae[width - 1]
@@ -214,10 +330,18 @@ def _make_signed_radix4(want_remainder):
                 result = (~signed_result) + 1
             return result
 
-        return signed_radix4_div
+        return signed_radix_div
 
     return factory
 
 
-make_soft_signed_radix4_div = _make_signed_radix4(want_remainder=False)
-make_soft_signed_radix4_mod = _make_signed_radix4(want_remainder=True)
+def make_soft_signed_radix_div(bits_per_step):
+    return _make_signed_radix(bits_per_step, want_remainder=False)
+
+
+def make_soft_signed_radix_mod(bits_per_step):
+    return _make_signed_radix(bits_per_step, want_remainder=True)
+
+
+make_soft_signed_radix4_div = make_soft_signed_radix_div(2)
+make_soft_signed_radix4_mod = make_soft_signed_radix_mod(2)

@@ -31,6 +31,8 @@ from operators.soft_div import (
     make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod,
     make_soft_radix4_div, make_soft_radix4_mod,
     make_soft_signed_radix4_div, make_soft_signed_radix4_mod,
+    make_soft_radix_div, make_soft_radix_mod,
+    make_soft_signed_radix_div, make_soft_signed_radix_mod,
 )
 from operators.soft_cmp import make_soft_sub_cmp, make_soft_sub_cmp_swapped, make_soft_bitwise_cmp
 from operators.soft_shift import make_soft_barrel_sl, make_soft_barrel_sr
@@ -108,14 +110,17 @@ def register_soft_mod(scope=None):
 def register_soft_div_radix4(scope=None):
     """Alternate DIV flavor: radix-4 restoring division (2 quotient bits per
     step instead of 1, half the steps of register_soft_div's plain restoring
-    divider). QoR-confirmed (docs/SYN_DESIGN.md, the latchup_div exploration)
-    at 1.63x the fmax of the plain restoring divider under PyRTL estimates --
-    by a wide margin the best of several structural variants tried there.
-    Same unsigned/signed split as register_soft_div; last registration for
-    an overlapping matcher wins, so calling this after register_soft_div
-    (or as part of a fresh register_soft_ops-style call) overrides DIV's
-    flavor for this scope without touching MOD unless register_soft_mod_radix4
-    is also called."""
+    divider). Autopipelined-fmax-sweep-confirmed (docs: div_fmax_sweep
+    exploration; see make_soft_radix_div's docstring in soft_div.py) at 34.1
+    MHz vs. 22.4-22.9 MHz for the plain restoring divider at 16 pipeline
+    stages under PyRTL estimates -- the best of bits_per_step in {1,2,3} and
+    six other algorithmic variants tried there (non-restoring, a
+    signed-digit/carry-save-shaped design, and four quotient-assembly/compare
+    micro-variants of plain radix-2). Same unsigned/signed split as
+    register_soft_div; last registration for an overlapping matcher wins, so
+    calling this after register_soft_div (or as part of a fresh
+    register_soft_ops-style call) overrides DIV's flavor for this scope
+    without touching MOD unless register_soft_mod_radix4 is also called."""
     register_operator("DIV", any_uint_t, any_uint_t, make_soft_radix4_div, scope=scope)
     register_operator("DIV", any_int_t, any_int_t, make_soft_signed_radix4_div, scope=scope)
 
@@ -124,6 +129,34 @@ def register_soft_mod_radix4(scope=None):
     """See register_soft_div_radix4 -- same radix-4 flavor, for MOD."""
     register_operator("MOD", any_uint_t, any_uint_t, make_soft_radix4_mod, scope=scope)
     register_operator("MOD", any_int_t, any_int_t, make_soft_signed_radix4_mod, scope=scope)
+
+
+def register_soft_div_radix(bits_per_step, scope=None):
+    """Generalized form of register_soft_div_radix4 for any bits_per_step.
+    bits_per_step=2 (what register_soft_div_radix4 calls) measured best in
+    the fmax sweep; bits_per_step=3 was close behind (33.0 MHz); 1 gives no
+    benefit over register_soft_div; 4+ elaborates and sims correctly but
+    wasn't benchmarked there (PyRTL synthesis of the resulting
+    2**bits_per_step-1-way precompute/priority-select didn't finish in 5
+    minutes for bits_per_step=4's 15-way select) -- use higher values with
+    that unmeasured-not-ranked-last caveat in mind. Same unsigned/signed
+    split and last-registration-wins semantics as register_soft_div_radix4."""
+    register_operator(
+        "DIV", any_uint_t, any_uint_t, make_soft_radix_div(bits_per_step), scope=scope
+    )
+    register_operator(
+        "DIV", any_int_t, any_int_t, make_soft_signed_radix_div(bits_per_step), scope=scope
+    )
+
+
+def register_soft_mod_radix(bits_per_step, scope=None):
+    """See register_soft_div_radix -- same generalized radix family, for MOD."""
+    register_operator(
+        "MOD", any_uint_t, any_uint_t, make_soft_radix_mod(bits_per_step), scope=scope
+    )
+    register_operator(
+        "MOD", any_int_t, any_int_t, make_soft_signed_radix_mod(bits_per_step), scope=scope
+    )
 
 
 def register_soft_cmp(scope=None):

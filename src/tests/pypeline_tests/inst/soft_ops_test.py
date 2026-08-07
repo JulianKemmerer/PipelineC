@@ -53,6 +53,8 @@ from operators.soft_div import (
     make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod,
     make_soft_radix4_div, make_soft_radix4_mod,
     make_soft_signed_radix4_div, make_soft_signed_radix4_mod,
+    make_soft_radix_div, make_soft_radix_mod,
+    make_soft_signed_radix_div, make_soft_signed_radix_mod,
 )
 from operators.soft_cmp import make_soft_sub_cmp
 from operators.soft_shift import (
@@ -289,6 +291,55 @@ def test_soft_signed_radix4_div_mod():
     print("test_soft_signed_radix4_div_mod passed")
 
 
+def test_soft_radix_div_mod_generalized():
+    """make_soft_radix_div/mod(bits_per_step): the generalized factory
+    make_soft_radix4_div/mod are built from (bits_per_step=2). Sweeps
+    bits_per_step in {1,2,3,4} x widths {6,7,8,12} so both the leading
+    partial-group path (n_bits % bits_per_step != 0, e.g. width 7 at
+    bits_per_step=2, or width 6 at bits_per_step=4) and the clean-multiple
+    path get exercised. bits_per_step=1 must match plain make_soft_div/mod
+    exactly (same recurrence, one bit at a time)."""
+    for bits_per_step in (1, 2, 3, 4):
+        for width in (6, 7, 8, 12):
+            ut = make_uint_t(width)
+            div = make_soft_radix_div(bits_per_step)(ut, ut)
+            mod = make_soft_radix_mod(bits_per_step)(ut, ut)
+            n = 1 << width
+            step = max(1, n // 11)
+            for a in range(0, n, step):
+                for b in range(1, n, step + 2):
+                    got_q = sim_call(div, SimVal(a, ut), SimVal(b, ut))
+                    got_r = sim_call(mod, SimVal(a, ut), SimVal(b, ut))
+                    check(f"soft_radix{bits_per_step}_div_w{width}({a},{b})", got_q, a // b)
+                    check(f"soft_radix{bits_per_step}_mod_w{width}({a},{b})", got_r, a % b)
+    print("test_soft_radix_div_mod_generalized passed")
+
+
+def test_soft_signed_radix_div_mod_generalized():
+    """Signed generalized radix divider: same abs-then-fix-sign wrapper and
+    C-style truncating convention as test_soft_signed_radix4_div_mod, swept
+    across bits_per_step."""
+    def c_trunc_div(a, b):
+        q = abs(a) // abs(b)
+        return -q if (a < 0) != (b < 0) else q
+
+    def c_trunc_mod(a, b):
+        r = abs(a) % abs(b)
+        return -r if (a < 0) != (b < 0) else r
+
+    for bits_per_step in (1, 2, 3, 4):
+        st = make_int_t(6)
+        div = make_soft_signed_radix_div(bits_per_step)(st, st)
+        mod = make_soft_signed_radix_mod(bits_per_step)(st, st)
+        for a in range(-32, 32, 5):
+            for b in list(range(-32, 0, 7)) + list(range(1, 32, 7)):
+                got_q = sim_call(div, SimVal(a, st), SimVal(b, st))
+                got_r = sim_call(mod, SimVal(a, st), SimVal(b, st))
+                check(f"soft_signed_radix{bits_per_step}_div({a},{b})", got_q, c_trunc_div(a, b))
+                check(f"soft_signed_radix{bits_per_step}_mod({a},{b})", got_r, c_trunc_mod(a, b))
+    print("test_soft_signed_radix_div_mod_generalized passed")
+
+
 def test_soft_div_mod_registration():
     """register_soft_div/register_soft_mod split unsigned (any_uint_t ->
     make_soft_div/make_soft_mod) from signed (any_int_t ->
@@ -490,6 +541,8 @@ if __name__ == "__main__":
     test_soft_signed_div_mod()
     test_soft_radix4_div_mod()
     test_soft_signed_radix4_div_mod()
+    test_soft_radix_div_mod_generalized()
+    test_soft_signed_radix_div_mod_generalized()
     test_soft_div_mod_registration()
     test_soft_mult_registration_unsigned_only()
     test_soft_cmp()
