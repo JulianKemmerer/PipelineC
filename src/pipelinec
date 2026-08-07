@@ -146,10 +146,20 @@ parser.add_argument(
     action="store_true",
 )
 parser.add_argument(
+    "--no_hier_syn",
+    help="Opposite of --full_hier_syn: never synthesize any hierarchical module (including MAINs and stateful atomic spans) -- only true primitive leaf functions are ever synthesized. Everything else is estimated from submodule delays. Fastest possible pre-pipelining delay collection, especially with a warm path_delay_cache, but gives up the automatic estimate-was-inaccurate fallback to real synthesis: a stalled sweep stops at its best result instead of measuring for real.",
+    action="store_true",
+)
+parser.add_argument(
     "--pipeline_min_effort",
     type=int,
     default=2,
-    help="Extra full-design synthesis iterations the throughput sweep may spend reducing pipeline stages after timing is met (hunting the fewest-registers solution). 0 = accept the first met result as-is (fastest, may be over-pipelined).",
+    help="Extra full-design synthesis iterations the throughput sweep may spend reducing pipeline stages after timing is met (hunting the fewest-registers solution). 0 = accept the first met result as-is (fastest, may be over-pipelined). No effect with --no_sweep (nothing ever measures as met).",
+)
+parser.add_argument(
+    "--no_sweep",
+    help="Make the throughput sweep's first planned guess, write the resulting pipelined VHDL, and stop -- zero sweep synthesis iterations. Timing is NOT verified; raise the @MAIN mhz target to get more pipeline stages. Works with both --coarse and the default planned sweep.",
+    action="store_true",
 )
 parser.add_argument(
     "--coarse",
@@ -189,6 +199,12 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
+# Reject contradictory combinations
+if args.full_hier_syn and args.no_hier_syn:
+    sys.exit("--full_hier_syn and --no_hier_syn are opposite ends of one axis (synthesize every hierarchy level vs. synthesize none) -- pick one.")
+if args.sweep and args.no_sweep:
+    sys.exit("--sweep and --no_sweep are contradictory: --sweep asks the coarse sweep to measure every cut count one at a time, --no_sweep asks for zero sweep synthesis iterations -- pick one.")
+
 # Combine certain args
 if args.sim and args.comb:
     args.sim_comb = True
@@ -207,9 +223,13 @@ SYN.TOP_LEVEL_MODULE = args.top
 # Flag for verilog conversion
 SYN.CONVERT_FINAL_TOP_VERILOG = args.verilog
 # Pre-pipelining per-func synthesis mode
-SYN.HIER_SYN_MODE = "full" if args.full_hier_syn else "leaf"
+SYN.HIER_SYN_MODE = (
+    "full" if args.full_hier_syn else ("prim" if args.no_hier_syn else "leaf")
+)
 # Post-met pipeline stage reduction effort
 SYN.PIPELINE_MIN_EFFORT = args.pipeline_min_effort
+# Plan-only: skip all sweep synthesis iterations, emit the first guess as-is
+SYN.NO_SWEEP = args.no_sweep
 # Output dir:
 #   Use what user provided
 #   Or create a new dir for each run by default

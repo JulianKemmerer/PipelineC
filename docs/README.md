@@ -127,6 +127,13 @@ pypelinec ./examples/pypeline/pipeline.py # Default no-arguments autopipelines w
 pypelinec ./examples/pypeline/pipeline.py --coarse --sweep --start N --stop N
 ```
 
+**For fast iteration**, to see a pipelined result quickly without waiting on
+sweep synthesis (timing is not verified -- raise the `@MAIN` mhz target for
+more stages) or on hierarchical delay measurement:
+```
+pypelinec ./examples/pypeline/pipeline.py --no_sweep --no_hier_syn
+```
+
 # Overview
 
 Consider the following generic register + combinatorial logic, compared across Pypeline,

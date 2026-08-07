@@ -113,7 +113,26 @@ combination hashes to its own VHDL entity `funcname_<latency>CLK_<hash>`.
 
 Old: `ADD_PATH_DELAY_TO_LOOKUP` synthesized **every** function individually —
 adder, foo, bar, and MAIN each got a syn run — because composing delays from
-children was thought too inaccurate.
+children was thought too inaccurate. This mode still exists as
+`--full_hier_syn` (`HIER_SYN_MODE == "full"`).
+
+There is also a third, opposite mode: `--no_hier_syn`
+(`HIER_SYN_MODE == "prim"`) synthesizes **only** true primitive leaves (funcs
+with no submodules) and estimates every hierarchical module above them,
+including MAINs and stateful atomic spans that `"leaf"` mode would otherwise
+give one whole-module synthesis run. It also disables `MEASURE_DELAYS` for
+any hierarchical func, so the automatic "estimate proved inaccurate, measure
+for real" fallback described below never fires -- a `--no_hier_syn` sweep
+that stalls stops at its best result instead. Meant for fast iteration on
+designs where even the measurement frontier's syn runs (e.g. a slow
+combinational MAIN) are too expensive; pairs well with `--no_sweep`.
+
+Note the one place `"prim"` can do *more* work than `"leaf"`: because every
+hierarchical module is now estimated, `_FUNC_NEEDS_SUBMODULE_DELAYS` must
+descend into stateful spans that `"leaf"` mode covered with a single
+whole-module run, collecting every `BIN_OP` leaf underneath them. Those leaves
+are small and disk-cacheable, but on a *cold* `path_delay_cache` a state-heavy
+design can trade one big synthesis run for many small ones.
 
 New (default `HIER_SYN_MODE == "leaf"`): only functions whose delay
 *genuinely requires* synthesis get a run:
@@ -188,7 +207,8 @@ stages are added from synthesis feedback. Under-pipelining and iterating up
 is the default; over-pipelining to meet timing fast is what makes people
 distrust HLS tools.
 
-**Estimates are never allowed to be why a sweep fails**:
+**Estimates are never allowed to be why a sweep fails** (in the default
+`"leaf"` and `"full"` modes):
 - `MEASURE_DELAYS(funcs)` really synthesizes given functions and replaces
   their estimates (invalidating stale pipeline-map caches);
 - the refinement loop calls it automatically when it runs out of ideas while
@@ -196,6 +216,13 @@ distrust HLS tools.
   synthesis: replacing 21 estimated delays with measured results...` — after
   which sample_power's plan shrank from 25 cuts to 14 and still met timing);
 - `--full_hier_syn` forces the old synthesize-everything behavior up front.
+
+`--no_hier_syn` (`HIER_SYN_MODE == "prim"`) deliberately gives this guarantee
+up: the fallback is gated on `HIER_SYN_MODE == "leaf"` exactly, so it never
+fires in `"prim"` mode, and `MEASURE_DELAYS` itself refuses to (re-)synthesize
+any func with submodules there. A `--no_hier_syn` sweep that stalls on
+estimate-driven cut placement stops at its best result instead of measuring
+for real -- the tradeoff for never paying for a hierarchical syn run.
 
 ## 4. New concepts (SWEEP.py)
 
@@ -653,7 +680,9 @@ explicitly during the sweep:
 | `--coarse` | single-instance coarse sweep only (even slices, latency grown from timing reports); auto-selected for a single main with no target MHz |
 | `--start N` / `--stop N` / `--sweep` | coarse sweep controls (start latency, stop latency, +1 stepping) |
 | `--full_hier_syn` | synthesize every hierarchy level for path delays (no estimates) |
-| `--pipeline_min_effort N` | extra full-design syn iterations allowed to reduce stages after timing is met (default 2; 0 = accept the first met result, fastest but possibly over-pipelined) |
+| `--no_hier_syn` | opposite of `--full_hier_syn`: never synthesize any hierarchical module (incl. MAINs, stateful atomic spans) -- only true primitive leaves are synthesized, everything else estimated. Gives up the automatic estimate-was-inaccurate fallback to real synthesis. |
+| `--pipeline_min_effort N` | extra full-design syn iterations allowed to reduce stages after timing is met (default 2; 0 = accept the first met result, fastest but possibly over-pipelined); no effect with `--no_sweep` |
+| `--no_sweep` | write the sweep's first planned guess as final VHDL and stop -- zero sweep synthesis iterations, timing NOT verified. Works with both the default planned sweep and `--coarse`. |
 
 ## 6.5 AUTOPIPELINE `.latency` pin-and-confirm loop (Pypeline designs only)
 

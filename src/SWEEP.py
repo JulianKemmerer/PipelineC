@@ -1036,8 +1036,11 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         plans[main_inst] = plan
 
     # One standalone synthesis each so the user sees whether "as written"
-    # holds - result is informational and never stored as the func's delay
-    RUN_AS_WRITTEN_CHECKS(planless_goal_mains, parser_state)
+    # holds - result is informational and never stored as the func's delay.
+    # --no_sweep skips this too: it is purely informational, not needed to
+    # produce the first planned guess.
+    if not SYN.NO_SWEEP:
+        RUN_AS_WRITTEN_CHECKS(planless_goal_mains, parser_state)
 
     # NOTE on budget calibration: cut counts are anchored to reality by the
     # "measurement frontier" in the presynth wave (SYN.FUNC_IS_TOPMOST_COMB):
@@ -1148,6 +1151,35 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         print("Updating output files...", flush=True)
         SYN.WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(tpl, parser_state, ancestor_insts)
         SYN.WRITE_REGISTERS_ESTIMATE_FILE(parser_state, multimain_timing_params)
+
+        if SYN.NO_SWEEP:
+            # First planned guess only -- no sweep synthesis iterations.
+            # Timing is NOT verified; raise the @MAIN mhz target for more
+            # pipeline stages.
+            print(
+                "--no_sweep: writing the first planned guess without "
+                "verifying it against real synthesis. Timing is NOT "
+                "confirmed -- raise the @MAIN mhz target for more pipeline "
+                "stages.",
+                flush=True,
+            )
+            for plan in plans.values():
+                main_func_name = parser_state.LogicInstLookupTable[
+                    plan.main_inst
+                ].func_name
+                _mono, _regions, total_stages = SUMMARIZE_DOMAIN_PIPELINE(
+                    plan.main_inst, plan.domains, tpl, parser_state
+                )
+                print(
+                    f"[sweep] {main_func_name}: --no_sweep guess, "
+                    f"{total_stages} pipeline register stage(s) built, "
+                    f"cuts={sum(len(c) for c in plan.cuts.values())} "
+                    "(UNVERIFIED)",
+                    flush=True,
+                )
+            multimain_timing_params.sweep_timing_failures = []
+            return multimain_timing_params
+
         print(
             f"Running syn w timing params... (sweep iteration {iteration})",
             flush=True,
@@ -1269,7 +1301,16 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         and soft_floor < target_mhz
                         and curr_mhz >= FLOOR_TOLERANCE * soft_floor
                         and plan.same_mhz_count >= 1
-                        and (measured_fallback_done or not any_estimates_in_play)
+                        and (
+                            measured_fallback_done
+                            or not any_estimates_in_play
+                            # "prim" mode: estimates are always in play and
+                            # never measured for real -- treat as if the
+                            # fallback already ran so the sweep can still
+                            # reach its floor stop instead of densifying
+                            # forever.
+                            or SYN.HIER_SYN_MODE == "prim"
+                        )
                     )
                     if at_hard_floor or at_soft_floor:
                         floor = hard_floor if at_hard_floor else soft_floor
@@ -1393,7 +1434,11 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 plan.hotspot_streak[hotspot_func]
                                 >= MINISWEEP_HOTSPOT_STREAK
                                 and plan.minisweeps_used < MAX_MINISWEEPS
-                                and (measured_fallback_done or not any_estimates)
+                                and (
+                                    measured_fallback_done
+                                    or not any_estimates
+                                    or SYN.HIER_SYN_MODE == "prim"
+                                )
                             ):
                                 plan.minisweeps_used += 1
                                 if RUN_HOTSPOT_MINISWEEP(

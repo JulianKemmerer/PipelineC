@@ -50,7 +50,15 @@ INF_MHZ = 1000  # Impossible timing goal
 #           FUNC_PATH_DELAY_IS_ESTIMABLE and docs/SYN_DESIGN.md).
 #  "full" = old behavior, synthesize every level of hierarchy individually
 #           including MAINs (--full_hier_syn cmd line flag).
+#  "prim" = opposite of "full": only true primitive leaves (no submodules)
+#           are ever synthesized. Every hierarchical module, including
+#           MAINs and stateful atomic spans, is estimated from submodule
+#           delays (--no_hier_syn cmd line flag). Gives up the automatic
+#           estimate-was-inaccurate fallback to real synthesis.
 HIER_SYN_MODE = "leaf"
+# Plan the pipelining once from the delay model, write it, and stop -- no
+# sweep synthesis iterations verify it meets timing. --no_sweep cmd line flag.
+NO_SWEEP = False
 # How many extra full-design synthesis iterations the throughput sweep may
 # spend reducing pipeline stages after timing is already met (hunting the
 # fewest-registers solution). 0 = accept the first met result (fastest).
@@ -3046,6 +3054,20 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
     VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
     WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, False)
     WRITE_REGISTERS_ESTIMATE_FILE(parser_state, multimain_timing_params)
+
+    if NO_SWEEP:
+        # --no_sweep: skip the confirmation synthesis. The convergence loop's
+        # real job (making the .latency ints the Python consumed equal the
+        # stage counts actually built) is decided by HARVEST_AUTOPIPELINE_LATENCIES,
+        # not by this timing verdict, so it still works.
+        print(
+            "--no_sweep: skipping AUTOPIPELINE confirmation synthesis. "
+            "Timing is NOT confirmed.",
+            flush=True,
+        )
+        multimain_timing_params.sweep_timing_failures = []
+        return multimain_timing_params, True
+
     print(
         "Running one confirmation synthesis with pipelining pinned from the previous pass...",
         flush=True,
@@ -3239,10 +3261,26 @@ def DO_THROUGHPUT_SWEEP(
             print("Main function:", main_func, "does not have a set target frequency.")
             target_mhz = INF_MHZ
             if starting_guess_latency is None:
-                print(
-                    "Starting a coarse sweep incrementally from zero added latency logic.",
-                    flush=True,
-                )
+                if NO_SWEEP:
+                    # The incremental-from-zero strategy needs sweep
+                    # iterations to grow the latency; --no_sweep takes the
+                    # first guess as-is, which here would be zero added
+                    # pipelining. Nothing to grow from - say so plainly
+                    # instead of silently emitting an unpipelined design.
+                    print(
+                        "WARNING: --no_sweep with a coarse sweep of a main "
+                        "with no target frequency has no first guess to make "
+                        "(the coarse strategy grows incrementally from zero "
+                        "added latency, which needs sweep iterations). "
+                        "Emitting ZERO added pipelining. Set a @MAIN mhz "
+                        "target, or pass --start N for N clocks of latency.",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        "Starting a coarse sweep incrementally from zero added latency logic.",
+                        flush=True,
+                    )
                 starting_guess_latency = 0
                 do_incremental_guesses = False
         max_allowed_latency_mult = None
@@ -3269,8 +3307,13 @@ def DO_THROUGHPUT_SWEEP(
         VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
 
         # Record unmet timing so the build fails with non zero exit (a coarse
-        # sweep with no user target uses INF_MHZ = characterization, no gate)
-        if target_mhz != INF_MHZ and not inst_sweep_state.met_timing:
+        # sweep with no user target uses INF_MHZ = characterization, no gate).
+        # --no_sweep never measured anything, so there is nothing to fail.
+        if (
+            not NO_SWEEP
+            and target_mhz != INF_MHZ
+            and not inst_sweep_state.met_timing
+        ):
             achieved = inst_sweep_state.last_mhz
             if len(inst_sweep_state.mhz_to_latency) > 0:
                 achieved = max(inst_sweep_state.mhz_to_latency.keys())
@@ -3674,6 +3717,18 @@ def DO_COARSE_THROUGHPUT_SWEEP(
             inst_name, logic, inst_sweep_state, parser_state
         )
 
+        if NO_SWEEP:
+            # First planned guess only -- no sweep synthesis iterations.
+            print(
+                "--no_sweep: writing the first coarse guess for",
+                logic.func_name,
+                "without verifying it against real synthesis. Timing is NOT "
+                "confirmed -- raise the @MAIN mhz target for more pipeline "
+                "stages.",
+                flush=True,
+            )
+            return inst_sweep_state, working_slices, TimingParamsLookupTable
+
         RUN_INST_SYN_AND_UPDATE_CACHE(
             inst_name, logic, inst_sweep_state, parser_state, TimingParamsLookupTable
         )
@@ -3987,7 +4042,9 @@ def _FUNC_NEEDS_SUBMODULE_DELAYS(func_name, parser_state):
     if FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(func_name, parser_state):
         return True
     logic = parser_state.FuncLogicLookupTable[func_name]
-    return HIER_SYN_MODE == "leaf" and FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state)
+    return HIER_SYN_MODE != "full" and FUNC_PATH_DELAY_IS_ESTIMABLE(
+        logic, parser_state
+    )
 
 
 def _AUTOFSM_MUX_ENTITIES(parser_state):
@@ -4056,7 +4113,7 @@ def RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(func_names, parser_state):
         # critical path (including regions about to be pipelined) feeds no
         # decision - synthesizing it wastes a near-whole-design run and its
         # number reads as a bogus "Design likely limited to X MHz" report
-        if func_name in parser_state.main_mhz.keys() and HIER_SYN_MODE != "leaf":
+        if func_name in parser_state.main_mhz.keys() and HIER_SYN_MODE == "full":
             if func_name not in funcs_to_synth:
                 funcs_to_synth.append(func_name)
     return funcs_to_synth
@@ -4223,6 +4280,10 @@ def FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state):
     #   them is synthesized or estimated (their interior delays feed no
     #   decision).
     if FUNC_SUBTREE_HAS_STATE(logic.func_name, parser_state):
+        # "prim" mode: never synthesize any hierarchical module, stateful
+        # or not -- estimate everything above true primitive leaves.
+        if HIER_SYN_MODE == "prim":
+            return True
         return FUNC_SUBTREE_HAS_AUTOPIPELINE(
             logic.func_name, parser_state
         ) or FUNC_SUBTREE_HAS_AUTOFSM(logic.func_name, parser_state)
@@ -4234,7 +4295,9 @@ def FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state):
         # keeps first plans at the fewest-stages guess). Interior comb funcs
         # below stay estimated; the landscape rescales their relative
         # geometry into this measured total.
-        return False
+        # "prim" mode skips even this: no hierarchical module is ever
+        # synthesized, including the measurement frontier.
+        return HIER_SYN_MODE == "prim"
     if not FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
         logic.func_name, parser_state
     ):
@@ -4338,9 +4401,12 @@ def MEASURE_DELAYS(func_names, parser_state):
     funcs_to_measure = []
     for func_name in func_names:
         logic = parser_state.FuncLogicLookupTable[func_name]
-        if len(logic.submodule_instances) > 0 and FUNC_SUBTREE_HAS_STATE(
-            func_name, parser_state
+        if len(logic.submodule_instances) > 0 and (
+            HIER_SYN_MODE == "prim"
+            or FUNC_SUBTREE_HAS_STATE(func_name, parser_state)
         ):
+            # "prim" mode: no hierarchical module is ever (re-)synthesized,
+            # only true primitive leaves -- callers fall back to the estimate.
             continue
         if logic.delay is None or logic.delay_is_estimated:
             if func_name in parser_state.FuncToInstances:
@@ -4478,7 +4544,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
 
         # Prepare for syn to determine
         if logic.delay is None:
-            if HIER_SYN_MODE == "leaf" and FUNC_PATH_DELAY_IS_ESTIMABLE(
+            if HIER_SYN_MODE != "full" and FUNC_PATH_DELAY_IS_ESTIMABLE(
                 logic, parser_state
             ):
                 # Hierarchical func on the pipelining path: derive delay from
