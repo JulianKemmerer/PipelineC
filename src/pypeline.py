@@ -2615,6 +2615,46 @@ class Output(metaclass=_OutputMeta):
     pass
 
 
+# make_clock(mhz) — tag a global Wire/Input as a clock (PipelineC's CLK_MHZ)
+# ──────────────────────────────────────────────────────────────────────────
+
+
+class _ClockMarker:
+    """Produced by make_clock(mhz). Used as the initializer of a global
+    Wire[uint1_t]/Input[uint1_t] declaration to tag that wire as a clock of a
+    given rate -- the pypeline equivalent of PipelineC's `CLK_MHZ` pragma.
+
+    Usage at module level only, as the annotation's initializer:
+        pll_clk: Input[uint1_t] = make_clock(85.0)   # external clock port
+        internal_clk: Wire[uint1_t] = make_clock(1.0)  # internally generated clock
+
+    PY_TO_LOGIC reads this marker off the live module namespace during
+    _discover_global_wires; it carries no meaning at Python runtime (native sim
+    never reads a global wire's bound value, only its annotation type).
+    """
+
+    def __init__(self, mhz):
+        self.mhz = float(mhz)
+
+    def __repr__(self):
+        return f"make_clock({self.mhz})"
+
+
+def make_clock(mhz):
+    """Tag a global Wire[uint1_t]/Input[uint1_t] as a clock of the given rate.
+
+    Ex.::
+
+        pll_clk: Input[uint1_t] = make_clock(85.0)
+        @MAIN(85.0)
+        def solution(): ...
+    """
+    mhz = float(mhz)
+    if mhz <= 0:
+        raise ValueError(f"make_clock(mhz) requires mhz > 0, got {mhz}")
+    return _ClockMarker(mhz)
+
+
 # ─────────────────────────────────────────────
 # Bit manipulation primitives
 # (intercepted by PY_TO_LOGIC elaborator; not callable at Python runtime)

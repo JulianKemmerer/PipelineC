@@ -68,6 +68,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
   - [`PART(...)` — FPGA Target Device](#part--fpga-target-device)
   - [`@MAIN(mhz)` — Clock Frequency Constraint](#mainmhz--clock-frequency-constraint)
   - [Clock Domain Inference (`INFER_CLOCK_DOMAINS`)](#clock-domain-inference-infer_clock_domains)
+  - [`make_clock(mhz)` — Python Equivalent of `CLK_MHZ`](#make_clockmhz--python-equivalent-of-clk_mhz)
 - [`AUTOPIPELINE(func, depth)` — Forced Submodule Pipelining](#autopipelinefunc-depth--forced-submodule-pipelining)
 - [`AUTOFSM(func)` — Resource-Shared State Machines](#autofsmfunc--resource-shared-state-machines)
 - [`MULTI_CYCLE[ncycles]` / `Reg[T, tag]` — Multi-Cycle Path Constraint](#multi_cyclencycles--regt-tag--multi-cycle-path-constraint)
@@ -3981,6 +3982,63 @@ first would let it embed call edges that no longer exist in the final logic:
 _build_func_call_graph(parser_state)
 C_TO_LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
 ```
+
+### `make_clock(mhz)` — Python Equivalent of `CLK_MHZ`
+
+`pypeline.make_clock(mhz)` (`src/pypeline.py`) returns a `_ClockMarker(mhz)` instance. It's
+meant to be used as a global `Wire`/`Input` declaration's *initializer*, which is otherwise
+banned:
+
+```python
+pll_clk: Input[uint1_t] = make_clock(85.0)
+```
+
+Unlike `PART`/`MAIN_MHZ`, this isn't a module-level registry read after `exec_module` —
+`_discover_global_wires` (Step 4.5/4.6) already has the live module namespace in hand via
+`module_globals`, and the marker only makes sense attached to one specific `AnnAssign` node,
+so it's read directly there:
+
+```python
+if node.value is not None:
+    maybe_marker = module_globals.get(node.target.id)
+    if isinstance(maybe_marker, _ClockMarker):
+        clock_marker = maybe_marker
+        if kind == "Output":
+            raise ElaborationError(...)   # a clock net needs exactly one driver
+    else:
+        raise ElaborationError(...)       # the original "no initializer" ban, preserved
+```
+
+After `reg_name` is computed (so an imported sub-file's `Wire` gets its `{prefix}_` name),
+the marker's rate is written straight into `parser_state.clk_mhz[reg_name]` — the same dict
+the C frontend's `#pragma CLK_MHZ` populates (`C_TO_LOGIC.py`'s `APPEND_PRAGMA_INFO`), so
+every VHDL/SYN consumer (`VHDL.GET_ALL_USER_CLOCKS`, the internal-signal + `dont_touch`
+emission in `WRITE_MULTIMAIN_TOP`, the `get_nets`-vs-`get_ports` SDC constraint in
+`SYN.WRITE_CLK_CONSTRAINTS_FILE`) is already frontend-agnostic and needs no Python-specific
+branch. Two checks happen at this same site: the wire's `var_info.type_name` must be
+`uint1_t` (a clock is a single bit), and no other tagged wire may already be registered at
+the same rate (two same-rate clocks would collide on one generated `clk_<rate>` net; not
+distinguishable without clock groups, which pypeline doesn't have).
+
+A `make_clock`-tagged rate is only meaningful if some `@MAIN` actually runs at that rate —
+otherwise the emitted `clk_<rate>` net has no reader. That can't be checked at
+`_discover_global_wires` time (Step 4.5, before any `@MAIN`'s rate is known, and before
+`INFER_CLOCK_DOMAINS` may still assign a rate to a currently-bare `@MAIN`). `PARSE_FILE`
+checks it right after the `INFER_CLOCK_DOMAINS` call above:
+
+```python
+if parser_state.clk_mhz:
+    main_rates = set(parser_state.main_mhz.values())
+    for clk_wire_name, clk_mhz in parser_state.clk_mhz.items():
+        if clk_mhz not in main_rates:
+            raise ElaborationError(...)
+```
+
+Only single-clock-domain designs are supported this way — a `make_clock` rate must equal
+some `@MAIN`'s rate exactly, which is also how the wire is understood to belong to that
+`@MAIN`'s domain. Clock groups (`MAIN_MHZ_GROUP`) and `#pragma ASYNC_WIRE` have no pypeline
+equivalent; `parser_state.main_clk_group[hw_name]` stays hardcoded `None` for every
+Python-frontend `@MAIN` (see the `@MAIN(mhz)` section above).
 
 ---
 

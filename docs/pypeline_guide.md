@@ -622,6 +622,35 @@ PART("xc7a35ticsg324-1l")   # Arty A7-35T
 Without `PART`, the tool chain uses a software timing estimator rather than real
 synthesis.
 
+### Naming a clock with `make_clock`
+
+By default the clock for a given `@MAIN(mhz)` rate is a tool-named top-level
+port, e.g. `clk_100p0`. `make_clock(mhz)` overrides this: it tags a global
+`Input[uint1_t]` or `Wire[uint1_t]` as *being* that clock, so the wire's own
+name becomes the real top-level port (or internal signal) instead. This is the
+pypeline equivalent of PipelineC's `DECL_INPUT` + `CLK_MHZ` pragma pair.
+
+```python
+from pypeline import MAIN, Input, uint1_t, make_clock
+
+# External clock on a fixed-name port (e.g. to match a board constraints file)
+pll_clk: Input[uint1_t] = make_clock(85.0)
+
+@MAIN(85.0)
+def solution(x: uint1_t) -> uint1_t:
+    ...
+```
+
+`make_clock`'s rate must equal some `@MAIN`'s rate in the design exactly — that
+match is how the tool decides which `@MAIN`'s clock this wire is. Use it on an
+`Input[uint1_t]` for an external clock, or a `Wire[uint1_t]` for an internally
+generated one (driven by another `@MAIN`, mirroring PipelineC's
+[internal_clocks.c](../examples/internal_clocks.c) example — note that pattern
+needs two `@MAIN`s at different rates, i.e. multiple clock domains, which is not
+yet supported end-to-end; see §28). It cannot be used on an `Output[T]` (a clock
+net needs exactly one driver, which an `Output` doesn't model) or on a wire whose
+rate collides with another `make_clock`-tagged wire at the same rate.
+
 ---
 
 ## 6 Your First Hardware Function
@@ -3598,7 +3627,8 @@ The table below consolidates all known limitations and unsupported features.
 
 | Feature | Status | Notes |
 |---|---|---|
-| **Multiple clock domains** | Not supported | `MAIN_MHZ_GROUP`, `#pragma ASYNC_WIRE`, `CLK_MHZ` have no pypeline equivalent |
+| **Named/generated clocks (single domain)** | Supported | `make_clock(mhz)` on a global `Input[uint1_t]`/`Wire[uint1_t]` — pypeline equivalent of `CLK_MHZ`, see [§5](#5-top-level-entry-points) |
+| **Multiple clock domains** | Not supported | `MAIN_MHZ_GROUP` (clock groups) and `#pragma ASYNC_WIRE` have no pypeline equivalent; `make_clock`'s rate must match some single `@MAIN`'s rate exactly |
 | **Async clock-crossing FIFOs** | Not supported | `GLOBAL_STREAM_FIFO` across clock boundaries cannot yet be expressed |
 | **Dual-port stream RAM** | Not built-in | `DECL_STREAM_RAM_DP_W_R_1` — use `vhdl()` passthrough |
 | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo` now does, covering `make_stream_fifo`/`make_stream_pipeline` too); this still includes `make_valid_ready_mcp` |

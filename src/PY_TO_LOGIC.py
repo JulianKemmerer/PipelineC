@@ -10,6 +10,7 @@ import textwrap
 import types as _types
 
 import C_TO_LOGIC
+import VHDL
 import AST as pypeline_ast
 from pypeline import (
     _RegType,
@@ -17,6 +18,7 @@ from pypeline import (
     _WireType,
     _InputType,
     _OutputType,
+    _ClockMarker,
     BIT_MANIP_FUNC_NAMES as _BIT_MANIP_FUNC_NAMES,
     _INT_CTYPE_RE,
     _ctype_is_int,
@@ -5797,10 +5799,22 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
             kind = "Output"
         else:
             continue
+        clock_marker = None
         if node.value is not None:
-            raise ElaborationError(
-                f"Global {kind} '{node.target.id}' cannot have an initializer"
-            )
+            maybe_marker = module_globals.get(node.target.id)
+            if isinstance(maybe_marker, _ClockMarker):
+                clock_marker = maybe_marker
+                if kind == "Output":
+                    raise ElaborationError(
+                        f"Global Output '{node.target.id}' cannot be tagged with "
+                        f"make_clock() -- a clock net must have exactly one driver, "
+                        f"which an Output (a top-level design output, driven from "
+                        f"inside the design) does not model. Use Wire or Input."
+                    )
+            else:
+                raise ElaborationError(
+                    f"Global {kind} '{node.target.id}' cannot have an initializer"
+                )
         # Wire[SomeInterface] (the bare @interface class, not .fwd_t/.fb_t/
         # .stream_t) is sugar for Wire[SomeInterface.wire_t] -- a flat,
         # non-directional struct (Feedback[T] fields unwrapped to plain T)
@@ -5871,6 +5885,24 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
             parser_state.input_wires.add(reg_name)
         elif kind == "Output":
             parser_state.output_wires.add(reg_name)
+        if clock_marker is not None:
+            if var_info.type_name != "uint1_t":
+                raise ElaborationError(
+                    f"Global {kind} '{bare_name}' tagged with make_clock() must be "
+                    f"uint1_t, got {var_info.type_name}"
+                )
+            dupes = [
+                w for w, m in parser_state.clk_mhz.items() if m == clock_marker.mhz
+            ]
+            if dupes:
+                raise ElaborationError(
+                    f"Global {kind} '{bare_name}' and {dupes} are both tagged as "
+                    f"clocks at {clock_marker.mhz} MHz -- two clocks at the same "
+                    f"rate would collide on the same generated clk_<rate> net. "
+                    f"Clock groups (distinguishing same-rate clocks) are not yet "
+                    f"supported in pypeline."
+                )
+            parser_state.clk_mhz[reg_name] = clock_marker.mhz
 
 
 # ─────────────────────────────────────────────
@@ -6545,6 +6577,24 @@ def PARSE_FILE(py_file):
 
     # ── Propagate MHz across MAINs sharing global wires ──
     C_TO_LOGIC.INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
+
+    # ── Validate every make_clock()-tagged wire binds to some @MAIN's rate ──
+    # Must run after INFER_CLOCK_DOMAINS above: that's what assigns a rate to a
+    # bare @MAIN that only inherits one through a shared global wire, so a clock
+    # whose only consumer is such a MAIN can't be checked before it runs.
+    if parser_state.clk_mhz:
+        main_rates = set(parser_state.main_mhz.values())
+        for clk_wire_name, clk_mhz in parser_state.clk_mhz.items():
+            if clk_mhz not in main_rates:
+                clk_name = VHDL.CLK_MHZ_GROUP_TEXT(clk_mhz, None)
+                main_rates_str = sorted(r for r in main_rates if r is not None)
+                raise ElaborationError(
+                    f"make_clock({clk_mhz}) on global wire '{clk_wire_name}' "
+                    f"(would generate clk_{clk_name}) does not match the rate of "
+                    f"any @MAIN in this design -- @MAIN rates present: "
+                    f"{main_rates_str}. A tagged clock must equal some @MAIN's rate "
+                    f"exactly."
+                )
 
     # ── Validate global Wire[T] / Input[T] / Output[T] rules ──
     for wire_name in parser_state.global_vars:

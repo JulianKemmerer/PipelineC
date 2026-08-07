@@ -732,6 +732,30 @@ def _register_main(func, mhz):
 so every `@MAIN` function automatically gets simulation type wrapping. Users do not need both
 `@MAIN` and `@hw_func` on the same function.
 
+### `make_clock(mhz)` — Naming a Clock (`CLK_MHZ` Equivalent)
+
+```python
+class _ClockMarker:
+    def __init__(self, mhz):
+        self.mhz = float(mhz)
+
+def make_clock(mhz):
+    mhz = float(mhz)
+    if mhz <= 0:
+        raise ValueError(...)
+    return _ClockMarker(mhz)
+```
+
+Used as a global `Wire[uint1_t]`/`Input[uint1_t]` declaration's initializer —
+`pll_clk: Input[uint1_t] = make_clock(85.0)` — to tag that wire as the clock for the `@MAIN`
+running at 85.0 MHz, instead of the default tool-named `clk_85p0` top port. Unlike `PART`/
+`@MAIN`, this carries no module-level registry: `PY_TO_LOGIC._discover_global_wires` reads the
+marker straight off the live module namespace for the one `AnnAssign` node it's attached to
+(see [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#make_clockmhz--python-equivalent-of-clk_mhz)
+for the elaboration-side detail). `_ClockMarker` carries no meaning at Python runtime — native
+sim never reads a global wire's bound value, only its `Wire`/`Input`/`Output` annotation type,
+so binding the module global to a marker object is otherwise inert.
+
 ### `AUTOPIPELINE(func, depth=-1)` — Forced Submodule Pipelining with `.latency`
 
 Python equivalent of PipelineC's `#pragma AUTOPIPELINE <depth>`, plus a feedback

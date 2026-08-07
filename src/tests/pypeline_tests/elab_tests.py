@@ -19,6 +19,7 @@ NO_SYNTH_TEST_FILES = [
     "autopipeline_test.py",
     "global_wires_test.py",
     "clock_domain_inference_test.py",
+    "user_clock_test.py",
     "compound_init_test.py",
     "bit_manip_test.py",
     "import_test.py",
@@ -249,6 +250,20 @@ def get_tests() -> list:
             name="operator_scope_test",
             category="elab",
             cmd=[INST_DIR / "operator_scope_test.py"],
+        )
+    )
+    # Not run through the pipelinec CLI either: checks parser_state.clk_mhz /
+    # SYN.GET_ALL_USER_CLOCKS directly for make_clock() (pypeline's CLK_MHZ
+    # equivalent), plus the *type* of ElaborationError each invalid use raises
+    # (non-uint1_t wire, tagging an Output, two clocks at the same rate, a rate
+    # matching no @MAIN) -- none of which is visible to a bare "does it
+    # elaborate" check the way user_clock_test.py above only proves the happy
+    # path builds.
+    tests.append(
+        Test(
+            name="clock_mhz_pragma_test",
+            category="elab",
+            cmd=[INST_DIR / "clock_mhz_pragma_test.py"],
         )
     )
     return tests

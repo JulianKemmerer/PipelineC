@@ -653,6 +653,7 @@ Most PipelineC `#pragma` annotations have a direct pypeline equivalent.
 | `#pragma PART "..."` | `PART("...")` at module level | [§5](pypeline_guide.md#5-top-level-entry-points) |
 | `#pragma MAIN func` | `@MAIN` decorator | [§5](pypeline_guide.md#5-top-level-entry-points) |
 | `#pragma MAIN_MHZ func 100.0` | `@MAIN(100.0)` decorator | [§5](pypeline_guide.md#5-top-level-entry-points) |
+| `DECL_INPUT(uint1_t, clk)` + `CLK_MHZ(clk, 100.0)` | `clk: Input[uint1_t] = make_clock(100.0)` | [§5](pypeline_guide.md#5-top-level-entry-points) |
 | `#pragma FEEDBACK x` | `x: Feedback[T]` annotation | [§9](pypeline_guide.md#9-feedback-wires-feedbackt) |
 | `#pragma FUNC_WIRES func` | `@wires` decorator on the function | [§18](pypeline_guide.md#18-just-wires-synthesis-hint-wires) |
 | `#pragma AUTOPIPELINE` on a call | `result = autopipeline(func(args))` | [§15](pypeline_guide.md#15-tool-chosen-implementation-autopipeline-and-autofsm) |
@@ -729,10 +730,9 @@ The following PipelineC features do not yet have a pypeline equivalent.
 
 | PipelineC feature | Notes |
 |---|---|
-| Multiple clock domains (`MAIN_MHZ_GROUP`, `#pragma ASYNC_WIRE`) | Not supported |
+| Multiple clock domains (`MAIN_MHZ_GROUP`, `#pragma ASYNC_WIRE`) | Not supported — `make_clock(mhz)` (§11 above) covers a single named/generated clock, but a tagged clock must match some `@MAIN`'s rate exactly; clock groups (distinct domains at the same rate) and async wires are not supported |
 | Async clock-crossing FIFOs (`GLOBAL_STREAM_FIFO` across clock domains) | Not supported |
 | Dual-port stream RAM (`DECL_STREAM_RAM_DP_W_R_1`) | Use `vhdl()` passthrough |
-| `CLK_MHZ` annotation for non-MAIN peripheral clocks | Not supported |
 | Simulation of `vhdl()`-based primitives | `make_stream_fifo`, `make_stream_pipeline`, `make_valid_ready_mcp` raise `NotImplementedError` in simulation; synthesise normally via `pipelinec` |
 | Multiple / early `return` statements (returning from inside an `if` branch) | Not supported — a pypeline function has exactly one `return`, which must be the final top-level statement; restructure to assign a result variable in each branch and return it once at the end (see [pypeline_guide.md §6](pypeline_guide.md#6-your-first-hardware-function)) |
 | `Reg[char_t[N]] = <initializer>` (register power-on value for a char array, e.g. equivalent of C's `static char name[16] = "boot";`) | Not supported for hardware elaboration — raises `ElaborationError`. `Reg[char_t[N]]` with no initializer (zero-init) works normally. See [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) |
