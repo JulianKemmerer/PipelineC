@@ -399,6 +399,30 @@ def test_soft_mult_registration_unsigned_only():
     print("test_soft_mult_registration_unsigned_only passed")
 
 
+def test_soft_mult_karatsuba_threshold_override():
+    """register_soft_mult_karatsuba(threshold=...) must actually thread the
+    override into the registered factory (not silently fall back to
+    make_soft_karatsuba_mult's own default), and the default (threshold=None)
+    must resolve to a working multiplier at all. Regression test for the
+    functools.partial-based override added alongside the threshold=16 default
+    (docs/SYN_DESIGN.md section 10)."""
+    import operators.soft as soft_lib
+
+    ut10 = make_uint_t(10)
+    soft_lib.register_soft_mult_karatsuba(threshold=4)
+    kar_t4 = _resolve_generic_operator("INFERRED_MULT", "uint10_t", "uint10_t")
+    assert kar_t4 is not None, "register_soft_mult_karatsuba(threshold=4) should register"
+    for a, b in [(0, 0), (1023, 1023), (731, 5), (17, 400)]:
+        got = sim_call(kar_t4, SimVal(a, ut10), SimVal(b, ut10))
+        check(f"soft_karatsuba(threshold=4)({a},{b})", got, a * b)
+
+    soft_lib.register_soft_mult_karatsuba()  # default (threshold=None)
+    kar_default = _resolve_generic_operator("INFERRED_MULT", "uint10_t", "uint10_t")
+    got = sim_call(kar_default, SimVal(731, ut10), SimVal(5, ut10))
+    check("soft_karatsuba(default)(731,5)", got, 731 * 5)
+    print("test_soft_mult_karatsuba_threshold_override passed")
+
+
 def test_soft_cmp():
     ut = make_uint_t(6)
     for op, pyop in (("GT", lambda a, b: a > b), ("GTE", lambda a, b: a >= b),
@@ -545,6 +569,7 @@ if __name__ == "__main__":
     test_soft_signed_radix_div_mod_generalized()
     test_soft_div_mod_registration()
     test_soft_mult_registration_unsigned_only()
+    test_soft_mult_karatsuba_threshold_override()
     test_soft_cmp()
     test_soft_eq()
     test_soft_shift()

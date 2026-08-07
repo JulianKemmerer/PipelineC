@@ -1232,3 +1232,101 @@ found already correct: each stage's *constant* shift lowers through VHDL's
 operand type by construction (`RAW_VHDL.py:4251-4310`) -- so no separate
 signed barrel implementation was needed, unlike the signed-multiply defect
 found in the mult round.
+
+## 10. Karatsuba base-case threshold: no split beats every split, below 16 bits
+
+Two multiplier shapes exist in `soft_mult.py`: `make_soft_shift_add_mult` (the
+default, `INFERRED_MULT` registered for `any_uint_t x any_uint_t` by
+`register_soft_mult`) and `make_soft_karatsuba_mult(l_t, r_t, threshold)`, a
+recursive Karatsuba split that falls back to shift-and-add once an operand
+narrows to `threshold` bits. That threshold had never been measured -- it was
+`8` from when the factory was written, and every prior comparison (this doc's
+mult-recursion work, `op_qor_bench.py`'s matrix) ran at that one fixed value.
+
+That matters because `threshold=8` is not even the shallowest possible
+Karatsuba shape at 16 bits: `uint16 x uint16` at `T=8` still recurses once
+more (its 9-bit middle term splits again), where `T=9..15` stops immediately.
+The prior verdict on this doc's multiplier round -- "Karatsuba loses to
+shift-and-add at every cut count" -- was measured against a shape carrying a
+gratuitous extra recursion level, never the cheapest one available.
+
+### Only a handful of thresholds build distinct hardware
+
+`threshold` only changes shape at specific values; every integer between two
+of those values builds byte-identical hardware (confirmed via
+`CANONICAL_CALLABLE_KEY`, which two different thresholds map to the *same*
+hash whenever they produce the same recursion tree). At `uint16`, for
+example: `T=6` and `T=7` are identical; `T=9..15` are identical; `T>=16` all
+degenerate to `make_soft_shift_add_mult` directly (Karatsuba never actually
+fires). Sweeping every integer would re-measure the same design up to 15x
+over; `op_qor_bench.py`'s `karatsuba_threshold_reps(n_bits)` enumerates one
+representative per distinct class instead.
+
+`threshold < 3` does not terminate: a 3-bit operand splits into `half=1` /
+`hi=2` with `mid = max(1,2)+1 = 3`, so the middle sub-multiply is the same
+width as its parent and recurses forever (confirmed: `RecursionError` at
+`threshold=2`). Fixed with an explicit guard in `make_soft_karatsuba_mult`.
+
+### Sweep, PyRTL `--coarse --sweep`, uint8 and uint16 (in scope this round; 32/64-bit widths not yet measured)
+
+Best sliced fmax (`n_cuts >= 1`), and the est/measured ratio at `n_cuts=0`
+(§8's over-prediction mechanism -- a hierarchical soft implementation sums
+every leaf's full measured delay with no cross-module optimization credit,
+so deeper hierarchies over-predict worse):
+
+| width | threshold | best fmax (cuts>=1) | comb ns | est/measured @ 0 cuts |
+|---|---|---|---|---|
+| 8 | T=3 | 32.75 MHz (1 cut) | 43.46 | 3.27x |
+| 8 | T=4 | 34.20 MHz (1 cut) | 39.37 | 2.68x |
+| 8 | T=5 | 35.94 MHz (1 cut) | 35.74 | 2.14x |
+| 8 | **T=8 (=no split)** | **61.41 MHz (1 cut)** | 23.31 | 1.21x |
+| 16 | T=3 | 27.66 MHz (3 cuts) | 70.80 | 2.99x |
+| 16 | T=4 / T=5 | 28.45 MHz (3 cuts) | 67.33 | 2.61x |
+| 16 | T=6 / old default T=8 | 38.33 MHz (3 cuts) | 62.71 | 2.28x |
+| 16 | T=9 | 39.77 MHz (3 cuts) | 54.95 | 1.95x |
+| 16 | **T=16 (=no split)** | **77.73 MHz (3 cuts)** | 38.73 | 1.22x |
+
+**The result is simpler than the mult-recursion round's per-level-width fix:
+there is no interior optimum.** Comb delay falls monotonically as `threshold`
+rises (confirming the structural model directly), but sliced fmax rises
+monotonically right along with it, all the way to the trivial `T=n_bits`
+case -- Karatsuba's recombination cost (`a_lo+a_hi`, `b_lo+b_hi`, a 3-way
+`z1_full - z0 - z2` subtract, and a 3-way shifted sum, all at or near full
+`out_t` width) is a fixed-ish overhead per split that a 16-bit-or-smaller
+design's actual multiply work never earns back. Splitting is pure loss in
+this range, at every cut count measured, not just at `n_cuts=0`.
+
+Sanity control confirmed the harness itself: `soft_karatsuba_t{n_bits}` rows
+are bit-identical (same measured ns at every cut count) to the corresponding
+`soft_shift_add` rows -- as they must be, since `T>=n_bits` makes
+`make_soft_karatsuba_mult` return `make_soft_shift_add_mult` directly.
+
+### Outcome
+
+**Shipped:** `make_soft_karatsuba_mult`'s default `threshold` raised from `8`
+to `16`. `register_soft_mult_karatsuba` gained a `threshold=None` parameter
+(forwarded via `functools.partial` when set, so the emitted entity stays
+readably named rather than falling into `_callable_canonical_name`'s opaque
+lambda-hash fallback) so a caller can still reach any measured or unmeasured
+threshold explicitly.
+
+Deliberately conservative: 16 is the ceiling of what was actually measured
+this round, not an estimate of some wider optimum. Raising the default only
+removes recursion this data directly shows is harmful at widths <= 16 bits;
+it cannot, by construction, make an untested 32- or 64-bit design recurse
+*less* than it otherwise would have (a 32-bit multiply's first split still
+produces two 16-bit halves, exactly where this round's data ends). Whether a
+real (non-degenerate) optimum threshold exists above 16 bits -- the original
+hypothesis motivating Karatsuba's presence in this library at all -- is still
+open and was explicitly out of scope this round.
+
+### Correctness
+
+`test_soft_karatsuba_mult` covers the `threshold<3` guard (must raise);
+`test_soft_mult_karatsuba_threshold_override` covers
+`register_soft_mult_karatsuba(threshold=...)` end-to-end through native sim,
+both the override and default paths. Every threshold class from `T=3` to
+`T=n_bits` was also swept for pure correctness (native sim, `uint8`/`uint12`/
+`uint16`, corners plus random pairs): 0 mismatches at every threshold --
+Karatsuba's correctness does not depend on where the recursion bottoms out,
+only its QoR does.

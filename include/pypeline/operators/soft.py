@@ -14,6 +14,8 @@ for new library code). Register once, globally, or scoped to one function:
     register_soft_mult()                      # shift-and-add (default flavor)
     register_soft_mult_karatsuba()            # overrides it -- last registration wins
 """
+import functools
+
 from pypeline import (
     register_operator,
     register_left_operator,
@@ -80,13 +82,22 @@ def register_soft_mult(scope=None):
     )
 
 
-def register_soft_mult_karatsuba(scope=None):
+def register_soft_mult_karatsuba(threshold=None, scope=None):
     """See register_soft_mult -- same unsigned-only restriction, same reason
     (make_soft_karatsuba_mult bottoms out in make_soft_shift_add_mult and
-    inherits its unsigned-only partial-product summation)."""
-    register_operator(
-        "INFERRED_MULT", any_uint_t, any_uint_t, make_soft_karatsuba_mult, scope=scope
-    )
+    inherits its unsigned-only partial-product summation).
+
+    threshold: base-case width override, forwarded to make_soft_karatsuba_mult.
+    Default None uses that factory's own default rather than duplicating the
+    number here, so there is one source of truth for it -- see
+    make_soft_karatsuba_mult's docstring and docs/SYN_DESIGN.md section 10 for
+    the measurement behind the current default (16: no threshold below the
+    operand width ever beat "don't split" at uint8/uint16, measured directly;
+    unmeasured above 16 bits, where a real optimum may still exist)."""
+    factory = make_soft_karatsuba_mult
+    if threshold is not None:
+        factory = functools.partial(make_soft_karatsuba_mult, threshold=threshold)
+    register_operator("INFERRED_MULT", any_uint_t, any_uint_t, factory, scope=scope)
 
 
 def register_soft_div(scope=None):

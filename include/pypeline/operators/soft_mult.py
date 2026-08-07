@@ -159,7 +159,7 @@ def make_soft_shift_add_mult(l_t, r_t):
     return soft_shift_add_mult
 
 
-def make_soft_karatsuba_mult(l_t, r_t, threshold=8):
+def make_soft_karatsuba_mult(l_t, r_t, threshold=16):
     """Recursive Karatsuba multiply. Below `threshold` bits, falls back to
     the shift-and-add multiplier (same style as a soft library implementation
     pinning its own base case rather than recursing forever).
@@ -169,7 +169,23 @@ def make_soft_karatsuba_mult(l_t, r_t, threshold=8):
     as its parent and the recursion terminates only because 3 <= threshold
     can be true. threshold=2 makes mid=3 > threshold, so the middle
     sub-multiply recurses into an identical 3-bit split forever
-    (RecursionError, confirmed by measurement)."""
+    (RecursionError, confirmed by measurement).
+
+    Default raised from 8 to 16 (docs/SYN_DESIGN.md section 10): swept every
+    structurally-distinct threshold at uint8 and uint16 (PyRTL, --coarse
+    --sweep) and found NO threshold in [3, n_bits) ever beats the trivial
+    n_bits<=threshold case (no split at all) at any cut count -- comb delay
+    falls monotonically as threshold rises with no interior optimum, e.g.
+    uint16 best sliced fmax at cuts>=1: T=3 27.7 MHz, T=6/T=8 (old default)
+    38.3 MHz, T=16 (no split) 77.7 MHz. Recombination overhead (two adds, a
+    3-way subtract, a 3-way shifted sum, all near full out_t width) dominates
+    completely below 16 bits; there is nothing for the module-boundary
+    slicing advantage to recover. Widths above 16 bits were NOT measured this
+    round -- 16 is the ceiling of what was actually tested, chosen so this
+    change can only remove already-confirmed-harmful splitting and cannot by
+    construction make an untested wider design recurse less than it already
+    would have. Whether a real optimum exists above 16 bits is open; see
+    docs/SYN_DESIGN.md section 10."""
     if threshold < 3:
         raise ValueError(
             f"make_soft_karatsuba_mult: threshold must be >= 3 (got {threshold}). A "
