@@ -105,6 +105,31 @@ CMP_OPS = ["GT", "GTE", "LT", "LTE"]
 EQ_IMPLS = ["raw_default", "soft_default"]
 EQ_OPS = ["EQ", "NEQ"]
 
+MIN_KARATSUBA_THRESHOLD = 3  # below this the recursion does not terminate (mid == parent width)
+
+
+def karatsuba_threshold_reps(n_bits):
+    """One representative threshold per DISTINCT Karatsuba structure for a same-width
+    n_bits x n_bits multiply. Thresholds between shape changes build byte-identical
+    hardware (verified via CANONICAL_CALLABLE_KEY), so sweeping every integer would
+    re-measure the same design 2-15x over. T == n_bits is included deliberately: it IS
+    make_soft_shift_add_mult, so its measurement doubles as a sanity control that must
+    match the soft_shift_add rows exactly."""
+    sys.path.insert(0, SRC_DIR)
+    sys.path.insert(0, INCLUDE_PYPELINE_DIR)
+    from pypeline import make_uint_t
+    from operators.soft_mult import make_soft_karatsuba_mult
+    from PY_TO_LOGIC import CANONICAL_CALLABLE_KEY
+
+    t = make_uint_t(n_bits)
+    reps, seen = [], set()
+    for T in range(MIN_KARATSUBA_THRESHOLD, n_bits + 1):
+        key = CANONICAL_CALLABLE_KEY(make_soft_karatsuba_mult(t, t, threshold=T))
+        if key not in seen:
+            seen.add(key)
+            reps.append(T)
+    return reps
+
 
 def build_cases(tool):
     cases = []
@@ -131,6 +156,22 @@ def build_cases(tool):
             for impl in [i for i in MULT_IMPLS if i != "raw_default"]:
                 cases.append(dict(tool=tool, op="INFERRED_MULT", impl=impl, l_bits=l_bits, r_bits=r_bits,
                                    signed=False, stop=stop))
+        # Karatsuba base-case threshold sweep -- same-width pairs only.
+        # Asymmetric Karatsuba (e.g. uint32 x uint3) is structurally degenerate: it
+        # still splits BOTH operands at n_bits//2, so the entire high half of the
+        # narrow operand is constant zero and it does three sub-multiplies to
+        # compute what shift-and-add does in one. Not worth sweeping.
+        if l_bits == r_bits:
+            reps = karatsuba_threshold_reps(l_bits)
+            if l_bits >= 64:
+                # Thresholds 3-6 instantiate 109-333 base multipliers each at this
+                # width -- elaboration alone is minutes and they are certain losers
+                # (see docs/SYN_DESIGN.md). Skip them; add back only if uint32's
+                # low-T rows turn out NOT monotonically bad.
+                reps = [T for T in reps if T >= 8]
+            for T in reps:
+                cases.append(dict(tool=tool, op="INFERRED_MULT", impl=f"soft_karatsuba_t{T}",
+                                   l_bits=l_bits, r_bits=r_bits, signed=False, stop=stop))
         for op in CMP_OPS:
             for impl in CMP_IMPLS:
                 cases.append(dict(tool=tool, op=op, impl=impl, l_bits=l_bits, r_bits=r_bits,
@@ -232,6 +273,21 @@ def gen_source(case):
         elif impl == "soft_karatsuba" and op == "INFERRED_MULT":
             lines.append('from operators.soft_mult import make_soft_karatsuba_mult')
             lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_karatsuba_mult)')
+        elif re.fullmatch(r"soft_karatsuba_t\d+", impl) and op == "INFERRED_MULT":
+            # NOTE: registers for any_integer_t like soft_karatsuba above, bypassing
+            # register_soft_mult's deliberate unsigned-only restriction (soft
+            # multipliers are wrong for signed operands -- see soft.py). Harmless
+            # here because build_cases hardcodes signed=False for every case, but a
+            # trap if a signed case is ever added to this harness.
+            threshold = int(impl[len("soft_karatsuba_t"):])
+            # Named module-level factory, not a lambda: _callable_canonical_name
+            # (PY_TO_LOGIC.py) drops lambdas into an opaque hash-fallback name,
+            # which would make the emitted entity ungreppable and indistinguishable
+            # from any other threshold's in the build log.
+            lines.append('from operators.soft_mult import make_soft_karatsuba_mult')
+            lines.append(f'def _kar_factory_t{threshold}(l, r):')
+            lines.append(f'    return make_soft_karatsuba_mult(l, r, threshold={threshold})')
+            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, _kar_factory_t{threshold})')
         else:
             raise SkipCase()
 

@@ -162,7 +162,21 @@ def make_soft_shift_add_mult(l_t, r_t):
 def make_soft_karatsuba_mult(l_t, r_t, threshold=8):
     """Recursive Karatsuba multiply. Below `threshold` bits, falls back to
     the shift-and-add multiplier (same style as a soft library implementation
-    pinning its own base case rather than recursing forever)."""
+    pinning its own base case rather than recursing forever).
+
+    threshold must be >= 3: a 3-bit operand splits into half=1 / hi=2 with
+    mid = max(1,2)+1 = 3 bits, so the middle sub-multiply is the same width
+    as its parent and the recursion terminates only because 3 <= threshold
+    can be true. threshold=2 makes mid=3 > threshold, so the middle
+    sub-multiply recurses into an identical 3-bit split forever
+    (RecursionError, confirmed by measurement)."""
+    if threshold < 3:
+        raise ValueError(
+            f"make_soft_karatsuba_mult: threshold must be >= 3 (got {threshold}). A "
+            "3-bit operand splits into half=1 / hi=2 with mid = max(1,2)+1 = 3 bits, "
+            "so the middle sub-multiply is the same width as its parent and the "
+            "recursion never terminates below this threshold."
+        )
     eff_l_t, eff_r_t, out_t = arith_result_type("INFERRED_MULT", l_t, r_t)
     n_bits = max(len(eff_l_t), len(eff_r_t))
 

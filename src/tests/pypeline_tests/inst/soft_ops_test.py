@@ -187,6 +187,15 @@ def test_soft_karatsuba_mult():
     for a, b in [(65535, 1), (1, 65535), (65535, 65535), (0, 65535), (12345, 6789)]:
         got = sim_call(mult16, SimVal(a, ut16), SimVal(b, ut16))
         check(f"soft_karatsuba_mult16({a},{b})", got, a * b)
+
+    # threshold < 3 never terminates: a 3-bit operand splits into half=1/hi=2
+    # with mid = max(1,2)+1 = 3, so the middle sub-multiply is the same width
+    # as its parent and recurses forever unless threshold >= 3 catches it.
+    try:
+        make_soft_karatsuba_mult(ut16, ut16, threshold=2)
+        check("soft_karatsuba_mult threshold=2 should raise", False, True)
+    except ValueError:
+        pass
     print("test_soft_karatsuba_mult passed")
 
 
