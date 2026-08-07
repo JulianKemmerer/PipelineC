@@ -55,7 +55,13 @@ from operators.soft_div import (
     make_soft_signed_radix4_div, make_soft_signed_radix4_mod,
 )
 from operators.soft_cmp import make_soft_sub_cmp
-from operators.soft_shift import make_soft_barrel_sl, make_soft_barrel_sr
+from operators.soft_shift import (
+    make_soft_barrel_sl,
+    make_soft_barrel_sr,
+    make_soft_barrel_rotl,
+    make_soft_barrel_rotr,
+    make_soft_shift_rot,
+)
 from operators.soft_misc import make_soft_negate, make_soft_eq
 
 FAILS = []
@@ -355,16 +361,91 @@ def test_soft_eq():
 
 
 def test_soft_shift():
-    ut = make_uint_t(8)
-    sl = make_soft_barrel_sl(ut)
-    sr = make_soft_barrel_sr(ut)
-    for a in range(0, 256, 17):
+    """Exhaustive over uint8_t (every value x every amount, both
+    directions), plus a signed sweep of make_soft_barrel_sr against Python's
+    arithmetic >> -- each CONST_SR stage lowers via VHDL's numeric_std
+    shift_right, which is arithmetic (sign-extending) for a signed operand
+    type, so a signed value_t should already match Python's sign-extending
+    >> with no separate signed implementation needed. Also covers uint1_t
+    (amount_bits floors at 1) and non-power-of-two widths, since the amount
+    width formula (n_bits-1).bit_length() is the part most likely to be off
+    by one at an edge width."""
+    for n_bits in (1, 2, 3, 8):
+        ut = make_uint_t(n_bits)
+        sl = make_soft_barrel_sl(ut)
+        sr = make_soft_barrel_sr(ut)
+        mask = (1 << n_bits) - 1
+        for a in range(0, 1 << n_bits):
+            for amt in range(0, n_bits):
+                got_sl = sim_call(sl, SimVal(a, ut), SimVal(amt))
+                got_sr = sim_call(sr, SimVal(a, ut), SimVal(amt))
+                check(f"soft_sl_n{n_bits}({a},{amt})", got_sl, (a << amt) & mask)
+                check(f"soft_sr_n{n_bits}({a},{amt})", got_sr, a >> amt)
+
+    it = make_int_t(8)
+    sr_signed = make_soft_barrel_sr(it)
+    for a in range(-128, 128):
         for amt in range(0, 8):
-            got_sl = sim_call(sl, SimVal(a, ut), SimVal(amt))
-            got_sr = sim_call(sr, SimVal(a, ut), SimVal(amt))
-            check(f"soft_sl({a},{amt})", got_sl, (a << amt) & 0xFF)
-            check(f"soft_sr({a},{amt})", got_sr, a >> amt)
+            check(f"soft_sr_signed({a},{amt})", sim_call(sr_signed, SimVal(a, it), SimVal(amt)), a >> amt)
     print("test_soft_shift passed")
+
+
+def _golden_shift(a, amt, n_bits, left):
+    mask = (1 << n_bits) - 1
+    if left:
+        return (a << amt) & mask if amt < n_bits else 0
+    return (a >> amt) & mask if amt < n_bits else 0
+
+
+def _golden_rot(a, amt, n_bits, left):
+    a &= (1 << n_bits) - 1
+    amt %= n_bits
+    if amt == 0:
+        return a
+    if left:
+        return ((a << amt) | (a >> (n_bits - amt))) & ((1 << n_bits) - 1)
+    return ((a >> amt) | (a << (n_bits - amt))) & ((1 << n_bits) - 1)
+
+
+def test_soft_rotate():
+    """make_soft_barrel_rotl/rotr: exhaustive over uint8_t, both directions,
+    including amount == 0 (identity) and amount == n_bits-1."""
+    for n_bits in (1, 2, 3, 8):
+        ut = make_uint_t(n_bits)
+        rotl = make_soft_barrel_rotl(ut)
+        rotr = make_soft_barrel_rotr(ut)
+        for a in range(0, 1 << n_bits):
+            for amt in range(0, n_bits):
+                got_l = sim_call(rotl, SimVal(a, ut), SimVal(amt))
+                got_r = sim_call(rotr, SimVal(a, ut), SimVal(amt))
+                check(f"soft_rotl_n{n_bits}({a},{amt})", got_l, _golden_rot(a, amt, n_bits, True))
+                check(f"soft_rotr_n{n_bits}({a},{amt})", got_r, _golden_rot(a, amt, n_bits, False))
+    print("test_soft_rotate passed")
+
+
+def test_soft_shift_rot():
+    """make_soft_shift_rot: the unified 4-mode (direction x rotate) funnel
+    barrel, exhaustive over uint8_t against the same shift/rotate goldens
+    test_soft_shift/test_soft_rotate use -- this is the primitive that
+    answers the pasted latchup_rotate C with one barrel instead of four."""
+    for n_bits in (1, 2, 3, 8):
+        ut = make_uint_t(n_bits)
+        u1 = make_uint_t(1)
+        fn = make_soft_shift_rot(ut)
+        for a in range(0, 1 << n_bits):
+            for amt in range(0, n_bits):
+                for direction in (0, 1):
+                    for rotate in (0, 1):
+                        got = sim_call(
+                            fn, SimVal(a, ut), SimVal(amt), SimVal(direction, u1), SimVal(rotate, u1)
+                        )
+                        want = (
+                            _golden_rot(a, amt, n_bits, bool(direction))
+                            if rotate
+                            else _golden_shift(a, amt, n_bits, bool(direction))
+                        )
+                        check(f"soft_shift_rot_n{n_bits}({a},{amt},d={direction},r={rotate})", got, want)
+    print("test_soft_shift_rot passed")
 
 
 def test_generic_registry_end_to_end():
@@ -405,6 +486,8 @@ if __name__ == "__main__":
     test_soft_cmp()
     test_soft_eq()
     test_soft_shift()
+    test_soft_rotate()
+    test_soft_shift_rot()
     test_generic_registry_end_to_end()
     if FAILS:
         for f in FAILS[:50]:

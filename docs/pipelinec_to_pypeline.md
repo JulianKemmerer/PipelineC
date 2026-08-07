@@ -555,8 +555,8 @@ Most bitwise operators are identical. The differences are in packing/unpacking h
 | `>>`, `<<`, `&`, `\|`, `^`, `~` | same operators | |
 | `uint8_uint8(b1, b0)` | `concat(b1, b0)` | first arg = MSB |
 | `uint16_uint16(msb, lsb)` | `concat(msb, lsb)` | |
-| `rotl32_16(x)` | `rotl(x, 16, 32)` | `rotl(value, amount, width)` |
-| `rotr32_8(x)` | `rotr(x, 8, 32)` | |
+| `rotl32_16(x)` | `rotl(x, 16)` | `rotl(value, amount)` -- width comes from `value`'s type |
+| `rotr32_8(x)` | `rotr(x, 8)` | |
 | `x[15]` | `x[15]` | single-bit select → `uint1_t` |
 | `x[15:8]` | `x[15:8]` | bit-slice read |
 | `x[7:0] = y` | `x[7:0] = y` | bit-slice assign |

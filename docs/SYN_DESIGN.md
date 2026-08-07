@@ -1073,3 +1073,162 @@ touched (constant shift amounts resolve to `CONST_SL/SR_<n>_<type>` built-ins
 before any registry lookup -- only variable shifts reach the operator
 registry). Re-measure `PLUS` under `--tool vivado` before drawing any
 conclusion from the pyrtl numbers.
+
+## 9. Soft barrel shifter: mux count is the only lever
+
+`include/pypeline/operators/soft_shift.py`'s variable-amount barrel shifter
+(`make_soft_barrel_sl`/`make_soft_barrel_sr`) is a chain of stages, each a
+`if amount[i]: result = shifted` conditional assignment beside a *constant*
+shift (`result << (1<<i)`). This investigation started from the hypothesis
+that mirrors the multiplier investigation above: does the barrel have the
+same uniform-width-stage mispricing the flat multiplier had, where genuinely
+cheaper early levels get priced the same as the expensive final one?
+
+**The hypothesis does not hold, for a structural reason specific to muxes.**
+The constant shift beside each stage is pure rewiring (`CONST_SL/SR_<n>_<type>`
+built-ins, zero delay, PY_TO_LOGIC.py:4293-4311) -- so a barrel shifter is
+*exactly* a chain of raw-HDL `MUX_<type>` leaf entities and nothing else
+(PY_TO_LOGIC.py:3573-3592). And **every mux in a design shares one cached
+delay, regardless of width or type**:
+`GET_CACHED_LOGIC_FILE_KEY` (SYN.py:3930-3932) collapses the cache key to the
+literal string `"mux"` ("Mux is same delay no matter type"); measured value
+`path_delay_cache/pyrtl_20nm_0ff/syn/mux.delay` = 1.640 ns for every mux in
+the repo. A `MUX` entity is also exactly one logic level
+(RAW_VHDL.py:3703-3730, "Which stage gets the 1 LL?"). So stage pricing
+*is* uniform -- but for a chain of genuinely identical muxes that is
+correct, not a mispricing: there is no analogue of the multiplier's
+narrower-early-level structure to expose, and splitting a stage into a
+narrower "active" sub-mux plus a wide passthrough (as a narrow analogy to
+the multiplier's per-level-width fix would suggest) prices *worse* --
+two 1.640 ns muxes instead of one -- no matter how cheap it is in real
+silicon.
+
+**Consequence: the only lever that matters is how many serial muxes the
+barrel has.** It sets comb delay, the slicing floor (one mux, 1.640 ns/2.66
+ns on Vivado -- see table below), and the cut count needed to reach that
+floor, all simultaneously.
+
+**The shipped shape had one dead stage.** `amount_bits =
+max(1, n_bits.bit_length())` gives 6 stages for `uint32_t`, though shift/
+rotate amounts 0..31 need only 5 -- the 6th stage (shift-by-32) can only ever
+produce zero. Fixed to `amount_bits = max(1, (n_bits - 1).bit_length())`.
+This mirrors what the C flow's SW_LIB generator already does correctly
+(`shift_bit_width = min(max_shift.bit_length(), right_unsigned_width)` with
+`max_shift = left_width - 1`, `SW_LIB.py:7081-7083`) -- the Pypeline soft
+library had regressed behind its own C-flow sibling.
+
+### Structural variants tried, PyRTL `uint32_t`, `--coarse --sweep --start 0 --stop 9`
+
+| variant | shape | comb ns | floor ns | cuts to floor |
+|---|---|---|---|---|
+| baseline (was shipped) | 6 stages (dead 6th stage) | 7.84 | 1.64 | 5 |
+| **minimal stages (now shipped)** | 5 stages, no dead stage | **6.94** | **1.64** | **4** |
+| masked/AND-OR select | 5 stages, `(shifted&mask)\|(result&~mask)` instead of a mux | 6.94 (tie) | 1.91 (worse) | never reaches 1.64 |
+| one-hot decode + OR-reduce | all n shifted versions in parallel, one-hot select | 24.54 | 3.42 | far worse throughout |
+| reversed stage order | minimal stages, largest-shift-first | 6.94 (tie) | 1.64 | 4 (tie) |
+| one `@hw_func` per stage | minimal stages, composed chain instead of inline loop | 6.94 (tie) | 1.64 | 4 (tie) |
+| `VAR_REF_RD` array-index select | `opts[k]=v<<k` for all k, `result=opts[amount]` | 6.94 (tie) | 1.64 | 4 (tie) |
+
+Minimal-stage-count wins outright at every cut count and is never worse than
+any other shape measured. Reversed order, per-stage composition, and
+array-index select all tie it exactly -- confirming, directly from measured
+data, that stage *count* is what governs delay; composition style,
+ordering, and codegen shape do not. Two results are worth flagging on their
+own:
+
+- **The masked/AND-OR variant ties on comb but is measurably worse once
+  sliced** (1.91 ns vs 1.64 ns -- never reaches the true floor within 8
+  cuts measured). Its estimated delay (`est_op_ns` = 6.3) *under-predicts*
+  its own measured comb delay (6.94), the mirror image of the multiplier's
+  over-prediction problem -- and an under-prediction is worse for cut
+  placement, since `BUILD_SLICE_LANDSCAPE`'s even-fraction coarse slicer
+  places cuts assuming the estimate is trustworthy. This is a caution
+  against judging a soft-op redesign by comb delay (or by a delay-model
+  estimate) alone; §8's "the decision metric is pipelined per-stage delay
+  at n_cuts >= 1, not comb delay at n_cuts = 0" rule applies here too, and
+  this round is direct evidence for it, not just the comparator round's.
+- **One-hot decode is decisively the worst shape**, because "free rewiring"
+  for the n parallel shifted versions does not make the *selection* free:
+  a one-hot decode is n equality comparators, and the OR-reduce is a wide
+  tree -- both real logic, unlike a barrel's single-bit mux select per
+  stage.
+
+### Confirmed on real Vivado hardware (`xc7a200tffg1156-2`)
+
+The minimal-stage-count result was not left as a PyRTL-only estimate --
+re-run head-to-head against the shipped baseline shape, `--coarse --sweep`,
+`uint32_t`:
+
+| cuts | baseline (6 stages) ns | minimal (5 stages) ns |
+|---|---|---|
+| 0 (comb) | 2.660 | 2.640 |
+| 1 | 1.930 | 1.930 |
+| 2 | 1.460 | 1.460 |
+| 3 | 1.460 | 1.460 |
+| 4 | 1.460 | **1.300 (floor)** |
+| 5 | **1.300 (floor)** | 1.300 |
+| 6 | 1.300 | 1.300 |
+
+Same shape as PyRTL: minimal-stage-count reaches the true floor at 4 cuts
+instead of 5, and is never worse at any cut count. **The comb-delay gap is
+much smaller on real Vivado than PyRTL predicted** (0.8% vs PyRTL's 12.9%)
+-- real synthesis evidently optimizes away much of the dead stage's
+unreachable logic during its own passes, where PyRTL's flatten-only flow
+does not. This is exactly why the decision metric is the full sweep, not
+comb delay on either backend alone: the *cut-count-to-floor* signal held
+up identically on both tools even though the comb-delay magnitude did not.
+
+### Bidirectional shift/rotate: one funnel barrel instead of four
+
+Pypeline had no variable-amount rotate at all before this round (`rotl`/
+`rotr` are constant-only -- `PY_TO_LOGIC.py:4778-4798`'s `_require_const`).
+Three new factories in `soft_shift.py`:
+
+- `make_soft_barrel_rotl` / `make_soft_barrel_rotr` -- the same minimal-stage
+  barrel, using the constant `rotl`/`rotr` built-in (also free rewiring, VHDL
+  `rol`/`ror`) as each stage's operation instead of a shift. Rotation is mod
+  `n_bits`, so this needs no oversize guard and no dead stage at all.
+- `make_soft_shift_rot` -- a unified 4-mode primitive (`direction` x
+  `rotate`), answering the motivating C idiom
+  (`(n<<d)|(n>>(N-d))` for rotate, composed from up to four separate barrel
+  calls plus a subtract plus an OR) with **one** left-shift-only funnel
+  barrel: `hi = rotate ? v : 0`; fold `v`/`hi` into a `2n`-bit word (`concat`,
+  free rewiring, with the concat order and effective shift amount chosen by
+  `direction`); barrel-shift that word left; slice out the correct half.
+  The identity (right-shift-by-d == left-funnel-shift-by-(n-d), taking the
+  same upper half) was verified both by direct calculation and by the
+  correctness gate below.
+
+Measured PyRTL, `uint32_t`, funnel vs. a faithful Pypeline transcription of
+the pasted four-barrel C idiom (both built from the shipped minimal-stage
+barrels):
+
+| cuts | four-barrel composition ns | funnel (`make_soft_shift_rot`) ns |
+|---|---|---|
+| 0 (comb) | 11.910 | 10.860 |
+| 1 | 8.950 | 8.260 |
+| 2 | 6.300 | 6.290 |
+| 3 | 4.660 | 4.290 |
+| 4 | 4.290 | 4.290 |
+| 5 | 3.650 | **2.960 (floor)** |
+| 6 | **2.960 (floor)** | 2.960 |
+
+The funnel is equal-or-better at every cut count and reaches the floor one
+cut sooner, at roughly half the total mux-entity count (one barrel instead
+of up to two run in parallel plus a merge), matching the area argument made
+before landing.
+
+### Correctness
+
+Every shipped factory (`make_soft_barrel_sl/sr`, the new rotl/rotr, and
+`make_soft_shift_rot`) is exhaustively swept in
+`src/tests/pypeline_tests/inst/soft_ops_test.py` over tiny widths
+(1, 2, 3 bits, where the amount-width formula is most likely to be off by
+one) plus `uint8_t`, both directions, and (for `make_soft_shift_rot`) all
+four `direction`/`rotate` combinations. A signed sweep of
+`make_soft_barrel_sr` against Python's arithmetic `>>` was also checked and
+found already correct: each stage's *constant* shift lowers through VHDL's
+`numeric_std.shift_right`, which is arithmetic (sign-extending) for a signed
+operand type by construction (`RAW_VHDL.py:4251-4310`) -- so no separate
+signed barrel implementation was needed, unlike the signed-multiply defect
+found in the mult round.
