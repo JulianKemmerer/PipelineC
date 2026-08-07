@@ -23,7 +23,7 @@ def _make_restoring(want_remainder):
         n_bits = len(eff_l_t)
 
         @hw_func
-        def restoring_div(a: l_t, b: r_t) -> out_t:
+        def soft_div_restoring(a: l_t, b: r_t) -> out_t:
             ae: eff_l_t = a
             be: eff_r_t = b
             rem: eff_l_t = 0
@@ -43,7 +43,7 @@ def _make_restoring(want_remainder):
                 result = quot
             return result
 
-        return restoring_div
+        return soft_div_restoring
 
     return factory
 
@@ -61,7 +61,7 @@ def _make_signed(want_remainder):
         unsigned_impl = _make_restoring(want_remainder)(unsigned_t, unsigned_t)
 
         @hw_func
-        def signed_restoring_div(a: l_t, b: r_t) -> out_t:
+        def soft_div_signed_restoring(a: l_t, b: r_t) -> out_t:
             ae: signed_t = a
             be: signed_t = b
             l_sign: uint1_t = ae[width - 1]
@@ -84,7 +84,7 @@ def _make_signed(want_remainder):
                 result = (~signed_result) + 1
             return result
 
-        return signed_restoring_div
+        return soft_div_signed_restoring
 
     return factory
 
@@ -146,7 +146,7 @@ def _make_radix_restoring(bits_per_step, want_remainder):
     step, now against 2**bits_per_step - 1 precomputed multiples of the
     divisor instead of 1).
 
-    bits_per_step=2 (the make_soft_radix4_div/mod default below) measured
+    bits_per_step=2 (the make_soft_div_radix4/mod default below) measured
     best of an autopipelined-fmax sweep across bits_per_step in {1..6} and
     seven algorithmic variants including non-restoring and a signed-digit/
     carry-save-shaped design (docs: div_fmax_sweep exploration) -- 34.1 MHz
@@ -166,7 +166,7 @@ def _make_radix_restoring(bits_per_step, want_remainder):
     stages under the same harness, so the defects cost ~28% fmax on their
     own, independent of any radix choice.
 
-    Unsigned-only, same as _make_restoring -- make_soft_signed_radix4_div/mod
+    Unsigned-only, same as _make_restoring -- make_soft_div_signed_radix4/mod
     below wrap this with the same abs-then-fix-sign structure
     make_soft_signed_div/mod use.
 
@@ -201,7 +201,7 @@ def _make_radix_restoring(bits_per_step, want_remainder):
             idx -= k
 
         @hw_func
-        def radix_div(a: l_t, b: r_t) -> out_t:
+        def soft_div_radix(a: l_t, b: r_t) -> out_t:
             ae: eff_l_t = a
             be: eff_r_t = b
             # d[0] unused; d[1..top] the precomputed multiples of the
@@ -253,7 +253,7 @@ def _make_radix_restoring(bits_per_step, want_remainder):
                     qk: kbits_t = 0
                     # `break` isn't supported by the elaborator; a `decided`
                     # flag gives the same first-match-from-the-top priority
-                    # select without it -- same pattern make_soft_bitwise_cmp
+                    # select without it -- same pattern make_soft_cmp_bitwise
                     # (soft_cmp.py) uses for its MSB-first magnitude scan.
                     decided: uint1_t = 0
                     for m in range(top, 0, -1):
@@ -277,26 +277,26 @@ def _make_radix_restoring(bits_per_step, want_remainder):
                 result = quot
             return result
 
-        return radix_div
+        return soft_div_radix
 
     return factory
 
 
-def make_soft_radix_div(bits_per_step):
+def make_soft_div_radix(bits_per_step):
     """Generalized radix-2**bits_per_step unsigned divider factory. See
     _make_radix_restoring's docstring for the sweep this is based on and its
-    measured/unmeasured range. make_soft_radix4_div below is the
+    measured/unmeasured range. make_soft_div_radix4 below is the
     bits_per_step=2 instance, the one actually measured best."""
     return _make_radix_restoring(bits_per_step, want_remainder=False)
 
 
-def make_soft_radix_mod(bits_per_step):
-    """See make_soft_radix_div -- same radix family, for the remainder."""
+def make_soft_mod_radix(bits_per_step):
+    """See make_soft_div_radix -- same radix family, for the remainder."""
     return _make_radix_restoring(bits_per_step, want_remainder=True)
 
 
-make_soft_radix4_div = make_soft_radix_div(2)
-make_soft_radix4_mod = make_soft_radix_mod(2)
+make_soft_div_radix4 = make_soft_div_radix(2)
+make_soft_mod_radix4 = make_soft_mod_radix(2)
 
 
 def _make_signed_radix(bits_per_step, want_remainder):
@@ -310,7 +310,7 @@ def _make_signed_radix(bits_per_step, want_remainder):
         )
 
         @hw_func
-        def signed_radix_div(a: l_t, b: r_t) -> out_t:
+        def soft_div_signed_radix(a: l_t, b: r_t) -> out_t:
             ae: signed_t = a
             be: signed_t = b
             l_sign: uint1_t = ae[width - 1]
@@ -330,18 +330,18 @@ def _make_signed_radix(bits_per_step, want_remainder):
                 result = (~signed_result) + 1
             return result
 
-        return signed_radix_div
+        return soft_div_signed_radix
 
     return factory
 
 
-def make_soft_signed_radix_div(bits_per_step):
+def make_soft_div_signed_radix(bits_per_step):
     return _make_signed_radix(bits_per_step, want_remainder=False)
 
 
-def make_soft_signed_radix_mod(bits_per_step):
+def make_soft_mod_signed_radix(bits_per_step):
     return _make_signed_radix(bits_per_step, want_remainder=True)
 
 
-make_soft_signed_radix4_div = make_soft_signed_radix_div(2)
-make_soft_signed_radix4_mod = make_soft_signed_radix_mod(2)
+make_soft_div_signed_radix4 = make_soft_div_signed_radix(2)
+make_soft_mod_signed_radix4 = make_soft_mod_signed_radix(2)

@@ -4795,7 +4795,7 @@ in `FuncLogicLookupTable` and as VHDL component entity names:
 A registered soft-operator-library implementation is a plain `@hw_func`, so it does **not**
 follow the `BIN_OP_*`/`UNARY_OP_*`/`MUX_*` naming convention above — its entity name is
 whatever `_canonical_func_name` derives from the factory (e.g.
-`soft_sub_cmp_greater_True_l_t_uint8_t_r_t_uint8_t_..._1CLK_<hash>`). Two integration points
+`soft_cmp_sub_greater_True_l_t_uint8_t_r_t_uint8_t_..._1CLK_<hash>`). Two integration points
 key off the built-in naming convention and were not updated as part of this library:
 `DEVICE_MODELS.func_name_to_op_and_widths` (delay estimation falls back to per-entity
 synthesis instead of a fast model lookup for soft-op entities — slower sweeps, not incorrect

@@ -1124,12 +1124,12 @@ compiler concept — every file here calls the exact same `register_operator` /
 above, using generic (matcher-based) registrations so one call covers every width.
 
 ```
-soft_add.py    make_soft_ripple_add, make_soft_carry_select_add, make_soft_sub
-soft_mult.py   make_soft_shift_add_mult, make_soft_karatsuba_mult
+soft_add.py    make_soft_add_ripple, make_soft_add_carry_select, make_soft_sub
+soft_mult.py   make_soft_mult_shift_add, make_soft_mult_karatsuba
 soft_div.py    make_soft_div, make_soft_mod           (restoring division, unsigned)
-soft_cmp.py    make_soft_sub_cmp(op)                  (widen/subtract/sign-bit, default)
-               make_soft_bitwise_cmp(op)              (MSB-first magnitude compare, alt)
-soft_shift.py  make_soft_barrel_sl, make_soft_barrel_sr
+soft_cmp.py    make_soft_cmp_sub(op)                  (widen/subtract/sign-bit, default)
+               make_soft_cmp_bitwise(op)              (MSB-first magnitude compare, alt)
+soft_shift.py  make_soft_shift_barrel_sl, make_soft_shift_barrel_sr
 soft_misc.py   make_soft_negate, make_soft_eq(negate), make_soft_mux
 soft.py        activation layer -- register_soft_*() functions, register_soft_ops()
 ```

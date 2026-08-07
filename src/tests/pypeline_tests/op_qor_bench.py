@@ -100,7 +100,10 @@ WIDTH_PAIRS = [
 
 PLUS_MINUS_IMPLS = ["raw_default", "soft_ripple", "soft_carry_select"]
 MULT_IMPLS = ["raw_default", "soft_shift_add", "soft_karatsuba"]
-CMP_IMPLS = ["soft_default", "soft_fixed", "soft_bitwise", "raw_revived_sliced"]
+CMP_IMPLS = [
+    "soft_cmp_sub", "soft_cmp_sub_swapped", "soft_cmp_bitwise",
+    "soft_cmp_borrow", "soft_cmp_prefix", "raw_revived_sliced",
+]
 CMP_OPS = ["GT", "GTE", "LT", "LTE"]
 EQ_IMPLS = ["raw_default", "soft_default"]
 EQ_OPS = ["EQ", "NEQ"]
@@ -113,18 +116,18 @@ def karatsuba_threshold_reps(n_bits):
     n_bits x n_bits multiply. Thresholds between shape changes build byte-identical
     hardware (verified via CANONICAL_CALLABLE_KEY), so sweeping every integer would
     re-measure the same design 2-15x over. T == n_bits is included deliberately: it IS
-    make_soft_shift_add_mult, so its measurement doubles as a sanity control that must
+    make_soft_mult_shift_add, so its measurement doubles as a sanity control that must
     match the soft_shift_add rows exactly."""
     sys.path.insert(0, SRC_DIR)
     sys.path.insert(0, INCLUDE_PYPELINE_DIR)
     from pypeline import make_uint_t
-    from operators.soft_mult import make_soft_karatsuba_mult
+    from operators.soft_mult import make_soft_mult_karatsuba
     from PY_TO_LOGIC import CANONICAL_CALLABLE_KEY
 
     t = make_uint_t(n_bits)
     reps, seen = [], set()
     for T in range(MIN_KARATSUBA_THRESHOLD, n_bits + 1):
-        key = CANONICAL_CALLABLE_KEY(make_soft_karatsuba_mult(t, t, threshold=T))
+        key = CANONICAL_CALLABLE_KEY(make_soft_mult_karatsuba(t, t, threshold=T))
         if key not in seen:
             seen.add(key)
             reps.append(T)
@@ -221,15 +224,21 @@ def gen_source(case):
 
     if is_cmp:
         out_t = "uint1_t"
-        if impl == "soft_default":
-            lines.append('from operators.soft_cmp import make_soft_sub_cmp')
-            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_sub_cmp({op!r}))')
-        elif impl == "soft_fixed":
-            lines.append('from operators.soft_cmp import make_soft_sub_cmp_swapped')
-            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_sub_cmp_swapped({op!r}))')
-        elif impl == "soft_bitwise":
-            lines.append('from operators.soft_cmp import make_soft_bitwise_cmp')
-            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_bitwise_cmp({op!r}))')
+        if impl == "soft_cmp_sub":
+            lines.append('from operators.soft_cmp import make_soft_cmp_sub')
+            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_cmp_sub({op!r}))')
+        elif impl == "soft_cmp_sub_swapped":
+            lines.append('from operators.soft_cmp import make_soft_cmp_sub_swapped')
+            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_cmp_sub_swapped({op!r}))')
+        elif impl == "soft_cmp_bitwise":
+            lines.append('from operators.soft_cmp import make_soft_cmp_bitwise')
+            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_cmp_bitwise({op!r}))')
+        elif impl == "soft_cmp_borrow":
+            lines.append('from operators.soft_cmp import make_soft_cmp_borrow')
+            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_cmp_borrow({op!r}))')
+        elif impl == "soft_cmp_prefix":
+            lines.append('from operators.soft_cmp import make_soft_cmp_prefix')
+            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_cmp_prefix({op!r}))')
         elif impl == "raw_revived_sliced":
             if tool != "vivado":
                 raise SkipCase()  # env-gated raw override only wired for the real VHDL path
@@ -257,22 +266,22 @@ def gen_source(case):
         if impl == "raw_default":
             pass
         elif impl == "soft_ripple" and op == "PLUS":
-            lines.append('from operators.soft_add import make_soft_ripple_add')
-            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_ripple_add)')
+            lines.append('from operators.soft_add import make_soft_add_ripple')
+            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_add_ripple)')
         elif impl == "soft_carry_select" and op == "PLUS":
-            lines.append('from operators.soft_add import make_soft_carry_select_add')
-            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_carry_select_add)')
+            lines.append('from operators.soft_add import make_soft_add_carry_select')
+            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_add_carry_select)')
         elif impl == "soft_ripple" and op == "MINUS":
             lines.append('from operators.soft_add import make_soft_sub')
             lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_sub)')
         elif impl == "soft_carry_select" and op == "MINUS":
             raise SkipCase()
         elif impl == "soft_shift_add" and op == "INFERRED_MULT":
-            lines.append('from operators.soft_mult import make_soft_shift_add_mult')
-            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_shift_add_mult)')
+            lines.append('from operators.soft_mult import make_soft_mult_shift_add')
+            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_mult_shift_add)')
         elif impl == "soft_karatsuba" and op == "INFERRED_MULT":
-            lines.append('from operators.soft_mult import make_soft_karatsuba_mult')
-            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_karatsuba_mult)')
+            lines.append('from operators.soft_mult import make_soft_mult_karatsuba')
+            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, make_soft_mult_karatsuba)')
         elif re.fullmatch(r"soft_karatsuba_t\d+", impl) and op == "INFERRED_MULT":
             # NOTE: registers for any_integer_t like soft_karatsuba above, bypassing
             # register_soft_mult's deliberate unsigned-only restriction (soft
@@ -284,9 +293,9 @@ def gen_source(case):
             # (PY_TO_LOGIC.py) drops lambdas into an opaque hash-fallback name,
             # which would make the emitted entity ungreppable and indistinguishable
             # from any other threshold's in the build log.
-            lines.append('from operators.soft_mult import make_soft_karatsuba_mult')
+            lines.append('from operators.soft_mult import make_soft_mult_karatsuba')
             lines.append(f'def _kar_factory_t{threshold}(l, r):')
-            lines.append(f'    return make_soft_karatsuba_mult(l, r, threshold={threshold})')
+            lines.append(f'    return make_soft_mult_karatsuba(l, r, threshold={threshold})')
             lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, _kar_factory_t{threshold})')
         else:
             raise SkipCase()
@@ -472,13 +481,16 @@ def run_case_subprocess(case):
     return case, results
 
 
-def main_driver(tool, jobs=1, ops=None, widths=None):
+def main_driver(tool, jobs=1, ops=None, widths=None, impls=None):
     cases = build_cases(tool)
     if ops:
         op_set = set(ops)
         cases = [c for c in cases if c["op"] in op_set]
     if widths:
         cases = [c for c in cases if (c["l_bits"], c["r_bits"]) in widths]
+    if impls:
+        impl_set = set(impls)
+        cases = [c for c in cases if c["impl"] in impl_set]
     done = load_done_keys(tool)
     todo = [c for c in cases if case_key(c) not in done]
     print(f"[{tool}] {len(cases)} total cases, {len(done)} already done, {len(todo)} to run.", flush=True)
@@ -516,6 +528,8 @@ if __name__ == "__main__":
                          help="Comma-separated op filter, e.g. PLUS,MINUS (default: all)")
     parser.add_argument("--widths", default=None,
                          help="Comma-separated l:r width-pair filter, e.g. 32:32 (default: all)")
+    parser.add_argument("--impls", default=None,
+                         help="Comma-separated impl filter, e.g. soft_cmp_sub_swapped,soft_cmp_prefix (default: all)")
     parser.add_argument("-j", "--jobs", type=int, default=1,
                          help="Run this many subprocesses concurrently")
     args = parser.parse_args()
@@ -531,4 +545,5 @@ if __name__ == "__main__":
             for pair in args.widths.split(","):
                 l_s, r_s = pair.split(":")
                 widths.add((int(l_s), int(r_s)))
-        main_driver(tool=args.tool, jobs=args.jobs, ops=ops, widths=widths)
+        impls = args.impls.split(",") if args.impls else None
+        main_driver(tool=args.tool, jobs=args.jobs, ops=ops, widths=widths, impls=impls)

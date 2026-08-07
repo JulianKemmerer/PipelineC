@@ -46,7 +46,7 @@ def _make_barrel(value_t, left):
     amount_t = make_uint_t(amount_bits)
 
     @hw_func
-    def barrel(v: value_t, amount: amount_t) -> value_t:
+    def soft_shift_barrel(v: value_t, amount: amount_t) -> value_t:
         result: value_t = v
         for i in range(amount_bits):
             shift_amt = 1 << i
@@ -58,14 +58,14 @@ def _make_barrel(value_t, left):
                 result = shifted
         return result
 
-    return barrel
+    return soft_shift_barrel
 
 
-def make_soft_barrel_sl(value_t):
+def make_soft_shift_barrel_sl(value_t):
     return _make_barrel(value_t, left=True)
 
 
-def make_soft_barrel_sr(value_t):
+def make_soft_shift_barrel_sr(value_t):
     return _make_barrel(value_t, left=False)
 
 
@@ -80,7 +80,7 @@ def _make_barrel_rot(value_t, left):
     const_rot = _const_rotl if left else _const_rotr
 
     @hw_func
-    def barrel_rot(v: value_t, amount: amount_t) -> value_t:
+    def soft_rot_barrel(v: value_t, amount: amount_t) -> value_t:
         result: value_t = v
         for i in range(amount_bits):
             shift_amt = 1 << i
@@ -89,14 +89,14 @@ def _make_barrel_rot(value_t, left):
                 result = shifted
         return result
 
-    return barrel_rot
+    return soft_rot_barrel
 
 
-def make_soft_barrel_rotl(value_t):
+def make_soft_rot_barrel_l(value_t):
     return _make_barrel_rot(value_t, left=True)
 
 
-def make_soft_barrel_rotr(value_t):
+def make_soft_rot_barrel_r(value_t):
     return _make_barrel_rot(value_t, left=False)
 
 
@@ -135,7 +135,7 @@ def make_soft_shift_rot(value_t):
     wide_t = make_uint_t(2 * n_bits)
 
     @hw_func
-    def shift_rot(v: value_t, amount: amount_t, direction: uint1_t, rotate: uint1_t) -> value_t:
+    def soft_shift_rot(v: value_t, amount: amount_t, direction: uint1_t, rotate: uint1_t) -> value_t:
         hi: value_t = 0
         if rotate:
             hi = v
@@ -158,4 +158,4 @@ def make_soft_shift_rot(value_t):
             out = v
         return out
 
-    return shift_rot
+    return soft_shift_rot

@@ -845,19 +845,24 @@ def _soft_equivalents(parser_state):
 
 # Which soft-operator factory implements each built-in operator. One fixed
 # flavor per op: the library ships several (ripple vs carry-select adders,
-# shift-add vs Karatsuba multipliers, subtract vs bitwise comparators) and
-# choosing between them is a second search axis, deliberately not opened here.
-# The flavors picked are the ones whose structure decomposes most evenly, which
-# is what makes them useful as SHARING candidates rather than as fast hardware.
+# shift-add vs Karatsuba multipliers, subtract vs bitwise vs parallel-prefix
+# comparators) and choosing between them is a second search axis, deliberately
+# not opened here. The flavors picked are the ones whose structure decomposes
+# most evenly, which is what makes them useful as SHARING candidates rather
+# than as fast hardware -- NOTE this is a different criterion than fmax, so
+# this map intentionally still pins the comparator to make_soft_cmp_sub_swapped
+# even though make_soft_cmp_prefix is now the fmax-optimized default elsewhere
+# (soft.py:register_soft_cmp, see docs/SYN_DESIGN.md section 8) -- prefix's
+# even-decomposition properties as a sharing candidate haven't been evaluated.
 _SOFT_FACTORY_FOR_OP = {
-    "PLUS": ("operators.soft_add", "make_soft_ripple_add", None),
+    "PLUS": ("operators.soft_add", "make_soft_add_ripple", None),
     "MINUS": ("operators.soft_add", "make_soft_sub", None),
-    "INFERRED_MULT": ("operators.soft_mult", "make_soft_shift_add_mult", None),
-    "MULT": ("operators.soft_mult", "make_soft_shift_add_mult", None),
-    "GT": ("operators.soft_cmp", "make_soft_sub_cmp_swapped", "GT"),
-    "GTE": ("operators.soft_cmp", "make_soft_sub_cmp_swapped", "GTE"),
-    "LT": ("operators.soft_cmp", "make_soft_sub_cmp_swapped", "LT"),
-    "LTE": ("operators.soft_cmp", "make_soft_sub_cmp_swapped", "LTE"),
+    "INFERRED_MULT": ("operators.soft_mult", "make_soft_mult_shift_add", None),
+    "MULT": ("operators.soft_mult", "make_soft_mult_shift_add", None),
+    "GT": ("operators.soft_cmp", "make_soft_cmp_sub_swapped", "GT"),
+    "GTE": ("operators.soft_cmp", "make_soft_cmp_sub_swapped", "GTE"),
+    "LT": ("operators.soft_cmp", "make_soft_cmp_sub_swapped", "LT"),
+    "LTE": ("operators.soft_cmp", "make_soft_cmp_sub_swapped", "LTE"),
     "EQ": ("operators.soft_misc", "make_soft_eq", False),
     "NEQ": ("operators.soft_misc", "make_soft_eq", True),
 }

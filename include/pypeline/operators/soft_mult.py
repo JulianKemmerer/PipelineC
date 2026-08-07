@@ -14,7 +14,7 @@ A signed soft multiplier has not been written yet."""
 from pypeline import hw_func, uint1_t, bit_dup, arith_result_type, make_uint_t
 
 
-def make_tree_add_shifted(n_leaves, leaf_t, out_t, level=0, max_width=None):
+def make_soft_add_tree_shifted(n_leaves, leaf_t, out_t, level=0, max_width=None):
     """Sum `n_leaves` leaf_t values, where leaf i contributes `terms[i] << i`,
     into out_t via a balanced binary tree (log2(n_leaves) deep) of the inferred
     + operator.
@@ -38,7 +38,7 @@ def make_tree_add_shifted(n_leaves, leaf_t, out_t, level=0, max_width=None):
 
     Each level is its own @hw_func, so per-level operand widths are visible to
     the timing model as genuinely different leaf ops -- see the note on
-    make_soft_shift_add_mult for why that matters for autopipelining.
+    make_soft_mult_shift_add for why that matters for autopipelining.
 
     NOTE: a constant << returns its LEFT operand's width unchanged
     (PY_TO_LOGIC.py:4293-4311), so each operand is widened to shifted_t BEFORE
@@ -49,8 +49,8 @@ def make_tree_add_shifted(n_leaves, leaf_t, out_t, level=0, max_width=None):
         max_width = len(out_t)
     if n_leaves < 2:
         raise ValueError(
-            "make_tree_add_shifted needs >= 2 leaves; callers handle the "
-            "single-partial-product case inline (see make_soft_shift_add_mult)"
+            "make_soft_add_tree_shifted needs >= 2 leaves; callers handle the "
+            "single-partial-product case inline (see make_soft_mult_shift_add)"
         )
     in_t = leaf_t[n_leaves]
 
@@ -69,18 +69,18 @@ def make_tree_add_shifted(n_leaves, leaf_t, out_t, level=0, max_width=None):
         # emit a rewire-only zero-delay entity, which makes PyRTL's max_freq
         # divide by zero (pyrtl/analysis.py:251 via PYRTL.py:267).
         @hw_func
-        def tree_add(terms: in_t) -> out_t:
+        def soft_add_tree(terms: in_t) -> out_t:
             wide: shifted_t = terms[1]
             shifted: shifted_t = wide << step
             result: out_t = terms[0] + shifted
             return result
 
-        return tree_add
+        return soft_add_tree
 
-    next_add = make_tree_add_shifted(n_next, node_t, out_t, level + 1, max_width)
+    next_add = make_soft_add_tree_shifted(n_next, node_t, out_t, level + 1, max_width)
 
     @hw_func
-    def tree_add(terms: in_t) -> out_t:
+    def soft_add_tree(terms: in_t) -> out_t:
         level_nodes: node_t[n_next]
         for i in range(n_pairs):
             wide: shifted_t = terms[2 * i + 1]
@@ -91,13 +91,13 @@ def make_tree_add_shifted(n_leaves, leaf_t, out_t, level=0, max_width=None):
             level_nodes[n_pairs] = leftover
         return next_add(level_nodes)
 
-    return tree_add
+    return soft_add_tree
 
 
-def make_soft_shift_add_mult(l_t, r_t):
+def make_soft_mult_shift_add(l_t, r_t):
     """Grade-school shift-and-add multiplier: for each bit of b produce an
     UNSHIFTED partial product (a masked by that bit, or 0), then combine them
-    with make_tree_add_shifted, a balanced binary adder tree (log2(n) deep) that
+    with make_soft_add_tree_shifted, a balanced binary adder tree (log2(n) deep) that
     folds each partial's positional shift into its tree level. Same
     partial-product structure as SW_LIB.GET_BIN_OP_MULT_UINT_N_C_CODE, as
     Pypeline HDL, with per-level width growth instead of one uniform
@@ -133,33 +133,33 @@ def make_soft_shift_add_mult(l_t, r_t):
 
     if r_bits == 1:
         # Single partial product -- no tree at all (and no rewire-only child
-        # entity; see make_tree_add_shifted's terminal-level note).
+        # entity; see make_soft_add_tree_shifted's terminal-level note).
         @hw_func
-        def soft_shift_add_mult(a: l_t, b: r_t) -> out_t:
+        def soft_mult_shift_add(a: l_t, b: r_t) -> out_t:
             ae: eff_l_t = a
             be: eff_r_t = b
             bit_mask: eff_l_t = bit_dup(be[0], left_bits)
             result: out_t = ae & bit_mask
             return result
 
-        return soft_shift_add_mult
+        return soft_mult_shift_add
 
-    tree_add = make_tree_add_shifted(r_bits, eff_l_t, out_t)
+    soft_add_tree = make_soft_add_tree_shifted(r_bits, eff_l_t, out_t)
 
     @hw_func
-    def soft_shift_add_mult(a: l_t, b: r_t) -> out_t:
+    def soft_mult_shift_add(a: l_t, b: r_t) -> out_t:
         ae: eff_l_t = a
         be: eff_r_t = b
         partials: eff_l_t[r_bits]
         for i in range(r_bits):
             bit_mask: eff_l_t = bit_dup(be[i], left_bits)
             partials[i] = ae & bit_mask
-        return tree_add(partials)
+        return soft_add_tree(partials)
 
-    return soft_shift_add_mult
+    return soft_mult_shift_add
 
 
-def make_soft_karatsuba_mult(l_t, r_t, threshold=16):
+def make_soft_mult_karatsuba(l_t, r_t, threshold=16):
     """Recursive Karatsuba multiply. Below `threshold` bits, falls back to
     the shift-and-add multiplier (same style as a soft library implementation
     pinning its own base case rather than recursing forever).
@@ -188,7 +188,7 @@ def make_soft_karatsuba_mult(l_t, r_t, threshold=16):
     docs/SYN_DESIGN.md section 10."""
     if threshold < 3:
         raise ValueError(
-            f"make_soft_karatsuba_mult: threshold must be >= 3 (got {threshold}). A "
+            f"make_soft_mult_karatsuba: threshold must be >= 3 (got {threshold}). A "
             "3-bit operand splits into half=1 / hi=2 with mid = max(1,2)+1 = 3 bits, "
             "so the middle sub-multiply is the same width as its parent and the "
             "recursion never terminates below this threshold."
@@ -197,7 +197,7 @@ def make_soft_karatsuba_mult(l_t, r_t, threshold=16):
     n_bits = max(len(eff_l_t), len(eff_r_t))
 
     if n_bits <= threshold:
-        return make_soft_shift_add_mult(l_t, r_t)
+        return make_soft_mult_shift_add(l_t, r_t)
 
     from pypeline import make_uint_t
 
@@ -206,12 +206,12 @@ def make_soft_karatsuba_mult(l_t, r_t, threshold=16):
     hi_t = make_uint_t(n_bits - half)
     mid_t = make_uint_t(max(half, n_bits - half) + 1)
 
-    mult_lo = make_soft_karatsuba_mult(lo_t, lo_t, threshold)
-    mult_hi = make_soft_karatsuba_mult(hi_t, hi_t, threshold)
-    mult_mid = make_soft_karatsuba_mult(mid_t, mid_t, threshold)
+    mult_lo = make_soft_mult_karatsuba(lo_t, lo_t, threshold)
+    mult_hi = make_soft_mult_karatsuba(hi_t, hi_t, threshold)
+    mult_mid = make_soft_mult_karatsuba(mid_t, mid_t, threshold)
 
     @hw_func
-    def soft_karatsuba_mult(a: l_t, b: r_t) -> out_t:
+    def soft_mult_karatsuba(a: l_t, b: r_t) -> out_t:
         ae: eff_l_t = a
         be: eff_r_t = b
         a_lo: lo_t = ae
@@ -228,4 +228,4 @@ def make_soft_karatsuba_mult(l_t, r_t, threshold=16):
         result = (result << (2 * half)) + (z1 << half) + z0
         return result
 
-    return soft_karatsuba_mult
+    return soft_mult_karatsuba

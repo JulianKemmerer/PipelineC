@@ -43,25 +43,25 @@ from pypeline import (
     _resolve_generic_operator,
 )
 
-from operators.soft_add import make_soft_ripple_add, make_soft_carry_select_add, make_soft_sub
+from operators.soft_add import make_soft_add_ripple, make_soft_add_carry_select, make_soft_sub
 from operators.soft_mult import (
-    make_soft_shift_add_mult,
-    make_soft_karatsuba_mult,
-    make_tree_add_shifted,
+    make_soft_mult_shift_add,
+    make_soft_mult_karatsuba,
+    make_soft_add_tree_shifted,
 )
 from operators.soft_div import (
     make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod,
-    make_soft_radix4_div, make_soft_radix4_mod,
-    make_soft_signed_radix4_div, make_soft_signed_radix4_mod,
-    make_soft_radix_div, make_soft_radix_mod,
-    make_soft_signed_radix_div, make_soft_signed_radix_mod,
+    make_soft_div_radix4, make_soft_mod_radix4,
+    make_soft_div_signed_radix4, make_soft_mod_signed_radix4,
+    make_soft_div_radix, make_soft_mod_radix,
+    make_soft_div_signed_radix, make_soft_mod_signed_radix,
 )
-from operators.soft_cmp import make_soft_sub_cmp
+from operators.soft_cmp import make_soft_cmp_sub
 from operators.soft_shift import (
-    make_soft_barrel_sl,
-    make_soft_barrel_sr,
-    make_soft_barrel_rotl,
-    make_soft_barrel_rotr,
+    make_soft_shift_barrel_sl,
+    make_soft_shift_barrel_sr,
+    make_soft_rot_barrel_l,
+    make_soft_rot_barrel_r,
     make_soft_shift_rot,
 )
 from operators.soft_misc import make_soft_negate, make_soft_eq
@@ -83,7 +83,7 @@ def to_signed(v, width):
 
 def test_soft_add():
     ut = make_uint_t(6)
-    add = make_soft_ripple_add(ut, ut)
+    add = make_soft_add_ripple(ut, ut)
     for a, b in itertools.product(range(0, 64, 5), range(0, 64, 7)):
         got = sim_call(add, SimVal(a, ut), SimVal(b, ut))
         check(f"soft_ripple_add({a},{b})", got, a + b)
@@ -92,7 +92,7 @@ def test_soft_add():
 
 def test_soft_add_carry_select():
     ut = make_uint_t(6)
-    add = make_soft_carry_select_add(ut, ut)
+    add = make_soft_add_carry_select(ut, ut)
     for a, b in itertools.product(range(0, 64, 5), range(0, 64, 7)):
         got = sim_call(add, SimVal(a, ut), SimVal(b, ut))
         check(f"soft_carry_select_add({a},{b})", got, a + b)
@@ -120,7 +120,7 @@ def test_soft_negate():
 
 def test_soft_mult():
     ut = make_uint_t(5)
-    mult = make_soft_shift_add_mult(ut, ut)
+    mult = make_soft_mult_shift_add(ut, ut)
     for a, b in itertools.product(range(0, 32, 3), range(0, 32, 5)):
         got = sim_call(mult, SimVal(a, ut), SimVal(b, ut))
         check(f"soft_mult({a},{b})", got, a * b)
@@ -128,13 +128,13 @@ def test_soft_mult():
 
 
 def test_soft_mult_asymmetric():
-    """Non-square operand widths, both orders -- make_soft_shift_add_mult's
+    """Non-square operand widths, both orders -- make_soft_mult_shift_add's
     tree is sized by r_bits with eff_l_t-wide leaves, so unequal left/right
     widths are the case most likely to expose a tree sizing mistake."""
     lt = make_uint_t(12)
     rt = make_uint_t(5)
-    mult_lr = make_soft_shift_add_mult(lt, rt)
-    mult_rl = make_soft_shift_add_mult(rt, lt)
+    mult_lr = make_soft_mult_shift_add(lt, rt)
+    mult_rl = make_soft_mult_shift_add(rt, lt)
     for a in range(0, 4096, 137):
         for b in range(0, 32, 3):
             got_lr = sim_call(mult_lr, SimVal(a, lt), SimVal(b, rt))
@@ -145,7 +145,7 @@ def test_soft_mult_asymmetric():
 
 
 def test_tree_add_shifted():
-    """make_tree_add_shifted directly, against the Python reference
+    """make_soft_add_tree_shifted directly, against the Python reference
     sum(t << i for i, t in enumerate(terms)). Exercised independently of the
     multiplier because its per-level shift/width/leftover bookkeeping is where a
     mistake would hide: odd leaf counts take the leftover path, and levels whose
@@ -157,7 +157,7 @@ def test_tree_add_shifted():
         # Widest possible sum for this leaf count, so out_t never truncates.
         max_sum = sum(hi << i for i in range(n_leaves))
         out_t = make_uint_t(max_sum.bit_length())
-        tree = make_tree_add_shifted(n_leaves, leaf_t, out_t)
+        tree = make_soft_add_tree_shifted(n_leaves, leaf_t, out_t)
         cases = [
             [0] * n_leaves,
             [hi] * n_leaves,
@@ -179,13 +179,13 @@ def test_soft_karatsuba_mult():
     instead of 65535. threshold=4 forces recursion (and odd splits) even for
     the smaller 8-bit sweep below."""
     ut8 = make_uint_t(8)
-    mult8 = make_soft_karatsuba_mult(ut8, ut8, threshold=4)
+    mult8 = make_soft_mult_karatsuba(ut8, ut8, threshold=4)
     for a, b in itertools.product(range(0, 256, 7), range(0, 256, 11)):
         got = sim_call(mult8, SimVal(a, ut8), SimVal(b, ut8))
         check(f"soft_karatsuba_mult8({a},{b})", got, a * b)
 
     ut16 = make_uint_t(16)
-    mult16 = make_soft_karatsuba_mult(ut16, ut16)
+    mult16 = make_soft_mult_karatsuba(ut16, ut16)
     for a, b in [(65535, 1), (1, 65535), (65535, 65535), (0, 65535), (12345, 6789)]:
         got = sim_call(mult16, SimVal(a, ut16), SimVal(b, ut16))
         check(f"soft_karatsuba_mult16({a},{b})", got, a * b)
@@ -194,7 +194,7 @@ def test_soft_karatsuba_mult():
     # with mid = max(1,2)+1 = 3, so the middle sub-multiply is the same width
     # as its parent and recurses forever unless threshold >= 3 catches it.
     try:
-        make_soft_karatsuba_mult(ut16, ut16, threshold=2)
+        make_soft_mult_karatsuba(ut16, ut16, threshold=2)
         check("soft_karatsuba_mult threshold=2 should raise", False, True)
     except ValueError:
         pass
@@ -247,15 +247,15 @@ def test_soft_signed_div_mod():
 
 
 def test_soft_radix4_div_mod():
-    """make_soft_radix4_div/mod: 2-quotient-bits-per-step restoring divider,
+    """make_soft_div_radix4/mod: 2-quotient-bits-per-step restoring divider,
     against the same golden a//b, a%b as test_soft_div_mod. Even width (6,
     exercises only 2-bit steps) and odd width (7, exercises the leading
     1-bit step) both covered -- the odd-width path is the one most likely to
     have an off-by-one in the elaboration-time step-list construction."""
     for width in (6, 7):
         ut = make_uint_t(width)
-        div = make_soft_radix4_div(ut, ut)
-        mod = make_soft_radix4_mod(ut, ut)
+        div = make_soft_div_radix4(ut, ut)
+        mod = make_soft_mod_radix4(ut, ut)
         n = 1 << width
         for a in range(0, n, 3):
             for b in range(1, n, 5):
@@ -271,8 +271,8 @@ def test_soft_signed_radix4_div_mod():
     test_soft_signed_div_mod, same abs-then-fix-sign wrapper, radix-4
     unsigned core instead of the plain restoring one."""
     st = make_int_t(6)
-    div = make_soft_signed_radix4_div(st, st)
-    mod = make_soft_signed_radix4_mod(st, st)
+    div = make_soft_div_signed_radix4(st, st)
+    mod = make_soft_mod_signed_radix4(st, st)
 
     def c_trunc_div(a, b):
         q = abs(a) // abs(b)
@@ -292,8 +292,8 @@ def test_soft_signed_radix4_div_mod():
 
 
 def test_soft_radix_div_mod_generalized():
-    """make_soft_radix_div/mod(bits_per_step): the generalized factory
-    make_soft_radix4_div/mod are built from (bits_per_step=2). Sweeps
+    """make_soft_div_radix/mod(bits_per_step): the generalized factory
+    make_soft_div_radix4/mod are built from (bits_per_step=2). Sweeps
     bits_per_step in {1,2,3,4} x widths {6,7,8,12} so both the leading
     partial-group path (n_bits % bits_per_step != 0, e.g. width 7 at
     bits_per_step=2, or width 6 at bits_per_step=4) and the clean-multiple
@@ -302,8 +302,8 @@ def test_soft_radix_div_mod_generalized():
     for bits_per_step in (1, 2, 3, 4):
         for width in (6, 7, 8, 12):
             ut = make_uint_t(width)
-            div = make_soft_radix_div(bits_per_step)(ut, ut)
-            mod = make_soft_radix_mod(bits_per_step)(ut, ut)
+            div = make_soft_div_radix(bits_per_step)(ut, ut)
+            mod = make_soft_mod_radix(bits_per_step)(ut, ut)
             n = 1 << width
             step = max(1, n // 11)
             for a in range(0, n, step):
@@ -329,8 +329,8 @@ def test_soft_signed_radix_div_mod_generalized():
 
     for bits_per_step in (1, 2, 3, 4):
         st = make_int_t(6)
-        div = make_soft_signed_radix_div(bits_per_step)(st, st)
-        mod = make_soft_signed_radix_mod(bits_per_step)(st, st)
+        div = make_soft_div_signed_radix(bits_per_step)(st, st)
+        mod = make_soft_mod_signed_radix(bits_per_step)(st, st)
         for a in range(-32, 32, 5):
             for b in list(range(-32, 0, 7)) + list(range(1, 32, 7)):
                 got_q = sim_call(div, SimVal(a, st), SimVal(b, st))
@@ -402,7 +402,7 @@ def test_soft_mult_registration_unsigned_only():
 def test_soft_mult_karatsuba_threshold_override():
     """register_soft_mult_karatsuba(threshold=...) must actually thread the
     override into the registered factory (not silently fall back to
-    make_soft_karatsuba_mult's own default), and the default (threshold=None)
+    make_soft_mult_karatsuba's own default), and the default (threshold=None)
     must resolve to a working multiplier at all. Regression test for the
     functools.partial-based override added alongside the threshold=16 default
     (docs/SYN_DESIGN.md section 10)."""
@@ -427,7 +427,7 @@ def test_soft_cmp():
     ut = make_uint_t(6)
     for op, pyop in (("GT", lambda a, b: a > b), ("GTE", lambda a, b: a >= b),
                       ("LT", lambda a, b: a < b), ("LTE", lambda a, b: a <= b)):
-        cmp_fn = make_soft_sub_cmp(op)(ut, ut)
+        cmp_fn = make_soft_cmp_sub(op)(ut, ut)
         for a, b in itertools.product(range(0, 64, 6), range(0, 64, 9)):
             got = sim_call(cmp_fn, SimVal(a, ut), SimVal(b, ut))
             check(f"soft_cmp_{op}({a},{b})", got, 1 if pyop(a, b) else 0)
@@ -446,7 +446,7 @@ def test_soft_eq():
 
 def test_soft_shift():
     """Exhaustive over uint8_t (every value x every amount, both
-    directions), plus a signed sweep of make_soft_barrel_sr against Python's
+    directions), plus a signed sweep of make_soft_shift_barrel_sr against Python's
     arithmetic >> -- each CONST_SR stage lowers via VHDL's numeric_std
     shift_right, which is arithmetic (sign-extending) for a signed operand
     type, so a signed value_t should already match Python's sign-extending
@@ -456,8 +456,8 @@ def test_soft_shift():
     by one at an edge width."""
     for n_bits in (1, 2, 3, 8):
         ut = make_uint_t(n_bits)
-        sl = make_soft_barrel_sl(ut)
-        sr = make_soft_barrel_sr(ut)
+        sl = make_soft_shift_barrel_sl(ut)
+        sr = make_soft_shift_barrel_sr(ut)
         mask = (1 << n_bits) - 1
         for a in range(0, 1 << n_bits):
             for amt in range(0, n_bits):
@@ -467,7 +467,7 @@ def test_soft_shift():
                 check(f"soft_sr_n{n_bits}({a},{amt})", got_sr, a >> amt)
 
     it = make_int_t(8)
-    sr_signed = make_soft_barrel_sr(it)
+    sr_signed = make_soft_shift_barrel_sr(it)
     for a in range(-128, 128):
         for amt in range(0, 8):
             check(f"soft_sr_signed({a},{amt})", sim_call(sr_signed, SimVal(a, it), SimVal(amt)), a >> amt)
@@ -492,12 +492,12 @@ def _golden_rot(a, amt, n_bits, left):
 
 
 def test_soft_rotate():
-    """make_soft_barrel_rotl/rotr: exhaustive over uint8_t, both directions,
+    """make_soft_rot_barrel_l/rotr: exhaustive over uint8_t, both directions,
     including amount == 0 (identity) and amount == n_bits-1."""
     for n_bits in (1, 2, 3, 8):
         ut = make_uint_t(n_bits)
-        rotl = make_soft_barrel_rotl(ut)
-        rotr = make_soft_barrel_rotr(ut)
+        rotl = make_soft_rot_barrel_l(ut)
+        rotr = make_soft_rot_barrel_r(ut)
         for a in range(0, 1 << n_bits):
             for amt in range(0, n_bits):
                 got_l = sim_call(rotl, SimVal(a, ut), SimVal(amt))
@@ -540,7 +540,7 @@ def test_generic_registry_end_to_end():
     from pypeline import hw_func
 
     ut = make_uint_t(13)  # a width nothing else in this file/session used
-    register_operator("PLUS", any_integer_t, any_integer_t, make_soft_ripple_add)
+    register_operator("PLUS", any_integer_t, any_integer_t, make_soft_add_ripple)
 
     @hw_func
     def add13(a: ut, b: ut) -> ut:

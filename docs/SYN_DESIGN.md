@@ -930,9 +930,14 @@ data point: that cut count is the operator's floor). Two tools:
 - **`--tool vivado`**: `PART("xc7a200tffg1156-2")` (wireguard-fpga's actual
   part), real OOC synthesis, minutes per case. Ground truth.
 
-`--ops` / `--widths` narrow the matrix; results land in
+`--ops` / `--widths` / `--impls` narrow the matrix; results land in
 `op_qor_results_<tool>.csv`, one row per `(op, impl, widths, n_cuts)`,
-resumable by `(tool, op, impl, l_type, r_type)`.
+resumable by `(tool, op, impl, l_type, r_type)`. `--impls` (added 2026-08) is
+the one to reach for when following up a PyRTL finding with a scoped Vivado
+head-to-head, e.g. `--tool vivado --impls soft_cmp_sub_swapped,soft_cmp_prefix`
+-- without it, a full `--tool vivado` run re-measures every impl in
+`CMP_IMPLS`/`PLUS_MINUS_IMPLS`/etc., which is minutes-per-case across the
+whole matrix.
 
 Four harness properties that are easy to get wrong, and were:
 
@@ -998,12 +1003,12 @@ That penalty applies only to implementations that decompose to gate level:
 | `soft_bitwise` | 115.60 | 4.34 | **26.6×** (35× avg across widths) |
 | `raw_revived_sliced` | *(none)* | 2.23 | measured leaf, never estimated |
 
-(`GT uint32×uint32`.) `make_soft_sub_cmp` computes one fixed `diff = a - b`
+(`GT uint32×uint32`.) `make_soft_cmp_sub` computes one fixed `diff = a - b`
 and derives all four ops from it, which forces an extra `is_zero` term for
 `GT`/`LTE` -- `1 if diff == 0 else 0` becomes `BIN_OP_EQ` + `MUX_uint1_t`, and
 `(1-neg) & (1-is_zero)` adds a 1-bit `MINUS` and an `AND`. Three gate-level
 ops, each charged a full 1.019 ns, is most of the 74% inflation.
-`make_soft_sub_cmp_swapped` instead reorders operands per op
+`make_soft_cmp_sub_swapped` instead reorders operands per op
 (`a>b ≡ neg(b-a)`, `a>=b ≡ !neg(a-b)`, `a<b ≡ neg(a-b)`, `a<=b ≡ !neg(b-a)`),
 so every op is one subtract plus one sign-bit read -- matching the structure
 the old SW_LIB C generator used (`GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE`). Its
@@ -1021,8 +1026,8 @@ would have papered over `soft_default` while leaving `soft_bitwise` off by 35×.
 ### Outcome
 
 **Shipped:** `soft.py:register_soft_cmp` registers
-`make_soft_sub_cmp_swapped` for all four ops (previously `make_soft_sub_cmp`).
-`make_soft_sub_cmp` is unchanged and kept for QoR comparison. Compares stay
+`make_soft_cmp_sub_swapped` for all four ops (previously `make_soft_cmp_sub`).
+`make_soft_cmp_sub` is unchanged and kept for QoR comparison. Compares stay
 soft by default -- `raw_revived_sliced` was measured head-to-head and does not
 justify reverting `C_BUILT_IN_FUNC_IS_RAW_HDL`. No change to `EQ`/`NEQ`/
 `MINUS`, which remain correctly raw-HDL by default.
@@ -1074,10 +1079,151 @@ before any registry lookup -- only variable shifts reach the operator
 registry). Re-measure `PLUS` under `--tool vivado` before drawing any
 conclusion from the pyrtl numbers.
 
+### Naming cleanup (2026-08): `soft_<op>_<algorithm>`, not `soft_<algorithm>_<op>`
+
+Every soft-operator factory and its generated hardware entity name now leads
+with the op family, algorithm second -- e.g. the default comparator's
+generated entity is `soft_cmp_sub_swapped_...`, not the old
+`soft_sub_cmp_swapped_...`. The old order read as an overloaded
+*subtraction* operator rather than a subtract-based *comparator* (`sub`
+there has always meant "built via subtract," never "substituted"). Renamed
+throughout: `make_soft_cmp_sub`/`_sub_swapped`/`_bitwise` (soft_cmp.py),
+`make_soft_add_ripple`/`_carry_select` and `make_soft_sub` (soft_add.py),
+`make_soft_mult_shift_add`/`_karatsuba` and `make_soft_add_tree_shifted`
+(soft_mult.py), `make_soft_div_radix[4]`/`make_soft_mod_radix[4]` and their
+`_signed` counterparts (soft_div.py), `make_soft_shift_barrel_sl/sr` and
+`make_soft_rot_barrel_l/r` (soft_shift.py). Pure rename, no behavior change --
+verified via the full `synth` test category (58/58 passing, including real
+Vivado builds) and the native-sim golden tests. `path_delay_cache/` is
+unaffected: it is keyed on entity name, but every cached file (2530 across
+all tool subdirectories) is a built-in leaf (`BIN_OP_*`/`UNARY_OP_*`/`MUX_*`/
+`CONST_*`/`BIT_*`) -- no soft-op composite entity, old or new name, has ever
+had its own cache entry, because a soft op's *leaves* are what get cached,
+and those leaf names don't change when the soft op around them is renamed.
+
+### fmax follow-up (2026-08): a parallel-prefix comparator beats the default under PyRTL
+
+Revisited whether a better-autopipelining comparator exists, since the
+comparator sits on the soft divider's critical path (a 32-bit radix-4 divide
+instantiates ~48 of them).
+
+**The recorded PyRTL sweep looked corrupted but wasn't.** GT/uint32/
+`soft_cmp_sub_swapped` in `op_qor_results_pyrtl.csv` goes
+10.88ns@0cuts → **18.11ns@1cut** → 15.51 → 12.50 → 12.64 → 10.72 → 10.72
+(identical at 5 and 6 cuts) -- the signature of "the harness re-measured the
+same design twice." Verified directly (re-running single cases through
+`pipelinec`, diffing generated VHDL) that it is real, distinct data at every
+cut count (`-- Pipeline Slices: [...]` differs every time, the tool's own log
+says `Same or worse timing result...` at 1 cut). The 0→1cut dip: the coarse
+sweep places cuts at naive even clock-count fractions
+(`GET_BEST_GUESS_IDEAL_SLICES`), not by where delay concentrates, and at 1
+cut that lands a register mid-way through the single 33-bit `BIN_OP_MINUS`'s
+carry chain, splitting it unevenly under PyRTL's flat per-op delay model. The
+5==6-cut plateau is the opposite effect: once cuts have isolated the true
+bottleneck segment, further cuts land in already-zero-delay regions and stop
+changing the number (a real slicing floor). Lesson: judge a comparator by its
+whole curve, never a single `n_cuts` point, and don't assume non-monotonic
+data is a harness bug without checking the generated VHDL first.
+
+**Three new candidates were built, sim-verified (directed edges + signed
+sign-boundary crossings + mismatched operand widths), and elaboration-gated:**
+
+- `make_soft_cmp_borrow` -- explicit LSB-to-MSB borrow-propagate chain
+  instead of the HDL `-` operator, reading the sign as the top difference bit
+  rather than a final borrow-out (those are NOT the same bit -- a
+  two's-complement sign bit is `x_msb^y_msb^borrow-in`, not the borrow that
+  ripples past it; conflating them broke only the signed sim_call sweep).
+  **Measured 7-8x WORSE than the default** (uint32 GT @0cuts: 79.86ns vs.
+  10.61-10.88ns). Not because the sum-bits hypothesis was right (a
+  subtractor's critical path is its carry chain regardless of whether sum
+  bits are also produced) but because hand-unrolling 31 bits into individual
+  bitwise `@hw_func` leaf operations forfeits the flat/lumped delay PyRTL
+  gives the native `-` operator and prices 31 serial gate levels
+  individually instead -- the exact same "primitive-aware operators (pyrtl
+  only)" blind spot documented above for `PLUS`/CARRY4, now confirmed to
+  apply to comparators too. Not evidence of worse real hardware; a `--tool
+  vivado` re-measurement (which infers fast-carry primitives from bitwise
+  ripple patterns) would be needed to actually rank it.
+- `make_soft_cmp_prefix` -- log2(n)-deep parallel-prefix magnitude compare,
+  combining per-bit `(gt,lt)` codes with an associative leader-select
+  operator, one `@hw_func` per tree level (same per-level-entity idiom that
+  measurably helped `make_soft_mult_shift_add`'s estimation accuracy, section
+  above). **Measured BETTER than the default at every PyRTL cut count**,
+  confirmed across all 24 measurable (op, width-pair) combinations in the
+  full sweep (GT/GTE/LT/LTE × uint16/32/64, plus mismatched uint32×uint3/4;
+  the two narrowest pairs have no `n_cuts>=1` default data to compare against
+  since the default's design is too small to slice at all there) -- 24/24
+  wins, 0 losses, 0 ties. Representative point, uint32 GT: 13.66/7.79/6.83/
+  6.75/4.84/4.24/4.16 ns at cuts 0-6 vs. the default's
+  10.88/18.11/15.51/12.50/12.64/10.72/10.72 -- roughly 2-2.5x better once
+  pipelined. The per-level entity boundary is doing real work here: unlike
+  the borrow chain, PyRTL prices each level's small 2-bit combine as its own
+  submodule rather than unrolling one giant flat per-bit scan.
+- `make_soft_cmp_chunked` -- c-bit chunks compared in parallel (each chunk's
+  *internal* compare a small serial bitwise scan), reduced across chunks via
+  the same tree `make_soft_cmp_prefix` uses. uint32 GT, chunk_bits=8:
+  29.48/16.83/12.01/9.20/8.31 ns at cuts 0-4 -- beats the default at
+  n_cuts>=2, loses at 0-1, loses to the prefix tree throughout (each chunk
+  still pays the serial-scan PyRTL penalty internally, just amortized over
+  fewer/wider chunks).
+
+**Vivado result (xc7a200tffg1156-2, all 32 (op, width) combinations
+measured): confirms the PyRTL direction, but not unconditionally.**
+`soft_cmp_prefix` wins 28/32 combinations at `n_cuts>=1` against the then
+default `soft_cmp_sub_swapped`. The win is decisive and *widens* with
+operand width across all four ops -- uint32 and uint64, GT/GTE/LT/LTE all
+favor `soft_cmp_prefix`, e.g. uint64 GTE up to 40% faster at deep cuts. But
+at the two narrowest widths (uint8, uint16) **GTE and LTE specifically
+lose** to `soft_cmp_sub_swapped`, consistently at every cut count, not
+noise (uint16 GTE: `soft_cmp_sub_swapped` 1.83-1.97ns vs. `soft_cmp_prefix`
+2.15-2.79ns at every measured cut). GT/LT still win even at those narrow
+widths -- only the non-strict ops regress. The mechanism:
+`soft_cmp_sub_swapped`'s GTE/LTE cost is identical to its GT/LT cost (same
+one-subtract-one-sign-bit structure, just operand-swapped), and Vivado
+already optimizes that single small subtract extremely well at 8-16 bits
+(~1.7-2ns) -- `soft_cmp_prefix`'s fixed per-level tree overhead (extra
+`MUX_uint2_t` entities per level) doesn't pay for itself until the base
+comparator is wide enough to actually be the bottleneck.
+
+**Outcome: promoted as the unconditional library default.**
+`soft.py:register_soft_cmp` now registers `make_soft_cmp_prefix` for all
+four ops (previously `make_soft_cmp_sub_swapped`) -- a net win across the
+full measured matrix (28/32), accepted with eyes open on the narrow-width
+GTE/LTE tradeoff: those 4 losing combinations are real, not noise, and
+notably invisible to the PyRTL-only sweep (PyRTL's 24/24 never flagged
+them; every one of its measured combinations favored `soft_cmp_prefix`,
+including the narrow-width GTE/LTE cases where Vivado disagrees -- see
+"Known blind spot" above; PyRTL's flat delay model doesn't distinguish "a
+tiny subtract Vivado optimizes very well" from "a larger one it doesn't,"
+so it missed the exact crossover Vivado exposed). Since
+`register_soft_cmp` is called automatically by
+`register_sw_lib_replacements` (`PY_TO_LOGIC.PARSE_FILE`), this changes the
+comparator every Pypeline build gets by default. `make_soft_cmp_sub_swapped`
+remains available via `register_soft_cmp_sub_swapped` for a design known to
+be narrow-width-GTE/LTE-heavy, where it is still the Vivado-confirmed
+better choice. `AUTOFSM.py`'s `_SOFT_FACTORY_FOR_OP` was deliberately left
+on `make_soft_cmp_sub_swapped` -- that map selects for even decomposition
+as FSM resource-sharing candidates, a different criterion its own comment
+calls out as "deliberately not" about speed, which this investigation never
+measured. See `soft_cmp.py`'s module docstring and both registration
+functions' docstrings in `soft.py` for the up-to-date numbers.
+
+Elaborator constraints newly hit while building these (beyond the existing
+divider-work list -- `break` unsupported, no tuple loop variables, no
+tuple-unpacking of closure constants, closure values limited to
+C-types/ints/bools/None/callables/lists-tuples thereof): a call target must
+be a bare name, not a subscript (`leaf_fns[j](...)` where `leaf_fns` is a
+Python list of distinct per-index closures fails with `AttributeError:
+'Subscript' object has no attribute 'id'` -- give each differently-shaped
+callable its own bare-name local instead of indexing into a list of them);
+and a slice used as a call argument must be assigned to a typed local first
+(`f(ae[hi:lo], ...)` fails the same way -- write `x: t = ae[hi:lo]` then
+`f(x, ...)`).
+
 ## 9. Soft barrel shifter: mux count is the only lever
 
 `include/pypeline/operators/soft_shift.py`'s variable-amount barrel shifter
-(`make_soft_barrel_sl`/`make_soft_barrel_sr`) is a chain of stages, each a
+(`make_soft_shift_barrel_sl`/`make_soft_shift_barrel_sr`) is a chain of stages, each a
 `if amount[i]: result = shifted` conditional assignment beside a *constant*
 shift (`result << (1<<i)`). This investigation started from the hypothesis
 that mirrors the multiplier investigation above: does the barrel have the
@@ -1184,7 +1330,7 @@ Pypeline had no variable-amount rotate at all before this round (`rotl`/
 `rotr` are constant-only -- `PY_TO_LOGIC.py:4778-4798`'s `_require_const`).
 Three new factories in `soft_shift.py`:
 
-- `make_soft_barrel_rotl` / `make_soft_barrel_rotr` -- the same minimal-stage
+- `make_soft_rot_barrel_l` / `make_soft_rot_barrel_r` -- the same minimal-stage
   barrel, using the constant `rotl`/`rotr` built-in (also free rewiring, VHDL
   `rol`/`ror`) as each stage's operation instead of a shift. Rotation is mod
   `n_bits`, so this needs no oversize guard and no dead stage at all.
@@ -1220,13 +1366,13 @@ before landing.
 
 ### Correctness
 
-Every shipped factory (`make_soft_barrel_sl/sr`, the new rotl/rotr, and
+Every shipped factory (`make_soft_shift_barrel_sl/sr`, the new rotl/rotr, and
 `make_soft_shift_rot`) is exhaustively swept in
 `src/tests/pypeline_tests/inst/soft_ops_test.py` over tiny widths
 (1, 2, 3 bits, where the amount-width formula is most likely to be off by
 one) plus `uint8_t`, both directions, and (for `make_soft_shift_rot`) all
 four `direction`/`rotate` combinations. A signed sweep of
-`make_soft_barrel_sr` against Python's arithmetic `>>` was also checked and
+`make_soft_shift_barrel_sr` against Python's arithmetic `>>` was also checked and
 found already correct: each stage's *constant* shift lowers through VHDL's
 `numeric_std.shift_right`, which is arithmetic (sign-extending) for a signed
 operand type by construction (`RAW_VHDL.py:4251-4310`) -- so no separate
@@ -1235,9 +1381,9 @@ found in the mult round.
 
 ## 10. Karatsuba base-case threshold: no split beats every split, below 16 bits
 
-Two multiplier shapes exist in `soft_mult.py`: `make_soft_shift_add_mult` (the
+Two multiplier shapes exist in `soft_mult.py`: `make_soft_mult_shift_add` (the
 default, `INFERRED_MULT` registered for `any_uint_t x any_uint_t` by
-`register_soft_mult`) and `make_soft_karatsuba_mult(l_t, r_t, threshold)`, a
+`register_soft_mult`) and `make_soft_mult_karatsuba(l_t, r_t, threshold)`, a
 recursive Karatsuba split that falls back to shift-and-add once an operand
 narrows to `threshold` bits. That threshold had never been measured -- it was
 `8` from when the factory was written, and every prior comparison (this doc's
@@ -1257,7 +1403,7 @@ of those values builds byte-identical hardware (confirmed via
 `CANONICAL_CALLABLE_KEY`, which two different thresholds map to the *same*
 hash whenever they produce the same recursion tree). At `uint16`, for
 example: `T=6` and `T=7` are identical; `T=9..15` are identical; `T>=16` all
-degenerate to `make_soft_shift_add_mult` directly (Karatsuba never actually
+degenerate to `make_soft_mult_shift_add` directly (Karatsuba never actually
 fires). Sweeping every integer would re-measure the same design up to 15x
 over; `op_qor_bench.py`'s `karatsuba_threshold_reps(n_bits)` enumerates one
 representative per distinct class instead.
@@ -1265,7 +1411,7 @@ representative per distinct class instead.
 `threshold < 3` does not terminate: a 3-bit operand splits into `half=1` /
 `hi=2` with `mid = max(1,2)+1 = 3`, so the middle sub-multiply is the same
 width as its parent and recurses forever (confirmed: `RecursionError` at
-`threshold=2`). Fixed with an explicit guard in `make_soft_karatsuba_mult`.
+`threshold=2`). Fixed with an explicit guard in `make_soft_mult_karatsuba`.
 
 ### Sweep, PyRTL `--coarse --sweep`, uint8 and uint16 (in scope this round; 32/64-bit widths not yet measured)
 
@@ -1299,11 +1445,11 @@ this range, at every cut count measured, not just at `n_cuts=0`.
 Sanity control confirmed the harness itself: `soft_karatsuba_t{n_bits}` rows
 are bit-identical (same measured ns at every cut count) to the corresponding
 `soft_shift_add` rows -- as they must be, since `T>=n_bits` makes
-`make_soft_karatsuba_mult` return `make_soft_shift_add_mult` directly.
+`make_soft_mult_karatsuba` return `make_soft_mult_shift_add` directly.
 
 ### Outcome
 
-**Shipped:** `make_soft_karatsuba_mult`'s default `threshold` raised from `8`
+**Shipped:** `make_soft_mult_karatsuba`'s default `threshold` raised from `8`
 to `16`. `register_soft_mult_karatsuba` gained a `threshold=None` parameter
 (forwarded via `functools.partial` when set, so the emitted entity stays
 readably named rather than falling into `_callable_canonical_name`'s opaque

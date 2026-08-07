@@ -13,7 +13,7 @@ values (ae[i], carry, ...) become real hardware.
 from pypeline import hw_func, uint1_t, bit_assign, arith_result_type
 
 
-def make_soft_ripple_add(l_t, r_t):
+def make_soft_add_ripple(l_t, r_t):
     """Bit-by-bit ripple-carry adder: sum[i] = a[i] ^ b[i] ^ carry,
     carry' = majority(a[i], b[i], carry). Built entirely from bitwise
     AND/OR/XOR -- the leaf ops that stay inferred -- plus bit_assign wiring."""
@@ -23,7 +23,7 @@ def make_soft_ripple_add(l_t, r_t):
     r_bits = len(eff_r_t)
 
     @hw_func
-    def soft_ripple_add(a: l_t, b: r_t) -> out_t:
+    def soft_add_ripple(a: l_t, b: r_t) -> out_t:
         ae: eff_l_t = a
         be: eff_r_t = b
         result: out_t = 0
@@ -40,14 +40,14 @@ def make_soft_ripple_add(l_t, r_t):
             carry = (ai & bi) | (ai & carry) | (bi & carry)
         return result
 
-    return soft_ripple_add
+    return soft_add_ripple
 
 
-def make_soft_carry_select_add(l_t, r_t, block_bits=4):
+def make_soft_add_carry_select(l_t, r_t, block_bits=4):
     """Carry-select adder: split into fixed-size blocks, compute each block's
     sum for both possible incoming carries (0 and 1), then bitwise-select the
     correct one once the true carry-in is known. Same full-precision result
-    as make_soft_ripple_add -- a different structure, not a different answer
+    as make_soft_add_ripple -- a different structure, not a different answer
     -- to exercise the "multiple soft flavors" mechanism end to end."""
     eff_l_t, eff_r_t, out_t = arith_result_type("PLUS", l_t, r_t)
     n_bits = len(out_t)
@@ -55,7 +55,7 @@ def make_soft_carry_select_add(l_t, r_t, block_bits=4):
     r_bits = len(eff_r_t)
 
     @hw_func
-    def soft_carry_select_add(a: l_t, b: r_t) -> out_t:
+    def soft_add_carry_select(a: l_t, b: r_t) -> out_t:
         ae: eff_l_t = a
         be: eff_r_t = b
         result: out_t = 0
@@ -91,7 +91,7 @@ def make_soft_carry_select_add(l_t, r_t, block_bits=4):
             block_start = block_end
         return result
 
-    return soft_carry_select_add
+    return soft_add_carry_select
 
 
 def make_soft_sub(l_t, r_t):

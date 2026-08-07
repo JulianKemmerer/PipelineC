@@ -27,27 +27,30 @@ from pypeline import (
     INFERRED,
 )
 
-from operators.soft_add import make_soft_ripple_add, make_soft_carry_select_add, make_soft_sub
-from operators.soft_mult import make_soft_shift_add_mult, make_soft_karatsuba_mult
+from operators.soft_add import make_soft_add_ripple, make_soft_add_carry_select, make_soft_sub
+from operators.soft_mult import make_soft_mult_shift_add, make_soft_mult_karatsuba
 from operators.soft_div import (
     make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod,
-    make_soft_radix4_div, make_soft_radix4_mod,
-    make_soft_signed_radix4_div, make_soft_signed_radix4_mod,
-    make_soft_radix_div, make_soft_radix_mod,
-    make_soft_signed_radix_div, make_soft_signed_radix_mod,
+    make_soft_div_radix4, make_soft_mod_radix4,
+    make_soft_div_signed_radix4, make_soft_mod_signed_radix4,
+    make_soft_div_radix, make_soft_mod_radix,
+    make_soft_div_signed_radix, make_soft_mod_signed_radix,
 )
-from operators.soft_cmp import make_soft_sub_cmp, make_soft_sub_cmp_swapped, make_soft_bitwise_cmp
-from operators.soft_shift import make_soft_barrel_sl, make_soft_barrel_sr
+from operators.soft_cmp import (
+    make_soft_cmp_sub, make_soft_cmp_sub_swapped, make_soft_cmp_bitwise,
+    make_soft_cmp_prefix,
+)
+from operators.soft_shift import make_soft_shift_barrel_sl, make_soft_shift_barrel_sr
 from operators.soft_misc import make_soft_negate, make_soft_eq, make_soft_mux
 
 
 def register_soft_add(scope=None):
-    register_operator("PLUS", any_integer_t, any_integer_t, make_soft_ripple_add, scope=scope)
+    register_operator("PLUS", any_integer_t, any_integer_t, make_soft_add_ripple, scope=scope)
 
 
 def register_soft_add_carry_select(scope=None):
     register_operator(
-        "PLUS", any_integer_t, any_integer_t, make_soft_carry_select_add, scope=scope
+        "PLUS", any_integer_t, any_integer_t, make_soft_add_carry_select, scope=scope
     )
 
 
@@ -56,7 +59,7 @@ def register_soft_sub(scope=None):
 
 
 def register_soft_mult(scope=None):
-    """make_soft_shift_add_mult registered for any_uint_t x any_uint_t only.
+    """make_soft_mult_shift_add registered for any_uint_t x any_uint_t only.
 
     Signed (and mixed-signedness) multiply is deliberately left unregistered.
     Both soft multipliers sum `a << i` over the set bits of b treating b as
@@ -78,25 +81,25 @@ def register_soft_mult(scope=None):
     register it here for any_int_t the way make_soft_signed_div is.
     """
     register_operator(
-        "INFERRED_MULT", any_uint_t, any_uint_t, make_soft_shift_add_mult, scope=scope
+        "INFERRED_MULT", any_uint_t, any_uint_t, make_soft_mult_shift_add, scope=scope
     )
 
 
 def register_soft_mult_karatsuba(threshold=None, scope=None):
     """See register_soft_mult -- same unsigned-only restriction, same reason
-    (make_soft_karatsuba_mult bottoms out in make_soft_shift_add_mult and
+    (make_soft_mult_karatsuba bottoms out in make_soft_mult_shift_add and
     inherits its unsigned-only partial-product summation).
 
-    threshold: base-case width override, forwarded to make_soft_karatsuba_mult.
+    threshold: base-case width override, forwarded to make_soft_mult_karatsuba.
     Default None uses that factory's own default rather than duplicating the
     number here, so there is one source of truth for it -- see
-    make_soft_karatsuba_mult's docstring and docs/SYN_DESIGN.md section 10 for
+    make_soft_mult_karatsuba's docstring and docs/SYN_DESIGN.md section 10 for
     the measurement behind the current default (16: no threshold below the
     operand width ever beat "don't split" at uint8/uint16, measured directly;
     unmeasured above 16 bits, where a real optimum may still exist)."""
-    factory = make_soft_karatsuba_mult
+    factory = make_soft_mult_karatsuba
     if threshold is not None:
-        factory = functools.partial(make_soft_karatsuba_mult, threshold=threshold)
+        factory = functools.partial(make_soft_mult_karatsuba, threshold=threshold)
     register_operator("INFERRED_MULT", any_uint_t, any_uint_t, factory, scope=scope)
 
 
@@ -122,7 +125,7 @@ def register_soft_div_radix4(scope=None):
     """Alternate DIV flavor: radix-4 restoring division (2 quotient bits per
     step instead of 1, half the steps of register_soft_div's plain restoring
     divider). Autopipelined-fmax-sweep-confirmed (docs: div_fmax_sweep
-    exploration; see make_soft_radix_div's docstring in soft_div.py) at 34.1
+    exploration; see make_soft_div_radix's docstring in soft_div.py) at 34.1
     MHz vs. 22.4-22.9 MHz for the plain restoring divider at 16 pipeline
     stages under PyRTL estimates -- the best of bits_per_step in {1,2,3} and
     six other algorithmic variants tried there (non-restoring, a
@@ -132,14 +135,14 @@ def register_soft_div_radix4(scope=None):
     calling this after register_soft_div (or as part of a fresh
     register_soft_ops-style call) overrides DIV's flavor for this scope
     without touching MOD unless register_soft_mod_radix4 is also called."""
-    register_operator("DIV", any_uint_t, any_uint_t, make_soft_radix4_div, scope=scope)
-    register_operator("DIV", any_int_t, any_int_t, make_soft_signed_radix4_div, scope=scope)
+    register_operator("DIV", any_uint_t, any_uint_t, make_soft_div_radix4, scope=scope)
+    register_operator("DIV", any_int_t, any_int_t, make_soft_div_signed_radix4, scope=scope)
 
 
 def register_soft_mod_radix4(scope=None):
     """See register_soft_div_radix4 -- same radix-4 flavor, for MOD."""
-    register_operator("MOD", any_uint_t, any_uint_t, make_soft_radix4_mod, scope=scope)
-    register_operator("MOD", any_int_t, any_int_t, make_soft_signed_radix4_mod, scope=scope)
+    register_operator("MOD", any_uint_t, any_uint_t, make_soft_mod_radix4, scope=scope)
+    register_operator("MOD", any_int_t, any_int_t, make_soft_mod_signed_radix4, scope=scope)
 
 
 def register_soft_div_radix(bits_per_step, scope=None):
@@ -153,37 +156,70 @@ def register_soft_div_radix(bits_per_step, scope=None):
     that unmeasured-not-ranked-last caveat in mind. Same unsigned/signed
     split and last-registration-wins semantics as register_soft_div_radix4."""
     register_operator(
-        "DIV", any_uint_t, any_uint_t, make_soft_radix_div(bits_per_step), scope=scope
+        "DIV", any_uint_t, any_uint_t, make_soft_div_radix(bits_per_step), scope=scope
     )
     register_operator(
-        "DIV", any_int_t, any_int_t, make_soft_signed_radix_div(bits_per_step), scope=scope
+        "DIV", any_int_t, any_int_t, make_soft_div_signed_radix(bits_per_step), scope=scope
     )
 
 
 def register_soft_mod_radix(bits_per_step, scope=None):
     """See register_soft_div_radix -- same generalized radix family, for MOD."""
     register_operator(
-        "MOD", any_uint_t, any_uint_t, make_soft_radix_mod(bits_per_step), scope=scope
+        "MOD", any_uint_t, any_uint_t, make_soft_mod_radix(bits_per_step), scope=scope
     )
     register_operator(
-        "MOD", any_int_t, any_int_t, make_soft_signed_radix_mod(bits_per_step), scope=scope
+        "MOD", any_int_t, any_int_t, make_soft_mod_signed_radix(bits_per_step), scope=scope
     )
 
 
 def register_soft_cmp(scope=None):
-    """Default comparator flavor: widen, subtract (operand order swapped per
-    op), take the sign bit -- one subtract, no extra EQ+MUX for any of the
-    four ops. QoR-confirmed (docs/SYN_DESIGN.md) to strictly dominate the
-    un-swapped make_soft_sub_cmp for GT/LTE and match it for GTE/LT, across
-    every measured width and pipeline cut count."""
+    """Default comparator flavor (changed 2026-08, see docs/SYN_DESIGN.md
+    section 8): log2(n)-deep parallel-prefix magnitude compare -- combines
+    per-bit (gt,lt) codes with an associative leader-select operator in a
+    balanced tree, one @hw_func per tree level.
+
+    Vivado-confirmed (xc7a200tffg1156-2, all 32 (op,width) combinations
+    measured) to win 28/32 vs. the previous default (make_soft_cmp_sub_swapped,
+    still available via register_soft_cmp_sub_swapped) at n_cuts>=1 -- the win
+    is decisive and widens with operand width across all four ops (up to 40%
+    faster at deep cuts for uint64 GTE). The 4 losses are GTE/LTE specifically
+    at the two narrowest widths (uint8, uint16): the previous default's
+    GTE/LTE cost equals its GT/LT cost (one subtract, operand-swapped), and
+    Vivado already optimizes that single small subtract very well at 8-16
+    bits, so this structure's fixed per-level tree overhead doesn't pay for
+    itself until the comparator is wide enough to be the real bottleneck.
+    Promoted anyway as the unconditional default -- see make_soft_cmp_prefix's
+    docstring in soft_cmp.py for the full numbers and register_soft_cmp_sub_swapped
+    below for the narrow-GTE/LTE-favoring alternative."""
     for op in ("GT", "GTE", "LT", "LTE"):
-        register_operator(op, any_integer_t, any_integer_t, make_soft_sub_cmp_swapped(op), scope=scope)
+        register_operator(op, any_integer_t, any_integer_t, make_soft_cmp_prefix(op), scope=scope)
 
 
 def register_soft_cmp_bitwise(scope=None):
     """Alternate comparator flavor: MSB-first bitwise magnitude compare."""
     for op in ("GT", "GTE", "LT", "LTE"):
-        register_operator(op, any_integer_t, any_integer_t, make_soft_bitwise_cmp(op), scope=scope)
+        register_operator(op, any_integer_t, any_integer_t, make_soft_cmp_bitwise(op), scope=scope)
+
+
+def register_soft_cmp_sub_swapped(scope=None):
+    """Alternate comparator flavor: widen, subtract (operand order swapped
+    per op), take the sign bit -- one subtract, no extra EQ+MUX for any of
+    the four ops. The library default through 2026-08 (see
+    docs/SYN_DESIGN.md section 8); superseded by register_soft_cmp's
+    parallel-prefix default, but still Vivado-confirmed faster than it for
+    GTE/LTE specifically at 8/16-bit operand widths -- reach for this via
+    scope= on a function known to do narrow-width GTE/LTE comparisons."""
+    for op in ("GT", "GTE", "LT", "LTE"):
+        register_operator(op, any_integer_t, any_integer_t, make_soft_cmp_sub_swapped(op), scope=scope)
+
+
+def register_soft_cmp_prefix(scope=None):
+    """Alias for register_soft_cmp (the parallel-prefix comparator is the
+    library default as of 2026-08) -- kept as an explicit name for callers
+    that want to name the flavor regardless of which one is currently
+    default. See register_soft_cmp's docstring for the measured numbers."""
+    register_soft_cmp(scope=scope)
 
 
 def register_soft_eq(scope=None):
@@ -192,8 +228,8 @@ def register_soft_eq(scope=None):
 
 
 def register_soft_shift(scope=None):
-    register_left_operator("SL", any_integer_t, make_soft_barrel_sl, scope=scope)
-    register_left_operator("SR", any_integer_t, make_soft_barrel_sr, scope=scope)
+    register_left_operator("SL", any_integer_t, make_soft_shift_barrel_sl, scope=scope)
+    register_left_operator("SR", any_integer_t, make_soft_shift_barrel_sr, scope=scope)
 
 
 def register_soft_negate(scope=None):
@@ -240,7 +276,7 @@ def register_sw_lib_replacements(scope=None):
     register_soft_mod_radix4), not the plain one-bit-per-step restoring
     divider -- autopipelined-fmax-sweep-confirmed at 34.1 MHz vs. 22.4-22.9
     MHz for plain restoring division at 16 pipeline stages under PyRTL
-    estimates (docs: div_fmax_sweep exploration; see make_soft_radix_div's
+    estimates (docs: div_fmax_sweep exploration; see make_soft_div_radix's
     docstring in soft_div.py). This is the only automatic, zero-registration
     DIV/MOD path in Pypeline -- there is no inferred HDL '/' equivalent to
     the built-in '*' that register_soft_mult's callers can fall back to;

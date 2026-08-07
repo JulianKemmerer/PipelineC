@@ -541,8 +541,8 @@ everything unconditionally, which for anything cheaper than its own multiplexer
 v1's descent bottomed out at built-in operators: a `BIN_OP_PLUS_uint32_t_uint32_t`
 has no Python source, so there is nothing to re-express. v2 asks the
 soft-operator library (`include/pypeline/operators/`) for an equivalent that
-does — `make_soft_ripple_add`, `make_soft_shift_add_mult`,
-`make_soft_sub_cmp_swapped`, … — whose own leaves are inferred bitwise
+does — `make_soft_add_ripple`, `make_soft_mult_shift_add`,
+`make_soft_cmp_sub_swapped`, … — whose own leaves are inferred bitwise
 operations. Descent can therefore continue all the way down to gates.
 
 Candidates are prepared during the bootstrap elaboration
