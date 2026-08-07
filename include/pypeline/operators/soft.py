@@ -234,7 +234,22 @@ def register_sw_lib_replacements(scope=None):
     so that path stays unreachable from any Pypeline build. Still overridable
     like any other registration -- a design (or this function called again
     with scope=) that registers something more specific afterward wins,
-    since the registry always resolves most-recently-registered-first."""
+    since the registry always resolves most-recently-registered-first.
+
+    DIV/MOD default to the radix-4 flavor (register_soft_div_radix4/
+    register_soft_mod_radix4), not the plain one-bit-per-step restoring
+    divider -- autopipelined-fmax-sweep-confirmed at 34.1 MHz vs. 22.4-22.9
+    MHz for plain restoring division at 16 pipeline stages under PyRTL
+    estimates (docs: div_fmax_sweep exploration; see make_soft_radix_div's
+    docstring in soft_div.py). This is the only automatic, zero-registration
+    DIV/MOD path in Pypeline -- there is no inferred HDL '/' equivalent to
+    the built-in '*' that register_soft_mult's callers can fall back to;
+    an unregistered DIV/MOD hits C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD and
+    raises loudly instead. register_soft_ops (the separate, explicitly-
+    opt-in "register everything soft" call below) still defaults DIV/MOD to
+    the plain divider, unchanged -- this function is specifically the
+    automatic fallback, not a general recommendation to prefer radix-4
+    whenever soft division is registered by hand."""
     global _sw_lib_replacements_registered
     if scope is None:
         if _sw_lib_replacements_registered:
@@ -242,8 +257,8 @@ def register_sw_lib_replacements(scope=None):
         _sw_lib_replacements_registered = True
     register_soft_negate(scope=scope)
     register_soft_cmp(scope=scope)
-    register_soft_div(scope=scope)
-    register_soft_mod(scope=scope)
+    register_soft_div_radix4(scope=scope)
+    register_soft_mod_radix4(scope=scope)
     register_soft_shift(scope=scope)
 
 
