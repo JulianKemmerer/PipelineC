@@ -688,7 +688,7 @@ explicitly during the sweep:
 
 Pypeline's `AUTOPIPELINE(func)` tag exposes the sweep's discovered stage count back to
 the design's Python as `.latency` (e.g. `make_stream_pipeline` sizes its output FIFO
-from it). The stage count only exists *after* the sweep, so the `pipelinec` driver
+from it). The stage count only exists *after* the sweep, so `SYN.DO_SWEEP_AND_AUTOPIPELINE`
 wraps the parse+sweep sequence in an outer loop — a **pin-and-confirm** loop, not a
 repeat-the-sweep one:
 
@@ -790,9 +790,10 @@ copy of each distinct operation and runs the function over several cycles. Full
 design in [`AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md); what matters here is how it
 sits around everything above.
 
-**Loop nesting.** `run_sweep_and_autopipeline` in `src/pipelinec` is the whole
-of §5 + §6.5 factored into one function. When a design contains AUTOFSM call
-sites, `run_autofsm_schedule_passes` wraps it:
+**Loop nesting.** `SYN.DO_SWEEP_AND_AUTOPIPELINE` is the whole of §5 + §6.5 factored
+into one function; `src/pipelinec` calls it via `SYN.DO_PIPELINED_BUILD`, which is
+the dispatch point. When a design contains AUTOFSM call sites,
+`AUTOFSM.DO_SCHEDULE_PASSES` wraps it instead:
 
 ```
 bootstrap parse (AUTOFSM call sites are combinational passthroughs)
@@ -800,7 +801,7 @@ for each schedule pass:
     ADD_PATH_DELAY_TO_LOOKUP          <- measure the operations, do NOT sweep
     schedule + bind each AUTOFSM
     install schedules, re-PARSE_FILE  <- call sites become the generated FSMs
-    run_sweep_and_autopipeline        <- §5 sweep + §6.5 AUTOPIPELINE loop
+    SYN.DO_SWEEP_AND_AUTOPIPELINE     <- §5 sweep + §6.5 AUTOPIPELINE loop
     timing met, or nothing/only-floors blamed?  -> done
     otherwise shrink the blamed FSMs' per-state budget and go again
 ```
@@ -808,6 +809,14 @@ for each schedule pass:
 The bootstrap design is deliberately **not** swept: it holds the raw
 combinational blob nobody intends to build, so sweeping it would fail timing
 pointlessly. It exists only to be measured.
+
+**The CLI driver stays thin.** `src/pipelinec` holds only argparse, argument
+validation/combination, propagating flags into module-level settings
+(`SYN.HIER_SYN_MODE`, `SIM.SET_SIM_TOOL`, ...), and a top-level sequence of
+named calls (parse → comb path → `SYN.DO_PIPELINED_BUILD` → write results →
+`SWEEP.PRINT_TIMING_FAILURES` → optional bitstream → optional sim). It defines
+no functions and no loops; every loop above lives in the module whose feature
+it drives.
 
 **Why a generated FSM needs no sweep support.** It holds non-volatile `Reg`
 state, so `CAN_HAVE_ADDED_LATENCY` is already False: the sweep treats it as an

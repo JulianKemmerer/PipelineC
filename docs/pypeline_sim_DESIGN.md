@@ -1629,10 +1629,11 @@ first when `--comb` is absent** (see the next section). Simulator selection is i
   (`SIM.GET_MAIN_FUNC_LATENCIES`) and the converged AUTOPIPELINE harvest
   (`SYN.HARVEST_AUTOPIPELINE_LATENCIES`) whenever a build's `parser_state`/timing params are
   available — all zeros/None on the comb path.
-- `src/pipelinec` checks `SIM.SIM_TOOL is SIM.pypeline_sim` right after tool selection and, if
-  **comb** simulation was requested (`--sim --comb`/`--sim_comb`, or `--no_synth`), calls
-  `DO_OPTIONAL_SIM` and exits immediately — **no VHDL elaboration or synthesis happens on this
-  path**, mirroring how `pypeline_sim.py` works standalone. A non-`--comb` `--sim` run instead
+- `src/pipelinec` checks `SIM.NATIVE_SIM_SKIPS_BUILD(args)` right after tool selection — true
+  when `SIM_TOOL is pypeline_sim` and **comb** simulation was requested (`--sim --comb`/
+  `--sim_comb`, or `--no_synth`) — and if so calls `DO_OPTIONAL_SIM` and exits immediately —
+  **no VHDL elaboration or synthesis happens on this path**, mirroring how `pypeline_sim.py`
+  works standalone. A non-`--comb` `--sim` run instead
   falls through to the full build (path-delay measurement → throughput sweep → AUTOPIPELINE
   pin-and-confirm), and the native sim launches at the end with the discovered latencies
   emulated — the same "no `--comb` means pipelined" rule the VHDL simulators follow. (If no
@@ -1662,9 +1663,10 @@ This section documents **how it is implemented**. Everything below lives in `src
 
 #### End-to-end control flow
 
-1. `src/pipelinec`: the native-sim short-circuit (which normally runs the sim and exits before
-   any elaboration) is now gated on `args.comb or args.no_synth`. A non-`--comb` `--sim` run
-   therefore *falls through* to the full build path, exactly like a cocotb build would.
+1. `src/pipelinec`: the native-sim short-circuit (`SIM.NATIVE_SIM_SKIPS_BUILD`, which normally
+   runs the sim and exits before any elaboration) is gated on `args.comb or args.no_synth`. A
+   non-`--comb` `--sim` run therefore *falls through* to the full build path, exactly like a
+   cocotb build would.
 2. The build runs to completion, ending at `SYN.WRITE_FINAL_FILES` with the converged
    `multimain_timing_params`.
 3. `SIM.DO_OPTIONAL_SIM(args.sim, parser_state, args, multimain_timing_params, ...)` dispatches

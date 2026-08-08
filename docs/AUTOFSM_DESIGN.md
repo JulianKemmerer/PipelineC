@@ -11,9 +11,9 @@ interval N, minimum area).
 Both are tool-driven: you write the function, state a clock goal, and the build
 figures out the rest — how many stages, or how many states.
 
-- Implementation: [`src/AUTOFSM.py`](../src/AUTOFSM.py), the tag class in
-  [`src/pypeline.py`](../src/pypeline.py), the elaborator hook in
-  [`src/PY_TO_LOGIC.py`](../src/PY_TO_LOGIC.py), the driver loop in
+- Implementation: [`src/AUTOFSM.py`](../src/AUTOFSM.py) (including the driver loop,
+  `DO_SCHEDULE_PASSES`), the tag class in [`src/pypeline.py`](../src/pypeline.py), the
+  elaborator hook in [`src/PY_TO_LOGIC.py`](../src/PY_TO_LOGIC.py), invoked from
   [`src/pipelinec`](../src/pipelinec).
 - Pypeline (Python) frontend only. The C frontend's `__clk()`-based FSM support
   ([`src/C_TO_FSM.py`](../src/C_TO_FSM.py)) is a different feature solving a
@@ -522,10 +522,10 @@ a problem inside it can be read as source instead of inferred from VHDL.
 
 ### 3.4 The driver loop
 
-`run_autofsm_schedule_passes` in [`src/pipelinec`](../src/pipelinec) wraps
-`run_sweep_and_autopipeline` (the extracted sweep + AUTOPIPELINE convergence
-flow). Each pass: measure → schedule → install → re-execute the design →
-full sweep + AUTOPIPELINE convergence → check timing.
+`AUTOFSM.DO_SCHEDULE_PASSES`, called from [`src/pipelinec`](../src/pipelinec) via
+`SYN.DO_PIPELINED_BUILD`, wraps `SYN.DO_SWEEP_AND_AUTOPIPELINE` (the sweep +
+AUTOPIPELINE convergence flow). Each pass: measure → schedule → install →
+re-execute the design → full sweep + AUTOPIPELINE convergence → check timing.
 
 The bootstrap design is deliberately **not** swept: it contains the raw
 combinational blob nobody intends to build, so sweeping it would just fail

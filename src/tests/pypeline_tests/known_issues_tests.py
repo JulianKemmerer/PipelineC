@@ -98,6 +98,22 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
+    # Structurally richest multi-writer global wire design (3 writers splitting
+    # nested struct leaves + a mixed-depth whole-subtree claim + readback), moved
+    # here from synth_tests.py: PY_TO_LOGIC.PARSE_FILE raises ElaborationError
+    # complaining that Global Output 'combined' has two whole-wire writers
+    # ('combiner' and a soft_cmp_prefix helper), even though the writers'
+    # actually-driven fields are disjoint -- the overlap check is over-eager
+    # about "whole wire" vs. the fields each writer really touches.
+    tests.append(
+        Test(
+            name="global_wire_nested_split_known_issue",
+            category="known_issues",
+            cmd=[PYPELINEC, INST_DIR / "global_wire_nested_split_test.py", "--comb"],
+            needs_out_dir=True,
+            expect_fail=True,
+        )
+    )
     return tests
 
 

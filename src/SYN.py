@@ -3331,6 +3331,192 @@ def DO_THROUGHPUT_SWEEP(
     return SWEEP.DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params)
 
 
+def AUTOPIPELINE_DIVERGENCE_EXIT(divergences):
+    for key, inst_latencies in sorted(divergences.items()):
+        print(f"AUTOPIPELINE: {key}:")
+        for sub_inst, lat in sorted(inst_latencies.items()):
+            print(f"  {lat} clks : {sub_inst}")
+    sys.exit(
+        "AUTOPIPELINE: ambiguous .latency: the above call site(s) are "
+        "instantiated multiple times with different discovered stage "
+        "counts, which a single .latency int cannot represent. Give "
+        "each call site its own factory-produced closure, or pin an "
+        "explicit depth=N."
+    )
+
+
+def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_file):
+    """AUTOPIPELINE .latency pin-and-confirm passes (Pypeline designs only, see
+    docs/SYN_DESIGN.md): if the design's Python read any AUTOPIPELINE(...).latency,
+    re-execute it with the discovered stage counts installed so those reads resolve to
+    real values (e.g. for FIFO sizing), carrying the sweep's pipelining over as pinned
+    seeds so only one confirmation synthesis is needed instead of a fresh sweep. A
+    design with no AUTOPIPELINE call sites, or one that never reads .latency, pays
+    nothing beyond the in-memory harvest walk below."""
+    import pypeline
+
+    latencies, divergences = HARVEST_AUTOPIPELINE_LATENCIES(
+        parser_state, multimain_timing_params.TimingParamsLookupTable
+    )
+    if divergences:
+        AUTOPIPELINE_DIVERGENCE_EXIT(divergences)
+    if not (latencies and pypeline.AUTOPIPELINE_LATENCY_WAS_READ()):
+        return parser_state, multimain_timing_params
+
+    import PY_TO_LOGIC
+    import C_TO_LOGIC
+
+    autopipeline_pass = 1
+    last_change_desc = None
+    while True:
+        autopipeline_pass += 1
+        if autopipeline_pass > AUTOPIPELINE_MAX_LATENCY_PASSES:
+            sys.exit(
+                f"AUTOPIPELINE: .latency did not settle within "
+                f"{AUTOPIPELINE_MAX_LATENCY_PASSES} passes "
+                f"(last change: {last_change_desc}). A "
+                f".latency-derived design change is perturbing timing "
+                f"enough to change the discovered stage count itself. "
+                f"Pin an explicit depth=N at the unstable call site "
+                f"to break the loop."
+            )
+        print(
+            f"================== AUTOPIPELINE Pass {autopipeline_pass}: "
+            f"Re-elaborating with Discovered Latencies ================================",
+            flush=True,
+        )
+        for key, lat in sorted(latencies.items()):
+            print(f"AUTOPIPELINE {key}: {lat} clks", flush=True)
+        prev_parser_state = parser_state
+        prev_tpl = multimain_timing_params.TimingParamsLookupTable
+        pypeline.SET_AUTOPIPELINE_LATENCY_CACHE(latencies)
+        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
+        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
+        parser_state = ADD_PATH_DELAY_TO_LOOKUP(parser_state)
+        seeded_tpl, unseeded_ap_insts = SEED_TIMING_PARAMS_FROM_PREVIOUS(
+            prev_parser_state,
+            prev_tpl,
+            parser_state,
+            GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state),
+        )
+        if unseeded_ap_insts:
+            sys.exit(
+                "AUTOPIPELINE: the set of AUTOPIPELINE call sites "
+                "changed between passes -- Python control flow (or an "
+                "AUTOPIPELINE'd function's closure-captured values, "
+                "which are encoded in its identity) must not depend "
+                "on .latency's own value; only sizing outside "
+                "AUTOPIPELINE'd functions may. New instance(s) with "
+                "no previous-pass counterpart: " + ", ".join(unseeded_ap_insts)
+            )
+        multimain_timing_params = MultiMainTimingParams()
+        multimain_timing_params.TimingParamsLookupTable = seeded_tpl
+        multimain_timing_params, met = DO_SEEDED_CONFIRM_OR_SWEEP(
+            parser_state, multimain_timing_params
+        )
+        new_latencies, divergences = HARVEST_AUTOPIPELINE_LATENCIES(
+            parser_state, multimain_timing_params.TimingParamsLookupTable
+        )
+        if divergences:
+            AUTOPIPELINE_DIVERGENCE_EXIT(divergences)
+        if new_latencies == latencies:
+            # The .latency values this pass's Python consumed equal
+            # the stage counts actually built -- converged. (Meeting
+            # timing alone is NOT sufficient to stop: realizing the
+            # seeded fractional slices hierarchically -- e.g. into
+            # pipelined built-in div/mult entities with their own
+            # stage granularity -- can change an instance's total
+            # latency even on a passing confirmation run, and exiting
+            # then would build VHDL whose actual depth contradicts
+            # every .latency-derived constant baked into it, and
+            # desync the native simulator's latency emulation.)
+            break
+        last_change_desc = ", ".join(
+            f"{key}: {latencies.get(key)} -> {new_latencies.get(key)} clks"
+            for key in sorted(set(latencies) | set(new_latencies))
+            if latencies.get(key) != new_latencies.get(key)
+        )
+        print(
+            "AUTOPIPELINE: "
+            + ("slice realization" if met else "fallback sweep")
+            + f" changed discovered latencies ({last_change_desc}); "
+            "re-elaborating...",
+            flush=True,
+        )
+        latencies = new_latencies
+
+    return parser_state, multimain_timing_params
+
+
+def DO_SWEEP_AND_AUTOPIPELINE(parser_state, args, src_file):
+    """Measure delays, run the throughput sweep, then converge AUTOPIPELINE
+    .latency feedback -- i.e. everything between "here is an elaborated design"
+    and "here is a pipelined design whose Python agrees with what was built".
+
+    Factored out of DO_PIPELINED_BUILD because AUTOFSM.DO_SCHEDULE_PASSES wraps this
+    whole thing in an outer loop of its own (schedule the FSMs -> re-elaborate ->
+    build; if an FSM is blamed for missing timing, reschedule it into more states and
+    go again). Returns the final (parser_state, multimain_timing_params): the
+    AUTOPIPELINE loop below re-parses the design internally, so the parser_state
+    handed in is not necessarily the one that comes back out.
+    """
+    if not args.comb and not args.yosys_json:
+        print(
+            "================== Adding Timing Information from Synthesis Tool ================================",
+            flush=True,
+        )
+        parser_state = ADD_PATH_DELAY_TO_LOOKUP(parser_state)
+
+    print(
+        "================== Beginning Throughput Sweep ================================",
+        flush=True,
+    )
+    multimain_timing_params = DO_THROUGHPUT_SWEEP(
+        parser_state,
+        coarse_only=args.coarse,
+        starting_guess_latency=args.start,
+        do_incremental_guesses=not (args.sweep),
+        comb_only=args.comb,
+        stop_at_latency=args.stop,
+    )
+
+    if src_file.endswith(".py") and not args.comb and not args.yosys_json:
+        parser_state, multimain_timing_params = DO_AUTOPIPELINE_LATENCY_PASSES(
+            parser_state, multimain_timing_params, src_file
+        )
+
+    return parser_state, multimain_timing_params
+
+
+def DO_PIPELINED_BUILD(parser_state, args, src_file):
+    """Dispatch to the AUTOFSM schedule-and-confirm loop when the design contains
+    AUTOFSM call sites, otherwise straight to the sweep + AUTOPIPELINE convergence
+    flow. Both paths return (parser_state, multimain_timing_params)."""
+    autofsm_possible = (
+        src_file.endswith(".py") and not args.comb and not args.yosys_json
+    )
+    if autofsm_possible:
+        import AUTOFSM
+
+        autofsm_possible = AUTOFSM.DESIGN_HAS_AUTOFSM(parser_state)
+    if autofsm_possible:
+        import AUTOFSM
+
+        return AUTOFSM.DO_SCHEDULE_PASSES(parser_state, args, src_file)
+    return DO_SWEEP_AND_AUTOPIPELINE(parser_state, args, src_file)
+
+
+def GENERATE_FINAL_BITSTREAM(parser_state, multimain_timing_params):
+    print("================== Generating Bitstream ==================", flush=True)
+    SYN_TOOL.SYN_AND_REPORT_TIMING(
+        None,
+        None,
+        parser_state,
+        multimain_timing_params.TimingParamsLookupTable,
+        is_final_top=True,
+    )
+
+
 # Not because it is easy, but because we thought it would be easy
 
 # Do I like Joe Walsh?

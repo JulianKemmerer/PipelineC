@@ -775,7 +775,7 @@ MY_AP.latency                             # int, 0 until known
 
 At plain simulation time `MY_AP(x)` is a plain identity passthrough (`func(x)`), and
 `.latency` stays 0 (the module-level latency cache it reads,
-`pypeline._autopipeline_latency_cache`, is only populated by the `pipelinec` driver —
+`pypeline._autopipeline_latency_cache`, is only populated by `SYN.DO_AUTOPIPELINE_LATENCY_PASSES` —
 between the pin-and-confirm loop's real synthesizing passes, and again before a
 non-`--comb` `--sim` run's native-sim design import, where `.latency` then reads the
 built stage count and `MY_AP(x)` emulates the N-stage pipeline with a per-call-site
@@ -820,8 +820,8 @@ UPDATE.latency                   # fixed in->out cycle count; 0 until a real bui
 ```
 
 Structurally a sibling of `AUTOPIPELINE`, and deliberately so: a duck-type marker
-the elaborator probes for (`_is_autofsm_pragma`), a module-global cache the
-`pipelinec` driver installs between passes (`SET_AUTOFSM_SCHEDULE_CACHE`,
+the elaborator probes for (`_is_autofsm_pragma`), a module-global cache
+`AUTOFSM.DO_SCHEDULE_PASSES` installs between passes (`SET_AUTOFSM_SCHEDULE_CACHE`,
 carrying `canonical_key -> schedule dict` instead of `-> stage count`), a
 snapshot taken at construction so one design execution sees one consistent view,
 a `canonical_key` computed lazily via `PY_TO_LOGIC.CANONICAL_CALLABLE_KEY`, and

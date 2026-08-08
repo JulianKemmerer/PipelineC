@@ -543,6 +543,33 @@ def PRINT_PIPELINE_DEPTH_SUMMARY(parser_state, TimingParamsLookupTable):
             )
 
 
+def PRINT_TIMING_FAILURES(multimain_timing_params) -> bool:
+    """Print one ERROR line per main that missed its timing goal. Returns True if
+    any failure was reported, so the caller can decide whether to fail the build --
+    results are still written for debugging either way."""
+    timing_failures = getattr(multimain_timing_params, "sweep_timing_failures", None)
+    if not timing_failures:
+        return False
+    print(
+        "================== TIMING NOT MET ================================",
+        flush=True,
+    )
+    for main_func_name, goal_mhz, achieved_mhz, why in timing_failures:
+        achieved_str = (
+            f"{achieved_mhz:.2f} MHz" if achieved_mhz is not None else "unknown"
+        )
+        print(
+            f"ERROR: TIMING NOT MET: {main_func_name} achieved {achieved_str} "
+            f"vs {goal_mhz:.2f} MHz goal ({why})",
+            flush=True,
+        )
+    print(
+        "Results were written for debugging; skipping simulation/bitstream.",
+        flush=True,
+    )
+    return True
+
+
 def PREDICTED_STAGE_NS(cuts, landscape):
     # Worst stage delay implied by the cuts (weighted units -> ns)
     bounds = [-1] + list(cuts) + [landscape.total_units - 1]

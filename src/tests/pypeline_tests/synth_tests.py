@@ -71,10 +71,12 @@ SYNTH_TEST_FILES = [
         EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_detect",
         ["--comb"],
     ),
-    # Structurally richest multi-writer global wire design (3 writers splitting
-    # nested struct leaves + a mixed-depth whole-subtree claim + readback):
-    # proves the per-region top-level VHDL through real synthesis, not just GHDL.
-    ("global_wire_nested_split_test.py", INST_DIR, ["--comb"]),
+    # global_wire_nested_split_test.py (structurally richest multi-writer global
+    # wire design: 3 writers splitting nested struct leaves + a mixed-depth
+    # whole-subtree claim + readback) moved to known_issues_tests.py --
+    # ElaborationError: 'combined' reported as having two whole-wire writers
+    # even though their driven fields are disjoint. See
+    # global_wire_nested_split_known_issue there.
 ]
 # fmt: on
 

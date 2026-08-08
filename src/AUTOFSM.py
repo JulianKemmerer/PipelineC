@@ -46,10 +46,11 @@ Where the pieces live:
   THIS MODULE                 builds the DAG from the elaborated Logic graph,
                               schedules + binds it, and GENERATES ORDINARY
                               PYPELINE PYTHON SOURCE implementing the FSM.
-  src/pipelinec               drives the schedule-and-confirm loop: measure
-                              delays -> schedule -> re-elaborate -> synthesize
-                              -> if an FSM is blamed for a timing failure,
-                              tighten its budget and reschedule.
+                              DO_SCHEDULE_PASSES (below) drives the
+                              schedule-and-confirm loop: measure delays ->
+                              schedule -> re-elaborate -> synthesize -> if an
+                              FSM is blamed for a timing failure, tighten its
+                              budget and reschedule. Called from src/pipelinec.
 
 Generating Python source (rather than a new backend IR) is what keeps this
 feature small: the generated FSM is elaborated by the same path as hand-written
@@ -2788,6 +2789,159 @@ def DESCRIBE_FUS(schedule):
         + ("" if fus.get(fu, fu) == fu else f" [{fu}]")
         for fu, count in sorted(counts.items())
     ]
+
+
+def PARSE_UNSHARE_SPEC(spec):
+    """argparse type= callable for --autofsm_unshare SUBSTR=N. Returns (pattern,
+    n_units); raises ArgumentTypeError on a malformed spec so a bad flag fails at
+    argument-parsing time rather than partway into a build."""
+    import argparse
+
+    pattern, _, n_units = spec.rpartition("=")
+    if not pattern or not n_units.isdigit():
+        raise argparse.ArgumentTypeError(
+            f"--autofsm_unshare expects SUBSTR=N, got {spec!r}"
+        )
+    return (pattern, int(n_units))
+
+
+def DO_SCHEDULE_PASSES(parser_state, args, src_file):
+    """AUTOFSM schedule-and-confirm loop, wrapping the sweep + AUTOPIPELINE flow.
+
+    An AUTOFSM call site elaborates to a combinational passthrough until a
+    schedule exists for it, so the bootstrap parse handed in deliberately built a
+    design with the raw combinational blob inline. That design is only useful
+    for MEASURING -- ADD_PATH_DELAY_TO_LOOKUP populates the per-operation delays
+    the scheduler needs -- so the sweep is skipped for it entirely (it would
+    just fail timing on a blob nobody intends to build).
+
+    Each pass then: schedule -> install -> re-execute the design (so call sites
+    now elaborate to the real FSM, and any .latency-derived Python sizing sees
+    real values) -> full sweep + AUTOPIPELINE convergence. If timing fails and
+    an AUTOFSM is to blame, shrink its per-state budget so the next schedule
+    uses more, smaller states, and go again -- the direct analogue of the sweep
+    adding pipeline stages, and the reason an AUTOFSM can be tuned by iteration
+    rather than by hand.
+    """
+    import sys
+
+    import SYN
+    import PY_TO_LOGIC
+    import C_TO_LOGIC
+    import pypeline
+
+    budget_scales = {}
+    if args.autofsm_budget_scale is not None:
+        for key in COLLECT_AUTOFSM_KEYS(parser_state):
+            budget_scales[key] = args.autofsm_budget_scale
+    force_unshare = list(args.autofsm_unshare)
+    force_open = list(args.autofsm_open)
+    prev_schedules = None
+    for schedule_pass in range(1, MAX_SCHEDULE_PASSES + 1):
+        print(
+            f"================== AUTOFSM Pass {schedule_pass}: Scheduling "
+            f"Shared-Resource FSMs ================================",
+            flush=True,
+        )
+        parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
+        schedules = HARVEST_AUTOFSM_SCHEDULES(
+            parser_state,
+            budget_scales,
+            prev_schedules,
+            area_sweep=not args.autofsm_no_area_sweep,
+            ctl=args.autofsm_ctl,
+            sweep_debug=args.autofsm_sweep_debug,
+            force_open=force_open,
+            force_unshare=force_unshare,
+        )
+        for key in sorted(schedules):
+            print(DESCRIBE_SCHEDULE(key, schedules[key]), flush=True)
+            for fu_line in DESCRIBE_FUS(schedules[key]):
+                print(fu_line, flush=True)
+        # A max_latency= cap is a hard constraint, so failing to meet it fails
+        # the build. Silently returning a slower FSM would defeat the point of
+        # asking for the cap in the first place.
+        infeasible = [k for k in sorted(schedules) if schedules[k]["latency_infeasible"]]
+        if infeasible:
+            for key in infeasible:
+                print(LATENCY_INFEASIBLE_MESSAGE(key, schedules[key]), flush=True)
+            sys.exit(-1)
+        prev_schedules = schedules
+
+        pypeline.SET_AUTOFSM_SCHEDULE_CACHE(schedules)
+        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
+        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
+        DUMP_GENERATED_SOURCE(parser_state, SYN.SYN_OUTPUT_DIRECTORY)
+        parser_state, multimain_timing_params = SYN.DO_SWEEP_AND_AUTOPIPELINE(
+            parser_state, args, src_file
+        )
+
+        failures = getattr(multimain_timing_params, "sweep_timing_failures", None)
+        if not failures:
+            break
+        blamed = BLAMED_AUTOFSM_KEYS(parser_state, multimain_timing_params, schedules)
+        if not blamed:
+            print(
+                "AUTOFSM: timing was missed but no AUTOFSM region is implicated; "
+                "adding states cannot help.",
+                flush=True,
+            )
+            break
+        if all(schedules[key]["at_floor"] for key in blamed):
+            print(
+                "AUTOFSM: every implicated FSM is already at its floor -- its "
+                "slowest state is a single indivisible operation, so no number "
+                "of extra states can make the clock: "
+                + ", ".join(sorted(blamed)),
+                flush=True,
+            )
+            break
+        if schedule_pass == MAX_SCHEDULE_PASSES:
+            print(
+                f"AUTOFSM: still missing timing after "
+                f"{MAX_SCHEDULE_PASSES} schedule passes.",
+                flush=True,
+            )
+            break
+        # Tighten until the schedule ACTUALLY changes. One step of the tighten
+        # factor does not always move an operation across a state boundary, and
+        # rebuilding a byte-identical design to discover that would waste a
+        # whole synthesis run -- so keep shrinking the budget (a cheap pure
+        # computation) until the plan differs, then go build that.
+        changed = False
+        for _attempt in range(MAX_TIGHTEN_STEPS):
+            for key in blamed:
+                budget_scales[key] = (
+                    budget_scales.get(key, DEFAULT_BUDGET_SCALE)
+                    * BUDGET_TIGHTEN_FACTOR
+                )
+            trial = HARVEST_AUTOFSM_SCHEDULES(
+                parser_state,
+                budget_scales,
+                schedules,
+                area_sweep=not args.autofsm_no_area_sweep,
+                ctl=args.autofsm_ctl,
+                force_open=force_open,
+                force_unshare=force_unshare,
+            )
+            if not SCHEDULES_EQUAL(trial, schedules):
+                changed = True
+                break
+        if not changed:
+            print(
+                "AUTOFSM: shrinking the per-state budget no longer changes the "
+                "schedule; adding states cannot help further.",
+                flush=True,
+            )
+            break
+        for key in sorted(blamed):
+            print(
+                f"AUTOFSM {key}: timing missed; tightened per-state budget to "
+                f"{budget_scales[key]:.3f} of the clock period, rescheduling "
+                f"into more states...",
+                flush=True,
+            )
+    return parser_state, multimain_timing_params
 
 
 # ─────────────────────────────────────────────

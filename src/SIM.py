@@ -33,6 +33,28 @@ def SET_SIM_TOOL(cmd_line_args, source_file=None):
         SIM_TOOL = pypeline_sim
 
 
+def NATIVE_SIM_SKIPS_BUILD(args) -> bool:
+    """True when a comb-only native (.py) Pypeline simulation run can go straight
+    against the design's Python source -- no VHDL elaboration or synthesis needed.
+    If SET_SIM_TOOL selected the native simulator (explicit --native or no other
+    simulator requested) and comb simulation was requested, the caller should run the
+    sim now and skip straight to done. A non---comb native --sim run instead falls
+    through to the full build (sweep + AUTOPIPELINE pin-and-confirm), and the sim
+    launches at the end with the discovered latencies emulated -- the same
+    no---comb-means-pipelined rule the VHDL simulators follow."""
+    return (
+        SIM_TOOL is pypeline_sim
+        and (args.sim or args.sim_comb)
+        and (args.comb or args.no_synth)
+    )
+
+
+def SIM_AT_COMB_STAGE(args) -> bool:
+    """True when --comb build's optional sim should run: explicit --sim_comb, or a
+    native-sim --sim run that got degraded to comb (e.g. no synth tool installed)."""
+    return args.sim_comb or (SIM_TOOL is pypeline_sim and args.sim)
+
+
 def DO_OPTIONAL_SIM(
     do_sim, parser_state, args, multimain_timing_params=None, source_file=None
 ):
@@ -59,7 +81,7 @@ def DO_OPTIONAL_SIM(
             # was never read -- the pin-and-confirm loop never ran for those,
             # so the cache is still empty. Harvest divergences are already a
             # fatal driver error for every non---comb .py build
-            # (pipelinec's autopipeline_divergence_exit), so ignore them here.
+            # (SYN.AUTOPIPELINE_DIVERGENCE_EXIT), so ignore them here.
             main_latencies = None
             ap_latencies = None
             autofsm_schedules = None

@@ -112,6 +112,7 @@ parser.add_argument(
     "instead of searching. Repeatable. Same A/B measurement purpose as "
     "--autofsm_open; may be combined with it.",
     action="append",
+    type=AUTOFSM.PARSE_UNSHARE_SPEC,
     default=[],
     metavar="SUBSTR=N",
 )
@@ -259,6 +260,8 @@ if args.sim_comb:
 # Resolve source file arg
 src_file = os.path.abspath(args.src_file)
 pins_file = os.path.abspath(args.pins) if args.pins else None
+if not (src_file.endswith(".c") or src_file.endswith(".py")):
+    sys.exit(f"Unrecognized source file type: {src_file} (expected .c or .py)")
 
 # Apply arguments to global modules
 
@@ -291,19 +294,9 @@ C_TO_LOGIC.MULT_STYLE = args.mult
 OPEN_TOOLS.YOSYS_JSON_ONLY = args.yosys_json
 # Sim tool selection
 SIM.SET_SIM_TOOL(args, src_file)
-# Comb-only native Pypeline (.py) simulation runs directly against the
-# design's Python source -- no VHDL elaboration or synthesis needed. If
-# SIM.py selected the native simulator (explicit --native or no other
-# simulator requested) and comb simulation was requested, run it now and
-# skip straight to done. A non---comb native --sim run instead falls
-# through to the full build (sweep + AUTOPIPELINE pin-and-confirm), and
-# the sim launches at the end with the discovered latencies emulated --
-# the same no---comb-means-pipelined rule the VHDL simulators follow.
-if (
-    SIM.SIM_TOOL is SIM.pypeline_sim
-    and (args.sim or args.sim_comb)
-    and (args.comb or args.no_synth)
-):
+# A comb-only native Pypeline (.py) simulation run needs no build at all -- see
+# SIM.NATIVE_SIM_SKIPS_BUILD.
+if SIM.NATIVE_SIM_SKIPS_BUILD(args):
     SIM.DO_OPTIONAL_SIM(True, None, args, source_file=src_file)
     sys.exit(0)
 # AXIS XO file switch
@@ -365,316 +358,16 @@ if args.comb:
     # (A native non---comb --sim run degraded to comb by the no-synth-tool
     # fallback above still sims here -- zero latency, warning already printed.)
     SIM.DO_OPTIONAL_SIM(
-        args.sim_comb or (SIM.SIM_TOOL is SIM.pypeline_sim and args.sim),
+        SIM.SIM_AT_COMB_STAGE(args),
         parser_state,
         args,
         source_file=src_file,
     )
 
-def run_sweep_and_autopipeline(parser_state):
-    """Measure delays, run the throughput sweep, then converge AUTOPIPELINE
-    .latency feedback -- i.e. everything between "here is an elaborated design"
-    and "here is a pipelined design whose Python agrees with what was built".
-
-    Factored out of the module-level flow because AUTOFSM wraps this whole thing
-    in an outer loop of its own (schedule the FSMs -> re-elaborate -> build; if
-    an FSM is blamed for missing timing, reschedule it into more states and go
-    again). Returns the final (parser_state, multimain_timing_params): the
-    AUTOPIPELINE loop below re-parses the design internally, so the parser_state
-    handed in is not necessarily the one that comes back out.
-    """
-    if not args.comb and not args.yosys_json:
-        print(
-            "================== Adding Timing Information from Synthesis Tool ================================",
-            flush=True,
-        )
-        parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
-
-    print(
-        "================== Beginning Throughput Sweep ================================",
-        flush=True,
-    )
-    multimain_timing_params = SYN.DO_THROUGHPUT_SWEEP(
-        parser_state,
-        coarse_only=args.coarse,
-        starting_guess_latency=args.start,
-        do_incremental_guesses=not (args.sweep),
-        comb_only=args.comb,
-        stop_at_latency=args.stop,
-    )
-
-    # AUTOPIPELINE .latency pin-and-confirm passes (Pypeline designs only,
-    # see docs/SYN_DESIGN.md): if the design's Python read any
-    # AUTOPIPELINE(...).latency, re-execute it with the discovered stage
-    # counts installed so those reads resolve to real values (e.g. for FIFO
-    # sizing), carrying the sweep's pipelining over as pinned seeds so only
-    # one confirmation synthesis is needed instead of a fresh sweep.
-    # A design with no AUTOPIPELINE call sites, or one that never reads
-    # .latency, pays nothing beyond the in-memory harvest walk below.
-    if src_file.endswith(".py") and not args.comb and not args.yosys_json:
-        import pypeline
-
-        def autopipeline_divergence_exit(divergences):
-            for key, inst_latencies in sorted(divergences.items()):
-                print(f"AUTOPIPELINE: {key}:")
-                for sub_inst, lat in sorted(inst_latencies.items()):
-                    print(f"  {lat} clks : {sub_inst}")
-            sys.exit(
-                "AUTOPIPELINE: ambiguous .latency: the above call site(s) are "
-                "instantiated multiple times with different discovered stage "
-                "counts, which a single .latency int cannot represent. Give "
-                "each call site its own factory-produced closure, or pin an "
-                "explicit depth=N."
-            )
-
-        latencies, divergences = SYN.HARVEST_AUTOPIPELINE_LATENCIES(
-            parser_state, multimain_timing_params.TimingParamsLookupTable
-        )
-        if divergences:
-            autopipeline_divergence_exit(divergences)
-        if latencies and pypeline.AUTOPIPELINE_LATENCY_WAS_READ():
-            autopipeline_pass = 1
-            last_change_desc = None
-            while True:
-                autopipeline_pass += 1
-                if autopipeline_pass > SYN.AUTOPIPELINE_MAX_LATENCY_PASSES:
-                    sys.exit(
-                        f"AUTOPIPELINE: .latency did not settle within "
-                        f"{SYN.AUTOPIPELINE_MAX_LATENCY_PASSES} passes "
-                        f"(last change: {last_change_desc}). A "
-                        f".latency-derived design change is perturbing timing "
-                        f"enough to change the discovered stage count itself. "
-                        f"Pin an explicit depth=N at the unstable call site "
-                        f"to break the loop."
-                    )
-                print(
-                    f"================== AUTOPIPELINE Pass {autopipeline_pass}: "
-                    f"Re-elaborating with Discovered Latencies ================================",
-                    flush=True,
-                )
-                for key, lat in sorted(latencies.items()):
-                    print(f"AUTOPIPELINE {key}: {lat} clks", flush=True)
-                prev_parser_state = parser_state
-                prev_tpl = multimain_timing_params.TimingParamsLookupTable
-                pypeline.SET_AUTOPIPELINE_LATENCY_CACHE(latencies)
-                parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
-                C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
-                parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
-                seeded_tpl, unseeded_ap_insts = SYN.SEED_TIMING_PARAMS_FROM_PREVIOUS(
-                    prev_parser_state,
-                    prev_tpl,
-                    parser_state,
-                    SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state),
-                )
-                if unseeded_ap_insts:
-                    sys.exit(
-                        "AUTOPIPELINE: the set of AUTOPIPELINE call sites "
-                        "changed between passes -- Python control flow (or an "
-                        "AUTOPIPELINE'd function's closure-captured values, "
-                        "which are encoded in its identity) must not depend "
-                        "on .latency's own value; only sizing outside "
-                        "AUTOPIPELINE'd functions may. New instance(s) with "
-                        "no previous-pass counterpart: " + ", ".join(unseeded_ap_insts)
-                    )
-                multimain_timing_params = SYN.MultiMainTimingParams()
-                multimain_timing_params.TimingParamsLookupTable = seeded_tpl
-                multimain_timing_params, met = SYN.DO_SEEDED_CONFIRM_OR_SWEEP(
-                    parser_state, multimain_timing_params
-                )
-                new_latencies, divergences = SYN.HARVEST_AUTOPIPELINE_LATENCIES(
-                    parser_state, multimain_timing_params.TimingParamsLookupTable
-                )
-                if divergences:
-                    autopipeline_divergence_exit(divergences)
-                if new_latencies == latencies:
-                    # The .latency values this pass's Python consumed equal
-                    # the stage counts actually built -- converged. (Meeting
-                    # timing alone is NOT sufficient to stop: realizing the
-                    # seeded fractional slices hierarchically -- e.g. into
-                    # pipelined built-in div/mult entities with their own
-                    # stage granularity -- can change an instance's total
-                    # latency even on a passing confirmation run, and exiting
-                    # then would build VHDL whose actual depth contradicts
-                    # every .latency-derived constant baked into it, and
-                    # desync the native simulator's latency emulation.)
-                    break
-                last_change_desc = ", ".join(
-                    f"{key}: {latencies.get(key)} -> {new_latencies.get(key)} clks"
-                    for key in sorted(set(latencies) | set(new_latencies))
-                    if latencies.get(key) != new_latencies.get(key)
-                )
-                print(
-                    "AUTOPIPELINE: "
-                    + ("slice realization" if met else "fallback sweep")
-                    + f" changed discovered latencies ({last_change_desc}); "
-                    "re-elaborating...",
-                    flush=True,
-                )
-                latencies = new_latencies
-
-    return parser_state, multimain_timing_params
-
-
-def run_autofsm_schedule_passes(parser_state):
-    """AUTOFSM schedule-and-confirm loop, wrapping the sweep + AUTOPIPELINE flow.
-
-    An AUTOFSM call site elaborates to a combinational passthrough until a
-    schedule exists for it, so the bootstrap parse above deliberately built a
-    design with the raw combinational blob inline. That design is only useful
-    for MEASURING -- ADD_PATH_DELAY_TO_LOOKUP populates the per-operation delays
-    the scheduler needs -- so the sweep is skipped for it entirely (it would
-    just fail timing on a blob nobody intends to build).
-
-    Each pass then: schedule -> install -> re-execute the design (so call sites
-    now elaborate to the real FSM, and any .latency-derived Python sizing sees
-    real values) -> full sweep + AUTOPIPELINE convergence. If timing fails and
-    an AUTOFSM is to blame, shrink its per-state budget so the next schedule
-    uses more, smaller states, and go again -- the direct analogue of the sweep
-    adding pipeline stages, and the reason an AUTOFSM can be tuned by iteration
-    rather than by hand.
-    """
-    import AUTOFSM
-    import pypeline
-
-    budget_scales = {}
-    if args.autofsm_budget_scale is not None:
-        for key in AUTOFSM.COLLECT_AUTOFSM_KEYS(parser_state):
-            budget_scales[key] = args.autofsm_budget_scale
-    force_unshare = []
-    for spec in args.autofsm_unshare:
-        pattern, _, n_units = spec.rpartition("=")
-        if not pattern or not n_units.isdigit():
-            print(
-                f"--autofsm_unshare expects SUBSTR=N, got {spec!r}",
-                flush=True,
-            )
-            sys.exit(-1)
-        force_unshare.append((pattern, int(n_units)))
-    force_open = list(args.autofsm_open)
-    prev_schedules = None
-    for schedule_pass in range(1, AUTOFSM.MAX_SCHEDULE_PASSES + 1):
-        print(
-            f"================== AUTOFSM Pass {schedule_pass}: Scheduling "
-            f"Shared-Resource FSMs ================================",
-            flush=True,
-        )
-        parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
-        schedules = AUTOFSM.HARVEST_AUTOFSM_SCHEDULES(
-            parser_state,
-            budget_scales,
-            prev_schedules,
-            area_sweep=not args.autofsm_no_area_sweep,
-            ctl=args.autofsm_ctl,
-            sweep_debug=args.autofsm_sweep_debug,
-            force_open=force_open,
-            force_unshare=force_unshare,
-        )
-        for key in sorted(schedules):
-            print(AUTOFSM.DESCRIBE_SCHEDULE(key, schedules[key]), flush=True)
-            for fu_line in AUTOFSM.DESCRIBE_FUS(schedules[key]):
-                print(fu_line, flush=True)
-        # A max_latency= cap is a hard constraint, so failing to meet it fails
-        # the build. Silently returning a slower FSM would defeat the point of
-        # asking for the cap in the first place.
-        infeasible = [k for k in sorted(schedules) if schedules[k]["latency_infeasible"]]
-        if infeasible:
-            for key in infeasible:
-                print(
-                    AUTOFSM.LATENCY_INFEASIBLE_MESSAGE(key, schedules[key]), flush=True
-                )
-            sys.exit(-1)
-        prev_schedules = schedules
-
-        pypeline.SET_AUTOFSM_SCHEDULE_CACHE(schedules)
-        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
-        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
-        AUTOFSM.DUMP_GENERATED_SOURCE(parser_state, SYN.SYN_OUTPUT_DIRECTORY)
-        parser_state, multimain_timing_params = run_sweep_and_autopipeline(parser_state)
-
-        failures = getattr(multimain_timing_params, "sweep_timing_failures", None)
-        if not failures:
-            break
-        blamed = AUTOFSM.BLAMED_AUTOFSM_KEYS(
-            parser_state, multimain_timing_params, schedules
-        )
-        if not blamed:
-            print(
-                "AUTOFSM: timing was missed but no AUTOFSM region is implicated; "
-                "adding states cannot help.",
-                flush=True,
-            )
-            break
-        if all(schedules[key]["at_floor"] for key in blamed):
-            print(
-                "AUTOFSM: every implicated FSM is already at its floor -- its "
-                "slowest state is a single indivisible operation, so no number "
-                "of extra states can make the clock: "
-                + ", ".join(sorted(blamed)),
-                flush=True,
-            )
-            break
-        if schedule_pass == AUTOFSM.MAX_SCHEDULE_PASSES:
-            print(
-                f"AUTOFSM: still missing timing after "
-                f"{AUTOFSM.MAX_SCHEDULE_PASSES} schedule passes.",
-                flush=True,
-            )
-            break
-        # Tighten until the schedule ACTUALLY changes. One step of the tighten
-        # factor does not always move an operation across a state boundary, and
-        # rebuilding a byte-identical design to discover that would waste a
-        # whole synthesis run -- so keep shrinking the budget (a cheap pure
-        # computation) until the plan differs, then go build that.
-        changed = False
-        for _attempt in range(AUTOFSM.MAX_TIGHTEN_STEPS):
-            for key in blamed:
-                budget_scales[key] = (
-                    budget_scales.get(key, AUTOFSM.DEFAULT_BUDGET_SCALE)
-                    * AUTOFSM.BUDGET_TIGHTEN_FACTOR
-                )
-            trial = AUTOFSM.HARVEST_AUTOFSM_SCHEDULES(
-                parser_state,
-                budget_scales,
-                schedules,
-                area_sweep=not args.autofsm_no_area_sweep,
-                ctl=args.autofsm_ctl,
-                force_open=force_open,
-                force_unshare=force_unshare,
-            )
-            if not AUTOFSM.SCHEDULES_EQUAL(trial, schedules):
-                changed = True
-                break
-        if not changed:
-            print(
-                "AUTOFSM: shrinking the per-state budget no longer changes the "
-                "schedule; adding states cannot help further.",
-                flush=True,
-            )
-            break
-        for key in sorted(blamed):
-            print(
-                f"AUTOFSM {key}: timing missed; tightened per-state budget to "
-                f"{budget_scales[key]:.3f} of the clock period, rescheduling "
-                f"into more states...",
-                flush=True,
-            )
-    return parser_state, multimain_timing_params
-
-
 if not args.no_synth:
-    _autofsm_possible = (
-        src_file.endswith(".py") and not args.comb and not args.yosys_json
+    parser_state, multimain_timing_params = SYN.DO_PIPELINED_BUILD(
+        parser_state, args, src_file
     )
-    if _autofsm_possible:
-        import AUTOFSM as _AUTOFSM
-
-        _autofsm_possible = _AUTOFSM.DESIGN_HAS_AUTOFSM(parser_state)
-    if _autofsm_possible:
-        parser_state, multimain_timing_params = run_autofsm_schedule_passes(
-            parser_state
-        )
-    else:
-        parser_state, multimain_timing_params = run_sweep_and_autopipeline(parser_state)
 
     print(
         "================== Writing Results of Throughput Sweep ================================",
@@ -688,36 +381,11 @@ if not args.no_synth:
     # The build must FAIL if any timing goal was not met - results above are
     # still written (useful for debugging) but simulation and bitstream
     # generation are skipped and the exit code is non zero
-    timing_failures = getattr(multimain_timing_params, "sweep_timing_failures", None)
-    if timing_failures:
-        print(
-            "================== TIMING NOT MET ================================",
-            flush=True,
-        )
-        for main_func_name, goal_mhz, achieved_mhz, why in timing_failures:
-            achieved_str = (
-                f"{achieved_mhz:.2f} MHz" if achieved_mhz is not None else "unknown"
-            )
-            print(
-                f"ERROR: TIMING NOT MET: {main_func_name} achieved {achieved_str} "
-                f"vs {goal_mhz:.2f} MHz goal ({why})",
-                flush=True,
-            )
-        print(
-            "Results were written for debugging; skipping simulation/bitstream.",
-            flush=True,
-        )
+    if SWEEP.PRINT_TIMING_FAILURES(multimain_timing_params):
         sys.exit(1)
 
     if SYN.PIN_CONSTRAINTS_FILE:
-        print("================== Generating Bitstream ==================", flush=True)
-        SYN.SYN_TOOL.SYN_AND_REPORT_TIMING(
-            None,
-            None,
-            parser_state,
-            multimain_timing_params.TimingParamsLookupTable,
-            is_final_top=True,
-        )
+        SYN.GENERATE_FINAL_BITSTREAM(parser_state, multimain_timing_params)
 
     # Start simulation on final VHDL
     SIM.DO_OPTIONAL_SIM(

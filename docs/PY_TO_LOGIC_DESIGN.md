@@ -4080,13 +4080,15 @@ MY_AP.latency                             # int; see below
 the `depth`, a lazily-computed `canonical_key` (via `PY_TO_LOGIC.CANONICAL_CALLABLE_KEY`,
 built on `_callable_canonical_name` — deterministic per source, never `id()`/call
 order), and a `latency` read from the module-level cross-pass cache
-(`pypeline._autopipeline_latency_cache`, installed by the `pipelinec` driver's
-pin-and-confirm loop; empty in native sim and `--comb` builds, so `.latency` reads 0
+(`pypeline._autopipeline_latency_cache`, installed by
+`SYN.DO_AUTOPIPELINE_LATENCY_PASSES`'s pin-and-confirm loop; empty in native sim and
+`--comb` builds, so `.latency` reads 0
 there). The class-level `_is_autopipeline_pragma` flag is the elaborator's duck-type
 probe, exactly like `@sim_output`'s `_is_sim_output`. `__call__` is an identity
 passthrough (`func(x)`), so proto-simulation needs no special-casing. `.latency` is a
 read-tracked property (any read flips `pypeline._autopipeline_latency_was_read`, which
-lets the driver skip the extra pass for designs that never consume the value), and
+lets `SYN.DO_AUTOPIPELINE_LATENCY_PASSES` skip the extra pass for designs that never
+consume the value), and
 `__repr__` is deliberately address-free *and fully distinguishing* (it embeds the
 wrapped func's canonical key when the compiler is loaded) because instances get
 captured in factory closures whose cell reprs feed canonical-name hashing.
@@ -4256,8 +4258,8 @@ and `double_parse_file_test.py` covers an AUTOFSM design for it.
 
 ### Repeated `PARSE_FILE` support (the pin-and-confirm loop's foundation)
 
-The `pipelinec` driver re-runs `PARSE_FILE` after the throughput sweep so `.latency`
-reads resolve to real values (see `SYN_DESIGN.md`). `PARSE_FILE` therefore supports
+`SYN.DO_AUTOPIPELINE_LATENCY_PASSES` re-runs `PARSE_FILE` after the throughput sweep so
+`.latency` reads resolve to real values (see `SYN_DESIGN.md`). `PARSE_FILE` therefore supports
 being called more than once per process:
 
 - **`sys.modules` eviction**: `exec_module` only re-executes the top design file;
