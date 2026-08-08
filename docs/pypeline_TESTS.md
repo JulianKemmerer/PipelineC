@@ -68,12 +68,14 @@ A design registered in `native_vs_vhdl_sim_tests.py` must:
   `sim_assert`s already check.
 - **Never** emit a `debug=True` print on the same cycle `sim_finish()` is called.
   Whether a same-cycle VHDL write flushes before `std.env.finish` kills GHDL is a
-  process-ordering race the diff must not depend on -- GHDL/cocotb reports a false
-  "Simulator shutdown prematurely" failure if this rule is broken. This is a
-  documented tool constraint, not a compiler bug -- see
-  `known_issues_tests.py`'s `sim_finish_debug_print_race_test` for a direct
-  reproduction of what happens if it's broken, and e.g. `self_check_counter_test.py`
-  for the standard one-cycle gate (`if n < NUM_COUNTS - 1: sim_print(...)`).
+  process-ordering race the diff must not depend on -- the print is silently DROPPED
+  from the VHDL/cocotb log entirely if this rule is broken (present in native sim,
+  absent in VHDL -- not a text-visible failure, just a missing line the cycle diff
+  will flag as a mismatch). This is a documented tool constraint, not a compiler
+  bug -- see `known_issues_tests.py`'s `sim_finish_debug_print_race_test` for a
+  direct reproduction of what happens if it's broken, and e.g.
+  `self_check_counter_test.py` for the standard one-cycle gate
+  (`if n < NUM_COUNTS - 1: sim_print(...)`).
 - For a non-`--comb` (pipelined) entry: put every probe inside a stateful (0-latency)
   MAIN, and valid-/count-gate it, since VHDL's undefined (`'U'`) warm-up registers
   can't be compared against native's typed zeros.

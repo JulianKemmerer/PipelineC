@@ -53,10 +53,12 @@ def get_tests() -> list:
         )
     )
     # A sim_print(..., debug=True) call the SAME cycle as sim_finish() races
-    # GHDL's write-flush against std.env.finish and reports a false failure.
-    # This wrapper asserts on cocotb's own log text (NOT expect_fail --
-    # pypelinec's exit code does not reflect the race at all, which is
-    # itself part of what's being demonstrated; see the wrapper's docstring).
+    # GHDL's write-flush against std.env.finish and the print is silently
+    # dropped from the VHDL/cocotb log entirely (present in native sim,
+    # absent in VHDL). This wrapper runs both sims itself and asserts on
+    # that (NOT expect_fail -- pypelinec's exit code is 0 either way; see
+    # the wrapper's own docstring for why text/exit-code alone can't express
+    # this).
     tests.append(
         Test(
             name="sim_finish_debug_print_race_test",

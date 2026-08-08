@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 
 import C_TO_LOGIC
@@ -127,13 +128,26 @@ def DUMP_PIPELINEC_DEBUG(dut):\n"""
             else ""
         )
         py_basename = "test_" + SYN.TOP_LEVEL_MODULE
+        # --run all relies on sim_finish()'s std.env.finish to terminate GHDL
+        # out from under cocotb's still-running coroutine -- cocotb has no way
+        # to distinguish that from a real crash, so it always scores the test
+        # a SimFailure (see CHECK_COCOTB_RESULTS's docstring for the verified
+        # log evidence). expect_error=SimFailure tells cocotb's own regression
+        # manager this specific outcome is the expected, successful one
+        # (cocotb/regression.py's _score_test: SimFailure matching
+        # expect_error -> "errored as expected" -> PASS; any OTHER exception,
+        # e.g. the --run-all safety-cap RuntimeError below, still -> FAIL).
+        # Finite --run N never triggers this path (the loop simply completes),
+        # so it keeps the plain, unmodified @cocotb.test().
+        test_decorator_args = "expect_error=SimFailure" if run_all else ""
         py_text = f'''
 import cocotb
+from cocotb.result import SimFailure
 from cocotb.triggers import Timer
 
 from pipelinec_cocotb import * # Generated
 
-@cocotb.test()
+@cocotb.test({test_decorator_args})
 async def my_first_test(dut):
     """Try accessing the design."""
     # Do first cycle print a little different
@@ -207,54 +221,93 @@ include $(shell cocotb-config --makefiles)/Makefile.sim
         f.write(makefile_text)
         f.close()
 
-    # Run make in directory with makefile to do simulation
+    # Run make in directory with makefile to do simulation. Use subprocess
+    # directly (not C_TO_LOGIC.GET_SHELL_CMD_OUTPUT, which raises a raw
+    # Exception on any nonzero exit and only returns stdout) -- a firing
+    # sim_assert makes GHDL itself exit nonzero, and DO_SIM needs to turn
+    # that into the same kind of verdict as every other failure mode, not an
+    # unhandled traceback.
     print("Running make in:", makefile_dir, "...", flush=True)
-    bash_cmd = "make"
-    log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=makefile_dir)
-    print(log_text, flush=True)
-    CHECK_COCOTB_LOG_PASS_FAIL(log_text, args)
+    proc = subprocess.run(
+        "make", shell=True, cwd=makefile_dir, capture_output=True, text=True
+    )
+    # stdout only, not stdout+stderr merged: pypeline_sim_debug.py's cycle
+    # diff parses this exact stream for interleaved "Clock: N" /
+    # "[SIM DEBUG PRINT: ...]" lines, in order -- merging stderr in would
+    # reorder them and break every native_vs_vhdl_sim test.
+    print(proc.stdout, flush=True)
+    if proc.returncode != 0:
+        print(proc.stderr, flush=True)
+        raise Exception(
+            f"make failed (exit {proc.returncode}) in {makefile_dir} -- see output above."
+        )
+    CHECK_COCOTB_RESULTS(makefile_dir, proc.stdout)
+    # Print an unambiguous verdict last -- cocotb's own scheduler still logs
+    # its generic "Simulator shutdown prematurely" ERROR line for every
+    # sim_finish()-terminated run even when CHECK_COCOTB_RESULTS scored it a
+    # clean PASS (that text comes from cocotb's low-level _sim_event handler,
+    # not its scoring path), which otherwise reads as a failure to a human
+    # skimming the log.
+    print(
+        "================== cocotb Simulation Result ==============================",
+        flush=True,
+    )
+    print("PASS: cocotb reported no test failures.", flush=True)
     sys.exit(0)
 
 
-def CHECK_COCOTB_LOG_PASS_FAIL(log_text, args):
-    """cocotb's own regression-manager PASS/FAIL summary is not reflected in `make`'s
-    process returncode for every failure mode: a real VHDL assertion failure (from
-    sim_assert) makes GHDL itself error out, which does propagate as a non-zero `make`
-    exit -- but a Python-level exception raised inside the generated cocotb test body
-    (e.g. --run all's safety-cap RuntimeError) does not, since GHDL considers the
-    simulation to have completed normally right up until that Python exception fires.
-    So `make` returning 0 is not sufficient evidence of success; check cocotb's own
-    "TESTS=N PASS=N FAIL=N" summary line explicitly.
+def CHECK_COCOTB_RESULTS(makefile_dir, log_text):
+    """cocotb's console "TESTS=N PASS=N FAIL=N" summary used to be misleading
+    on its face for every --run all design: sim_finish() stops the
+    simulation via VHDL's std.env.finish, which terminates GHDL out from
+    under cocotb's still-awaiting coroutine.
+    cocotb has no way to distinguish that from a real crash, so its
+    regression manager used to always score it a SimFailure ("Simulator
+    shutdown prematurely") -- confirmed empirically against a design that
+    unambiguously passed (self_check_autofsm_test, native vs. VHDL cycle
+    diff matched): its own log ended "TESTS=1 PASS=0 FAIL=1".
 
-    A FAIL is expected and OK exactly when it's `--run all` and the failure is GHDL's
-    own "Simulator shutdown prematurely" scheduler message (cocotb's generic framing
-    for "the simulator ended before I expected it to") -- that's what a clean,
-    intentional sim_finish()/std.env.finish() stop looks like, confirmed empirically:
-    GHDL prints "simulation finished @<t>ns" and terminates immediately, which cocotb
-    (having no way to know the stop was intentional) reports as this same premature-
-    shutdown FAIL text. Any other FAIL (including a Python traceback from a genuine bug
-    like the safety cap firing, or any other in-test exception) is a real failure.
+    The generated testbench (see the `expect_error=SimFailure` decorator
+    argument above) now tells cocotb's regression manager that exact
+    SimFailure outcome is the EXPECTED, successful one for --run all, so a
+    clean sim_finish() stop is scored PASS and any other exception (a real
+    crash, or the --run-all safety-cap RuntimeError) is still scored FAIL.
+    That makes cocotb's own COCOTB_RESULTS_FILE (results.xml, cocotb's
+    structured JUnit-style report -- see cocotb's Makefile.inc) the
+    authoritative verdict, with no text-based carve-out needed here.
+
+    results.xml's location is COCOTB_RESULTS_FILE relative to `make`'s cwd
+    (makefile_dir here), which can differ from COCOTB_OUT_DIR when a user
+    passes --makefile.
     """
-    import re
+    import xml.etree.ElementTree as ET
 
-    m = re.search(r"TESTS=(\d+)\s+PASS=(\d+)\s+FAIL=(\d+)", log_text)
-    if m is None:
-        raise Exception(
-            "Could not find cocotb's 'TESTS=N PASS=N FAIL=N' summary line in the "
-            "simulation log -- cannot confirm the cocotb test actually passed."
+    results_path = os.path.join(makefile_dir, "results.xml")
+    if not os.path.isfile(results_path):
+        # Only reachable via a relocating --makefile; results.xml is
+        # otherwise guaranteed to exist by cocotb's own check_for_results_file.
+        print(
+            f"WARNING: {results_path} not found -- falling back to a log-text "
+            f"check instead of cocotb's structured results.",
+            flush=True,
         )
-    num_tests, num_pass, num_fail = (int(g) for g in m.groups())
-    if num_fail == 0 and num_pass == num_tests:
-        return  # genuine clean pass
-    run_all = getattr(args, "run", None) == pypeline_sim.RUN_ALL
-    if (
-        run_all
-        and "Simulator shutdown prematurely" in log_text
-        and "my_first_test failed" not in log_text
-    ):
-        # Expected: sim_finish()/std.env.finish() stopped the simulation cleanly.
+        if "TESTS=" not in log_text or " FAIL=0 " not in log_text:
+            raise Exception(
+                "cocotb's 'TESTS=N PASS=N FAIL=N' summary line is missing or "
+                "reports a failure -- see the simulation log above."
+            )
         return
-    raise Exception(
-        f"cocotb reported real test failures (TESTS={num_tests} PASS={num_pass} "
-        f"FAIL={num_fail}) -- see the simulation log above."
-    )
+
+    tree = ET.parse(results_path)
+    failures = []
+    for testcase in tree.getroot().iter("testcase"):
+        if testcase.find("failure") is not None:
+            name = testcase.get("name", "<unnamed>")
+            msg = testcase.find("failure").get("message", "no message")
+            failures.append(f"{name}: {msg}")
+    if failures:
+        raise Exception(
+            "cocotb reported real test failure(s): "
+            + "; ".join(failures)
+            + " -- see the simulation log above."
+        )

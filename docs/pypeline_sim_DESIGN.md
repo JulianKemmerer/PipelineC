@@ -1870,7 +1870,20 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   `debug=True` prints on the cycle it calls `sim_finish()` — quiesce prints one cycle earlier
   (the shipped `native_vs_vhdl_*` test designs gate their final prints with a `done` register).
   This is a testbench-authoring rule, not a native-sim inaccuracy, but it governs whether a diff
-  reads clean.
+  reads clean. Broken, it does not raise or warn — the print simply never appears in the VHDL log
+  (present in native sim, absent in VHDL); see `src/tests/pypeline_tests/inst/
+  sim_finish_debug_print_race_test.py` for a direct reproduction.
+- **cocotb's own pass/fail verdict, not `make`'s exit code.** `std.env.finish` (from
+  `sim_finish()`) terminates GHDL out from under cocotb's still-awaiting test coroutine; cocotb
+  cannot distinguish that from a real crash on its own, and its makefile cannot set an exit code
+  at all (`Makefile.inc`: *"since we can't set an exit code from cocotb"*). `src/COCOTB.py`
+  generates the `--run all` testbench with `expect_error=SimFailure` so cocotb's regression
+  manager scores a clean `sim_finish()` stop as a genuine PASS, then reads the verdict from
+  cocotb's own `results.xml` rather than `make`'s exit code or any console-text heuristic. A real
+  failure (e.g. a firing `sim_assert`) still fails the build — GHDL itself exits nonzero in that
+  case, which `make` (and `COCOTB.DO_SIM`) propagates. See `COCOTB.CHECK_COCOTB_RESULTS`'s
+  docstring and `src/tests/pypeline_tests/inst/cocotb_verdict_test.py`, the regression guard for
+  both halves.
 
 #### AUTOFSM call sites (non-`--comb` `--sim`)
 

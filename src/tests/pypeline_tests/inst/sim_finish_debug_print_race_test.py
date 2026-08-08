@@ -1,41 +1,36 @@
 # pyright: reportInvalidTypeForm=none
-"""KNOWN ISSUE (reproducer, not a fix), two-in-one:
+"""KNOWN ISSUE (reproducer, not a fix): a sim_print(..., debug=True) call on
+the SAME cycle as sim_finish() is silently DROPPED from the cocotb+GHDL log
+entirely -- not printed late, not printed with a warning, just absent --
+even though the identical design's native (Python) sim prints it normally.
+Confirmed directly: sim_finish_debug_print_race_design.py's "about to finish"
+line appears in native --sim --comb --run all output but not anywhere in its
+--cocotb --ghdl --run all output, despite both runs exiting 0. The cause is
+a process-ordering race between GHDL's VHDL write-flush for the print and
+std.env.finish (from sim_finish()) killing the simulator on the same clock
+edge -- exactly the constraint documented at docs/pypeline_sim_DESIGN.md's
+Limitations section ("no debug=True prints on the sim_finish() cycle") and
+followed by every design in native_vs_vhdl_sim_tests.py (each delays its
+last print by a cycle from its sim_finish() call, or gates it out entirely
+-- see e.g. self_check_counter_test.py). This file demonstrates what happens
+if that rule is broken.
 
-1. A sim_print(..., debug=True) call on the SAME cycle as sim_finish() races
-   GHDL's write-flush against std.env.finish and reports a false failure --
-   "Simulator shutdown prematurely" in cocotb's own regression summary --
-   even though nothing is actually wrong with the design or the print.
-   Native sim is unaffected (it always finishes cleanly). This is exactly
-   the constraint documented at docs/pypeline_sim_DESIGN.md's Limitations
-   section ("no debug=True prints on the sim_finish() cycle") and followed by
-   every design in native_vs_vhdl_sim_tests.py (each delays its last print by
-   a cycle from its sim_finish() call, or gates it out entirely -- see e.g.
-   self_check_counter_test.py). This file demonstrates what happens if that
-   rule is broken.
-
-2. MORE SURPRISING: `pypelinec <this file> --sim --comb --cocotb --ghdl`
-   exits 0 despite cocotb's own regression summary printing
-   "TESTS=1 PASS=0 FAIL=1" and "Simulator shutdown prematurely" -- the
-   cocotb-level failure does NOT propagate to pypelinec's process exit code
-   in this race. That means run_all.py-style "exit code is the entire
-   verdict" checking (native_vs_vhdl_sim/elab/synth) would silently call
-   this a PASS. pypeline_sim_debug.py's own returncode check (added
-   alongside this file) doesn't catch it either, for the same reason -- it
-   trusts the same exit code. Hence this test is a WRAPPER (like
-   build_report_tests.py's) that asserts on cocotb's own log text instead of
-   trusting the exit code -- and its own "PASS" means "the known issue still
-   reproduces": a run_all.py FAIL here is the signal to re-investigate,
-   exactly like an XPASS elsewhere in this category. See
-   known_issues_tests.py's registration comment for exactly this reasoning.
+Earlier revisions of this test asserted on cocotb's own "Simulator shutdown
+prematurely" scheduler message instead. That text turned out to appear in
+EVERY --run all cocotb simulation, passing or failing (see src/COCOTB.py's
+CHECK_COCOTB_RESULTS docstring) -- so it reproduced trivially and proved
+nothing specific to this race. Once COCOTB.py started telling cocotb to
+expect that shutdown (expect_error=SimFailure), the old assertion would have
+started reproducing even on runs that break no rule at all. This revision
+asserts on the real, still-present symptom instead: the missing print line.
 
 Whether this is a real GHDL/cocotb bug (VPI callback ordering vs
-std.env.finish, and/or cocotb-result-to-exit-code plumbing) or an inherent
-property of the two-process handshake is not established here -- it is filed
-as a known issue because it constrains what test authors can write and what
-run_all.py can trust, not because a fix has been identified.
+std.env.finish) or an inherent property of the two-process handshake is not
+established here -- it is filed as a known issue because it constrains what
+test authors can write, not because a fix has been identified.
 
 See also: nested_truncate_vhdl_mismatch_known_issue.py, which works around
-issue #1 with a one-cycle sim_finish() delay.
+this by delaying sim_finish() one cycle past its design's own debug print.
 """
 
 import os
@@ -45,6 +40,13 @@ import sys
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYPELINEC = os.path.join(THIS_DIR, "..", "..", "..", "pypelinec")
 DESIGN = os.path.join(THIS_DIR, "sim_finish_debug_print_race_design.py")
+PROBE_TEXT = "about to finish"
+
+
+def _run(extra_args, out_dir):
+    cmd = [sys.executable, PYPELINEC, DESIGN] + extra_args + ["--out_dir", out_dir]
+    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
+    return result.stdout, result.returncode
 
 
 def main() -> int:
@@ -53,30 +55,39 @@ def main() -> int:
     parser = argparse.ArgumentParser()
     parser.add_argument("--out_dir", default=None)
     args = parser.parse_args()
+    out_dir = args.out_dir or os.path.join(THIS_DIR, "sim_finish_debug_print_race_test_out")
 
-    cmd = [sys.executable, PYPELINEC, DESIGN, "--sim", "--comb", "--cocotb", "--ghdl", "--run", "all"]
-    if args.out_dir:
-        cmd += ["--out_dir", args.out_dir]
-    result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
-    out = result.stdout
-    print(out)
+    native_out, native_rc = _run(["--sim", "--comb", "--run", "all"], os.path.join(out_dir, "native"))
+    vhdl_out, vhdl_rc = _run(
+        ["--sim", "--comb", "--cocotb", "--ghdl", "--run", "all"], os.path.join(out_dir, "vhdl")
+    )
+    print(native_out)
+    print(vhdl_out)
 
-    if "Simulator shutdown prematurely" not in out:
-        print(
-            "FAIL (issue appears RESOLVED): expected the same-cycle "
-            "sim_print(debug=True)+sim_finish() race to trip cocotb's "
-            "'Simulator shutdown prematurely' failure, but it did not -- "
-            "promote this out of known_issues if confirmed."
-        )
+    if native_rc != 0:
+        print(f"FAIL (harness broken): native sim exited {native_rc}, expected 0.")
         return 1
-    if result.returncode == 0:
+    if PROBE_TEXT not in native_out:
+        print(f"FAIL (harness broken): native sim never printed {PROBE_TEXT!r} at all.")
+        return 1
+    if vhdl_rc != 0:
         print(
-            "NOTE: pypelinec exited 0 despite the cocotb-reported failure above "
-            "-- reproducing known issue #2 (exit code does not reflect the "
-            "cocotb race). This is the expected (still-broken) state."
+            f"NOTE: VHDL/cocotb sim exited {vhdl_rc} (nonzero) -- a stricter failure mode "
+            f"than the known issue itself, but still consistent with 'the rule was broken'."
         )
-    print("PASS (known issue still reproduces, as expected).")
-    return 0
+    if PROBE_TEXT not in vhdl_out:
+        print(
+            "PASS (known issue still reproduces, as expected): native sim printed "
+            f"{PROBE_TEXT!r} but the VHDL/cocotb sim never did."
+        )
+        return 0
+    print(
+        f"FAIL (issue appears RESOLVED): expected the same-cycle "
+        f"sim_print(debug=True)+sim_finish() race to silently drop {PROBE_TEXT!r} from "
+        f"the VHDL/cocotb log, but it printed normally -- promote this out of "
+        f"known_issues if confirmed."
+    )
+    return 1
 
 
 if __name__ == "__main__":

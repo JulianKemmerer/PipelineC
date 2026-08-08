@@ -146,6 +146,20 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # Regression guard for src/COCOTB.py's PASS/FAIL reporting: runs one
+    # passing and one failing design through --cocotb --ghdl --run all and
+    # asserts each is scored correctly. See COCOTB.py's CHECK_COCOTB_RESULTS
+    # docstring for the bug this guards (every --run all sim used to report
+    # FAIL in cocotb's own summary regardless of the actual outcome).
+    tests.append(
+        Test(
+            name="cocotb_verdict_test",
+            category="build_report",
+            cmd=[INST_DIR / "cocotb_verdict_test.py"],
+            needs_out_dir=True,
+            requires=["ghdl"],
+        )
+    )
     return tests
 
 
