@@ -68,7 +68,22 @@ import os
 import C_TO_LOGIC
 
 # Schedule dict format version, bumped if the shape changes incompatibly.
-SCHEDULE_VERSION = 2
+# 3: v3 constant-LUT control path (`ctl` field, see _Codegen).
+SCHEDULE_VERSION = 3
+
+# How the generated FSM's CONTROL path is rendered. This selects codegen shape
+# AND the matching area model -- the two must agree, so it is part of the
+# schedule (hence hashed into the entity name), not a codegen-time afterthought.
+# Without that, a codegen-only change would silently reuse measured delays
+# cached against genuinely different hardware.
+#   "v3"     constant lookup tables: per-FU select LUTs, per-register write
+#            enable LUTs, next-state LUT. One comparator survives per FSM.
+#   "v2"     the shipped comparator chains (`if st == k: ... elif ...`), kept
+#            for A/B measurement and debugging.
+#   "onehot" experimental: v3 with the binary state register replaced by a
+#            packed one-hot register (see the M6 experiment in AUTOFSM_DESIGN).
+CTL_CHOICES = ("v3", "v2", "onehot")
+DEFAULT_CTL = "v3"
 
 # Maximum schedule+synthesize passes before giving up on meeting timing by
 # adding states (mirrors SYN.AUTOPIPELINE_MAX_LATENCY_PASSES). Six rather than
@@ -156,7 +171,30 @@ AREA_PER_BIT_DEFAULT = 1.0  # unknown leaf: priced like an adder
 # route and enable, and a schedule holding dozens of live values is genuinely
 # harder than one holding three.
 AREA_PER_BIT_FF = 0.2
-AREA_PER_STATE_DECODE = 1.0  # per-state next-state/enable decode
+AREA_PER_STATE_DECODE = 1.0  # ctl "v2" only: per-state next-state/enable decode
+
+# ── Control path, ctl "v3" ────────────────────────────────────────────────
+# v3 decodes state with constant lookup tables instead of a comparator per
+# state per unit. A table's leaves are constants, so synthesis folds it to
+# roughly one 2-input gate per OUTPUT BIT -- hence the same 0.16 the other
+# per-bit gate terms use, charged per bit of table output rather than per state.
+AREA_PER_CTL_LUT_BIT = 0.16
+# What is left per state once the tables are priced: clock-enable fanout and
+# the routing of `st` to every table. Much smaller than v2's per-state decode
+# because the decode itself is no longer per-state.
+AREA_PER_STATE_CTL = 0.2
+# Delay charged for a select table in front of an operand mux. Deliberately 0:
+# `st` is a register output available at the start of the cycle, so
+# st -> table -> mux.sel resolves in PARALLEL with operands -> mux.data, and on
+# the chain-fit states that set the schedule the data side arrives strictly
+# later (its operands are same-cycle unit outputs). Charging it in series would
+# model sum() where the truth is max(), making v3 schedule more conservatively
+# than v2 for no real timing benefit -- and v2 charged nothing for a DEEPER
+# comparator chain. Measured evidence: on vga donut the v3 control path is
+# 21% faster than v2's (48.3 vs 39.9 MHz) at an identical schedule.
+# Kept as a named tunable in case a design ever shows the select path on the
+# critical path; the honest fix is a max() chain fit, noted in AUTOFSM_DESIGN.
+CTL_LUT_DU = 0
 
 # ── Area sweep ────────────────────────────────────────────────────────────
 # How many "open one more entity" moves the search may accept before stopping.
@@ -1769,6 +1807,7 @@ def BUILD_SCHEDULE(
     opened=(),
     max_nodes=None,
     unshared=(),
+    ctl=DEFAULT_CTL,
 ):
     """Schedule + bind one AUTOFSM'd function into a plain (picklable,
     comparable) schedule dict.
@@ -1778,6 +1817,11 @@ def BUILD_SCHEDULE(
     surrounding design, which is what makes the driver's loop converge
     trivially: only an explicit budget tightening, or the area sweep choosing
     different grain/binding, can change the answer.
+
+    `ctl` selects the control-path rendering (see CTL_CHOICES). It is part of
+    the schedule because codegen shape and area model must agree, and because
+    the entity name must change with it -- otherwise measured delays cached
+    against one control path would be reused against another.
 
     `unshared` is a sequence of (entity, n_units) pairs: how many physical
     copies of an operation to build instead of the default one. Sharing is not
@@ -1860,6 +1904,12 @@ def BUILD_SCHEDULE(
                 du = _mux_delay_du(parser_state, types, ctype, n, mux_snapshot)
                 mux_snapshot.setdefault(f"{ctype}#{n}", du)
                 cached = max(cached, du)
+            if ctl != "v2" and n >= 2:
+                # The select table feeding this mux. CTL_LUT_DU is 0 by
+                # design (see its definition): the table resolves in parallel
+                # with the data it steers. The hook exists so the tunable has
+                # exactly one place to act if that ever stops being true.
+                cached += CTL_LUT_DU
             mux_du_cache[(e, n)] = cached
         return cached
 
@@ -1887,6 +1937,7 @@ def BUILD_SCHEDULE(
     schedule_core = {
         "version": SCHEDULE_VERSION,
         "key": key,
+        "ctl": ctl,
         "func_entity": func_entity,
         "n_states": n_states,
         "latency": n_states + 1,
@@ -2067,6 +2118,14 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None):
                  it to a later state that reads it, plus the input/output/state
                  registers. Finer sharing means more states means more values
                  in flight, so this grows too.
+      control    decoding the state into unit selects, register write enables
+                 and the next state. Priced by `ctl`, because the two control
+                 paths differ by more than a constant: v2's cost is per STATE
+                 (a comparator chain that lengthens as sharing adds states),
+                 while v3's is per TABLE OUTPUT BIT and grows only
+                 logarithmically. That is what makes sharing cheaper under v3,
+                 and therefore what lets the search share further before the
+                 mux and register terms overtake it.
 
     Ranking only -- see the note on the AREA_* constants for why this cannot be
     a real utilization number.
@@ -2102,14 +2161,50 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None):
     )
     reg_bits = sum(_ctype_width(t) for t in reg_types.values())
     reg_bits += _ctype_width(schedule["out_type"])
-    reg_bits += max(1, int(schedule["n_states"]).bit_length())
+    if schedule.get("ctl", DEFAULT_CTL) == "onehot":
+        # One flip-flop per state plus idle, where binary needs only log2.
+        reg_bits += schedule["n_states"] + 1
+    else:
+        reg_bits += max(1, int(schedule["n_states"]).bit_length())
     # The input latch is deliberately not counted: it is the same width in
     # every candidate for a given function, so it cannot change a ranking.
     total += reg_bits * AREA_PER_BIT_FF
-    # No multiplexer term for shared registers: ALLOCATE_REGISTERS only merges
-    # values coming from the same unit, so a shared register's data input is
-    # one unchanged wire and only its write enable widens.
-    total += schedule["n_states"] * AREA_PER_STATE_DECODE
+
+    n_states = schedule["n_states"]
+    statew = max(1, int(n_states).bit_length())
+    if schedule.get("ctl", DEFAULT_CTL) == "v2":
+        # No multiplexer term for shared registers: ALLOCATE_REGISTERS only
+        # merges values coming from the same unit, so a shared register's data
+        # input is one unchanged wire and only its write enable widens.
+        total += n_states * AREA_PER_STATE_DECODE
+    else:
+        # One select table per shared unit, sized by its select width...
+        for fu, nids in sorted(users.items()):
+            n = len(nids)
+            if n < 2:
+                continue
+            total += max(1, (n - 1).bit_length()) * AREA_PER_CTL_LUT_BIT
+        # ...one one-bit write-enable table per register, plus the next-state
+        # table and the output-write pulse.
+        total += len(reg_types) * AREA_PER_CTL_LUT_BIT
+        total += (statew + 1) * AREA_PER_CTL_LUT_BIT
+        # Writeback source multiplexers. Zero under today's allocator (a shared
+        # register's values all come from one unit), so this term exists to
+        # price cross-unit register sharing correctly if that is ever enabled:
+        # such a register needs a real mux in front of its data input.
+        srcs_per_reg = {}
+        for nid, idx in reg_of.items():
+            fu = nodes[nid].get("fu")
+            if fu is not None:
+                srcs_per_reg.setdefault(idx, set()).add(fu)
+        for idx, srcs in sorted(srcs_per_reg.items()):
+            if len(srcs) > 1:
+                total += (
+                    _ctype_width(reg_types[idx])
+                    * (len(srcs) - 1)
+                    * AREA_PER_BIT_MUX
+                )
+        total += n_states * AREA_PER_STATE_CTL
     return total
 
 
@@ -2126,7 +2221,7 @@ def _openable_entities(parser_state, schedule, opened):
 
 
 def SWEEP_MIN_AREA_SCHEDULE(
-    parser_state, key, tag, budget_scale, prev_schedule=None
+    parser_state, key, tag, budget_scale, prev_schedule=None, ctl=DEFAULT_CTL
 ):
     """Search for the SMALLEST schedule that still meets the clock goal and the
     latency cap, by opening operations up one entity at a time.
@@ -2166,7 +2261,9 @@ def SWEEP_MIN_AREA_SCHEDULE(
     constants.
     """
     memo = {}
-    anchor = BUILD_SCHEDULE(parser_state, key, tag, budget_scale, prev_schedule)
+    anchor = BUILD_SCHEDULE(
+        parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl
+    )
     anchor_cost = ESTIMATE_SCHEDULE_AREA(parser_state, anchor, memo)
     best, best_cost = anchor, anchor_cost
     cur = anchor
@@ -2186,6 +2283,7 @@ def SWEEP_MIN_AREA_SCHEDULE(
                 tuple(sorted(trial_opened)),
                 MAX_SWEEP_DAG_NODES,
                 tuple(sorted(trial_unshared.items())),
+                ctl=ctl,
             )
         except AutofsmError:
             return None
@@ -2314,7 +2412,11 @@ def _budget_du(parser_state, budget_scale):
 
 
 def HARVEST_AUTOFSM_SCHEDULES(
-    parser_state, budget_scales=None, prev_schedules=None, area_sweep=True
+    parser_state,
+    budget_scales=None,
+    prev_schedules=None,
+    area_sweep=True,
+    ctl=DEFAULT_CTL,
 ):
     """Schedule every AUTOFSM call site in the design.
 
@@ -2342,6 +2444,7 @@ def HARVEST_AUTOFSM_SCHEDULES(
             tag,
             budget_scales.get(key, DEFAULT_BUDGET_SCALE),
             prev_schedules.get(key),
+            ctl=ctl,
         )
     return schedules
 
@@ -2611,6 +2714,10 @@ class _Codegen:
         self.parser_state = parser_state
         self.nodes = schedule["nodes"]
         self.n_states = schedule["n_states"]
+        # Control-path rendering, see CTL_CHOICES. Schedules built before this
+        # field existed cannot reach here (SCHEDULE_VERSION gates them), so the
+        # default is for hand-built test schedules only.
+        self.ctl = schedule.get("ctl", DEFAULT_CTL)
         self.em = _Emitter()
         self.types = _TypeResolver()
         self.local_of_node = {}  # node id -> local name holding its result
@@ -2734,6 +2841,14 @@ class _Codegen:
                 f"{text!r}, which cannot be regenerated as a literal yet"
             )
 
+    def _st_bit(self, state):
+        """Source expression for "the FSM is in this state", one-hot only."""
+        return f"st1h[{state}:{state}]"
+
+    def _st_bits_or(self, states):
+        """OR of the hot bits for a set of states, one-hot only."""
+        return " | ".join(self._st_bit(k) for k in sorted(states))
+
     # ── register allocation ────────────────────────────────────────────
     def _cross_state_nodes(self):
         return _CROSS_STATE_NODES(self.nodes, self.schedule["output"], self.n_states)
@@ -2753,6 +2868,13 @@ class _Codegen:
         out_t = em.inj(tag.out_type, "t")
         st_t = em.inj(self.types.resolve(_state_reg_ctype(self.n_states)), "t")
         u1_t = em.inj(self.types.resolve("uint1_t"), "t")
+        onehot = self.ctl == "onehot"
+        if onehot:
+            # One bit per state, bit 0 = idle. Reg initialiser makes idle the
+            # reset state, which binary encoding gets for free from zero.
+            st1h_t = em.inj(
+                self.types.resolve(f"uint{self.n_states + 1}_t"), "t"
+            )
 
         # Values crossing a state boundary, bound to registers -- SHARING one
         # register between values that are never live at the same time (see
@@ -2766,7 +2888,10 @@ class _Codegen:
 
         em.line("@hw_func")
         em.line(f"def {name}(s: {in_stream_t}) -> {out_stream_t}:")
-        em.line(f"    st_r: Reg[{st_t}]")
+        if onehot:
+            em.line(f"    st1h_r: Reg[{st1h_t}] = 1")
+        else:
+            em.line(f"    st_r: Reg[{st_t}]")
         em.line(f"    in_r: Reg[{in_t}]")
         for idx in sorted(reg_types):
             t = em.inj(self.types.resolve(reg_types[idx]), "t")
@@ -2777,7 +2902,10 @@ class _Codegen:
             "    # Snapshot committed state before any write below "
             "(pypeline assignment is sequential)"
         )
-        em.line(f"    st: {st_t} = st_r")
+        if onehot:
+            em.line(f"    st1h: {st1h_t} = st1h_r")
+        else:
+            em.line(f"    st: {st_t} = st_r")
         em.line(f"    in_v: {in_t} = in_r")
         for idx in sorted(reg_types):
             t = em.inj(self.types.resolve(reg_types[idx]), "t")
@@ -2787,11 +2915,56 @@ class _Codegen:
         em.line(f"    o: {out_stream_t}")
         em.line("    o.data = out_data_r")
         em.line("    o.valid = out_valid_r")
-        em.line("    out_valid_r = 0")
+        if onehot:
+            # Assemble the next one-hot state directly: shift the hot bit along
+            # and wrap the last state back to idle. No override contract is
+            # needed (unlike v3's table) because accepting an input is just one
+            # more term in bit 1's expression.
+            n = self.n_states
+            em.line("    # Next state: shift the hot bit along, wrap to idle")
+            em.line(f"    ns1h: {st1h_t} = 0")
+            em.line(f"    ns1h[1:1] = {self._st_bit(0)} & s.valid")
+            for k in range(1, n):
+                em.line(f"    ns1h[{k + 1}:{k + 1}] = {self._st_bit(k)}")
+            # `^ 1` rather than `~`: on a one-bit value `~` would invert the
+            # whole promoted width, and only the low bit is wanted here.
+            em.line(
+                f"    ns1h[0:0] = {self._st_bit(n)} | "
+                f"({self._st_bit(0)} & (s.valid ^ 1))"
+            )
+            em.line("    st1h_r = ns1h")
+        elif self.ctl == "v2":
+            em.line("    out_valid_r = 0")
+        else:
+            # Next state from a constant LUT rather than a comparator per state.
+            # ns[0] = 0 holds idle, ns[k] = k + 1 advances, ns[n_states] = 0
+            # wraps -- one table covers all three, where `st + 1` would need an
+            # idle guard, a wrap guard and a promotion cast.
+            ns = [0] * (self.n_states + 1)
+            for k in range(1, self.n_states):
+                ns[k] = k + 1
+            ns_lut_t = em.inj(
+                self.types.resolve(_state_reg_ctype(self.n_states))[self.n_states + 1],
+                "t",
+            )
+            em.line(
+                "    # Next state from a constant LUT: idle holds 0, "
+                "last state wraps to 0."
+            )
+            em.line(
+                "    # Written BEFORE the accept below, so accept's "
+                "st_r = 1 overrides it."
+            )
+            em.line(f"    ns_lut: {ns_lut_t} = {ns!r}")
+            em.line("    st_r = ns_lut[st]")
         em.line("    # Accept a new input only while idle (II == latency)")
-        em.line("    if (st == 0) & s.valid:")
-        em.line("        in_r = s.data")
-        em.line("        st_r = 1")
+        if onehot:
+            em.line(f"    if {self._st_bit(0)} & s.valid:")
+            em.line("        in_r = s.data")
+        else:
+            em.line("    if (st == 0) & s.valid:")
+            em.line("        in_r = s.data")
+            em.line("        st_r = 1")
 
         # ── shared functional units ──
         for fu in schedule["fu_order"]:
@@ -2824,19 +2997,87 @@ class _Codegen:
             out_expr = self._cast_local(out_expr, ctype)
 
         # ── writebacks and next state ──
-        em.line("    # Writebacks and next state")
-        for state in range(1, self.n_states + 1):
-            kw = "if" if state == 1 else "elif"
-            em.line(f"    {kw} st == {state}:")
-            for nid in cross:
-                if self.nodes[nid]["state"] == state:
-                    em.line(f"        {reg_names[nid]}_r = {self.local_of_node[nid]}")
-            if state == self.n_states:
-                em.line(f"        out_data_r = {out_expr}")
-                em.line("        out_valid_r = 1")
-                em.line("        st_r = 0")
+        if self.ctl == "v2":
+            em.line("    # Writebacks and next state")
+            for state in range(1, self.n_states + 1):
+                kw = "if" if state == 1 else "elif"
+                em.line(f"    {kw} st == {state}:")
+                for nid in cross:
+                    if self.nodes[nid]["state"] == state:
+                        em.line(
+                            f"        {reg_names[nid]}_r = {self.local_of_node[nid]}"
+                        )
+                if state == self.n_states:
+                    em.line(f"        out_data_r = {out_expr}")
+                    em.line("        out_valid_r = 1")
+                    em.line("        st_r = 0")
+                else:
+                    em.line(f"        st_r = {state + 1}")
+        else:
+            # One write-enable bit per register, read from a constant table.
+            # `if <uint1>:` is pure clock-enable gating -- PY_TO_LOGIC only
+            # inserts a comparator when the condition is not already one bit
+            # wide -- so this costs a table and no compare, where v2 paid an
+            # equality comparator per state plus a priority chain.
+            if onehot:
+                em.line(
+                    "    # Writebacks: write enable is an OR of the states' "
+                    "hot bits"
+                )
             else:
-                em.line(f"        st_r = {state + 1}")
+                em.line(
+                    "    # Writebacks: constant write-enable LUT per register, "
+                    "no state compares"
+                )
+                we_lut_t = em.inj(
+                    self.types.resolve("uint1_t")[self.n_states + 1], "t"
+                )
+            by_reg = {}
+            for nid in cross:
+                by_reg.setdefault(reg_of[nid], []).append(nid)
+            for idx in sorted(by_reg):
+                nids = by_reg[idx]
+                srcs = sorted({self.local_of_node[nid] for nid in nids})
+                if len(srcs) != 1:
+                    # Structurally impossible today: ALLOCATE_REGISTERS shares a
+                    # register only between values produced by the SAME unit, and
+                    # every node of a unit reads back from that unit's one output
+                    # local. If the allocator is ever relaxed to share across
+                    # units, this register needs a source multiplexer (the
+                    # measured make_operand_mux shape) in front of it, not just an
+                    # enable -- see AUTOFSM_DESIGN.md's future work.
+                    raise AutofsmError(
+                        f"AUTOFSM: register v{idx} would be written from "
+                        f"{len(srcs)} different sources ({', '.join(srcs)}). "
+                        f"Cross-unit register sharing needs a writeback "
+                        f"multiplexer, which is not implemented."
+                    )
+                if onehot:
+                    states = {self.nodes[nid]["state"] for nid in nids}
+                    em.line(
+                        f"    v{idx}_we: {u1_t} = {self._st_bits_or(states)}"
+                    )
+                else:
+                    wel = [0] * (self.n_states + 1)
+                    for nid in nids:
+                        wel[self.nodes[nid]["state"]] = 1
+                    em.line(f"    v{idx}_wel: {we_lut_t} = {wel!r}")
+                    em.line(f"    v{idx}_we: {u1_t} = v{idx}_wel[st]")
+                em.line(f"    if v{idx}_we:")
+                em.line(f"        v{idx}_r = {srcs[0]}")
+            if onehot:
+                em.line(
+                    f"    ow: {u1_t} = {self._st_bit(self.n_states)}"
+                    "  # last-state pulse"
+                )
+            else:
+                ow = [0] * (self.n_states + 1)
+                ow[self.n_states] = 1
+                em.line(f"    ow_lut: {we_lut_t} = {ow!r}  # last-state pulse")
+                em.line(f"    ow: {u1_t} = ow_lut[st]")
+            em.line("    if ow:")
+            em.line(f"        out_data_r = {out_expr}")
+            em.line("    out_valid_r = ow")
         em.line("    return o")
 
         em.globals["hw_func"] = hw_func
@@ -2870,9 +3111,14 @@ class _Codegen:
         the if/elif form v1 used elaborates to a PRIORITY chain, whose depth --
         and therefore delay -- grows linearly in the fold count instead of
         logarithmically. That difference is small at 2 users and dominant at 20,
-        which is exactly the range the area sweep now explores. The narrow
-        state->fold-index decode stays an if/elif chain: it is a couple of bits
-        wide and feeds the tree's select input, not the data path.
+        which is exactly the range the area sweep now explores.
+
+        The narrow state->fold-index decode is itself a constant table read
+        (`u0_sel = u0_slut[st]`) under ctl "v3", where v2 spent one equality
+        comparator per fold plus a priority chain. Synthesis folds the table's
+        constant leaves down to about one gate per select bit, and the read sits
+        off the data path: `st` is a register output available at the start of
+        the cycle, so it resolves in parallel with the operands it steers.
         """
         em = self.em
         n_ports = len(fu_nodes[0][1]["operands"])
@@ -2897,12 +3143,44 @@ class _Codegen:
             # next, and so on in ascending state order (fu_nodes is emitted in
             # node_order, so sort explicitly to make the mapping deterministic).
             sel_name = f"{prefix}_sel"
-            sel_t = em.inj(_mux_sel_type(n_users), "t")
-            em.line(f"    {sel_name}: {sel_t} = 0")
-            for idx, (nid, node) in enumerate(fu_nodes[1:], start=1):
-                kw = "if" if idx == 1 else "elif"
-                em.line(f"    {kw} st == {node['state']}:")
-                em.line(f"        {sel_name} = {idx}")
+            sel_elem_t = _mux_sel_type(n_users)
+            sel_t = em.inj(sel_elem_t, "t")
+            if self.ctl == "onehot":
+                # The operand mux is a MEASURED balanced tree and needs a
+                # binary select, so one-hot has to encode back: select bit j is
+                # the OR of the hot bits of every state whose fold index has
+                # bit j set. This encoder is the price one-hot pays where v3
+                # pays a constant table, and measuring which is cheaper is the
+                # entire point of the ctl "onehot" experiment.
+                em.line(f"    {sel_name}: {sel_t} = 0")
+                selw = max(1, (n_users - 1).bit_length())
+                for j in range(selw):
+                    hot = [
+                        node["state"]
+                        for idx, (_nid, node) in enumerate(fu_nodes)
+                        if (idx >> j) & 1
+                    ]
+                    if hot:
+                        em.line(
+                            f"    {sel_name}[{j}:{j}] = {self._st_bits_or(hot)}"
+                        )
+            elif self.ctl == "v2":
+                em.line(f"    {sel_name}: {sel_t} = 0")
+                for idx, (nid, node) in enumerate(fu_nodes[1:], start=1):
+                    kw = "if" if idx == 1 else "elif"
+                    em.line(f"    {kw} st == {node['state']}:")
+                    em.line(f"        {sel_name} = {idx}")
+            else:
+                # One constant table read instead of a comparator per fold: the
+                # states this unit does NOT run in read 0, which is harmless
+                # because the unit's output is only captured where a write
+                # enable says so.
+                lut = [0] * (self.n_states + 1)
+                for idx, (_nid, node) in enumerate(fu_nodes):
+                    lut[node["state"]] = idx
+                lut_t = em.inj(sel_elem_t[self.n_states + 1], "t")
+                em.line(f"    {prefix}_slut: {lut_t} = {lut!r}  # state -> fold index")
+                em.line(f"    {sel_name}: {sel_t} = {prefix}_slut[st]")
 
         for i, arg in enumerate(arg_names):
             port_t = self.types.resolve(first_node["port_types"][i])
@@ -2916,7 +3194,13 @@ class _Codegen:
                 if n_users > 1:
                     for idx, (nid, node) in enumerate(fu_nodes[1:], start=1):
                         kw = "if" if idx == 1 else "elif"
-                        em.line(f"    {kw} st == {node['state']}:")
+                        # Branch on the already-decoded fold index, not on the
+                        # state: v3's whole point is that `st` is compared once
+                        # per FSM, in the accept.
+                        if self.ctl == "v2":
+                            em.line(f"    {kw} st == {node['state']}:")
+                        else:
+                            em.line(f"    {kw} {sel_name} == {idx}:")
                         em.line(f"        {arg} = {exprs[nid][i]}")
                 continue
             arr_name = f"{prefix}_c{i}"

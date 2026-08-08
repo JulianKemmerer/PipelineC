@@ -129,9 +129,9 @@ def main():
     # of a cheap unit when its operand multiplexer would cost more than the
     # unit does. That is the search working, not sharing regressing -- the
     # units-fewer-than-operations check above is what guards against the
-    # latter. (The state-decode comparators and operand multiplexers the FSM
-    # adds around all this appear many times; they are the price of sharing,
-    # not the thing being shared.)
+    # latter. (The state-decode tables and operand multiplexers the FSM adds
+    # around all this appear many times; they are the price of sharing, not the
+    # thing being shared.)
     units_claimed = {}
     for line in out.splitlines():
         fu = re.match(r"^  (\S+) x(\d+) -> 1 unit", line)

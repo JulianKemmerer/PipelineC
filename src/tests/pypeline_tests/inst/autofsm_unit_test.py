@@ -187,10 +187,103 @@ def main():
         check(name == sched["entity"], "generated function name is the schedule entity")
         check(src.count("+") == 1, f"exactly one '+' in the generated FSM (got {src.count('+')})")
         check("if (st == 0) & s.valid:" in src, "accepts input only while idle")
-        check("out_valid_r = 1" in src, "pulses valid when the result is ready")
+        # v3 drives valid straight from the last-state pulse bit rather than
+        # defaulting it to 0 and setting 1 inside a state comparison.
+        check("out_valid_r = ow" in src, "pulses valid when the result is ready")
         check(
             src.index("st: ") < src.index("st_r = "),
             "state is snapshotted before it is written",
+        )
+
+        print("[v3 control path]")
+        # The whole point of ctl v3: state is compared ONCE per FSM, in the
+        # accept. Everything else -- unit selects, register write enables, the
+        # next state -- reads a constant table indexed by the state instead.
+        check(
+            src.count("st == ") == 1,
+            f"exactly one state comparator in the whole FSM "
+            f"(got {src.count('st == ')})",
+        )
+        check("ns_lut: " in src, "next state comes from a constant table")
+        check(
+            src.index("st_r = ns_lut[st]") < src.index("if (st == 0) & s.valid:"),
+            "the next-state table is written BEFORE the accept, so accepting "
+            "an input overrides it (pypeline assignment is sequential)",
+        )
+        # 3 adds on one unit over 3 states: one select table, and the only
+        # value crossing a state boundary is the running sum.
+        check("u0_slut: " in src, "the shared unit's select comes from a table")
+        check(
+            src.count("_wel: ") == 1,
+            f"one write-enable table per cross-state register "
+            f"(got {src.count('_wel: ')})",
+        )
+        check(
+            "if v0_we:" in src,
+            "the register write is a plain one-bit enable, which PY_TO_LOGIC "
+            "turns into a clock enable rather than a comparator",
+        )
+        # State 1 runs fold 0, state 2 fold 1, state 3 fold 2; state 0 is idle
+        # and reads 0, which is harmless because nothing is enabled there.
+        check("[0, 0, 1, 2]" in src, "select table maps state -> fold index")
+        check("[0, 2, 3, 0]" in src, "next-state table advances then wraps to idle")
+
+        print("[v2 control path is still available for A/B]")
+        ps_v2, key_v2, tag_v2 = parse_design(tmp, mhz=25.0, name="d1b")
+        fake_delays(ps_v2, key_v2, tag_v2)
+        sched_v2 = AUTOFSM.BUILD_SCHEDULE(ps_v2, key_v2, tag_v2, 0.9, ctl="v2")
+        _n2, src_v2, _g2 = AUTOFSM.GENERATE_FSM_SOURCE(tag_v2, sched_v2, ps_v2)
+        check("elif st == " in src_v2, "ctl v2 still emits comparator chains")
+        check(
+            src_v2.count("st == ") > 1,
+            "ctl v2 compares the state many times (what v3 removes)",
+        )
+        check(
+            sched_v2["entity"] != sched["entity"],
+            "the control path is part of the schedule identity, so measured "
+            "delays cached for one are never reused for the other",
+        )
+        check(
+            AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps_v2, sched_v2)
+            > AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps, sched),
+            "the area model prices v3's control path below v2's (which is what "
+            "lets the sweep share further before muxes overtake the saving)",
+        )
+
+        print("[one-hot control path]")
+        ps_oh, key_oh, tag_oh = parse_design(tmp, mhz=25.0, name="d1c")
+        fake_delays(ps_oh, key_oh, tag_oh)
+        sched_oh = AUTOFSM.BUILD_SCHEDULE(ps_oh, key_oh, tag_oh, 0.9, ctl="onehot")
+        _n3, src_oh, _g3 = AUTOFSM.GENERATE_FSM_SOURCE(tag_oh, sched_oh, ps_oh)
+        check(
+            "st1h_r: " in src_oh and "= 1" in src_oh,
+            "one-hot state register resets to the idle bit",
+        )
+        check(
+            "st == " not in src_oh,
+            "one-hot compares the state ZERO times -- even the accept is a bit "
+            "read",
+        )
+        check(
+            "u0_sel[0:0] = " in src_oh,
+            "the operand mux select is encoded back to binary from hot bits "
+            "(the mux is a measured balanced tree and needs a binary select)",
+        )
+        check(
+            "v0_we: _af_t5 = st1h[1:1] | st1h[2:2]" in src_oh,
+            "a write enable is a plain OR of the writing states' hot bits",
+        )
+        check(
+            "(s.valid ^ 1)" in src_oh,
+            "the idle-hold term complements one bit with ^ 1, not ~ (which "
+            "would invert the whole promoted width)",
+        )
+        # One flip-flop per state plus idle, where binary needs only log2 --
+        # the cost one-hot trades against its cheaper decode.
+        check(
+            AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps_oh, sched_oh)
+            > AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps, sched),
+            "the area model charges one-hot for its extra flip-flops",
         )
 
         print("[budget controls state count]")

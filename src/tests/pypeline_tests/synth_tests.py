@@ -165,6 +165,20 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # The FSM's CONTROL path, built under both --autofsm_ctl modes and compared
+    # on yosys cell counts, plus the timing consequence on a design that sits at
+    # its clock goal. Guards the constant-table decode that replaced v2's
+    # per-state comparator chains -- a regression there is invisible to every
+    # correctness test in this suite, since both control paths compute the same
+    # thing.
+    tests.append(
+        Test(
+            name="autofsm_ctl_compare_test",
+            category="synth",
+            cmd=[INST_DIR / "autofsm_ctl_compare_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # max_latency= as a HARD constraint, both halves: a cap the tool can meet
     # is met (by unsharing, the only thing that shortens a schedule), and a cap
     # it cannot meet fails the build with a message naming the latency actually

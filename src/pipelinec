@@ -17,6 +17,11 @@ import pypeline_sim
 import SYN
 import SWEEP
 
+# Imported up here (elsewhere it is imported lazily, inside the functions that
+# schedule) so --autofsm_ctl's choices can come from AUTOFSM itself rather than
+# being restated. Its own imports are all already loaded above.
+import AUTOFSM
+
 # Defaults
 default_src_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.py"
 default_top_module = "top"
@@ -81,6 +86,17 @@ parser.add_argument(
     "only improve on this by its own cost model, so this is for A/B comparison "
     "and for debugging a schedule the search complicated.",
     action="store_true",
+)
+parser.add_argument(
+    "--autofsm_ctl",
+    help="How an AUTOFSM's control path is built (default v3). 'v3' decodes "
+    "state with constant lookup tables: one select LUT per shared unit, one "
+    "write-enable LUT per register, one next-state LUT, leaving a single "
+    "comparator per FSM. 'v2' is the older comparator chain (one equality "
+    "compare per state per unit), kept for A/B comparison. 'onehot' is "
+    "experimental: v3 with a one-hot state register.",
+    choices=list(AUTOFSM.CTL_CHOICES),
+    default=AUTOFSM.DEFAULT_CTL,
 )
 parser.add_argument(
     "--sim",
@@ -509,6 +525,7 @@ def run_autofsm_schedule_passes(parser_state):
             budget_scales,
             prev_schedules,
             area_sweep=not args.autofsm_no_area_sweep,
+            ctl=args.autofsm_ctl,
         )
         for key in sorted(schedules):
             print(AUTOFSM.DESCRIBE_SCHEDULE(key, schedules[key]), flush=True)
@@ -578,6 +595,7 @@ def run_autofsm_schedule_passes(parser_state):
                 budget_scales,
                 schedules,
                 area_sweep=not args.autofsm_no_area_sweep,
+                ctl=args.autofsm_ctl,
             )
             if not AUTOFSM.SCHEDULES_EQUAL(trial, schedules):
                 changed = True

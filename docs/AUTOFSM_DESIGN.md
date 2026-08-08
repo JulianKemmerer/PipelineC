@@ -403,28 +403,92 @@ def autofsm_chain_428aec93(s: _af_t0) -> _af_t1:
         in_r = s.data
         st_r = 1
     # BIN_OP_PLUS_int16_t_int16_t: 3 operation(s) sharing one unit
-    u0_a0: _af_t3 = in_v.a      # first user's operands double as the mux default
-    u0_a1: _af_t3 = in_v.b
-    if st == 2:
-        u0_a0 = v0
-        u0_a1 = in_v.c
-    elif st == 3:
-        u0_a0 = v1
-        u0_a1 = in_v.d
+    u0_slut: _af_t9 = [0, 0, 1, 2]      # state -> fold index
+    u0_sel: _af_t8 = u0_slut[st]
+    u0_c0: _af_t10                      # one array per unit input port
+    u0_c0[0] = in_v.a
+    u0_c0[1] = v0
+    u0_c0[2] = v1
+    u0_a0: _af_t3 = _af_mux11(u0_sel, u0_c0)
+    u0_c1: _af_t12
+    u0_c1[0] = in_v.b
+    u0_c1[1] = in_v.c
+    u0_c1[2] = in_v.d
+    u0_a1: _af_t3 = _af_mux11(u0_sel, u0_c1)
     u0_o: _af_t6 = (u0_a0 + u0_a1)      # THE one hardware adder
-    # Writebacks and next state
-    if st == 1:
+    # Writebacks: constant write-enable LUT per register, no state compares
+    v0_wel: _af_t13 = [0, 1, 0, 0]
+    v0_we: _af_t5 = v0_wel[st]
+    if v0_we:
         v0_r = u0_o
-        st_r = 2
-    elif st == 2:
+    v1_wel: _af_t13 = [0, 0, 1, 0]
+    v1_we: _af_t5 = v1_wel[st]
+    if v1_we:
         v1_r = u0_o
-        st_r = 3
-    elif st == 3:
+    ow_lut: _af_t13 = [0, 0, 0, 1]      # last-state pulse
+    ow: _af_t5 = ow_lut[st]
+    if ow:
         out_data_r = u0_o
-        out_valid_r = 1
-        st_r = 0
+    out_valid_r = ow
     return o
 ```
+
+#### The control path
+
+Everything above that reads `st` is **control**, and how it is built is selected
+by `--autofsm_ctl` (`v3` by default, `v2` and `onehot` also available). The
+shape shown is `v3`.
+
+v2 decoded state with comparators: `u0_sel = 0; if st == 2: u0_sel = 1; elif
+st == 3: ...` per shared unit, and `if st == 1: ... elif st == 2: ...` for the
+writebacks and next state. That is one equality comparator per fold per unit
+plus one per state, each followed by a priority chain — O(states x units)
+comparators, all of them in the path from the state register to the operand
+multiplexers.
+
+v3 replaces every one of them with a **constant lookup table indexed by the
+state**. A constant local array read at a variable index elaborates to a
+balanced selection tree whose leaves are literals, which synthesis
+constant-folds to roughly one gate per table output bit. Three kinds appear:
+
+| table | what it drives | width |
+|---|---|---|
+| `u{n}_slut` | one shared unit's operand-mux select | `ceil(log2(folds))` bits |
+| `v{n}_wel` | one register's write enable | 1 bit |
+| `ns_lut`, `ow_lut` | next state, output-write pulse | state width, 1 bit |
+
+Exactly **one comparator survives per FSM**: `st == 0` in the accept.
+
+Three details that are load-bearing:
+
+- **`if <one-bit value>:` is a clock enable, not a comparator.** PY_TO_LOGIC
+  only inserts a `!= 0` comparison when the condition is wider than one bit
+  (`BOOL_C_TYPE` is `uint1_t`), so a write-enable table feeding `if v0_we:`
+  costs the table and nothing else.
+- **`st_r = ns_lut[st]` is written BEFORE the accept block**, so the accept's
+  `st_r = 1` overrides it. Pypeline assignment is sequential; reversing these
+  two would silently drop every accepted input.
+- **The select table is off the data path.** `st` is a register output
+  available at the start of the cycle, so `st -> table -> mux.sel` resolves in
+  parallel with `operands -> mux.data`. This is why `CTL_LUT_DU` is 0: charging
+  it in series would model a sum where the truth is a max.
+
+Two shapes were considered and **rejected**: using the state bits *directly* as
+a mux select (with data inputs padded out to one row per state) grows the
+operand mux from `folds` rows to `states + 1` rows, which on any real data
+width costs far more than the decode it saves — sine's 7-fold float64 unit would
+buy 8 extra 64-bit mux rows to avoid about 3 gates. And a real ROM primitive
+does not exist in the compiler; a constant array at a variable index is the
+closest thing, which is exactly what is used here.
+
+`onehot` goes further: the state register becomes one bit per state (plus idle),
+so every control signal is a constant-index bit read. Write enables become
+`v0_we = st1h[1:1] | st1h[3:3]`, the next state is a bit shift, and the accept
+is a bit read — **zero** comparators. It pays for this with one flip-flop per
+state instead of `log2(states)`, and with a binary encoder per shared unit,
+since the operand mux is a measured balanced tree that needs a binary select.
+Measured results are in §4; it wins on every design tried so far but its
+flip-flop cost grows linearly in states, so `v3` remains the default.
 
 Points that are easy to get wrong, and are deliberate here:
 
@@ -698,6 +762,50 @@ shared unit is an expensive multiply or a wide add. The search earns its keep by
 there for the designs where it is not true — cheap operations behind wide
 multiplexers, or several composite units built from the same smaller pieces.
 
+**v2 → v3** (the constant-table control path), same schedule under both, so
+these differences are the control path and nothing else. Cell counts exclude
+`$scopeinfo`, which is yosys bookkeeping recording where flattened logic came
+from rather than hardware — v3 deliberately instantiates one small module per
+table, so counting it would report a design that shrank as if it had grown:
+
+| design | v2 | v3 | onehot | v3 change |
+|---|---|---|---|---|
+| `autofsm_resources_test.py` (top) | 3309 | **3284** | 3276 | −0.8% |
+| `autofsm_donut_update.py` (FSM entity) | 2123 | **2073** | 2017 | −2.4% |
+| `float_sine_autofsm.py` (FSM entity) | 24281 | **24156** | 24124 | −0.5% |
+
+The area saving is real but modest. **The timing result is the big one:**
+
+| design | v2 fmax | v3 fmax | onehot fmax |
+|---|---|---|---|
+| `autofsm_donut_update.py` (40 MHz goal) | 39.93 — **FAIL** | **48.33 — PASS** | 52.61 — PASS |
+| `float_sine_autofsm.py` (4 MHz goal) | 7.71 | 7.85 | 7.94 |
+
+Donut sits close enough to its goal that the control path decides whether it
+builds at all. Under v2 it misses 40 MHz by 0.07, the driver tightens the state
+budget and reschedules, and the resulting deeply-opened schedule (412 operations
+over 131 states) hits a pre-existing bit-slice bug in the elaborator — so the
+build fails outright. Under v3 the same schedule meets timing on the first pass.
+This is also the first time the donut FSM is **smaller than the combinational
+logic it replaces** (2362 vs 2380 cells at the top level), where v2 was a net
+loss.
+
+The one-hot column is an experiment that was expected to lose and did not: its
+extra flip-flops are cheaper than expected and its decode is cheaper still,
+because a write enable becomes an OR of already-decoded hot bits rather than a
+fresh boolean function of the state bits. It wins on all three designs, on both
+area and fmax. It remains off by default because its flip-flop cost grows
+linearly in state count while binary encoding grows logarithmically — the
+designs measured here have 6, 8 and 14 states, and nothing here says where the
+crossover is.
+
+What did **not** move: pricing v3's cheaper control in the area model did not
+change a single scheduling decision on these three designs. The control saving
+is real, but it is small next to the unit and multiplexer terms that actually
+drive the search's choices, so "cheaper sharing lets the search share more" did
+not materialise here. The model terms are correct and in place; the lever simply
+has less leverage than expected.
+
 Timing iteration, starting from a deliberately over-packed schedule
 (`--autofsm_budget_scale 1.5`): first build 30.46 MHz vs a 40 MHz goal (FAIL) →
 budget tightened → 44.23 MHz (PASS), with no source change.
@@ -722,6 +830,7 @@ at least 3"*.
 | `autofsm_area_sweep_compare_test.py` | synth | the area search does not make designs bigger, and its cost model agrees with yosys about which of two schedules is smaller — the calibration guard |
 | `autofsm_max_latency_test.py` | synth | a meetable `max_latency` is met by unsharing; an unmeetable one fails the build naming the latency actually needed |
 | `autofsm_timing_iter_test.py` | synth | a critical path inside an FSM is found and fixed by rescheduling |
+| `autofsm_ctl_compare_test.py` | synth | the constant-table control path is not bigger than the comparator chains it replaced, and the donut FSM still meets the clock goal that v2 misses |
 | `double_parse_file_test.py` | elab | re-parsing an AUTOFSM design is reproducible |
 
 `self_check_autofsm_test.py` is worth copying as a template: it reacts to
@@ -768,7 +877,32 @@ latency, which is what lets it be reused unchanged across four registrations.
 - **Cross-unit register sharing under a timing model.** Today registers merge
   only within one producing unit, because merging across units puts a
   multiplexer in front of a flip-flop and cost the donut example 5 MHz. With a
-  per-path timing estimate the safe cases could be taken.
+  per-path timing estimate the safe cases could be taken. The enabling pieces
+  are in place: the writeback is already factored as {write-enable table +
+  source}, so a multi-source register needs only a source multiplexer (the same
+  measured `make_operand_mux` shape) in front of it, `ESTIMATE_SCHEDULE_AREA`
+  already carries the term that prices one, and codegen raises a named error
+  rather than mis-generating if the allocator ever hands it a multi-source
+  register.
+- **A max() chain fit.** The delay model sums a state's operation chain and its
+  operand multiplexers. For the multiplexer that is not quite right: its select
+  and its data arrive on independent paths, so the truth is
+  `max(sel_path, data_path) + mux_delay`. Modelling that is what would let
+  `CTL_LUT_DU` be charged honestly instead of pinned at 0.
+- **A ROM primitive.** Constant tables are built today as a constant local array
+  read at a variable index, which elaborates to a full selection tree and only
+  becomes cheap once synthesis folds the constants. It works (the whole v3
+  control path depends on it) but the internal delay model prices the unfolded
+  tree — a 5-entry table estimates at 4.8 ns where the module it sits in
+  measures 1.9 ns. Harmless inside an AUTOFSM, whose delay is one measured
+  whole-module number, but a real ROM/table primitive with its own cost model
+  would make the idiom usable in ordinary designs.
+- **A latent bit-slice bug in deeply-opened schedules.** Rescheduling the donut
+  design under a tightened budget produces a 412-operation, 131-state plan whose
+  generated source fails to elaborate: *"Bit index [14:14] out of range for
+  uint9_t"*. This predates the v3 work and is unrelated to the control path —
+  v3 only avoids it by meeting timing on the first pass — but it is reachable
+  from any design the search opens far enough.
 - **Multiple concurrent AUTOFSM threads sharing units.** Two FSMs that both need
   a float multiplier could share one, with arbitration. The binding step already
   keys on entity, so the scheduler generalizes; what is missing is the arbiter

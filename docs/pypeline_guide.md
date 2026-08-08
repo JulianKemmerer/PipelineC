@@ -2434,6 +2434,25 @@ The search never returns something bigger or slower than plain share-everything,
 so there is nothing to turn on. `--autofsm_no_area_sweep` turns it *off*, which
 is useful mainly for comparing the two.
 
+### Control path — `--autofsm_ctl`
+
+Something has to decode the state into "which operand does this unit take",
+"which registers are written now" and "what is the next state". `--autofsm_ctl`
+picks how, and the default is normally right:
+
+| value | how state is decoded | comparators per FSM |
+|---|---|---|
+| `v3` (default) | constant lookup tables indexed by the state | one (the accept) |
+| `v2` | an equality comparator per state per unit, in priority chains | O(states × units) |
+| `onehot` | one bit per state; every control signal is a bit read | zero |
+
+`v2` exists for A/B comparison — it is what the tool used to emit, and it is
+measurably both bigger and slower. `onehot` is smaller and faster still on every
+design measured so far, but spends a flip-flop per state where the others spend
+`log2(states)`, so it is not the default; try it on FSMs with few states and a
+tight clock. The choice is part of the schedule's identity, so switching it
+re-measures rather than reusing timing from the other one.
+
 Working examples: `examples/pypeline/autofsm_donut_update.py` (per-frame
 rotation math) and `examples/pypeline/float_sine_autofsm.py` (a float64
 polynomial onto one multiplier). Full design notes in
