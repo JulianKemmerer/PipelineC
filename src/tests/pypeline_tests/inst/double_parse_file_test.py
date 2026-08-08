@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # In-process regression test: PY_TO_LOGIC.PARSE_FILE called twice in one
-# process (the pipelinec driver's AUTOPIPELINE pin-and-confirm loop does
+# process (the pypelinec driver's AUTOPIPELINE pin-and-confirm loop does
 # exactly this) must behave like two fresh parses.
 #
 # Guards two once-latent bugs:

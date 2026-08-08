@@ -1602,7 +1602,8 @@ exception (not `sys.exit`) so callers can catch it deliberately. `src/pypeline_s
 `run_sim()` CLI driver catches `SimFinish` around its per-cycle `_run_clock_cycle(...)` call and
 breaks out of the run loop cleanly (prints an early-stop message, still prints the final
 elapsed-time summary) instead of treating it as a crash; `sim_call()`-based tests instead
-typically assert `SimFinish` is raised directly (see `sim_assert_finish_test.py`).
+typically assert `SimFinish` is raised directly (see
+`src/tests/pypeline_tests/inst/sim_assert_finish_test.py`).
 
 ### Invocation via `pipelinec --sim --run N`
 
@@ -1930,12 +1931,18 @@ hardware in practice.
 
 #### `pypeline_sim_debug.py` under non-`--comb`
 
-For non-`--comb` args the tool runs its two `pipelinec` invocations **sequentially** (native
-first) instead of concurrently: both do a full synthesis build, and running native first leaves
-the repo-level path-delay / pipeline-min-period caches warm, so the second (VHDL) build reuses
-them and both converge on identical latencies (a prerequisite for a meaningful cycle diff), with
-no concurrent cache writes. It detects this by scanning the forwarded args for
-`--comb`/`--sim_comb`/`--no_synth`; comb runs keep the original concurrent thread pool.
+For non-`--comb` args the tool first does a single build-only pass (no `--sim`) into a
+shared `out_dir` -- the full throughput sweep + AUTOPIPELINE pin-and-confirm, paid once
+-- then points **both** the native and VHDL `--sim` invocations at that same now-warm
+`out_dir` and runs them **concurrently**. Each re-runs `pypelinec`'s build path
+internally, but with the sweep already warm (existing VHDL/log/timing-params results in
+`out_dir`, plus the repo-level path-delay / pipeline-min-period caches) it converges
+fast, and both are guaranteed to reach the same discovered latencies as the build phase
+-- a prerequisite for a meaningful cycle diff -- with no concurrent cache-write race,
+since the expensive discovery work already happened in the single build-only pass. It
+detects non-`--comb` mode by scanning the forwarded args for
+`--comb`/`--sim_comb`/`--no_synth`; comb runs skip the build-only pass and run both
+sims concurrently in separate `--out_dir`s from the start.
 
 ---
 
@@ -2191,11 +2198,12 @@ The `pipelinec --sim --run N` § above is covered by `pipelinec_native_sim_test`
 `SIM.SET_SIM_TOOL`/`DO_OPTIONAL_SIM` dispatch wiring from the simulator itself, which the other
 `global_wires_sim_test` entry already covers. (Every native_sim-category `pipelinec` invocation
 passes `--comb` — without it, `--sim` now triggers a full build first.) The pipelined native
-sim § is covered in the synth category: `native_pipelined_sim_test` (non-`--comb` build +
-latency-emulated native self-checks of `self_check_stream_pipeline_test.py`) and the two
-`pypeline_sim_debug.py` cycle-diff tests `native_vs_vhdl_pipelined_ap_test` /
-`native_vs_vhdl_pipelined_main_test`, which MATCH-compare emulated native sim against real
-pipelined GHDL for an AUTOPIPELINE call site and a naturally-pipelined pure MAIN respectively.
+sim § is covered by `native_pipelined_sim_test` (in `synth_tests.py`: non-`--comb` build +
+latency-emulated native self-checks of `self_check_stream_pipeline_test.py`) and, in the
+`native_vs_vhdl_sim` category, `pypeline_sim_debug.py` cycle-diff tests including
+`native_vs_vhdl_ap_test` and `native_vs_vhdl_pipelined_main_test`, which MATCH-compare emulated
+native sim against real pipelined GHDL for an AUTOPIPELINE call site and a naturally-pipelined
+pure MAIN respectively.
 
 ```
 python3 src/tests/pypeline_tests/native_sim_tests.py            # just the sim tests
@@ -2204,8 +2212,7 @@ python3 src/tests/pypeline_tests/run_all.py --category native_sim
 ```
 
 Aside from `pipelinec_native_sim_test` above (which exits before elaboration even though it
-invokes `pipelinec`), no `pipelinec` elaboration/synthesis happens in this script — that's
-covered separately by `elab_tests.py`/`synth_tests.py` (see
-[PY_TO_LOGIC_DESIGN.md § Tests](PY_TO_LOGIC_DESIGN.md#tests)). Tests run in parallel via a
-thread pool (`common.py`, shared with the other two scripts); see
-[pypeline_DESIGN.md § Tests](pypeline_DESIGN.md#tests) for the full-suite runner.
+invokes `pipelinec`), no `pipelinec` elaboration/synthesis happens in this script. See
+[pypeline_TESTS.md](pypeline_TESTS.md) for the full category breakdown (`elab`,
+`elab_introspect`, `unit`, `synth`, `build_report`, `native_vs_vhdl_sim`, `known_issues`), the
+`run_all.py` CLI, and the `native_vs_vhdl_sim` probe-placement rules.

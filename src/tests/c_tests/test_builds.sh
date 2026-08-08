@@ -1,15 +1,18 @@
 #!/usr/bin/env bash
 
-# $1 is piplinec args
-#   ex. PipelineC$ ./test_builds.sh "--comb --no_synth"
-export PIPELINEC=../src/pipelinec
-export EXAMPLES=../examples
+# $1 is pipelinec args
+#   ex. src/tests/c_tests$ ./test_builds.sh "--comb --no_synth"
+#   (runnable from any cwd -- paths are resolved relative to this script)
+THIS_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")" && pwd)"
+REPO_ROOT="$(cd "$THIS_DIR/../../.." && pwd)"
+export PIPELINEC="$REPO_ROOT/src/pipelinec"
+export EXAMPLES="$REPO_ROOT/examples"
 
 set -e # Exit if anything fails
 
-rm -rf TEST_OUTPUTS
-mkdir TEST_OUTPUTS
-cd TEST_OUTPUTS
+rm -rf "$THIS_DIR/TEST_OUTPUTS"
+mkdir "$THIS_DIR/TEST_OUTPUTS"
+cd "$THIS_DIR/TEST_OUTPUTS"
 
 "$PIPELINEC" "$EXAMPLES"/blink.c $1
 "$PIPELINEC" "$EXAMPLES"/tool_tests/open_tools.c $1

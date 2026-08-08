@@ -67,7 +67,7 @@ def test_mixed_granularity_reassign_uses_fresh_value():
 
     # See two_factory_wrappers_test.py: PARSE_FILE's _build_inst_lookup walk of
     # C-built-in submodule instances needs SYN.SYN_OUTPUT_DIRECTORY set -- normally done
-    # by the pipelinec CLI wrapper before calling PARSE_FILE; replicate it here since
+    # by the pypelinec CLI wrapper before calling PARSE_FILE; replicate it here since
     # this test calls PARSE_FILE directly.
     SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(
         prefix="mixed_granularity_reassign_test_"

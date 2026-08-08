@@ -5,7 +5,7 @@ return-value) and a bare @sim_output call nested one level inside a plain,
 non-MAIN @hw_func elaborates cleanly -- no ElaborationError about writing a
 read-only Input[T]/reading an Output[T], no NotImplementedError about an
 unsupported statement -- with every sim-only call vanishing from the generated
-hardware. Success is simply a zero exit code (pipelinec inst/
+hardware. Success is simply a zero exit code (pypelinec inst/
 sim_input_output_elab_test.py --no_synth).
 
 `in_return`'s body deliberately uses `itertools.count()` -- a Python-only

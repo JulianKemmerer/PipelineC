@@ -2,7 +2,7 @@
 """Wire-convergence stress test for make_fifo's _FifoFwftModel: run only via
 the multi-MAIN runner (pypeline_sim.py fifo_sim_model_test.py --run N). Not a
 plain-python3 test (no __main__ block) and not elaborated/synthesized by
-pipelinec -- mirrors global_wires_sim_test.py's structure/registration.
+pypelinec -- mirrors global_wires_sim_test.py's structure/registration.
 """
 
 import sys, os

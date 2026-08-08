@@ -11,7 +11,7 @@ This exact shape is what wireguard-fpga's *_dataflow.py files hit -- deliberatel
 NOT import wire_discovery_leaf_a/_b directly here, only the pass-through module.
 
 Run: pypeline_sim.py wire_discovery_passthrough_sim_test.py --run N
- or: pipelinec wire_discovery_passthrough_sim_test.py --sim --run N
+ or: pypelinec wire_discovery_passthrough_sim_test.py --sim --run N
 """
 
 import sys, os

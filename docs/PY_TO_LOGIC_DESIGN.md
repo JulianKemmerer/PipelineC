@@ -5070,21 +5070,24 @@ top.py  (single-file or multi-file entry point)
 ## Tests
 
 `src/tests/pypeline_tests/` drives `pipelinec` against design files in `inst/` to exercise
-the elaboration mechanics, pragmas, and syntax extensions described above end-to-end. Two
-scripts cover the `pipelinec` side of the suite (a third, `native_sim_tests.py`, covers pure-Python
-simulation — see [pypeline_sim_DESIGN.md § Tests](pypeline_sim_DESIGN.md#tests)):
+the elaboration mechanics, pragmas, and syntax extensions described above end-to-end. Full
+category breakdown: [pypeline_TESTS.md](pypeline_TESTS.md). The two most relevant here:
 
-- **`elab_tests.py`** — runs `pipelinec --comb --no_synth` (elaboration only, no
-  autopipelining or synthesis tool invocation) against design files that exercise global
-  wires, compound initializers, bit manipulation syntax, and multi-file imports
-  (`global_wires_test.py`, `compound_init_test.py`, `bit_manip_test.py`, `import_test.py`,
-  `func_wires_test.py`). Fast — useful for checking HDL generation/elaboration correctness
-  without needing a synthesis toolchain installed.
+- **`elab_tests.py`** — runs `pipelinec --no_synth` (elaboration only, no autopipelining
+  or synthesis tool invocation) against design files that exercise global wires, compound
+  initializers, bit manipulation syntax, and multi-file imports (`global_wires_test.py`,
+  `compound_init_test.py`, `bit_manip_test.py`, `import_test.py`, `func_wires_test.py`).
+  Fast — useful for checking HDL generation/elaboration correctness without needing a
+  synthesis toolchain installed. Exit code is the entire verdict; see
+  `elab_introspect_tests.py` for tests that instead call `PY_TO_LOGIC.PARSE_FILE`
+  in-process and assert on `parser_state`/`FuncLogicLookupTable`/a raised
+  `ElaborationError`'s type and message.
 - **`synth_tests.py`** — runs `pipelinec` (with or without `--comb`, but without
   `--no_synth`) on the remaining design files, exercising the full pipeline: elaboration →
   `SYN.DO_THROUGHPUT_SWEEP` autopipelining → synthesis. Requires a synthesis tool to be
   installed and discoverable via `SYN.PART_SET_TOOL` (falls back to `--comb --no_synth`
-  with a warning if none is found).
+  with a warning if none is found). Exit code is the entire verdict here too; see
+  `build_report_tests.py` for wrapper scripts that instead assert on the build log/artifacts.
 
 ```
 python3 src/tests/pypeline_tests/elab_tests.py            # elaboration only, fast
@@ -5095,4 +5098,5 @@ python3 src/tests/pypeline_tests/run_all.py --category elab --category synth
 Each test gets an isolated `--out_dir` under a tmp directory (`common.run_test()` in
 `src/tests/pypeline_tests/common.py`), so tests can run in parallel safely — unlike the old
 `run_all.sh`, which serialized everything through one shared `~/pypeline_run_all` directory.
-See [pypeline_DESIGN.md § Tests](pypeline_DESIGN.md#tests) for the combined-suite runner.
+See [pypeline_TESTS.md](pypeline_TESTS.md) for the full category breakdown and
+[pypeline_DESIGN.md § Tests](pypeline_DESIGN.md#tests) for the combined-suite runner.

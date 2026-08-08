@@ -9,7 +9,6 @@ See the [Pypeline language guide](../../docs/pypeline_guide.md) and
   colour test pattern, driven to real board pins and viewable live in native simulation.
 * [vga_donut.py](vga_donut.py) — a spinning 3D donut rendered to VGA.
 * [float_sine.py](float_sine.py) — a from-scratch floating point `sinf` implementation.
-* [sim_assert_finish_test.py](sim_assert_finish_test.py) — minimal `sim_assert`/`sim_finish` usage.
 * [dsp/](dsp) — DSP/FIR filter library examples with testbenches and plots:
   [fir_lowpass_tb.py](dsp/fir_lowpass_tb.py), [fir_decim_tb.py](dsp/fir_decim_tb.py),
   [fir_interp_tb.py](dsp/fir_interp_tb.py), and [fm_radio_decim.py](dsp/fm_radio_decim.py) (a

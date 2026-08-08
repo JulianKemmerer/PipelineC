@@ -1,15 +1,16 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
 """Native (Python-only) simulation tests -- no VHDL/GHDL involved. See
-vhdl_sim_tests.py for the subset of self-checking designs also run through real
-VHDL simulation (--cocotb --ghdl).
+native_vs_vhdl_sim_tests.py for the self-checking designs that ALSO run
+through real cocotb+GHDL, with the two sims' sim_print(debug=True) output
+diffed cycle by cycle.
 
 Run standalone: python3 native_sim_tests.py [-j N]
 """
 
 import sys
 
-from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PIPELINEC, PYPELINE_SIM, Test, main
+from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINEC, PYPELINE_SIM, Test, main
 
 # fmt: off
 PLAIN_PYTHON_TEST_FILES = [
@@ -96,7 +97,7 @@ def get_tests() -> list:
             name="pipelinec_native_sim_test",
             category="native_sim",
             cmd=[
-                PIPELINEC,
+                PYPELINEC,
                 INST_DIR / "global_wires_sim_test.py",
                 "--sim",
                 "--comb",
@@ -122,7 +123,7 @@ def get_tests() -> list:
             name="wire_discovery_passthrough_native_sim_test",
             category="native_sim",
             cmd=[
-                PIPELINEC,
+                PYPELINEC,
                 INST_DIR / "wire_discovery_passthrough_sim_test.py",
                 "--sim",
                 "--comb",
@@ -171,7 +172,7 @@ def get_tests() -> list:
             Test(
                 name=fname[: -len(".py")],
                 category="native_sim",
-                cmd=[PIPELINEC, DSP_DIR / fname, "--sim", "--comb", "--run", str(run_n)],
+                cmd=[PYPELINEC, DSP_DIR / fname, "--sim", "--comb", "--run", str(run_n)],
             )
         )
     # PDW project: hysteresis SM / candidate-PDW extractor (3 @MAINs --
@@ -181,7 +182,7 @@ def get_tests() -> list:
             name="pulse_detect_tb",
             category="native_sim",
             cmd=[
-                PIPELINEC,
+                PYPELINEC,
                 EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_detect" / "pulse_detect_tb.py",
                 "--sim",
                 "--comb",
@@ -194,35 +195,22 @@ def get_tests() -> list:
     # whole pulse_gen -> detect_pulses chain, several pulse settings incl.
     # filtered-out ones and the CW/max_width cap.
     #
-    # DISABLED (intentionally, not a real failure): pdw_tb.py's PATH_B_SKEW is
-    # set to 0 -- the CORRECT Path B alignment -- and is EXPECTED to fail
+    # pdw_tb.py itself is registered in known_issues_tests.py, not here:
+    # PATH_B_SKEW = 0 -- the CORRECT Path B alignment -- is EXPECTED to fail
     # until pulse_detect.py's delay line is fixed to match (see that
     # function's docstring and README.md section 5's "Known gap" note). Once
-    # that hardware fix lands, pdw_tb.py becomes its acceptance test and this
-    # registration should be re-enabled.
-    # tests.append(
-    #     Test(
-    #         name="pdw_tb",
-    #         category="native_sim",
-    #         cmd=[
-    #             PIPELINEC,
-    #             EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_tb.py",
-    #             "--sim",
-    #             "--comb",
-    #             "--run",
-    #             "6200",
-    #         ],
-    #     )
-    # )
+    # that hardware fix lands, pdw_tb.py becomes its acceptance test and
+    # should move here.
     # Self-checking sim_assert/sim_finish designs -- no external Python
     # sim_call/assert harness needed. Same source files are also registered in
-    # vhdl_sim_tests.py under --cocotb --ghdl, proving native and VHDL sim agree.
+    # native_vs_vhdl_sim_tests.py, where the native and cocotb+GHDL sims are
+    # run together and their debug output diffed cycle by cycle.
     tests.append(
         Test(
             name="self_check_counter_test",
             category="native_sim",
             cmd=[
-                PIPELINEC,
+                PYPELINEC,
                 INST_DIR / "self_check_counter_test.py",
                 "--sim",
                 "--comb",
@@ -236,7 +224,7 @@ def get_tests() -> list:
             name="self_check_fifo_test",
             category="native_sim",
             cmd=[
-                PIPELINEC,
+                PYPELINEC,
                 INST_DIR / "self_check_fifo_test.py",
                 "--sim",
                 "--comb",
@@ -248,14 +236,14 @@ def get_tests() -> list:
     # AUTOFSM in --comb mode: the call site is still the combinational
     # passthrough (latency 0), so this also proves the self-checking testbench
     # is latency-agnostic -- the same source is correct whether the FSM is
-    # scheduled or not, which is what lets it be reused unchanged in
-    # vhdl_sim_tests.py and in the full-build synth tests.
+    # scheduled or not, which is what lets it be reused unchanged in both of
+    # native_vs_vhdl_sim_tests.py's entries (--comb and full-build).
     tests.append(
         Test(
             name="self_check_autofsm_comb_test",
             category="native_sim",
             cmd=[
-                PIPELINEC,
+                PYPELINEC,
                 INST_DIR / "self_check_autofsm_test.py",
                 "--sim",
                 "--comb",
@@ -269,7 +257,7 @@ def get_tests() -> list:
             name="self_check_bit_math_test",
             category="native_sim",
             cmd=[
-                PIPELINEC,
+                PYPELINEC,
                 INST_DIR / "self_check_bit_math_test.py",
                 "--sim",
                 "--comb",
@@ -283,7 +271,7 @@ def get_tests() -> list:
             name="struct_ctor_positional_test",
             category="native_sim",
             cmd=[
-                PIPELINEC,
+                PYPELINEC,
                 INST_DIR / "struct_ctor_positional_test.py",
                 "--sim",
                 "--comb",
@@ -297,7 +285,7 @@ def get_tests() -> list:
             name="global_wire_partial_field_test",
             category="native_sim",
             cmd=[
-                PIPELINEC,
+                PYPELINEC,
                 INST_DIR / "global_wire_partial_field_test.py",
                 "--sim",
                 "--comb",
@@ -311,7 +299,7 @@ def get_tests() -> list:
             name="global_wire_read_write_test",
             category="native_sim",
             cmd=[
-                PIPELINEC,
+                PYPELINEC,
                 INST_DIR / "global_wire_read_write_test.py",
                 "--sim",
                 "--comb",
@@ -325,7 +313,7 @@ def get_tests() -> list:
             name="global_wire_split_driver_test",
             category="native_sim",
             cmd=[
-                PIPELINEC,
+                PYPELINEC,
                 INST_DIR / "global_wire_split_driver_test.py",
                 "--sim",
                 "--comb",
@@ -338,7 +326,8 @@ def get_tests() -> list:
     # cross-writer readback, 3-writer nested struct splits, hierarchy-buried
     # writers, conditionally (clock-enable style) driven fields, and
     # constant-index array element splits. Each also runs through real GHDL in
-    # vhdl_sim_tests.py so native sim and hardware are held to the same golden
+    # native_vs_vhdl_sim_tests.py (except global_wire_nested_split_test.py --
+    # see that file) so native sim and hardware are held to the same golden
     # behavior.
     for fname in [
         "global_wire_readback_test.py",
@@ -353,7 +342,7 @@ def get_tests() -> list:
                 name=fname[: -len(".py")],
                 category="native_sim",
                 cmd=[
-                    PIPELINEC,
+                    PYPELINEC,
                     INST_DIR / fname,
                     "--sim",
                     "--comb",

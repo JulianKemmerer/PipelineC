@@ -8,8 +8,9 @@ raising a clear elaboration error. Covers positional-only, keyword-only, and
 mixed positional+keyword struct constructors, plus a plain local-variable
 assignment with positional args (same underlying _elab_compound_init code path).
 
-Registered in both native_sim_tests.py (--sim --comb --run all) and
-vhdl_sim_tests.py (--sim --comb --cocotb --ghdl --run all).
+Registered in native_vs_vhdl_sim_tests.py, which runs the native (--sim --comb)
+and cocotb+GHDL (--cocotb --ghdl) sims and diffs their sim_print(debug=True)
+output cycle by cycle.
 """
 
 import sys, os
@@ -20,7 +21,17 @@ sys.path.insert(
 
 from typing import NamedTuple
 
-from pypeline import MAIN, Reg, hw_func, sim_assert, sim_finish, struct, uint1_t, uint8_t
+from pypeline import (
+    MAIN,
+    Reg,
+    hw_func,
+    sim_assert,
+    sim_finish,
+    sim_print,
+    struct,
+    uint1_t,
+    uint8_t,
+)
 
 NUM_COUNTS = 10
 
@@ -74,6 +85,9 @@ def struct_ctor_positional_test():
         local_pos.b == active, f"local positional: expected b={active}, got {local_pos.b}"
     )
 
+    # No debug print on the sim_finish() cycle -- see self_check_counter_test.py.
+    if n < NUM_COUNTS - 1:
+        sim_print(f"struct_ctor_positional n={n} active={active}", debug=True)
     if n == NUM_COUNTS - 1:
         sim_finish()
     n += 1

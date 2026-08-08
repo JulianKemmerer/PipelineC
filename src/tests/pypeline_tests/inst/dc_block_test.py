@@ -3,7 +3,7 @@
 golden model (dsp/dsp_tb.golden_dc_block), full precision vs resized/
 saturated output, valid_only mode, consumer backpressure stalls, and input
 valid gaps. Plain `python3 dc_block_test.py` runs the sim_call tests; the
-@MAIN entry points below also give `pipelinec dc_block_test.py --comb`
+@MAIN entry points below also give `pypelinec dc_block_test.py --comb`
 elaboration coverage of every mode."""
 
 import sys, os

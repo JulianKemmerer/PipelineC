@@ -56,7 +56,7 @@ dwidth_narrow, _wide_axis_t_n, _narrow_axis_t_n = make_dwidth_narrow(uint8_t, N,
 dwidth_widen_result_t = hw_return_type(dwidth_widen)
 dwidth_narrow_result_t = hw_return_type(dwidth_narrow)
 
-# Top-level entry points so `pipelinec --comb` elaborates/synthesizes the same hardware
+# Top-level entry points so `pypelinec --comb` elaborates/synthesizes the same hardware
 # functions exercised below, mirroring axis_test.py/multi_cycle_test.py. MAIN(...) only
 # works as a decorator on a function def — wrap each call instead of calling it directly.
 

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Planned throughput sweep test (g): planless mains get an "as written" check.
-# Runs pipelinec on sweep_planless_design.py (a stateful MAIN with no
+# Runs pypelinec on sweep_planless_design.py (a stateful MAIN with no
 # AUTOPIPELINE regions and an easily met 1 MHz goal) and asserts:
 #  - the planning-time warning still tells the user nothing is cuttable
 #  - the main gets ONE standalone whole-module synthesis and the new
@@ -15,7 +15,7 @@ import subprocess
 import sys
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-PIPELINEC = os.path.join(THIS_DIR, "../../../pipelinec")
+PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
 DESIGN = os.path.join(THIS_DIR, "sweep_planless_design.py")
 
 MAX_FULL_SYN_RUNS = 1
@@ -26,7 +26,7 @@ def main():
     parser.add_argument("--out_dir", default=None)
     args = parser.parse_args()
 
-    cmd = [sys.executable, PIPELINEC, DESIGN]
+    cmd = [sys.executable, PYPELINEC, DESIGN]
     if args.out_dir:
         cmd += ["--out_dir", args.out_dir]
     print("Running:", " ".join(cmd), flush=True)
@@ -37,7 +37,7 @@ def main():
     print(out)
 
     if result.returncode != 0:
-        print("FAIL: pipelinec exited non zero despite met timing goal")
+        print("FAIL: pypelinec exited non zero despite met timing goal")
         sys.exit(1)
     if "contains nothing autopipelining can help" not in out:
         print("FAIL: no planning-time warning that autopipelining cannot help")

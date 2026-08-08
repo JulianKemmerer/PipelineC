@@ -13,8 +13,9 @@ variable index): runtime claim tracking records the concrete indices each
 function actually touched, so each writer's per-invocation reset zeros
 exactly its own elements and never the other writer's.
 
-Registered in native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
-(--sim --comb --cocotb --ghdl --run all).
+Registered in native_vs_vhdl_sim_tests.py, which runs the native (--sim --comb)
+and cocotb+GHDL (--cocotb --ghdl) sims and diffs their sim_print(debug=True)
+output cycle by cycle.
 """
 
 import sys, os
@@ -23,7 +24,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
 )
 
-from pypeline import MAIN, Reg, Wire, sim_assert, sim_finish, uint8_t
+from pypeline import MAIN, Reg, Wire, sim_assert, sim_finish, sim_print, uint8_t
 
 
 arr_w: Wire[uint8_t[4]]  # [0..1] driven by main_01, [2..3] by main_23
@@ -55,6 +56,12 @@ def checker():
     for i in range(2, 4):
         sim_assert(
             arr_w[i] == n + 10 + i, f"arr_w[{i}] expected {n + 10 + i} got {arr_w[i]}"
+        )
+    # No debug print on the sim_finish() cycle -- see global_wire_partial_field_test.py.
+    if n < NUM_CHECKS - 1:
+        sim_print(
+            f"global_wire_array_split arr={arr_w[0]},{arr_w[1]},{arr_w[2]},{arr_w[3]}",
+            debug=True,
         )
     if n == NUM_CHECKS - 1:
         sim_finish()

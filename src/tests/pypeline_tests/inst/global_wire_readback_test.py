@@ -17,8 +17,9 @@ readback input is fed all zeros by the dedicated unshared feed pass in
 VHDL.py (read-before-write zero, write-then-read new value, exactly like a
 local variable).
 
-Registered in native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
-(--sim --comb --cocotb --ghdl --run all).
+Registered in native_vs_vhdl_sim_tests.py, which runs the native (--sim --comb)
+and cocotb+GHDL (--cocotb --ghdl) sims and diffs their sim_print(debug=True)
+output cycle by cycle.
 """
 
 import sys, os
@@ -34,6 +35,7 @@ from pypeline import (
     Wire,
     sim_assert,
     sim_finish,
+    sim_print,
     struct,
     uint8_t,
 )
@@ -66,6 +68,10 @@ def main_a():
         w.y == n + 100,
         f"main_a reads foreign leaf w.y: expected {n + 100} got {w.y}",
     )
+    # No debug print on the sim_finish() cycle (checker calls it at n ==
+    # NUM_CHECKS - 1) -- see global_wire_partial_field_test.py.
+    if n < NUM_CHECKS - 1:
+        sim_print(f"global_wire_readback priv={priv} wx={w.x} wy={w.y}", debug=True)
     n += 1
 
 

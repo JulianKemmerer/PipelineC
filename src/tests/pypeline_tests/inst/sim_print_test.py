@@ -113,7 +113,7 @@ def test_bare_char_array_elaborates():
     needed. print_name/test_print_name above already exercises this end to end; this
     test just pins down that elaboration itself succeeds (doesn't raise) for the bare
     form, on an isolated temp file (not this file itself, since this file is also fed
-    wholesale to pipelinec by elab_tests.py/synth_tests.py and must elaborate cleanly
+    wholesale to pypelinec by elab_tests.py/synth_tests.py and must elaborate cleanly
     end to end)."""
     import PY_TO_LOGIC
 

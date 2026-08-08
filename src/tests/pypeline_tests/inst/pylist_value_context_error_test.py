@@ -11,7 +11,7 @@ from pypeline import MAIN, int16_t, int32_t
 # PY_TO_LOGIC.ElaborationError, not a raw KeyError. See pylist_value_context_test.py
 # for the supported-construct coverage; this file checks the error path
 # _elab_ref_read takes when even the _try_eval_const fallback can't resolve
-# the reference. Not run through the pipelinec CLI (unlike
+# the reference. Not run through the pypelinec CLI (unlike
 # pylist_value_context_test.py) since the check is "which exception type is
 # raised", which needs direct PY_TO_LOGIC.PARSE_FILE + exception-type
 # inspection -- same in-process pattern as two_factory_wrappers_test.py.

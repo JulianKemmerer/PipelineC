@@ -19,7 +19,7 @@ import subprocess
 import sys
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-PIPELINEC = os.path.join(THIS_DIR, "../../../pipelinec")
+PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
 DESIGN = os.path.join(THIS_DIR, "autofsm_max_latency_design.py")
 
 CAP = 4
@@ -36,7 +36,7 @@ def run_build(out_dir, impossible=False):
         env["PYPELINE_AUTOFSM_IMPOSSIBLE_LATENCY"] = "1"
     else:
         env.pop("PYPELINE_AUTOFSM_IMPOSSIBLE_LATENCY", None)
-    cmd = [sys.executable, PIPELINEC, DESIGN, "--out_dir", out_dir]
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--out_dir", out_dir]
     print("Running:", " ".join(cmd), f"(impossible={impossible})", flush=True)
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env

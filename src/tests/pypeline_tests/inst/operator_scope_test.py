@@ -4,7 +4,7 @@
 _elab_compare registry consultation in src/PY_TO_LOGIC.py).
 
 Checked directly via PY_TO_LOGIC.PARSE_FILE + FuncLogicLookupTable /
-submodule_instances, not sim_call or a full pipelinec build -- same rationale
+submodule_instances, not sim_call or a full pypelinec build -- same rationale
 as two_factory_wrappers_test.py: this is about *what got instantiated*, which
 neither native sim (never touches FuncLogicLookupTable) nor a bare "does it
 elaborate" check can see.

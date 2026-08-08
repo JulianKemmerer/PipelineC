@@ -19,9 +19,12 @@ single whole-field struct write, while main_b claims individual nested leaves
 (w2.b.x) and a scalar field (w2.tag) -- regions at different depths of the
 same type tree ((w2.b.y is claimed by nobody and must read zero).
 
-Registered in native_sim_tests.py (--sim --comb --run all), vhdl_sim_tests.py
-(--sim --comb --cocotb --ghdl --run all), and synth_tests.py (--comb) so the
-per-region VHDL is also proven through real synthesis.
+Registered in native_sim_tests.py (--sim --comb --run all) and synth_tests.py
+(--comb), so the per-region VHDL is also proven through real synthesis. NOT
+in native_vs_vhdl_sim_tests.py: under --comb --sim --cocotb --ghdl this
+design currently trips an elaboration error misidentifying an internal
+soft-compare submodule as a second writer of `combined` -- see that file's
+own comment.
 
 `sim_assert`/`sim_finish` are simulation-only built-ins invisible to real
 synthesis, so a design that only ever touches the split wires through them
@@ -48,6 +51,7 @@ from pypeline import (
     Wire,
     sim_assert,
     sim_finish,
+    sim_print,
     struct,
     uint8_t,
 )
@@ -121,6 +125,14 @@ def checker():
     sim_assert(w2.b.x == n + 70, f"w2.b.x expected {n + 70} got {w2.b.x}")
     sim_assert(w2.b.y == 0, f"unclaimed w2.b.y expected 0 got {w2.b.y}")
     sim_assert(w2.tag == n + 80, f"w2.tag expected {n + 80} got {w2.tag}")
+    # No debug print on the sim_finish() cycle -- see global_wire_partial_field_test.py.
+    if n < NUM_CHECKS - 1:
+        sim_print(
+            f"global_wire_nested_split wax={w.a.x} wby={w.b.y} way={w.a.y} "
+            f"wbx={w.b.x} wtag={w.tag} w2ax={w2.a.x} w2ay={w2.a.y} "
+            f"w2bx={w2.b.x} w2tag={w2.tag}",
+            debug=True,
+        )
     if n == NUM_CHECKS - 1:
         sim_finish()
     n += 1

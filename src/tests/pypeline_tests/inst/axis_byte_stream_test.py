@@ -35,7 +35,7 @@ buf_t = uint8_t[MAX_BYTES]
 mask_t = uint1_t[MAX_BYTES]
 
 
-# Top-level entry points so `pipelinec --comb` elaborates/synthesizes the same
+# Top-level entry points so `pypelinec --comb` elaborates/synthesizes the same
 # hardware functions exercised below, mirroring dwidth_converter_test.py.
 @MAIN
 def byte_source_main(

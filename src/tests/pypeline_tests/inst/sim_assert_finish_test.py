@@ -94,7 +94,7 @@ def test_sim_assert_default_message():
     # No comparison operators here -- x is already uint1_t, so PARSE_FILE only needs
     # to elaborate sim_assert's own raw-HDL submodule, not a synthesized BIN_OP_LT
     # comparator (which requires the full CLI-driven SYN_OUTPUT_DIRECTORY context that
-    # a standalone PARSE_FILE() call, outside pipelinec's driver, doesn't set up).
+    # a standalone PARSE_FILE() call, outside pypelinec's driver, doesn't set up).
     sim_reset()
     fd, path = tempfile.mkstemp(
         suffix=".py", dir=os.path.dirname(os.path.abspath(__file__))

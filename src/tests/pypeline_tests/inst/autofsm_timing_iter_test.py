@@ -30,8 +30,8 @@ import subprocess
 import sys
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-PIPELINEC = os.path.join(THIS_DIR, "../../../pipelinec")
-DESIGN = os.path.join(THIS_DIR, "autofsm_tighten_test.py")
+PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
+DESIGN = os.path.join(THIS_DIR, "..", "autofsm_tighten_test.py")
 START_BUDGET_SCALE = "1.5"
 
 
@@ -48,7 +48,7 @@ def main():
     out_dir = args.out_dir or os.path.join(THIS_DIR, "autofsm_timing_iter_test_out")
     cmd = [
         sys.executable,
-        PIPELINEC,
+        PYPELINEC,
         DESIGN,
         "--out_dir",
         out_dir,
@@ -63,7 +63,7 @@ def main():
     print(out)
 
     if result.returncode != 0:
-        fail(f"pipelinec exited nonzero ({result.returncode})")
+        fail(f"pypelinec exited nonzero ({result.returncode})")
 
     passes = re.findall(r"^=+ AUTOFSM Pass (\d+): ", out, re.M)
     if len(passes) < 2:

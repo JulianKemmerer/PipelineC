@@ -40,8 +40,8 @@ import subprocess
 import sys
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-PIPELINEC = os.path.join(THIS_DIR, "../../../pipelinec")
-DIV_DESIGN = os.path.join(THIS_DIR, "autofsm_div_share_test.py")
+PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
+DIV_DESIGN = os.path.join(THIS_DIR, "..", "autofsm_div_share_test.py")
 
 # The search may not land more than this above the best point actually built.
 # A tolerance, not a target: the model ranks in abstract units and can be a
@@ -62,7 +62,7 @@ def fail(msg):
 
 
 def run_build(out_dir, extra):
-    cmd = [sys.executable, PIPELINEC, DIV_DESIGN, "--out_dir", out_dir] + extra
+    cmd = [sys.executable, PYPELINEC, DIV_DESIGN, "--out_dir", out_dir] + extra
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True

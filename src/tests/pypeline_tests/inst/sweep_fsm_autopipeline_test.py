@@ -52,7 +52,7 @@ autopipelined_heavy_pipeline, heavy_pipeline_ap = _autopipeline_with_io_regs(
 )
 # Reading .latency here makes this design a .latency consumer: a real
 # synthesizing build (synth_tests runs this file through a full sweep) then
-# exercises the pipelinec driver's pin-and-confirm pass. 0 on the bootstrap
+# exercises the pypelinec driver's pin-and-confirm pass. 0 on the bootstrap
 # pass and in native sim; the discovered core depth on the confirm pass.
 print(
     "sweep_fsm_autopipeline_test: heavy_pipeline AUTOPIPELINE latency =",

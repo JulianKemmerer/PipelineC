@@ -7,7 +7,7 @@ Registered three ways, each proving something different:
   native_sim  plain `python3 autofsm_test.py` -- the tag behaves as an
               identity passthrough when no schedule is installed, so the
               function's own semantics are checkable with sim_call.
-  elab        `pipelinec --no_synth` -- the bootstrap (no-schedule) call site
+  elab        `pypelinec --no_synth` -- the bootstrap (no-schedule) call site
               elaborates: the combinational passthrough wrapper that puts the
               real function into the design for delay measurement.
   synth       driven by the autofsm_latency_test wrapper, which runs the full

@@ -4,10 +4,11 @@ inputs and checks every result in hardware with sim_assert, calling sim_finish()
 when all cases have passed. Pass/fail is decided entirely by whether the
 simulation halts cleanly.
 
-Registered in native_sim_tests.py, in vhdl_sim_tests.py (same source through
-real GHDL, proving native and VHDL agree), and in synth_tests.py as a full
-non---comb build whose native sim then runs against the REAL scheduled FSM
-latency -- that last one is what proves the generated hardware computes the
+Registered in native_sim_tests.py, and TWICE in native_vs_vhdl_sim_tests.py:
+once with --comb (the call site is still the combinational passthrough) and
+once without (a full build whose native sim then runs against the REAL
+scheduled FSM latency). Both diff native against cocotb+GHDL cycle by cycle;
+the non---comb one is what proves the generated FSM hardware computes the
 same thing as the pure function it replaced.
 
 The testbench deliberately reacts to `o.valid` instead of counting cycles, so
@@ -32,6 +33,7 @@ from pypeline import (
     int16_t,
     sim_assert,
     sim_finish,
+    sim_print,
     struct,
     uint1_t,
     uint4_t,
@@ -108,6 +110,9 @@ def self_check_autofsm() -> int16_t:
         sim_assert(o.data == want, "AUTOFSM result did not match the pure function")
         last = o.data
         busy = 0
+        # No debug print on the sim_finish() cycle -- see self_check_counter_test.py.
+        if case_idx < NUM_CASES - 1:
+            sim_print(f"self_check_autofsm case_idx={case_idx} data={o.data}", debug=True)
         if case_idx == NUM_CASES - 1:
             sim_finish()
         case_idx += 1

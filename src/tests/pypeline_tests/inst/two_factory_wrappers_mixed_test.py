@@ -37,7 +37,7 @@ PART("xc7a35ticsg324-1l")
 # second wrapper's inner `func` call resolves to the first wrapper's already-
 # elaborated function and fails to drive its differently-typed output wires.
 # Elaboration succeeding cleanly is the pass condition -- checked via
-# `pipelinec ... --no_synth` exit code by elab_tests.py, no sim_call needed
+# `pypelinec ... --no_synth` exit code by elab_tests.py, no sim_call needed
 # since make_stream_pipeline doesn't support it.
 
 

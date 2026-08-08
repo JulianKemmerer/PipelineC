@@ -26,7 +26,7 @@ import subprocess
 import sys
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-PIPELINEC = os.path.join(THIS_DIR, "../../../pipelinec")
+PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
 # autofsm_test.py rather than autofsm_resources_test.py: the latter is 6
 # multiplies and 5 adds, all of them so much more expensive than their own
 # multiplexers that sharing every one is obviously right and the search
@@ -48,7 +48,7 @@ def fail(msg):
 
 
 def run_build(out_dir, extra):
-    cmd = [sys.executable, PIPELINEC, DESIGN, "--out_dir", out_dir] + extra
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--out_dir", out_dir] + extra
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True

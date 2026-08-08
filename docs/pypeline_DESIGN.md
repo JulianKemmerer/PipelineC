@@ -1475,14 +1475,15 @@ dynamically-produced types like factory structs.
 ## Tests
 
 `src/tests/pypeline_tests/` exercises the type system, struct support, operator registry,
-and elaboration paths described above against real `.py` design files in `inst/`. The suite
-is split across three scripts, run together via `run_all.py`:
-
-- **`native_sim_tests.py`** — plain `python3 <file>` simulation tests (no elaboration). See
-  [pypeline_sim_DESIGN.md § Tests](pypeline_sim_DESIGN.md#tests) for what these cover.
-- **`elab_tests.py`** / **`synth_tests.py`** — `pipelinec` elaboration and synthesis runs
-  against the same design files. See
-  [PY_TO_LOGIC_DESIGN.md § Tests](PY_TO_LOGIC_DESIGN.md#tests) for details.
+and elaboration paths described above against real `.py` design files in `inst/`, across
+eight categories run together via `run_all.py` — see
+[pypeline_TESTS.md](pypeline_TESTS.md) for the full category breakdown, naming
+conventions, and CLI. In short: `native_sim_tests.py` covers plain `python3 <file>`
+simulation (no elaboration; see [pypeline_sim_DESIGN.md § Tests](pypeline_sim_DESIGN.md#tests)),
+`elab_tests.py`/`synth_tests.py` cover `pipelinec` elaboration and synthesis runs (see
+[PY_TO_LOGIC_DESIGN.md § Tests](PY_TO_LOGIC_DESIGN.md#tests)), and
+`native_vs_vhdl_sim_tests.py`, `elab_introspect_tests.py`, `unit_tests.py`,
+`build_report_tests.py`, and `known_issues_tests.py` round out the rest.
 
 The bidirectional-port mechanism `@interface`
 (`include/pypeline/interface/interface.py`) reuses this module's compound-type introspection
@@ -1501,15 +1502,18 @@ and tests `inst/interface_test.py`, `inst/interface_func*_test.py`,
 `inst/interface_mixing_rules_test.py`.
 
 ```
-python3 src/tests/pypeline_tests/run_all.py            # run everything, in parallel
+python3 src/tests/pypeline_tests/run_all.py            # default categories, in parallel
 python3 src/tests/pypeline_tests/run_all.py -j 4        # cap parallelism at 4 workers
 python3 src/tests/pypeline_tests/run_all.py --category native_sim
+python3 src/tests/pypeline_tests/run_all.py --category known_issues   # opt-in, see below
 ```
 
 These scripts replace the old `run_all.sh`: each test gets its own tmp output directory
 (`common.py`'s `make_tmp_root()`/`run_test()`), tests run in parallel via a thread pool
-(default worker count = `cpu_count() // 2`), and all paths are resolved relative to the
-repository root (`common.REPO_ROOT`) rather than hardcoded — the suite runs unmodified on
-any checkout. A summary table reports PASS/FAIL per test, with output directories of any
-failed test printed for inspection. `native_sim_tests.py`, `elab_tests.py`, and `synth_tests.py`
-can each also be run standalone.
+(default worker count = `cpu_count() // 2`) with a per-category default timeout, and all
+paths are resolved relative to the repository root (`common.REPO_ROOT`) rather than
+hardcoded — the suite runs unmodified on any checkout. A summary table reports
+PASS/FAIL/XFAIL/XPASS/SKIP/TIMEOUT per test, with output directories of any failed test
+printed for inspection. `known_issues_tests.py` (expected-to-fail bug reproducers) is
+excluded from the default category set — see [pypeline_TESTS.md](pypeline_TESTS.md).
+Every category module can also be run standalone.

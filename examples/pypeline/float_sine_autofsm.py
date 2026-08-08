@@ -16,7 +16,7 @@ multiplier:
 AUTOFSM schedules exactly that: one float64 multiplier and one float64 adder,
 reused across as many states as the clock goal requires.
 
-    $ pipelinec examples/pypeline/float_sine_autofsm.py
+    $ pypelinec examples/pypeline/float_sine_autofsm.py
 
 Compare the `AUTOFSM ...: N ops -> M shared unit(s)` line and the yosys cell
 count against a `--comb` build of the same file.

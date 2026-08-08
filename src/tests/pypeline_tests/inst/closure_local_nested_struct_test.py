@@ -80,7 +80,7 @@ def test_closure_local_nested_struct_registration():
 
     # PARSE_FILE walks C-built-in submodule instances via _build_inst_lookup,
     # which needs SYN.SYN_OUTPUT_DIRECTORY set -- normally done by the
-    # pipelinec CLI wrapper before it calls PARSE_FILE; replicate that here
+    # pypelinec CLI wrapper before it calls PARSE_FILE; replicate that here
     # since this test calls PARSE_FILE directly.
     SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(
         prefix="closure_local_nested_struct_test_"

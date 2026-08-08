@@ -11,7 +11,7 @@ import PY_TO_LOGIC
 # In-process regression tests for the global Wire[T]/Output[T] error paths
 # introduced alongside multi-writer split-field driving: each design below is
 # written to its own temp .py file and parsed directly via PY_TO_LOGIC.PARSE_FILE
-# (not through the pipelinec CLI), since the check is "which ElaborationError is
+# (not through the pypelinec CLI), since the check is "which ElaborationError is
 # raised", mirroring pylist_value_context_error_test.py's in-process pattern.
 # PARSE_FILE evicts its own per-parse caches/sys.modules on every call (see
 # PY_TO_LOGIC.py's PARSE_FILE / the double_parse_file_test.py regression it

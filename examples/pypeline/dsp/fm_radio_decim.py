@@ -11,9 +11,9 @@ FPGA (the vendor-portable alternative to a Xilinx FIR Compiler / Intel FIR II
 IP instance).
 
 Elaborate + estimate combinational timing:
-    python3 src/pipelinec examples/pypeline/dsp/fm_radio_decim.py --comb
+    python3 src/pypelinec examples/pypeline/dsp/fm_radio_decim.py --comb
 Full autopipelining throughput sweep to the 125 MHz goal:
-    python3 src/pipelinec examples/pypeline/dsp/fm_radio_decim.py
+    python3 src/pypelinec examples/pypeline/dsp/fm_radio_decim.py
 
 For a simulation testbench with plots, see fir_decim_tb.py next to this file
 (same filter, driven by dsp/fir_tb.py's @sim_input/@sim_output machinery).

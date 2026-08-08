@@ -13,8 +13,9 @@ pre-fix, the lazy write-declare ran mid-branch and elaboration crashed with
 write-declaration of every pre-scanned written wire to elaborate() start so
 the branch merge always has the implicit zero-init base to mux against.
 
-Registered in native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
-(--sim --comb --cocotb --ghdl --run all).
+Registered in native_vs_vhdl_sim_tests.py, which runs the native (--sim --comb)
+and cocotb+GHDL (--cocotb --ghdl) sims and diffs their sim_print(debug=True)
+output cycle by cycle.
 """
 
 import sys, os
@@ -30,6 +31,7 @@ from pypeline import (
     Wire,
     sim_assert,
     sim_finish,
+    sim_print,
     struct,
     uint1_t,
     uint8_t,
@@ -83,4 +85,8 @@ def checker():
         # this check in program order, so cycle 9's own enable is included: 5.
         sim_assert(enables_seen == 5, f"enables_seen expected 5 got {enables_seen}")
         sim_finish()
+    else:
+        # No debug print on the sim_finish() cycle -- see
+        # global_wire_partial_field_test.py.
+        sim_print(f"global_wire_cond_driver en={w.en} x={w.x} y={w.y}", debug=True)
     n += 1

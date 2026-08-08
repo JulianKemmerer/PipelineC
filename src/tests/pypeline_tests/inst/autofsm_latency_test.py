@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 """AUTOFSM end-to-end scheduling test.
 
-Runs a full pipelinec build (no --comb) on autofsm_test.py and asserts the
+Runs a full pypelinec build (no --comb) on autofsm_test.py and asserts the
 whole chain the feature depends on:
   - the schedule pass ran and produced a real multi-state schedule
   - the pure function's several same-kind operations were FOLDED onto fewer
@@ -20,7 +20,7 @@ import subprocess
 import sys
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-PIPELINEC = os.path.join(THIS_DIR, "../../../pipelinec")
+PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
 DESIGN = os.path.join(THIS_DIR, "autofsm_test.py")
 
 
@@ -35,7 +35,7 @@ def main():
     args = parser.parse_args()
 
     out_dir = args.out_dir or os.path.join(THIS_DIR, "autofsm_latency_test_out")
-    cmd = [sys.executable, PIPELINEC, DESIGN, "--out_dir", out_dir]
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--out_dir", out_dir]
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -44,7 +44,7 @@ def main():
     print(out)
 
     if result.returncode != 0:
-        fail(f"pipelinec exited nonzero ({result.returncode})")
+        fail(f"pypelinec exited nonzero ({result.returncode})")
     if "AUTOFSM Pass 1: Scheduling Shared-Resource FSMs" not in out:
         fail("the AUTOFSM schedule pass never ran")
 

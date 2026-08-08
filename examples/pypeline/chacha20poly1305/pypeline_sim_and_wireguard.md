@@ -203,7 +203,7 @@ Python function call, with its result pushed through a shift-register-style
 delay line to reproduce the right number of cycles of latency before the
 result appears. That's cheap enough to make pipelined native sim practical,
 but it's still an emulation of timing, not a real per-stage register model
-— see ["Pipelined native sim"](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_sim_DESIGN.md#pipelined-native-sim-non---comb-pipelinec---sim)
+— see ["Pipelined native sim"](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_sim_DESIGN.md#pipelined-native-sim-non---comb-pypelinec---sim)
 in `pypeline_sim_DESIGN.md` for the mechanics.
 
 If a mismatch between native Python based simulation and generated VHDL is suspected

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # Planned throughput sweep test (f): unpipelinable design messaging.
-# Runs pipelinec on sweep_unpipelinable_design.py (a stateful MAIN with no
+# Runs pypelinec on sweep_unpipelinable_design.py (a stateful MAIN with no
 # AUTOPIPELINE regions and an unreachable 100 MHz goal) and asserts the tool
 # tells the user PLAINLY that autopipelining cannot help:
 #  - at planning time (main has a goal but nothing cuttable)
@@ -16,7 +16,7 @@ import subprocess
 import sys
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-PIPELINEC = os.path.join(THIS_DIR, "../../../pipelinec")
+PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
 DESIGN = os.path.join(THIS_DIR, "sweep_unpipelinable_design.py")
 
 MAX_FULL_SYN_RUNS = 1
@@ -27,7 +27,7 @@ def main():
     parser.add_argument("--out_dir", default=None)
     args = parser.parse_args()
 
-    cmd = [sys.executable, PIPELINEC, DESIGN]
+    cmd = [sys.executable, PYPELINEC, DESIGN]
     if args.out_dir:
         cmd += ["--out_dir", args.out_dir]
     print("Running:", " ".join(cmd), flush=True)
@@ -40,7 +40,7 @@ def main():
     # Timing is NOT met by design here: the build must FAIL (non zero exit)
     # so users cannot miss it - but only after writing results for debugging
     if result.returncode == 0:
-        print("FAIL: pipelinec exited zero despite unmet timing goal")
+        print("FAIL: pypelinec exited zero despite unmet timing goal")
         sys.exit(1)
     if "ERROR: TIMING NOT MET" not in out:
         print("FAIL: no TIMING NOT MET error block")

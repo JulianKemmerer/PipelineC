@@ -472,11 +472,16 @@ pypeline_sim_debug.py ./src/my_design_tb.py --sim --run all          # PIPELINED
 ```
 
 `--comb` runs compare zero-latency native sim against comb VHDL, concurrently (the slow
-GHDL run doesn't have to wait on the fast native run). Without `--comb`, **both** runs
-do a full synthesis build first — the native side then emulates the discovered pipeline
-latencies (see `docs/pypeline_sim_DESIGN.md` §"Pipelined native sim") — and the tool
-runs them sequentially, native first, so the second build reuses the first's warm
-path-delay caches and both converge on identical latencies. Three constraints on a
+GHDL run doesn't have to wait on the fast native run). Without `--comb`, the tool first
+does a single build-only pass (no `--sim`) into a shared `out_dir` — the full throughput
+sweep + AUTOPIPELINE pin-and-confirm, paid once — then points **both** the native and
+VHDL `--sim` invocations at that same now-warm `out_dir` and runs them **concurrently**;
+each re-runs `pypelinec`'s build path internally, but with the sweep already warm
+(existing VHDL/log/timing-params results in `out_dir`, plus the repo-level path-delay /
+pipeline-min-period caches) it converges fast, and both are guaranteed to reach the same
+discovered latencies as the build phase — a prerequisite for a meaningful cycle diff.
+The native side then emulates those discovered pipeline latencies (see
+`docs/pypeline_sim_DESIGN.md` §"Pipelined native sim"). Three constraints on a
 pipelined (non-`--comb`) compare — see the design doc's Limitations subsection for the
 full list:
 - **Valid-gate every probe.** VHDL pipeline registers read `'U'` during warm-up; native

@@ -16,7 +16,7 @@ just had no way to be spent. Nothing in the source says how many states to use
 or which operations share what: the tool measures the operations' delays,
 schedules them against the clock goal, and reports what it did.
 
-    $ pipelinec examples/pypeline/autofsm_donut_update.py
+    $ pypelinec examples/pypeline/autofsm_donut_update.py
 
 Look for the `AUTOFSM ...: N ops -> M shared unit(s)` line in the build log,
 and compare against a `--comb` build of the same file (where the AUTOFSM call

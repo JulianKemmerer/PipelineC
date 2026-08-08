@@ -1,7 +1,7 @@
 # pyright: reportInvalidTypeForm=none
 """Self-checking make_stream_pipeline design for PIPELINED native sim.
 
-Registered in synth_tests.py as `pipelinec <this file> --sim --run all`
+Registered in synth_tests.py as `pypelinec <this file> --sim --run all`
 (no --comb): the full build runs first (throughput sweep + AUTOPIPELINE
 .latency pin-and-confirm — make_stream_pipeline reads .latency to size its
 FIFO), then the native simulator runs with the discovered latencies emulated

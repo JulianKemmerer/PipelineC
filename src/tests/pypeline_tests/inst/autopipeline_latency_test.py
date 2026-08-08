@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # AUTOPIPELINE .latency pin-and-confirm end-to-end test.
-# Runs pipelinec (full sweep, no --comb) on stream_pipeline_test.py -- whose
+# Runs pypelinec (full sweep, no --comb) on stream_pipeline_test.py -- whose
 # make_stream_pipeline reads AUTOPIPELINE(...).latency to size its FIFO --
 # and asserts the driver's pin-and-confirm loop:
 #  - pass 1 discovers a real (>0) latency for the AUTOPIPELINE'd core
@@ -21,7 +21,7 @@ import subprocess
 import sys
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-PIPELINEC = os.path.join(THIS_DIR, "../../../pipelinec")
+PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
 DESIGN = os.path.join(THIS_DIR, "stream_pipeline_test.py")
 
 
@@ -30,7 +30,7 @@ def main():
     parser.add_argument("--out_dir", default=None)
     args = parser.parse_args()
 
-    cmd = [sys.executable, PIPELINEC, DESIGN]
+    cmd = [sys.executable, PYPELINEC, DESIGN]
     if args.out_dir:
         cmd += ["--out_dir", args.out_dir]
     print("Running:", " ".join(cmd), flush=True)
@@ -41,7 +41,7 @@ def main():
     print(out)
 
     if result.returncode != 0:
-        print("FAIL: pipelinec exited nonzero", result.returncode)
+        print("FAIL: pypelinec exited nonzero", result.returncode)
         sys.exit(1)
 
     if "AUTOPIPELINE Pass 2" not in out:

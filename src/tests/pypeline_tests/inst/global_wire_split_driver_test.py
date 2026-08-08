@@ -11,9 +11,10 @@ This is the direct hardware realization of the guide's example:
     main_ab_in: Wire[uint1_t]    # input into main_a and into main_b
     main_ab_out: Wire[point_t]   # output .x from main_a and .y from main_b
 
-Registered in both native_sim_tests.py (--sim --comb --run all) and
-vhdl_sim_tests.py (--sim --comb --cocotb --ghdl --run all) so native sim and
-the generated VHDL are both checked against the same golden behavior.
+Registered in native_vs_vhdl_sim_tests.py, which runs the native (--sim --comb)
+and cocotb+GHDL (--cocotb --ghdl) sims and diffs their sim_print(debug=True)
+output cycle by cycle, so native sim and the generated VHDL are both checked
+against the same golden behavior.
 """
 
 import sys, os
@@ -29,6 +30,7 @@ from pypeline import (
     Wire,
     sim_assert,
     sim_finish,
+    sim_print,
     struct,
     uint8_t,
 )
@@ -71,6 +73,11 @@ def checker():
         main_ab_out.y == n + 100,
         f"main_ab_out.y should track main_b: expected {n + 100} got {main_ab_out.y}",
     )
+    # No debug print on the sim_finish() cycle -- see global_wire_partial_field_test.py.
+    if n < NUM_CHECKS - 1:
+        sim_print(
+            f"global_wire_split_driver x={main_ab_out.x} y={main_ab_out.y}", debug=True
+        )
     if n == NUM_CHECKS - 1:
         sim_finish()
     n += 1

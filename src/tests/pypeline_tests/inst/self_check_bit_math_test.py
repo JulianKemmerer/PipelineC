@@ -12,8 +12,9 @@ would pull bit_math_top into this simulation too, which the CLI --sim
 multi-main driver can't drive (it only supports no-arg @MAINs reading global
 Wire[T] state), breaking `--sim` for this file.
 
-Registered in both native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
-(--sim --comb --cocotb --ghdl --run all), proving native and VHDL sim agree.
+Registered in native_vs_vhdl_sim_tests.py, which runs the native (--sim --comb)
+and cocotb+GHDL (--cocotb --ghdl) sims and diffs their sim_print(debug=True)
+output cycle by cycle, proving native and VHDL sim agree.
 """
 
 import sys, os

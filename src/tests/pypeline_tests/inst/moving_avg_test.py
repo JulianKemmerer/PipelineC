@@ -4,7 +4,7 @@ integer golden model (dsp/dsp_tb.golden_moving_avg), normalized vs raw-sum
 (non-power-of-two) modes, full precision vs resized/saturated output,
 valid_only mode, consumer backpressure stalls, and input valid gaps. Plain
 `python3 moving_avg_test.py` runs the sim_call tests; the @MAIN entry points
-below also give `pipelinec moving_avg_test.py --comb` elaboration coverage of
+below also give `pypelinec moving_avg_test.py --comb` elaboration coverage of
 every mode."""
 
 import sys, os

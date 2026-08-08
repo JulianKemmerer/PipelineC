@@ -4,7 +4,7 @@ integer golden model (dsp/fir_tb.golden_fir), symmetry-folded vs unfolded
 bit-identity, half-band zero-tap skipping, antisymmetric folding, full
 precision mode, valid_only mode, consumer backpressure stalls, and input
 valid gaps. Plain `python3 fir_test.py` runs the sim_call tests; the @MAIN
-entry points below also give `pipelinec fir_test.py --comb` elaboration
+entry points below also give `pypelinec fir_test.py --comb` elaboration
 coverage of every mode."""
 
 import sys, os

@@ -14,9 +14,9 @@ Two tools, selected per case:
   tool="vivado" PART(xc7a200tffg1156-2) -- wireguard-fpga's actual part.
                 Real synthesis, minutes per case. Ground truth / fallback.
 
-Both drive the real `pipelinec` CLI with `--coarse --sweep --start 0 --stop
+Both drive the real `pypelinec` CLI with `--coarse --sweep --start 0 --stop
 N` -- ONE subprocess per (op, impl, widths) sweeps cut counts 0..N inside a
-single pipelinec run (each step is still an independent OOC synthesis/estimate,
+single pypelinec run (each step is still an independent OOC synthesis/estimate,
 but elaboration + CLI startup only happens once), instead of one subprocess
 per (op, impl, widths, n_cuts). The sweep loop naturally stops early if it
 can no longer slice further (e.g. hit bit-granularity floor) -- fine, that's
@@ -314,11 +314,11 @@ def gen_source(case):
 
 
 # ---------------------------------------------------------------------------
-# Single-case runner: ONE pipelinec invocation, --coarse --sweep, parses
+# Single-case runner: ONE pypelinec invocation, --coarse --sweep, parses
 # every "Current: ... latency=N clks cuts=N slices" line it prints.
 # ---------------------------------------------------------------------------
 
-PIPELINEC = os.path.join(SRC_DIR, "pipelinec")
+PYPELINEC = os.path.join(SRC_DIR, "pypelinec")
 
 RESULT_LINE_RE = re.compile(
     r"Current:\s*([\d.]+)\s*\(MHz\)\(([\d.]+)\s*ns\)\s*latency=(\d+)\s*clks\s*cuts=(\d+)\s*slices"
@@ -362,7 +362,7 @@ def run_single_case(case):
 
     # --sweep -> do_incremental_guesses=False -> literal clock-by-clock
     # increase from --start to --stop, one printed result line per clock,
-    # all inside this single pipelinec invocation (no explicit mhz goal is
+    # all inside this single pypelinec invocation (no explicit mhz goal is
     # ever set on bench_main, so it never "meets timing" early and the sweep
     # runs the full requested range, or stops naturally if it can't slice
     # further -- both are real data, not harness bugs).
@@ -370,7 +370,7 @@ def run_single_case(case):
     # so `--stop N` measures cut counts 0..N-1. Pass stop+1 to actually measure
     # the intended top cut count -- which is the most decision-relevant point.
     cmd = [
-        sys.executable, PIPELINEC, src_path,
+        sys.executable, PYPELINEC, src_path,
         "--out_dir", out_dir, "--top", "bench_main",
         "--coarse", "--sweep", "--start", "0", "--stop", str(stop + 1),
     ]

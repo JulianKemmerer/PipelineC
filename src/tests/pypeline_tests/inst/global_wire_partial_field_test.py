@@ -5,9 +5,10 @@
 if implicitly driven with zeros before the writer's real assignments, exactly
 like a local variable's implicit zero-init.
 
-Registered in both native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
-(--sim --comb --cocotb --ghdl --run all) so native sim and the generated VHDL
-are both checked against the same golden behavior.
+Registered in native_vs_vhdl_sim_tests.py, which runs the native (--sim --comb)
+and cocotb+GHDL (--cocotb --ghdl) sims and diffs their sim_print(debug=True)
+output cycle by cycle, so native sim and the generated VHDL are both checked
+against the same golden behavior.
 """
 
 import sys, os
@@ -23,6 +24,7 @@ from pypeline import (
     Wire,
     sim_assert,
     sim_finish,
+    sim_print,
     struct,
     uint8_t,
 )
@@ -55,6 +57,11 @@ def checker():
         point_out.x == n + 1,
         f"driven .x should track writer, expected {n + 1} got {point_out.x}",
     )
+    # No debug print on the sim_finish() cycle -- whether a same-cycle VHDL
+    # write flushes before std.env.finish kills GHDL is a process-ordering
+    # race the cycle diff must not depend on (see docs/pypeline_sim_DESIGN.md).
+    if n < NUM_CHECKS - 1:
+        sim_print(f"global_wire_partial_field x={point_out.x}", debug=True)
     if n == NUM_CHECKS - 1:
         sim_finish()
     n += 1

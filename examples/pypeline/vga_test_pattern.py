@@ -1,7 +1,7 @@
 # pyright: reportInvalidTypeForm=none
 """VGA test pattern — hardware design + simulation display.
 
-Hardware: compiles with pipelinec to drive a VGA monitor via the Arty A7 PMOD connectors.
+Hardware: compiles with pypelinec to drive a VGA monitor via the Arty A7 PMOD connectors.
 Simulation: run with pypelinec --sim for a live matplotlib display.
 
     pypelinec examples/pypeline/vga_test_pattern.py --sim --comb --run 420000
@@ -32,14 +32,14 @@ fig = None
 ax = None
 
 
-@sim_output  # @sim_output — skipped by pipelinec, runs in sim
+@sim_output  # @sim_output — skipped by pypelinec, runs in sim
 def capture_pixel(sig, px):
     """Accumulate pixels into a numpy image and refresh the display each scan line.
 
     Lazily initialises the matplotlib figure on first call.  4-bit colour channels
     are expanded to 8-bit by replicating the nibble: v → (v << 4) | v.
     Called once per cycle in the final pass; skipped during convergence.
-    Invisible to the hardware elaborator (pipelinec) via the @sim_output guard.
+    Invisible to the hardware elaborator (pypelinec) via the @sim_output guard.
     """
     global img_data, ax_img, fig, ax
     if fig is None:

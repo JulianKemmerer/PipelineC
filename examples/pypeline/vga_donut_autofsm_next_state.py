@@ -2,7 +2,7 @@
 # pyright: reportUndefinedVariable=none
 """VGA donut — hardware design + simulation display.
 
-Hardware: compiles with pipelinec to drive a VGA monitor via the Arty A7 PMOD connectors.
+Hardware: compiles with pypelinec to drive a VGA monitor via the Arty A7 PMOD connectors.
 Simulation: run with pypelinec --sim for a live matplotlib display.
 
     pypelinec examples/pypeline/vga_donut.py --sim --comb --run <cycles>

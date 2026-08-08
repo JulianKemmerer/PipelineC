@@ -12,8 +12,9 @@ and VHDL.py's _inst_text assembles the full hierarchical record path
 global_to_module/module_to_global record ports threaded down through mid's
 entity automatically (LOGIC_NEEDS_* recursion).
 
-Registered in native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
-(--sim --comb --cocotb --ghdl --run all).
+Registered in native_vs_vhdl_sim_tests.py, which runs the native (--sim --comb)
+and cocotb+GHDL (--cocotb --ghdl) sims and diffs their sim_print(debug=True)
+output cycle by cycle.
 """
 
 import sys, os
@@ -30,6 +31,7 @@ from pypeline import (
     hw_func,
     sim_assert,
     sim_finish,
+    sim_print,
     struct,
     uint8_t,
 )
@@ -76,6 +78,9 @@ def checker():
     n: Reg[uint8_t]
     sim_assert(w.x == n, f"w.x (written 2 levels deep) expected {n} got {w.x}")
     sim_assert(w.y == n + 100, f"w.y expected {n + 100} got {w.y}")
+    # No debug print on the sim_finish() cycle -- see global_wire_partial_field_test.py.
+    if n < NUM_CHECKS - 1:
+        sim_print(f"global_wire_hier_writer x={w.x} y={w.y}", debug=True)
     if n == NUM_CHECKS - 1:
         sim_finish()
     n += 1

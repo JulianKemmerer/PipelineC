@@ -6,8 +6,9 @@ sim_call/assert harness needed, mirroring self_check_counter_test.py and
 wireguard-fpga's syn_tb testbenches (fixed expected-value table, shift-register-
 style push/pop state machine, sim_assert + sim_finish for in-hardware checking).
 
-Registered in both native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
-(--sim --comb --cocotb --ghdl --run all).
+Registered in native_vs_vhdl_sim_tests.py, which runs the native (--sim --comb)
+and cocotb+GHDL (--cocotb --ghdl) sims and diffs their sim_print(debug=True)
+output cycle by cycle.
 """
 
 import sys, os
@@ -27,7 +28,7 @@ sys.path.insert(
         "pypeline",
     ),
 )
-from pypeline import MAIN, Reg, sim_assert, sim_finish, uint1_t, uint32_t
+from pypeline import MAIN, Reg, sim_assert, sim_finish, sim_print, uint1_t, uint32_t
 
 from fifo import make_fifo
 
@@ -63,6 +64,11 @@ def self_check_fifo():
             f"self_check_fifo: pop order mismatch at index {pop_idx}: "
             f"expected {values[pop_idx]} got {fifo_out.data_out}",
         )
+        # No debug print on the sim_finish() cycle -- whether a same-cycle
+        # VHDL write flushes before std.env.finish kills GHDL is a
+        # process-ordering race the cycle diff must not depend on.
+        if pop_idx < NUM_VALUES - 1:
+            sim_print(f"self_check_fifo pop_idx={pop_idx} data={fifo_out.data_out}", debug=True)
         if pop_idx == NUM_VALUES - 1:
             sim_finish()
         pop_idx = pop_idx + 1

@@ -3,7 +3,7 @@
 integer golden model (dsp/dsp_tb.golden_magnitude), full precision vs
 resized/saturated output, valid_only mode, consumer backpressure stalls, and
 input valid gaps. Plain `python3 magnitude_test.py` runs the sim_call tests;
-the @MAIN entry points below also give `pipelinec magnitude_test.py --comb`
+the @MAIN entry points below also give `pypelinec magnitude_test.py --comb`
 elaboration coverage of every mode."""
 
 import sys, os

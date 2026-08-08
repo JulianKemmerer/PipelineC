@@ -27,8 +27,8 @@ import subprocess
 import sys
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-PIPELINEC = os.path.join(THIS_DIR, "../../../pipelinec")
-DESIGN = os.path.join(THIS_DIR, "autofsm_resources_test.py")
+PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
+DESIGN = os.path.join(THIS_DIR, "..", "autofsm_resources_test.py")
 
 # The FSM shares 6 multiplies onto 1 multiplier and 5 adds onto 1 adder, at the
 # cost of operand multiplexers, state and value registers. A multiplier is far
@@ -44,7 +44,7 @@ def fail(msg):
 
 
 def run_build(out_dir, extra):
-    cmd = [sys.executable, PIPELINEC, DESIGN, "--out_dir", out_dir] + extra
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--out_dir", out_dir] + extra
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True

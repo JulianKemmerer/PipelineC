@@ -42,8 +42,8 @@ import subprocess
 import sys
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
-PIPELINEC = os.path.join(THIS_DIR, "../../../pipelinec")
-RESOURCES_DESIGN = os.path.join(THIS_DIR, "autofsm_resources_test.py")
+PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
+RESOURCES_DESIGN = os.path.join(THIS_DIR, "..", "autofsm_resources_test.py")
 DONUT_DESIGN = os.path.join(
     THIS_DIR, "../../../../examples/pypeline/autofsm_donut_update.py"
 )
@@ -59,7 +59,7 @@ def fail(msg):
 
 
 def run_build(design, out_dir, extra, allow_fail=False):
-    cmd = [sys.executable, PIPELINEC, design, "--out_dir", out_dir] + extra
+    cmd = [sys.executable, PYPELINEC, design, "--out_dir", out_dir] + extra
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True

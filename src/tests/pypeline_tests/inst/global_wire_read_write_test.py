@@ -6,8 +6,9 @@ the function is what every other function sees that cycle, and reading a
 leaf before it has been written (even within the writer itself) returns zero
 (the writer's own implicit zero-init), not an elaboration error.
 
-Registered in both native_sim_tests.py (--sim --comb --run all) and vhdl_sim_tests.py
-(--sim --comb --cocotb --ghdl --run all).
+Registered in native_vs_vhdl_sim_tests.py, which runs the native (--sim --comb)
+and cocotb+GHDL (--cocotb --ghdl) sims and diffs their sim_print(debug=True)
+output cycle by cycle.
 """
 
 import sys, os
@@ -23,6 +24,7 @@ from pypeline import (
     Wire,
     sim_assert,
     sim_finish,
+    sim_print,
     struct,
     uint8_t,
 )
@@ -76,6 +78,9 @@ def checker():
     sim_assert(
         point_out.y == 0, f"undriven point_out.y should read zero, got {point_out.y}"
     )
+    # No debug print on the sim_finish() cycle -- see global_wire_partial_field_test.py.
+    if n < NUM_CHECKS - 1:
+        sim_print(f"global_wire_read_write scalar={scalar_out} x={point_out.x}", debug=True)
     if n == NUM_CHECKS - 1:
         sim_finish()
     n += 1

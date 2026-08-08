@@ -76,8 +76,8 @@ def test_two_factory_wrappers_distinct_logic():
 
     # PARSE_FILE walks C-built-in submodule instances (Reg[T]/MUX/etc, used
     # internally by make_valid_ready_mcp) via _build_inst_lookup, which needs
-    # SYN.SYN_OUTPUT_DIRECTORY set -- normally done by the pipelinec CLI
-    # wrapper (src/pipelinec) before it calls PARSE_FILE; replicate that here
+    # SYN.SYN_OUTPUT_DIRECTORY set -- normally done by the pypelinec CLI
+    # wrapper (src/pypelinec) before it calls PARSE_FILE; replicate that here
     # since this test calls PARSE_FILE directly.
     SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(prefix="two_factory_wrappers_test_")
 
