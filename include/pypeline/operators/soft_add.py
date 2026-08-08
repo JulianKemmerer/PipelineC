@@ -13,14 +13,27 @@ values (ae[i], carry, ...) become real hardware.
 from pypeline import hw_func, uint1_t, bit_assign, arith_result_type
 
 
+def _sign_bits(eff_t):
+    """(is_signed, width) for an operand's effective type.
+
+    The adders below work bit by bit, so they have to perform the WIDENING to
+    the result type themselves. Above an operand's own width a signed value
+    continues with its sign bit, not with zero -- getting this wrong produces an
+    adder that is right for every non-negative input and quietly wrong for the
+    rest (int16 -3 + 4 came out as 65537 rather than 1). Same
+    `str(t).startswith("int")` test soft_cmp.py uses.
+    """
+    return str(eff_t).startswith("int"), len(eff_t)
+
+
 def make_soft_add_ripple(l_t, r_t):
     """Bit-by-bit ripple-carry adder: sum[i] = a[i] ^ b[i] ^ carry,
     carry' = majority(a[i], b[i], carry). Built entirely from bitwise
     AND/OR/XOR -- the leaf ops that stay inferred -- plus bit_assign wiring."""
     eff_l_t, eff_r_t, out_t = arith_result_type("PLUS", l_t, r_t)
     n_bits = len(out_t)
-    l_bits = len(eff_l_t)
-    r_bits = len(eff_r_t)
+    l_signed, l_bits = _sign_bits(eff_l_t)
+    r_signed, r_bits = _sign_bits(eff_r_t)
 
     @hw_func
     def soft_add_ripple(a: l_t, b: r_t) -> out_t:
@@ -33,8 +46,12 @@ def make_soft_add_ripple(l_t, r_t):
             bi: uint1_t = 0
             if i < l_bits:
                 ai = ae[i]
+            elif l_signed:
+                ai = ae[l_bits - 1]
             if i < r_bits:
                 bi = be[i]
+            elif r_signed:
+                bi = be[r_bits - 1]
             bit_val: uint1_t = (ai ^ bi) ^ carry
             result = bit_assign(result, bit_val, i)
             carry = (ai & bi) | (ai & carry) | (bi & carry)
@@ -51,8 +68,8 @@ def make_soft_add_carry_select(l_t, r_t, block_bits=4):
     -- to exercise the "multiple soft flavors" mechanism end to end."""
     eff_l_t, eff_r_t, out_t = arith_result_type("PLUS", l_t, r_t)
     n_bits = len(out_t)
-    l_bits = len(eff_l_t)
-    r_bits = len(eff_r_t)
+    l_signed, l_bits = _sign_bits(eff_l_t)
+    r_signed, r_bits = _sign_bits(eff_r_t)
 
     @hw_func
     def soft_add_carry_select(a: l_t, b: r_t) -> out_t:
@@ -72,8 +89,12 @@ def make_soft_add_carry_select(l_t, r_t, block_bits=4):
                 bi: uint1_t = 0
                 if i < l_bits:
                     ai = ae[i]
+                elif l_signed:
+                    ai = ae[l_bits - 1]
                 if i < r_bits:
                     bi = be[i]
+                elif r_signed:
+                    bi = be[r_bits - 1]
                 bit0: uint1_t = (ai ^ bi) ^ c0
                 bit1: uint1_t = (ai ^ bi) ^ c1
                 sum0 = bit_assign(sum0, bit0, i)

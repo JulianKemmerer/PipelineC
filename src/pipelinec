@@ -88,6 +88,34 @@ parser.add_argument(
     action="store_true",
 )
 parser.add_argument(
+    "--autofsm_sweep_debug",
+    help="Print one line per candidate schedule the AUTOFSM minimum-area search "
+    "considers: the move, its estimated area, and why it was accepted or "
+    "rejected. The search reports only its final choice by default, which makes "
+    "'it declined to move' indistinguishable from 'it never looked'.",
+    action="store_true",
+)
+parser.add_argument(
+    "--autofsm_open",
+    help="Force the AUTOFSM schedule to open up (decompose into its internals) "
+    "the functional unit whose entity name contains this substring, instead of "
+    "searching. Repeatable. For A/B measurement -- it is how a test builds the "
+    "schedule the area search rejected and compares real cell counts against "
+    "it. An ambiguous or unmatched substring is an error.",
+    action="append",
+    default=[],
+    metavar="SUBSTR",
+)
+parser.add_argument(
+    "--autofsm_unshare",
+    help="Force SUBSTR=N physical copies of the functional unit matching SUBSTR, "
+    "instead of searching. Repeatable. Same A/B measurement purpose as "
+    "--autofsm_open; may be combined with it.",
+    action="append",
+    default=[],
+    metavar="SUBSTR=N",
+)
+parser.add_argument(
     "--autofsm_ctl",
     help="How an AUTOFSM's control path is built (default v3). 'v3' decodes "
     "state with constant lookup tables: one select LUT per shared unit, one "
@@ -512,6 +540,17 @@ def run_autofsm_schedule_passes(parser_state):
     if args.autofsm_budget_scale is not None:
         for key in AUTOFSM.COLLECT_AUTOFSM_KEYS(parser_state):
             budget_scales[key] = args.autofsm_budget_scale
+    force_unshare = []
+    for spec in args.autofsm_unshare:
+        pattern, _, n_units = spec.rpartition("=")
+        if not pattern or not n_units.isdigit():
+            print(
+                f"--autofsm_unshare expects SUBSTR=N, got {spec!r}",
+                flush=True,
+            )
+            sys.exit(-1)
+        force_unshare.append((pattern, int(n_units)))
+    force_open = list(args.autofsm_open)
     prev_schedules = None
     for schedule_pass in range(1, AUTOFSM.MAX_SCHEDULE_PASSES + 1):
         print(
@@ -526,6 +565,9 @@ def run_autofsm_schedule_passes(parser_state):
             prev_schedules,
             area_sweep=not args.autofsm_no_area_sweep,
             ctl=args.autofsm_ctl,
+            sweep_debug=args.autofsm_sweep_debug,
+            force_open=force_open,
+            force_unshare=force_unshare,
         )
         for key in sorted(schedules):
             print(AUTOFSM.DESCRIBE_SCHEDULE(key, schedules[key]), flush=True)
@@ -596,6 +638,8 @@ def run_autofsm_schedule_passes(parser_state):
                 schedules,
                 area_sweep=not args.autofsm_no_area_sweep,
                 ctl=args.autofsm_ctl,
+                force_open=force_open,
+                force_unshare=force_unshare,
             )
             if not AUTOFSM.SCHEDULES_EQUAL(trial, schedules):
                 changed = True

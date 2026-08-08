@@ -725,6 +725,120 @@ across 150-odd states — three tiny units, and multiplexers and registers costi
 an order of magnitude more than the adder did. The estimate turns back up and
 the search stops.
 
+### 3.9 What the clock goal does to allocation
+
+Two different mechanisms decompose an operation into smaller ones, and they pull
+in opposite directions with respect to the clock goal. Confusing them is the
+usual source of "why is my design not getting smaller when I ask for less
+speed?"
+
+**A HIGH clock goal forces decomposition, and does not unshare.** `BUILD_DAG`
+descends into any operation whose own delay plus its operand multiplexer exceeds
+one state's budget (`too_slow_for_a_state`). That is a correctness move, not an
+optimization: an operation that cannot fit one state makes the clock goal
+unreachable at any latency. The pieces it descends into are still SHARED, one
+unit per entity — a tight clock never hands anything extra copies. Only a
+`max_latency=` cap that sharing cannot meet, or the search's own UNSHARE move,
+adds unit copies.
+
+**A LOW clock goal is what lets the search decompose by choice.** With a budget
+big enough that the whole operation fits one state, keeping it atomic is the
+anchor, and opening it becomes something `SWEEP_MIN_AREA_SCHEDULE` decides on
+area grounds — the "split until multiplexers and registers cost more than the
+units saved" behaviour an area-first build wants. The search still never spends
+timing margin (the `worst_state_du > anchor["worst_state_du"]` guard), so a
+loose clock does not licence a slower schedule; it changes what the ANCHOR is,
+and therefore what the search is choosing between.
+
+`autofsm_min_area_verify_test.py` is where this is measured rather than
+asserted: it builds the alternatives the search passed over
+(`--autofsm_open` / `--autofsm_unshare`) and checks the search's answer against
+their real yosys cell counts.
+
+#### What that measurement found, and why decomposition usually loses
+
+The first run of that test inverted the expected result, and the numbers are
+worth keeping because they are the clearest statement of the trade. Three
+uint8 divides at a 1 MHz goal, whole design, `$scopeinfo` excluded:
+
+| schedule | cells | shape |
+|---|---|---|
+| share the divider whole | **998** | 2 units, 3 states, multiplexers 50 + 33 cells |
+| open the divider up | 1700 | 10 units, 36 states, **1271 cells of operand multiplexing** |
+| two dividers, unopened | 1636 | 3 units, 2 states |
+| three dividers, unopened | 2360 | 4 units, 2 states |
+
+Opening one unit into N pieces necessarily spreads them over N states, and that
+buys an N-way multiplexer on **every operand port**. Here that came to 76% of
+the resulting FSM — paid to save a single divider. The search had rated the
+same move a large win, for one reason: `AREA_PER_BIT_MUX` priced a 2:1
+multiplexer bit at about one yosys cell, where measurement across four
+multiplexer shapes puts it at 2.07-2.14. That constant is now set from those
+measurements, and it is the term that decides whether descent pays at all.
+
+Recalibrating narrowed the gap but did not close it: the model still rated the
+opened schedule a 3% improvement over one that real synthesis says is 72%
+worse. The residual is that synthesis optimizes ARITHMETIC far harder than a
+per-bit sum of submodules predicts, while it cannot optimize away data
+selection — so the model over-prices the shared whole unit and under-prices the
+multiplexers that replace it. Rather than tune constants past what was
+measured, `SWEEP_MIN_IMPROVEMENT` was raised to reflect the model's
+demonstrated accuracy: single-digit-percent differences are below its noise
+floor and the search is no longer allowed to act on them. The asymmetry
+justifies it — declining a real win costs an opportunity, while acting on a
+false one ships a design 70% larger than not searching at all.
+
+#### Why donut and sine decline every move
+
+Neither shipped example takes a single move at any clock goal, and both declines
+are correct rather than a search failure:
+
+* `autofsm_donut_update` is int16 add/subtract/compare. Opening a 16-bit adder
+  yields ~16 one-bit operations, each wanting its own operand multiplexers and
+  cross-state registers, to save one adder. Its state count also has a floor no
+  clock can lower: the most-shared unit carries 8 operations, and one unit runs
+  at most one operation per state.
+* `float_sine_autofsm` is float64. Floating-point operands have no soft
+  equivalent and float built-ins have no Python source to descend into, so its
+  expensive units are not openable candidates at all. Its state count *does*
+  fall with a looser budget (14 → 10 at 1 MHz), but that is the greedy scheduler
+  packing more per state, not the search choosing differently.
+
+A design where opening pays needs a unit far more expensive than the
+multiplexers sharing its pieces costs. A divider is that case — the most
+expensive operation the area model knows, whose soft equivalent is a chain of
+ordinary compare-and-subtract steps that fold onto units the design already has
+— which is what `autofsm_div_share_test.py` exists to be.
+
+#### Which built-in operators can be opened at all
+
+`_SOFT_FACTORY_FOR_OP` maps a built-in operator to the soft-operator equivalent
+descent uses. Signedness is part of that choice, and getting it wrong does not
+produce a slower design, it produces a WRONG one — `_open_target`'s return-type
+and arity checks cannot tell the difference, since the widths match and only the
+answers differ.
+
+| operator | unsigned | signed |
+|---|---|---|
+| PLUS / MINUS | ripple adder / subtract-via-add | same |
+| MULT | shift-and-add | **not openable** — no signed soft multiplier exists |
+| DIV / MOD | radix restoring | signed radix (magnitudes, sign applied after) |
+| comparisons, EQ / NEQ | subtract-based | same |
+| shifts | **not openable** (see below) | |
+| floating point | **not openable** — no soft equivalent | |
+
+Both soft multipliers sum `a << i` over the set bits of `b` treating `b` as
+unsigned; for a signed `b` the top bit carries weight `-2**(n-1)` and its partial
+product would have to be subtracted. `make_soft_mult_shift_add(int16_t, int16_t)`
+builds without complaint and computes `-3 * 4` as `1048564`, so a signed
+multiply is refused rather than opened.
+
+Shifts are absent even though `operators/soft_shift.py` ships barrel shifters:
+the built-in takes its amount at the operand's own width while the barrel takes
+exactly `log2(width)` amount bits, so the two disagree for any amount at or
+above the operand width. Wiring them up needs an adapter that saturates the
+amount first.
+
 ---
 
 ## 4. Results
@@ -828,6 +942,7 @@ at least 3"*.
 | `autofsm_latency_test.py` | synth | end-to-end schedule; the generated VHDL instantiates exactly as many copies of each shared unit as the schedule claims |
 | `autofsm_resources_compare_test.py` | synth | the FSM is actually smaller than the logic it replaces |
 | `autofsm_area_sweep_compare_test.py` | synth | the area search does not make designs bigger, and its cost model agrees with yosys about which of two schedules is smaller — the calibration guard |
+| `autofsm_min_area_verify_test.py` | synth | the search actually MOVES on a design built to reward moving, the move is smaller in real yosys cells, and no alternative point of the search space (built via `--autofsm_open` / `--autofsm_unshare`) is smaller still |
 | `autofsm_max_latency_test.py` | synth | a meetable `max_latency` is met by unsharing; an unmeetable one fails the build naming the latency actually needed |
 | `autofsm_timing_iter_test.py` | synth | a critical path inside an FSM is found and fixed by rescheduling |
 | `autofsm_ctl_compare_test.py` | synth | the constant-table control path is not bigger than the comparator chains it replaced, and the donut FSM still meets the clock goal that v2 misses |
@@ -859,6 +974,12 @@ latency, which is what lets it be reused unchanged across four registrations.
   are targeting — on an FPGA, flip-flops come paired with the LUTs in front of
   them and are far cheaper than a cell count suggests. The anchor guarantee
   bounds the damage of a mis-ranking to a missed opportunity.
+- An ARRAY-typed operand cannot be shared. Its operand multiplexer is an array
+  of arrays, and `T[A][B]` currently mis-elaborates to VHDL — a bare
+  `make_operand_mux(uint2_t[16], 4)` design fails GHDL import with "can't match
+  ... with type array type uint2_t_4", with no AUTOFSM involved. Reachable only
+  from a schedule that shares an operation taking a whole array, which is rare;
+  the underlying 2D-array bug is not an AUTOFSM one and is unfixed.
 
 **Future work**
 

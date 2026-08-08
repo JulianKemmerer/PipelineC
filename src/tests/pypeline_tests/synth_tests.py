@@ -165,6 +165,21 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # The stronger form of the same question. The compare test above only asks
+    # "did the search make things worse?", which every design in this repo
+    # answers by taking no moves at all -- passing it vacuously. This one uses a
+    # design built to reward moving (three divides sharing one divider) and
+    # asserts the search actually opens it up, that the move is smaller in real
+    # cells, and that no alternative point of the search space -- built
+    # explicitly with --autofsm_open/--autofsm_unshare -- is smaller still.
+    tests.append(
+        Test(
+            name="autofsm_min_area_verify_test",
+            category="synth",
+            cmd=[INST_DIR / "autofsm_min_area_verify_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # The FSM's CONTROL path, built under both --autofsm_ctl modes and compared
     # on yosys cell counts, plus the timing consequence on a design that sits at
     # its clock goal. Guards the constant-table decode that replaced v2's

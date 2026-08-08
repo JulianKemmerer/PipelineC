@@ -511,6 +511,118 @@ def main():
             "names the generated entity, so it has to be)",
         )
 
+    # ── soft-operator equivalents: which built-ins can be opened, and into
+    #    WHAT. Signedness is the sharp edge -- substituting an unsigned
+    #    algorithm for a signed operator does not make a slower design, it makes
+    #    a wrong one, and _open_target's return-type/arity check cannot see the
+    #    difference (same widths, different answers).
+    print("\n[soft-operator equivalents]")
+
+    class _FakeParserState:
+        pass
+
+    ps_soft = _FakeParserState()
+    ps_soft.pypeline_builtin_op_info = {
+        "u_mult": ("INFERRED_MULT", ("uint16_t", "uint16_t")),
+        "s_mult": ("INFERRED_MULT", ("int16_t", "int16_t")),
+        "u_div": ("DIV", ("uint16_t", "uint16_t")),
+        "s_div": ("DIV", ("int16_t", "int16_t")),
+        "u_mod": ("MOD", ("uint16_t", "uint16_t")),
+        "shift": ("SR", ("uint32_t", "uint8_t")),
+        "f_add": ("PLUS", ("float32_t", "float32_t")),
+    }
+
+    def soft_name(entity):
+        fn = AUTOFSM._soft_equivalent_callable(ps_soft, entity)
+        return getattr(fn, "__name__", None)
+
+    check(
+        soft_name("u_div") == "soft_div_radix",
+        "an unsigned divide opens into the radix restoring divider (the one "
+        "operation expensive enough that opening it buys real area)",
+    )
+    check(
+        soft_name("s_div") == "soft_div_signed_radix",
+        "a SIGNED divide opens into the signed divider, not the unsigned one",
+    )
+    # Modulo shares the divider's structure and, in the library, its function
+    # NAME too (one factory, `want_remainder` picking which value comes out).
+    # So the check that matters is not the name but that the two are different
+    # functions computing different things -- a collision here would silently
+    # turn `a % b` into `a / b`.
+    div_fn = AUTOFSM._soft_equivalent_callable(ps_soft, "u_div")
+    mod_fn = AUTOFSM._soft_equivalent_callable(ps_soft, "u_mod")
+    check(
+        mod_fn is not None and mod_fn is not div_fn,
+        "unsigned modulo opens into its own function, not the divider's",
+    )
+    if mod_fn is not None and div_fn is not None:
+        wrong = [
+            (a, b)
+            for a, b in ((100, 7), (255, 16), (9, 3), (1, 1))
+            if pypeline.sim_call(div_fn, a, b) != a // b
+            or pypeline.sim_call(mod_fn, a, b) != a % b
+        ]
+        check(
+            not wrong,
+            "the divide/modulo soft equivalents compute divide and remainder"
+            + (f" -- wrong for {wrong[:2]}" if wrong else ""),
+        )
+    check(
+        soft_name("u_mult") == "soft_mult_shift_add",
+        "an unsigned multiply opens into the shift-and-add multiplier",
+    )
+    check(
+        soft_name("s_mult") is None,
+        "a SIGNED multiply is NOT openable: both soft multipliers treat the "
+        "second operand as unsigned, so substituting one computes the wrong "
+        "product (int16 -3 * 4 comes out as 1048564)",
+    )
+    check(
+        soft_name("shift") is None,
+        "shifts are not openable: the barrel shifter takes log2(width) amount "
+        "bits where the built-in takes the operand's own width, so the two "
+        "disagree for out-of-range shift amounts",
+    )
+    check(
+        soft_name("f_add") is None,
+        "floating-point operands have no soft equivalent",
+    )
+
+    # The soft adders have to widen their operands to the result type
+    # themselves, bit by bit. Above an operand's own width a SIGNED value
+    # continues with its sign bit, not with zero -- get that wrong and the
+    # adder is right for every non-negative input and quietly wrong for the
+    # rest, which is exactly what descending into a signed add used to build.
+    print("\n[soft adder sign extension]")
+    try:
+        from operators.soft_add import make_soft_add_ripple, make_soft_add_carry_select
+
+        # Compared against the BUILT-IN adder rather than Python's `+`: that is
+        # the actual contract ("computes what + computes"), and it sidesteps
+        # how a simulated value of a signed type prints.
+        @pypeline.hw_func
+        def _builtin_add(a: pypeline.int16_t, b: pypeline.int16_t) -> pypeline.int17_t:
+            r: pypeline.int17_t = a + b
+            return r
+
+        cases = ((-3, 4), (-3, -4), (-1, 1), (-32768, 5), (-32768, -32768), (7, 9))
+        for factory in (make_soft_add_ripple, make_soft_add_carry_select):
+            f = factory(pypeline.int16_t, pypeline.int16_t)
+            bad = [
+                (a, b)
+                for a, b in cases
+                if (pypeline.sim_call(f, a, b) & 0x1FFFF)
+                != (pypeline.sim_call(_builtin_add, a, b) & 0x1FFFF)
+            ]
+            check(
+                not bad,
+                f"{factory.__name__} sign-extends signed operands"
+                + (f" -- wrong for {bad[:2]}" if bad else ""),
+            )
+    except ImportError:
+        print("  skip: operators.soft_add not importable")
+
     if FAILURES:
         print(f"\n{len(FAILURES)} AUTOFSM unit check(s) FAILED")
         sys.exit(1)

@@ -67,9 +67,13 @@ import os
 
 import C_TO_LOGIC
 
-# Schedule dict format version, bumped if the shape changes incompatibly.
+# Schedule dict format version, bumped if the shape changes incompatibly OR the
+# generated hardware changes for an unchanged schedule -- the entity name is a
+# hash of the schedule, so codegen-only changes would otherwise reuse delays
+# measured against different logic.
 # 3: v3 constant-LUT control path (`ctl` field, see _Codegen).
-SCHEDULE_VERSION = 3
+# 4: glue operands materialize their port type (_render_operand at_port_type).
+SCHEDULE_VERSION = 4
 
 # How the generated FSM's CONTROL path is rendered. This selects codegen shape
 # AND the matching area model -- the two must agree, so it is part of the
@@ -154,7 +158,26 @@ _MAX_NAME_LEN = 96
 AREA_PER_BIT_ADD = 1.0  # ripple add/sub: a full adder per bit
 AREA_PER_BIT_CMP = 1.0  # compare == subtract + sign bit
 AREA_PER_BIT_BITWISE = 0.16  # one 2-input gate per bit
-AREA_PER_BIT_MUX = 0.16  # one 2:1 mux per bit
+# One 2:1 multiplexer bit. MEASURED, and the measurement is why this is not the
+# 0.16 the other per-bit gate terms use -- an operand multiplexer costs about
+# twice a plain gate. Built as balanced trees and counted in yosys (the div
+# design behind autofsm_min_area_verify_test):
+#
+#     36-way over uint10   726 cells / 350 mux bits = 2.07 cells per bit
+#     27-way over uint10   545 cells / 260 mux bits = 2.10
+#     36-way over uint2    150 cells /  70 mux bits = 2.14
+#
+# against the ~1 cell that 0.16 implies at this model's 6.25-cells-per-unit
+# scale. (Two- and three-way muxes run higher still, 3-4 cells per bit, but
+# fixed overhead on a tiny mux never decides anything.)
+#
+# This is the term that decides whether DECOMPOSITION pays, so a 2x error here
+# is not a rounding matter: opening one unit into N pieces necessarily spreads
+# them across N states and therefore buys an N-way multiplexer on every operand
+# port. Under-priced, descent looks nearly free. On that div design the search
+# duly opened a shared divider, paying 1271 cells of operand multiplexing to
+# save one divider -- its model called it a win, yosys called it 70% worse.
+AREA_PER_BIT_MUX = 0.34
 AREA_PER_BIT_SHIFT_VAR = 0.7  # barrel shifter ~ log2(W) layers of muxes
 # Array multiplier, per PARTIAL PRODUCT (Wl*Wr of them). Slightly above the
 # per-bit adder cost, which is what yosys actually reports: a 16x16 fabric
@@ -204,10 +227,25 @@ CTL_LUT_DU = 0
 MAX_SWEEP_MOVES = 24
 
 # A move must beat the BEST-SO-FAR by at least this fraction of its estimated
-# area to become the new best. Without it the search would chase model noise,
+# area to become the new best. Without it the search chases model noise,
 # churning the schedule (and therefore the generated entity name) for no real
 # gain.
-SWEEP_MIN_IMPROVEMENT = 0.01
+#
+# SET FROM MEASURED MODEL ERROR, not from taste. The estimate is only a ranking
+# of abstract units, and how far it can be trusted was unknown until the div
+# design in autofsm_min_area_verify_test was built both ways: sharing a divider
+# whole came to 979 yosys cells, opening it up across 36 states came to 1680 --
+# 72% WORSE -- and the model rated that same move a 3% improvement. So the
+# model's error between schedules of very different shape is tens of percent,
+# and a threshold of 0.01 was licensing the search to act on differences an
+# order of magnitude smaller than its own accuracy.
+#
+# The cost of setting this high is a missed opportunity (the anchor is kept);
+# the cost of setting it low is shipping a design 70% bigger than the one the
+# user would have got by not running the search at all. Those are not
+# symmetric, which is why this sits well above the largest mis-ranking seen
+# rather than just above it.
+SWEEP_MIN_IMPROVEMENT = 0.25
 
 # How many consecutive non-improving moves the search will walk through before
 # giving up.
@@ -658,7 +696,7 @@ def _render_op(op, operand_exprs, em, parser_state, entity):
                 f"re-emit entity {entity!r}"
             )
         args = list(operand_exprs) + [repr(c) for c in op["consts"]]
-        return f"{em.inj(fn, 'bm')}({', '.join(args)})"
+        return f"{em.inj_named(fn, op['builtin'])}({', '.join(args)})"
     if kind == "call":
         func = _entity_callables(parser_state).get(entity)
         if func is None:
@@ -897,6 +935,8 @@ _SOFT_FACTORY_FOR_OP = {
     "MINUS": ("operators.soft_add", "make_soft_sub", None),
     "INFERRED_MULT": ("operators.soft_mult", "make_soft_mult_shift_add", None),
     "MULT": ("operators.soft_mult", "make_soft_mult_shift_add", None),
+    "DIV": ("operators.soft_div", "make_soft_div_radix", 1),
+    "MOD": ("operators.soft_div", "make_soft_mod_radix", 1),
     "GT": ("operators.soft_cmp", "make_soft_cmp_sub_swapped", "GT"),
     "GTE": ("operators.soft_cmp", "make_soft_cmp_sub_swapped", "GTE"),
     "LT": ("operators.soft_cmp", "make_soft_cmp_sub_swapped", "LT"),
@@ -904,6 +944,35 @@ _SOFT_FACTORY_FOR_OP = {
     "EQ": ("operators.soft_misc", "make_soft_eq", False),
     "NEQ": ("operators.soft_misc", "make_soft_eq", True),
 }
+
+# SIGNEDNESS IS PART OF THE CHOICE, and getting it wrong is not a missed
+# optimization -- it silently builds hardware computing something else.
+# operators/soft.py encodes the same policy in what each register_soft_* call
+# accepts (any_uint_t vs any_integer_t); AUTOFSM bypasses that registry and so
+# has to repeat it here.
+#
+#   * A SIGNED operand needs a different algorithm for divide, so it gets a
+#     different factory -- restoring division works on magnitudes and applies
+#     the sign afterwards.
+#   * Both soft multipliers sum `a << i` over the set bits of b treating b as
+#     UNSIGNED; for a signed b the top bit carries weight -2**(n-1) and its
+#     partial product would have to be SUBTRACTED. No signed soft multiplier
+#     exists yet, so a signed multiply is simply not openable and stays an
+#     atomic unit. (Verified, not assumed: make_soft_mult_shift_add(int16_t,
+#     int16_t) builds without complaint and computes -3 * 4 = 1048564.)
+_SOFT_FACTORY_FOR_SIGNED_OP = {
+    "DIV": ("operators.soft_div", "make_soft_div_signed_radix", 1),
+    "MOD": ("operators.soft_div", "make_soft_mod_signed_radix", 1),
+}
+_SOFT_UNSIGNED_ONLY_OPS = frozenset({"MULT", "INFERRED_MULT"})
+
+# Shifts (SL/SR) are deliberately absent even though operators/soft_shift.py
+# ships barrel shifters: the built-in takes its amount at the operand's own
+# width, while the barrel takes exactly log2(width) amount bits, so the two
+# disagree for any shift amount at or above the operand width -- an
+# out-of-range shift zeroes on the built-in and wraps on the barrel. Arity and
+# return type match, so _open_target's checks would NOT catch the difference.
+# Wiring these up needs an adapter that saturates the amount first.
 
 # Ceiling on how many distinct built-in operator shapes get a soft equivalent
 # elaborated. Bounded by the number of DISTINCT (op, operand types) triples in
@@ -924,13 +993,20 @@ def _soft_equivalent_callable(parser_state, entity):
     if info is None:
         return None
     op_name, operand_ctypes = info
-    spec = _SOFT_FACTORY_FOR_OP.get(op_name)
-    if spec is None or len(operand_ctypes) != 2:
+    if op_name not in _SOFT_FACTORY_FOR_OP or len(operand_ctypes) != 2:
         return None
-    module_name, factory_name, arg = spec
     types = [_scalar_ctype_to_type(ct) for ct in operand_ctypes]
     if any(t is None for t in types):
         return None  # non-integer operands: no soft equivalent exists
+    any_signed = any(not ct.startswith("u") for ct in operand_ctypes)
+    if any_signed and op_name in _SOFT_UNSIGNED_ONLY_OPS:
+        return None
+    spec = (
+        _SOFT_FACTORY_FOR_SIGNED_OP.get(op_name, _SOFT_FACTORY_FOR_OP[op_name])
+        if any_signed
+        else _SOFT_FACTORY_FOR_OP[op_name]
+    )
+    module_name, factory_name, arg = spec
     try:
         import importlib
 
@@ -2220,8 +2296,85 @@ def _openable_entities(parser_state, schedule, opened):
     return out
 
 
+def _resolve_entity_pattern(schedule, pattern):
+    """Which of a schedule's bound entities a user-supplied substring names.
+
+    Used only by the force flags (--autofsm_open / --autofsm_unshare), which
+    exist so a test can build the schedule the search REJECTED and compare real
+    cell counts against it. Entity names are long and generated
+    (BIN_OP_DIV_uint32_t_uint32_t), so matching is by substring -- but an
+    ambiguous or absent match is an error, never a guess: a flag that silently
+    forced nothing would look exactly like a search that declined to move.
+    """
+    matches = sorted({e for e in schedule["fus"].values() if pattern in e})
+    if not matches:
+        raise AutofsmError(
+            f"AUTOFSM: no functional unit matching {pattern!r}. This schedule "
+            f"binds: " + ", ".join(sorted(set(schedule["fus"].values())))
+        )
+    if len(matches) > 1:
+        raise AutofsmError(
+            f"AUTOFSM: {pattern!r} matches more than one functional unit: "
+            + ", ".join(matches)
+        )
+    return matches[0]
+
+
+def FORCE_SCHEDULE(
+    parser_state,
+    key,
+    tag,
+    budget_scale,
+    prev_schedule=None,
+    ctl=DEFAULT_CTL,
+    open_patterns=(),
+    unshare_patterns=(),
+):
+    """Build one explicitly-chosen point of the search space instead of
+    searching: open these entities, give those entities that many units.
+
+    This is the measurement counterpart to the area search. The search ranks
+    candidates with an internal model and never sees a real utilization number
+    (see the AREA_* constants for why it cannot), so the only way to check that
+    its answer is really the smallest is to BUILD the alternatives it passed
+    over and count their cells -- which is what
+    src/tests/pypeline_tests/inst/autofsm_min_area_verify_test.py does. The
+    resulting schedule is a normal schedule in every respect, including having
+    `opened`/`unshared` hashed into its entity name, so a forced variant can
+    never reuse measured delays belonging to a different one.
+    """
+    anchor = BUILD_SCHEDULE(
+        parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl
+    )
+    opened = sorted(
+        {_resolve_entity_pattern(anchor, p) for p in open_patterns}
+    )
+    unshared = {}
+    for pattern, n_units in unshare_patterns:
+        unshared[_resolve_entity_pattern(anchor, pattern)] = int(n_units)
+    schedule = BUILD_SCHEDULE(
+        parser_state,
+        key,
+        tag,
+        budget_scale,
+        prev_schedule,
+        tuple(opened),
+        None,
+        tuple(sorted(unshared.items())),
+        ctl=ctl,
+    )
+    schedule["forced"] = True
+    return schedule
+
+
 def SWEEP_MIN_AREA_SCHEDULE(
-    parser_state, key, tag, budget_scale, prev_schedule=None, ctl=DEFAULT_CTL
+    parser_state,
+    key,
+    tag,
+    budget_scale,
+    prev_schedule=None,
+    ctl=DEFAULT_CTL,
+    debug=False,
 ):
     """Search for the SMALLEST schedule that still meets the clock goal and the
     latency cap, by opening operations up one entity at a time.
@@ -2272,7 +2425,26 @@ def SWEEP_MIN_AREA_SCHEDULE(
     n_considered = 0
     uphill = 0
 
+    def trace(label, sched, verdict):
+        """One auditable line per candidate. Every 'the search declined to
+        move' claim in the docs and tests is only as good as being able to see
+        WHICH candidates were considered and why each lost."""
+        if not debug:
+            return
+        move = f"{label[0]} {label[1]}"
+        if sched is None:
+            print(f"AUTOFSM {key}: sweep candidate {move}: {verdict}", flush=True)
+            return
+        print(
+            f"AUTOFSM {key}: sweep candidate {move}: est "
+            f"{ESTIMATE_SCHEDULE_AREA(parser_state, sched, memo):.0f}, "
+            f"{len(sched['fus'])} unit(s), {sched['n_states']} states, worst "
+            f"state {sched['worst_state_du'] / 10.0:.2f} ns: {verdict}",
+            flush=True,
+        )
+
     def evaluate(trial_opened, trial_unshared):
+        """The candidate schedule, or None with the reason it was rejected."""
         try:
             sched = BUILD_SCHEDULE(
                 parser_state,
@@ -2286,13 +2458,13 @@ def SWEEP_MIN_AREA_SCHEDULE(
                 ctl=ctl,
             )
         except AutofsmError:
-            return None
+            return None, "rejected: too many operations to score (DAG cap)"
         if sched["latency_infeasible"] and not anchor["latency_infeasible"]:
-            return None
+            return None, "rejected: cannot meet the max_latency cap"
         if sched["at_floor"] and not anchor["at_floor"]:
             # This made some state unschedulable at the clock goal. More area
             # for worse timing is never the trade being looked for here.
-            return None
+            return None, "rejected: a state stopped fitting the clock goal"
         if sched["worst_state_du"] > anchor["worst_state_du"]:
             # THE SEARCH MAY NOT SPEND TIMING MARGIN. A candidate whose worst
             # state is longer than the anchor's still "fits the budget" by the
@@ -2308,15 +2480,28 @@ def SWEEP_MIN_AREA_SCHEDULE(
             # Trading latency for timing is the DRIVER's job (it tightens the
             # per-state budget and reschedules); the search's job is area at
             # equal-or-better timing, and nothing else.
-            return None
-        return sched
+            return None, (
+                f"rejected: worst state {sched['worst_state_du'] / 10.0:.2f} ns "
+                f"exceeds the anchor's {anchor['worst_state_du'] / 10.0:.2f} ns "
+                f"(may not spend timing margin)"
+            )
+        return sched, "considered"
 
+    if debug:
+        print(
+            f"AUTOFSM {key}: sweep anchor (share everything): est "
+            f"{anchor_cost:.0f}, {len(anchor['fus'])} unit(s), "
+            f"{anchor['n_states']} states, worst state "
+            f"{anchor['worst_state_du'] / 10.0:.2f} ns",
+            flush=True,
+        )
     for _move in range(MAX_SWEEP_MOVES):
         candidates = []  # (cost, tie-break label, schedule, opened, unshared)
         for entity in sorted(_openable_entities(parser_state, cur, opened)):
             trial_opened = sorted(opened + [entity])
-            sched = evaluate(trial_opened, unshared)
+            sched, why = evaluate(trial_opened, unshared)
             n_considered += 1
+            trace(("open", entity), sched, why)
             if sched is not None:
                 candidates.append(
                     (
@@ -2330,8 +2515,9 @@ def SWEEP_MIN_AREA_SCHEDULE(
         for entity, n_units in sorted(_unshareable_entities(cur, unshared).items()):
             trial_unshared = dict(unshared)
             trial_unshared[entity] = n_units
-            sched = evaluate(opened, trial_unshared)
+            sched, why = evaluate(opened, trial_unshared)
             n_considered += 1
+            trace(("unshare", f"{entity} -> {n_units} units"), sched, why)
             if sched is not None:
                 candidates.append(
                     (
@@ -2343,14 +2529,28 @@ def SWEEP_MIN_AREA_SCHEDULE(
                     )
                 )
         if not candidates:
+            if debug:
+                print(
+                    f"AUTOFSM {key}: sweep move {_move}: no candidate survived; "
+                    f"stopping",
+                    flush=True,
+                )
             break
         candidates.sort(key=lambda c: (c[0], c[1]))
-        cost, _label, sched, opened, unshared = candidates[0]
+        cost, label, sched, opened, unshared = candidates[0]
         # Always take the cheapest available move, even uphill -- see
         # MAX_SWEEP_UPHILL. The incumbent BEST is what gets returned, so
         # walking uphill can only ever discover something, never lose anything.
         cur = sched
-        if cost < best_cost * (1.0 - SWEEP_MIN_IMPROVEMENT):
+        improved = cost < best_cost * (1.0 - SWEEP_MIN_IMPROVEMENT)
+        if debug:
+            print(
+                f"AUTOFSM {key}: sweep move {_move}: took {label[0]} "
+                f"{label[1]} at est {cost:.0f} vs best {best_cost:.0f} -- "
+                + ("NEW BEST" if improved else f"uphill {uphill + 1}"),
+                flush=True,
+            )
+        if improved:
             best, best_cost = sched, cost
             uphill = 0
         else:
@@ -2417,6 +2617,9 @@ def HARVEST_AUTOFSM_SCHEDULES(
     prev_schedules=None,
     area_sweep=True,
     ctl=DEFAULT_CTL,
+    sweep_debug=False,
+    force_open=(),
+    force_unshare=(),
 ):
     """Schedule every AUTOFSM call site in the design.
 
@@ -2437,15 +2640,30 @@ def HARVEST_AUTOFSM_SCHEDULES(
                 f"AUTOFSM: no live tag object recorded for call site {key!r} "
                 f"(internal error)"
             )
-        build = SWEEP_MIN_AREA_SCHEDULE if area_sweep else BUILD_SCHEDULE
-        schedules[key] = build(
-            parser_state,
-            key,
-            tag,
-            budget_scales.get(key, DEFAULT_BUDGET_SCALE),
-            prev_schedules.get(key),
-            ctl=ctl,
-        )
+        budget_scale = budget_scales.get(key, DEFAULT_BUDGET_SCALE)
+        prev = prev_schedules.get(key)
+        if force_open or force_unshare:
+            # An explicitly requested point of the search space overrides the
+            # search entirely -- this is the A/B measurement path, not a hint.
+            schedules[key] = FORCE_SCHEDULE(
+                parser_state,
+                key,
+                tag,
+                budget_scale,
+                prev,
+                ctl=ctl,
+                open_patterns=force_open,
+                unshare_patterns=force_unshare,
+            )
+        elif area_sweep:
+            schedules[key] = SWEEP_MIN_AREA_SCHEDULE(
+                parser_state, key, tag, budget_scale, prev, ctl=ctl,
+                debug=sweep_debug,
+            )
+        else:
+            schedules[key] = BUILD_SCHEDULE(
+                parser_state, key, tag, budget_scale, prev, ctl=ctl
+            )
     return schedules
 
 
@@ -2592,6 +2810,24 @@ class _Emitter:
         self.globals = {}
         self._by_obj_key = {}
         self._n = 0
+
+    def inj_named(self, obj, name):
+        """Inject a live object under an EXACT name, for the few callees the
+        elaborator recognizes by name rather than by value.
+
+        The bit-manipulation builtins (concat, bit_assign, rotl, ...) are
+        intercepted in _elab_call by literal name; injected as `_af_bm0` they
+        instead look like an ordinary callable, and the elaborator tries to
+        elaborate their SIMULATION body -- which is plain Python (`concat` maps
+        a list comprehension over its varargs) and not hardware at all.
+        """
+        if self.globals.get(name) not in (None, obj):
+            raise AutofsmError(
+                f"AUTOFSM: generated-source name {name!r} is already bound to a "
+                f"different object (internal error)"
+            )
+        self.globals[name] = obj
+        return name
 
     def inj(self, obj, hint="v"):
         """Inject a live object, returning the generated name that refers to it."""
@@ -2768,10 +3004,25 @@ class _Codegen:
         return self._render_glue(nid, node)
 
     def _render_glue(self, nid, node):
+        # Glue is rendered as a bare INLINE EXPRESSION, so -- unlike a scheduled
+        # operation, whose operands land in an array declared at the port type,
+        # and unlike assembly, which writes into a typed local's fields --
+        # nothing here performs the port's own cast. _clean_cast_chain drops
+        # that cast on exactly that assumption, so replay it here.
+        assemble = node["op"]["kind"] == "assemble"
+        # A bit slice's base must be a plain name: the elaborator resolves it
+        # by looking the identifier up, so a base that is itself an expression
+        # -- notably another slice, which happens as soon as one opened
+        # operation feeds a second -- is not recognized as a slice at all and
+        # is misread as an array index (`((v0)[15:0])[13:0]`).
+        slicing = node["op"].get("builtin") == "__slice__"
         operand_exprs = [
-            self._render_operand(node, i) for i in range(len(node["operands"]))
+            self._render_operand(
+                node, i, at_port_type=not assemble, force_local=slicing
+            )
+            for i in range(len(node["operands"]))
         ]
-        if node["op"]["kind"] == "assemble":
+        if assemble:
             return self._render_assemble(node, operand_exprs)
         return _render_op(
             node["op"], operand_exprs, self.em, self.parser_state, node["entity"]
@@ -2801,13 +3052,47 @@ class _Codegen:
             self.em.line(f"    {target} = {operand_exprs[i]}")
         return name
 
-    def _render_operand(self, node, i):
+    def _render_operand(self, node, i, at_port_type=False, force_local=False):
         """Render operand i of a node, replaying any narrowing the original
-        code performed between the producer and this port."""
+        code performed between the producer and this port.
+
+        `at_port_type` additionally materializes the port's own type, for
+        consumers that render the operand inline instead of assigning it to
+        something declared at that type. It is not cosmetic: a literal is typed
+        at its own minimal width, so an operation reading `440` on a 16-bit port
+        sees a 9-bit value unless the widening the real wire performs is
+        replayed -- which is how descending into a soft multiplier used to
+        produce "Bit index [14:14] out of range for uint9_t".
+        """
         expr = self._render_ref(node["operands"][i])
-        for ctype in node["casts"][i]:
+        chain = list(node["casts"][i])
+        if at_port_type:
+            port_type = node["port_types"][i]
+            # Scalar integer ports only: width is the whole point, and a
+            # compound port carries its value through unreinterpreted anyway.
+            if (
+                port_type is not None
+                and _scalar_ctype_to_type(port_type) is not None
+                and self._expr_ctype(node, i, chain) != port_type
+            ):
+                chain.append(port_type)
+        for ctype in chain:
+            expr = self._cast_local(expr, ctype)
+        if force_local and not expr.isidentifier():
+            ctype = node["port_types"][i] or node["out_type"]
             expr = self._cast_local(expr, ctype)
         return expr
+
+    def _expr_ctype(self, node, i, chain):
+        """The type a rendered operand expression already carries, or None when
+        that cannot be known (a constant literal carries only its own width)."""
+        if chain:
+            return chain[-1]
+        ref = node["operands"][i]
+        if ref[0] == "node":
+            producer = self.nodes.get(ref[1])
+            return producer.get("out_type") if producer else None
+        return None
 
     def _cast_local(self, expr, ctype):
         """Materialize an intermediate narrowing as a typed local."""

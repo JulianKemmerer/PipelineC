@@ -2434,6 +2434,31 @@ The search never returns something bigger or slower than plain share-everything,
 so there is nothing to turn on. `--autofsm_no_area_sweep` turns it *off*, which
 is useful mainly for comparing the two.
 
+**How much the search can do depends on your clock goal**, and not in the
+direction people expect. A high goal FORCES decomposition — an operation that
+cannot fit one state is split whether or not that saves area — but leaves the
+pieces shared. A LOW goal is what gives the search room to decompose *by
+choice*: with a budget big enough for the whole operation, keeping it atomic is
+the starting point and opening it up is a decision made on area grounds. So if
+you want the smallest design and do not care about speed, ask for a low clock
+and let the search work; asking for a high one takes the choice away from it.
+See [`docs/AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md) for what is and is not
+openable (signed multiplies and floating point are not).
+
+`--autofsm_sweep_debug` prints one line per candidate the search considers —
+the move, its estimated area, and why it was accepted or rejected. Without it
+the build log reports only the final choice, which makes "the search declined
+to move" indistinguishable from "the search never looked".
+
+`--autofsm_open SUBSTR` and `--autofsm_unshare SUBSTR=N` skip the search and
+build one explicitly chosen point instead: open up the unit whose entity name
+contains `SUBSTR`, or give it `N` copies. These exist for measurement — the
+tool cannot read area back from a synthesis tool, so the only way to check that
+the search's answer really is the smallest is to build the alternatives it
+passed over and count cells, which is what
+`src/tests/pypeline_tests/inst/autofsm_min_area_verify_test.py` does. An
+ambiguous or unmatched `SUBSTR` is an error rather than a silent no-op.
+
 ### Control path — `--autofsm_ctl`
 
 Something has to decode the state into "which operand does this unit take",
