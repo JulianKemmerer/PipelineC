@@ -7,6 +7,7 @@ For getting started information see the [README](README.md).
 ## Table of Contents
 
 **Part I — The language**
+
 1. [What is Pypeline?](#what-is-pypeline)
 2. [Worked Example: VGA Test Pattern](#worked-example-vga-test-pattern)
 3. [Digital Logic Basics](#digital-logic-basics)
@@ -25,10 +26,12 @@ For getting started information see the [README](README.md).
 16. [Global Signals](#global-signals)
 
 **Part II — Temporal behavior**
+
 17. [Tool-Chosen Implementation: `AUTOPIPELINE(...)` and `AUTOFSM(...)`](#tool-chosen-implementation-autopipeline-and-autofsm)
 18. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle)
 
 **Part III — Ports and streams**
+
 19. [Keep-Tagged Lanes: `kept_data_bus_t`](#keep-tagged-lanes-kept_data_bus_t)
 20. [N-Dimensional Stream Fragments: `ndarray_fragment_t`](#n-dimensional-stream-fragments-ndarray_fragment_t)
 21. [Streams: `stream_t`](#streams-stream_t)
@@ -39,10 +42,12 @@ For getting started information see the [README](README.md).
 26. [Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp)
 
 **Part IV — Escape hatches**
+
 27. [Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
 28. [Just-Wires Synthesis Hint: `@wires`](#just-wires-synthesis-hint-wires)
 
 **Part V — Reference**
+
 29. [Simulation Reference](#simulation-reference)
 30. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
 31. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
