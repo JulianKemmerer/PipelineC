@@ -71,7 +71,7 @@ PART("xc7a100tcsg324-1")
 ```
 
 Without `PART()`, pypeline uses a software timing estimator instead of real synthesis.
-See [pypeline_guide.md §5](pypeline_guide.md#5-top-level-entry-points).
+See [pypeline_guide.md §5](pypeline_guide.md#top-level-entry-points).
 
 ---
 
@@ -123,7 +123,7 @@ data: uint32_t[4]
 ```
 
 Indexing with a compile-time constant is free; indexing with a hardware signal infers a
-mux tree. See [pypeline_guide.md §11](pypeline_guide.md#11-types).
+mux tree. See [pypeline_guide.md §11](pypeline_guide.md#basic-types).
 
 ### 3d. Casting
 
@@ -148,7 +148,7 @@ def widen(x: uint16_t) -> uint32_t:
 The annotation on `tmp` performs the same implicit width-truncating/reinterpreting
 assignment a cast would, including signed/unsigned reinterpretation — there is just no
 wrapping call syntax for it. See
-[pypeline_guide.md §11](pypeline_guide.md#11-types) and [§13](#13-not-yet-supported).
+[pypeline_guide.md §11](pypeline_guide.md#basic-types) and [§13](#13-not-yet-supported).
 
 ### 3e. Enum Types
 
@@ -218,7 +218,7 @@ not `5`.
 
 In simulation, a `char_t[N]` value is a `CharArray` (a list of `SimVal`s that also behaves
 like the Python string it represents) — pass and compare plain Python `str` values
-directly, no conversion needed (see [pypeline_guide.md §11](pypeline_guide.md#11-types)).
+directly, no conversion needed (see [pypeline_guide.md §11](pypeline_guide.md#basic-types)).
 
 `Reg[char_t[N]]` currently only supports zero-init (no `=` initializer) — see
 [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) for the known limitation.
@@ -262,7 +262,7 @@ payload). Converting between float precisions, or to/from an actual int *value*,
 is a different operation — use `make_float_converter`/`make_float_to_int`/
 `make_int_to_float` (also in `floating_point`) instead of either of the above.
 
-See [pypeline_guide.md §11](pypeline_guide.md#11-types) for the full explanation
+See [pypeline_guide.md §11](pypeline_guide.md#basic-types) for the full explanation
 (including why `typeof()` keeps this generic across exponent/mantissa widths) and
 `src/tests/pypeline_tests/inst/float32_add_test.py` /
 `src/tests/pypeline_tests/inst/float_ops_test.py` for complete worked examples.
@@ -298,7 +298,7 @@ def my_top():
 Multiple `#pragma MAIN` functions in one `.c` file → multiple `@MAIN` functions in one
 `.py` file. They share the same global signals (see §8).
 
-See [pypeline_guide.md §5](pypeline_guide.md#5-top-level-entry-points).
+See [pypeline_guide.md §5](pypeline_guide.md#top-level-entry-points).
 
 ---
 
@@ -345,7 +345,7 @@ def top():
     led = led_r             # register the output
 ```
 
-See [pypeline_guide.md §14](pypeline_guide.md#14-global-signals).
+See [pypeline_guide.md §14](pypeline_guide.md#global-signals).
 
 ---
 
@@ -382,7 +382,7 @@ assigned value latches at the next clock edge.
 Functions containing `Reg[T]` must be decorated `@hw_func` or `@MAIN` so simulation
 tracks register state correctly.
 
-See [pypeline_guide.md §8](pypeline_guide.md#8-registers-regt).
+See [pypeline_guide.md §8](pypeline_guide.md#registers-regt).
 
 ---
 
@@ -410,7 +410,7 @@ ready_for_in = downstream_ready & some_condition
 ```
 
 `Feedback[T]` is purely combinational (no storage, no clock edge). Do not give it an
-initializer. See [pypeline_guide.md §9](pypeline_guide.md#9-feedback-wires-feedbackt).
+initializer. See [pypeline_guide.md §9](pypeline_guide.md#feedback-wires-feedbackt).
 
 ---
 
@@ -460,7 +460,7 @@ def my_inst_main():
     my_inst_out = my_inst_pipeline(my_inst_in)
 ```
 
-See [pypeline_guide.md §15](pypeline_guide.md#15-tool-chosen-implementation-autopipeline-and-autofsm).
+See [pypeline_guide.md §15](pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm).
 
 ### 8c. GLOBAL_VALID_READY_PIPELINE_INST — stream pipeline with FIFO
 
@@ -494,7 +494,7 @@ def name_main():
     name_in_ready = result.stream_in.ready
 ```
 
-See [pypeline_guide.md §25](pypeline_guide.md#25-pipelined-stream-wrappers-make_stream_pipeline).
+See [pypeline_guide.md §25](pypeline_guide.md#pipelined-stream-wrappers-make_stream_pipeline).
 
 ### 8d. GLOBAL_STREAM_FIFO — synchronous FIFO
 
@@ -524,7 +524,7 @@ def fifo_name_main():
     fifo_name_in_ready = result.in_ready
 ```
 
-See [pypeline_guide.md §24](pypeline_guide.md#24-fifos-make_stream_fifo).
+See [pypeline_guide.md §24](pypeline_guide.md#fifos-make_stream_fifo).
 
 ### 8e. GLOBAL_VALID_READY_MCP_INST — multi-cycle path pipeline
 
@@ -542,7 +542,7 @@ name_mcp_func, name_mcp_t = make_valid_ready_mcp(func, ncycles)
 # substituting name_mcp_func for name_pipeline_func.
 ```
 
-See [pypeline_guide.md §16](pypeline_guide.md#16-multi-cycle-paths-multi_cycle).
+See [pypeline_guide.md §16](pypeline_guide.md#multi-cycle-paths-multi_cycle).
 
 ---
 
@@ -577,7 +577,7 @@ for i in range(16):
 repacked = bswap(src_array)          # or manual concat() chain
 ```
 
-See [pypeline_guide.md §10](pypeline_guide.md#10-bit-manipulation).
+See [pypeline_guide.md §10](pypeline_guide.md#bit-manipulation).
 
 ---
 
@@ -639,8 +639,8 @@ if my_stream_in.valid & downstream_ready:
     # process my_stream_in.data
 ```
 
-See [pypeline_guide.md §22](pypeline_guide.md#22-bidirectional-ports-interface) and
-[§23](pypeline_guide.md#23-axi-stream-axis_t).
+See [pypeline_guide.md §22](pypeline_guide.md#bidirectional-ports-interface) and
+[§23](pypeline_guide.md#axi-stream-axis_t).
 
 ---
 
@@ -650,15 +650,15 @@ Most PipelineC `#pragma` annotations have a direct pypeline equivalent.
 
 | PipelineC | pypeline | Reference |
 |---|---|---|
-| `#pragma PART "..."` | `PART("...")` at module level | [§5](pypeline_guide.md#5-top-level-entry-points) |
-| `#pragma MAIN func` | `@MAIN` decorator | [§5](pypeline_guide.md#5-top-level-entry-points) |
-| `#pragma MAIN_MHZ func 100.0` | `@MAIN(100.0)` decorator | [§5](pypeline_guide.md#5-top-level-entry-points) |
-| `DECL_INPUT(uint1_t, clk)` + `CLK_MHZ(clk, 100.0)` | `clk: Input[uint1_t] = make_clock(100.0)` | [§5](pypeline_guide.md#5-top-level-entry-points) |
-| `#pragma FEEDBACK x` | `x: Feedback[T]` annotation | [§9](pypeline_guide.md#9-feedback-wires-feedbackt) |
-| `#pragma FUNC_WIRES func` | `@wires` decorator on the function | [§18](pypeline_guide.md#18-just-wires-synthesis-hint-wires) |
-| `#pragma AUTOPIPELINE` on a call | `result = autopipeline(func(args))` | [§15](pypeline_guide.md#15-tool-chosen-implementation-autopipeline-and-autofsm) |
-| `#pragma INST_ARRAY` | factory function + Python list/loop | [§12](pypeline_guide.md#12-parametric-hardware-with-factory-functions) |
-| `#pragma MULTI_CYCLE N` | `MC = MULTI_CYCLE[N]` | [§16](pypeline_guide.md#16-multi-cycle-paths-multi_cycle) |
+| `#pragma PART "..."` | `PART("...")` at module level | [§5](pypeline_guide.md#top-level-entry-points) |
+| `#pragma MAIN func` | `@MAIN` decorator | [§5](pypeline_guide.md#top-level-entry-points) |
+| `#pragma MAIN_MHZ func 100.0` | `@MAIN(100.0)` decorator | [§5](pypeline_guide.md#top-level-entry-points) |
+| `DECL_INPUT(uint1_t, clk)` + `CLK_MHZ(clk, 100.0)` | `clk: Input[uint1_t] = make_clock(100.0)` | [§5](pypeline_guide.md#top-level-entry-points) |
+| `#pragma FEEDBACK x` | `x: Feedback[T]` annotation | [§9](pypeline_guide.md#feedback-wires-feedbackt) |
+| `#pragma FUNC_WIRES func` | `@wires` decorator on the function | [§18](pypeline_guide.md#just-wires-synthesis-hint-wires) |
+| `#pragma AUTOPIPELINE` on a call | `result = autopipeline(func(args))` | [§15](pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm) |
+| `#pragma INST_ARRAY` | factory function + Python list/loop | [§12](pypeline_guide.md#parametric-hardware-with-factory-functions) |
+| `#pragma MULTI_CYCLE N` | `MC = MULTI_CYCLE[N]` | [§16](pypeline_guide.md#multi-cycle-paths-multi_cycle) |
 
 ### FUNC_WIRES
 
@@ -720,7 +720,7 @@ adder_u16 = make_adder(uint16_t)
 `PPCAT(INST_NAME, _pipeline)` style dynamic naming → simply use the variable names
 returned by the factory.
 
-See [pypeline_guide.md §12](pypeline_guide.md#12-parametric-hardware-with-factory-functions).
+See [pypeline_guide.md §12](pypeline_guide.md#parametric-hardware-with-factory-functions).
 
 ---
 
@@ -734,11 +734,11 @@ The following PipelineC features do not yet have a pypeline equivalent.
 | Async clock-crossing FIFOs (`GLOBAL_STREAM_FIFO` across clock domains) | Not supported |
 | Dual-port stream RAM (`DECL_STREAM_RAM_DP_W_R_1`) | Use `vhdl()` passthrough |
 | Simulation of `vhdl()`-based primitives | `make_stream_fifo`, `make_stream_pipeline`, `make_valid_ready_mcp` raise `NotImplementedError` in simulation; synthesise normally via `pipelinec` |
-| Multiple / early `return` statements (returning from inside an `if` branch) | Not supported — a pypeline function has exactly one `return`, which must be the final top-level statement; restructure to assign a result variable in each branch and return it once at the end (see [pypeline_guide.md §6](pypeline_guide.md#6-your-first-hardware-function)) |
+| Multiple / early `return` statements (returning from inside an `if` branch) | Not supported — a pypeline function has exactly one `return`, which must be the final top-level statement; restructure to assign a result variable in each branch and return it once at the end (see [pypeline_guide.md §6](pypeline_guide.md#your-first-hardware-function)) |
 | `Reg[char_t[N]] = <initializer>` (register power-on value for a char array, e.g. equivalent of C's `static char name[16] = "boot";`) | Not supported for hardware elaboration — raises `ElaborationError`. `Reg[char_t[N]]` with no initializer (zero-init) works normally. See [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) |
 | C-style casts (`(uint32_t)x`) | No pypeline equivalent — calling a type as a function around a wire/parameter inside a hardware function body fails at elaboration time. Assign to an intermediate variable with an explicit type annotation instead (see [§3d Casting](#3d-casting)) |
 
-See also the [Limitations](pypeline_guide.md#28-limitations--not-yet-supported) section
+See also the [Limitations](pypeline_guide.md#limitations--not-yet-supported) section
 of the pypeline guide.
 
 ---

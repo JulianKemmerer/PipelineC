@@ -391,7 +391,7 @@ three cross-checked codebase explorations plus direct source reads while debuggi
 memory for the full repro and cycle-by-cycle trace.
 
 **Bug fixed 2026-07-24:** `_typed_new` (struct constructor kwargs, see
-[pypeline_DESIGN.md](pypeline_DESIGN.md#the-struct-decorator)) had the same class of
+[pypeline_DESIGN.md](pypeline_DESIGN.md#struct-decorator)) had the same class of
 unsound "trust the existing ctype tag" shortcut, but for the *constructor* path rather than
 bitwise dunders: it only cast a scalar-int kwarg to the field's declared `ftype` when the
 value wasn't already a typed `SimVal` (`if type(v) is not SimVal or v._ctype is None`). This

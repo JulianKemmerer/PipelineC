@@ -588,7 +588,7 @@ whose first textual touch is inside an `if` still has its base declared ahead of
 branch merge), and `_declare_global_write_wire` in `PY_TO_LOGIC.py` gives the base an
 implicit first alias using the exact same alias-chain mechanism `_declare_var` uses
 for an ordinary local variable (see
-[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#global-wires)). That first alias is
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#global-wires-wiret)). That first alias is
 driven by zeros (`0` / `C_TO_LOGIC.COMPOUND_NULL`) for a write-only function, or by
 an internal **readback input wire** (below) for a function that also reads the wire.
 

@@ -82,22 +82,22 @@ uint1_t blink()
 | | Pypeline | PipelineC |
 |---|---|---|
 | **Getting started** | [/docs directory](docs/README.md) | [GitHub wiki](https://github.com/JulianKemmerer/PipelineC/wiki) |
-| Easy to understand software-like syntax | [Yes](docs/pypeline_guide.md#1-what-is-pypeline) | Yes |
-| Timing feedback from synthesis+pnr tools | [Yes](docs/pypeline_guide.md#5-top-level-entry-points) | Yes |
-| Automatic pipelining of comb. logic | [Yes](docs/pypeline_guide.md#1-what-is-pypeline) | Yes |
-| Dev board specific support packages | [Yes](docs/pypeline_guide.md#2-worked-example-vga-test-pattern) | Yes |
+| Easy to understand software-like syntax | [Yes](docs/pypeline_guide.md#what-is-pypeline) | Yes |
+| Timing feedback from synthesis+pnr tools | [Yes](docs/pypeline_guide.md#top-level-entry-points) | Yes |
+| Automatic pipelining of comb. logic | [Yes](docs/pypeline_guide.md#what-is-pypeline) | Yes |
+| Dev board specific support packages | [Yes](docs/pypeline_guide.md#worked-example-vga-test-pattern) | Yes |
 | VHDL Output | Yes (human readable) | Yes (human readable) |
-| VHDL based existing module import | [Yes](docs/pypeline_guide.md#17-raw-vhdl-passthrough-vhdl) | Yes |
+| VHDL based existing module import | [Yes](docs/pypeline_guide.md#raw-vhdl-passthrough-vhdl) | Yes |
 | Verilog Output | Yes (machine converted) | Yes (machine converted) |
 | Verilog based existing module import | No | No |
-| Traditional HDL simulator support | [Yes](docs/pypeline_guide.md#4-simulation) | Yes |
-| Native Simulation | [Yes](docs/pypeline_guide.md#4-simulation) | No |
+| Traditional HDL simulator support | [Yes](docs/pypeline_guide.md#simulation) | Yes |
+| Native Simulation | [Yes](docs/pypeline_guide.md#simulation) | No |
 | Valid-Ready handshaking | [Yes](docs/pypeline_guide.md#the-stream-interface-validready-handshaking) | Yes |
-| Globally visible point to point wires | [Yes](docs/pypeline_guide.md#14-global-signals) | Yes |
+| Globally visible point to point wires | [Yes](docs/pypeline_guide.md#global-signals) | Yes |
 | Multiple clock domains / Clock domain crossings | No | Yes |
-| Parameterized/Template Functions+Types | [Yes](docs/pypeline_guide.md#12-parametric-hardware-with-factory-functions) | No |
-| Operator overloading | [Yes](docs/pypeline_guide.md#13-custom-operators) | Yes (hacky) |
-| User visible automatic pipeline depths | [Yes](docs/pypeline_guide.md#15-tool-chosen-implementation-autopipeline-and-autofsm) | No |
+| Parameterized/Template Functions+Types | [Yes](docs/pypeline_guide.md#parametric-hardware-with-factory-functions) | No |
+| Operator overloading | [Yes](docs/pypeline_guide.md#custom-operators) | Yes (hacky) |
+| User visible automatic pipeline depths | [Yes](docs/pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm) | No |
 | Automatic resource sharing (pure func → shared-resource FSM) | [Yes](docs/pypeline_guide.md#autofsm-the-opposite-trade-off) | No |
 | SoC system bus helpers | No | Yes |
 | Generates software Helper Code | No | Yes |

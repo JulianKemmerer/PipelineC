@@ -61,7 +61,8 @@ wrote twelve similar lines" produce identical graphs, and AUTOFSM folds both.
 
 Background reading, in order: [`docs/SYN_DESIGN.md`](SYN_DESIGN.md) for the
 delay model and the sweep, [`docs/PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md)
-for how Python becomes a `Logic` graph, and `docs/pypeline_guide.md` §15 for
+for how Python becomes a `Logic` graph, and
+[`docs/pypeline_guide.md`'s Tool-Chosen Implementation section](pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm) for
 AUTOPIPELINE, whose machinery AUTOFSM mirrors.
 
 ---

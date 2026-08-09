@@ -115,7 +115,7 @@ Here's a taste of what driving stimulus looks like: ordinary Python, run
 live during simulation. Both the streaming generator/checker and the
 expected-vs-actual scoreboard bookkeeping come from a shared, reusable Pypeline testbench
 library ([`include/pypeline/axi/axis.py`](https://github.com/JulianKemmerer/PipelineC/blob/master/include/pypeline/axi/axis.py)/[`axis_sim.py`](https://github.com/JulianKemmerer/PipelineC/blob/master/include/pypeline/axi/axis_sim.py),
-documented in [`pypeline_guide.md`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#23-axi-stream-axis_t)).
+documented in [`pypeline_guide.md`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#axi-stream-axis_t)).
 
 ```python
 scoreboard = Scoreboard()
@@ -175,7 +175,7 @@ Dropping `--comb` gets an autopipelined cycle accurate simulation instead:
 ./build.py --enc --sim --native            # pipelined native sim (slow!)
 ```
 
-See the [`pypeline_guide.md` Simulation section](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#4-simulation)
+See the [`pypeline_guide.md` Simulation section](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#simulation)
 for the full menu of flags, and the port's own
 [`3.build/pypeline_build/README.md`](https://github.com/chili-chips-ba/wireguard-fpga/blob/main/3.build/pypeline_build/README.md) for the complete command reference and
 source layout.
@@ -187,7 +187,7 @@ design's automatically pipelined functions actually elaborated to after synthesi
 That latency information only existed after a real VHDL build invisible to any C-level user code being written.
 
 Pypeline improves on that in two ways:
-First,  [`AUTOPIPELINE(...)`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#15-tool-chosen-implementation-autopipeline-and-autofsm) lets
+First,  [`AUTOPIPELINE(...)`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm) lets
 design code (and testbenches) read back the real, synthesis-discovered
 pipeline depth of an autopipelined function — see
 ["`.latency`: reading back the discovered pipeline depth"](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#latency-reading-back-the-discovered-pipeline-depth).
@@ -207,7 +207,7 @@ but it's still an emulation of timing, not a real per-stage register model
 in `pypeline_sim_DESIGN.md` for the mechanics.
 
 If a mismatch between native Python based simulation and generated VHDL is suspected
-then [`pypeline_sim_debug.py`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#pypeline_sim_debugpy--native-vs-vhdl-cycle-diff-tool) can be used. It compares `sim_print(..., debug=True)`-tagged output between the native simulator and real cocotb+GHDL. This confirms that not only have no `sim_assert`s failed but also that both simulations produce identical *cycle-accurate* behavior.
+then [`pypeline_sim_debug.py`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/README.md#pypeline_sim_debugpy--native-vs-vhdl-cycle-diff-tool) can be used. It compares `sim_print(..., debug=True)`-tagged output between the native simulator and real cocotb+GHDL. This confirms that not only have no `sim_assert`s failed but also that both simulations produce identical *cycle-accurate* behavior.
 
 ## Next Steps
 

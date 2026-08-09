@@ -99,11 +99,90 @@ end top;
   and then covers every language feature in its own section.
 * [Set up your tools](https://github.com/JulianKemmerer/PipelineC/wiki/Running-the-Tool)
   for simulation, synthesis, and bitstream generation. (Native Python simulation needs
-  no toolchain at all — see the guide's [Simulation](pypeline_guide.md#4-simulation)
+  no toolchain at all — see the guide's [Simulation](pypeline_guide.md#simulation)
   section.)
 * See the [examples/pypeline](../examples/pypeline) directory for more code, and
   [include/pypeline](../include/pypeline) for the reusable library (VGA, DSP/FIR,
-  AXI-Stream, fixed/floating point, board support, etc).
+  AXI-Stream, fixed/floating point, board support, etc). The DSP/FIR filter library has
+  its own guide: [`include/pypeline/dsp/pypeline_dsp_guide.md`](../include/pypeline/dsp/pypeline_dsp_guide.md).
+* Coming from the C front end? See
+  [`docs/pipelinec_to_pypeline.md`](pipelinec_to_pypeline.md) for a pattern-by-pattern
+  translation reference.
+* Compiler-internals / design documents (not needed to just use Pypeline, but useful if
+  you're extending it or tracking down a subtle bug):
+  [`docs/pypeline_DESIGN.md`](pypeline_DESIGN.md) (shared `pypeline.py` type system/foundations),
+  [`docs/PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md) (the Python→hardware elaborator),
+  [`docs/pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md) (native simulation),
+  [`docs/SYN_DESIGN.md`](SYN_DESIGN.md) (autopipelining / the throughput sweep),
+  [`docs/AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md) (resource-shared FSM synthesis), and
+  [`docs/pypeline_TESTS.md`](pypeline_TESTS.md) (the test suite's structure and conventions).
+
+## Tools & CLI
+
+### VHDL (cocotb+GHDL) simulation: `--cocotb --ghdl`
+
+Passing `--cocotb --ghdl` on the `pypelinec` command line elaborates the design to VHDL
+and simulates it with a real GHDL simulator via cocotb, instead of using the native
+Python simulator. Use this when you need cycle-accurate confirmation against the actual
+generated VHDL (e.g. verifying a `vhdl()` passthrough or a hand-written `@sim_model`
+really matches its hardware), or when a design uses a feature the native simulator
+doesn't model yet.
+
+### `--out_dir`
+
+`--out_dir <path>` sets the build/simulation output directory explicitly (VHDL, logs,
+timing-params caches, etc.), instead of a freshly generated default directory. Pointing
+two separate invocations at the same `--out_dir` lets a later run reuse an earlier run's
+warm sweep/build results instead of paying for them again — this is how
+`pypeline_sim_debug.py` (below) gets both its native and VHDL runs to agree on the same
+discovered pipeline latencies.
+
+### `--autofsm_ctl`
+
+`--autofsm_ctl` selects AUTOFSM's constant-LUT control path for the generated FSM
+control logic. See [`docs/AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md) for the tradeoffs this
+implies (a win for timing, not area).
+
+### `pypeline_sim_debug.py` — native-vs-VHDL cycle diff tool
+
+`src/pypeline_sim_debug.py` runs a testbench both ways — native sim, and `--cocotb
+--ghdl` VHDL sim — and diffs their `sim_print(..., debug=True)` output cycle by cycle.
+It exists to localize *cycle-timing* mismatches (data correct, but arriving on the
+wrong clock cycle) that ordinary `sim_assert`s don't catch. Invoke it exactly like
+`pypelinec ... --sim ...`; it adds `--cocotb --ghdl` itself for the VHDL run:
+
+```
+pypeline_sim_debug.py ./src/my_design_tb.py --sim --comb --run all   # comb compare
+pypeline_sim_debug.py ./src/my_design_tb.py --sim --run all          # PIPELINED compare
+```
+
+`--comb` runs compare zero-latency native sim against comb VHDL, concurrently. Without
+`--comb`, the tool first does a single build-only pass into a shared `out_dir`, then
+points both the native and VHDL `--sim` invocations at that same warm `out_dir` so both
+converge on the same discovered pipeline latencies — see
+[`docs/pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)'s "Pipelined native sim" section
+for the warm-`out_dir` build orchestration and convergence guarantees.
+
+There are three constraints on a pipelined (non-`--comb`) compare:
+- **Valid-gate every probe.** VHDL pipeline registers read `'U'` during warm-up; native
+  delay lines start at typed zeros — an un-gated data print can never match there. Gate
+  on a valid bit carried through the same pipeline.
+- **Probe from stateful code, not inside the pipelined comb.** A print inside a
+  pipelined region fires at stage-0 timing natively but at its retimed stage in VHDL.
+- **Bundle co-timed outputs of a pipelined pure MAIN into one struct wire.** Native
+  delays every wire a pipelined MAIN writes by that MAIN's total latency, but VHDL
+  emerges each *separate* wire at its own cone depth — so a shallow side wire alongside
+  a deep one diverges. Fields of one struct wire emerge together in both and match.
+
+The tool reports the first cycle where the two runs' debug-tagged lines differ, plus
+the total mismatch count, and exits non-zero on any mismatch. Full raw stdout from both
+runs is always saved to `<out_dir>/native.log` and `<out_dir>/vhdl.log` (`--out_dir`
+defaults to a fresh `./pypeline_sim_debug_out_<design>_<pid>` directory if not given).
+On mismatch, the tool also prints a side-by-side dump of both runs' debug-tagged lines
+for `--context` cycles before and after the first divergence (default 10; pass
+`--context 0` to suppress it). See the guide's
+[`sim_print(..., debug=True)`](pypeline_guide.md#sim_print-debugtrue--tagged-prints-for-pypeline_sim_debugpy)
+section for how to tag prints for this tool.
 
 ## Pure functions can be pipelined!
 **Quickly render basic un-pipelined combinatorial logic VHDL:**
@@ -114,7 +193,7 @@ pypelinec ./examples/pypeline/pipeline.py --comb
 
 * First [have tools installed](https://github.com/JulianKemmerer/PipelineC/wiki/Running-the-Tool). (or install free [PyRTL](https://ucsbarchlab.github.io/PyRTL/) Python package for experimental ASIC timing models and provide no `PART()`.)
 * And then [open and edit](../examples/pypeline/pipeline.py) `pipeline.py` to specify the target frequency and FPGA part:
-  * Ex. `@MAIN(F)` says the `my_pipeline` function is a single top level `@MAIN` function intended to run at `F`MHz — see [Top-Level Entry Points](pypeline_guide.md#5-top-level-entry-points).
+  * Ex. `@MAIN(F)` says the `my_pipeline` function is a single top level `@MAIN` function intended to run at `F`MHz — see [Top-Level Entry Points](pypeline_guide.md#top-level-entry-points).
   * Ex. `PART("LFE5UM5G-85F-8BG756C")` for `ghdl+yosys+nextpnr` `ECP5U` flow.
 
 * Since `my_pipeline` is a pure function the Pypeline tool will autopipeline the function to meet the target operating frequency.
@@ -224,10 +303,10 @@ that turns a function into a stateful process like the VHDL/Verilog above.
 
 Functions = combinatorial logic to be pipelined (a single Python function describes an
 N>=0 clock pipeline). Pure functions can be pipelined to 'arbitrary' N>0 clock cycle
-pipelines. If a function is marked with [`@MAIN`](pypeline_guide.md#5-top-level-entry-points)
+pipelines. If a function is marked with [`@MAIN`](pypeline_guide.md#top-level-entry-points)
 then its inputs and return value are used for top level input and output ports.
 
-[`Reg[T]`](pypeline_guide.md#8-registers-regt) local variables = registers. Use a
+[`Reg[T]`](pypeline_guide.md#registers-regt) local variables = registers. Use a
 register and N=0. The function now describes a "stateful function" of combinatorial
 logic and registers, think processes in HDL. Generally speaking, isolate and minimize
 your use of registers for higher operating frequencies.
@@ -235,7 +314,7 @@ your use of registers for higher operating frequencies.
 'Invocation is instantiation' is the default behavior of function calls. Each function
 call location is a new instance of the function's module.
 
-[Global signals](pypeline_guide.md#14-global-signals) (`Wire[T]`/`Input[T]`/`Output[T]`)
+[Global signals](pypeline_guide.md#global-signals) (`Wire[T]`/`Input[T]`/`Output[T]`)
 work similar to registers but also can be used as a mechanism for moving data between
 functions. Multiple locations can read a global wire but there can only be one instance
 of a function that writes to it.
@@ -245,11 +324,11 @@ clock cycle, using `Reg[T]` the same way you would in a traditional HDL process.
 
 Python isn't a great hardware description language in itself. Some functionality is
 provided to bridge the gap between Python and traditional HDLs (see
-[Bit Manipulation](pypeline_guide.md#10-bit-manipulation) and
-[Types](pypeline_guide.md#11-types)).
+[Bit Manipulation](pypeline_guide.md#bit-manipulation) and
+[Types](pypeline_guide.md#basic-types)).
 
 Pypeline can replace VHDL/Verilog almost entirely. However, if the need arises there
-are [hooks for writing arbitrary VHDL](pypeline_guide.md#17-raw-vhdl-passthrough-vhdl)
+are [hooks for writing arbitrary VHDL](pypeline_guide.md#raw-vhdl-passthrough-vhdl)
 instead of Pypeline code.
 
 The Pypeline tool is pure Python other than calls to the synthesis+simulation tools.
@@ -259,7 +338,7 @@ Pypeline is synthesized into hardware so we can't avoid talking hardware for lon
 
 Hardware modules have input ports. Input ports are function arguments (type-annotated).
 Function return statements are the single output port. Do multiple outputs as a
-[struct](pypeline_guide.md#11-types).
+[struct](pypeline_guide.md#basic-types).
 
 Each function describes comb. logic (possibly to be auto-pipelined) that exists in a
 single clock domain. Functions marked `@MAIN` are single instance top level design
@@ -288,5 +367,5 @@ increasing the depth/latency of the pipeline. All functions (ex. including float
 point operations) are broken down into subpipelines thus allowing for fine grained
 control of synthesis results.
 
-See the guide's [Limitations / Not Yet Supported](pypeline_guide.md#28-limitations--not-yet-supported)
+See the guide's [Limitations / Not Yet Supported](pypeline_guide.md#limitations--not-yet-supported)
 section for the current list of known gaps.

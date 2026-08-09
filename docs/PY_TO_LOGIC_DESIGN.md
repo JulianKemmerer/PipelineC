@@ -1,7 +1,7 @@
 # PY_TO_LOGIC — Design Document
 
 This document covers `PY_TO_LOGIC.py` — the hardware elaborator that translates pypeline
-Python design files into PipelineC's internal `Logic()` graph representation. For the shared
+Python design files into PypelineC's internal `Logic()` graph representation. For the shared
 `pypeline.py` foundations (type system, `SimVal`, operator registry), see
 [`pypeline_DESIGN.md`](pypeline_DESIGN.md). For simulation, see
 [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md).
@@ -77,7 +77,7 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
 **Syntax Extensions**
 - [Compound Initializer Syntax](#compound-initializer-syntax)
 - [Ternary (IfExp) Assignment](#ternary-ifexp-assignment)
-- [Augmented Assignment (`+=`, `-=`, etc.)](#augmented-assignment-----etc)
+- [Augmented Assignment (`+=`, `-=`, etc.)](#augmented-assignment----etc)
 - [Boolean Operators (`and` / `or`)](#boolean-operators-and--or)
 - [Bit Manipulation Syntax](#bit-manipulation-syntax)
 - [Built-in Bit Manipulation Functions](#built-in-bit-manipulation-functions)
@@ -98,8 +98,8 @@ Python design files into PipelineC's internal `Logic()` graph representation. Fo
 
 ## Overview
 
-`PY_TO_LOGIC.py` is the Python frontend for the PipelineC hardware compiler. It translates
-Python design files into PipelineC's internal `Logic()` graph representation, which the
+`PY_TO_LOGIC.py` is the Python frontend for the PypelineC hardware compiler. It translates
+Python design files into PypelineC's internal `Logic()` graph representation, which the
 backend then lowers to VHDL.
 
 The central idea is to **use Python itself as the elaboration language**. A design file is
@@ -1662,7 +1662,7 @@ call site — not a downstream `KeyError`.
   body. Only a callee's feedforward parameters (`fwd_params`) are caller-suppliable; the reverse
   halves of its output ports (`fb_params`) are synthesized by the pass, so naming one by keyword
   is rejected. This is a source-parsing change only — the *generated* call
-  ([interface_func.py:~750](include/pypeline/interface/interface_func.py)) is still emitted
+  ([interface_func.py:~750](../include/pypeline/interface/interface_func.py)) is still emitted
   positionally in callee-declaration order regardless of how the caller wrote it, so native sim
   and VHDL elaboration consume an unchanged artifact either way.
 - In `PY_TO_LOGIC.py`'s generic submodule-call elaborator (`_elab_call`, around line 4171), the

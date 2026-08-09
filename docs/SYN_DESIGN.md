@@ -1,6 +1,6 @@
 # Autopipelining and the Throughput Sweep
 
-How PipelineC turns combinational logic into pipelines to meet an fmax goal,
+How PypelineC turns combinational logic into pipelines to meet an fmax goal,
 and how the *planned throughput sweep* replaced the old "middle out" sweep.
 
 ## 0. Who does what

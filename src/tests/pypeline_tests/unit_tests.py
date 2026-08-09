@@ -59,6 +59,15 @@ def get_tests() -> list:
             cmd=[INST_DIR / "registration_audit_test.py"],
         )
     )
+    # Meta-test: every markdown link/anchor in the repo resolves (in-page and
+    # cross-file) -- catches stale doc links after a heading rename/move.
+    tests.append(
+        Test(
+            name="doc_links_test",
+            category="unit",
+            cmd=[INST_DIR / "doc_links_test.py"],
+        )
+    )
     return tests
 
 
