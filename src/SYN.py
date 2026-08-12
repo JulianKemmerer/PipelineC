@@ -33,6 +33,11 @@ OUTPUT_DIR_NAME = "pipelinec_output"
 SYN_OUTPUT_DIRECTORY = None  # Auto created with pid and filename or from user
 TOP_LEVEL_MODULE = None  # Holds the name of the top level module
 SYN_TOOL = None  # Attempts to figure out from part number
+# Tri-state override for the mux path-delay cache key (see
+# GET_CACHED_LOGIC_FILE_KEY): None = automatic per SYN_TOOL, True/False force
+# width-keyed or collapsed for every tool. Set by --mux_delay_by_width /
+# --no_mux_delay_by_width.
+MUX_DELAY_KEY_BY_WIDTH = None
 CONVERT_FINAL_TOP_VERILOG = False  # Flag for final top level converison to verilog
 WRITE_AXIS_XO_FILE = False
 PIN_CONSTRAINTS_FILE = None  # Pin constraints file to use
@@ -151,6 +156,18 @@ def PART_SET_TOOL(part_str, allow_fail=False):
                 else:
                     if not allow_fail:
                         raise Exception("CologneChip toolchain install not found!")
+            elif part_str.lower().startswith("sky130"):
+                SYN_TOOL = DEVICE_MODELS
+                if DEVICE_MODELS.IS_INSTALLED():
+                    print("DEVICE_MODELS (sky130 liberty STA):", DEVICE_MODELS.SELECTED_LIBRARY, flush=True)
+                else:
+                    if not allow_fail:
+                        raise Exception(
+                            "sky130 liberty STA not available -- need yosys+ghdl "
+                            "(OPEN_TOOLS) and a volare sky130 PDK install "
+                            "(see DEVICE_MODELS.LIBERTY_RAW_LIB_PATH / "
+                            "PIPELINEC_SKY130_LIB_PATH)!"
+                        )
             else:
                 if not allow_fail:
                     print(
@@ -177,7 +194,7 @@ def TOOL_DOES_PNR():
     ):
         return True
     # Uses synthesis estimates
-    elif (SYN_TOOL is DIAMOND) or (SYN_TOOL is PYRTL):
+    elif (SYN_TOOL is DIAMOND) or (SYN_TOOL is PYRTL) or (SYN_TOOL is DEVICE_MODELS):
         return False
     else:
         raise Exception("Need to know if tool flow does PnR!")
@@ -202,6 +219,8 @@ def GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
     elif SYN_TOOL is GOWIN:
         ext = ".sdc"
     elif SYN_TOOL is PYRTL:
+        ext = ".sdc"
+    elif SYN_TOOL is DEVICE_MODELS:
         ext = ".sdc"
     elif SYN_TOOL is CC_TOOLS:
         ext = ".ccf"  # Only for temp clock pins, no timing contraints?
@@ -4155,6 +4174,12 @@ def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
         PATH_DELAY_CACHE_DIR += (
             "_" + str(PYRTL.TECH_IN_NM) + "nm" + "_" + str(PYRTL.FF_OVERHEAD) + "ff"
         )
+    if SYN_TOOL is DEVICE_MODELS:
+        PATH_DELAY_CACHE_DIR += (
+            "_" + DEVICE_MODELS.SELECTED_LIBRARY
+            + "_" + DEVICE_MODELS.SELECTED_CORNER
+            + "_v" + str(DEVICE_MODELS.MODEL_VERSION)
+        )
     if parser_state.part is not None:
         PATH_DELAY_CACHE_DIR += "/" + parser_state.part
     if TOOL_DOES_PNR():
@@ -4168,8 +4193,23 @@ def GET_CACHED_LOGIC_FILE_KEY(logic, parser_state):
     # Default sanity
     key = logic.func_name
 
-    # Mux is same delay no matter type
-    if logic.is_c_built_in and logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME):
+    # Mux is same delay no matter type -- true for PYRTL (measured: 1.640ns
+    # at every width 1..64, with the cache deleted -- not a caching
+    # artifact), but not necessarily for a real per-cell model where a wider
+    # mux's select really does drive more sinks inside its own entity. See
+    # MUX_DELAY_KEY_BY_WIDTH: defaults to collapsed (this original behavior,
+    # unchanged) for every tool that predates it, width-keyed only for
+    # DEVICE_MODELS; --mux_delay_by_width/--no_mux_delay_by_width force
+    # either, for any tool, for A/B measurement.
+    is_mux = logic.is_c_built_in and logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME)
+    mux_collapsed = False
+    if is_mux:
+        by_width = MUX_DELAY_KEY_BY_WIDTH
+        if by_width is None:
+            by_width = SYN_TOOL is DEVICE_MODELS
+        mux_collapsed = not by_width
+
+    if mux_collapsed:
         key = "mux"
     else:
         # MEM has var name - weird yo

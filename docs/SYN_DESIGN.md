@@ -9,6 +9,7 @@ and how the *planned throughput sweep* replaced the old "middle out" sweep.
 |---|---|
 | `src/SYN.py` | The infrastructure that already existed and remains: timing params (`TimingParams`, slices, IO regs), the pipeline map (`GET_PIPELINE_MAP`), recursive slicing (`SLICE_DOWN_HIERARCHY_...`), per-function path delay collection (`ADD_PATH_DELAY_TO_LOOKUP`), the coarse sweep engine (`DO_COARSE_THROUGHPUT_SWEEP`, kept for `--coarse` and mini-sweeps), entity writing, and the `DO_THROUGHPUT_SWEEP` entry point. |
 | `src/SWEEP.py` | New. The *brains* of autopipelining: cut domains, slice landscapes, floor prediction, cut planning, and the synthesis-feedback refinement loop (`DO_PLANNED_THROUGHPUT_SWEEP`). Replaces the old middle-out sweep that lived in SYN.py. |
+| `src/PYRTL.py`, `src/DEVICE_MODELS.py` | The `SYN_TOOL` backends this document's delay model and sweep are built on top of — see [`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md) for the real sky130 liberty STA backend (`PART("sky130...")` / `--syn_tool sky130`) and why it exists (PyRTL's own cost model has no fanout/load term at all). |
 
 Vocabulary used throughout (each defined in detail later):
 
