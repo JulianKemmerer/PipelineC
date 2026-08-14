@@ -1,0 +1,37 @@
+sky130_fd_sc_hvl__tt_025C_3v30.lib
+==================================
+Real SkyWater sky130 PDK liberty timing file, `sky130_fd_sc_hvl` library,
+`tt_025C_3v30` corner -- the only library/corner this repo's sky130 tooling
+(src/DEVICE_MODELS.py) currently supports or has any ground truth to
+validate against (see docs/DEVICE_MODELS_DESIGN.md).
+
+Vendored directly into the repo so `--syn_tool sky130` works out of the box
+with no PDK manager (volare or otherwise) required. Used only by the
+external yosys/GHDL/abc synthesis step (dfflibmap/abc -liberty, mapping the
+design to real standard cells) -- DEVICE_MODELS.py's own Python STA engine
+never parses this file directly; it reads the much smaller extracted table
+below instead. See DEVICE_MODELS.LIBERTY_RAW_LIB_PATH /
+PIPELINEC_SKY130_LIB_PATH to override with a different file (e.g. a
+different corner) without touching this one.
+
+Source: SkyWater Open Source PDK (github.com/google/skywater-pdk),
+Apache License 2.0. Copied unmodified from a volare-managed install,
+PDK version/commit c6d73a35f524070e85faff4a6a9eef49553ebc2b, path
+`sky130A/libs.ref/sky130_fd_sc_hvl/lib/sky130_fd_sc_hvl__tt_025C_3v30.lib`,
+2026-08-14. md5: 9dc103b51223b61e2523cd59247223b5.
+
+sky130_fd_sc_hvl__tt_025C_3v30.json
+====================================
+Condensed NLDM-style per-cell delay/setup/hold lookup table extracted
+offline from the same .lib above (generator script lives in scratchpad, not
+shipped -- this repo only ships the one already-generated pack). This is
+what DEVICE_MODELS.py's own Python STA engine (`run_sta`, section (a)/(b) of
+DEVICE_MODELS.py) actually reads to compute per-arc delays over a
+liberty-mapped netlist -- deliberately kept import-independent from the rest
+of the compiler so it (and the .lib above) can be driven completely
+standalone for calibration/validation, with zero PipelineC integration.
+
+Both files are needed for a real `--syn_tool sky130` build: the .lib by the
+external EDA tools (yosys/GHDL/abc) that map and report which real cells got
+used, the .json by PipelineC's own STA to turn that mapping into an actual
+timing number.

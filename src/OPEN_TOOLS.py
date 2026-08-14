@@ -1,4 +1,5 @@
 import os
+import subprocess
 import sys
 
 import C_TO_LOGIC
@@ -28,7 +29,6 @@ if os.path.exists(OSS_CAD_SUITE_PATH):
     YOSYS_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
     GHDL_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
     GHDL_PREFIX = OSS_CAD_SUITE_PATH + "/lib/ghdl"
-    GHDL_PLUGIN_BUILT_IN = False
     NEXTPNR_BIN_PATH = OSS_CAD_SUITE_PATH + "/bin"
 
 if YOSYS_BIN_PATH is None or not os.path.exists(YOSYS_BIN_PATH + "/" + YOSYS_EXE):
@@ -41,7 +41,6 @@ if GHDL_BIN_PATH is None or not os.path.exists(GHDL_BIN_PATH + "/" + GHDL_EXE):
     if GHDL_EXE_PATH is not None:
         GHDL_BIN_PATH = os.path.abspath(os.path.dirname(GHDL_EXE_PATH))
         GHDL_PREFIX = os.path.abspath(os.path.dirname(GHDL_EXE_PATH) + "/../lib/ghdl")
-    GHDL_PLUGIN_BUILT_IN = False
 
 if NEXTPNR_BIN_PATH is None or not os.path.exists(
     NEXTPNR_BIN_PATH + "/" + NEXT_PNR_EXE
@@ -49,6 +48,44 @@ if NEXTPNR_BIN_PATH is None or not os.path.exists(
     NEXTPNR_EXE_PATH = GET_TOOL_PATH(NEXT_PNR_EXE)
     if NEXTPNR_EXE_PATH is not None:
         NEXTPNR_BIN_PATH = os.path.abspath(os.path.dirname(NEXTPNR_EXE_PATH))
+
+
+def _GHDL_PLUGIN_IS_BUILT_IN(yosys_bin_path):
+    """Real probe (not a hardcoded guess) for whether this yosys build
+    recognizes the `ghdl` command on its own, without the separate `-m ghdl`
+    plugin flag some builds need to load it (e.g. oss-cad-suite's, which
+    ships yosys and the ghdl plugin as separate pieces joined at runtime).
+
+    Every yosys this codebase has been run against so far has needed
+    `-m ghdl` -- that was previously just hardcoded, never actually checked.
+    Tries `ghdl --help` with no `-m` flag and looks for yosys's specific
+    "command not found" error, the one unambiguous signal that the plugin
+    isn't loaded: any other ghdl-side error (e.g. an unrecognized ghdl flag)
+    still proves the `ghdl` command itself is registered and just objected
+    to `--help` -- that counts as built in. Fails safe to False (fall back
+    to `-m ghdl`, today's universal case) on any doubt: stdin closed and a
+    bounded timeout, same pattern as every other yosys invocation in this
+    codebase, so a hung/misbehaving yosys can't stall startup.
+    """
+    if yosys_bin_path is None:
+        return False
+    yosys_exe = os.path.join(yosys_bin_path, YOSYS_EXE)
+    if not os.path.exists(yosys_exe):
+        return False
+    try:
+        result = subprocess.run(
+            [yosys_exe, "-p", "ghdl --help"],
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=15,
+        )
+        return b"No such command: ghdl" not in result.stdout
+    except Exception:
+        return False
+
+
+GHDL_PLUGIN_BUILT_IN = _GHDL_PLUGIN_IS_BUILT_IN(YOSYS_BIN_PATH)
 
 # Flag to skip pnr
 YOSYS_JSON_ONLY = False

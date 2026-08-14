@@ -631,12 +631,14 @@ ABC_EXTRA_ARGS = "-fast"
 
 # Real per-cell synthesis (dfflibmap/abc costing) needs the actual, full
 # liberty file -- unlike sections (a)/(b), which only ever read the small
-# committed JSON pack. This is a genuine external dependency, the same way
-# VIVADO.py/QUARTUS.py depend on a real tool install; IS_INSTALLED() reports
-# it missing rather than raising, same pattern as every other SYN_TOOL here.
-# Override by setting this directly before synthesis, or via the
-# PIPELINEC_SKY130_LIB_PATH environment variable, if it isn't found in a
-# standard volare install location.
+# committed JSON pack. Unlike a real tool install (VIVADO.py/QUARTUS.py),
+# the one library/corner this repo currently supports (see LOAD_LIBERTY's
+# DEFAULT_LIBRARY/DEFAULT_CORNER) is vendored directly in src/liberty_data/
+# (see src/liberty_data/README for provenance/license) -- no PDK manager
+# required out of the box. Override by setting LIBERTY_RAW_LIB_PATH
+# directly, or via the PIPELINEC_SKY130_LIB_PATH environment variable, for a
+# different corner/library; a volare install is still detected as a final
+# fallback if present, for exactly that case.
 LIBERTY_RAW_LIB_PATH = None
 _VOLARE_GLOB = os.path.expanduser(
     "~/.volare/volare/{library_family}/versions/*/{library_family}A/libs.ref/{library}/lib/{library}__{corner}.lib"
@@ -659,6 +661,9 @@ def _find_raw_liberty_lib(library=None, corner=None):
     env_path = os.environ.get("PIPELINEC_SKY130_LIB_PATH")
     if env_path and os.path.exists(env_path):
         return env_path
+    vendored_path = os.path.join(_LIBERTY_DATA_DIR, f"{library}__{corner}.lib")
+    if os.path.exists(vendored_path):
+        return vendored_path
     pattern = _VOLARE_GLOB.format(library_family=_library_family(library), library=library, corner=corner)
     matches = sorted(glob.glob(pattern))
     return matches[-1] if matches else None
@@ -758,8 +763,10 @@ def _run_synth_and_sta(vhdl_files_texts, top_entity_name, work_dir, log_path):
     if lib_path is None:
         raise Exception(
             f"No sky130 liberty file found for library={SELECTED_LIBRARY} corner={SELECTED_CORNER}. "
-            f"Install via volare, or set DEVICE_MODELS.LIBERTY_RAW_LIB_PATH / "
-            f"the PIPELINEC_SKY130_LIB_PATH env var."
+            f"The default library/corner ({DEFAULT_LIBRARY}/{DEFAULT_CORNER}) ships in "
+            f"src/liberty_data/ and needs no install -- for a different one, install via "
+            f"volare or set DEVICE_MODELS.LIBERTY_RAW_LIB_PATH / the PIPELINEC_SKY130_LIB_PATH "
+            f"env var."
         )
 
     # Absolute so write_json's target and the bash script's `cwd=` agree
