@@ -1,6 +1,6 @@
 # pyright: reportInvalidTypeForm=none
 # Planned throughput sweep test (a): pure comb MAIN needing pipelining.
-# The whole main is one cut domain; the planner must place cuts and meet
+# The whole main is one cut subtree; the planner must place cuts and meet
 # timing (PYRTL software timing model, no PART()).
 import sys, os
 

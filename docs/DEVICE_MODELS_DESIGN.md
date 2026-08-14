@@ -215,6 +215,35 @@ build), before the `-fast` fix was even found.
 
 ## 5. Limitations and future work
 
+- **Register overhead (clk->Q + setup) is not modeled** — the planner
+  budgets logic delay only, i.e. it assumes a real clock period has zero
+  margin left for the register itself. A `GET_REGISTER_OVERHEAD_NS()` hook
+  (subtracting `dfxtp_1`'s own clk->Q + `setup_rising` from the per-stage
+  budget) was built and tried, but reverted: on the divider design it
+  produced a sweep that no longer converged (a real planned-sweep run
+  spiraled past 270+ slices without settling, where the unmodified
+  planner reaches its answer in 4-6 iterations) — the tighter budget it
+  imposes appears to interact badly with the sweep's own densify/trim
+  heuristics rather than being a pure, harmless correction. Worth
+  retrying if the interaction is ever root-caused, but not as a silent
+  default.
+- **A "bits"-kind raw HDL leaf's own delay is real and concave in width**
+  (measured here: `D(10)=2.607ns`, `D(34)=3.851ns` for `BIN_OP_MINUS`, far
+  from linear) but `RAW_VHDL.GET_BITS_PER_STAGE_DICT` does not try to fit or
+  invert that curve to place *uneven* bit boundaries — an implementation
+  that did was tried and found, by testing against real synthesis here, to
+  measurably miss timing goals a plain **equal-width** split met (once a
+  stage boundary is registered, that stage's own delay depends on its own
+  chunk width, not on cumulative position along the leaf's *unregistered*
+  delay axis — a cumulative-curve inversion models the wrong quantity). The
+  concave shape above is still worth knowing as context for why splitting
+  helps at all and why gains taper off with more stages; it just isn't
+  something the bit-allocation decision needs to fit a curve to.
+- **`MUX_uintN` genuine bit-chunking remains deferred** (a 1-bit MUX select
+  vs. a 32-bit one really do carry different real delay here — `MUX_uint1_t
+  0.983ns` vs `MUX_uint32_t 3.268ns` — but `SPLIT_KIND_1LL` leaves are
+  capped at latency 2 regardless of width, trading that potential fmax
+  headroom for simplicity and for not needing per-bit MUX generator changes).
 - **No net/interconnect delay.** Matches the sky130 flows measured against
   (all report zero net delay), but is therefore a pre-PnR estimate, not a
   post-route number — say so plainly wherever this tool's output is surfaced.

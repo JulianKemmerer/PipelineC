@@ -1,11 +1,142 @@
 #!/usr/bin/env python
 import copy
+import math
 import sys
 
 import C_TO_LOGIC
 import SW_LIB
 import VHDL
 from pycparser import c_ast, c_parser  # bleh for now
+
+
+# ═══════════════════════════════════════════════════════════════════════════
+# Leaf split-kind classification: how a raw HDL leaf's own combinational
+# delay may legally be divided by added pipeline register slices.
+#
+#  - SPLIT_KIND_BITS: the operator's own bit width can be partitioned across
+#    stages (PLUS/MINUS/EQ/NEQ/GT/GTE/LT/LTE/accum) - see
+#    GET_BITS_PER_STAGE_DICT, which does the actual split.
+#  - SPLIT_KIND_1LL ("one logic level"): MUX/AND/OR/XOR/NOT/NEGATE/MULT.
+#    Their generators (the repeated `stage_for_1ll`/`stage_for_op` pattern,
+#    e.g. GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT)
+#    always places the WHOLE operation in exactly one stage no matter the
+#    latency - only the register BOUNDARY moves (latency 1: the op sits in
+#    stage 0 xor stage 1 depending on which side of 0.5 the slice fraction
+#    falls on - i.e. one boundary register; latency 2: registers on both
+#    sides, logic in the untouched middle stage). A 3rd slice is provably
+#    wasted - the remaining stage is a bare register around logic that never
+#    shrinks - see LEAF_MAX_SPLIT_SLICES.
+#  - SPLIT_KIND_NONE: leaves with no stage-dependent behavior at all
+#    (bit-manip/cast/const-shift/const-ref raw HDL - anything not matched
+#    below). A slice here would be a bug; in practice unreachable since
+#    LOGIC_IS_ZERO_DELAY already excludes these from ever getting cuts.
+#
+# Single source of truth for both SWEEP.py's landscape/PLAN_CUTS legality
+# and SYN.py's slice-descend guard, so the two can't independently drift on
+# what a leaf may legally accept (they are already documented at their call
+# sites as manually mirrored descend rules).
+SPLIT_KIND_BITS = "bits"
+SPLIT_KIND_1LL = "1ll"
+SPLIT_KIND_NONE = "none"
+
+def GET_LEAF_SPLIT_KIND(logic):
+    """Raw HDL leaf only (len(logic.submodule_instances)==0). Dispatch
+    mirrors GET_RAW_HDL_ENTITY_PROCESS_STAGES_TEXT's func_name prefix
+    matching (below) - kept as simple prefix checks, not a shared helper,
+    since that function's own dispatch is what it must stay in sync with.
+    The op-name tuples are built locally, not at module scope: RAW_VHDL is
+    imported partway through C_TO_LOGIC's own top-level execution (via
+    SW_LIB -> SYN -> CC_TOOLS -> VHDL -> RAW_VHDL), so C_TO_LOGIC.BIN_OP_*_
+    NAME constants don't exist yet at RAW_VHDL's own module-load time -
+    only safe to read once some function here actually runs."""
+    bits_bin_ops = (
+        C_TO_LOGIC.BIN_OP_EQ_NAME,
+        C_TO_LOGIC.BIN_OP_NEQ_NAME,
+        C_TO_LOGIC.BIN_OP_PLUS_NAME,
+        C_TO_LOGIC.BIN_OP_MINUS_NAME,
+        C_TO_LOGIC.BIN_OP_GT_NAME,
+        C_TO_LOGIC.BIN_OP_GTE_NAME,
+        C_TO_LOGIC.BIN_OP_LT_NAME,
+        C_TO_LOGIC.BIN_OP_LTE_NAME,
+    )
+    ll_bin_ops = (
+        C_TO_LOGIC.BIN_OP_AND_NAME,
+        C_TO_LOGIC.BIN_OP_OR_NAME,
+        C_TO_LOGIC.BIN_OP_XOR_NAME,
+        C_TO_LOGIC.BIN_OP_MULT_NAME,
+        C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME,
+    )
+    fn = logic.func_name
+    if fn.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_"):
+        for bits_op in bits_bin_ops:
+            if fn.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + bits_op + "_"):
+                return SPLIT_KIND_BITS
+        for ll_op in ll_bin_ops:
+            if fn.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_" + ll_op + "_"):
+                return SPLIT_KIND_1LL
+        return SPLIT_KIND_NONE  # SL/SR/MOD/DIV/... not raw-HDL split here
+    if fn.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_"):
+        if fn.startswith(
+            C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX
+            + "_"
+            + C_TO_LOGIC.UNARY_OP_NOT_NAME
+            + "_"
+        ) or fn.startswith(
+            C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX
+            + "_"
+            + C_TO_LOGIC.UNARY_OP_NEGATE_NAME
+            + "_"
+        ):
+            return SPLIT_KIND_1LL
+        return SPLIT_KIND_NONE
+    if fn.startswith(C_TO_LOGIC.MUX_LOGIC_NAME):
+        return SPLIT_KIND_1LL
+    if fn.startswith(C_TO_LOGIC.ACCUM_FUNC_NAME + "_"):
+        return SPLIT_KIND_BITS
+    return SPLIT_KIND_NONE
+
+
+def LEAF_MAX_SPLIT_SLICES(logic):
+    """Cap on len(timing_params._slices) for this raw HDL leaf, or None for
+    SPLIT_KIND_BITS (capped instead by width - see GET_BITS_PER_STAGE_DICT's
+    own W+1 ceiling). See SPLIT_KIND_1LL above for why 2 is the real ceiling
+    there: stage_for_1ll's own code already handles 0/1/2 correctly (that IS
+    the boundary-register mechanism, the same "0 bits this stage" concept a
+    SPLIT_KIND_BITS leaf uses at its own boundary), and every latency beyond
+    that is a bare register around logic that never shrinks."""
+    kind = GET_LEAF_SPLIT_KIND(logic)
+    if kind == SPLIT_KIND_NONE:
+        return 0
+    if kind == SPLIT_KIND_1LL:
+        return 2
+    return None
+
+
+def GET_LEAF_BIT_WIDTH(logic, parser_state):
+    """Best-available proxy for a SPLIT_KIND_BITS raw HDL leaf's own
+    carry/comparison width - the same "widest input/output" every such
+    leaf's own codegen (e.g. GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_..., which
+    sets width = max(left_width, right_width)) already uses as the
+    `num_bits` argument to GET_BITS_PER_STAGE_DICT. Returns None if no
+    widths are found (caller must then treat this leaf as uncapped, same as
+    before this existed).
+
+    Used by SWEEP.BUILD_SLICE_LANDSCAPE to cap how many legal cut units a
+    SLICEABLE segment offers: an N-bit leaf can hold at most N-1 interior
+    registers (N stages) - offering more legal positions than that produces
+    interior zero-bit stages once GET_BITS_PER_STAGE_DICT actually
+    allocates bits (a bare register around no logic, the same failure class
+    SPLIT_KIND_1LL's own 2-slice cap above exists to prevent)."""
+    widths = []
+    for wire in list(logic.inputs) + list(logic.outputs):
+        c_type = logic.wire_to_c_type.get(wire)
+        if c_type is None:
+            continue
+        try:
+            widths.append(VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type))
+        except Exception:
+            continue
+    return max(widths) if widths else None
 
 
 # Declare variables used internally to c built in C logic
@@ -1909,60 +2040,59 @@ def SLICES_TO_SIZE_LIST(slices):
     return adj_percents
 
 
+def _EQUAL_WIDTH_BITS_PER_STAGE_DICT(num_bits, num_slices):
+    """D2 fix, corrected: the naive read of timing_params._slices as bit
+    boundaries to hit via a delay-fraction curve inversion (an earlier
+    version of this function) turned out to model the WRONG quantity, found
+    by testing against real sky130 synthesis (see docs/SYN_DESIGN.md) - it
+    made highly-sliced leaves noticeably WORSE than the plain linear split
+    it was replacing, not better.
+
+    Why: once a stage boundary is registered, stage k's own generated VHDL
+    (see e.g. GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_..._TEXT above) computes
+    ONLY that stage's bits_per_stage_dict[k] bits, from a REGISTERED 1-bit
+    carry-in - i.e. a FRESH bits_per_stage_dict[k]-wide computation, timing-
+    wise equivalent to an isolated same-width leaf, not a marginal
+    extension of a longer unregistered chain. So stage k's real delay is
+    ~D(chunk_width_k), not D(cumulative_boundary_k) - D(cumulative_
+    boundary_{k-1}) (what the curve-inversion version computed). Since a
+    real D(w) is monotonic increasing in w, minimizing the WORST stage's
+    delay for a fixed chunk COUNT means making every chunk as close to
+    EQUAL WIDTH as possible - regardless of D's concave shape, and
+    regardless of the specific delay fractions PLAN_CUTS happened to
+    request for this leaf (those fractions reflect this leaf's POSITION in
+    the domain's wider delay-budget walk, not a meaningful signal for how
+    ITS OWN bits should be divided). This also directly eliminates the old
+    linear model's degenerate near-boundary splits (a request near the
+    leaf's own edge used to produce a lopsided {31,3}-bit split of a 34-bit
+    op; a single cut now always produces a balanced {17,17}-style split,
+    regardless of the requested fraction)."""
+    chunks = num_slices + 1
+    bits_per_stage_dict = {}
+    prev_boundary = 0
+    for stage in range(chunks):
+        # Last stage's boundary is forced to num_bits exactly rather than
+        # trusting round(chunks*num_bits/chunks) to land there - guarantees
+        # sum(bits_per_stage_dict) == num_bits with no float-rounding edge
+        # case, no separate excess/deficit fixup pass needed.
+        if stage == chunks - 1:
+            boundary = num_bits
+        else:
+            boundary = int(round((stage + 1) * num_bits / float(chunks)))
+            boundary = max(prev_boundary, min(num_bits, boundary))
+        bits_per_stage_dict[stage] = boundary - prev_boundary
+        prev_boundary = boundary
+    return bits_per_stage_dict
+
+
 # TODO min bits per stage roughly based on smallest add op in one lut/carry?
 def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
-    bits_per_stage_dict = {}
+    bits_per_stage_dict = _EQUAL_WIDTH_BITS_PER_STAGE_DICT(
+        num_bits, len(timing_params._slices)
+    )
 
-    # Default everything in stage 0 if no slices
-    bits_per_stage_dict[0] = num_bits
-
-    # Build a list of absolute percent sizes for each stage
-    # ex. two even slices = [0.333,0.3333,0.333]
-    adj_percents = SLICES_TO_SIZE_LIST(timing_params._slices)
-
-    # Apply slice
-    # (will have zero bits per stage in some places)
-    stage = 0
-    for adj_percent in adj_percents:
-        # Take away N percent
-        int_bits_to_take = int(round(adj_percent * float(num_bits)))
-        bits_per_stage_dict[stage] = int_bits_to_take
-        stage += 1
-
-    # Zero bits per stage is OK anywhere? # Expecting to Fly - Of Montreal
-
-    # Might have used too many or too little bits?
-    excess = sum(bits_per_stage_dict.values()) - num_bits
-
-    # Handle excess
-    while excess != 0:
-        if excess > 0:
-            # Too many bits, need to subtract some
-            # Best thing for timing is to subtract from max bits stage
-            max_bits = 0
-            max_stage = None
-            for stage in bits_per_stage_dict:
-                bits = bits_per_stage_dict[stage]
-                if bits > max_bits:
-                    max_stage = stage
-                    max_bits = bits
-            bits_per_stage_dict[max_stage] -= 1
-        elif excess < 0:
-            # Need more bits
-            # Best thing for timing is to add 1 bit to lowest bit stage
-            min_bits = 9999999
-            min_stage = None
-            for stage in bits_per_stage_dict:
-                bits = bits_per_stage_dict[stage]
-                if bits < min_bits:
-                    min_stage = stage
-                    min_bits = bits
-            # print "bits_per_stage_dict",bits_per_stage_dict
-            bits_per_stage_dict[min_stage] += 1
-
-        excess = sum(bits_per_stage_dict.values()) - num_bits
-
-    # sanity check
+    # sanity check (the boundary construction above guarantees this by
+    # telescoping sum + an exact final boundary, not a fixup loop)
     maybe_num_bits = sum(bits_per_stage_dict.values())
     if maybe_num_bits != num_bits:
         print("maybe_num_bits != num_bits")
@@ -1970,6 +2100,25 @@ def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
         print("num_bits", num_bits)
         print(0 / 0)
         sys.exit(-1)
+
+    # A leading or trailing zero-bit stage is fine (an IO-boundary register
+    # with no logic on the outer side of it). An INTERIOR zero-bit stage is
+    # not: it's a bare register wired straight through, computing no new
+    # bits of the operation at all - only possible once more slices are
+    # requested than this leaf's own width can usefully support (e.g. 14
+    # slices on a 4-bit op: [0,1,0,0,0,1,0,0,0,1,0,0,0,1,0]). The real
+    # prevention is upstream, capping legal cut units by leaf bit width in
+    # SWEEP.BUILD_SLICE_LANDSCAPE (RAW_VHDL.GET_LEAF_BIT_WIDTH) - this is a
+    # backstop so a landscape/planner disagreement fails loud instead of
+    # silently wasting a stage.
+    n_stages = len(bits_per_stage_dict)
+    for stage in range(1, n_stages - 1):
+        if bits_per_stage_dict[stage] == 0:
+            raise Exception(
+                f"GET_BITS_PER_STAGE_DICT: interior zero-bit stage {stage} of "
+                f"{n_stages} for a {num_bits}-bit op ({len(timing_params._slices)} "
+                f"slices requested) - bits_per_stage_dict={bits_per_stage_dict}"
+            )
 
     return bits_per_stage_dict
 

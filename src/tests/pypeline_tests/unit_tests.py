@@ -68,6 +68,45 @@ def get_tests() -> list:
             cmd=[INST_DIR / "doc_links_test.py"],
         )
     )
+    # Raw-HDL leaf split model: SPLIT_KIND classification (RAW_VHDL.
+    # GET_LEAF_SPLIT_KIND/LEAF_MAX_SPLIT_SLICES) and the equal-width bit
+    # allocator (RAW_VHDL._EQUAL_WIDTH_BITS_PER_STAGE_DICT) that replaced an
+    # earlier, real-synthesis-disproven curve-inversion approach -- see the
+    # test file's own docstring for what broke and why.
+    tests.append(
+        Test(
+            name="leaf_split_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "leaf_split_unit_test.py"],
+        )
+    )
+    # SWEEP.PLAN_CUTS boundary-snap: prefer a real segment boundary over a
+    # mid-segment cut within a bounded budget overrun, found necessary by
+    # testing the real divider design against real sky130 synthesis (a low
+    # cut count merged a SLICEABLE_1LL leaf into a neighboring stage instead
+    # of getting its own boundary) -- see the test file's own docstring.
+    tests.append(
+        Test(
+            name="plan_cuts_boundary_snap_test",
+            category="unit",
+            cmd=[INST_DIR / "plan_cuts_boundary_snap_test.py"],
+        )
+    )
+    # Three bugs found during this session's audit, previously undetected:
+    # SWEEP.AT_PREDICTED_FLOOR's missing upper bound (a floor-stop could
+    # fire arbitrarily far above a stale/under-predicted floor),
+    # SWEEP.BEST_SNAPSHOT_MET_ALL_GOALS (restoring the best-seen result
+    # never re-checked whether it actually met its goal before writing it
+    # out), and RAW_VHDL.GET_LEAF_BIT_WIDTH + the SLICEABLE legal-unit cap
+    # (a narrow leaf could accept far more cuts than its own width usefully
+    # supports) -- see the test file's own docstring.
+    tests.append(
+        Test(
+            name="floor_and_bits_cap_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "floor_and_bits_cap_unit_test.py"],
+        )
+    )
     return tests
 
 

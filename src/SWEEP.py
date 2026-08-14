@@ -5,22 +5,22 @@ Planned throughput sweep: autopipelining driven by a static delay model
 multiplier-driven middle-out sweep.
 
 Terminology (see docs/SYN_DESIGN.md):
-  cut       - a planned register position along a module's combinational delay.
-              Cuts become fractional "slices" fed to the existing recursive
-              slicing mechanism in SYN.py. The number of cuts requested and the
-              pipeline latency that results are related but intentionally NOT
-              the same number.
-  cut domain- a maximal subtree of the instance hierarchy that can accept added
-              latency: either a sliceable pure-comb function, or a region
-              reached through AUTOPIPELINE tagged call sites underneath
-              stateful (feedback/state reg) containers.
-  landscape - the flattened delay axis of one cut domain, each delay unit
-              tagged legal (a cut here lands in some sliceable raw HDL leaf)
-              or illegal (only unsliceable/locked logic here), with weights
-              used for stage budgeting and calibration.
-  floor     - the predicted maximum achievable fmax of a domain: set by its
-              longest run of illegal (unsliceable) delay. Reported up front,
-              before any synthesis runs.
+  cut         - a planned register position along a module's combinational
+                delay. Cuts become fractional "slices" fed to the existing
+                recursive slicing mechanism in SYN.py. The number of cuts
+                requested and the pipeline latency that results are related
+                but intentionally NOT the same number.
+  cut subtree - a maximal subtree of the instance hierarchy that can accept
+                added latency: either a sliceable pure-comb function, or a
+                region reached through AUTOPIPELINE tagged call sites
+                underneath stateful (feedback/state reg) containers.
+  landscape   - the flattened delay axis of one cut subtree, each delay unit
+                tagged legal (a cut here lands in some sliceable raw HDL leaf)
+                or illegal (only unsliceable/locked logic here), with weights
+                used for stage budgeting and calibration.
+  floor       - the predicted maximum achievable fmax of a subtree: set by its
+                longest run of illegal (unsliceable) delay. Reported up front,
+                before any synthesis runs.
 
 The refinement loop runs ONE full-design synthesis per iteration and reacts
 using approximate attribution of the critical path (function name fragments in
@@ -40,6 +40,7 @@ from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
 
 import C_TO_LOGIC
+import RAW_VHDL
 import SYN
 
 # Max full-design synthesis runs in the refinement loop
@@ -60,6 +61,38 @@ MINISWEEP_TRIM_PROBES = 3
 # Achieved fmax within this fraction of the predicted floor counts as
 # "at the floor" (can't do better by adding registers)
 FLOOR_TOLERANCE = 0.95
+
+
+def AT_PREDICTED_FLOOR(curr_mhz, floor, target_mhz, tolerance=FLOOR_TOLERANCE):
+    """True if curr_mhz has plateaued NEAR a predicted floor - a symmetric
+    band, not merely "at or above" it. A curr_mhz far ABOVE a stale or
+    under-predicted floor (seen for real: 124.18 MHz measured against a
+    ~71.6 MHz predicted floor, 73% above it) means the prediction was
+    simply wrong, not that a real ceiling was reached; without the upper
+    bound this mislabeled a real, still-improvable result as a floor
+    plateau and stopped the sweep short of goals it was already exceeding
+    toward. `floor` must additionally sit below `target_mhz` (a floor above
+    the goal is not a reason to stop)."""
+    return (
+        floor is not None
+        and floor < target_mhz
+        and curr_mhz >= tolerance * floor
+        and curr_mhz <= floor / tolerance
+    )
+
+
+def BEST_SNAPSHOT_MET_ALL_GOALS(best_score):
+    """True if best_score - the worst-case achieved/target ratio from
+    whichever iteration best_tpl/best_plan_cuts were captured from (both
+    are only ever updated together, at the same point in the sweep loop) -
+    shows every reported clock group in that snapshot actually met its
+    goal. Used when restoring best_tpl as the final result: without this
+    check, a build could restore a snapshot that measured well above its
+    goal (seen for real: 244.72 MHz against a 147.00 MHz target) and still
+    report TIMING NOT MET, because met_timing was last written by a later,
+    worse iteration (e.g. one a floor-stop landed on afterward) and never
+    re-checked against the snapshot actually being written out."""
+    return best_score is not None and best_score >= 1.0
 # NOTE on trimming: reported slack is NOT used to detect over-pipelining -
 # synthesis tools stop optimizing as soon as slack crosses zero, so a met
 # design shows near-zero slack no matter how over-registered it is. Instead
@@ -104,34 +137,49 @@ SOFT_FLOOR_REASONS = ("state_regs", "feedback_vars", "fixed_latency")
 
 
 class Segment:
-    """One leaf-most piece of a cut domain's delay axis."""
+    """One leaf-most piece of a cut subtree's delay axis."""
 
     # kind values
-    SLICEABLE = "sliceable"  # raw HDL leaf that can hold added registers
+    SLICEABLE = "sliceable"  # raw HDL leaf that can hold added registers anywhere
+    # raw HDL leaf whose own generator only ever places its logic in ONE
+    # stage no matter the latency (RAW_VHDL.SPLIT_KIND_1LL: MUX/AND/OR/XOR/
+    # NOT/NEGATE/MULT) - only its own two BOUNDARY units are legal cut
+    # positions (an input-only or output-only register; both together with
+    # a 2nd cut), its interior is atomic like a genuinely unsliceable span.
+    # See SliceLandscape.finalize().
+    SLICEABLE_1LL = "sliceable_1ll"
     ATOMIC = "atomic"  # unsliceable logic, cuts cannot land inside
     LOCKED = "locked"  # params_are_fixed (ex. mini sweep result), no new cuts
 
     def __init__(self, inst_path, func_name, start, end, kind, reason=""):
         self.inst_path = inst_path
         self.func_name = func_name
-        self.start = start  # float, domain root zero clk pipeline map units
+        self.start = start  # float, subtree root zero clk pipeline map units
         self.end = end  # float, exclusive
         self.kind = kind
         self.reason = reason
         self.hard = reason not in SOFT_FLOOR_REASONS
-        # func names of this segment's ancestors within the domain (incl. own)
+        # func names of this segment's ancestors within the subtree (incl. own)
         # used for approximate attribution and calibration
         self.ancestor_funcs = set()
+        # SLICEABLE only: RAW_VHDL.GET_LEAF_BIT_WIDTH(sub_logic, ...), or
+        # None if unavailable (uncapped, matching pre-existing behavior).
+        # An N-bit leaf can hold at most N-1 interior registers (N stages) -
+        # SliceLandscape.finalize() uses this to cap how many of this
+        # segment's units are ever marked legal, so PLAN_CUTS can't request
+        # more cuts than GET_BITS_PER_STAGE_DICT can usefully honor without
+        # producing interior zero-bit (bare register, no logic) stages.
+        self.max_legal_units = None
 
     def __str__(self):
         return f"[{self.start:.1f},{self.end:.1f}) {self.kind} {self.inst_path.split(C_TO_LOGIC.SUBMODULE_MARKER)[-1]}({self.reason})"
 
 
 class SliceLandscape:
-    """Flattened delay axis of one cut domain with per-unit legality/weight."""
+    """Flattened delay axis of one cut subtree with per-unit legality/weight."""
 
-    def __init__(self, domain_root_inst, total_units, units_to_ns):
-        self.domain_root_inst = domain_root_inst
+    def __init__(self, subtree_root_inst, total_units, units_to_ns):
+        self.subtree_root_inst = subtree_root_inst
         self.total_units = total_units  # int number of delay units
         self.units_to_ns = units_to_ns  # ns per (unweighted) delay unit
         self.segments = []
@@ -156,6 +204,24 @@ class SliceLandscape:
         for seg in self.segments:
             lo = max(0, int(math.floor(seg.start)))
             hi = min(n, int(math.ceil(seg.end)))
+            # An N-bit SLICEABLE leaf can hold at most N-1 interior
+            # registers (N stages) - more legal positions than that lets
+            # PLAN_CUTS request cuts GET_BITS_PER_STAGE_DICT can only honor
+            # with interior zero-bit (bare register, no logic) stages.
+            # Evenly spread the allowed cap across the segment's own span
+            # (None = uncapped: width unavailable, or no cap needed).
+            bits_cap_units = None
+            if (
+                seg.kind == Segment.SLICEABLE
+                and seg.max_legal_units is not None
+                and seg.max_legal_units - 1 < hi - lo
+            ):
+                cap = max(0, seg.max_legal_units - 1)
+                span = hi - lo
+                bits_cap_units = set()
+                for k in range(1, cap + 1):
+                    u = lo + int(round(k * span / float(cap + 1))) - 1
+                    bits_cap_units.add(max(lo, min(hi - 1, u)))
             seg_scale = 1.0
             for f in seg.ancestor_funcs:
                 if f in func_delay_scale:
@@ -165,7 +231,19 @@ class SliceLandscape:
                 if seg.kind != Segment.LOCKED:
                     locked_only[u] = False
                 if seg.kind == Segment.SLICEABLE:
-                    self.legal[u] = True
+                    if bits_cap_units is None or u in bits_cap_units:
+                        self.legal[u] = True
+                elif seg.kind == Segment.SLICEABLE_1LL:
+                    # Only the leaf's own two boundary units are real cut
+                    # positions (stage_for_1ll: latency 1 = one boundary
+                    # register, latency 2 = both) - its interior never
+                    # shrinks no matter how many cuts land there, so it
+                    # blames/floors like ATOMIC (a 3rd+ cut is provably a
+                    # bare register around unchanged logic).
+                    if u == lo or u == hi - 1:
+                        self.legal[u] = True
+                    elif self.blame[u] is None:
+                        self.blame[u] = seg
                 elif seg.kind == Segment.ATOMIC and self.blame[u] is None:
                     self.blame[u] = seg
                 scale[u] = max(scale[u], seg_scale)
@@ -224,18 +302,18 @@ class SliceLandscape:
         return 1000.0 / self.hard_floor_ns
 
 
-def COLLECT_CUT_DOMAINS(main_inst, parser_state):
+def COLLECT_CUT_SUBTREES(main_inst, parser_state):
     """Maximal sliceable subtrees reachable from a main func: the main itself
     if pure comb, otherwise regions reached through AUTOPIPELINE tagged call
     sites under stateful containers."""
-    domains = []
+    subtrees = []
 
     def rec(inst, logic):
         if logic.CAN_HAVE_ADDED_LATENCY(parser_state):
             if SYN.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
                 logic.func_name, parser_state
             ):
-                domains.append(inst)
+                subtrees.append(inst)
             return
         # Stateful container: descend only through autopipeline tagged paths
         for sub_inst_local in logic.submodule_instances:
@@ -246,17 +324,17 @@ def COLLECT_CUT_DOMAINS(main_inst, parser_state):
 
     main_logic = parser_state.LogicInstLookupTable[main_inst]
     rec(main_inst, main_logic)
-    return domains
+    return subtrees
 
 
 def BUILD_SLICE_LANDSCAPE(
-    domain_root_inst, parser_state, TimingParamsLookupTable, func_delay_scale
+    subtree_root_inst, parser_state, TimingParamsLookupTable, func_delay_scale
 ):
-    root_logic = parser_state.LogicInstLookupTable[domain_root_inst]
+    root_logic = parser_state.LogicInstLookupTable[subtree_root_inst]
     if root_logic.delay is None or root_logic.delay <= 0:
         return None
     root_map = SYN.GET_ZERO_ADDED_CLKS_PIPELINE_MAP(
-        domain_root_inst, root_logic, parser_state
+        subtree_root_inst, root_logic, parser_state
     )
     total_units_f = float(root_map.zero_clk_max_delay)
     if total_units_f <= 0.0:
@@ -264,7 +342,7 @@ def BUILD_SLICE_LANDSCAPE(
     # SLICE_DOWN maps fraction f to offset floor(f*map_total); real time size of
     # one map unit follows from the root's (possibly measured) delay
     units_to_ns = (root_logic.delay / SYN.DELAY_UNIT_MULT) / total_units_f
-    landscape = SliceLandscape(domain_root_inst, int(round(total_units_f)), units_to_ns)
+    landscape = SliceLandscape(subtree_root_inst, int(round(total_units_f)), units_to_ns)
 
     def rec(inst, logic, abs_start, unit_scale, ancestor_funcs):
         pm = SYN.GET_ZERO_ADDED_CLKS_PIPELINE_MAP(inst, logic, parser_state)
@@ -313,9 +391,17 @@ def BUILD_SLICE_LANDSCAPE(
             elif len(sub_logic.submodule_instances) == 0:
                 # Raw HDL leaf
                 if sub_logic.CAN_HAVE_ADDED_LATENCY(parser_state):
-                    seg = Segment(
-                        child_inst, sub_logic.func_name, s, e, Segment.SLICEABLE
+                    split_kind = RAW_VHDL.GET_LEAF_SPLIT_KIND(sub_logic)
+                    seg_kind = (
+                        Segment.SLICEABLE_1LL
+                        if split_kind == RAW_VHDL.SPLIT_KIND_1LL
+                        else Segment.SLICEABLE
                     )
+                    seg = Segment(child_inst, sub_logic.func_name, s, e, seg_kind)
+                    if seg_kind == Segment.SLICEABLE:
+                        seg.max_legal_units = RAW_VHDL.GET_LEAF_BIT_WIDTH(
+                            sub_logic, parser_state
+                        )
                 else:
                     seg = Segment(
                         child_inst,
@@ -354,7 +440,7 @@ def BUILD_SLICE_LANDSCAPE(
             landscape.segments.append(seg)
 
     rec(
-        domain_root_inst,
+        subtree_root_inst,
         root_logic,
         0.0,
         1.0,
@@ -364,33 +450,124 @@ def BUILD_SLICE_LANDSCAPE(
     return landscape
 
 
+# PLAN_CUTS boundary-snap tolerance: how much EXTRA weight (as a fraction of
+# the per-stage budget) the walk may accumulate past where it would
+# otherwise cut, in order to reach a real "run boundary" (see below) instead
+# of committing mid-segment. Found necessary by testing the real divider
+# design against real sky130 synthesis: a low cut count spread by uniform
+# weight alone repeatedly left a SLICEABLE_1LL segment (a MUX between two
+# repeated loop iterations) with no cut anywhere near it, merging it into
+# one iteration's tail and the next iteration's head - one ~11ns stage,
+# worse than an unsliced one-cut-per-iteration reference design achieves.
+# _RUN_BOUNDARY_UNITS pre-filters to exactly one meaningful candidate per
+# gap, so this only needs to cover "the rest of the current repeated unit",
+# not an arbitrary distance - 1.0 (a full extra budget) turned out to
+# overshoot PAST that and wait for the boundary of the *next* repeated unit
+# instead when the trigger point fell early in a unit, silently skipping
+# every other one; 0.75 fell just barely short in a real case (~5.47ns of
+# tolerance needed against a 5.45ns allowance) and merged two repeated
+# units into one stage - the actual failure this whole mechanism exists to
+# prevent. 0.85 covers the same real case with room, found by testing
+# against real sky130 synthesis and the design's own repeated-unit shape.
+PLAN_CUTS_BOUNDARY_SNAP_FRAC = 0.85
+
+
+def _RUN_BOUNDARY_UNITS(landscape):
+    """Unit positions marking 'just before the next wide SLICEABLE ("bits")
+    leaf begins' - i.e. one unit before each SLICEABLE segment's own start.
+    Deliberately NOT derived by walking landscape.segments in list order:
+    that list is appended in a structural/recursive traversal order, not
+    sorted by position, and real designs have PARALLEL branches (e.g. one
+    divider loop iteration's NOT and MUX both read MINUS's output directly
+    and don't depend on each other, so their segments overlap on the axis
+    instead of following one another) - "the next segment in the list"
+    is not reliably "the next thing at this position". Anchoring on
+    SLICEABLE segment START positions instead sidesteps that entirely: it
+    doesn't matter how many small (SLICEABLE_1LL/ATOMIC/LOCKED) segments,
+    serial or parallel/overlapping, occupy the gap before the next wide
+    leaf - only where that next wide leaf itself begins. The very end of
+    the landscape also always qualifies (nothing further to skip)."""
+    n = landscape.total_units
+    starts = sorted(
+        seg.start for seg in landscape.segments if seg.kind == Segment.SLICEABLE
+    )
+    units = set()
+    for s in starts:
+        # ceil(s) - 1, not floor(s) - 1: a segment's own legal boundary
+        # unit (finalize()'s "hi - 1") is built from ceil(that segment's
+        # OWN .end), and a directly-adjacent preceding segment's .end
+        # equals this SLICEABLE segment's .start - so matching finalize()'s
+        # own rounding (ceil, not floor) here is what makes the two line
+        # up bit-for-bit instead of landing one unit apart.
+        b = min(int(math.ceil(s)) - 1, n - 1)
+        while b >= 0 and not landscape.legal[b]:
+            b -= 1
+        if b >= 0:
+            units.add(b)
+    if n - 1 >= 0 and landscape.legal[n - 1]:
+        units.add(n - 1)
+    return sorted(units)
+
+
 def PLAN_CUTS(landscape, budget_units):
     """Place cuts along the landscape: walk the delay axis accumulating
     (calibrated) weight and cut at the last legal unit each time the stage
     budget fills. Runs of illegal units longer than the budget get their own
-    stage (they set the floor). Returns list of int unit offsets."""
+    stage (they set the floor). Returns list of int unit offsets.
+
+    Boundary-snap: when the budget fills strictly inside a segment (most
+    often a wide SLICEABLE "bits" leaf, where every unit is legal), cutting
+    exactly there is not free - whatever follows next on the axis (often a
+    SLICEABLE_1LL leaf, which only ever gets isolated by a cut landing at
+    its own edge) stays merged into the stage that starts here. So the walk
+    checks whether the nearest _RUN_BOUNDARY_UNITS position ahead is within
+    PLAN_CUTS_BOUNDARY_SNAP_FRAC of one budget's worth of extra weight, and
+    if so waits for it instead of cutting immediately - still respecting
+    the existing legal[]/weight[] model, just choosing among the legal
+    positions available rather than always taking the first one budget
+    allows. Found necessary by testing the real divider design against
+    real sky130 synthesis: without it, a low cut count merged an entire
+    loop iteration's tail, a small SLICEABLE_1LL leaf, and the next
+    iteration's head into one stage far slower than any single iteration."""
     n = landscape.total_units
     if n <= 0:
         return []
     budget = max(budget_units, 0.5)
+    boundary_units = _RUN_BOUNDARY_UNITS(landscape)
+
     cuts = []
     acc = 0.0
     last_legal = None
     pending = False  # budget exceeded, waiting for a legal unit
+    snap_target = None  # boundary unit committed to wait for, if any
     for u in range(n):
         if landscape.legal[u]:
             last_legal = u
         acc += landscape.weight[u]
-        if acc >= budget or pending:
-            if last_legal is not None and (len(cuts) == 0 or last_legal > cuts[-1]):
-                cuts.append(last_legal)
-                # Residual weight after the cut position carries into next stage
-                acc = 0.0
-                for v in range(last_legal + 1, u + 1):
-                    acc += landscape.weight[v]
-                pending = acc >= budget
-            else:
-                pending = True
+        budget_full = acc >= budget or pending
+        if budget_full and snap_target is None:
+            for b in boundary_units:
+                if b <= u:
+                    continue
+                extra = sum(landscape.weight[v] for v in range(u + 1, b + 1))
+                if extra <= PLAN_CUTS_BOUNDARY_SNAP_FRAC * budget:
+                    snap_target = b
+                break  # only the nearest qualifying boundary is considered
+        if snap_target is not None and u < snap_target:
+            continue  # waiting for the snap target - keep accumulating
+        if not budget_full:
+            continue
+        cut_pos = snap_target if snap_target is not None else last_legal
+        if cut_pos is not None and (len(cuts) == 0 or cut_pos > cuts[-1]):
+            cuts.append(cut_pos)
+            # Residual weight after the cut position carries into next stage
+            acc = 0.0
+            for v in range(cut_pos + 1, u + 1):
+                acc += landscape.weight[v]
+            pending = acc >= budget
+        else:
+            pending = True
+        snap_target = None
     # Drop a trailing cut that leaves a nearly empty final stage
     if len(cuts) > 0 and cuts[-1] >= n - 1:
         cuts = cuts[:-1]
@@ -403,11 +580,11 @@ def CUTS_TO_SLICES(cuts, landscape):
     return [(u + 0.5) / float(landscape.total_units) for u in cuts]
 
 
-def SUMMARIZE_DOMAIN_PIPELINE(
-    main_inst, domains, TimingParamsLookupTable, parser_state
+def SUMMARIZE_SUBTREE_PIPELINE(
+    main_inst, subtrees, TimingParamsLookupTable, parser_state
 ):
     """Describe how many pipeline register stages the sweep built into a
-    main's cut domains, and where.
+    main's cut subtrees, and where.
 
     A main's own GET_TOTAL_LATENCY only counts registers on its *monolithic*
     (non-decoupled) input-to-output path: a flow-controlled/AUTOPIPELINE
@@ -416,39 +593,39 @@ def SUMMARIZE_DOMAIN_PIPELINE(
     the main latency (0 for a pure stream) or only the deepest single instance
     (one block_step, not the whole chacha pipeline) both understate the depth.
 
-    So walk the domain subtrees and add up every decoupled region's own
+    So walk the subtrees and add up every decoupled region's own
     latency alongside the monolithic part:
-      monolithic  = register stages sliced directly into the cut domain roots
+      monolithic  = register stages sliced directly into the cut subtree roots
                     (the disjoint maximal sliceable regions - a pure-comb main
-                    is its own domain; unlabeled naturally-pipelinable logic is
-                    sliced here too). A domain root's own latency already
+                    is its own subtree; unlabeled naturally-pipelinable logic is
+                    sliced here too). A subtree root's own latency already
                     excludes any decoupled child it contains.
       regions     = func_name -> {count, latency, total} for each decoupled
                     (autopipeline-tagged) region instance carrying latency
       total_stages= monolithic + sum of every decoupled region instance's
-                    latency = total pipeline register rows inserted for the
+                    latency = total slices inserted for the
                     main (== input-to-output depth when the regions sit in
                     series, as in a stream pipeline)
     Returns (monolithic, regions, total_stages)."""
     marker = C_TO_LOGIC.SUBMODULE_MARKER
-    # Cut domains are disjoint maximal sliceable subtrees, so summing their
-    # own latencies never double counts. (A decoupled child inside a domain
+    # Cut subtrees are disjoint maximal sliceable subtrees, so summing their
+    # own latencies never double counts. (A decoupled child inside a subtree
     # root reports 0 to it and is added separately below.)
     monolithic = sum(
         TimingParamsLookupTable[d].GET_TOTAL_LATENCY(
             parser_state, TimingParamsLookupTable
         )
-        for d in domains
+        for d in subtrees
     )
 
-    def in_domain(inst):
-        return any(inst == d or inst.startswith(d + marker) for d in domains)
+    def in_subtree(inst):
+        return any(inst == d or inst.startswith(d + marker) for d in subtrees)
 
     regions = {}
     for inst_name, logic in parser_state.LogicInstLookupTable.items():
         if not logic.sub_inst_to_autopipeline_depth:
             continue
-        if not in_domain(inst_name):
+        if not in_subtree(inst_name):
             continue
         for local_sub in logic.sub_inst_to_autopipeline_depth:
             sub_inst = inst_name + marker + local_sub
@@ -472,12 +649,17 @@ def SUMMARIZE_DOMAIN_PIPELINE(
     return monolithic, regions, total_stages
 
 
-def GET_DOMAIN_PIPELINE_STAGES(plan, TimingParamsLookupTable, parser_state):
-    # Total pipeline register stages built into the plan's domains (the
-    # physically meaningful "how deep did this get pipelined" number - see
-    # SUMMARIZE_DOMAIN_PIPELINE for why the main's own latency alone is not it).
-    _monolithic, _regions, total_stages = SUMMARIZE_DOMAIN_PIPELINE(
-        plan.main_inst, plan.domains, TimingParamsLookupTable, parser_state
+def GET_SUBTREE_PIPELINE_STAGES(plan, TimingParamsLookupTable, parser_state):
+    # NOTE despite the name (kept for call-site compatibility), this returns
+    # total SLICES built into the plan's subtrees, not comb-region
+    # pipeline stage count (= slices + 1) - the physically meaningful
+    # "how deep did this get pipelined" number - see
+    # SUMMARIZE_SUBTREE_PIPELINE for why the main's own latency alone is
+    # not it. Callers that
+    # report a "pipeline_stages" figure to the user must add 1 themselves
+    # (see the sweep iteration print/history entry).
+    _monolithic, _regions, total_stages = SUMMARIZE_SUBTREE_PIPELINE(
+        plan.main_inst, plan.subtrees, TimingParamsLookupTable, parser_state
     )
     return total_stages
 
@@ -489,7 +671,7 @@ def PRINT_PIPELINE_DEPTH_SUMMARY(parser_state, TimingParamsLookupTable):
     so it reflects the design as built regardless of which path produced it -
     a full sweep, an AUTOPIPELINE confirmation pass, or the coarse sweep - and
     picks up any deepening the pin-and-confirm re-elaboration introduced.
-    Recomputes each main's cut domains (path-independent). Mains with nothing
+    Recomputes each main's cut subtrees (path-independent). Mains with nothing
     autopipelinable are noted in one line each."""
     printed_header = False
     for main_inst in parser_state.main_mhz:
@@ -500,27 +682,29 @@ def PRINT_PIPELINE_DEPTH_SUMMARY(parser_state, TimingParamsLookupTable):
         # buried under dozens of pmod-wire "connect" mains.
         if SYN.LOGIC_IS_ZERO_DELAY(main_logic, parser_state, allow_none_delay=True):
             continue
-        domains = COLLECT_CUT_DOMAINS(main_inst, parser_state)
+        subtrees = COLLECT_CUT_SUBTREES(main_inst, parser_state)
         if not printed_header:
             print("[sweep] Pipeline depth summary:", flush=True)
             printed_header = True
-        if len(domains) == 0:
+        if len(subtrees) == 0:
             print(
                 f"[sweep]   {main_func}: not autopipelined "
                 "(nothing sliceable; meets its goal as written if at all)",
                 flush=True,
             )
             continue
-        monolithic, regions, total_stages = SUMMARIZE_DOMAIN_PIPELINE(
-            main_inst, domains, TimingParamsLookupTable, parser_state
+        monolithic, regions, total_stages = SUMMARIZE_SUBTREE_PIPELINE(
+            main_inst, subtrees, TimingParamsLookupTable, parser_state
         )
         print(
-            f"[sweep]   {main_func}: {total_stages} pipeline register stage(s) total",
+            f"[sweep]   {main_func}: {total_stages} pipeline register stage(s) total "
+            f"({total_stages + 1} pipeline stages: comb regions separated by "
+            "those slices)",
             flush=True,
         )
         if monolithic > 0 and regions:
             print(
-                f"[sweep]     {monolithic} in the domain's own (monolithic) pipeline",
+                f"[sweep]     {monolithic} in the subtree's own (monolithic) pipeline",
                 flush=True,
             )
         for region_func in sorted(regions):
@@ -583,25 +767,25 @@ def PREDICTED_STAGE_NS(cuts, landscape):
 
 
 def CHECK_CUTS_VS_LATENCY(
-    domain_root_inst, TimingParamsLookupTable, parser_state, n_cuts, landscape=None
+    subtree_root_inst, TimingParamsLookupTable, parser_state, n_cuts, landscape=None
 ):
     """Every planned cut must materialize as at least one slice in some raw
-    HDL leaf of the domain subtree - registers only physically exist as leaf
+    HDL leaf of the subtree - registers only physically exist as leaf
     slices (or IO regs). Zero leaf slices means every cut was silently lost
     descending the hierarchy (the old Finding #1 failure mode) - always fatal.
 
-    Beyond that, strictness depends on the domain's landscape:
-    - Fully sliceable domain (every delay unit legal - pure comb, a register
+    Beyond that, strictness depends on the subtree's landscape:
+    - Fully sliceable subtree (every delay unit legal - pure comb, a register
       can go anywhere): no planned cut may be LOST, so fewer leaf slices
       than cuts means the slicing machinery is broken and the build stops.
       MORE leaf slices than cuts is normal even here: a cut is a stage
       boundary line across the dataflow, and where it crosses parallel
       branches each branch materializes its own leaf register.
-    - Domain with unsliceable spans (atomic/locked segments): planned cuts
+    - Subtree with unsliceable spans (atomic/locked segments): planned cuts
       legitimately shift/merge around those spans on the way down, so a
       shortfall is expected - one informational line only.
 
-    Note the domain root's own rebuilt latency is NOT compared against the
+    Note the subtree root's own rebuilt latency is NOT compared against the
     cut count: autopipeline tagged submodules report latency 0 to their
     containers by design, so a root whose cuts pass through tagged boundaries
     can legitimately have total latency 0 while its interior is pipelined.
@@ -609,9 +793,9 @@ def CHECK_CUTS_VS_LATENCY(
     cuts, IO regs on locked insts, factory internal autopipelines)."""
     total_leaf_slices = 0
     sliced_leaves = []
-    prefix = domain_root_inst + C_TO_LOGIC.SUBMODULE_MARKER
+    prefix = subtree_root_inst + C_TO_LOGIC.SUBMODULE_MARKER
     for inst in TimingParamsLookupTable:
-        if inst == domain_root_inst or inst.startswith(prefix):
+        if inst == subtree_root_inst or inst.startswith(prefix):
             timing_params = TimingParamsLookupTable[inst]
             if len(timing_params._slices) == 0:
                 continue
@@ -623,13 +807,13 @@ def CHECK_CUTS_VS_LATENCY(
         # Every cut vanished - the Finding #1 failure class (slicing descended
         # into logic that silently dropped the slices). Never acceptable.
         raise Exception(
-            f"Planned {n_cuts} cuts for {domain_root_inst} but NO raw HDL "
+            f"Planned {n_cuts} cuts for {subtree_root_inst} but NO raw HDL "
             f"leaf slices materialized: cuts were lost descending the "
             f"hierarchy (sliceability model out of sync with SLICE_DOWN?)"
         )
     strict = landscape is not None and all(landscape.legal)
     if strict and total_leaf_slices < n_cuts:
-        # Nothing in this domain may shift or absorb a cut - a shortfall
+        # Nothing in this subtree may shift or absorb a cut - a shortfall
         # means a planned stage boundary was lost and slicing descent is
         # broken. (More slices than cuts is fine: parallel branch fan-out.)
         leaf_lines = []
@@ -640,18 +824,18 @@ def CHECK_CUTS_VS_LATENCY(
         if len(sliced_leaves) > 5:
             leaf_lines.append(f"  ... and {len(sliced_leaves) - 5} more")
         raise Exception(
-            f"Planned {n_cuts} cuts for fully sliceable domain "
-            f"{domain_root_inst} but only {total_leaf_slices} leaf slices "
-            f"materialized - the domain is pure comb logic (a register can "
+            f"Planned {n_cuts} cuts for fully sliceable subtree "
+            f"{subtree_root_inst} but only {total_leaf_slices} leaf slices "
+            f"materialized - the subtree is pure comb logic (a register can "
             f"go anywhere) so no planned stage boundary may be lost. "
             f"{len(sliced_leaves)} sliced leaves, first few:\n" + "\n".join(leaf_lines)
         )
     if not strict and total_leaf_slices < n_cuts:
-        # Expected drift: cuts shift/merge around the domain's unsliceable
+        # Expected drift: cuts shift/merge around the subtree's unsliceable
         # spans on the way down. The refinement loop's timing feedback
         # compensates - informational only.
         print(
-            f"[sweep] note: planned {n_cuts} cuts for {domain_root_inst}, "
+            f"[sweep] note: planned {n_cuts} cuts for {subtree_root_inst}, "
             f"{total_leaf_slices} leaf slices materialized "
             f"(cuts shift/merge around unsliceable spans - expected)",
             flush=True,
@@ -664,9 +848,9 @@ class MainSweepPlan:
         self.main_inst = main_inst
         self.target_mhz = target_mhz
         self.target_period_ns = 1000.0 / target_mhz
-        self.domains = []  # list of domain root inst names
-        self.landscapes = {}  # domain root inst -> SliceLandscape
-        self.cuts = {}  # domain root inst -> [int offsets]
+        self.subtrees = []  # list of subtree root inst names
+        self.landscapes = {}  # subtree root inst -> SliceLandscape
+        self.cuts = {}  # subtree root inst -> [int offsets]
         self.func_delay_scale = {}  # func name -> learned weight multiplier
         self.global_scale = 1.0  # budget divisor when attribution fails
         self.locked = {}  # inst -> (slices, has_in_regs, has_out_regs)
@@ -688,7 +872,7 @@ class MainSweepPlan:
         self.history = []  # dicts for sweep_history.json
 
     def predicted_floor(self):
-        # (floor_mhz, blame Segment) worst over domains, None if all sliceable
+        # (floor_mhz, blame Segment) worst over subtrees, None if all sliceable
         worst = None
         blame = None
         for landscape in self.landscapes.values():
@@ -728,19 +912,19 @@ def ATTRIBUTE_PATH_TO_FUNC(path_report, plan, parser_state):
         name_strs.append(r.lower())
     if len(name_strs) == 0:
         return None, ""
-    # Candidate funcs = every func inside this plan's domains (from segments)
-    # EXCEPT the domain roots and the main itself: the flattened netlist
+    # Candidate funcs = every func inside this plan's subtrees (from segments)
+    # EXCEPT the subtree roots and the main itself: the flattened netlist
     # prefixes every register name with the top/main entity name, so the
     # root would match everything and always win - a meaningless
     # attribution. Only a proper interior func is a usable hotspot; when
     # none matches the caller falls back to global rescaling.
     excluded = set()
     excluded.add(parser_state.LogicInstLookupTable[plan.main_inst].func_name)
-    for domain_root in plan.domains:
-        excluded.add(parser_state.LogicInstLookupTable[domain_root].func_name)
+    for subtree_root in plan.subtrees:
+        excluded.add(parser_state.LogicInstLookupTable[subtree_root].func_name)
     candidates = set()
     for landscape in plan.landscapes.values():
-        if landscape is None:  # locked domain root
+        if landscape is None:  # locked subtree root
             continue
         for seg in landscape.segments:
             candidates |= seg.ancestor_funcs
@@ -793,11 +977,11 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     internally pipelined black box."""
     if HOTSPOT_IS_LOCKED(hotspot_func, plan, parser_state):
         return False  # already locked, sweeping it again changes nothing
-    # Never mini-sweep a domain root (or the main): "isolating" the whole
-    # domain is just this sweep with even slices instead of planned cuts,
+    # Never mini-sweep a subtree root (or the main): "isolating" the whole
+    # subtree is just this sweep with even slices instead of planned cuts,
     # and locking the root would freeze the entire plan
     root_funcs = set(
-        parser_state.LogicInstLookupTable[d].func_name for d in plan.domains
+        parser_state.LogicInstLookupTable[d].func_name for d in plan.subtrees
     )
     root_funcs.add(parser_state.LogicInstLookupTable[plan.main_inst].func_name)
     if hotspot_func in root_funcs:
@@ -946,16 +1130,16 @@ def GET_MAIN_INSTS_FOR_PATH_REPORT(path_report, parser_state, multimain_timing_p
 
 
 def PRINT_FLOOR_REPORT(plan, parser_state):
-    for domain_root in plan.domains:
-        landscape = plan.landscapes.get(domain_root)
+    for subtree_root in plan.subtrees:
+        landscape = plan.landscapes.get(subtree_root)
         if landscape is None:
             continue
-        root_logic = parser_state.LogicInstLookupTable[domain_root]
+        root_logic = parser_state.LogicInstLookupTable[subtree_root]
         total_ns = landscape.total_units * landscape.units_to_ns
         floor = landscape.floor_mhz()
         msg = (
             f"[sweep] main={parser_state.LogicInstLookupTable[plan.main_inst].func_name} "
-            f"domain={root_logic.func_name} comb delay ~{total_ns:.1f} ns, "
+            f"subtree={root_logic.func_name} comb delay ~{total_ns:.1f} ns, "
             f"target {plan.target_period_ns:.1f} ns ({plan.target_mhz:.1f} MHz)"
         )
         if floor is None:
@@ -1040,8 +1224,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         target_mhz = SYN.GET_TARGET_MHZ(main_inst, parser_state)
         if target_mhz is None:
             continue
-        domains = COLLECT_CUT_DOMAINS(main_inst, parser_state)
-        if len(domains) == 0:
+        subtrees = COLLECT_CUT_SUBTREES(main_inst, parser_state)
+        if len(subtrees) == 0:
             main_logic = parser_state.LogicInstLookupTable[main_inst]
             # A zero-delay main (FUNC_WIRES rewiring, bit manipulation, clock
             # crossing, ...) trivially meets any goal and has no timing path
@@ -1059,7 +1243,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             planless_goal_mains.append((main_inst, target_mhz))
             continue
         plan = MainSweepPlan(main_inst, target_mhz)
-        plan.domains = domains
+        plan.subtrees = subtrees
         plans[main_inst] = plan
 
     # One standalone synthesis each so the user sees whether "as written"
@@ -1073,10 +1257,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     # "measurement frontier" in the presynth wave (SYN.FUNC_IS_TOPMOST_COMB):
     # the topmost fully-combinational funcs get one real synthesis run each,
     # so the estimated delays of everything above them (stateful containers,
-    # domain roots, mains - which are NEVER synthesized per-module, their
+    # subtree roots, mains - which are NEVER synthesized per-module, their
     # synthesized number would be an internal critical path, not an
     # input-to-output through delay) are built from measured totals. No
-    # domain-root synthesis happens here.
+    # subtree-root synthesis happens here.
 
     best_tpl = None
     best_score = None
@@ -1099,15 +1283,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         for plan in plans.values():
             tpl = APPLY_LOCKS(plan, parser_state, tpl)
         for plan in plans.values():
-            # Build landscapes (locked domain roots already carry their
+            # Build landscapes (locked subtree roots already carry their
             # pipeline from the lock - planning/slicing them again is illegal)
-            for domain_root in plan.domains:
-                if tpl[domain_root].params_are_fixed:
-                    plan.landscapes[domain_root] = None
-                    plan.cuts[domain_root] = []
+            for subtree_root in plan.subtrees:
+                if tpl[subtree_root].params_are_fixed:
+                    plan.landscapes[subtree_root] = None
+                    plan.cuts[subtree_root] = []
                     continue
-                plan.landscapes[domain_root] = BUILD_SLICE_LANDSCAPE(
-                    domain_root, parser_state, tpl, plan.func_delay_scale
+                plan.landscapes[subtree_root] = BUILD_SLICE_LANDSCAPE(
+                    subtree_root, parser_state, tpl, plan.func_delay_scale
                 )
             # Plan cuts. Replanning an unresolved plan to the identical cut
             # list would waste a whole synthesis run (a small budget change
@@ -1122,15 +1306,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             total_cuts = 0
             for attempt in range(8):
                 total_cuts = 0
-                for domain_root in plan.domains:
-                    landscape = plan.landscapes.get(domain_root)
+                for subtree_root in plan.subtrees:
+                    landscape = plan.landscapes.get(subtree_root)
                     if landscape is None:
                         continue
                     budget = (
                         plan.target_period_ns / landscape.units_to_ns
                     ) / plan.global_scale
-                    plan.cuts[domain_root] = PLAN_CUTS(landscape, budget)
-                    total_cuts += len(plan.cuts[domain_root])
+                    plan.cuts[subtree_root] = PLAN_CUTS(landscape, budget)
+                    total_cuts += len(plan.cuts[subtree_root])
                 if not plan_unresolved or total_cuts != plan.prev_total_cuts:
                     break
                 if plan.trim_pending:
@@ -1139,16 +1323,16 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     plan.global_scale *= 1.1  # failing - force more cuts
             plan.prev_total_cuts = total_cuts
             # Apply the cuts
-            for domain_root in plan.domains:
-                landscape = plan.landscapes.get(domain_root)
-                cuts = plan.cuts.get(domain_root, [])
+            for subtree_root in plan.subtrees:
+                landscape = plan.landscapes.get(subtree_root)
+                cuts = plan.cuts.get(subtree_root, [])
                 if landscape is None or len(cuts) == 0:
                     continue
-                root_logic = parser_state.LogicInstLookupTable[domain_root]
+                root_logic = parser_state.LogicInstLookupTable[subtree_root]
                 slices = CUTS_TO_SLICES(cuts, landscape)
                 tpl = (
                     SYN.ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
-                        domain_root,
+                        subtree_root,
                         root_logic,
                         slices,
                         parser_state,
@@ -1158,10 +1342,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 )
                 if type(tpl) is int:
                     raise Exception(
-                        f"Planned cut produced a bad slice in {domain_root}: slice index {tpl} of {slices}"
+                        f"Planned cut produced a bad slice in {subtree_root}: slice index {tpl} of {slices}"
                     )
                 CHECK_CUTS_VS_LATENCY(
-                    domain_root, tpl, parser_state, len(cuts), landscape
+                    subtree_root, tpl, parser_state, len(cuts), landscape
                 )
         if iteration == 1:
             for plan in plans.values():
@@ -1194,18 +1378,38 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 main_func_name = parser_state.LogicInstLookupTable[
                     plan.main_inst
                 ].func_name
-                _mono, _regions, total_stages = SUMMARIZE_DOMAIN_PIPELINE(
-                    plan.main_inst, plan.domains, tpl, parser_state
+                _mono, _regions, total_stages = SUMMARIZE_SUBTREE_PIPELINE(
+                    plan.main_inst, plan.subtrees, tpl, parser_state
                 )
                 print(
                     f"[sweep] {main_func_name}: --no_sweep guess, "
-                    f"{total_stages} pipeline register stage(s) built, "
+                    f"{total_stages} pipeline register stage(s) built "
+                    f"({total_stages + 1} pipeline stages), "
                     f"cuts={sum(len(c) for c in plan.cuts.values())} "
                     "(UNVERIFIED)",
                     flush=True,
                 )
             multimain_timing_params.sweep_timing_failures = []
             return multimain_timing_params
+
+        # What's about to be synthesized, printed BEFORE the long wait below
+        # (previously this only appeared after synthesis finished, alongside
+        # the achieved MHz - leaving "how many slices/stages did it even try"
+        # unknown for the whole duration of a long syn run).
+        for plan in plans.values():
+            main_func_name = parser_state.LogicInstLookupTable[
+                plan.main_inst
+            ].func_name
+            _mono, _regions, total_stages = SUMMARIZE_SUBTREE_PIPELINE(
+                plan.main_inst, plan.subtrees, tpl, parser_state
+            )
+            print(
+                f"[sweep] {main_func_name}: about to synthesize, "
+                f"cuts={sum(len(c) for c in plan.cuts.values())}, "
+                f"{total_stages} pipeline register stage(s) "
+                f"({total_stages + 1} pipeline stages)",
+                flush=True,
+            )
 
         print(
             f"Running syn w timing params... (sweep iteration {iteration})",
@@ -1270,10 +1474,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 plan.trim_pending = False
                 total_cuts = sum(len(c) for c in plan.cuts.values())
                 latency = tpl[main_inst].GET_TOTAL_LATENCY(parser_state, tpl)
-                deepest = GET_DOMAIN_PIPELINE_STAGES(plan, tpl, parser_state)
+                deepest = GET_SUBTREE_PIPELINE_STAGES(plan, tpl, parser_state)
                 predicted_ns = 0.0
-                for domain_root, cuts in plan.cuts.items():
-                    landscape = plan.landscapes.get(domain_root)
+                for subtree_root, cuts in plan.cuts.items():
+                    landscape = plan.landscapes.get(subtree_root)
                     if landscape is not None:
                         predicted_ns = max(
                             predicted_ns, PREDICTED_STAGE_NS(cuts, landscape)
@@ -1309,11 +1513,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     # there - they are pessimistic estimates, not ceilings.
                     hard_floor, hard_blame = plan.predicted_hard_floor()
                     soft_floor, soft_blame = plan.predicted_floor()
-                    at_hard_floor = (
-                        hard_floor is not None
-                        and hard_floor < target_mhz
-                        and curr_mhz >= FLOOR_TOLERANCE * hard_floor
-                    )
+                    # See AT_PREDICTED_FLOOR's own docstring for the
+                    # symmetric-tolerance-band rationale.
+                    at_hard_floor = AT_PREDICTED_FLOOR(curr_mhz, hard_floor, target_mhz)
                     # A soft floor built from ESTIMATED spans is not evidence
                     # enough to give up: measure the real delays first (the
                     # ladder's escalation - fallback, minisweep - broke
@@ -1324,9 +1526,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         for l in parser_state.FuncLogicLookupTable.values()
                     )
                     at_soft_floor = (
-                        soft_floor is not None
-                        and soft_floor < target_mhz
-                        and curr_mhz >= FLOOR_TOLERANCE * soft_floor
+                        AT_PREDICTED_FLOOR(curr_mhz, soft_floor, target_mhz)
                         and plan.same_mhz_count >= 1
                         and (
                             measured_fallback_done
@@ -1518,10 +1718,17 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 bottleneck_str = (
                     f" bottleneck={hotspot_func}{stage_info}" if hotspot_func else ""
                 )
+                # deepest = SLICES (see GET_SUBTREE_PIPELINE_STAGES);
+                # pipeline_stages is comb regions separated by those slices,
+                # i.e. slices + 1 (0 slices = 1 stage, 1 slice = 2
+                # stages, ...) - conflating the two here previously made
+                # e.g. "cuts=30 main_latency=30 pipeline_stages=30" look like
+                # 30 cuts bought 0 extra stages.
+                pipeline_stages = deepest + 1
                 print(
                     f"[sweep] iter={iteration} main={main_logic.func_name} "
                     f"goal={target_mhz:.2f}MHz got={curr_mhz:.2f}MHz ({path_report.path_delay_ns:.2f}ns) "
-                    f"cuts={total_cuts} main_latency={latency} pipeline_stages={deepest} "
+                    f"cuts={total_cuts} main_latency={latency} pipeline_stages={pipeline_stages} "
                     f"predicted_stage={predicted_ns:.2f}ns"
                     f"{bottleneck_str} action={action}",
                     flush=True,
@@ -1534,7 +1741,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         "achieved_mhz": round(curr_mhz, 3),
                         "cuts": total_cuts,
                         "main_latency": latency,
-                        "pipeline_stages": deepest,
+                        "pipeline_stages": pipeline_stages,
                         "predicted_stage_ns": round(predicted_ns, 3),
                         "bottleneck": hotspot_func,
                         "action": action,
@@ -1721,6 +1928,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             best_tpl, parser_state
         )
         SYN.WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(best_tpl, parser_state, best_ancestors)
+        if BEST_SNAPSHOT_MET_ALL_GOALS(best_score):
+            for p in plans.values():
+                p.met_timing = True
+                p.stopped_reason = None
 
     # Final summary + history dump
     for plan in plans.values():
@@ -1728,15 +1939,16 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         outcome = (
             "met timing" if plan.met_timing else f"stopped ({plan.stopped_reason})"
         )
-        _mono, _regions, total_stages = SUMMARIZE_DOMAIN_PIPELINE(
+        _mono, _regions, total_stages = SUMMARIZE_SUBTREE_PIPELINE(
             plan.main_inst,
-            plan.domains,
+            plan.subtrees,
             multimain_timing_params.TimingParamsLookupTable,
             parser_state,
         )
         print(
             f"[sweep] {main_func_name}: {outcome}, {total_stages} pipeline register "
-            f"stage(s) built, cuts={sum(len(c) for c in plan.cuts.values())}, "
+            f"stage(s) built ({total_stages + 1} pipeline stages), "
+            f"cuts={sum(len(c) for c in plan.cuts.values())}, "
             f"locked={len(plan.locked)} inst(s), iterations={iteration}",
             flush=True,
         )

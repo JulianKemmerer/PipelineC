@@ -62,7 +62,7 @@ def heavy(x: uint8_t) -> uint8_t:
     return x / ~x
 
 
-# Pure comb MAIN: no Reg/Feedback state, so the whole MAIN is one cut domain
+# Pure comb MAIN: no Reg/Feedback state, so the whole MAIN is one cut subtree
 # and the planner slices it to meet 50 MHz (same double-division cone as
 # sweep_comb_test.py, proven under the PYRTL software timing model).
 @MAIN(50.0)

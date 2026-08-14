@@ -2304,6 +2304,27 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
             ):
                 continue
 
+            # Defensive backstop, not the primary mechanism: a raw HDL leaf
+            # whose own generator only meaningfully supports a bounded
+            # number of slices (SPLIT_KIND_1LL - see RAW_VHDL.
+            # LEAF_MAX_SPLIT_SLICES) must not silently accept one more - the
+            # extra stage would be a bare register around logic that never
+            # shrinks (RAW_VHDL module docstring). The real enforcement is
+            # upstream in planning (SWEEP.PLAN_CUTS never requests a cut
+            # here once the landscape marks the rest of the span illegal),
+            # so this should essentially never fire; it exists to fail loud
+            # (matching this function's own ADD_SLICE/CHECK_CUTS_VS_LATENCY
+            # style) instead of silently producing a wasted stage if some
+            # other slice-adding path (coarse/mini-sweep even-fraction
+            # guesses, a future caller) ever disagrees with the landscape.
+            if len(submodule_logic.submodule_instances) == 0:
+                max_slices = RAW_VHDL.LEAF_MAX_SPLIT_SLICES(submodule_logic)
+                if (
+                    max_slices is not None
+                    and len(submodule_timing_params._slices) >= max_slices
+                ):
+                    continue
+
             # Slice into that submodule
             skip_boundary_slice = False
             TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
@@ -3086,6 +3107,31 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
         )
         multimain_timing_params.sweep_timing_failures = []
         return multimain_timing_params, True
+
+    # What's about to be synthesized, printed BEFORE the long wait below --
+    # mirrors SWEEP.py's own "about to synthesize" print, but reads directly
+    # off the seeded TimingParamsLookupTable (the pinned state actually
+    # about to be built) rather than a fresh plan.
+    import SWEEP
+
+    TimingParamsLookupTable = multimain_timing_params.TimingParamsLookupTable
+    for main_inst in parser_state.main_mhz:
+        main_logic = parser_state.LogicInstLookupTable[main_inst]
+        if LOGIC_IS_ZERO_DELAY(main_logic, parser_state, allow_none_delay=True):
+            continue
+        subtrees = SWEEP.COLLECT_CUT_SUBTREES(main_inst, parser_state)
+        if len(subtrees) == 0:
+            continue
+        _monolithic, _regions, total_stages = SWEEP.SUMMARIZE_SUBTREE_PIPELINE(
+            main_inst, subtrees, TimingParamsLookupTable, parser_state
+        )
+        cuts = sum(len(TimingParamsLookupTable[d]._slices) for d in subtrees)
+        print(
+            f"[sweep] {main_logic.func_name}: about to synthesize (pinned "
+            f"from previous pass), cuts={cuts}, {total_stages} pipeline "
+            f"register stage(s) ({total_stages + 1} pipeline stages)",
+            flush=True,
+        )
 
     print(
         "Running one confirmation synthesis with pipelining pinned from the previous pass...",
@@ -4180,7 +4226,17 @@ def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
             + "_" + DEVICE_MODELS.SELECTED_CORNER
             + "_v" + str(DEVICE_MODELS.MODEL_VERSION)
         )
-    if parser_state.part is not None:
+    # `part` disambiguates cache entries when the same SYN_TOOL/library/
+    # corner combo could still map to different physical parts (ex. PyRTL's
+    # tech node doesn't imply an FPGA part number). For DEVICE_MODELS the
+    # library IS the part - PART("sky130_fd_sc_hvl") sets parser_state.part
+    # to the exact same string already folded into PATH_DELAY_CACHE_DIR
+    # above, so appending it again produced a redundant nested directory
+    # with identical cache contents at two different paths.
+    part_already_encoded = (
+        SYN_TOOL is DEVICE_MODELS and parser_state.part == DEVICE_MODELS.SELECTED_LIBRARY
+    )
+    if parser_state.part is not None and not part_already_encoded:
         PATH_DELAY_CACHE_DIR += "/" + parser_state.part
     if TOOL_DOES_PNR():
         PATH_DELAY_CACHE_DIR += "/pnr"
@@ -4334,7 +4390,7 @@ def RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(func_names, parser_state):
                 funcs_to_synth.append(func_name)
         # Old (full) mode: always synthesize main funcs too (their delay
         # seeded coarse sweep guesses). Leaf mode does not force this:
-        # sliceable mains are cut domain roots measured on demand by the
+        # sliceable mains are cut subtree roots measured on demand by the
         # sweep's budget anchor, and a stateful main's whole-design zero clk
         # critical path (including regions about to be pipelined) feeds no
         # decision - synthesizing it wastes a near-whole-design run and its

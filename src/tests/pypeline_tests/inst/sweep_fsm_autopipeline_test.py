@@ -1,6 +1,6 @@
 # pyright: reportInvalidTypeForm=none
 # Planned throughput sweep test (c): stateful (Reg) main containing an
-# AUTOPIPELINE region (via _autopipeline_with_io_regs). The cut domain is the
+# AUTOPIPELINE region (via _autopipeline_with_io_regs). The cut subtree is the
 # AUTOPIPELINE tagged child; cuts descend through the stateful boundary via
 # the tag override while the FSM's own latency stays 0.
 import sys, os

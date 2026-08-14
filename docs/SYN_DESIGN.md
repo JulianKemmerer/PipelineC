@@ -8,20 +8,20 @@ and how the *planned throughput sweep* replaced the old "middle out" sweep.
 | file | role |
 |---|---|
 | `src/SYN.py` | The infrastructure that already existed and remains: timing params (`TimingParams`, slices, IO regs), the pipeline map (`GET_PIPELINE_MAP`), recursive slicing (`SLICE_DOWN_HIERARCHY_...`), per-function path delay collection (`ADD_PATH_DELAY_TO_LOOKUP`), the coarse sweep engine (`DO_COARSE_THROUGHPUT_SWEEP`, kept for `--coarse` and mini-sweeps), entity writing, and the `DO_THROUGHPUT_SWEEP` entry point. |
-| `src/SWEEP.py` | New. The *brains* of autopipelining: cut domains, slice landscapes, floor prediction, cut planning, and the synthesis-feedback refinement loop (`DO_PLANNED_THROUGHPUT_SWEEP`). Replaces the old middle-out sweep that lived in SYN.py. |
+| `src/SWEEP.py` | New. The *brains* of autopipelining: cut subtrees, slice landscapes, floor prediction, cut planning, and the synthesis-feedback refinement loop (`DO_PLANNED_THROUGHPUT_SWEEP`). Replaces the old middle-out sweep that lived in SYN.py. |
 | `src/PYRTL.py`, `src/DEVICE_MODELS.py` | The `SYN_TOOL` backends this document's delay model and sweep are built on top of — see [`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md) for the real sky130 liberty STA backend (`PART("sky130...")` / `--syn_tool sky130`) and why it exists (PyRTL's own cost model has no fanout/load term at all). |
 
 Vocabulary used throughout (each defined in detail later):
 
 | term | one-liner |
 |---|---|
-| **slice** | a fraction 0.0–1.0 of one module's delay where a register row is inserted (`TimingParams._slices`); the only way registers physically exist, ultimately always in raw HDL *leaves* |
-| **cut** | a planned register row across a whole *cut domain*'s delay axis; one cut becomes one-or-more leaf slices |
-| **cut domain** | the largest subtree registers may be added to (a comb MAIN, or each AUTOPIPELINE-tagged region) |
-| **landscape** | the flattened delay axis of one domain: where every nanosecond of logic lives and whether a cut may land there |
+| **slice** | a fraction 0.0–1.0 of one module's delay where a register is inserted (`TimingParams._slices`); the only way registers physically exist, ultimately always in raw HDL *leaves* |
+| **cut** | a planned register inserted across a whole *cut subtree*'s delay axis; one cut becomes one-or-more leaf slices |
+| **cut subtree** | the largest subtree registers may be added to (a comb MAIN, or each AUTOPIPELINE-tagged region) |
+| **landscape** | the flattened delay axis of one cut subtree: where every nanosecond of logic lives and whether a cut may land there |
 | **segment** | one leaf-most piece of that axis (sliceable / atomic / locked) |
 | **floor** | the fmax that no amount of added registers can beat (longest un-cuttable stretch) |
-| **plan** | per-MAIN sweep state: domains, landscapes, cuts, learned scale factors, locks |
+| **plan** | per-MAIN sweep state: cut subtrees, landscapes, cuts, learned scale factors, locks |
 | **measurement frontier** | the topmost fully-combinational funcs — the only hierarchical modules ever synthesized per-module; their measured through-delays calibrate the estimates of everything above (and thus how many cuts the first plan gets) |
 | **lock** | a mini-sweep result frozen onto all instances of a func (`params_are_fixed`); planning treats it as a pre-pipelined black box |
 | **trim** | post-met iterations that retry with fewer cuts to prove the stage count is minimal |
@@ -46,13 +46,49 @@ This part works like it always did. Registers only physically exist as:
 
 1. **Leaf slices** — a raw HDL leaf (no submodules, e.g. `BIN_OP_PLUS`) with
    `TimingParams._slices = [0.5]` becomes a 2-stage adder, carry chain broken
-   at 50% of its delay (a slice value is always a fraction 0.0–1.0 of that
-   module's *own* delay). Leaf latency = `len(_slices)`:
+   at 50% of its delay (a slice value is a fraction 0.0–1.0 of that module's
+   *own* delay, but see below — what that fraction turns into differs by leaf
+   kind). Leaf latency = `len(_slices)`:
 
    ```
    4 ns ADD, _slices = [0.5]:
    in --[ low 2 ns of carry chain ]--REG--[ high 2 ns ]-- out   (1 clk latency)
    ```
+
+   `RAW_VHDL.GET_LEAF_SPLIT_KIND` puts every raw HDL leaf into one of three
+   kinds, which each generator's own code (not the sweep/landscape layer)
+   decides how to honor:
+   - `SPLIT_KIND_BITS` (PLUS/MINUS/EQ/NEQ/GT/GTE/LT/LTE/accum): the operand
+     bit range is what gets split. `RAW_VHDL.GET_BITS_PER_STAGE_DICT` divides
+     the width as **evenly as possible across the requested chunk COUNT**
+     (`len(_slices) + 1` stages) — the specific slice fractions only set the
+     count, not where the boundaries land. This looks like it throws away
+     information, but it doesn't: once a boundary is registered, each stage
+     computes its own chunk from scratch off a registered 1-bit carry-in, so
+     that stage's delay depends only on its own chunk width, not on where
+     along the leaf's *unregistered* delay axis the cut nominally sits. Since
+     real per-width delay is monotonic (and concave — sky130 measured
+     `D(10)=2.607ns`, `D(34)=3.851ns` for a 34-bit `MINUS`, nowhere near
+     linear), minimizing the worst stage's delay for a given stage count
+     means equal-width chunks, full stop — an earlier version of this fix
+     instead inverted a delay-fraction curve to place *uneven* boundaries,
+     which measurably missed real sky130 timing goals that the plain
+     equal-width split (and even the original linear-fraction model) met.
+   - `SPLIT_KIND_1LL` ("one logic level" — MUX/AND/OR/XOR/NOT/NEGATE/MULT):
+     these generators (`stage_for_1ll`) always place the *whole* operation in
+     exactly one stage no matter the latency — only the register *boundary*
+     moves. Latency 1 puts the op in stage 0 or 1 depending on which side of
+     0.5 the slice falls; latency 2 puts registers on both sides with the op
+     untouched in the middle. A 3rd slice is provably wasted (a bare register
+     around logic that never shrinks), so `RAW_VHDL.LEAF_MAX_SPLIT_SLICES`
+     caps these at 2 — enforced primarily in the landscape (§4: only a
+     `SPLIT_KIND_1LL` segment's own two boundary units are ever legal cut
+     positions) and backstopped by a hard error in
+     `SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES` if anything else ever
+     requests a 3rd.
+   - `SPLIT_KIND_NONE` (bit-manip/cast/const-shift/const-ref): no
+     stage-dependent behavior at all; in practice unreachable since
+     `LOGIC_IS_ZERO_DELAY` already excludes these from ever getting cuts.
 2. **IO regs** — `_has_input_regs/_has_output_regs` add boundary registers.
 
 Everything else is *emergent*: a hierarchical module's latency is rebuilt
@@ -89,23 +125,33 @@ depth) — which is exactly the region `CHECK_CUTS_VS_LATENCY` marks `strict`.
 **Reporting how deep the design got pipelined.** Because a stream MAIN reads
 `main_latency=0` and the deepest single instance (one block_step) is far
 shallower than the whole pipeline, neither alone answers "how many stages did
-autopipelining build?". So the metric reported as `pipeline_stages=` per
-iteration and in the `Pipeline depth summary` at *Writing Results* is the
-**total register stages in a main's cut domains**:
+autopipelining build?". So `GET_SUBTREE_PIPELINE_STAGES`/`SUMMARIZE_SUBTREE_
+PIPELINE` compute the **total slices in a main's cut subtrees**:
 
 ```
-total = (register stages sliced directly into the cut-domain roots)
+total = (slices inserted directly into the cut-subtree roots)
       + (latency of every decoupled autopipeline region instance in them)
 ```
 
-The two parts never overlap: a domain root's own latency already zeroes its
+The two parts never overlap: a subtree root's own latency already zeroes its
 decoupled children (they report 0 to it), and the second term adds exactly
-those back. This equals the input-to-output depth when the regions sit in
-series, as in a stream pipeline (wireguard chacha: 0 monolithic + block_step
-3 clks x 10 = 30 stages — not the "3" a single-instance view would show).
-The summary is computed at *Writing Results* on the final, actually-emitted
-table, so it reflects any extra depth the AUTOPIPELINE pin-and-confirm
-re-elaboration (§6.5) added.
+those back. This equals the input-to-output register count when the regions
+sit in series, as in a stream pipeline (wireguard chacha: 0 monolithic +
+block_step 3 clks x 10 = 30 slices — not the "3" a single-instance
+view would show). The `Pipeline depth summary` at *Writing Results* prints
+this figure as "N pipeline register stage(s)" (computed at *Writing Results*
+on the final, actually-emitted table, so it reflects any extra depth the
+AUTOPIPELINE pin-and-confirm re-elaboration (§6.5) added).
+
+**Slices vs. pipeline stages — `stages = slices + 1`.** A slice
+count is not the same number as "how many pipeline stages". 0 slices (comb
+logic) is 1 stage; 1 slice splits it into 2 stages; N slices in series
+give N+1 stages. So the `pipeline_stages=` field printed per sweep iteration
+and written to `sweep_history.json` is always `cuts + 1`, not `cuts`
+itself — conflating the two used to make a print like `cuts=30
+main_latency=30 pipeline_stages=30` look like 30 cuts bought zero additional
+stages, when it actually built 31. The wireguard example above is 30
+slices, i.e. **31** pipeline stages end-to-end.
 
 Entity naming is also unchanged: each distinct (IO regs + leaf slices)
 combination hashes to its own VHDL entity `funcname_<latency>CLK_<hash>`.
@@ -179,9 +225,9 @@ empirically in full-design timing reports (and stops the sweep via the
 empirical floor), not in the geometry model.
 
 **There are no exceptions**: nothing with state in its subtree is ever
-synthesized per-module — a domain root like wireguard's `encrypt_dataflow`
+synthesized per-module — a subtree root like wireguard's `encrypt_dataflow`
 (Reg/Feedback in its FIFOs/interlocks) is estimated, not measured. The
-calibration that used to come from measuring domain roots comes instead
+calibration that used to come from measuring subtree roots comes instead
 from the **measurement frontier** (`FUNC_IS_TOPMOST_COMB`): the topmost
 fully-combinational funcs — the largest subtrees with no Reg/Feedback
 anywhere inside, where measured == input→output through-delay *by
@@ -276,35 +322,35 @@ designs the frontier measurement is what deflates the wildly-inflated
 leaf-sum estimates — wireguard's chacha comb subtree estimates ~1090 ns
 but measures ~150 ns).
 
-### Cut domain
+### Cut subtree
 
-*Where is adding registers even allowed to start?* A **cut domain** is a
+*Where is adding registers even allowed to start?* A **cut subtree** is a
 maximal subtree that can accept added latency: the MAIN itself if it is pure
 comb, otherwise each region reached through AUTOPIPELINE-tagged call sites
-underneath stateful containers. One plan per MAIN, one or more domains per
-plan.
+underneath stateful containers. One plan per MAIN, one or more cut subtrees
+per plan.
 
 In the running example `my_main` is itself sliceable comb (the state lives
 *inside* `acc`, which the descend rule below refuses to enter), so the whole
-main is one cut domain with root `my_main` — the left shape below. The right
+main is one cut subtree with root `my_main` — the left shape below. The right
 shape is what real stream designs (wireguard) look like: the MAIN is an FSM,
 so registers may only be added inside explicitly tagged regions:
 
 ```
  MAIN (pure comb)                    MAIN (FSM: Reg/Feedback -> not sliceable)
    = the whole MAIN is                 |
-     one cut domain                    +-- prep_fsm (stateful, no tag)   X no domain
+     one cut subtree                   +-- prep_fsm (stateful, no tag)   X no subtree
                                        |
                                        +-- wrapper (stateful)
                                              |
                                              +-- autopipeline(chacha_loop(...))   <- TAG
                                                    |
-                                                   chacha_loop = cut domain root
+                                                   chacha_loop = cut subtree root
 ```
 
 This replaces the old question "which module should the middle-out sweep
 coarse-sweep next?" — instead of discovering boundaries by trial synthesis,
-the domains are computed once from the sliceability rules.
+the cut subtrees are computed once from the sliceability rules.
 
 The descend rule (used both by the old recursive slicer and the landscape,
 now fixed): descend into a child iff
@@ -322,11 +368,32 @@ no fixed-latency/vhdl-text/clock-crossing/state-regs/memory/blackbox/feedback.
 
 ### Landscape and segments
 
-*Where inside a domain may cuts land, and what does each stretch of delay
-cost?* `BUILD_SLICE_LANDSCAPE` flattens a domain onto its delay axis into
+*Where inside a subtree may cuts land, and what does each stretch of delay
+cost?* `BUILD_SLICE_LANDSCAPE` flattens a subtree onto its delay axis into
 leaf-most **segments**:
 
-- `sliceable` — raw HDL leaf; cuts anywhere inside produce a register,
+- `sliceable` — `SPLIT_KIND_BITS` raw HDL leaf; cuts anywhere inside produce
+  a register (§2: the leaf's own generator decides *how*, via an equal-width
+  split, not the landscape), **capped** to at most `width - 1` legal units
+  (`RAW_VHDL.GET_LEAF_BIT_WIDTH`, the same "widest input/output wire" every
+  such leaf's own codegen already uses as `GET_BITS_PER_STAGE_DICT`'s
+  `num_bits`) — an N-bit leaf can hold at most N-1 interior registers (N
+  stages); offering more legal positions than that let `PLAN_CUTS` request
+  cuts `GET_BITS_PER_STAGE_DICT` could only honor with **interior zero-bit
+  stages** (bare registers around no logic — found for real: a 4-bit op
+  spread over 15 units accepted 14 cuts, `[0,1,0,0,0,1,0,0,0,1,0,0,0,1,0]`
+  bits per stage). Backstopped by a hard error in `GET_BITS_PER_STAGE_DICT`
+  itself if an interior zero-bit stage ever slips through anyway (a leading
+  or trailing zero-bit stage is fine — an IO-boundary register with no
+  logic on the outer side).
+- `sliceable_1ll` — `SPLIT_KIND_1LL` raw HDL leaf (MUX/AND/OR/XOR/...); only
+  the segment's own two boundary units are legal (`u == lo or u == hi - 1`),
+  its interior blames like `atomic` — a cut can move the leaf's boundary but
+  can never split its content, since the leaf's own generator places the
+  whole op in one stage regardless (§2). This is what stops `PLAN_CUTS` from
+  ever wasting a 2nd/3rd cut deep inside one MUX, the direct mechanism
+  behind an earlier bug where two cuts landing inside the same op produced
+  two slices that split zero logic.
 - `atomic` — unsliceable span (reason recorded: `state_regs`,
   `feedback_vars`, `vhdl_module_text`, `inside_X_container`, ...),
 - `locked` — `params_are_fixed` (a mini-sweep result); already pipelined
@@ -387,36 +454,45 @@ cut@19 -> 19.5/25 = 0.78 of my_main -> 4.5ns into mul_add[2] (15..25)
           -> 4.5ns into MULT (0..6)  -> MULT._slices = [0.75]
 
 TimingParamsLookupTable (only non-empty entries shown):
-  my_main/mul_add[1]/ADD   ._slices = [0.875]   # leaf register row 1
-  my_main/mul_add[2]/MULT  ._slices = [0.75]    # leaf register row 2
+  my_main/mul_add[1]/ADD   ._slices = [0.875]   # leaf slice 1
+  my_main/mul_add[2]/MULT  ._slices = [0.75]    # leaf slice 2
   -> my_main rebuilt latency = 2 clks = 3 pipeline stages
 ```
 
 Parallel branches overlap on the axis; a unit is legal if *any* sliceable
-leaf covers it. The old equivalent of all of the above was
-`GET_BEST_GUESS_IDEAL_SLICES(n)` = n evenly spaced fractions, blind to what
-they'd hit (a cut at 0.5 here would have landed inside `acc` and been
-silently lost — the "Finding #1" bug class the invariant now guards).
+leaf covers it. `--coarse` (and the hotspot mini-sweep, which is a
+`--coarse` run in isolation) uses `GET_BEST_GUESS_IDEAL_SLICES(n)` = n
+evenly spaced global fractions with no idea what they'd hit (a cut at 0.5
+here would have landed inside `acc` and been silently lost — the "Finding
+#1" bug class the invariant above guards against). A landscape-aware,
+exact-cut-count replacement for this (`SEARCH_EXACT_CUT_COUNT`/
+`GET_EVEN_SLICES_OVER_LANDSCAPE`) was built and measured against real
+sky130 synthesis: on the divider design it consistently placed cuts *worse*
+than the blind fractions it was meant to improve on (~16% lower fmax at an
+equal, fixed cut count, holding every other change constant) with no
+counter-example found where it did better — reverted rather than shipped.
+See the project's autopipelining-fmax investigation handoff notes if
+revisiting this.
 
 After applying cuts, `CHECK_CUTS_VS_LATENCY` compares the planned cut count
-against the leaf slices that actually materialized in the domain subtree.
+against the leaf slices that actually materialized in the subtree.
 Its strictness follows the landscape:
 
 - **Zero leaf slices** while cuts were planned: always a hard error
   (the Finding #1 class — every register vanished).
-- **Fully sliceable domain** (every delay unit legal — pure comb, a
+- **Fully sliceable subtree** (every delay unit legal — pure comb, a
   register can go anywhere): fewer leaf slices than cuts is a hard error —
-  nothing in the domain may absorb a cut, so a shortfall means slicing
+  nothing in the subtree may absorb a cut, so a shortfall means slicing
   descent itself is broken. *More* slices than cuts is normal even here:
   a cut is a stage-boundary line across the dataflow, and where it crosses
   parallel branches each branch materializes its own leaf register.
-- **Domain with unsliceable spans** (atomic/locked segments): cuts
+- **Subtree with unsliceable spans** (atomic/locked segments): cuts
   legitimately shift/merge around those spans on the way down, so a
   shortfall is expected — a one-line `[sweep] note:` only, no warning.
 
 ### Floor
 
-*What fmax can this domain never exceed?* The longest run of illegal units
+*What fmax can this subtree never exceed?* The longest run of illegal units
 is the predicted minimum stage delay — reported with a blamed instance
 **before any synthesis run**. Old behavior: this was discovered empirically
 by watching 5+ full syn runs plateau at the same MHz.
@@ -426,7 +502,7 @@ In the running example the longest illegal run is `acc`'s 5 units → floor =
 informational:
 
 ```
-[sweep] main=my_main domain=my_main comb delay ~25.0 ns, target 10.0 ns
+[sweep] main=my_main subtree=my_main comb delay ~25.0 ns, target 10.0 ns
         (100.0 MHz), predicted fmax floor (soft) ~200.0 MHz
         due to acc (state_regs, 5.0 ns unsliceable)
 ```
@@ -451,6 +527,28 @@ Floors come in two strengths:
   at a soft floor *empirically* (achieved fmax stuck there for consecutive
   iterations).
 
+**"At the floor" is a symmetric band, not a one-sided threshold.**
+`SWEEP.AT_PREDICTED_FLOOR(curr_mhz, floor, target_mhz)` requires curr_mhz
+within `[FLOOR_TOLERANCE*floor, floor/FLOOR_TOLERANCE]` — both a lower bound
+*and* an upper bound. An earlier version checked only the lower bound
+(`curr_mhz >= FLOOR_TOLERANCE*floor`), which is satisfied by any fmax above
+the floor however far above: seen for real, a sweep stopped at 124.18 MHz
+citing a ~71.6 MHz predicted floor (73% above it, nowhere near stagnating)
+and reported `TIMING NOT MET` despite comfortably beating its own 147 MHz
+goal. A curr_mhz far above the floor means the *prediction* was wrong, not
+that a ceiling was reached, so it must not count as "at the floor".
+
+**Restoring the best-seen result must re-check whether it actually met
+its goal.** When the sweep stops without the final iteration meeting
+timing, it restores whichever earlier iteration had the best worst-case
+achieved/target ratio (`best_tpl`/`best_score`) and writes that out instead.
+`SWEEP.BEST_SNAPSHOT_MET_ALL_GOALS(best_score)` (`best_score >= 1.0`) then
+re-derives `met_timing` for that restored snapshot — without it, a build
+could restore a snapshot that measured 244.72 MHz against a 147.00 MHz
+target and still exit `TIMING NOT MET`, because `met_timing` was last
+written by a later, worse iteration (e.g. one a floor-stop landed on
+afterward) and never re-checked against the snapshot actually written out.
+
 ### Plan
 
 `MainSweepPlan` (one per MAIN with a target MHz) replaces the old
@@ -462,9 +560,9 @@ example, mid-sweep after one failed iteration that was attributed to
 MainSweepPlan(
   main_inst        = "my_main",
   target_mhz       = 100.0,
-  domains          = ["my_main"],            # cut domain roots
+  subtrees         = ["my_main"],            # cut subtree roots
   landscapes       = {"my_main": <SliceLandscape above>},
-  cuts             = {"my_main": [9, 19]},   # planned cut units per domain
+  cuts             = {"my_main": [9, 19]},   # planned cut units per subtree
   # learned calibration (successors of the old global multipliers,
   # but per-func where attribution allows):
   func_delay_scale = {"mul_add": 1.75},      # densify: mul_add units now
@@ -493,7 +591,7 @@ The history dumps to `<out_dir>/<top>/sweep_history.json`, one record per
 
 ```
                  +--------------------------------------------+
-                 | plan cuts per domain (landscape + budget)   |
+                 | plan cuts per subtree (landscape + budget)  |
                  | apply locks, slice, write VHDL              |
                  +--------------------+-----------------------+
                                       |
@@ -572,10 +670,10 @@ attempted. Instead:
 
 1. MAINs resolve via entity-name prefixes (unchanged
    `GET_MAIN_INSTS_FROM_PATH_REPORT` — MAIN entities survive unmangled);
-2. function-name *fragments* from the domain's landscape are
+2. function-name *fragments* from the subtree's landscape are
    substring-scored against the report's register/netlist names (generated
    `REG_STAGEn_<wire>` FF names survive synthesis well); highest score wins.
-   The domain root and the main's own names are **excluded** — the flattened
+   The subtree root and the main's own names are **excluded** — the flattened
    netlist prefixes every register with the top entity name, so the root
    would match everything and always win, a meaningless attribution;
 3. entity-local `REG_STAGEn` stage numbers are logged only — stage indices
@@ -678,7 +776,7 @@ explicitly during the sweep:
 |---|---|
 | (default) | planned sweep per MAIN with a target MHz |
 | `--comb` | no pipelining; one syn run reporting comb fmax per clock |
-| `--coarse` | single-instance coarse sweep only (even slices, latency grown from timing reports); auto-selected for a single main with no target MHz |
+| `--coarse` | single-instance coarse sweep only (evenly-spaced global fractions, `GET_BEST_GUESS_IDEAL_SLICES`; latency grown from timing reports); auto-selected for a single main with no target MHz |
 | `--start N` / `--stop N` / `--sweep` | coarse sweep controls (start latency, stop latency, +1 stepping) |
 | `--full_hier_syn` | synthesize every hierarchy level for path delays (no estimates) |
 | `--no_hier_syn` | opposite of `--full_hier_syn`: never synthesize any hierarchical module (incl. MAINs, stateful atomic spans) -- only true primitive leaves are synthesized, everything else estimated. Gives up the automatic estimate-was-inaccurate fallback to real synthesis. |
@@ -901,7 +999,7 @@ run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
 |---|---|
 | `sweep_comb_test.py` | pure comb MAIN: planner places cuts, meets timing |
 | `sweep_two_mains_test.py` | two MAINs: per-main plans, no-attribution fallback |
-| `sweep_fsm_autopipeline_test.py` | Reg-FSM main + AUTOPIPELINE region (via `_autopipeline_with_io_regs`): cut domain is the tagged child, FSM latency stays 0 |
+| `sweep_fsm_autopipeline_test.py` | Reg-FSM main + AUTOPIPELINE region (via `_autopipeline_with_io_regs`): cut subtree is the tagged child, FSM latency stays 0 |
 | `sweep_stateful_boundary_test.py` | comb→stateful→comb: cuts stop at the stateful boundary (Finding #1 regression) |
 | `sweep_floor_detect_test.py` | unreachable goal: floor predicted & blamed up front, sweep stops after a few syn runs, results written, then `TIMING NOT MET` + non-zero exit |
 | `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that autopipelining cannot help (planning time + standalone as-written check FAIL + failing report), one full syn run, `TIMING NOT MET` + non-zero exit |

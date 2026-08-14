@@ -160,6 +160,34 @@ def get_tests() -> list:
             requires=["ghdl"],
         )
     )
+    # Regression guard for the D1 fix (RAW_VHDL.SPLIT_KIND_1LL leaves -
+    # MUX/AND/OR/XOR - modelled as freely splittable when their generator
+    # only ever places their logic in ONE stage): a serial 1LL-only gate
+    # chain under real sky130 timing must never let one of them exceed its
+    # real slice ceiling, must still get pipelined at all (not collapse
+    # into one uncuttable atomic span), and must show up in the fmax floor
+    # report as a real bottleneck instead of "no unsliceable spans".
+    tests.append(
+        Test(
+            name="leaf_1ll_cap_test",
+            category="build_report",
+            cmd=[INST_DIR / "leaf_1ll_cap_test.py"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+        )
+    )
+    # Regression guard for the D2 fix (RAW_VHDL._EQUAL_WIDTH_BITS_PER_STAGE_
+    # DICT) and the §6a/§6b reporting fixes, against a real multi-cut sky130
+    # build in both the planned sweep and --coarse paths.
+    tests.append(
+        Test(
+            name="split_model_build_report_test",
+            category="build_report",
+            cmd=[INST_DIR / "split_model_build_report_test.py"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+        )
+    )
     return tests
 
 
