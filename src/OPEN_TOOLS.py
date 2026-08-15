@@ -87,6 +87,165 @@ def _GHDL_PLUGIN_IS_BUILT_IN(yosys_bin_path):
 
 GHDL_PLUGIN_BUILT_IN = _GHDL_PLUGIN_IS_BUILT_IN(YOSYS_BIN_PATH)
 
+# yosys shells out to a SEPARATE abc executable for its `abc` pass -- it is not
+# built into the yosys binary. It looks for `yosys-abc` next to its own exe
+# (what oss-cad-suite and most distro packages ship), unless built with
+# ABCEXTERNAL, in which case that compiled-in path (commonly a plain `abc` on
+# PATH) is used instead. A yosys install missing abc runs `synth` fine and only
+# fails once something actually reaches an `abc` pass -- which is why a plain
+# "is yosys installed" check can pass while DEVICE_MODELS (the only SYN_TOOL
+# here whose recipe calls `abc -liberty`) fails and PyRTL's own yosys use keeps
+# working.
+ABC_EXE = "yosys-abc"
+
+
+def FIND_ABC_EXE(yosys_bin_path=None):
+    """Best-effort locate the abc executable yosys would use. None if not found
+    (which does NOT prove abc is unavailable -- an ABCEXTERNAL-built yosys can
+    point anywhere -- so treat None as 'likely missing', not proof)."""
+    yosys_bin_path = yosys_bin_path or YOSYS_BIN_PATH
+    if yosys_bin_path is not None:
+        beside_yosys = os.path.join(yosys_bin_path, ABC_EXE)
+        if os.path.exists(beside_yosys):
+            return beside_yosys
+    for exe in (ABC_EXE, "abc"):
+        found = GET_TOOL_PATH(exe)
+        if found is not None:
+            return found
+    return None
+
+
+def _RUNS_OK(argv, timeout=15):
+    """True if argv executes at all (any exit code). False if it can't run --
+    missing, not executable, wrong arch/ABI, hung."""
+    try:
+        subprocess.run(
+            argv,
+            stdin=subprocess.DEVNULL,
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            timeout=timeout,
+        )
+        return True
+    except Exception:
+        return False
+
+
+def DIAGNOSE_TOOLS():
+    """Static, cheap checks of the yosys/ghdl/abc install, returning a list of
+    human-readable problem strings (empty == nothing obviously wrong).
+
+    Exists because the real failure mode is a *partial* install: yosys present
+    but abc missing, or ghdl present but GHDL_PREFIX pointing at a directory
+    with no runtime libraries. Both produce failures deep inside a redirected
+    yosys log rather than at any "is it installed" check, and both can leave
+    other flows (PyRTL, plain elaboration) working perfectly. Intended for
+    attaching to an error after a tool invocation has already failed, or for a
+    manual pre-flight check -- not called on every build.
+    """
+    problems = []
+
+    # --- yosys ---
+    if YOSYS_BIN_PATH is None:
+        problems.append(
+            "yosys not found. Set the OSS_CAD_SUITE env var to an oss-cad-suite "
+            "install, or put `yosys` on PATH."
+        )
+    else:
+        yosys_exe = os.path.join(YOSYS_BIN_PATH, YOSYS_EXE)
+        if not os.path.exists(yosys_exe):
+            problems.append(f"yosys executable missing: {yosys_exe}")
+        elif not _RUNS_OK([yosys_exe, "--version"]):
+            problems.append(
+                f"yosys found but will not run: {yosys_exe} "
+                "(not executable, wrong architecture, or missing shared libraries?)"
+            )
+
+    # --- abc (yosys's separate technology-mapping executable) ---
+    abc_exe = FIND_ABC_EXE()
+    if abc_exe is None:
+        problems.append(
+            f"abc executable not found (looked for `{ABC_EXE}` next to yosys at "
+            f"{YOSYS_BIN_PATH}, then `{ABC_EXE}`/`abc` on PATH). yosys shells out "
+            "to abc for its `abc` pass, so `synth` succeeds and only liberty "
+            "technology mapping (`abc -liberty ...`) fails -- this breaks the "
+            "sky130 SYN_TOOL while leaving PyRTL's yosys use working. If this "
+            "yosys was built with ABCEXTERNAL, abc may live elsewhere and this "
+            "warning can be ignored."
+        )
+    elif not _RUNS_OK([abc_exe, "-h"]):
+        problems.append(f"abc found but will not run: {abc_exe}")
+
+    # --- ghdl ---
+    if GHDL_BIN_PATH is None:
+        problems.append("ghdl not found. Put `ghdl` on PATH or install oss-cad-suite.")
+    else:
+        ghdl_exe = os.path.join(GHDL_BIN_PATH, GHDL_EXE)
+        if not os.path.exists(ghdl_exe):
+            problems.append(f"ghdl executable missing: {ghdl_exe}")
+        elif not _RUNS_OK([ghdl_exe, "--version"]):
+            problems.append(f"ghdl found but will not run: {ghdl_exe}")
+
+    # --- GHDL_PREFIX (ghdl's compiled runtime + analyzed std/ieee libraries) ---
+    if GHDL_PREFIX is None:
+        problems.append(
+            "GHDL_PREFIX is unset and could not be derived. ghdl cannot find its "
+            "analyzed `std`/`ieee` libraries without it, so every `ghdl` import "
+            "inside yosys fails."
+        )
+    elif not os.path.isdir(GHDL_PREFIX):
+        problems.append(
+            f"GHDL_PREFIX points at a non-existent directory: {GHDL_PREFIX} "
+            "(derived as <ghdl exe dir>/../lib/ghdl -- correct that path, or set "
+            "the OSS_CAD_SUITE env var if using oss-cad-suite)."
+        )
+    else:
+        missing_libs = [
+            d for d in ("std", "ieee") if not os.path.isdir(os.path.join(GHDL_PREFIX, d))
+        ]
+        if missing_libs:
+            problems.append(
+                f"GHDL_PREFIX={GHDL_PREFIX} exists but is missing the "
+                f"{'/'.join(missing_libs)} subdirector"
+                f"{'y' if len(missing_libs) == 1 else 'ies'} ghdl needs -- this is "
+                "probably the wrong directory (it should contain ghdl's analyzed "
+                "standard libraries, e.g. oss-cad-suite's lib/ghdl)."
+            )
+
+    # --- the ghdl-yosys plugin bridge, however this install provides it ---
+    if YOSYS_BIN_PATH is not None and os.path.exists(
+        os.path.join(YOSYS_BIN_PATH, YOSYS_EXE)
+    ):
+        yosys_exe = os.path.join(YOSYS_BIN_PATH, YOSYS_EXE)
+        argv = [yosys_exe]
+        if not GHDL_PLUGIN_BUILT_IN:
+            argv += ["-m", "ghdl"]
+        argv += ["-p", "ghdl --version"]
+        try:
+            result = subprocess.run(
+                argv,
+                stdin=subprocess.DEVNULL,
+                stdout=subprocess.PIPE,
+                stderr=subprocess.STDOUT,
+                timeout=15,
+            )
+            out = result.stdout.decode(errors="replace")
+            if "No such command: ghdl" in out or "Can't load module" in out:
+                problems.append(
+                    "yosys cannot provide the `ghdl` command "
+                    f"({'no -m flag needed per auto-detect' if GHDL_PLUGIN_BUILT_IN else 'tried `-m ghdl`'}): "
+                    "the ghdl-yosys-plugin is missing, or was built against a "
+                    "different yosys version than this one. Installing yosys and "
+                    "ghdl from one coordinated source (e.g. a single oss-cad-suite "
+                    "release) avoids this. yosys output:\n    "
+                    + "\n    ".join(out.strip().splitlines()[-5:])
+                )
+        except Exception as e:
+            problems.append(f"could not probe yosys's ghdl command support: {e}")
+
+    return problems
+
+
 # Flag to skip pnr
 YOSYS_JSON_ONLY = False
 

@@ -4229,13 +4229,18 @@ def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
     # `part` disambiguates cache entries when the same SYN_TOOL/library/
     # corner combo could still map to different physical parts (ex. PyRTL's
     # tech node doesn't imply an FPGA part number). For DEVICE_MODELS the
-    # library IS the part - PART("sky130_fd_sc_hvl") sets parser_state.part
-    # to the exact same string already folded into PATH_DELAY_CACHE_DIR
-    # above, so appending it again produced a redundant nested directory
-    # with identical cache contents at two different paths.
-    part_already_encoded = (
-        SYN_TOOL is DEVICE_MODELS and parser_state.part == DEVICE_MODELS.SELECTED_LIBRARY
-    )
+    # part carries no information the library+corner above doesn't already
+    # encode -- the part string is only ever a *selector* that routes to this
+    # tool (PART_SET_TOOL matches any "sky130"-prefixed string), and the
+    # library/corner actually used comes from SELECTED_LIBRARY/SELECTED_CORNER
+    # regardless of how it was spelled. Appending it too would fragment one
+    # logical cache across a directory per spelling: PART("sky130") and
+    # PART("sky130_fd_sc_hvl") select the identical tool+library+corner but
+    # would look in ".../sky130/syn" and ".../syn" respectively, so a
+    # committed cache populated under one spelling silently misses under the
+    # other (real bug: PART("sky130") re-synthesized every already-cached
+    # leaf).
+    part_already_encoded = SYN_TOOL is DEVICE_MODELS
     if parser_state.part is not None and not part_already_encoded:
         PATH_DELAY_CACHE_DIR += "/" + parser_state.part
     if TOOL_DOES_PNR():

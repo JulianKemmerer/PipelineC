@@ -792,7 +792,57 @@ def _run_synth_and_sta(vhdl_files_texts, top_entity_name, work_dir, log_path):
             f'export GHDL_PREFIX="{OPEN_TOOLS.GHDL_PREFIX}"\n'
             f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys {m_ghdl}-p '{script}' &>> {os.path.basename(synth_log_path)}\n"
         )
-    C_TO_LOGIC.GET_SHELL_CMD_OUTPUT("bash " + os.path.basename(sh_path), cwd=work_dir)
+    try:
+        C_TO_LOGIC.GET_SHELL_CMD_OUTPUT("bash " + os.path.basename(sh_path), cwd=work_dir)
+    except Exception as e:
+        # The script sends ALL yosys/ghdl/abc output to synth_log_path (`&>>`),
+        # so the raised shell error carries an empty stdout/stderr and says only
+        # "Command failed: bash <x>_syn.sh" -- useless on a machine where you
+        # can't open the log yourself (CI, a hosted grader). Surface the actual
+        # tool output, plus the exact command, which together identify the usual
+        # causes directly: a missing//wrong-ABI `-m ghdl` plugin, a bad
+        # GHDL_PREFIX, an unreadable liberty file, or an abc/yosys version that
+        # rejects a flag.
+        tail = ""
+        if os.path.exists(synth_log_path):
+            log_lines = open(synth_log_path, errors="replace").read().splitlines()
+            tail = "\n".join(log_lines[-60:])
+        # Static install checks, run only now that something has actually
+        # failed: a partial install (yosys without abc, ghdl without a valid
+        # GHDL_PREFIX, a mismatched ghdl plugin) fails here rather than at any
+        # "is it installed" check, so this is where naming the specific broken
+        # piece is worth the few subprocess probes it costs.
+        problems = list(OPEN_TOOLS.DIAGNOSE_TOOLS())
+        if not os.path.exists(lib_path):
+            problems.append(f"liberty file missing: {lib_path}")
+        elif not os.access(lib_path, os.R_OK):
+            problems.append(f"liberty file not readable: {lib_path}")
+        elif os.path.getsize(lib_path) < 1024 * 1024:
+            problems.append(
+                f"liberty file is suspiciously small "
+                f"({os.path.getsize(lib_path)} bytes): {lib_path} -- a real sky130 "
+                "standard-cell .lib is several MB; a git-lfs pointer or truncated "
+                "copy would look like this."
+            )
+        problems_text = (
+            "".join(f"  * {p}\n" for p in problems)
+            if problems
+            else "  (no obvious install problem found -- see the log above)\n"
+        )
+        raise Exception(
+            f"{e}\n"
+            f"[DEVICE_MODELS] synth/STA shell script failed.\n"
+            f"  script: {sh_path}\n"
+            f"  log:    {synth_log_path}\n"
+            f"  yosys:  {OPEN_TOOLS.YOSYS_BIN_PATH}/yosys {m_ghdl}\n"
+            f"  abc:    {OPEN_TOOLS.FIND_ABC_EXE()}\n"
+            f"  GHDL_PREFIX: {OPEN_TOOLS.GHDL_PREFIX}\n"
+            f"  liberty: {lib_path}\n"
+            f"--- last 60 lines of {os.path.basename(synth_log_path)} ---\n"
+            f"{tail if tail else '(no log output produced at all)'}\n"
+            f"--- end of log ---\n"
+            f"[DEVICE_MODELS] likely causes:\n{problems_text}"
+        ) from e
 
     synth_log_text = open(synth_log_path).read() if os.path.exists(synth_log_path) else ""
     if not os.path.exists(json_path):
