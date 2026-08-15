@@ -105,9 +105,7 @@ int main()
     else:
         raise Exception("yosys executable not found!")
 
-    m_ghdl = ""
-    if not OPEN_TOOLS.GHDL_PLUGIN_BUILT_IN:
-        m_ghdl = "-m ghdl "
+    m_ghdl = OPEN_TOOLS.GET_GHDL_PLUGIN_FLAGS()
     sh_text = f"""
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i --std=08 `cat ../vhdl_files.txt` && \
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m --std=08 {SYN.TOP_LEVEL_MODULE} && \

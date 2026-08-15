@@ -1,9 +1,11 @@
 # pyright: reportInvalidTypeForm=none
+import ast
 import functools
 import inspect
 import math
 import os
 import sys
+import typing
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "..", "..")
@@ -146,6 +148,24 @@ def make_shared_typed_helper(T):
         return x
 
     return shared_typed_helper
+
+
+def test_function_type_params_are_not_mistaken_for_hardware_annotations():
+    T = typing.TypeVar("T")
+
+    def generic_identity(value):
+        return value
+
+    generic_identity.__type_params__ = (T,)
+    func_def = ast.parse("def generic_identity(value: T) -> T: pass").body[0]
+    assert not P._is_hardware_func(
+        func_def, {"generic_identity": generic_identity}
+    )
+
+    if hasattr(typing, "override"):
+        override_def = P._parsed_func_def(typing.override)
+        assert not P._is_hardware_func(override_def, vars(typing))
+    print("test_function_type_params_are_not_mistaken_for_hardware_annotations PASS")
 
 
 def test_annotation_only_param_recovered_into_closure_ns():
@@ -525,6 +545,7 @@ if __name__ == "__main__":
     test_nested_factory_instances_get_distinct_readable_names()
     test_top_level_callable_closure_param_is_readable()
     test_nested_callable_closure_param_recurses_and_stays_unique()
+    test_function_type_params_are_not_mistaken_for_hardware_annotations()
     test_annotation_only_param_recovered_into_closure_ns()
     test_recursive_naming_uses_callables_own_globals_and_recovers_annotations()
     test_same_factory_same_args_dedups()
