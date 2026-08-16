@@ -1,0 +1,104 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-08-15T16:07:45.921262+00:00",
+  "purpose": "Byte-frozen full gate-Divider synthesis-recipe selection at the generic hand-equivalent physical control placement",
+  "target": {
+    "strict_fmax_mhz": 143.0,
+    "maximum_slices": 48,
+    "measured_slices": 32,
+    "measured_stages": 33
+  },
+  "frozen_design": {
+    "fixture_sha256": "dcb24be3351f4e8d4680cfcaca3ed073d7c439db680919f8d6e7cfbd60661aec",
+    "generator_manifest_sha256": "a76fa92034f8fd3074fdc29bad7c262f79eda48009a706583583c1a3f496938d",
+    "generator_vhdl_aggregate_sha256": "df00a68328a83c94c0165512d2bb711b256fd3e1686d9d544e4065f49c96cce0",
+    "ordered_file_count": 16,
+    "schedule": "divide-zero select output followed by the first 31 repeated step outputs",
+    "functional": {
+      "passed": true,
+      "cycles": 201,
+      "valid_vectors": 141,
+      "latency_slices": 32,
+      "coverage": [
+        "continuous-valid traffic",
+        "bubbles",
+        "edge cases",
+        "divide by zero",
+        "output ordering",
+        "valid timing",
+        "pipeline flush",
+        "input_ready == 1"
+      ],
+      "output_backpressure": false
+    }
+  },
+  "pinned_inputs": {
+    "yosys_sha256": "7c3e3396b38c129dd7485be5a0a0f0da8e495a94c8fd486059e3bea043a588d6",
+    "yosys_version": "Yosys 0.48+51 (git sha1 17a53b838)",
+    "mapping_liberty_sha256": "fb1c43d5971efa70df79d7f16de69f8bbe3c7f0de0432baae4c43e7c72e251e9",
+    "sta_condensed_json_sha256": "a202cd3c60891ea4a655bf45e838a1a37e98f58e3c61fac86bb84606a637fe6b",
+    "measured_model_version": 2
+  },
+  "selection_policy": "At equal slice count, meet timing first, then maximize fmax margin, then compare cells and runtime",
+  "selected_production_recipe": "early_flatten_opt",
+  "promoted_model_version": 3,
+  "recipes": {
+    "current": {
+      "worst_period_ns": 6.702941600362068,
+      "fmax_mhz": 149.18823102173286,
+      "mapped_cells": 27330,
+      "mapped_dffs": 3072,
+      "n_unmapped_cells": 0,
+      "incomplete_topo": false,
+      "n_max_capacitance_violations": 3,
+      "mapping_runtime_seconds": 225.68003550497815,
+      "mapped_json_sha256": "595822ac56818379e02eba8740d18bbe7540ba1dd916f0be52d2c8fe5d4ea2dd",
+      "recipe_evidence_sha256": "eb7e6e4917c7c8930ba2807fd82d1c8e405f2a328f575d9bcad656caec7e66c4",
+      "acceptance_passed": true,
+      "provenance_note": "Byte-level VHDL, tool, liberty, mapping, STA and simulation evidence is authoritative; mapper-source hashes were captured before the later hardening fields existed."
+    },
+    "synth_flatten": {
+      "worst_period_ns": 5.9178889560585,
+      "fmax_mhz": 168.97917609221776,
+      "mapped_cells": 16359,
+      "mapped_dffs": 3072,
+      "n_unmapped_cells": 0,
+      "incomplete_topo": false,
+      "n_max_capacitance_violations": 0,
+      "mapping_runtime_seconds": 1692.0610696668737,
+      "mapped_json_sha256": "693668fef5f3625ed7310e824565bcaa674c85364ff3dd5cfffdcd0e968b28df",
+      "recipe_evidence_sha256": "861d5679a1d640a014a8af10ea7c5a8a8a87629af237d836577fa58eb0bbbc3d",
+      "acceptance_passed": true,
+      "provenance_note": "Byte-level VHDL, tool, liberty, mapping, STA and simulation evidence is authoritative; mapper-source hashes were captured before the later hardening fields existed."
+    },
+    "synth_flatten_noabc": {
+      "worst_period_ns": 5.918791249251697,
+      "fmax_mhz": 168.95341597432218,
+      "mapped_cells": 16285,
+      "mapped_dffs": 3072,
+      "n_unmapped_cells": 0,
+      "incomplete_topo": false,
+      "n_max_capacitance_violations": 0,
+      "mapping_runtime_seconds": 1769.0941736099776,
+      "mapped_json_sha256": "d957bfe0bb4269cf888ae68da9c5b22256b7c75f8828ec29e45d5fe4d392348e",
+      "recipe_evidence_sha256": "f2b0d85e2c27a319f270d9f66801717598ed4227557b952d4bd877edeada7cac",
+      "acceptance_passed": true,
+      "provenance_note": "Frozen hardware/tool/liberty evidence is authoritative. Source files changed while this long control ran, so post-hoc mapper-source attribution is intentionally not used."
+    },
+    "early_flatten_opt": {
+      "worst_period_ns": 5.666675655881654,
+      "fmax_mhz": 176.47030829478706,
+      "mapped_cells": 16594,
+      "mapped_dffs": 3072,
+      "n_unmapped_cells": 0,
+      "incomplete_topo": false,
+      "n_max_capacitance_violations": 0,
+      "mapping_runtime_seconds": 242.3628294991795,
+      "mapped_json_sha256": "a4bf075a232770cae9992059ebbb387bb1cea20608a03093fb89ba94544e0c79",
+      "recipe_evidence_sha256": "d10499f2753002f7275b127f852d7a253e284e450204aac1e8d246a243482dcc",
+      "acceptance_passed": true,
+      "mapper_sources_unchanged_through_mapping": true,
+      "selection_note": "Highest full-design fmax; 4.43% more margin than synth_flatten, 39.28% fewer cells than current, and close to current runtime."
+    }
+  }
+}

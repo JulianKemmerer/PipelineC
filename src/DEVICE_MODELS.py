@@ -10,7 +10,10 @@
 # (C) 2022 Victor Surez Rovere <suarezvictor@gmail.com>
 # NOTE: only for integer operations (not floats)
 
+import hashlib
 import os, re, math
+import shlex
+import time
 
 ops = {}
 
@@ -310,6 +313,88 @@ def LOAD_LIBERTY(library=DEFAULT_LIBRARY, corner=DEFAULT_CORNER):
 from collections import deque as _deque
 
 
+class _ArrivalState:
+    """One rise/fall arrival with enough provenance to explain the winner.
+
+    ``prev`` is a back-pointer rather than a copied path list. Keeping this
+    representation O(number of nets) matters for full-divider netlists while
+    still allowing the one critical path to be reconstructed after timing.
+    """
+
+    __slots__ = (
+        "time_ns",
+        "transition_ns",
+        "root_inst",
+        "launch_clock_to_q_ns",
+        "combinational_delay_ns",
+        "prev",
+        "arc",
+    )
+
+    def __init__(
+        self,
+        time_ns,
+        transition_ns,
+        root_inst,
+        launch_clock_to_q_ns=0.0,
+        combinational_delay_ns=0.0,
+        prev=None,
+        arc=None,
+    ):
+        self.time_ns = time_ns
+        self.transition_ns = transition_ns
+        self.root_inst = root_inst
+        self.launch_clock_to_q_ns = launch_clock_to_q_ns
+        self.combinational_delay_ns = combinational_delay_ns
+        self.prev = prev
+        self.arc = arc
+
+
+def _arc_diagnostic(
+    kind,
+    inst,
+    cell_type,
+    in_pin,
+    out_pin,
+    in_polarity,
+    out_polarity,
+    delay_ns,
+    input_transition_ns,
+    output_transition_ns,
+    load_cap_pf,
+    max_capacitance_pf,
+    fanout,
+):
+    return {
+        "kind": kind,
+        "instance": inst,
+        "cell_type": cell_type,
+        "input_pin": in_pin,
+        "output_pin": out_pin,
+        "input_polarity": in_polarity,
+        "output_polarity": out_polarity,
+        "delay_ns": delay_ns,
+        "input_transition_ns": input_transition_ns,
+        "output_transition_ns": output_transition_ns,
+        "load_capacitance_pf": load_cap_pf,
+        "max_capacitance_pf": max_capacitance_pf,
+        "fanout": fanout,
+        "violates_max_capacitance": (
+            max_capacitance_pf is not None and load_cap_pf > max_capacitance_pf
+        ),
+    }
+
+
+def _reconstruct_critical_path(state):
+    arcs = []
+    while state is not None:
+        if state.arc is not None:
+            arcs.append(state.arc)
+        state = state.prev
+    arcs.reverse()
+    return arcs
+
+
 def _strip_bs(name):
     return name.lstrip("\\") if isinstance(name, str) else name
 
@@ -400,21 +485,25 @@ def _source_polarities(sense, out_pol):
     return ("rise", "fall")  # non_unate / unspecified -- conservative
 
 
-def run_sta(json_path, top=None, library=DEFAULT_LIBRARY, corner=DEFAULT_CORNER,
-            default_trans=DEFAULT_TRANSITION_NS):
+def run_sta(
+    json_path,
+    top=None,
+    library=DEFAULT_LIBRARY,
+    corner=DEFAULT_CORNER,
+    default_trans=DEFAULT_TRANSITION_NS,
+):
     """Real topological STA over a liberty-mapped yosys JSON netlist.
-    Returns a dict: worst_period_ns, start_reg_name, end_reg_name (real
-    hierarchical instance dotted-paths when the winning path starts/ends at a
-    register -- None otherwise, e.g. a primary-input-sourced or
-    primary-output-sunk path), n_cells, n_unmapped_cells,
-    incomplete_topo (True means a combinational cycle or disconnected cell
-    was found -- should never happen on real synthesized logic),
-    n_max_capacitance_violations (informational: how many arcs were
-    evaluated past their characterized load range this run).
+
+    In addition to the historical worst period and endpoint names, the result
+    separates launch clock-to-Q, combinational, and setup delay and includes
+    a structured cell-arc trace for the winning path. These are diagnostics;
+    their sum is the same period used by the sweep.
     """
     models = LOAD_LIBERTY(library, corner)
     cells, ports = _load_netlist_json(json_path, top)
-    driver_of, sinks_of, clk_sinks_of, load_cap, n_unmapped = _build_graph(cells, models)
+    driver_of, sinks_of, clk_sinks_of, load_cap, n_unmapped = _build_graph(
+        cells, models
+    )
     preds, succs = _build_cell_graph(cells, models, driver_of)
 
     indeg = {inst: len(preds[inst]) for inst in cells}
@@ -423,89 +512,162 @@ def run_sta(json_path, top=None, library=DEFAULT_LIBRARY, corner=DEFAULT_CORNER,
     while dq:
         inst = dq.popleft()
         order.append(inst)
-        for s in succs[inst]:
-            indeg[s] -= 1
-            if indeg[s] == 0:
-                dq.append(s)
+        for successor in succs[inst]:
+            indeg[successor] -= 1
+            if indeg[successor] == 0:
+                dq.append(successor)
     incomplete_topo = len(order) != len(cells)
 
-    # arrival[bit] = {"rise": (t_ns, trans_ns, root_inst_or_None), "fall": (...)}
-    # root_inst is the *originating register instance* (or None for a
-    # primary-input-sourced signal) that this arrival ultimately traces back
-    # to -- carried forward hop-by-hop so a winning endpoint can report real
-    # start_reg_name/end_reg_name without a separate backtracking pass.
+    # root_inst is the originating register instance (or None for a primary
+    # input). Back-pointers provide path provenance without copying whole
+    # lists at each propagated net.
     arrival = {}
     all_bits = set(driver_of) | set(sinks_of) | set(clk_sinks_of)
-    for b in all_bits:
-        if b not in driver_of:
-            arrival[b] = dict(rise=(0.0, default_trans, None), fall=(0.0, default_trans, None))
+    for port in ports.values():
+        all_bits.update(bit for bit in port.get("bits", ()) if isinstance(bit, int))
+    for bit in all_bits:
+        if bit not in driver_of:
+            arrival[bit] = {
+                "rise": _ArrivalState(0.0, default_trans, None),
+                "fall": _ArrivalState(0.0, default_trans, None),
+            }
 
     n_violations = 0
 
-    # Seed sequential-cell outputs via their own idealized clk-><out> arc.
-    for inst, c in cells.items():
-        model = models.get(c.get("type", ""))
+    # Seed sequential-cell outputs via their ideal-clock clk->Q arc.
+    for inst, cell in cells.items():
+        model = models.get(cell.get("type", ""))
         if model is None or not model.is_sequential:
             continue
-        conns = c.get("connections", {})
+        conns = cell.get("connections", {})
         clk_pin = model.clock_pin()
         for out_pin in model.output_pins:
             bits = conns.get(out_pin, [])
             if not bits or not isinstance(bits[0], int):
                 continue
-            ob = bits[0]
+            out_bit = bits[0]
             if clk_pin is None:
-                arrival[ob] = dict(rise=(0.0, default_trans, inst), fall=(0.0, default_trans, inst))
+                arrival[out_bit] = {
+                    "rise": _ArrivalState(0.0, default_trans, inst),
+                    "fall": _ArrivalState(0.0, default_trans, inst),
+                }
                 continue
-            load = load_cap.get(ob, 0.0)
-            res = {}
-            for kind, pol in (("cell_rise", "rise"), ("cell_fall", "fall")):
-                r = model.table_lookup(out_pin, clk_pin, kind, default_trans, load)
-                if r is None:
-                    res[pol] = (0.0, default_trans, inst)
+            load = load_cap.get(out_bit, 0.0)
+            max_cap = model.output_pins.get(out_pin, {}).get("max_capacitance")
+            fanout = len(sinks_of.get(out_bit, ()))
+            result = {}
+            for table_kind, polarity in (
+                ("cell_rise", "rise"),
+                ("cell_fall", "fall"),
+            ):
+                lookup = model.table_lookup(
+                    out_pin, clk_pin, table_kind, default_trans, load
+                )
+                if lookup is None:
+                    result[polarity] = _ArrivalState(0.0, default_trans, inst)
                     continue
-                delay, trans, violates = r
+                delay, transition, violates = lookup
                 if violates:
                     n_violations += 1
-                res[pol] = (delay, trans, inst)
-            arrival[ob] = res
+                arc = _arc_diagnostic(
+                    "clock_to_q",
+                    inst,
+                    cell.get("type", ""),
+                    clk_pin,
+                    out_pin,
+                    None,
+                    polarity,
+                    delay,
+                    default_trans,
+                    transition,
+                    load,
+                    max_cap,
+                    fanout,
+                )
+                result[polarity] = _ArrivalState(
+                    delay,
+                    transition,
+                    inst,
+                    launch_clock_to_q_ns=delay,
+                    arc=arc,
+                )
+            arrival[out_bit] = result
 
     # Propagate through combinational cells in topological order.
     for inst in order:
-        c = cells[inst]
-        model = models.get(c.get("type", ""))
+        cell = cells[inst]
+        model = models.get(cell.get("type", ""))
         if model is None or model.is_sequential:
             continue
-        conns = c.get("connections", {})
+        conns = cell.get("connections", {})
         for out_pin in model.output_pins:
             out_bits = conns.get(out_pin, [])
             if not out_bits or not isinstance(out_bits[0], int):
                 continue
-            ob = out_bits[0]
-            load = load_cap.get(ob, 0.0)
-            best = dict(rise=None, fall=None)
+            out_bit = out_bits[0]
+            load = load_cap.get(out_bit, 0.0)
+            max_cap = model.output_pins.get(out_pin, {}).get("max_capacitance")
+            fanout = len(sinks_of.get(out_bit, ()))
+            best = {"rise": None, "fall": None}
             for in_pin in model.input_pins:
                 in_bits = conns.get(in_pin, [])
                 if not in_bits or not isinstance(in_bits[0], int):
                     continue
-                ib = in_bits[0]
-                in_state = arrival.get(ib)
+                in_state = arrival.get(in_bits[0])
                 if in_state is None:
                     continue
                 sense = model.timing_sense(out_pin, in_pin)
-                for out_kind, out_pol in (("cell_rise", "rise"), ("cell_fall", "fall")):
-                    for src_pol in _source_polarities(sense, out_pol):
-                        src = in_state.get(src_pol)
-                        if src is None:
+                for table_kind, out_polarity in (
+                    ("cell_rise", "rise"),
+                    ("cell_fall", "fall"),
+                ):
+                    for in_polarity in _source_polarities(sense, out_polarity):
+                        source = in_state.get(in_polarity)
+                        if source is None:
                             continue
-                        arr, trans, root = src
-                        r = model.table_lookup(out_pin, in_pin, out_kind, trans, load)
-                        if r is None:
+                        lookup = model.table_lookup(
+                            out_pin,
+                            in_pin,
+                            table_kind,
+                            source.transition_ns,
+                            load,
+                        )
+                        if lookup is None:
                             continue
-                        delay, out_trans, violates = r
-                        cand = arr + delay
-                        if best[out_pol] is None or cand > best[out_pol][0]:
-                            best[out_pol] = (cand, out_trans, root)
+                        delay, out_transition, violates = lookup
+                        candidate = source.time_ns + delay
+                        if (
+                            best[out_polarity] is None
+                            or candidate > best[out_polarity].time_ns
+                        ):
+                            arc = _arc_diagnostic(
+                                "combinational",
+                                inst,
+                                cell.get("type", ""),
+                                in_pin,
+                                out_pin,
+                                in_polarity,
+                                out_polarity,
+                                delay,
+                                source.transition_ns,
+                                out_transition,
+                                load,
+                                max_cap,
+                                fanout,
+                            )
+                            best[out_polarity] = _ArrivalState(
+                                candidate,
+                                out_transition,
+                                source.root_inst,
+                                launch_clock_to_q_ns=(
+                                    source.launch_clock_to_q_ns
+                                ),
+                                combinational_delay_ns=(
+                                    source.combinational_delay_ns + delay
+                                ),
+                                prev=source,
+                                arc=arc,
+                            )
                             if violates:
                                 n_violations += 1
             if best["rise"] is None and best["fall"] is None:
@@ -514,18 +676,24 @@ def run_sta(json_path, top=None, library=DEFAULT_LIBRARY, corner=DEFAULT_CORNER,
                 best["rise"] = best["fall"]
             if best["fall"] is None:
                 best["fall"] = best["rise"]
-            arrival[ob] = best
+            arrival[out_bit] = best
 
-    # Endpoints: sequential-cell data-ish inputs (setup-constrained) and
-    # true primary-output ports (no downstream register modeled here).
+    # Endpoints: sequential-cell non-clock inputs and true primary outputs.
     worst_period = 0.0
     start_reg_name = None
     end_reg_name = None
-    for inst, c in cells.items():
-        model = models.get(c.get("type", ""))
+    worst_state = None
+    worst_setup = 0.0
+    critical_path_polarity = None
+    critical_endpoint_kind = None
+    critical_endpoint_pin = None
+    critical_output_port = None
+
+    for inst, cell in cells.items():
+        model = models.get(cell.get("type", ""))
         if model is None or not model.is_sequential:
             continue
-        conns = c.get("connections", {})
+        conns = cell.get("connections", {})
         clk_pin = model.clock_pin()
         for in_pin in model.input_pins:
             if in_pin == clk_pin:
@@ -533,48 +701,93 @@ def run_sta(json_path, top=None, library=DEFAULT_LIBRARY, corner=DEFAULT_CORNER,
             bits = conns.get(in_pin, [])
             if not bits or not isinstance(bits[0], int):
                 continue
-            ib = bits[0]
-            st = arrival.get(ib)
-            if st is None:
+            state = arrival.get(bits[0])
+            if state is None:
                 continue
-            r_arr, r_trans, r_root = st["rise"]
-            f_arr, f_trans, f_root = st["fall"]
-            if r_arr >= f_arr:
-                data_arr, data_trans, root = r_arr, r_trans, r_root
+            if state["rise"].time_ns >= state["fall"].time_ns:
+                endpoint_state = state["rise"]
+                endpoint_polarity = "rise"
             else:
-                data_arr, data_trans, root = f_arr, f_trans, f_root
-            setup = model.setup_requirement(in_pin, clk_pin, data_trans, default_trans) if clk_pin else 0.0
-            total = data_arr + setup
+                endpoint_state = state["fall"]
+                endpoint_polarity = "fall"
+            setup = (
+                model.setup_requirement(
+                    in_pin,
+                    clk_pin,
+                    endpoint_state.transition_ns,
+                    default_trans,
+                )
+                if clk_pin
+                else 0.0
+            )
+            total = endpoint_state.time_ns + setup
             if total > worst_period:
                 worst_period = total
-                start_reg_name = root
+                start_reg_name = endpoint_state.root_inst
                 end_reg_name = inst
+                worst_state = endpoint_state
+                worst_setup = setup
+                critical_path_polarity = endpoint_polarity
+                critical_endpoint_kind = "register"
+                critical_endpoint_pin = in_pin
+                critical_output_port = None
 
-    for pname, p in ports.items():
-        if p.get("direction") != "output":
+    for port_name, port in ports.items():
+        if port.get("direction") != "output":
             continue
-        for b in p.get("bits", []):
-            if not isinstance(b, int):
+        for bit in port.get("bits", []):
+            if not isinstance(bit, int):
                 continue
-            st = arrival.get(b)
-            if st is None:
+            state = arrival.get(bit)
+            if state is None:
                 continue
-            cand = max(st["rise"][0], st["fall"][0])
-            root = st["rise"][2] if st["rise"][0] >= st["fall"][0] else st["fall"][2]
-            if cand > worst_period:
-                worst_period = cand
-                start_reg_name = root
-                end_reg_name = None  # a top-level output port, not a register
+            if state["rise"].time_ns >= state["fall"].time_ns:
+                endpoint_state = state["rise"]
+                endpoint_polarity = "rise"
+            else:
+                endpoint_state = state["fall"]
+                endpoint_polarity = "fall"
+            if endpoint_state.time_ns > worst_period:
+                worst_period = endpoint_state.time_ns
+                start_reg_name = endpoint_state.root_inst
+                end_reg_name = None
+                worst_state = endpoint_state
+                worst_setup = 0.0
+                critical_path_polarity = endpoint_polarity
+                critical_endpoint_kind = "primary_output"
+                critical_endpoint_pin = None
+                critical_output_port = port_name
 
-    return dict(
-        worst_period_ns=worst_period,
-        start_reg_name=start_reg_name,
-        end_reg_name=end_reg_name,
-        n_cells=len(cells),
-        n_unmapped_cells=n_unmapped,
-        incomplete_topo=incomplete_topo,
-        n_max_capacitance_violations=n_violations,
+    critical_path = _reconstruct_critical_path(worst_state)
+    critical_path_cap_violations = sum(
+        1 for arc in critical_path if arc["violates_max_capacitance"]
     )
+
+    return {
+        "worst_period_ns": worst_period,
+        "start_reg_name": start_reg_name,
+        "end_reg_name": end_reg_name,
+        "launch_clock_to_q_ns": (
+            worst_state.launch_clock_to_q_ns if worst_state is not None else 0.0
+        ),
+        "combinational_delay_ns": (
+            worst_state.combinational_delay_ns if worst_state is not None else 0.0
+        ),
+        "setup_ns": worst_setup,
+        "critical_path_polarity": critical_path_polarity,
+        "critical_endpoint_kind": critical_endpoint_kind,
+        "critical_endpoint_pin": critical_endpoint_pin,
+        "critical_output_port": critical_output_port,
+        "critical_path": critical_path,
+        "critical_path_arc_count": len(critical_path),
+        "critical_path_max_capacitance_violations": (
+            critical_path_cap_violations
+        ),
+        "n_cells": len(cells),
+        "n_unmapped_cells": n_unmapped,
+        "incomplete_topo": incomplete_topo,
+        "n_max_capacitance_violations": n_violations,
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════
@@ -607,12 +820,12 @@ def run_sta(json_path, top=None, library=DEFAULT_LIBRARY, corner=DEFAULT_CORNER,
 SELECTED_LIBRARY = DEFAULT_LIBRARY
 SELECTED_CORNER = DEFAULT_CORNER
 
-# Bump whenever run_sta()'s algorithm OR the synth recipe (ABC_EXTRA_ARGS
-# below) changes in a way that could change a previously-cached leaf delay's
-# value -- joins the path_delay_cache key (SYN.GET_PATH_DELAY_CACHE_DIR)
-# alongside library/corner specifically so a change can never silently replay
-# a stale pre-change delay.
-MODEL_VERSION = 2
+# Bump whenever run_sta()'s algorithm or the production synth recipe
+# (including ABC_EXTRA_ARGS below) changes in a way that could change a cached
+# leaf delay. Alternate experimental recipes also carry their own versioned
+# suffix. Both identities join SYN.GET_PATH_DELAY_CACHE_DIR alongside the
+# library/corner, so no recipe can silently replay another recipe's delay.
+MODEL_VERSION = 3
 
 # Extra flags passed to yosys' `abc` pass (see _run_synth_and_sta). Measured
 # (Phase 3.9 of the plan, not guessed): the plain `abc -liberty` invocation
@@ -629,16 +842,243 @@ MODEL_VERSION = 2
 # WORSE (-18.9%), so this is deliberately just the bare flag.
 ABC_EXTRA_ARGS = "-fast"
 
+# Fixed, internal-only recipe matrix used by the opt-in QoR benchmark. The
+# environment selector intentionally accepts names from this closed set: it
+# is not a public arbitrary-yosys-flags interface. ``early_flatten_opt`` is
+# the production recipe selected by the byte-frozen full-Divider A/B; the
+# historical recipe remains available as the ``current`` control ID.
+_SYNTHESIS_RECIPE_ENV = "PIPELINEC_INTERNAL_SKY130_RECIPE"
+_DEFAULT_SYNTHESIS_RECIPE = "early_flatten_opt"
+_SELECTED_SYNTHESIS_RECIPE = os.environ.get(
+    _SYNTHESIS_RECIPE_ENV, _DEFAULT_SYNTHESIS_RECIPE
+)
+_SYNTHESIS_RECIPE_CACHE_TAGS = {
+    "current": "current_v1",
+    "synth_flatten": "synth_flatten_v1",
+    "synth_flatten_noabc": "synth_flatten_noabc_v1",
+    "early_flatten_opt": "early_flatten_opt_v1",
+}
+
+
+def _get_synthesis_recipe_name(recipe_name=None):
+    name = (
+        _SELECTED_SYNTHESIS_RECIPE
+        if recipe_name is None
+        else recipe_name
+    )
+    if name not in _SYNTHESIS_RECIPE_CACHE_TAGS:
+        choices = ", ".join(sorted(_SYNTHESIS_RECIPE_CACHE_TAGS))
+        raise ValueError(
+            f"Unknown internal sky130 synthesis recipe {name!r}; "
+            f"expected one of: {choices}"
+        )
+    return name
+
+
+def GET_SYNTHESIS_RECIPE_CACHE_SUFFIX(recipe_name=None):
+    """Stable cache/artifact suffix for a non-production experiment.
+
+    The production recipe deliberately returns an empty recipe suffix. The
+    MODEL_VERSION bump on promotion invalidates older machine-local caches.
+    Every alternate recipe gets a distinct versioned suffix, preventing
+    leaf-delay, min-period, log, and mapped-netlist replay across recipes.
+    """
+
+    name = _get_synthesis_recipe_name(recipe_name)
+    if name == _DEFAULT_SYNTHESIS_RECIPE:
+        return ""
+    return "__recipe_" + _SYNTHESIS_RECIPE_CACHE_TAGS[name]
+
+
+def GET_MODEL_CACHE_IDENTITY(
+    library=None, corner=None, recipe_name=None
+):
+    """Machine-readable identity shared by caches and benchmark manifests."""
+
+    library = library or SELECTED_LIBRARY
+    corner = corner or SELECTED_CORNER
+    return (
+        f"device_models_{library}_{corner}_v{MODEL_VERSION}"
+        + GET_SYNTHESIS_RECIPE_CACHE_SUFFIX(recipe_name)
+    )
+
+
+def GET_MODEL_ARTIFACT_SUFFIX(recipe_name=None):
+    """Filename-safe identity for synthesis outputs and timing reports.
+
+    Recipe-only filenames allowed a later ``MODEL_VERSION`` to replay an old
+    mapped netlist or text timing log in a reused output directory.  Keep the
+    public/cache identity as the single source of truth and put all of it in
+    every generated artifact name.
+    """
+
+    return "__model_" + GET_MODEL_CACHE_IDENTITY(recipe_name=recipe_name)
+
+
+def _get_synthesis_recipe_commands(top_entity_name, lib_path, recipe_name=None):
+    name = _get_synthesis_recipe_name(recipe_name)
+    liberty_map = (
+        f"dfflibmap -liberty {lib_path}; "
+        f"abc -liberty {lib_path} {ABC_EXTRA_ARGS}; "
+    )
+    if name == "current":
+        return f"synth -top {top_entity_name}; " + liberty_map + "flatten; "
+    if name == "synth_flatten":
+        return (
+            f"synth -top {top_entity_name} -flatten; "
+            + liberty_map
+            + "flatten; "
+        )
+    if name == "synth_flatten_noabc":
+        return (
+            f"synth -top {top_entity_name} -flatten -noabc; "
+            "opt -full; "
+            + liberty_map
+            + "flatten; "
+        )
+    if name == "early_flatten_opt":
+        return (
+            f"synth -top {top_entity_name}; "
+            "flatten; opt -full; "
+            + liberty_map
+            + "flatten; "
+        )
+    raise AssertionError(name)  # guarded by _get_synthesis_recipe_name
+
+
+def _get_synthesis_recipe_artifact_paths(
+    top_entity_name, work_dir, recipe_name=None
+):
+    """Return stable paths used by the frozen-VHDL benchmark runner."""
+
+    suffix = GET_MODEL_ARTIFACT_SUFFIX(recipe_name)
+    work_dir = os.path.abspath(work_dir)
+    stem = os.path.join(work_dir, top_entity_name + suffix)
+    return {
+        "mapped_json": stem + "_liberty.json",
+        "synthesis_log": stem + "_synth.log",
+        "synthesis_script": stem + "_syn.sh",
+    }
+
+
+def _sha256_file(path):
+    digest = hashlib.sha256()
+    with open(path, "rb") as f:
+        for chunk in iter(lambda: f.read(1024 * 1024), b""):
+            digest.update(chunk)
+    return digest.hexdigest()
+
+
+def _vhdl_input_record(vhdl_files_texts, work_dir):
+    """Hash the exact ordered VHDL bytes consumed by the GHDL frontend."""
+
+    records = []
+    aggregate = hashlib.sha256()
+    for token in shlex.split(vhdl_files_texts):
+        path = token if os.path.isabs(token) else os.path.join(work_dir, token)
+        path = os.path.abspath(path)
+        if not os.path.isfile(path):
+            raise FileNotFoundError(f"missing synthesis VHDL input: {path}")
+        size = os.path.getsize(path)
+        sha256 = _sha256_file(path)
+        records.append({"path": path, "bytes": size, "sha256": sha256})
+        # Length-prefix each digest so ordering and duplicate files are part
+        # of the identity without depending on their machine-local roots.
+        aggregate.update(size.to_bytes(8, "big"))
+        aggregate.update(bytes.fromhex(sha256))
+    if not records:
+        raise ValueError("synthesis requires at least one VHDL input")
+    return {
+        "ordered_file_count": len(records),
+        "ordered_aggregate_sha256": aggregate.hexdigest(),
+        "files": records,
+    }
+
+
+def _synthesis_input_identity(
+    vhdl_files_texts,
+    top_entity_name,
+    work_dir,
+    lib_path,
+    yosys_path,
+    recipe_name=None,
+):
+    """Return exact source/model/tool provenance for cache validation."""
+
+    recipe_name = _get_synthesis_recipe_name(recipe_name)
+    condensed_path = os.path.join(
+        _LIBERTY_DATA_DIR,
+        f"{SELECTED_LIBRARY}__{SELECTED_CORNER}.json",
+    )
+    if not os.path.isfile(condensed_path):
+        raise FileNotFoundError(f"missing condensed STA liberty data: {condensed_path}")
+    record = {
+        "top_entity": top_entity_name,
+        "model_cache_identity": GET_MODEL_CACHE_IDENTITY(recipe_name=recipe_name),
+        "synthesis_recipe": recipe_name,
+        "recipe_commands_sha256": hashlib.sha256(
+            _get_synthesis_recipe_commands(top_entity_name, lib_path, recipe_name).encode()
+        ).hexdigest(),
+        "vhdl": _vhdl_input_record(vhdl_files_texts, work_dir),
+        "mapping_liberty": {
+            "path": os.path.abspath(lib_path),
+            "bytes": os.path.getsize(lib_path),
+            "sha256": _sha256_file(lib_path),
+        },
+        "sta_condensed_json": {
+            "path": os.path.abspath(condensed_path),
+            "bytes": os.path.getsize(condensed_path),
+            "sha256": _sha256_file(condensed_path),
+        },
+        "yosys": {
+            "path": os.path.abspath(yosys_path),
+            "bytes": os.path.getsize(yosys_path),
+            "sha256": _sha256_file(yosys_path),
+        },
+    }
+    canonical = _json.dumps(record, sort_keys=True, separators=(",", ":"))
+    record["identity_sha256"] = hashlib.sha256(canonical.encode()).hexdigest()
+    return record
+
+
+def _cached_timing_matches(log_path, synthesis_inputs, recipe_name=None):
+    """Fail closed unless a structured report matches exact current inputs."""
+
+    timing_json_path = os.path.splitext(log_path)[0] + "_timing.json"
+    try:
+        with open(timing_json_path) as f:
+            structured = _json.load(f)
+    except (OSError, ValueError):
+        return False
+    mapped_json_path = structured.get("mapped_json_path")
+    mapped_json_matches = (
+        mapped_json_path is not None
+        and os.path.isfile(mapped_json_path)
+        and structured.get("mapped_json_sha256")
+        == _sha256_file(mapped_json_path)
+    )
+    return (
+        structured.get("mapping_succeeded") is True
+        and structured.get("model_cache_identity")
+        == GET_MODEL_CACHE_IDENTITY(recipe_name=recipe_name)
+        and structured.get("synthesis_recipe")
+        == _get_synthesis_recipe_name(recipe_name)
+        and structured.get("synthesis_inputs", {}).get("identity_sha256")
+        == synthesis_inputs.get("identity_sha256")
+        and mapped_json_matches
+    )
+
 # Real per-cell synthesis (dfflibmap/abc costing) needs the actual, full
 # liberty file -- unlike sections (a)/(b), which only ever read the small
 # committed JSON pack. Unlike a real tool install (VIVADO.py/QUARTUS.py),
 # the one library/corner this repo currently supports (see LOAD_LIBERTY's
 # DEFAULT_LIBRARY/DEFAULT_CORNER) is vendored directly in src/liberty_data/
 # (see src/liberty_data/README for provenance/license) -- no PDK manager
-# required out of the box. Override by setting LIBERTY_RAW_LIB_PATH
-# directly, or via the PIPELINEC_SKY130_LIB_PATH environment variable, for a
-# different corner/library; a volare install is still detected as a final
-# fallback if present, for exactly that case.
+# required out of the box. The legacy override/volare discovery below is
+# retained for compatibility, but synthesis now accepts a discovered file
+# only when it resolves to the vendored raw liberty paired with the condensed
+# STA data. Supporting another corner requires plumbing its raw liberty and
+# condensed JSON as one versioned model; mixing them fails closed.
 LIBERTY_RAW_LIB_PATH = None
 _VOLARE_GLOB = os.path.expanduser(
     "~/.volare/volare/{library_family}/versions/*/{library_family}A/libs.ref/{library}/lib/{library}__{corner}.lib"
@@ -704,6 +1144,15 @@ class PathReport:
         self.netlist_resources = set()
         self.start_reg_name = None
         self.end_reg_name = None
+        self.launch_clock_to_q_ns = None
+        self.combinational_delay_ns = None
+        self.setup_ns = None
+        self.critical_path_arc_count = None
+        self.critical_path_max_capacitance_violations = None
+        self.synthesis_recipe = None
+        self.model_cache_identity = None
+        self.synthesis_input_identity = None
+        self.mapping_succeeded = None
 
         def _val(line, tok):
             return line.split(tok, 1)[1].strip()
@@ -717,6 +1166,35 @@ class PathReport:
             elif "End reg:" in line:
                 v = _val(line, "End reg:")
                 self.end_reg_name = None if v == "None" else v
+            elif "Launch clock-to-Q (ns):" in line:
+                self.launch_clock_to_q_ns = float(
+                    _val(line, "Launch clock-to-Q (ns):")
+                )
+            elif "Combinational delay (ns):" in line:
+                self.combinational_delay_ns = float(
+                    _val(line, "Combinational delay (ns):")
+                )
+            elif "Setup (ns):" in line:
+                self.setup_ns = float(_val(line, "Setup (ns):"))
+            elif "Critical path arcs:" in line:
+                self.critical_path_arc_count = int(
+                    _val(line, "Critical path arcs:")
+                )
+            elif "Critical path max_capacitance violations:" in line:
+                self.critical_path_max_capacitance_violations = int(
+                    _val(line, "Critical path max_capacitance violations:")
+                )
+            elif "Synthesis recipe:" in line:
+                self.synthesis_recipe = _val(line, "Synthesis recipe:")
+            elif "Model cache identity:" in line:
+                self.model_cache_identity = _val(line, "Model cache identity:")
+            elif "Synthesis input identity:" in line:
+                v = _val(line, "Synthesis input identity:")
+                self.synthesis_input_identity = None if v == "None" else v
+            elif "Mapping succeeded:" in line:
+                self.mapping_succeeded = (
+                    _val(line, "Mapping succeeded:").lower() == "true"
+                )
 
 
 class ParsedTimingReport:
@@ -729,7 +1207,30 @@ class ParsedTimingReport:
         self.path_reports[path_report.path_group] = path_report
 
 
-def _write_sta_log(log_path, sta_result, library, corner):
+def _timing_report_has_components(parsed_timing_report):
+    """Whether a cached report can drive component-based planner geometry."""
+
+    if len(parsed_timing_report.path_reports) != 1:
+        return False
+    path_report = next(iter(parsed_timing_report.path_reports.values()))
+    return all(
+        getattr(path_report, field, None) is not None
+        for field in (
+            "launch_clock_to_q_ns",
+            "combinational_delay_ns",
+            "setup_ns",
+        )
+    )
+
+
+def _write_sta_log(
+    log_path,
+    sta_result,
+    library,
+    corner,
+    recipe_name=None,
+    synthesis_inputs=None,
+):
     period_ns = sta_result["worst_period_ns"]
     fmax_mhz = (1000.0 / period_ns) if period_ns else 0.0
     lines = [
@@ -740,6 +1241,17 @@ def _write_sta_log(log_path, sta_result, library, corner):
         f"Fmax (MHz): {fmax_mhz:.6f}",
         f"Start reg: {sta_result['start_reg_name']}",
         f"End reg: {sta_result['end_reg_name']}",
+        f"Launch clock-to-Q (ns): {sta_result.get('launch_clock_to_q_ns', 0.0):.6f}",
+        f"Combinational delay (ns): {sta_result.get('combinational_delay_ns', 0.0):.6f}",
+        f"Setup (ns): {sta_result.get('setup_ns', 0.0):.6f}",
+        f"Critical path arcs: {sta_result.get('critical_path_arc_count', 0)}",
+        "Critical path max_capacitance violations: "
+        f"{sta_result.get('critical_path_max_capacitance_violations', 0)}",
+        f"Synthesis recipe: {_get_synthesis_recipe_name(recipe_name)}",
+        f"Model cache identity: {GET_MODEL_CACHE_IDENTITY(library, corner, recipe_name)}",
+        "Synthesis input identity: "
+        f"{(synthesis_inputs or {}).get('identity_sha256')}",
+        f"Mapping succeeded: {sta_result.get('mapping_succeeded', True)}",
         f"N cells: {sta_result['n_cells']}",
         f"N unmapped cells: {sta_result['n_unmapped_cells']}",
         f"N max_capacitance violations: {sta_result['n_max_capacitance_violations']}",
@@ -749,24 +1261,70 @@ def _write_sta_log(log_path, sta_result, library, corner):
         f.write("\n".join(lines) + "\n")
 
 
-def _run_synth_and_sta(vhdl_files_texts, top_entity_name, work_dir, log_path):
-    """Real (no -flatten) synth + liberty dfflibmap/abc mapping, then a
-    purely-structural post-abc `flatten` so the STA graph is one connected
-    component without altering which gates abc chose (V2, prior session:
-    this recipe reproduces latchup's own exact FF count and fanout profile).
-    Returns the text to use as this run's cached log.
-    """
+def _write_sta_json(
+    log_path,
+    sta_result,
+    library,
+    corner,
+    recipe_name=None,
+    synthesis_inputs=None,
+):
+    structured = dict(sta_result)
+    period_ns = structured.get("worst_period_ns", 0.0)
+    structured["fmax_mhz"] = (1000.0 / period_ns) if period_ns else 0.0
+    structured["library"] = library
+    structured["corner"] = corner
+    structured["synthesis_recipe"] = _get_synthesis_recipe_name(recipe_name)
+    structured["model_version"] = MODEL_VERSION
+    structured["model_cache_identity"] = GET_MODEL_CACHE_IDENTITY(
+        library, corner, recipe_name
+    )
+    structured["mapping_succeeded"] = sta_result.get("mapping_succeeded", True)
+    structured["synthesis_inputs"] = synthesis_inputs
+    timing_json_path = os.path.splitext(log_path)[0] + "_timing.json"
+    with open(timing_json_path, "w") as f:
+        _json.dump(structured, f, indent=2, sort_keys=True)
+        f.write("\n")
+    return timing_json_path
+
+
+def _run_synth_and_sta(
+    vhdl_files_texts,
+    top_entity_name,
+    work_dir,
+    log_path,
+    recipe_name=None,
+    synthesis_inputs=None,
+):
+    """Run one fixed synthesis recipe, map to liberty, and run local STA."""
     import C_TO_LOGIC
     import OPEN_TOOLS
 
+    recipe_name = _get_synthesis_recipe_name(recipe_name)
     lib_path = _find_raw_liberty_lib()
     if lib_path is None:
         raise Exception(
             f"No sky130 liberty file found for library={SELECTED_LIBRARY} corner={SELECTED_CORNER}. "
             f"The default library/corner ({DEFAULT_LIBRARY}/{DEFAULT_CORNER}) ships in "
-            f"src/liberty_data/ and needs no install -- for a different one, install via "
-            f"volare or set DEVICE_MODELS.LIBERTY_RAW_LIB_PATH / the PIPELINEC_SKY130_LIB_PATH "
-            f"env var."
+            f"src/liberty_data/ and needs no install. Another corner is not "
+            f"accepted until its raw liberty and condensed STA JSON are "
+            f"provided together as one versioned model."
+        )
+
+    # The local STA data pack is generated from the vendored raw liberty.
+    # Mapping against an override while timing against that pack would mix
+    # corners silently, so fail closed until a matching raw+condensed pair is
+    # plumbed as one explicit model.
+    vendored_lib_path = os.path.abspath(
+        os.path.join(
+            _LIBERTY_DATA_DIR,
+            f"{SELECTED_LIBRARY}__{SELECTED_CORNER}.lib",
+        )
+    )
+    if os.path.abspath(lib_path) != vendored_lib_path:
+        raise RuntimeError(
+            "DEVICE_MODELS mapping and STA must use the same pinned vendored "
+            f"liberty; resolved mapping liberty was {os.path.abspath(lib_path)}"
         )
 
     # Absolute so write_json's target and the bash script's `cwd=` agree
@@ -774,35 +1332,143 @@ def _run_synth_and_sta(vhdl_files_texts, top_entity_name, work_dir, log_path):
     # already-validated prior-session prototype, local_liberty_sta.py).
     work_dir = os.path.abspath(work_dir)
     os.makedirs(work_dir, exist_ok=True)
-    json_path = os.path.join(work_dir, top_entity_name + "_liberty.json")
-    synth_log_path = os.path.join(work_dir, top_entity_name + "_synth.log")
-    m_ghdl = "" if OPEN_TOOLS.GHDL_PLUGIN_BUILT_IN else "-m ghdl "
-    script = (
-        f"ghdl --std=08 {vhdl_files_texts} -e {top_entity_name}; "
-        f"synth -top {top_entity_name}; "
-        f"dfflibmap -liberty {lib_path}; "
-        f"abc -liberty {lib_path} {ABC_EXTRA_ARGS}; "
-        f"flatten; "
-        f"write_json {json_path}"
+    artifact_paths = _get_synthesis_recipe_artifact_paths(
+        top_entity_name, work_dir, recipe_name
     )
-    sh_path = os.path.join(work_dir, top_entity_name + "_syn.sh")
+    json_path = artifact_paths["mapped_json"]
+    synth_log_path = artifact_paths["synthesis_log"]
+    yosys_path = os.path.join(OPEN_TOOLS.YOSYS_BIN_PATH, "yosys")
+    if synthesis_inputs is None:
+        synthesis_inputs = _synthesis_input_identity(
+            vhdl_files_texts,
+            top_entity_name,
+            work_dir,
+            lib_path,
+            yosys_path,
+            recipe_name,
+        )
+    temp_json_path = (
+        json_path + f".tmp.{os.getpid()}.{time.time_ns()}"
+    )
+    timing_json_path = os.path.splitext(log_path)[0] + "_timing.json"
+    # Each run must prove it produced a fresh mapped netlist. Exact generated
+    # outputs are safe to clear; unrelated/user files are never touched.
+    for stale_path in (
+        json_path,
+        temp_json_path,
+        synth_log_path,
+        log_path,
+        timing_json_path,
+    ):
+        if os.path.isfile(stale_path):
+            os.unlink(stale_path)
+    m_ghdl = OPEN_TOOLS.GET_GHDL_PLUGIN_FLAGS()
+    script = f"ghdl --std=08 {vhdl_files_texts} -e {top_entity_name}; "
+    script += _get_synthesis_recipe_commands(
+        top_entity_name, lib_path, recipe_name
+    )
+    script += f"write_json {temp_json_path}"
+    sh_path = artifact_paths["synthesis_script"]
     with open(sh_path, "w") as f:
         f.write(
-            "#!/usr/bin/env bash\n"
+            "#!/usr/bin/env bash\nset -euo pipefail\n"
             f'export GHDL_PREFIX="{OPEN_TOOLS.GHDL_PREFIX}"\n'
-            f"{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys {m_ghdl}-p '{script}' &>> {os.path.basename(synth_log_path)}\n"
+            f"{shlex.quote(yosys_path)} {m_ghdl}-p {shlex.quote(script)} "
+            f"> {shlex.quote(os.path.basename(synth_log_path))} 2>&1\n"
         )
-    C_TO_LOGIC.GET_SHELL_CMD_OUTPUT("bash " + os.path.basename(sh_path), cwd=work_dir)
+    mapping_error = None
+    try:
+        C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(
+            "bash " + shlex.quote(os.path.basename(sh_path)), cwd=work_dir
+        )
+        if not os.path.isfile(temp_json_path) or os.path.getsize(temp_json_path) == 0:
+            raise RuntimeError("yosys exited successfully without a mapped JSON netlist")
+        # Parse once before publication so malformed/truncated output can
+        # never replace a previously valid artifact.
+        with open(temp_json_path) as f:
+            mapped = _json.load(f)
+        if top_entity_name not in mapped.get("modules", {}):
+            raise RuntimeError(
+                f"mapped JSON does not contain requested top {top_entity_name!r}"
+            )
+        os.replace(temp_json_path, json_path)
+        # run_sta() loads the published JSON again with its own compact
+        # provenance structures. Do not retain a second full decoded netlist
+        # across that call for large whole-design mappings.
+        del mapped
+    except Exception as exc:
+        mapping_error = str(exc)
+        for failed_path in (temp_json_path, json_path):
+            if os.path.isfile(failed_path):
+                os.unlink(failed_path)
 
-    synth_log_text = open(synth_log_path).read() if os.path.exists(synth_log_path) else ""
-    if not os.path.exists(json_path):
-        _write_sta_log(log_path, dict(worst_period_ns=0.0, start_reg_name=None, end_reg_name=None,
-                                       n_cells=0, n_unmapped_cells=0, n_max_capacitance_violations=0,
-                                       incomplete_topo=False), SELECTED_LIBRARY, SELECTED_CORNER)
-        return synth_log_text + "\n[DEVICE_MODELS] synth/mapping FAILED, no JSON netlist produced\n"
-
+    synth_log_text = (
+        open(synth_log_path).read() if os.path.exists(synth_log_path) else ""
+    )
+    if mapping_error is not None or not os.path.exists(json_path):
+        failed_result = {
+            "worst_period_ns": 0.0,
+            "start_reg_name": None,
+            "end_reg_name": None,
+            "launch_clock_to_q_ns": 0.0,
+            "combinational_delay_ns": 0.0,
+            "setup_ns": 0.0,
+            "critical_path_polarity": None,
+            "critical_endpoint_kind": None,
+            "critical_endpoint_pin": None,
+            "critical_output_port": None,
+            "critical_path": [],
+            "critical_path_arc_count": 0,
+            "critical_path_max_capacitance_violations": 0,
+            "n_cells": 0,
+            "n_unmapped_cells": None,
+            "n_max_capacitance_violations": 0,
+            "incomplete_topo": True,
+            "mapping_succeeded": False,
+            "mapping_error": mapping_error or "no JSON netlist produced",
+            "mapped_json_sha256": None,
+            "mapped_json_path": None,
+        }
+        _write_sta_log(
+            log_path,
+            failed_result,
+            SELECTED_LIBRARY,
+            SELECTED_CORNER,
+            recipe_name,
+            synthesis_inputs,
+        )
+        _write_sta_json(
+            log_path,
+            failed_result,
+            SELECTED_LIBRARY,
+            SELECTED_CORNER,
+            recipe_name,
+            synthesis_inputs,
+        )
+        raise RuntimeError(
+            "DEVICE_MODELS synth/mapping failed: "
+            + failed_result["mapping_error"]
+        )
     sta_result = run_sta(json_path, top=top_entity_name, library=SELECTED_LIBRARY, corner=SELECTED_CORNER)
-    _write_sta_log(log_path, sta_result, SELECTED_LIBRARY, SELECTED_CORNER)
+    sta_result["mapping_succeeded"] = True
+    sta_result["mapped_json_sha256"] = _sha256_file(json_path)
+    sta_result["mapped_json_path"] = os.path.abspath(json_path)
+    _write_sta_log(
+        log_path,
+        sta_result,
+        SELECTED_LIBRARY,
+        SELECTED_CORNER,
+        recipe_name,
+        synthesis_inputs,
+    )
+    _write_sta_json(
+        log_path,
+        sta_result,
+        SELECTED_LIBRARY,
+        SELECTED_CORNER,
+        recipe_name,
+        synthesis_inputs,
+    )
     return synth_log_text + "\n" + open(log_path).read()
 
 
@@ -844,6 +1510,7 @@ def SYN_AND_REPORT_TIMING_NEW(
 ):
     import SYN
     import VHDL
+    import OPEN_TOOLS
 
     if inst_name:
         Logic = parser_state.LogicInstLookupTable[inst_name]
@@ -854,40 +1521,92 @@ def SYN_AND_REPORT_TIMING_NEW(
         if total_latency is None:
             total_latency = timing_params.GET_TOTAL_LATENCY(parser_state, multimain_timing_params.TimingParamsLookupTable)
         entity_file_ext = "_" + str(total_latency) + "CLK" + hash_ext
-        log_file_name = "device_models" + entity_file_ext + ".log"
+        log_file_name = (
+            "device_models"
+            + entity_file_ext
+            + GET_MODEL_ARTIFACT_SUFFIX()
+            + ".log"
+        )
     else:
         output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
         hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
-        log_file_name = "device_models" + hash_ext + ".log"
+        log_file_name = (
+            "device_models"
+            + hash_ext
+            + GET_MODEL_ARTIFACT_SUFFIX()
+            + ".log"
+        )
 
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
     log_path = output_directory + "/" + log_file_name
 
-    if os.path.exists(log_path) and use_existing_log_file:
+    # Render before considering reuse. TimingParams/model identity alone does
+    # not prove emitter output stayed byte-identical, so the structured timing
+    # sibling is validated against exact ordered VHDL, liberty, recipe, and
+    # mapping-tool hashes on every cache hit.
+    if inst_name:
+        VHDL.WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, multimain_timing_params.TimingParamsLookupTable)
+        VHDL.WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, multimain_timing_params.TimingParamsLookupTable)
+    else:
+        VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
+
+    SYN.WRITE_CLK_CONSTRAINTS_FILE(multimain_timing_params, parser_state, inst_name)
+    SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name)
+    vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
+        multimain_timing_params, parser_state, inst_name
+    )
+
+    if not IS_INSTALLED():
+        raise Exception("DEVICE_MODELS (sky130 liberty STA) not installed/available -- see IS_INSTALLED()")
+    lib_path = _find_raw_liberty_lib()
+    yosys_path = os.path.join(OPEN_TOOLS.YOSYS_BIN_PATH, "yosys")
+    synthesis_inputs = _synthesis_input_identity(
+        vhdl_files_texts,
+        top_entity_name,
+        output_directory,
+        lib_path,
+        yosys_path,
+    )
+
+    reuse_existing_log = (
+        os.path.exists(log_path)
+        and use_existing_log_file
+        and _cached_timing_matches(log_path, synthesis_inputs)
+    )
+    if reuse_existing_log:
         print("Reading log", log_path)
         log_text = open(log_path).read()
-    else:
-        if inst_name:
-            VHDL.WRITE_LOGIC_ENTITY(inst_name, Logic, output_directory, parser_state, multimain_timing_params.TimingParamsLookupTable)
-            VHDL.WRITE_LOGIC_TOP(inst_name, Logic, output_directory, parser_state, multimain_timing_params.TimingParamsLookupTable)
-        else:
-            VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
-
-        # Written for parity with every other SYN_TOOL (constraints file on
-        # disk for inspection); this tool's own delay computation never
-        # consumes clk_to_mhz itself, same as PYRTL.py.
-        SYN.WRITE_CLK_CONSTRAINTS_FILE(multimain_timing_params, parser_state, inst_name)
-        SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(parser_state, inst_name)
-
-        vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
-            multimain_timing_params, parser_state, inst_name
+        # Component-planner caches have a distinct identity in SYN.py, while
+        # an output directory may still contain a V2 log written before
+        # component fields existed. That log remains valid for ordinary
+        # total-delay use. Under the explicit experiment only, remeasure it
+        # once so the requested geometry cannot silently use total delay.
+        if (
+            SYN.USE_COMBINATIONAL_PLANNER_WEIGHTS
+            and not _timing_report_has_components(ParsedTimingReport(log_text))
+        ):
+            reuse_existing_log = False
+            print(
+                "Cached timing log lacks planner timing components; "
+                "remeasuring:",
+                log_path,
+                flush=True,
+            )
+    elif os.path.exists(log_path) and use_existing_log_file:
+        print(
+            "Cached timing identity/input mismatch; remeasuring:",
+            log_path,
+            flush=True,
         )
-
-        if not IS_INSTALLED():
-            raise Exception("DEVICE_MODELS (sky130 liberty STA) not installed/available -- see IS_INSTALLED()")
-
+    if not reuse_existing_log:
         print("Running:", log_path, flush=True)
-        log_text = _run_synth_and_sta(vhdl_files_texts, top_entity_name, output_directory, log_path)
+        log_text = _run_synth_and_sta(
+            vhdl_files_texts,
+            top_entity_name,
+            output_directory,
+            log_path,
+            synthesis_inputs=synthesis_inputs,
+        )
 
     return ParsedTimingReport(log_text)

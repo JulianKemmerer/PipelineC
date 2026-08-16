@@ -2039,9 +2039,17 @@ inside calls made through it, overriding the normal "must stay combinational her
 and, unlike a plain pragma, it exposes the **discovered stage count** back to your
 Python as `.latency`:
 
+The function does not need to be pre-divided into helpers that each happen to fit one
+clock. Elaboration exposes the primitive operations and their dependency wiring even
+when the body is one flat sequence, and the planner may register legal operation outputs
+or genuinely split supported wide arithmetic leaves. Helper boundaries are optional
+structure and a placement tie-break, not a prerequisite for autopipelining. See
+[`SYN_DESIGN.md`](SYN_DESIGN.md) and
+[`RAW_VHDL_DESIGN.md`](RAW_VHDL_DESIGN.md) for the lowering rules.
+
 ```python
 MY_AP = AUTOPIPELINE(some_func)           # tool picks how many stages
-MY_AP = AUTOPIPELINE(some_func, depth=2)  # force exactly 2 pipeline stages
+MY_AP = AUTOPIPELINE(some_func, depth=2)  # force 2 clocks / register slices
 
 @hw_func
 def my_pipeline(i: my_struct_t) -> my_struct_t:
@@ -2049,6 +2057,13 @@ def my_pipeline(i: my_struct_t) -> my_struct_t:
 
 MY_AP.latency    # int: the pipeline depth the tool chose; 0 until known
 ```
+
+Build reports distinguish inserted register **slices** from combinational pipeline
+**stages**: zero slices is one stage, and `N` serial slices separate `N + 1` stages.
+The explicit `depth` and discovered `.latency` are the core's clock delay in inserted
+register slices, not the number of combinational regions. Thus `depth=2` separates
+three combinational regions and reports two clocks of core latency. Any explicit
+input/output registers around the call add their own cycles.
 
 `func` must already be `@hw_func`-decorated. In simulation, `MY_AP(x)` is an identity
 passthrough (it just runs `func(x)`), so `sim_call` behaves identically with or without

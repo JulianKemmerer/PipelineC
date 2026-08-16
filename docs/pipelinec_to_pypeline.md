@@ -462,6 +462,13 @@ def my_inst_main():
 
 See [pypeline_guide.md §15](pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm).
 
+The wrapped function may be flat or hierarchical. Neither frontend requires users to
+split its source into helper functions sized like pipeline stages: elaboration exposes
+individual operations, and the common backend chooses legal operation-output or
+bit-internal placements. Generated `N` register slices correspond to `N + 1`
+combinational pipeline stages; see [SYN_DESIGN.md](SYN_DESIGN.md) and
+[VHDL_DESIGN.md](VHDL_DESIGN.md).
+
 ### 8c. GLOBAL_VALID_READY_PIPELINE_INST — stream pipeline with FIFO
 
 This is the most common pattern for high-throughput pipelined compute. pypeline provides

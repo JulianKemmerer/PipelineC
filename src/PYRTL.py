@@ -24,6 +24,7 @@ def IS_INSTALLED():
 
 class ParsedTimingReport:
     def __init__(self, syn_output):
+        self.orig_text = syn_output
         self.path_reports = {}
         path_report = PathReport(syn_output)
         self.path_reports[path_report.path_group] = path_report
@@ -231,9 +232,7 @@ print("Fmax (MHz):", timing.max_freq(tech_in_nm={TECH_IN_NM}, ffoverhead={FF_OVE
 
         # Uses yosys blif output
         # Write a shell script to execute
-        m_ghdl = ""
-        if not OPEN_TOOLS.GHDL_PLUGIN_BUILT_IN:
-            m_ghdl = "-m ghdl "
+        m_ghdl = OPEN_TOOLS.GET_GHDL_PLUGIN_FLAGS()
 
         f.write(
             """

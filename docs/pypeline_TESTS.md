@@ -111,5 +111,61 @@ Each category module can also run standalone, e.g.
 - `src/tests/pypeline_tests/op_qor_bench.py` -- QoR benchmark (not a correctness test,
   not part of `run_all.py`), driving `pypelinec --coarse --sweep` and comparing yosys
   cell-count estimates against synthesized results across the operator library.
+- `src/tests/pypeline_tests/divider_qor_bench.py` -- opt-in sky130 autopipelining
+  benchmark and correctness gate, also excluded from `run_all.py` because a full gate
+  Divider sweep can take about an hour. It has unchanged-logic arithmetic and gate-level
+  143 MHz fixtures under `qor/divider/`. A normal run records a machine-readable
+  `manifest.json` containing source/compiler/tool/liberty hashes, placement trace,
+  exact final VHDL hashes, mapped-cell histogram/DFF count, timing components, runtime,
+  and the acceptance verdict:
+
+  ```text
+  python3 src/tests/pypeline_tests/divider_qor_bench.py \
+    --variant gate --out_dir /tmp/divider_gate
+  ```
+
+  The gate verdict requires correct final-VHDL output, fmax strictly above 143 MHz,
+  and no more than 48 slices (49 combinational pipeline stages). The arithmetic
+  regression requires the same correctness/fmax checks and at most 63 slices.
+  The harness first copies the exact ordered `vhdl_files.txt` bytes into an
+  evidence snapshot. Simulation compiles that snapshot with the pinned GHDL,
+  and the accepted timing/cell result comes from remapping the same immutable
+  snapshot rather than whichever netlist happened to be produced by the last
+  sweep probe. It checks
+  continuous-valid traffic, bubbles, edge cases, divide-by-zero, ordering, valid
+  latency, input readiness, and pipeline flush. The fixture has no output-ready port,
+  so this test intentionally makes no output-backpressure claim.
+
+  The accepted 2026-08-16 results are preserved in
+  `qor/divider_qor_acceptance.json`: the automatic gate result is 160.43 MHz
+  at 31 slices / 32 combinational stages, and the arithmetic result is
+  180.05 MHz at 32 slices / 33 stages. Both exact final-VHDL runs pass 141
+  ordered vectors, have zero unmapped cells, and satisfy their slice limits.
+  The corresponding clean-commit baselines required 66 and 64 slices. The
+  full byte-frozen recipe decision is in
+  `qor/synthesis_recipe_forced32_matrix.json`; `early_flatten_opt` is the
+  production default under model V3. Full sky130 runs remain opt-in.
+
+  Controlled physical and recipe experiments remain internal to this harness. Use
+  `--placement step-boundaries` to force every gate `step_gates` output boundary, or
+  `--placement step-boundaries-div0` for the divide-zero-select output followed by
+  the first 31 repeated-step outputs (32 slices / 33 combinational regions);
+  `--elaborate-only --diagnostic` to emit/check that placement without a timing sweep;
+  or `--frozen-vhdl-source <run>` with one of the fixed recipe IDs to remap byte-identical
+  VHDL without re-planning. There is no arbitrary synthesis-flags or public slice-cap
+  interface. A timing-miss compiler exit does not suppress exact-VHDL simulation when
+  the final artifacts were still written. To import an already-completed run whose
+  stdout was not redirected, use `--existing-build --existing-latency N` and optionally
+  `--existing-runtime-seconds S --existing-returncode RC`; the return code is
+  required for a non-diagnostic acceptance import. The manifest marks any pre-existing `build.log` as
+  incomplete/unverified rather than presenting an injected depth line as full stdout.
+  `--compiler-commit` and `--source-sha256` attach the compiler/source snapshot which
+  actually launched that completed build; the manifest records the current worktree
+  separately so later documentation changes cannot be misattributed to the old run.
+  Normal and frozen runs reject nonempty destination directories, liberty
+  overrides, source drift during the run, mismatched recipe/model identities,
+  unmapped cells, incomplete topology, or a timing report whose VHDL/mapped
+  hashes do not match the immutable snapshot. A nonzero simulator return code
+  cannot be overridden by a stale `functional_results.json` pass marker.
 - `src/tests/c_tests/test_builds.sh` -- legacy smoke-build script for the C frontend
   (`.c` designs under `examples/`), independent of this Python suite.

@@ -180,6 +180,7 @@ prj_strgy set_value -strategy Strategy1 lse_vhdl2008=True
 
 class ParsedTimingReport:
     def __init__(self, syn_output):
+        self.orig_text = syn_output
         if DIAMOND_TOOL == "lse":
             self.init_lse(syn_output)
         if DIAMOND_TOOL == "synplify":

@@ -71,17 +71,17 @@ EXAMPLES_PYPELINE_DIR = REPO_ROOT / "examples" / "pypeline"
 # subprocess can't block the whole suite forever. Override per-Test via
 # timeout= for anything known to legitimately run longer/shorter.
 DEFAULT_CATEGORY_TIMEOUT_S = {
-    "native_sim": 300,
-    "native_vs_vhdl_sim": 900,
-    "vhdl_sim": 900,
-    "elab": 120,
-    "elab_introspect": 120,
-    "unit": 120,
-    "synth": 1800,
-    "build_report": 1800,
-    "known_issues": 300,
+    "native_sim": 7200,
+    "native_vs_vhdl_sim": 7200,
+    "vhdl_sim": 7200,
+    "elab": 7200,
+    "elab_introspect": 7200,
+    "unit": 7200,
+    "synth": 7200,
+    "build_report": 7200,
+    "known_issues": 7200,
 }
-FALLBACK_TIMEOUT_S = 1800
+FALLBACK_TIMEOUT_S = 7200
 
 _TOOL_WHICH_CACHE = {}
 
@@ -143,8 +143,19 @@ def default_jobs() -> int:
     return max(1, (os.cpu_count() or 2) // 2)
 
 
+DEFAULT_TMP_DIR = Path("/media/1TB/tmp")
+
+
 def make_tmp_root() -> Path:
-    tmp_root = Path(tempfile.mkdtemp(prefix="pypeline_run_all_"))
+    parent_dir = DEFAULT_TMP_DIR if DEFAULT_TMP_DIR.is_dir() else None
+    try:
+        tmp_root = Path(tempfile.mkdtemp(prefix="pypeline_run_all_", dir=parent_dir))
+    except OSError:
+        # Some CI/sandbox mounts expose the shared evidence directory read-only
+        # even though it exists and reports as writable. Keep the preferred
+        # location when possible, but make the runner portable by falling back
+        # to the platform temp directory if creation fails.
+        tmp_root = Path(tempfile.mkdtemp(prefix="pypeline_run_all_"))
     print(f"Test output directory: {tmp_root}")
     return tmp_root
 

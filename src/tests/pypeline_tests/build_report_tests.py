@@ -161,8 +161,8 @@ def get_tests() -> list:
         )
     )
     # Regression guard for the D1 fix (RAW_VHDL.SPLIT_KIND_1LL leaves -
-    # MUX/AND/OR/XOR - modelled as freely splittable when their generator
-    # only ever places their logic in ONE stage): a serial 1LL-only gate
+    # MUX/AND/OR/XOR - expose real operation boundaries without pretending
+    # their one logic level has an arbitrary interior): a serial 1LL-only gate
     # chain under real sky130 timing must never let one of them exceed its
     # real slice ceiling, must still get pipelined at all (not collapse
     # into one uncuttable atomic span), and must show up in the fmax floor

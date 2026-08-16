@@ -107,6 +107,34 @@ def get_tests() -> list:
             cmd=[INST_DIR / "floor_and_bits_cap_unit_test.py"],
         )
     )
+    # Typed operation-boundary/bit-internal placement and direct lowering.
+    tests.append(
+        Test(
+            name="typed_pipeline_placement_test",
+            category="unit",
+            cmd=[INST_DIR / "typed_pipeline_placement_test.py"],
+        )
+    )
+    # DEVICE_MODELS sky130 STA diagnostics and fixed internal synthesis
+    # recipes: component sums, endpoint semantics, structured arc traces,
+    # and recipe-scoped cache/artifact identities. Uses tiny mapped-JSON
+    # fixtures only; no external synthesis tool is invoked.
+    tests.append(
+        Test(
+            name="device_models_sta_test",
+            category="unit",
+            cmd=[INST_DIR / "device_models_sta_test.py"],
+        )
+    )
+    # Fast schema/parser coverage for the opt-in, hours-long Divider sky130
+    # QoR harness.  The real benchmark itself is intentionally not in run_all.
+    tests.append(
+        Test(
+            name="divider_qor_bench_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "divider_qor_bench_unit_test.py"],
+        )
+    )
     return tests
 
 

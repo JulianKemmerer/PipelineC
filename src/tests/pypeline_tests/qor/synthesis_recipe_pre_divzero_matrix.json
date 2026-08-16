@@ -1,0 +1,108 @@
+{
+  "schema_version": 1,
+  "experiment": "frozen_gate_divider_pre_divzero_synthesis_recipe_matrix",
+  "recorded_utc_date": "2026-08-14",
+  "purpose": "Reproduce the gate Divider's pre-step divisor-nonzero reduction feeding a 32-bit select, and determine whether hierarchy before liberty mapping creates the observed high-fanout timing floor.",
+  "provenance": {
+    "compiler_commit_that_rendered_leaf_vhdl": "c81ca31fe944e18960db5ed3558219959956142c",
+    "divider_fixture_sha256": "dcb24be3351f4e8d4680cfcaca3ed073d7c439db680919f8d6e7cfbd60661aec",
+    "frozen_top": "pre_divzero",
+    "frozen_wrapper": {
+      "path": "src/tests/pypeline_tests/qor/synthesis_recipe_pre_divzero_wrapper.vhd",
+      "bytes": 771,
+      "sha256": "d96c9d0ab4626c0b33ae7f41182128470761f4426c5cd75db74974a680d02832"
+    },
+    "generated_dependencies": [
+      {
+        "role": "package",
+        "name": "c_structs_pkg.pkg.vhd",
+        "bytes": 2270878,
+        "sha256": "f67a66b42bfce352519de3b4da2c7cbfdbbb9e661717f254d374e4d1605c63da"
+      },
+      {
+        "role": "divisor_nonzero_reduction",
+        "name": "BIN_OP_NEQ_uint32_t_uint1_t_0CLK_de264c78.vhd",
+        "sha256": "06a1a7e4c3a45a3639f95a14f6ad589b83c106ba56c8d75c1e63aee8df13199d"
+      },
+      {
+        "role": "left_eff_select",
+        "name": "MUX_uint32_t_0CLK_de264c78.vhd",
+        "sha256": "299efcbae799a2e657d6262288996d1ad3665e639a523a2f3498ab1d5a542e96"
+      }
+    ],
+    "library": "sky130_fd_sc_hvl",
+    "corner": "tt_025C_3v30",
+    "liberty_sha256": "fb1c43d5971efa70df79d7f16de69f8bbe3c7f0de0432baae4c43e7c72e251e9",
+    "yosys": "Yosys 0.48+51 (git sha1 17a53b838, clang++ 18.1.8 -fPIC -O3)",
+    "ghdl": "GHDL 5.0.0-dev (4.1.0.r453.g85927f052.dirty) [Dunoon edition]",
+    "abc_extra_args": "-fast",
+    "sta_model_version": 2,
+    "net_delay_model": "none"
+  },
+  "controlled_variables": {
+    "vhdl": "byte-identical across recipes",
+    "liberty": "byte-identical across recipes",
+    "sta": "same DEVICE_MODELS.run_sta implementation",
+    "clock_to_q_and_setup": "zero for this combinational entity",
+    "changed_variable": "fixed synthesis recipe only"
+  },
+  "recipes": {
+    "current": {
+      "commands": "synth -top <top>; dfflibmap -liberty <lib>; abc -liberty <lib> -fast; flatten",
+      "metrics": {
+        "worst_period_ns": 5.540592151979178,
+        "fmax_mhz": 180.4861236073451,
+        "n_cells": 130,
+        "n_unmapped_cells": 0,
+        "n_max_capacitance_violations": 3,
+        "critical_path_max_capacitance_violations": 1,
+        "critical_path_arc_count": 5,
+        "launch_clock_to_q_ns": 0.0,
+        "combinational_delay_ns": 5.540592151979178,
+        "setup_ns": 0.0
+      },
+      "critical_path": [
+        {"cell_type": "sky130_fd_sc_hvl__or2_1", "delay_ns": 0.4425239227393346, "fanout": 1, "load_capacitance_pf": 0.00499, "max_capacitance_pf": 0.39213, "violates_max_capacitance": false},
+        {"cell_type": "sky130_fd_sc_hvl__nor3_1", "delay_ns": 0.23200129976679779, "fanout": 1, "load_capacitance_pf": 0.00416, "max_capacitance_pf": 0.12507, "violates_max_capacitance": false},
+        {"cell_type": "sky130_fd_sc_hvl__nand3_1", "delay_ns": 4.324961658493955, "fanout": 64, "load_capacitance_pf": 0.29475999999999986, "max_capacitance_pf": 0.1767, "violates_max_capacitance": true},
+        {"cell_type": "sky130_fd_sc_hvl__nand2_1", "delay_ns": 0.452443970117396, "fanout": 1, "load_capacitance_pf": 0.00472, "max_capacitance_pf": 0.24954, "violates_max_capacitance": false},
+        {"cell_type": "sky130_fd_sc_hvl__o21ai_1", "delay_ns": 0.08866130086169413, "fanout": 0, "load_capacitance_pf": 0.0, "max_capacitance_pf": 0.18051, "violates_max_capacitance": false}
+      ],
+      "artifacts": {
+        "synthesis_script_sha256": "f8882fca035b9a7cba06e95abe1f00f7796d61f9bc1e8c4b2cab2c863fd79eef",
+        "mapped_json_bytes": 90597,
+        "mapped_json_sha256": "58ee79e4b36d41aa792d66ec3f5104dca1303ee4eaf99cef357e20d360155d55",
+        "timing_json_bytes": 3554,
+        "timing_json_sha256": "eaae1e2f805d4b5cba5417b266af3fa9b396cfd2488eb7ed7f23bf421af9dd41"
+      }
+    },
+    "synth_flatten": {
+      "commands": "synth -top <top> -flatten; dfflibmap -liberty <lib>; abc -liberty <lib> -fast; flatten",
+      "relative_to_current": {"period_reduction_percent": 52.53445326864611, "cell_reduction_percent": 27.692307692307693},
+      "metrics": {"worst_period_ns": 2.629872357091403, "fmax_mhz": 380.24659155168433, "n_cells": 94, "n_unmapped_cells": 0, "n_max_capacitance_violations": 0, "critical_path_max_capacitance_violations": 0, "critical_path_arc_count": 5, "launch_clock_to_q_ns": 0.0, "combinational_delay_ns": 2.629872357091403, "setup_ns": 0.0},
+      "critical_path": [
+        {"cell_type": "sky130_fd_sc_hvl__nor2_1", "delay_ns": 0.1381327930274494, "fanout": 1, "load_capacitance_pf": 0.00475, "max_capacitance_pf": 0.19246, "violates_max_capacitance": false},
+        {"cell_type": "sky130_fd_sc_hvl__nand2_1", "delay_ns": 0.12756684705446186, "fanout": 1, "load_capacitance_pf": 0.00464, "max_capacitance_pf": 0.24954, "violates_max_capacitance": false},
+        {"cell_type": "sky130_fd_sc_hvl__nor2_1", "delay_ns": 0.15374678598944308, "fanout": 1, "load_capacitance_pf": 0.00475, "max_capacitance_pf": 0.19246, "violates_max_capacitance": false},
+        {"cell_type": "sky130_fd_sc_hvl__nand2_1", "delay_ns": 1.717570971169796, "fanout": 32, "load_capacitance_pf": 0.15456, "max_capacitance_pf": 0.24954, "violates_max_capacitance": false},
+        {"cell_type": "sky130_fd_sc_hvl__o21ai_1", "delay_ns": 0.4928549598502524, "fanout": 0, "load_capacitance_pf": 0.0, "max_capacitance_pf": 0.18051, "violates_max_capacitance": false}
+      ],
+      "artifacts": {"synthesis_script_sha256": "86a53963c8a52405b4d2054b9837824faa393d14028dda7bfcdc46f38af27e8d", "mapped_json_bytes": 61705, "mapped_json_sha256": "9334ea3ad380c15f0581601e0ed453fb064d398831e1ddd91fa9e655875c2274", "timing_json_bytes": 3520, "timing_json_sha256": "5ab83b44eca04e2e119bc4a22cb831c2260c74da0a2806bd1a8bb2a90a1b549c"}
+    },
+    "synth_flatten_noabc": {
+      "commands": "synth -top <top> -flatten -noabc; opt -full; dfflibmap -liberty <lib>; abc -liberty <lib> -fast; flatten",
+      "relative_to_current": {"period_reduction_percent": 52.53445326864611, "cell_reduction_percent": 27.692307692307693},
+      "metrics": {"worst_period_ns": 2.629872357091403, "fmax_mhz": 380.24659155168433, "n_cells": 94, "n_unmapped_cells": 0, "n_max_capacitance_violations": 0, "critical_path_max_capacitance_violations": 0, "critical_path_arc_count": 5, "launch_clock_to_q_ns": 0.0, "combinational_delay_ns": 2.629872357091403, "setup_ns": 0.0},
+      "critical_path_same_as": "synth_flatten",
+      "artifacts": {"synthesis_script_sha256": "6a66ca500b8c6b3cb6108f3e721a94463228d74b9dad4a718cd27d2b460b3c59", "mapped_json_bytes": 58489, "mapped_json_sha256": "48faa047843c7c9a6a6634a6393cf5dc2c376ea406a67a2009439174eb6a3af8", "timing_json_bytes": 3532, "timing_json_sha256": "224fb7f1452281a0c3bfc52665926b35418d95000efe3c8c641768dc0d29b327"}
+    },
+    "early_flatten_opt": {
+      "commands": "synth -top <top>; flatten; opt -full; dfflibmap -liberty <lib>; abc -liberty <lib> -fast; flatten",
+      "relative_to_current": {"period_reduction_percent": 52.53445326864611, "cell_reduction_percent": 27.692307692307693},
+      "metrics": {"worst_period_ns": 2.629872357091403, "fmax_mhz": 380.24659155168433, "n_cells": 94, "n_unmapped_cells": 0, "n_max_capacitance_violations": 0, "critical_path_max_capacitance_violations": 0, "critical_path_arc_count": 5, "launch_clock_to_q_ns": 0.0, "combinational_delay_ns": 2.629872357091403, "setup_ns": 0.0},
+      "critical_path_same_as": "synth_flatten",
+      "artifacts": {"synthesis_script_sha256": "730c7fd7c78b5db1141c1e942caf107a2396c4e36ca8d83c8c018a02fcf9c42f", "mapped_json_bytes": 62509, "mapped_json_sha256": "e499f5a7d7eef533e1baf1350cc47d2f0a0547f9e20e1a116450d8e7d966f94e", "timing_json_bytes": 3528, "timing_json_sha256": "4a675c3eb6ce99da096a46210654e5045fe19f88b6da603363798a7a790ec690"}
+    }
+  },
+  "conclusion": "Mapping the compare and select separately hides the eventual 64-load select fanout from ABC and creates a 4.325 ns max-capacitance-violating NAND3 arc. Every early-flatten recipe maps the combined cone, halves the frozen path period, removes all capacitance violations, and reduces cells. This is a generic hierarchy/mapping effect, not a Divider-specific synthesis rule. Full frozen Divider mapping remains the promotion gate."
+}

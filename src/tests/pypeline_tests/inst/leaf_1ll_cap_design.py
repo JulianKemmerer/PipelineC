@@ -3,11 +3,12 @@ from pypeline import *
 # Synthetic stand-in for the real ~24k-gate gate-level radix-2 divider
 # (outside this repo): a short serial chain of nothing but SPLIT_KIND_1LL
 # leaves (AND/OR/XOR/MUX), no SPLIT_KIND_BITS leaf anywhere - the shape
-# where D1 (1LL leaves modelled as freely splittable) is total, and the
-# shape leaf_1ll_cap_test.py checks stays legally cuttable end to end
-# instead of collapsing into one uncuttable atomic span. An aggressive
-# clock target forces several cuts through this chain.
-CLK_RATE_MHZ = 2000.0
+# where the old false-interior split model was most misleading. The planner
+# must use real operation boundaries instead of collapsing the chain into one
+# atomic span. The production early-flatten recipe shortened the measured
+# root enough that 2000 MHz requested only one boundary; 4000 MHz remains
+# below this fixture's reported 1LL floor while forcing several boundaries.
+CLK_RATE_MHZ = 4000.0
 PART("sky130_fd_sc_hvl")
 clk: Input[uint1_t] = make_clock(CLK_RATE_MHZ)
 a: Input[uint32_t]

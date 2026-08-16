@@ -2040,6 +2040,31 @@ def SLICES_TO_SIZE_LIST(slices):
     return adj_percents
 
 
+def GET_EQUAL_WIDTH_BIT_BOUNDARIES(num_bits, num_slices):
+    """Return the cumulative bit boundaries physically emitted for a
+    ``SPLIT_KIND_BITS`` leaf with ``num_slices`` internal registers.
+
+    Slice *fractions* stored in ``TimingParams`` do not select these
+    boundaries; the raw generators deliberately balance chunk widths from
+    the final slice count.  The typed planner uses this function too, so its
+    ordinal placement metadata and trace describe the same boundaries the
+    VHDL generators consume below.
+    """
+    if num_bits <= 0:
+        raise ValueError(f"num_bits must be positive, got {num_bits}")
+    if num_slices < 0:
+        raise ValueError(f"num_slices must be non-negative, got {num_slices}")
+    chunks = num_slices + 1
+    boundaries = []
+    prev_boundary = 0
+    for ordinal in range(1, chunks):
+        boundary = int(round(ordinal * num_bits / float(chunks)))
+        boundary = max(prev_boundary, min(num_bits, boundary))
+        boundaries.append(boundary)
+        prev_boundary = boundary
+    return boundaries
+
+
 def _EQUAL_WIDTH_BITS_PER_STAGE_DICT(num_bits, num_slices):
     """D2 fix, corrected: the naive read of timing_params._slices as bit
     boundaries to hit via a delay-fraction curve inversion (an earlier
@@ -2068,6 +2093,7 @@ def _EQUAL_WIDTH_BITS_PER_STAGE_DICT(num_bits, num_slices):
     op; a single cut now always produces a balanced {17,17}-style split,
     regardless of the requested fraction)."""
     chunks = num_slices + 1
+    boundaries = GET_EQUAL_WIDTH_BIT_BOUNDARIES(num_bits, num_slices)
     bits_per_stage_dict = {}
     prev_boundary = 0
     for stage in range(chunks):
@@ -2075,14 +2101,20 @@ def _EQUAL_WIDTH_BITS_PER_STAGE_DICT(num_bits, num_slices):
         # trusting round(chunks*num_bits/chunks) to land there - guarantees
         # sum(bits_per_stage_dict) == num_bits with no float-rounding edge
         # case, no separate excess/deficit fixup pass needed.
-        if stage == chunks - 1:
-            boundary = num_bits
-        else:
-            boundary = int(round((stage + 1) * num_bits / float(chunks)))
-            boundary = max(prev_boundary, min(num_bits, boundary))
+        boundary = num_bits if stage == chunks - 1 else boundaries[stage]
         bits_per_stage_dict[stage] = boundary - prev_boundary
         prev_boundary = boundary
     return bits_per_stage_dict
+
+
+def GET_EQUAL_WIDTH_BITS_PER_STAGE_DICT(num_bits, num_slices):
+    """Public, side-effect-free view of the bit chunks raw VHDL will emit.
+
+    The typed placement planner uses this for validation and trace metadata;
+    keeping the implementation above as the single source of truth prevents
+    planner ordinals from drifting from code generation.
+    """
+    return _EQUAL_WIDTH_BITS_PER_STAGE_DICT(num_bits, num_slices)
 
 
 # TODO min bits per stage roughly based on smallest add op in one lut/carry?

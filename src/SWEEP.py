@@ -6,18 +6,19 @@ multiplier-driven middle-out sweep.
 
 Terminology (see docs/SYN_DESIGN.md):
   cut         - a planned register position along a module's combinational
-                delay. Cuts become fractional "slices" fed to the existing
-                recursive slicing mechanism in SYN.py. The number of cuts
-                requested and the pipeline latency that results are related
-                but intentionally NOT the same number.
+                delay. Cuts select typed physical placements: an operation's
+                output boundary or a genuine bit-internal leaf split. The
+                number of cuts requested and the pipeline latency that
+                results are related but intentionally NOT the same number.
   cut subtree - a maximal subtree of the instance hierarchy that can accept
                 added latency: either a sliceable pure-comb function, or a
                 region reached through AUTOPIPELINE tagged call sites
                 underneath stateful (feedback/state reg) containers.
   landscape   - the flattened delay axis of one cut subtree, each delay unit
-                tagged legal (a cut here lands in some sliceable raw HDL leaf)
-                or illegal (only unsliceable/locked logic here), with weights
-                used for stage budgeting and calibration.
+                tagged legal (a cut resolves to an operation-output boundary
+                or a true bit-splittable raw-leaf site) or illegal (only
+                unsliceable/locked logic here), with weights used for stage
+                budgeting and calibration.
   floor       - the predicted maximum achievable fmax of a subtree: set by its
                 longest run of illegal (unsliceable) delay. Reported up front,
                 before any synthesis runs.
@@ -42,6 +43,7 @@ from timeit import default_timer as timer
 import C_TO_LOGIC
 import RAW_VHDL
 import SYN
+import VHDL
 
 # Max full-design synthesis runs in the refinement loop
 # (generous: budgets start at the fewest-stages guess and converge from
@@ -52,8 +54,16 @@ FUNC_SCALE_MIN_STEP = 1.05
 FUNC_SCALE_MAX_STEP = 3.0
 GLOBAL_SCALE_MIN_STEP = 1.05
 GLOBAL_SCALE_MAX_STEP = 2.0
-# Consecutive same-hotspot attributions before an isolated mini sweep
-MINISWEEP_HOTSPOT_STREAK = 3
+# Consecutive same-hotspot attributions before an isolated mini sweep.
+#
+# A repeatedly blamed hierarchical helper is stronger evidence than the
+# current top-level geometry: its isolated sweep measures the helper before
+# choosing any lock, while another global densify step can jump over the
+# short, repeatable solution (Wireguard's ten block-step helpers are the
+# motivating case).  Two independent full-design failures are enough to
+# justify that bounded, measured probe.  The mini sweep remains capped and
+# falls back to ordinary densification if it cannot produce an internal cut.
+MINISWEEP_HOTSPOT_STREAK = 2
 MAX_MINISWEEPS = 2
 # Extra single-latency syn runs spent bisecting a mini sweep result down to
 # its proven-minimal latency before locking it
@@ -143,10 +153,10 @@ class Segment:
     SLICEABLE = "sliceable"  # raw HDL leaf that can hold added registers anywhere
     # raw HDL leaf whose own generator only ever places its logic in ONE
     # stage no matter the latency (RAW_VHDL.SPLIT_KIND_1LL: MUX/AND/OR/XOR/
-    # NOT/NEGATE/MULT) - only its own two BOUNDARY units are legal cut
-    # positions (an input-only or output-only register; both together with
-    # a 2nd cut), its interior is atomic like a genuinely unsliceable span.
-    # See SliceLandscape.finalize().
+    # NOT/NEGATE/MULT). The typed planner exposes its output boundary; its
+    # interior is atomic like a genuinely unsliceable span. The legacy raw
+    # VHDL splitter can still represent input/output boundary slices when
+    # used directly outside this planner. See SliceLandscape.finalize().
     SLICEABLE_1LL = "sliceable_1ll"
     ATOMIC = "atomic"  # unsliceable logic, cuts cannot land inside
     LOCKED = "locked"  # params_are_fixed (ex. mini sweep result), no new cuts
@@ -170,9 +180,348 @@ class Segment:
         # more cuts than GET_BITS_PER_STAGE_DICT can usefully honor without
         # producing interior zero-bit (bare register, no logic) stages.
         self.max_legal_units = None
+        # Optional planner-only relative delay (e.g. isolated combinational
+        # component instead of full clk-to-q + logic + setup).  It is
+        # normalized across the landscape before feedback scales are applied,
+        # so the measured frontier total and initial cut-count budget stay
+        # unchanged while relative placement geometry may move.
+        self.planner_scale = 1.0
 
     def __str__(self):
         return f"[{self.start:.1f},{self.end:.1f}) {self.kind} {self.inst_path.split(C_TO_LOGIC.SUBMODULE_MARKER)[-1]}({self.reason})"
+
+
+class PipelinePlacement:
+    """One concrete, physically lowerable pipeline-register position.
+
+    The old landscape planner returned only an integer position on a flattened
+    delay axis.  Lowering that position recursively projected a fractional cut
+    through every descendant overlapping the axis position.  That is useful as
+    a fallback representation, but it loses the distinction between two very
+    different pieces of hardware:
+
+      * a register on a combinational operation instance's outputs; and
+      * a genuine internal split in a bit-splittable raw-HDL leaf.
+
+    A PipelinePlacement preserves that distinction all the way through
+    lowering.  ``fixed`` means the placement was supplied by the internal
+    experiment hook and must be retained while the remaining positions are
+    planned; it does *not* freeze the whole instance subtree.
+    """
+
+    INSTANCE_OUTPUT = "instance_output"
+    BIT_INTERNAL = "bit_internal"
+
+    def __init__(
+        self,
+        kind,
+        inst_path,
+        func_name,
+        axis_unit,
+        axis_position,
+        local_slice=None,
+        registered_bits=None,
+        hierarchy_depth=0,
+        span_units=0.0,
+        coherent_boundary=False,
+        ancestor_funcs=None,
+        fixed=False,
+        source="planner",
+        bit_width=None,
+        bit_split_ordinal=None,
+        bit_split_count=None,
+        bit_boundary=None,
+        leaf_axis_start=None,
+        leaf_axis_end=None,
+        requested_axis_unit=None,
+        requested_axis_position=None,
+        requested_local_slice=None,
+    ):
+        if kind not in (self.INSTANCE_OUTPUT, self.BIT_INTERNAL):
+            raise ValueError(f"Unknown pipeline placement kind: {kind}")
+        if kind == self.BIT_INTERNAL:
+            required = {
+                "bit_width": bit_width,
+                "bit_split_ordinal": bit_split_ordinal,
+                "bit_split_count": bit_split_count,
+                "bit_boundary": bit_boundary,
+                "leaf_axis_start": leaf_axis_start,
+                "leaf_axis_end": leaf_axis_end,
+            }
+            missing = [name for name, value in required.items() if value is None]
+            if missing:
+                raise ValueError(
+                    "Physical BIT_INTERNAL placement requires "
+                    + ", ".join(missing)
+                )
+            bit_width = int(bit_width)
+            bit_split_ordinal = int(bit_split_ordinal)
+            bit_split_count = int(bit_split_count)
+            bit_boundary = int(bit_boundary)
+            if bit_width <= 0 or bit_split_count <= 0:
+                raise ValueError(
+                    f"Invalid physical bit split width/count: "
+                    f"{bit_width}/{bit_split_count}"
+                )
+            if not 1 <= bit_split_ordinal <= bit_split_count:
+                raise ValueError(
+                    f"Invalid physical bit split ordinal "
+                    f"{bit_split_ordinal}/{bit_split_count}"
+                )
+            expected_boundaries = RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(
+                bit_width, bit_split_count
+            )
+            expected_boundary = expected_boundaries[bit_split_ordinal - 1]
+            if bit_boundary != expected_boundary:
+                raise ValueError(
+                    f"BIT_INTERNAL boundary {bit_boundary} does not match "
+                    f"equal-width boundary {expected_boundary} for ordinal "
+                    f"{bit_split_ordinal}/{bit_split_count} of {bit_width} bits"
+                )
+            expected_local_slice = bit_boundary / float(bit_width)
+            if (
+                local_slice is not None
+                and not math.isclose(
+                    float(local_slice), expected_local_slice, rel_tol=0.0, abs_tol=1e-15
+                )
+            ):
+                raise ValueError(
+                    f"BIT_INTERNAL local slice {local_slice} does not match "
+                    f"emitted bit boundary {bit_boundary}/{bit_width}"
+                )
+            local_slice = expected_local_slice
+            leaf_axis_start = float(leaf_axis_start)
+            leaf_axis_end = float(leaf_axis_end)
+            if leaf_axis_end <= leaf_axis_start:
+                raise ValueError(
+                    f"Invalid BIT_INTERNAL leaf axis span "
+                    f"[{leaf_axis_start}, {leaf_axis_end})"
+                )
+            expected_axis_position = leaf_axis_start + local_slice * (
+                leaf_axis_end - leaf_axis_start
+            )
+            expected_axis_unit = int(math.ceil(expected_axis_position)) - 1
+            if not math.isclose(
+                float(axis_position), expected_axis_position, rel_tol=0.0, abs_tol=1e-12
+            ):
+                raise ValueError(
+                    f"BIT_INTERNAL axis position {axis_position} does not match "
+                    f"physical boundary position {expected_axis_position}"
+                )
+            if int(axis_unit) != expected_axis_unit:
+                raise ValueError(
+                    f"BIT_INTERNAL axis unit {axis_unit} does not contain "
+                    f"physical boundary position {expected_axis_position} "
+                    f"(expected unit {expected_axis_unit})"
+                )
+        self.kind = kind
+        self.inst_path = inst_path
+        self.func_name = func_name
+        self.axis_unit = int(axis_unit)
+        self.axis_position = float(axis_position)
+        self.local_slice = (
+            None if local_slice is None else float(local_slice)
+        )
+        self.registered_bits = registered_bits
+        self.hierarchy_depth = int(hierarchy_depth)
+        self.span_units = float(span_units)
+        self.coherent_boundary = bool(coherent_boundary)
+        self.ancestor_funcs = tuple(sorted(ancestor_funcs or ()))
+        self.fixed = bool(fixed)
+        self.source = source
+        self.bit_width = bit_width
+        self.bit_split_ordinal = bit_split_ordinal
+        self.bit_split_count = bit_split_count
+        self.bit_boundary = bit_boundary
+        self.leaf_axis_start = leaf_axis_start
+        self.leaf_axis_end = leaf_axis_end
+        self.requested_axis_unit = requested_axis_unit
+        self.requested_axis_position = requested_axis_position
+        self.requested_local_slice = requested_local_slice
+
+    @property
+    def is_physical(self):
+        return True
+
+    @property
+    def bits_per_stage(self):
+        if self.kind != self.BIT_INTERNAL:
+            return None
+        return tuple(
+            RAW_VHDL.GET_EQUAL_WIDTH_BITS_PER_STAGE_DICT(
+                self.bit_width, self.bit_split_count
+            ).values()
+        )
+
+    @property
+    def candidate_id(self):
+        # Instance paths are elaboration-stable.  Use a decimal representation
+        # with enough precision to distinguish every legal local slice while
+        # remaining byte-stable across runs/Python versions.
+        rv = f"{self.kind}:{self.inst_path}"
+        if self.kind == self.BIT_INTERNAL:
+            rv += (
+                f"#{self.bit_split_ordinal}/{self.bit_split_count}"
+                f"@bit{self.bit_boundary}/{self.bit_width}"
+            )
+        elif self.local_slice is not None:
+            rv += f"@{self.local_slice:.15g}"
+        return rv
+
+    def copy_with(self, fixed=None, source=None):
+        rv = copy.copy(self)
+        if fixed is not None:
+            rv.fixed = bool(fixed)
+        if source is not None:
+            rv.source = source
+        return rv
+
+    def to_dict(self):
+        rv = {
+            "candidate_id": self.candidate_id,
+            "kind": self.kind,
+            "placement_role": "physical",
+            "physical": True,
+            "instance_path": self.inst_path,
+            "function": self.func_name,
+            "axis_unit": self.axis_unit,
+            "axis_position": round(self.axis_position, 12),
+            "local_slice": (
+                None if self.local_slice is None else round(self.local_slice, 12)
+            ),
+            "registered_bits": self.registered_bits,
+            "registered_bits_scope": (
+                "leaf_width_proxy"
+                if self.kind == self.BIT_INTERNAL
+                else "local_output_bank"
+            ),
+            "hierarchy_depth": self.hierarchy_depth,
+            "span_units": round(self.span_units, 6),
+            "coherent_boundary": self.coherent_boundary,
+            "ancestor_functions": list(self.ancestor_funcs),
+            "fixed": self.fixed,
+            "source": self.source,
+        }
+        if self.kind == self.BIT_INTERNAL:
+            rv.update(
+                {
+                    "bit_width": self.bit_width,
+                    "bit_boundary": self.bit_boundary,
+                    "bit_split_ordinal": self.bit_split_ordinal,
+                    "bit_split_count": self.bit_split_count,
+                    "bits_per_stage": list(self.bits_per_stage),
+                    "leaf_axis_start": round(self.leaf_axis_start, 12),
+                    "leaf_axis_end": round(self.leaf_axis_end, 12),
+                    "requested_axis_unit": self.requested_axis_unit,
+                    "requested_axis_position": (
+                        None
+                        if self.requested_axis_position is None
+                        else round(self.requested_axis_position, 12)
+                    ),
+                    "requested_local_slice": (
+                        None
+                        if self.requested_local_slice is None
+                        else round(self.requested_local_slice, 12)
+                    ),
+                }
+            )
+        return rv
+
+    def __repr__(self):
+        return f"PipelinePlacement({self.candidate_id})"
+
+
+class BitPlacementRequest:
+    """A provisional raster site used only while choosing a stage budget.
+
+    A raw bit-splittable leaf does not honor an arbitrary fractional slice:
+    its VHDL generator balances the *final count* of selected splits into
+    equal-width chunks.  Consequently a raster crossing cannot truthfully be
+    called a physical placement until all requests for that leaf are known.
+    PLAN_PIPELINE_PLACEMENTS materializes these requests into ordinal/count-
+    aware :class:`PipelinePlacement` objects before returning to lowering.
+    """
+
+    kind = PipelinePlacement.BIT_INTERNAL
+
+    def __init__(
+        self,
+        inst_path,
+        func_name,
+        axis_unit,
+        axis_position,
+        requested_local_slice,
+        bit_width,
+        leaf_axis_start,
+        leaf_axis_end,
+        registered_bits=None,
+        hierarchy_depth=0,
+        span_units=0.0,
+        coherent_boundary=False,
+        ancestor_funcs=None,
+        fixed=False,
+        source="planner",
+    ):
+        self.inst_path = inst_path
+        self.func_name = func_name
+        self.axis_unit = int(axis_unit)
+        self.axis_position = float(axis_position)
+        self.local_slice = None
+        self.requested_local_slice = float(requested_local_slice)
+        self.bit_width = None if bit_width is None else int(bit_width)
+        self.leaf_axis_start = float(leaf_axis_start)
+        self.leaf_axis_end = float(leaf_axis_end)
+        self.registered_bits = registered_bits
+        self.hierarchy_depth = int(hierarchy_depth)
+        self.span_units = float(span_units)
+        self.coherent_boundary = bool(coherent_boundary)
+        self.ancestor_funcs = tuple(sorted(ancestor_funcs or ()))
+        self.fixed = bool(fixed)
+        self.source = source
+
+    @property
+    def is_physical(self):
+        return False
+
+    @property
+    def candidate_id(self):
+        return (
+            f"bit_internal_request:{self.inst_path}"
+            f"@{self.requested_local_slice:.15g}"
+        )
+
+    def copy_with(self, fixed=None, source=None):
+        rv = copy.copy(self)
+        if fixed is not None:
+            rv.fixed = bool(fixed)
+        if source is not None:
+            rv.source = source
+        return rv
+
+    def to_dict(self):
+        return {
+            "candidate_id": self.candidate_id,
+            "kind": self.kind,
+            "placement_role": "planning_site",
+            "physical": False,
+            "instance_path": self.inst_path,
+            "function": self.func_name,
+            "requested_axis_unit": self.axis_unit,
+            "requested_axis_position": round(self.axis_position, 12),
+            "requested_local_slice": round(self.requested_local_slice, 12),
+            "bit_width": self.bit_width,
+            "registered_bits": self.registered_bits,
+            "registered_bits_scope": "leaf_width_proxy",
+            "hierarchy_depth": self.hierarchy_depth,
+            "span_units": round(self.span_units, 6),
+            "coherent_boundary": self.coherent_boundary,
+            "ancestor_functions": list(self.ancestor_funcs),
+            "fixed": self.fixed,
+            "source": self.source,
+        }
+
+    def __repr__(self):
+        return f"BitPlacementRequest({self.candidate_id})"
 
 
 class SliceLandscape:
@@ -193,6 +542,78 @@ class SliceLandscape:
         # stateful spans break the run - their boundaries can take registers)
         self.hard_floor_ns = 0.0
         self.hard_floor_blame = None
+        # Candidate inventory. Operation outputs are concrete physical
+        # placements. Bit-internal entries are explicitly provisional raster
+        # requests: their physical equal-width boundaries depend on how many
+        # requests ultimately target the same leaf.
+        self.candidates = []
+        self.candidates_by_unit = {}
+
+    def add_candidate(self, placement):
+        if not isinstance(placement, (PipelinePlacement, BitPlacementRequest)):
+            raise TypeError(type(placement))
+        self.candidates.append(placement)
+
+    def _add_segment_candidates(self, seg, lo, hi, bits_cap_units):
+        if hi <= lo or seg.kind in (Segment.ATOMIC, Segment.LOCKED):
+            return
+        depth = seg.inst_path.count(C_TO_LOGIC.SUBMODULE_MARKER) - (
+            self.subtree_root_inst.count(C_TO_LOGIC.SUBMODULE_MARKER)
+        )
+        # Every sliceable operation has a deterministic output boundary.
+        # For raw 1LL leaves this is the one useful side of the old two-edge
+        # representation; the other side is normally the preceding
+        # operation's output boundary (or an enclosing function's input).
+        out_u = hi - 1
+        self.add_candidate(
+            PipelinePlacement(
+                PipelinePlacement.INSTANCE_OUTPUT,
+                seg.inst_path,
+                seg.func_name,
+                out_u,
+                out_u + 0.5,
+                hierarchy_depth=max(0, depth),
+                span_units=max(0.0, seg.end - seg.start),
+                coherent_boundary=False,
+                ancestor_funcs=seg.ancestor_funcs,
+            )
+        )
+        if seg.kind != Segment.SLICEABLE:
+            return
+        # Without a resolved leaf width there is no way to name or validate
+        # the equal-width bit boundary RAW VHDL will emit. Keep the concrete
+        # operation-output boundary above, but do not fabricate internal
+        # physical candidates from an arbitrary fractional raster position.
+        if seg.max_legal_units is None:
+            return
+        for u in range(lo, hi):
+            if bits_cap_units is not None and u not in bits_cap_units:
+                continue
+            span = seg.end - seg.start
+            if span <= 0.0:
+                continue
+            local_slice = ((u + 0.5) - seg.start) / span
+            # It must describe logic on both sides.  Rounding at a segment's
+            # raster edge can otherwise produce exactly 0/1, which is a
+            # boundary register rather than a genuine bit-internal cut.
+            local_slice = max(1.0e-12, min(1.0 - 1.0e-12, local_slice))
+            self.add_candidate(
+                BitPlacementRequest(
+                    seg.inst_path,
+                    seg.func_name,
+                    u,
+                    u + 0.5,
+                    requested_local_slice=local_slice,
+                    bit_width=seg.max_legal_units,
+                    leaf_axis_start=seg.start,
+                    leaf_axis_end=seg.end,
+                    registered_bits=seg.max_legal_units,
+                    hierarchy_depth=max(0, depth),
+                    span_units=max(0.0, span),
+                    coherent_boundary=False,
+                    ancestor_funcs=seg.ancestor_funcs,
+                )
+            )
 
     def finalize(self, func_delay_scale):
         n = self.total_units
@@ -200,7 +621,11 @@ class SliceLandscape:
         covered = [False] * n
         locked_only = [True] * n
         self.blame = [None] * n
-        scale = [1.0] * n
+        # Zero while covered segments contribute their relative component
+        # weights.  Starting at 1.0 would clamp every normal comb/full ratio
+        # (<1) back to 1 and make the experiment a no-op.
+        planner_scale = [0.0] * n
+        feedback_scale = [1.0] * n
         for seg in self.segments:
             lo = max(0, int(math.floor(seg.start)))
             hi = min(n, int(math.ceil(seg.end)))
@@ -216,12 +641,19 @@ class SliceLandscape:
                 and seg.max_legal_units is not None
                 and seg.max_legal_units - 1 < hi - lo
             ):
-                cap = max(0, seg.max_legal_units - 1)
+                # Reserve one of the width-derived legal positions for the
+                # operation-output boundary added below.  It is a useful
+                # physical boundary, but must not silently increase the
+                # leaf's total useful cut capacity beyond the existing
+                # width-1 model (except a 1-bit op, which has no genuine
+                # interior position but still has a legal output boundary).
+                cap = max(0, seg.max_legal_units - 2)
                 span = hi - lo
                 bits_cap_units = set()
                 for k in range(1, cap + 1):
                     u = lo + int(round(k * span / float(cap + 1))) - 1
                     bits_cap_units.add(max(lo, min(hi - 1, u)))
+            self._add_segment_candidates(seg, lo, hi, bits_cap_units)
             seg_scale = 1.0
             for f in seg.ancestor_funcs:
                 if f in func_delay_scale:
@@ -231,29 +663,55 @@ class SliceLandscape:
                 if seg.kind != Segment.LOCKED:
                     locked_only[u] = False
                 if seg.kind == Segment.SLICEABLE:
-                    if bits_cap_units is None or u in bits_cap_units:
-                        self.legal[u] = True
+                    # Legal positions are finalized from concrete candidates
+                    # below.  Keep only the atomic-floor attribution here.
+                    pass
                 elif seg.kind == Segment.SLICEABLE_1LL:
-                    # Only the leaf's own two boundary units are real cut
-                    # positions (stage_for_1ll: latency 1 = one boundary
-                    # register, latency 2 = both) - its interior never
-                    # shrinks no matter how many cuts land there, so it
-                    # blames/floors like ATOMIC (a 3rd+ cut is provably a
-                    # bare register around unchanged logic).
-                    if u == lo or u == hi - 1:
-                        self.legal[u] = True
-                    elif self.blame[u] is None:
+                    # The whole operation remains atomic; only its output
+                    # boundary is exposed as a typed position.
+                    if u != hi - 1 and self.blame[u] is None:
                         self.blame[u] = seg
                 elif seg.kind == Segment.ATOMIC and self.blame[u] is None:
                     self.blame[u] = seg
-                scale[u] = max(scale[u], seg_scale)
-        self.weight = [0.0] * n
+                planner_scale[u] = max(planner_scale[u], seg.planner_scale)
+                feedback_scale[u] = max(feedback_scale[u], seg_scale)
+        # Deduplicate positions added both as hierarchical child boundaries
+        # and leaf-segment boundaries, then make legality derive from what the
+        # typed lowering can actually materialize.
+        by_id = {}
+        for candidate in self.candidates:
+            if 0 <= candidate.axis_unit < n:
+                old = by_id.get(candidate.candidate_id)
+                if old is None or candidate.coherent_boundary:
+                    by_id[candidate.candidate_id] = candidate
+        self.candidates = sorted(
+            by_id.values(), key=lambda p: (p.axis_unit, p.candidate_id)
+        )
+        self.candidates_by_unit = {}
+        for candidate in self.candidates:
+            self.candidates_by_unit.setdefault(candidate.axis_unit, []).append(
+                candidate
+            )
+            self.legal[candidate.axis_unit] = True
+        planner_weight = [0.0] * n
         for u in range(n):
             if covered[u] and locked_only[u]:
                 # Internally pipelined already - costs no stage budget
-                self.weight[u] = 0.0
+                planner_weight[u] = 0.0
             else:
-                self.weight[u] = scale[u]
+                planner_weight[u] = planner_scale[u] if covered[u] else 1.0
+        # Normalize planner-only relative geometry back to the old measured
+        # frontier total.  This explicitly avoids the failed fixed-overhead
+        # behavior: component timing can move cuts, but cannot by itself ask
+        # for more stages.  Learned synthesis feedback is applied afterward
+        # and therefore retains its intended ability to densify a hotspot.
+        old_total = sum(1.0 for w in planner_weight if w > 0.0)
+        planner_total = sum(planner_weight)
+        planner_norm = old_total / planner_total if planner_total > 0.0 else 1.0
+        self.weight = [
+            planner_weight[u] * planner_norm * feedback_scale[u]
+            for u in range(n)
+        ]
         # Predicted floor = worst weighted run of illegal units
         # (and the hard-only variant used for the give-up decision)
         run_w = 0.0
@@ -344,6 +802,17 @@ def BUILD_SLICE_LANDSCAPE(
     units_to_ns = (root_logic.delay / SYN.DELAY_UNIT_MULT) / total_units_f
     landscape = SliceLandscape(subtree_root_inst, int(round(total_units_f)), units_to_ns)
 
+    def output_register_bits(logic):
+        bits = 0
+        try:
+            for output in logic.outputs:
+                bits += VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(
+                    logic.wire_to_c_type[output], parser_state
+                )
+        except Exception:
+            return None
+        return bits
+
     def rec(inst, logic, abs_start, unit_scale, ancestor_funcs):
         pm = SYN.GET_ZERO_ADDED_CLKS_PIPELINE_MAP(inst, logic, parser_state)
         for sub_inst_local in pm.zero_clk_submodule_start_offset:
@@ -365,6 +834,41 @@ def BUILD_SLICE_LANDSCAPE(
                 logic.CAN_HAVE_ADDED_LATENCY(parser_state)
                 and sub_logic.CAN_HAVE_ADDED_LATENCY(parser_state)
             )
+
+            # A child output is a concrete legal stage boundary in its own
+            # right.  Record this before deciding whether the child is a raw
+            # leaf or a hierarchy to recurse through: helper-function
+            # boundaries (one whole divider step, for example) are exactly
+            # what disappeared when the old fractional cut was recursively
+            # pushed into all of the helper's descendants.  Flat user code is
+            # covered too because each elaborated operator is itself a child.
+            if (
+                descend_ok
+                and not child_timing_params.params_are_fixed
+                and sub_logic.CAN_HAVE_ADDED_LATENCY(parser_state)
+                and len(sub_logic.outputs) > 0
+            ):
+                axis_u = min(
+                    landscape.total_units - 1,
+                    max(0, int(math.ceil(e)) - 1),
+                )
+                depth = child_inst.count(C_TO_LOGIC.SUBMODULE_MARKER) - (
+                    subtree_root_inst.count(C_TO_LOGIC.SUBMODULE_MARKER)
+                )
+                landscape.add_candidate(
+                    PipelinePlacement(
+                        PipelinePlacement.INSTANCE_OUTPUT,
+                        child_inst,
+                        sub_logic.func_name,
+                        axis_u,
+                        axis_u + 0.5,
+                        registered_bits=output_register_bits(sub_logic),
+                        hierarchy_depth=max(0, depth),
+                        span_units=max(0.0, e - s),
+                        coherent_boundary=len(sub_logic.submodule_instances) > 0,
+                        ancestor_funcs=child_ancestors,
+                    )
+                )
 
             seg = None
             if child_timing_params.params_are_fixed:
@@ -437,6 +941,14 @@ def BUILD_SLICE_LANDSCAPE(
                 )
                 continue
             seg.ancestor_funcs = child_ancestors
+            planner_delay = SYN.GET_PLANNER_DELAY(sub_logic)
+            if (
+                planner_delay is not None
+                and planner_delay > 0
+                and sub_logic.delay is not None
+                and sub_logic.delay > 0
+            ):
+                seg.planner_scale = planner_delay / float(sub_logic.delay)
             landscape.segments.append(seg)
 
     rec(
@@ -504,12 +1016,67 @@ def _RUN_BOUNDARY_UNITS(landscape):
             b -= 1
         if b >= 0:
             units.add(b)
+    # A coherent hierarchical operation output is an even stronger physical
+    # boundary than the leaf-run heuristic above: it registers the helper as
+    # a unit instead of projecting a diagonal fractional cut through all of
+    # its descendants.  This is what makes repeated one-step helpers and
+    # ordinary flat operation chains use the same typed mechanism.
+    coherent_outputs = [
+        p
+        for p in landscape.candidates
+        if p.kind == PipelinePlacement.INSTANCE_OUTPUT and p.coherent_boundary
+    ]
+    for p in coherent_outputs:
+        units.add(p.axis_unit)
+    if coherent_outputs:
+        # Also retain direct sibling operations immediately before/after each
+        # coherent helper region (setup/result muxes are a common shape).
+        # Grouping by the helper's PARENT instance is important: an outer
+        # wrapper is often shallower than both the repeated helpers and their
+        # setup op.  Comparing everything with one global minimum hierarchy
+        # depth would then hide precisely that setup boundary.  Do not admit
+        # primitive boundaries *inside* a coherent helper; those would
+        # reintroduce the diagonal/mid-helper choices this representation is
+        # designed to avoid.
+        outputs = [
+            p
+            for p in landscape.candidates
+            if p.kind == PipelinePlacement.INSTANCE_OUTPUT
+        ]
+        marker = C_TO_LOGIC.SUBMODULE_MARKER
+
+        def parent_inst(placement):
+            return placement.inst_path.rsplit(marker, 1)[0]
+
+        coherent_spans_by_parent = {}
+        for p in coherent_outputs:
+            coherent_spans_by_parent.setdefault(parent_inst(p), []).append(
+                (p.axis_position - p.span_units, p.axis_position)
+            )
+        for p in outputs:
+            coherent_spans = coherent_spans_by_parent.get(parent_inst(p))
+            if coherent_spans is None:
+                continue
+            inside_helper = any(lo < p.axis_position <= hi for lo, hi in coherent_spans)
+            if not inside_helper:
+                units.add(p.axis_unit)
+    # A completely flat function has no hierarchical helper boundary.  Its
+    # shallowest operation outputs are the coherent boundaries available.
+    else:
+        outputs = [
+            p
+            for p in landscape.candidates
+            if p.kind == PipelinePlacement.INSTANCE_OUTPUT
+        ]
+        if outputs:
+            shallowest = min(p.hierarchy_depth for p in outputs)
+            units.update(p.axis_unit for p in outputs if p.hierarchy_depth == shallowest)
     if n - 1 >= 0 and landscape.legal[n - 1]:
         units.add(n - 1)
     return sorted(units)
 
 
-def PLAN_CUTS(landscape, budget_units):
+def PLAN_CUTS(landscape, budget_units, required_units=None):
     """Place cuts along the landscape: walk the delay axis accumulating
     (calibrated) weight and cut at the last legal unit each time the stage
     budget fills. Runs of illegal units longer than the budget get their own
@@ -532,27 +1099,81 @@ def PLAN_CUTS(landscape, budget_units):
     n = landscape.total_units
     if n <= 0:
         return []
+    required_units = set(required_units or ())
+    for u in required_units:
+        if u < 0 or u >= n or not landscape.legal[u]:
+            raise ValueError(
+                f"Required cut unit {u} is not a legal typed placement in "
+                f"{landscape.subtree_root_inst}"
+            )
     budget = max(budget_units, 0.5)
     boundary_units = _RUN_BOUNDARY_UNITS(landscape)
+    boundary_set = set(boundary_units)
 
     cuts = []
     acc = 0.0
     last_legal = None
     pending = False  # budget exceeded, waiting for a legal unit
     snap_target = None  # boundary unit committed to wait for, if any
+    last_boundary = None
     for u in range(n):
         if landscape.legal[u]:
             last_legal = u
+        if u in boundary_set:
+            last_boundary = u
         acc += landscape.weight[u]
+        if u in required_units:
+            if len(cuts) == 0 or u > cuts[-1]:
+                cuts.append(u)
+            # A fixed physical placement ends the current stage regardless
+            # of whether the free-running budget has filled yet.
+            acc = 0.0
+            pending = False
+            snap_target = None
+            last_legal = None
+            last_boundary = None
+            continue
         budget_full = acc >= budget or pending
         if budget_full and snap_target is None:
+            # First consider the coherent boundary immediately behind the
+            # budget crossing.  This is essential when one complete repeated
+            # helper is slightly *faster* than the target period: waiting for
+            # the next helper boundary would merge two helpers, while the
+            # preceding one is the closest balanced physical cut.
+            prev_target = last_boundary
+            prev_delta = None
+            if prev_target is not None:
+                after_prev = sum(
+                    landscape.weight[v] for v in range(prev_target + 1, u + 1)
+                )
+                prev_stage_weight = acc - after_prev
+                if prev_stage_weight > 0.0:
+                    prev_delta = abs(budget - prev_stage_weight)
+            next_target = None
             for b in boundary_units:
                 if b <= u:
                     continue
+                # A non-fixed cut at the final unit is removed below because
+                # it creates an empty trailing comb region.  Never wait for
+                # that discard-only position as a forward snap target: doing
+                # so can skip useful legal positions between the budget
+                # crossing and the tail, then remove the only cut it chose.
+                if b >= n - 1 and b not in required_units:
+                    break
                 extra = sum(landscape.weight[v] for v in range(u + 1, b + 1))
                 if extra <= PLAN_CUTS_BOUNDARY_SNAP_FRAC * budget:
-                    snap_target = b
+                    next_target = b
                 break  # only the nearest qualifying boundary is considered
+            if prev_delta is not None:
+                # A real boundary behind the budget crossing keeps the
+                # just-finished stage within budget.  Advancing to the next
+                # boundary necessarily exceeds it and can merge a setup op +
+                # one repeated helper (or two helpers) into the critical
+                # stage.  Prefer the safe preceding boundary; the cut-count
+                # refinement loop can later prove whether fewer are possible.
+                snap_target = prev_target
+            elif next_target is not None:
+                snap_target = next_target
         if snap_target is not None and u < snap_target:
             continue  # waiting for the snap target - keep accumulating
         if not budget_full:
@@ -565,11 +1186,22 @@ def PLAN_CUTS(landscape, budget_units):
             for v in range(cut_pos + 1, u + 1):
                 acc += landscape.weight[v]
             pending = acc >= budget
+            last_legal = None
+            last_boundary = None
+            for v in range(cut_pos + 1, u + 1):
+                if landscape.legal[v]:
+                    last_legal = v
+                if v in boundary_set:
+                    last_boundary = v
         else:
             pending = True
         snap_target = None
     # Drop a trailing cut that leaves a nearly empty final stage
-    if len(cuts) > 0 and cuts[-1] >= n - 1:
+    if (
+        len(cuts) > 0
+        and cuts[-1] >= n - 1
+        and cuts[-1] not in required_units
+    ):
         cuts = cuts[:-1]
     return cuts
 
@@ -580,10 +1212,390 @@ def CUTS_TO_SLICES(cuts, landscape):
     return [(u + 0.5) / float(landscape.total_units) for u in cuts]
 
 
+def _PLACEMENT_RANK_KEY(placement):
+    """Deterministic tie-break among physical candidates at one axis point.
+
+    PLAN_CUTS has already minimized predicted worst-stage delay by choosing
+    the axis unit.  At that unit prefer a coherent/high-level operation
+    boundary before consulting the *local* output width.  Local width is not
+    the materialized register cost: a one-bit leaf boundary can force a huge
+    bank of alignment registers in its parent, while one helper-output bank
+    keeps all of those values coherent.  Until the graph-wide live-bit cost is
+    available, treating local width as the primary score recreates exactly
+    that pathology.  It remains a useful tie-break among equally coherent
+    candidates; unknown widths sort last.
+    """
+    bits = placement.registered_bits
+    if bits is None:
+        bits = float("inf")
+    return (
+        0 if placement.coherent_boundary else 1,
+        placement.hierarchy_depth,
+        -placement.span_units,
+        bits,
+        0 if placement.kind == PipelinePlacement.INSTANCE_OUTPUT else 1,
+        placement.candidate_id,
+    )
+
+
+def MATERIALIZE_BIT_PLACEMENT_REQUESTS(placements, landscape):
+    """Convert provisional bit raster sites to emitted equal-width boundaries.
+
+    RAW VHDL chooses bit chunks from the final number of slices in a leaf, not
+    from the fractional values stored in ``TimingParams``. Grouping first is
+    therefore essential: for K selected sites on a W-bit leaf, the only
+    truthful physical placements are ordinals 1..K of the K+1 equal-width
+    chunks. The requested raster coordinates remain diagnostic metadata.
+    """
+    physical = []
+    requests_by_inst = {}
+    for placement in placements:
+        if isinstance(placement, BitPlacementRequest):
+            requests_by_inst.setdefault(placement.inst_path, []).append(placement)
+        elif isinstance(placement, PipelinePlacement):
+            physical.append(placement)
+        else:
+            raise TypeError(type(placement))
+
+    for inst_path in sorted(requests_by_inst):
+        requests = sorted(
+            requests_by_inst[inst_path],
+            key=lambda p: (p.axis_position, p.candidate_id),
+        )
+        unique = []
+        seen_ids = set()
+        for request in requests:
+            if request.candidate_id not in seen_ids:
+                unique.append(request)
+                seen_ids.add(request.candidate_id)
+        requests = unique
+        count = len(requests)
+        widths = {request.bit_width for request in requests}
+        if None in widths or len(widths) != 1:
+            raise ValueError(
+                f"Cannot materialize bit placements for {inst_path}: "
+                f"inconsistent/unresolved widths {sorted(str(w) for w in widths)}"
+            )
+        width = widths.pop()
+        if count >= width:
+            raise ValueError(
+                f"Cannot materialize {count} internal bit placements in "
+                f"{width}-bit leaf {inst_path}; at least one bit of logic is "
+                "required in every emitted chunk"
+            )
+        starts = {request.leaf_axis_start for request in requests}
+        ends = {request.leaf_axis_end for request in requests}
+        if len(starts) != 1 or len(ends) != 1:
+            raise ValueError(
+                f"Cannot materialize bit placements for {inst_path}: "
+                "requests disagree on the leaf's delay-axis span"
+            )
+        leaf_start = starts.pop()
+        leaf_end = ends.pop()
+        boundaries = RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(width, count)
+        for ordinal, (request, boundary) in enumerate(
+            zip(requests, boundaries), start=1
+        ):
+            local_slice = boundary / float(width)
+            axis_position = leaf_start + local_slice * (leaf_end - leaf_start)
+            axis_unit = int(math.ceil(axis_position)) - 1
+            if not 0 <= axis_unit < landscape.total_units:
+                raise ValueError(
+                    f"Physical bit boundary for {inst_path} fell outside "
+                    f"landscape: unit {axis_unit} of {landscape.total_units}"
+                )
+            physical.append(
+                PipelinePlacement(
+                    PipelinePlacement.BIT_INTERNAL,
+                    request.inst_path,
+                    request.func_name,
+                    axis_unit,
+                    axis_position,
+                    local_slice=local_slice,
+                    registered_bits=(
+                        width
+                        if request.registered_bits is None
+                        else request.registered_bits
+                    ),
+                    hierarchy_depth=request.hierarchy_depth,
+                    span_units=request.span_units,
+                    coherent_boundary=request.coherent_boundary,
+                    ancestor_funcs=request.ancestor_funcs,
+                    fixed=request.fixed,
+                    source=request.source,
+                    bit_width=width,
+                    bit_split_ordinal=ordinal,
+                    bit_split_count=count,
+                    bit_boundary=boundary,
+                    leaf_axis_start=leaf_start,
+                    leaf_axis_end=leaf_end,
+                    requested_axis_unit=request.axis_unit,
+                    requested_axis_position=request.axis_position,
+                    requested_local_slice=request.requested_local_slice,
+                )
+            )
+    return sorted(physical, key=lambda p: (p.axis_position, p.candidate_id))
+
+
+def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
+    """Plan concrete physical placements while retaining PLAN_CUTS's budget.
+
+    ``fixed_placements`` is used only by the internal experiment hook.  Their
+    axis units become required stage boundaries; the budget walk fills any
+    remaining long intervals with normal typed candidates.  Multiple fixed
+    placements at one unit are all retained (the axis has one logical cut,
+    while the graph may need more than one physical register bank there).
+
+    Returns ``(cuts, placements)``.  Keeping cuts explicit preserves the
+    existing prediction/history machinery while callers lower placements.
+    """
+    fixed_placements = list(fixed_placements or ())
+    fixed_by_unit = {}
+    for placement in fixed_placements:
+        candidates = {
+            p.candidate_id: p
+            for p in landscape.candidates_by_unit.get(placement.axis_unit, ())
+        }
+        if placement.candidate_id not in candidates:
+            raise ValueError(
+                f"Fixed pipeline placement is not legal in this landscape: "
+                f"{placement.candidate_id}"
+            )
+        fixed_by_unit.setdefault(placement.axis_unit, []).append(placement)
+
+    cuts = PLAN_CUTS(
+        landscape,
+        budget_units,
+        required_units=set(fixed_by_unit),
+    )
+    placements = []
+    used_ids = set()
+    for unit in cuts:
+        if unit in fixed_by_unit:
+            selected = sorted(
+                fixed_by_unit[unit], key=lambda p: p.candidate_id
+            )
+        else:
+            candidates = [
+                p
+                for p in landscape.candidates_by_unit.get(unit, ())
+                if p.candidate_id not in used_ids
+            ]
+            if not candidates:
+                raise RuntimeError(
+                    f"PLAN_CUTS chose legal unit {unit} in "
+                    f"{landscape.subtree_root_inst}, but no typed physical "
+                    "candidate exists there"
+                )
+            selected = [min(candidates, key=_PLACEMENT_RANK_KEY)]
+        for placement in selected:
+            if placement.candidate_id in used_ids:
+                continue
+            used_ids.add(placement.candidate_id)
+            placements.append(placement)
+    placements = MATERIALIZE_BIT_PLACEMENT_REQUESTS(placements, landscape)
+    # Bit boundaries can move from their provisional raster crossing to the
+    # actual equal-width bit boundary. Return/report the physical axis units,
+    # never the nominal request units PLAN_CUTS used to choose the count.
+    cuts = sorted(set(placement.axis_unit for placement in placements))
+    return cuts, placements
+
+
+# Intentionally not a command-line/source interface.  The opt-in QoR harness
+# uses this hook to pin known physical placements for controlled A/B builds.
+INTERNAL_PLACEMENT_FILE_ENV = "PIPELINEC_INTERNAL_PLACEMENT_FILE"
+INTERNAL_PLACEMENT_SCHEMA_VERSION = 1
+
+
+def LOAD_INTERNAL_PLACEMENT_CONFIG(environ=None):
+    environ = os.environ if environ is None else environ
+    path = environ.get(INTERNAL_PLACEMENT_FILE_ENV)
+    if not path:
+        return None
+    with open(path, "r") as f:
+        config = json.load(f)
+    if not isinstance(config, dict):
+        raise ValueError(f"{INTERNAL_PLACEMENT_FILE_ENV} JSON must be an object")
+    version = config.get("version")
+    if version != INTERNAL_PLACEMENT_SCHEMA_VERSION:
+        raise ValueError(
+            f"Unsupported internal placement schema version {version}; "
+            f"expected {INTERNAL_PLACEMENT_SCHEMA_VERSION}"
+        )
+    mode = config.get("mode", "seed")
+    if mode not in ("seed", "replace"):
+        raise ValueError(f"Internal placement mode must be seed or replace: {mode}")
+    selectors = config.get("selectors", [])
+    exact = config.get("placements", [])
+    if not isinstance(selectors, list) or not isinstance(exact, list):
+        raise ValueError("Internal placement selectors/placements must be lists")
+    # Exact candidate IDs use the same resolver and therefore get identical
+    # unmatched/ambiguous checking.
+    for item in exact:
+        if not isinstance(item, dict) or "candidate_id" not in item:
+            raise ValueError(
+                "Each internal placements[] entry requires candidate_id"
+            )
+        selectors.append(dict(item))
+    if not selectors:
+        raise ValueError(
+            "Internal placement request must contain at least one selector "
+            "or exact placement"
+        )
+    config = dict(config)
+    config["mode"] = mode
+    config["selectors"] = selectors
+    config["source_path"] = os.path.abspath(path)
+    return config
+
+
+def RESOLVE_INTERNAL_PIPELINE_PLACEMENTS(config, plans, parser_state):
+    """Resolve generic selectors against this iteration's candidate inventory.
+
+    The resolver is intentionally strict: a typo that matches nothing or an
+    unqualified selector that matches multiple positions is an error, never a
+    silently-different forced benchmark.
+    """
+    inventory = []
+    for plan in plans.values():
+        main_func = parser_state.LogicInstLookupTable[plan.main_inst].func_name
+        for subtree_root, landscape in plan.landscapes.items():
+            if landscape is None:
+                continue
+            subtree_func = parser_state.LogicInstLookupTable[
+                subtree_root
+            ].func_name
+            for placement in landscape.candidates:
+                inventory.append(
+                    (plan, subtree_root, main_func, subtree_func, placement)
+                )
+    inventory.sort(key=lambda x: (x[4].axis_position, x[4].candidate_id))
+    resolved = {plan.main_inst: {} for plan in plans.values()}
+    allowed_keys = {
+        "candidate_id",
+        "kind",
+        "func_name",
+        "ancestor_func",
+        "instance_path",
+        "instance_path_regex",
+        "main_function",
+        "subtree_function",
+        "hierarchy_depth",
+        "coherent_boundary",
+        "axis_unit_min",
+        "axis_unit_max",
+        "all",
+        "limit",
+        "fixed",
+    }
+    for selector_i, selector in enumerate(config.get("selectors", ())):
+        if not isinstance(selector, dict):
+            raise ValueError(f"Internal placement selector {selector_i} is not an object")
+        unknown = set(selector) - allowed_keys
+        if unknown:
+            raise ValueError(
+                f"Unknown internal placement selector field(s): {sorted(unknown)}"
+            )
+        pattern = selector.get("instance_path_regex")
+        regex = re.compile(pattern) if pattern is not None else None
+        matches = []
+        for item in inventory:
+            _plan, _root, main_func, subtree_func, placement = item
+            if (
+                "candidate_id" in selector
+                and placement.candidate_id != selector["candidate_id"]
+            ):
+                continue
+            if "kind" in selector and placement.kind != selector["kind"]:
+                continue
+            if (
+                "func_name" in selector
+                and placement.func_name != selector["func_name"]
+            ):
+                continue
+            if (
+                "ancestor_func" in selector
+                and selector["ancestor_func"] not in placement.ancestor_funcs
+            ):
+                continue
+            if (
+                "instance_path" in selector
+                and placement.inst_path != selector["instance_path"]
+            ):
+                continue
+            if regex is not None and regex.search(placement.inst_path) is None:
+                continue
+            if (
+                "main_function" in selector
+                and main_func != selector["main_function"]
+            ):
+                continue
+            if (
+                "subtree_function" in selector
+                and subtree_func != selector["subtree_function"]
+            ):
+                continue
+            if (
+                "hierarchy_depth" in selector
+                and placement.hierarchy_depth != selector["hierarchy_depth"]
+            ):
+                continue
+            if (
+                "coherent_boundary" in selector
+                and placement.coherent_boundary
+                != bool(selector["coherent_boundary"])
+            ):
+                continue
+            if (
+                "axis_unit_min" in selector
+                and placement.axis_unit < selector["axis_unit_min"]
+            ):
+                continue
+            if (
+                "axis_unit_max" in selector
+                and placement.axis_unit > selector["axis_unit_max"]
+            ):
+                continue
+            matches.append(item)
+        if not matches:
+            raise ValueError(
+                f"Internal placement selector {selector_i} matched no legal "
+                f"candidate: {selector}"
+            )
+        all_matches = bool(selector.get("all", False))
+        limit = selector.get("limit")
+        if limit is not None:
+            if not isinstance(limit, int) or limit <= 0:
+                raise ValueError("Internal placement selector limit must be > 0")
+            matches = matches[:limit]
+        elif not all_matches and len(matches) != 1:
+            raise ValueError(
+                f"Internal placement selector {selector_i} is ambiguous: "
+                f"matched {len(matches)} candidates; use all=true, limit, or "
+                "an exact candidate_id"
+            )
+        for plan, subtree_root, _main_func, _subtree_func, placement in matches:
+            selected = placement.copy_with(
+                fixed=selector.get("fixed", True), source="internal_forced"
+            )
+            bucket = resolved[plan.main_inst].setdefault(subtree_root, {})
+            bucket[selected.candidate_id] = selected
+
+    for plan in plans.values():
+        by_root = resolved[plan.main_inst]
+        plan.fixed_placements = {
+            root: sorted(items.values(), key=lambda p: (p.axis_unit, p.candidate_id))
+            for root, items in by_root.items()
+        }
+        if plan.fixed_placements:
+            plan.placement_mode = config["mode"]
+    return resolved
+
+
 def SUMMARIZE_SUBTREE_PIPELINE(
     main_inst, subtrees, TimingParamsLookupTable, parser_state
 ):
-    """Describe how many pipeline register stages the sweep built into a
+    """Describe how many slices the sweep built into a
     main's cut subtrees, and where.
 
     A main's own GET_TOTAL_LATENCY only counts registers on its *monolithic*
@@ -595,7 +1607,7 @@ def SUMMARIZE_SUBTREE_PIPELINE(
 
     So walk the subtrees and add up every decoupled region's own
     latency alongside the monolithic part:
-      monolithic  = register stages sliced directly into the cut subtree roots
+      monolithic  = slices inserted directly into the cut subtree roots
                     (the disjoint maximal sliceable regions - a pure-comb main
                     is its own subtree; unlabeled naturally-pipelinable logic is
                     sliced here too). A subtree root's own latency already
@@ -666,7 +1678,7 @@ def GET_SUBTREE_PIPELINE_STAGES(plan, TimingParamsLookupTable, parser_state):
 
 def PRINT_PIPELINE_DEPTH_SUMMARY(parser_state, TimingParamsLookupTable):
     """Print, for every main, how deeply the FINAL emitted design was
-    autopipelined: total pipeline register stages and the decoupled regions
+    autopipelined: total slices and the decoupled regions
     that carry them. Runs at 'Writing Results' on the actually-written table,
     so it reflects the design as built regardless of which path produced it -
     a full sweep, an AUTOPIPELINE confirmation pass, or the coarse sweep - and
@@ -697,7 +1709,7 @@ def PRINT_PIPELINE_DEPTH_SUMMARY(parser_state, TimingParamsLookupTable):
             main_inst, subtrees, TimingParamsLookupTable, parser_state
         )
         print(
-            f"[sweep]   {main_func}: {total_stages} pipeline register stage(s) total "
+            f"[sweep]   {main_func}: {total_stages} slice(s) total "
             f"({total_stages + 1} pipeline stages: comb regions separated by "
             "those slices)",
             flush=True,
@@ -764,6 +1776,351 @@ def PREDICTED_STAGE_NS(cuts, landscape):
             w += landscape.weight[u]
         worst = max(worst, w)
     return worst * landscape.units_to_ns
+
+
+def APPLY_PIPELINE_PLACEMENTS(
+    placements,
+    parser_state,
+    TimingParamsLookupTable,
+    lock_targets=False,
+):
+    """Lower typed placements without recursively projecting global slices.
+
+    This is deliberately an internal compiler API: the planned sweep and the
+    opt-in QoR benchmark both use it, but it is not a source pragma or command
+    line interface.  The setters invalidate each modified TimingParams hash
+    and latency cache; the normal ancestor invalidation pass refreshes the
+    enclosing entity hashes after the full batch is applied.
+    """
+    target_insts = set()
+    seen = set()
+    bit_groups = {}
+    for placement in placements:
+        if not isinstance(placement, PipelinePlacement):
+            if isinstance(placement, BitPlacementRequest):
+                raise ValueError(
+                    f"Cannot lower provisional bit planning site "
+                    f"{placement.candidate_id}; materialize its ordinal/count "
+                    "against the complete selected leaf group first"
+                )
+            raise TypeError(type(placement))
+        if placement.candidate_id in seen:
+            continue
+        seen.add(placement.candidate_id)
+        if placement.inst_path not in TimingParamsLookupTable:
+            raise KeyError(
+                f"Pipeline placement instance does not exist: "
+                f"{placement.inst_path}"
+            )
+        timing_params = TimingParamsLookupTable[placement.inst_path]
+        logic = parser_state.LogicInstLookupTable[placement.inst_path]
+        if timing_params.params_are_fixed:
+            raise ValueError(
+                f"Cannot add pipeline placement to locked instance "
+                f"{placement.inst_path}"
+            )
+        if not logic.CAN_HAVE_ADDED_LATENCY(parser_state):
+            raise ValueError(
+                f"Pipeline placement targets non-sliceable function "
+                f"{logic.func_name}: {placement.candidate_id}"
+            )
+        if placement.kind == PipelinePlacement.INSTANCE_OUTPUT:
+            if len(logic.outputs) == 0:
+                raise ValueError(
+                    f"Output-boundary placement targets function with no "
+                    f"outputs: {placement.candidate_id}"
+                )
+            timing_params.SET_HAS_OUT_REGS(True)
+        elif placement.kind == PipelinePlacement.BIT_INTERNAL:
+            if len(logic.submodule_instances) != 0:
+                raise ValueError(
+                    f"Bit-internal placement must target a raw HDL leaf: "
+                    f"{placement.candidate_id}"
+                )
+            if RAW_VHDL.GET_LEAF_SPLIT_KIND(logic) != RAW_VHDL.SPLIT_KIND_BITS:
+                raise ValueError(
+                    f"Bit-internal placement targets non-bit-splittable leaf "
+                    f"{logic.func_name}: {placement.candidate_id}"
+                )
+            bit_groups.setdefault(placement.inst_path, []).append(placement)
+        else:  # guarded by PipelinePlacement.__init__, defensive for mutation
+            raise ValueError(placement.kind)
+        target_insts.add(placement.inst_path)
+
+    for inst_path, group in bit_groups.items():
+        timing_params = TimingParamsLookupTable[inst_path]
+        logic = parser_state.LogicInstLookupTable[inst_path]
+        counts = {placement.bit_split_count for placement in group}
+        widths = {placement.bit_width for placement in group}
+        if len(counts) != 1 or len(widths) != 1:
+            raise ValueError(
+                f"Physical bit placements for {inst_path} disagree on "
+                f"split count/width: counts={counts}, widths={widths}"
+            )
+        count = counts.pop()
+        width = widths.pop()
+        ordinals = {placement.bit_split_ordinal for placement in group}
+        if len(group) != count or ordinals != set(range(1, count + 1)):
+            raise ValueError(
+                f"Physical bit placement group for {inst_path} is incomplete: "
+                f"ordinals={sorted(ordinals)}, expected 1..{count}"
+            )
+        actual_width = RAW_VHDL.GET_LEAF_BIT_WIDTH(logic, parser_state)
+        if actual_width != width:
+            raise ValueError(
+                f"Physical bit placement width {width} disagrees with raw "
+                f"VHDL leaf width {actual_width} for {inst_path}"
+            )
+        boundaries = RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(width, count)
+        expected_slices = [boundary / float(width) for boundary in boundaries]
+        by_ordinal = {
+            placement.bit_split_ordinal: placement for placement in group
+        }
+        for ordinal, (boundary, local_slice) in enumerate(
+            zip(boundaries, expected_slices), start=1
+        ):
+            placement = by_ordinal[ordinal]
+            if (
+                placement.bit_boundary != boundary
+                or not math.isclose(
+                    placement.local_slice,
+                    local_slice,
+                    rel_tol=0.0,
+                    abs_tol=1e-15,
+                )
+            ):
+                raise ValueError(
+                    f"Physical bit placement {placement.candidate_id} does "
+                    "not match RAW VHDL's equal-width allocation"
+                )
+        if timing_params._slices not in ([], expected_slices):
+            raise ValueError(
+                f"Physical bit placement group for {inst_path} conflicts "
+                f"with existing slices {timing_params._slices}; expected "
+                f"{expected_slices}"
+            )
+        timing_params.SET_SLICES(expected_slices)
+
+    if lock_targets:
+        # Lock after the whole batch so multiple internal cuts may legally
+        # target the same leaf.
+        for inst in target_insts:
+            TimingParamsLookupTable[inst].params_are_fixed = True
+    return TimingParamsLookupTable
+
+
+def PIPELINE_PLACEMENT_REALIZATION(
+    placement, parser_state, TimingParamsLookupTable
+):
+    """Machine-readable realization/status record for placement_trace.json."""
+    if isinstance(placement, BitPlacementRequest):
+        rv = placement.to_dict()
+        rv.update(
+            {
+                "realized": False,
+                "realization": "provisional_planning_site",
+            }
+        )
+        return rv
+    if not isinstance(placement, PipelinePlacement):
+        raise TypeError(type(placement))
+    timing_params = TimingParamsLookupTable.get(placement.inst_path)
+    rv = placement.to_dict()
+    if timing_params is None:
+        rv.update({"realized": False, "realization": "missing_instance"})
+        return rv
+    if placement.kind == PipelinePlacement.INSTANCE_OUTPUT:
+        realized = timing_params._has_output_regs
+        local_boundary = None
+        if realized:
+            local_boundary = timing_params.GET_TOTAL_LATENCY(
+                parser_state, TimingParamsLookupTable
+            )
+        rv.update(
+            {
+                "realized": realized,
+                "boundary_register": "output" if realized else None,
+                "stage_assignment": {
+                    "scope": "instance_local",
+                    "ends_stage": local_boundary,
+                },
+            }
+        )
+    else:
+        expected_boundaries = RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(
+            placement.bit_width, placement.bit_split_count
+        )
+        expected_slices = [
+            boundary / float(placement.bit_width)
+            for boundary in expected_boundaries
+        ]
+        realized = timing_params._slices == expected_slices
+        ends_stage = placement.bit_split_ordinal if realized else None
+        rv.update(
+            {
+                "realized": realized,
+                "realization": (
+                    "equal_width_bit_boundary"
+                    if realized
+                    else "emitted_slice_group_mismatch"
+                ),
+                "emitted_slices": list(timing_params._slices),
+                "expected_slices": expected_slices,
+                "boundary_register": "leaf_internal" if realized else None,
+                "stage_assignment": {
+                    "scope": "leaf_local",
+                    "ends_stage": ends_stage,
+                },
+            }
+        )
+    return rv
+
+
+def CHECK_PIPELINE_PLACEMENTS_REALIZED(
+    placements, parser_state, TimingParamsLookupTable
+):
+    missing = []
+    for placement in placements:
+        record = PIPELINE_PLACEMENT_REALIZATION(
+            placement, parser_state, TimingParamsLookupTable
+        )
+        if not record["realized"]:
+            missing.append(placement.candidate_id)
+    if missing:
+        raise RuntimeError(
+            f"{len(missing)} planned pipeline placement(s) did not materialize: "
+            + ", ".join(missing[:5])
+        )
+    return len(placements)
+
+
+def WRITE_PIPELINE_PLACEMENT_TRACE(
+    plans, parser_state, TimingParamsLookupTable, internal_config=None
+):
+    """Write the typed planner's candidate/selection/final-realization trace."""
+    out_dir = os.path.join(SYN.SYN_OUTPUT_DIRECTORY, SYN.TOP_LEVEL_MODULE)
+    os.makedirs(out_dir, exist_ok=True)
+    trace_path = os.path.join(out_dir, "placement_trace.json")
+    trace = {
+        "schema_version": 2,
+        "planner": "typed_physical_placement",
+        "internal_forced_mode": (
+            None if internal_config is None else internal_config.get("mode")
+        ),
+        "mains": {},
+    }
+    for plan in plans.values():
+        main_func = parser_state.LogicInstLookupTable[plan.main_inst].func_name
+        _ff_text, final_estimated_ffs = SYN.GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(
+            parser_state.LogicInstLookupTable[plan.main_inst],
+            plan.main_inst,
+            parser_state,
+            TimingParamsLookupTable,
+            {},
+        )
+        candidates = []
+        planning_sites = []
+        seen_candidates = set()
+        seen_planning_sites = set()
+        for subtree_root in plan.subtrees:
+            landscape = plan.landscapes.get(subtree_root)
+            if landscape is None:
+                continue
+            for placement in landscape.candidates:
+                record = placement.to_dict()
+                record["subtree"] = subtree_root
+                if isinstance(placement, BitPlacementRequest):
+                    if placement.candidate_id in seen_planning_sites:
+                        continue
+                    seen_planning_sites.add(placement.candidate_id)
+                    planning_sites.append(record)
+                else:
+                    if placement.candidate_id in seen_candidates:
+                        continue
+                    seen_candidates.add(placement.candidate_id)
+                    candidates.append(record)
+        candidates.sort(key=lambda p: (p["axis_position"], p["candidate_id"]))
+        planning_sites.sort(
+            key=lambda p: (
+                p["requested_axis_position"],
+                p["candidate_id"],
+            )
+        )
+
+        final_selected = []
+        selected_ids = set()
+        for subtree_root, placements in plan.placements.items():
+            for placement in placements:
+                if placement.candidate_id in selected_ids:
+                    continue
+                selected_ids.add(placement.candidate_id)
+                record = PIPELINE_PLACEMENT_REALIZATION(
+                    placement, parser_state, TimingParamsLookupTable
+                )
+                record["subtree"] = subtree_root
+                final_selected.append(record)
+        missing = [p["candidate_id"] for p in final_selected if not p["realized"]]
+        if missing:
+            raise RuntimeError(
+                f"Final placement trace disagrees with emitted TimingParams for "
+                f"{main_func}: {missing[:5]}"
+            )
+        final_selected.sort(
+            key=lambda p: (p["axis_position"], p["candidate_id"])
+        )
+        # Coarse mini-sweeps use the older, compatibility fraction lowering
+        # deliberately: an isolated helper can be split internally and then
+        # wrapped in IO registers.  It is still a physical, fixed scheduling
+        # decision and must not disappear from the machine-readable trace
+        # merely because it was not chosen from this iteration's typed
+        # landscape candidates.
+        locked_instances = []
+        for inst_path, (slices, has_input_regs, has_output_regs) in sorted(
+            plan.locked.items()
+        ):
+            timing_params = TimingParamsLookupTable[inst_path]
+            logic = parser_state.LogicInstLookupTable[inst_path]
+            realized = (
+                timing_params.params_are_fixed
+                and timing_params._slices == list(slices)
+                and timing_params._has_input_regs == has_input_regs
+                and timing_params._has_output_regs == has_output_regs
+            )
+            if not realized:
+                raise RuntimeError(
+                    f"Locked pipeline decision did not materialize for {inst_path}"
+                )
+            locked_instances.append(
+                {
+                    "instance_path": inst_path,
+                    "function": logic.func_name,
+                    "slices": list(slices),
+                    "input_registers": has_input_regs,
+                    "output_registers": has_output_regs,
+                    "total_latency": timing_params.GET_TOTAL_LATENCY(
+                        parser_state, TimingParamsLookupTable
+                    ),
+                    "realized": realized,
+                    "lowering": "coarse_minisweep_lock",
+                }
+            )
+        trace["mains"][main_func] = {
+            "main_instance": plan.main_inst,
+            "target_mhz": plan.target_mhz,
+            "mode": plan.placement_mode,
+            "candidate_count": len(candidates),
+            "planning_site_count": len(planning_sites),
+            "final_estimated_total_ffs": final_estimated_ffs,
+            "candidates": candidates,
+            "planning_sites": planning_sites,
+            "iterations": plan.placement_iterations,
+            "final_selected": final_selected,
+            "locked_instances": locked_instances,
+        }
+    with open(trace_path, "w") as f:
+        json.dump(trace, f, indent=1, sort_keys=True)
+    print(f"[sweep] Placement trace: {trace_path}", flush=True)
+    return trace_path
 
 
 def CHECK_CUTS_VS_LATENCY(
@@ -851,6 +2208,10 @@ class MainSweepPlan:
         self.subtrees = []  # list of subtree root inst names
         self.landscapes = {}  # subtree root inst -> SliceLandscape
         self.cuts = {}  # subtree root inst -> [int offsets]
+        self.placements = {}  # subtree root inst -> [PipelinePlacement]
+        self.fixed_placements = {}  # subtree root inst -> retained experiment seeds
+        self.placement_mode = "automatic"  # automatic / seed / replace
+        self.placement_iterations = []  # machine-readable trace snapshots
         self.func_delay_scale = {}  # func name -> learned weight multiplier
         self.global_scale = 1.0  # budget divisor when attribution fails
         self.locked = {}  # inst -> (slices, has_in_regs, has_out_regs)
@@ -972,9 +2333,10 @@ def HOTSPOT_IS_LOCKED(hotspot_func, plan, parser_state):
 
 
 def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
-    """Isolated coarse sweep of one hotspot func; on success lock its slices
-    (with IO regs) on all instances so top level planning treats it as an
-    internally pipelined black box."""
+    """Isolated coarse sweep of one hotspot func; on a nonzero split, lock
+    its slices (with IO regs) on all instances so top-level planning treats
+    it as an internally pipelined black box. A zero-cut pass is evidence that
+    this helper needs no internal lock, not permission to add IO-only delay."""
     if HOTSPOT_IS_LOCKED(hotspot_func, plan, parser_state):
         return False  # already locked, sweeping it again changes nothing
     # Never mini-sweep a subtree root (or the main): "isolating" the whole
@@ -1026,6 +2388,20 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     if not inst_sweep_state.met_timing or working_slices is None:
         print(
             f"[sweep] Hotspot {hotspot_func} could not meet timing in isolation.",
+            flush=True,
+        )
+        return False
+    # The lock adds IO register banks around every instance.  If the helper
+    # already meets its isolated goal with zero internal cuts, those banks
+    # would add latency without subdividing the blamed combinational path.
+    # Leave it to normal boundary planning instead.  This is also important
+    # for repeated helpers such as Divider's step function, which may already
+    # be fast enough in isolation and must not acquire two gratuitous clocks
+    # per instance merely because a different path was blamed at top level.
+    if len(working_slices) == 0:
+        print(
+            f"[sweep] Hotspot {hotspot_func} meets timing in isolation without "
+            "internal cuts; not locking IO-only latency.",
             flush=True,
         )
         return False
@@ -1274,7 +2650,17 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     met_snapshot_tpl = None
     met_snapshot_cuts = None
     met_snapshot_plan_cuts = None
+    met_snapshot_plan_placements = None
     best_plan_cuts = None
+    best_plan_placements = None
+    internal_placement_config = LOAD_INTERNAL_PLACEMENT_CONFIG()
+    if internal_placement_config is not None:
+        print(
+            f"[sweep] INTERNAL TEST placement hook: "
+            f"{internal_placement_config['mode']} mode from "
+            f"{internal_placement_config['source_path']}",
+            flush=True,
+        )
 
     while True:
         iteration += 1
@@ -1289,10 +2675,16 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 if tpl[subtree_root].params_are_fixed:
                     plan.landscapes[subtree_root] = None
                     plan.cuts[subtree_root] = []
+                    plan.placements[subtree_root] = []
                     continue
                 plan.landscapes[subtree_root] = BUILD_SLICE_LANDSCAPE(
                     subtree_root, parser_state, tpl, plan.func_delay_scale
                 )
+        if internal_placement_config is not None:
+            RESOLVE_INTERNAL_PIPELINE_PLACEMENTS(
+                internal_placement_config, plans, parser_state
+            )
+        for plan in plans.values():
             # Plan cuts. Replanning an unresolved plan to the identical cut
             # list would waste a whole synthesis run (a small budget change
             # can be eaten by cut quantization) - nudge the scale until the
@@ -1313,7 +2705,18 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     budget = (
                         plan.target_period_ns / landscape.units_to_ns
                     ) / plan.global_scale
-                    plan.cuts[subtree_root] = PLAN_CUTS(landscape, budget)
+                    fixed = plan.fixed_placements.get(subtree_root, ())
+                    if plan.placement_mode == "replace":
+                        placements = MATERIALIZE_BIT_PLACEMENT_REQUESTS(
+                            list(fixed), landscape
+                        )
+                        cuts = sorted(set(p.axis_unit for p in placements))
+                    else:
+                        cuts, placements = PLAN_PIPELINE_PLACEMENTS(
+                            landscape, budget, fixed_placements=fixed
+                        )
+                    plan.cuts[subtree_root] = cuts
+                    plan.placements[subtree_root] = placements
                     total_cuts += len(plan.cuts[subtree_root])
                 if not plan_unresolved or total_cuts != plan.prev_total_cuts:
                     break
@@ -1326,27 +2729,33 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             for subtree_root in plan.subtrees:
                 landscape = plan.landscapes.get(subtree_root)
                 cuts = plan.cuts.get(subtree_root, [])
-                if landscape is None or len(cuts) == 0:
+                placements = plan.placements.get(subtree_root, [])
+                if landscape is None or len(placements) == 0:
                     continue
-                root_logic = parser_state.LogicInstLookupTable[subtree_root]
-                slices = CUTS_TO_SLICES(cuts, landscape)
-                tpl = (
-                    SYN.ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
-                        subtree_root,
-                        root_logic,
-                        slices,
-                        parser_state,
-                        tpl,
-                        write_files=False,
-                    )
+                tpl = APPLY_PIPELINE_PLACEMENTS(
+                    placements,
+                    parser_state,
+                    tpl,
                 )
-                if type(tpl) is int:
-                    raise Exception(
-                        f"Planned cut produced a bad slice in {subtree_root}: slice index {tpl} of {slices}"
-                    )
-                CHECK_CUTS_VS_LATENCY(
-                    subtree_root, tpl, parser_state, len(cuts), landscape
+                CHECK_PIPELINE_PLACEMENTS_REALIZED(
+                    placements, parser_state, tpl
                 )
+            plan.placement_iterations.append(
+                {
+                    "iteration": iteration,
+                    "mode": plan.placement_mode,
+                    "subtrees": {
+                        subtree_root: {
+                            "cuts": list(plan.cuts.get(subtree_root, ())),
+                            "placements": [
+                                p.to_dict()
+                                for p in plan.placements.get(subtree_root, ())
+                            ],
+                        }
+                        for subtree_root in plan.subtrees
+                    },
+                }
+            )
         if iteration == 1:
             for plan in plans.values():
                 PRINT_FLOOR_REPORT(plan, parser_state)
@@ -1383,12 +2792,18 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 )
                 print(
                     f"[sweep] {main_func_name}: --no_sweep guess, "
-                    f"{total_stages} pipeline register stage(s) built "
+                    f"{total_stages} slice(s) built "
                     f"({total_stages + 1} pipeline stages), "
                     f"cuts={sum(len(c) for c in plan.cuts.values())} "
                     "(UNVERIFIED)",
                     flush=True,
                 )
+            WRITE_PIPELINE_PLACEMENT_TRACE(
+                plans,
+                parser_state,
+                tpl,
+                internal_config=internal_placement_config,
+            )
             multimain_timing_params.sweep_timing_failures = []
             return multimain_timing_params
 
@@ -1406,7 +2821,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             print(
                 f"[sweep] {main_func_name}: about to synthesize, "
                 f"cuts={sum(len(c) for c in plan.cuts.values())}, "
-                f"{total_stages} pipeline register stage(s) "
+                f"{total_stages} slice(s) "
                 f"({total_stages + 1} pipeline stages)",
                 flush=True,
             )
@@ -1647,25 +3062,18 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             for f in list(plan.hotspot_streak.keys()):
                                 if f != hotspot_func:
                                     plan.hotspot_streak[f] = 0
-                            # Mini sweep + lock is the LAST resort: while
-                            # estimated delays are still in play the cut
-                            # placement (not the total) is the prime suspect
-                            # - fix the delay model first (the stagnation /
-                            # no-change fallback measures for real), and only
-                            # escalate to locking if that didn't help
-                            any_estimates = any(
-                                l.delay_is_estimated
-                                for l in parser_state.FuncLogicLookupTable.values()
-                            )
+                            # A repeated, attributed helper is worth an early
+                            # isolated probe. RUN_HOTSPOT_MINISWEEP measures
+                            # that helper before making a lock, so an estimate
+                            # elsewhere in the hierarchy is not a reason to
+                            # keep globally densifying past a compact repeated
+                            # solution. If the probe cannot find a nonzero
+                            # internal cut, ordinary feedback densification
+                            # continues below.
                             if (
                                 plan.hotspot_streak[hotspot_func]
                                 >= MINISWEEP_HOTSPOT_STREAK
                                 and plan.minisweeps_used < MAX_MINISWEEPS
-                                and (
-                                    measured_fallback_done
-                                    or not any_estimates
-                                    or SYN.HIER_SYN_MODE == "prim"
-                                )
                             ):
                                 plan.minisweeps_used += 1
                                 if RUN_HOTSPOT_MINISWEEP(
@@ -1714,6 +3122,13 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             plan.global_scale *= step
                             action = f"replan(global x{plan.global_scale:.2f})"
                             made_change = True
+                    if not met and plan.placement_mode == "replace":
+                        # Controlled frozen-placement A/B: synthesize exactly
+                        # the supplied hardware once and report its result.
+                        # Any densify scale computed by the generic failure
+                        # branch above is deliberately ignored.
+                        plan.stopped_reason = "internal_forced_placement_result"
+                        action = "stop(internal forced placement result)"
                     plan.last_mhz = curr_mhz
                 bottleneck_str = (
                     f" bottleneck={hotspot_func}{stage_info}" if hotspot_func else ""
@@ -1755,6 +3170,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             best_score = overall_score
             best_tpl = copy.deepcopy(tpl)
             best_plan_cuts = {mi: copy.deepcopy(p.cuts) for mi, p in plans.items()}
+            best_plan_placements = {
+                mi: copy.deepcopy(p.placements) for mi, p in plans.items()
+            }
 
         # Plans never implicated in a failing path report have no timing
         # signal to react to - when every reported path meets its goal they
@@ -1802,9 +3220,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     met_snapshot_plan_cuts = {
                         mi: copy.deepcopy(p.cuts) for mi, p in plans.items()
                     }
+                    met_snapshot_plan_placements = {
+                        mi: copy.deepcopy(p.placements) for mi, p in plans.items()
+                    }
                 trim_candidates = []
                 for p in plans.values():
-                    if p.stopped_reason is not None:
+                    if (
+                        p.stopped_reason is not None
+                        or p.placement_mode == "replace"
+                    ):
                         continue
                     met_cuts = sum(len(c) for c in p.cuts.values())
                     if met_cuts <= 1:
@@ -1851,6 +3275,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             for mi, p in plans.items():
                 if mi in met_snapshot_plan_cuts:
                     p.cuts = met_snapshot_plan_cuts[mi]
+                if mi in met_snapshot_plan_placements:
+                    p.placements = met_snapshot_plan_placements[mi]
             ancestor_insts = SYN.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
                 tpl, parser_state
             )
@@ -1924,6 +3350,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             for mi, p in plans.items():
                 if mi in best_plan_cuts:
                     p.cuts = best_plan_cuts[mi]
+                if mi in best_plan_placements:
+                    p.placements = best_plan_placements[mi]
         best_ancestors = SYN.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
             best_tpl, parser_state
         )
@@ -1946,12 +3374,18 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             parser_state,
         )
         print(
-            f"[sweep] {main_func_name}: {outcome}, {total_stages} pipeline register "
-            f"stage(s) built ({total_stages + 1} pipeline stages), "
+            f"[sweep] {main_func_name}: {outcome}, {total_stages} slice(s) built "
+            f"({total_stages + 1} pipeline stages), "
             f"cuts={sum(len(c) for c in plan.cuts.values())}, "
             f"locked={len(plan.locked)} inst(s), iterations={iteration}",
             flush=True,
         )
+    WRITE_PIPELINE_PLACEMENT_TRACE(
+        plans,
+        parser_state,
+        multimain_timing_params.TimingParamsLookupTable,
+        internal_config=internal_placement_config,
+    )
     try:
         out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
         if not os.path.exists(out_dir):

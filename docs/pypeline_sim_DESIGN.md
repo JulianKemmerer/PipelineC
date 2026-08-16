@@ -2220,6 +2220,15 @@ latency-emulated native self-checks of `self_check_stream_pipeline_test.py`) and
 native sim against real pipelined GHDL for an AUTOPIPELINE call site and a naturally-pipelined
 pure MAIN respectively.
 
+The opt-in Divider QoR harness adds a different end-to-end check: it compiles the exact final
+`vhdl_files.txt` after autopipelining and verifies stream ordering, bubbles, divide-by-zero,
+valid latency, input readiness, and pipeline flush under continuous traffic. It deliberately
+does not claim output-backpressure coverage because that fixture has no output-ready port.
+See [pypeline_TESTS.md](pypeline_TESTS.md) for its commands and acceptance limits. This is a
+generated-VHDL verification tier, not evidence about the native delay-line simulator. The
+accepted gate and arithmetic artifacts pass 141 ordered vectors at 31- and 32-cycle latency,
+respectively; their timing/cell claims come from immutable remaps of those same VHDL bytes.
+
 ```
 python3 src/tests/pypeline_tests/native_sim_tests.py            # just the sim tests
 python3 src/tests/pypeline_tests/native_sim_tests.py -j 4

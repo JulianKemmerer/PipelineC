@@ -1307,7 +1307,9 @@ begin
         text += """
 -- Directly connected global wires
 """
-    for var_name in shared_global_vars:
+    # shared_global_vars is a set; stable ordering keeps byte-identical top
+    # VHDL for identical logic/timing parameters across Python processes.
+    for var_name in sorted(shared_global_vars):
         var_info = parser_state.global_vars[var_name]
         # Global var with one or more reader wires
         # Get info on this var

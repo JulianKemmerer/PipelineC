@@ -155,12 +155,17 @@ def test_wide_leaf_uncapped_when_width_exceeds_span():
     assert legal_count == 10, legal_count
 
 
-def test_unknown_width_stays_uncapped():
-    # max_legal_units=None (width unavailable) must reproduce pre-fix
-    # behavior exactly: every unit in the segment's span is legal.
+def test_unknown_width_exposes_only_truthful_output_boundary():
+    # Without a resolved width, no internal raster position can be mapped to
+    # the equal-width bit boundary raw VHDL will emit. Keep the concrete
+    # operation-output boundary, but do not fabricate internal placements.
     landscape = _landscape_with_one_sliceable_segment(15, max_legal_units=None)
     legal_count = sum(1 for l in landscape.legal if l)
-    assert legal_count == 15, legal_count
+    assert legal_count == 1, legal_count
+    assert all(
+        p.kind == SWEEP.PipelinePlacement.INSTANCE_OUTPUT
+        for p in landscape.candidates
+    )
 
 
 def test_bits_per_stage_dict_rejects_interior_zero_bit_stage():
@@ -219,7 +224,7 @@ if __name__ == "__main__":
     test_get_leaf_bit_width_none_when_no_types_resolve()
     test_narrow_leaf_caps_legal_units_to_width_minus_one()
     test_wide_leaf_uncapped_when_width_exceeds_span()
-    test_unknown_width_stays_uncapped()
+    test_unknown_width_exposes_only_truthful_output_boundary()
     test_bits_per_stage_dict_rejects_interior_zero_bit_stage()
     test_bits_per_stage_dict_allows_leading_trailing_zero_bit_stage()
     test_bits_per_stage_dict_within_cap_never_raises()

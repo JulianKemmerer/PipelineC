@@ -4,7 +4,8 @@
 machine that holds **one copy of each distinct operation** and runs the function
 over several clock cycles. It is the resource-minimizing dual of
 [`AUTOPIPELINE`](SYN_DESIGN.md): where AUTOPIPELINE cuts one full copy of the
-hardware into N pipeline stages (initiation interval 1, maximum throughput,
+hardware with N serial register slices (N clocks of latency and N+1
+combinational pipeline regions, initiation interval 1, maximum throughput,
 maximum area), AUTOFSM keeps one adder and uses it twelve times (initiation
 interval N, minimum area).
 

@@ -94,21 +94,46 @@ smallest existing example of the contract `SYN.py` requires. Imports
 `SYN`/`VHDL`/`OPEN_TOOLS` *inside* its functions rather than at module top,
 specifically so (a)/(b) keep the standalone property above.
 
-The synth recipe, once per whole-design confirmation or per isolated leaf
-entity:
+The production synth recipe, once per whole-design confirmation or per
+isolated leaf entity:
 
 ```
 ghdl --std=08 <files> -e <top>;
-synth -top <top>;                        # no -flatten: real sky130 flows don't either
+synth -top <top>;
+flatten; opt -full;                      # expose and simplify cross-entity logic
 dfflibmap -liberty <lib>;
 abc -liberty <lib> -fast;                # see "the -fast finding" below
-flatten;                                 # purely structural, AFTER abc --
-write_json <out>.json                    #   connects the STA graph without
-                                          #   changing which gates abc chose
+flatten;
+write_json <out>.json
 ```
 
 `run_sta` then runs directly in-process — no second Python subprocess, unlike
 PyRTL's flow which shells out to run its own generated script.
+
+Every run writes both the traditional text log and a sibling
+`*_timing.json`. The structured report records `worst_period_ns`, `fmax_mhz`,
+launch clock-to-Q, combinational and setup components, launch/capture
+endpoints, critical-path arcs and loads, cell/unmapped counts,
+`max_capacitance` violations, library/corner, synthesis recipe, model version,
+and the full model/cache identity. A purely combinational isolated leaf has
+zero clock-to-Q and setup by construction; a registered full design normally
+has all three components.
+
+The historical no-early-flatten flow remains the `current` **control recipe**.
+The opt-in synthesis-recipe matrix also has fixed internal variants for
+`synth -flatten`, flattening with `-noabc` before the single liberty ABC pass,
+and the production `early_flatten_opt` sequence above. Each variant has a
+distinct artifact and cache identity. There is no public arbitrary-flags
+interface.
+
+The closed recipe IDs are `current`, `synth_flatten`,
+`synth_flatten_noabc`, and `early_flatten_opt`, selected only by the opt-in
+benchmark's internal `PIPELINEC_INTERNAL_SKY130_RECIPE` environment variable.
+The production `early_flatten_opt` identity has no recipe suffix. Every
+non-production mapped netlist, script, log, leaf-delay cache, and
+minimum-period cache carries a versioned `__recipe_<id>_v1` suffix, including
+the historical `current` control. Promotion bumped `MODEL_VERSION` from 2 to
+3, so no V2 value or artifact can replay under the new default.
 
 **Per-leaf isolation (an architectural limit, not a bug).** Like every
 existing `SYN_TOOL`, a leaf-entity `SYN_AND_REPORT_TIMING` call synthesizes
@@ -164,12 +189,111 @@ for this tool, the same way PyRTL appends `_<TECH>nm_<FF>ff`. Bump
 could change a previously-cached leaf delay's value — otherwise a model
 change could silently replay a stale pre-change number.
 
+`GET_MODEL_CACHE_IDENTITY()` is the machine-readable source of truth used by
+both timing JSON and benchmark manifests. Fixed non-production recipes extend
+that identity with their recipe suffix. Promoting a different recipe requires
+a `MODEL_VERSION` bump; merely running an isolated alternate recipe does not
+invalidate the unchanged production cache.
+
+### Frozen recipe screen (2026-08-14)
+
+The primary recipe matrix has been run on byte-identical VHDL for the
+unchanged gate Divider's isolated `step_gates` entity. The durable evidence is
+[`synthesis_recipe_step_gates_matrix.json`](../src/tests/pypeline_tests/qor/synthesis_recipe_step_gates_matrix.json),
+including source/VHDL/tool/liberty hashes, exact commands, timing components,
+mapped-artifact hashes, and relative deltas:
+
+| recipe | period | fmax | cells | versus `current` |
+|---|---:|---:|---:|---|
+| `current` | 5.817 ns | 171.90 MHz | 754 | control |
+| `synth_flatten` | 4.909 ns | 203.71 MHz | 414 | 15.6% less period, 45.1% fewer cells |
+| `synth_flatten_noabc` | 4.948 ns | 202.10 MHz | 425 | 14.9% less period, 43.6% fewer cells |
+| `early_flatten_opt` | 4.849 ns | 206.25 MHz | 427 | 16.7% less period, 43.4% fewer cells |
+
+This first screen established that early flattening was materially beneficial
+for the isolated step under the pinned tools. It did not by itself justify a
+production change; the full-design screen below made that decision.
+
+### Pre-step compare/select cone and clean-baseline floor (2026-08-14)
+
+Two further durable artifacts isolate a different effect and keep their
+provenance deliberately separate:
+
+- [`divider_gate_clean_baseline_critical_paths.json`](../src/tests/pypeline_tests/qor/divider_gate_clean_baseline_critical_paths.json)
+  is the unchanged gate fixture run by clean commit `c81ca31f`, with the
+  `current` recipe and no superseded handoff patch. At 28, 50, 63, 67, and 70
+  slices, the winning path starts at the divisor input and traverses the
+  pre-step `right != 0` reduction and 32-bit `left_eff` select before entering
+  the first radix step. At 67 slices it is 7.010 ns (142.647 MHz); 70 slices
+  adds 1,135 mapped cells but changes timing by exactly zero. The shared
+  pre-step prefix is about 5.67 ns, dominated by a 4.325 ns fanout-64 NAND3
+  arc that violates `max_capacitance`. A hierarchy-delay fallback finally
+  gives the mux two near-edge slices at 73, jumping to 224.314 MHz; trim then
+  restores a different 66-slice / 67-stage result at 184.348 MHz. The exact
+  final 66-slice VHDL passes 141 ordered vectors at 66-cycle latency. That is
+  the clean baseline, and it still fails the 48-slice acceptance limit.
+- [`synthesis_recipe_pre_divzero_matrix.json`](../src/tests/pypeline_tests/qor/synthesis_recipe_pre_divzero_matrix.json)
+  holds the source-generated compare and mux VHDL byte-identical under a
+  small frozen wrapper
+  ([`synthesis_recipe_pre_divzero_wrapper.vhd`](../src/tests/pypeline_tests/qor/synthesis_recipe_pre_divzero_wrapper.vhd)).
+  The leaf VHDL came from clean `c81ca31f`; the synthetic wrapper was mapped
+  with this session's diagnostic backend. `current` measures 5.541 ns, 130
+  cells, and three capacitance violations. Each early-flatten variant measures
+  2.630 ns, 94 cells, and zero violations.
+
+The controlled cone matrix is strong evidence that hierarchy visible to ABC
+creates the pre-step fanout cliff, and that early flattening can remove it. It
+remains mechanism evidence rather than an acceptance result; the clean
+baseline, forced control, and automatic production results retain separate
+provenance.
+
+### Full frozen recipe selection and production result (2026-08-15)
+
+The full recipe matrix held the 16 ordered VHDL files byte-identical at the
+generic hand-equivalent 32-slice placement (divide-zero select plus the first
+31 repeated-step outputs). Every row passed the same 141-vector exact-VHDL
+test. The durable summary is
+[`synthesis_recipe_forced32_matrix.json`](../src/tests/pypeline_tests/qor/synthesis_recipe_forced32_matrix.json).
+
+| recipe | period | fmax | cells | DFFs | cap violations | map time |
+|---|---:|---:|---:|---:|---:|---:|
+| historical `current` | 6.703 ns | 149.19 MHz | 27,330 | 3,072 | 3 | 226 s |
+| `synth_flatten` | 5.918 ns | 168.98 MHz | 16,359 | 3,072 | 0 | 1,692 s |
+| `synth_flatten_noabc` | 5.919 ns | 168.95 MHz | 16,285 | 3,072 | 0 | 1,769 s |
+| **`early_flatten_opt`** | **5.667 ns** | **176.47 MHz** | 16,594 | 3,072 | 0 | 242 s |
+
+At equal latency, `early_flatten_opt` has the largest fmax margin, is 39.3%
+smaller than the control, and maps in roughly the control's runtime. It is now
+the production recipe and `MODEL_VERSION = 3`. `synth_flatten_noabc` saves 74
+cells versus `synth_flatten` but is a timing tie, takes longer, and loses to
+the production recipe by 7.52 MHz. No-`-fast`, `-D`, custom ABC scripts,
+buffering/upsize, and register retiming were not promoted; the earlier
+no-`-fast`/`-D` evidence was worse or inert, and the higher-return primary
+matrix already met the acceptance target without sequential retiming risk.
+
+The first generic automatic planner result produced 33 slices / 34
+combinational stages: the divide-zero select, 31 coherent repeated-step
+outputs, and one legal operation output inside the last step. A later
+minimal-stage regression run with the same production recipe trimmed that to
+31 coherent repeated-step output boundaries. Early flattening removes the
+former pre-step fanout floor, so no dedicated divide-zero boundary is needed.
+An immutable remap of the current 16-file result is **160.43 MHz**, 16,514
+cells, 3,007 DFFs, zero unmapped cells, zero capacitance violations, and
+complete timing topology. Exact GHDL/cocotb simulation passed 141 ordered
+vectors at 31-cycle latency. The combined gate and arithmetic acceptance record is
+[`divider_qor_acceptance.json`](../src/tests/pypeline_tests/qor/divider_qor_acceptance.json).
+
 ## 3. Results
 
 Measured against real sky130 synthesis of a radix-2 divider (`latchup.app`'s
-own sky130 fmax scoring, 1→128 pipeline stages, entity hashes verified
+own sky130 fmax scoring, designs historically labeled 1→128 cycles, entity hashes verified
 bit-identical to theirs) and a held-out different design/language reference
 (`TARGET_33cycles_140mhz`).
+
+The `N` values in this historical calibration table are the source design's
+cycle labels. They are retained as evidence metadata and must not be confused
+with current compiler reporting, where `N` inserted slices means `N + 1`
+combinational stages.
 
 **Engine alone, fed real (not self-synthesized) netlists** — isolates the STA
 physics from any synthesis-recipe question:
@@ -178,10 +302,11 @@ physics from any synthesis-recipe question:
 |---|---|---|
 | STA engine (sections a+b) | **4.66%** | **−0.4%** (was +35.4% under the prior fitted-linear model) |
 
-**End to end, real shipped recipe, our own hash-verified builds** — the
-harder test, since it includes our own local synthesis, not a given netlist:
+**Historical calibrated `current` control, our own hash-verified builds** —
+retained because it validates the original `-fast` calibration across the
+external corpus. The production full-Divider result is reported above:
 
-| N (stages) | real (ns) | predicted (ns) | err% |
+| historical source label N (cycles) | real (ns) | predicted (ns) | err% |
 |---|---|---|---|
 | 1 | 253.000 | 236.608 | −6.5% |
 | 4 | 68.670 | 64.742 | −5.7% |
@@ -215,9 +340,12 @@ build), before the `-fast` fix was even found.
 
 ## 5. Limitations and future work
 
-- **Register overhead (clk->Q + setup) is not modeled** — the planner
-  budgets logic delay only, i.e. it assumes a real clock period has zero
-  margin left for the register itself. A `GET_REGISTER_OVERHEAD_NS()` hook
+- **Register overhead is modeled by STA but is not subtracted as one fixed
+  planner-wide constant.** Full registered paths include measured clk->Q,
+  combinational, and setup components in both text and JSON reports. The
+  planner's initial global slice-count budget still uses the measured
+  frontier total without a separate fixed overhead subtraction. A
+  `GET_REGISTER_OVERHEAD_NS()` hook
   (subtracting `dfxtp_1`'s own clk->Q + `setup_rising` from the per-stage
   budget) was built and tried, but reverted: on the divider design it
   produced a sweep that no longer converged (a real planned-sweep run

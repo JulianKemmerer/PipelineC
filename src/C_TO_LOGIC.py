@@ -542,6 +542,13 @@ class Logic:
         # True when delay was derived from the zero clock pipeline map
         # (submodule delays) instead of measured by a real synthesis run
         self.delay_is_estimated = False
+        # Optional measured path decomposition supplied by timing backends
+        # that can distinguish launch clock-to-Q, combinational, and setup
+        # delay. ``planner_delay`` is the combinational component in the same
+        # integer units as ``delay``. It is diagnostic by default; SYN's
+        # internal experimental gate decides whether a planner consumes it.
+        self.delay_components = None
+        self.planner_delay = None
 
         # Save C code text for later
         self.c_code_text = None
@@ -631,6 +638,12 @@ class Logic:
         rv.wire_to_c_type = dict(self.wire_to_c_type)  # IMMUTABLE
         rv.delay = self.delay
         rv.delay_is_estimated = self.delay_is_estimated
+        rv.delay_components = (
+            dict(self.delay_components)
+            if self.delay_components is not None
+            else None
+        )
+        rv.planner_delay = self.planner_delay
         rv.c_code_text = self.c_code_text
         rv.containing_funcs = set(self.containing_funcs)
         rv.ref_submodule_instance_to_input_port_driven_ref_toks = (
@@ -866,6 +879,30 @@ class Logic:
                 raise Exception("Mismatch delay!")
         elif self.delay is None:
             self.delay = logic_b.delay
+
+        # Optional planner-only timing diagnostics follow the same merge
+        # contract as measured delay. In ordinary frontend merges both sides
+        # are None; this also makes post-measurement copies deterministic.
+        if (
+            self.delay_components is not None
+            and logic_b.delay_components is not None
+            and self.delay_components != logic_b.delay_components
+        ):
+            raise Exception("Mismatch delay components!")
+        if self.delay_components is None:
+            self.delay_components = (
+                dict(logic_b.delay_components)
+                if logic_b.delay_components is not None
+                else None
+            )
+        if (
+            self.planner_delay is not None
+            and logic_b.planner_delay is not None
+            and self.planner_delay != logic_b.planner_delay
+        ):
+            raise Exception("Mismatch planner delay!")
+        if self.planner_delay is None:
+            self.planner_delay = logic_b.planner_delay
 
         # NExt user inst name?
         if self.next_user_inst_name != logic_b.next_user_inst_name:

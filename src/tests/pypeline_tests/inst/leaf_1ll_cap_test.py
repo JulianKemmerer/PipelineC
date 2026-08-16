@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
-# Regression guard for the D1 fix (SPLIT_KIND_1LL leaves modelled as freely
-# splittable when their generator only ever places their logic in ONE
-# stage): builds leaf_1ll_cap_design.py (a serial AND/OR/XOR/MUX-only
+# Regression guard for the D1 fix (SPLIT_KIND_1LL leaves must expose useful
+# operation boundaries without pretending their one logic level has an
+# arbitrary interior): builds leaf_1ll_cap_design.py (a serial AND/OR/XOR/MUX-only
 # chain - no SPLIT_KIND_BITS leaf anywhere, the shape where this bug is
 # total) under --syn_tool sky130 at an aggressive clock target, and checks
 #  - the build succeeds

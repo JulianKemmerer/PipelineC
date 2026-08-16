@@ -132,8 +132,32 @@ def test_plan_cuts_boundary_snap_invariants_stress():
         assert all(0 <= c < n for c in cuts), (n_steps, budget_units, cuts)
 
 
+def test_discarded_tail_boundary_never_hides_useful_legal_cuts():
+    # A final-unit output boundary is intentionally removed when it is not
+    # fixed: otherwise it creates an empty trailing comb region.  It must not
+    # first be used as a forward snap target, because that skips the useful
+    # bit-split sites before it and then deletes the chosen tail cut.
+    landscape = SWEEP.SliceLandscape("wide_leaf", 100, 1.0)
+    seg = SWEEP.Segment(
+        "wide_leaf____minus",
+        "BIN_OP_MINUS_uint8_t_uint8_t",
+        0.0,
+        100.0,
+        SWEEP.Segment.SLICEABLE,
+    )
+    seg.max_legal_units = 8
+    seg.ancestor_funcs = {"wide_leaf", seg.func_name}
+    landscape.segments.append(seg)
+    landscape.finalize({})
+
+    cuts = SWEEP.PLAN_CUTS(landscape, 25.0)
+    assert cuts == [13, 28, 42, 56, 70, 85], cuts
+    assert SWEEP.PREDICTED_STAGE_NS(cuts, landscape) <= 25.0
+
+
 if __name__ == "__main__":
     test_low_cut_density_never_merges_two_full_steps()
     test_cuts_land_at_end_of_run_not_mid_run()
     test_plan_cuts_boundary_snap_invariants_stress()
+    test_discarded_tail_boundary_never_hides_useful_legal_cuts()
     print("All PLAN_CUTS boundary-snap tests passed.")

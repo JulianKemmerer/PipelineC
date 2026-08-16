@@ -44,6 +44,7 @@ def NODE_TO_ELEM(node_str):
 
 class ParsedTimingReport:
     def __init__(self, syn_output):
+        self.orig_text = syn_output
         # print(syn_output)
         # Clocks reported once at end
         clock_to_act_tar_mhz = {}

@@ -1,0 +1,119 @@
+{
+  "schema_version": 1,
+  "experiment": "frozen_step_gates_primary_synthesis_recipe_matrix",
+  "recorded_utc_date": "2026-08-14",
+  "purpose": "Screen the four fixed internal sky130 recipes on byte-identical unchanged gate Divider step VHDL before spending hours on full Divider mappings.",
+  "provenance": {
+    "compiler_commit_that_rendered_vhdl": "c81ca31fe944e18960db5ed3558219959956142c",
+    "divider_fixture_sha256": "dcb24be3351f4e8d4680cfcaca3ed073d7c439db680919f8d6e7cfbd60661aec",
+    "frozen_entity": "step_gates_0CLK_aba532cf",
+    "frozen_entity_vhdl_bytes": 755143,
+    "frozen_entity_vhdl_sha256": "b0f2abee2771d3a3588ab4a97f8dc61806534573fe529ee7309174123790bae4",
+    "library": "sky130_fd_sc_hvl",
+    "corner": "tt_025C_3v30",
+    "liberty_sha256": "fb1c43d5971efa70df79d7f16de69f8bbe3c7f0de0432baae4c43e7c72e251e9",
+    "yosys": "Yosys 0.48+51 (git sha1 17a53b838, clang++ 18.1.8 -fPIC -O3)",
+    "ghdl": "GHDL 5.0.0-dev (4.1.0.r453.g85927f052.dirty) [Dunoon edition]",
+    "abc_extra_args": "-fast",
+    "sta_model_version": 2,
+    "net_delay_model": "none"
+  },
+  "controlled_variables": {
+    "vhdl": "byte-identical",
+    "liberty": "byte-identical",
+    "sta": "same DEVICE_MODELS.run_sta implementation",
+    "clock_to_q_and_setup": "zero for this combinational entity",
+    "changed_variable": "fixed synthesis recipe only"
+  },
+  "recipes": {
+    "current": {
+      "commands": "synth -top <top>; dfflibmap -liberty <lib>; abc -liberty <lib> -fast; flatten",
+      "metrics": {
+        "worst_period_ns": 5.817494075159302,
+        "fmax_mhz": 171.8953190292019,
+        "n_cells": 754,
+        "n_unmapped_cells": 0,
+        "n_max_capacitance_violations": 0,
+        "critical_path_arc_count": 29,
+        "launch_clock_to_q_ns": 0.0,
+        "combinational_delay_ns": 5.817494075159302,
+        "setup_ns": 0.0
+      },
+      "artifacts": {
+        "mapped_json_bytes": 1193872,
+        "mapped_json_sha256": "284ee1e43ec98347a097fa27e9a96ff11ed8544f087e5e94d2ce32de0e38d961",
+        "timing_json_sha256": "b09929841459601c0a59c7ef68abc6431aefbdb685586548b494c90ca48e1493"
+      }
+    },
+    "synth_flatten": {
+      "commands": "synth -top <top> -flatten; dfflibmap -liberty <lib>; abc -liberty <lib> -fast; flatten",
+      "relative_to_current": {
+        "period_reduction_percent": 15.619529331927708,
+        "cell_reduction_percent": 45.09283819628647
+      },
+      "metrics": {
+        "worst_period_ns": 4.908828881706638,
+        "fmax_mhz": 203.71457716251314,
+        "n_cells": 414,
+        "n_unmapped_cells": 0,
+        "n_max_capacitance_violations": 0,
+        "critical_path_arc_count": 15,
+        "launch_clock_to_q_ns": 0.0,
+        "combinational_delay_ns": 4.908828881706638,
+        "setup_ns": 0.0
+      },
+      "artifacts": {
+        "mapped_json_bytes": 721294,
+        "mapped_json_sha256": "795c8bdb397674e32d6b92e924e84a2856d6ed47ec877752b6c941efe3f12b97",
+        "timing_json_sha256": "e9524e840a7f4f59e1b75408f015105e9ea17d0962ab9e599f2bb4ccb245d572"
+      }
+    },
+    "synth_flatten_noabc": {
+      "commands": "synth -top <top> -flatten -noabc; opt -full; dfflibmap -liberty <lib>; abc -liberty <lib> -fast; flatten",
+      "relative_to_current": {
+        "period_reduction_percent": 14.946352989282046,
+        "cell_reduction_percent": 43.63395225464191
+      },
+      "metrics": {
+        "worst_period_ns": 4.947990875555424,
+        "fmax_mhz": 202.10223202720593,
+        "n_cells": 425,
+        "n_unmapped_cells": 0,
+        "n_max_capacitance_violations": 0,
+        "critical_path_arc_count": 15,
+        "launch_clock_to_q_ns": 0.0,
+        "combinational_delay_ns": 4.947990875555424,
+        "setup_ns": 0.0
+      },
+      "artifacts": {
+        "mapped_json_bytes": 836870,
+        "mapped_json_sha256": "317f031e9de6a2f01977d2d82da468c4772463256d3cadac0c2b056090a09cfe",
+        "timing_json_sha256": "81854831d9753dfc98b361440118a4f2c3f7e1af27fc4ecdbf2c21c6c61d4170"
+      }
+    },
+    "early_flatten_opt": {
+      "commands": "synth -top <top>; flatten; opt -full; dfflibmap -liberty <lib>; abc -liberty <lib> -fast; flatten",
+      "relative_to_current": {
+        "period_reduction_percent": 16.655117558288996,
+        "cell_reduction_percent": 43.36870026525199
+      },
+      "metrics": {
+        "worst_period_ns": 4.848583597995023,
+        "fmax_mhz": 206.24579937396936,
+        "n_cells": 427,
+        "n_unmapped_cells": 0,
+        "n_max_capacitance_violations": 0,
+        "critical_path_arc_count": 15,
+        "launch_clock_to_q_ns": 0.0,
+        "combinational_delay_ns": 4.848583597995023,
+        "setup_ns": 0.0
+      },
+      "artifacts": {
+        "mapped_json_bytes": 836812,
+        "mapped_json_sha256": "a072d9793c1ec8bb723f21383b7f90b737c23be59d8639d6d46965bf8d71b68e",
+        "timing_json_sha256": "22f95bcbebfcf19d6e2e3d3f0058d9b940da14e46afadeb8103b70c9317bba64"
+      }
+    }
+  },
+  "screening_conclusion": "All early-flatten families are materially faster and smaller than current on the isolated unchanged step. early_flatten_opt wins fmax; synth_flatten wins cells and is within 1.2 percent of that fmax. Full frozen Divider mapping decides promotion."
+}

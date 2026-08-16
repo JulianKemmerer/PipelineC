@@ -4,6 +4,7 @@ import copy
 import datetime
 import hashlib
 import inspect
+import json
 import math
 import os
 import re
@@ -61,6 +62,38 @@ INF_MHZ = 1000  # Impossible timing goal
 #           delays (--no_hier_syn cmd line flag). Gives up the automatic
 #           estimate-was-inaccurate fallback to real synthesis.
 HIER_SYN_MODE = "leaf"
+# Experimental planner geometry: use a timing backend's measured
+# combinational component as the relative leaf weight, then normalize it at
+# the measured frontier before placement. This stays internal and defaults
+# off until controlled A/B evidence promotes it; the synthesis/STA budget
+# continues to use Logic.delay regardless.
+USE_COMBINATIONAL_PLANNER_WEIGHTS = os.environ.get(
+    "PIPELINEC_INTERNAL_COMBINATIONAL_PLANNER_WEIGHTS", "0"
+).lower() in ("1", "true", "yes", "on")
+COMBINATIONAL_PLANNER_MODEL_VERSION = 1
+
+
+def GET_PLANNER_DELAY_CACHE_SUFFIX():
+    if not USE_COMBINATIONAL_PLANNER_WEIGHTS:
+        return ""
+    return f"__comb_planner_v{COMBINATIONAL_PLANNER_MODEL_VERSION}"
+
+
+def GET_PLANNER_DELAY(logic):
+    """Relative planner weight in the same integer units as ``logic.delay``.
+
+    The experimental value is the measured combinational component. Callers
+    must normalize a frontier's relative weights back to its existing
+    measured total before placement; this helper intentionally does not alter
+    the global slice-count/timing budget.
+    """
+
+    if (
+        USE_COMBINATIONAL_PLANNER_WEIGHTS
+        and getattr(logic, "planner_delay", None) is not None
+    ):
+        return logic.planner_delay
+    return logic.delay
 # Plan the pipelining once from the delay model, write it, and stop -- no
 # sweep synthesis iterations verify it meets timing. --no_sweep cmd line flag.
 NO_SWEEP = False
@@ -1262,7 +1295,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     #   "Let's pretend we don't exist. Lets pretend we're in Antarctica" - Of Montreal
     wire_to_remaining_clks_before_driven = {}
     # All wires start with invalid latency as to not write them too soon
-    for wire in logic.wires:
+    for wire in sorted(logic.wires):
         wire_to_remaining_clks_before_driven[wire] = -1
 
     # Bound on latency for sanity - this isnt used is it?
@@ -1280,7 +1313,10 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         if type(driven_wire_or_wires) is list:
             driven_wires = driven_wire_or_wires
         elif type(driven_wire_or_wires) is set:
-            driven_wires = list(driven_wire_or_wires)
+            # Set iteration changes across Python processes.  This order is
+            # carried into PipelineMap and eventually VHDL statement order,
+            # so stabilize graph frontiers before traversing them.
+            driven_wires = sorted(driven_wire_or_wires)
         else:
             driven_wires = [driven_wire_or_wires]
         for driven_wire in driven_wires:
@@ -1342,7 +1378,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             # Otherwise keep following connected wires
             driven_wires = []
             if wire_to_follow in logic.wire_drives:
-                driven_wires = logic.wire_drives[wire_to_follow]
+                driven_wires = sorted(logic.wire_drives[wire_to_follow])
             for driven_wire in driven_wires:
                 RECORD_DRIVEN_BY(wire_to_follow, driven_wire)
                 submodule_level_info.driver_driven_wire_pairs.append(
@@ -1370,7 +1406,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         # Upstreams vars for these wires depend on if starting off with wires or following submodules
         wire_to_upstream_vars = {}
         if things_are_upstream_vars_not_submodules:
-            wires_to_follow = things_to_follow
+            wires_to_follow = sorted(things_to_follow)
             for wire_to_follow in wires_to_follow:
                 # Follow wires marking as mark of network to submodules
                 upstream_vars = set([wire_to_follow])
@@ -1379,7 +1415,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             submodules_to_follow_outputs = things_to_follow
             # Follow submodule outputs adding to wires_to_follow
             wires_to_follow = set()
-            for sub_inst_reached in submodules_to_follow_outputs:
+            for sub_inst_reached in sorted(submodules_to_follow_outputs):
                 sub_func_name = logic.submodule_instances[sub_inst_reached]
                 sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
                 # Known that this func has all inputs fully driven by network in prev sub level
@@ -1412,7 +1448,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                     wire_to_upstream_vars[output_wire] = input_upstream_vars
         # Follow each wire with associated upstream vars to more submodules
         all_in_network_sub_insts_reached = set()
-        for wire_to_follow in wires_to_follow:
+        for wire_to_follow in sorted(wires_to_follow):
             upstream_vars = wire_to_upstream_vars[wire_to_follow]
             sub_insts_reached = propagate_wire(
                 wire_to_follow,
@@ -1421,7 +1457,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                 network_wire_to_upstream_vars,
             )
             # Are all submodule inputs part of network?
-            for sub_inst_reached in sub_insts_reached:
+            for sub_inst_reached in sorted(sub_insts_reached):
                 if sub_inst_reached in all_in_network_sub_insts_reached:
                     continue
                 sub_func_name = logic.submodule_instances[sub_inst_reached]
@@ -1450,7 +1486,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 
     # Constant network propagation starts at user constant literals like '2'
     things_to_follow = set()
-    for wire in logic.wires:
+    for wire in sorted(logic.wires):
         if C_TO_LOGIC.WIRE_IS_CONSTANT(wire):
             RECORD_DRIVEN_BY(None, wire)
             things_to_follow.add(wire)
@@ -1469,7 +1505,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         submodule_level += 1
         # Conditionally set submodule outputs as next wires to follow
         things_to_follow = set()
-        for sub_inst_reached in all_in_network_sub_insts_reached:
+        for sub_inst_reached in sorted(all_in_network_sub_insts_reached):
             sub_func_name = logic.submodule_instances[sub_inst_reached]
             sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
             # Is this logic something constants propagate over?
@@ -1507,7 +1543,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         submodule_level += 1
         # Conditionally set submodule outputs as next wires to follow
         things_to_follow = set()
-        for sub_inst_reached in all_in_network_sub_insts_reached:
+        for sub_inst_reached in sorted(all_in_network_sub_insts_reached):
             sub_func_name = logic.submodule_instances[sub_inst_reached]
             sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
             # Is this logic something non vol read only globals propagate over?
@@ -1786,7 +1822,9 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             fully_driven_submodule_inst_this_level_2_logic = {}
             # Get submodule logics
             # Loop over each sumodule and check if all inputs are driven
-            not_fully_driven_submodules_iter = set(not_fully_driven_submodules)
+            not_fully_driven_submodules_iter = sorted(
+                not_fully_driven_submodules
+            )
             for submodule_inst in not_fully_driven_submodules_iter:
                 submodule_inst_name = (
                     inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
@@ -2068,7 +2106,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             wires_starting_level = []
             # Also are added to wires driven so far
             # (done per submodule level iteration since ALSO DOES 0 CLK SUBMODULE OUTPUTS)
-            for wire in wire_to_remaining_clks_before_driven:
+            for wire in sorted(wire_to_remaining_clks_before_driven):
                 if wire_to_remaining_clks_before_driven[wire] == 0:
                     if wire not in wires_driven_by_so_far:
                         if bad_inf_loop:
@@ -4213,9 +4251,11 @@ def IS_USER_CODE(logic, parser_state):
 
 
 def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
-    PATH_DELAY_CACHE_DIR = (
-        C_TO_LOGIC.EXE_ABS_DIR() + f"/../{dir_name}/" + str(SYN_TOOL.__name__).lower()
+    cache_dir = os.environ.get(
+        "PYPELINEC_PATH_DELAY_CACHE_DIR",
+        C_TO_LOGIC.EXE_ABS_DIR() + f"/../{dir_name}/",
     )
+    PATH_DELAY_CACHE_DIR = os.path.join(cache_dir, str(SYN_TOOL.__name__).lower())
     if SYN_TOOL is PYRTL:
         PATH_DELAY_CACHE_DIR += (
             "_" + str(PYRTL.TECH_IN_NM) + "nm" + "_" + str(PYRTL.FF_OVERHEAD) + "ff"
@@ -4225,17 +4265,24 @@ def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
             "_" + DEVICE_MODELS.SELECTED_LIBRARY
             + "_" + DEVICE_MODELS.SELECTED_CORNER
             + "_v" + str(DEVICE_MODELS.MODEL_VERSION)
+            + DEVICE_MODELS.GET_SYNTHESIS_RECIPE_CACHE_SUFFIX()
         )
+    PATH_DELAY_CACHE_DIR += GET_PLANNER_DELAY_CACHE_SUFFIX()
     # `part` disambiguates cache entries when the same SYN_TOOL/library/
     # corner combo could still map to different physical parts (ex. PyRTL's
     # tech node doesn't imply an FPGA part number). For DEVICE_MODELS the
-    # library IS the part - PART("sky130_fd_sc_hvl") sets parser_state.part
-    # to the exact same string already folded into PATH_DELAY_CACHE_DIR
-    # above, so appending it again produced a redundant nested directory
-    # with identical cache contents at two different paths.
-    part_already_encoded = (
-        SYN_TOOL is DEVICE_MODELS and parser_state.part == DEVICE_MODELS.SELECTED_LIBRARY
-    )
+    # part carries no information the library+corner above doesn't already
+    # encode -- the part string is only ever a *selector* that routes to this
+    # tool (PART_SET_TOOL matches any "sky130"-prefixed string), and the
+    # library/corner actually used comes from SELECTED_LIBRARY/SELECTED_CORNER
+    # regardless of how it was spelled. Appending it too would fragment one
+    # logical cache across a directory per spelling: PART("sky130") and
+    # PART("sky130_fd_sc_hvl") select the identical tool+library+corner but
+    # would look in ".../sky130/syn" and ".../syn" respectively, so a
+    # committed cache populated under one spelling silently misses under the
+    # other (real bug: PART("sky130") re-synthesized every already-cached
+    # leaf).
+    part_already_encoded = SYN_TOOL is DEVICE_MODELS
     if parser_state.part is not None and not part_already_encoded:
         PATH_DELAY_CACHE_DIR += "/" + parser_state.part
     if TOOL_DOES_PNR():
@@ -4286,6 +4333,11 @@ def GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state):
     return file_path
 
 
+def GET_CACHED_PATH_DELAY_COMPONENTS_FILE_PATH(logic, parser_state):
+    key = GET_CACHED_LOGIC_FILE_KEY(logic, parser_state)
+    return GET_PATH_DELAY_CACHE_DIR(parser_state) + "/" + key + ".timing.json"
+
+
 def GET_CACHED_PATH_DELAY(logic, parser_state):
     if not logic.is_c_built_in and C_TO_LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
         return None
@@ -4297,6 +4349,96 @@ def GET_CACHED_PATH_DELAY(logic, parser_state):
         return float(open(file_path, "r").readlines()[0])
 
     return None
+
+
+def GET_CACHED_PATH_DELAY_COMPONENTS(logic, parser_state, expected_delay_ns=None):
+    """Read an optional V1 leaf timing-component cache sidecar.
+
+    Old ``.delay`` caches intentionally have no sidecar and cleanly return
+    None. When the experimental combinational planner model is selected its
+    cache identity is distinct, so such a miss triggers one real measurement
+    rather than silently mixing total-delay and combinational geometries.
+    """
+
+    if not logic.is_c_built_in and C_TO_LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
+        return None
+    path = GET_CACHED_PATH_DELAY_COMPONENTS_FILE_PATH(logic, parser_state)
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path) as f:
+            value = json.load(f)
+        if value.get("schema_version") != 1:
+            return None
+        component_names = (
+            "launch_clock_to_q_ns",
+            "combinational_delay_ns",
+            "setup_ns",
+        )
+        components = {
+            name: float(value[name])
+            for name in component_names
+        }
+        cached_total = float(value["path_delay_ns"])
+        if expected_delay_ns is not None and not math.isclose(
+            cached_total,
+            expected_delay_ns,
+            rel_tol=1e-9,
+            abs_tol=1e-9,
+        ):
+            return None
+        components["path_delay_ns"] = cached_total
+        return components
+    except (KeyError, OSError, TypeError, ValueError):
+        return None
+
+
+def _PATH_REPORT_DELAY_COMPONENTS(path_report):
+    names = (
+        "launch_clock_to_q_ns",
+        "combinational_delay_ns",
+        "setup_ns",
+    )
+    values = [getattr(path_report, name, None) for name in names]
+    if any(value is None for value in values):
+        return None
+    components = {name: float(value) for name, value in zip(names, values)}
+    components["path_delay_ns"] = float(path_report.path_delay_ns)
+    component_sum = sum(components[name] for name in names)
+    # DEVICE_MODELS text logs are rounded to 6 decimal places. Reject a
+    # genuinely inconsistent decomposition but tolerate that serialization.
+    if not math.isclose(
+        component_sum,
+        components["path_delay_ns"],
+        rel_tol=1e-6,
+        abs_tol=5e-6,
+    ):
+        return None
+    return components
+
+
+def _SET_LOGIC_DELAY_COMPONENTS(logic, components):
+    logic.delay_components = dict(components) if components is not None else None
+    logic.planner_delay = None
+    if components is None:
+        return
+    combinational_ns = components["combinational_delay_ns"]
+    planner_delay = int(combinational_ns * DELAY_UNIT_MULT)
+    if combinational_ns > 0.0 and planner_delay == 0:
+        planner_delay = 1
+    logic.planner_delay = planner_delay
+
+
+def _WRITE_CACHED_PATH_DELAY_COMPONENTS(logic, parser_state, components):
+    if components is None:
+        return
+    path = GET_CACHED_PATH_DELAY_COMPONENTS_FILE_PATH(logic, parser_state)
+    value = dict(components)
+    value["schema_version"] = 1
+    value["planner_weight"] = "combinational_delay_ns"
+    with open(path, "w") as f:
+        json.dump(value, f, indent=2, sort_keys=True)
+        f.write("\n")
 
 
 def FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(func_name, parser_state):
@@ -4615,6 +4757,8 @@ def SET_MEASURED_DELAY_FROM_REPORT(logic, parsed_timing_report, parser_state):
         sys.exit(-1)
     logic.delay = int(path_report.path_delay_ns * DELAY_UNIT_MULT)
     logic.delay_is_estimated = False
+    delay_components = _PATH_REPORT_DELAY_COMPONENTS(path_report)
+    _SET_LOGIC_DELAY_COMPONENTS(logic, delay_components)
     if logic.delay > 0 and FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
         logic.func_name, parser_state
     ):
@@ -4645,6 +4789,9 @@ def SET_MEASURED_DELAY_FROM_REPORT(logic, parsed_timing_report, parser_state):
         f = open(filepath, "w")
         f.write(str(path_report.path_delay_ns))
         f.close()
+        _WRITE_CACHED_PATH_DELAY_COMPONENTS(
+            logic, parser_state, delay_components
+        )
 
 
 def ESTIMATE_HIER_PATH_DELAYS(funcs_to_estimate, parser_state, quiet=False):
@@ -4662,6 +4809,8 @@ def ESTIMATE_HIER_PATH_DELAYS(funcs_to_estimate, parser_state, quiet=False):
         )
         logic.delay = zero_added_clks_pipeline_map.zero_clk_max_delay
         logic.delay_is_estimated = True
+        logic.delay_components = None
+        logic.planner_delay = None
         if not quiet:
             print(
                 f"Function: {logic.func_name} estimated path delay: {logic.delay / DELAY_UNIT_MULT:.3f} ns (derived from submodules)"
@@ -4799,9 +4948,24 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                 modeled_path_delay = DEVICE_MODELS.estimate_int_timing(op, widths)
         # Try to get cached path delay
         cached_path_delay = GET_CACHED_PATH_DELAY(logic, parser_state)
+        cached_delay_components = None
+        if cached_path_delay is not None:
+            cached_delay_components = GET_CACHED_PATH_DELAY_COMPONENTS(
+                logic, parser_state, cached_path_delay
+            )
+            if (
+                USE_COMBINATIONAL_PLANNER_WEIGHTS
+                and SYN_TOOL is DEVICE_MODELS
+                and cached_delay_components is None
+            ):
+                # The experimental planner cache identity requires timing
+                # components. A lone legacy/partial .delay file cannot supply
+                # its geometry, so measure once and populate the sidecar.
+                cached_path_delay = None
         # Prefer cache over model
         if cached_path_delay is not None:
             logic.delay = int(cached_path_delay * DELAY_UNIT_MULT)
+            _SET_LOGIC_DELAY_COMPONENTS(logic, cached_delay_components)
             print(
                 f"Function: {logic.func_name} cached path delay: {cached_path_delay:.3f} ns"
             )
@@ -4817,12 +4981,14 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                 logic.delay = 1  # Set to smallest non zero for now?
         elif modeled_path_delay is not None:
             logic.delay = int(modeled_path_delay * DELAY_UNIT_MULT)
+            _SET_LOGIC_DELAY_COMPONENTS(logic, None)
             print(
                 f"Function: {logic.func_name} modeled path delay: {modeled_path_delay:.3f} ns"
             )
         # Then check for known delays
         elif LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=True):
             logic.delay = 0
+            _SET_LOGIC_DELAY_COMPONENTS(logic, None)
 
         # Prepare for syn to determine
         if logic.delay is None:
@@ -5217,7 +5383,12 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(
     entities_so_far = set()
     while len(inst_names) > 0:
         next_inst_names = set()
-        for inst_name_i in inst_names:
+        # Sets are useful for frontier deduplication, but their iteration
+        # order is process-randomized. Keep the ordered VHDL input list
+        # deterministic: it participates in synthesis cache identity and two
+        # byte-identical designs must not re-map merely because siblings were
+        # discovered in a different hash order.
+        for inst_name_i in sorted(inst_names):
             logic_i = parser_state.LogicInstLookupTable[inst_name_i]
             # Write file text
             # ONly write non vhdl
@@ -5246,7 +5417,7 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(
                 files_txt += syn_output_directory + "/" + entity_filename + " "
 
             # Add submodules as next inst_names
-            for submodule_inst in logic_i.submodule_instances:
+            for submodule_inst in sorted(logic_i.submodule_instances):
                 full_submodule_inst_name = (
                     inst_name_i + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
                 )

@@ -808,8 +808,9 @@ optional unconditional `Reg[T]` boundary registers and returns
 ### `AUTOFSM(func)` — Resource-Shared State Machines with `.latency`
 
 The resource-minimizing dual of `AUTOPIPELINE`. Where `AUTOPIPELINE(func)` builds
-one full copy of `func`'s hardware cut into pipeline stages (initiation interval
-1, maximum area), `AUTOFSM(func)` builds a state machine holding ONE copy of each
+one full copy of `func`'s hardware cut by serial register slices (N slices give
+N clocks of latency and N+1 combinational regions; initiation interval 1,
+maximum area), `AUTOFSM(func)` builds a state machine holding ONE copy of each
 distinct operation and runs `func` over several cycles (initiation interval N,
 minimum area). Twelve identical adds become one adder used in twelve states.
 
@@ -1484,6 +1485,9 @@ simulation (no elaboration; see [pypeline_sim_DESIGN.md § Tests](pypeline_sim_D
 [PY_TO_LOGIC_DESIGN.md § Tests](PY_TO_LOGIC_DESIGN.md#tests)), and
 `native_vs_vhdl_sim_tests.py`, `elab_introspect_tests.py`, `unit_tests.py`,
 `build_report_tests.py`, and `known_issues_tests.py` round out the rest.
+Generated entity identity, stage alignment, and final file-list mechanics are
+documented separately in [VHDL_DESIGN.md](VHDL_DESIGN.md); built-in leaf split
+semantics live in [RAW_VHDL_DESIGN.md](RAW_VHDL_DESIGN.md).
 
 The bidirectional-port mechanism `@interface`
 (`include/pypeline/interface/interface.py`) reuses this module's compound-type introspection

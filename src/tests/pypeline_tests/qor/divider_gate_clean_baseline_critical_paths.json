@@ -1,0 +1,129 @@
+{
+  "schema_version": 1,
+  "experiment": "clean_c81ca31f_gate_divider_autopipeline_critical_path_matrix",
+  "recorded_utc_date": "2026-08-14",
+  "purpose": "Preserve the clean current-recipe baseline's stage-specific critical-path evidence and classify logic outside the 32 radix steps.",
+  "provenance": {
+    "compiler_commit": "c81ca31fe944e18960db5ed3558219959956142c",
+    "superseded_handoff_patch_applied": false,
+    "divider_fixture_sha256": "dcb24be3351f4e8d4680cfcaca3ed073d7c439db680919f8d6e7cfbd60661aec",
+    "goal_mhz": 143.0,
+    "goal_period_ns": 6.993006993006993,
+    "synthesis_recipe": "current",
+    "synthesis_commands": "synth -top <top>; dfflibmap -liberty <lib>; abc -liberty <lib> -fast; flatten",
+    "library": "sky130_fd_sc_hvl",
+    "corner": "tt_025C_3v30",
+    "liberty_sha256": "fb1c43d5971efa70df79d7f16de69f8bbe3c7f0de0432baae4c43e7c72e251e9",
+    "sta_model_version": 2,
+    "net_delay_model": "none"
+  },
+  "shared_critical_prefix": {
+    "source_classification": "primary divisor input through pre-step divide-by-zero handling",
+    "source_location": "gate.py line 578: left_eff = left if right != 0 else 0xffffffff",
+    "operation_sequence": ["32-bit divisor != 0 reduction", "32-bit left_eff select"],
+    "arc_count": 4,
+    "typical_delay_ns": 5.66983058622015,
+    "dominant_arc": {
+      "operation": "divisor != 0 reduction",
+      "cell_type": "sky130_fd_sc_hvl__nand3_1",
+      "delay_ns": 4.324961658493955,
+      "fanout": 64,
+      "load_capacitance_pf": 0.29475999999999986,
+      "max_capacitance_pf": 0.1767,
+      "violates_max_capacitance": true
+    },
+    "post_step_divide_by_zero_logic_on_winning_path": false
+  },
+  "points": [
+    {
+      "slices": 28,
+      "pipeline_stages": 29,
+      "top_entity": "top_29688ad8",
+      "timing_met": false,
+      "metrics": {"worst_period_ns": 11.472588365671555, "fmax_mhz": 87.16428831284617, "launch_clock_to_q_ns": 0.0, "combinational_delay_ns": 11.339798428100972, "setup_ns": 0.13278993757058405, "n_cells": 29253, "n_unmapped_cells": 0, "n_max_capacitance_violations": 3, "critical_path_max_capacitance_violations": 1, "critical_path_arc_count": 26},
+      "critical_path_classification": {"start": "primary divisor input", "pre_step_arc_count": 4, "pre_step_delay_ns": 5.741039286322504, "pre_step_percent_of_combinational": 50.62734864929986, "radix_region": "step_gates call 31", "radix_step_delay_ns": 5.598759141778465, "end": "step 31 output register"},
+      "artifacts": {"top_vhdl_bytes": 1480, "top_vhdl_sha256": "d9da678e03b92b20400ea9b8e217540ab0b7ba2445af027b2d563190ea5133f7", "synthesis_script_sha256": "cbb12b6af37131866238f4203c0a31aa0ebee4ca66dca72634f03231f1e13935", "mapped_json_bytes": 79778458, "mapped_json_sha256": "a25cc13715f9685d50ff806c78a918bdf730422112c3d0d3443e5bc35649085b", "timing_log_sha256": "6e7a7c90a53c17126dc520be4693384b6cb795763ca8e205812583f1c9ff5c6c"}
+    },
+    {
+      "slices": 50,
+      "pipeline_stages": 51,
+      "top_entity": "top_f82e2c20",
+      "timing_met": false,
+      "metrics": {"worst_period_ns": 8.210788234393199, "fmax_mhz": 121.79098662065334, "launch_clock_to_q_ns": 0.0, "combinational_delay_ns": 8.069682295660977, "setup_ns": 0.1411059387322222, "n_cells": 32662, "n_unmapped_cells": 0, "n_max_capacitance_violations": 3, "critical_path_max_capacitance_violations": 1, "critical_path_arc_count": 15},
+      "critical_path_classification": {"start": "primary divisor input", "pre_step_arc_count": 4, "pre_step_delay_ns": 5.66983058622015, "pre_step_percent_of_combinational": 70.26088981556047, "radix_region": "step_gates call 31", "radix_step_delay_ns": 2.399851709440826, "end": "step 31 internal AND output register"},
+      "artifacts": {"top_vhdl_bytes": 1480, "top_vhdl_sha256": "3dfdb88a852ae0a03098866e4412542061b95d58086b29810344cb2e6a683a14", "synthesis_script_sha256": "8b7b6f65d8329721eeee057e9b076de598133580cb3a873e3c02a3dd20bbcc8e", "mapped_json_bytes": 84663544, "mapped_json_sha256": "3dc4a65dbb8ee03381ca6df8eed076715000073682b46db8d2c96fbed58c8387", "timing_log_sha256": "ed50009be9816b0e5be17a6e248493b1ede80656fcc8f2176e63a9b50c4018c7"}
+    },
+    {
+      "slices": 63,
+      "pipeline_stages": 64,
+      "top_entity": "top_4c9288f1",
+      "timing_met": false,
+      "metrics": {"worst_period_ns": 7.294467141575536, "fmax_mhz": 137.09020557518193, "launch_clock_to_q_ns": 0.0, "combinational_delay_ns": 7.15357253594518, "setup_ns": 0.14089460563035602, "n_cells": 35108, "n_unmapped_cells": 0, "n_max_capacitance_violations": 3, "critical_path_max_capacitance_violations": 1, "critical_path_arc_count": 11},
+      "critical_path_classification": {"start": "primary divisor input", "pre_step_arc_count": 4, "pre_step_delay_ns": 5.66983058622015, "pre_step_percent_of_combinational": 79.25872782767571, "radix_region": "step_gates call 31", "radix_step_delay_ns": 1.4837419497250306, "end": "step 31 internal AND output register"},
+      "artifacts": {"top_vhdl_bytes": 1480, "top_vhdl_sha256": "eab3ac1c8bca605a66739a2fdf75fa975ab5ae121ba336dce5e656d6fec89f8a", "synthesis_script_sha256": "785b6a799dabbfb4aa6a72fb1635325c492e82b79c57427c414fef09bab8d0fe", "mapped_json_bytes": 87096613, "mapped_json_sha256": "879bdc79763bfeadb97343f0be87ca82e5b01143867df98530a8292d2355a52b", "timing_log_sha256": "54fca8d9a956f16c4744eb32d13902d496b101c8f4eadbe1843bee0a4d2e2b0d"}
+    },
+    {
+      "slices": 67,
+      "pipeline_stages": 68,
+      "top_entity": "top_e5431830",
+      "timing_met": false,
+      "metrics": {"worst_period_ns": 7.010329134629537, "fmax_mhz": 142.64665478546684, "launch_clock_to_q_ns": 0.0, "combinational_delay_ns": 6.878017751439292, "setup_ns": 0.1323113831902455, "n_cells": 35551, "n_unmapped_cells": 0, "n_max_capacitance_violations": 3, "critical_path_max_capacitance_violations": 1, "critical_path_arc_count": 9},
+      "critical_path_classification": {"start": "primary divisor input", "pre_step_arc_count": 4, "pre_step_delay_ns": 5.66983058622015, "pre_step_percent_of_combinational": 82.43407899076274, "radix_region": "step_gates call 31", "radix_step_delay_ns": 1.208187165219143, "end": "step 31 internal OR output register"},
+      "artifacts": {"top_vhdl_bytes": 1480, "top_vhdl_sha256": "8765e3c72e5d22a94045e6c3e6a383fe73a12636a1a49dc418c3a43eca367991", "synthesis_script_sha256": "0c27353e06771f0acb49d725fc307a1fafb1a3c007be6885d66306165a68a290", "mapped_json_bytes": 88404972, "mapped_json_sha256": "a5f0d9e1685e0643e0d4d8163685b0db1161f4eb3a1205a07d3bed7902ebd3e4", "timing_log_sha256": "d9fa95f8c9350ade88aceb63c89c115ada74f163ce94fd01b024b4413e877f22"}
+    },
+    {
+      "slices": 70,
+      "pipeline_stages": 71,
+      "top_entity": "top_cf6947a3",
+      "timing_met": false,
+      "metrics": {"worst_period_ns": 7.010329134629537, "fmax_mhz": 142.64665478546684, "launch_clock_to_q_ns": 0.0, "combinational_delay_ns": 6.878017751439292, "setup_ns": 0.1323113831902455, "n_cells": 36686, "n_unmapped_cells": 0, "n_max_capacitance_violations": 3, "critical_path_max_capacitance_violations": 1, "critical_path_arc_count": 9},
+      "critical_path_classification": {"start": "primary divisor input", "pre_step_arc_count": 4, "pre_step_delay_ns": 5.66983058622015, "pre_step_percent_of_combinational": 82.43407899076274, "radix_region": "step_gates call 31", "radix_step_delay_ns": 1.208187165219143, "end": "step 31 internal OR output register"},
+      "comparison_to_67_slices": {"additional_slices": 3, "period_change_ns": 0.0, "fmax_change_mhz": 0.0, "cell_increase": 1135},
+      "artifacts": {"top_vhdl_bytes": 1480, "top_vhdl_sha256": "f07c386aa3861465cd14c7ebd93f30f444b13ea711f26fe87d1a8cbc5a261d48", "synthesis_script_sha256": "ee0351a1e60f3aed62013e1ca9f764f1c3ef5fdbe3a1a8eebf61d1545fa76cb9", "mapped_json_bytes": 89607002, "mapped_json_sha256": "258343e050c731f08f8e4322e84eb6d45e2239e6693f84617e1a491fbc4b41d6", "timing_log_sha256": "baa159e72f53f1bc3508e145f19bdabfb472ec2007a5972588b7d9644daa1f0a"}
+    },
+    {
+      "slices": 73,
+      "pipeline_stages": 74,
+      "top_entity": "top_6df91b1e",
+      "timing_met": true,
+      "metrics": {"worst_period_ns": 4.458029219843682, "fmax_mhz": 224.31436643545922, "launch_clock_to_q_ns": 0.5901594316664194, "combinational_delay_ns": 3.733034657996679, "setup_ns": 0.1348351301805826, "n_cells": 36466, "n_unmapped_cells": 0, "n_max_capacitance_violations": 0, "critical_path_max_capacitance_violations": 0, "critical_path_arc_count": 14},
+      "critical_path_classification": {"start": "register inside step_gates call 26", "pre_step_arc_count": 0, "pre_step_delay_ns": 0.0, "radix_region": "step_gates call 26 only", "radix_step_delay_ns": 3.733034657996679, "end": "register inside step_gates call 26", "dominant_arc": {"cell_type": "sky130_fd_sc_hvl__and2_1", "delay_ns": 1.63361221219273, "fanout": 49, "load_capacitance_pf": 0.20173, "max_capacitance_pf": 0.38502, "violates_max_capacitance": false}},
+      "pre_step_floor_knee": {
+        "compare_latency_slices": 0,
+        "left_eff_mux_latency_slices": 2,
+        "left_eff_mux_pipeline_slices": [0.016725244498777492, 0.9876757334963324],
+        "left_eff_mux_latency_at_67_and_70_slices": 0,
+        "mechanism": "The two legal near-edge placements isolate the whole compare/select cone from the first radix step and break the condition's previously unregistered 64-load select fanout. They are operation I/O boundaries, not evidence that a wide MUX needs bit-internal chunking.",
+        "generated_mux_vhdl": {"name": "MUX_uint32_t_2CLK_4336703f.vhd", "bytes": 3813, "sha256": "97f1768127431b5113489f6b9b542cd5cda6c7115ef3abef7bc578cbcba2f648"}
+      },
+      "comparison_to_70_slices": {"additional_slices": 3, "period_reduction_ns": 2.5522999147858556, "period_reduction_percent": 36.40770448534344, "fmax_increase_mhz": 81.66771164999238, "cell_change": -220},
+      "artifacts": {"top_vhdl_bytes": 1480, "top_vhdl_sha256": "aa2afdb7ea48d8f458f924bdbd3706bbca0c342281115c17a84263f4dcf51cb0", "radix2_div_gates_vhdl_bytes": 1682866, "radix2_div_gates_vhdl_sha256": "fb8613477260674ede1a77853871b072d4b842a7ca15b61353f316f988e1f866", "synthesis_script_sha256": "df5af4aceb68c3df2c6f5378c54416e6a4d97e2f554db683403fa46a9756c387", "mapped_json_bytes": 89677820, "mapped_json_sha256": "92032689b4387276c9ecfddc3d7afac44323f6e9fa98ade088ba3d99c5101bac", "timing_log_sha256": "e70880029ea5e9391efe8dd28a59e98f733b274aa286f643c8ee7f223633b08e"}
+    },
+    {
+      "slices": 66,
+      "pipeline_stages": 67,
+      "top_entity": "top_c3d36c77",
+      "timing_met": true,
+      "sweep_role": "final minimal-stage trim probe restored as the clean baseline result",
+      "metrics": {"worst_period_ns": 5.424510776988916, "fmax_mhz": 184.34842165713027, "launch_clock_to_q_ns": 0.5901594316664194, "combinational_delay_ns": 4.834351345322496, "setup_ns": 0.0, "n_cells": 34585, "mapped_dffs": 10327, "n_unmapped_cells": 0, "n_max_capacitance_violations": 0, "critical_path_max_capacitance_violations": 0, "critical_path_arc_count": 17, "incomplete_topo": false},
+      "exact_final_vhdl_simulation": {"passed": true, "valid_vectors": 141, "cycles": 235, "observed_latency_slices": 66, "runtime_seconds": 1226.37},
+      "critical_path_classification": {"start": "register inside step_gates call 0", "pre_step_arc_count": 0, "pre_step_delay_ns": 0.0, "radix_region": "step_gates call 0 only", "radix_step_delay_ns": 4.834351345322496, "end": "primary divider output", "endpoint_note": "The final trimmed point's winner is register-to-primary-output, so setup is explicitly zero."},
+      "comparison_to_73_slices": {"fewer_slices": 7, "period_increase_ns": 0.966481557145234, "fmax_decrease_mhz": 39.96594477832895, "cell_decrease": 1881},
+      "non_monotonic_sweep_note": "This 66-slice hierarchy-delay-fallback placement meets timing although the earlier 67- and 70-slice landscapes miss; slice count alone does not define cut geometry.",
+      "artifacts": {"top_vhdl_bytes": 1480, "top_vhdl_sha256": "daab91fded03cc8e29e893f3a949d7c0435f275dbd2d09886f23876dd80eff1e", "synthesis_script_sha256": "6f4f93dd8541596ed0a9f2f2c226eaef9b79598163bc724dfbcb2b7c19157da4", "mapped_json_bytes": 87161654, "mapped_json_sha256": "66daf4f41a5d0c9380846687cde37cb032fcc62550ea191c6c87a1c219bd3f10", "timing_log_sha256": "ce9733b636c7853bc31481c18064db8b3d1a1b9ca29f7234754f6ce9d217e367"}
+    }
+  ],
+  "sta_diagnostic_scale_check": {
+    "representative_top": "top_29688ad8",
+    "mapped_json_bytes": 79778458,
+    "n_cells": 29253,
+    "method": "separate /usr/bin/time processes on the same warm-cache artifact",
+    "json_load_only": {"elapsed_seconds": 1.36, "peak_rss_kib": 289044},
+    "run_sta_with_backpointer_provenance": {"elapsed_seconds": 3.97, "peak_rss_kib": 297048},
+    "marginal_peak_rss_kib": 8004,
+    "period_ns": 11.472588365671555,
+    "critical_path_arc_count": 26,
+    "interpretation": "Backpointer provenance adds about 8 MiB peak RSS over parsing the 79.8 MB JSON itself; it does not retain a copied path per accepted state."
+  },
+  "conclusion": "Increasing the old planner from 28 to 70 slices progressively removes radix-step work but cannot cut the primary-input-to-step-31 path before the loop. By 67 slices, 82.43 percent of the combinational path is the invariant pre-step divide-by-zero compare/select; 70 slices adds 1,135 cells and changes timing by exactly zero. At the 73-slice fallback knee the MUX finally receives two legal near-edge slices, the pre-step cone disappears from the winning path, capacitance violations fall from three to zero, and fmax jumps to 224.31 MHz. The final trim then finds a different 66-slice placement at 184.35 MHz, demonstrating non-monotonic placement geometry rather than a simple slice-count curve. Both met points remain outside the 48-slice acceptance limit; selecting operation boundaries earlier and/or flattening before ABC is required."
+}

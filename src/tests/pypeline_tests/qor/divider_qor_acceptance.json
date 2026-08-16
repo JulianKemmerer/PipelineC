@@ -1,0 +1,152 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-08-16T11:39:35+00:00",
+  "commit_baseline": "c81ca31fe944e18960db5ed3558219959956142c",
+  "policy": "Generated VHDL, exact cycle simulation, mapped netlists, and STA are authoritative; all acceptance timing is from immutable final-VHDL remaps.",
+  "targets": {
+    "gate": {
+      "strict_fmax_mhz": 143.0,
+      "maximum_slices": 48
+    },
+    "arithmetic": {
+      "strict_fmax_mhz": 143.0,
+      "maximum_slices": 63
+    }
+  },
+  "pinned_inputs": {
+    "gate_fixture_sha256": "dcb24be3351f4e8d4680cfcaca3ed073d7c439db680919f8d6e7cfbd60661aec",
+    "arithmetic_fixture_sha256": "643fa6b38e4435c7acae9c0879767e4c4686c5c75eb34442b6270aee73deb983",
+    "yosys_sha256": "7c3e3396b38c129dd7485be5a0a0f0da8e495a94c8fd486059e3bea043a588d6",
+    "ghdl_sha256": "90a8f83c4af4b1fc0fc1c656b60e9412d7b523aba1f8e75fa3ad70883903e943",
+    "mapping_liberty_sha256": "fb1c43d5971efa70df79d7f16de69f8bbe3c7f0de0432baae4c43e7c72e251e9",
+    "sta_condensed_json_sha256": "a202cd3c60891ea4a655bf45e838a1a37e98f58e3c61fac86bb84606a637fe6b"
+  },
+  "production": {
+    "model_version": 3,
+    "synthesis_recipe": "early_flatten_opt",
+    "planner": "typed_physical_placement",
+    "placement_trace_schema": 2
+  },
+  "gate": {
+    "clean_c81ca31f": {
+      "slices": 66,
+      "stages": 67,
+      "fmax_mhz": 184.34842165713027,
+      "worst_period_ns": 5.424510776988916,
+      "mapped_cells": 34585,
+      "mapped_dffs": 10327,
+      "n_unmapped_cells": 0,
+      "n_max_capacitance_violations": 0,
+      "functional_passed": true,
+      "valid_vectors": 141,
+      "cycles": 235,
+      "acceptance_passed": false,
+      "failed_check": "66 slices exceeds the 48-slice limit",
+      "mapped_json_sha256": "66daf4f41a5d0c9380846687cde37cb032fcc62550ea191c6c87a1c219bd3f10",
+      "durable_source": "divider_gate_clean_baseline_critical_paths.json"
+    },
+    "automatic_v3": {
+      "slices": 31,
+      "stages": 32,
+      "fmax_mhz": 160.43455627081457,
+      "worst_period_ns": 6.233071124103672,
+      "launch_clock_to_q_ns": 0.0,
+      "combinational_delay_ns": 6.102414309693395,
+      "setup_ns": 0.1306568144102767,
+      "mapped_cells": 16514,
+      "mapped_dffs": 3007,
+      "n_unmapped_cells": 0,
+      "incomplete_topo": false,
+      "n_max_capacitance_violations": 0,
+      "functional_passed": true,
+      "valid_vectors": 141,
+      "cycles": 200,
+      "latency_slices": 31,
+      "acceptance_passed": true,
+      "mapping_runtime_seconds": 275.6652916329913,
+      "vhdl_aggregate_sha256": "692136c92d0a7bc9b45926352f7a386a049d9f337c3399395828fca834f97508",
+      "mapped_json_sha256": "a0709835897ef6d56827cf7ebebd635b808110840fbc7291ec14e83d7375550e",
+      "placement_trace_sha256": "6fb3aa859999bc02e7b44c6147f674ad0d09d0f77e4d5d7f96d451b5572c157e",
+      "recipe_evidence_sha256": "79b939b47e44576e81fee736c6719f269ecf6a1b9fca12e1545223692433803c",
+      "placement_summary": "31 coherent repeated-step output boundaries; early flatten removes the former pre-step fanout floor without a dedicated divide-zero placement",
+      "coverage": [
+        "continuous-valid traffic",
+        "bubbles",
+        "edge cases",
+        "divide by zero",
+        "output ordering",
+        "valid timing",
+        "pipeline flush",
+        "input_ready == 1"
+      ]
+    },
+    "improvement": {
+      "slices_removed": 35,
+      "stages_removed": 35,
+      "mapped_cells_reduced_percent": 52.250976,
+      "mapped_dffs_reduced_percent": 70.882154,
+      "note": "The clean result had more timing margin only because it used twice as many slices; optimization priority is the fewest slices above 143 MHz."
+    }
+  },
+  "arithmetic": {
+    "clean_c81ca31f": {
+      "slices": 64,
+      "stages": 65,
+      "fmax_mhz": 149.15573719811272,
+      "worst_period_ns": 6.704401847256956,
+      "mapped_cells": 22563,
+      "mapped_dffs": 8749,
+      "n_unmapped_cells": 0,
+      "n_max_capacitance_violations": 3,
+      "functional_passed": true,
+      "valid_vectors": 141,
+      "cycles": 233,
+      "latency_slices": 64,
+      "acceptance_passed": false,
+      "failed_check": "the requirement is fewer than 64 slices",
+      "vhdl_aggregate_sha256": "a30a2e4ebccc7e92148e7fb8c4a91a6077d545c8743050081138b4d7df53c7b9",
+      "mapped_json_sha256": "55d0ea874b73bcda9b30be00410011337ed5d4eb5193037a094287290a14a422",
+      "recipe_evidence_sha256": "614bce89ef1649c25d0aec3da3c01cf9e4c85666bc618001d69cbef0abc8b8d6",
+      "provenance_note": "VHDL was generated directly by the clean commit; the exact restored bytes were independently simulated and remapped with the unchanged historical current recipe."
+    },
+    "automatic_v3": {
+      "slices": 32,
+      "stages": 33,
+      "fmax_mhz": 180.04583877310873,
+      "worst_period_ns": 5.5541411388029145,
+      "launch_clock_to_q_ns": 0.7614207989254801,
+      "combinational_delay_ns": 4.65128493640333,
+      "setup_ns": 0.14143540347410308,
+      "mapped_cells": 13779,
+      "mapped_dffs": 3072,
+      "n_unmapped_cells": 0,
+      "incomplete_topo": false,
+      "n_max_capacitance_violations": 0,
+      "functional_passed": true,
+      "valid_vectors": 141,
+      "cycles": 201,
+      "latency_slices": 32,
+      "acceptance_passed": true,
+      "compiler_runtime_seconds": 84.98288189806044,
+      "mapping_runtime_seconds": 21.375224297866225,
+      "vhdl_aggregate_sha256": "49eda3dd8bc6bdc3f2a07bb46dbdf5b01a03360fcf5194838b888930d2c0c52b",
+      "mapped_json_sha256": "e8b5cd006c29b088dfa3bf0f118baef1771e2b209c3766dca5ae5d0c80265453",
+      "placement_trace_sha256": "f8af4b13f1b754ac0722f8b7dea8eeed6668e777061559eb4c3e2d5e232839ba",
+      "manifest_sha256": "37261b637b22c8695f33ae02518878f1840104cb56ac8643cfbac2c2d2ed0944",
+      "recipe_evidence_sha256": "44dd6be25b6133bdc0be7049324351e512f914cafa6776935dcd2d564dcfbe25",
+      "placement_summary": "divide-zero select output followed by the first 31 flat loop remainder-select operations"
+    },
+    "improvement": {
+      "slices_removed": 32,
+      "stages_removed": 32,
+      "fmax_increased_percent": 20.709965,
+      "mapped_cells_reduced_percent": 38.930993,
+      "mapped_dffs_reduced_percent": 64.887416
+    }
+  },
+  "negative_results": {
+    "synth_flatten_noabc": "Tied synth_flatten in full-design fmax within 0.02%, used 74 fewer cells, but took longer and lost to early_flatten_opt by 7.52 MHz.",
+    "synth_flatten": "Improved the historical recipe but lost to early_flatten_opt by 7.49 MHz and took about seven times longer on the frozen full Divider.",
+    "deeper_options": "Custom ABC scripts, constraints, buffering/upsize, retiming, graph scheduling, and structural source/VHDL rewrites were not deepened because the higher-return typed-placement plus early-flatten branch met both acceptance targets."
+  }
+}

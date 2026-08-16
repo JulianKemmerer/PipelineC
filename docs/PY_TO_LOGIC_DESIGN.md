@@ -100,7 +100,11 @@ Python design files into PypelineC's internal `Logic()` graph representation. Fo
 
 `PY_TO_LOGIC.py` is the Python frontend for the PypelineC hardware compiler. It translates
 Python design files into PypelineC's internal `Logic()` graph representation, which the
-backend then lowers to VHDL.
+backend then lowers to VHDL. Operation calls produced from a flat expression remain
+explicit `Logic` instances with driver/consumer wiring, so autopipelining does not require
+the source author to manufacture one helper function per intended stage. See
+[`SYN_DESIGN.md`](SYN_DESIGN.md) for placement and
+[`VHDL_DESIGN.md`](VHDL_DESIGN.md) for final entity/pipeline lowering.
 
 The central idea is to **use Python itself as the elaboration language**. A design file is
 executed as a live Python module before any AST analysis begins. This means Python's full
@@ -5064,7 +5068,8 @@ top.py  (single-file or multi-file entry point)
   ├─ INFER_CLOCK_DOMAINS({}, {}, {}, parser_state)
   │   Propagates known MHz to board-support MAINs sharing global wires (fixed-point loop)
   │
-  └─ ParserState → VHDL backend
+  └─ ParserState → throughput placement → VHDL backend
+                  (SYN_DESIGN.md)        (VHDL_DESIGN.md)
 ```
 
 ---

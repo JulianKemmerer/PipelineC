@@ -90,6 +90,13 @@ NON_COMB_TEST_FILES = [
         INST_DIR,
         ["--pipeline_min_effort", "0"],
     ),
+    # Typed physical operation boundaries and genuine bit-internal cuts on a
+    # flat/hierarchical fork-join pair with bypass/fanout alignment.
+    (
+        "typed_placement_alignment_test.py",
+        INST_DIR,
+        ["--pipeline_min_effort", "0", "--no_sweep"],
+    ),
 ]
 # fmt: on
 
