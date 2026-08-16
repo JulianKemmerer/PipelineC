@@ -92,7 +92,7 @@ GHDL_PLUGIN_BUILT_IN = _GHDL_PLUGIN_IS_BUILT_IN(YOSYS_BIN_PATH)
 def GET_GHDL_PLUGIN_FLAGS():
     if GHDL_PLUGIN_BUILT_IN:
         return ""
-    plugin = os.environ.get("PIPELINEC_YOSYS_GHDL_PLUGIN", "ghdl")
+    plugin = os.environ.get("PYPELINEC_YOSYS_GHDL_PLUGIN", "ghdl")
     return f"-m {shlex.quote(plugin)} "
 
 

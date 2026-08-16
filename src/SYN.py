@@ -4214,7 +4214,7 @@ def IS_USER_CODE(logic, parser_state):
 
 def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
     cache_dir = os.environ.get(
-        "PIPELINEC_PATH_DELAY_CACHE_DIR",
+        "PYPELINEC_PATH_DELAY_CACHE_DIR",
         C_TO_LOGIC.EXE_ABS_DIR() + f"/../{dir_name}/",
     )
     PATH_DELAY_CACHE_DIR = os.path.join(cache_dir, str(SYN_TOOL.__name__).lower())

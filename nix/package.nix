@@ -57,12 +57,12 @@ stdenv.mkDerivation {
   installPhase = ''
     runHook preInstall
 
-    mkdir -p "$out/lib/pipelinec" "$out/bin"
-    cp -r . "$out/lib/pipelinec"
+    mkdir -p "$out/lib/pypelinec" "$out/bin"
+    cp -r . "$out/lib/pypelinec"
 
     for compiler in pipelinec pypelinec; do
       makeWrapper ${python}/bin/python3 "$out/bin/$compiler" \
-        --add-flags "$out/lib/pipelinec/src/$compiler" \
+        --add-flags "$out/lib/pypelinec/src/$compiler" \
         --prefix PATH : ${
           lib.makeBinPath [
             python
@@ -71,10 +71,10 @@ stdenv.mkDerivation {
             gcc
           ]
         } \
-        --set PYTHONPATH "$out/lib/pipelinec/src:$out/lib/pipelinec/include/pypeline" \
-        --set PIPELINEC_YOSYS_GHDL_PLUGIN "${yosys-ghdl}/share/yosys/plugins/ghdl.so" \
-        --run "if [ ! -d .pipelinec_path_delay_cache ]; then ${coreutils}/bin/cp -r '$out/lib/pipelinec/path_delay_cache' .pipelinec_path_delay_cache && ${coreutils}/bin/chmod -R u+w .pipelinec_path_delay_cache; fi" \
-        --run 'export PIPELINEC_PATH_DELAY_CACHE_DIR="$PWD/.pipelinec_path_delay_cache/"'
+        --set PYTHONPATH "$out/lib/pypelinec/src:$out/lib/pypelinec/include/pypeline" \
+        --set PYPELINEC_YOSYS_GHDL_PLUGIN "${yosys-ghdl}/share/yosys/plugins/ghdl.so" \
+        --run "if [ ! -d .pypelinec_path_delay_cache ]; then ${coreutils}/bin/cp -r '$out/lib/pypelinec/path_delay_cache' .pypelinec_path_delay_cache && ${coreutils}/bin/chmod -R u+w .pypelinec_path_delay_cache; fi" \
+        --run 'export PYPELINEC_PATH_DELAY_CACHE_DIR="$PWD/.pypelinec_path_delay_cache/"'
     done
 
     runHook postInstall
