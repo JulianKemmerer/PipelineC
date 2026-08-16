@@ -776,7 +776,7 @@ def _run_synth_and_sta(vhdl_files_texts, top_entity_name, work_dir, log_path):
     os.makedirs(work_dir, exist_ok=True)
     json_path = os.path.join(work_dir, top_entity_name + "_liberty.json")
     synth_log_path = os.path.join(work_dir, top_entity_name + "_synth.log")
-    m_ghdl = "" if OPEN_TOOLS.GHDL_PLUGIN_BUILT_IN else "-m ghdl "
+    m_ghdl = OPEN_TOOLS.GET_GHDL_PLUGIN_FLAGS()
     script = (
         f"ghdl --std=08 {vhdl_files_texts} -e {top_entity_name}; "
         f"synth -top {top_entity_name}; "

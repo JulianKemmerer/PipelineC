@@ -5983,12 +5983,20 @@ def _is_hardware_func(func_def, eval_ns=None):
     elaboration-time helpers/factories must not be mistaken for hardware
     functions just because they happen to have type annotations too.
     """
-    arg_anns = [a.annotation for a in func_def.args.args if a.annotation is not None]
+    all_args = (
+        func_def.args.posonlyargs + func_def.args.args + func_def.args.kwonlyargs
+    )
+    arg_anns = [a.annotation for a in all_args if a.annotation is not None]
     anns = ([func_def.returns] if func_def.returns is not None else []) + arg_anns
     if not anns:
         return False
     if eval_ns is None:
         return True
+    live_func = eval_ns.get(func_def.name)
+    type_params = getattr(live_func, "__type_params__", ())
+    if type_params:
+        eval_ns = dict(eval_ns)
+        eval_ns.update({param.__name__: param for param in type_params})
     saw_eval_success = False
     for ann in anns:
         ok, value = _eval_annotation_type(ann, eval_ns)

@@ -1,4 +1,5 @@
 import os
+import shlex
 import subprocess
 import sys
 
@@ -86,6 +87,14 @@ def _GHDL_PLUGIN_IS_BUILT_IN(yosys_bin_path):
 
 
 GHDL_PLUGIN_BUILT_IN = _GHDL_PLUGIN_IS_BUILT_IN(YOSYS_BIN_PATH)
+
+
+def GET_GHDL_PLUGIN_FLAGS():
+    if GHDL_PLUGIN_BUILT_IN:
+        return ""
+    plugin = os.environ.get("PIPELINEC_YOSYS_GHDL_PLUGIN", "ghdl")
+    return f"-m {shlex.quote(plugin)} "
+
 
 # yosys shells out to a SEPARATE abc executable for its `abc` pass -- it is not
 # built into the yosys binary. It looks for `yosys-abc` next to its own exe
@@ -217,9 +226,7 @@ def DIAGNOSE_TOOLS():
         os.path.join(YOSYS_BIN_PATH, YOSYS_EXE)
     ):
         yosys_exe = os.path.join(YOSYS_BIN_PATH, YOSYS_EXE)
-        argv = [yosys_exe]
-        if not GHDL_PLUGIN_BUILT_IN:
-            argv += ["-m", "ghdl"]
+        argv = [yosys_exe] + shlex.split(GET_GHDL_PLUGIN_FLAGS())
         argv += ["-p", "ghdl --version"]
         try:
             result = subprocess.run(
@@ -233,7 +240,7 @@ def DIAGNOSE_TOOLS():
             if "No such command: ghdl" in out or "Can't load module" in out:
                 problems.append(
                     "yosys cannot provide the `ghdl` command "
-                    f"({'no -m flag needed per auto-detect' if GHDL_PLUGIN_BUILT_IN else 'tried `-m ghdl`'}): "
+                    f"({'no -m flag needed per auto-detect' if GHDL_PLUGIN_BUILT_IN else 'tried `' + GET_GHDL_PLUGIN_FLAGS().strip() + '`'}): "
                     "the ghdl-yosys-plugin is missing, or was built against a "
                     "different yosys version than this one. Installing yosys and "
                     "ghdl from one coordinated source (e.g. a single oss-cad-suite "
@@ -574,9 +581,7 @@ def SYN_AND_REPORT_TIMING_NEW(
             raise Exception("nextpnr not installed?")
 
         # A single shell script build .sh
-        m_ghdl = ""
-        if not GHDL_PLUGIN_BUILT_IN:
-            m_ghdl = "-m ghdl "
+        m_ghdl = GET_GHDL_PLUGIN_FLAGS()
         optional_router2 = ""  # Always default router for now...
         # optional_router2 = "--router router2"
         # if inst_name:
@@ -691,9 +696,7 @@ def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
         raise Exception("yosys executable not found!")
 
     # Write a shell script to execute
-    m_ghdl = ""
-    if not GHDL_PLUGIN_BUILT_IN:
-        m_ghdl = "-m ghdl "
+    m_ghdl = GET_GHDL_PLUGIN_FLAGS()
 
     # GHDL --out=verilog produces duplicate wires
     # https://github.com/ghdl/ghdl/issues/2491
