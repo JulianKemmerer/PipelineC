@@ -36,10 +36,12 @@ let
     ps.pyparsing
     pyrtl
   ]);
+
+  gitRevision = builtins.fetchGit { url = toString ../.; };
 in
 stdenv.mkDerivation {
-  pname = "pipelinec";
-  version = (lib.importTOML ../pyproject.toml).tool.poetry.version;
+  pname = "pypelinec";
+  version = "unstable-${gitRevision.dirtyShortRev or gitRevision.shortRev}";
   src = lib.fileset.toSource {
     root = ../.;
     fileset = lib.fileset.unions [
