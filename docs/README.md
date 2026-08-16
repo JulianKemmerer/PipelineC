@@ -118,27 +118,6 @@ regardless of which path you take.
   [`docs/pipelinec_to_pypeline.md`](pipelinec_to_pypeline.md) for a pattern-by-pattern
   translation reference.
 
-## Autopipelining documentation audit (2026-08-16)
-
-Every Markdown file in this directory was checked against the current compiler and the
-artifact-first Divider investigation. Measurements remain evidence-qualified: generated
-VHDL, mapped netlists, exact simulation, and STA take precedence over older narrative.
-The unchanged-source Divider checks currently record gate at 160.43 MHz with 31 slices
-and arithmetic at 180.05 MHz with 32 slices; see
-[`divider_qor_acceptance.json`](../src/tests/pypeline_tests/qor/divider_qor_acceptance.json)
-for hashes and acceptance evidence.
-
-The compiler-internals documents cover the resulting contracts:
-
-* [`SYN_DESIGN.md`](SYN_DESIGN.md) — typed placement, flat-operation scheduling, and
-  slice/stage semantics.
-* [`RAW_VHDL_DESIGN.md`](RAW_VHDL_DESIGN.md) and [`VHDL_DESIGN.md`](VHDL_DESIGN.md) —
-  split kinds, boundary registers, entity identity, and synthesis boundaries.
-* [`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md) — pinned sky130 recipes, cache
-  identity, timing components, and provenance.
-* [`pypeline_TESTS.md`](pypeline_TESTS.md) and [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)
-  — exact-final-VHDL verification and latency/traffic coverage.
-
 # Overview
 
 Consider the following generic register + combinatorial logic, compared across Pypeline,
