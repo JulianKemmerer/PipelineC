@@ -181,6 +181,18 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
 
     _log(f"[RUN ] {test.category:10s} {test.name}  log: {out_log}")
 
+    # Force TMPDIR to this test's own directory so any tempfile.mkdtemp()/
+    # TemporaryDirectory() call made INSIDE the test process (not just the
+    # explicit --out_dir above, which only needs_out_dir tests receive) lands
+    # under tmp_root/<category>/<name>/ instead of wherever the ambient
+    # default happens to resolve to. A bare PY_TO_LOGIC.PARSE_FILE-style test
+    # (e.g. clock_mhz_pragma_test.py) makes its own scratch tempdirs with no
+    # awareness of run_all.py at all -- previously those leaked straight into
+    # the platform tempdir (/tmp, or /media/1TB/tmp when TMPDIR happened to
+    # be set that way in the invoking shell), uncontained and never cleaned
+    # up alongside the rest of that test's output.
+    env = {**os.environ, "TMPDIR": str(test_dir)}
+
     start = time.monotonic()
     timed_out = False
     # Hand the log file directly to the child process so output is written
@@ -189,7 +201,8 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
     # (e.g. a traceback next to the print that triggered it) stays readable.
     with open(out_log, "w") as out_f:
         proc = subprocess.Popen(
-            cmd, cwd=REPO_ROOT, stdout=out_f, stderr=subprocess.STDOUT, text=True
+            cmd, cwd=REPO_ROOT, stdout=out_f, stderr=subprocess.STDOUT, text=True,
+            env=env
         )
         _register_proc(proc)
         try:
