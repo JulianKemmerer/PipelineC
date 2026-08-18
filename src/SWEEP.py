@@ -2812,9 +2812,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         # the achieved MHz - leaving "how many slices/stages did it even try"
         # unknown for the whole duration of a long syn run).
         for plan in plans.values():
-            main_func_name = parser_state.LogicInstLookupTable[
-                plan.main_inst
-            ].func_name
+            main_logic = parser_state.LogicInstLookupTable[plan.main_inst]
+            main_func_name = main_logic.func_name
+            if SYN.LOGIC_IS_ZERO_DELAY(main_logic, parser_state, allow_none_delay=True):
+                continue
             _mono, _regions, total_stages = SUMMARIZE_SUBTREE_PIPELINE(
                 plan.main_inst, plan.subtrees, tpl, parser_state
             )
