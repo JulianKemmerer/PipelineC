@@ -1003,7 +1003,16 @@ def GET_CONST_REF_RD_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
         expanded_ref_tok_list = C_TO_LOGIC.EXPAND_REF_TOKS_OR_STRS(
             driven_ref_toks, logic.c_ast_node, parser_state_copy
         )
-        for expanded_ref_toks in expanded_ref_tok_list:
+        # EXPAND_REF_TOKS_OR_STRS returns a set, whose iteration order for
+        # str-containing tuples is randomized per-process (PYTHONHASHSEED) --
+        # each iteration below emits one VHDL assignment line, so that order
+        # otherwise leaks into the generated text and defeats byte-identical
+        # output across processes (confirmed: identical design, two fresh
+        # builds, only line order differed). Sort by str(tok) rather than the
+        # raw tuples -- ref toks mix int and str, which isn't orderable.
+        for expanded_ref_toks in sorted(
+            expanded_ref_tok_list, key=lambda t: tuple(str(x) for x in t)
+        ):
             # Build vhdl str doing the reference assignment to base
             vhdl_ref_str = ""
             for ref_tok in expanded_ref_toks[1:]:  # Dont need base var name

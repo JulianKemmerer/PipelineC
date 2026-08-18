@@ -119,6 +119,36 @@ def _has_variable_index(ref_toks):
     return any(_is_var_tok(tok) for tok in ref_toks)
 
 
+def _ref_tok_str(tok):
+    """Canonical string for one ref tok. A variable-index tok is a Python AST
+    node -- str(ast_node) on this Python includes its repr memory address
+    ('<_ast.Name object at 0x...>'), which is per-process and unstable. Every
+    variable position already collapses to a single generated Logic() (see
+    _var_ref_toks_covers / _var_alias_internal_path: they key off WHICH
+    positions are variable, never the index expression's identity -- that
+    arrives separately as a var_dim_i port), so collapsing all AST nodes to
+    the fixed token 'VAR' cannot merge two definitions that were meant to
+    stay distinct. Matches the convention _ref_toks_to_alias_prefix already
+    uses for alias names."""
+    return "VAR" if _is_var_tok(tok) else str(tok)
+
+
+def _covering_ref_toks_str(covering_ref_toks_list):
+    """Canonical, process-independent string for a covering_ref_toks_list,
+    for use as *_REF_*'s func_name hash input. See _ref_tok_str: without
+    this, a variable-index covering wire (two sequential runtime var-index
+    writes to the same array, the second's covering wire being the first's
+    alias) hashes a memory address into the generated entity name, so the
+    same design gets a different name -- and a different synthesis log file
+    -- every process. Found via wireguard-fpga's --continue builds
+    re-synthesizing instead of reusing existing logs despite an unchanged
+    design.
+    """
+    return "_".join(
+        "_".join(_ref_tok_str(t) for t in toks) for toks in covering_ref_toks_list
+    )
+
+
 def _select_type_for_dim(dim_size):
     """Minimum unsigned type to hold 0..dim_size-1. e.g. 10 -> 'uint4_t'"""
     bits = max(1, (dim_size - 1).bit_length()) if dim_size > 1 else 1
@@ -363,9 +393,7 @@ def _var_ref_assign_func_name(output_type, base_type, ref_toks, covering_ref_tok
     func_name += "_" + base_type.replace("[", "_").replace("]", "")
     for tok in ref_toks[1:]:
         func_name += "_VAR" if _is_var_tok(tok) else "_" + str(tok)
-    input_str = "_".join(
-        "_".join(str(t) for t in toks) for toks in covering_ref_toks_list
-    )
+    input_str = _covering_ref_toks_str(covering_ref_toks_list)
     h = hashlib.md5(input_str.encode()).hexdigest()[: C_TO_LOGIC.C_AST_NODE_HASH_LEN]
     func_name += "_" + h
     return func_name
@@ -462,6 +490,9 @@ _MAX_MANGLE_NAME_LEN = 96
 _MAX_CALLABLE_RECURSION_DEPTH = 16
 
 
+_REPR_ADDR_RE = re.compile(r" at 0x[0-9a-fA-F]+")
+
+
 def _callable_hash(val):
     """Return a short (8-char hex) hash representing a callable's identity.
 
@@ -470,6 +501,12 @@ def _callable_hash(val):
     types produce different hashes. Last-resort disambiguator used only by
     _callable_canonical_name's fallback branches (lambdas, unintrospectable
     objects, recursion-cycle/depth-cap) -- never the common case.
+
+    A closure cell's default repr() for an object with no custom __repr__
+    ("<Foo object at 0x7f...>") embeds a per-process memory address, which
+    would otherwise leak into this hash and rename the generated entity on
+    every run (see _ref_tok_str for the same class of bug, confirmed via
+    unstable VAR_REF_* entity names). Strip it before hashing.
     """
     qual = getattr(val, "__qualname__", repr(val))
     mod = getattr(val, "__module__", "")
@@ -478,7 +515,7 @@ def _callable_hash(val):
         try:
             closure_key = str(
                 sorted(
-                    repr(c.cell_contents)
+                    _REPR_ADDR_RE.sub("", repr(c.cell_contents))
                     for c in val.__closure__
                     if c.cell_contents is not None
                 )
@@ -1226,10 +1263,8 @@ def _const_ref_rd_func_name(
     func_name += "_" + output_c_type.replace("[", "_").replace("]", "")
     func_name += "_" + base_c_type.replace("[", "_").replace("]", "")
     for tok in ref_toks[1:]:
-        func_name += "_" + str(tok)
-    input_str = "_".join(
-        "_".join(str(t) for t in toks) for toks in covering_ref_toks_list
-    )
+        func_name += "_" + _ref_tok_str(tok)
+    input_str = _covering_ref_toks_str(covering_ref_toks_list)
     h = hashlib.md5(input_str.encode()).hexdigest()[: C_TO_LOGIC.C_AST_NODE_HASH_LEN]
     func_name += "_" + h
     return func_name
@@ -1242,9 +1277,7 @@ def _var_ref_rd_func_name(output_c_type, base_c_type, ref_toks, covering_ref_tok
     func_name += "_" + base_c_type.replace("[", "_").replace("]", "")
     for tok in ref_toks[1:]:
         func_name += "_VAR" if _is_var_tok(tok) else "_" + str(tok)
-    input_str = "_".join(
-        "_".join(str(t) for t in toks) for toks in covering_ref_toks_list
-    )
+    input_str = _covering_ref_toks_str(covering_ref_toks_list)
     h = hashlib.md5(input_str.encode()).hexdigest()[: C_TO_LOGIC.C_AST_NODE_HASH_LEN]
     func_name += "_" + h
     return func_name

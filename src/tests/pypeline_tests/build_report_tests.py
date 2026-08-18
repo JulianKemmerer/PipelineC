@@ -176,6 +176,24 @@ def get_tests() -> list:
             requires=["yosys", "ghdl"],
         )
     )
+    # Regression guard for two process-nondeterminism bugs that defeated
+    # --continue's synthesis-log reuse on designs with sequential runtime
+    # variable-index array writes (found via wireguard-fpga): unstable
+    # VAR_REF_ASSIGN/VAR_REF_RD/CONST_REF_RD entity NAMES (a repr memory
+    # address leaking through str(ast_node) into a name hash) and unstable
+    # entity CONTENT (PYTHONHASHSEED-salted set iteration order leaking into
+    # generated VHDL line order). Builds real sky130 synthesis twice into the
+    # same out_dir (names + log reuse) and once each into two independent
+    # out_dirs (byte-identical content).
+    tests.append(
+        Test(
+            name="var_ref_naming_test",
+            category="build_report",
+            cmd=[INST_DIR / "var_ref_naming_test.py"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+        )
+    )
     # Regression guard for the D2 fix (RAW_VHDL._EQUAL_WIDTH_BITS_PER_STAGE_
     # DICT) and the §6a/§6b reporting fixes, against a real multi-cut sky130
     # build in both the planned sweep and --coarse paths.

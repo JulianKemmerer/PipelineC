@@ -100,9 +100,24 @@ def test_autofsm_design_reparses():
     parse_twice_and_compare(os.path.join(INST_DIR, "autofsm_test.py"))
 
 
+def test_var_ref_naming_design_reparses():
+    # Two sequential runtime variable-index writes to the same array -- the
+    # second write's covering wire is the first write's own alias, whose
+    # ref_toks contains a Python AST node. In-process repro for the
+    # entity-name instability bug: str(ast_node) embeds a repr memory
+    # address, so VAR_REF_ASSIGN/VAR_REF_RD/CONST_REF_RD func names built
+    # from covering_ref_toks_list changed on every re-parse -- found via
+    # wireguard-fpga's --continue builds re-synthesizing instead of reusing
+    # existing logs despite an unchanged design. ps1 stays alive while ps2
+    # parses, so parse 2's AST nodes cannot land on parse 1's addresses --
+    # the fastest way to catch this without a real subprocess rebuild.
+    parse_twice_and_compare(os.path.join(INST_DIR, "var_ref_naming_design.py"))
+
+
 if __name__ == "__main__":
     test_multi_file_design_reparses()
     test_stream_pipeline_design_reparses()
     test_fir_design_reparses()
     test_autofsm_design_reparses()
+    test_var_ref_naming_design_reparses()
     print("All double PARSE_FILE tests passed.")
