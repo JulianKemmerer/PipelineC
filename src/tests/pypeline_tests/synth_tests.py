@@ -19,6 +19,12 @@ from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINEC, Test, main
 # fmt: off
 # (filename, source_dir, extra_args)
 SYNTH_TEST_FILES = [
+    # By far the slowest test in the suite (a ~48-stage unrolled float32
+    # divider under real sky130 synth+STA, see float_ops_div_test.py's own
+    # comment) -- listed FIRST so run_all.py's FIFO dispatch starts it
+    # building at t=0, concurrent with the rest of the suite, instead of
+    # gating on whatever alphabetically/positionally precedes it.
+    ("float_ops_div_test.py", INST_DIR, ["--comb"]),
     # stream_pipeline_test.py's full-sweep build runs inside the
     # autopipeline_latency_test wrapper (added in get_tests below), which also
     # asserts on the AUTOPIPELINE .latency pin-and-confirm output -- not

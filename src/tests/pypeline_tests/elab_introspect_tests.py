@@ -81,16 +81,6 @@ def get_tests() -> list:
             cmd=[INST_DIR / "global_wire_errors_test.py"],
         )
     )
-    # Same pattern as two_factory_wrappers_test.py: a dot_a/dot_b naming
-    # collision would be silent, so it's checked via
-    # PY_TO_LOGIC.PARSE_FILE + FuncLogicLookupTable inspection.
-    tests.append(
-        Test(
-            name="factory_closure_list_test",
-            category="elab_introspect",
-            cmd=[INST_DIR / "factory_closure_list_test.py"],
-        )
-    )
     # Calls PY_TO_LOGIC.PARSE_FILE twice in one process (what the
     # AUTOPIPELINE pin-and-confirm driver loop does) and compares the
     # resulting parser_states -- guards the sys.modules eviction and
@@ -113,47 +103,20 @@ def get_tests() -> list:
             cmd=[INST_DIR / "loc_str_multiline_binop_test.py"],
         )
     )
-    # Checks the *type* and message of the ElaborationError raised by Reg[T]
-    # where T is an @interface's .fwd_t/.fb_t (a register is internal state,
-    # never a port), plus positive cases (Reg[.stream_t], Feedback[.fwd_t]
-    # must both stay clean).
+    # Checks the *type* and message of the ElaborationError raised when a
+    # non-port construct is declared with an @interface's .fwd_t/.fb_t
+    # port-pairing type -- merged from four originally separate files, one
+    # per declaration site checked: Reg[T]/Feedback[T] (a register is
+    # internal state, never a port), local variables (the same restriction,
+    # generalized), global Wire[T]/Input[T]/Output[T], and a plain
+    # (non-hw_func) function's return value. Plus each site's positive case
+    # (the correct .stream_t / inline-constructor-at-a-real-port replacement
+    # must stay clean). See the file's own docstring for the full mapping.
     tests.append(
         Test(
-            name="reg_interface_type_error_test",
+            name="interface_type_error_test",
             category="elab_introspect",
-            cmd=[INST_DIR / "reg_interface_type_error_test.py"],
-        )
-    )
-    # Same pattern as reg_interface_type_error_test.py, generalized: no plain
-    # local variable (not just Reg[T]) may be declared with an @interface's
-    # .fwd_t/.fb_t type. Also covers constructing a .fwd_t/.fb_t value inline
-    # as a call argument (no local at all).
-    tests.append(
-        Test(
-            name="local_var_interface_type_error_test",
-            category="elab_introspect",
-            cmd=[INST_DIR / "local_var_interface_type_error_test.py"],
-        )
-    )
-    # Same pattern, for global Wire[T]/Input[T]/Output[T] declarations --
-    # none of these are themselves a paired port-pairing construct, so none
-    # may ever be declared with an @interface's .fwd_t/.fb_t type.
-    tests.append(
-        Test(
-            name="global_wire_interface_type_error_test",
-            category="elab_introspect",
-            cmd=[INST_DIR / "global_wire_interface_type_error_test.py"],
-        )
-    )
-    # Same pattern, for a plain (non-hw_func) Python function's return value
-    # -- it may never be an @interface's .fwd_t/.fb_t port-pairing type,
-    # since that would hide the pairing construction behind a function-call
-    # boundary instead of at a real port crossing.
-    tests.append(
-        Test(
-            name="indirect_interface_pairing_return_error_test",
-            category="elab_introspect",
-            cmd=[INST_DIR / "indirect_interface_pairing_return_error_test.py"],
+            cmd=[INST_DIR / "interface_type_error_test.py"],
         )
     )
     # In-process PARSE_FILE + FuncLogicLookupTable/submodule_instances

@@ -30,9 +30,12 @@ from floating_point import (
 
 
 # ─────────────────────────────────────────────
-# Elaboration/synthesis coverage: bare +, -, *, / on both predefined widths,
+# Elaboration/synthesis coverage: bare +, -, * on both predefined widths,
 # exercised through @MAIN entry points (matches float32_add_test.py's
-# float_add_32_main pattern).
+# float_add_32_main pattern). float32 division has its own @MAIN in the
+# sibling file float_ops_div_test.py -- split out because its ~48-stage
+# unrolled divider is far slower to synthesize than these three combined,
+# and bundling it here would gate their builds behind it too.
 # ─────────────────────────────────────────────
 
 
@@ -51,16 +54,12 @@ def float32_mul_main(a: float32_t, b: float32_t) -> float32_t:
     return a * b
 
 
-@MAIN
-def float32_div_main(a: float32_t, b: float32_t) -> float32_t:
-    return a / b
-
-
-# float64 +, -, *, /, and float32<->float64/int32 conversions are exercised
-# only via native sim below (test_bare_operators_native_sim/test_conversions),
-# not through @MAIN -- float64's wider mantissa (52 vs 23 bits) makes its
-# --comb synthesis substantially more expensive than float32's, and native
-# sim already gives full bit-accurate coverage of the same arithmetic without
+# float64 +, -, *, /, and float32<->float64/int32 conversions (and float32
+# division, see float_ops_div_test.py above) are exercised only via native
+# sim below (test_bare_operators_native_sim/test_conversions), not through
+# @MAIN -- float64's wider mantissa (52 vs 23 bits) makes its --comb
+# synthesis substantially more expensive than float32's, and native sim
+# already gives full bit-accurate coverage of the same arithmetic without
 # paying that cost.
 
 # ─────────────────────────────────────────────

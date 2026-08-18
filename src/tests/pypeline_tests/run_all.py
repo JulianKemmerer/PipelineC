@@ -43,6 +43,29 @@ DEFAULT_CATEGORY_MODULES = {
 # docstring) -- only reachable via an explicit --category known_issues.
 ALL_CATEGORY_MODULES = dict(DEFAULT_CATEGORY_MODULES, known_issues=known_issues_tests)
 
+# Heaviest (real sky130 synth/STA, or GHDL+cocotb) categories first: tests are
+# submitted to run_tests()'s ThreadPoolExecutor up front, in list order, and a
+# thread pool dispatches queued work FIFO -- so whatever sits at the front of
+# this combined list starts at t=0 and runs concurrently with everything
+# after it, while whatever sits at the back only starts once an earlier test
+# frees a worker. Alphabetical order (the previous default, via sorted())
+# left the two heaviest categories, synth and build_report, running
+# second-to-last and first respectively -- accidental, not deliberate. This
+# order is the deliberate one; explicit --category flags are unaffected.
+_DEFAULT_CATEGORY_ORDER = [
+    "synth",
+    "build_report",
+    "native_vs_vhdl_sim",
+    "elab_introspect",
+    "elab",
+    "native_sim",
+    "unit",
+]
+assert set(_DEFAULT_CATEGORY_ORDER) == set(DEFAULT_CATEGORY_MODULES), (
+    "_DEFAULT_CATEGORY_ORDER is out of sync with DEFAULT_CATEGORY_MODULES -- "
+    "a category was added/removed without updating the other"
+)
+
 
 def main() -> int:
     parser = make_arg_parser(
@@ -59,7 +82,7 @@ def main() -> int:
     )
     args = parser.parse_args()
 
-    categories = args.category or sorted(DEFAULT_CATEGORY_MODULES)
+    categories = args.category or _DEFAULT_CATEGORY_ORDER
     tests = []
     for category in categories:
         tests += ALL_CATEGORY_MODULES[category].get_tests()
