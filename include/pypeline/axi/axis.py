@@ -84,7 +84,7 @@ def make_axis_broadcast_interlock(axis_intrf, n):
             out_i.valid = 0
             if all_sinks_ready | ~axis_out_if[i].ready:
                 out_i.valid = axis_in_if.stream.valid
-            o.axis_out_if[i] = axis_intrf.fwd_t(stream=out_i)
+            o.axis_out_if[i] = axis_intrf.fwd_t(out_i)
         o.axis_in_if.ready = all_sinks_ready
         return o
 

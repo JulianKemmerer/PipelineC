@@ -1075,30 +1075,62 @@ int33_t  = make_int_t(N + 9)
 Integer literals in hardware function bodies are automatically given the minimum-width
 unsigned type that fits the value (`0` → `uint1_t`, `255` → `uint8_t`, etc.).
 
-### Casting — not yet supported
+### Casting
 
-> **Not supported:** There is no explicit cast expression. Calling a type as a
-> function — `uint32_t(x)`, `int16_t(133)` — anywhere inside a hardware function
-> body fails at elaboration time, even when the argument is already a compile-time
-> constant. Instead, assign the value to an **intermediate variable with an
-> explicit type annotation**; the annotation itself triggers the same
-> implicit width-truncating/reinterpreting assignment used everywhere else in the
-> language for narrowing/widening, including signed/unsigned reinterpretation —
-> no wrapping call needed:
->
-> ```python
-> def widen(x: uint16_t) -> uint32_t:
->     tmp: uint32_t = x       # correct — annotated intermediate variable
->     return tmp
-> ```
->
-> Calling a type with a plain Python value **at module level**, outside any
-> hardware function (e.g. `ABSTOP12 = uint32_t(0x3f4)`), is unaffected — that's
-> ordinary Python executed at import time, not hardware elaboration.
+`T(x)` — a type called with exactly one positional argument and no keywords — is a cast.
 
-See [Limitations: Language](#limitations--not-yet-supported) for the full explanation of
-why this fails (a confusing `inspect`/`OSError` rather than a clear error) and more
-examples.
+```python
+def widen(x: uint16_t) -> uint32_t:
+    return uint32_t(x)      # identical to: tmp: uint32_t = x; return tmp
+```
+
+For two scalar `u/intN_t` types, a cast behaves **exactly like an annotated assignment**
+— same truncation on narrowing, same sign-extension/zero-extension on widening — because
+it lowers to the same mechanism, not a separate one. `y = type2_t(x)` and
+`y: type2_t = x` always agree; there is no scenario where they diverge. Casting between
+two integer types of the *same* width and signedness (or casting a value to its own
+type) costs nothing extra — it's the same wire, not a new one.
+
+`char_t` and `@enum` destinations, and casting *to* an array type (`uint8_t[4](x)`), are
+not supported — the last of these is rejected explicitly (an array's `[4]` looks like a
+bit width to the same machinery that computes one, so silently accepting it would risk
+masking to the wrong width); an enum destination is unsupported because `state_t(2)`
+already has an unrelated meaning (`IntEnum` member lookup) that casting would silently
+shadow.
+
+For a compound (struct, or `@interface` half) destination, a cast dispatches to a
+**registered conversion function** — an ordinary hardware function of the form
+`def f(x: src_t) -> dst_t`, real logic if the conversion needs it (e.g. float↔float,
+float↔int):
+
+```python
+from pypeline import cast
+
+@cast
+def f(x: src_t) -> dst_t:
+    ...
+
+y = dst_t(some_src_t_value)   # dispatches to f
+```
+
+`register_cast(src_t, dst_t, func)` is the imperative form, for a factory that already
+built the function (`include/pypeline/floating_point.py`'s `make_float_converter`/
+`make_float_to_int`/`make_int_to_float` all self-register this way). Casting to a struct
+with no registered conversion from the argument's type is an `ElaborationError`, except
+for a struct with exactly one field, which falls back to filling that field directly
+(the same thing `T(x)` meant before casting existed).
+
+`include/pypeline/stream/stream.py`'s `make_stream_interface` registers casts both ways
+between a stream interface's two halves and their plain payload types, so the common
+"give one field a name nobody needs to read" pattern collapses:
+
+```python
+axis_out_if = axis128_intrf.fb_t(some_ready_value)     # was fb_t(ready=some_ready_value)
+in_stream_if = axis128_intrf.fwd_t(some_stream_value)   # was fwd_t(stream=some_stream_value)
+```
+
+The keyword form (`fb_t(ready=x)`, `fwd_t(stream=x)`) still works everywhere — casting is
+purely additive syntax, never a replacement requirement.
 
 ### Struct types
 
@@ -1576,32 +1608,36 @@ register just one operator, or reuse an existing adder (`make_float_subtractor`'
 #### Converting between float precisions, or to/from an int
 
 `make_float_converter(src_t, dst_t)` builds a widening or narrowing conversion
-function between any two `make_float_t` types — this is what to reach for in place
-of a cast (structs can't be cast; see [Casting](#casting--not-yet-supported)):
+function between any two `make_float_t` types, and self-registers it as a
+[cast](#casting) — so once built, `dst_t(some_src_t_value)` works directly:
 
 ```python
 from floating_point import float32_t, float64_t, make_float_converter
 
 float32_to_float64 = make_float_converter(float32_t, float64_t)
 float64_to_float32 = make_float_converter(float64_t, float32_t)
+y64: float64_t = float64_t(some_float32_value)   # same conversion, via the cast
 ```
 
 The library already builds these two for you (`from floating_point import
 float32_to_float64, float64_to_float32`). For converting to/from a plain integer
 type, `make_float_to_int(float_t, int_t)` (truncating, toward zero, like C's
 `(int)f`) and `make_int_to_float(int_t, float_t)` (value-preserving) do the same
-job — the library also ships `float64_to_int32`/`int32_to_float64` pre-built.
-None of these handle subnormals, `inf`/`NaN`, or overflow specially — they match
-the common-case-only rigor of the adder they're built alongside.
+job — self-registering as casts the same way — and the library also ships
+`float64_to_int32`/`int32_to_float64` pre-built. None of these handle subnormals,
+`inf`/`NaN`, or overflow specially — they match the common-case-only rigor of the
+adder they're built alongside.
 
 #### Converting to/from a raw bit pattern (e.g. `uint32_t`)
 
-A float type is a **struct**, not a distinct bit-reinterpretation of an integer, so
-there is no cast between `float32_t` and `uint32_t` (see
-[Casting](#casting--not-yet-supported) above — this is exactly the case that section
-warns about). To move a float value across a boundary declared as a plain unsigned
-integer — a top-level port, a stream payload, anything typed `uintN_t` — unpack/pack
-the struct fields by hand with bit-slicing and `concat()` instead:
+A [cast](#casting) between two struct types is always a **value-preserving
+conversion** through a registered function, never an unchecked reinterpretation of
+the same bits — and no library conversion between `float32_t` and `uint32_t` is
+registered, since that pairing isn't a numeric conversion at all (a float's bit
+pattern is sign/exponent/mantissa, not the integer it names). To move a float
+value across a boundary declared as a plain unsigned integer — a top-level port, a
+stream payload, anything typed `uintN_t` — unpack/pack the struct fields by hand
+with bit-slicing and `concat()` instead:
 
 ```python
 from pypeline import concat
@@ -3802,7 +3838,7 @@ built yet."
 | Category | Feature | Status | Notes |
 |---|---|---|---|
 | Language | **Multiple/early `return` statements** | Not supported | A function may have at most one `return`, and it must be the function's final top-level statement; assign to a variable inside `if`/`else` branches and return it once at the end (see [Control flow](#your-first-hardware-function)) |
-| Language | **Explicit casts (`uint32_t(x)`, etc.)** | Not supported | Calling a type as a function around a wire/parameter inside a hardware function body fails at elaboration time; assign to an intermediate variable with an explicit type annotation instead (see [Basic Types](#basic-types)) |
+| Language | **Casting to `char_t`, an `@enum`, or an array type** | Not supported | Scalar int/uint casting, and compound (struct/`@interface`-half) casting via `@cast`/`register_cast`, are supported (see [Casting](#casting)) — these three destination kinds are the exceptions |
 | Language | **Hardware signals as loop conditions** | Not supported | `for`/`while` loop bounds must be compile-time Python integers (fully unrollable) |
 | Language | **`from module import *`** | Not supported | Only qualified imports (`import module`) are supported |
 | Language | **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead |

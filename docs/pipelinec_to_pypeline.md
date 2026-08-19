@@ -127,10 +127,11 @@ mux tree. See [pypeline_guide.md §11](pypeline_guide.md#basic-types).
 
 ### 3d. Casting
 
-PipelineC's C-style casts don't have a pypeline equivalent yet. Calling a type as a
-function around a wire/parameter inside a hardware function body — the direct
-translation of a C cast — fails at elaboration time in pypeline, not with a clear
-error message.
+A PipelineC C-style cast on a scalar int type has a direct pypeline equivalent: calling
+the type with the value as its one positional argument. It behaves exactly like an
+annotated-intermediate assignment (same truncation/sign-extension) — the two are
+guaranteed to agree, since a cast lowers to the identical mechanism assignment uses, not
+a separate one.
 
 ```c
 // PipelineC
@@ -139,16 +140,17 @@ uint32_t widen(uint16_t x) {
 }
 ```
 ```python
-# pypeline — do NOT do this: uint32_t(x) fails at elaboration time
+# pypeline
 def widen(x: uint16_t) -> uint32_t:
-    tmp: uint32_t = x    # assign to an intermediate, annotated variable instead
-    return tmp
+    return uint32_t(x)   # identical to: tmp: uint32_t = x; return tmp
 ```
 
-The annotation on `tmp` performs the same implicit width-truncating/reinterpreting
-assignment a cast would, including signed/unsigned reinterpretation — there is just no
-wrapping call syntax for it. See
-[pypeline_guide.md §11](pypeline_guide.md#basic-types) and [§13](#13-not-yet-supported).
+Casting to `char_t`, an `@enum` type, or an array type (`uint8_t[4](x)`) is not
+supported. Casting between compound (struct/`@interface`-half) types is supported, but
+unlike C's cast it is never an unchecked bit reinterpretation — it dispatches to a
+function registered with `register_cast(src_t, dst_t, func)` or `@cast`, so a struct
+cast is always a real, defined conversion. See
+[pypeline_guide.md §11 (Casting)](pypeline_guide.md#casting).
 
 ### 3e. Enum Types
 
@@ -238,8 +240,11 @@ def add(a: float32_t, b: float32_t) -> float32_t:
 
 If you're translating PipelineC/C code that manually reinterprets a `uint32_t`'s
 bits as a float (a union, a pointer cast, or hand-written `asuint32`/`asfloat32`-style
-helpers), the pypeline equivalent is **not** a cast — casting a struct type is not
-supported at all (see [§3d Casting](#3d-casting)). Convert by bit-slicing the fields
+helpers), the pypeline equivalent is **not** a cast — a pypeline cast between two
+struct types is always a value-preserving *conversion* through a registered function
+(see [§3d Casting](#3d-casting)), never an unchecked reinterpretation of the same bits,
+and no such conversion is registered between `float32_t` and `uint32_t` (that pairing
+isn't a numeric conversion at all). Convert by bit-slicing the fields
 out (or `concat()`-ing them back together):
 
 ```python
@@ -743,7 +748,7 @@ The following PipelineC features do not yet have a pypeline equivalent.
 | Simulation of `vhdl()`-based primitives | `make_stream_fifo`, `make_stream_pipeline`, `make_valid_ready_mcp` raise `NotImplementedError` in simulation; synthesise normally via `pipelinec` |
 | Multiple / early `return` statements (returning from inside an `if` branch) | Not supported — a pypeline function has exactly one `return`, which must be the final top-level statement; restructure to assign a result variable in each branch and return it once at the end (see [pypeline_guide.md §6](pypeline_guide.md#your-first-hardware-function)) |
 | `Reg[char_t[N]] = <initializer>` (register power-on value for a char array, e.g. equivalent of C's `static char name[16] = "boot";`) | Not supported for hardware elaboration — raises `ElaborationError`. `Reg[char_t[N]]` with no initializer (zero-init) works normally. See [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) |
-| C-style casts (`(uint32_t)x`) | No pypeline equivalent — calling a type as a function around a wire/parameter inside a hardware function body fails at elaboration time. Assign to an intermediate variable with an explicit type annotation instead (see [§3d Casting](#3d-casting)) |
+| C-style casts to `char_t`, an `@enum` type, or an array type | Not supported (scalar int↔int and struct/`@interface`-half casts are — see [§3d Casting](#3d-casting)) |
 
 See also the [Limitations](pypeline_guide.md#limitations--not-yet-supported) section
 of the pypeline guide.

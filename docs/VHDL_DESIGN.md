@@ -76,6 +76,22 @@ boundary registers. They participate in latency, hashing, clock/clock-enable
 requirements, and wire alignment just like internal stages. A design with
 `N` serial register slices has `N + 1` combinational pipeline stages.
 
+## Type conversion on a mismatched connection
+
+`TYPE_RESOLVE_ASSIGNMENT_RHS` wraps the RHS expression whenever a connection's
+two wires carry different C types — an ordinary assignment across a width/
+signedness change, and (Pypeline only) a scalar `T(x)` cast, which lowers to
+the identical connection (see `pypeline_DESIGN.md`/`PY_TO_LOGIC_DESIGN.md`'s
+Casting sections). Every quadrant (same-signedness resize; unsigned driving
+signed; signed driving unsigned, either direction) is meant to match C's
+conversion rule: take the low `Wd` bits of the source's two's-complement
+representation and reinterpret per the destination's signedness. Signed→
+signed narrowing did not — `numeric_std.resize` on a `SIGNED` value is
+sign-preserving (keeps the sign bit, not the low bit), not C's rule — fixed
+by routing that one case through `unsigned` first, the same shape already
+used for signed→unsigned narrowing. `nested_truncate_test.py` is the
+regression, confirmed against real GHDL.
+
 ## Flat code and hierarchy
 
 Pypeline and C source functions are elaboration boundaries, not mandatory

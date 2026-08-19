@@ -92,7 +92,7 @@ def make_fir_decim(
             sp_in: sp_func.in_intrf.stream_t
             sp_in.data = shifted
             sp_in.valid = stream_in_if.stream.valid & (phase == LAST_PHASE)
-            sp_o = sp_func(sp_func.in_intrf.fwd_t(stream=sp_in), stream_out_if)
+            sp_o = sp_func(sp_func.in_intrf.fwd_t(sp_in), stream_out_if)
 
             accepted: uint1_t = stream_in_if.stream.valid & sp_o.stream_in_if.ready
             if accepted:

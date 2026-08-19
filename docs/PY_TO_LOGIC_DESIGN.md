@@ -76,6 +76,7 @@ Python design files into PypelineC's internal `Logic()` graph representation. Fo
 
 **Syntax Extensions**
 - [Compound Initializer Syntax](#compound-initializer-syntax)
+- [Casting](#casting)
 - [Ternary (IfExp) Assignment](#ternary-ifexp-assignment)
 - [Augmented Assignment (`+=`, `-=`, etc.)](#augmented-assignment----etc)
 - [Boolean Operators (`and` / `or`)](#boolean-operators-and--or)
@@ -2903,6 +2904,159 @@ explicit `.as_const(…)` call is required.
 
 ---
 
+## Casting
+
+`dst_t(x)` — one positional argument, no keywords — is a **cast**, not a struct
+constructor call, even though the callee is the same kind of object (a `_CTypeMeta`
+scalar type or a `@struct`/interface-half NamedTuple class) a constructor call targets.
+See `pypeline_DESIGN.md`'s own Casting section for the native-sim half of this story
+(`_CTypeMeta.__call__`, `_CastDispatchMeta`, `_sim_cast`); this section covers only
+elaboration.
+
+### Two hooks, and why de-classification is enough
+
+Every non-scalar cast is, once recognized, an ordinary function call — so the actual
+lowering needs no new machinery, only **not being misclassified** as something else
+first. Two hooks:
+
+- **`FuncElaborator._is_cast_call(call_node)`** — purely syntactic:
+  `len(call_node.args) == 1 and not call_node.keywords`. Never consults the cast
+  registry, so the argument is elaborated exactly once and the decision never depends on
+  what else happens to be registered (a registry-dependent rule would also break
+  `copy.deepcopy`'s reconstruction of a one-field struct — see `pypeline_DESIGN.md`).
+- **`_is_pypeline_type(t)`** — `hasattr(t, "_ctype_name") or hasattr(t, "_fields")`,
+  applied to an already-`_try_eval_const`-resolved callee.
+
+**Hook A — de-classification.** Every pre-existing struct-constructor interception site
+gates on `hasattr(callee, "_fields")`; each now ANDs in `not self._is_cast_call(node)`:
+`_elab_assign`'s `is_struct_ctor_call` classification and its separate `Name`-target
+recheck, `_elab_ann_assign`'s struct-ctor branch, `_elab_compound_init`'s own recursive
+struct-ctor branch (a cast used as a nested field initializer, e.g.
+`fwd_t(stream=some_cast_t(w))`, must be excluded here too, or it never reaches Hook B),
+`_elab_return`'s struct-ctor branch, and `_elab_call`'s inline-constructor-as-argument
+handling (a cast used AS a call argument, e.g. `f(port=fwd_t(x))`). Every one of these
+sites already has a generic `_elab_expr`-based fallback for "not a struct ctor" (that is
+what handles an ordinary, non-struct-returning function call today) — de-classifying a
+cast-shaped call is 100% of the fix; nothing else about these sites changes.
+
+- **Hook B — `_elab_call`**, immediately after `tag_probe = self._try_eval_const(expr.
+  func)` and *before* the `ast.Attribute` resolution branch (so both a bare `uint8_t(x)`
+  and an attribute-form `intrf.fb_t(x)` are caught before either reaches ordinary callee
+  resolution): `elif self._is_cast_call(expr) and self._is_pypeline_type(tag_probe):
+  return self._elab_cast_call(expr, tag_probe)`.
+
+`_elab_call`'s own tail (submodule instantiation, clock-enable port, autopipeline/autofsm
+tagging) was extracted into `_elab_submodule_instance(callee_name, callee_def,
+input_ports, expr, autopipeline_call, autofsm_call)`, taking pre-bound `(port_name, wire,
+ctype)` tuples instead of `expr.args`/`.keywords` — the ordinary call path builds those
+by elaborating AST arg nodes; `_elab_cast_call`'s registered-cast branch builds a
+single-entry list directly from the wire it already elaborated, so the two paths share
+everything after "how do I get input_ports" without a second elaboration of the argument.
+
+### `_elab_cast_call(expr, dst_t)`
+
+1. `_register_struct_recursive(dst_t, self.parser_state)` — unconditionally, before
+   touching the argument at all (see "Struct discovery" below).
+2. Elaborate the single argument. A string-literal argument goes through
+   `_elab_str_literal`; an inline struct-constructor argument (e.g. the source is itself
+   written inline, `fwd_t(stream_t(data=d, valid=v))`) goes through the same synthetic-
+   local-plus-`_elab_compound_init`-plus-`_read_ref` pattern `_elab_call`'s own inline-
+   ctor-as-argument handling uses; everything else goes through plain `_elab_expr`.
+3. **Identity** (`src_str == dst_str`): return the argument's wire unchanged. Free — no
+   new wire, no entity.
+4. **Both sides scalar int/char**: add a wire of `dst_str`, connect the argument wire to
+   it, return the new wire. This is *by construction* what an assignment to a
+   `dst_str`-typed variable already does (`_write_ref` does the identical
+   add-wire-and-connect, just keyed off the LHS's declared type instead of a cast's
+   destination type) — `VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS` supplies the resize either way,
+   so a cast cannot drift from assignment's truncation/sign-extension semantics; it is
+   not a separately-maintained lowering. Checking *both* sides matters: an earlier
+   version of this check looked at `dst_str` alone, which incorrectly took this path for
+   e.g. `uint1_t(some_fb_t_value)` (the registered `fb_t -> feedback_t` unwrap cast,
+   where `feedback_t` defaults to `uint1_t`) — connecting a struct-typed wire straight
+   into a `uint1_t`-typed wire and skipping the cast registry entirely. Caught before
+   this reached a test, but only because the two-repo build never happened to exercise a
+   scalar-destination cast from a compound source until one was deliberately written.
+5. **Registered cast** (`pypeline._resolve_cast_entry((src_str, dst_str))`): elaborate
+   the (possibly lazily-built, e.g. a stream interface's wrap/unwrap cast — see
+   `pypeline_DESIGN.md`) hw_func via `_elaborate_live_func` and instantiate it as an
+   ordinary submodule through `_elab_submodule_instance`, with `input_ports` built
+   directly from the already-elaborated argument wire.
+6. **Miss, one-field struct**: positional field-fill, reusing the argument wire already
+   elaborated in step 2 — `_write_ref((synth_name, dst_t._fields[0]), arg_wire, src_str,
+   expr)` into a synthetic local, then `_read_ref` it back. Matches what `T(x)` meant for
+   this shape before casting existed, and what `copy.deepcopy` relies on continuing to
+   mean for an *unregistered* pair (see `pypeline_DESIGN.md`).
+7. **Miss, anything else**: `ElaborationError` naming both types and pointing at
+   `register_cast(...)`/`@cast`.
+
+Casting to an array ctype (`dst_t._elem_ctype is not None`) is rejected explicitly, up
+front, with its own message — not merely because it happens to fail some later check.
+
+### Struct discovery: a cast target reached only through cast syntax
+
+`parser_state.struct_to_field_type_dict` is normally populated by
+`_discover_structs_from_module` (whole-module scan at `PARSE_FILE` start) and by
+`_elaborate_live_func`'s own closure-struct-registration (any struct type appearing in
+some function's signature gets registered when that function is elaborated).
+`_discover_structs_from_module` explicitly **skips `@interface` objects** (`if getattr
+(obj, "_pypeline_is_interface", False): return` inside `_register_struct_recursive`) —
+reasonably, since an interface itself isn't a hardware struct — but that means its
+derived `.fwd_t`/`.fb_t`/`.stream_t` are *only* discovered by reaching them through some
+real function's signature somewhere in the design. Before casting, that was always true
+in practice (an interface half's whole reason to exist is being a port type). Casting
+adds a way to construct an interface-half *value* without ever writing one in a
+signature: `fwd_t(stream_t(data=d, valid=v))` used purely as an inline expression. If
+`fwd_t`/`stream_t` had never appeared in a signature elsewhere in the design,
+`_write_ref` would hit a `KeyError` in `_ref_toks_to_ctype` reading
+`struct_to_field_type_dict` — reachable in practice, since the two most common casts
+(the stream-interface wrap casts) are on interface halves by construction.
+
+Fixed by step 1 above: `_elab_cast_call` calls `_register_struct_recursive(dst_t, ...)`
+itself, before the argument is touched, which — being recursive — also registers `dst_t`'s
+own struct-typed fields (`fwd_t.stream: stream_t`, in the example above) in the same call.
+This only needs to run for the destination: by the time a design casts *from* some type,
+that type was necessarily already constructed (and therefore already registered) earlier
+in the same function.
+
+### Interface-half bans: three exemptions, one bug fix
+
+A cast converts between one interface half and its plain payload — not a port crossing —
+so it needs to take (or return) a lone half without the pairing checks written for real
+ports objecting. `pypeline.py`'s `_check_partial_interface_ports` and PY_TO_LOGIC's
+`_check_no_indirect_interface_pairing_return` are both exempted for a
+`_pypeline_is_cast`-marked function; see `pypeline_DESIGN.md` for the full mechanism and
+why the marker must be stamped *before* `@wires`/`@hw_func`-wrapping runs.
+
+`_check_no_indirect_interface_pairing_return` also got a real bug fix while adding this
+exemption, unrelated to casting itself: it used to recognize the sanctioned
+`intrf.fwd_t(...)`/`intrf.fb_t(...)` inline-constructor idiom by literal AST attribute
+name (`call_node.func.attr in ("fwd_t", "fb_t")`), which misses every factory-stamped
+alias of the identical class object — `fir.out_fb_t(...)`, `stream_fifo.fb_t(...)`,
+`divider_mcp.out_fb_t(...)`. Any of those, called where its result happens to
+const-fold, would have wrongly raised "a plain function cannot return an @interface's
+port-pairing type." Now resolved by evaluating the callee via `_try_eval_const` and
+checking `_pypeline_interface_role`/`_pypeline_is_cast` on the resulting **value**, which
+is unaffected by which attribute name reached that value.
+
+The bans this does **not** touch — `.fwd_t`/`.fb_t` may still only be constructed inline
+at a real port crossing, never stashed in a bare local — key off the *declared type* at
+each of their own sites (`_elab_assign`'s brand-new-local branch, `_elab_ann_assign`,
+`Reg[T]`/`Feedback[T]` annotations, global `Wire`/`Input`/`Output`), not the call shape,
+so in principle they need no cast-awareness. One of them needed a real fix anyway:
+`_elab_assign`'s bare-local ban (`bad = intrf.fwd_t(x)`, no annotation) originally lived
+*inside* the same `if hasattr(callee, "_fields") and not self._is_cast_call(...)` block
+as the struct-ctor routing being de-classified — so de-classifying a cast-shaped call
+skipped the ban check along with the routing it was meant to skip, and
+`bad = chan_intrf.fwd_t(some_stream)` silently bypassed a ban that already correctly
+blocks the keyword form `bad = chan_intrf.fwd_t(stream=some_stream)`. Fixed by hoisting
+the ban check above the `_is_cast_call` branch so it runs unconditionally once `callee`
+is known to be an interface half, regardless of call shape.
+`cast_error_test.py`'s `test_bare_local_fwd_t_still_banned_via_cast_call` is the
+regression test; it failed against the first version of this fix.
+
+---
+
 ## Ternary (IfExp) Assignment
 
 Python's ternary `x = body if test else orelse` is supported in hardware assignments.
@@ -2925,6 +3079,10 @@ x = body if test else orelse
 This reuses the full `_elab_if` MUX machinery, including clock-enable propagation and
 temporal sorting of covering wires. If the condition evaluates to a compile-time constant
 via `_try_eval_const`, the unused branch is eliminated entirely.
+
+`uint4_t(0)` above is a cast (see Casting, below) — this example previously did not
+elaborate at all (a ctype class is callable, so it reached `_elaborate_live_func` and
+died on an uncaught `OSError` from `inspect.getsourcelines`); it is real now.
 
 ---
 

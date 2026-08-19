@@ -83,8 +83,8 @@ def pulse_detect_elastic_tb():
     stutter = stutter + 1
 
     o = pulse_detect_e(
-        pulse_detect_e.in_intrf.fwd_t(stream=stream_in_if),
-        pulse_detect_e.out_intrf.fb_t(ready=pdw_ready),
+        pulse_detect_e.in_intrf.fwd_t(stream_in_if),
+        pulse_detect_e.out_intrf.fb_t(pdw_ready),
         data_t(val=THRESHOLD_HIGH),
         data_t(val=THRESHOLD_LOW),
         MAX_WIDTH_NORMAL,
@@ -181,7 +181,7 @@ def pulse_detect_valid_only_tb():
 
     o = pulse_detect_vo(
         stream_in_if,
-        pulse_detect_vo.out_intrf.fb_t(ready=1),
+        pulse_detect_vo.out_intrf.fb_t(1),
         data_t(val=THRESHOLD_HIGH),
         data_t(val=THRESHOLD_LOW),
         MAX_WIDTH_NORMAL,
@@ -265,8 +265,8 @@ def pulse_detect_cw_tb():
     stream_in_if.data = data_t(val=HIGH_POWER)  # permanently above threshold_high
 
     o = pulse_detect_cw(
-        pulse_detect_cw.in_intrf.fwd_t(stream=stream_in_if),
-        pulse_detect_cw.out_intrf.fb_t(ready=1),
+        pulse_detect_cw.in_intrf.fwd_t(stream_in_if),
+        pulse_detect_cw.out_intrf.fb_t(1),
         data_t(val=THRESHOLD_HIGH),
         data_t(val=THRESHOLD_LOW),
         CW_MAX_WIDTH,

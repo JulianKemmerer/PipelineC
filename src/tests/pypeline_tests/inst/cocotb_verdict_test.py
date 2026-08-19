@@ -24,7 +24,7 @@ import sys
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYPELINEC = os.path.join(THIS_DIR, "..", "..", "..", "pypelinec")
 PASSING_DESIGN = os.path.join(THIS_DIR, "self_check_counter_test.py")
-FAILING_DESIGN = os.path.join(THIS_DIR, "nested_truncate_vhdl_mismatch_known_issue.py")
+FAILING_DESIGN = os.path.join(THIS_DIR, "deliberate_sim_assert_failure_design.py")
 
 
 def _run(design, out_dir):

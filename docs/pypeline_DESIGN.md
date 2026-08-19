@@ -16,6 +16,7 @@ internals (Logic() graph, FuncElaborator, CONST_REF_RD, etc.) see
 - [Annotation Types](#annotation-types)
 - [`PART()` and `@MAIN` Pragmas](#part-and-main-pragmas)
 - [Operator Registry](#operator-registry)
+- [Casting](#casting)
 - [`SimVal` — Typed Simulation Integer](#simval--typed-simulation-integer)
 - [`concat(*args)` — Bit Concatenation](#concatargs--bit-concatenation)
 - [`vhdl(text)` — Raw VHDL Passthrough](#vhdltext--raw-vhdl-passthrough)
@@ -1140,6 +1141,246 @@ un-rewritten source.
 
 ---
 
+## Casting
+
+`T(x)` — a call on a pypeline type with **exactly one positional argument and no
+keywords** — is a cast. It never consults the registry at the *classification* step: the
+1-positional/0-keyword shape alone decides "this is a cast," so an argument is always
+elaborated exactly once and the decision never depends on what happens to be registered
+elsewhere. `T(field=x, ...)` (any keyword) stays an ordinary struct constructor, unaffected.
+
+```python
+y = type2_t(x)   # cast
+y = type2_t(a=x, b=0)  # struct init, not a cast (has a keyword)
+```
+
+### Scalar int/char: a language primitive, not a registered cast
+
+Casting between two scalar int/uint (or `char`) types is **not** in the cast registry at
+all — `y = type2_t(x)` behaves *identically* to `y: type2_t = x` (same truncation/sign-
+extension), because both lower to the exact same mechanism: elaboration adds a wire of the
+destination type and connects the source wire to it, and
+`VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS` inserts whatever resize the two types need — the same
+function assignment already goes through. An identity cast (source and destination
+already the same type) costs nothing: the source wire is returned directly, no new wire,
+no entity. `PY_TO_LOGIC._elab_cast_call` is the implementation; it deliberately does
+**not** use the pre-existing `CAST_TO_<t>` C-frontend backend path
+(`C_TO_LOGIC.C_AST_CAST_TO_LOGIC`) — that path's passthrough elimination lives in
+`TRY_CONST_REDUCE_*`, which PY_TO_LOGIC never calls; its entity base name omits the input
+type, so two different-width casts to the same destination would collide and silently
+reuse the first one's resize width; and (before the fix described below) its VHDL body
+resized a signed source *before* converting to unsigned, which disagreed with assignment
+for a narrowing signed source.
+
+On native sim, `_CTypeMeta.__call__` (the metaclass every `uintN_t`/`intN_t` shares)
+implements the same contract: registry first (for a genuinely registered cast — see
+below), then `_sim_cast(val, cls)` for a scalar destination. It rejects 0 or >1 arguments
+and rejects casting *to* an array ctype outright (`uint8_t[4](x)` would otherwise reach
+`_sim_cast` → `_CTypeMeta.__len__`, which reads the `[4]` as a bit width and masks to the
+wrong thing — silently). `char_t` and enum destinations are explicitly **not** part of
+this contract: `char_t` happens to work through `_sim_cast` (its width is special-cased to
+8 in `_CTypeMeta.width`) but is excluded from the elaborator's built-in path, so a
+`char_t` cast is a hard error at elaboration time, matching arrays. Enums are excluded
+entirely — `@enum` returns an `_IntEnum` subclass whose metaclass is `EnumMeta`, not
+`_CTypeMeta`, so `_CTypeMeta.__call__` never fires for them, and `state_t(2)` already has
+a meaning (`IntEnum` member lookup) that casting would silently override.
+
+#### Making integer conversion match C
+
+The governing intent is that `x: int8_t = a_i32` and `x: int8_t = int8_t(a_i32)` agree
+with each other and with C's actual conversion rule (§6.3.1.3): take the low `Wd` bits of
+the source's two's-complement representation and reinterpret per the destination's
+signedness; widening sign-extends a signed source and zero-extends an unsigned one;
+source signedness is irrelevant when narrowing. Native sim's `_sim_cast` already
+implements this exactly (`v = int(val) & mask; if is_signed and v >= sign_bit: v -= mask +
+1`) and needs no source-type information to do it. `VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS` had
+exactly one non-conforming case: **signed → signed narrowing** emitted plain
+`resize(x, Wd)`, and `numeric_std.resize` on a `SIGNED` value is *sign-preserving* (copies
+the sign bit into the new MSB, keeps the low `Wd-1` bits) — not C's rule. Fixed by routing
+that one case through `unsigned` first, the same shape already used for signed→unsigned
+narrowing: `signed(std_logic_vector(resize(unsigned(std_logic_vector(x)), Wd)))`. Every
+other quadrant (unsigned→unsigned, unsigned→signed, signed→unsigned either direction,
+signed→signed widening) was already correct. `src/tests/pypeline_tests/inst/
+nested_truncate_test.py` (formerly a `known_issues` XFAIL entry,
+`nested_truncate_vhdl_mismatch_known_issue.py`) is the regression test — confirmed against
+real GHDL: was `7233`, now `-25535`, matching native sim.
+
+Left deliberately unfixed: the C frontend's own explicit-cast entity
+(`RAW_VHDL.GET_CAST_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT`) resizes its
+input in the *source's* signedness before reinterpreting, so it is non-C-conformant for a
+signed source and disagrees with `TYPE_RESOLVE_ASSIGNMENT_RHS` — in PipelineC C,
+`(uint8_t)x` and `uint8_t y = x;` can differ for negative `x` today. Confirmed directly
+(`--no_synth` on a two-function `.c` reproducer, comparing the generated VHDL for
+`return (uint8_t)x;` against `uint8_t y = x; return y;`): the explicit cast emits
+`unsigned(std_logic_vector(resize(rhs, 8)))` (resizes the signed value first — sign-
+preserving, wrong), the assignment emits `resize(unsigned(std_logic_vector(x)), 8)`
+(converts first — correct). Pypeline casting never reaches this code (it has its own
+lowering, above); fixing it would change emitted VHDL for every existing `.c` design
+that narrows a signed value through an explicit cast, which is out of scope here. Not
+tracked as a `known_issues_tests.py` entry — that suite is pypeline-only (`src/tests/
+pypeline_tests/`), and this bug is in the separate C frontend (`src/tests/c_tests/`),
+whose conventions this work didn't otherwise touch.
+
+### Compound casts: `register_cast` / `@cast`
+
+Anything that isn't a scalar int/char pair is a **registered** cast — an ordinary hardware
+function, `def f(x: src_t) -> dst_t`, looked up by `(src_ctype_str, dst_ctype_str)` and
+instantiated as a real submodule call (native sim: an ordinary function call through
+`_struct_dispatch_call`, which activates `_sim_active` and pushes `f`'s own scoped
+registrations — the same mechanism struct operator dispatch uses, see Operator Registry
+above). There is no built-in compound cast, not even for the interface-half wrap/unwrap
+casts described below — everything goes through this one mechanism.
+
+```python
+_cast_registry: dict[(src_ctype_str, dst_ctype_str), hw_func]
+
+register_cast(src_t, dst_t, func)   # imperative form -- a factory that already
+                                     # built the function just wires it in
+```
+
+```python
+@cast
+def f(x: src_t) -> dst_t:
+    ...
+```
+
+`@cast` applied to a **plain, undecorated** function wraps it with `@wires` itself (a cast
+is assumed to be pure rewiring unless the caller pre-wraps with plain `@hw_func` for real
+delay-bearing logic) and — critically — stamps `fn._pypeline_is_cast = True` **before**
+that wrapping runs, not after. This ordering is load-bearing, not stylistic: `@wires`/
+`@hw_func` call `_sim_type_wrap`, which runs `_check_partial_interface_ports` as part of
+wrapping, and that check must see the cast marker to exempt an interface-half arg/return
+(see below) — since Python decorators evaluate bottom-up, marking a *result* after the
+fact would be too late for a check that already ran during the wrap. `@cast` on an
+*already*-wrapped function (e.g. `@cast` applied outermost over a hand-written
+`@hw_func`) is also accepted, for a cast whose types are never a lone interface half.
+
+**Compound dispatch lives in a metaclass, not in `struct()`'s `__new__` override.**
+`struct()` rebuilds every decorated class, as its last step, through `_CastDispatchMeta`
+— a `type` subclass whose `__call__` does the registry lookup for a 1-positional/0-
+keyword call before delegating to `super().__call__`. `_typed_new` (the `__new__`
+override that masks/casts scalar fields and handles `SIM_RAW_INTS`) is completely
+unaware casting exists — it is exactly the same positional/keyword field-fill it always
+was. This split exists because `copy.deepcopy`/`copy.copy` reconstruct a NamedTuple
+instance via `cls.__new__(cls, *fields)` **directly, bypassing `__call__` entirely** —
+and for a **one-field** struct, that is the identical `(1 positional, 0 keyword)` shape a
+cast call has. Dispatching in `__new__` would silently reinterpret a deepcopy
+reconstruction as a cast whenever *any* code, anywhere, registered a cast whose source
+type matches that struct's own field type — a realistic shape, since `make_fixed_t`
+(`include/pypeline/fixed_point.py`) produces exactly one-field structs. A metaclass
+`__call__` is the only interception point that can tell `T(x)` (goes through `__call__`)
+from `T.__new__(T, x)` (does not) apart. Measured cost: ~20% on every `@struct`
+construction in native sim (all struct types, not just cast targets) — accepted so that
+no future copy/serialization protocol can silently reintroduce the corruption; a narrower
+`__deepcopy__`/`__copy__` override would have been free but is a denylist, not a fix.
+`src/tests/pypeline_tests/inst/cast_test.py`'s
+`test_deepcopy_and_copy_not_reinterpreted_as_cast` is the direct regression test.
+
+On a registry **miss**: a destination struct with exactly **one field** falls back to
+positional field-fill — the same thing `T(x)` meant before casting existed, and what
+`copy.deepcopy`'s `__getnewargs__`-based reconstruction of an *unregistered* one-field
+struct relies on continuing to mean. Any other miss (multi-field struct, no cast
+registered) is a hard `ElaborationError` naming both types — this is a **strict
+improvement** over the previous behavior in one respect: before casting existed, a
+1-positional-arg call on a multi-field struct silently bound only the first field via
+`zip(callee._fields, init_node.args)`, leaving the rest undriven (the same class of bug
+`struct_ctor_positional_test.py` guards against for the *0-positional-args-missing*
+case) — now it raises instead of silently under-driving.
+
+At elaboration, casts are recognized in `PY_TO_LOGIC._elab_call` (`_is_cast_call`/
+`_is_pypeline_type`, checked immediately after the `AUTOPIPELINE`/`AUTOFSM` special
+forms and before ordinary callee resolution, so both `uint8_t(x)` and `intrf.fb_t(x)`
+are caught) and de-classified out of every pre-existing struct-constructor interception
+site (`_elab_assign`, `_elab_ann_assign`, `_elab_compound_init`'s own recursive branch,
+`_elab_return`, and `_elab_call`'s inline-constructor-as-argument path) so a cast-shaped
+call falls through to the ordinary expression path instead of the positional-zip struct
+init those sites otherwise apply. A cast target reached *purely* through cast syntax
+(never as some other function's own signature type) has no other path into
+`parser_state.struct_to_field_type_dict` — `_elab_cast_call` calls
+`_register_struct_recursive(dst_t, ...)` itself, before touching the argument, which also
+recursively registers `dst_t`'s own struct-typed fields (e.g. `fwd_t.stream: stream_t`).
+
+### Interface-half casts bend three checks, deliberately
+
+A cast converts between one interface half (`.fwd_t`/`.fb_t`) and its plain payload —
+that is a value transformation, not a port crossing, so there is no second half to pair.
+Three pre-existing checks are exempted for a `_pypeline_is_cast`-marked function (or,
+equivalently, a callee whose `_pypeline_interface_role` resolves it directly):
+
+1. `_check_partial_interface_ports` (`pypeline.py`) — would otherwise raise
+   `InterfacePortError` for a cast taking (or returning) a lone half without its pair.
+2. Its `_if`-naming-convention warning — same early return.
+3. `PY_TO_LOGIC._check_no_indirect_interface_pairing_return` — would otherwise ban a
+   plain function from returning an interface half.
+
+(3) also got a real fix along the way: it used to whitelist the sanctioned
+`intrf.fwd_t(...)`/`intrf.fb_t(...)` idiom by **literal AST attribute name**
+(`call_node.func.attr in ("fwd_t", "fb_t")`), which misses every factory-stamped alias of
+the exact same class — `fir.out_fb_t(...)`, `stream_fifo.fb_t(...)`, a closure alias with
+a different name — wrongly raising whenever such a call happened to const-fold. It now
+resolves the callee via `_try_eval_const` and checks `_pypeline_interface_role`/
+`_pypeline_is_cast` on the **value**, which is alias-proof by construction.
+
+The bans this does **not** touch: `.fwd_t`/`.fb_t` may still only be constructed inline at
+a real port crossing — a bare local of that type is still an `ElaborationError`
+regardless of whether the value came from a cast or a keyword constructor, since that ban
+keys off the *declared type*, not the call shape. (An earlier version of the cast
+de-classification accidentally skipped this ban for cast-shaped calls, since the ban check
+lived inside the same `if ... and not is_cast_call` block as the struct-ctor routing it
+was gating — `cast_error_test.py`'s
+`test_bare_local_fwd_t_still_banned_via_cast_call` is the regression test.)
+
+### Interface wrap/unwrap casts (`stream.make_stream_interface`)
+
+`make_stream_interface` registers four casts — both directions, both halves — via
+`_register_stream_casts` in `include/pypeline/stream/stream.py`:
+
+| Cast | Field |
+|---|---|
+| `stream_t → fwd_t` (wrap) | `stream` |
+| `fwd_t → stream_t` (unwrap) | `stream` |
+| `feedback_t → fb_t` (wrap) | `ready` |
+| `fb_t → feedback_t` (unwrap) | `ready` |
+
+```python
+axis_out_if = axis128_intrf.fb_t(early_out_ready)        # was fb_t(ready=early_out_ready)
+in_stream_if = axis128_intrf.fwd_t(verify_fifo_in_s)      # was fwd_t(stream=verify_fifo_in_s)
+```
+
+Only the **wrap** direction is worth writing as a cast in practice: `fb_t`/`fwd_t` each
+have exactly one field, so the keyword form's field name (`ready=`/`stream=`) carries no
+information — the cast drops it for free. The **unwrap** direction is registered too, for
+symmetry and because user code can call it directly, but a cast is *never* shorter than
+the plain field read it would replace (`uint1_t(fb)` vs. `fb.ready`), so no call site in
+this repository or in wireguard-fpga was rewritten to use it —
+`cast_interface_test.py` is its only exercise.
+
+Generated **lazily**: `register_lazy_cast`/`_LazyCast`/`_resolve_cast_entry` defer
+building the four `@cast` functions (real generated source, `exec`'d into a synthetic
+module via `pypeline._exec_generated_func` so `inspect.getsource` can recover it — the
+same technique `interface_func.make_hw_func_from_interface_func` and the `@stream_func`
+sugar use, reused rather than duplicated a third time, with a `folder` parameter added so
+this caller's synthetic paths land under `pypeline_generated_casts` instead of the
+original `pypeline_generated_bytes`) until the first time a design actually casts that
+specific interface. A design that builds a stream interface but never casts it — the
+overwhelming majority of existing designs and tests — pays nothing: no generated source,
+no extra VHDL entity. Entity names are a pure function of the source/destination
+canonical type names (`project_canonical_name_determinism`): two independently derived
+interfaces with identical field types produce identical cast entity names.
+
+Deliberately **not** auto-registered inside `include/pypeline/floating_point.py`'s
+`make_fixed_resize`-equivalent for fixed-point (`include/pypeline/fixed_point.py`'s
+`make_fixed_resize`): it takes `rounding`/`overflow` parameters and is legitimately
+called multiple times for the same `(src_t, dst_t)` pair with different modes
+(`fixed_point_test.py` does exactly this) — auto-registering would silently pick
+whichever call happened to run last as "the" cast for that pair. `make_float_converter`/
+`make_float_to_int`/`make_int_to_float` (`include/pypeline/floating_point.py`) have no
+such ambiguity — each `(src_t, dst_t)` float pair has exactly one sensible conversion —
+so they self-register via `register_cast` directly inside the factory, the same
+"supplied where the type is made" pattern as the stream casts.
+
+---
+
 ## Soft Operator Library (`include/pypeline/operators/`)
 
 Ordinary user-level Pypeline HDL, shipped in the repo, implementing integer operators via
@@ -1425,6 +1666,11 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `register_operator(op, lhs, rhs, impl, scope=None)` | Binds a binary operator on an exact `(lhs, rhs)` type pair |
 | `register_left_operator(op, lhs, impl, scope=None)` | Binds a binary operator matching only on left operand type |
 | `register_unary_operator(op, operand, impl, scope=None)` | Binds a unary operator for a specific operand type |
+| `@cast` | Registers a `def f(x: src_t) -> dst_t` as the implementation of `dst_t(value)` for a `src_t` value; wraps a plain function with `@wires` itself, marking it as a cast before that wrapping's interface-port check runs (see Casting) |
+| `register_cast(src_t, dst_t, func)` | Imperative form of `@cast`, for a factory that already built the function |
+| `register_lazy_cast(src_t, dst_t, build)` | Like `register_cast`, but `build()` (a zero-arg callable) only runs on first actual use of the pair |
+| `_cast_registry` | `(src_ctype_str, dst_ctype_str) → hw_func` (or `_LazyCast`); consulted by `_CTypeMeta.__call__`, `_CastDispatchMeta.__call__`, and `PY_TO_LOGIC._elab_cast_call` |
+| `_CastDispatchMeta` | Metaclass every `@struct` class is rebuilt through; its `__call__` is where compound cast dispatch happens (never `__new__` — see Casting for why) |
 | `_push_scoped_registrations(func)` | Merges scoped operator entries for `func` into globals; returns save-list |
 | `_pop_scoped_registrations(saved)` | Restores global registries from save-list |
 | `bit_dup`, `rotl`, `rotr`, `bswap`, `bit_assign` | Bit manipulation primitives (hardware + sim) |
@@ -1437,7 +1683,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `_make_ctype(name)` | Dynamically creates C type class objects (used by `make_uint_t`, array subscript, etc.) |
 | `SimVal` | Simulation typed integer: bit-slice `__getitem__`, operator dispatch, hardware-accurate arithmetic |
 | `_RawField` | Raw-mode int subclass for struct fields: C-level arithmetic + `__getitem__` for bit slicing |
-| `_sim_cast(val, ctype)` | Cast a Python int/SimVal to a pypeline ctype: mask to bit width, two's-complement sign |
+| `_sim_cast(val, ctype)` | Mask/sign-extend a Python int/SimVal to a pypeline scalar ctype's bit width — assignment's own truncation logic, and (via `_CTypeMeta.__call__`) `T(x)` scalar casting's, since the two are defined to be identical (see Casting) |
 | `_sim_val_make(v, ctype)` | Fast `SimVal` allocation bypassing Python `__new__`; checks flyweight cache first |
 | `_SIM_CONST_CACHE` | Flyweight cache: `(int_value, ctype)` → `SimVal` for values 0–15 per ctype |
 | `AUTOFSM(func)` | Tag object: implements a pure single-argument function as a resource-shared FSM; `.latency`, `.in_stream_t`, `.out_stream_t`; see AUTOFSM_DESIGN.md |

@@ -10,6 +10,7 @@ from pypeline import (
     concat,
     hw_func,
     hw_return_type,
+    register_cast,
     register_operator,
     register_left_operator,
     register_unary_operator,
@@ -539,6 +540,13 @@ def make_float_converter(src_t, dst_t):
         result: dst_t = dst_t(sign=new_sign, exp=out_exp, man=out_man)
         return result
 
+    # Self-registers as a cast (unlike make_fixed_resize below, a (src_t,
+    # dst_t) float pair has no rounding/overflow-mode ambiguity -- exactly
+    # one sensible conversion, so `dst_t(some_src_t_value)` can safely mean
+    # "the" converter for this pair) -- so e.g. `float64_t(some_float32)`
+    # works immediately for any pair a caller builds, not just the
+    # module-level float32_t<->float64_t instances below.
+    register_cast(src_t, dst_t, convert)
     return convert
 
 
@@ -590,6 +598,7 @@ def make_float_to_int(float_t, int_t):
     register_operator("SR", wide_t, shift_amount_t, sr_wide, scope=float_to_int)
     register_unary_operator("NEGATE", int_t, negate_result, scope=float_to_int)
 
+    register_cast(float_t, int_t, float_to_int)
     return float_to_int
 
 
@@ -637,6 +646,7 @@ def make_int_to_float(int_t, float_t):
 
     register_operator("SL", align_wide_t, clz_out_t, sl_align, scope=int_to_float)
 
+    register_cast(int_t, float_t, int_to_float)
     return int_to_float
 
 

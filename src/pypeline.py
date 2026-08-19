@@ -79,6 +79,46 @@ class _CTypeMeta(type):
             return int(m.group(1))
         return cls.width
 
+    def __call__(cls, *args, **kwargs):
+        """`T(x)` -- a CAST: exactly one positional argument, no keywords.
+        (@struct types never reach here -- they override __new__ instead, via
+        _typed_new below, which handles both keyword-form struct init and
+        cast dispatch for compound destinations.)
+
+        A scalar int/uint destination always has a built-in meaning (mask/
+        sign-extend exactly like assignment -- see _sim_cast). Any other
+        destination (a distinct integer width the user registered a cast
+        for, e.g. never -- ints are built-in only) must go through
+        register_cast()/@cast, or this raises. Array ctypes (uint8_t[4])
+        cannot be cast at all: rejected explicitly, since silently falling
+        through to _sim_cast would reinterpret the array length as a bit
+        width (see _CTypeMeta.__len__) and mask to the wrong thing.
+        """
+        if kwargs or len(args) != 1:
+            raise TypeError(
+                f"{cls._ctype_name}(...) is a cast and takes exactly one "
+                f"positional argument, got {len(args)} positional and "
+                f"{len(kwargs)} keyword argument(s)"
+            )
+        if getattr(cls, "_elem_ctype", None) is not None:
+            raise TypeError(
+                f"{cls._ctype_name} is an array type; casting to an array "
+                "type is not supported"
+            )
+        (val,) = args
+        src_t = _value_ctype(val)
+        if src_t is not None:
+            fn = _resolve_cast_entry((_ctype_str(src_t), cls._ctype_name))
+            if fn is not None:
+                return _struct_dispatch_call(fn, (val,))
+        if not _is_scalar_pypeline_int(cls):
+            src_desc = _ctype_str(src_t) if src_t is not None else type(val).__name__
+            raise TypeError(
+                f"No cast registered from {src_desc!r} to {cls._ctype_name!r} "
+                "-- use register_cast(...)/@cast to define one"
+            )
+        return _sim_cast(val, cls)
+
 
 def _make_ctype(name: str):
     """Create a C type as a real Python class.
@@ -902,6 +942,33 @@ def _enclosing_factory_param_suffix(cls, frame):
     return ("_" + "_".join(parts)) if parts else ""
 
 
+class _CastDispatchMeta(type):
+    """Metaclass for @struct classes: `T(x)`, called with exactly one
+    positional argument and no keywords, dispatches to a registered cast
+    (register_cast/@cast) before falling through to ordinary construction.
+
+    Deliberately a metaclass __call__, not a __new__ override: copy.deepcopy/
+    copy.copy reconstruct an instance via `cls.__new__(cls, *fields)`
+    directly, bypassing __call__ entirely -- for a ONE-FIELD struct that is
+    the exact same (1 positional, 0 keyword) shape as a cast call. Dispatch
+    in __new__ would make deepcopy of, say, a fixed-point struct with a
+    registered raw-int->fixed cast on its own field type silently re-run
+    that cast instead of reconstructing the value. A metaclass is the only
+    interception point that can tell `T(x)` (goes through __call__) from
+    `T.__new__(T, x)` (does not) apart -- struct()'s _typed_new stays pure
+    positional/keyword field-fill, unaware casting exists at all.
+    """
+
+    def __call__(cls, *args, **kwargs):
+        if len(args) == 1 and not kwargs:
+            src_t = _value_ctype(args[0])
+            if src_t is not None:
+                fn = _resolve_cast_entry((_ctype_str(src_t), cls._pypeline_ctype_name))
+                if fn is not None:
+                    return _struct_dispatch_call(fn, (args[0],))
+        return super().__call__(*args, **kwargs)
+
+
 def struct(cls):
     """Decorator that adds array subscript support and stamps a canonical C type name.
     The canonical name is derived from the class name, field types, and (for a
@@ -968,6 +1035,17 @@ def struct(cls):
     _orig_new = cls.__new__
 
     def _typed_new(klass, *args, **kwargs):
+        # NOTE: cast dispatch (T(x) where x's ctype has a registered cast into
+        # klass) deliberately does NOT live here. __new__ is also what
+        # copy.deepcopy/copy.copy call directly to reconstruct an instance
+        # (cls.__new__(cls, *fields)), which for a ONE-FIELD struct is the
+        # exact same (1 positional, 0 keyword) shape as a cast call -- adding
+        # cast dispatch here would silently reinterpret a deepcopy
+        # reconstruction as a cast whenever some unrelated code registered a
+        # cast from that field's type. See _CastDispatchMeta.__call__ below,
+        # which intercepts real `T(x)` call syntax before it ever reaches
+        # __new__ -- a distinction only a metaclass can make, since
+        # deepcopy/copy bypass __call__ entirely and go straight to __new__.
         if args:
             positional = dict(zip(klass._fields, args))
             positional.update(kwargs)
@@ -1038,6 +1116,16 @@ def struct(cls):
     cls.__gt__ = lambda self, other: _struct_dispatch_binary_op("GT", self, other)
     cls.__ge__ = lambda self, other: _struct_dispatch_binary_op("GTE", self, other)
 
+    # Rebuild through _CastDispatchMeta so T(x) can dispatch a registered cast
+    # (see that class's docstring for why this must be a metaclass, not a
+    # __new__ override). Last step: every attribute set above (by this
+    # function, and everything @interface's _derive() and factory functions
+    # like make_fixed_t set afterward on whatever struct() returns) carries
+    # over via dict(vars(cls)) -- nothing here is order-sensitive except that
+    # this must be struct()'s final statement, since anything set on the
+    # PRE-rebuild `cls` after this point would be invisible on the object
+    # actually returned/bound at the call site.
+    cls = _CastDispatchMeta(cls.__name__, cls.__bases__, dict(vars(cls)))
     return cls
 
 
@@ -1848,6 +1936,32 @@ def ctype_name(t) -> str:
     return _ctype_str(t)
 
 
+def _value_ctype(val):
+    """Best-effort ctype of a native-sim value, for cast dispatch.
+    SimVal carries it directly; a @struct instance's ctype IS its own class
+    (the class itself carries _pypeline_ctype_name, stamped by @struct/
+    @interface's _derive). A plain unannotated Python int falls back to its
+    minimum-width inferred type (_infer_literal_ctype -- same rule
+    PY_TO_LOGIC._infer_const_ctype uses at elaboration time for a bare
+    literal), so e.g. `float_t(5)` dispatches a registered int->float cast
+    in native sim exactly as it would during elaboration, rather than
+    silently falling through to positional field-fill because `5` looked
+    untyped. Returns None only for a bool (excluded by _infer_literal_ctype)
+    or a non-int, non-pypeline value -- there is no source type to dispatch
+    a cast on."""
+    t = getattr(val, "_ctype", None)
+    if t is not None:
+        return t
+    cls = type(val)
+    if hasattr(cls, "_pypeline_ctype_name"):
+        return cls
+    if isinstance(val, int):
+        lit_t = _infer_literal_ctype(val)
+        if lit_t is not None:
+            return _reconstruct_int_ctype(lit_t)
+    return None
+
+
 _operator_registry: dict = {}  # (op_str, l_type_str, r_type_str) -> name_or_callable
 _left_operator_registry: dict = {}  # (op_str, l_type_str) -> name_or_callable
 _unary_operator_registry: dict = {}  # (op_str, type_str) -> name_or_callable
@@ -2190,6 +2304,126 @@ def register_unary_operator(op: str, operand_type, func, scope=None) -> None:
     else:
         _scoped_funcs.add(id(scope))
         _scoped_unary_operator_registry.setdefault(id(scope), {})[key] = func
+
+
+# ─────────────────────────────────────────────
+# Casting: T(x)
+#
+# A call on a pypeline type with exactly one positional argument and no
+# keywords is a cast (see _CTypeMeta.__call__ for scalar int/uint
+# destinations, and struct()'s _typed_new below for compound ones). Every
+# non-scalar cast is implemented as an ordinary hardware function -- a real
+# submodule instance at elaboration time, an ordinary call in native sim --
+# registered here by (src_ctype_str, dst_ctype_str). There is no built-in
+# compound cast: even the interface-half wrap/unwrap casts
+# (stream.make_stream_interface) are registered functions, not special-cased.
+#
+# Scalar int/uint destinations are the one exception: they are not looked up
+# here at all (see _CTypeMeta.__call__) -- casting between two integer
+# widths/signs is a language primitive with the same truncation/sign-
+# extension behavior as assignment, not something a user can override.
+# ─────────────────────────────────────────────
+
+_cast_registry: dict = {}  # (src_type_str, dst_type_str) -> hw_func
+
+
+def register_cast(src_t, dst_t, func) -> None:
+    """Register `func` -- a hardware function of the form
+    `def f(x: src_t) -> dst_t` -- as the implementation of `dst_t(value)`
+    whenever `value`'s ctype is `src_t`.
+
+    Imperative form, for a factory that already built the function (e.g.
+    make_float_converter/make_fixed_resize) and just needs to wire it in.
+    Prefer the @cast decorator when writing the function directly.
+    """
+    key = (_ctype_str(src_t), _ctype_str(dst_t))
+    _cast_registry[key] = func
+
+
+class _LazyCast:
+    """A cast registered via a thunk instead of a finished function: `build()`
+    (a zero-arg callable returning the real cast function) only runs on the
+    first actual lookup of this (src_t, dst_t) pair, via _resolve_cast_entry
+    -- not at registration time. See register_lazy_cast."""
+
+    __slots__ = ("build",)
+
+    def __init__(self, build):
+        self.build = build
+
+
+def register_lazy_cast(src_t, dst_t, build) -> None:
+    """Like register_cast, but defers building the real cast function until
+    first use (see _LazyCast). For a cast whose implementation is itself
+    generated (e.g. stream.make_stream_interface's wrap/unwrap casts,
+    generated as real source text + exec()) -- so a design that builds the
+    type but never casts it never pays for generating (and, in hardware,
+    instantiating) an implementation it doesn't use.
+    """
+    key = (_ctype_str(src_t), _ctype_str(dst_t))
+    _cast_registry[key] = _LazyCast(build)
+
+
+def _resolve_cast_entry(key):
+    """Look up _cast_registry[key], resolving (and caching back) a lazy
+    entry. The single lookup path both _CastDispatchMeta.__call__ (native
+    sim) and PY_TO_LOGIC._elab_cast_call (elaboration) use -- so a lazy
+    cast's first use, from either side, builds it exactly once."""
+    entry = _cast_registry.get(key)
+    if isinstance(entry, _LazyCast):
+        entry = entry.build()
+        _cast_registry[key] = entry
+    return entry
+
+
+def cast(fn):
+    """Decorator: register `fn` -- a function of the form
+    `def f(x: src_t) -> dst_t` -- as the implementation of `dst_t(value)`
+    whenever `value`'s ctype is `src_t`. `src_t`/`dst_t` are read from the
+    function's own argument/return annotations; it must take exactly one
+    argument.
+
+    Apply directly to a plain (undecorated) function -- @cast wraps it with
+    @wires itself, so the result is a real, callable hw_func exactly as if
+    @wires had been applied directly:
+
+        @cast
+        def stream_to_fwd(x: stream_t) -> fwd_t:
+            return fwd_t(stream=x)
+
+    This marks the function as a cast BEFORE hw_func-wrapping runs its
+    interface-port-pairing check (_check_partial_interface_ports), which is
+    what lets a cast take or return a lone interface half (.fwd_t/.fb_t)
+    without its paired other half: a cast is a conversion between a half and
+    its payload, not a port crossing, so there is no second half to pair.
+    Decorator evaluation is bottom-up, so this ONLY works when @cast is
+    applied to a not-yet-wrapped function -- @cast on an already-@hw_func/
+    @wires-decorated function is also accepted (for a cast whose types are
+    never a lone interface half, e.g. a hand-written struct or float
+    conversion needing real delay, pre-wrapped with plain @hw_func by the
+    caller), but for an interface-half cast the port-pairing check has
+    already run by then and raises regardless of any exemption.
+
+    A cast is assumed to be pure rewiring (like the interface wrap/unwrap
+    casts this exists for) -- @wires, not @hw_func, is what gets applied. A
+    cast needing real combinational delay should be built as an ordinary
+    @hw_func (e.g. via a factory) and registered with register_cast(...)
+    instead, or pre-wrapped with plain @hw_func before applying @cast.
+    """
+    if is_hw_func(fn):
+        wrapped = fn
+    else:
+        fn._pypeline_is_cast = True
+        wrapped = wires(fn)
+    arg_types = hw_arg_types(wrapped)
+    if len(arg_types) != 1:
+        raise TypeError(
+            f"@cast function {getattr(wrapped, '__qualname__', wrapped)!r} must take "
+            f"exactly one argument, got {len(arg_types)}"
+        )
+    register_cast(arg_types[0], hw_return_type(wrapped), wrapped)
+    wrapped._pypeline_is_cast = True
+    return wrapped
 
 
 def _struct_dispatch_call(fn, args):
@@ -2914,10 +3148,20 @@ def _bytes_type_key(t) -> str:
 def _finalize_hw_name(name: str) -> str:
     """Collapse a generated hardware function name to fit _MAX_MANGLE_NAME_LEN,
     using the same truncated-prefix + sha256[:8] fallback convention as
-    @struct/@enum."""
+    @struct/@enum.
+
+    The truncation point is a fixed character offset, so it can land right
+    after a `_` already in the name -- `.rstrip("_")` before appending the
+    `_{hash}` separator, or the result has two consecutive underscores,
+    which GHDL rejects as an illegal VHDL identifier ("two underscores can't
+    be consecutive"). Caught by a real synthesis run of a long cast entity
+    name (`cast_stream_intrf_..._frac_bits_..._1edf40d4` truncating right
+    after `frac_bits_`), not by elaboration or native sim, which never
+    validate VHDL identifier syntax.
+    """
     if len(name) > _MAX_MANGLE_NAME_LEN:
         h = _hashlib.sha256(name.encode()).hexdigest()[:8]
-        name = f"{name[: _MAX_MANGLE_NAME_LEN - 9]}_{h}"
+        name = f"{name[: _MAX_MANGLE_NAME_LEN - 9].rstrip('_')}_{h}"
     return name
 
 
@@ -2944,7 +3188,9 @@ def _collect_struct_types(t, out=None):
     return out
 
 
-def _exec_generated_func(func_name: str, src: str, extra_globals: dict):
+def _exec_generated_func(
+    func_name: str, src: str, extra_globals: dict, folder: str = "pypeline_generated_bytes"
+):
     """exec() a single-function source string (a flat, non-nested `def`, so
     its __qualname__ has no '.<locals>.' and PY_TO_LOGIC's elaborator treats it
     as an ordinary top-level function rather than a factory closure), patching
@@ -2958,8 +3204,13 @@ def _exec_generated_func(func_name: str, src: str, extra_globals: dict):
     but not in a VHDL identifier, and only fail once the output actually reaches
     a VHDL compiler (e.g. via --sim --ghdl), not under plain --no_synth
     elaboration, which never compiles the generated text.
+
+    `folder` only affects the synthetic path's directory component (cosmetic --
+    where SYN.GET_OUTPUT_DIRECTORY places this entity's generated VHDL); the
+    original caller (make_type_to_bytes/make_type_from_bytes) keeps its default,
+    a different generated-function caller (e.g. a cast) can pass its own.
     """
-    fake_file = f"/pypeline_generated_bytes/{func_name}.py"
+    fake_file = f"/{folder}/{func_name}.py"
     _linecache.cache[fake_file] = (len(src), None, src.splitlines(True), fake_file)
     code = compile(src, fake_file, "exec")
     ns = dict(extra_globals)
@@ -5107,7 +5358,15 @@ def _check_partial_interface_ports(fn, ann, params, ret_t):
     fields) are complete with a single half and never error -- checked via the
     interface's own `_pypeline_iface_derived` memo. A genuinely valid-only
     stream (e.g. `stream.make_stream_t(...)`) has no reverse half to pair, so
-    it falls into that exemption."""
+    it falls into that exemption.
+
+    A @cast function (fn._pypeline_is_cast, stamped by cast() BEFORE this
+    check runs -- see cast()'s docstring for why the ordering matters) is
+    exempt entirely: a cast converts between one interface half and its
+    payload, not a port crossing, so there is no second half to pair and no
+    '_if' naming convention to enforce either."""
+    if getattr(fn, "_pypeline_is_cast", False):
+        return
     ports = {}  # name -> {"fwd": side|None, "fb": side|None, "iface": iface}
 
     def note(name, t, side):

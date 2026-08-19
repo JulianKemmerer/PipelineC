@@ -143,6 +143,20 @@ def get_tests() -> list:
             cmd=[INST_DIR / "clock_mhz_pragma_test.py"],
         )
     )
+    # Casting's error paths: an unregistered (src, dst) pair, wrong arity on
+    # a scalar cast, casting to an array type, that the pre-existing
+    # interface-half-local ban still fires for a cast-shaped call (not just
+    # the keyword-ctor form it was originally written for), and that a
+    # multi-field struct's 1-positional-arg call is cast-shaped (raising
+    # "no cast registered") rather than silently under-driving one field via
+    # the old positional zip(_fields, args).
+    tests.append(
+        Test(
+            name="cast_error_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "cast_error_test.py"],
+        )
+    )
     return tests
 
 

@@ -2132,15 +2132,26 @@ class FuncElaborator:
         function body hide the pairing construction behind a call boundary,
         defeating the "construct .fwd_t/.fb_t only inline, at a real port
         crossing" discipline enforced elsewhere (_elab_ann_assign,
-        _discover_global_wires). The one exemption is the sanctioned inline
-        constructor call itself, `intrf.fwd_t(...)`/`intrf.fb_t(...)` --
-        recognized here as a direct `.fwd_t`/`.fb_t` attribute-call, which is
-        exactly the idiom callers are supposed to use instead.
+        _discover_global_wires). Two exemptions:
+
+        - The sanctioned inline constructor call itself, `intrf.fwd_t(...)`/
+          `intrf.fb_t(...)`, recognized here by VALUE (the callee itself
+          resolves to a derived interface-half class -- `_pypeline_interface_
+          role` is stamped on `fwd_t`/`fb_t` themselves), not by literal AST
+          attribute name. A name-based check (`call_node.func.attr in
+          ("fwd_t", "fb_t")`) misses every factory-stamped alias of the exact
+          same class -- `fir.out_fb_t(...)`, `stream_fifo.fb_t(...)` via a
+          closure alias with a different name, `divider_mcp.out_fb_t(...)`
+          -- wrongly raising whenever such a call happens to const-fold.
+        - A @cast function (or a class dispatching through one, e.g.
+          `intrf.fb_t(some_uint1)` as a cast) -- a cast converts between a
+          lone interface half and its payload by design, not a port
+          crossing, so there's no pairing to defeat.
         """
-        if isinstance(call_node.func, ast.Attribute) and call_node.func.attr in (
-            "fwd_t",
-            "fb_t",
-        ):
+        callee = self._try_eval_const(call_node.func)
+        if getattr(callee, "_pypeline_interface_role", None) is not None:
+            return
+        if getattr(callee, "_pypeline_is_cast", False):
             return
         elem = _array_elem_ctype(val) or val
         owning_intrf = (
@@ -2860,8 +2871,10 @@ class FuncElaborator:
                 ctor_callee, "_is_sim_output", False
             ):
                 return  # sim-only call on the RHS — whole assignment is a hardware no-op
-            is_struct_ctor_call = ctor_callee is not None and hasattr(
-                ctor_callee, "_fields"
+            is_struct_ctor_call = (
+                ctor_callee is not None
+                and hasattr(ctor_callee, "_fields")
+                and not self._is_cast_call(stmt.value)
             )
             if not is_struct_ctor_call:
                 const_val = self._try_eval_const(stmt.value)
@@ -2875,42 +2888,52 @@ class FuncElaborator:
                 python_name = target.id
                 hw_name = _sanitize_vhdl_name(python_name)
                 global_key = self._resolve_global_wire(python_name)
-                if global_key is not None:
-                    if global_key not in self.env:
-                        self._declare_global_write_wire(global_key, target)
-                    self._elab_compound_init(global_key, stmt.value, stmt.value)
-                elif hw_name in self.env:
-                    self._elab_compound_init(hw_name, stmt.value, stmt.value)
-                else:
-                    # A brand-new local declared via a bare struct-constructor-call
-                    # assignment (no type annotation at all, e.g. 'x = intrf.fwd_t(...)')
-                    # is exactly the same "local variable of an @interface's paired
-                    # .fwd_t/.fb_t type" pattern _elab_ann_assign already bans for the
-                    # annotated form -- ban it here too so it can't be smuggled in
-                    # just by omitting the annotation.
-                    if (
-                        getattr(callee, "_pypeline_interface_role", None) is not None
-                    ):
-                        owning_intrf = getattr(callee, "_pypeline_interface", None)
-                        raise ElaborationError(
-                            f"'{python_name}': a local variable cannot be declared "
-                            f"with an @interface's .fwd_t/.fb_t port-pairing type -- "
-                            f"that type is reserved for hw_func signature args/return "
-                            f"fields and inline constructor-call expressions at a real "
-                            f"port crossing (e.g. 'f(port=intrf.fwd_t(stream=x))'). Use "
-                            f"'{owning_intrf.__name__}.stream_t' instead (or the plain "
-                            f"make_stream_t(...) type your data actually is), and "
-                            f"construct the '.fwd_t'/'.fb_t' value inline only at the "
-                            f"point it meets a real port.",
-                            stmt.value,
-                        )
-                    struct_ctype = (
-                        getattr(callee, "_pypeline_ctype_name", None) or callee.__name__
+                # The interface-half-local ban applies regardless of whether
+                # this call is cast-shaped: a NEW local can ALSO end up
+                # holding a .fwd_t/.fb_t value via cast dispatch (dst_t(x)
+                # where dst_t is an interface half), not just the inline-
+                # constructor-argument idiom the ban was originally written
+                # for -- so it needs the exact same check, checked BEFORE
+                # branching on _is_cast_call below. Only reachable for a
+                # brand-new local (global_key is None, hw_name not already
+                # in self.env): a REASSIGNMENT to an existing local was
+                # already checked at its own (annotated) declaration, which
+                # bans this type outright, so it can never legitimately
+                # reach here already declared.
+                if (
+                    global_key is None
+                    and hw_name not in self.env
+                    and getattr(callee, "_pypeline_interface_role", None) is not None
+                ):
+                    owning_intrf = getattr(callee, "_pypeline_interface", None)
+                    raise ElaborationError(
+                        f"'{python_name}': a local variable cannot be declared "
+                        f"with an @interface's .fwd_t/.fb_t port-pairing type -- "
+                        f"that type is reserved for hw_func signature args/return "
+                        f"fields and inline constructor-call expressions at a real "
+                        f"port crossing (e.g. 'f(port=intrf.fwd_t(stream=x))'). Use "
+                        f"'{owning_intrf.__name__}.stream_t' instead (or the plain "
+                        f"make_stream_t(...) type your data actually is), and "
+                        f"construct the '.fwd_t'/'.fb_t' value inline only at the "
+                        f"point it meets a real port.",
+                        stmt.value,
                     )
-                    hw_name = self._hw_name(python_name)
-                    self._declare_var(hw_name, struct_ctype, target)
-                    self._elab_compound_init(hw_name, stmt.value, stmt.value)
-                return
+                if not self._is_cast_call(stmt.value):
+                    if global_key is not None:
+                        if global_key not in self.env:
+                            self._declare_global_write_wire(global_key, target)
+                        self._elab_compound_init(global_key, stmt.value, stmt.value)
+                    elif hw_name in self.env:
+                        self._elab_compound_init(hw_name, stmt.value, stmt.value)
+                    else:
+                        struct_ctype = (
+                            getattr(callee, "_pypeline_ctype_name", None)
+                            or callee.__name__
+                        )
+                        hw_name = self._hw_name(python_name)
+                        self._declare_var(hw_name, struct_ctype, target)
+                        self._elab_compound_init(hw_name, stmt.value, stmt.value)
+                    return
         # Struct/compound-helper compound init on module-qualified global wire:
         # board_vga.vga_pmod = MyStruct(...) or board_vga.vga_pmod = zero_pmod()
         if (
@@ -3151,7 +3174,11 @@ class FuncElaborator:
                 self._elab_compound_init(var_name, stmt.value, stmt.value)
             elif isinstance(stmt.value, ast.Call):
                 callee = self._try_eval_const(stmt.value.func)
-                if callee is not None and hasattr(callee, "_fields"):
+                if (
+                    callee is not None
+                    and hasattr(callee, "_fields")
+                    and not self._is_cast_call(stmt.value)
+                ):
                     # NamedTuple struct constructor: MyStruct(field=val, ...)
                     self._elab_compound_init(var_name, stmt.value, stmt.value)
                 else:
@@ -3195,11 +3222,19 @@ class FuncElaborator:
                     context_node,
                     path_toks + (_sanitize_ref_tok(key),),
                 )
-        elif isinstance(init_node, ast.Call) and hasattr(
-            self._try_eval_const(init_node.func), "_fields"
+        elif (
+            isinstance(init_node, ast.Call)
+            and hasattr(
+                (_ctor_callee := self._try_eval_const(init_node.func)), "_fields"
+            )
+            and not self._is_cast_call(init_node)
         ):
             # NamedTuple struct constructor: MyStruct(val, ..., field=val, ...)
-            callee = self._try_eval_const(init_node.func)
+            # (a cast-shaped call -- dst_t(x), one positional arg, no keywords
+            # -- is excluded above so it falls to the generic _elab_expr leaf
+            # case below instead, reaching _elab_call's cast dispatch, not
+            # this positional zip(_fields, args) struct-init.)
+            callee = _ctor_callee
             for fname, arg_node in zip(callee._fields, init_node.args):
                 self._elab_compound_init(
                     base_name,
@@ -3289,7 +3324,11 @@ class FuncElaborator:
             return
         elif isinstance(stmt.value, ast.Call):
             callee = self._try_eval_const(stmt.value.func)
-            if callee is not None and hasattr(callee, "_fields"):
+            if (
+                callee is not None
+                and hasattr(callee, "_fields")
+                and not self._is_cast_call(stmt.value)
+            ):
                 self._elab_compound_init(RET, stmt.value, stmt.value)
                 self._connect_compound_return(RET, stmt.value)
                 return
@@ -3825,12 +3864,26 @@ class FuncElaborator:
         )
 
     def _elab_python_value(self, val, ast_node):
-        """Emit a plain Python int/bool as a CONST wire in the hardware graph."""
+        """Emit a plain Python int/bool as a CONST wire in the hardware graph.
+
+        A SimVal (val carries a real `._ctype`, e.g. the result of
+        const-folding a cast like `uint16_t(5)` -- _CTypeMeta.__call__ is a
+        real callable now, so _try_eval_const's eval() actually executes it)
+        is emitted at ITS OWN ctype, not the minimum-width type
+        _infer_const_ctype would otherwise compute from the bare value --
+        otherwise a fully-constant cast expression would silently narrow
+        (uint16_t(5) -> inferred uint3_t), corrupting anything width-
+        sensitive downstream (concat, a Reg[T] init, a bit slice).
+        """
         if not isinstance(val, (int, bool)):
             raise ElaborationError(
                 f"Cannot emit non-int Python value as hardware: {val!r}"
             )
-        typ = _infer_const_ctype(val)
+        ctype = getattr(val, "_ctype", None)
+        if ctype is not None:
+            typ = getattr(ctype, "_pypeline_ctype_name", None) or str(ctype)
+        else:
+            typ = _infer_const_ctype(val)
         coord_str = _loc_str(self.src_file, ast_node)
         const_wire = f"{C_TO_LOGIC.CONST_PREFIX}{val}_{coord_str}"
         _add_wire(self.logic, const_wire, typ)
@@ -4553,6 +4606,12 @@ class FuncElaborator:
             )
             callee_name = generated.__name__
             callee_def = self._elaborate_live_func(callee_name, generated)
+        elif self._is_cast_call(expr) and self._is_pypeline_type(tag_probe):
+            # dst_t(x): a cast (exactly one positional arg, no keywords, on
+            # a pypeline type) -- checked here, before the ast.Attribute
+            # branch below, so both a bare uint8_t(x) and an attribute-form
+            # intrf.fb_t(x) are caught. See _elab_cast_call/docs: Casting.
+            return self._elab_cast_call(expr, tag_probe)
         # ── Resolve callee ──────────────────────────────────────────────────────
         elif isinstance(expr.func, ast.Attribute):
             # Module-qualified call: pypeline_tests.abs_int32(a)
@@ -4605,16 +4664,6 @@ class FuncElaborator:
                     raise NotImplementedError(
                         f"Call to unknown function '{callee_name}'"
                     )
-        inst = self._inst(callee_name, expr)
-        # A void callee (no -> annotation) has no RETURN_WIRE_NAME entry in wire_to_c_type --
-        # tolerate that instead of KeyError, so a bare `foo()` statement call to a void
-        # function can elaborate (see _elab_stmt's bare-call fallback below).
-        ret_typ = callee_def.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME)
-        port_return = (
-            _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
-            if ret_typ is not None
-            else None
-        )
         input_ports = []
         # Bind call arguments to the callee's input ports, mirroring Python:
         # positional args fill inputs left to right, keyword args bind by the
@@ -4649,6 +4698,7 @@ class FuncElaborator:
             elif isinstance(arg_expr, ast.List) or (
                 isinstance(arg_expr, ast.Call)
                 and hasattr(self._try_eval_const(arg_expr.func), "_fields")
+                and not self._is_cast_call(arg_expr)
             ):
                 # Inline NamedTuple/struct constructor (or a list literal building
                 # an array, e.g. an array of already-declared Feedback[intrf.fb_t]
@@ -4680,14 +4730,44 @@ class FuncElaborator:
             else:
                 arg_wire, arg_typ = self._elab_expr(arg_expr)
             input_ports.append((port_name, arg_wire, arg_typ))
+        return self._elab_submodule_instance(
+            callee_name, callee_def, input_ports, expr, autopipeline_call, autofsm_call
+        )
+
+    def _elab_submodule_instance(
+        self,
+        callee_name,
+        callee_def,
+        input_ports,
+        expr,
+        autopipeline_call=None,
+        autofsm_call=None,
+    ):
+        """Instantiate `callee_def` as a submodule given already-bound
+        (port_name, wire, ctype) input_ports. The shared tail of an ordinary
+        function call (_elab_call, above) and a cast dispatch
+        (_elab_cast_call, below) -- they differ only in how input_ports gets
+        built (elaborating expr.args/.keywords vs. reusing an
+        already-elaborated cast argument wire so it is never elaborated
+        twice)."""
+        inst = self._inst(callee_name, expr)
+        # A void callee (no -> annotation) has no RETURN_WIRE_NAME entry in wire_to_c_type --
+        # tolerate that instead of KeyError, so a bare `foo()` statement call to a void
+        # function can elaborate (see _elab_stmt's bare-call fallback below).
+        ret_typ = callee_def.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME)
+        port_return = (
+            _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME)
+            if ret_typ is not None
+            else None
+        )
         if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(callee_def, self.parser_state):
-            input_ports.append(
+            input_ports = input_ports + [
                 (
                     C_TO_LOGIC.CLOCK_ENABLE_NAME,
                     self.logic.clock_enable_wires[-1],
                     C_TO_LOGIC.BOOL_C_TYPE,
                 )
-            )
+            ]
         _add_submodule_instance(
             self.logic,
             inst,
@@ -4706,6 +4786,127 @@ class FuncElaborator:
         if autofsm_call is not None:
             self.logic.sub_inst_to_autofsm_key[inst] = autofsm_call.canonical_key
         return port_return, ret_typ
+
+    @staticmethod
+    def _is_cast_call(call_node):
+        """Purely syntactic: exactly one positional argument, no keywords --
+        the AST shape of a cast (dst_t(x)), as opposed to a struct
+        constructor (dst_t(field=x, ...)). Never consults the cast registry,
+        so the argument is elaborated exactly once and this decision never
+        depends on what else happens to be registered (see docs: Casting)."""
+        return len(call_node.args) == 1 and not call_node.keywords
+
+    @staticmethod
+    def _is_pypeline_type(t):
+        """True if `t` (an already-const-evaluated callee) is a pypeline
+        type a cast call could target: a C type (_CTypeMeta -- scalar or
+        array) or a @struct/derived-interface-half NamedTuple class."""
+        return t is not None and (hasattr(t, "_ctype_name") or hasattr(t, "_fields"))
+
+    def _elab_cast_call(self, expr, dst_t):
+        """Elaborate `dst_t(x)` -- a cast (routed here from _elab_call, whose
+        top checks _is_cast_call/_is_pypeline_type on the callee).
+
+        Scalar int (and char) dst: lower to a typed wire connection --
+        exactly what assignment truncation already does (_write_ref adds an
+        alias wire of the declared type and connects the RHS to it; VHDL.
+        TYPE_RESOLVE_ASSIGNMENT_RHS inserts the resize). A cast can never
+        drift from assignment's truncation/sign-extension semantics because
+        it is the identical mechanism, not a separately-maintained lowering.
+        Deliberately NOT the existing CAST_TO_<t> C-frontend backend path --
+        see docs/PY_TO_LOGIC_DESIGN.md's Casting section for why (its
+        passthrough elimination is unreachable from here, its base name
+        collides across widths, and its VHDL body disagrees with assignment
+        for a signed narrowing source).
+
+        Compound dst: dispatch to the registered cast hw_func as an ordinary
+        submodule call. On a miss, a one-field struct falls back to
+        positional field-fill (matching copy.deepcopy / native sim's
+        _typed_new), reusing the arg wire already elaborated below rather
+        than re-elaborating it; any other miss is a hard error.
+        """
+        import pypeline as _pypeline
+
+        (arg_node,) = expr.args
+        # Register dst_t (and, recursively, any struct-typed fields it has --
+        # e.g. fwd_t.stream: stream_t) BEFORE touching the argument. A cast
+        # target reached purely through cast syntax (never as some hw_func's
+        # own signature type) has no other path into
+        # parser_state.struct_to_field_type_dict -- _discover_structs_from_
+        # module skips @interface-derived halves' OWNER (the @interface
+        # itself is explicitly excluded, so its .fwd_t/.fb_t are only found
+        # by whatever function signature happens to use them), and without
+        # this, an inline-ctor argument of the same (nested) struct type,
+        # e.g. `fwd_t(stream_t(data=d, valid=v))`, fails in _write_ref with
+        # a KeyError before the cast registry is ever consulted. A no-op for
+        # a scalar/array dst (_register_struct_recursive requires a tuple
+        # subclass with _fields).
+        _register_struct_recursive(dst_t, self.parser_state)
+        dst_str = getattr(dst_t, "_pypeline_ctype_name", None) or str(dst_t)
+        if getattr(dst_t, "_elem_ctype", None) is not None:
+            raise ElaborationError(
+                f"'{dst_str}(...)': casting to an array type is not supported",
+                expr,
+            )
+        arg_callee = (
+            self._try_eval_const(arg_node.func)
+            if isinstance(arg_node, ast.Call)
+            else None
+        )
+        if isinstance(arg_node, ast.Constant) and isinstance(arg_node.value, str):
+            arg_wire, src_str = self._elab_str_literal(arg_node.value, None, arg_node)
+        elif hasattr(arg_callee, "_fields") and not self._is_cast_call(arg_node):
+            # Inline struct-ctor argument (e.g. a cast whose source is
+            # itself written inline: `fwd_t(stream_t(data=d, valid=v))`) --
+            # mirrors _elab_call's own inline-ctor-as-argument handling
+            # (bound_args loop, above), since _elab_expr alone has no case
+            # for a bare struct-ctor Call node.
+            synth_name = f"INLINE_CTOR_{_loc_str(self.src_file, arg_node)}"
+            src_str = (
+                getattr(arg_callee, "_pypeline_ctype_name", None) or arg_callee.__name__
+            )
+            self._declare_var(synth_name, src_str, arg_node)
+            self._elab_compound_init(synth_name, arg_node, arg_node)
+            arg_wire, src_str = self._read_ref((synth_name,), src_str, arg_node)
+        else:
+            arg_wire, src_str = self._elab_expr(arg_node)
+        if src_str == dst_str:
+            return arg_wire, dst_str  # identity cast: free, no new wire
+        # Built-in scalar-int/char lowering applies only when BOTH sides are
+        # scalar int/char -- NOT whenever the destination merely happens to
+        # be one. dst_t's own registered casts include ones with a scalar
+        # dst and a COMPOUND src, e.g. unwrap_fb: fb_t -> feedback_t, where
+        # feedback_t defaults to uint1_t -- checking dst alone would connect
+        # a struct-typed wire straight to a uint1_t wire and skip the
+        # registry entirely.
+        src_is_builtin_scalar = _ctype_is_int(src_str) or src_str == "char"
+        dst_is_builtin_scalar = _ctype_is_int(dst_str) or dst_str == "char"
+        if src_is_builtin_scalar and dst_is_builtin_scalar:
+            alias = _alias(
+                f"{self.loop_instance_prefix}CAST_{dst_str}", self.src_file, expr
+            )
+            _add_wire(self.logic, alias, dst_str)
+            _connect(self.logic, arg_wire, alias)
+            return alias, dst_str
+        fn = _pypeline._resolve_cast_entry((src_str, dst_str))
+        if fn is not None:
+            callee_name = getattr(fn, "__name__", "cast")
+            callee_def = self._elaborate_live_func(callee_name, fn)
+            input_ports = [(callee_def.inputs[0], arg_wire, src_str)]
+            return self._elab_submodule_instance(
+                callee_name, callee_def, input_ports, expr
+            )
+        if hasattr(dst_t, "_fields") and len(dst_t._fields) == 1:
+            fname = dst_t._fields[0]
+            synth_name = f"INLINE_CTOR_{_loc_str(self.src_file, expr)}"
+            self._declare_var(synth_name, dst_str, expr)
+            self._write_ref((synth_name, fname), arg_wire, src_str, expr)
+            return self._read_ref((synth_name,), dst_str, expr)
+        raise ElaborationError(
+            f"No cast registered from {src_str!r} to {dst_str!r} -- use "
+            "register_cast(...)/@cast to define one",
+            expr,
+        )
 
     def _elab_strlen_call(self, expr):
         """strlen(arr) -- pure elaboration-time constant, mirroring PipelineC's
@@ -4975,7 +5176,19 @@ class FuncElaborator:
             true_src_file = os.path.abspath(inspect.getsourcefile(func_for_source))
         except TypeError:
             true_src_file = self.src_file
-        _, true_start_line = inspect.getsourcelines(func_for_source)
+        try:
+            _, true_start_line = inspect.getsourcelines(func_for_source)
+        except OSError as e:
+            # A pypeline C type (uint8_t, a @struct class, ...) is callable but
+            # has no retrievable Python source -- reached here for a call this
+            # elaborator didn't recognize as anything more specific (a cast is
+            # exactly one positional argument, no keywords; see _is_cast_call).
+            raise ElaborationError(
+                f"Cannot elaborate '{module_level_name}(...)' as a function "
+                f"call -- {func_for_source!r} has no retrievable Python source "
+                f"({e}). If this is meant to be a cast (e.g. uint8_t(x)), a "
+                "cast takes exactly one positional argument and no keywords."
+            )
 
         source = textwrap.dedent(inspect.getsource(func_for_source))
         tree = ast.parse(source)

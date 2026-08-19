@@ -286,7 +286,7 @@ def make_fir_tb(
         @sim_input
         def drive_ready() -> out_fb_t:
             st["ready_now"] = _ready_value()
-            return out_fb_t(ready=st["ready_now"])
+            return out_fb_t(st["ready_now"])
 
     else:
 

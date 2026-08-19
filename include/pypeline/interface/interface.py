@@ -45,6 +45,20 @@ derivation yields identical definitions (canonical-name determinism). A plain
 valid-only stream (`stream.make_stream_t`) never needs an interface at all --
 it is just a `{data, valid}` struct -- and `make_stream_interface(T).stream_t`
 is literally that same struct, not a separately-derived twin.
+
+A half may also be produced/consumed by a *cast* (`dst_t(x)`, exactly one
+positional argument -- see `pypeline_DESIGN.md`'s Casting section), which is
+how `stream.make_stream_interface` gives its `.fwd_t`/`.fb_t` a direct
+conversion to/from their plain payload without a keyword struct-init. This
+module (`interface`/`_derive`) is untouched by that -- a cast is registered
+externally, per interface, wherever the interface is built (e.g.
+`stream._register_stream_casts`), not baked into `@interface` itself. A cast
+function is exempt from the `_if`-naming lint and the port-pairing check
+mentioned above (`pypeline._check_partial_interface_ports`) and from the
+plain-function return ban (`PY_TO_LOGIC._check_no_indirect_interface_pairing_
+return`): a cast converts between one half and its payload, not a port
+crossing, so it has no second half to pair and nothing to hide behind a
+function boundary.
 """
 
 import sys as _sys

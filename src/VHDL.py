@@ -6995,6 +6995,17 @@ def TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire, driven_wire, parser_st
         left_width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, left_type)
         if right_width == left_width:
             return RHS
+        elif left_is_int and right_is_int and left_width < right_width:
+            # SIGNED narrowing: numeric_std.resize(SIGNED, N) is sign-preserving
+            # (copies the sign bit into the new MSB, keeps the low N-1 bits) --
+            # not what C's implicit truncation does (take the low N bits of the
+            # two's complement representation, regardless of sign). Route through
+            # unsigned first so the truncation is a plain bit-select, matching
+            # both C and Pypeline's native-sim _sim_cast.
+            resize_toks = [
+                "signed(std_logic_vector(resize(unsigned(std_logic_vector(",
+                ")), " + str(left_width) + ")))",
+            ]
         else:
             resize_toks = ["resize(", ", " + str(left_width) + ")"]
 

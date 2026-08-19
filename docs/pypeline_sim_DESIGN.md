@@ -79,12 +79,18 @@ immediately with no work.
 per ctype. Populated lazily by `_sim_type_init(ctype)` on first use; inline `try/except KeyError`
 avoids the per-hit overhead of an `lru_cache` function call frame.
 
-**Three call sites:**
+**Call sites:**
 1. By `@hw_func` / `_sim_type_wrap` to cast function inputs and outputs at call boundaries.
 2. By `SimVal._dispatch_unary`/`_dispatch_binary` as a fallback when a dispatched function
    returns an untyped value.
 3. By `_TypedAnnAssignRewriter`-generated code to truncate typed local variable assignments
    inside `@hw_func` bodies.
+4. By `_CTypeMeta.__call__` for a scalar-destination cast (`T(x)`, one positional
+   argument, no keywords — see `pypeline_DESIGN.md`'s Casting section) after a registry
+   miss — this is exactly what makes `y = type2_t(x)` and `y: type2_t = x` identical:
+   both eventually call `_sim_cast` with the same `(val, ctype)`. A compound-destination
+   cast dispatches through the registry instead, in `_CastDispatchMeta.__call__` (a
+   metaclass, not `_typed_new` — see Casting for why), never touching `_sim_cast` itself.
 
 ---
 

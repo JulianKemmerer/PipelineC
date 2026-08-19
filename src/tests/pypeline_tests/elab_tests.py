@@ -36,6 +36,9 @@ NO_SYNTH_TEST_FILES = [
     "array_2d_order_test.py",
     "pylist_value_context_test.py",
     "keyword_call_test.py",
+    "cast_test.py",
+    "cast_interface_test.py",
+    "cast_hw_func_test.py",
 ]
 # fmt: on
 

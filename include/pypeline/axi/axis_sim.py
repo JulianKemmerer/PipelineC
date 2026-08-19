@@ -113,7 +113,7 @@ class AxisSimSource:
 
     def _null_word(self):
         return self.axis_intrf.fwd_t(
-            stream=self.axis_intrf.stream_t(
+            self.axis_intrf.stream_t(
                 data=self._zero_frag(),
                 valid=0,
             )
@@ -148,7 +148,7 @@ class AxisSimSource:
         frag_t = self.axis_intrf.stream_t.typeof("data")
         bus_t = frag_t.typeof("frag")
         word = self.axis_intrf.fwd_t(
-            stream=self.axis_intrf.stream_t(
+            self.axis_intrf.stream_t(
                 data=frag_t(frag=bus_t(data=data, keep=keep), eod=[eod]),
                 valid=1,
             )

@@ -29,29 +29,6 @@ from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINEC, Test, main
 
 def get_tests() -> list:
     tests = []
-    # int16_t squaring-then-truncating a value that overflows int16_t range
-    # computes a DIFFERENT result in real GHDL hardware (7233) than in native
-    # sim (-25535, which matches a plain-Python model). See the reproducer's
-    # own docstring for how this was found and why it went unnoticed.
-    tests.append(
-        Test(
-            name="nested_truncate_vhdl_mismatch_known_issue",
-            category="known_issues",
-            cmd=[
-                PYPELINEC,
-                INST_DIR / "nested_truncate_vhdl_mismatch_known_issue.py",
-                "--sim",
-                "--comb",
-                "--cocotb",
-                "--ghdl",
-                "--run",
-                "all",
-            ],
-            needs_out_dir=True,
-            expect_fail=True,
-            requires=["ghdl"],
-        )
-    )
     # A sim_print(..., debug=True) call the SAME cycle as sim_finish() races
     # GHDL's write-flush against std.env.finish and the print is silently
     # dropped from the VHDL/cocotb log entirely (present in native sim,

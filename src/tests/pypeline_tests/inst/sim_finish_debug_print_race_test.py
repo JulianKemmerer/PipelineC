@@ -29,8 +29,10 @@ std.env.finish) or an inherent property of the two-process handshake is not
 established here -- it is filed as a known issue because it constrains what
 test authors can write, not because a fix has been identified.
 
-See also: nested_truncate_vhdl_mismatch_known_issue.py, which works around
-this by delaying sim_finish() one cycle past its design's own debug print.
+See also: nested_truncate_test.py (formerly nested_truncate_vhdl_mismatch_
+known_issue.py, promoted out of known_issues once its own unrelated VHDL bug
+was fixed), which works around this by delaying sim_finish() one cycle past
+its design's own debug print.
 """
 
 import os

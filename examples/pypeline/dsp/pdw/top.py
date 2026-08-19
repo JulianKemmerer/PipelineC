@@ -182,7 +182,7 @@ def pdw_main():
 
     o = detect_pulses(
         stream_in_if,
-        detect_pulses.out_fb_t(ready=candidate_pdw_ready),
+        detect_pulses.out_fb_t(candidate_pdw_ready),
         detect_pulses.power_t(val=threshold_high),
         detect_pulses.power_t(val=threshold_low),
         max_width,

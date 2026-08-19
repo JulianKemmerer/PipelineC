@@ -43,11 +43,16 @@ COMB_TEST_FILES = [
     # one combinational block that calls sim_finish() the very same cycle it
     # computes everything, with nothing before that cycle to safely print --
     # structurally incompatible with the "no debug print on the sim_finish()
-    # cycle" rule (see module docstring). It also currently trips a real,
-    # unrelated hardware bug (nested_truncate(200) computes a different value
-    # in GHDL than in native sim) -- see
-    # known_issues_tests.py:nested_truncate_int16_vhdl_mismatch_test.
+    # cycle" rule (see module docstring). (It used to ALSO trip a real
+    # int16_t narrowing VHDL-emission bug -- nested_truncate(200) computed a
+    # different value in GHDL than in native sim -- fixed as part of adding
+    # T(x) casting; see nested_truncate_test.py, which carries the real
+    # regression coverage for that fix now that it's a plain -- not
+    # known_issues -- entry here.)
     ("struct_ctor_positional_test.py", INST_DIR, []),
+    # See docs: Casting's "Make integer conversion match C" section --
+    # signed narrowing used to disagree with native sim in real GHDL.
+    ("nested_truncate_test.py", INST_DIR, []),
     # AUTOFSM through real GHDL in --comb mode (passthrough, latency 0). The
     # scheduled FSM hardware is exercised by the non---comb entry below.
     ("self_check_autofsm_test.py", INST_DIR, []),
