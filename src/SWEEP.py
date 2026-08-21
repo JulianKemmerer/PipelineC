@@ -32,6 +32,7 @@ intentionally never attempted).
 
 import copy
 import json
+import bisect
 import math
 import os
 import re
@@ -687,6 +688,67 @@ class SliceLandscape:
         self.candidates = sorted(
             by_id.values(), key=lambda p: (p.axis_unit, p.candidate_id)
         )
+        # A candidate is only a real stage boundary if NOTHING uncuttable
+        # straddles its position. Segments on the axis are not a serial
+        # chain: parallel branches overlap (the divider's UNARY_OP_NOT reads
+        # BIN_OP_MINUS's output and feeds q_out, so it runs alongside the MUX
+        # that feeds remainder, not after it). Registering the NOT's output
+        # therefore lands strictly INSIDE the parallel MUX's atomic span -
+        # the NOT branch gets a register while the MUX path crosses the same
+        # depth uncut, so no pipeline stage is actually created. Left
+        # unchecked this silently inflates the cut count without deepening
+        # the pipeline: the real divider planned 48 cuts and built 32 slices,
+        # 16 of them wasted on NOT outputs. Compare exact positions, not
+        # units - a preceding operation's output boundary rounds into the
+        # same unit as the next segment's start and must stay legal.
+        # (start, end, boundary_unit). A blocker never blocks a candidate
+        # sitting at its OWN end boundary: that candidate is this operation's
+        # output register (its own, or an enclosing function's whose last
+        # child it is), not a cut through its middle. Keyed on the rounded
+        # end unit rather than instance paths so it holds regardless of how
+        # a segment's span rounds onto the raster - a 1LL segment [lo, hi)
+        # places its own output boundary at hi - 0.5, i.e. inside itself.
+        blockers = sorted(
+            (
+                seg.start,
+                seg.end,
+                min(n, int(math.ceil(seg.end))) - 1,
+            )
+            for seg in self.segments
+            if seg.kind in (Segment.ATOMIC, Segment.SLICEABLE_1LL)
+            and seg.end > seg.start
+        )
+        blocker_starts = [s for s, _, _ in blockers]
+        max_end = []
+        running = float("-inf")
+        for _, e, _u in blockers:
+            running = max(running, e)
+            max_end.append(running)
+
+        def _straddled(candidate):
+            position = candidate.axis_position
+            i = bisect.bisect_left(blocker_starts, position)
+            for j in range(i - 1, -1, -1):
+                if max_end[j] <= position:
+                    break  # nothing starting this early reaches past it
+                start, end, boundary_unit = blockers[j]
+                # One raster unit of slack at the near edge. A candidate's
+                # nominal position is its unit + 0.5, while the boundary it
+                # stands for is the segment's exact .end - so an operation
+                # output whose true edge is where this blocker BEGINS can
+                # round to a hair inside it. Without the slack that deletes
+                # a legitimate boundary (both branches start there, so a
+                # register at that depth cuts every path): on the divider it
+                # removed half of the BIN_OP_MINUS outputs and left the
+                # planner nothing to use between whole iterations.
+                if (
+                    start + 1.0 < position < end
+                    and candidate.axis_unit != boundary_unit
+                ):
+                    return True
+            return False
+
+        self.candidates = [c for c in self.candidates if not _straddled(c)]
         self.candidates_by_unit = {}
         for candidate in self.candidates:
             self.candidates_by_unit.setdefault(candidate.axis_unit, []).append(
@@ -962,26 +1024,6 @@ def BUILD_SLICE_LANDSCAPE(
     return landscape
 
 
-# PLAN_CUTS boundary-snap tolerance: how much EXTRA weight (as a fraction of
-# the per-stage budget) the walk may accumulate past where it would
-# otherwise cut, in order to reach a real "run boundary" (see below) instead
-# of committing mid-segment. Found necessary by testing the real divider
-# design against real sky130 synthesis: a low cut count spread by uniform
-# weight alone repeatedly left a SLICEABLE_1LL segment (a MUX between two
-# repeated loop iterations) with no cut anywhere near it, merging it into
-# one iteration's tail and the next iteration's head - one ~11ns stage,
-# worse than an unsliced one-cut-per-iteration reference design achieves.
-# _RUN_BOUNDARY_UNITS pre-filters to exactly one meaningful candidate per
-# gap, so this only needs to cover "the rest of the current repeated unit",
-# not an arbitrary distance - 1.0 (a full extra budget) turned out to
-# overshoot PAST that and wait for the boundary of the *next* repeated unit
-# instead when the trigger point fell early in a unit, silently skipping
-# every other one; 0.75 fell just barely short in a real case (~5.47ns of
-# tolerance needed against a 5.45ns allowance) and merged two repeated
-# units into one stage - the actual failure this whole mechanism exists to
-# prevent. 0.85 covers the same real case with room, found by testing
-# against real sky130 synthesis and the design's own repeated-unit shape.
-PLAN_CUTS_BOUNDARY_SNAP_FRAC = 0.85
 
 
 def _RUN_BOUNDARY_UNITS(landscape):
@@ -1076,26 +1118,115 @@ def _RUN_BOUNDARY_UNITS(landscape):
     return sorted(units)
 
 
-def PLAN_CUTS(landscape, budget_units, required_units=None):
-    """Place cuts along the landscape: walk the delay axis accumulating
-    (calibrated) weight and cut at the last legal unit each time the stage
-    budget fills. Runs of illegal units longer than the budget get their own
-    stage (they set the floor). Returns list of int unit offsets.
+def _OP_OUTPUT_UNITS(landscape):
+    """Units carrying a real operation-output boundary (an INSTANCE_OUTPUT
+    candidate) as opposed to only a provisional bit-internal raster site.
 
-    Boundary-snap: when the budget fills strictly inside a segment (most
-    often a wide SLICEABLE "bits" leaf, where every unit is legal), cutting
-    exactly there is not free - whatever follows next on the axis (often a
-    SLICEABLE_1LL leaf, which only ever gets isolated by a cut landing at
-    its own edge) stays merged into the stage that starts here. So the walk
-    checks whether the nearest _RUN_BOUNDARY_UNITS position ahead is within
-    PLAN_CUTS_BOUNDARY_SNAP_FRAC of one budget's worth of extra weight, and
-    if so waits for it instead of cutting immediately - still respecting
-    the existing legal[]/weight[] model, just choosing among the legal
-    positions available rather than always taking the first one budget
-    allows. Found necessary by testing the real divider design against
-    real sky130 synthesis: without it, a low cut count merged an entire
-    loop iteration's tail, a small SLICEABLE_1LL leaf, and the next
-    iteration's head into one stage far slower than any single iteration."""
+    The distinction is physical, not cosmetic. A BitPlacementRequest is later
+    snapped by MATERIALIZE_BIT_PLACEMENT_REQUESTS to an EQUAL-WIDTH bit
+    boundary of its leaf, so a request landing one delay unit past an
+    operation's edge does not become a register on that edge - it becomes a
+    split through the MIDDLE of the next operation. See PLAN_CUTS pass 3.
+    """
+    return {
+        unit
+        for unit, candidates in landscape.candidates_by_unit.items()
+        if any(
+            getattr(c, "kind", None) == PipelinePlacement.INSTANCE_OUTPUT
+            for c in candidates
+        )
+    }
+
+
+def _GREEDY_CUTS(landscape, budget, required_units, op_output_units=None):
+    """Pass 1 of PLAN_CUTS: the FEWEST cuts that keep every stage within
+    ``budget``.
+
+    Walk the delay axis and cut at the FURTHEST legal unit whose stage still
+    fits the budget; overshoot only when no legal unit fits at all (a genuine
+    atomic run - that stage sets the floor, exactly as before). This is the
+    classic exchange-argument greedy and is optimal for the cut COUNT:
+    starting a stage later can never make the remainder easier, so there is
+    nothing to gain from cutting earlier than necessary and no lookahead is
+    needed.
+    """
+    n = landscape.total_units
+    legal = landscape.legal
+    weight = landscape.weight
+    cuts = []
+    start = 0
+    while start < n:
+        acc = 0.0
+        best = None
+        best_op_output = None
+        u = start
+        while u < n:
+            acc += weight[u]
+            if u in required_units:
+                # A fixed physical placement ends the stage regardless of
+                # whether the budget has filled yet.
+                best = u
+                best_op_output = u
+                break
+            if legal[u]:
+                if acc <= budget:
+                    best = u  # fits - remember it and keep looking further
+                    if op_output_units is not None and u in op_output_units:
+                        best_op_output = u
+                elif best is None:
+                    best = u  # nothing fits: forced overshoot (the floor)
+                    break
+                else:
+                    break
+            elif acc > budget and best is not None:
+                break
+            u += 1
+        chosen = best if best_op_output is None else best_op_output
+        if chosen is None:
+            break  # no legal position remains anywhere ahead
+        cuts.append(chosen)
+        start = chosen + 1
+    return cuts
+
+
+def PLAN_CUTS(landscape, budget_units, required_units=None):
+    """Place cuts along the landscape, in two passes.
+
+    Pass 1 (``_GREEDY_CUTS``) finds the fewest cuts K that keep every stage
+    within the budget. Pass 2 then binary-searches the SMALLEST budget W that
+    still needs only K cuts, and returns pass 1's plan at W - "use no more
+    registers than the goal requires, then make the stages as tight as that
+    number of registers allows, for free". Cut count is monotone
+    non-increasing in W, so the predicate is monotone and the search is valid;
+    ``hi`` only moves down when the predicate holds, so the returned plan
+    always satisfies it.
+
+    Pass 2 is not polish, it is what makes pass 1 safe to use. Pass 1 alone
+    minimizes the cut COUNT but not the worst stage AT that count, and the
+    difference is real hardware: on the radix-2 divider at a 7.4 ns budget the
+    furthest fitting position sits ~0.23 ns PAST the iteration boundary (a
+    legal bit-internal site 2 bits into a 34-bit subtractor), so pass 1 alone
+    would keep the same 32 cuts but place them as ragged mid-operation
+    register banks instead of on the clean MUX boundary. Pass 2 recovers the
+    boundary by itself, with no notion of "boundary" in it.
+
+    This replaced a walk that cut when the budget filled and then, via a
+    ``PLAN_CUTS_BOUNDARY_SNAP_FRAC`` tolerance, allowed itself to accumulate
+    up to 0.85 of an EXTRA budget in order to reach a ``_RUN_BOUNDARY_UNITS``
+    position. That tolerance existed for a real reason - without any snap, a
+    low cut count left a SLICEABLE_1LL segment (a MUX between two repeated
+    loop iterations) with no cut near it and merged one iteration's tail, the
+    MUX, and the next iteration's head into a single ~11 ns stage. But being
+    a fraction of the budget, it scaled with the budget, and in the regime
+    where the budget is SMALLER than one repeated unit it did the opposite of
+    its job: on that divider a 4.7 ns budget (214 MHz) snapped forward to the
+    7.119 ns iteration boundary - a 51% overrun - and reported 33 cuts where
+    64 were needed. Every target from 167 to 250 MHz produced the identical
+    33-cut plan. The rule here cannot do that: a stage is never allowed to
+    exceed the budget when a legal position inside it would have fit, so the
+    ~11 ns merge is forbidden outright rather than by tolerance, and the
+    budget genuinely maps onto a cut count again.
+    """
     n = landscape.total_units
     if n <= 0:
         return []
@@ -1107,95 +1238,46 @@ def PLAN_CUTS(landscape, budget_units, required_units=None):
                 f"{landscape.subtree_root_inst}"
             )
     budget = max(budget_units, 0.5)
-    boundary_units = _RUN_BOUNDARY_UNITS(landscape)
-    boundary_set = set(boundary_units)
 
-    cuts = []
-    acc = 0.0
-    last_legal = None
-    pending = False  # budget exceeded, waiting for a legal unit
-    snap_target = None  # boundary unit committed to wait for, if any
-    last_boundary = None
-    for u in range(n):
-        if landscape.legal[u]:
-            last_legal = u
-        if u in boundary_set:
-            last_boundary = u
-        acc += landscape.weight[u]
-        if u in required_units:
-            if len(cuts) == 0 or u > cuts[-1]:
-                cuts.append(u)
-            # A fixed physical placement ends the current stage regardless
-            # of whether the free-running budget has filled yet.
-            acc = 0.0
-            pending = False
-            snap_target = None
-            last_legal = None
-            last_boundary = None
-            continue
-        budget_full = acc >= budget or pending
-        if budget_full and snap_target is None:
-            # First consider the coherent boundary immediately behind the
-            # budget crossing.  This is essential when one complete repeated
-            # helper is slightly *faster* than the target period: waiting for
-            # the next helper boundary would merge two helpers, while the
-            # preceding one is the closest balanced physical cut.
-            prev_target = last_boundary
-            prev_delta = None
-            if prev_target is not None:
-                after_prev = sum(
-                    landscape.weight[v] for v in range(prev_target + 1, u + 1)
-                )
-                prev_stage_weight = acc - after_prev
-                if prev_stage_weight > 0.0:
-                    prev_delta = abs(budget - prev_stage_weight)
-            next_target = None
-            for b in boundary_units:
-                if b <= u:
-                    continue
-                # A non-fixed cut at the final unit is removed below because
-                # it creates an empty trailing comb region.  Never wait for
-                # that discard-only position as a forward snap target: doing
-                # so can skip useful legal positions between the budget
-                # crossing and the tail, then remove the only cut it chose.
-                if b >= n - 1 and b not in required_units:
-                    break
-                extra = sum(landscape.weight[v] for v in range(u + 1, b + 1))
-                if extra <= PLAN_CUTS_BOUNDARY_SNAP_FRAC * budget:
-                    next_target = b
-                break  # only the nearest qualifying boundary is considered
-            if prev_delta is not None:
-                # A real boundary behind the budget crossing keeps the
-                # just-finished stage within budget.  Advancing to the next
-                # boundary necessarily exceeds it and can merge a setup op +
-                # one repeated helper (or two helpers) into the critical
-                # stage.  Prefer the safe preceding boundary; the cut-count
-                # refinement loop can later prove whether fewer are possible.
-                snap_target = prev_target
-            elif next_target is not None:
-                snap_target = next_target
-        if snap_target is not None and u < snap_target:
-            continue  # waiting for the snap target - keep accumulating
-        if not budget_full:
-            continue
-        cut_pos = snap_target if snap_target is not None else last_legal
-        if cut_pos is not None and (len(cuts) == 0 or cut_pos > cuts[-1]):
-            cuts.append(cut_pos)
-            # Residual weight after the cut position carries into next stage
-            acc = 0.0
-            for v in range(cut_pos + 1, u + 1):
-                acc += landscape.weight[v]
-            pending = acc >= budget
-            last_legal = None
-            last_boundary = None
-            for v in range(cut_pos + 1, u + 1):
-                if landscape.legal[v]:
-                    last_legal = v
-                if v in boundary_set:
-                    last_boundary = v
-        else:
-            pending = True
-        snap_target = None
+    cuts = _GREEDY_CUTS(landscape, budget, required_units)
+    if len(cuts) > 0:
+        # Pass 2: tighten the budget as far as it goes at no extra cost in
+        # cuts. 50 bisections resolves W far finer than one delay unit.
+        target_count = len(cuts)
+        lo = 0.0
+        hi = budget
+        for _ in range(50):
+            mid = 0.5 * (lo + hi)
+            if mid <= lo or mid >= hi:
+                break
+            tightened = _GREEDY_CUTS(landscape, mid, required_units)
+            if len(tightened) <= target_count:
+                hi = mid
+                cuts = tightened
+            else:
+                lo = mid
+        # Pass 3: among positions that fit the TIGHTENED budget, prefer a
+        # real operation-output boundary over a provisional bit-internal
+        # raster site. Both can be equally good on the worst-stage metric
+        # while being completely different hardware: on the divider at a
+        # 7.4 ns goal, pass 2's furthest-fitting choice sat ONE delay unit
+        # past each MUX boundary, and a bit-internal request there does not
+        # become a register on the MUX edge - MATERIALIZE_BIT_PLACEMENT_
+        # REQUESTS snaps it to the equal-width MIDDLE of the following
+        # 34-bit subtractor instead. Guarded by the cut count so it can
+        # never trade registers for tidiness: an op boundary is taken only
+        # when preferring them costs no extra cuts, which is what keeps the
+        # intermediate plans (the whole point of the two passes above) from
+        # collapsing back onto operation boundaries.
+        preferred = _GREEDY_CUTS(
+            landscape,
+            hi,
+            required_units,
+            op_output_units=_OP_OUTPUT_UNITS(landscape),
+        )
+        if 0 < len(preferred) <= target_count:
+            cuts = preferred
+
     # Drop a trailing cut that leaves a nearly empty final stage
     if (
         len(cuts) > 0
@@ -1337,6 +1419,29 @@ def MATERIALIZE_BIT_PLACEMENT_REQUESTS(placements, landscape):
     return sorted(physical, key=lambda p: (p.axis_position, p.candidate_id))
 
 
+def _LANDSCAPE_WITHOUT_BIT_SITES(landscape):
+    """Shallow view of ``landscape`` offering only real operation-output
+    boundaries - no provisional bit-internal raster sites.
+
+    Used to sanity-check a bit-splitting plan against the simpler plan that
+    uses only physical operation boundaries. See PLAN_PIPELINE_PLACEMENTS.
+    """
+    view = copy.copy(landscape)
+    view.candidates = [
+        c
+        for c in landscape.candidates
+        if getattr(c, "kind", None) == PipelinePlacement.INSTANCE_OUTPUT
+    ]
+    view.legal = [False] * landscape.total_units
+    view.candidates_by_unit = {}
+    for candidate in view.candidates:
+        view.candidates_by_unit.setdefault(candidate.axis_unit, []).append(
+            candidate
+        )
+        view.legal[candidate.axis_unit] = True
+    return view
+
+
 def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
     """Plan concrete physical placements while retaining PLAN_CUTS's budget.
 
@@ -1363,41 +1468,100 @@ def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
             )
         fixed_by_unit.setdefault(placement.axis_unit, []).append(placement)
 
-    cuts = PLAN_CUTS(
-        landscape,
-        budget_units,
-        required_units=set(fixed_by_unit),
-    )
-    placements = []
-    used_ids = set()
-    for unit in cuts:
-        if unit in fixed_by_unit:
-            selected = sorted(
-                fixed_by_unit[unit], key=lambda p: p.candidate_id
-            )
-        else:
-            candidates = [
-                p
-                for p in landscape.candidates_by_unit.get(unit, ())
-                if p.candidate_id not in used_ids
-            ]
-            if not candidates:
-                raise RuntimeError(
-                    f"PLAN_CUTS chose legal unit {unit} in "
-                    f"{landscape.subtree_root_inst}, but no typed physical "
-                    "candidate exists there"
+    def _lower_at(view, budget):
+        cuts = PLAN_CUTS(
+            view,
+            budget,
+            required_units=set(fixed_by_unit),
+        )
+        placements = []
+        used_ids = set()
+        for unit in cuts:
+            if unit in fixed_by_unit:
+                selected = sorted(
+                    fixed_by_unit[unit], key=lambda p: p.candidate_id
                 )
-            selected = [min(candidates, key=_PLACEMENT_RANK_KEY)]
-        for placement in selected:
-            if placement.candidate_id in used_ids:
-                continue
-            used_ids.add(placement.candidate_id)
-            placements.append(placement)
-    placements = MATERIALIZE_BIT_PLACEMENT_REQUESTS(placements, landscape)
-    # Bit boundaries can move from their provisional raster crossing to the
-    # actual equal-width bit boundary. Return/report the physical axis units,
-    # never the nominal request units PLAN_CUTS used to choose the count.
-    cuts = sorted(set(placement.axis_unit for placement in placements))
+            else:
+                candidates = [
+                    p
+                    for p in view.candidates_by_unit.get(unit, ())
+                    if p.candidate_id not in used_ids
+                ]
+                if not candidates:
+                    raise RuntimeError(
+                        f"PLAN_CUTS chose legal unit {unit} in "
+                        f"{view.subtree_root_inst}, but no typed physical "
+                        "candidate exists there"
+                    )
+                selected = [min(candidates, key=_PLACEMENT_RANK_KEY)]
+            for placement in selected:
+                if placement.candidate_id in used_ids:
+                    continue
+                used_ids.add(placement.candidate_id)
+                placements.append(placement)
+        placements = MATERIALIZE_BIT_PLACEMENT_REQUESTS(placements, view)
+        # Bit boundaries can move from their provisional raster crossing to
+        # the actual equal-width bit boundary. Return/report the physical
+        # axis units, never the nominal request units PLAN_CUTS used to
+        # choose the count.
+        cuts = sorted(set(placement.axis_unit for placement in placements))
+        return cuts, placements
+
+    def _lower(view):
+        return _lower_at(view, budget_units)
+
+    cuts, placements = _lower(landscape)
+
+    # Judge the plan on where its registers ACTUALLY land, not where they
+    # were requested. MATERIALIZE_BIT_PLACEMENT_REQUESTS emits EQUAL-WIDTH
+    # bit boundaries chosen from how many requests hit a leaf, so a lone
+    # request anywhere in a 34-bit operation becomes a split at bit 17 - the
+    # real divider asked for cuts at 3.9%, 11.8% and 51.3% of its subtractors
+    # and got the midpoint for all three. The stage structure the planner
+    # costed then does not exist, and the extra registers can buy nothing: at
+    # a 190 MHz goal that produced 48 cuts whose realized worst stage was
+    # 7.00ns - identical to the 32-cut boundary-only plan, for 16 more
+    # register banks. So also lower the plan that uses only real operation
+    # boundaries (whose positions cannot move) and keep whichever is better
+    # once realized: lower worst stage first, then fewer cuts. Bit splitting
+    # is kept whenever it genuinely pays, and dropped when it only looked
+    # like it would on the raster.
+    if any(
+        getattr(p, "kind", None) == PipelinePlacement.BIT_INTERNAL
+        for p in placements
+    ):
+        alt_cuts, alt_placements = _lower(_LANDSCAPE_WITHOUT_BIT_SITES(landscape))
+        if len(alt_cuts) > 0:
+            realized = PREDICTED_STAGE_NS(cuts, landscape)
+            alt_realized = PREDICTED_STAGE_NS(alt_cuts, landscape)
+            if (alt_realized, len(alt_cuts)) < (realized, len(cuts)):
+                cuts, placements = alt_cuts, alt_placements
+
+    # Finally, never keep a register the plan did not earn. PLAN_CUTS'
+    # pass 2 makes the stages as tight as a given cut COUNT allows; this is
+    # its mirror, on realized positions: re-plan at the worst stage actually
+    # achieved and keep the result if it reaches the same speed with fewer
+    # cuts. The budget the caller asked for can be unreachable (the goal sits
+    # below the design's floor), and then a tighter budget only buys extra
+    # register banks that shorten nothing - the reported bug's 33rd cut,
+    # which measured the identical 169.57 MHz the 32-cut plan already had.
+    for _ in range(4):
+        realized = PREDICTED_STAGE_NS(cuts, landscape)
+        if realized <= 0.0 or len(cuts) == 0:
+            break
+        # Epsilon: the relaxed budget is reconstructed by dividing a ns
+        # value back into units, so the very stage weight it came from can
+        # land a few ULPs above it and be rejected as not fitting.
+        relaxed_cuts, relaxed_placements = _lower_at(
+            landscape, (realized / landscape.units_to_ns) + 1e-6
+        )
+        if len(relaxed_cuts) == 0:
+            break
+        relaxed_realized = PREDICTED_STAGE_NS(relaxed_cuts, landscape)
+        if (relaxed_realized, len(relaxed_cuts)) < (realized, len(cuts)):
+            cuts, placements = relaxed_cuts, relaxed_placements
+        else:
+            break
     return cuts, placements
 
 
@@ -2790,14 +2954,50 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 _mono, _regions, total_stages = SUMMARIZE_SUBTREE_PIPELINE(
                     plan.main_inst, plan.subtrees, tpl, parser_state
                 )
+                # Nothing measures a --no_sweep plan, so report what the plan
+                # itself predicts. Taken from the REALIZED cuts (post
+                # MATERIALIZE_BIT_PLACEMENT_REQUESTS, which can relocate a
+                # bit-internal cut to the leaf's equal-width bit boundary),
+                # not from the planner's raster request. Without this, a plan
+                # that cannot reach the goal looks identical to one that can:
+                # every target from 167 to 250 MHz used to print the same
+                # "cuts=33" line while predicting a 7.1 ns stage.
+                predicted_ns = 0.0
+                for subtree_root in plan.subtrees:
+                    landscape = plan.landscapes.get(subtree_root)
+                    if landscape is None:
+                        continue
+                    predicted_ns = max(
+                        predicted_ns,
+                        PREDICTED_STAGE_NS(
+                            plan.cuts.get(subtree_root, []), landscape
+                        ),
+                    )
+                predicted_str = ""
+                if predicted_ns > 0.0:
+                    predicted_mhz = 1000.0 / predicted_ns
+                    predicted_str = (
+                        f", predicted worst stage {predicted_ns:.2f}ns "
+                        f"(~{predicted_mhz:.1f} MHz vs "
+                        f"{plan.target_mhz:.1f} MHz goal)"
+                    )
                 print(
                     f"[sweep] {main_func_name}: --no_sweep guess, "
                     f"{total_stages} slice(s) built "
                     f"({total_stages + 1} pipeline stages), "
-                    f"cuts={sum(len(c) for c in plan.cuts.values())} "
-                    "(UNVERIFIED)",
+                    f"cuts={sum(len(c) for c in plan.cuts.values())}"
+                    f"{predicted_str} (UNVERIFIED)",
                     flush=True,
                 )
+                if predicted_ns > 0.0 and 1000.0 / predicted_ns < plan.target_mhz:
+                    print(
+                        f"[sweep] WARNING: {main_func_name}'s --no_sweep plan "
+                        f"is predicted at ~{1000.0 / predicted_ns:.1f} MHz, "
+                        f"below its {plan.target_mhz:.1f} MHz goal - the "
+                        "delay model cannot place enough registers to reach "
+                        "the goal (see the floor report above).",
+                        flush=True,
+                    )
             WRITE_PIPELINE_PLACEMENT_TRACE(
                 plans,
                 parser_state,

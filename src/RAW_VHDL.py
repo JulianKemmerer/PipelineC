@@ -2100,7 +2100,35 @@ def _EQUAL_WIDTH_BITS_PER_STAGE_DICT(num_bits, num_slices):
     linear model's degenerate near-boundary splits (a request near the
     leaf's own edge used to produce a lopsided {31,3}-bit split of a 34-bit
     op; a single cut now always produces a balanced {17,17}-style split,
-    regardless of the requested fraction)."""
+    regardless of the requested fraction).
+
+    OPEN QUESTION (2026-08-21) -- two halves of the above have aged
+    differently, and neither is a reason to change this function today, but
+    do not read it as settled:
+
+    1. The REASONING (stage delay depends only on its own chunk width, so for
+       a fixed count equal widths minimize the worst chunk) is
+       model-independent and still stands.
+    2. The EMPIRICAL claim (that the curve-inversion version measurably lost
+       against real sky130) was measured under the previous device model and
+       synthesis recipe, both since replaced -- DEVICE_MODELS.MODEL_VERSION
+       is now 4 on `early_flatten_noabc`. It has not been re-run. Unverified,
+       not disproven.
+
+    The more interesting gap is that this argument is purely LOCAL: it shows
+    equal widths are best for this leaf in isolation, and says nothing about
+    whether that boundary is right GLOBALLY when neighbouring atomic
+    operations constrain where a stage can end. SWEEP's planner requests a
+    delay fraction and gets back the nearest equal-width boundary, which can
+    be far away -- the radix-2 divider asked for 3.9%, 11.8% and 51.3% of its
+    34-bit subtractors and got bit 17 for all three. That mismatch is
+    currently CONTAINED upstream (SWEEP.PLAN_PIPELINE_PLACEMENTS judges plans
+    on realized positions and drops ones that stop paying), and containing it
+    was enough: no equal-latency fmax regression survived. But containment is
+    not proof the constraint is free. A leaf-split interface able to honor a
+    requested fraction might enable stage structures this one forecloses.
+    Deciding that means measuring both under the current model. See
+    docs/SYN_DESIGN.md section 2, "Open question (2026-08-21)"."""
     chunks = num_slices + 1
     boundaries = GET_EQUAL_WIDTH_BIT_BOUNDARIES(num_bits, num_slices)
     bits_per_stage_dict = {}

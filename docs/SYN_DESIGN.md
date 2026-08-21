@@ -78,6 +78,30 @@ Registers physically exist in two forms:
      instead inverted a delay-fraction curve to place *uneven* boundaries,
      which measurably missed real sky130 timing goals that the plain
      equal-width split (and even the original linear-fraction model) met.
+
+     **Open question (2026-08-21).** That argument has two halves and they
+     have aged differently. The *reasoning* above is model-independent and
+     still stands: stage delay depends only on its own chunk width, so for a
+     fixed count equal widths minimize the worst chunk. The *empirical*
+     half — that uneven boundaries measurably missed goals equal-width met —
+     was measured under the previous device model and synthesis recipe, both
+     since replaced (`MODEL_VERSION` 4, `early_flatten_noabc`), and has not
+     been re-run. Treat it as unverified rather than as settled evidence.
+
+     Separately, and more interestingly, the argument is purely *local*: it
+     shows equal widths are best for that leaf in isolation. It says nothing
+     about whether the leaf's locally-optimal boundary is the right boundary
+     *globally*, when neighbouring atomic operations constrain where a stage
+     can end. The planner requests a fraction; the generator answers with the
+     nearest equal-width boundary; those can differ a lot (§4: requests at
+     3.9%, 11.8% and 51.3% of a 34-bit subtractor all became bit 17). Today
+     that mismatch is contained by judging plans on realized positions and
+     discarding ones that stop paying (§4), which is sufficient — the divider
+     acceptance above shows no equal-latency fmax regression. It is *not* a
+     demonstration that the constraint costs nothing: a leaf-split interface
+     that could honor a requested fraction might enable stage structures the
+     equal-width constraint currently forecloses. Settling that means
+     measuring both under the current model, not re-reading the note above.
    - `SPLIT_KIND_1LL` ("one logic level" — MUX/AND/OR/XOR/NOT/NEGATE/MULT):
      these generators (`stage_for_1ll`) always place the *whole* operation in
      exactly one stage no matter the latency — only the register *boundary*
@@ -450,21 +474,54 @@ weight:  1111111111 11111 1111111111     (all 1.0 until densified)
 blame:   .......... aaaaa ..........     (a -> the acc Segment)
 ```
 
-`PLAN_CUTS` walks left to right filling a per-stage budget of
-`target_period / global_scale` weighted units — 10 ns here — and drops a
-cut on the **last legal unit** whenever the budget fills (an atomic run
-longer than the whole budget just gets its own stage):
+`PLAN_CUTS` fills a per-stage budget of `target_period / global_scale`
+weighted units — 10 ns here — in **three passes**, none of which has a
+tolerance knob:
+
+1. **Fewest cuts that fit.** Walk left to right and cut at the *furthest*
+   legal unit whose stage still fits the budget; overshoot only when **no**
+   legal unit fits (a genuine atomic run — that stage sets the floor). This
+   is the classic exchange-argument greedy and is optimal for the cut
+   *count*: starting a stage later can never make the remainder easier.
+2. **Tighten for free.** Binary-search the smallest budget `W` that still
+   needs only that many cuts, and emit pass 1's plan at `W`. Count is
+   monotone non-increasing in `W`, so the predicate is monotone.
+3. **Prefer real boundaries.** Among units that fit the tightened budget,
+   prefer one carrying an `INSTANCE_OUTPUT` candidate over a provisional
+   bit site — guarded by the cut count, so it can never trade registers for
+   tidiness.
 
 ```
-walk:  units 0..9 accumulate 10.0 -> budget full at unit 9, legal -> CUT@9
-       units 10..19 accumulate 10.0 -> unit 19 legal          -> CUT@19
+walk:  units 0..9 accumulate 10.0 -> unit 9 is the furthest legal that fits -> CUT@9
+       units 10..19 accumulate 10.0 -> unit 19 likewise                     -> CUT@19
        units 20..24 = final stage (4 ns, no cut needed)
 
 cuts = [9, 19]   ->  3 stages of ~10ns / ~10ns / ~4ns
 ```
 
+Pass 3 is load-bearing, not polish. Pass 1 minimizes the cut *count* but not
+the worst stage *at* that count: on the radix-2 divider at a 7.4 ns goal the
+furthest fitting position sits ~0.23 ns **past** each iteration boundary — a
+legal bit site 2 bits into a 34-bit subtractor — so passes 1–2 alone keep the
+same 32 cuts while placing them as ragged mid-operation register banks
+instead of on the clean MUX boundary.
+
+This replaced a walk that cut when the budget filled and then, via a
+`PLAN_CUTS_BOUNDARY_SNAP_FRAC = 0.85` tolerance, allowed itself to accumulate
+up to 0.85 of an **extra** budget to reach a `_RUN_BOUNDARY_UNITS` position.
+That tolerance existed for a real reason (without any snap, a low cut count
+merged an iteration's tail, the 1LL MUX between iterations, and the next
+iteration's head into one ~11 ns stage) — but being a fraction of the budget
+it scaled with the budget, and once the budget fell *below* one repeated unit
+it did the opposite of its job: a 4.7 ns budget snapped forward to the
+7.119 ns iteration boundary, a 51% overrun, and reported 33 cuts where 64
+were needed. Every goal from 167 to 250 MHz produced the identical 33-cut
+plan. The rule above cannot do that — a stage never exceeds the budget when a
+legal position inside it would have fit — so the ~11 ns merge is forbidden
+outright rather than by tolerance.
+
 `PLAN_CUTS` still chooses delay-axis units, preserving the existing budget,
-boundary-snap, floor, and feedback machinery. `PLAN_PIPELINE_PLACEMENTS` then
+floor, and feedback machinery. `PLAN_PIPELINE_PLACEMENTS` then
 chooses an output candidate or provisional bit site at each unit. All selected
 sites for one bit-splittable leaf are materialized together as ordinals
 `1..K` of the exact `K+1` equal-width chunks emitted by `RAW_VHDL`; the
@@ -476,13 +533,52 @@ and a bit-internal site. The current bit cost is local rather than graph-wide,
 so it is a late tie-break, not a claim to know the complete alignment-register
 cost.
 
+A plan is then judged on where its registers **actually land**, not where they
+were requested. `MATERIALIZE_BIT_PLACEMENT_REQUESTS` emits equal-width bit
+boundaries chosen from how many requests hit a leaf, so a lone request
+anywhere in a 34-bit operation becomes a split at bit 17 — the real divider
+asked for cuts at 3.9%, 11.8% and 51.3% of its subtractors and got the
+midpoint for all three. The stage structure the planner costed then does not
+exist, and the extra registers can buy nothing: at a 190 MHz goal that
+produced 48 cuts whose realized worst stage was 7.00 ns, identical to the
+32-cut boundary-only plan, for 16 more register banks. So
+`PLAN_PIPELINE_PLACEMENTS` also lowers the plan that uses only real operation
+boundaries (whose positions cannot move) and keeps whichever is better once
+realized — lower worst stage first, then fewer cuts — and finally re-plans at
+the worst stage actually achieved, keeping that result if it reaches the same
+speed with fewer cuts. Bit splitting survives whenever it genuinely pays and
+is dropped when it only looked like it would on the raster. The caller's
+budget can be unreachable (the goal sits below the design's floor), and then
+a tighter budget only buys register banks that shorten nothing.
+
+Note this *contains* the planner/generator mismatch rather than resolving it.
+Whether the equal-width constraint itself should stay is an open question —
+see the "Open question (2026-08-21)" note under `SPLIT_KIND_BITS` in §2.
+
 `APPLY_PIPELINE_PLACEMENTS` lowers the selected types directly. After the
 pipeline map is rebuilt, `CHECK_PIPELINE_PLACEMENTS_REALIZED` verifies every
 selected candidate materialized; a missing placement is a hard compiler error.
 The resulting `N` serial register slices delimit `N + 1` combinational stages.
 
-Parallel branches overlap on the axis; a unit is legal if *any* sliceable
-leaf covers it. `--coarse` (and the hotspot mini-sweep, which is a
+Parallel branches overlap on the axis, and that overlap decides legality: a
+candidate is a real stage boundary only if **nothing uncuttable straddles its
+position**. Segments are not a serial chain — the divider's `UNARY_OP_NOT`
+reads `BIN_OP_MINUS`'s output and feeds `q_out`, so it runs *alongside* the
+MUX that feeds `remainder`, not after it. Registering the NOT's output
+therefore lands strictly inside the parallel MUX's atomic span: the NOT branch
+gets a register while the MUX path crosses the same depth uncut, so no
+pipeline stage is created. Left legal that silently inflates the cut count
+without deepening the pipeline — the real divider planned 48 cuts and built
+32 slices, 16 of them wasted on NOT outputs. `finalize()` therefore drops any
+candidate straddled by an `atomic`/`sliceable_1ll` segment, comparing exact
+positions (not units) and exempting a blocker's own end boundary, with one
+raster unit of slack at the near edge: a candidate's nominal position is its
+unit + 0.5 while the boundary it stands for is the segment's exact `.end`, so
+an operation output whose true edge is where the next segment *begins* can
+round to a hair inside it. Without that slack half the `BIN_OP_MINUS` outputs
+disappeared and the planner had nothing to use between whole iterations.
+
+`--coarse` (and the hotspot mini-sweep, which is a
 `--coarse` run in isolation) uses `GET_BEST_GUESS_IDEAL_SLICES(n)` = n
 evenly spaced global fractions with no idea what they'd hit (a cut at 0.5
 here would have landed inside `acc` and been silently lost — the "Finding
@@ -607,6 +703,41 @@ custom ABC scripts, sequential retiming, flatter stage-oriented VHDL, and
 source reshaping were not deepened. Those remain escalation paths if a future
 design exposes a typed-landscape limitation; hierarchy remains metadata and a
 tie-break, never the unit of scheduling.
+
+### Budget-to-latency continuity result (2026-08-21)
+
+The three-pass `PLAN_CUTS`, the parallel-branch legality rule, and
+realized-plan judging were accepted together against the `--no_sweep
+--no_hier_syn` radix-2 divider (`early_flatten` shape, sky130 model V4,
+`early_flatten_noabc`). The acceptance rule was stated per **latency**, not
+per MHz target: a deeper pipeline at a given goal is fine, a slower pipeline
+at a given stage count is not.
+
+Measured on the first planned guess (`iter=1` is the same
+`PLAN_PIPELINE_PLACEMENTS` call `--no_sweep` writes, taken before any
+`global_scale` adjustment, so the sweep's own synthesis measures the
+`--no_sweep` artifact):
+
+| slices / stages | before | after | |
+|---:|---:|---:|---|
+| 16 / 17 | 67.40 MHz | **68.09 MHz** | +1.0% |
+| 32 / 33 | 169.57 MHz | **169.57 MHz** | equal; placement-identical (32 MUX outputs, same units) |
+| 33 / 34 | 169.57 MHz | not produced | the 33rd cut measured zero gain — pure waste |
+| 64 / 65 | 164.69 MHz | **221.94 MHz** | +34.8% |
+
+Goal-to-slice mapping, before → after: 69→16/16, 100→32/32, 135.5→32/32,
+167→33/**64**, 190→33/**64**, 214→33/**65**, 250→33/**65**, 284→64/65. The
+33-slice plateau spanning 167–250 MHz is gone.
+
+Note what this design does **not** have: a continuum between 32 and 64. One
+loop iteration is `BIN_OP_MINUS` 3.851 ns + `MUX_uint32_t` 3.268 ns =
+7.119 ns, and any stage holding the MUX plus any part of the next subtractor
+is ≥ 7.119 ns — so any goal below ~141 MHz-equivalent period needs two cuts
+per iteration. Intermediate slice counts are phase variants with the *same*
+worst stage, which is exactly what the old planner was emitting and what
+realized-plan judging now discards. "More latency variety" here means the
+goal maps monotonically onto the reachable levels (16/32/64/65), not that
+arbitrary depths exist.
 
 ### Floor
 
