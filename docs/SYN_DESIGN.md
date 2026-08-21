@@ -580,6 +580,12 @@ cap, or required stage-sized helper function. The durable record is
 | arithmetic | clean `c81ca31f` / historical control | 64 | 65 | 149.16 MHz | 22,563 | 8,749 | fails fewer-than-64 limit |
 | arithmetic | typed planner / `early_flatten_opt` V3 | **32** | **33** | **180.05 MHz** | 13,779 | 3,072 | **pass** |
 
+These fmax figures are under the V3 production recipe `early_flatten_opt`.
+The production recipe is now `early_flatten_noabc` (model V4), chosen because
+it reproduces latchup's real netlists rather than because it maximises our own
+fmax — under it the same arithmetic design maps to 13,873 cells at 169.6 MHz.
+See docs/DEVICE_MODELS_DESIGN.md, "Matching latchup's early-flatten flow".
+
 The current automatic gate trace contains the first 31 coherent `step_gates`
 outputs.  With `early_flatten_opt`, that is enough to remove the former
 pre-loop divide-zero fanout floor without an explicit divide-zero placement.

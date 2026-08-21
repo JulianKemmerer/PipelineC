@@ -32,8 +32,9 @@ RECIPES = (
     "synth_flatten",
     "synth_flatten_noabc",
     "early_flatten_opt",
+    "early_flatten_noabc",
 )
-DEFAULT_RECIPE = "early_flatten_opt"
+DEFAULT_RECIPE = "early_flatten_noabc"
 
 
 def _sha256(path):

@@ -99,13 +99,18 @@ isolated leaf entity:
 
 ```
 ghdl --std=08 <files> -e <top>;
-synth -top <top>;
+synth -top <top> -noabc;                 # leave all structural mapping to the
+                                         #   single liberty ABC pass below
 flatten; opt -full;                      # expose and simplify cross-entity logic
 dfflibmap -liberty <lib>;
 abc -liberty <lib> -fast;                # see "the -fast finding" below
 flatten;
 write_json <out>.json
 ```
+
+This is recipe `early_flatten_noabc`, selected 2026-08-20 by reproducing
+latchup.app's own post-early-flatten netlists — see "Matching latchup's
+early-flatten flow" below.
 
 `run_sta` then runs directly in-process — no second Python subprocess, unlike
 PyRTL's flow which shells out to run its own generated script.
@@ -122,18 +127,24 @@ has all three components.
 The historical no-early-flatten flow remains the `current` **control recipe**.
 The opt-in synthesis-recipe matrix also has fixed internal variants for
 `synth -flatten`, flattening with `-noabc` before the single liberty ABC pass,
-and the production `early_flatten_opt` sequence above. Each variant has a
+and the former production `early_flatten_opt` sequence. Each variant has a
 distinct artifact and cache identity. There is no public arbitrary-flags
 interface.
 
-The closed recipe IDs are `current`, `synth_flatten`,
-`synth_flatten_noabc`, and `early_flatten_opt`, selected only by the opt-in
-benchmark's internal `PIPELINEC_INTERNAL_SKY130_RECIPE` environment variable.
-The production `early_flatten_opt` identity has no recipe suffix. Every
+The closed recipe IDs are `current`, `synth_flatten`, `synth_flatten_noabc`,
+`early_flatten_opt`, and the production `early_flatten_noabc`, selected only
+by the opt-in benchmark's internal `PIPELINEC_INTERNAL_SKY130_RECIPE`
+environment variable. The production identity has no recipe suffix. Every
 non-production mapped netlist, script, log, leaf-delay cache, and
 minimum-period cache carries a versioned `__recipe_<id>_v1` suffix, including
-the historical `current` control. Promotion bumped `MODEL_VERSION` from 2 to
-3, so no V2 value or artifact can replay under the new default.
+the historical `current` control.
+
+**The empty-suffix rule makes a `MODEL_VERSION` bump mandatory on every
+promotion.** Because the default recipe is exactly the one whose cache
+identity has no suffix, promoting a different recipe without bumping the
+version would leave the identity string unchanged and silently replay the
+*previous* recipe's leaf delays out of the same directory. Promotions so far:
+2 → 3 with `early_flatten_opt`, 3 → 4 with `early_flatten_noabc`.
 
 **Per-leaf isolation (an architectural limit, not a bug).** Like every
 existing `SYN_TOOL`, a leaf-entity `SYN_AND_REPORT_TIMING` call synthesizes
@@ -165,6 +176,15 @@ went to exactly zero, and predicted-period error at one measured point went
 from +33.6% to −1.6%. Adding a `-D` target back on top of `-fast` made it
 *worse* — the fix is the bare flag, not a tuned target. `ABC_EXTRA_ARGS` in
 `DEVICE_MODELS.py` is the single switch if this ever needs revisiting.
+
+**Re-validated 2026-08-20, with one cited fact now obsolete.** `-fast` is
+still right (it is part of the recipe that reproduces latchup's current
+netlists exactly), but "`mux2_1` usage goes to exactly zero" was a property
+of *their pre-flatten flow*, not of the flag. Their post-early-flatten
+netlists contain 838 `mux2_1` at 33 stages and 745 at 65 — and `-fast` under
+the current recipe reproduces those counts exactly too. Mux inference is a
+property of the network abc is handed; do not treat "zero `mux2_1`" as the
+signature to match.
 
 ### Mux path-delay cache key
 
@@ -262,9 +282,16 @@ test. The durable summary is
 | `synth_flatten_noabc` | 5.919 ns | 168.95 MHz | 16,285 | 3,072 | 0 | 1,769 s |
 | **`early_flatten_opt`** | **5.667 ns** | **176.47 MHz** | 16,594 | 3,072 | 0 | 242 s |
 
+> **Superseded as the production selection** by "Matching latchup's
+> early-flatten flow" below. This matrix stands as the record of the V3
+> decision, but its selection policy — maximise *our own* fmax at equal
+> latency — turned out to be the wrong objective for a model whose job is to
+> predict what latchup will report. `early_flatten_opt` remains available as
+> a named recipe.
+
 At equal latency, `early_flatten_opt` has the largest fmax margin, is 39.3%
-smaller than the control, and maps in roughly the control's runtime. It is now
-the production recipe and `MODEL_VERSION = 3`. `synth_flatten_noabc` saves 74
+smaller than the control, and maps in roughly the control's runtime. It was
+the production recipe at `MODEL_VERSION = 3`. `synth_flatten_noabc` saves 74
 cells versus `synth_flatten` but is a timing tie, takes longer, and loses to
 the production recipe by 7.52 MHz. No-`-fast`, `-D`, custom ABC scripts,
 buffering/upsize, and register retiming were not promoted; the earlier
@@ -285,10 +312,98 @@ vectors at 31-cycle latency. The combined gate and arithmetic acceptance record 
 
 ## 3. Results
 
-Measured against real sky130 synthesis of a radix-2 divider (`latchup.app`'s
-own sky130 fmax scoring, designs historically labeled 1→128 cycles, entity hashes verified
-bit-identical to theirs) and a held-out different design/language reference
-(`TARGET_33cycles_140mhz`).
+Measured against real sky130 synthesis of a radix-2 divider — `latchup.app`'s
+own sky130 fmax scoring, with entity hashes verified bit-identical to theirs —
+and a held-out different design/language reference (`TARGET_33cycles_140mhz`).
+The first subsection is the current calibration; the two after it are the
+historical record it was built on.
+
+### Matching latchup's early-flatten flow (2026-08-20)
+
+latchup.app adopted an early synthesis flatten, invalidating the flow this
+model had been calibrated against. Four fresh scored builds of the
+*arithmetic* radix-2 divider were used as ground truth. Every one was rebuilt
+locally with the same `--no_sweep --no_hier_syn` invocation and produced the
+**same top entity hash** latchup's netlists carry
+(`solution_16clk_48e99f0c`, `solution_32clk_42c98b59`, `solution_33clk_f2083cc2`,
+`solution_64clk_17c0b934`), so the VHDL under test is identical to theirs and
+every comparison below is apples-to-apples. Full record:
+[`latchup_early_flatten_match_matrix.json`](../src/tests/pypeline_tests/qor/latchup_early_flatten_match_matrix.json).
+
+**(a) STA engine alone, fed latchup's OWN mapped netlists** — isolates the
+physics from any recipe question, the same methodology as the historical
+9-netlist table below:
+
+| netlists | MAE | worst |
+|---|---|---|
+| 4 post-early-flatten | **4.82%** | 6.35% |
+| 3 pre-flatten (control) | 5.83% | 6.81% |
+
+The engine is unaffected by their flatten change. On the 33- and 34-stage
+designs it independently picks *the same critical path endpoints* latchup
+reports, and an arc-by-arc diff of the 33-stage path shows 10 of its 11 arcs
+agreeing to **within 8 ps** — including a 35-fanout `nand2_1` arc at 1.990 ns
+against their 1.989 ns. The entire residual is one arc: the final
+`mux2_1` `S→X`, where we compute 0.904 ns against their 1.132 ns at a 2.592 ns
+input slew. This is *not* out-of-range extrapolation (that cell's slew axis
+runs to 3.75 ns); reproducing their number would need a ~3.85 ns input
+transition, i.e. their tool derives a larger transition out of the preceding
+cell than we do while agreeing on its delay to 1 ps. Their implied setup is
+also consistently ~1.5x ours. Both are conventions we cannot read off their
+artifacts, so they are recorded here rather than fitted away.
+
+**(b) Recipe selection, our own synthesis on the identical frozen VHDL**,
+scored against latchup's reported period and mapped cell histogram:
+
+| recipe | period MAE | worst | designs reproducing their histogram exactly |
+|---|---|---|---|
+| `current` | 24.52% | 39.32% | 0/4 |
+| `synth_flatten` | 13.09% | 29.18% | 0/4 |
+| `synth_flatten_noabc` | 12.61% | 34.72% | 3/4 |
+| `early_flatten_opt` (was production) | 11.12% | 21.29% | 0/4 |
+| **`early_flatten_noabc`** | **5.42%** | **6.52%** | **3/4** |
+
+"Exactly" is literal: at 33 stages `early_flatten_noabc` maps to 13,873 cells
+against their 13,873, matching all 19 cell types with zero difference in every
+one. Its remaining error is (a)'s engine residual, not a mapping difference.
+The 65-stage design is the one it does not reproduce (+1.4% cells, 7.0%
+histogram distance, +5.04% period) — the likely cause is that latchup runs
+**yosys 0.55** while this repo's oss-cad-suite is **0.48+51**, a difference no
+repo change can close. `synth_flatten_noabc` is the cautionary result: exact on
+the same three designs, then +34.72% on the fourth. Promotion bumped
+`MODEL_VERSION` 3 → 4 and the whole shipped leaf cache was regenerated; 23 of
+its 35 entries changed value, so no V3 number could have been carried over.
+
+**The gate-level Divider variant is recipe-insensitive**, checked directly on
+one frozen build: `early_flatten_opt` 207.74 MHz / 20,053 cells vs
+`early_flatten_noabc` 207.84 MHz / 19,960 cells, identical DFF and `mux2_1`
+counts. Expected — that design is already a flat netlist of single-gate
+entities, so `synth`'s internal ABC pass has nothing structural left to do and
+`-noabc` is a no-op for it. The promotion therefore does not move the gate
+acceptance point in `divider_qor_acceptance.json`, which was taken under V3.
+
+**Two divergences from latchup's flow that remain, both recorded not fixed:**
+their yosys version as above, and their frontend path — they go VHDL → ghdl →
+`write_verilog` (`rtl/PipelineC_inner.v`) → `read_verilog` → synth behind a
+hand-written `rtl/Solution.v` wrapper, where PipelineC reads the VHDL directly
+through the ghdl-yosys plugin.
+
+**Out of scope this round, but measured:** the *planner* is a separate and
+much larger source of error than the STA. Under `--no_sweep` (latchup's mode)
+a 135.5 MHz goal produced 33 stages that measure 161 MHz, but a 214 MHz goal
+produced 34 stages that also measure 161, and a 284 MHz goal produced 65
+stages that measure 173 — while `PRINT_FLOOR_REPORT` claimed a 322.6 MHz
+floor for a design that really plateaus near 175. The mechanism is visible in
+the cached leaf components: `MUX_uint32_t`'s 3.268 ns leaf delay is 2.633 ns
+launch clock-to-Q and only 0.504 ns of combinational logic, yet the planner
+sums whole leaf `path_delay_ns` along a chain, paying register overhead at
+every leaf boundary. `SYN.USE_COMBINATIONAL_PLANNER_WEIGHTS` is the existing
+(default-off) hook for that experiment.
+
+### Historical calibration corpus (pre-early-flatten)
+
+These tables were taken against latchup's *older* flow, on designs
+historically labeled 1→128 cycles.
 
 The `N` values in this historical calibration table are the source design's
 cycle labels. They are retained as evidence metadata and must not be confused
@@ -332,7 +447,11 @@ build), before the `-fast` fix was even found.
 | check | what it proves |
 |---|---|
 | STA engine vs. 9 real `timing.log`s, netlists supplied (not self-synthesized) | the NLDM physics — unateness, clk→Q, setup, `max_capacitance` extrapolation — reproduce real numbers, isolated from any synthesis-recipe question |
+| STA engine vs. 4 post-early-flatten + 3 pre-flatten `timing.log`s, netlists supplied | the physics is recipe-independent: MAE 4.82% after their flow change vs. 5.83% before it, and the same critical-path endpoints they report |
+| Arc-by-arc diff of one shared critical path (33 stages) | agreement is per-cell-arc, not just in total: 10 of 11 arcs within 8 ps, so the residual is one identified convention difference, not distributed error |
+| Our synth recipe vs. latchup's own mapped cell histogram, 4 hash-identical designs | mapping fidelity, not just number fidelity: exact on all 19 cell types on 3 of 4 designs (13,873/13,873 at 33 stages) |
 | Our synth recipe vs. a real sky130 netlist's own FF count | sequential mapping fidelity (exact, 4029/4029) |
+| Replay of all 4 shipped cache-source builds after a `MODEL_VERSION` bump | the regenerated leaf cache is complete: 100% cache hits, zero re-synthesis, exactly one sky130 cache directory |
 | Per-stage bit-distribution readback (`*_registers.log`), all hash-verified builds | no zero-bit or degenerate pipeline splits silently wasting a stage |
 | Whole-design STA, our own synthesis, all 7 stage counts | the end-to-end shape bar: monotone, saturating, real 32→64 knee reproduced |
 | Real `pipelinec --syn_tool sky130` build, normal throughput sweep (not `--no_sweep`) | the full integration: per-leaf isolated synthesis, multimain confirmation, sweep convergence, all through the real CLI |
@@ -394,7 +513,26 @@ build), before the `-fast` fix was even found.
   matching real sky130 results well on a different design, re-run the flag
   sweep documented in the project history before assuming the physics model
   itself regressed.
-- **Setup/hold constraint table axis convention is standard but unverified in
-  isolation** — the shape and total-period results validate it in aggregate,
-  but no test isolates the setup term the way the cliff cells isolate the
-  load-extrapolation term.
+- **We are a yosys minor version behind the thing we model.** latchup runs
+  yosys 0.55; this repo's oss-cad-suite is 0.48+51. On three of four
+  hash-identical designs that costs nothing (exact cell-histogram match); on
+  the fourth (65 stages) it is the leading explanation for a +1.4% cell /
+  +5.04% period divergence. Not fixable by a repo change. Re-check the recipe
+  matrix whenever the local toolchain is upgraded, because the selection was
+  made on this pairing.
+- **latchup's frontend has a Verilog round trip we do not.** They go VHDL →
+  ghdl → `write_verilog` → `read_verilog` → synth behind a hand-written
+  wrapper; PipelineC reads VHDL straight through the ghdl-yosys plugin. Not
+  currently believed to matter (the histograms match), but it is a real
+  structural difference between the two flows.
+- **Setup/hold constraint table axis convention is standard but still not
+  isolated.** The 2026-08-20 arc-by-arc comparison narrowed it usefully:
+  against latchup, our setup term is consistently ~1.5x smaller (0.141 ns vs
+  their implied 0.201 ns at 33 stages), and separately our final high-slew
+  cell arc is smaller (0.904 ns vs 1.132 ns for a `mux2_1` `S→X` at 2.592 ns
+  input slew — in range, not extrapolated). Reproducing their number requires
+  a ~3.85 ns input transition, i.e. they derive a larger *transition* out of
+  the preceding cell while agreeing with us on its *delay* to 1 ps. Both look
+  like transition-propagation/setup conventions we cannot read off their
+  artifacts, and neither was fitted away with a fudge factor. Together they
+  are essentially the whole remaining ~5% engine error.

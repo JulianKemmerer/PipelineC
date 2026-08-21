@@ -1,0 +1,499 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-08-21T02:59:03.756263+00:00",
+  "purpose": "Select the production sky130 synthesis recipe by reproducing latchup.app's own post-early-flatten mapped netlists and reported fmax, on four designs whose generated VHDL was hash-verified identical to theirs.",
+  "ground_truth": {
+    "17cycles_63mhz": {
+      "latchup_reported_mhz": 63.0,
+      "latchup_reported_period_ns": 15.873016,
+      "latchup_data_arrival_ns": 14.2,
+      "latchup_implied_setup_ns": 1.673016,
+      "latchup_synth_v_sha256": "d95d9feac76f8702283e57ba4cf68debb37dcaf69d1c7be99c23cddce3d9bc91",
+      "latchup_solution_py_sha256": "6cde041d367d885bd8d0d8f5782fe24a2edef0f6677dfed27c8eac47ebc57be3",
+      "reproduced_top_entity": "solution_16clk_48e99f0c",
+      "slices": 16,
+      "stages": 17,
+      "latchup_mapped_cells": 16430,
+      "latchup_mux2_1_cells": 33,
+      "latchup_dfxtp_1_cells": 1552
+    },
+    "33cycles_161mhz": {
+      "latchup_reported_mhz": 161.0,
+      "latchup_reported_period_ns": 6.21118,
+      "latchup_data_arrival_ns": 6.01,
+      "latchup_implied_setup_ns": 0.20118,
+      "latchup_synth_v_sha256": "d45cc2b5958f309d1d1dbc07bb5644c53d72756f1bec28725904ae09f45849b7",
+      "latchup_solution_py_sha256": "cfde3ad82985716544df580bb9415c6cbc4efa03ed4687b14a774e1bda56f70f",
+      "reproduced_top_entity": "solution_32clk_42c98b59",
+      "slices": 32,
+      "stages": 33,
+      "latchup_mapped_cells": 13873,
+      "latchup_mux2_1_cells": 838,
+      "latchup_dfxtp_1_cells": 3072
+    },
+    "34cycles_161mhz": {
+      "latchup_reported_mhz": 161.0,
+      "latchup_reported_period_ns": 6.21118,
+      "latchup_data_arrival_ns": 6.01,
+      "latchup_implied_setup_ns": 0.20118,
+      "latchup_synth_v_sha256": "1602bdf933119b1e5ec9cef0cb0382d2733e2d0d21bd6ca478724a921adae5a7",
+      "latchup_solution_py_sha256": "643bc63dc8765ce637d54f803a662725b5aabb6676c73a73c2b8eb88f46ea290",
+      "reproduced_top_entity": "solution_33clk_f2083cc2",
+      "slices": 33,
+      "stages": 34,
+      "latchup_mapped_cells": 13938,
+      "latchup_mux2_1_cells": 838,
+      "latchup_dfxtp_1_cells": 3137
+    },
+    "65cycles_173mhz": {
+      "latchup_reported_mhz": 173.0,
+      "latchup_reported_period_ns": 5.780347,
+      "latchup_data_arrival_ns": 5.612,
+      "latchup_implied_setup_ns": 0.168347,
+      "latchup_synth_v_sha256": "74868f3cb3885ce5b28c91fe75bd4e93b3dccc385dd713c62efbfc3b02140eb4",
+      "latchup_solution_py_sha256": "cc4bb6063273e7d007b56f40217a7b289032f30656d196834039b16d76086dfa",
+      "reproduced_top_entity": "solution_64clk_17c0b934",
+      "slices": 64,
+      "stages": 65,
+      "latchup_mapped_cells": 17782,
+      "latchup_mux2_1_cells": 745,
+      "latchup_dfxtp_1_cells": 6703
+    }
+  },
+  "pinned_inputs": {
+    "yosys_version": "Yosys 0.48+51 (git sha1 17a53b838, clang++ 18.1.8 -fPIC -O3)",
+    "yosys_sha256": "7c3e3396b38c129dd7485be5a0a0f0da8e495a94c8fd486059e3bea043a588d6",
+    "mapping_liberty_sha256": "fb1c43d5971efa70df79d7f16de69f8bbe3c7f0de0432baae4c43e7c72e251e9",
+    "sta_condensed_json_sha256": "a202cd3c60891ea4a655bf45e838a1a37e98f58e3c61fac86bb84606a637fe6b",
+    "measured_model_version": 4,
+    "latchup_yosys_version": "Yosys 0.55 (git sha1 60f126cd00)",
+    "latchup_frontend_note": "latchup goes VHDL -> ghdl -> write_verilog (rtl/PipelineC_inner.v) -> read_verilog -> synth, plus a hand-written rtl/Solution.v wrapper; PipelineC reads the VHDL directly through the ghdl-yosys plugin."
+  },
+  "selection_policy": "Minimise absolute error against latchup's reported period across all four designs, then prefer the recipe that reproduces their mapped cell histogram exactly. Maximising our own fmax is explicitly NOT the goal: this model exists to predict their number, not to beat it.",
+  "selected_production_recipe": "early_flatten_noabc",
+  "promoted_model_version": 4,
+  "previous_production_recipe": "early_flatten_opt",
+  "previous_model_version": 3,
+  "recipes": {
+    "current": {
+      "commands": "synth -top <top>; dfflibmap -liberty <liberty>; abc -liberty <liberty> -fast; flatten; ",
+      "per_design": {
+        "17cycles_63mhz": {
+          "worst_period_ns": 15.060791631840353,
+          "fmax_mhz": 66.39757221565152,
+          "period_error_pct": -5.117,
+          "mapped_cells": 13554,
+          "mapped_dffs": 1552,
+          "mapped_mux2_1": 0,
+          "cell_histogram_l1": 5504,
+          "cell_histogram_l1_pct": 33.4997,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 67,
+          "mapping_runtime_seconds": 21.5,
+          "mapped_json_sha256": null
+        },
+        "33cycles_161mhz": {
+          "worst_period_ns": 7.877181207002166,
+          "fmax_mhz": 126.948964829079,
+          "period_error_pct": 26.8226,
+          "mapped_cells": 15074,
+          "mapped_dffs": 3072,
+          "mapped_mux2_1": 0,
+          "cell_histogram_l1": 5787,
+          "cell_histogram_l1_pct": 41.7141,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 67,
+          "mapping_runtime_seconds": 34.9,
+          "mapped_json_sha256": null
+        },
+        "34cycles_161mhz": {
+          "worst_period_ns": 7.877181207002166,
+          "fmax_mhz": 126.948964829079,
+          "period_error_pct": 26.8226,
+          "mapped_cells": 15139,
+          "mapped_dffs": 3137,
+          "mapped_mux2_1": 0,
+          "cell_histogram_l1": 5787,
+          "cell_histogram_l1_pct": 41.5196,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 67,
+          "mapping_runtime_seconds": 34.8,
+          "mapped_json_sha256": null
+        },
+        "65cycles_173mhz": {
+          "worst_period_ns": 8.053090121811621,
+          "fmax_mhz": 124.1759355569015,
+          "period_error_pct": 39.3185,
+          "mapped_cells": 21091,
+          "mapped_dffs": 7745,
+          "mapped_mux2_1": 0,
+          "cell_histogram_l1": 6023,
+          "cell_histogram_l1_pct": 33.8713,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 131,
+          "mapping_runtime_seconds": 78.7,
+          "mapped_json_sha256": null
+        }
+      },
+      "period_error_mae_pct": 24.5202,
+      "period_error_worst_pct": 39.3185,
+      "designs_with_exact_latchup_histogram": []
+    },
+    "synth_flatten": {
+      "commands": "synth -top <top> -flatten; dfflibmap -liberty <liberty>; abc -liberty <liberty> -fast; flatten; ",
+      "per_design": {
+        "17cycles_63mhz": {
+          "worst_period_ns": 11.241156339464787,
+          "fmax_mhz": 88.95881969804647,
+          "period_error_pct": -29.1807,
+          "mapped_cells": 15155,
+          "mapped_dffs": 1552,
+          "mapped_mux2_1": 48,
+          "cell_histogram_l1": 3201,
+          "cell_histogram_l1_pct": 19.4827,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 0,
+          "mapping_runtime_seconds": 27.2,
+          "mapped_json_sha256": null
+        },
+        "33cycles_161mhz": {
+          "worst_period_ns": 5.717077032204654,
+          "fmax_mhz": 174.91455762567782,
+          "period_error_pct": -7.9551,
+          "mapped_cells": 13997,
+          "mapped_dffs": 3072,
+          "mapped_mux2_1": 838,
+          "cell_histogram_l1": 2168,
+          "cell_histogram_l1_pct": 15.6275,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 0,
+          "mapping_runtime_seconds": 41.2,
+          "mapped_json_sha256": null
+        },
+        "34cycles_161mhz": {
+          "worst_period_ns": 5.717077032204654,
+          "fmax_mhz": 174.91455762567782,
+          "period_error_pct": -7.9551,
+          "mapped_cells": 14062,
+          "mapped_dffs": 3137,
+          "mapped_mux2_1": 838,
+          "cell_histogram_l1": 2168,
+          "cell_histogram_l1_pct": 15.5546,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 0,
+          "mapping_runtime_seconds": 40.9,
+          "mapped_json_sha256": null
+        },
+        "65cycles_173mhz": {
+          "worst_period_ns": 6.20106415065331,
+          "fmax_mhz": 161.26264391163338,
+          "period_error_pct": 7.2784,
+          "mapped_cells": 21506,
+          "mapped_dffs": 6703,
+          "mapped_mux2_1": 1,
+          "cell_histogram_l1": 6694,
+          "cell_histogram_l1_pct": 37.6448,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 0,
+          "mapping_runtime_seconds": 138.3,
+          "mapped_json_sha256": null
+        }
+      },
+      "period_error_mae_pct": 13.0923,
+      "period_error_worst_pct": 29.1807,
+      "designs_with_exact_latchup_histogram": []
+    },
+    "synth_flatten_noabc": {
+      "commands": "synth -top <top> -flatten -noabc; opt -full; dfflibmap -liberty <liberty>; abc -liberty <liberty> -fast; flatten; ",
+      "per_design": {
+        "17cycles_63mhz": {
+          "worst_period_ns": 14.865545843345501,
+          "fmax_mhz": 67.26964556418531,
+          "period_error_pct": -6.3471,
+          "mapped_cells": 16430,
+          "mapped_dffs": 1552,
+          "mapped_mux2_1": 33,
+          "cell_histogram_l1": 0,
+          "cell_histogram_l1_pct": 0.0,
+          "reproduces_latchup_histogram_exactly": true,
+          "n_max_capacitance_violations": 60,
+          "mapping_runtime_seconds": 23.2,
+          "mapped_json_sha256": null
+        },
+        "33cycles_161mhz": {
+          "worst_period_ns": 5.919797413555479,
+          "fmax_mhz": 168.92469963754922,
+          "period_error_pct": -4.6913,
+          "mapped_cells": 13873,
+          "mapped_dffs": 3072,
+          "mapped_mux2_1": 838,
+          "cell_histogram_l1": 0,
+          "cell_histogram_l1_pct": 0.0,
+          "reproduces_latchup_histogram_exactly": true,
+          "n_max_capacitance_violations": 0,
+          "mapping_runtime_seconds": 36.9,
+          "mapped_json_sha256": null
+        },
+        "34cycles_161mhz": {
+          "worst_period_ns": 5.919797413555479,
+          "fmax_mhz": 168.92469963754922,
+          "period_error_pct": -4.6913,
+          "mapped_cells": 13938,
+          "mapped_dffs": 3137,
+          "mapped_mux2_1": 838,
+          "cell_histogram_l1": 0,
+          "cell_histogram_l1_pct": 0.0,
+          "reproduces_latchup_histogram_exactly": true,
+          "n_max_capacitance_violations": 0,
+          "mapping_runtime_seconds": 37.7,
+          "mapped_json_sha256": null
+        },
+        "65cycles_173mhz": {
+          "worst_period_ns": 7.7870831326484815,
+          "fmax_mhz": 128.4177891728617,
+          "period_error_pct": 34.7165,
+          "mapped_cells": 23004,
+          "mapped_dffs": 6703,
+          "mapped_mux2_1": 0,
+          "cell_histogram_l1": 7696,
+          "cell_histogram_l1_pct": 43.2797,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 93,
+          "mapping_runtime_seconds": 130.7,
+          "mapped_json_sha256": null
+        }
+      },
+      "period_error_mae_pct": 12.6115,
+      "period_error_worst_pct": 34.7165,
+      "designs_with_exact_latchup_histogram": [
+        "17cycles_63mhz",
+        "33cycles_161mhz",
+        "34cycles_161mhz"
+      ]
+    },
+    "early_flatten_opt": {
+      "commands": "synth -top <top>; flatten; opt -full; dfflibmap -liberty <liberty>; abc -liberty <liberty> -fast; flatten; ",
+      "per_design": {
+        "17cycles_63mhz": {
+          "worst_period_ns": 12.493477139878134,
+          "fmax_mhz": 80.04176810057815,
+          "period_error_pct": -21.2911,
+          "mapped_cells": 15383,
+          "mapped_dffs": 1552,
+          "mapped_mux2_1": 63,
+          "cell_histogram_l1": 2661,
+          "cell_histogram_l1_pct": 16.196,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 60,
+          "mapping_runtime_seconds": 25.9,
+          "mapped_json_sha256": null
+        },
+        "33cycles_161mhz": {
+          "worst_period_ns": 5.5541411388029145,
+          "fmax_mhz": 180.04583877310873,
+          "period_error_pct": -10.5783,
+          "mapped_cells": 13779,
+          "mapped_dffs": 3072,
+          "mapped_mux2_1": 838,
+          "cell_histogram_l1": 1514,
+          "cell_histogram_l1_pct": 10.9133,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 0,
+          "mapping_runtime_seconds": 34.4,
+          "mapped_json_sha256": null
+        },
+        "34cycles_161mhz": {
+          "worst_period_ns": 5.5541411388029145,
+          "fmax_mhz": 180.04583877310873,
+          "period_error_pct": -10.5783,
+          "mapped_cells": 13844,
+          "mapped_dffs": 3137,
+          "mapped_mux2_1": 838,
+          "cell_histogram_l1": 1514,
+          "cell_histogram_l1_pct": 10.8624,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 0,
+          "mapping_runtime_seconds": 33.9,
+          "mapped_json_sha256": null
+        },
+        "65cycles_173mhz": {
+          "worst_period_ns": 5.6634050315825775,
+          "fmax_mhz": 176.57222014378172,
+          "period_error_pct": -2.0231,
+          "mapped_cells": 18683,
+          "mapped_dffs": 6703,
+          "mapped_mux2_1": 745,
+          "cell_histogram_l1": 2831,
+          "cell_histogram_l1_pct": 15.9206,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 0,
+          "mapping_runtime_seconds": 85.9,
+          "mapped_json_sha256": null
+        }
+      },
+      "period_error_mae_pct": 11.1177,
+      "period_error_worst_pct": 21.2911,
+      "designs_with_exact_latchup_histogram": []
+    },
+    "early_flatten_noabc": {
+      "commands": "synth -top <top> -noabc; flatten; opt -full; dfflibmap -liberty <liberty>; abc -liberty <liberty> -fast; flatten; ",
+      "per_design": {
+        "17cycles_63mhz": {
+          "worst_period_ns": 14.837519672593327,
+          "fmax_mhz": 67.39670929280179,
+          "period_error_pct": -6.5236,
+          "mapped_cells": 16430,
+          "mapped_dffs": 1552,
+          "mapped_mux2_1": 33,
+          "cell_histogram_l1": 0,
+          "cell_histogram_l1_pct": 0.0,
+          "reproduces_latchup_histogram_exactly": true,
+          "n_max_capacitance_violations": 60,
+          "mapping_runtime_seconds": 17.7,
+          "mapped_json_sha256": "212bc8d0f633d4c1a0a40f720f26fd6661620d52e57b5839f838ed252712043d"
+        },
+        "33cycles_161mhz": {
+          "worst_period_ns": 5.89712600342987,
+          "fmax_mhz": 169.57412804447162,
+          "period_error_pct": -5.0563,
+          "mapped_cells": 13873,
+          "mapped_dffs": 3072,
+          "mapped_mux2_1": 838,
+          "cell_histogram_l1": 0,
+          "cell_histogram_l1_pct": 0.0,
+          "reproduces_latchup_histogram_exactly": true,
+          "n_max_capacitance_violations": 0,
+          "mapping_runtime_seconds": 22.7,
+          "mapped_json_sha256": "9de518889974a5325299f08d873063bb766c066dc0253cb63626d45e200dfcfa"
+        },
+        "34cycles_161mhz": {
+          "worst_period_ns": 5.89712600342987,
+          "fmax_mhz": 169.57412804447162,
+          "period_error_pct": -5.0563,
+          "mapped_cells": 13938,
+          "mapped_dffs": 3137,
+          "mapped_mux2_1": 838,
+          "cell_histogram_l1": 0,
+          "cell_histogram_l1_pct": 0.0,
+          "reproduces_latchup_histogram_exactly": true,
+          "n_max_capacitance_violations": 0,
+          "mapping_runtime_seconds": 23.2,
+          "mapped_json_sha256": "a7ea5cf829b25ec0d72081d7dc6c7d1cfb215fa8efbc0fc85fb410084f23aab4"
+        },
+        "65cycles_173mhz": {
+          "worst_period_ns": 6.071844407605972,
+          "fmax_mhz": 164.69460231018726,
+          "period_error_pct": 5.0429,
+          "mapped_cells": 18029,
+          "mapped_dffs": 6703,
+          "mapped_mux2_1": 745,
+          "cell_histogram_l1": 1243,
+          "cell_histogram_l1_pct": 6.9902,
+          "reproduces_latchup_histogram_exactly": false,
+          "n_max_capacitance_violations": 0,
+          "mapping_runtime_seconds": 53.0,
+          "mapped_json_sha256": "11f16c47f67f3bca618f80916dbb353c4c927afdd49782f1d0655624e3291e3a"
+        }
+      },
+      "period_error_mae_pct": 5.4198,
+      "period_error_worst_pct": 6.5236,
+      "designs_with_exact_latchup_histogram": [
+        "17cycles_63mhz",
+        "33cycles_161mhz",
+        "34cycles_161mhz"
+      ]
+    }
+  },
+  "engine_only_on_latchup_netlists": {
+    "note": "STA engine fed latchup's OWN mapped netlists, isolating the physics from any recipe question. Unchanged by their flatten change; the pre-flatten netlists are the control.",
+    "post_early_flatten_mae_pct": 4.8206,
+    "post_early_flatten_worst_pct": 6.3471,
+    "pre_flatten_control_mae_pct": 5.8302,
+    "per_netlist": {
+      "new/17stages": {
+        "netlist_source": "latchup",
+        "mapped_cells": 16430,
+        "latchup_reported_period_ns": 15.873016,
+        "our_period_ns": 14.865546,
+        "period_error_pct": -6.3471,
+        "our_launch_clock_to_q_ns": 0.790373,
+        "our_combinational_ns": 14.017634,
+        "our_setup_ns": 0.057539,
+        "latchup_implied_setup_ns": 1.673016,
+        "same_critical_path_endpoints_as_latchup": false
+      },
+      "new/33stages": {
+        "netlist_source": "latchup",
+        "mapped_cells": 13873,
+        "latchup_reported_period_ns": 6.21118,
+        "our_period_ns": 5.919797,
+        "period_error_pct": -4.6913,
+        "our_launch_clock_to_q_ns": 0.701318,
+        "our_combinational_ns": 5.077072,
+        "our_setup_ns": 0.141407,
+        "latchup_implied_setup_ns": 0.20118,
+        "same_critical_path_endpoints_as_latchup": true
+      },
+      "new/34stages": {
+        "netlist_source": "latchup",
+        "mapped_cells": 13938,
+        "latchup_reported_period_ns": 6.21118,
+        "our_period_ns": 5.919797,
+        "period_error_pct": -4.6913,
+        "our_launch_clock_to_q_ns": 0.701318,
+        "our_combinational_ns": 5.077072,
+        "our_setup_ns": 0.141407,
+        "latchup_implied_setup_ns": 0.20118,
+        "same_critical_path_endpoints_as_latchup": true
+      },
+      "new/65stages": {
+        "netlist_source": "latchup",
+        "mapped_cells": 17782,
+        "latchup_reported_period_ns": 5.780347,
+        "our_period_ns": 5.574992,
+        "period_error_pct": -3.5526,
+        "our_launch_clock_to_q_ns": 0.740675,
+        "our_combinational_ns": 4.693937,
+        "our_setup_ns": 0.14038,
+        "latchup_implied_setup_ns": 0.168347,
+        "same_critical_path_endpoints_as_latchup": false
+      },
+      "old/32cycles": {
+        "netlist_source": "latchup(pre-early-flatten control)",
+        "mapped_cells": 16767,
+        "latchup_reported_period_ns": 11.235955,
+        "our_period_ns": 10.666341,
+        "period_error_pct": -5.0696,
+        "our_launch_clock_to_q_ns": 2.632526,
+        "our_combinational_ns": 7.904438,
+        "our_setup_ns": 0.129376,
+        "latchup_implied_setup_ns": 0.255955,
+        "same_critical_path_endpoints_as_latchup": false
+      },
+      "old/64cycles": {
+        "netlist_source": "latchup(pre-early-flatten control)",
+        "mapped_cells": 24933,
+        "latchup_reported_period_ns": 10.752688,
+        "our_period_ns": 10.149659,
+        "period_error_pct": -5.6082,
+        "our_launch_clock_to_q_ns": 0.683116,
+        "our_combinational_ns": 9.339063,
+        "our_setup_ns": 0.127479,
+        "latchup_implied_setup_ns": 0.252688,
+        "same_critical_path_endpoints_as_latchup": false
+      },
+      "old/128cycles": {
+        "netlist_source": "latchup(pre-early-flatten control)",
+        "mapped_cells": 33993,
+        "latchup_reported_period_ns": 8.0,
+        "our_period_ns": 7.454976,
+        "period_error_pct": -6.8128,
+        "our_launch_clock_to_q_ns": 0.68319,
+        "our_combinational_ns": 6.643322,
+        "our_setup_ns": 0.128463,
+        "latchup_implied_setup_ns": 0.226,
+        "same_critical_path_endpoints_as_latchup": false
+      }
+    }
+  }
+}

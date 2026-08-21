@@ -825,30 +825,42 @@ SELECTED_CORNER = DEFAULT_CORNER
 # leaf delay. Alternate experimental recipes also carry their own versioned
 # suffix. Both identities join SYN.GET_PATH_DELAY_CACHE_DIR alongside the
 # library/corner, so no recipe can silently replay another recipe's delay.
-MODEL_VERSION = 3
+MODEL_VERSION = 4
 
 # Extra flags passed to yosys' `abc` pass (see _run_synth_and_sta). Measured
 # (Phase 3.9 of the plan, not guessed): the plain `abc -liberty` invocation
 # uses yosys' modern default script (ending in `&nf {D}`, a network-flow
-# area-recovery mapper) which, on this design, chose sky130_fd_sc_hvl__mux2_1
-# for ~1000 instances that latchup's real netlist has ZERO of -- confirmed
-# via direct comparison of the real synth.v cell histogram, and confirmed
-# NOT fixable by supplying `-D <ps>` delay targets to that script (swept
-# 500-32000ps, zero effect on the output, bit-identical every time). `-fast`
-# switches to the older, classic `map {D}` technology mapper, which matches
-# latchup's real mapping far better with no other changes: at N=32,
-# mux2_1 1056->0 (exact), predicted period error +33.6%->-1.6%; at N=1,
-# error +68.8%->-6.5%. Adding a -D target back on top of -fast made it
-# WORSE (-18.9%), so this is deliberately just the bare flag.
+# area-recovery mapper); `-fast` switches to the older, classic `map {D}`
+# technology mapper. `-fast` matched latchup's real mapping far better with
+# no other changes: against their pre-flatten netlists, predicted period
+# error went +33.6%->-1.6% at N=32 and +68.8%->-6.5% at N=1. Adding a -D
+# delay target back on top of -fast made it WORSE (-18.9%), and -D alone had
+# zero effect on the default script (swept 500-32000ps, bit-identical every
+# time), so this is deliberately just the bare flag.
+#
+# Re-validated 2026-08-20 against latchup's post-early-flatten netlists and
+# still correct, but note the cell-histogram evidence originally cited for it
+# has flipped: their PRE-flatten netlists contained zero mux2_1 (which `-fast`
+# reproduced exactly), while their post-flatten netlists contain hundreds
+# (838 at 33 stages, 745 at 65) -- which `-fast` also reproduces exactly under
+# the current recipe. Mux inference is a property of what abc is handed, not
+# of this flag; do not treat "zero mux2_1" as the signature to match.
 ABC_EXTRA_ARGS = "-fast"
 
 # Fixed, internal-only recipe matrix used by the opt-in QoR benchmark. The
 # environment selector intentionally accepts names from this closed set: it
-# is not a public arbitrary-yosys-flags interface. ``early_flatten_opt`` is
-# the production recipe selected by the byte-frozen full-Divider A/B; the
-# historical recipe remains available as the ``current`` control ID.
+# is not a public arbitrary-yosys-flags interface.
+#
+# ``early_flatten_noabc`` is the production recipe. It was selected by
+# reproducing latchup.app's own post-early-flatten mapped netlists: on three
+# of four hash-verified designs it lands on their cell histogram EXACTLY
+# (all 19 cell types, 13,873/13,873 at 33 stages), and it predicts their
+# reported period with MAE 5.42%/worst 6.52% where the previously-default
+# ``early_flatten_opt`` scored 11.12%/21.29%. See
+# docs/DEVICE_MODELS_DESIGN.md. The historical pre-flatten recipe remains
+# available as the ``current`` control ID.
 _SYNTHESIS_RECIPE_ENV = "PIPELINEC_INTERNAL_SKY130_RECIPE"
-_DEFAULT_SYNTHESIS_RECIPE = "early_flatten_opt"
+_DEFAULT_SYNTHESIS_RECIPE = "early_flatten_noabc"
 _SELECTED_SYNTHESIS_RECIPE = os.environ.get(
     _SYNTHESIS_RECIPE_ENV, _DEFAULT_SYNTHESIS_RECIPE
 )
@@ -857,6 +869,7 @@ _SYNTHESIS_RECIPE_CACHE_TAGS = {
     "synth_flatten": "synth_flatten_v1",
     "synth_flatten_noabc": "synth_flatten_noabc_v1",
     "early_flatten_opt": "early_flatten_opt_v1",
+    "early_flatten_noabc": "early_flatten_noabc_v1",
 }
 
 
@@ -939,6 +952,18 @@ def _get_synthesis_recipe_commands(top_entity_name, lib_path, recipe_name=None):
     if name == "early_flatten_opt":
         return (
             f"synth -top {top_entity_name}; "
+            "flatten; opt -full; "
+            + liberty_map
+            + "flatten; "
+        )
+    if name == "early_flatten_noabc":
+        # Production. Same shape as early_flatten_opt, but `-noabc` skips
+        # synth's own internal gate-level abc pass so the single
+        # `abc -liberty` below is the only structural mapping step, working
+        # on the flattened+optimised design. That is what reproduces
+        # latchup's real netlists (see _SYNTHESIS_RECIPE_CACHE_TAGS above).
+        return (
+            f"synth -top {top_entity_name} -noabc; "
             "flatten; opt -full; "
             + liberty_map
             + "flatten; "

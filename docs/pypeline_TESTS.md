@@ -143,8 +143,11 @@ Each category module can also run standalone, e.g.
   ordered vectors, have zero unmapped cells, and satisfy their slice limits.
   The corresponding clean-commit baselines required 66 and 64 slices. The
   full byte-frozen recipe decision is in
-  `qor/synthesis_recipe_forced32_matrix.json`; `early_flatten_opt` is the
-  production default under model V3. Full sky130 runs remain opt-in.
+  `qor/synthesis_recipe_forced32_matrix.json`; `early_flatten_opt` was the
+  production default under model V3. Those numbers were NOT re-taken for the
+  V4 promotion: the production default is now `early_flatten_noabc`, selected
+  in `qor/latchup_early_flatten_match_matrix.json` on latchup-match evidence
+  rather than on our own fmax. Full sky130 runs remain opt-in.
 
   Controlled physical and recipe experiments remain internal to this harness. Use
   `--placement step-boundaries` to force every gate `step_gates` output boundary, or

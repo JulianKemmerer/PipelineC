@@ -231,7 +231,7 @@ def test_existing_runtime_requires_existing_build():
     assert args.existing_runtime_seconds == 123.5
     assert args.existing_returncode == 0
     assert args.compiler_commit == "c81ca31f"
-    assert args.recipe == bench.DEFAULT_RECIPE == "early_flatten_opt"
+    assert args.recipe == bench.DEFAULT_RECIPE == "early_flatten_noabc"
     try:
         with contextlib.redirect_stderr(io.StringIO()):
             bench._parse_args(

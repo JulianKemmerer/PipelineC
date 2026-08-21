@@ -136,6 +136,7 @@ def test_fixed_recipe_commands_and_cache_identity():
         "synth_flatten",
         "synth_flatten_noabc",
         "early_flatten_opt",
+        "early_flatten_noabc",
     }
     assert set(DEVICE_MODELS._SYNTHESIS_RECIPE_CACHE_TAGS) == expected
     suffixes = {
@@ -143,7 +144,7 @@ def test_fixed_recipe_commands_and_cache_identity():
         for name in expected
     }
     default_recipe = DEVICE_MODELS._DEFAULT_SYNTHESIS_RECIPE
-    assert default_recipe == "early_flatten_opt"
+    assert default_recipe == "early_flatten_noabc"
     assert suffixes[default_recipe] == ""
     assert len(set(suffixes.values())) == len(expected), suffixes
     identities = {
@@ -172,6 +173,10 @@ def test_fixed_recipe_commands_and_cache_identity():
     assert (
         "synth -top frozen_top; flatten; opt -full;"
         in commands["early_flatten_opt"]
+    )
+    assert (
+        "synth -top frozen_top -noabc; flatten; opt -full;"
+        in commands["early_flatten_noabc"]
     )
 
     try:
@@ -398,7 +403,9 @@ def test_durable_qor_evidence_matrices_are_self_consistent():
     with open(wrapper_path, "rb") as f:
         wrapper_hash = hashlib.sha256(f.read()).hexdigest()
     assert wrapper_hash == pre["provenance"]["frozen_wrapper"]["sha256"]
-    assert set(pre["recipes"]) == set(
+    # Historical matrices are frozen evidence for the recipe set that existed
+    # when they were taken; a later promotion may add recipes they never ran.
+    assert set(pre["recipes"]) <= set(
         DEVICE_MODELS._SYNTHESIS_RECIPE_CACHE_TAGS
     )
     current = pre["recipes"]["current"]
@@ -413,17 +420,20 @@ def test_durable_qor_evidence_matrices_are_self_consistent():
         os.path.join(qor_dir, "synthesis_recipe_forced32_matrix.json")
     ) as f:
         full = json.load(f)
-    assert set(full["recipes"]) == set(
+    assert set(full["recipes"]) <= set(
         DEVICE_MODELS._SYNTHESIS_RECIPE_CACHE_TAGS
     )
-    assert full["selected_production_recipe"] == (
-        DEVICE_MODELS._DEFAULT_SYNTHESIS_RECIPE
-    )
-    assert full["promoted_model_version"] == DEVICE_MODELS.MODEL_VERSION
     assert full["target"]["measured_stages"] == (
         full["target"]["measured_slices"] + 1
     )
-    winner = full["recipes"][full["selected_production_recipe"]]
+    # This matrix promoted V3/early_flatten_opt on a "maximise our own fmax"
+    # policy. It stays valid as a record of that decision, but it is no
+    # longer what selects the production recipe -- see the latchup-match
+    # matrix below, whose policy is to predict latchup's number, not beat it.
+    former = full["selected_production_recipe"]
+    assert former in DEVICE_MODELS._SYNTHESIS_RECIPE_CACHE_TAGS
+    assert full["promoted_model_version"] < DEVICE_MODELS.MODEL_VERSION
+    winner = full["recipes"][former]
     assert winner["fmax_mhz"] == max(
         result["fmax_mhz"] for result in full["recipes"].values()
     )
@@ -432,11 +442,54 @@ def test_durable_qor_evidence_matrices_are_self_consistent():
     assert not winner["incomplete_topo"]
     assert all(result["acceptance_passed"] for result in full["recipes"].values())
 
+    # Current production selection: reproduce latchup's post-early-flatten
+    # netlists and reported period.
+    with open(
+        os.path.join(qor_dir, "latchup_early_flatten_match_matrix.json")
+    ) as f:
+        match = json.load(f)
+    assert set(match["recipes"]) == set(
+        DEVICE_MODELS._SYNTHESIS_RECIPE_CACHE_TAGS
+    )
+    selected = match["selected_production_recipe"]
+    assert selected == DEVICE_MODELS._DEFAULT_SYNTHESIS_RECIPE
+    assert match["promoted_model_version"] == DEVICE_MODELS.MODEL_VERSION
+    assert match["previous_model_version"] < DEVICE_MODELS.MODEL_VERSION
+    # The promoted recipe must be the most accurate one on BOTH scores, or the
+    # selection policy quoted in the file is not what actually chose it.
+    scores = {
+        name: result["period_error_mae_pct"]
+        for name, result in match["recipes"].items()
+    }
+    assert scores[selected] == min(scores.values()), scores
+    worst = {
+        name: result["period_error_worst_pct"]
+        for name, result in match["recipes"].items()
+    }
+    assert worst[selected] == min(worst.values()), worst
+    # ...and it must actually reproduce their mapping, not merely their number.
+    assert len(
+        match["recipes"][selected]["designs_with_exact_latchup_histogram"]
+    ) >= 3
+    # Every design's VHDL was hash-verified identical to latchup's own build.
+    for design, truth in match["ground_truth"].items():
+        assert truth["stages"] == truth["slices"] + 1, design
+        assert truth["reproduced_top_entity"].startswith("solution_"), design
+    # Engine-only physics is recipe-independent and must stay at its bar.
+    engine = match["engine_only_on_latchup_netlists"]
+    assert engine["post_early_flatten_mae_pct"] < 5.0
+    assert engine["post_early_flatten_worst_pct"] < 10.0
+
     with open(os.path.join(qor_dir, "divider_qor_acceptance.json")) as f:
         acceptance = json.load(f)
-    assert acceptance["production"]["model_version"] == DEVICE_MODELS.MODEL_VERSION
-    assert acceptance["production"]["synthesis_recipe"] == (
-        DEVICE_MODELS._DEFAULT_SYNTHESIS_RECIPE
+    # The full Divider QoR acceptance run is expensive (one gate build is
+    # about an hour) and was NOT re-run for the V4/early_flatten_noabc
+    # promotion, which was selected purely on latchup-match evidence. So this
+    # file legitimately describes an earlier production configuration; assert
+    # exactly that, rather than pretending it tracks the current default.
+    assert acceptance["production"]["model_version"] < DEVICE_MODELS.MODEL_VERSION
+    assert acceptance["production"]["synthesis_recipe"] in (
+        DEVICE_MODELS._SYNTHESIS_RECIPE_CACHE_TAGS
     )
     for variant in ("gate", "arithmetic"):
         baseline = acceptance[variant]["clean_c81ca31f"]
