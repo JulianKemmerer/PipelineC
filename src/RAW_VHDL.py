@@ -2122,13 +2122,17 @@ def _EQUAL_WIDTH_BITS_PER_STAGE_DICT(num_bits, num_slices):
     delay fraction and gets back the nearest equal-width boundary, which can
     be far away -- the radix-2 divider asked for 3.9%, 11.8% and 51.3% of its
     34-bit subtractors and got bit 17 for all three. That mismatch is
-    currently CONTAINED upstream (SWEEP.PLAN_PIPELINE_PLACEMENTS judges plans
-    on realized positions and drops ones that stop paying), and containing it
-    was enough: no equal-latency fmax regression survived. But containment is
-    not proof the constraint is free. A leaf-split interface able to honor a
-    requested fraction might enable stage structures this one forecloses.
-    Deciding that means measuring both under the current model. See
-    docs/SYN_DESIGN.md section 2, "Open question (2026-08-21)"."""
+    handled upstream by SWEEP.PLAN_PIPELINE_PLACEMENTS working WITHIN this
+    contract: it re-plans against the exact boundaries this function will
+    emit and ranks the results, so a plan is never costed at a position that
+    lowering then moves. That was enough to reach intermediate pipeline
+    depths at all, with no equal-latency fmax regression. It is not proof the
+    constraint is free: the intermediate depth it now reaches is itself
+    suboptimal (48 slices at 164.69 MHz on the divider, below the 32-slice
+    plan's 169.57 MHz), which is the shape of result a leaf-split interface
+    able to honor a requested fraction might improve. Deciding that means
+    measuring both under the current model. See docs/SYN_DESIGN.md section 2,
+    "Open question (2026-08-21)"."""
     chunks = num_slices + 1
     boundaries = GET_EQUAL_WIDTH_BIT_BOUNDARIES(num_bits, num_slices)
     bits_per_stage_dict = {}

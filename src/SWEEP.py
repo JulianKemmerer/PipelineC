@@ -1419,6 +1419,103 @@ def MATERIALIZE_BIT_PLACEMENT_REQUESTS(placements, landscape):
     return sorted(physical, key=lambda p: (p.axis_position, p.candidate_id))
 
 
+def _LANDSCAPE_WITH_EQUAL_WIDTH_BIT_SITES(landscape, counts_by_inst):
+    """Landscape view whose bit sites are the boundaries RAW VHDL will emit.
+
+    The planner's raster bit sites are provisional fictions: a leaf with K
+    selected cuts emits ordinals 1..K of K+1 EQUAL-WIDTH chunks, wherever the
+    requests actually were. So a plan costed on raster positions can be a
+    different pipeline once lowered - on the divider a 50-cut plan costed at
+    5.20ns had 20 of its 31 bit cuts relocated (unit 142 -> 161, ~1.9ns) and
+    realized 7.20ns, blowing the budget it was chosen to meet. Every
+    intermediate depth between "one cut per loop iteration" and "two" died
+    that way, which is why the fmax goal could only reach 32 or 64 cuts.
+
+    Given how many cuts the previous round put in each leaf, this rebuilds
+    that leaf's sites AT the equal-width boundaries for that count, so the
+    next round plans against positions that survive lowering unchanged.
+    Leaves the caller iterates to a fixed point; two or three rounds is
+    plenty because the count per leaf is almost always 1 or 2.
+    """
+    view = copy.copy(landscape)
+    kept = []
+    for candidate in landscape.candidates:
+        if not isinstance(candidate, BitPlacementRequest):
+            kept.append(candidate)
+    for inst_path, count in sorted(counts_by_inst.items()):
+        template = next(
+            (
+                c
+                for c in landscape.candidates
+                if isinstance(c, BitPlacementRequest)
+                and c.inst_path == inst_path
+            ),
+            None,
+        )
+        if template is None or count <= 0 or count >= template.bit_width:
+            continue
+        span = template.leaf_axis_end - template.leaf_axis_start
+        if span <= 0.0:
+            continue
+        for boundary in RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(
+            template.bit_width, count
+        ):
+            local_slice = boundary / float(template.bit_width)
+            position = template.leaf_axis_start + local_slice * span
+            unit = int(math.ceil(position)) - 1
+            if not 0 <= unit < landscape.total_units:
+                continue
+            kept.append(
+                BitPlacementRequest(
+                    template.inst_path,
+                    template.func_name,
+                    unit,
+                    position,
+                    requested_local_slice=local_slice,
+                    bit_width=template.bit_width,
+                    leaf_axis_start=template.leaf_axis_start,
+                    leaf_axis_end=template.leaf_axis_end,
+                    registered_bits=template.registered_bits,
+                    hierarchy_depth=template.hierarchy_depth,
+                    span_units=template.span_units,
+                    coherent_boundary=template.coherent_boundary,
+                    ancestor_funcs=template.ancestor_funcs,
+                )
+            )
+    view.candidates = sorted(
+        {c.candidate_id: c for c in kept}.values(),
+        key=lambda c: (c.axis_unit, c.candidate_id),
+    )
+    view.legal = [False] * landscape.total_units
+    view.candidates_by_unit = {}
+    for candidate in view.candidates:
+        view.candidates_by_unit.setdefault(candidate.axis_unit, []).append(
+            candidate
+        )
+        view.legal[candidate.axis_unit] = True
+    return view
+
+
+def _PLAN_RANK(cuts, landscape, budget_ns):
+    """Sort key for choosing between two lowered plans. Lower is better.
+
+    Meeting the goal is the whole point of a budget, so a plan that meets it
+    is never beaten by one that is merely faster: among plans that meet it,
+    the fewest cuts wins (registers are cost, and the extra speed was not
+    asked for). Only when NOTHING meets the budget - the goal sits below the
+    design's floor - does raw speed decide, and cut count breaks that tie.
+
+    Ranking on worst stage first instead is what collapsed the divider's
+    entire 32..64 cut range onto 64: a 48-cut plan meeting a 190 MHz goal at
+    5.19ns kept losing to a 64-cut plan at 3.85ns.
+    """
+    worst = PREDICTED_STAGE_NS(cuts, landscape)
+    meets = worst <= budget_ns + 1e-9
+    if meets:
+        return (0, len(cuts), worst)
+    return (1, worst, len(cuts))
+
+
 def _LANDSCAPE_WITHOUT_BIT_SITES(landscape):
     """Shallow view of ``landscape`` offering only real operation-output
     boundaries - no provisional bit-internal raster sites.
@@ -1523,19 +1620,83 @@ def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
     # 7.00ns - identical to the 32-cut boundary-only plan, for 16 more
     # register banks. So also lower the plan that uses only real operation
     # boundaries (whose positions cannot move) and keep whichever is better
-    # once realized: lower worst stage first, then fewer cuts. Bit splitting
-    # is kept whenever it genuinely pays, and dropped when it only looked
-    # like it would on the raster.
+    # once realized. Bit splitting is kept whenever it genuinely pays, and
+    # dropped when it only looked like it would on the raster.
+    #
+    # "Better" is ranked by _PLAN_RANK: MEET THE BUDGET FIRST, then use the
+    # fewest cuts. Ranking on worst stage first (an earlier version of this)
+    # is wrong and silently destroys every intermediate pipeline depth: on
+    # the divider a 190 MHz goal has a real 48-cut plan at 5.19ns (cut at
+    # MINUS's output, the next MINUS's midpoint, then that MUX's output - 3
+    # cuts per 2 iterations), which comfortably meets the goal, but the
+    # boundary-only plan realizes 3.85ns with 64 cuts and won on "lower worst
+    # stage" - 33% more registers to beat a target that was already met. That
+    # collapsed the whole 32..64 range onto 64 and left the fmax goal unable
+    # to ask for anything in between.
+    budget_ns = budget_units * landscape.units_to_ns
+
+    def _consider(candidate_cuts, candidate_placements):
+        nonlocal cuts, placements
+        if len(candidate_cuts) == 0:
+            return False
+        if _PLAN_RANK(candidate_cuts, landscape, budget_ns) < _PLAN_RANK(
+            cuts, landscape, budget_ns
+        ):
+            cuts, placements = candidate_cuts, candidate_placements
+            return True
+        return False
+
+    # Round 2+: re-plan against the equal-width boundaries this plan's own
+    # per-leaf cut counts imply, so the positions survive lowering unchanged
+    # instead of being relocated out from under the budget that chose them.
+    # Iterated to a fixed point (the per-leaf count is almost always 1 or 2,
+    # so this settles immediately); every round is ranked, so a round can
+    # only ever replace the incumbent with a strictly better plan.
+    seen_counts = []
+    for _ in range(3):
+        counts_by_inst = {}
+        for placement in placements:
+            if getattr(placement, "kind", None) == PipelinePlacement.BIT_INTERNAL:
+                counts_by_inst[placement.inst_path] = (
+                    counts_by_inst.get(placement.inst_path, 0) + 1
+                )
+        if not counts_by_inst or counts_by_inst in seen_counts:
+            break
+        seen_counts.append(dict(counts_by_inst))
+        _consider(
+            *_lower(
+                _LANDSCAPE_WITH_EQUAL_WIDTH_BIT_SITES(landscape, counts_by_inst)
+            )
+        )
+
+    # A restriction derived from one plan only explores that plan's own
+    # family, which leaves the result depending on where the first raster
+    # plan happened to land - two nearby goals could pick different families
+    # and the LOOSER goal end up with MORE registers (92 MHz took 26 cuts
+    # where 96 MHz's 23-cut plan met it too). The families that matter are
+    # few and structural ("split every wide leaf once", "twice"), so probe
+    # them directly and let the rank decide.
+    bit_insts = {
+        c.inst_path
+        for c in landscape.candidates
+        if isinstance(c, BitPlacementRequest)
+    }
+    if bit_insts:
+        for uniform_count in (1, 2):
+            _consider(
+                *_lower(
+                    _LANDSCAPE_WITH_EQUAL_WIDTH_BIT_SITES(
+                        landscape,
+                        {inst: uniform_count for inst in bit_insts},
+                    )
+                )
+            )
+
     if any(
         getattr(p, "kind", None) == PipelinePlacement.BIT_INTERNAL
         for p in placements
     ):
-        alt_cuts, alt_placements = _lower(_LANDSCAPE_WITHOUT_BIT_SITES(landscape))
-        if len(alt_cuts) > 0:
-            realized = PREDICTED_STAGE_NS(cuts, landscape)
-            alt_realized = PREDICTED_STAGE_NS(alt_cuts, landscape)
-            if (alt_realized, len(alt_cuts)) < (realized, len(cuts)):
-                cuts, placements = alt_cuts, alt_placements
+        _consider(*_lower(_LANDSCAPE_WITHOUT_BIT_SITES(landscape)))
 
     # Finally, never keep a register the plan did not earn. PLAN_CUTS'
     # pass 2 makes the stages as tight as a given cut COUNT allows; this is
@@ -1557,8 +1718,9 @@ def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
         )
         if len(relaxed_cuts) == 0:
             break
-        relaxed_realized = PREDICTED_STAGE_NS(relaxed_cuts, landscape)
-        if (relaxed_realized, len(relaxed_cuts)) < (realized, len(cuts)):
+        if _PLAN_RANK(relaxed_cuts, landscape, budget_ns) < _PLAN_RANK(
+            cuts, landscape, budget_ns
+        ):
             cuts, placements = relaxed_cuts, relaxed_placements
         else:
             break

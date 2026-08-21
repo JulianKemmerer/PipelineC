@@ -395,22 +395,81 @@ def test_bit_splitting_is_dropped_when_it_does_not_pay_once_realized():
     # for 3.9%, 11.8% and 51.3% and got the midpoint for all of them: 48
     # cuts whose REALIZED worst stage was 7.00ns, exactly what the 32-cut
     # boundary-only plan already achieved, for 16 extra register banks.
-    # A plan must never be kept when the boundary-only plan realizes at
-    # least as good a worst stage with no more cuts.
+    # A plan must never be kept when the boundary-only plan is better by
+    # SWEEP._PLAN_RANK - meet the goal first, then fewest cuts. Ranking on
+    # worst stage instead is itself a bug: it makes a 63-cut plan at 3.90ns
+    # beat a 47-cut plan at 5.20ns that already met the goal, which is what
+    # collapsed the whole 32..64 range onto 64 (see the test below).
     landscape = _build_divider_landscape()
     boundary_only = SWEEP._LANDSCAPE_WITHOUT_BIT_SITES(landscape)
     for mhz in (100, 135.5, 145, 167, 190, 214, 260):
         budget = (1000.0 / mhz) / UNITS_TO_NS
+        budget_ns = 1000.0 / mhz
         cuts, _placements = SWEEP.PLAN_PIPELINE_PLACEMENTS(landscape, budget)
         alt_cuts, _alt = SWEEP.PLAN_PIPELINE_PLACEMENTS(boundary_only, budget)
         if not alt_cuts:
             continue
-        got = (SWEEP.PREDICTED_STAGE_NS(cuts, landscape), len(cuts))
-        alt = (SWEEP.PREDICTED_STAGE_NS(alt_cuts, landscape), len(alt_cuts))
+        got = SWEEP._PLAN_RANK(cuts, landscape, budget_ns)
+        alt = SWEEP._PLAN_RANK(alt_cuts, landscape, budget_ns)
         assert got <= alt, (
-            f"{mhz}MHz: kept a bit-splitting plan realizing "
-            f"{got[0]:.2f}ns with {got[1]} cuts, when operation boundaries "
-            f"alone realize {alt[0]:.2f}ns with {alt[1]} cuts"
+            f"{mhz}MHz: kept a plan ranking {got}, when operation "
+            f"boundaries alone rank {alt} (lower is better)"
+        )
+
+
+def test_fmax_goal_can_ask_for_depths_between_the_structural_levels():
+    # The capability this whole planner exists to provide, and the one the
+    # divider lost twice over. One loop iteration is MINUS 3.851ns + MUX
+    # 3.268ns, so "one cut per iteration" (32) and "two" (64) are the levels
+    # that fall out for free - but a real plan exists in between: cut at
+    # MINUS's output, the NEXT MINUS's midpoint, then that MUX's output, 3
+    # cuts per 2 iterations, ~48 cuts at ~5.2ns.
+    #
+    # Reaching it needs both halves working: the bit site must be planned AT
+    # the equal-width boundary lowering will emit (otherwise it is relocated
+    # and the plan realizes 7.20ns, blowing the budget that chose it), and
+    # the plan must be ranked by "meets the goal, fewest cuts" rather than by
+    # raw worst stage (otherwise the 64-cut plan wins a goal already met).
+    # Merely emitting a depth in between is NOT enough and must not be what
+    # this asserts: the old planner emitted 33..48-cut plans whose realized
+    # worst stage was 7.00ns, identical to the 32-cut plan's - phase variants
+    # that spend registers and buy no speed. The intermediate depth has to be
+    # genuinely FASTER than the coarse level, and has to meet the goal that
+    # selected it.
+    landscape = _build_divider_landscape()
+    plans = {}
+    for mhz in range(60, 300, 2):
+        budget_ns = 1000.0 / mhz
+        cuts, _p = SWEEP.PLAN_PIPELINE_PLACEMENTS(
+            landscape, budget_ns / UNITS_TO_NS
+        )
+        plans[mhz] = (len(cuts), SWEEP.PREDICTED_STAGE_NS(cuts, landscape))
+    one_per_iteration = min(
+        (ns for n, ns in plans.values() if n <= 32), default=None
+    )
+    assert one_per_iteration is not None, plans
+    # "Faster" has to mean a MATERIAL step, not a rounding artifact. A phase
+    # variant of the one-cut-per-iteration plan lands within a raster unit or
+    # two of it (the old planner's best was 37 cuts at 7.10ns against the
+    # 32-cut plan's 7.20ns - 1.4% for 5 extra register banks). A genuine
+    # intermediate level is a different stage structure entirely: the
+    # MINUS-out / next-MINUS-midpoint / MUX-out plan realizes ~5.2ns, ~72% of
+    # the coarse level. Require the step to clear 10%.
+    useful = {
+        mhz: (n, ns)
+        for mhz, (n, ns) in plans.items()
+        if 33 <= n <= 62 and ns < one_per_iteration * 0.9
+    }
+    assert useful, (
+        "no pipeline depth between the 32- and 64-cut structural levels is "
+        "reachable AND materially faster than the 32-cut plan "
+        f"({one_per_iteration:.2f}ns); reachable (cuts, ns) were "
+        f"{sorted(set(plans.values()))}"
+    )
+    for mhz, (n, ns) in useful.items():
+        assert ns <= (1000.0 / mhz) + 1e-9, (
+            f"{mhz}MHz picked the {n}-cut intermediate plan but it realizes "
+            f"{ns:.2f}ns against a {1000.0 / mhz:.2f}ns budget"
         )
 
 if __name__ == "__main__":
@@ -424,4 +483,5 @@ if __name__ == "__main__":
     test_budget_just_above_one_iteration_cuts_on_the_boundary()
     test_parallel_branch_output_is_not_a_stage_boundary()
     test_bit_splitting_is_dropped_when_it_does_not_pay_once_realized()
+    test_fmax_goal_can_ask_for_depths_between_the_structural_levels()
     print("All PLAN_CUTS boundary-snap tests passed.")

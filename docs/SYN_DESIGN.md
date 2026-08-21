@@ -95,13 +95,16 @@ Registers physically exist in two forms:
      can end. The planner requests a fraction; the generator answers with the
      nearest equal-width boundary; those can differ a lot (§4: requests at
      3.9%, 11.8% and 51.3% of a 34-bit subtractor all became bit 17). Today
-     that mismatch is contained by judging plans on realized positions and
-     discarding ones that stop paying (§4), which is sufficient — the divider
-     acceptance above shows no equal-latency fmax regression. It is *not* a
-     demonstration that the constraint costs nothing: a leaf-split interface
-     that could honor a requested fraction might enable stage structures the
-     equal-width constraint currently forecloses. Settling that means
-     measuring both under the current model, not re-reading the note above.
+     the planner works *within* that contract: it re-plans against the exact
+     equal-width boundaries lowering will emit and ranks the results (§4).
+     That is enough to reach intermediate pipeline depths at all, and the
+     divider acceptance shows no equal-latency fmax regression. It is *not* a
+     demonstration that the constraint costs nothing — the intermediate level
+     it now reaches is itself suboptimal (48 slices at 164.69 MHz, below the
+     32-slice plan's 169.57 MHz), which is exactly the shape of result a
+     leaf-split interface able to honor a requested fraction might improve.
+     Settling that means measuring both under the current model, not
+     re-reading the note above.
    - `SPLIT_KIND_1LL` ("one logic level" — MUX/AND/OR/XOR/NOT/NEGATE/MULT):
      these generators (`stage_for_1ll`) always place the *whole* operation in
      exactly one stage no matter the latency — only the register *boundary*
@@ -541,19 +544,39 @@ asked for cuts at 3.9%, 11.8% and 51.3% of its subtractors and got the
 midpoint for all three. The stage structure the planner costed then does not
 exist, and the extra registers can buy nothing: at a 190 MHz goal that
 produced 48 cuts whose realized worst stage was 7.00 ns, identical to the
-32-cut boundary-only plan, for 16 more register banks. So
-`PLAN_PIPELINE_PLACEMENTS` also lowers the plan that uses only real operation
-boundaries (whose positions cannot move) and keeps whichever is better once
-realized — lower worst stage first, then fewer cuts — and finally re-plans at
-the worst stage actually achieved, keeping that result if it reaches the same
-speed with fewer cuts. Bit splitting survives whenever it genuinely pays and
-is dropped when it only looked like it would on the raster. The caller's
-budget can be unreachable (the goal sits below the design's floor), and then
-a tighter budget only buys register banks that shorten nothing.
+32-cut boundary-only plan, for 16 more register banks. So `PLAN_PIPELINE_PLACEMENTS` lowers several candidate plans and keeps the
+best, ranked by `_PLAN_RANK`:
 
-Note this *contains* the planner/generator mismatch rather than resolving it.
-Whether the equal-width constraint itself should stay is an open question —
-see the "Open question (2026-08-21)" note under `SPLIT_KIND_BITS` in §2.
+- the plan as first planned on the raster;
+- **re-planned against the equal-width boundaries its own per-leaf cut counts
+  imply** (`_LANDSCAPE_WITH_EQUAL_WIDTH_BIT_SITES`), iterated to a fixed
+  point — the per-leaf count is almost always 1 or 2, so it settles at once.
+  This is what stops a plan being relocated out from under the budget that
+  chose it;
+- the two *uniform* split families ("split every wide leaf once", "twice"),
+  probed directly. A restriction derived from one plan only explores that
+  plan's own family, which otherwise leaves the answer dependent on where the
+  first raster plan happened to land — two nearby goals could pick different
+  families and the **looser** goal end up with more registers;
+- the plan using only real operation boundaries, whose positions cannot move;
+- the incumbent re-planned at the worst stage it actually achieved, which
+  drops registers that shorten nothing when the caller's budget is
+  unreachable (the goal sits below the design's floor).
+
+`_PLAN_RANK` is **meet the budget first, then fewest cuts**, with worst stage
+deciding only when nothing meets it. Ranking on worst stage first is a bug
+that silently destroys every intermediate pipeline depth: a 47-cut plan at
+5.19 ns that comfortably meets a 190 MHz goal loses to a 63-cut plan at
+3.85 ns — 33% more registers to beat a target already met — which collapses
+the whole 32..64 range onto 64.
+
+Bit splitting therefore survives whenever it genuinely pays and is dropped
+when it only looked like it would on the raster.
+
+Note this makes the planner *honest about* the generator's equal-width
+contract rather than changing it. Whether that constraint itself should stay
+is an open question — see the "Open question (2026-08-21)" note under
+`SPLIT_KIND_BITS` in §2.
 
 `APPLY_PIPELINE_PLACEMENTS` lowers the selected types directly. After the
 pipeline map is rebuilt, `CHECK_PIPELINE_PLACEMENTS_REALIZED` verifies every
@@ -723,21 +746,40 @@ Measured on the first planned guess (`iter=1` is the same
 | 16 / 17 | 67.40 MHz | **68.09 MHz** | +1.0% |
 | 32 / 33 | 169.57 MHz | **169.57 MHz** | equal; placement-identical (32 MUX outputs, same units) |
 | 33 / 34 | 169.57 MHz | not produced | the 33rd cut measured zero gain — pure waste |
+| 48 / 49 | not produced | 164.69 MHz | new intermediate level, see below |
 | 64 / 65 | 164.69 MHz | **221.94 MHz** | +34.8% |
+| 65 / 66 | not produced | 221.94 MHz | |
 
-Goal-to-slice mapping, before → after: 69→16/16, 100→32/32, 135.5→32/32,
-167→33/**64**, 190→33/**64**, 214→33/**65**, 250→33/**65**, 284→64/65. The
-33-slice plateau spanning 167–250 MHz is gone.
+The accepted gate is **the 33-stage solution must maintain or improve**; it is
+equal, and no other measured latency regressed. Goal-to-slice mapping,
+before → after: 69→16/16, 100→32/32, 135.5→32/32, 167→33/**48**,
+190→33/**48**, 200→33/**64**, 214→33/**65**, 284→64/65. The 33-slice plateau
+spanning 167–250 MHz is gone.
 
-Note what this design does **not** have: a continuum between 32 and 64. One
-loop iteration is `BIN_OP_MINUS` 3.851 ns + `MUX_uint32_t` 3.268 ns =
-7.119 ns, and any stage holding the MUX plus any part of the next subtractor
-is ≥ 7.119 ns — so any goal below ~141 MHz-equivalent period needs two cuts
-per iteration. Intermediate slice counts are phase variants with the *same*
-worst stage, which is exactly what the old planner was emitting and what
-realized-plan judging now discards. "More latency variety" here means the
-goal maps monotonically onto the reachable levels (16/32/64/65), not that
-arbitrary depths exist.
+The reachable levels are structural, not arbitrary. One loop iteration is
+`BIN_OP_MINUS` 3.851 ns + `MUX_uint32_t` 3.268 ns = 7.119 ns, so "one cut per
+iteration" (32) and "two" (64) fall out for free. A real level sits between
+them — cut at a MINUS's output, the *next* MINUS's midpoint, then that MUX's
+output: 3 cuts per 2 iterations, **48**, predicted ~5.1 ns. Reaching it needs
+both halves of the plan/lower contract working (see "Landscape, segments, and
+typed candidates"): the bit site must be planned *at* the equal-width
+boundary lowering will emit, and plans must be ranked by `_PLAN_RANK` (meet
+the goal, then fewest cuts) rather than by raw worst stage.
+
+Do not confuse an intermediate level with a **phase variant**. The old
+planner emitted 33–48-slice plans whose realized worst stage was 7.00 ns —
+identical to the 32-slice plan's — registers spent for no speed. Those are
+what realized-plan judging discards. A genuine level is a different stage
+structure: 48 slices at ~5.1 ns is ~72% of the coarse level, where a phase
+variant sits within a raster unit of it.
+
+**The 48-slice plan is currently suboptimal and knowingly shipped that way**
+(measured 164.69 MHz, below the 32-slice plan's 169.57 MHz — more registers
+for less fmax). It was accepted because the requirement was to make the fmax
+goal *able to ask for* depths in between; only the 33-stage result was held
+to maintain-or-improve. Improving what the intermediate level actually
+achieves is open work, and the equal-width note in §2 is the first place to
+look.
 
 ### Floor
 
