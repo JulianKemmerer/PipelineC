@@ -35,6 +35,34 @@ class FakeTimingParams:
         self._slices = list(slices)
 
 
+class FakeAggregateParserState:
+    LogicInstLookupTable = {}
+    struct_to_field_type_dict = {
+        "wrapped_uint32_t": {"value": "uint32_t"},
+        "nested_t": {
+            "words": "uint8_t[4]",
+            "wrapped": "wrapped_uint32_t",
+        },
+    }
+    enum_info_dict = {}
+
+
+def make_mux_logic(func_name, c_type):
+    class MuxLogic:
+        inputs = ["cond", "iftrue", "iffalse"]
+        outputs = ["return_output"]
+        wire_to_c_type = {
+            "cond": "uint1_t",
+            "iftrue": c_type,
+            "iffalse": c_type,
+            "return_output": c_type,
+        }
+
+    logic = MuxLogic()
+    logic.func_name = func_name
+    return logic
+
+
 def test_split_kind_classification():
     cases = [
         ("BIN_OP_MINUS_uint34_t_uint34_t", RAW_VHDL.SPLIT_KIND_BITS),
@@ -55,7 +83,9 @@ def test_split_kind_classification():
         ("UNARY_OP_NEGATE_float_8_23_t", RAW_VHDL.SPLIT_KIND_1LL),
         ("MUX_uint32_t", RAW_VHDL.SPLIT_KIND_MUX_BITS),
         ("MUX_int17_t", RAW_VHDL.SPLIT_KIND_MUX_BITS),
-        ("MUX_float_8_23_t", RAW_VHDL.SPLIT_KIND_1LL),
+        ("MUX_float_8_23_t", RAW_VHDL.SPLIT_KIND_MUX_BITS),
+        ("MUX_wrapped_uint32_t", RAW_VHDL.SPLIT_KIND_MUX_BITS),
+        ("MUX_uint8_t_4", RAW_VHDL.SPLIT_KIND_MUX_BITS),
         ("BIN_OP_SL_uint32_t_uint5_t", RAW_VHDL.SPLIT_KIND_NONE),
         ("BIN_OP_SR_uint32_t_uint5_t", RAW_VHDL.SPLIT_KIND_NONE),
         ("BIN_OP_MOD_uint32_t_uint32_t", RAW_VHDL.SPLIT_KIND_NONE),
@@ -141,6 +171,34 @@ def test_integer_mux_exact_boundary_renders_stage_local_bit_chunks():
     assert "return_output := write_pipe.iftrue" not in body
 
 
+def test_aggregate_mux_width_and_slv_chunks():
+    parser_state = FakeAggregateParserState()
+    wrapped = make_mux_logic("MUX_wrapped_uint32_t", "wrapped_uint32_t")
+    nested = make_mux_logic("MUX_nested_t", "nested_t")
+    array = make_mux_logic("MUX_uint8_t_4", "uint8_t[4]")
+    assert RAW_VHDL.GET_MUX_DATA_WIDTH(wrapped, parser_state) == 32
+    assert RAW_VHDL.GET_LEAF_BIT_WIDTH(wrapped, parser_state) == 32
+    assert RAW_VHDL.GET_MUX_DATA_WIDTH(array, parser_state) == 32
+    assert RAW_VHDL.GET_MUX_DATA_WIDTH(nested, parser_state) == 64
+
+    tp = FakeTimingParams([0.5])
+    tp._exact_bit_boundaries = [16]
+    decl, body = (
+        RAW_VHDL.GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
+            wrapped, parser_state, tp
+        )
+    )
+    assert "return_output_slv : std_logic_vector(wrapped_uint32_t_SLV_LEN-1" in decl
+    assert "wrapped_uint32_t_to_slv(write_pipe.iftrue)" in body
+    assert "wrapped_uint32_t_to_slv(write_pipe.iffalse)" in body
+    assert "return_output_slv(15 downto 0)" in body
+    assert "return_output_slv(31 downto 16)" in body
+    assert (
+        "write_pipe.return_output := "
+        "slv_to_wrapped_uint32_t(write_pipe.return_output_slv);"
+    ) in body
+
+
 def test_bits_per_stage_dict_sum_and_balance_invariant_stress():
     # Random (num_bits, n_slices) combos within what a leaf's own width can
     # usefully support (n_slices <= num_bits - 1, the cap SWEEP.
@@ -169,5 +227,6 @@ if __name__ == "__main__":
     test_equal_width_split_balances_multiple_chunks()
     test_exact_bit_boundaries_emit_requested_uneven_chunks()
     test_integer_mux_exact_boundary_renders_stage_local_bit_chunks()
+    test_aggregate_mux_width_and_slv_chunks()
     test_bits_per_stage_dict_sum_and_balance_invariant_stress()
     print("All leaf split-model unit tests passed.")

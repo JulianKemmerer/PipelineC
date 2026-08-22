@@ -16,11 +16,10 @@ from pycparser import c_ast, c_parser  # bleh for now
 #  - SPLIT_KIND_BITS: the operator's own bit width can be partitioned across
 #    stages (PLUS/MINUS/EQ/NEQ/GT/GTE/LT/LTE/accum) - see
 #    GET_BITS_PER_STAGE_DICT, which does the actual split.
-#  - SPLIT_KIND_MUX_BITS: integer MUXes retain an atomic planner landscape,
-#    but typed same-depth refinement may split their output bits across
-#    stages to reduce select fanout.
-#  - SPLIT_KIND_1LL ("one logic level"): non-integer MUX/AND/OR/XOR/NOT/
-#    NEGATE/MULT.
+#  - SPLIT_KIND_MUX_BITS: MUXes retain an atomic planner landscape, but typed
+#    same-depth refinement may split the packed output bits of any supported
+#    scalar or aggregate data type across stages to reduce select fanout.
+#  - SPLIT_KIND_1LL ("one logic level"): AND/OR/XOR/NOT/NEGATE/MULT.
 #    Their generators (the repeated `stage_for_1ll`/`stage_for_op` pattern,
 #    e.g. GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT)
 #    always places the WHOLE operation in exactly one stage no matter the
@@ -95,12 +94,7 @@ def GET_LEAF_SPLIT_KIND(logic):
             return SPLIT_KIND_1LL
         return SPLIT_KIND_NONE
     if fn.startswith(C_TO_LOGIC.MUX_LOGIC_NAME):
-        if (
-            fn.startswith(C_TO_LOGIC.MUX_LOGIC_NAME + "_uint")
-            or fn.startswith(C_TO_LOGIC.MUX_LOGIC_NAME + "_int")
-        ):
-            return SPLIT_KIND_MUX_BITS
-        return SPLIT_KIND_1LL
+        return SPLIT_KIND_MUX_BITS
     if fn.startswith(C_TO_LOGIC.ACCUM_FUNC_NAME + "_"):
         return SPLIT_KIND_BITS
     return SPLIT_KIND_NONE
@@ -123,6 +117,30 @@ def LEAF_MAX_SPLIT_SLICES(logic):
     return None
 
 
+def GET_MUX_DATA_WIDTH(logic, parser_state):
+    """Return the canonical packed width of a raw-HDL MUX data bank.
+
+    MUX inputs may be scalar vectors, enums, arrays, structs, or arbitrary
+    nested combinations of those types.  The c_structs_pkg SLV conversion
+    contract is the single source of truth for their physical bit width.
+    """
+    data_wires = list(logic.inputs[1:]) + list(logic.outputs)
+    if len(logic.inputs[1:]) != 2 or not data_wires:
+        raise ValueError(f"Malformed MUX ports for {logic.func_name}")
+    widths = []
+    for wire in data_wires:
+        c_type = logic.wire_to_c_type.get(wire)
+        if c_type is None:
+            raise ValueError(f"MUX {logic.func_name} has no type for {wire}")
+        widths.append(VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(c_type, parser_state))
+    if len(set(widths)) != 1:
+        raise ValueError(
+            f"MUX {logic.func_name} data ports have different packed widths: "
+            f"{widths}"
+        )
+    return widths[0]
+
+
 def GET_LEAF_BIT_WIDTH(logic, parser_state):
     """Best-available proxy for a bit-splittable raw HDL leaf's own
     carry/comparison width - the same "widest input/output" every such
@@ -138,6 +156,9 @@ def GET_LEAF_BIT_WIDTH(logic, parser_state):
     interior zero-bit stages once GET_BITS_PER_STAGE_DICT actually
     allocates bits (a bare register around no logic, the same failure class
     SPLIT_KIND_1LL's own 2-slice cap above exists to prevent)."""
+    if GET_LEAF_SPLIT_KIND(logic) == SPLIT_KIND_MUX_BITS:
+        return GET_MUX_DATA_WIDTH(logic, parser_state)
+
     widths = []
     for wire in list(logic.inputs) + list(logic.outputs):
         c_type = logic.wire_to_c_type.get(wire)
@@ -3948,17 +3969,34 @@ def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
 """
     )
 
-    # MAx clocks is input reg and output reg
-    # max_clocks = 2
     latency = len(timing_params._slices)
     num_stages = latency + 1
-    chunked = (
-        latency > 0
-        and (VHDL.C_TYPE_IS_UINT_N(c_type) or VHDL.C_TYPE_IS_INT_N(c_type))
+    chunked = latency > 0
+    direct_vector = input_vhdl_type.startswith(
+        ("unsigned(", "signed(", "std_logic_vector(")
     )
     if chunked:
-        width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+        width = GET_MUX_DATA_WIDTH(logic, parser_state)
         bits_per_stage = GET_BITS_PER_STAGE_DICT(width, timing_params)
+        if not direct_vector:
+            packed_len = VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_STR(c_type, parser_state)
+            wires_decl_text += (
+                "  return_output_slv : std_logic_vector("
+                + packed_len
+                + "-1 downto 0);\n"
+                + "  iftrue_slv : std_logic_vector("
+                + packed_len
+                + "-1 downto 0);\n"
+                + "  iffalse_slv : std_logic_vector("
+                + packed_len
+                + "-1 downto 0);\n"
+            )
+            to_slv_toks = VHDL.VHDL_TYPE_TO_SLV_TOKS(
+                input_vhdl_type, parser_state
+            )
+            from_slv_toks = VHDL.VHDL_TYPE_FROM_SLV_TOKS(
+                input_vhdl_type, parser_state
+            )
         text = ""
         low = 0
         for stage in range(num_stages):
@@ -3966,17 +4004,44 @@ def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
             high = low + count - 1
             keyword = "if" if stage == 0 else "elsif"
             text += f"\n    {keyword} STAGE = {stage} then\n"
-            if stage == 0:
+            if stage == 0 and direct_vector:
                 text += "      write_pipe.return_output := (others => '0');\n"
-            if count > 0:
+            elif stage == 0:
                 text += (
-                    "      if write_pipe.cond=1 then\n"
-                    f"        write_pipe.return_output({high} downto {low}) := "
-                    f"write_pipe.iftrue({high} downto {low});\n"
-                    "      else\n"
-                    f"        write_pipe.return_output({high} downto {low}) := "
-                    f"write_pipe.iffalse({high} downto {low});\n"
-                    "      end if;\n"
+                    "      write_pipe.return_output_slv := (others => '0');\n"
+                    "      write_pipe.iftrue_slv := "
+                    + to_slv_toks[0]
+                    + "write_pipe.iftrue"
+                    + to_slv_toks[1]
+                    + ";\n"
+                    "      write_pipe.iffalse_slv := "
+                    + to_slv_toks[0]
+                    + "write_pipe.iffalse"
+                    + to_slv_toks[1]
+                    + ";\n"
+                )
+            if count > 0:
+                output_name = "return_output" if direct_vector else "return_output_slv"
+                true_name = "iftrue" if direct_vector else "iftrue_slv"
+                false_name = "iffalse" if direct_vector else "iffalse_slv"
+                text += "      if write_pipe.cond=1 then\n"
+                text += (
+                    f"        write_pipe.{output_name}({high} downto {low}) := "
+                    f"write_pipe.{true_name}({high} downto {low});\n"
+                )
+                text += "      else\n"
+                text += (
+                    f"        write_pipe.{output_name}({high} downto {low}) := "
+                    f"write_pipe.{false_name}({high} downto {low});\n"
+                )
+                text += "      end if;\n"
+            if stage == num_stages - 1 and not direct_vector:
+                text += (
+                    "      write_pipe.return_output := "
+                    + from_slv_toks[0]
+                    + "write_pipe.return_output_slv"
+                    + from_slv_toks[1]
+                    + ";\n"
                 )
             low += count
         text += "    end if;\n"

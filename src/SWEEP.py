@@ -1803,10 +1803,10 @@ def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
 
 
 def BUILD_CHUNKED_MUX_REFINEMENT(placements, landscape, parser_state):
-    """Replace selected integer-MUX output banks with bit-chunk banks.
+    """Replace selected packed-MUX output banks with bit-chunk banks.
 
     The replacement has the same local latency, but halves the load seen by
-    each stage's select.  Also split the terminal integer MUX when it was the
+    each stage's select.  Also split the terminal packed MUX when it was the
     deliberately unregistered tail of the plan; this costs one additional
     slice and prevents the output-only tail from retaining the old full
     fanout.  Nothing here recognizes a design or function name beyond the
@@ -1815,7 +1815,7 @@ def BUILD_CHUNKED_MUX_REFINEMENT(placements, landscape, parser_state):
     placements = list(placements)
     segments = {segment.inst_path: segment for segment in landscape.segments}
 
-    def is_integer_mux_output(placement):
+    def is_chunkable_mux_output(placement):
         if not isinstance(placement, PipelinePlacement):
             return False
         if placement.kind != PipelinePlacement.INSTANCE_OUTPUT:
@@ -1828,9 +1828,9 @@ def BUILD_CHUNKED_MUX_REFINEMENT(placements, landscape, parser_state):
             == RAW_VHDL.SPLIT_KIND_MUX_BITS
         )
 
-    selected_mux_outputs = [p for p in placements if is_integer_mux_output(p)]
+    selected_mux_outputs = [p for p in placements if is_chunkable_mux_output(p)]
     mux_candidates = [
-        p for p in landscape.candidates if is_integer_mux_output(p)
+        p for p in landscape.candidates if is_chunkable_mux_output(p)
     ]
     if not selected_mux_outputs or not mux_candidates:
         return None
@@ -1844,7 +1844,7 @@ def BUILD_CHUNKED_MUX_REFINEMENT(placements, landscape, parser_state):
         p
         for p in placements
         if not (
-            is_integer_mux_output(p) and p.inst_path in targets
+            is_chunkable_mux_output(p) and p.inst_path in targets
         )
     ]
     for inst_path, output in sorted(
@@ -2676,7 +2676,7 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
     os.makedirs(out_dir, exist_ok=True)
     trace_path = os.path.join(out_dir, "placement_trace.json")
     trace = {
-        "schema_version": 3,
+        "schema_version": 4,
         "planner": "typed_physical_placement",
         "internal_forced_mode": (
             None if internal_config is None else internal_config.get("mode")
@@ -2789,7 +2789,7 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
             "planning_sites": planning_sites,
             "iterations": plan.placement_iterations,
             "same_depth_refinement": {
-                "chunked_integer_mux_attempted": (
+                "chunked_mux_attempted": (
                     plan.chunked_mux_refinement_attempted
                 ),
                 "final_active_kind": plan.active_placement_refinement,
@@ -3885,7 +3885,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     ):
                         # Before spending another full synthesis on more
                         # stages, try the bounded physical neighbor which
-                        # replaces selected integer-MUX output banks with a
+                        # replaces selected packed-MUX output banks with a
                         # midpoint bit boundary.  The terminal MUX is included
                         # so a formerly unregistered tail does not retain the
                         # same high-fanout select path.  Delay-scale feedback
@@ -3928,13 +3928,13 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 not in plan.attempted_placement_fingerprints
                             ):
                                 plan.pending_placement_refinement = {
-                                    "kind": "chunked_integer_mux",
+                                    "kind": "chunked_mux",
                                     "fingerprint": candidate_fingerprint,
                                     "subtrees": refined_subtrees,
                                 }
                                 plan.stopped_reason = None
                                 action = (
-                                    "refine(chunked integer MUX boundaries)"
+                                    "refine(chunked MUX boundaries)"
                                 )
                                 made_change = True
                     if not met and plan.placement_mode == "replace":

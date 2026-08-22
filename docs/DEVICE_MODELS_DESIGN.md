@@ -201,6 +201,21 @@ this feature (PyRTL included, unchanged), width-keyed only for
 `DEVICE_MODELS`. `--mux_delay_by_width` / `--no_mux_delay_by_width` force
 either, for any tool, for direct A/B measurement.
 
+In width-keyed mode the key describes physical packed width, not the source
+type name: every N-bit integer, signed value, float, enum, array, struct, or
+nested aggregate MUX reads and writes `MUX_uintN_t.delay` and its
+`MUX_uintN_t.timing.json` sidecar. Built-in MUXes remain cacheable when their
+ports carry a user-defined type; unrelated user functions retain the normal
+non-cacheable policy. If several cold typed MUX entities resolve to the same
+key during one compiler run, only one representative synthesis is launched
+and its timing report is propagated to the equivalent logic objects. Collapsed
+mode continues to use the single `mux` key exactly as before.
+
+This canonicalization changed neither `DEVICE_MODELS.py`, model V4, timing
+coefficients, the liberty data, nor the cache-directory identity: an N-bit
+typed MUX is the same isolated MUX bank already represented by the existing
+integer key, rather than a new timing model.
+
 ### Cache-key versioning
 
 `SYN.GET_PATH_DELAY_CACHE_DIR` appends library + corner + `DEVICE_MODELS.MODEL_VERSION`
@@ -393,12 +408,19 @@ did not edit `DEVICE_MODELS.py`, its coefficients, the liberty pack, recipe,
 or model V4. It confirmed that the former 49-stage first guess maps to only
 164.69 MHz between 169.57 MHz at 33 stages and 221.94 MHz at 65 stages.
 Whole-design critical paths, not changes to this STA, led to the generic
-chunked-integer-MUX refinement now documented in
+chunked-MUX refinement now documented in
 [`SYN_DESIGN.md`](SYN_DESIGN.md#budget-to-latency-continuity-result-2026-08-21):
 a normal 180 MHz sweep returns 50 stages at 194.22 MHz and passes the exact
 final-VHDL functional test. This is also direct evidence for the limitation
 below: the isolated subtract boundary with the best modeled fmax became one
 of the worst full-Divider schedules once flattened fanout was present.
+
+The follow-up one-field-struct Divider check began with an empty cache and
+reproduced the same 49-slice/50-stage, 194.2227 MHz result. Its typed 32-bit
+MUX measurement populated `MUX_uint32_t.delay` plus the canonical timing
+sidecar and no struct-named entry, while all 141 functional vectors passed.
+That test validates cache/type canonicalization without changing the frozen
+model.
 
 ### Historical calibration corpus (pre-early-flatten)
 
@@ -486,14 +508,14 @@ build), before the `-fast` fix was even found.
   concave shape above is still worth knowing as context for why splitting
   helps at all and why gains taper off with more stages; it just isn't
   something the bit-allocation decision needs to fit a curve to.
-- **Integer-MUX bit chunking is deliberately feedback-only in the planned
+- **Packed-MUX bit chunking is deliberately feedback-only in the planned
   sweep.** A 1-bit MUX select versus a 32-bit one carries different measured
   delay here (`MUX_uint1_t` 0.983 ns versus `MUX_uint32_t` 3.268 ns), and the
-  new raw generator can split the output bank. The initial landscape remains
-  atomic to preserve its proven fewest-stage geometry; after a whole-design
-  miss, one bounded midpoint-chunk neighbor is tried. This separation is
-  intentional because isolated-leaf ranking did not predict full-design
-  fanout QoR.
+  raw generator can split the packed output bank for scalars and aggregates.
+  The initial landscape remains atomic to preserve its proven fewest-stage
+  geometry; after a whole-design miss, one bounded midpoint-chunk neighbor is
+  tried. This separation is intentional because isolated-leaf ranking did not
+  predict full-design fanout QoR.
 - **No net/interconnect delay.** Matches the sky130 flows measured against
   (all report zero net delay), but is therefore a pre-PnR estimate, not a
   post-route number — say so plainly wherever this tool's output is surfaced.

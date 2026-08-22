@@ -4339,6 +4339,35 @@ def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
     return PATH_DELAY_CACHE_DIR
 
 
+def LOGIC_IS_BUILT_IN_MUX(logic):
+    return logic.is_c_built_in and logic.func_name.startswith(
+        C_TO_LOGIC.MUX_LOGIC_NAME
+    )
+
+
+def LOGIC_PATH_DELAY_IS_CACHEABLE(logic, parser_state):
+    """Measured built-in MUXes are reusable even when their packed data
+    type is user-defined.  Other user-code entities retain the existing
+    no-disk-cache policy."""
+    return LOGIC_IS_BUILT_IN_MUX(logic) or not IS_USER_CODE(logic, parser_state)
+
+
+def CLAIM_MUX_PATH_DELAY_SYNTH_OWNER(
+    logic, parser_state, cache_key_to_owner
+):
+    """Claim one cold synthesis owner for a canonical packed-MUX key.
+
+    Returns ``(None, None)`` for non-MUX logic.  Equivalent typed MUXes get
+    the first claimant's function name so ADD_PATH_DELAY_TO_LOOKUP can share
+    its AsyncResult without launching a duplicate synthesis.
+    """
+    if not LOGIC_IS_BUILT_IN_MUX(logic):
+        return None, None
+    cache_key = GET_CACHED_LOGIC_FILE_KEY(logic, parser_state)
+    owner = cache_key_to_owner.setdefault(cache_key, logic.func_name)
+    return cache_key, owner
+
+
 def GET_CACHED_LOGIC_FILE_KEY(logic, parser_state):
     # Default sanity
     key = logic.func_name
@@ -4351,7 +4380,7 @@ def GET_CACHED_LOGIC_FILE_KEY(logic, parser_state):
     # unchanged) for every tool that predates it, width-keyed only for
     # DEVICE_MODELS; --mux_delay_by_width/--no_mux_delay_by_width force
     # either, for any tool, for A/B measurement.
-    is_mux = logic.is_c_built_in and logic.func_name.startswith(C_TO_LOGIC.MUX_LOGIC_NAME)
+    is_mux = LOGIC_IS_BUILT_IN_MUX(logic)
     mux_collapsed = False
     if is_mux:
         by_width = MUX_DELAY_KEY_BY_WIDTH
@@ -4361,6 +4390,12 @@ def GET_CACHED_LOGIC_FILE_KEY(logic, parser_state):
 
     if mux_collapsed:
         key = "mux"
+    elif is_mux:
+        # A 2:1 MUX over any N-bit packed type is physically the same bank as
+        # MUX_uintN_t.  Canonicalizing signed, float, enum, array, and struct
+        # names lets every representation share the existing integer cache.
+        width = RAW_VHDL.GET_MUX_DATA_WIDTH(logic, parser_state)
+        key = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_uint{width}_t"
     else:
         # MEM has var name - weird yo
         if SW_LIB.IS_MEM(logic):
@@ -4826,9 +4861,10 @@ def SET_MEASURED_DELAY_FROM_REPORT(logic, parsed_timing_report, parser_state):
     # Make adjustment for 0 LLs to have 0 delay
     if (SYN_TOOL is VIVADO) and path_report.logic_levels == 0:
         logic.delay = 0
-    # Cache delay syn result if not user code
+    # Cache delay syn result if not user code, or if this is a built-in MUX
+    # whose user type has a canonical packed-width cache identity.
     # (never cache estimated delays - cache holds measured values only)
-    if not IS_USER_CODE(logic, parser_state):
+    if LOGIC_PATH_DELAY_IS_CACHEABLE(logic, parser_state):
         filepath = GET_CACHED_PATH_DELAY_FILE_PATH(logic, parser_state)
         PATH_DELAY_CACHE_DIR = GET_PATH_DELAY_CACHE_DIR(parser_state)
         if not os.path.exists(PATH_DELAY_CACHE_DIR):
@@ -4970,6 +5006,8 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
     )
     my_thread_pool = ThreadPool(processes=NUM_PROCESSES)
     func_name_to_async_result = {}
+    func_name_to_async_owner = {}
+    mux_cache_key_to_async_owner = {}
     func_names_done_so_far = set()
     # Hierarchical funcs deferred for delay estimation from submodule delays
     # instead of a real syn run (leaf-only syn mode). funcs_to_synth is bottom
@@ -5049,14 +5087,29 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                 # and MEASURE_DELAYS() is the fallback when estimates are off.
                 funcs_to_estimate.append(logic_func_name)
             else:
-                # Run real syn in parallel
-                print("Synthesizing function:", logic.func_name, flush=True)
-                # Start Syn
-                my_async_result = my_thread_pool.apply_async(
-                    SYN_TOOL.SYN_AND_REPORT_TIMING,
-                    (inst_name, logic, parser_state, TimingParamsLookupTable),
+                cache_key, owner = CLAIM_MUX_PATH_DELAY_SYNTH_OWNER(
+                    logic, parser_state, mux_cache_key_to_async_owner
                 )
-                func_name_to_async_result[logic_func_name] = my_async_result
+                if owner is not None and owner != logic_func_name:
+                    func_name_to_async_result[logic_func_name] = (
+                        func_name_to_async_result[owner]
+                    )
+                    func_name_to_async_owner[logic_func_name] = owner
+                    print(
+                        f"Sharing MUX path-delay synthesis for {logic.func_name} "
+                        f"with {owner} (cache key {cache_key})",
+                        flush=True,
+                    )
+                else:
+                    # Run real syn in parallel
+                    print("Synthesizing function:", logic.func_name, flush=True)
+                    # Start Syn
+                    my_async_result = my_thread_pool.apply_async(
+                        SYN_TOOL.SYN_AND_REPORT_TIMING,
+                        (inst_name, logic, parser_state, TimingParamsLookupTable),
+                    )
+                    func_name_to_async_result[logic_func_name] = my_async_result
+                    func_name_to_async_owner[logic_func_name] = logic_func_name
         else:
             func_names_done_so_far.add(logic_func_name)
 
@@ -5071,7 +5124,8 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
             print(
                 f"Function {len(func_names_done_so_far)}/{len(funcs_to_synth)}, elapsed time {str(datetime.timedelta(seconds=(timer() - START_TIME)))}..."
             )
-            print("...Waiting on synthesis for:", logic_func_name, flush=True)
+            owner = func_name_to_async_owner[logic_func_name]
+            print("...Waiting on synthesis for:", owner, flush=True)
             # TODO better than simple loop doing .get() on each and waiting some
             parsed_timing_report = my_async_result.get()
             SET_MEASURED_DELAY_FROM_REPORT(logic, parsed_timing_report, parser_state)

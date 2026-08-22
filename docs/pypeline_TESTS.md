@@ -195,7 +195,7 @@ Each category module can also run standalone, e.g.
   checks as the main Divider harness.
 
   The accepted midpoint mechanism first measures the 48-slice/49-stage control
-  at 164.69 MHz, then tries one generic chunked-integer-MUX neighbor and returns
+  at 164.69 MHz, then tries one generic chunked-MUX neighbor and returns
   49 slices / 50 stages at 194.22 MHz. Negative A/B evidence is retained for
   all exact subtract boundaries, periodic phase variants, stage-local ripple
   borrow, and chunking without the terminal MUX. `--plans-only`, `--continue`,
@@ -206,5 +206,29 @@ Each category module can also run standalone, e.g.
   fragments in `_DUPLICATE_<hash>` names while keeping the entity hash fixed.
   The harness canonicalizes only that ordering for placement deduplication;
   actual VHDL hashes and immutable mapped bytes are never canonicalized.
+- `src/tests/pypeline_tests/divider_struct_mux_bench.py` -- focused opt-in
+  verification of generic packed-MUX lowering and canonical delay caching. Its
+  arithmetic fixture wraps `left_eff` and the loop-carried `remainder` in a
+  one-field 32-bit struct while leaving ports, arithmetic, quotient behavior,
+  and the 180 MHz goal unchanged. Run it with an empty caller-selected output
+  directory (the harness creates an isolated empty path-delay cache inside):
+
+  ```text
+  python3 src/tests/pypeline_tests/divider_struct_mux_bench.py \
+    --out_dir /media/1TB/tmp/divider_struct_mux
+  ```
+
+  The acceptance requires 49 slices / 50 stages, timing met within 1% of the
+  194.22 MHz plain-integer result, schema-4 trace evidence for 32-bit midpoint
+  splitting including the terminal wrapper MUX, all 141 functional vectors,
+  complete mapped topology, and only the canonical `MUX_uint32_t.delay` plus
+  timing sidecar in the cache. The accepted run measured 194.2227 MHz and
+  recorded 17 wrapper-MUX chunk placements. `--continue` reuses completed
+  evidence and `--diagnostic` prints failures without changing the verdict.
+
+  Fast unit tests separately cover recursive packed widths, aggregate SLV
+  rendering/reconstruction, scalar and aggregate cache-key equivalence,
+  collapsed-mode compatibility, and the exception that makes built-in typed
+  MUXes cacheable while leaving unrelated user functions non-cacheable.
 - `src/tests/c_tests/test_builds.sh` -- legacy smoke-build script for the C frontend
   (`.c` designs under `examples/`), independent of this Python suite.

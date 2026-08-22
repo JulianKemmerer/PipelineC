@@ -36,8 +36,8 @@ lowering backstop:
 | kind | current operations | generated structure |
 |---|---|---|
 | `SPLIT_KIND_BITS` | `PLUS`, `MINUS`, `EQ`, `NEQ`, `GT`, `GTE`, `LT`, `LTE`, accumulator | genuinely partitions the operator's bit work across stages |
-| `SPLIT_KIND_MUX_BITS` | integer mux | partitions the output bit-vector when a physical bit placement is selected, while remaining atomic in the initial planner landscape |
-| `SPLIT_KIND_1LL` | non-integer mux, bitwise `AND`/`OR`/`XOR`, `NOT`, `NEGATE`, multiply | keeps the whole operation in one stage and moves registers to its boundaries |
+| `SPLIT_KIND_MUX_BITS` | every built-in mux | partitions the packed output bits when a physical bit placement is selected, while remaining atomic in the initial planner landscape |
+| `SPLIT_KIND_1LL` | bitwise `AND`/`OR`/`XOR`, `NOT`, `NEGATE`, multiply | keeps the whole operation in one stage and moves registers to its boundaries |
 | `SPLIT_KIND_NONE` | zero-delay bit manipulation, casts and other unsupported interiors | accepts no pipeline slice |
 
 These are implementation facts, not estimates. Timing measurements may
@@ -63,7 +63,7 @@ boundary group in `TimingParams._exact_bit_boundaries`. The group, not merely
 its fractional projection in `_slices`, participates in copying, validation,
 entity hashing, lowering, and placement traces. This internal mechanism can
 emit uneven chunks without changing the legacy equal-width behavior. It is
-used by controlled QoR experiments and by the bounded integer-MUX refinement
+used by controlled QoR experiments and by the bounded packed-MUX refinement
 described below.
 
 `GET_LEAF_BIT_WIDTH` gives the planner the same widest-input/output width the
@@ -74,16 +74,31 @@ zero-bit stage. Leading or trailing zero-bit work can be meaningful when it
 represents an operation-boundary register; an empty stage in the interior is
 padding and is not legal.
 
-## Integer MUX bit chunks and one-logic-level leaves
+## Packed MUX bit chunks and one-logic-level leaves
 
-An integer `MUX_uintN_t`/`MUX_intN_t` with one or more local slices emits only
-the selected output bit chunk in each stage and carries the partial result
-through the normal leaf pipeline record. This is a genuine logic split: each
-stage's one-bit select drives only its chunk rather than the complete output
-bank. The initial landscape still treats the MUX interior as atomic so the
-fewest-stage planner retains the established operation-boundary geometry.
-After a full-design timing miss, the sweep may try one typed midpoint-chunk
-neighbor before selecting a denser schedule.
+Every built-in MUX uses `SPLIT_KIND_MUX_BITS`. Its width is the packed width
+defined by `c_structs_pkg`, recursively covering integers, floats, enums,
+arrays, structs, and nested combinations. A MUX with one or more local slices
+emits only the selected packed bit chunk in each stage and carries the partial
+result through the normal leaf pipeline record. This is a genuine logic split:
+each stage's one-bit select drives only its chunk rather than the complete
+output bank.
+
+Unsigned, signed, and plain `std_logic_vector` data retain the direct vector
+lowering. For a composite or named user type, stage 0 converts both alternatives
+with the generated `<type>_to_slv` function, the stages select their assigned
+SLV ranges, and the final stage reconstructs the result with
+`slv_to_<type>`. The condition, packed alternatives, and partial packed result
+are ordinary pipeline-record fields, so the normal wire-alignment machinery
+carries them across the leaf stages. The conversion preserves the canonical
+`c_structs_pkg` field/element packing order; the splitter does not invent a
+second type layout.
+
+The initial landscape still treats a MUX interior as atomic so the fewest-stage
+planner retains the established operation-boundary geometry. After a
+full-design timing miss, the sweep may try one typed midpoint-chunk neighbor
+before selecting a denser schedule. The exact/equal boundary rules are shared
+with integer MUXes; no user-type-specific placement rule is involved.
 
 The repeated `stage_for_1ll`/`stage_for_op` generators put all of a 1LL
 operation in exactly one stage. With one slice, the fraction chooses which
@@ -91,8 +106,8 @@ side of the operation is registered. With two slices, the operation sits
 between input and output registers. A third slice cannot shorten the logic,
 so `LEAF_MAX_SPLIT_SLICES` caps these leaves at two and the typed planner
 normally exposes their useful output boundary directly. This remains the
-contract for non-integer MUXes and the other 1LL operations; changing their
-classification alone would only add padding registers.
+contract for the remaining 1LL operations. MUXes do not use this generator
+path once pipelined; they use the packed-bit lowering above.
 
 ## Operation-boundary lowering
 
@@ -113,7 +128,8 @@ useful metadata and a tie-break, not a requirement for finding stages.
 
 Fast tests under `src/tests/pypeline_tests/inst/` cover leaf split
 classification, the 1LL cap, width caps, equal-width and exact allocation,
-typed bit-internal placement, chunked integer-MUX refinement, and the absence
+typed bit-internal placement, chunked packed-MUX refinement, composite
+SLV conversion/reconstruction, and the absence
 of padding-only interior stages. Any
 new generator or classification change should add both structure assertions
 and a generated-VHDL elaboration/simulation case. Real sky130 comparisons are

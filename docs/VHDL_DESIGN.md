@@ -72,11 +72,22 @@ their consumer runs. An operation-output placement creates a register at that
 instance boundary; values which remain live across it are delayed through the
 same pipeline map. A genuine bit-internal placement delegates the split to
 the raw leaf generator. Exact placements carry their integer boundary group
-through `TimingParams`; integer MUX leaves can therefore render a different
-output bit chunk in each local stage while the pipeline map aligns their
-condition/data inputs and partial output. These cases remain distinct through
-lowering, so an output boundary does not get recursively pushed into every
-descendant.
+through `TimingParams`; every built-in MUX can therefore render a different
+packed output bit chunk in each local stage while the pipeline map aligns its
+condition, data inputs, and partial output. Integer/signed/vector MUXes select
+their native vectors directly. Composite MUXes use the generated
+`<type>_to_slv` functions at stage 0 and `slv_to_<type>` after the final
+chunk, so structs, arrays, enums, floats, and nested combinations use the same
+canonical packed layout as all other VHDL connections. These cases remain
+distinct through lowering, so an output boundary does not get recursively
+pushed into every descendant.
+
+The SLV alternatives and partial result are fields of the raw leaf's pipeline
+record. They consequently participate in the same register transfer and live
+wire alignment as native typed values. Slice coordinates, exact packed-bit
+boundaries, and the composite type all remain part of entity hashing; two
+typed entities may share a width-keyed timing-cache result without becoming
+the same VHDL entity or losing their type-specific conversion functions.
 
 `TimingParams._has_input_regs` and `_has_output_regs` implement entity
 boundary registers. They participate in latency, hashing, clock/clock-enable
@@ -169,3 +180,10 @@ slices / 50 stages, passed all 141 vectors at 49-cycle latency, and remapped
 to 194.22 MHz from the same VHDL bytes. Its machine-readable evidence lives
 under the benchmark's caller-selected output directory rather than in the
 normal test suite.
+
+`divider_struct_mux_bench.py` applies the same immutable-byte check after
+wrapping the Divider's loop-carried 32-bit values in a struct. The emitted
+composite-MUX VHDL compiles and simulates all 141 vectors, and the exact
+49-slice snapshot remaps to 194.2227 MHz. This specifically exercises the
+stage-0 pack, two stage-local SLV selections, final unpack, and ordinary
+pipeline-map alignment rather than merely testing the scalar MUX path again.

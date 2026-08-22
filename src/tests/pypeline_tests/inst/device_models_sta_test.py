@@ -10,6 +10,7 @@ import hashlib
 import os
 import sys
 import tempfile
+from types import SimpleNamespace
 
 sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
@@ -22,6 +23,32 @@ import SYN
 
 DFF = "sky130_fd_sc_hvl__dfxtp_1"
 INV = "sky130_fd_sc_hvl__inv_1"
+
+
+class _MuxCacheParserState:
+    part = DEVICE_MODELS.SELECTED_LIBRARY
+    struct_to_field_type_dict = {
+        "wrapped_uint32_t": {"value": "uint32_t"},
+    }
+    enum_info_dict = {
+        "state32_t": SimpleNamespace(int_c_type="uint32_t"),
+    }
+
+
+def _mux_logic(func_name, c_type):
+    logic = C_TO_LOGIC.Logic()
+    logic.func_name = func_name
+    logic.is_c_built_in = True
+    logic.inputs = ["cond", "iftrue", "iffalse"]
+    logic.outputs = ["return_output"]
+    logic.wires = []
+    logic.wire_to_c_type = {
+        "cond": "uint1_t",
+        "iftrue": c_type,
+        "iffalse": c_type,
+        "return_output": c_type,
+    }
+    return logic
 
 
 def _run_fixture(module):
@@ -227,6 +254,91 @@ def test_syn_disk_caches_are_recipe_scoped():
     assert production_path != flatten_path
     assert comb_planner_suffix == "__comb_planner_v1"
     assert comb_planner_suffix in comb_planner_path, comb_planner_path
+
+
+def test_mux_cache_keys_canonicalize_packed_types_by_width():
+    parser_state = _MuxCacheParserState()
+    same_width = [
+        _mux_logic("MUX_uint32_t", "uint32_t"),
+        _mux_logic("MUX_int32_t", "int32_t"),
+        _mux_logic("MUX_float_8_23_t", "float_8_23_t"),
+        _mux_logic("MUX_state32_t", "state32_t"),
+        _mux_logic("MUX_uint8_t_4", "uint8_t[4]"),
+        _mux_logic("MUX_wrapped_uint32_t", "wrapped_uint32_t"),
+    ]
+    different_width = _mux_logic("MUX_uint16_t", "uint16_t")
+    old_tool = SYN.SYN_TOOL
+    old_override = SYN.MUX_DELAY_KEY_BY_WIDTH
+    try:
+        SYN.SYN_TOOL = DEVICE_MODELS
+        SYN.MUX_DELAY_KEY_BY_WIDTH = True
+        keys = {
+            SYN.GET_CACHED_LOGIC_FILE_KEY(logic, parser_state)
+            for logic in same_width
+        }
+        assert keys == {"MUX_uint32_t"}, keys
+        assert (
+            SYN.GET_CACHED_LOGIC_FILE_KEY(different_width, parser_state)
+            == "MUX_uint16_t"
+        )
+        assert SYN.LOGIC_PATH_DELAY_IS_CACHEABLE(same_width[-1], parser_state)
+
+        owners = {}
+        first_key, first_owner = SYN.CLAIM_MUX_PATH_DELAY_SYNTH_OWNER(
+            same_width[0], parser_state, owners
+        )
+        for equivalent in same_width[1:]:
+            key, owner = SYN.CLAIM_MUX_PATH_DELAY_SYNTH_OWNER(
+                equivalent, parser_state, owners
+            )
+            assert (key, owner) == (first_key, first_owner)
+        assert owners == {"MUX_uint32_t": same_width[0].func_name}
+
+        user_logic = C_TO_LOGIC.Logic()
+        user_logic.func_name = "user_struct_func"
+        user_logic.is_c_built_in = False
+        user_logic.inputs = ["i"]
+        user_logic.outputs = ["return_output"]
+        user_logic.wires = []
+        user_logic.wire_to_c_type = {
+            "i": "wrapped_uint32_t",
+            "return_output": "wrapped_uint32_t",
+        }
+        assert not SYN.LOGIC_PATH_DELAY_IS_CACHEABLE(user_logic, parser_state)
+
+        SYN.MUX_DELAY_KEY_BY_WIDTH = False
+        assert {
+            SYN.GET_CACHED_LOGIC_FILE_KEY(logic, parser_state)
+            for logic in same_width + [different_width]
+        } == {"mux"}
+    finally:
+        SYN.SYN_TOOL = old_tool
+        SYN.MUX_DELAY_KEY_BY_WIDTH = old_override
+
+
+def test_struct_mux_reads_plain_uint_cache_entry():
+    parser_state = _MuxCacheParserState()
+    struct_mux = _mux_logic("MUX_wrapped_uint32_t", "wrapped_uint32_t")
+    old_tool = SYN.SYN_TOOL
+    old_override = SYN.MUX_DELAY_KEY_BY_WIDTH
+    original_cache_dir = SYN.GET_PATH_DELAY_CACHE_DIR
+    with tempfile.TemporaryDirectory(prefix="pipelinec_mux_cache_unit_") as td:
+        try:
+            SYN.SYN_TOOL = DEVICE_MODELS
+            SYN.MUX_DELAY_KEY_BY_WIDTH = True
+            SYN.GET_PATH_DELAY_CACHE_DIR = (
+                lambda parser_state, dir_name="path_delay_cache": td
+            )
+            with open(os.path.join(td, "MUX_uint32_t.delay"), "w") as f:
+                f.write("3.25\n")
+            assert SYN.GET_CACHED_PATH_DELAY(struct_mux, parser_state) == 3.25
+            assert SYN.GET_CACHED_PATH_DELAY_FILE_PATH(
+                struct_mux, parser_state
+            ).endswith("/MUX_uint32_t.delay")
+        finally:
+            SYN.SYN_TOOL = old_tool
+            SYN.MUX_DELAY_KEY_BY_WIDTH = old_override
+            SYN.GET_PATH_DELAY_CACHE_DIR = original_cache_dir
 
 
 def test_planner_component_weight_is_optional_and_deepcopied():

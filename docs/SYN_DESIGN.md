@@ -91,12 +91,14 @@ Registers physically exist in two forms:
      violation. Local leaf optimality therefore did not predict flattened
      whole-design QoR, and exact subtract boundaries were retained as an
      internal mechanism rather than made the ordinary allocation policy.
-   - `SPLIT_KIND_MUX_BITS` (integer MUX): the initial landscape deliberately
+   - `SPLIT_KIND_MUX_BITS` (every built-in MUX): the initial landscape deliberately
      exposes only the normal operation-output boundary. A typed physical
-     placement may split the output bit-vector, however, making each stage's
-     select drive only that chunk. This is the mechanism used by the bounded
-     same-depth-neighbor refinement below.
-   - `SPLIT_KIND_1LL` ("one logic level" — non-integer MUX/AND/OR/XOR/NOT/NEGATE/MULT):
+     placement may split the packed output bits, however, making each stage's
+     select drive only that chunk. Aggregate data uses the generated
+     `c_structs_pkg` SLV conversion functions around the stage-local selection.
+     This is the mechanism used by the bounded same-depth-neighbor refinement
+     below.
+   - `SPLIT_KIND_1LL` ("one logic level" — AND/OR/XOR/NOT/NEGATE/MULT):
      these generators (`stage_for_1ll`) always place the *whole* operation in
      exactly one stage no matter the latency — only the register *boundary*
      moves. Latency 1 puts the op in stage 0 or 1 depending on which side of
@@ -423,7 +425,7 @@ leaf-most **segments**:
 - `sliceable_1ll` — `SPLIT_KIND_1LL` and the initial-planner view of
   `SPLIT_KIND_MUX_BITS`; the operation-output boundary is legal and the
   interior blames like `atomic`. Ordinary planning therefore cannot waste a
-  2nd/3rd cut inside one 1LL operation. Integer MUXes have a separate,
+  2nd/3rd cut inside one 1LL operation. Built-in MUXes have a separate,
   genuinely bit-chunked lowering, but only the bounded physical-neighbor
   refinement opts into it after whole-design timing says the output-boundary
   schedule is poor.
@@ -643,14 +645,15 @@ planner fills long remaining intervals. Unmatched or ambiguous selectors fail
 loudly. This exists for controlled physical-placement A/B tests and must not
 become a Divider-name rule or public slice-cap option.
 
-Every planned run writes `<out>/top/placement_trace.json`. Trace schema 3 keeps
+Every planned run writes `<out>/top/placement_trace.json`. Trace schema 4 keeps
 concrete output `candidates` separate from nonphysical bit `planning_sites`.
 Per-iteration and final selections contain only physical placements; a bit
 selection records its emitted width, boundary, split ordinal/count,
 bits-per-stage, boundary mode/group, requested raster coordinate, actual
 axis/local coordinate, and realization status. The trace also records
-per-iteration physical fingerprints and whether the one bounded
-chunked-integer-MUX refinement was attempted, plus instance/function metadata,
+per-iteration physical fingerprints and whether the one bounded generic
+chunked-MUX refinement was attempted (`same_depth_refinement.chunked_mux_attempted`),
+plus instance/function metadata,
 estimated registered bits, internal forced mode, boundary-register type, and
 local stage assignment. A `locked_instances` entry separately records every
 coarse mini-sweep compatibility lock, including its internal slices, input/
@@ -785,8 +788,8 @@ Its controlled results were:
 
 The promoted response is generic. After a full-design timing miss, before a
 denser landscape plan is synthesized, the sweep constructs at most one
-physical neighbor: each selected integer-MUX output bank becomes one exact
-midpoint bit boundary, and the last candidate integer MUX is included to
+physical neighbor: each selected built-in MUX output bank becomes one exact
+midpoint packed-bit boundary, and the last candidate MUX is included to
 remove a formerly unsplit tail. Selected output banks retain one clock of
 local latency; the terminal split costs one additional slice. Physical
 fingerprints prevent duplicate synthesis. If the neighbor fails, the already
@@ -803,6 +806,16 @@ the 64-slice/65-stage endpoint remains 221.94 MHz because neither renders a
 bit-chunked MUX. Thus the accepted returned sequence is approximately
 169.57 → 194.22 → 221.94 MHz at 33 → 50 → 65 stages, with meaningful gains
 on both depth increases instead of a flat intermediate plateau.
+
+The generic lowering was subsequently checked with the Divider's 32-bit
+loop-carried values wrapped in a one-field user struct. The normal 180 MHz
+sweep, starting from an empty temporary path-delay cache, took the same route:
+the 48-slice control missed, then the packed-MUX neighbor returned 49 slices /
+50 stages at **194.2227 MHz**. The immutable VHDL passed the same 141-vector
+test at 49-cycle latency. Trace schema 4 recorded 17 wrapper-MUX midpoint
+placements (including the terminal refinement), and cache output contained
+only canonical `MUX_uint32_t.delay` and `MUX_uint32_t.timing.json` files.
+There is no wrapper-type cache filename or Divider-specific production rule.
 
 ### Floor
 
@@ -927,7 +940,7 @@ The history dumps to `<out_dir>/<top>/sweep_history.json`, one record per
           |
           no
           |
-   unused chunked-integer-MUX physical neighbor available?
+   unused chunked-MUX physical neighbor available?
           |-- yes --> try it once before any denser schedule
           |           (selected output banks -> midpoint chunks + terminal MUX)
           |-- no/failed --> continue with ordinary feedback below
@@ -957,7 +970,7 @@ The history dumps to `<out_dir>/<top>/sweep_history.json`, one record per
 compact repeated-helper solution before global densification skips past it:
 
 1. before synthesizing the denser plan, try one fingerprint-deduplicated
-   chunked-integer-MUX neighbor when the current schedule contains such
+   chunked-MUX neighbor when the current schedule contains such
    operation-output boundaries; if it fails, retain the feedback calculated
    for the ordinary next step;
 2. densify cuts in the attributed func (`func_delay_scale`) — replan;
@@ -1694,15 +1707,16 @@ cheaper early levels get priced the same as the expensive final one?
 The constant shift beside each stage is pure rewiring (`CONST_SL/SR_<n>_<type>`
 built-ins, zero delay, PY_TO_LOGIC.py:4293-4311) -- so a barrel shifter is
 *exactly* a chain of raw-HDL `MUX_<type>` leaf entities and nothing else
-(PY_TO_LOGIC.py:3573-3592). And **every mux in a design shares one cached
-delay, regardless of width or type**:
-`GET_CACHED_LOGIC_FILE_KEY` (SYN.py:3930-3932) collapses the cache key to the
-literal string `"mux"` ("Mux is same delay no matter type"); measured value
-`path_delay_cache/pyrtl_20nm_0ff/syn/mux.delay` = 1.640 ns for every mux in
-the repo. A `MUX` entity is also exactly one logic level
-(RAW_VHDL.py:3703-3730, "Which stage gets the 1 LL?"). So stage pricing
-*is* uniform -- but for a chain of genuinely identical muxes that is
-correct, not a mispricing: there is no analogue of the multiplier's
+(PY_TO_LOGIC.py:3573-3592). Under the PyRTL tool used by this investigation,
+**every mux in a design shares one cached delay, regardless of width or
+type**: `GET_CACHED_LOGIC_FILE_KEY` uses the collapsed literal key `"mux"`,
+and the measured `path_delay_cache/pyrtl_20nm_0ff/syn/mux.delay` value is
+1.640 ns for every width. (`DEVICE_MODELS` instead canonicalizes by packed
+width; see `DEVICE_MODELS_DESIGN.md`.) An unsplit MUX is one logic level and
+the initial landscape treats it atomically; the later bounded packed-bit
+refinement is feedback-only and was not active in these PyRTL barrel results.
+So initial stage pricing *is* uniform -- but for a chain of genuinely
+identical muxes that is correct, not a mispricing: there is no analogue of the multiplier's
 narrower-early-level structure to expose, and splitting a stage into a
 narrower "active" sub-mux plus a wide passthrough (as a narrow analogy to
 the multiplier's per-level-width fix would suggest) prices *worse* --
