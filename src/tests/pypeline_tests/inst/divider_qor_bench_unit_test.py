@@ -11,6 +11,7 @@ import io
 import json
 import os
 from pathlib import Path
+import sys
 import tempfile
 from types import SimpleNamespace
 
@@ -20,6 +21,14 @@ BENCH = HERE.parent / "divider_qor_bench.py"
 SPEC = importlib.util.spec_from_file_location("divider_qor_bench", BENCH)
 bench = importlib.util.module_from_spec(SPEC)
 SPEC.loader.exec_module(bench)
+sys.modules.setdefault("divider_qor_bench", bench)
+
+CONTINUITY_BENCH = HERE.parent / "divider_continuity_bench.py"
+CONTINUITY_SPEC = importlib.util.spec_from_file_location(
+    "divider_continuity_bench", CONTINUITY_BENCH
+)
+continuity = importlib.util.module_from_spec(CONTINUITY_SPEC)
+CONTINUITY_SPEC.loader.exec_module(continuity)
 
 
 def test_depth_and_timing_parsers_use_slice_stage_semantics():
@@ -339,6 +348,123 @@ def test_new_runs_reject_nonempty_evidence_and_generator_manifest_mismatch():
             assert "does not match" in str(exc)
         else:
             raise AssertionError("mismatched generator manifest was trusted")
+
+
+def test_continuity_source_derivation_changes_only_clock_assignment():
+    source = "before\nCLK_RATE_MHZ = 135.5\nafter\n"
+    derived = continuity._derive_source(source, 180.0)
+    assert derived == "before\nCLK_RATE_MHZ = 180\nafter\n"
+    try:
+        continuity._derive_source("no clock here\n", 180.0)
+    except ValueError as exc:
+        assert "expected one" in str(exc)
+    else:
+        raise AssertionError("source without CLK_RATE_MHZ was accepted")
+
+
+def test_continuity_fingerprint_ignores_known_duplicate_name_order_only():
+    def trace(path, duplicate_name):
+        Path(path).write_text(
+            json.dumps(
+                {
+                    "mains": {
+                        "solution": {
+                            "final_selected": [
+                                {
+                                    "kind": "bit_internal",
+                                    "instance_path": duplicate_name,
+                                    "function": "BIN_OP_MINUS_uint34_t_uint34_t",
+                                    "axis_unit": 42,
+                                    "bit_width": 34,
+                                    "bit_boundary": 17,
+                                    "realized": True,
+                                }
+                            ]
+                        }
+                    }
+                }
+            )
+            + "\n"
+        )
+
+    with tempfile.TemporaryDirectory() as td:
+        a = Path(td) / "a.json"
+        b = Path(td) / "b.json"
+        trace(a, "x_py_l35_l34_DUPLICATE_abcd")
+        trace(b, "x_py_l34_l35_DUPLICATE_1234")
+        fp_a, placements_a = continuity.placement_fingerprint(a)
+        fp_b, placements_b = continuity.placement_fingerprint(b)
+        assert fp_a == fp_b
+        assert placements_a == placements_b
+        assert placements_a[0]["instance_path"] == "x_py_l34_l35_DUPLICATE"
+
+
+def test_continuity_acceptance_enforces_monotonic_depth_and_real_mid_gain():
+    physical = {
+        "stage_semantics": True,
+        "mapping_succeeded": True,
+        "zero_unmapped_cells": True,
+        "complete_timing_topology": True,
+        "timing_recipe_matches": True,
+        "timing_model_identity_matches": True,
+        "timing_vhdl_bytes_match_snapshot": True,
+    }
+
+    def plan(goal, stages, fmax):
+        value = {
+            "goal_mhz": goal,
+            "slices": stages - 1,
+            "stages": stages,
+            "placement_fingerprint": f"p{stages}",
+        }
+        mapping = {
+            "metrics": {"fmax_mhz": fmax},
+            "functional": {"passed": True},
+            "mapping_checks": physical,
+        }
+        return value, {**value, "mapping": mapping}
+
+    low_plan, low_map = plan(135.5, 33, 170.0)
+    mid_plan, mid_map = plan(180.0, 49, 190.0)
+    high_plan, high_map = plan(210.0, 65, 223.0)
+    sweeps = []
+    for plan_value, mapped_value in (
+        (low_plan, low_map),
+        (mid_plan, mid_map),
+        (high_plan, high_map),
+    ):
+        sweeps.append(
+            {
+                **plan_value,
+                "build": {"returncode": 0},
+                "exact_final": mapped_value["mapping"],
+            }
+        )
+    result = continuity._acceptance(
+        [low_plan, mid_plan, high_plan],
+        [low_map, mid_map, high_map],
+        sweeps,
+        model_unchanged=True,
+    )
+    assert result["passed"], result
+
+    regressed_sweeps = [dict(value) for value in sweeps]
+    regressed_sweeps[1] = {
+        **regressed_sweeps[1],
+        "exact_final": {
+            **regressed_sweeps[1]["exact_final"],
+            "metrics": {"fmax_mhz": 164.7},
+        },
+    }
+    result = continuity._acceptance(
+        [low_plan, mid_plan, high_plan],
+        [low_map, mid_map, high_map],
+        regressed_sweeps,
+        model_unchanged=True,
+    )
+    assert not result["checks"]["automatic_fmax_nondecreasing_with_depth"]
+    assert not result["checks"]["deeper_automatic_schedule_has_meaningful_gain"]
+    assert not result["checks"]["midpoint_at_least_10_percent_above_low"]
 
 
 if __name__ == "__main__":

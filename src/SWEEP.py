@@ -31,6 +31,7 @@ intentionally never attempted).
 """
 
 import copy
+import hashlib
 import json
 import bisect
 import math
@@ -232,6 +233,8 @@ class PipelinePlacement:
         bit_split_ordinal=None,
         bit_split_count=None,
         bit_boundary=None,
+        bit_boundary_mode="equal_width",
+        bit_boundaries=None,
         leaf_axis_start=None,
         leaf_axis_end=None,
         requested_axis_unit=None,
@@ -259,6 +262,10 @@ class PipelinePlacement:
             bit_split_ordinal = int(bit_split_ordinal)
             bit_split_count = int(bit_split_count)
             bit_boundary = int(bit_boundary)
+            if bit_boundary_mode not in ("equal_width", "exact"):
+                raise ValueError(
+                    f"Unknown bit-boundary mode: {bit_boundary_mode}"
+                )
             if bit_width <= 0 or bit_split_count <= 0:
                 raise ValueError(
                     f"Invalid physical bit split width/count: "
@@ -269,14 +276,32 @@ class PipelinePlacement:
                     f"Invalid physical bit split ordinal "
                     f"{bit_split_ordinal}/{bit_split_count}"
                 )
-            expected_boundaries = RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(
-                bit_width, bit_split_count
-            )
+            if bit_boundary_mode == "exact":
+                if bit_boundaries is None:
+                    raise ValueError(
+                        "Exact BIT_INTERNAL placement requires bit_boundaries"
+                    )
+                expected_boundaries = tuple(int(b) for b in bit_boundaries)
+                if (
+                    len(expected_boundaries) != bit_split_count
+                    or expected_boundaries != tuple(sorted(set(expected_boundaries)))
+                    or any(b <= 0 or b >= bit_width for b in expected_boundaries)
+                ):
+                    raise ValueError(
+                        f"Invalid exact bit-boundary group {expected_boundaries} "
+                        f"for {bit_width}-bit leaf"
+                    )
+            else:
+                expected_boundaries = tuple(
+                    RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(
+                        bit_width, bit_split_count
+                    )
+                )
             expected_boundary = expected_boundaries[bit_split_ordinal - 1]
             if bit_boundary != expected_boundary:
                 raise ValueError(
                     f"BIT_INTERNAL boundary {bit_boundary} does not match "
-                    f"equal-width boundary {expected_boundary} for ordinal "
+                    f"{bit_boundary_mode} boundary {expected_boundary} for ordinal "
                     f"{bit_split_ordinal}/{bit_split_count} of {bit_width} bits"
                 )
             expected_local_slice = bit_boundary / float(bit_width)
@@ -334,6 +359,10 @@ class PipelinePlacement:
         self.bit_split_ordinal = bit_split_ordinal
         self.bit_split_count = bit_split_count
         self.bit_boundary = bit_boundary
+        self.bit_boundary_mode = bit_boundary_mode
+        self.bit_boundaries = (
+            None if bit_boundaries is None else tuple(int(b) for b in bit_boundaries)
+        )
         self.leaf_axis_start = leaf_axis_start
         self.leaf_axis_end = leaf_axis_end
         self.requested_axis_unit = requested_axis_unit
@@ -348,11 +377,16 @@ class PipelinePlacement:
     def bits_per_stage(self):
         if self.kind != self.BIT_INTERNAL:
             return None
-        return tuple(
-            RAW_VHDL.GET_EQUAL_WIDTH_BITS_PER_STAGE_DICT(
-                self.bit_width, self.bit_split_count
-            ).values()
-        )
+        if self.bit_boundary_mode == "exact":
+            previous = 0
+            chunks = []
+            for boundary in self.bit_boundaries + (self.bit_width,):
+                chunks.append(boundary - previous)
+                previous = boundary
+            return tuple(chunks)
+        return tuple(RAW_VHDL.GET_EQUAL_WIDTH_BITS_PER_STAGE_DICT(
+            self.bit_width, self.bit_split_count
+        ).values())
 
     @property
     def candidate_id(self):
@@ -408,6 +442,12 @@ class PipelinePlacement:
                 {
                     "bit_width": self.bit_width,
                     "bit_boundary": self.bit_boundary,
+                    "bit_boundary_mode": self.bit_boundary_mode,
+                    "bit_boundaries": (
+                        None
+                        if self.bit_boundaries is None
+                        else list(self.bit_boundaries)
+                    ),
                     "bit_split_ordinal": self.bit_split_ordinal,
                     "bit_split_count": self.bit_split_count,
                     "bits_per_stage": list(self.bits_per_stage),
@@ -960,7 +1000,11 @@ def BUILD_SLICE_LANDSCAPE(
                     split_kind = RAW_VHDL.GET_LEAF_SPLIT_KIND(sub_logic)
                     seg_kind = (
                         Segment.SLICEABLE_1LL
-                        if split_kind == RAW_VHDL.SPLIT_KIND_1LL
+                        if split_kind
+                        in (
+                            RAW_VHDL.SPLIT_KIND_1LL,
+                            RAW_VHDL.SPLIT_KIND_MUX_BITS,
+                        )
                         else Segment.SLICEABLE
                     )
                     seg = Segment(child_inst, sub_logic.func_name, s, e, seg_kind)
@@ -1190,7 +1234,7 @@ def _GREEDY_CUTS(landscape, budget, required_units, op_output_units=None):
 
 
 def PLAN_CUTS(landscape, budget_units, required_units=None):
-    """Place cuts along the landscape, in two passes.
+    """Place cuts along the landscape, in three passes.
 
     Pass 1 (``_GREEDY_CUTS``) finds the fewest cuts K that keep every stage
     within the budget. Pass 2 then binary-searches the SMALLEST budget W that
@@ -1200,6 +1244,9 @@ def PLAN_CUTS(landscape, budget_units, required_units=None):
     non-increasing in W, so the predicate is monotone and the search is valid;
     ``hi`` only moves down when the predicate holds, so the returned plan
     always satisfies it.
+
+    Pass 3 prefers an operation-output position when doing so preserves both
+    the tightened budget and cut count.
 
     Pass 2 is not polish, it is what makes pass 1 safe to use. Pass 1 alone
     minimizes the cut COUNT but not the worst stage AT that count, and the
@@ -1267,7 +1314,7 @@ def PLAN_CUTS(landscape, budget_units, required_units=None):
         # 34-bit subtractor instead. Guarded by the cut count so it can
         # never trade registers for tidiness: an op boundary is taken only
         # when preferring them costs no extra cuts, which is what keeps the
-        # intermediate plans (the whole point of the two passes above) from
+        # intermediate plans (the whole point of the first two passes) from
         # collapsing back onto operation boundaries.
         preferred = _GREEDY_CUTS(
             landscape,
@@ -1320,7 +1367,9 @@ def _PLACEMENT_RANK_KEY(placement):
     )
 
 
-def MATERIALIZE_BIT_PLACEMENT_REQUESTS(placements, landscape):
+def MATERIALIZE_BIT_PLACEMENT_REQUESTS(
+    placements, landscape, exact_requested=False
+):
     """Convert provisional bit raster sites to emitted equal-width boundaries.
 
     RAW VHDL chooses bit chunks from the final number of slices in a leaf, not
@@ -1374,7 +1423,22 @@ def MATERIALIZE_BIT_PLACEMENT_REQUESTS(placements, landscape):
             )
         leaf_start = starts.pop()
         leaf_end = ends.pop()
-        boundaries = RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(width, count)
+        if exact_requested:
+            # Honor the planner's requested physical coordinates.  Clamp in
+            # sorted order so every chunk retains at least one bit even when
+            # two nearby raster requests round to the same integer boundary.
+            boundaries = []
+            for index, request in enumerate(requests):
+                remaining = count - index - 1
+                boundary = int(round(request.requested_local_slice * width))
+                minimum = 1 if not boundaries else boundaries[-1] + 1
+                maximum = width - remaining - 1
+                boundaries.append(max(minimum, min(maximum, boundary)))
+            boundary_mode = "exact"
+        else:
+            boundaries = RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(width, count)
+            boundary_mode = "equal_width"
+        boundary_group = tuple(boundaries)
         for ordinal, (request, boundary) in enumerate(
             zip(requests, boundaries), start=1
         ):
@@ -1409,6 +1473,10 @@ def MATERIALIZE_BIT_PLACEMENT_REQUESTS(placements, landscape):
                     bit_split_ordinal=ordinal,
                     bit_split_count=count,
                     bit_boundary=boundary,
+                    bit_boundary_mode=boundary_mode,
+                    bit_boundaries=(
+                        boundary_group if exact_requested else None
+                    ),
                     leaf_axis_start=leaf_start,
                     leaf_axis_end=leaf_end,
                     requested_axis_unit=request.axis_unit,
@@ -1565,7 +1633,7 @@ def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
             )
         fixed_by_unit.setdefault(placement.axis_unit, []).append(placement)
 
-    def _lower_at(view, budget):
+    def _lower_at(view, budget, exact_requested=False):
         cuts = PLAN_CUTS(
             view,
             budget,
@@ -1596,7 +1664,9 @@ def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
                     continue
                 used_ids.add(placement.candidate_id)
                 placements.append(placement)
-        placements = MATERIALIZE_BIT_PLACEMENT_REQUESTS(placements, view)
+        placements = MATERIALIZE_BIT_PLACEMENT_REQUESTS(
+            placements, view, exact_requested=exact_requested
+        )
         # Bit boundaries can move from their provisional raster crossing to
         # the actual equal-width bit boundary. Return/report the physical
         # axis units, never the nominal request units PLAN_CUTS used to
@@ -1606,6 +1676,11 @@ def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
 
     def _lower(view):
         return _lower_at(view, budget_units)
+
+    if os.environ.get("PIPELINEC_INTERNAL_EXACT_REQUESTED_BITS") == "1":
+        return _lower_at(
+            landscape, budget_units, exact_requested=True
+        )
 
     cuts, placements = _lower(landscape)
 
@@ -1727,6 +1802,115 @@ def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
     return cuts, placements
 
 
+def BUILD_CHUNKED_MUX_REFINEMENT(placements, landscape, parser_state):
+    """Replace selected integer-MUX output banks with bit-chunk banks.
+
+    The replacement has the same local latency, but halves the load seen by
+    each stage's select.  Also split the terminal integer MUX when it was the
+    deliberately unregistered tail of the plan; this costs one additional
+    slice and prevents the output-only tail from retaining the old full
+    fanout.  Nothing here recognizes a design or function name beyond the
+    generic raw-HDL MUX split kind.
+    """
+    placements = list(placements)
+    segments = {segment.inst_path: segment for segment in landscape.segments}
+
+    def is_integer_mux_output(placement):
+        if not isinstance(placement, PipelinePlacement):
+            return False
+        if placement.kind != PipelinePlacement.INSTANCE_OUTPUT:
+            return False
+        logic = parser_state.LogicInstLookupTable.get(placement.inst_path)
+        return (
+            logic is not None
+            and len(logic.submodule_instances) == 0
+            and RAW_VHDL.GET_LEAF_SPLIT_KIND(logic)
+            == RAW_VHDL.SPLIT_KIND_MUX_BITS
+        )
+
+    selected_mux_outputs = [p for p in placements if is_integer_mux_output(p)]
+    mux_candidates = [
+        p for p in landscape.candidates if is_integer_mux_output(p)
+    ]
+    if not selected_mux_outputs or not mux_candidates:
+        return None
+    targets = {p.inst_path: p for p in selected_mux_outputs}
+    terminal = max(
+        mux_candidates, key=lambda p: (p.axis_position, p.candidate_id)
+    )
+    targets.setdefault(terminal.inst_path, terminal)
+
+    refined = [
+        p
+        for p in placements
+        if not (
+            is_integer_mux_output(p) and p.inst_path in targets
+        )
+    ]
+    for inst_path, output in sorted(
+        targets.items(), key=lambda item: item[1].axis_position
+    ):
+        logic = parser_state.LogicInstLookupTable[inst_path]
+        width = RAW_VHDL.GET_LEAF_BIT_WIDTH(logic, parser_state)
+        segment = segments.get(inst_path)
+        if width is None or width < 2 or segment is None:
+            return None
+        boundary = int(round(width / 2.0))
+        local_slice = boundary / float(width)
+        axis_position = segment.start + local_slice * (
+            segment.end - segment.start
+        )
+        refined.append(
+            PipelinePlacement(
+                PipelinePlacement.BIT_INTERNAL,
+                inst_path,
+                logic.func_name,
+                int(math.ceil(axis_position)) - 1,
+                axis_position,
+                local_slice=local_slice,
+                registered_bits=width,
+                hierarchy_depth=output.hierarchy_depth,
+                span_units=output.span_units,
+                coherent_boundary=False,
+                ancestor_funcs=output.ancestor_funcs,
+                fixed=False,
+                source="same_depth_mux_refinement",
+                bit_width=width,
+                bit_split_ordinal=1,
+                bit_split_count=1,
+                bit_boundary=boundary,
+                bit_boundary_mode="exact",
+                bit_boundaries=(boundary,),
+                leaf_axis_start=segment.start,
+                leaf_axis_end=segment.end,
+            )
+        )
+    refined.sort(key=lambda p: (p.axis_position, p.candidate_id))
+    old_ids = tuple(p.candidate_id for p in placements)
+    new_ids = tuple(p.candidate_id for p in refined)
+    if new_ids == old_ids:
+        return None
+    return sorted(set(p.axis_unit for p in refined)), refined
+
+
+def PIPELINE_PLACEMENT_FINGERPRINT(placements_by_subtree):
+    """Return a deterministic identity for one realized physical schedule."""
+    fields = []
+    for subtree_root, placements in sorted(placements_by_subtree.items()):
+        fields.append(subtree_root)
+        fields.extend(
+            placement.candidate_id
+            for placement in sorted(
+                placements,
+                key=lambda placement: (
+                    placement.axis_position,
+                    placement.candidate_id,
+                ),
+            )
+        )
+    return hashlib.sha256("\n".join(fields).encode("utf-8")).hexdigest()
+
+
 # Intentionally not a command-line/source interface.  The opt-in QoR harness
 # uses this hook to pin known physical placements for controlled A/B builds.
 INTERNAL_PLACEMENT_FILE_ENV = "PIPELINEC_INTERNAL_PLACEMENT_FILE"
@@ -1753,7 +1937,12 @@ def LOAD_INTERNAL_PLACEMENT_CONFIG(environ=None):
         raise ValueError(f"Internal placement mode must be seed or replace: {mode}")
     selectors = config.get("selectors", [])
     exact = config.get("placements", [])
-    if not isinstance(selectors, list) or not isinstance(exact, list):
+    exact_bit_groups = config.get("exact_bit_boundaries", [])
+    if (
+        not isinstance(selectors, list)
+        or not isinstance(exact, list)
+        or not isinstance(exact_bit_groups, list)
+    ):
         raise ValueError("Internal placement selectors/placements must be lists")
     # Exact candidate IDs use the same resolver and therefore get identical
     # unmatched/ambiguous checking.
@@ -1763,14 +1952,26 @@ def LOAD_INTERNAL_PLACEMENT_CONFIG(environ=None):
                 "Each internal placements[] entry requires candidate_id"
             )
         selectors.append(dict(item))
-    if not selectors:
+    for item in exact_bit_groups:
+        if (
+            not isinstance(item, dict)
+            or "instance_path" not in item
+            or "boundaries" not in item
+            or not isinstance(item["boundaries"], list)
+        ):
+            raise ValueError(
+                "Each internal exact_bit_boundaries[] entry requires an "
+                "instance_path and a boundaries list"
+            )
+    if not selectors and not exact_bit_groups:
         raise ValueError(
             "Internal placement request must contain at least one selector "
-            "or exact placement"
+            "or exact bit-boundary group"
         )
     config = dict(config)
     config["mode"] = mode
     config["selectors"] = selectors
+    config["exact_bit_boundaries"] = exact_bit_groups
     config["source_path"] = os.path.abspath(path)
     return config
 
@@ -1905,6 +2106,122 @@ def RESOLVE_INTERNAL_PIPELINE_PLACEMENTS(config, plans, parser_state):
                 fixed=selector.get("fixed", True), source="internal_forced"
             )
             bucket = resolved[plan.main_inst].setdefault(subtree_root, {})
+            bucket[selected.candidate_id] = selected
+
+    # Exact physical bit groups deliberately bypass the provisional raster
+    # resolver.  They remain an internal experiment interface: the caller
+    # must name a single elaborated raw-HDL leaf, while this resolver obtains
+    # its legal width and delay-axis span from the normal candidate inventory.
+    for group_i, spec in enumerate(config.get("exact_bit_boundaries", ())):
+        unknown = set(spec) - {"instance_path", "boundaries", "fixed"}
+        if unknown:
+            raise ValueError(
+                f"Unknown exact bit-boundary field(s): {sorted(unknown)}"
+            )
+        inst_path = spec["instance_path"]
+        boundaries = tuple(int(boundary) for boundary in spec["boundaries"])
+        raster_templates = []
+        output_templates = []
+        seen_raster_locations = set()
+        seen_output_locations = set()
+        for plan, subtree_root, _main_func, _subtree_func, placement in inventory:
+            if placement.inst_path != inst_path:
+                continue
+            location = (plan.main_inst, subtree_root)
+            if isinstance(placement, BitPlacementRequest):
+                if location in seen_raster_locations:
+                    continue
+                seen_raster_locations.add(location)
+                raster_templates.append((plan, subtree_root, placement))
+            elif (
+                isinstance(placement, PipelinePlacement)
+                and placement.kind == PipelinePlacement.INSTANCE_OUTPUT
+            ):
+                logic = parser_state.LogicInstLookupTable.get(inst_path)
+                if (
+                    logic is None
+                    or RAW_VHDL.GET_LEAF_SPLIT_KIND(logic)
+                    != RAW_VHDL.SPLIT_KIND_MUX_BITS
+                    or location in seen_output_locations
+                ):
+                    continue
+                seen_output_locations.add(location)
+                output_templates.append((plan, subtree_root, placement))
+        templates = raster_templates or output_templates
+        if len(templates) != 1:
+            raise ValueError(
+                f"Internal exact bit-boundary group {group_i} for {inst_path} "
+                f"matched {len(templates)} bit-splittable leaves; expected one"
+            )
+        plan, subtree_root, template = templates[0]
+        if isinstance(template, BitPlacementRequest):
+            width = template.bit_width
+            leaf_axis_start = template.leaf_axis_start
+            leaf_axis_end = template.leaf_axis_end
+        else:
+            width = RAW_VHDL.GET_LEAF_BIT_WIDTH(
+                parser_state.LogicInstLookupTable[inst_path], parser_state
+            )
+            matching_segments = [
+                segment
+                for segment in plan.landscapes[subtree_root].segments
+                if segment.inst_path == inst_path
+            ]
+            if len(matching_segments) != 1:
+                raise ValueError(
+                    f"Internal exact bit-boundary group {group_i} for "
+                    f"{inst_path} matched {len(matching_segments)} segments; "
+                    "expected one"
+                )
+            leaf_axis_start = matching_segments[0].start
+            leaf_axis_end = matching_segments[0].end
+        if (
+            width is None
+            or not boundaries
+            or boundaries != tuple(sorted(set(boundaries)))
+            or any(boundary <= 0 or boundary >= width for boundary in boundaries)
+        ):
+            raise ValueError(
+                f"Invalid exact bit boundaries {boundaries} for {width}-bit "
+                f"leaf {inst_path}"
+            )
+        count = len(boundaries)
+        bucket = resolved[plan.main_inst].setdefault(subtree_root, {})
+        for ordinal, boundary in enumerate(boundaries, start=1):
+            local_slice = boundary / float(width)
+            axis_position = leaf_axis_start + local_slice * (
+                leaf_axis_end - leaf_axis_start
+            )
+            selected = PipelinePlacement(
+                PipelinePlacement.BIT_INTERNAL,
+                inst_path,
+                template.func_name,
+                int(math.ceil(axis_position)) - 1,
+                axis_position,
+                local_slice=local_slice,
+                registered_bits=(
+                    width
+                    if template.registered_bits is None
+                    else template.registered_bits
+                ),
+                hierarchy_depth=template.hierarchy_depth,
+                span_units=template.span_units,
+                coherent_boundary=template.coherent_boundary,
+                ancestor_funcs=template.ancestor_funcs,
+                fixed=spec.get("fixed", True),
+                source="internal_exact",
+                bit_width=width,
+                bit_split_ordinal=ordinal,
+                bit_split_count=count,
+                bit_boundary=boundary,
+                bit_boundary_mode="exact",
+                bit_boundaries=boundaries,
+                leaf_axis_start=leaf_axis_start,
+                leaf_axis_end=leaf_axis_end,
+                requested_axis_unit=None,
+                requested_axis_position=None,
+                requested_local_slice=None,
+            )
             bucket[selected.candidate_id] = selected
 
     for plan in plans.values():
@@ -2163,7 +2480,10 @@ def APPLY_PIPELINE_PLACEMENTS(
                     f"Bit-internal placement must target a raw HDL leaf: "
                     f"{placement.candidate_id}"
                 )
-            if RAW_VHDL.GET_LEAF_SPLIT_KIND(logic) != RAW_VHDL.SPLIT_KIND_BITS:
+            if RAW_VHDL.GET_LEAF_SPLIT_KIND(logic) not in (
+                RAW_VHDL.SPLIT_KIND_BITS,
+                RAW_VHDL.SPLIT_KIND_MUX_BITS,
+            ):
                 raise ValueError(
                     f"Bit-internal placement targets non-bit-splittable leaf "
                     f"{logic.func_name}: {placement.candidate_id}"
@@ -2178,13 +2498,16 @@ def APPLY_PIPELINE_PLACEMENTS(
         logic = parser_state.LogicInstLookupTable[inst_path]
         counts = {placement.bit_split_count for placement in group}
         widths = {placement.bit_width for placement in group}
-        if len(counts) != 1 or len(widths) != 1:
+        modes = {placement.bit_boundary_mode for placement in group}
+        if len(counts) != 1 or len(widths) != 1 or len(modes) != 1:
             raise ValueError(
                 f"Physical bit placements for {inst_path} disagree on "
-                f"split count/width: counts={counts}, widths={widths}"
+                f"split count/width/mode: counts={counts}, widths={widths}, "
+                f"modes={modes}"
             )
         count = counts.pop()
         width = widths.pop()
+        mode = modes.pop()
         ordinals = {placement.bit_split_ordinal for placement in group}
         if len(group) != count or ordinals != set(range(1, count + 1)):
             raise ValueError(
@@ -2197,7 +2520,16 @@ def APPLY_PIPELINE_PLACEMENTS(
                 f"Physical bit placement width {width} disagrees with raw "
                 f"VHDL leaf width {actual_width} for {inst_path}"
             )
-        boundaries = RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(width, count)
+        if mode == "exact":
+            groups = {placement.bit_boundaries for placement in group}
+            if len(groups) != 1:
+                raise ValueError(
+                    f"Exact physical bit placements for {inst_path} disagree "
+                    f"on their boundary group: {groups}"
+                )
+            boundaries = list(groups.pop())
+        else:
+            boundaries = RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(width, count)
         expected_slices = [boundary / float(width) for boundary in boundaries]
         by_ordinal = {
             placement.bit_split_ordinal: placement for placement in group
@@ -2217,15 +2549,24 @@ def APPLY_PIPELINE_PLACEMENTS(
             ):
                 raise ValueError(
                     f"Physical bit placement {placement.candidate_id} does "
-                    "not match RAW VHDL's equal-width allocation"
+                    f"not match RAW VHDL's {mode} allocation"
                 )
-        if timing_params._slices not in ([], expected_slices):
+        existing_boundaries = getattr(
+            timing_params, "_exact_bit_boundaries", None
+        )
+        if timing_params._slices not in ([], expected_slices) or (
+            existing_boundaries is not None
+            and list(existing_boundaries) != boundaries
+        ):
             raise ValueError(
                 f"Physical bit placement group for {inst_path} conflicts "
                 f"with existing slices {timing_params._slices}; expected "
                 f"{expected_slices}"
             )
-        timing_params.SET_SLICES(expected_slices)
+        if mode == "exact":
+            timing_params.SET_EXACT_BIT_BOUNDARIES(boundaries, width)
+        else:
+            timing_params.SET_SLICES(expected_slices)
 
     if lock_targets:
         # Lock after the whole batch so multiple internal cuts may legally
@@ -2273,20 +2614,27 @@ def PIPELINE_PLACEMENT_REALIZATION(
             }
         )
     else:
-        expected_boundaries = RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(
-            placement.bit_width, placement.bit_split_count
-        )
+        if placement.bit_boundary_mode == "exact":
+            expected_boundaries = list(placement.bit_boundaries)
+        else:
+            expected_boundaries = RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(
+                placement.bit_width, placement.bit_split_count
+            )
         expected_slices = [
             boundary / float(placement.bit_width)
             for boundary in expected_boundaries
         ]
-        realized = timing_params._slices == expected_slices
+        exact_metadata = getattr(timing_params, "_exact_bit_boundaries", None)
+        realized = timing_params._slices == expected_slices and (
+            placement.bit_boundary_mode != "exact"
+            or exact_metadata == expected_boundaries
+        )
         ends_stage = placement.bit_split_ordinal if realized else None
         rv.update(
             {
                 "realized": realized,
                 "realization": (
-                    "equal_width_bit_boundary"
+                    f"{placement.bit_boundary_mode}_bit_boundary"
                     if realized
                     else "emitted_slice_group_mismatch"
                 ),
@@ -2328,7 +2676,7 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
     os.makedirs(out_dir, exist_ok=True)
     trace_path = os.path.join(out_dir, "placement_trace.json")
     trace = {
-        "schema_version": 2,
+        "schema_version": 3,
         "planner": "typed_physical_placement",
         "internal_forced_mode": (
             None if internal_config is None else internal_config.get("mode")
@@ -2440,6 +2788,15 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
             "candidates": candidates,
             "planning_sites": planning_sites,
             "iterations": plan.placement_iterations,
+            "same_depth_refinement": {
+                "chunked_integer_mux_attempted": (
+                    plan.chunked_mux_refinement_attempted
+                ),
+                "final_active_kind": plan.active_placement_refinement,
+                "attempted_physical_fingerprints": sorted(
+                    plan.attempted_placement_fingerprints
+                ),
+            },
             "final_selected": final_selected,
             "locked_instances": locked_instances,
         }
@@ -2553,6 +2910,14 @@ class MainSweepPlan:
         self.last_failing_total_cuts = None
         self.prev_total_cuts = None
         self.trim_pending = False  # probing fewer cuts after having met
+        # A failed physical schedule may have a cheaper same-depth neighbor.
+        # Keep this separate from the delay-scale feedback so the neighbor is
+        # synthesized before the next denser landscape plan.
+        self.pending_placement_refinement = None
+        self.active_placement_refinement = None
+        self.chunked_mux_refinement_attempted = False
+        self.attempted_placement_fingerprints = set()
+        self.current_placement_fingerprint = None
         # (func_name, reason) when the critical path was attributed to a
         # func autopipelining cannot subdivide
         self.unpipelinable_blame = None
@@ -3022,7 +3387,26 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 and plan.prev_total_cuts is not None
             )
             total_cuts = 0
-            for attempt in range(8):
+            pending_refinement = plan.pending_placement_refinement
+            plan.pending_placement_refinement = None
+            plan.active_placement_refinement = None
+            if pending_refinement is not None:
+                # The refinement was derived from the just-measured physical
+                # schedule.  Try it byte-for-byte before the scale feedback
+                # below is allowed to select a denser landscape plan.
+                for subtree_root in plan.subtrees:
+                    cuts, placements = pending_refinement["subtrees"].get(
+                        subtree_root, ([], [])
+                    )
+                    plan.cuts[subtree_root] = list(cuts)
+                    plan.placements[subtree_root] = list(placements)
+                    total_cuts += len(cuts)
+                plan.active_placement_refinement = pending_refinement["kind"]
+                plan.chunked_mux_refinement_attempted = True
+            planning_attempts = (
+                range(8) if pending_refinement is None else ()
+            )
+            for attempt in planning_attempts:
                 total_cuts = 0
                 for subtree_root in plan.subtrees:
                     landscape = plan.landscapes.get(subtree_root)
@@ -3051,6 +3435,12 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 else:
                     plan.global_scale *= 1.1  # failing - force more cuts
             plan.prev_total_cuts = total_cuts
+            plan.current_placement_fingerprint = PIPELINE_PLACEMENT_FINGERPRINT(
+                plan.placements
+            )
+            plan.attempted_placement_fingerprints.add(
+                plan.current_placement_fingerprint
+            )
             # Apply the cuts
             for subtree_root in plan.subtrees:
                 landscape = plan.landscapes.get(subtree_root)
@@ -3070,6 +3460,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 {
                     "iteration": iteration,
                     "mode": plan.placement_mode,
+                    "refinement": plan.active_placement_refinement,
+                    "placement_fingerprint": plan.current_placement_fingerprint,
                     "subtrees": {
                         subtree_root: {
                             "cuts": list(plan.cuts.get(subtree_root, ())),
@@ -3485,6 +3877,66 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             plan.global_scale *= step
                             action = f"replan(global x{plan.global_scale:.2f})"
                             made_change = True
+                    if (
+                        not met
+                        and plan.placement_mode == "automatic"
+                        and plan.active_placement_refinement is None
+                        and not plan.chunked_mux_refinement_attempted
+                    ):
+                        # Before spending another full synthesis on more
+                        # stages, try the bounded physical neighbor which
+                        # replaces selected integer-MUX output banks with a
+                        # midpoint bit boundary.  The terminal MUX is included
+                        # so a formerly unregistered tail does not retain the
+                        # same high-fanout select path.  Delay-scale feedback
+                        # computed above is retained for use only if this
+                        # neighbor also fails.
+                        refined_subtrees = {}
+                        changed = False
+                        for subtree_root in plan.subtrees:
+                            landscape = plan.landscapes.get(subtree_root)
+                            current = list(
+                                plan.placements.get(subtree_root, ())
+                            )
+                            refinement = None
+                            if landscape is not None:
+                                refinement = BUILD_CHUNKED_MUX_REFINEMENT(
+                                    current, landscape, parser_state
+                                )
+                            if refinement is None:
+                                refined_subtrees[subtree_root] = (
+                                    list(plan.cuts.get(subtree_root, ())),
+                                    current,
+                                )
+                            else:
+                                refined_subtrees[subtree_root] = refinement
+                                changed = True
+                        if changed:
+                            candidate_fingerprint = (
+                                PIPELINE_PLACEMENT_FINGERPRINT(
+                                    {
+                                        subtree_root: placements
+                                        for subtree_root, (
+                                            _cuts,
+                                            placements,
+                                        ) in refined_subtrees.items()
+                                    }
+                                )
+                            )
+                            if (
+                                candidate_fingerprint
+                                not in plan.attempted_placement_fingerprints
+                            ):
+                                plan.pending_placement_refinement = {
+                                    "kind": "chunked_integer_mux",
+                                    "fingerprint": candidate_fingerprint,
+                                    "subtrees": refined_subtrees,
+                                }
+                                plan.stopped_reason = None
+                                action = (
+                                    "refine(chunked integer MUX boundaries)"
+                                )
+                                made_change = True
                     if not met and plan.placement_mode == "replace":
                         # Controlled frozen-placement A/B: synthesize exactly
                         # the supplied hardware once and report its result.

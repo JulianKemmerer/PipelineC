@@ -29,9 +29,10 @@
 # own end and built a stage 51% over budget. On the real divider every target
 # from 167 to 250 MHz collapsed onto the identical 33-cut plan (measured
 # 169.57 MHz local sky130 v4 - the same fmax the 32-cut plan already had, for
-# one extra stage). PLAN_CUTS is now two passes with no tolerance at all:
-# fewest cuts that fit the budget, then the tightest budget that still needs
-# only that many cuts. The tests below therefore assert the INVARIANTS
+# one extra stage). PLAN_CUTS is now three passes with no tolerance at all:
+# fewest cuts that fit the budget, the tightest budget that still needs only
+# that many cuts, then a count-preserving preference for real operation
+# boundaries over provisional bit sites. The tests below assert the INVARIANTS
 # (never exceed budget unless physically forced; monotone; minimal; tight)
 # rather than any particular snap behavior.
 import math
@@ -310,7 +311,7 @@ def test_cut_count_is_minimal_for_the_budget():
 def test_budget_just_above_one_iteration_cuts_on_the_boundary():
     # Guards the reported 33-stage solution. Pass 1 alone would take the
     # furthest fitting site, ~0.23ns PAST the iteration boundary and 2 bits
-    # into a 34-bit subtractor - same cut count, ragged hardware. Pass 2 must
+    # into a 34-bit subtractor - same cut count, ragged hardware. Pass 3 must
     # pull every cut back onto the iteration boundary.
     landscape = _build_divider_landscape()
     one_step = MINUS_NS + MUX_NS

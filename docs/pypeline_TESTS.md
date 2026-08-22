@@ -170,5 +170,41 @@ Each category module can also run standalone, e.g.
   unmapped cells, incomplete topology, or a timing report whose VHDL/mapped
   hashes do not match the immutable snapshot. A nonzero simulator return code
   cannot be overridden by a stale `functional_results.json` pass marker.
+- `src/tests/pypeline_tests/divider_continuity_bench.py` -- opt-in arithmetic-
+  only model-V4 continuity benchmark, also excluded from `run_all.py`. It
+  requires the unchanged latchup source SHA-256
+  `cfde3ad82985716544df580bb9415c6cbc4efa03ed4687b14a774e1bda56f70f`,
+  derives temporary variants by changing only `CLK_RATE_MHZ`, and rejects any
+  change to `DEVICE_MODELS.py` or the `early_flatten_noabc` identity. A full
+  run is:
+
+  ```text
+  python3 src/tests/pypeline_tests/divider_continuity_bench.py \
+    --out_dir /media/1TB/tmp/divider_continuity
+  ```
+
+  It scans the requested-frequency/first-plan frontier, deduplicates physical
+  placement fingerprints, maps and exact-simulates every useful initial shape,
+  then runs ordinary sweeps at 135.5, 180, and 210 MHz. Acceptance is based on
+  the immutable final artifacts those normal sweeps actually return; rejected
+  first guesses remain in `initial_plan_diagnostic_points`. Returned depths
+  must be target-monotonic, each deeper returned schedule must gain more than
+  the 1% noise band, the endpoints must remain within 1%, and the 45--53-stage
+  point must be at least 10% faster than the 33-stage point. Every accepted
+  artifact must pass the same 141-vector protocol/latency test and mapping
+  checks as the main Divider harness.
+
+  The accepted midpoint mechanism first measures the 48-slice/49-stage control
+  at 164.69 MHz, then tries one generic chunked-integer-MUX neighbor and returns
+  49 slices / 50 stages at 194.22 MHz. Negative A/B evidence is retained for
+  all exact subtract boundaries, periodic phase variants, stage-local ripple
+  borrow, and chunking without the terminal MUX. `--plans-only`, `--continue`,
+  and the exact-boundary options support diagnosis; none is a public compiler
+  interface.
+
+  A known, unrelated frontend nondeterminism can reverse the source-coordinate
+  fragments in `_DUPLICATE_<hash>` names while keeping the entity hash fixed.
+  The harness canonicalizes only that ordering for placement deduplication;
+  actual VHDL hashes and immutable mapped bytes are never canonicalized.
 - `src/tests/c_tests/test_builds.sh` -- legacy smoke-build script for the C frontend
   (`.c` designs under `examples/`), independent of this Python suite.

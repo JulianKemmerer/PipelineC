@@ -53,7 +53,9 @@ def test_split_kind_classification():
         ("BIN_OP_INFERRED_MULT_uint16_t_uint16_t", RAW_VHDL.SPLIT_KIND_1LL),
         ("UNARY_OP_NOT_uint1_t", RAW_VHDL.SPLIT_KIND_1LL),
         ("UNARY_OP_NEGATE_float_8_23_t", RAW_VHDL.SPLIT_KIND_1LL),
-        ("MUX_uint32_t", RAW_VHDL.SPLIT_KIND_1LL),
+        ("MUX_uint32_t", RAW_VHDL.SPLIT_KIND_MUX_BITS),
+        ("MUX_int17_t", RAW_VHDL.SPLIT_KIND_MUX_BITS),
+        ("MUX_float_8_23_t", RAW_VHDL.SPLIT_KIND_1LL),
         ("BIN_OP_SL_uint32_t_uint5_t", RAW_VHDL.SPLIT_KIND_NONE),
         ("BIN_OP_SR_uint32_t_uint5_t", RAW_VHDL.SPLIT_KIND_NONE),
         ("BIN_OP_MOD_uint32_t_uint32_t", RAW_VHDL.SPLIT_KIND_NONE),
@@ -69,7 +71,9 @@ def test_leaf_max_split_slices():
     # SPLIT_KIND_1LL caps at 2 (stage_for_1ll's real ceiling - a 3rd slice
     # is a bare register around logic that never shrinks, see RAW_VHDL
     # module docstring)
-    assert RAW_VHDL.LEAF_MAX_SPLIT_SLICES(FakeLogic("MUX_uint32_t")) == 2
+    # Integer MUXes can genuinely split their output bit-vector and are
+    # therefore width-capped by the landscape/lowering, not by the 1LL cap.
+    assert RAW_VHDL.LEAF_MAX_SPLIT_SLICES(FakeLogic("MUX_uint32_t")) is None
     assert RAW_VHDL.LEAF_MAX_SPLIT_SLICES(FakeLogic("BIN_OP_AND_uint1_t_uint1_t")) == 2
     # SPLIT_KIND_BITS is uncapped here (bounded instead by width, inside
     # GET_BITS_PER_STAGE_DICT itself)
@@ -101,6 +105,42 @@ def test_equal_width_split_balances_multiple_chunks():
     assert max(d.values()) - min(d.values()) <= 1, d
 
 
+def test_exact_bit_boundaries_emit_requested_uneven_chunks():
+    tp = FakeTimingParams([4 / 34.0, 21 / 34.0])
+    tp._exact_bit_boundaries = [4, 21]
+    d = RAW_VHDL.GET_BITS_PER_STAGE_DICT(34, tp)
+    assert d == {0: 4, 1: 17, 2: 13}, d
+
+
+def test_integer_mux_exact_boundary_renders_stage_local_bit_chunks():
+    class MuxLogic:
+        func_name = "MUX_uint8_t"
+        inputs = ["cond", "iftrue", "iffalse"]
+        outputs = ["return_output"]
+        wire_to_c_type = {
+            "cond": "uint1_t",
+            "iftrue": "uint8_t",
+            "iffalse": "uint8_t",
+            "return_output": "uint8_t",
+        }
+
+    class ParserState:
+        LogicInstLookupTable = {}
+
+    tp = FakeTimingParams([3 / 8.0])
+    tp._exact_bit_boundaries = [3]
+    _decl, body = (
+        RAW_VHDL.GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
+            MuxLogic(), ParserState(), tp
+        )
+    )
+    assert "if STAGE = 0 then" in body
+    assert "elsif STAGE = 1 then" in body
+    assert "return_output(2 downto 0)" in body
+    assert "return_output(7 downto 3)" in body
+    assert "return_output := write_pipe.iftrue" not in body
+
+
 def test_bits_per_stage_dict_sum_and_balance_invariant_stress():
     # Random (num_bits, n_slices) combos within what a leaf's own width can
     # usefully support (n_slices <= num_bits - 1, the cap SWEEP.
@@ -127,5 +167,7 @@ if __name__ == "__main__":
     test_leaf_max_split_slices()
     test_equal_width_split_ignores_requested_fraction()
     test_equal_width_split_balances_multiple_chunks()
+    test_exact_bit_boundaries_emit_requested_uneven_chunks()
+    test_integer_mux_exact_boundary_renders_stage_local_bit_chunks()
     test_bits_per_stage_dict_sum_and_balance_invariant_stress()
     print("All leaf split-model unit tests passed.")

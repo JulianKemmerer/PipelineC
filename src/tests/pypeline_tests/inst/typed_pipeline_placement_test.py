@@ -337,6 +337,159 @@ def test_bit_requests_materialize_to_raw_equal_width_boundaries():
         assert "provisional bit planning site" in str(e)
 
 
+def test_exact_typed_bit_boundaries_lower_and_hash_distinctly():
+    leaf = FakeLogic(
+        "BIN_OP_MINUS_uint10_t_uint10_t", ["left", "right"], ["out"],
+        {"left": "uint10_t", "right": "uint10_t", "out": "uint10_t"},
+    )
+    ps = FakeParserState({"main__leaf": leaf})
+    tpl = {"main__leaf": SYN.TimingParams("main__leaf", leaf)}
+    placements = []
+    for ordinal, boundary in enumerate((2, 7), start=1):
+        placements.append(SWEEP.PipelinePlacement(
+            SWEEP.PipelinePlacement.BIT_INTERNAL,
+            "main__leaf", leaf.func_name,
+            boundary - 1, float(boundary), local_slice=boundary / 10.0,
+            bit_width=10, bit_split_ordinal=ordinal, bit_split_count=2,
+            bit_boundary=boundary, bit_boundary_mode="exact",
+            bit_boundaries=(2, 7), leaf_axis_start=0.0, leaf_axis_end=10.0,
+        ))
+    SWEEP.APPLY_PIPELINE_PLACEMENTS(placements, ps, tpl)
+    tp = tpl["main__leaf"]
+    assert tp._slices == [0.2, 0.7]
+    assert tp._exact_bit_boundaries == [2, 7]
+    assert RAW_VHDL.GET_BITS_PER_STAGE_DICT(10, tp) == {0: 2, 1: 5, 2: 3}
+    assert all(p.bits_per_stage == (2, 5, 3) for p in placements)
+    SWEEP.CHECK_PIPELINE_PLACEMENTS_REALIZED(placements, ps, tpl)
+
+    exact_hash = tp.GET_HASH_EXT(tpl, ps)
+    equal_tp = SYN.TimingParams("main__leaf", leaf)
+    equal_tp.SET_SLICES([0.2, 0.7])
+    equal_hash = equal_tp.GET_HASH_EXT({"main__leaf": equal_tp}, ps)
+    assert exact_hash != equal_hash
+
+
+def test_internal_exact_bit_boundary_group_resolves_without_raster_aliasing():
+    leaf = FakeLogic(
+        "BIN_OP_MINUS_uint10_t_uint10_t", ["left", "right"], ["out"],
+        {"left": "uint10_t", "right": "uint10_t", "out": "uint10_t"},
+    )
+    ps = FakeParserState({"main": FakeLogic("main"), "main__leaf": leaf})
+    landscape = SWEEP.SliceLandscape("main", 10, 1.0)
+    segment = SWEEP.Segment(
+        "main__leaf", leaf.func_name, 0.0, 10.0, SWEEP.Segment.SLICEABLE
+    )
+    segment.max_legal_units = 10
+    landscape.segments.append(segment)
+    landscape.finalize({})
+    plan = SWEEP.MainSweepPlan("main", 100.0)
+    plan.subtrees = ["main"]
+    plan.landscapes = {"main": landscape}
+    config = {
+        "version": 1,
+        "mode": "replace",
+        "selectors": [],
+        "exact_bit_boundaries": [
+            {"instance_path": "main__leaf", "boundaries": [2, 7]}
+        ],
+    }
+    SWEEP.RESOLVE_INTERNAL_PIPELINE_PLACEMENTS(config, {"main": plan}, ps)
+    selected = plan.fixed_placements["main"]
+    assert [p.bit_boundary for p in selected] == [2, 7]
+    assert all(p.bit_boundary_mode == "exact" for p in selected)
+    assert all(p.bit_boundaries == (2, 7) for p in selected)
+
+
+def test_chunked_mux_refinement_replaces_outputs_and_covers_terminal_tail():
+    insts = [f"main__mux_{index}" for index in range(3)]
+    muxes = {
+        inst: FakeLogic(
+            "MUX_uint8_t",
+            ["cond", "iftrue", "iffalse"],
+            ["return_output"],
+            {
+                "cond": "uint1_t",
+                "iftrue": "uint8_t",
+                "iffalse": "uint8_t",
+                "return_output": "uint8_t",
+            },
+        )
+        for inst in insts
+    }
+    ps = FakeParserState({"main": FakeLogic("main"), **muxes})
+    landscape = SWEEP.SliceLandscape("main", 30, 1.0)
+    for index, inst in enumerate(insts):
+        start = float(index * 10)
+        end = start + 10.0
+        segment = SWEEP.Segment(
+            inst,
+            "MUX_uint8_t",
+            start,
+            end,
+            SWEEP.Segment.SLICEABLE_1LL,
+        )
+        landscape.segments.append(segment)
+        landscape.add_candidate(
+            SWEEP.PipelinePlacement(
+                SWEEP.PipelinePlacement.INSTANCE_OUTPUT,
+                inst,
+                "MUX_uint8_t",
+                int(end) - 1,
+                end - 0.5,
+                registered_bits=8,
+                span_units=10.0,
+            )
+        )
+    landscape.finalize({})
+    selected = [
+        placement
+        for placement in landscape.candidates
+        if placement.inst_path in insts[:2]
+        and placement.kind == SWEEP.PipelinePlacement.INSTANCE_OUTPUT
+    ]
+    refinement = SWEEP.BUILD_CHUNKED_MUX_REFINEMENT(
+        selected, landscape, ps
+    )
+    assert refinement is not None
+    cuts, placements = refinement
+    assert len(cuts) == 3
+    assert len(placements) == 3
+    assert {placement.inst_path for placement in placements} == set(insts)
+    assert all(
+        placement.kind == SWEEP.PipelinePlacement.BIT_INTERNAL
+        and placement.bit_boundary_mode == "exact"
+        and placement.bit_boundaries == (4,)
+        and placement.source == "same_depth_mux_refinement"
+        for placement in placements
+    )
+    assert SWEEP.PIPELINE_PLACEMENT_FINGERPRINT({"main": selected}) != (
+        SWEEP.PIPELINE_PLACEMENT_FINGERPRINT({"main": placements})
+    )
+
+    # MUXes deliberately remain atomic in the ordinary landscape, so the
+    # internal exact-boundary experiment hook must derive their span from the
+    # concrete output candidate instead of requiring a raster bit request.
+    plan = SWEEP.MainSweepPlan("main", 100.0)
+    plan.subtrees = ["main"]
+    plan.landscapes = {"main": landscape}
+    SWEEP.RESOLVE_INTERNAL_PIPELINE_PLACEMENTS(
+        {
+            "version": 1,
+            "mode": "replace",
+            "selectors": [],
+            "exact_bit_boundaries": [
+                {"instance_path": insts[0], "boundaries": [3]}
+            ],
+        },
+        {"main": plan},
+        ps,
+    )
+    forced = plan.fixed_placements["main"]
+    assert len(forced) == 1
+    assert forced[0].bit_boundary == 3
+    assert forced[0].bit_boundaries == (3,)
+
+
 def test_internal_selector_is_deterministic_and_strict():
     landscape = _landscape()
     ps = FakeParserState({"main": FakeLogic("main"), "main__step": FakeLogic("step")})
@@ -384,6 +537,9 @@ if __name__ == "__main__":
     test_typed_lowering_is_local_not_recursive()
     test_minisweep_zero_cut_pass_never_locks_io_only_latency()
     test_bit_requests_materialize_to_raw_equal_width_boundaries()
+    test_exact_typed_bit_boundaries_lower_and_hash_distinctly()
+    test_internal_exact_bit_boundary_group_resolves_without_raster_aliasing()
+    test_chunked_mux_refinement_replaces_outputs_and_covers_terminal_tail()
     test_internal_selector_is_deterministic_and_strict()
     test_internal_placement_file_rejects_empty_request()
     print("All typed pipeline-placement tests passed.")

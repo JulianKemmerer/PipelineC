@@ -388,17 +388,17 @@ their yosys version as above, and their frontend path — they go VHDL → ghdl 
 hand-written `rtl/Solution.v` wrapper, where PipelineC reads the VHDL directly
 through the ghdl-yosys plugin.
 
-**Out of scope this round, but measured:** the *planner* is a separate and
-much larger source of error than the STA. Under `--no_sweep` (latchup's mode)
-a 135.5 MHz goal produced 33 stages that measure 161 MHz, but a 214 MHz goal
-produced 34 stages that also measure 161, and a 284 MHz goal produced 65
-stages that measure 173 — while `PRINT_FLOOR_REPORT` claimed a 322.6 MHz
-floor for a design that really plateaus near 175. The mechanism is visible in
-the cached leaf components: `MUX_uint32_t`'s 3.268 ns leaf delay is 2.633 ns
-launch clock-to-Q and only 0.504 ns of combinational logic, yet the planner
-sums whole leaf `path_delay_ns` along a chain, paying register overhead at
-every leaf boundary. `SYN.USE_COMBINATIONAL_PLANNER_WEIGHTS` is the existing
-(default-off) hook for that experiment.
+**Planner follow-up, with this model frozen:** the arithmetic continuity work
+did not edit `DEVICE_MODELS.py`, its coefficients, the liberty pack, recipe,
+or model V4. It confirmed that the former 49-stage first guess maps to only
+164.69 MHz between 169.57 MHz at 33 stages and 221.94 MHz at 65 stages.
+Whole-design critical paths, not changes to this STA, led to the generic
+chunked-integer-MUX refinement now documented in
+[`SYN_DESIGN.md`](SYN_DESIGN.md#budget-to-latency-continuity-result-2026-08-21):
+a normal 180 MHz sweep returns 50 stages at 194.22 MHz and passes the exact
+final-VHDL functional test. This is also direct evidence for the limitation
+below: the isolated subtract boundary with the best modeled fmax became one
+of the worst full-Divider schedules once flattened fanout was present.
 
 ### Historical calibration corpus (pre-early-flatten)
 
@@ -486,11 +486,14 @@ build), before the `-fast` fix was even found.
   concave shape above is still worth knowing as context for why splitting
   helps at all and why gains taper off with more stages; it just isn't
   something the bit-allocation decision needs to fit a curve to.
-- **`MUX_uintN` genuine bit-chunking remains deferred** (a 1-bit MUX select
-  vs. a 32-bit one really do carry different real delay here — `MUX_uint1_t
-  0.983ns` vs `MUX_uint32_t 3.268ns` — but `SPLIT_KIND_1LL` leaves are
-  capped at latency 2 regardless of width, trading that potential fmax
-  headroom for simplicity and for not needing per-bit MUX generator changes).
+- **Integer-MUX bit chunking is deliberately feedback-only in the planned
+  sweep.** A 1-bit MUX select versus a 32-bit one carries different measured
+  delay here (`MUX_uint1_t` 0.983 ns versus `MUX_uint32_t` 3.268 ns), and the
+  new raw generator can split the output bank. The initial landscape remains
+  atomic to preserve its proven fewest-stage geometry; after a whole-design
+  miss, one bounded midpoint-chunk neighbor is tried. This separation is
+  intentional because isolated-leaf ranking did not predict full-design
+  fanout QoR.
 - **No net/interconnect delay.** Matches the sky130 flows measured against
   (all report zero net delay), but is therefore a pre-PnR estimate, not a
   post-route number — say so plainly wherever this tool's output is surfaced.

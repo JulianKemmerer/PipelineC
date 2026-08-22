@@ -16,7 +16,11 @@ from pycparser import c_ast, c_parser  # bleh for now
 #  - SPLIT_KIND_BITS: the operator's own bit width can be partitioned across
 #    stages (PLUS/MINUS/EQ/NEQ/GT/GTE/LT/LTE/accum) - see
 #    GET_BITS_PER_STAGE_DICT, which does the actual split.
-#  - SPLIT_KIND_1LL ("one logic level"): MUX/AND/OR/XOR/NOT/NEGATE/MULT.
+#  - SPLIT_KIND_MUX_BITS: integer MUXes retain an atomic planner landscape,
+#    but typed same-depth refinement may split their output bits across
+#    stages to reduce select fanout.
+#  - SPLIT_KIND_1LL ("one logic level"): non-integer MUX/AND/OR/XOR/NOT/
+#    NEGATE/MULT.
 #    Their generators (the repeated `stage_for_1ll`/`stage_for_op` pattern,
 #    e.g. GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT)
 #    always places the WHOLE operation in exactly one stage no matter the
@@ -36,6 +40,7 @@ from pycparser import c_ast, c_parser  # bleh for now
 # what a leaf may legally accept (they are already documented at their call
 # sites as manually mirrored descend rules).
 SPLIT_KIND_BITS = "bits"
+SPLIT_KIND_MUX_BITS = "mux_bits"
 SPLIT_KIND_1LL = "1ll"
 SPLIT_KIND_NONE = "none"
 
@@ -90,6 +95,11 @@ def GET_LEAF_SPLIT_KIND(logic):
             return SPLIT_KIND_1LL
         return SPLIT_KIND_NONE
     if fn.startswith(C_TO_LOGIC.MUX_LOGIC_NAME):
+        if (
+            fn.startswith(C_TO_LOGIC.MUX_LOGIC_NAME + "_uint")
+            or fn.startswith(C_TO_LOGIC.MUX_LOGIC_NAME + "_int")
+        ):
+            return SPLIT_KIND_MUX_BITS
         return SPLIT_KIND_1LL
     if fn.startswith(C_TO_LOGIC.ACCUM_FUNC_NAME + "_"):
         return SPLIT_KIND_BITS
@@ -98,12 +108,13 @@ def GET_LEAF_SPLIT_KIND(logic):
 
 def LEAF_MAX_SPLIT_SLICES(logic):
     """Cap on len(timing_params._slices) for this raw HDL leaf, or None for
-    SPLIT_KIND_BITS (capped instead by width - see GET_BITS_PER_STAGE_DICT's
-    own W+1 ceiling). See SPLIT_KIND_1LL above for why 2 is the real ceiling
-    there: stage_for_1ll's own code already handles 0/1/2 correctly (that IS
-    the boundary-register mechanism, the same "0 bits this stage" concept a
-    SPLIT_KIND_BITS leaf uses at its own boundary), and every latency beyond
-    that is a bare register around logic that never shrinks."""
+    SPLIT_KIND_BITS/SPLIT_KIND_MUX_BITS (capped instead by width - see
+    GET_BITS_PER_STAGE_DICT's own W+1 ceiling). See SPLIT_KIND_1LL above for
+    why 2 is the real ceiling there: stage_for_1ll's own code already handles
+    0/1/2 correctly (that IS the boundary-register mechanism, the same "0 bits
+    this stage" concept a bit-splittable leaf uses at its own boundary), and
+    every latency beyond that is a bare register around logic that never
+    shrinks."""
     kind = GET_LEAF_SPLIT_KIND(logic)
     if kind == SPLIT_KIND_NONE:
         return 0
@@ -113,7 +124,7 @@ def LEAF_MAX_SPLIT_SLICES(logic):
 
 
 def GET_LEAF_BIT_WIDTH(logic, parser_state):
-    """Best-available proxy for a SPLIT_KIND_BITS raw HDL leaf's own
+    """Best-available proxy for a bit-splittable raw HDL leaf's own
     carry/comparison width - the same "widest input/output" every such
     leaf's own codegen (e.g. GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_..., which
     sets width = max(left_width, right_width)) already uses as the
@@ -2160,9 +2171,27 @@ def GET_EQUAL_WIDTH_BITS_PER_STAGE_DICT(num_bits, num_slices):
 
 # TODO min bits per stage roughly based on smallest add op in one lut/carry?
 def GET_BITS_PER_STAGE_DICT(num_bits, timing_params):
-    bits_per_stage_dict = _EQUAL_WIDTH_BITS_PER_STAGE_DICT(
-        num_bits, len(timing_params._slices)
-    )
+    exact_boundaries = getattr(timing_params, "_exact_bit_boundaries", None)
+    if exact_boundaries is None:
+        bits_per_stage_dict = _EQUAL_WIDTH_BITS_PER_STAGE_DICT(
+            num_bits, len(timing_params._slices)
+        )
+    else:
+        boundaries = [int(boundary) for boundary in exact_boundaries]
+        if (
+            boundaries != sorted(set(boundaries))
+            or any(boundary <= 0 or boundary >= num_bits for boundary in boundaries)
+            or len(boundaries) != len(timing_params._slices)
+        ):
+            raise ValueError(
+                f"Invalid exact bit boundaries {boundaries} for {num_bits}-bit "
+                f"leaf with slices {timing_params._slices}"
+            )
+        bits_per_stage_dict = {}
+        previous = 0
+        for stage, boundary in enumerate(boundaries + [num_bits]):
+            bits_per_stage_dict[stage] = boundary - previous
+            previous = boundary
 
     # sanity check (the boundary construction above guarantees this by
     # telescoping sum + an exact final boundary, not a fixup loop)
@@ -3923,6 +3952,36 @@ def GET_MUX_C_BUILT_IN_C_ENTITY_WIRES_DECL_AND_PROCESS_STAGES_TEXT(
     # max_clocks = 2
     latency = len(timing_params._slices)
     num_stages = latency + 1
+    chunked = (
+        latency > 0
+        and (VHDL.C_TYPE_IS_UINT_N(c_type) or VHDL.C_TYPE_IS_INT_N(c_type))
+    )
+    if chunked:
+        width = VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+        bits_per_stage = GET_BITS_PER_STAGE_DICT(width, timing_params)
+        text = ""
+        low = 0
+        for stage in range(num_stages):
+            count = bits_per_stage[stage]
+            high = low + count - 1
+            keyword = "if" if stage == 0 else "elsif"
+            text += f"\n    {keyword} STAGE = {stage} then\n"
+            if stage == 0:
+                text += "      write_pipe.return_output := (others => '0');\n"
+            if count > 0:
+                text += (
+                    "      if write_pipe.cond=1 then\n"
+                    f"        write_pipe.return_output({high} downto {low}) := "
+                    f"write_pipe.iftrue({high} downto {low});\n"
+                    "      else\n"
+                    f"        write_pipe.return_output({high} downto {low}) := "
+                    f"write_pipe.iffalse({high} downto {low});\n"
+                    "      end if;\n"
+                )
+            low += count
+        text += "    end if;\n"
+        return wires_decl_text, text
+
     # Which stage gets the 1 LL ?
     stage_for_1ll = None
     if latency == 0:

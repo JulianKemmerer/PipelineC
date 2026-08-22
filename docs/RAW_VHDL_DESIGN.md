@@ -36,7 +36,8 @@ lowering backstop:
 | kind | current operations | generated structure |
 |---|---|---|
 | `SPLIT_KIND_BITS` | `PLUS`, `MINUS`, `EQ`, `NEQ`, `GT`, `GTE`, `LT`, `LTE`, accumulator | genuinely partitions the operator's bit work across stages |
-| `SPLIT_KIND_1LL` | mux, bitwise `AND`/`OR`/`XOR`, `NOT`, `NEGATE`, multiply | keeps the whole operation in one stage and moves registers to its boundaries |
+| `SPLIT_KIND_MUX_BITS` | integer mux | partitions the output bit-vector when a physical bit placement is selected, while remaining atomic in the initial planner landscape |
+| `SPLIT_KIND_1LL` | non-integer mux, bitwise `AND`/`OR`/`XOR`, `NOT`, `NEGATE`, multiply | keeps the whole operation in one stage and moves registers to its boundaries |
 | `SPLIT_KIND_NONE` | zero-delay bit manipulation, casts and other unsupported interiors | accepts no pipeline slice |
 
 These are implementation facts, not estimates. Timing measurements may
@@ -45,8 +46,9 @@ generator's legal structure.
 
 ## Genuine bit-internal splits
 
-For `SPLIT_KIND_BITS`, `GET_BITS_PER_STAGE_DICT` divides the operator width as
-evenly as possible across `len(_slices) + 1` chunks.
+For ordinary `SPLIT_KIND_BITS` placement,
+`GET_BITS_PER_STAGE_DICT` divides the operator width as evenly as possible
+across `len(_slices) + 1` chunks.
 `GET_EQUAL_WIDTH_BIT_BOUNDARIES` is the shared, side-effect-free source for
 those emitted boundaries. During planning, nominal raster sites select the
 number and ordering of cuts in a leaf; before lowering they are replaced by
@@ -56,6 +58,14 @@ from emitted coordinates rather than implying that an arbitrary fraction
 selects an uneven bit coordinate. Equal-width chunks minimize the widest stage
 for the current carry/comparison generators.
 
+A typed exact placement instead installs a strictly increasing integer
+boundary group in `TimingParams._exact_bit_boundaries`. The group, not merely
+its fractional projection in `_slices`, participates in copying, validation,
+entity hashing, lowering, and placement traces. This internal mechanism can
+emit uneven chunks without changing the legacy equal-width behavior. It is
+used by controlled QoR experiments and by the bounded integer-MUX refinement
+described below.
+
 `GET_LEAF_BIT_WIDTH` gives the planner the same widest-input/output width the
 generators use. An `N`-bit operation has at most `N - 1` useful internal
 registers. Both the placement candidate inventory and
@@ -64,27 +74,34 @@ zero-bit stage. Leading or trailing zero-bit work can be meaningful when it
 represents an operation-boundary register; an empty stage in the interior is
 padding and is not legal.
 
-## One-logic-level leaves
+## Integer MUX bit chunks and one-logic-level leaves
+
+An integer `MUX_uintN_t`/`MUX_intN_t` with one or more local slices emits only
+the selected output bit chunk in each stage and carries the partial result
+through the normal leaf pipeline record. This is a genuine logic split: each
+stage's one-bit select drives only its chunk rather than the complete output
+bank. The initial landscape still treats the MUX interior as atomic so the
+fewest-stage planner retains the established operation-boundary geometry.
+After a full-design timing miss, the sweep may try one typed midpoint-chunk
+neighbor before selecting a denser schedule.
 
 The repeated `stage_for_1ll`/`stage_for_op` generators put all of a 1LL
 operation in exactly one stage. With one slice, the fraction chooses which
 side of the operation is registered. With two slices, the operation sits
 between input and output registers. A third slice cannot shorten the logic,
 so `LEAF_MAX_SPLIT_SLICES` caps these leaves at two and the typed planner
-normally exposes their useful output boundary directly.
-
-A wide mux is consequently not bit-chunked today. Its width still affects the
-measured delay and cache key, but relaxing the 1LL cap requires a genuinely
-chunked mux generator and separate functional/timing evidence; changing the
+normally exposes their useful output boundary directly. This remains the
+contract for non-integer MUXes and the other 1LL operations; changing their
 classification alone would only add padding registers.
 
 ## Operation-boundary lowering
 
 An `instance_output` placement is lowered by setting the target instance's
 output-register flag. It does not get projected recursively into every child.
-A `bit_internal` placement is legal only for a `SPLIT_KIND_BITS` leaf and is
-lowered into that leaf's `_slices`. The normal VHDL pipeline map then delays
-other live wires as needed to keep dependencies aligned.
+A `bit_internal` placement is legal only for a `SPLIT_KIND_BITS` or
+`SPLIT_KIND_MUX_BITS` leaf and is lowered into that leaf's `_slices` plus,
+for exact mode, `_exact_bit_boundaries`. The normal VHDL pipeline map then
+delays other live wires as needed to keep dependencies aligned.
 
 This distinction is important for ordinary user code. A user need not write
 helper functions that are approximately one stage long: elaboration already
@@ -95,8 +112,9 @@ useful metadata and a tie-break, not a requirement for finding stages.
 ## Invariants and tests
 
 Fast tests under `src/tests/pypeline_tests/inst/` cover leaf split
-classification, the 1LL cap, width caps, equal-width allocation, typed
-bit-internal placement, and the absence of padding-only interior stages. Any
+classification, the 1LL cap, width caps, equal-width and exact allocation,
+typed bit-internal placement, chunked integer-MUX refinement, and the absence
+of padding-only interior stages. Any
 new generator or classification change should add both structure assertions
 and a generated-VHDL elaboration/simulation case. Real sky130 comparisons are
 opt-in benchmarks because they are too expensive for the normal unit suite.

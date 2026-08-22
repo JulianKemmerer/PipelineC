@@ -511,6 +511,12 @@ class TimingParams:
         self.params_are_fixed = False
         # Params, private _ since cached
         self._slices = []  # Unless raw vhdl (no submodules), these are only ~approximate slices
+        # Optional physical bit boundaries for a raw-HDL leaf.  Ordinary
+        # fractional slicing keeps this unset and therefore retains the
+        # historical equal-width allocation.  Typed exact placements set it
+        # explicitly so code generation, entity hashing, and diagnostics all
+        # describe the same (possibly uneven) chunks.
+        self._exact_bit_boundaries = None
         # ??Maybe add flag for these fixed slices provide latency, dont rebuild? unecessary?
         self._has_input_regs = False
         self._has_output_regs = False
@@ -529,6 +535,11 @@ class TimingParams:
     def DEEPCOPY(self):
         rv = copy.copy(self)
         rv._slices = self._slices[:]  # COPY
+        rv._exact_bit_boundaries = (
+            None
+            if self._exact_bit_boundaries is None
+            else self._exact_bit_boundaries[:]
+        )
         # Logic ok to be same obj
         # All others immut right now
         return rv
@@ -672,7 +683,13 @@ class TimingParams:
                 )
         else:
             # Raw HDL
-            rv += (tuple(timing_params._slices),)
+            raw_slice_state = tuple(timing_params._slices)
+            if timing_params._exact_bit_boundaries is not None:
+                raw_slice_state = (
+                    raw_slice_state,
+                    ("exact_bit_boundaries", tuple(timing_params._exact_bit_boundaries)),
+                )
+            rv += (raw_slice_state,)
 
         return rv
 
@@ -699,6 +716,12 @@ class TimingParams:
         return self.hash_ext
 
     def ADD_SLICE(self, slice_point):
+        # ADD_SLICE is the legacy fractional interface.  Mixing it with a
+        # previously installed exact group would make the physical meaning
+        # ambiguous, so returning to it deliberately clears exact metadata.
+        if self._exact_bit_boundaries is not None:
+            self._exact_bit_boundaries = None
+            self.INVALIDATE_CACHE()
         if self._slices is None:
             self._slices = []
         if slice_point > 1.0:
@@ -726,8 +749,32 @@ class TimingParams:
             sys.exit(-1)
 
     def SET_SLICES(self, value):
-        if value != self._slices:
+        if value != self._slices or self._exact_bit_boundaries is not None:
             self._slices = value[:]
+            self._exact_bit_boundaries = None
+            self.INVALIDATE_CACHE()
+
+    def SET_EXACT_BIT_BOUNDARIES(self, boundaries, bit_width):
+        """Install a strictly increasing physical split for a raw-HDL leaf."""
+        boundaries = [int(boundary) for boundary in boundaries]
+        bit_width = int(bit_width)
+        if bit_width <= 0:
+            raise ValueError(f"Exact bit-boundary width must be > 0: {bit_width}")
+        if (
+            boundaries != sorted(set(boundaries))
+            or any(boundary <= 0 or boundary >= bit_width for boundary in boundaries)
+        ):
+            raise ValueError(
+                f"Exact bit boundaries must be unique, strictly increasing, "
+                f"and inside 0..{bit_width}: {boundaries}"
+            )
+        slices = [boundary / float(bit_width) for boundary in boundaries]
+        if (
+            slices != self._slices
+            or boundaries != self._exact_bit_boundaries
+        ):
+            self._slices = slices
+            self._exact_bit_boundaries = boundaries
             self.INVALIDATE_CACHE()
 
     def SET_HAS_IN_REGS(self, value):

@@ -56,7 +56,7 @@ Registers physically exist in two forms:
    in --[ low 2 ns of carry chain ]--REG--[ high 2 ns ]-- out   (1 clk latency)
    ```
 
-   `RAW_VHDL.GET_LEAF_SPLIT_KIND` puts every raw HDL leaf into one of three
+   `RAW_VHDL.GET_LEAF_SPLIT_KIND` puts every raw HDL leaf into one of four
    kinds, which each generator's own code (not the sweep/landscape layer)
    decides how to honor:
    - `SPLIT_KIND_BITS` (PLUS/MINUS/EQ/NEQ/GT/GTE/LT/LTE/accum): the operand
@@ -64,9 +64,12 @@ Registers physically exist in two forms:
      the width as **evenly as possible across the requested chunk COUNT**
      (`len(_slices) + 1` stages). Compatibility/coarse fractional requests
      therefore set the count rather than arbitrary bit boundaries. Typed
-     bit placements instead carry the canonical equal-width boundary,
+     bit placements normally carry the canonical equal-width boundary,
      ordinal, and count all the way through lowering, so the trace describes
-     the exact emitted split. This looks like it throws away
+     the exact emitted split. Typed `exact` placements may instead carry a
+     strictly increasing integer boundary group; that group is validated,
+     hashed, and emitted without changing the compatibility path. The normal
+     equal-width conversion looks like it throws away
      information, but it doesn't: once a boundary is registered, each stage
      computes its own chunk from scratch off a registered 1-bit carry-in, so
      that stage's delay depends only on its own chunk width, not on where
@@ -79,33 +82,21 @@ Registers physically exist in two forms:
      which measurably missed real sky130 timing goals that the plain
      equal-width split (and even the original linear-fraction model) met.
 
-     **Open question (2026-08-21).** That argument has two halves and they
-     have aged differently. The *reasoning* above is model-independent and
-     still stands: stage delay depends only on its own chunk width, so for a
-     fixed count equal widths minimize the worst chunk. The *empirical*
-     half — that uneven boundaries measurably missed goals equal-width met —
-     was measured under the previous device model and synthesis recipe, both
-     since replaced (`MODEL_VERSION` 4, `early_flatten_noabc`), and has not
-     been re-run. Treat it as unverified rather than as settled evidence.
-
-     Separately, and more interestingly, the argument is purely *local*: it
-     shows equal widths are best for that leaf in isolation. It says nothing
-     about whether the leaf's locally-optimal boundary is the right boundary
-     *globally*, when neighbouring atomic operations constrain where a stage
-     can end. The planner requests a fraction; the generator answers with the
-     nearest equal-width boundary; those can differ a lot (§4: requests at
-     3.9%, 11.8% and 51.3% of a 34-bit subtractor all became bit 17). Today
-     the planner works *within* that contract: it re-plans against the exact
-     equal-width boundaries lowering will emit and ranks the results (§4).
-     That is enough to reach intermediate pipeline depths at all, and the
-     divider acceptance shows no equal-latency fmax regression. It is *not* a
-     demonstration that the constraint costs nothing — the intermediate level
-     it now reaches is itself suboptimal (48 slices at 164.69 MHz, below the
-     32-slice plan's 169.57 MHz), which is exactly the shape of result a
-     leaf-split interface able to honor a requested fraction might improve.
-     Settling that means measuring both under the current model, not
-     re-reading the note above.
-   - `SPLIT_KIND_1LL` ("one logic level" — MUX/AND/OR/XOR/NOT/NEGATE/MULT):
+     **Current-model exact-boundary result (2026-08-21).** All subtract
+     boundaries 1..33 were mapped in isolation under unchanged model V4.
+     Bit 24 was best in isolation (345.96 MHz versus 314.96 MHz at the equal
+     bit-17 split), but the full 49-stage Divider became much worse at
+     144.43 MHz; bits 28 and 33 reached only 152.06 and 162.99 MHz. The bit-24
+     full path contained a 64-fanout NOR and a 3.92 ns max-capacitance
+     violation. Local leaf optimality therefore did not predict flattened
+     whole-design QoR, and exact subtract boundaries were retained as an
+     internal mechanism rather than made the ordinary allocation policy.
+   - `SPLIT_KIND_MUX_BITS` (integer MUX): the initial landscape deliberately
+     exposes only the normal operation-output boundary. A typed physical
+     placement may split the output bit-vector, however, making each stage's
+     select drive only that chunk. This is the mechanism used by the bounded
+     same-depth-neighbor refinement below.
+   - `SPLIT_KIND_1LL` ("one logic level" — non-integer MUX/AND/OR/XOR/NOT/NEGATE/MULT):
      these generators (`stage_for_1ll`) always place the *whole* operation in
      exactly one stage no matter the latency — only the register *boundary*
      moves. Latency 1 puts the op in stage 0 or 1 depending on which side of
@@ -429,14 +420,13 @@ leaf-most **segments**:
   itself if an interior zero-bit stage ever slips through anyway (a leading
   or trailing zero-bit stage is fine — an IO-boundary register with no
   logic on the outer side).
-- `sliceable_1ll` — `SPLIT_KIND_1LL` raw HDL leaf (MUX/AND/OR/XOR/...); its
-  operation-output boundary is legal and its interior blames like `atomic` —
-  a placement can register the leaf boundary but
-  can never split its content, since the leaf's own generator places the
-  whole op in one stage regardless (§2). This is what stops `PLAN_CUTS` from
-  ever wasting a 2nd/3rd cut deep inside one MUX, the direct mechanism
-  behind an earlier bug where two cuts landing inside the same op produced
-  two slices that split zero logic.
+- `sliceable_1ll` — `SPLIT_KIND_1LL` and the initial-planner view of
+  `SPLIT_KIND_MUX_BITS`; the operation-output boundary is legal and the
+  interior blames like `atomic`. Ordinary planning therefore cannot waste a
+  2nd/3rd cut inside one 1LL operation. Integer MUXes have a separate,
+  genuinely bit-chunked lowering, but only the bounded physical-neighbor
+  refinement opts into it after whole-design timing says the output-boundary
+  schedule is poor.
 - `atomic` — unsliceable span (reason recorded: `state_regs`,
   `feedback_vars`, `vhdl_module_text`, `inside_X_container`, ...),
 - `locked` — `params_are_fixed` (a mini-sweep result); already pipelined
@@ -526,8 +516,9 @@ outright rather than by tolerance.
 `PLAN_CUTS` still chooses delay-axis units, preserving the existing budget,
 floor, and feedback machinery. `PLAN_PIPELINE_PLACEMENTS` then
 chooses an output candidate or provisional bit site at each unit. All selected
-sites for one bit-splittable leaf are materialized together as ordinals
-`1..K` of the exact `K+1` equal-width chunks emitted by `RAW_VHDL`; the
+sites for one bit-splittable leaf are normally materialized together as
+ordinals `1..K` of the exact `K+1` equal-width chunks emitted by `RAW_VHDL`;
+typed exact groups retain explicitly requested integer boundaries instead. The
 reported physical axes and local fractions are recomputed from those bit
 boundaries rather than pretending the raster requests are hardware. Its
 deterministic ranking prefers a coherent hierarchy/output boundary, then
@@ -645,18 +636,21 @@ clock's worth of logic per helper.
 hook, not a command-line or source interface. Schema version 1 accepts generic
 selectors (`candidate_id`, kind, function, ancestor, instance path/regex,
 main/subtree, hierarchy depth, coherent-boundary flag, axis bounds, `all`, and
-`limit`) plus exact candidate IDs. `replace` emits
+`limit`) plus exact candidate IDs and strictly increasing
+`exact_bit_boundaries` groups for a named raw leaf. `replace` emits
 only the fixed schedule; `seed` retains fixed positions while the ordinary
 planner fills long remaining intervals. Unmatched or ambiguous selectors fail
 loudly. This exists for controlled physical-placement A/B tests and must not
 become a Divider-name rule or public slice-cap option.
 
-Every planned run writes `<out>/top/placement_trace.json`. Trace schema 2 keeps
+Every planned run writes `<out>/top/placement_trace.json`. Trace schema 3 keeps
 concrete output `candidates` separate from nonphysical bit `planning_sites`.
 Per-iteration and final selections contain only physical placements; a bit
 selection records its emitted width, boundary, split ordinal/count,
-bits-per-stage, requested raster coordinate, actual axis/local coordinate,
-and realization status. The trace also records instance/function metadata,
+bits-per-stage, boundary mode/group, requested raster coordinate, actual
+axis/local coordinate, and realization status. The trace also records
+per-iteration physical fingerprints and whether the one bounded
+chunked-integer-MUX refinement was attempted, plus instance/function metadata,
 estimated registered bits, internal forced mode, boundary-register type, and
 local stage assignment. A `locked_instances` entry separately records every
 coarse mini-sweep compatibility lock, including its internal slices, input/
@@ -773,13 +767,42 @@ what realized-plan judging discards. A genuine level is a different stage
 structure: 48 slices at ~5.1 ns is ~72% of the coarse level, where a phase
 variant sits within a raster unit of it.
 
-**The 48-slice plan is currently suboptimal and knowingly shipped that way**
-(measured 164.69 MHz, below the 32-slice plan's 169.57 MHz — more registers
-for less fmax). It was accepted because the requirement was to make the fmax
-goal *able to ask for* depths in between; only the 33-stage result was held
-to maintain-or-improve. Improving what the intermediate level actually
-achieves is open work, and the equal-width note in §2 is the first place to
-look.
+The 48-slice first guess exposed the remaining defect rather than becoming a
+returned result: it mapped to 164.69 MHz, below the 32-slice plan's 169.57
+MHz. The follow-up investigation held `DEVICE_MODELS.py`, model V4, the
+liberty data, timing coefficients, and `early_flatten_noabc` byte-identical.
+Its controlled results were:
+
+| 49-stage structural A/B | full-Divider fmax | result |
+|---|---:|---|
+| equal-width subtract split, output-boundary MUX | 164.69 MHz | control; plateau |
+| best isolated subtract boundary (bit 24) | 144.43 MHz | rejected; full-design fanout/max-capacitance dominated |
+| exact subtract bit 28 | 152.06 MHz | rejected |
+| exact subtract bit 33 | 162.99 MHz | rejected |
+| explicit ripple-borrow stage-local subtract | 99.16 MHz | rejected |
+| chunk selected integer MUXes, tail unchanged | 170.15 MHz | only +0.3% over 33 stages |
+| chunk selected integer MUXes plus terminal MUX | **194.22 MHz at 50 stages** | accepted |
+
+The promoted response is generic. After a full-design timing miss, before a
+denser landscape plan is synthesized, the sweep constructs at most one
+physical neighbor: each selected integer-MUX output bank becomes one exact
+midpoint bit boundary, and the last candidate integer MUX is included to
+remove a formerly unsplit tail. Selected output banks retain one clock of
+local latency; the terminal split costs one additional slice. Physical
+fingerprints prevent duplicate synthesis. If the neighbor fails, the already
+computed stage-specific/global feedback resumes normal densification; no
+Divider name, iteration count, target frequency, or public slice cap appears
+in the rule.
+
+At the 180 MHz goal the normal sweep now measures the 48-slice/49-stage
+control at 164.69 MHz, then returns **49 slices / 50 stages at 194.22 MHz**.
+The immutable final VHDL passes all 141 ordered vectors at 49-cycle latency,
+including bubbles and divide-by-zero, and maps with complete topology and
+zero unmapped cells. The 32-slice/33-stage endpoint remains 169.57 MHz and
+the 64-slice/65-stage endpoint remains 221.94 MHz because neither renders a
+bit-chunked MUX. Thus the accepted returned sequence is approximately
+169.57 → 194.22 → 221.94 MHz at 33 → 50 → 65 stages, with meaningful gains
+on both depth increases instead of a flat intermediate plateau.
 
 ### Floor
 
@@ -904,6 +927,11 @@ The history dumps to `<out_dir>/<top>/sweep_history.json`, one record per
           |
           no
           |
+   unused chunked-integer-MUX physical neighbor available?
+          |-- yes --> try it once before any denser schedule
+          |           (selected output banks -> midpoint chunks + terminal MUX)
+          |-- no/failed --> continue with ordinary feedback below
+          |
    at hard floor? / soft floor + stagnant? --> stop, warn, keep best (exit 0)
           |
    attribute critical path to a function (approximate)
@@ -928,8 +956,12 @@ The history dumps to `<out_dir>/<top>/sweep_history.json`, one record per
 **Escalation ladder for a stuck hotspot** — ordered to prefer a measured,
 compact repeated-helper solution before global densification skips past it:
 
-1. densify cuts in the attributed func (`func_delay_scale`) — replan;
-2. still attributed to the same helper on the next full-design result →
+1. before synthesizing the denser plan, try one fingerprint-deduplicated
+   chunked-integer-MUX neighbor when the current schedule contains such
+   operation-output boundaries; if it fails, retain the feedback calculated
+   for the ordinary next step;
+2. densify cuts in the attributed func (`func_delay_scale`) — replan;
+3. still attributed to the same helper on the next full-design result →
    isolated **mini-sweep**: measure
    the hotspot's own delay first if it is fully comb (the coarse initial
    guess divides delay by target period — an inflated estimate would
@@ -940,7 +972,7 @@ compact repeated-helper solution before global densification skips past it:
    — the lock lands on the proven-minimal latency, never the first passing
    overshoot. A zero-cut isolated pass is deliberately not locked: adding
    IO registers alone would add latency without splitting the hot path.
-3. fmax stuck while cuts grow and the targeted probe did not help → **measure**
+4. fmax stuck while cuts grow and the targeted probe did not help → **measure**
    the remaining estimated delays for real and replan with true geometry.
 
 A same-fmax comparison uses a *relative* tolerance (1% of target):

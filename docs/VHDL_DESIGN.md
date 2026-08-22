@@ -34,8 +34,9 @@ tree, and a glob can silently combine entities from different timing shapes.
 `WRITE_LOGIC_ENTITY` renders one implementation and
 `GET_ENTITY_NAME` names the timing-specific shape. Generated combinational
 entities use names of the form `func_<latency>CLK_<hash>`. The hash includes
-the timing structure that affects rendered content: local slices, I/O
-registers, and referenced child entity identities. Identical shapes are
+the timing structure that affects rendered content: local slices, exact
+integer bit-boundary groups, I/O registers, and referenced child entity
+identities. Identical shapes are
 reused; different placements cannot alias merely because their total latency
 matches.
 
@@ -46,12 +47,14 @@ the stable public `top` entity after the final timing table is selected.
 has a definition in the final file list.
 
 Pipeline-map graph frontiers and shared-global emission are sorted before
-rendering. Thus identical logic and timing parameters produce byte-identical
-generated VHDL across Python processes, independent of set iteration order.
-As a separate-process check, the automatic and internally forced Divider
-schedules selected the same 32 boundaries and produced identical content for
-all 16 files listed by `vhdl_files.txt`. This guarantee is scoped to generated
-file content, not downstream synthesis-tool artifacts.
+rendering. One unrelated exception remains: source-coordinate fragments in
+generated `_DUPLICATE_<hash>` names can flip from `_py_l35_l34_` to
+`_py_l34_l35_` when set iteration reaches `C_TO_LOGIC.py`'s duplicate-name
+path. The entity hash stays the same but the VHDL bytes change, so this can
+intermittently miss a byte-hash synthesis cache. It was observed during the
+continuity work and deliberately not fixed there. The benchmark canonicalizes
+only this coordinate order when deduplicating placement fingerprints; it
+records and maps the actual, unmodified VHDL bytes.
 
 ## Building a pipelined architecture
 
@@ -68,8 +71,12 @@ Reconvergent branches and bypass inputs are aligned to the stage at which
 their consumer runs. An operation-output placement creates a register at that
 instance boundary; values which remain live across it are delayed through the
 same pipeline map. A genuine bit-internal placement delegates the split to
-the raw leaf generator. These two cases remain distinct through lowering, so
-an output boundary does not get recursively pushed into every descendant.
+the raw leaf generator. Exact placements carry their integer boundary group
+through `TimingParams`; integer MUX leaves can therefore render a different
+output bit chunk in each local stage while the pipeline map aligns their
+condition/data inputs and partial output. These cases remain distinct through
+lowering, so an output boundary does not get recursively pushed into every
+descendant.
 
 `TimingParams._has_input_regs` and `_has_output_regs` implement entity
 boundary registers. They participate in latency, hashing, clock/clock-enable
@@ -154,3 +161,11 @@ unmapped cells. The arithmetic fixture independently passes at 32 slices /
 33 stages and 180.05 MHz despite having no stage-sized helper function. Exact
 hashes are recorded in
 [`divider_qor_acceptance.json`](../src/tests/pypeline_tests/qor/divider_qor_acceptance.json).
+
+The arithmetic continuity benchmark independently freezes and verifies the
+model-V4 artifacts returned by normal sweeps. At 180 MHz, the first 49-stage
+shape measured 164.69 MHz; the bounded chunked-MUX neighbor then produced 49
+slices / 50 stages, passed all 141 vectors at 49-cycle latency, and remapped
+to 194.22 MHz from the same VHDL bytes. Its machine-readable evidence lives
+under the benchmark's caller-selected output directory rather than in the
+normal test suite.
