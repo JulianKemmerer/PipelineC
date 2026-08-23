@@ -20,6 +20,8 @@ class FakeLogic:
         self.outputs = list(outputs)
         self.wire_to_c_type = dict(wire_to_c_type or {})
         self.submodule_instances = {}
+        self.wire_driven_by = {}
+        self.wire_drives = {}
 
     def CAN_HAVE_ADDED_LATENCY(self, _parser_state):
         return True
@@ -32,6 +34,7 @@ class FakeParserState:
             logic.func_name: logic for logic in inst_to_logic.values()
         }
         self.func_fixed_latency = {}
+        self.func_marked_no_add_io_regs = set()
 
 
 def _landscape():
@@ -227,6 +230,110 @@ def test_typed_lowering_is_local_not_recursive():
     assert tpl["main"].IS_EMPTY()
     assert not tpl["main__leaf"]._has_output_regs
     SWEEP.CHECK_PIPELINE_PLACEMENTS_REALIZED([boundary, internal], ps, tpl)
+
+
+def test_input_boundary_is_a_typed_local_placement():
+    root = FakeLogic("main")
+    step = FakeLogic(
+        "step", ["x"], ["out"], {"x": "uint8_t", "out": "uint8_t"}
+    )
+    ps = FakeParserState({"main": root, "main__step": step})
+    tpl = {inst: SYN.TimingParams(inst, logic) for inst, logic in ps.LogicInstLookupTable.items()}
+    boundary = SWEEP.PipelinePlacement(
+        SWEEP.PipelinePlacement.INSTANCE_INPUT, "main__step", "step", 0, 0.0
+    )
+    SWEEP.APPLY_PIPELINE_PLACEMENTS([boundary], ps, tpl)
+    assert tpl["main__step"]._has_input_regs
+    assert not tpl["main__step"]._has_output_regs
+    record = SWEEP.PIPELINE_PLACEMENT_REALIZATION(boundary, ps, tpl)
+    assert record["realized"]
+    assert record["boundary_register"] == "input"
+
+
+def _minisweep_chain_fixture(n=10):
+    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    root = FakeLogic("main")
+    step = FakeLogic(
+        "step", ["x"], ["out"], {"x": "uint8_t", "out": "uint8_t"}
+    )
+    inst_to_logic = {"main": root}
+    insts = []
+    for i in range(n):
+        local = f"step_{i}"
+        inst = f"main{marker}{local}"
+        insts.append(inst)
+        inst_to_logic[inst] = step
+        root.submodule_instances[local] = "step"
+        root.wire_driven_by[f"{local}{marker}x"] = (
+            "top_x" if i == 0 else f"step_{i - 1}{marker}out"
+        )
+    ps = FakeParserState(inst_to_logic)
+    ps.FuncToInstances = {"step": insts}
+    plan = SWEEP.MainSweepPlan("main", 100.0)
+    for inst in insts:
+        plan.locked[inst] = SWEEP.MiniSweepLock([0.5])
+    return plan, ps, insts
+
+
+def test_minisweep_serial_topology_shares_one_boundary_per_edge():
+    plan, ps, insts = _minisweep_chain_fixture()
+    assert SWEEP.SET_MINISWEEP_BOUNDARY_STRATEGY(
+        plan, "step", "topology_output", ps
+    )
+    diag = plan.mini_sweep_boundary_diagnostics["step"]
+    assert len(diag["direct_edges"]) == len(insts) - 1
+    assert diag["selected_outputs"] == insts[:-1]
+    assert diag["selected_inputs"] == []
+    assert all(not plan.locked[inst].has_input_regs for inst in insts)
+    assert all(plan.locked[inst].has_output_regs for inst in insts[:-1])
+    assert not plan.locked[insts[-1]].has_output_regs
+
+    assert SWEEP.SET_MINISWEEP_BOUNDARY_STRATEGY(
+        plan, "step", "topology_input", ps
+    )
+    assert not plan.locked[insts[0]].has_input_regs
+    assert all(plan.locked[inst].has_input_regs for inst in insts[1:])
+    assert all(not plan.locked[inst].has_output_regs for inst in insts)
+
+
+def test_minisweep_topology_does_not_cross_an_operation():
+    plan, ps, insts = _minisweep_chain_fixture(2)
+    root = ps.LogicInstLookupTable["main"]
+    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    op = FakeLogic("op", ["x"], ["out"], {"x": "uint8_t", "out": "uint8_t"})
+    ps.FuncLogicLookupTable["op"] = op
+    root.submodule_instances["op"] = "op"
+    root.wire_driven_by[f"step_1{marker}x"] = f"op{marker}out"
+    assert SWEEP.FIND_DIRECT_LOCKED_BOUNDARY_EDGES(plan, "step", ps) == []
+
+
+def test_minisweep_boundary_cover_respects_no_io_pragma_and_fingerprint():
+    plan, ps, insts = _minisweep_chain_fixture(2)
+    ps.func_marked_no_add_io_regs.add("step")
+    SWEEP.SET_MINISWEEP_BOUNDARY_STRATEGY(plan, "step", "topology_output", ps)
+    diag = plan.mini_sweep_boundary_diagnostics["step"]
+    assert not diag["selected_inputs"] and not diag["selected_outputs"]
+    assert len(diag["uncovered_edges"]) == 1
+    no_io_fingerprint = SWEEP.PIPELINE_PLACEMENT_FINGERPRINT({}, plan.locked)
+    ps.func_marked_no_add_io_regs.clear()
+    SWEEP.SET_MINISWEEP_BOUNDARY_STRATEGY(plan, "step", "topology_output", ps)
+    with_io_fingerprint = SWEEP.PIPELINE_PLACEMENT_FINGERPRINT({}, plan.locked)
+    assert no_io_fingerprint != with_io_fingerprint
+    assert plan.locked[insts[0]].has_output_regs
+
+
+def test_minisweep_boundary_cover_shares_fanout_and_fanin_banks():
+    # One producer bank covers all fanout edges; one consumer bank covers all
+    # fanin edges.  This is why a real bipartite cover is preferable to an
+    # instance-order greedy walk.
+    outputs, inputs, uncovered = SWEEP._MIN_COST_BIPARTITE_BOUNDARY_COVER(
+        [("a", "b"), ("a", "c")], {"a": 8}, {"b": 8, "c": 8}, True
+    )
+    assert (outputs, inputs, uncovered) == (["a"], [], [])
+    outputs, inputs, uncovered = SWEEP._MIN_COST_BIPARTITE_BOUNDARY_COVER(
+        [("a", "c"), ("b", "c")], {"a": 8, "b": 8}, {"c": 8}, True
+    )
+    assert (outputs, inputs, uncovered) == ([], ["c"], [])
 
 
 def test_minisweep_zero_cut_pass_never_locks_io_only_latency():

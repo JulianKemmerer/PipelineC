@@ -20,11 +20,11 @@ Vocabulary used throughout (each defined in detail later):
 | **cut subtree** | the largest subtree registers may be added to (a comb MAIN, or each AUTOPIPELINE-tagged region) |
 | **landscape** | the flattened delay axis of one cut subtree: where every nanosecond of logic lives and whether a cut may land there |
 | **segment** | one leaf-most piece of that axis (sliceable / atomic / locked) |
-| **placement** | one typed physical register location: an operation-instance output or a genuine bit-internal leaf cut; `fixed` placements are retained by controlled internal experiments |
+| **placement** | one typed physical register location: an operation-instance input/output boundary or a genuine bit-internal leaf cut; `fixed` placements are retained by controlled internal experiments |
 | **floor** | the fmax that no amount of added registers can beat (longest un-cuttable stretch) |
 | **plan** | per-MAIN sweep state: cut subtrees, landscapes, cuts, learned scale factors, locks |
 | **measurement frontier** | the topmost fully-combinational funcs — the only hierarchical modules ever synthesized per-module; their measured through-delays calibrate the estimates of everything above (and thus how many cuts the first plan gets) |
-| **lock** | a mini-sweep result frozen onto all instances of a func (`params_are_fixed`); planning treats it as a pre-pipelined black box |
+| **lock** | a mini-sweep result whose internal slices are frozen onto all instances of a func (`params_are_fixed`); optional input/output banks are selected from parent dataflow rather than assumed per instance |
 | **trim** | post-met iterations that retry with fewer cuts to prove the stage count is minimal |
 
 ## 1. Old vs new, in one table
@@ -114,8 +114,8 @@ Registers physically exist in two forms:
      stage-dependent behavior at all; in practice unreachable since
      `LOGIC_IS_ZERO_DELAY` already excludes these from ever getting cuts.
 2. **IO regs** — `_has_input_regs/_has_output_regs` add boundary registers.
-   Typed operation-output placements lower directly to the selected child
-   instance's output register. They do not manufacture fractional cuts in
+   Typed `instance_input` and `instance_output` placements lower directly to
+   the selected child boundary. They do not manufacture fractional cuts in
    every primitive below that child.
 
 Everything else is *emergent*: a hierarchical module's latency is rebuilt
@@ -124,8 +124,8 @@ registers wires crossing stage boundaries (`REG_STAGEn_<wire>`).
 
 The planned sweep now preserves a concrete `PipelinePlacement` through
 selection and lowering rather than immediately projecting a fractional cut
-through every descendant. `instance_output` sets that operation instance's
-output-register flag; `bit_internal` adds a local slice only to a genuinely
+through every descendant. `instance_input`/`instance_output` set one entity
+boundary flag; `bit_internal` adds a local slice only to a genuinely
 bit-splittable raw leaf. The older recursive fraction mechanism remains for
 the coarse sweep and compatibility paths:
 
@@ -140,9 +140,13 @@ the coarse sweep and compatibility paths:
 **Cuts != latency.** The two are related but distinct numbers, now always
 reported separately. Latency can exceed the cut count (children of one cut
 sliced at misaligned positions, IO regs, `make_stream_pipeline`-style
-factories with internal `autopipeline()` calls: an isolated Wireguard
-`block_step` accepts one internal half-way slice and, when locked, receives
-an input and an output register bank: **3 clocks** total per instance). And an **autopipeline-tagged call
+factories with internal `autopipeline()` calls). A mini-swept WireGuard
+`block_step` accepts one internal half-way slice. Its external banks are then
+chosen over direct parent-dataflow edges: a ten-instance serial chain needs
+the ten internal slices plus nine shared boundaries, not both banks on every
+instance. The historical compatibility shape was 3 clocks per instance; it
+is now only the final fallback when compact boundary policies miss timing.
+An **autopipeline-tagged call
 site reports latency 0 to its container** (so FSMs keep their cycle
 accounting) — a stateful MAIN prints `main_latency=0` while a deep pipeline
 runs inside it. That is expected, not a bug.
@@ -168,9 +172,11 @@ total = (slices inserted directly into the cut-subtree roots)
 The two parts never overlap: a subtree root's own latency already zeroes its
 decoupled children (they report 0 to it), and the second term adds exactly
 those back. This equals the input-to-output register count when the regions
-sit in series, as in a stream pipeline (wireguard chacha: 0 monolithic +
-block_step 3 clks x 10 = 30 slices — not the "3" a single-instance
-view would show). The `Pipeline depth summary` at *Writing Results* prints
+sit in series, as in a stream pipeline. The historical WireGuard
+compatibility result was 0 monolithic + `block_step` 3 clocks x 10 = 30
+slices — not the "3" a single-instance view would show. A topology-aware
+lock instead records its shared boundary cover and reports the realized total.
+The `Pipeline depth summary` at *Writing Results* prints
 this figure as "N slice(s) total (N+1 pipeline stages)" (computed at *Writing Results*
 on the final, actually-emitted table, so it reflects any extra depth the
 AUTOPIPELINE pin-and-confirm re-elaboration (§6.5) added).
@@ -184,10 +190,11 @@ not the requested `cuts` count. The requested cut count and realized slice
 count are often equal for one pure-comb subtree (so `pipeline_stages` is then
 `cuts + 1`), but those two counts can differ after boundary lowering or with
 decoupled regions.
-Conflating these values used to make a print like `cuts=30
-main_latency=30 pipeline_stages=30` look like 30 cuts bought zero additional
-stages, when it actually built 31. The wireguard example above is 30
-slices, i.e. **31** pipeline stages end-to-end.
+Conflating these values can make a print like `cuts=0
+main_latency=0 pipeline_stages=20` look like no registers were added at all.
+The compact WireGuard result has no remaining *global* cuts, but does have 19
+realized locked slices (ten internal helper slices and nine shared
+boundaries), i.e. **20** pipeline stages end-to-end.
 
 Entity naming is also unchanged: each distinct (IO regs + leaf slices)
 combination hashes to its own VHDL entity `funcname_<latency>CLK_<hash>`.
@@ -645,7 +652,7 @@ planner fills long remaining intervals. Unmatched or ambiguous selectors fail
 loudly. This exists for controlled physical-placement A/B tests and must not
 become a Divider-name rule or public slice-cap option.
 
-Every planned run writes `<out>/top/placement_trace.json`. Trace schema 4 keeps
+Every planned run writes `<out>/top/placement_trace.json`. Trace schema 5 keeps
 concrete output `candidates` separate from nonphysical bit `planning_sites`.
 Per-iteration and final selections contain only physical placements; a bit
 selection records its emitted width, boundary, split ordinal/count,
@@ -656,8 +663,11 @@ chunked-MUX refinement was attempted (`same_depth_refinement.chunked_mux_attempt
 plus instance/function metadata,
 estimated registered bits, internal forced mode, boundary-register type, and
 local stage assignment. A `locked_instances` entry separately records every
-coarse mini-sweep compatibility lock, including its internal slices, input/
-output register banks, rebuilt latency, and realization check. The trace,
+coarse mini-sweep lock, including its fixed internal slices, selected input/
+output banks, boundary strategy, rebuilt latency, and realization check.
+`mini_sweep_boundary_diagnostics` records the alias-only direct edges, the
+minimum-cost input/output cover, and any edge ineligible because a no-I/O
+pragma applied. The trace,
 generated VHDL, mapped JSON, and STA report
 together are the evidence for a placement claim; requested cut counts alone
 are not.
@@ -812,7 +822,7 @@ loop-carried values wrapped in a one-field user struct. The normal 180 MHz
 sweep, starting from an empty temporary path-delay cache, took the same route:
 the 48-slice control missed, then the packed-MUX neighbor returned 49 slices /
 50 stages at **194.2227 MHz**. The immutable VHDL passed the same 141-vector
-test at 49-cycle latency. Trace schema 4 recorded 17 wrapper-MUX midpoint
+test at 49-cycle latency. Trace schema 5 recorded 17 wrapper-MUX midpoint
 placements (including the terminal refinement), and cache output contained
 only canonical `MUX_uint32_t.delay` and `MUX_uint32_t.timing.json` files.
 There is no wrapper-type cache filename or Divider-specific production rule.
@@ -895,8 +905,8 @@ MainSweepPlan(
   func_delay_scale = {"mul_add": 1.75},      # densify: mul_add units now
                                              #  cost 1.75x stage budget
   global_scale     = 1.0,                    # no-attribution fallback knob
-  locked           = {},                     # inst -> (slices, io_regs) from
-                                             #  mini-sweeps, none here
+  locked           = {},                     # inst -> fixed interior slices
+                                             #  + independently chosen I/O banks
   met_timing       = False,
   last_failing_total_cuts = 2,               # for post-met trim bisection
   unpipelinable_blame     = None,
@@ -952,7 +962,8 @@ The history dumps to `<out_dir>/<top>/sweep_history.json`, one record per
    hotspot found:   func_delay_scale[hotspot] *= target/achieved  -> replan
    same hotspot 2x: isolated mini-sweep of that func, lock result
                     (the isolated probe measures that helper itself)
-   hotspot locked:  global rescale once, then stop if stagnant
+   hotspot locked:  try the opposite compact boundary side, then bounded
+                    one-sided/both-sided fallback policies before rescaling
    hotspot cannot be autopipelined (state regs, vhdl text, ...):
                     rescale once (boundary registers may cut its IO paths),
                     then if fmax stagnates stop and tell the user PLAINLY:
@@ -997,7 +1008,8 @@ hierarchy step-down to the table above. The old per-module coarse sweep
 survives in two places: the `--coarse` CLI path, and as the **mini-sweep**
 run on an attributed hotspot (streamsoc: fft attributed 3x → `Isolated
 coarse sweep of hotspot: fft_2pt_pipeline_no_handshake` → met 129 MHz in
-isolation with 2 cuts → locked with IO regs).
+isolation with 2 cuts → locked interior plus a parent-dataflow boundary
+policy).
 
 **Attribution is approximate by design.** Post-synthesis names below the
 top-level MAIN are mangled differently by every tool, and keep/dont_touch
@@ -1022,13 +1034,13 @@ attempted. Instead:
    group-worst path, which can live in a different main — same semantics as
    the old sweep).
 
-Every iteration logs one line per main — a real one from wireguard showing
+Every iteration logs one line per main — a real one from WireGuard showing
 targeted densification of the correctly-attributed interior hotspot:
 
 ```
-[sweep] iter=1 main=encrypt_dataflow_encrypt_dataflow goal=80.00MHz
+[sweep] iter=1 main=chacha20_pipeline_shared_chacha20_pipeline_shared goal=80.00MHz
         got=47.91MHz (20.87ns) cuts=12 main_latency=0 pipeline_stages=13
-        predicted_stage=12.51ns bottleneck=chacha20_chacha20_block_step
+        predicted_stage=12.25ns bottleneck=chacha20_chacha20_block_step
         action=densify(chacha20_chacha20_block_step x1.75)
 ```
 
@@ -1071,8 +1083,9 @@ table so it includes any depth the §6.5 re-elaboration added:
 
 ```
 [sweep] Pipeline depth summary:
-[sweep]   chacha20_pipeline_shared: 30 slice(s) total (31 pipeline stages)
-[sweep]     chacha20_block_step: 3 clk(s) deep x 10 instance(s) = 30 slice(s)
+[sweep]   chacha20_pipeline_shared: 19 slice(s) total (20 pipeline stages)
+[sweep]     chacha20_block_step: 1 internal slice x 10 + 9 shared output
+[sweep]       boundaries = 19 slices
 [sweep]     (decoupled regions above sum to the end-to-end pipeline depth
              when in series, as in a stream pipeline)
 [sweep]   some_planless_main: not autopipelined (nothing sliceable; meets its
@@ -1354,9 +1367,10 @@ invariants, budget→states, floors, byte-identical generated source across
 re-elaborations) and `double_parse_file_test.py` (repeated `PARSE_FILE`
 equivalence, including an AUTOFSM design).
 
-Real-toolchain validation: the wireguard-fpga ChaCha20-Poly1305 build
-(`wireguard-fpga/3.build/pypeline_build/build_syn_tb_pipe*.sh`, Vivado) and the
-multi-clock streamsoc example (`examples/stream_soc/cpu/hardware/top.c`).
+Real-toolchain validation: the wireguard-fpga ChaCha20-Poly1305 shared build
+(`wireguard-fpga/3.build/pypeline_build/build.py --shared --sim --syn_tb`,
+Vivado plus cocotb/GHDL) and the multi-clock streamsoc example
+(`examples/stream_soc/cpu/hardware/top.c`).
 
 ## 8. Operator QoR: raw VHDL vs. soft-operator-library implementations
 
@@ -1505,7 +1519,8 @@ soft by default -- `raw_revived_sliced` was measured head-to-head and does not
 justify reverting `C_BUILT_IN_FUNC_IS_RAW_HDL`. No change to `EQ`/`NEQ`/
 `MINUS`, which remain correctly raw-HDL by default.
 
-wireguard-fpga's shared encrypt+decrypt syn_tb build, on
+Historical WireGuard baseline before mini-sweep boundary coalescing, shared
+encrypt+decrypt syn_tb build on
 `xc7a200tffg1156-2`, with that one change:
 
 ```
@@ -1518,6 +1533,21 @@ PASS decrypt_dataflow_shared: 91.17 MHz vs 80.00 MHz goal (confirmation run)
 (densify → measured fallback → minisweep → lock) is designed to climb out of
 one, and does, in 6 iterations. What broke it was feeding that ladder a
 comparator that was simultaneously slower and 74% over-modeled.
+
+That 30-slice result used the old per-instance input-plus-output lock policy;
+it is retained as a regression baseline, not as the target for the
+topology-aware boundary policy described above.
+
+**Current topology-aware result (fresh generated output, 2026-08-23):** the
+same shared `build.py --shared --sim --syn_tb` flow selected one internal
+half-way `block_step` slice on all ten instances, then found nine direct
+producer-to-consumer edges and selected only the first nine producer output
+banks. No input bank was selected and the final block has no output bank.
+The schema-5 trace therefore realizes **10 + 9 = 19 slices / 20 stages**,
+rather than the old 30/31 shape. The pinned Vivado confirmation met 80 MHz at
+**84.45 MHz** (0.658 ns MET slack; 11.796 ns data path), and the cocotb/GHDL
+shared encrypt+decrypt test exited zero with no test failures. This is a
+physical integration result, not a Divider-specific rule.
 
 ### Cache hygiene
 

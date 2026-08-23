@@ -219,7 +219,7 @@ Each category module can also run standalone, e.g.
   ```
 
   The acceptance requires 49 slices / 50 stages, timing met within 1% of the
-  194.22 MHz plain-integer result, schema-4 trace evidence for 32-bit midpoint
+  194.22 MHz plain-integer result, schema-5 trace evidence for 32-bit midpoint
   splitting including the terminal wrapper MUX, all 141 functional vectors,
   complete mapped topology, and only the canonical `MUX_uint32_t.delay` plus
   timing sidecar in the cache. The accepted run measured 194.2227 MHz and
@@ -230,5 +230,18 @@ Each category module can also run standalone, e.g.
   rendering/reconstruction, scalar and aggregate cache-key equivalence,
   collapsed-mode compatibility, and the exception that makes built-in typed
   MUXes cacheable while leaving unrelated user functions non-cacheable.
+- `src/tests/pypeline_tests/inst/typed_pipeline_placement_test.py` -- fast
+  unit coverage for typed placement lowering and mini-sweep boundary
+  coalescing. It builds synthetic serial, fanout, fanin, alias, and
+  intervening-operation graphs without an external synthesis tool, proving
+  that a repeated helper chain uses one input-or-output bank per direct edge,
+  respects `FUNC_NO_ADD_IO_REGS`, and fingerprints the selected lock banks.
+  Full WireGuard synthesis remains the integration/physical QoR gate.
+- WireGuard integration (opt-in, long-running) -- from a generated-output-free
+  copy of `wireguard-fpga/3.build/pypeline_build`, run
+  `PYPELINEC=<repo>/src/pypelinec ./build.py --shared --sim --syn_tb`.
+  The 2026-08-23 fresh result passed cocotb/GHDL and Vivado confirmation at
+  84.45 MHz against 80 MHz, with 19 slices / 20 stages. Its schema-5 trace
+  records ten half-sliced block steps and nine shared producer-output banks.
 - `src/tests/c_tests/test_builds.sh` -- legacy smoke-build script for the C frontend
   (`.c` designs under `examples/`), independent of this Python suite.

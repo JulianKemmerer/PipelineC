@@ -211,6 +211,7 @@ class PipelinePlacement:
     planned; it does *not* freeze the whole instance subtree.
     """
 
+    INSTANCE_INPUT = "instance_input"
     INSTANCE_OUTPUT = "instance_output"
     BIT_INTERNAL = "bit_internal"
 
@@ -241,7 +242,11 @@ class PipelinePlacement:
         requested_axis_position=None,
         requested_local_slice=None,
     ):
-        if kind not in (self.INSTANCE_OUTPUT, self.BIT_INTERNAL):
+        if kind not in (
+            self.INSTANCE_INPUT,
+            self.INSTANCE_OUTPUT,
+            self.BIT_INTERNAL,
+        ):
             raise ValueError(f"Unknown pipeline placement kind: {kind}")
         if kind == self.BIT_INTERNAL:
             required = {
@@ -428,7 +433,11 @@ class PipelinePlacement:
             "registered_bits_scope": (
                 "leaf_width_proxy"
                 if self.kind == self.BIT_INTERNAL
-                else "local_output_bank"
+                else (
+                    "local_input_bank"
+                    if self.kind == self.INSTANCE_INPUT
+                    else "local_output_bank"
+                )
             ),
             "hierarchy_depth": self.hierarchy_depth,
             "span_units": round(self.span_units, 6),
@@ -1893,8 +1902,13 @@ def BUILD_CHUNKED_MUX_REFINEMENT(placements, landscape, parser_state):
     return sorted(set(p.axis_unit for p in refined)), refined
 
 
-def PIPELINE_PLACEMENT_FINGERPRINT(placements_by_subtree):
-    """Return a deterministic identity for one realized physical schedule."""
+def PIPELINE_PLACEMENT_FINGERPRINT(placements_by_subtree, locks=None):
+    """Return a deterministic identity for one realized physical schedule.
+
+    Mini-sweep boundary banks are physical registers too.  They must be in
+    the identity or a ``--continue``/in-process dedupe can mistake an
+    output-only serial schedule for the historical both-I/O schedule.
+    """
     fields = []
     for subtree_root, placements in sorted(placements_by_subtree.items()):
         fields.append(subtree_root)
@@ -1908,6 +1922,13 @@ def PIPELINE_PLACEMENT_FINGERPRINT(placements_by_subtree):
                 ),
             )
         )
+    if locks:
+        fields.append("--mini-sweep-locks--")
+        for inst_path, lock in sorted(locks.items()):
+            fields.append(inst_path)
+            fields.append(
+                json.dumps(lock.to_dict(), sort_keys=True, separators=(",", ":"))
+            )
     return hashlib.sha256("\n".join(fields).encode("utf-8")).hexdigest()
 
 
@@ -2467,7 +2488,14 @@ def APPLY_PIPELINE_PLACEMENTS(
                 f"Pipeline placement targets non-sliceable function "
                 f"{logic.func_name}: {placement.candidate_id}"
             )
-        if placement.kind == PipelinePlacement.INSTANCE_OUTPUT:
+        if placement.kind == PipelinePlacement.INSTANCE_INPUT:
+            if len(logic.inputs) == 0:
+                raise ValueError(
+                    f"Input-boundary placement targets function with no "
+                    f"inputs: {placement.candidate_id}"
+                )
+            timing_params.SET_HAS_IN_REGS(True)
+        elif placement.kind == PipelinePlacement.INSTANCE_OUTPUT:
             if len(logic.outputs) == 0:
                 raise ValueError(
                     f"Output-boundary placement targets function with no "
@@ -2596,7 +2624,19 @@ def PIPELINE_PLACEMENT_REALIZATION(
     if timing_params is None:
         rv.update({"realized": False, "realization": "missing_instance"})
         return rv
-    if placement.kind == PipelinePlacement.INSTANCE_OUTPUT:
+    if placement.kind == PipelinePlacement.INSTANCE_INPUT:
+        realized = timing_params._has_input_regs
+        rv.update(
+            {
+                "realized": realized,
+                "boundary_register": "input" if realized else None,
+                "stage_assignment": {
+                    "scope": "instance_local",
+                    "starts_stage": 1 if realized else None,
+                },
+            }
+        )
+    elif placement.kind == PipelinePlacement.INSTANCE_OUTPUT:
         realized = timing_params._has_output_regs
         local_boundary = None
         if realized:
@@ -2676,7 +2716,7 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
     os.makedirs(out_dir, exist_ok=True)
     trace_path = os.path.join(out_dir, "placement_trace.json")
     trace = {
-        "schema_version": 4,
+        "schema_version": 5,
         "planner": "typed_physical_placement",
         "internal_forced_mode": (
             None if internal_config is None else internal_config.get("mode")
@@ -2742,23 +2782,18 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
         final_selected.sort(
             key=lambda p: (p["axis_position"], p["candidate_id"])
         )
-        # Coarse mini-sweeps use the older, compatibility fraction lowering
-        # deliberately: an isolated helper can be split internally and then
-        # wrapped in IO registers.  It is still a physical, fixed scheduling
-        # decision and must not disappear from the machine-readable trace
-        # merely because it was not chosen from this iteration's typed
-        # landscape candidates.
+        # A mini-sweep fixes a helper's *interior*.  Its edge banks are a
+        # separate full-design choice and are retained here with the topology
+        # evidence that selected them.
         locked_instances = []
-        for inst_path, (slices, has_input_regs, has_output_regs) in sorted(
-            plan.locked.items()
-        ):
+        for inst_path, lock in sorted(plan.locked.items()):
             timing_params = TimingParamsLookupTable[inst_path]
             logic = parser_state.LogicInstLookupTable[inst_path]
             realized = (
                 timing_params.params_are_fixed
-                and timing_params._slices == list(slices)
-                and timing_params._has_input_regs == has_input_regs
-                and timing_params._has_output_regs == has_output_regs
+                and timing_params._slices == list(lock.slices)
+                and timing_params._has_input_regs == lock.has_input_regs
+                and timing_params._has_output_regs == lock.has_output_regs
             )
             if not realized:
                 raise RuntimeError(
@@ -2768,9 +2803,10 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
                 {
                     "instance_path": inst_path,
                     "function": logic.func_name,
-                    "slices": list(slices),
-                    "input_registers": has_input_regs,
-                    "output_registers": has_output_regs,
+                    "slices": list(lock.slices),
+                    "input_registers": lock.has_input_regs,
+                    "output_registers": lock.has_output_regs,
+                    "boundary_strategy": lock.boundary_strategy,
                     "total_latency": timing_params.GET_TOTAL_LATENCY(
                         parser_state, TimingParamsLookupTable
                     ),
@@ -2799,11 +2835,42 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
             },
             "final_selected": final_selected,
             "locked_instances": locked_instances,
+            "mini_sweep_boundary_diagnostics": plan.mini_sweep_boundary_diagnostics,
         }
     with open(trace_path, "w") as f:
         json.dump(trace, f, indent=1, sort_keys=True)
     print(f"[sweep] Placement trace: {trace_path}", flush=True)
     return trace_path
+
+
+class MiniSweepLock:
+    """A proven helper interior plus independently selectable edge banks.
+
+    ``slices`` is the result of the isolated throughput measurement and is
+    immutable for the lifetime of this lock.  Input/output banks are a
+    full-design scheduling decision: putting both on every serial instance
+    creates an avoidable empty output-to-input cycle.
+    """
+
+    def __init__(
+        self,
+        slices,
+        has_input_regs=False,
+        has_output_regs=False,
+        boundary_strategy="topology_output",
+    ):
+        self.slices = list(slices)
+        self.has_input_regs = bool(has_input_regs)
+        self.has_output_regs = bool(has_output_regs)
+        self.boundary_strategy = boundary_strategy
+
+    def to_dict(self):
+        return {
+            "slices": list(self.slices),
+            "input_registers": self.has_input_regs,
+            "output_registers": self.has_output_regs,
+            "boundary_strategy": self.boundary_strategy,
+        }
 
 
 def CHECK_CUTS_VS_LATENCY(
@@ -2897,7 +2964,12 @@ class MainSweepPlan:
         self.placement_iterations = []  # machine-readable trace snapshots
         self.func_delay_scale = {}  # func name -> learned weight multiplier
         self.global_scale = 1.0  # budget divisor when attribution fails
-        self.locked = {}  # inst -> (slices, has_in_regs, has_out_regs)
+        # inst -> MiniSweepLock.  An isolated mini-sweep proves the interior
+        # slices of a repeated helper, but does not prove that every instance
+        # needs both external register banks.  Keep those decisions separate
+        # so adjacent helpers can share one real boundary register.
+        self.locked = {}
+        self.mini_sweep_boundary_diagnostics = {}
         self.hotspot_streak = {}  # func name -> consecutive attributions
         self.minisweeps_used = 0
         self.met_timing = False
@@ -3016,6 +3088,344 @@ def _INSTS_CONFLICT(inst_a, inst_b):
     )
 
 
+def _IO_REGISTER_BITS(logic, direction, parser_state):
+    """Return the bank width used by the existing VHDL I/O-register path."""
+    ports = logic.inputs if direction == "input" else logic.outputs
+    bits = 0
+    try:
+        for port in ports:
+            bits += VHDL.C_TYPE_STR_TO_VHDL_SLV_LEN_NUM(
+                logic.wire_to_c_type[port], parser_state
+            )
+    except Exception:
+        return None
+    return bits
+
+
+def _PARENT_INST_AND_LOCAL(inst_path):
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    if marker not in inst_path:
+        return None, None
+    return inst_path.rsplit(marker, 1)
+
+
+def _TRACE_TRANSPARENT_DRIVER(logic, wire):
+    """Follow only collapsed parent-scope aliases back to their source."""
+    seen = set()
+    while wire in logic.wire_driven_by and wire not in seen:
+        seen.add(wire)
+        wire = logic.wire_driven_by[wire]
+    return wire
+
+
+def _LOCKED_SOURCE_INSTANCE(parent_logic, parent_inst, wire, parser_state):
+    """Return the immediate child instance driving ``wire``, if any.
+
+    At this point aliases have been collapsed or followed.  Deliberately do
+    not walk through a submodule/operator: a register is shared only when two
+    locked helpers are connected by parent-scope wire plumbing with no logic
+    in between.
+    """
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    if marker not in wire:
+        return None
+    local_inst, port_expr = wire.split(marker, 1)
+    if local_inst not in parent_logic.submodule_instances:
+        return None
+    source_logic = parser_state.FuncLogicLookupTable[
+        parent_logic.submodule_instances[local_inst]
+    ]
+    if not any(
+        port_expr == port
+        or port_expr.startswith(port + ".")
+        or port_expr.startswith(port + "[")
+        for port in source_logic.outputs
+    ):
+        return None
+    return parent_inst + marker + local_inst
+
+
+def FIND_DIRECT_LOCKED_BOUNDARY_EDGES(plan, hotspot_func, parser_state):
+    """Find direct producer->consumer edges among one mini-swept helper set.
+
+    This intentionally uses elaborated connectivity rather than source order
+    or a function-name convention.  A serial chain, fanout, and fanin remain
+    distinguishable, while an intervening operation prevents false boundary
+    coalescing.
+    """
+    targets = {
+        inst
+        for inst in plan.locked
+        if parser_state.LogicInstLookupTable[inst].func_name == hotspot_func
+    }
+    edges = set()
+    for consumer in sorted(targets):
+        parent_inst, local_consumer = _PARENT_INST_AND_LOCAL(consumer)
+        if parent_inst is None:
+            continue
+        parent_logic = parser_state.LogicInstLookupTable.get(parent_inst)
+        if parent_logic is None:
+            continue
+        consumer_logic = parser_state.LogicInstLookupTable[consumer]
+        for input_port in consumer_logic.inputs:
+            try:
+                driver = C_TO_LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(
+                    parent_logic, local_consumer, input_port
+                )
+            except KeyError:
+                continue
+            driver = _TRACE_TRANSPARENT_DRIVER(parent_logic, driver)
+            producer = _LOCKED_SOURCE_INSTANCE(
+                parent_logic, parent_inst, driver, parser_state
+            )
+            if producer in targets and producer != consumer:
+                edges.add((producer, consumer))
+    return sorted(edges)
+
+
+def _MIN_COST_BIPARTITE_BOUNDARY_COVER(
+    edges, output_cost, input_cost, prefer_output
+):
+    """Exact weighted vertex cover for direct helper connections.
+
+    Each graph edge can be covered by a producer output bank or consumer
+    input bank.  This is a bipartite minimum-cut problem; using the exact
+    solution avoids an order-dependent greedy policy on branching dataflow.
+    """
+    forced_outputs = {
+        producer
+        for producer, consumer in edges
+        if producer in output_cost and consumer not in input_cost
+    }
+    forced_inputs = {
+        consumer
+        for producer, consumer in edges
+        if producer not in output_cost and consumer in input_cost
+    }
+    remaining_edges = [
+        (producer, consumer)
+        for producer, consumer in edges
+        if producer not in forced_outputs and consumer not in forced_inputs
+    ]
+    left = sorted(
+        {producer for producer, _consumer in remaining_edges if producer in output_cost}
+    )
+    right = sorted(
+        {consumer for _producer, consumer in remaining_edges if consumer in input_cost}
+    )
+    usable_edges = [
+        (producer, consumer)
+        for producer, consumer in remaining_edges
+        if producer in output_cost and consumer in input_cost
+    ]
+    uncovered = [
+        (producer, consumer)
+        for producer, consumer in remaining_edges
+        if producer not in output_cost and consumer not in input_cost
+    ]
+    # A selected bank has a strictly positive integer capacity.  The scale
+    # makes width the primary objective, number of banks second, and the
+    # requested output/input orientation the deterministic final tie-break.
+    scale = 4 * (len(left) + len(right) + 1)
+
+    def capacity(bits, side):
+        bits = max(1, int(bits if bits is not None else 1_000_000))
+        side_penalty = 0 if (side == "output") == prefer_output else 1
+        return bits * scale + 1 + side_penalty
+
+    source = "__source__"
+    sink = "__sink__"
+    graph = {}
+
+    def add_edge(u, v, cap):
+        graph.setdefault(u, {})
+        graph.setdefault(v, {})
+        graph[u][v] = graph[u].get(v, 0) + cap
+        graph[v].setdefault(u, 0)
+
+    for producer in left:
+        add_edge(source, ("out", producer), capacity(output_cost[producer], "output"))
+    inf = sum(
+        capacity(output_cost[p], "output") for p in left
+    ) + sum(capacity(input_cost[c], "input") for c in right) + 1
+    for producer, consumer in usable_edges:
+        add_edge(("out", producer), ("in", consumer), inf)
+    for consumer in right:
+        add_edge(("in", consumer), sink, capacity(input_cost[consumer], "input"))
+
+    # Edmonds-Karp is adequate here: mini-sweep groups are deliberately
+    # bounded repeated helpers, and the implementation stays dependency-free.
+    while True:
+        parent = {source: None}
+        queue = [source]
+        for u in queue:
+            for v, cap in sorted(graph.get(u, {}).items(), key=lambda item: str(item[0])):
+                if cap > 0 and v not in parent:
+                    parent[v] = u
+                    queue.append(v)
+                    if v == sink:
+                        break
+            if sink in parent:
+                break
+        if sink not in parent:
+            break
+        flow = None
+        v = sink
+        while parent[v] is not None:
+            u = parent[v]
+            flow = graph[u][v] if flow is None else min(flow, graph[u][v])
+            v = u
+        v = sink
+        while parent[v] is not None:
+            u = parent[v]
+            graph[u][v] -= flow
+            graph[v][u] = graph[v].get(u, 0) + flow
+            v = u
+
+    reachable = {source}
+    queue = [source]
+    for u in queue:
+        for v, cap in graph.get(u, {}).items():
+            if cap > 0 and v not in reachable:
+                reachable.add(v)
+                queue.append(v)
+    selected_outputs = sorted(
+        forced_outputs | {
+            producer for producer in left if ("out", producer) not in reachable
+        }
+    )
+    selected_inputs = sorted(
+        forced_inputs | {
+            consumer for consumer in right if ("in", consumer) in reachable
+        }
+    )
+    return selected_outputs, selected_inputs, uncovered
+
+
+def SET_MINISWEEP_BOUNDARY_STRATEGY(plan, hotspot_func, strategy, parser_state):
+    """Choose boundary banks for one repeated mini-sweep helper group.
+
+    The compact policies cover only direct helper-to-helper edges.  This
+    leaves top-level endpoints unregistered by default and lets timing
+    feedback request the progressively broader one-sided/both-sided fallback
+    policies only when necessary.
+    """
+    valid = {
+        "topology_output",
+        "topology_input",
+        "all_output",
+        "all_input",
+        "both",
+    }
+    if strategy not in valid:
+        raise ValueError(f"Unknown mini-sweep boundary strategy: {strategy}")
+    target_insts = sorted(
+        inst
+        for inst in plan.locked
+        if parser_state.LogicInstLookupTable[inst].func_name == hotspot_func
+    )
+    if not target_insts:
+        return False
+    allow_io = hotspot_func not in parser_state.func_marked_no_add_io_regs
+    can_input = {
+        inst: allow_io
+        and len(parser_state.LogicInstLookupTable[inst].inputs) > 0
+        for inst in target_insts
+    }
+    can_output = {
+        inst: allow_io
+        and len(parser_state.LogicInstLookupTable[inst].outputs) > 0
+        for inst in target_insts
+    }
+    for inst in target_insts:
+        lock = plan.locked[inst]
+        lock.has_input_regs = False
+        lock.has_output_regs = False
+        lock.boundary_strategy = strategy
+
+    edges = FIND_DIRECT_LOCKED_BOUNDARY_EDGES(plan, hotspot_func, parser_state)
+    selected_outputs = []
+    selected_inputs = []
+    uncovered = []
+    if strategy == "both":
+        selected_outputs = [inst for inst in target_insts if can_output[inst]]
+        selected_inputs = [inst for inst in target_insts if can_input[inst]]
+    elif strategy == "all_output":
+        selected_outputs = [inst for inst in target_insts if can_output[inst]]
+    elif strategy == "all_input":
+        selected_inputs = [inst for inst in target_insts if can_input[inst]]
+    else:
+        output_cost = {
+            inst: _IO_REGISTER_BITS(
+                parser_state.LogicInstLookupTable[inst], "output", parser_state
+            )
+            for inst in target_insts
+            if can_output[inst]
+        }
+        input_cost = {
+            inst: _IO_REGISTER_BITS(
+                parser_state.LogicInstLookupTable[inst], "input", parser_state
+            )
+            for inst in target_insts
+            if can_input[inst]
+        }
+        selected_outputs, selected_inputs, uncovered = _MIN_COST_BIPARTITE_BOUNDARY_COVER(
+            edges,
+            output_cost,
+            input_cost,
+            prefer_output=(strategy == "topology_output"),
+        )
+    for inst in selected_outputs:
+        plan.locked[inst].has_output_regs = True
+    for inst in selected_inputs:
+        plan.locked[inst].has_input_regs = True
+    diagnostics = {
+        "strategy": strategy,
+        "direct_edges": [
+            {"producer": producer, "consumer": consumer}
+            for producer, consumer in edges
+        ],
+        "selected_outputs": selected_outputs,
+        "selected_inputs": selected_inputs,
+        "uncovered_edges": [
+            {"producer": producer, "consumer": consumer}
+            for producer, consumer in uncovered
+        ],
+    }
+    plan.mini_sweep_boundary_diagnostics[hotspot_func] = diagnostics
+    return True
+
+
+def TRY_NEXT_MINISWEEP_BOUNDARY_STRATEGY(plan, hotspot_func, parser_state):
+    """Advance one bounded full-design boundary-policy A/B candidate."""
+    target_locks = [
+        plan.locked[inst]
+        for inst in sorted(plan.locked)
+        if parser_state.LogicInstLookupTable[inst].func_name == hotspot_func
+    ]
+    if not target_locks:
+        return None
+    current = target_locks[0].boundary_strategy
+    order = [
+        "topology_output",
+        "topology_input",
+        "all_output",
+        "all_input",
+        "both",
+    ]
+    try:
+        next_index = order.index(current) + 1
+    except ValueError:
+        next_index = len(order)
+    if next_index >= len(order):
+        return None
+    next_strategy = order[next_index]
+    SET_MINISWEEP_BOUNDARY_STRATEGY(
+        plan, hotspot_func, next_strategy, parser_state
+    )
+    return next_strategy
+
+
 def HOTSPOT_IS_LOCKED(hotspot_func, plan, parser_state):
     if hotspot_func not in parser_state.FuncToInstances:
         return False
@@ -3024,10 +3434,13 @@ def HOTSPOT_IS_LOCKED(hotspot_func, plan, parser_state):
 
 
 def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
-    """Isolated coarse sweep of one hotspot func; on a nonzero split, lock
-    its slices (with IO regs) on all instances so top-level planning treats
-    it as an internally pipelined black box. A zero-cut pass is evidence that
-    this helper needs no internal lock, not permission to add IO-only delay."""
+    """Isolated coarse sweep of one hotspot func.
+
+    A nonzero result locks the *interior* slices on every instance.  Boundary
+    registers are selected separately from the real parent dataflow: direct
+    serial helpers share one bank instead of every instance receiving the old
+    unconditional input-plus-output pair.
+    """
     if HOTSPOT_IS_LOCKED(hotspot_func, plan, parser_state):
         return False  # already locked, sweeping it again changes nothing
     # Never mini-sweep a subtree root (or the main): "isolating" the whole
@@ -3136,20 +3549,24 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
             working_slices = probe_slices
         else:
             lo = mid
-    needs_io_regs = hotspot_func not in parser_state.func_marked_no_add_io_regs
     # Replace any conflicting (nested/containing) older locks
     for func_inst in sorted(parser_state.FuncToInstances[hotspot_func]):
         for locked_inst in list(plan.locked.keys()):
             if _INSTS_CONFLICT(func_inst, locked_inst):
                 del plan.locked[locked_inst]
-        plan.locked[func_inst] = (
-            list(working_slices),
-            needs_io_regs,
-            needs_io_regs,
+        plan.locked[func_inst] = MiniSweepLock(
+            working_slices,
+            boundary_strategy="topology_output",
         )
+    SET_MINISWEEP_BOUNDARY_STRATEGY(
+        plan, hotspot_func, "topology_output", parser_state
+    )
+    boundary = plan.mini_sweep_boundary_diagnostics[hotspot_func]
     print(
         f"[sweep] Locked {hotspot_func} at cuts={len(working_slices)} "
-        f"(+{2 * needs_io_regs} IO regs) on "
+        f"({len(boundary['selected_inputs'])} input + "
+        f"{len(boundary['selected_outputs'])} output boundary bank(s), "
+        f"{len(boundary['direct_edges'])} direct edge(s)) on "
         f"{len(parser_state.FuncToInstances[hotspot_func])} instance(s)",
         flush=True,
     )
@@ -3157,24 +3574,58 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
 
 
 def APPLY_LOCKS(plan, parser_state, TimingParamsLookupTable):
+    boundary_placements = []
     for locked_inst in sorted(plan.locked.keys()):
-        slices, in_regs, out_regs = plan.locked[locked_inst]
+        lock = plan.locked[locked_inst]
         locked_logic = parser_state.LogicInstLookupTable[locked_inst]
         TimingParamsLookupTable = (
             SYN.ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
                 locked_inst,
                 locked_logic,
-                slices,
+                lock.slices,
                 parser_state,
                 TimingParamsLookupTable,
                 write_files=False,
             )
         )
         if type(TimingParamsLookupTable) is int:
-            raise Exception(f"Bad locked slices for {locked_inst}: {slices}")
+            raise Exception(f"Bad locked slices for {locked_inst}: {lock.slices}")
+        if lock.has_input_regs:
+            boundary_placements.append(
+                PipelinePlacement(
+                    PipelinePlacement.INSTANCE_INPUT,
+                    locked_inst,
+                    locked_logic.func_name,
+                    0,
+                    0.0,
+                    registered_bits=_IO_REGISTER_BITS(
+                        locked_logic, "input", parser_state
+                    ),
+                    source="minisweep_boundary_" + lock.boundary_strategy,
+                )
+            )
+        if lock.has_output_regs:
+            boundary_placements.append(
+                PipelinePlacement(
+                    PipelinePlacement.INSTANCE_OUTPUT,
+                    locked_inst,
+                    locked_logic.func_name,
+                    0,
+                    0.0,
+                    registered_bits=_IO_REGISTER_BITS(
+                        locked_logic, "output", parser_state
+                    ),
+                    source="minisweep_boundary_" + lock.boundary_strategy,
+                )
+            )
+    # The helper interiors have now been lowered but are not frozen until the
+    # independently selected I/O banks are present.  This reuses ordinary
+    # typed placement lowering rather than growing a second VHDL path.
+    TimingParamsLookupTable = APPLY_PIPELINE_PLACEMENTS(
+        boundary_placements, parser_state, TimingParamsLookupTable
+    )
+    for locked_inst in sorted(plan.locked.keys()):
         timing_params = TimingParamsLookupTable[locked_inst]
-        timing_params.SET_HAS_IN_REGS(in_regs)
-        timing_params.SET_HAS_OUT_REGS(out_regs)
         timing_params.params_are_fixed = True
     return TimingParamsLookupTable
 
@@ -3342,8 +3793,12 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     met_snapshot_cuts = None
     met_snapshot_plan_cuts = None
     met_snapshot_plan_placements = None
+    met_snapshot_plan_locks = None
+    met_snapshot_plan_boundary_diagnostics = None
     best_plan_cuts = None
     best_plan_placements = None
+    best_plan_locks = None
+    best_plan_boundary_diagnostics = None
     internal_placement_config = LOAD_INTERNAL_PLACEMENT_CONFIG()
     if internal_placement_config is not None:
         print(
@@ -3436,7 +3891,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     plan.global_scale *= 1.1  # failing - force more cuts
             plan.prev_total_cuts = total_cuts
             plan.current_placement_fingerprint = PIPELINE_PLACEMENT_FINGERPRINT(
-                plan.placements
+                plan.placements, plan.locked
             )
             plan.attempted_placement_fingerprints.add(
                 plan.current_placement_fingerprint
@@ -3462,6 +3917,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     "mode": plan.placement_mode,
                     "refinement": plan.active_placement_refinement,
                     "placement_fingerprint": plan.current_placement_fingerprint,
+                    "mini_sweep_locks": {
+                        inst: lock.to_dict() for inst, lock in sorted(plan.locked.items())
+                    },
                     "subtrees": {
                         subtree_root: {
                             "cuts": list(plan.cuts.get(subtree_root, ())),
@@ -3785,11 +4243,32 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         elif hotspot_func is not None and HOTSPOT_IS_LOCKED(
                             hotspot_func, plan, parser_state
                         ):
-                            # The blamed func is already locked at its best
-                            # isolated result - nothing more to change inside
-                            # it. If this repeats the sweep stops (same mhz /
-                            # no change) keeping the best result.
-                            if plan.same_mhz_count >= 1:
+                            # Its interior is fixed, but the full design has
+                            # not necessarily proved the cheapest side for
+                            # each boundary bank.  Try compact output/input
+                            # covers and single-sided endpoint variants before
+                            # giving up or restoring the historical both-I/O
+                            # shape.
+                            next_boundary_strategy = (
+                                TRY_NEXT_MINISWEEP_BOUNDARY_STRATEGY(
+                                    plan, hotspot_func, parser_state
+                                )
+                            )
+                            if next_boundary_strategy is not None:
+                                print(
+                                    f"[sweep] Locked {hotspot_func} remains on "
+                                    f"the critical path; trying "
+                                    f"{next_boundary_strategy} boundary policy.",
+                                    flush=True,
+                                )
+                                plan.same_mhz_count = 0
+                                plan.last_mhz = None
+                                action = (
+                                    f"refine(minisweep boundary "
+                                    f"{next_boundary_strategy})"
+                                )
+                                made_change = True
+                            elif plan.same_mhz_count >= 1:
                                 print(
                                     f"[sweep] WARNING: {main_logic.func_name} limited by "
                                     f"already-locked {hotspot_func} (best isolated pipelining applied); "
@@ -3920,7 +4399,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                             _cuts,
                                             placements,
                                         ) in refined_subtrees.items()
-                                    }
+                                    },
+                                    plan.locked,
                                 )
                             )
                             if (
@@ -3988,6 +4468,13 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             best_plan_placements = {
                 mi: copy.deepcopy(p.placements) for mi, p in plans.items()
             }
+            best_plan_locks = {
+                mi: copy.deepcopy(p.locked) for mi, p in plans.items()
+            }
+            best_plan_boundary_diagnostics = {
+                mi: copy.deepcopy(p.mini_sweep_boundary_diagnostics)
+                for mi, p in plans.items()
+            }
 
         # Plans never implicated in a failing path report have no timing
         # signal to react to - when every reported path meets its goal they
@@ -4037,6 +4524,13 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     }
                     met_snapshot_plan_placements = {
                         mi: copy.deepcopy(p.placements) for mi, p in plans.items()
+                    }
+                    met_snapshot_plan_locks = {
+                        mi: copy.deepcopy(p.locked) for mi, p in plans.items()
+                    }
+                    met_snapshot_plan_boundary_diagnostics = {
+                        mi: copy.deepcopy(p.mini_sweep_boundary_diagnostics)
+                        for mi, p in plans.items()
                     }
                 trim_candidates = []
                 for p in plans.values():
@@ -4092,6 +4586,12 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     p.cuts = met_snapshot_plan_cuts[mi]
                 if mi in met_snapshot_plan_placements:
                     p.placements = met_snapshot_plan_placements[mi]
+                if mi in met_snapshot_plan_locks:
+                    p.locked = met_snapshot_plan_locks[mi]
+                if mi in met_snapshot_plan_boundary_diagnostics:
+                    p.mini_sweep_boundary_diagnostics = (
+                        met_snapshot_plan_boundary_diagnostics[mi]
+                    )
             ancestor_insts = SYN.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
                 tpl, parser_state
             )
@@ -4167,6 +4667,12 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     p.cuts = best_plan_cuts[mi]
                 if mi in best_plan_placements:
                     p.placements = best_plan_placements[mi]
+                if mi in best_plan_locks:
+                    p.locked = best_plan_locks[mi]
+                if mi in best_plan_boundary_diagnostics:
+                    p.mini_sweep_boundary_diagnostics = (
+                        best_plan_boundary_diagnostics[mi]
+                    )
         best_ancestors = SYN.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
             best_tpl, parser_state
         )

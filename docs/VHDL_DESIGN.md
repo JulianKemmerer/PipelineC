@@ -89,10 +89,18 @@ boundaries, and the composite type all remain part of entity hashing; two
 typed entities may share a width-keyed timing-cache result without becoming
 the same VHDL entity or losing their type-specific conversion functions.
 
-`TimingParams._has_input_regs` and `_has_output_regs` implement entity
-boundary registers. They participate in latency, hashing, clock/clock-enable
-requirements, and wire alignment just like internal stages. A design with
-`N` serial register slices has `N + 1` combinational pipeline stages.
+`TimingParams._has_input_regs` and `_has_output_regs` implement independent
+entity-boundary registers. They participate in latency, hashing,
+clock/clock-enable requirements, and wire alignment just like internal
+stages. The sweep may therefore put a shared direct connection's register on
+the producer output *or* the consumer input; it must not render both merely
+because adjacent helper instances were independently mini-swept. PipelineMap
+still aligns every other input and bypass at the selected consumer stage. A
+design with `N` serial register slices has `N + 1` combinational pipeline
+stages. The fresh WireGuard shared build validates this lowering on ten
+serial `chacha20_block_step` instances: one internal slice per helper plus
+nine producer-output banks rendered as 19 slices / 20 stages, with no
+redundant output-to-input register pairs.
 
 ## Type conversion on a mismatched connection
 

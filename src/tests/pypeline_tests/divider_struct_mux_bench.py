@@ -120,7 +120,7 @@ def main(argv=None):
             and abs(fmax - REFERENCE_FMAX_MHZ) / REFERENCE_FMAX_MHZ
             <= FMAX_TOLERANCE
         ),
-        "trace_schema_4": trace.get("schema_version") == 4,
+        "trace_schema_5": trace.get("schema_version") == 5,
         "wrapper_muxes_chunked_at_midpoint": (
             bool(wrapper_placements)
             and len(chunked) == len(wrapper_placements)
