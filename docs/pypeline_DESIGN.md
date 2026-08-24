@@ -1690,7 +1690,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `hw_func` | Decorator for inner hardware functions; adds sim-mode type casting and register state management |
 | `hw_arg_types(func)` | Returns a hardware function's parameter types, in declaration order, as a tuple — reads through `__wrapped__`/`__annotations__` so it works on `@hw_func`-wrapped or plain functions alike |
 | `hw_return_type(func)` | Returns a hardware function's declared return type — same unwrapping as `hw_arg_types` |
-| `is_hw_func(func)` | Returns True if `func` is already `@hw_func`/`@MAIN`-decorated (checks the `_is_hw_func` marker `_sim_type_wrap` sets on its wrapper); used by factories (`make_autopipeline`, `make_valid_ready_mcp`, `make_stream_pipeline`) to validate a caller-supplied `func` before calling it from their own hardware function body |
+| `is_hw_func(func)` | Returns True if `func` is already `@hw_func`/`@MAIN`-decorated (checks the `_is_hw_func` marker `_sim_type_wrap` sets on its wrapper); used by factories (`make_autopipeline`, `make_valid_ready_mcp`, `make_stream_pipeline`, `make_stream_autofsm`) to validate a caller-supplied `func` before calling it from their own hardware function body |
 | `sim_call(func, *args)` | Call a pypeline function in simulation mode with scoped operators active |
 | `sim_reset()` | Clear all simulated register state and global wire state; restores declared init values |
 | `sim_wire_reset()` | Clear only `_sim_wire_state`; leaves register state intact |
@@ -1743,8 +1743,9 @@ modules deterministically. It exposes no new pypeline.py API — the generated f
 ordinary `@hw_func` + `@struct` pair, and `make_stream_t(data_t, feedback_t=uint1_t)` is now just
 the feedforward half of `make_stream_interface(...)`. Library modules that carry backpressure
 declare interface ports: `stream/stream_pipeline.py`, `stream/stream_fifo.py`,
-`multi_cycle_path.py`, `dsp/`, and all of `axi/axis.py` (whose `make_axis_broadcast_interlock`
-uses an *array* interface port for fan-out). `fifo.py`'s raw `make_fifo` deliberately does not —
+`stream/stream_autofsm.py`, `multi_cycle_path.py`, `dsp/`, and all of `axi/axis.py` (whose
+`make_axis_broadcast_interlock` uses an *array* interface port for fan-out). `fifo.py`'s raw
+`make_fifo` deliberately does not —
 its three loose signals are literally the wrapped VHDL entity's ports. See
 [PY_TO_LOGIC_DESIGN.md § `@interface`](PY_TO_LOGIC_DESIGN.md#interface--generated-reverse-wiring)
 and tests `inst/interface_test.py`, `inst/interface_func*_test.py`,

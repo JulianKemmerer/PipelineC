@@ -1699,7 +1699,9 @@ class AUTOFSM:
       - An input is accepted only when the FSM is idle; `valid` pulses asserted
         while it is busy are IGNORED (no backpressure signal in this version --
         space inputs at least .latency cycles apart, which .latency itself lets
-        surrounding Python compute).
+        surrounding Python compute). For a real valid/ready stream port around
+        an AUTOFSM instance instead of this manual spacing, see
+        make_stream_autofsm (include/pypeline/stream/stream_autofsm.py).
       - The result appears with a one-cycle `valid` pulse exactly .latency
         cycles after the accepted input cycle; `.data` holds the last result
         between pulses. Initiation interval == .latency.

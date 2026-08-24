@@ -56,6 +56,8 @@ COMB_TEST_FILES = [
     # AUTOFSM through real GHDL in --comb mode (passthrough, latency 0). The
     # scheduled FSM hardware is exercised by the non---comb entry below.
     ("self_check_autofsm_test.py", INST_DIR, []),
+    # make_stream_autofsm's handshake wrapper, same --comb/non---comb split.
+    ("self_check_stream_autofsm_test.py", INST_DIR, []),
     ("global_wire_partial_field_test.py", INST_DIR, []),
     ("global_wire_read_write_test.py", INST_DIR, []),
     ("global_wire_split_driver_test.py", INST_DIR, []),
@@ -81,6 +83,10 @@ NON_COMB_TEST_FILES = [
     # the REAL scheduled FSM (replaces synth_tests.py's former
     # autofsm_native_sim_test + autofsm_vhdl_sim_test pair with one cycle diff).
     ("self_check_autofsm_test.py", INST_DIR, []),
+    # Same, one layer up: the real scheduled FSM underneath
+    # make_stream_autofsm's handshake registers, with real backpressure
+    # toggled from the testbench (see the design file's own docstring).
+    ("self_check_stream_autofsm_test.py", INST_DIR, []),
     # self_check_stream_pipeline_test.py is deliberately NOT here: its VHDL
     # sim produced zero debug output cycle over cycle (pypeline_sim_debug.py
     # reported a MISMATCH against native's real output) despite the build

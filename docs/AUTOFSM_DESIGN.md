@@ -108,7 +108,9 @@ UPDATE.latency                           # fixed in->out cycle count; 0 until kn
 - An input is accepted **only while the FSM is idle**. A `valid` pulse asserted
   while it is busy is IGNORED — there is no backpressure signal in this version.
   Space requests at least `.latency` cycles apart; `.latency` is available to
-  the surrounding Python precisely so it can do that.
+  the surrounding Python precisely so it can do that. `make_stream_autofsm`
+  (§2.1) does this bookkeeping automatically, with real valid/ready
+  backpressure instead of manual spacing.
 - The result appears with a one-cycle `valid` pulse **exactly `.latency` cycles**
   after the accepted input cycle. `.data` holds the last result between pulses.
   Initiation interval == `.latency`.
@@ -140,6 +142,56 @@ and the cap bounds how much of it the search may spend.
 ```python
 UPDATE = AUTOFSM(next_state, max_latency=8)   # never more than 8 cycles
 ```
+
+### 2.1 Stream wrapper: `make_stream_autofsm`
+
+`include/pypeline/stream/stream_autofsm.py`'s `make_stream_autofsm(func,
+max_latency=None)` is pure library code (no compiler changes) built the same
+way `make_stream_pipeline`/`make_valid_ready_mcp` are: it constructs an
+`AUTOFSM(func, max_latency=max_latency)` internally and wraps its call site in
+a real valid/ready `@interface` stream port, so callers no longer hand-roll
+the `busy`-register spacing the raw contract above requires.
+
+```python
+blob_fsm, blob_fsm_t = make_stream_autofsm(blob)
+@MAIN(25.0)
+def top(stream_in: blob_fsm.in_stream_t, stream_out: blob_fsm.out_fb_t) -> blob_fsm_t:
+    return blob_fsm(stream_in, stream_out)
+```
+
+**Shape: a registered output.** A holding register latches the FSM's one-cycle
+pulse; a `busy` register tracks whether the FSM itself is occupied.
+`stream_in_if.ready` is asserted only when both are free, and the output side
+is computed *first* in the body (the same same-cycle out→in trick
+`make_valid_ready_mcp` uses), so the slot a result just vacated is visible to
+the accept decision in the same cycle — back-to-back requests with an always-
+ready consumer still pack tightly, one every `latency` cycles, no bubble.
+
+Two alternative shapes were considered and rejected:
+- **Bypass/skid output** (combinational presentation when the slot is free,
+  registering only on a downstream stall) matches the raw AUTOFSM latency
+  exactly, but adds a combinational path from the FSM's own output registers
+  to the wrapper's port — the registered-output shape has none.
+- **Cycle-counter** (mirroring `make_valid_ready_mcp`'s `cycles_since_launch`)
+  hits `latency` cycles of II with zero bubble, but its body would have to read
+  `.latency` directly — see the next paragraph for why that's a real hazard
+  here, not just a style preference.
+
+**Latency = `fsm.latency + 1`; II = `fsm.latency + 1`.** The one extra cycle
+over the raw FSM is the holding register. Crucially, **the generated hardware
+never reads `.latency`** — unlike the raw call site's manual spacing, the
+wrapper's RTL shape is identical whether `fsm.latency` is 0 (bootstrap pass /
+`--comb` / native sim) or a real scheduled value. This matters because
+`AUTOFSM.__repr__` (§3, canonical-name hashing) carries the canonical key and
+`max_latency` but *not* `.latency` itself — a wrapper whose body varied with
+`.latency` could hash two genuinely different circuits to the same entity name
+and reuse stale measured delays, the same class of hazard closed for the `ctl`
+parameter in AUTOFSM v3. Avoiding `.latency` in the body sidesteps it by
+construction.
+
+See `src/tests/pypeline_tests/inst/stream_autofsm_test.py` for the native-sim
+handshake/backpressure tests and `self_check_stream_autofsm_test.py` for the
+full self-checking design, also run through real GHDL (§5).
 
 ---
 
@@ -939,8 +991,11 @@ at least 3"*.
 | test | category | what it proves |
 |---|---|---|
 | `autofsm_test.py` | native_sim, (synth via wrapper) | the pure function's semantics, and the passthrough behaviour when unscheduled |
-| `autofsm_unit_test.py` | elab | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, register allocation, budget → states, floors, determinism, schedule is carryable data |
+| `autofsm_unit_test.py` | elab | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, register allocation, budget → states, floors, determinism, schedule is carryable data, soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction |
 | `self_check_autofsm_test.py` | native_sim, vhdl_sim, synth ×2 | the FSM computes what the function did — in native sim, in GHDL, at latency 0 and at real latency |
+| `stream_autofsm_test.py` | native_sim | `make_stream_autofsm`'s handshake protocol: ready deasserts while busy, latency/II == `fsm.latency + 1`, and — the property raw AUTOFSM cannot provide — a stalled consumer never loses a result and sees stable data while it's held |
+| `self_check_stream_autofsm_test.py` | native_sim, vhdl_sim, synth ×2 | same shape as `self_check_autofsm_test.py`, one layer up: the wrapper's handshake + the real scheduled FSM underneath it compute and sequence what the function did, with real backpressure toggled from the testbench, in native sim, in GHDL, at latency 1 and at real latency |
+| `qor/multiplier/autofsm.py`, `qor/divider/autofsm.py`, `qor/sqrt/autofsm.py` | synth | AUTOPIPELINE→`make_stream_autofsm` conversions of the QoR designs, real `PART("sky130")`/pyrtl builds with `ready` genuinely wired (never a constant 1); the multiplier is what exposed and pins the `_TypeResolver` array-reconstruction fix below |
 | `autofsm_latency_test.py` | synth | end-to-end schedule; the generated VHDL instantiates exactly as many copies of each shared unit as the schedule claims |
 | `autofsm_resources_compare_test.py` | synth | the FSM is actually smaller than the logic it replaces |
 | `autofsm_area_sweep_compare_test.py` | synth | the area search does not make designs bigger, and its cost model agrees with yosys about which of two schedules is smaller — the calibration guard |
@@ -953,6 +1008,10 @@ at least 3"*.
 `self_check_autofsm_test.py` is worth copying as a template: it reacts to
 `resp.valid` rather than counting cycles, so one source file is correct at every
 latency, which is what lets it be reused unchanged across four registrations.
+`self_check_stream_autofsm_test.py` follows the same template one layer up —
+it reacts to `stream_out_if.stream.valid & ready_now` (the real "consumed this
+cycle" condition) instead, so it is equally correct at latency 1 (`--comb`)
+and at `fsm.latency + 1` (scheduled).
 
 ---
 
@@ -960,8 +1019,9 @@ latency, which is what lets it be reused unchanged across four registrations.
 
 **Current limitations**
 
-- One argument (bundle into a struct); one computation in flight; no
-  backpressure — `valid` while busy is ignored.
+- One argument (bundle into a struct); one computation in flight; the raw
+  call site has no backpressure — `valid` while busy is ignored. Wrap with
+  `make_stream_autofsm` (§2.1) for a real valid/ready port instead.
 - The function must be pure: no `Reg`, `Feedback` or global wires anywhere in
   its subtree. Dynamic (non-constant) array indexing is not supported yet.
 - An operation bigger than a state that cannot be decomposed *and* has no
@@ -982,6 +1042,21 @@ latency, which is what lets it be reused unchanged across four registrations.
   ... with type array type uint2_t_4", with no AUTOFSM involved. Reachable only
   from a schedule that shares an operation taking a whole array, which is rare;
   the underlying 2D-array bug is not an AUTOFSM one and is unfixed.
+  **Not the same bug** as the one below — this one is about SHARING an
+  array-typed value across states (the mux), which is still open.
+- Fixed: an array type living only inside a DESCENDED body (a soft
+  multiplier's local partial-products array, say) used to crash codegen —
+  `_TypeResolver` only seeded from types surviving into the schedule's
+  `fus`/nodes, so an entity fully consumed by descent contributed nothing, and
+  `AUTOFSM: cannot reconstruct a live Python type for C type 'uint16_t[16]'`
+  followed. Fixed two ways: `_TypeResolver.resolve` now rebuilds `BASE[d1]
+  [d2]...` compositionally from a reconstructible `BASE` (an array is always
+  reconstructible if its element type is — nothing about that needs seeding),
+  and `_Codegen` additionally seeds from the AUTOFSM'd function's whole
+  elaborated subtree, not just what survived into the schedule (covers a
+  struct-typed descended local, which the array fix alone would not). See
+  `qor/multiplier/autofsm.py`, the design that found this, and the
+  `[type resolver: array reconstruction]` section of `autofsm_unit_test.py`.
 
 **Future work**
 

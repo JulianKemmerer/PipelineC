@@ -14,7 +14,7 @@ Run standalone: python3 synth_tests.py [-j N]
 
 import sys
 
-from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINEC, Test, main
+from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINEC, QOR_DIR, Test, main
 
 # fmt: off
 # (filename, source_dir, extra_args)
@@ -35,6 +35,11 @@ SYNTH_TEST_FILES = [
     ("sweep_fsm_autopipeline_test.py", INST_DIR, []),
     ("sweep_stateful_boundary_test.py", INST_DIR, []),
     ("fir_sweep_test.py", INST_DIR, []),  # FIR blob retimes to a @MAIN goal
+    # Non---comb build: proves make_stream_autofsm elaborates and synthesises
+    # with a real AUTOFSM schedule installed underneath its handshake
+    # registers, independent of the native-vs-VHDL cycle diff registered in
+    # native_vs_vhdl_sim_tests.py.
+    ("self_check_stream_autofsm_test.py", INST_DIR, []),
     ("valid_ready_mcp_test.py", INST_DIR, ["--comb"]),
     ("vga_donut.py", EXAMPLES_PYPELINE_DIR, ["--comb"]),
     ("vga_test_pattern.py", EXAMPLES_PYPELINE_DIR, ["--comb"]),
@@ -118,6 +123,30 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # AUTOPIPELINE -> make_stream_autofsm conversions of the qor/ QoR designs
+    # (real valid/ready handshake, ready genuinely wired -- not a constant 1).
+    # Each lives at qor/<domain>/autofsm.py -- named explicitly here rather
+    # than through the SYNTH_TEST_FILES comprehension above, since that
+    # derives a Test's name from the bare filename and all three share the
+    # name "autofsm". Clock goals are lowered from each design's AUTOPIPELINE
+    # original: AUTOFSM shares hardware across states instead of spreading it
+    # across pipeline stages, so the goal that mattered for a free-running
+    # pipeline does not carry over -- what matters here is a clean
+    # synthesizing build, not matching the pipelined design's fmax (each
+    # file's own comment records its measured floor). The multiplier is also
+    # what exposed and pins the _TypeResolver array-reconstruction fix in
+    # AUTOFSM.py (an AUTOFSM over a descended soft multiplier's local
+    # partial-products array used to crash codegen with "cannot reconstruct a
+    # live Python type for C type 'uint16_t[16]'").
+    for qor_name in ("multiplier", "divider", "sqrt"):
+        tests.append(
+            Test(
+                name=f"qor_{qor_name}_autofsm_test",
+                category="synth",
+                cmd=[PYPELINEC, QOR_DIR / qor_name / "autofsm.py"],
+                needs_out_dir=True,
+            )
+        )
     return tests
 
 

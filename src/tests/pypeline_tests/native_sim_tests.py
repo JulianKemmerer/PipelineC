@@ -17,6 +17,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "stream_pipeline_test.py",
     "autopipeline_test.py",
     "autofsm_test.py",
+    "stream_autofsm_test.py",
     "valid_ready_mcp_test.py",
     "float32_add_test.py",
     "float_ops_test.py",
@@ -248,6 +249,25 @@ def get_tests() -> list:
             cmd=[
                 PYPELINEC,
                 INST_DIR / "self_check_autofsm_test.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "all",
+            ],
+        )
+    )
+    # Same reasoning as self_check_autofsm_comb_test above, one layer up: the
+    # make_stream_autofsm wrapper's handshake never reads .latency, so the
+    # same source is correct whether the FSM underneath it is scheduled or
+    # still the --comb passthrough -- reused unchanged in both of
+    # native_vs_vhdl_sim_tests.py's entries below.
+    tests.append(
+        Test(
+            name="self_check_stream_autofsm_comb_test",
+            category="native_sim",
+            cmd=[
+                PYPELINEC,
+                INST_DIR / "self_check_stream_autofsm_test.py",
                 "--sim",
                 "--comb",
                 "--run",

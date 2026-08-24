@@ -623,6 +623,60 @@ def main():
     except ImportError:
         print("  skip: operators.soft_add not importable")
 
+    # _TypeResolver.resolve rebuilds a live type from the C type name string a
+    # Logic graph carries. Scalars always worked; an ARRAY of a reconstructible
+    # type should too -- 'uint16_t[16]' is just 'uint16_t' plus a dimension,
+    # regardless of whether anything in the design ever carried that exact
+    # array type standalone. This is what a descended soft multiplier's local
+    # partial-products array needs (see docs/AUTOFSM_DESIGN.md and
+    # soft_mult.py's make_soft_mult_shift_add) -- entities fully consumed by
+    # descent contribute nothing to the usual fus/node seeding, so the type
+    # must be reconstructible from its name alone, not merely seeded.
+    print("\n[type resolver: array reconstruction]")
+    import typing
+
+    @pypeline.struct
+    class _seeded_leaf_t(typing.NamedTuple):
+        a: pypeline.uint8_t
+        b: pypeline.uint8_t
+
+    resolver = AUTOFSM._TypeResolver()
+    t1 = resolver.resolve("uint16_t[16]")
+    check(
+        t1 is not None and pypeline.ctype_name(t1) == "uint16_t[16]",
+        "an array of a scalar (uint16_t[16]) resolves from its name alone, unseeded",
+    )
+    # Dimension order must match _CTypeMeta.__getitem__ (outer/first bracket
+    # applied first, C-declaration order) -- get it backwards and this
+    # round-trip silently produces the wrong shape instead of raising.
+    t2 = resolver.resolve("uint2_t[4][16]")
+    check(
+        t2 is not None
+        and pypeline.ctype_name(t2) == "uint2_t[4][16]"
+        and pypeline._array_len(t2) == 4
+        and pypeline.ctype_name(pypeline._array_elem_ctype(t2)) == "uint2_t[16]",
+        "a 2-D array (uint2_t[4][16]) round-trips with the outer dimension "
+        "(4) first, matching C's T x[A][B]",
+    )
+    resolver.seed(_seeded_leaf_t)
+    struct_arr_name = f"{pypeline.ctype_name(_seeded_leaf_t)}[8]"
+    t3 = resolver.resolve(struct_arr_name)
+    check(
+        t3 is not None and pypeline.ctype_name(t3) == struct_arr_name,
+        "an array of a SEEDED struct resolves",
+    )
+    raised_name = None
+    try:
+        resolver.resolve("some_unseeded_struct_t[8]")
+    except AUTOFSM.AutofsmError as e:
+        raised_name = str(e)
+    check(
+        raised_name is not None and "some_unseeded_struct_t" in raised_name,
+        "an array of an UNSEEDED struct still raises, naming the base type "
+        "(not the whole array name) -- a struct genuinely cannot be rebuilt "
+        "from its name alone",
+    )
+
     if FAILURES:
         print(f"\n{len(FAILURES)} AUTOFSM unit check(s) FAILED")
         sys.exit(1)

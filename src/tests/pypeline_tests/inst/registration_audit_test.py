@@ -31,6 +31,7 @@ INST_DIR = os.path.dirname(os.path.abspath(__file__))
 PYPELINE_TESTS_DIR = os.path.dirname(INST_DIR)
 REPO_ROOT = os.path.abspath(os.path.join(PYPELINE_TESTS_DIR, "..", "..", ".."))
 EXAMPLES_PYPELINE_DIR = os.path.join(REPO_ROOT, "examples", "pypeline")
+QOR_DIR = os.path.join(PYPELINE_TESTS_DIR, "qor")
 
 CATEGORY_MODULES = [
     "native_sim_tests.py",
@@ -86,11 +87,12 @@ def test_every_test_file_is_registered_somewhere():
 
 def test_registered_filenames_actually_exist():
     # Most registrations live in inst/, but some (dsp/examples designs)
-    # reference EXAMPLES_PYPELINE_DIR and its subdirectories instead -- a
-    # filename is fine as long as it exists SOMEWHERE plausible, since this
-    # check only exists to catch stale references, not to enforce a
-    # directory layout the category modules already encode explicitly via
-    # their own source_dir.
+    # reference EXAMPLES_PYPELINE_DIR and its subdirectories instead, and some
+    # (qor/ AUTOFSM/AUTOPIPELINE comparison fixtures) reference QOR_DIR and
+    # its per-design subdirectories -- a filename is fine as long as it exists
+    # SOMEWHERE plausible, since this check only exists to catch stale
+    # references, not to enforce a directory layout the category modules
+    # already encode explicitly via their own source_dir.
     registered = _registered_filenames()
     missing = []
     for f in registered:
@@ -100,13 +102,16 @@ def test_registered_filenames_actually_exist():
             for _, _, names in os.walk(EXAMPLES_PYPELINE_DIR)
             for name in names
         )
-        if not (in_inst or in_examples):
+        in_qor = any(
+            f == name for _, _, names in os.walk(QOR_DIR) for name in names
+        )
+        if not (in_inst or in_examples or in_qor):
             missing.append(f)
     missing.sort()
     assert not missing, (
         f"{len(missing)} filename(s) referenced by a category module don't "
-        f"exist in inst/ or under examples/pypeline/ (stale registration "
-        f"after a rename/delete?): {missing}"
+        f"exist in inst/, under examples/pypeline/, or under qor/ (stale "
+        f"registration after a rename/delete?): {missing}"
     )
 
 

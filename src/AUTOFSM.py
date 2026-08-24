@@ -338,11 +338,17 @@ class _TypeResolver:
     to live pypeline type objects, which generated source needs for its
     variable annotations.
 
-    Scalars are reconstructible from the name alone; struct/array types are not,
-    so they are seeded from the live objects actually in play: the AUTOFSM'd
-    function's own input/output types and every unit callable's annotations.
-    Any type reaching generated source came from one of those, so an
-    unresolvable name is a genuine gap -- raise rather than guess.
+    Scalars are reconstructible from the name alone, and so is any array whose
+    element type is (recursively) reconstructible -- 'uint16_t[16]' is just
+    'uint16_t' plus a dimension, regardless of whether anything in the design
+    ever carried that exact array type standalone. Only a struct genuinely
+    cannot be rebuilt from its name, so those are seeded from the live objects
+    actually in play: the AUTOFSM'd function's own input/output types, every
+    unit callable's annotations, and (see _Codegen.__init__) every entity in
+    its elaborated subtree, including ones fully consumed by descent. Any
+    struct type reaching generated source came from one of those, so an
+    unresolvable name at that point is a genuine gap -- raise rather than
+    guess.
     """
 
     def __init__(self):
@@ -380,6 +386,11 @@ class _TypeResolver:
                 self.seed(t)
             self.seed(hw_return_type(func))
         except Exception:
+            # Best-effort: func is anything _entity_callables handed us, not
+            # necessarily a plain @hw_func with clean annotations (a bit-manip
+            # builtin, a partial, ...). A seeding miss here is not fatal by
+            # itself -- resolve() only raises later if some generated line
+            # actually needed the type this call would have provided.
             pass
 
     def resolve(self, ctype_str: str):
@@ -390,11 +401,26 @@ class _TypeResolver:
         if scalar is not None:
             self._by_name[ctype_str] = scalar
             return scalar
+        # BASE[d1][d2]... is reconstructible whenever BASE is: rebuild it by
+        # indexing BASE with each dimension in source (outer-to-inner) order,
+        # matching how _CTypeMeta.__getitem__ builds the name in the first
+        # place (each further bracket is APPENDED to the name and pushed onto
+        # the current leaf element -- see its own comment). Recursing through
+        # `resolve` for BASE means a struct-typed leaf that genuinely cannot
+        # be rebuilt still raises naming itself, not the whole array name.
+        base_name, dims = _split_array_ctype(ctype_str)
+        if dims:
+            t = self.resolve(base_name)
+            for d in dims:
+                t = t[d]
+            self._by_name[ctype_str] = t
+            return t
         raise AutofsmError(
             f"AUTOFSM: cannot reconstruct a live Python type for C type "
             f"{ctype_str!r} needed by the generated FSM. Only scalar integer "
-            f"types, and types reachable from the AUTOFSM'd function's own "
-            f"signature or a shared unit's signature, can be regenerated."
+            f"types, arrays of a reconstructible type, and struct types "
+            f"reachable from the AUTOFSM'd function's own elaborated subtree "
+            f"can be regenerated."
         )
 
 
@@ -524,6 +550,28 @@ def _scalar_ctype_to_type(ctype_str: str):
         return None
     width = int(m.group(2))
     return make_uint_t(width) if m.group(1) == "u" else make_int_t(width)
+
+
+def _split_array_ctype(ctype_str: str):
+    """'BASE[d1][d2]...' -> (BASE, [d1, d2, ...]), dimensions in SOURCE
+    (left-to-right, outer-to-inner, C-declaration) order. (BASE, []) if
+    ctype_str carries no trailing bracket at all.
+
+    Peels one bracket at a time from the right (same regex shape as
+    _ctype_width), which finds dimensions in right-to-left order -- reversed
+    before returning so callers can re-apply them left-to-right and get the
+    same name back (see _TypeResolver.resolve)."""
+    import re
+
+    dims = []
+    rest = ctype_str
+    m = re.fullmatch(r"(.+)\[(\d+)\]", rest)
+    while m:
+        dims.append(int(m.group(2)))
+        rest = m.group(1)
+        m = re.fullmatch(r"(.+)\[(\d+)\]", rest)
+    dims.reverse()
+    return rest, dims
 
 
 # ─────────────────────────────────────────────
@@ -797,6 +845,26 @@ def _snapshot_subtree_delays(parser_state, entity, out=None):
     out[entity] = logic.delay
     for sub_entity in logic.submodule_instances.values():
         _snapshot_subtree_delays(parser_state, sub_entity, out)
+    return out
+
+
+def _subtree_entities(parser_state, entity, out=None):
+    """Every entity in a subtree, including ones fully consumed by descent and
+    therefore absent from a schedule's `fus`/node entities. Same traversal
+    shape as _snapshot_subtree_delays (FuncLogicLookupTable.submodule_instances
+    recursion with a seen set), used by _Codegen to seed _TypeResolver from
+    types that live only inside a descended body -- see that class's
+    docstring for why seeding from `fus`/nodes alone is not enough."""
+    if out is None:
+        out = set()
+    if entity in out:
+        return out
+    logic = parser_state.FuncLogicLookupTable.get(entity)
+    if logic is None:
+        return out
+    out.add(entity)
+    for sub_entity in logic.submodule_instances.values():
+        _subtree_entities(parser_state, sub_entity, out)
     return out
 
 
@@ -3126,6 +3194,20 @@ class _Codegen:
             f = _entity_callables(parser_state).get(node["entity"])
             if f is not None:
                 self.types.seed_callable(f)
+        # fus/nodes only cover entities that SURVIVED into the schedule -- an
+        # entity fully consumed by descent (its whole body inlined into the
+        # parent, see "kind": "inlined" in BUILD_DAG) contributes nothing
+        # there, so a type living only inside it (a descended soft multiplier's
+        # local partial-products array, say) would otherwise never be seeded.
+        # BUILD_AUTOFSM_FUNC already elaborates tag.func's whole subtree right
+        # before constructing this _Codegen, so it is safe to walk here.
+        func_entity = schedule.get("func_entity")
+        if func_entity is not None:
+            entity_callables = _entity_callables(parser_state)
+            for entity in _subtree_entities(parser_state, func_entity):
+                f = entity_callables.get(entity)
+                if f is not None:
+                    self.types.seed_callable(f)
 
     # ── value rendering ────────────────────────────────────────────────
     def _render_ref(self, ref):

@@ -40,17 +40,18 @@ For getting started information see the [README](README.md).
 24. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
 25. [Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline)
 26. [Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp)
+27. [Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm)
 
 **Part IV — Escape hatches**
 
-27. [Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
-28. [Just-Wires Synthesis Hint: `@wires`](#just-wires-synthesis-hint-wires)
+28. [Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
+29. [Just-Wires Synthesis Hint: `@wires`](#just-wires-synthesis-hint-wires)
 
 **Part V — Reference**
 
-29. [Simulation Reference](#simulation-reference)
-30. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
-31. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
+30. [Simulation Reference](#simulation-reference)
+31. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
+32. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
 
 ---
 
@@ -2251,7 +2252,9 @@ all of the time.
 - An input is accepted **only while the FSM is idle**. A `valid` pulse asserted
   while it is busy is IGNORED — there is no `ready` signal in this version.
   Space requests at least `.latency` cycles apart; that is what `.latency` is
-  for.
+  for. For a real valid/ready stream port that does this bookkeeping for you
+  — including holding a result across a stalled consumer instead of dropping
+  it — see [Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm).
 - The result arrives with a one-cycle `valid` pulse exactly `.latency` cycles
   after the accepted input. `.data` holds the last result in between. Initiation
   interval == `.latency`.
@@ -3391,7 +3394,8 @@ pipeline — AUTOPIPELINE retiming plus the output FIFO — simulates via `sim_c
 
 **See also:** [Tool-Chosen Implementation: `AUTOPIPELINE(...)` and `AUTOFSM(...)`](#tool-chosen-implementation-autopipeline-and-autofsm) ·
 [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo) ·
-[Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp)
+[Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp) ·
+[Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm)
 
 ---
 
@@ -3439,6 +3443,74 @@ relaxed timing only matters during real FPGA synthesis (requires `PART()` + Viva
 simulation always sees `func`'s result settle the same cycle it is computed. See
 `src/tests/pypeline_tests/inst/valid_ready_mcp_test.py` (translated from
 `examples/mcp/mcp_divider.c`) for the full example.
+
+---
+
+## Stream Wrapper for AUTOFSM: `make_stream_autofsm`
+
+[`AUTOFSM(func)`](#tool-chosen-implementation-autopipeline-and-autofsm) has no backpressure of
+its own: an input is accepted only while the FSM is idle, a `valid` pulse asserted while it's
+busy is ignored, and the result itself is only a **one-cycle `valid` pulse** — every raw
+AUTOFSM call site (`self_check_autofsm_test.py`, the donut/sine examples) hand-rolls a `busy`
+register and manually spaces requests at least `.latency` cycles apart.
+`make_stream_autofsm`, from `include/pypeline/stream/stream_autofsm.py`, does that bookkeeping
+once and presents a real valid/ready [stream interface](#the-stream-interface-validready-handshaking)
+instead — the AUTOFSM sibling of `make_stream_pipeline` (AUTOPIPELINE) and
+`make_valid_ready_mcp` (`MULTI_CYCLE[...]`) above:
+
+```python
+from pypeline import hw_func, MAIN
+from stream.stream_autofsm import make_stream_autofsm
+
+@hw_func
+def blob(x: blob_in_t) -> int16_t:
+    ...
+
+blob_fsm, blob_fsm_t = make_stream_autofsm(blob)   # tool picks the state count
+
+@MAIN(25.0)
+def top(stream_in: blob_fsm.in_stream_t, stream_out: blob_fsm.out_fb_t) -> blob_fsm_t:
+    return blob_fsm(stream_in, stream_out)
+```
+
+`make_stream_autofsm(func, max_latency=None)` infers `in_type`/`out_type` from `func`'s own
+parameter/return type annotations, constructs an `AUTOFSM(func, max_latency=max_latency)`
+instance internally, and returns `(func_autofsm, func_autofsm_t)`. Its ports are the two
+halves of a stream `@interface`, exactly like `make_stream_pipeline`'s and
+`make_valid_ready_mcp`'s:
+
+| | Type | Meaning |
+|---|---|---|
+| `func_autofsm(stream_in_if, stream_out_if)` | `(in_intrf.fwd_t, out_intrf.fb_t) -> func_autofsm_t` | one AUTOFSM-backed instance of `func` |
+| `func_autofsm_t.stream_out_if` | `out_intrf.fwd_t` | `func`'s result, held valid until the consumer takes it |
+| `func_autofsm_t.stream_in_if` | `in_intrf.fb_t` | `.ready` high while the FSM is idle **and** the output slot is free |
+| `func_autofsm.fsm` | `AUTOFSM` | the underlying tag object — `func_autofsm.fsm.latency` reads the raw FSM's cycle count |
+| `func_autofsm.latency` | `int` | the wrapper's own latency, `fsm.latency + 1` |
+
+**Internally, a registered output.** A holding register latches the FSM's one-cycle pulse and a
+`busy` register tracks whether the FSM itself is occupied; `stream_in_if.ready` is asserted only
+when both are free. This means the wrapper's latency and initiation interval are both
+`FSM.latency + 1` — one cycle more than the raw AUTOFSM contract, spent latching the pulse — but
+in exchange a stalled consumer (`stream_out_if.ready` low) never loses a result: it stays valid,
+with stable data, until taken. Back-to-back requests still pack tightly: when the consumer is
+always ready, the slot frees combinationally within the same cycle the result appears, so a new
+input can be accepted that same cycle.
+
+**The handshake body never reads `.latency`.** Unlike the raw AUTOFSM call site's manual
+spacing (which reads `.latency` to know how far apart to place requests), `make_stream_autofsm`'s
+generated hardware is identical whether `fsm.latency` is 0 (bootstrap pass / `--comb` / plain
+native sim) or a real scheduled value — only the register-transfer *timing* differs, not the
+RTL shape. That is what keeps its generated entity name stable across a build's passes; see
+[`docs/AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md) for why a schedule-dependent body would risk a
+stale delay-cache hit.
+
+**Simulates end-to-end**, in the same sense `make_stream_pipeline` does: plain native sim never
+installs a schedule, so `fsm.latency` stays 0 and the wrapper degrades to a correct
+1-cycle-latency, 1-cycle-II stream; a pipelined `--sim` build's native sim runs against the real
+discovered latency instead. See `src/tests/pypeline_tests/inst/stream_autofsm_test.py` for the
+handshake/backpressure tests and `self_check_stream_autofsm_test.py` for the full self-checking
+design (also driven through real GHDL — see
+[docs/AUTOFSM_DESIGN.md](AUTOFSM_DESIGN.md)'s test table).
 
 ---
 

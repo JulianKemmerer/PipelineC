@@ -556,6 +556,30 @@ name_mcp_func, name_mcp_t = make_valid_ready_mcp(func, ncycles)
 
 See [pypeline_guide.md §16](pypeline_guide.md#multi-cycle-paths-multi_cycle).
 
+### 8f. Stream wrapper for AUTOFSM — `make_stream_autofsm`
+
+No PipelineC macro maps onto this one directly — `AUTOFSM` (the resource-shared
+FSM builder) is pypeline-only, with no C-side equivalent to wrap. Included here
+because it completes the family started by 8c/8e above: a third
+function-to-stream wrapper, same port shape, this time around `AUTOFSM` instead
+of `AUTOPIPELINE`/`MULTI_CYCLE[...]`.
+
+```python
+# pypeline
+from stream.stream_autofsm import make_stream_autofsm
+
+name_autofsm_func, name_autofsm_t = make_stream_autofsm(func)
+
+# Wire and @MAIN pattern identical to 8c above,
+# substituting name_autofsm_func for name_pipeline_func.
+```
+
+Unlike `AUTOFSM(func)`'s own raw call site (which drops a result if the
+consumer isn't ready, and needs a hand-rolled `busy` register), the wrapper
+gives a real valid/ready port with a held, never-dropped result across a
+stalled consumer. See
+[pypeline_guide.md §27](pypeline_guide.md#stream-wrapper-for-autofsm-make_stream_autofsm).
+
 ---
 
 ## 9. Bit Manipulation
@@ -745,7 +769,6 @@ The following PipelineC features do not yet have a pypeline equivalent.
 | Multiple clock domains (`MAIN_MHZ_GROUP`, `#pragma ASYNC_WIRE`) | Not supported — `make_clock(mhz)` (§11 above) covers a single named/generated clock, but a tagged clock must match some `@MAIN`'s rate exactly; clock groups (distinct domains at the same rate) and async wires are not supported |
 | Async clock-crossing FIFOs (`GLOBAL_STREAM_FIFO` across clock domains) | Not supported |
 | Dual-port stream RAM (`DECL_STREAM_RAM_DP_W_R_1`) | Use `vhdl()` passthrough |
-| Simulation of `vhdl()`-based primitives | `make_stream_fifo`, `make_stream_pipeline`, `make_valid_ready_mcp` raise `NotImplementedError` in simulation; synthesise normally via `pipelinec` |
 | Multiple / early `return` statements (returning from inside an `if` branch) | Not supported — a pypeline function has exactly one `return`, which must be the final top-level statement; restructure to assign a result variable in each branch and return it once at the end (see [pypeline_guide.md §6](pypeline_guide.md#your-first-hardware-function)) |
 | `Reg[char_t[N]] = <initializer>` (register power-on value for a char array, e.g. equivalent of C's `static char name[16] = "boot";`) | Not supported for hardware elaboration — raises `ElaborationError`. `Reg[char_t[N]]` with no initializer (zero-init) works normally. See [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) |
 | C-style casts to `char_t`, an `@enum` type, or an array type | Not supported (scalar int↔int and struct/`@interface`-half casts are — see [§3d Casting](#3d-casting)) |
