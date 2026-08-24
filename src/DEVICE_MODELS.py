@@ -7,7 +7,6 @@
 # https://github.com/JulianKemmerer/PipelineC/issues/48
 # https://github.com/JulianKemmerer/PipelineC/issues/64
 
-# (C) 2022 Victor Surez Rovere <suarezvictor@gmail.com>
 # NOTE: only for integer operations (not floats)
 
 import hashlib
