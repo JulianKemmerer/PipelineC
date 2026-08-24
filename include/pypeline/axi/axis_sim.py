@@ -62,22 +62,19 @@ class AxisSimSource:
         self.n = n
         self._queue = deque()
         self._current = None  # bytes remaining of the in-flight frame, or None
-        self._current_mask = None  # parallel keep-mask remaining, or None
         self._pause_iter = None
 
-    def send_nowait(self, frame, keep_mask=None):
-        """`keep_mask`, if given, is a sequence of 0/1 the same length as
-        `frame`, overriding the default "every byte up to the frame's own
-        length is kept" behavior -- needed whenever a frame is really
-        *multiple concatenated sub-messages* with a hard beat boundary
-        between them (see `make_axis_byte_source`'s `use_keep_mask` docstring
-        for the motivating example: wireguard's ciphertext-then-auth-tag
-        framing, where the tag must always start on a fresh beat)."""
-        frame = bytes(frame)
-        if keep_mask is not None:
-            keep_mask = list(keep_mask)
-            assert len(keep_mask) == len(frame), "keep_mask must match frame length"
-        self._queue.append((frame, keep_mask))
+    def send_nowait(self, frame):
+        """Queues `frame` (any bytes-like object). Every byte up to the
+        frame's own length is kept; `keep[i] = remaining > i` on the final
+        beat, matching `make_axis_byte_source` -- this is already
+        Xilinx-style AXIS-interop shaped (full keep except a trailing-only
+        partial `eod` beat). A frame that is really multiple concatenated
+        sub-messages (e.g. wireguard's ciphertext-then-auth-tag framing) must
+        be packed contiguously by the caller before `send()`, not given
+        padding gaps (see wireguard-fpga issue #44: no embedded null
+        bytes)."""
+        self._queue.append(bytes(frame))
 
     # Synchronous model -- no real waiting involved, `send` is just the
     # cocotbext-axi-familiar name for the same operation as send_nowait.
@@ -131,19 +128,18 @@ class AxisSimSource:
         if self._current is None:
             if not self._queue:
                 return self._null_word()
-            self._current, self._current_mask = self._queue.popleft()
+            self._current = self._queue.popleft()
 
         if self._paused():
             return self._null_word()
 
         chunk = self._current[: self.n]
-        mask_chunk = self._current_mask[: self.n] if self._current_mask is not None else None
         eod = 1 if len(self._current) <= self.n else 0
         data = [0] * self.n
         keep = [0] * self.n
         for i, b in enumerate(chunk):
             data[i] = b
-            keep[i] = mask_chunk[i] if mask_chunk is not None else 1
+            keep[i] = 1
 
         frag_t = self.axis_intrf.stream_t.typeof("data")
         bus_t = frag_t.typeof("frag")
@@ -157,11 +153,8 @@ class AxisSimSource:
         if ready:
             if eod:
                 self._current = None
-                self._current_mask = None
             else:
                 self._current = self._current[self.n :]
-                if self._current_mask is not None:
-                    self._current_mask = self._current_mask[self.n :]
 
         return word
 
@@ -174,6 +167,14 @@ class AxisSimSink:
     via `recv()`/`recv_nowait()`. Always behaves as if its own `ready` is 1
     (matching every existing testbench in this codebase) -- it has no
     backpressure/pause hook of its own.
+
+    Every accepted beat is checked for Xilinx-style AXIS-interop compliance
+    (wireguard-fpga issue #44): `keep` must be all-ones unless the beat
+    carries `eod`, and on the `eod` beat `keep` must be a contiguous prefix
+    (lanes `[0, popcount)` kept, the rest not) -- never a mid-packet or
+    mid-beat hole/embedded null byte. A violation raises `AssertionError`
+    immediately, independent of whatever the caller separately checks about
+    the collected frame bytes.
 
     `scoreboard`, if given, lets `check_nowait()` pop a completed frame and
     compare it against the next `Scoreboard.expect()`-ed value in one call --
@@ -189,10 +190,20 @@ class AxisSimSink:
     def step(self, word):
         if not word.stream.valid:
             return
+        keep = [word.stream.data.frag.keep[i] for i in range(self.n)]
+        eod = word.stream.data.eod[0]
+        popcount = sum(1 for k in keep if k)
+        assert popcount == self.n or eod, (
+            "AXIS Xilinx-style tkeep violation: partial-keep beat without tlast "
+            "(embedded null bytes)"
+        )
+        assert keep == [1] * popcount + [0] * (self.n - popcount), (
+            "AXIS Xilinx-style tkeep violation: tkeep is not a contiguous prefix"
+        )
         for i in range(self.n):
-            if word.stream.data.frag.keep[i]:
+            if keep[i]:
                 self._current.append(word.stream.data.frag.data[i])
-        if word.stream.data.eod[0]:
+        if eod:
             self._queue.append(bytes(self._current))
             self._current = bytearray()
 

@@ -8,6 +8,7 @@ from pypeline import (
     uint8_t,
     uint32_t,
     make_uint_t,
+    sim_assert,
 )
 
 from kept_data_bus import make_kept_data_bus_t
@@ -385,7 +386,7 @@ def make_dwidth_narrow(elem_t, narrow_n, ratio):
 # reverse half itself, same as with any other consumer.
 
 
-def make_axis_byte_source(axis_intrf, n, max_bytes, use_keep_mask=False):
+def make_axis_byte_source(axis_intrf, n, max_bytes):
     """Synthesizable byte-stream generator. Load a byte array + length once
     (while idle), then emits one `axis_intrf.stream_t` word per cycle with
     `keep[i] = remaining > i`, `eod[0]` set on the last beat, shifting the
@@ -394,22 +395,18 @@ def make_axis_byte_source(axis_intrf, n, max_bytes, use_keep_mask=False):
     FSM block duplicated across wireguard-fpga's `*_syn_tb.py` testbenches
     (e.g. `encrypt_syn_tb.py`'s plaintext-streaming block).
 
-    `use_keep_mask=True` adds a `load_keep_mask: uint1_t[max_bytes]` input,
-    latched alongside `load_data`/`load_len`, that overrides the default
-    `keep[i] = remaining > i` derivation with an explicit per-byte mask --
-    needed whenever a frame is really *multiple concatenated sub-messages*
-    with a hard beat boundary between them (e.g. wireguard's ciphertext-then-
-    auth-tag framing: the tag must always start on a fresh beat, so a
-    non-block-aligned ciphertext's last beat needs trailing padding bytes
-    marked keep=0, not folded into "still remaining" and marked keep=1 like
-    ordinary single-message data would be). `load_len` still spans the padded
-    total length (so `eod` still lands on the true final beat); the mask only
-    changes which bytes within that span read as kept.
+    `keep[i] = remaining > i` is already Xilinx-style by construction: full
+    keep on every beat except the last, and a contiguous *prefix* of kept
+    lanes (never a mid-packet hole) on the `eod` beat. There is no
+    caller-overridable mask -- a frame that is really multiple concatenated
+    sub-messages (e.g. wireguard's ciphertext-then-auth-tag framing) must be
+    packed contiguously by the caller before `load_data`/`load_len`, not
+    given padding gaps to mark not-kept (see issue #44 in wireguard-fpga: an
+    AMD/Xilinx AXIS-interop stream never carries embedded null bytes).
 
     Returns (axis_byte_source, axis_byte_source_t):
         axis_byte_source(load: uint1_t, load_data: uint8_t[max_bytes],
-                          load_len: uint32_t, [load_keep_mask: uint1_t[max_bytes],]
-                          stream_out_if: axis_intrf.fb_t)
+                          load_len: uint32_t, stream_out_if: axis_intrf.fb_t)
             -> axis_byte_source_t
         axis_byte_source_t fields:
           .stream_out_if (axis_intrf.fwd_t) - the generated stream (paired
@@ -418,93 +415,47 @@ def make_axis_byte_source(axis_intrf, n, max_bytes, use_keep_mask=False):
           .idle (uint1_t) - no frame in flight; safe to `load` a new one
     """
     buf_t = uint8_t[max_bytes]
-    mask_t = uint1_t[max_bytes]
 
     @struct
     class axis_byte_source_t(NamedTuple):
         stream_out_if: axis_intrf.fwd_t
         idle: uint1_t
 
-    if use_keep_mask:
+    @hw_func
+    def axis_byte_source(
+        load: uint1_t,
+        load_data: buf_t,
+        load_len: uint32_t,
+        stream_out_if: axis_intrf.fb_t,
+    ) -> axis_byte_source_t:
+        o: axis_byte_source_t
+        buf: Reg[buf_t]
+        remaining: Reg[uint32_t]
 
-        @hw_func
-        def axis_byte_source(
-            load: uint1_t,
-            load_data: buf_t,
-            load_len: uint32_t,
-            load_keep_mask: mask_t,
-            stream_out_if: axis_intrf.fb_t,
-        ) -> axis_byte_source_t:
-            o: axis_byte_source_t
-            buf: Reg[buf_t]
-            remaining: Reg[uint32_t]
-            keep_mask: Reg[mask_t]
+        if load & (remaining == 0):
+            buf = load_data
+            remaining = load_len
 
-            if load & (remaining == 0):
-                buf = load_data
-                remaining = load_len
-                keep_mask = load_keep_mask
+        outw: axis_intrf.stream_t
+        outw.valid = remaining > 0
+        outw.data.eod[0] = remaining <= n
+        for i in range(n):
+            outw.data.frag.keep[i] = remaining > i
+            outw.data.frag.data[i] = 0
+            if remaining > i:
+                outw.data.frag.data[i] = buf[i]
 
-            outw: axis_intrf.stream_t
-            outw.valid = remaining > 0
-            outw.data.eod[0] = remaining <= n
-            for i in range(n):
-                outw.data.frag.keep[i] = 0
-                outw.data.frag.data[i] = 0
-                if remaining > i:
-                    outw.data.frag.keep[i] = keep_mask[i]
-                    outw.data.frag.data[i] = buf[i]
+        if outw.valid & stream_out_if.ready:
+            if outw.data.eod[0]:
+                remaining = 0
+            else:
+                remaining = remaining - n
+                for i in range(max_bytes - n):
+                    buf[i] = buf[i + n]
 
-            if outw.valid & stream_out_if.ready:
-                if outw.data.eod[0]:
-                    remaining = 0
-                else:
-                    remaining = remaining - n
-                    for i in range(max_bytes - n):
-                        keep_mask[i] = keep_mask[i + n]
-                        buf[i] = buf[i + n]
-
-            o.stream_out_if.stream = outw
-            o.idle = remaining == 0
-            return o
-
-    else:
-
-        @hw_func
-        def axis_byte_source(
-            load: uint1_t,
-            load_data: buf_t,
-            load_len: uint32_t,
-            stream_out_if: axis_intrf.fb_t,
-        ) -> axis_byte_source_t:
-            o: axis_byte_source_t
-            buf: Reg[buf_t]
-            remaining: Reg[uint32_t]
-
-            if load & (remaining == 0):
-                buf = load_data
-                remaining = load_len
-
-            outw: axis_intrf.stream_t
-            outw.valid = remaining > 0
-            outw.data.eod[0] = remaining <= n
-            for i in range(n):
-                outw.data.frag.keep[i] = remaining > i
-                outw.data.frag.data[i] = 0
-                if remaining > i:
-                    outw.data.frag.data[i] = buf[i]
-
-            if outw.valid & stream_out_if.ready:
-                if outw.data.eod[0]:
-                    remaining = 0
-                else:
-                    remaining = remaining - n
-                    for i in range(max_bytes - n):
-                        buf[i] = buf[i + n]
-
-            o.stream_out_if.stream = outw
-            o.idle = remaining == 0
-            return o
+        o.stream_out_if.stream = outw
+        o.idle = remaining == 0
+        return o
 
     axis_byte_source.axis_intrf = axis_intrf
     return axis_byte_source, axis_byte_source_t
@@ -519,6 +470,14 @@ def make_axis_byte_sink(axis_intrf, n, max_bytes):
     the output-side per-lane `sim_assert` + shift-down-expected-array block
     duplicated across wireguard-fpga's `*_syn_tb.py` testbenches (e.g.
     `encrypt_syn_tb.py`'s ciphertext-checking block).
+
+    Every accepted beat is also checked for Xilinx-style AXIS-interop
+    compliance (wireguard-fpga issue #44): `tkeep` must be all-ones unless the
+    beat carries `eod`, and on the `eod` beat `tkeep` must be a contiguous
+    prefix (lanes `[0, popcount)` kept, the rest not) -- never a mid-packet or
+    mid-beat hole/embedded null byte. A violation raises `sim_assert` (a real
+    VHDL `assert ... severity failure` once elaborated), independent of
+    whatever the caller separately checks about `frame_data`/`frame_len`.
 
     Returns (axis_byte_sink, axis_byte_sink_t):
         axis_byte_sink(stream_in_if: axis_intrf.fwd_t) -> axis_byte_sink_t
@@ -557,9 +516,23 @@ def make_axis_byte_sink(axis_intrf, n, max_bytes):
             for i in range(n):
                 buf[count + i] = stream_in_if.stream.data.frag.data[i]
             new_count: uint32_t = count
+            keep_popcount: uint32_t = 0
             for i in range(n):
                 if stream_in_if.stream.data.frag.keep[i]:
                     new_count = new_count + 1
+                    keep_popcount = keep_popcount + 1
+            # Xilinx-style AXIS-interop compliance (issue #44): full keep
+            # unless this is the eod beat, and even then keep must be a
+            # contiguous prefix -- never a mid-packet/mid-beat null-byte hole.
+            sim_assert(
+                (keep_popcount == n) | stream_in_if.stream.data.eod[0],
+                "AXIS Xilinx-style tkeep violation: partial-keep beat without tlast (embedded null bytes)",
+            )
+            for i in range(n):
+                sim_assert(
+                    stream_in_if.stream.data.frag.keep[i] == (i < keep_popcount),
+                    "AXIS Xilinx-style tkeep violation: tkeep is not a contiguous prefix",
+                )
             if stream_in_if.stream.data.eod[0]:
                 o.frame_valid = 1
                 o.frame_data = buf

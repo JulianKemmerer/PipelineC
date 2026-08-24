@@ -27,12 +27,8 @@ MAX_BYTES = 32
 axis_intrf = make_axis_interface(N)
 byte_source, byte_source_t = make_axis_byte_source(axis_intrf, N, MAX_BYTES)
 byte_sink, byte_sink_t = make_axis_byte_sink(axis_intrf, N, MAX_BYTES)
-masked_byte_source, masked_byte_source_t = make_axis_byte_source(
-    axis_intrf, N, MAX_BYTES, use_keep_mask=True
-)
 
 buf_t = uint8_t[MAX_BYTES]
-mask_t = uint1_t[MAX_BYTES]
 
 
 # Top-level entry points so `pypelinec --comb` elaborates/synthesizes the same
@@ -47,17 +43,6 @@ def byte_source_main(
 @MAIN
 def byte_sink_main(stream_in_if: axis_intrf.fwd_t) -> byte_sink_t:
     return byte_sink(stream_in_if)
-
-
-@MAIN
-def masked_byte_source_main(
-    load: uint1_t,
-    load_data: buf_t,
-    load_len: uint32_t,
-    load_keep_mask: mask_t,
-    stream_out_if: axis_intrf.fb_t,
-) -> masked_byte_source_t:
-    return masked_byte_source(load, load_data, load_len, load_keep_mask, stream_out_if)
 
 
 def _round_trip_hw(frame_bytes):
@@ -93,40 +78,45 @@ def test_hw_round_trip_partial_final_beat():
     print("test_hw_round_trip_partial_final_beat PASSED")
 
 
-def test_hw_keep_mask_beat_boundary():
-    """use_keep_mask=True: two concatenated sub-messages (a 6-byte "ciphertext"
-    then a 4-byte "tag") where the tag must start on a fresh beat -- the
-    ciphertext's last beat is padded with not-kept bytes rather than letting
-    the tag merge into its leftover lanes. This is the exact shape
-    wireguard-fpga's decrypt testbench needs for its ciphertext-then-auth-tag
-    input framing."""
-    sim_reset()
-    msg_a = bytes([10, 20, 30, 40, 50, 60])  # 6 bytes -> pads to 2 beats (N=4)
-    msg_b = bytes([1, 2, 3, 4])  # 4 bytes -> exactly 1 beat
-    pad_len = (-len(msg_a)) % N
-    total_len = len(msg_a) + pad_len + len(msg_b)
-    load_data = list(msg_a) + [0] * pad_len + list(msg_b) + [0] * (MAX_BYTES - total_len)
-    keep_mask = (
-        [1] * len(msg_a) + [0] * pad_len + [1] * len(msg_b) + [0] * (MAX_BYTES - total_len)
-    )
-    expected = list(msg_a) + list(msg_b)
-
-    sink_ready = axis_intrf.fb_t(ready=1)
-    got = None
-    for cycle in range(50):
-        load = 1 if cycle == 0 else 0
-        src = sim_call(
-            masked_byte_source, load, load_data, total_len, keep_mask, sink_ready
+def _make_stream(data, keep, eod, valid=1):
+    """Hand-craft an axis_intrf.fwd_t word with arbitrary data/keep/eod --
+    bypassing byte_source, whose own derivation can't produce a non-compliant
+    beat -- so the compliance-check tests below can drive one directly."""
+    frag_t = axis_intrf.stream_t.typeof("data")
+    bus_t = frag_t.typeof("frag")
+    return axis_intrf.fwd_t(
+        axis_intrf.stream_t(
+            data=frag_t(frag=bus_t(data=data, keep=keep), eod=[eod]),
+            valid=valid,
         )
-        snk = sim_call(byte_sink, src.stream_out_if)
-        sink_ready = snk.stream_in_if
-        if snk.frame_valid:
-            got = list(snk.frame_data[: len(expected)])
-            break
-    assert got is not None, "byte_sink never signaled frame_valid"
-    assert int(snk.frame_len) == len(expected), (int(snk.frame_len), len(expected))
-    assert got == expected, (got, expected)
-    print("test_hw_keep_mask_beat_boundary PASSED")
+    )
+
+
+def test_hw_sink_rejects_mid_packet_hole():
+    """byte_sink's Xilinx-style compliance check (wireguard-fpga issue #44):
+    a partial-keep beat that does NOT carry eod (an embedded null byte mid
+    packet) must raise via sim_assert."""
+    sim_reset()
+    word = _make_stream(data=[1, 2, 0, 0], keep=[1, 1, 0, 0], eod=0)
+    try:
+        sim_call(byte_sink, word)
+    except AssertionError:
+        print("test_hw_sink_rejects_mid_packet_hole PASSED")
+        return
+    raise AssertionError("byte_sink accepted a mid-packet tkeep hole without raising")
+
+
+def test_hw_sink_rejects_non_prefix_keep():
+    """Even on the eod beat, a non-contiguous keep pattern (a hole before the
+    last kept lane) must raise -- Xilinx-style tkeep is always a prefix."""
+    sim_reset()
+    word = _make_stream(data=[1, 0, 3, 4], keep=[1, 0, 1, 1], eod=1)
+    try:
+        sim_call(byte_sink, word)
+    except AssertionError:
+        print("test_hw_sink_rejects_non_prefix_keep PASSED")
+        return
+    raise AssertionError("byte_sink accepted a non-prefix tkeep pattern without raising")
 
 
 def test_sim_source_sink_round_trip():
@@ -148,29 +138,17 @@ def test_sim_source_sink_round_trip():
     print("test_sim_source_sink_round_trip PASSED")
 
 
-def test_sim_source_keep_mask_beat_boundary():
-    """AxisSimSource's send(frame, keep_mask=...) -- the plain-Python mirror of
-    test_hw_keep_mask_beat_boundary."""
-    src = AxisSimSource(axis_intrf, N)
+def test_sim_sink_rejects_mid_packet_hole():
+    """AxisSimSink's Xilinx-style compliance check -- the plain-Python mirror
+    of test_hw_sink_rejects_mid_packet_hole."""
     snk = AxisSimSink(axis_intrf, N)
-    msg_a = bytes([10, 20, 30, 40, 50, 60])
-    msg_b = bytes([1, 2, 3, 4])
-    pad_len = (-len(msg_a)) % N
-    frame = msg_a + bytes(pad_len) + msg_b
-    keep_mask = [1] * len(msg_a) + [0] * pad_len + [1] * len(msg_b)
-    src.send(frame, keep_mask=keep_mask)
-
-    got = None
-    for _ in range(20):
-        word = src.step(True)
+    word = _make_stream(data=[1, 2, 0, 0], keep=[1, 1, 0, 0], eod=0)
+    try:
         snk.step(word)
-        f = snk.recv_nowait()
-        if f is not None:
-            got = f
-            break
-    expected = msg_a + msg_b
-    assert got == expected, (got, expected)
-    print("test_sim_source_keep_mask_beat_boundary PASSED")
+    except AssertionError:
+        print("test_sim_sink_rejects_mid_packet_hole PASSED")
+        return
+    raise AssertionError("AxisSimSink accepted a mid-packet tkeep hole without raising")
 
 
 def test_sim_source_pause_generator():
@@ -246,9 +224,10 @@ def test_axis_sim_sink_check_nowait():
 if __name__ == "__main__":
     test_hw_round_trip_full_beats()
     test_hw_round_trip_partial_final_beat()
-    test_hw_keep_mask_beat_boundary()
+    test_hw_sink_rejects_mid_packet_hole()
+    test_hw_sink_rejects_non_prefix_keep()
     test_sim_source_sink_round_trip()
-    test_sim_source_keep_mask_beat_boundary()
+    test_sim_sink_rejects_mid_packet_hole()
     test_sim_source_pause_generator()
     test_scoreboard_pass_and_fail()
     test_axis_sim_sink_check_nowait()
