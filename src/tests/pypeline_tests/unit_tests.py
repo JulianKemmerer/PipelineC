@@ -115,6 +115,22 @@ def get_tests() -> list:
             cmd=[INST_DIR / "typed_pipeline_placement_test.py"],
         )
     )
+    # SWEEP.RANK_PATH_FUNC_CANDIDATES / RESOLVE_PIPELINABLE_HOTSPOT: critical
+    # path attribution ranked candidates by summed matched-substring length,
+    # which has no depth signal (every ancestor's name is a substring of a
+    # descendant register's name) and so always favored the single longest
+    # candidate name. Found for real on wireguard-fpga's decrypt path: a
+    # long auto-generated interface-func wrapper name outscored the actual
+    # on-path `chacha20_chacha20_block_step`, so the sweep declared the path
+    # unpipelinable (feedback_vars on the wrapper) and stopped 3x too early
+    # -- see the test file's own docstring.
+    tests.append(
+        Test(
+            name="path_attribution_test",
+            category="unit",
+            cmd=[INST_DIR / "path_attribution_test.py"],
+        )
+    )
     # DEVICE_MODELS sky130 STA diagnostics and fixed internal synthesis
     # recipes: component sums, endpoint semantics, structured arc traces,
     # and recipe-scoped cache/artifact identities. Uses tiny mapped-JSON

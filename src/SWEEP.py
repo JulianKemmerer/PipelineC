@@ -3022,20 +3022,43 @@ class MainSweepPlan:
         return worst, blame
 
 
-def ATTRIBUTE_PATH_TO_FUNC(path_report, plan, parser_state):
-    """Approximate critical path attribution: score function name fragments
-    against register/netlist resource names from the timing report. Post
-    synthesis names below the MAIN are mangled tool-dependently, so this is
-    intentionally substring scoring, never exact hierarchical matching.
-    Returns (func_name or None, local_stage_info string for logging)."""
-    name_strs = []
+def RANK_PATH_FUNC_CANDIDATES(path_report, plan, parser_state):
+    """Rank candidate funcs for critical-path attribution, best (deepest,
+    most specific) guess first. Post synthesis names below the MAIN are
+    mangled tool-dependently, so this is intentionally substring scoring,
+    never exact hierarchical matching.
+
+    Both endpoint names share their textual prefix down to the lowest
+    common ancestor of the two registers, so a candidate func name that is a
+    substring of *every available* endpoint name is a true ancestor of the
+    path - not just something that happens to appear near it. Ranking those
+    by the deepest (rightmost) match position, longest name breaking ties,
+    finds the lowest common ancestor without ever needing exact
+    hierarchical matching.
+
+    This replaces an earlier version that scored every candidate by summed
+    matched-substring length across start/end reg names and netlist
+    resources. Because every ancestor func's name is *itself* a substring
+    of a descendant register's fully-qualified name (each level just
+    prepends its own instance name), that scoring had no depth signal at
+    all - it always favored the single longest candidate name, which in
+    practice meant long auto-generated hash-suffixed interface-func wrapper
+    names beat short, specific, actually-on-the-critical-path names. Seen
+    for real on wireguard-fpga's decrypt path: the 58-char wrapper
+    ``if8040c842_decrypt_dataflow_core_077e07da383ed36e_inst18`` scored 14112
+    and won over the 29-char ``chacha20_chacha20_block_step`` (7056), even
+    though the reported critical path ran entirely between two registers
+    inside the latter - not merely nearby, but fully bounded within it.
+
+    Returns a list of func names, best first (may be empty)."""
+    endpoints = []
     for s in [path_report.start_reg_name, path_report.end_reg_name]:
         if s is not None:
-            name_strs.append(s.lower())
-    for r in path_report.netlist_resources:
-        name_strs.append(r.lower())
+            endpoints.append(s.lower())
+    resource_strs = [r.lower() for r in path_report.netlist_resources]
+    name_strs = endpoints + resource_strs
     if len(name_strs) == 0:
-        return None, ""
+        return []
     # Candidate funcs = every func inside this plan's subtrees (from segments)
     # EXCEPT the subtree roots and the main itself: the flattened netlist
     # prefixes every register name with the top/main entity name, so the
@@ -3053,6 +3076,43 @@ def ATTRIBUTE_PATH_TO_FUNC(path_report, plan, parser_state):
         for seg in landscape.segments:
             candidates |= seg.ancestor_funcs
     candidates -= excluded
+
+    def _ranked(keyed):
+        # keyed: func_name -> ascending-better sort key tuple. Name itself
+        # is always the last key element so a hash-seed-salted set
+        # iteration order never changes the result between two candidates
+        # that otherwise tie exactly.
+        return [
+            kv[0] for kv in sorted(keyed.items(), key=lambda kv: kv[1], reverse=True)
+        ]
+
+    if len(endpoints) > 0:
+        # Tier A: substring of every available endpoint name (both, or the
+        # single one when the report only had one usable end) - a true
+        # common ancestor of the path.
+        both = {}
+        for func_name in candidates:
+            fl = func_name.lower()
+            positions = [e.rfind(fl) for e in endpoints]
+            if all(p >= 0 for p in positions):
+                both[func_name] = (min(positions), len(fl), fl)
+        if len(both) > 0:
+            return _ranked(both)
+        # Tier B: only reachable with two endpoints available and no
+        # candidate spanning both - fall back to whichever endpoint(s) a
+        # candidate does match.
+        one = {}
+        for func_name in candidates:
+            fl = func_name.lower()
+            positions = [e.rfind(fl) for e in endpoints if fl in e]
+            if len(positions) > 0:
+                one[func_name] = (max(positions), len(fl), fl)
+        if len(one) > 0:
+            return _ranked(one)
+
+    # Tier C: no endpoint name usable at all (mangled beyond matching, or
+    # the tool reports netlist resources but no register endpoint names) -
+    # the pre-existing summed substring-length score, unchanged.
     scores = {}
     for func_name in candidates:
         fl = func_name.lower()
@@ -3061,22 +3121,70 @@ def ATTRIBUTE_PATH_TO_FUNC(path_report, plan, parser_state):
             if fl in st:
                 s += len(fl)
         if s > 0:
-            scores[func_name] = s
-    if len(scores) == 0:
-        return None, ""
-    # Highest score wins; longer (more specific) name breaks ties
-    best = sorted(scores.items(), key=lambda kv: (kv[1], len(kv[0])))[-1][0]
-    # Entity-local pipeline stage numbers (REG_STAGEn_...) for logging only
-    stage_info = ""
+            scores[func_name] = (s, len(fl), fl)
+    return _ranked(scores)
+
+
+def _PATH_REPORT_STAGE_INFO(path_report):
+    # Entity-local pipeline stage numbers (REG_STAGEn_...) for logging only -
+    # stage indices are local to the entity the FF lives in, never global.
     stages = []
     for s in [path_report.start_reg_name, path_report.end_reg_name]:
         if s is not None:
             m = re.search(r"stage(\d+)", s.lower())
             if m:
                 stages.append(m.group(1))
-    if len(stages) > 0:
-        stage_info = " local_stages=" + "->".join(stages)
-    return best, stage_info
+    if len(stages) == 0:
+        return ""
+    return " local_stages=" + "->".join(stages)
+
+
+def ATTRIBUTE_PATH_TO_FUNC(path_report, plan, parser_state):
+    """Best-guess critical path attribution.
+    Returns (func_name or None, local_stage_info string for logging)."""
+    ranked = RANK_PATH_FUNC_CANDIDATES(path_report, plan, parser_state)
+    best = ranked[0] if len(ranked) > 0 else None
+    return best, _PATH_REPORT_STAGE_INFO(path_report)
+
+
+def WHY_HOTSPOT_NOT_PIPELINABLE(func_name, parser_state):
+    """None if autopipelining can help this func; otherwise the reason it
+    cannot subdivide the path attributed to it. Mirrors the two-part check
+    the sweep uses before declaring a hotspot unpipelinable."""
+    h_logic = parser_state.FuncLogicLookupTable[func_name]
+    if not h_logic.CAN_HAVE_ADDED_LATENCY(parser_state):
+        return WHY_NOT_SLICEABLE(h_logic, parser_state)
+    if not SYN.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+        func_name, parser_state
+    ):
+        return "no sliceable logic beneath it"
+    return None
+
+
+def RESOLVE_PIPELINABLE_HOTSPOT(path_report, plan, parser_state):
+    """Rank this path's candidate funcs and pick the deepest one that
+    autopipelining can actually help - an unsliceable common ancestor (e.g.
+    a wrapper with its own feedback_vars) must not mask a deeper-or-sibling
+    candidate on the same path that is fully sliceable, or a real hotspot
+    reads as unpipelinable and the sweep gives up early.
+
+    Returns (hotspot_func or None, unpipelinable_reason or None,
+    stage_info). unpipelinable_reason is only set when every ranked
+    candidate was checked and none can be autopipelined - the honest
+    "nothing here can help" case; hotspot_func is then the deepest (best
+    attributed) candidate, for logging/blame purposes."""
+    ranked = RANK_PATH_FUNC_CANDIDATES(path_report, plan, parser_state)
+    stage_info = _PATH_REPORT_STAGE_INFO(path_report)
+    if len(ranked) == 0:
+        return None, None, stage_info
+    hotspot_func = ranked[0]
+    reason = WHY_HOTSPOT_NOT_PIPELINABLE(hotspot_func, parser_state)
+    if reason is None:
+        return hotspot_func, None, stage_info
+    for candidate in ranked[1:]:
+        if WHY_HOTSPOT_NOT_PIPELINABLE(candidate, parser_state) is None:
+            return candidate, None, stage_info
+    return hotspot_func, reason, stage_info
 
 
 def _INSTS_CONFLICT(inst_a, inst_b):
@@ -4184,21 +4292,13 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         )
                         action = "stop_at_floor"
                     else:
-                        hotspot_func, stage_info = ATTRIBUTE_PATH_TO_FUNC(
+                        (
+                            hotspot_func,
+                            unpipelinable_reason,
+                            stage_info,
+                        ) = RESOLVE_PIPELINABLE_HOTSPOT(
                             path_report, plan, parser_state
                         )
-                        # Can autopipelining even help the blamed func?
-                        unpipelinable_reason = None
-                        if hotspot_func is not None:
-                            h_logic = parser_state.FuncLogicLookupTable[hotspot_func]
-                            if not h_logic.CAN_HAVE_ADDED_LATENCY(parser_state):
-                                unpipelinable_reason = WHY_NOT_SLICEABLE(
-                                    h_logic, parser_state
-                                )
-                            elif not SYN.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
-                                hotspot_func, parser_state
-                            ):
-                                unpipelinable_reason = "no sliceable logic beneath it"
                         if (
                             hotspot_func is not None
                             and unpipelinable_reason is not None

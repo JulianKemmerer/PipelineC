@@ -1018,12 +1018,41 @@ attempted. Instead:
 
 1. MAINs resolve via entity-name prefixes (unchanged
    `GET_MAIN_INSTS_FROM_PATH_REPORT` — MAIN entities survive unmangled);
-2. function-name *fragments* from the subtree's landscape are
-   substring-scored against the report's register/netlist names (generated
-   `REG_STAGEn_<wire>` FF names survive synthesis well); highest score wins.
-   The subtree root and the main's own names are **excluded** — the flattened
-   netlist prefixes every register with the top entity name, so the root
-   would match everything and always win, a meaningless attribution;
+2. function-name *fragments* from the subtree's landscape (`SWEEP.
+   RANK_PATH_FUNC_CANDIDATES`) are substring-matched against the report's
+   register/netlist names (generated `REG_STAGEn_<wire>` FF names survive
+   synthesis well) and ranked **by depth, not by name length**: a candidate
+   whose name is a substring of *every available* endpoint name is a true
+   common ancestor of the two registers (both endpoint names share their
+   textual prefix down to their lowest common ancestor), so the deepest
+   (rightmost) such match wins, longer name breaking ties — this finds the
+   LCA without ever needing exact hierarchical matching. Only when no
+   candidate matches any endpoint name at all does it fall back to summing
+   matched-substring length across every endpoint/resource string (the
+   original scoring, kept as a last resort for tools that report resources
+   but no usable register endpoint names). The subtree root and the main's
+   own names are **excluded** — the flattened netlist prefixes every
+   register with the top entity name, so the root would match everything
+   and always win, a meaningless attribution;
+
+   *Why length alone was wrong:* every ancestor func's name is itself a
+   substring of a descendant register's fully-qualified name (each
+   hierarchy level just prepends its own instance name), so a pure
+   matched-length score carries no depth signal — it always favors
+   whichever candidate name is longest. Seen for real on wireguard-fpga's
+   decrypt path: a 58-character auto-generated interface-func wrapper name
+   (`if8040c842_decrypt_dataflow_core_..._inst18`) scored 14112 and beat
+   the 29-character `chacha20_chacha20_block_step` at 7056, even though
+   Vivado's own timing report showed the critical path running entirely
+   between two registers *inside* the latter, many levels deeper than the
+   wrapper. `SWEEP.RESOLVE_PIPELINABLE_HOTSPOT` additionally guards a
+   related case: the correctly-attributed deepest common ancestor can
+   itself be unsliceable (state/feedback at its own level, e.g. a
+   `feedback_vars` submodule threaded through an interface-func wrapper)
+   while wrapping other, unrelated sliceable logic — before declaring the
+   path unpipelinable it scans the remaining ranked candidates for the
+   deepest one that autopipelining *can* help, so one stuck ancestor never
+   masks a densifiable one on the same path;
 3. entity-local `REG_STAGEn` stage numbers are logged only — stage indices
    are local to the entity the FF lives in, never global;
 4. low confidence → no attribution → global rescale. PYRTL (the no-PART
@@ -1058,6 +1087,44 @@ design more finely):
         (10.11ns) cuts=3 main_latency=4 pipeline_stages=5 predicted_stage=9.10ns
         bottleneck=fft_2pt_pipeline_no_handshake action=densify(fft_... x1.17)
 ```
+
+### Attribution depth-ranking result (2026-08-24)
+
+`./build.py --dec --sim --native` (wireguard-fpga, 80 MHz goal) used to fail
+after 2 iterations: iter=1 attributed the critical path to
+`if8040c842_decrypt_dataflow_core_..._inst18` — an auto-generated
+interface-func wrapper, unsliceable because a `Feedback[uint1_t]` inside
+`strip_auth_tag` makes it report `feedback_vars` — and iter=2 stopped there
+(`action=stop(unpipelinable if8040c842_...)`), despite Vivado's own timing
+report showing the actual worst path running entirely between two
+registers inside `chacha20_chacha20_block_step`, many levels deeper and
+fully sliceable. Replaying the real timing report through the old scorer
+confirmed why: all four matched candidates matched every endpoint name and
+every one of 250 netlist resources, so the summed-length score just picked
+the longest name (14112 for the 58-char wrapper vs 7056 for the 29-char
+`chacha20_chacha20_block_step`) — no depth signal at all.
+
+With `RANK_PATH_FUNC_CANDIDATES` (rank by deepest shared substring match,
+not name length) and `RESOLVE_PIPELINABLE_HOTSPOT` (skip past an
+unsliceable match to a deeper sliceable one on the same path), the same
+build now attributes correctly from iteration 1 and meets timing:
+
+```
+[sweep] iter=1 ... got=31.34MHz (31.91ns) cuts=7 ... bottleneck=chacha20_chacha20_block_step
+        action=densify(chacha20_chacha20_block_step x2.68)
+[sweep] iter=2 ... got=63.13MHz (15.84ns) cuts=35 ... action=minisweep(chacha20_chacha20_block_step)
+[sweep]   Locked chacha20_chacha20_block_step at cuts=1 (0 input + 9 output boundary bank(s)) on 10 instance(s)
+[sweep] iter=3 ... got=95.91MHz (10.43ns) cuts=1 ... action=met
+PASS decrypt_dataflow_decrypt_dataflow: 95.91 MHz vs 80.00 MHz goal (confirmation run)
+```
+
+3 iterations, 21 pipeline stages, met with margin (95.91 vs 80.00 MHz) —
+where the unfixed build never got past 31.34 MHz. `./build.py --enc
+--sim --native` (no `feedback_vars` submodule in its call graph, so never
+exercised this bug) was not re-run as part of this fix; it already passed
+at iter=1 before and after, and the change only touches how a hotspot is
+*chosen* when multiple candidates match a path, not the sweep's
+convergence mechanics.
 
 **Unmet timing fails the build.** The best pipeline found (largest
 worst-case achieved/target ratio across iterations) is still written out —
