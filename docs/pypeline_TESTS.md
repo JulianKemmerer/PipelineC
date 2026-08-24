@@ -202,10 +202,11 @@ Each category module can also run standalone, e.g.
   and the exact-boundary options support diagnosis; none is a public compiler
   interface.
 
-  A known, unrelated frontend nondeterminism can reverse the source-coordinate
-  fragments in `_DUPLICATE_<hash>` names while keeping the entity hash fixed.
-  The harness canonicalizes only that ordering for placement deduplication;
-  actual VHDL hashes and immutable mapped bytes are never canonicalized.
+  The harness still normalizes the trailing per-build content hash out of
+  `_DUPLICATE_<hash>` names for placement deduplication (it is unrelated to
+  physical placement identity); the source-coordinate fragment itself is now
+  compiler-sorted and no longer needs canonicalizing. Actual VHDL hashes and
+  immutable mapped bytes are never canonicalized.
 - `src/tests/pypeline_tests/divider_struct_mux_bench.py` -- focused opt-in
   verification of generic packed-MUX lowering and canonical delay caching. Its
   arithmetic fixture wraps `left_eff` and the loop-carried `remainder` in a

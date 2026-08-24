@@ -47,14 +47,18 @@ the stable public `top` entity after the final timing table is selected.
 has a definition in the final file list.
 
 Pipeline-map graph frontiers and shared-global emission are sorted before
-rendering. One unrelated exception remains: source-coordinate fragments in
-generated `_DUPLICATE_<hash>` names can flip from `_py_l35_l34_` to
-`_py_l34_l35_` when set iteration reaches `C_TO_LOGIC.py`'s duplicate-name
-path. The entity hash stays the same but the VHDL bytes change, so this can
-intermittently miss a byte-hash synthesis cache. It was observed during the
-continuity work and deliberately not fixed there. The benchmark canonicalizes
-only this coordinate order when deduplicating placement fingerprints; it
-records and maps the actual, unmodified VHDL bytes.
+rendering. Source-coordinate fragments in generated `_DUPLICATE_<hash>` names
+(from `C_TO_LOGIC.py`'s duplicate-submodule-collapsing pass) are sorted the
+same way: the pass collects one `ASTMeta` per collapsed source location into a
+set, and `ASTMeta.__hash__` is a `PYTHONHASHSEED`-salted string hash, so
+iterating that set directly used to make the same design spell the fragment
+`_py_l35_l34_` in one process and `_py_l34_l35_` in another -- same entity
+hash, different VHDL bytes, an intermittent miss on a byte-hash synthesis
+cache. The coordinates are now sorted by `(src_file, line, col, end_col)`
+before rendering, not by the string each `ASTMeta` hashes on, which for the C
+frontend embeds a per-process memory address and would not be stable across
+processes. Regression-tested by `duplicate_collapse_naming_test.py`, which
+pins two `PYTHONHASHSEED` values confirmed to disagree pre-fix.
 
 ## Building a pipelined architecture
 

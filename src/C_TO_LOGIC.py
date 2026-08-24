@@ -9872,7 +9872,26 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
             the_c_ast_node = None
             file_lines = []
             last_ast_meta = None
-            for ast_meta in c_ast_metas:
+            # c_ast_metas is a set of ASTMeta, whose __hash__ is
+            # hash(coord_str()) -- a str hash, randomized per-process by
+            # PYTHONHASHSEED. Both the emitted "lNN" order below and
+            # last_ast_meta (which alone picks src_file_str) would otherwise
+            # leak that order into new_sub_inst_name, changing generated VHDL
+            # bytes for an identical design and defeating DEVICE_MODELS'
+            # byte-hash synthesis cache (confirmed: 5 fresh builds, 4x
+            # l35_l34, 1x l34_l35). Sort on the location fields only --
+            # NOT coord_str()/hash_suffix, which embed str(id(node)) for the
+            # C frontend (TEMP_HACKY_C_AST_NODE_ID) and are themselves
+            # process-unstable.
+            for ast_meta in sorted(
+                c_ast_metas,
+                key=lambda m: (
+                    m.src_file,
+                    m.line,
+                    m.col,
+                    -1 if m.end_col is None else m.end_col,
+                ),
+            ):
                 # file_coord_strs += "[" + C_AST_NODE_COORD_STR(c_ast_node) + "]"
                 file_line = "l" + str(ast_meta.line)
                 if file_line not in file_lines:

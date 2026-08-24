@@ -72,16 +72,12 @@ BASELINE_HIGH_FMAX_MHZ = 221.944
 FMAX_NOISE_FRAC = 0.01
 MID_GAIN_FRAC = 0.10
 
-# C_TO_LOGIC.py currently builds duplicate-instance names from set iteration.
-# The same source can therefore spell an otherwise identical coordinate as
-# ``_py_l34_l35_DUPLICATE_abcd`` or ``_py_l35_l34_DUPLICATE_ef01``.  That
-# unrelated byte-level nondeterminism is deliberately not fixed here, but it
-# must not make one physical plan look like two in this benchmark.  Actual
-# VHDL hashes remain unmodified evidence; only the placement fingerprint is
-# canonicalized.
-_DUPLICATE_COORD_RE = re.compile(
-    r"(?P<prefix>_py_)(?P<lines>l\d+(?:_l\d+)+)_DUPLICATE_[0-9a-fA-F]+"
-)
+# C_TO_LOGIC.py's duplicate-instance-collapsing pass emits a coordinate
+# fragment (e.g. ``_py_l34_l35_``) that is now sorted deterministically, so
+# two builds of the same source always spell it the same way. The trailing
+# per-build content hash (``_DUPLICATE_abcd``) is unrelated to physical
+# placement identity, so it is still normalized out of the placement
+# fingerprint here; actual VHDL hashes remain unmodified evidence.
 _DUPLICATE_HASH_RE = re.compile(r"_DUPLICATE_[0-9a-fA-F]+")
 
 
@@ -165,12 +161,6 @@ def _normalized_placement(placement):
 
 
 def _canonicalize_duplicate_name(value):
-    def replace_coord(match):
-        lines = match.group("lines").split("_")
-        lines.sort(key=lambda line: int(line[1:]))
-        return match.group("prefix") + "_".join(lines) + "_DUPLICATE"
-
-    value = _DUPLICATE_COORD_RE.sub(replace_coord, value)
     return _DUPLICATE_HASH_RE.sub("_DUPLICATE", value)
 
 

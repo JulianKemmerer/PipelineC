@@ -362,43 +362,6 @@ def test_continuity_source_derivation_changes_only_clock_assignment():
         raise AssertionError("source without CLK_RATE_MHZ was accepted")
 
 
-def test_continuity_fingerprint_ignores_known_duplicate_name_order_only():
-    def trace(path, duplicate_name):
-        Path(path).write_text(
-            json.dumps(
-                {
-                    "mains": {
-                        "solution": {
-                            "final_selected": [
-                                {
-                                    "kind": "bit_internal",
-                                    "instance_path": duplicate_name,
-                                    "function": "BIN_OP_MINUS_uint34_t_uint34_t",
-                                    "axis_unit": 42,
-                                    "bit_width": 34,
-                                    "bit_boundary": 17,
-                                    "realized": True,
-                                }
-                            ]
-                        }
-                    }
-                }
-            )
-            + "\n"
-        )
-
-    with tempfile.TemporaryDirectory() as td:
-        a = Path(td) / "a.json"
-        b = Path(td) / "b.json"
-        trace(a, "x_py_l35_l34_DUPLICATE_abcd")
-        trace(b, "x_py_l34_l35_DUPLICATE_1234")
-        fp_a, placements_a = continuity.placement_fingerprint(a)
-        fp_b, placements_b = continuity.placement_fingerprint(b)
-        assert fp_a == fp_b
-        assert placements_a == placements_b
-        assert placements_a[0]["instance_path"] == "x_py_l34_l35_DUPLICATE"
-
-
 def test_continuity_acceptance_enforces_monotonic_depth_and_real_mid_gain():
     physical = {
         "stage_semantics": True,

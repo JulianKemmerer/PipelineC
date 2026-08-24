@@ -194,6 +194,24 @@ def get_tests() -> list:
             requires=["yosys", "ghdl"],
         )
     )
+    # Regression guard for a third process-nondeterminism bug in the same
+    # family as var_ref_naming_test above, this time in
+    # C_TO_LOGIC.TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE's duplicate-submodule
+    # collapsing pass: the "_lNN_lMM" source-coordinate fragment of a
+    # collapsed instance's name was built by iterating a set of ASTMeta
+    # directly, and ASTMeta.__hash__ is a PYTHONHASHSEED-salted str hash.
+    # Pins PYTHONHASHSEED to two seeds confirmed to disagree pre-fix and
+    # diffs the resulting VHDL byte-for-byte -- a bare repeat-build only
+    # catches a 2-element set flip about half the time. Uses --comb
+    # --no_synth so it needs no yosys/ghdl and runs in seconds.
+    tests.append(
+        Test(
+            name="duplicate_collapse_naming_test",
+            category="build_report",
+            cmd=[INST_DIR / "duplicate_collapse_naming_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # Regression guard for the D2 fix (RAW_VHDL._EQUAL_WIDTH_BITS_PER_STAGE_
     # DICT) and the §6a/§6b reporting fixes, against a real multi-cut sky130
     # build in both the planned sweep and --coarse paths.
