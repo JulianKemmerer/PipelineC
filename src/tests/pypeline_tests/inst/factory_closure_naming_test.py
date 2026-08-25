@@ -354,22 +354,39 @@ def test_tuple_closure_param_encoded_same_as_list():
     print("test_tuple_closure_param_encoded_same_as_list PASS")
 
 
-def test_list_closure_param_unsupported_element_raises_clean_error():
-    # A list element that isn't an int/bool/nested list (e.g. a float) still
-    # can't be encoded into a VHDL identifier -- must raise a clean
-    # ElaborationError naming the offending element, not crash some other way.
-    dot_bad = make_dot([1, 2.5, 3])
-    try:
-        P._canonical_func_name(dot_bad, _closure_ns(dot_bad), MODULE_GLOBALS)
-    except P.ElaborationError as e:
-        assert "coeffs" in str(e), e
-        assert "2.5" in str(e), e
-        assert "index 1" in str(e), e
-        print(
-            f"test_list_closure_param_unsupported_element_raises_clean_error PASS  ({e})"
-        )
-        return
-    raise AssertionError("Expected ElaborationError, but none was raised")
+def test_list_closure_param_float_element_is_readable():
+    # Regression: a list element that isn't an int/bool/nested list (e.g. a
+    # float) used to raise ElaborationError from _canonical_func_name --
+    # encode_param_value now supports float directly (see
+    # docs/PY_TO_LOGIC_DESIGN.md), so a float-valued coefficient list gets a
+    # readable, distinct name instead of failing to elaborate at all.
+    dot_float = make_dot([1, 2.5, 3])
+    name = P._canonical_func_name(dot_float, _closure_ns(dot_float), MODULE_GLOBALS)
+    assert name == "dot_coeffs_1_2p5_3", name
+    assert name.isidentifier(), name
+    print("test_list_closure_param_float_element_is_readable PASS")
+
+
+def test_unencodable_closure_param_gets_labeled_hash_not_error():
+    # A closure value of a type encode_param_value has no dedicated encoding
+    # for (e.g. an arbitrary object) must still produce a valid identifier --
+    # a labeled hash of its address-stripped repr -- rather than raising, so
+    # an unusual factory parameter type never blocks elaboration outright.
+    class Weird:
+        pass
+
+    def make_weird_holder(w):
+        def weird_holder(x):
+            return (x, w)  # reference w so it's captured as a closure cell
+
+        return weird_holder
+
+    local_globals = dict(MODULE_GLOBALS, make_weird_holder=make_weird_holder)
+    holder = make_weird_holder(Weird())
+    name = P._canonical_func_name(holder, _closure_ns(holder), local_globals)
+    assert name.isidentifier(), name
+    assert name.startswith("weird_holder_w_Weird_"), name
+    print("test_unencodable_closure_param_gets_labeled_hash_not_error PASS")
 
 
 def test_ast_meta_src_file_and_line_point_to_true_definition():
@@ -436,11 +453,13 @@ def test_struct_factory_param_suffix_disambiguates_colliding_field_types():
     a = _make_split_struct(4, 8)
     b = _make_split_struct(8, 4)
     # Without the param suffix, both would collapse to split_t_val_int12_t.
+    # Params appear in the factory's own DECLARATION order (int_bits then
+    # frac_bits), not alphabetical -- see docs/PY_TO_LOGIC_DESIGN.md.
     assert (
-        a._pypeline_ctype_name == "split_t_val_int12_t_frac_bits_8_int_bits_4"
+        a._pypeline_ctype_name == "split_t_val_int12_t_int_bits_4_frac_bits_8"
     ), a._pypeline_ctype_name
     assert (
-        b._pypeline_ctype_name == "split_t_val_int12_t_frac_bits_4_int_bits_8"
+        b._pypeline_ctype_name == "split_t_val_int12_t_int_bits_8_frac_bits_4"
     ), b._pypeline_ctype_name
     assert a._pypeline_ctype_name != b._pypeline_ctype_name
     print("test_struct_factory_param_suffix_disambiguates_colliding_field_types PASS")
@@ -458,10 +477,10 @@ def test_struct_factory_param_suffix_deterministic_regardless_of_order():
     a = _make_split_struct(8, 4)
     b = _make_split_struct(4, 8)
     assert (
-        a._pypeline_ctype_name == "split_t_val_int12_t_frac_bits_4_int_bits_8"
+        a._pypeline_ctype_name == "split_t_val_int12_t_int_bits_8_frac_bits_4"
     ), a._pypeline_ctype_name
     assert (
-        b._pypeline_ctype_name == "split_t_val_int12_t_frac_bits_8_int_bits_4"
+        b._pypeline_ctype_name == "split_t_val_int12_t_int_bits_4_frac_bits_8"
     ), b._pypeline_ctype_name
     print("test_struct_factory_param_suffix_deterministic_regardless_of_order PASS")
 
@@ -541,6 +560,120 @@ def test_struct_factory_param_suffix_overflow_collapses_safely():
     print("test_struct_factory_param_suffix_overflow_collapses_safely PASS")
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# Regression tests for the naming patterns found by auditing a real build's
+# own output (wireguard-fpga generated-files-sim-pipe-shared-native/) -- see
+# docs/PY_TO_LOGIC_DESIGN.md's "Canonical function name format" and
+# "Submodule Instance Names" sections.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_hw_func_name_elides_redundant_module_prefix():
+    # The stuttering "append_auth_tag_append_auth_tag" shape (a module's own
+    # entry-point function sharing the module's name) drops its prefix.
+    assert P._hw_func_name("append_auth_tag", "append_auth_tag") == "append_auth_tag"
+    # A prefix-of shape also elides.
+    assert P._hw_func_name("chacha20", "chacha20_block") == "chacha20_block"
+    # A genuinely distinct pair still gets prefixed.
+    assert P._hw_func_name("chacha20", "quarter_round") == "chacha20_quarter_round"
+    print("test_hw_func_name_elides_redundant_module_prefix PASS")
+
+
+def test_enum_sequential_values_elided_sparse_kept():
+    import enum as _enum_mod
+
+    @PL.enum
+    class seq_state_t(_enum_mod.IntEnum):
+        IDLE = 0
+        RUNNING = 1
+        DONE = 2
+
+    @PL.enum
+    class sparse_state_t(_enum_mod.IntEnum):
+        A = 0
+        B = 5
+
+    assert seq_state_t._pypeline_ctype_name == "seq_state_t_IDLE_RUNNING_DONE", (
+        seq_state_t._pypeline_ctype_name
+    )
+    assert sparse_state_t._pypeline_ctype_name == "sparse_state_t_A_0_B_5", (
+        sparse_state_t._pypeline_ctype_name
+    )
+    assert seq_state_t._pypeline_ctype_name != sparse_state_t._pypeline_ctype_name
+    print("test_enum_sequential_values_elided_sparse_kept PASS")
+
+
+def test_overflow_collapse_never_lands_mid_token():
+    # Regression for real garbage found in a build's own output: a
+    # fixed-character-offset truncation used to cut a name right after the
+    # first digit of an unrelated trailing hash, or mid-word.
+    full_a = "cast_stream_intrf_data_t_chacha_shared_pipeline_out_t_8d070d63_fe_b1dab4d2"
+    collapsed_a = P._collapse_overflow_name(full_a, "cast_stream_intrf")
+    assert "_8_" not in collapsed_a, collapsed_a
+    assert not collapsed_a.split("_")[-2].isdigit() or len(collapsed_a.split("_")[-2]) != 1, (
+        collapsed_a
+    )
+    full_b = "cast_stream_intrf_data_t_ndarray_fragment_t_a0f67613_feedback_t_uint1_t_76c61b8e"
+    collapsed_b = P._collapse_overflow_name(full_b, "cast_stream_intrf")
+    assert "_fe_" not in collapsed_b, collapsed_b
+    print("test_overflow_collapse_never_lands_mid_token PASS")
+
+
+def test_generic_call_site_alias_labels_instance_with_callee_name():
+    # multi_cycle_path.make_valid_ready_mcp's generated wrapper calls the
+    # caller-supplied function through a closure variable literally named
+    # `func` -- real production code exercising exactly the generic-alias
+    # shape _elab_submodule_instance now substitutes. Reuses
+    # two_factory_wrappers_test.py (round_a/round_b via make_valid_ready_mcp)
+    # rather than building a new design, since it already elaborates this
+    # exact shape.
+    import tempfile
+
+    import SYN
+
+    SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(prefix="generic_alias_test_")
+    test_file = os.path.abspath(
+        os.path.join(os.path.dirname(__file__), "two_factory_wrappers_test.py")
+    )
+    parser_state = P.PARSE_FILE(test_file)
+
+    inst_labels = set()
+    for logic in parser_state.FuncLogicLookupTable.values():
+        inst_labels.update(logic.submodule_instances.keys())
+
+    bare_func_labels = [l for l in inst_labels if l.startswith("func[")]
+    assert not bare_func_labels, (
+        f"expected no bare 'func[...]' instance labels, got {bare_func_labels}"
+    )
+    assert any(l.startswith("round_a[") for l in inst_labels), sorted(inst_labels)
+    assert any(l.startswith("round_b[") for l in inst_labels), sorted(inst_labels)
+    print("test_generic_call_site_alias_labels_instance_with_callee_name PASS")
+
+
+def test_loc_str_omits_el_for_single_line_keeps_for_multiline():
+    import types as _types_mod
+
+    single = _types_mod.SimpleNamespace(
+        lineno=10, col_offset=4, end_lineno=10, end_col_offset=20
+    )
+    multi = _types_mod.SimpleNamespace(
+        lineno=10, col_offset=4, end_lineno=12, end_col_offset=8
+    )
+    single_str = P._loc_str("myfile.py", single)
+    multi_str = P._loc_str("myfile.py", multi)
+    assert single_str == "myfile_py_l10_c4_ec20", single_str
+    assert "_el" not in single_str, single_str
+    assert multi_str == "myfile_py_l10_c4_el12_ec8", multi_str
+    # Two distinct nodes (different end_lineno) must never collide, even
+    # though both start at the same (line, col) -- the original bug this
+    # location suffix format guards against.
+    other_multi = _types_mod.SimpleNamespace(
+        lineno=10, col_offset=4, end_lineno=13, end_col_offset=8
+    )
+    assert P._loc_str("myfile.py", other_multi) != multi_str
+    print("test_loc_str_omits_el_for_single_line_keeps_for_multiline PASS")
+
+
 if __name__ == "__main__":
     test_nested_factory_instances_get_distinct_readable_names()
     test_top_level_callable_closure_param_is_readable()
@@ -561,7 +694,8 @@ if __name__ == "__main__":
     test_nested_list_closure_param_is_valid_identifier()
     test_empty_list_closure_param_no_crash()
     test_tuple_closure_param_encoded_same_as_list()
-    test_list_closure_param_unsupported_element_raises_clean_error()
+    test_list_closure_param_float_element_is_readable()
+    test_unencodable_closure_param_gets_labeled_hash_not_error()
     test_ast_meta_src_file_and_line_point_to_true_definition()
     test_struct_factory_param_suffix_disambiguates_colliding_field_types()
     test_struct_factory_param_suffix_deterministic_regardless_of_order()
@@ -570,4 +704,9 @@ if __name__ == "__main__":
     test_struct_factory_param_suffix_scalar_ctype_value()
     test_struct_factory_param_suffix_negative_value_safe()
     test_struct_factory_param_suffix_overflow_collapses_safely()
+    test_hw_func_name_elides_redundant_module_prefix()
+    test_enum_sequential_values_elided_sparse_kept()
+    test_overflow_collapse_never_lands_mid_token()
+    test_generic_call_site_alias_labels_instance_with_callee_name()
+    test_loc_str_omits_el_for_single_line_keeps_for_multiline()
     print("All factory_closure_naming tests passed.")

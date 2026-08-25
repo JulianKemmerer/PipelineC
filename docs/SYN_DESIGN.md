@@ -1199,6 +1199,49 @@ explicitly during the sweep:
 | `--pipeline_min_effort N` | extra full-design syn iterations allowed to reduce stages after timing is met (default 2; 0 = accept the first met result, fastest but possibly over-pipelined); no effect with `--no_sweep` |
 | `--no_sweep` | write the sweep's first planned guess as final VHDL and stop -- zero sweep synthesis iterations, timing NOT verified. Works with both the default planned sweep and `--coarse`. |
 
+### Build output: `name_index.log`
+
+Alongside `module_instances.log` (top-N-by-delay-usage functions and their instance
+paths) and `integer_module_instances.log`, every build also writes
+`SYN_OUTPUT_DIRECTORY/name_index.log` (`SYN.WRITE_NAME_INDEX_LOG`), so a generated name
+seen anywhere else in the build's own output — a VHDL entity name, a
+`module_instances.log` hierarchy path, a `[sweep]`/stdout message — can be traced back to
+source without cross-referencing a second log or re-deriving a formatting decision. Four
+sections:
+
+- **ENTITIES**: every instantiated function's true source location
+  (`Logic.ast_meta.src_file:line[:col]`), its full uncollapsed canonical name when the
+  displayed name was actually collapsed to fit the VHDL identifier length cap (see
+  [PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md)'s "Canonical function name format"), and
+  its instance count.
+- **TYPES**: the same full-name decode for every collapsed `@struct`/`@enum` canonical
+  type name.
+- **GENERATED SOURCES**: every synthetic pypeline-generated Python source (a to_bytes/
+  from_bytes cast helper, an AUTOFSM-opened FSM, an interface function's generated wiring
+  module) actually written to `SYN_OUTPUT_DIRECTORY/pypeline_generated_source/` by
+  `pypeline.dump_generated_sources` — so a `_py_lNN` location suffix pointing at generated
+  code (not user source) resolves to a real file instead of a name nobody can open.
+- **PIPELINE VARIANTS**: decodes each `hash_ext` (the trailing hash on names like
+  `decrypt_dataflow_decrypt_dataflow_0CLK_6f395802` or `top_2abf080f.vhd` — an md5 of the
+  timing-params configuration, see `TimingParams.BUILD_HASH_EXT` /
+  `MultiMainTimingParams.GET_HASH_EXT`) back to the function it belongs to and its stage
+  count. The hash itself is never renamed (it keys real cache/output files and content-hash
+  cache replay across AUTOPIPELINE passes) — only decoded.
+
+Best-effort throughout: every field is sourced from a `parser_state` side-table that is
+simply empty (not an error) for a plain C-frontend design, so `name_index.log` is still
+written, just with less content than a Pypeline design produces.
+
+### Also produced: source locations on stdout/`[sweep]` messages
+
+`SYN.FUNC_SRC_LOC_STR(parser_state, func_name)` appends `" [file.py:line]"` (from the same
+`Logic.ast_meta` `name_index.log` reads, empty string when there is none) to every stdout
+line that names a function without a location: `"Synthesizing function:"`,
+`"Design likely limited to ~N MHz due to function:"`, and every `[sweep]` WARNING/NOTE
+line in `SWEEP.py` that names a hotspot or a MAIN. Reading a failing build's own console
+output no longer requires separately grepping `module_instances.log`/`pipeline_map.log`
+just to find which line of which file a printed name refers to.
+
 ## 6.5 AUTOPIPELINE `.latency` pin-and-confirm loop (Pypeline designs only)
 
 Pypeline's `AUTOPIPELINE(func)` tag exposes the sweep's discovered stage count back to

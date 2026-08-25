@@ -71,6 +71,20 @@ architecture implement the stage-to-stage transfers. Names containing
 source-level variable owns an independent physical delay chain; synthesis may
 merge equivalent registers.
 
+`io_registers_r` (the record holding a clocked function's input/output register
+banks) and `REG_STAGE<n>_<wire>` are deliberately GENERIC signal names -- they
+carry no reference to source location or the variable's Python name, unlike the
+generated entity/instance names elsewhere in this build (see
+[PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md)'s "Canonical function name
+format"). This is intentional, not an oversight: `SWEEP.py`'s critical-path
+attribution parses `stage(\d+)` back out of a register name
+(`_PATH_REPORT_STAGE_INFO`) to report local pipeline-stage info, and a Vivado/
+yosys timing report cross-references these exact strings, so renaming them would
+require updating both. To find the source construct a specific `io_registers_r`/
+`REG_STAGE<n>` field belongs to, read the ENCLOSING hierarchical instance path
+instead -- that path segment does carry a `_py_lNN` location suffix, and
+`name_index.log` (see [SYN_DESIGN.md](SYN_DESIGN.md)) decodes it further.
+
 Reconvergent branches and bypass inputs are aligned to the stage at which
 their consumer runs. An operation-output placement creates a register at that
 instance boundary; values which remain live across it are delayed through the

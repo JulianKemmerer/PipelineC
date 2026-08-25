@@ -50,7 +50,9 @@ from pypeline import (
     NamedTuple,
     _array_elem_ctype,
     _array_len,
-    _enclosing_factory_param_suffix,
+    capture_factory_args,
+    collapse_overflow_name,
+    encode_param_value,
     hw_func,
     struct,
 )
@@ -68,7 +70,7 @@ IN = "in"
 OUT = "out"
 _DEFAULT_OUT = "out_port_if"  # port name given to a bare (unbundled) interface return
 # NOTE: must be a legal VHDL identifier -- "out" is a VHDL reserved word.
-_MAX_SUFFIX_LEN = 48  # beyond this a factory-parameter suffix is hashed, see _factory_suffix
+_MAX_SUFFIX_LEN = 96  # beyond this a factory-parameter suffix is collapsed, see _factory_suffix
 
 
 class InterfaceFuncError(InterfaceError):
@@ -300,7 +302,7 @@ class _Emitter:
 
     def gensym(self, hint):
         self._n += 1
-        return f"if{self.tag}_{hint}{self._n}"
+        return f"{hint}{self._n}_if{self.tag}"
 
 
 def _func_eval_ns(orig):
@@ -409,14 +411,19 @@ def _factory_suffix(orig):
         frame = frame.f_back
     if frame is None:
         return ""
-    suffix = _enclosing_factory_param_suffix(orig, frame)
+    factory_args = capture_factory_args(orig.__qualname__, frame)
+    if not factory_args:
+        return ""
+    suffix = "_" + "_".join(
+        f"{k}_{encode_param_value(v)}" for k, v in factory_args.items()
+    )
     # The generated module's name becomes a directory name during synthesis, so
     # a factory with many parameters (dsp/fir_interp: coeffs, widths, rounding,
-    # symmetry, ...) would overflow the filesystem's limit. Hash it -- still a
-    # pure function of the factory's inputs, so names stay deterministic.
-    if len(suffix) > _MAX_SUFFIX_LEN:
-        suffix = "_" + hashlib.sha256(suffix.encode()).hexdigest()[:16]
-    return suffix
+    # symmetry, ...) would overflow the filesystem's limit. Collapse it (readable
+    # prefix trimmed to a '_' boundary + hash of the full suffix) rather than a
+    # bare hash -- still a pure function of the factory's inputs, so names stay
+    # deterministic.
+    return collapse_overflow_name(suffix, "", _MAX_SUFFIX_LEN)
 
 
 def _own_output_ports(ret_type):
@@ -554,6 +561,9 @@ def make_hw_func_from_interface_func(f):
     tag = hashlib.sha256(
         f"{getattr(orig, '__module__', '')}.{_qn(orig)}{suffix}".encode()
     ).hexdigest()[:8]
+    # Last path segment of orig's defining module, for the readable module
+    # filename below -- mirrors PY_TO_LOGIC._canonical_func_name's mod_last.
+    _orig_mod_last = (getattr(orig, "__module__", "") or "").rsplit(".", 1)[-1]
     em = _Emitter(eval_ns, tag)
     iface_vals = set(in_ports)  # names holding interface values
     # per interface value, which of its attributes are interface ports; None
@@ -744,7 +754,11 @@ def make_hw_func_from_interface_func(f):
         if port.fb_t is not None:
             sig.append(f"{name}: {em.inj(port.fb_t, 't')}")
 
-    fname_ = em.gensym(f"{orig.__name__}{suffix}_inst")
+    # Not routed through gensym: `tag` alone already guarantees this name is
+    # globally unique (see _Emitter's docstring), so a gensym counter would
+    # only add noise -- there is exactly one instantiation function per
+    # generated module.
+    fname_ = f"{orig.__name__}{suffix}_if{tag}"
     L = ["@struct", f"class {out_struct}(NamedTuple):"]
     for n, t in fields:
         L.append(f"    {n}: {t}")
@@ -861,7 +875,14 @@ def make_hw_func_from_interface_func(f):
 
     source = "\n".join(L) + "\n"
 
-    modname = f"pypeline_interface_func_gen_{fname_}"
+    # Short, readable synthetic filename -- embedded verbatim (via PY_TO_LOGIC
+    # ._loc_str) into every instance name inside this generated module, so its
+    # length directly bloats every hierarchy path under this interface function.
+    modname = (
+        f"ifgen_{_orig_mod_last}_{orig.__name__}_if{tag}"
+        if _orig_mod_last
+        else f"ifgen_{orig.__name__}_if{tag}"
+    )
     modfile = f"{modname}.py"
     linecache.cache[modfile] = (len(source), None, source.splitlines(True), modfile)
     mod = types.ModuleType(modname)

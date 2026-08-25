@@ -27,6 +27,9 @@ from pypeline import (
     _arith_promote,
     _arith_output_ctype,
     _array_elem_ctype,
+    encode_param_value,
+    capture_factory_args,
+    collapse_overflow_name,
 )
 
 # Recognized by name in FuncElaborator._elab_stmt as a raw-VHDL-passthrough statement.
@@ -483,11 +486,17 @@ def _annotation_to_ctype(ann, eval_ns=None, parser_state=None):
 # If a fully-expanded canonical name exceeds this length, it is collapsed to a
 # truncated-but-readable prefix + "_{sha256[:8]}" to keep VHDL identifiers
 # manageable (see _collapse_overflow_name).
-_MAX_MANGLE_NAME_LEN = 96
+_MAX_MANGLE_NAME_LEN = 128
 
 # Recursion bound for _callable_canonical_name <-> _canonical_func_name mutual
 # recursion (each nesting level consumes ~2 of these, one per direction).
 _MAX_CALLABLE_RECURSION_DEPTH = 16
+
+# Call-site aliases too generic to name a submodule instance with (see
+# _elab_submodule_instance) -- typically a factory's own pass-through
+# parameter name (make_stream_pipeline's `func`, etc.), never the thing
+# actually being instantiated.
+_GENERIC_INSTANCE_ALIASES = {"func", "f", "fn", "callee", "impl", "inner", "body"}
 
 
 _REPR_ADDR_RE = re.compile(r" at 0x[0-9a-fA-F]+")
@@ -786,27 +795,18 @@ def CANONICAL_CALLABLE_KEY(func) -> str:
 
 
 def _collapse_overflow_name(full: str, inner_func_name: str) -> str:
-    """Collapse an over-length canonical name to fit _MAX_MANGLE_NAME_LEN while
-    keeping a readable prefix, instead of discarding all descriptive content.
-
-    The hash is computed over the FULL untruncated name (so two different
-    over-length names that happen to share a truncated prefix still get
-    distinct results); the kept prefix is trimmed to the last '_' boundary so
-    it doesn't end mid-token.
+    """Collapse an over-length canonical name to fit _MAX_MANGLE_NAME_LEN via
+    the shared pypeline.collapse_overflow_name helper (readable prefix
+    trimmed back to a '_' boundary + sha256[:8] of the full name) -- the same
+    convention @struct/@enum use. Thin wrapper kept so the many call sites
+    below don't need to pass _MAX_MANGLE_NAME_LEN explicitly.
     """
-    if len(full) <= _MAX_MANGLE_NAME_LEN:
-        return full
-    h = hashlib.sha256(full.encode()).hexdigest()[:8]
-    budget = _MAX_MANGLE_NAME_LEN - 9  # "_" + 8 hex chars
-    prefix = full[:budget]
-    last_us = prefix.rfind("_")
-    if last_us > budget // 2:
-        prefix = prefix[:last_us]
-    prefix = prefix.rstrip("_") or inner_func_name
-    return f"{prefix}_{h}"
+    return collapse_overflow_name(full, inner_func_name, _MAX_MANGLE_NAME_LEN)
 
 
-def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _depth=0):
+def _canonical_func_name(
+    func, closure_ns, module_globals=None, _seen=None, _depth=0, collapse=True
+):
     """Return a canonical name for a factory-produced closure, or None for top-level functions.
 
     Factory closures have '.<locals>.' in __qualname__. The canonical name is:
@@ -814,54 +814,69 @@ def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _dep
         <inner_func_name>_<param1>_<val1>_<param2>_<val2>_...
 
     where <inner_func_name> is the innermost returned function name (mirrors how
-    @struct uses the inner class name, not the factory name).
+    @struct uses the inner class name, not the factory name), and params are
+    emitted in the factory's own DECLARATION order (not alphabetical) so the
+    most identifying parameter -- typically the first one, e.g. `func`/
+    `data_t` -- leads, with flags trailing.
 
-    For each factory parameter:
-      - C type / @struct type → use canonical type name
-      - int / bool             → use value string
-      - list / tuple            → each element encoded the same way (ints/bools,
-                                 or nested lists/tuples), joined with '_'; lets
-                                 e.g. coefficient-list-parameterized factories
-                                 (make_fir(coeffs), ...) get readable, distinct
-                                 names per instantiation
-      - callable (in closure)  → readable, hierarchical name reflecting which
-                                 module/function it's defined in, recursing into
-                                 its own factory-closure naming if applicable
-                                 (see _callable_canonical_name); hash only as a
-                                 last resort (lambdas, unintrospectable objects)
-      - absent from closure    → the param was consumed by the factory to produce
-                                 derived locals; hash those derived closure vars
-                                 and label the term with the param name
+    Two ways a parameter's value is found, tried in order:
+
+    1. **Real captured factory arguments** (preferred): `func._pypeline_factory_args`,
+       populated at @hw_func/@wires/@MAIN decoration time by
+       pypeline.capture_factory_args walking the live call stack. Covers
+       EVERY parameter the factory declares, including ones fully consumed
+       before the closure is returned (e.g. make_fifo(data_t, depth, mode)
+       reducing depth/mode to a `capacity` local that alone survives into
+       the closure) -- closure-cell introspection can never see those.
+    2. **Closure-cell introspection** (fallback, used when `func` was never
+       @hw_func-wrapped -- e.g. a plain nested def reached only via
+       _callable_canonical_name's generic recursion): only closure variables
+       whose names match a declared factory parameter are used; a parameter
+       consumed by the factory (absent from the closure) is represented by
+       hashing the *derived* closure vars instead and labeling the term with
+       the param name -- a strictly weaker signal than case 1, since the
+       hash isn't guaranteed to change when the missing param's value does.
+
+    Each parameter value is encoded via pypeline.encode_param_value (C type/
+    struct/enum -> canonical type name; int/bool -> value string; str/float/
+    dict/IntEnum member -> a readable encoding; list/tuple -> recursively
+    encoded and joined; anything else -> a labeled hash of its address-
+    stripped repr, so encoding never raises), except a callable value, which
+    uses _callable_canonical_name for a readable, hierarchical name that
+    recurses into the callable's own factory-closure naming if applicable.
 
     If the full name exceeds _MAX_MANGLE_NAME_LEN it is collapsed via
     _collapse_overflow_name (truncated-but-readable prefix + hash of the full
     name), not discarded entirely.
 
-    Four cases:
-      1. Factory not found in module_globals: fall back to all closure vars (legacy).
-      2. Factory has 0 params: name is just the inner function name (no suffix).
-      3. ALL factory params absent from closure: hash all closure vars under param names.
-      4. SOME params absent: include found params normally + hash derived vars for missing.
-
     _seen/_depth thread cycle/depth guards through to _callable_canonical_name
     for callable-valued closure params (mutual recursion); callers outside this
     module never need to pass them.
+
+    collapse=False returns the FULL, uncollapsed name even past
+    _MAX_MANGLE_NAME_LEN -- used by _elaborate_live_func to populate
+    parser_state.pypeline_name_full for SYN's name_index.log, so a collapsed
+    name's hash is always decodable from the build's own output. Only applies
+    to THIS call's own collapse decision, not to nested calls the callable-
+    valued-param branch makes into its own recursion -- those still collapse
+    normally (a nested callable's own name, if collapsed, is independently
+    decodable via its own FuncLogicLookupTable entry).
     """
 
-    def _encode_int_bool_for_name(val):
-        # A bare '-' is not legal inside a VHDL basic identifier, so a negative
-        # value uses a 'neg' prefix instead of str(val)'s '-5'.
-        return str(val) if val >= 0 else f"neg{-val}"
+    def _finish(full, fallback_prefix):
+        return full if not collapse else _collapse_overflow_name(full, fallback_prefix)
 
     def _stable_val_repr(v):
-        # Deterministic per-value encoding for the closure-hash branches below
-        # (NOT raw repr(v)): closure cells routinely hold callables/factory
-        # closures whose default repr embeds a memory address, which would
-        # change the hash -- and therefore this entity's canonical name -- on
-        # every design re-execution. The AUTOPIPELINE .latency pin-and-confirm
-        # loop re-executes the design in-process and matches funcs across
-        # passes by these names, so they must be a pure function of the design
-        # source. Mirrors the readable per-cell branches' encodings.
+        # Deterministic per-value encoding for the LEGACY closure-hash
+        # branches below only (case 2's "factory param absent from closure"
+        # and "factory not found" hash fallbacks) -- NOT raw repr(v): closure
+        # cells routinely hold callables/factory closures whose default repr
+        # embeds a memory address, which would change the hash -- and
+        # therefore this entity's canonical name -- on every design
+        # re-execution. The AUTOPIPELINE .latency pin-and-confirm loop
+        # re-executes the design in-process and matches funcs across passes
+        # by these names, so they must be a pure function of the design
+        # source.
         if isinstance(v, type):
             return getattr(v, "_pypeline_ctype_name", str(v))
         if isinstance(v, (bool, int, str)) or v is None:
@@ -881,24 +896,16 @@ def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _dep
             return _callable_canonical_name(v, module_globals, _seen, _depth + 1)
         return repr(v)  # last resort for unusual cell types
 
-    def _encode_list_for_name(var_name, val):
-        if not val:
-            return "empty"
-        parts = []
-        for i, elem in enumerate(val):
-            if isinstance(elem, (list, tuple)):
-                parts.append(_encode_list_for_name(var_name, elem))
-            elif isinstance(elem, (int, bool)):
-                parts.append(_encode_int_bool_for_name(elem))
-            else:
-                raise ElaborationError(
-                    f"Factory closure variable '{var_name}' is a list/tuple "
-                    f"containing unsupported element {elem!r} "
-                    f"(type: {type(elem).__name__}) at index {i}. List/tuple "
-                    f"closure parameters must contain only ints, bools, or "
-                    f"nested lists/tuples thereof."
-                )
-        return "_".join(parts)
+    def _encode_one(var_name, val):
+        if callable(val) and not isinstance(val, type):
+            # Readable, hierarchical name reflecting the callable's own
+            # module/function nesting (recursing into its own factory-closure
+            # naming if applicable) -- see _callable_canonical_name.
+            return (
+                f"{var_name}_"
+                f"{_callable_canonical_name(val, module_globals, _seen, _depth + 1)}"
+            )
+        return f"{var_name}_{encode_param_value(val)}"
 
     if ".<locals>." not in func.__qualname__:
         return None
@@ -906,88 +913,70 @@ def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _dep
     inner_func_name = _sanitize_vhdl_name(
         parts[-1]
     )  # e.g. "stream_pipeline" — used as the name base
-    factory_prefix = "_".join(
-        parts[:-1]
-    )  # e.g. "make_stream_pipeline" — for fallback hash suffix
 
-    # Collect parameter names from each factory in the qualname chain.
-    # None means "factory not found"; empty set means "0-param factory".
+    # ── Preferred path: real captured factory-argument values ──────────────
+    factory_args = getattr(func, "_pypeline_factory_args", None)
+    if factory_args:
+        name_parts = [_encode_one(k, v) for k, v in factory_args.items()]
+        full = inner_func_name + ("_" + "_".join(name_parts) if name_parts else "")
+        return _finish(full, inner_func_name)
+
+    # ── Fallback: legacy closure-cell introspection (func was never
+    # @hw_func/@wires/@MAIN-wrapped, so no live-frame capture happened) ────
+
+    # Collect parameter names, in DECLARATION order, from each factory in the
+    # qualname chain. None means "factory not found"; empty list means
+    # "0-param factory".
     factory_param_names = None
     if module_globals is not None:
         outermost_func = module_globals.get(parts[0])
         if callable(outermost_func) and hasattr(outermost_func, "__code__"):
             n = outermost_func.__code__.co_argcount
-            factory_param_names = set(outermost_func.__code__.co_varnames[:n])
+            factory_param_names = list(outermost_func.__code__.co_varnames[:n])
             # Middle factories in the chain may be in the closure as callables.
             for middle_name in parts[1:-1]:
                 middle_func = closure_ns.get(middle_name)
                 if callable(middle_func) and hasattr(middle_func, "__code__"):
                     m = middle_func.__code__.co_argcount
-                    factory_param_names.update(middle_func.__code__.co_varnames[:m])
+                    for pname in middle_func.__code__.co_varnames[:m]:
+                        if pname not in factory_param_names:
+                            factory_param_names.append(pname)
 
     if factory_param_names is None:
-        # Factory not found — fall back to all closure vars (legacy).
-        filtered_ns = closure_ns
-        missing_params = set()
-    elif factory_param_names:
-        # Factory has params — separate those captured in closure from those that were
-        # consumed by the factory to produce derived locals (and are absent from closure).
-        found_params = {k: v for k, v in closure_ns.items() if k in factory_param_names}
-        missing_params = factory_param_names - set(found_params.keys())
-        if not found_params:
-            # ALL factory params were consumed/derived — hash all closure vars.
-            # e.g. make_vga_timing(spec=VGA_640_480) → inner_name_spec_a1b2c3d4
-            closure_repr = repr(
-                sorted((k, _stable_val_repr(v)) for k, v in closure_ns.items())
-            ).encode()
-            h = hashlib.sha256(closure_repr).hexdigest()[:8]
-            param_suffix = "_".join(sorted(factory_param_names))
-            full = inner_func_name + "_" + param_suffix + "_" + h
-            return _collapse_overflow_name(full, inner_func_name)
-        filtered_ns = found_params
-    else:
+        # Factory not found — fall back to all closure vars (legacy), sorted
+        # for determinism (no declaration-order info is available here).
+        name_parts = [_encode_one(k, closure_ns[k]) for k in sorted(closure_ns.keys())]
+        full = inner_func_name + ("_" + "_".join(name_parts) if name_parts else "")
+        return _finish(full, inner_func_name)
+
+    if not factory_param_names:
         # 0-param factory — name is just the inner function name, no suffix.
-        filtered_ns = {}
-        missing_params = set()
+        return _finish(inner_func_name, inner_func_name)
 
-    name_parts = []
-    for var_name in sorted(filtered_ns.keys()):
-        val = filtered_ns[var_name]
-        if isinstance(val, type):
-            if hasattr(val, "_pypeline_ctype_name"):
-                s = val._pypeline_ctype_name  # @struct type: already canonical
-            else:
-                s = str(val)
-                if s.startswith("<"):
-                    continue  # plain Python class without canonical C name, skip
-                s = s.replace("[", "_").replace("]", "")  # mangle brackets
-            name_parts.append(f"{var_name}_{s}")
-        elif isinstance(val, (int, bool)) and not isinstance(val, type):
-            name_parts.append(f"{var_name}_{_encode_int_bool_for_name(val)}")
-        elif val is None:
-            name_parts.append(f"{var_name}_None")
-        elif isinstance(val, (list, tuple)):
-            name_parts.append(f"{var_name}_{_encode_list_for_name(var_name, val)}")
-        elif callable(val):
-            # Readable, hierarchical name reflecting the callable's own module/
-            # function nesting (recursing into its own factory-closure naming
-            # if applicable) -- see _callable_canonical_name.
-            name_parts.append(
-                f"{var_name}_"
-                f"{_callable_canonical_name(val, module_globals, _seen, _depth + 1)}"
-            )
-        else:
-            raise ElaborationError(
-                f"Factory closure variable '{var_name}' has unsupported value "
-                f"{val!r} (type: {type(val).__name__}). "
-                f"Factory parameters must be C types, ints, bools, None, "
-                f"callables, or lists/tuples thereof."
-            )
+    found_params = {k: v for k, v in closure_ns.items() if k in factory_param_names}
+    missing_params = [p for p in factory_param_names if p not in found_params]
 
-    # Factory params that were consumed by the factory (not in closure) are represented
-    # by hashing the derived closure vars — e.g. make_stream_pipeline(func, MAX_IN_FLIGHT)
-    # where 'func' is absent from stream_pipeline's closure but its effects appear in
-    # in_stream_t, out_stream_t, autopipelined_func, etc.
+    if not found_params:
+        # ALL factory params were consumed/derived — hash all closure vars.
+        # e.g. make_vga_timing(spec=VGA_640_480) → inner_name_spec_a1b2c3d4
+        closure_repr = repr(
+            sorted((k, _stable_val_repr(v)) for k, v in closure_ns.items())
+        ).encode()
+        h = hashlib.sha256(closure_repr).hexdigest()[:8]
+        param_suffix = "_".join(factory_param_names)  # declaration order
+        full = inner_func_name + "_" + param_suffix + "_" + h
+        return _finish(full, inner_func_name)
+
+    # SOME params found, in declaration order; params consumed by the
+    # factory (not in closure) are represented by hashing the derived
+    # closure vars — e.g. make_stream_pipeline(func, MAX_IN_FLIGHT) where
+    # 'func' is absent from stream_pipeline's closure but its effects appear
+    # in in_stream_t, out_stream_t, autopipelined_func, etc.
+    name_parts = [
+        _encode_one(name, found_params[name])
+        for name in factory_param_names
+        if name in found_params
+    ]
     if missing_params:
         derived_ns = {
             k: v for k, v in closure_ns.items() if k not in factory_param_names
@@ -996,19 +985,25 @@ def _canonical_func_name(func, closure_ns, module_globals=None, _seen=None, _dep
             sorted((k, _stable_val_repr(v)) for k, v in derived_ns.items())
         ).encode()
         missing_hash = hashlib.sha256(derived_repr).hexdigest()[:8]
-        for mp in sorted(missing_params):
+        for mp in missing_params:  # declaration order
             name_parts.append(f"{mp}_{missing_hash}")
 
     full = inner_func_name + ("_" + "_".join(name_parts) if name_parts else "")
-    return _collapse_overflow_name(full, inner_func_name)
+    return _finish(full, inner_func_name)
 
 
 def _loc_str(src_file, node):
     file_base = os.path.basename(src_file).replace(".", "_")
+    end_lineno = getattr(node, "end_lineno", None)
+    # Single-line nodes (the common case) omit "_elN" -- it's always equal to
+    # "_lN" and was pure repetition (e.g. "_py_l108_c13_el108_ec44" repeats
+    # "108"), bloating every level of every hierarchy path. end_col_offset is
+    # kept unconditionally, so uniqueness is unaffected: two distinct
+    # single-line nodes can't share (line, col, end_col) without being the
+    # same source span, and a genuine multiline node still gets its "_elN"
+    # (see the _loc_str multiline-instance-collision regression this guards).
     end_line = (
-        f"_el{node.end_lineno}"
-        if hasattr(node, "end_lineno") and node.end_lineno is not None
-        else ""
+        f"_el{end_lineno}" if end_lineno is not None and end_lineno != node.lineno else ""
     )
     end_col = (
         f"_ec{node.end_col_offset}"
@@ -1220,9 +1215,22 @@ def _hw_func_name(mod_prefix, name):
     string for a given (mod_prefix, name), or FuncLogicLookupTable lookups
     silently diverge (see the closure-callable-collision bug regression-tested
     by two_factory_wrappers_test.py). Always call this; never re-derive the
-    f-string locally."""
+    f-string locally.
+
+    The prefix is dropped when `name` already starts with it (the common
+    one-module-one-entry-point layout, e.g. append_auth_tag.py's own
+    `append_auth_tag` function) -- otherwise every such name stutters
+    (`append_auth_tag_append_auth_tag`), and that name sits at the head of
+    every hierarchy path under it. Safe: a distinct (mod_prefix, name) pair
+    that collides after this elision is still caught by PARSE_FILE Step 6's
+    `_hw_name_lower_to_orig` guard, which raises naming both functions.
+    """
     safe_name = _sanitize_vhdl_name(name)
-    return f"{mod_prefix}_{safe_name}" if mod_prefix else safe_name
+    if not mod_prefix:
+        return safe_name
+    if safe_name == mod_prefix or safe_name.startswith(mod_prefix + "_"):
+        return safe_name
+    return f"{mod_prefix}_{safe_name}"
 
 
 _HW_OP_TO_ARITH_OP = {
@@ -4773,7 +4781,19 @@ class FuncElaborator:
         built (elaborating expr.args/.keywords vs. reusing an
         already-elaborated cast argument wire so it is never elaborated
         twice)."""
-        inst = self._inst(callee_name, expr)
+        # A generic call-site alias (e.g. a factory's own `func` parameter,
+        # called as `func(x)` inside stream_pipeline.py/multi_cycle_path.py)
+        # says nothing about what's actually instantiated -- it was the 6th
+        # most common instance label in a real build's module_instances.log
+        # (4247 occurrences). Label the instance with the callee's own
+        # canonical name instead; the call-site location suffix (added by
+        # self._inst below) still pins the exact call regardless.
+        inst_label = (
+            callee_def.func_name
+            if callee_name in _GENERIC_INSTANCE_ALIASES
+            else callee_name
+        )
+        inst = self._inst(inst_label, expr)
         # A void callee (no -> annotation) has no RETURN_WIRE_NAME entry in wire_to_c_type --
         # tolerate that instead of KeyError, so a bare `foo()` statement call to a void
         # function can elaborate (see _elab_stmt's bare-call fallback below).
@@ -5245,6 +5265,44 @@ class FuncElaborator:
             if canonical is not None
             else self._top_level_func_key(func_for_source)
         )
+        if canonical is not None:
+            # Full, uncollapsed name for SYN's name_index.log -- computed only
+            # when there's a factory-closure canonical name at all (a
+            # top-level function's `key` comes from _top_level_func_key
+            # instead and was never subject to collapsing). Stored only when
+            # collapsing actually happened, so every collapsed name's hash is
+            # decodable from the build's own output.
+            full_canonical = _canonical_func_name(
+                func_for_source, closure_ns, self.module_globals, collapse=False
+            )
+            if full_canonical != canonical:
+                self.parser_state.pypeline_name_full[canonical] = full_canonical
+
+        # Collision guard: two genuinely different closures landing on the same
+        # canonical name would otherwise silently dedup below onto the WRONG
+        # Logic() (see PARSE_FILE's pypeline_canonical_name_owner comment).
+        # Identity is this closure's own true defining location -- the same
+        # closure reached again (from a second call site, or a re-parse pass)
+        # has the same (module, qualname, src_file, line) and is the
+        # legitimate dedup case; a different closure never does.
+        owner_identity = (
+            getattr(func_for_source, "__module__", "") or "",
+            getattr(func_for_source, "__qualname__", "") or "",
+            true_src_file,
+            true_start_line,
+        )
+        owners = self.parser_state.pypeline_canonical_name_owner
+        prior_owner = owners.setdefault(key, owner_identity)
+        if prior_owner != owner_identity:
+            prior_mod, prior_qual, prior_file, prior_line = prior_owner
+            new_mod, new_qual, new_file, new_line = owner_identity
+            raise ElaborationError(
+                f"Naming collision: '{prior_qual}' ({prior_mod}, "
+                f"{prior_file}:{prior_line}) and '{new_qual}' ({new_mod}, "
+                f"{new_file}:{new_line}) both produced the canonical entity "
+                f"name {key!r}. Give one of them a distinguishing factory "
+                f"parameter or name."
+            )
 
         # Remember which live Python callable produced this entity, so AUTOFSM's
         # code generator can emit a direct call to it when binding that entity as
@@ -6015,6 +6073,9 @@ def _register_struct_recursive(obj, parser_state, visited=None):
     if c_name in visited:
         return
     visited.add(c_name)
+    full_c_name = getattr(obj, "_pypeline_ctype_canonical", None)
+    if full_c_name is not None and full_c_name != c_name:
+        parser_state.pypeline_type_canonical[c_name] = full_c_name
     fields = {}
     for field, annotation in obj.__annotations__.items():
         fields[_sanitize_vhdl_name(field)] = (
@@ -6049,6 +6110,9 @@ def _register_enum(ctype_obj, parser_state):
     ctype_name = getattr(ctype_obj, "_pypeline_ctype_name", None)
     if not ctype_name or ctype_name in parser_state.enum_info_dict:
         return
+    full_ctype_name = getattr(ctype_obj, "_pypeline_ctype_canonical", None)
+    if full_ctype_name is not None and full_ctype_name != ctype_name:
+        parser_state.pypeline_type_canonical[ctype_name] = full_ctype_name
     info = C_TO_LOGIC.EnumInfo()
     info.name = ctype_name
     for m in ctype_obj:
@@ -6706,10 +6770,25 @@ def PARSE_FILE(py_file):
     #     constant args), so AUTOFSM can re-emit e.g. bit_assign(base, x, 5).
     #     Without it a soft adder's body -- which is mostly bit_assign -- could
     #     not be regenerated, and descending into one would silently fail.
+    #   pypeline_canonical_name_owner: canonical entity name -> (module,
+    #     qualname, src_file, line) of the closure that first produced it.
+    #     Removing hashes from canonical names removes entropy, so
+    #     _elaborate_live_func checks every new name against this table --
+    #     two genuinely different closures landing on the same name is a
+    #     silent-miscompile-shaped bug (a false dedup), not just a cosmetic
+    #     collision, and must raise rather than silently reuse the wrong
+    #     Logic().
     parser_state.pypeline_entity_callables = {}
     parser_state.pypeline_const_wire_values = {}
     parser_state.pypeline_builtin_op_info = {}
     parser_state.pypeline_bit_manip_info = {}
+    parser_state.pypeline_canonical_name_owner = {}
+    # canonical (possibly collapsed) func name -> its full, uncollapsed form;
+    # only populated when collapsing actually happened. Same idea as
+    # pypeline_name_full but for @struct/@enum type names, populated by
+    # _register_struct_recursive/_register_enum from _pypeline_ctype_canonical.
+    parser_state.pypeline_name_full = {}
+    parser_state.pypeline_type_canonical = {}
 
     # ── Apply pypeline pragmas (PART, MAIN_MHZ) from the live module ──
     if pypeline._part_registry is not None:

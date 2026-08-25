@@ -488,7 +488,7 @@ def main():
         # real yosys cell counts by autofsm_area_sweep_compare_test.py; asserted
         # here because that test needs a full synthesis run and this does not.
         all_unshared = AUTOFSM.BUILD_SCHEDULE(
-            ps6, key6, tag6, 0.9, None, (), None, (("BIN_OP_PLUS_int16_t_int16_t", 3),)
+            ps6, key6, tag6, 0.9, None, (), None, ((adder, 3),)
         )
         check(
             len(all_unshared["fus"]) == 3

@@ -120,6 +120,17 @@ def _plan(main_func, ancestor_func_sets, extra_func_logics=(), target_mhz=100.0)
 
 
 # ─── Real wireguard-fpga decrypt path (source data for the bug report) ───
+#
+# PRE-RENAME HISTORICAL FIXTURE: these strings are a byte-for-byte capture
+# from one specific past build, predating the generated-name readability
+# work (see docs/PY_TO_LOGIC_DESIGN.md). Left exactly as recorded -- do NOT
+# "modernize" these to the current naming scheme -- they still exercise
+# RANK_PATH_FUNC_CANDIDATES's substring-depth-matching ranking exactly as
+# intended, which is name-shape-agnostic by construction. See the separate
+# post-rename-shape fixture below (_PR_START_REG etc.) for coverage of the
+# CURRENT naming scheme's shapes (no if########_ prefix, readable-leading
+# interface-func names, no module-prefix stutter, no redundant single-line
+# "_el").
 
 # Verbatim from generated-files-sim-pipe-dec-native/top/vivado_443bba56.log,
 # the worst "Slack (VIOLATED)" path's Source:/Destination:, with the
@@ -192,6 +203,73 @@ def test_wireguard_decrypt_blames_chacha_not_the_interface_wrapper():
     assert _WG_WRAPPER != ranked[0]
     func, stage_info = SWEEP.ATTRIBUTE_PATH_TO_FUNC(path_report, plan, ps)
     assert func == _WG_HOTSPOT
+
+
+# ─── Same scenario, current (post-rename) naming shapes ───────────────────
+# Not a literal re-encoding of the wireguard build above -- a representative
+# path built from the CURRENT naming conventions this work introduced, so the
+# ranking algorithm (which is name-shape-agnostic: it works on shared
+# substring depth, not length or a specific format) is exercised against
+# them too, not only the pre-rename fixture's shapes.
+_PR_START_REG = (
+    "decrypt_dataflow_0CLK_6f395802/"
+    "decrypt_dataflow_core_decrypt_dataflow_py_l27_c8_ec5/"
+    "chacha_func_decrypt_dataflow_core_if8040c842_py_l20_c13_ec148/"
+    "pipeline_func_chacha20_instance_wiring_ifbf63ab38_py_l12_c11_ec74/"
+    "autopipelined_func_chacha20_chacha20_loop_body_has_input_reg_True_"
+    "has_output_reg_True_chacha20_py_l112_c36_ec71/"
+    "chacha20_block_chacha20_py_l205_c12_ec33/"
+    "chacha20_block_step_chacha20_py_l128_c12_ec38/"
+    "quarter_round_a_2_b_6_c_10_d_14_chacha20_py_l108_c13_ec44/"
+    "io_registers_r_reg[output_regs][return_output][state][3][1]"
+)
+_PR_END_REG = (
+    "decrypt_dataflow_0CLK_6f395802/"
+    "decrypt_dataflow_core_decrypt_dataflow_py_l27_c8_ec5/"
+    "chacha_func_decrypt_dataflow_core_if8040c842_py_l20_c13_ec148/"
+    "pipeline_func_chacha20_instance_wiring_ifbf63ab38_py_l12_c11_ec74/"
+    "autopipelined_func_chacha20_chacha20_loop_body_has_input_reg_True_"
+    "has_output_reg_True_chacha20_py_l112_c36_ec71/"
+    "chacha20_block_chacha20_py_l205_c12_ec33/"
+    "chacha20_block_step_chacha20_py_l129_c12_ec38/"
+    "quarter_round_a_3_b_4_c_9_d_14_chacha20_py_l113_c13_ec43/"
+    "REG_STAGE0_s_reg[state][7][6]"
+)
+_PR_ANCESTOR_FUNCS = {
+    "BIN_OP_PLUS_uint32_t_uint32_t",
+    "BIN_OP_XOR_uint32_t_uint32_t",
+    "BIN_OP_XOR_uint8_t_uint8_t",
+    "MUX_uint8_t",
+    "autopipelined_func_chacha20_chacha20_loop_body_has_input_reg_True_"
+    "has_output_reg_True",
+    "chacha20_block",
+    "chacha20_block_step",
+    "chacha20_loop_body",
+    "decrypt_dataflow_core_if8040c842",
+    "chacha20_instance_wiring_ifbf63ab38",
+    "quarter_round_a_0_b_4_c_8_d_12",
+    "quarter_round_a_0_b_5_c_10_d_15",
+    "quarter_round_a_1_b_5_c_9_d_13",
+    "quarter_round_a_1_b_6_c_11_d_12",
+    "quarter_round_a_2_b_6_c_10_d_14",
+    "quarter_round_a_2_b_7_c_8_d_13",
+    "quarter_round_a_3_b_4_c_9_d_14",
+    "quarter_round_a_3_b_7_c_11_d_15",
+}
+_PR_WRAPPER = "decrypt_dataflow_core_if8040c842"
+_PR_HOTSPOT = "chacha20_block_step"
+
+
+def test_post_rename_shapes_still_blame_chacha_not_the_interface_wrapper():
+    path_report = FakePathReport(_PR_START_REG, _PR_END_REG)
+    plan, ps = _plan("decrypt_dataflow", [_PR_ANCESTOR_FUNCS])
+    ranked = SWEEP.RANK_PATH_FUNC_CANDIDATES(path_report, plan, ps)
+    assert len(ranked) > 0, "expected at least one attribution candidate"
+    assert ranked[0] == _PR_HOTSPOT, (
+        f"expected the deepest common ancestor {_PR_HOTSPOT!r} to win, got "
+        f"{ranked[0]!r} (full ranking: {ranked})"
+    )
+    assert _PR_WRAPPER != ranked[0]
 
 
 def test_netlist_resources_cannot_outvote_a_deeper_endpoint_match():
@@ -382,6 +460,7 @@ if __name__ == "__main__":
         print(",".join(SWEEP.RANK_PATH_FUNC_CANDIDATES(_pr, _plan_obj, _ps)))
         sys.exit(0)
     test_wireguard_decrypt_blames_chacha_not_the_interface_wrapper()
+    test_post_rename_shapes_still_blame_chacha_not_the_interface_wrapper()
     test_netlist_resources_cannot_outvote_a_deeper_endpoint_match()
     test_missing_end_reg_name_falls_back_to_the_single_endpoint()
     test_sky130_divider_attribution_is_unchanged()

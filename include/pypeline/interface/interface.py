@@ -69,7 +69,8 @@ from pypeline import (
     _FeedbackType,
     _array_elem_ctype,
     _array_len,
-    _enclosing_factory_param_suffix,
+    capture_factory_args,
+    encode_param_value,
     _struct_class_getitem,
 )
 
@@ -228,8 +229,11 @@ def interface(cls):
 
     cls.__class_getitem__ = classmethod(_struct_class_getitem)
     cls._pypeline_is_interface = True
-    cls._pypeline_iface_canonical = cls.__name__ + _enclosing_factory_param_suffix(
-        cls, _sys._getframe(1)
+    factory_args = capture_factory_args(cls.__qualname__, _sys._getframe(1))
+    cls._pypeline_iface_canonical = cls.__name__ + (
+        "_" + "_".join(f"{k}_{encode_param_value(v)}" for k, v in factory_args.items())
+        if factory_args
+        else ""
     )
     cls._pypeline_iface_derived = {}
 

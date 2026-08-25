@@ -26,6 +26,7 @@ import RAW_VHDL
 import SW_LIB
 import VHDL
 import VIVADO
+import pypeline
 from utilities import REPO_ABS_DIR
 
 START_TIME = timer()
@@ -497,6 +498,15 @@ class MultiMainTimingParams:
             top_level_str += hash_ext_i
         s = top_level_str
         hash_ext = "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:8])
+        # Side-record for name_index.log's PIPELINE VARIANTS section -- see
+        # the matching comment in TimingParams.BUILD_HASH_EXT.
+        hash_ext_info = getattr(parser_state, "pypeline_hash_ext_info", None)
+        if hash_ext_info is None:
+            hash_ext_info = {}
+            parser_state.pypeline_hash_ext_info = hash_ext_info
+        hash_ext_info.setdefault(
+            hash_ext, ("<multimain top>", sorted(parser_state.main_mhz.keys()))
+        )
         return hash_ext
 
 
@@ -705,6 +715,18 @@ class TimingParams:
             "_" + (full_hash[0:8])
         )  # 4 chars enough, no you dummy, lets hope 8 is
         # print(f"inst {inst_name} {full_hash} {hash_ext}")
+        # Side-record what this hash_ext decodes to (func name + stage count)
+        # for name_index.log's PIPELINE VARIANTS section -- generic names like
+        # "decrypt_dataflow_decrypt_dataflow_0CLK_6f395802" otherwise carry no
+        # decodable meaning for the hash suffix anywhere in the build's own
+        # output. First writer wins (same hash_ext recomputed later is the
+        # same content by construction). Lazily created so this works
+        # identically for a plain C-frontend parser_state.
+        hash_ext_info = getattr(parser_state, "pypeline_hash_ext_info", None)
+        if hash_ext_info is None:
+            hash_ext_info = {}
+            parser_state.pypeline_hash_ext_info = hash_ext_info
+        hash_ext_info.setdefault(hash_ext, (Logic.func_name, len(self._slices)))
         return hash_ext
 
     def GET_HASH_EXT(self, TimingParamsLookupTable, parser_state):
@@ -4100,6 +4122,19 @@ def DO_COARSE_THROUGHPUT_SWEEP(
             return inst_sweep_state, working_slices, TimingParamsLookupTable
 
 
+def FUNC_SRC_LOC_STR(parser_state, func_name):
+    """' [file.py:line]' for a function's true source location, or '' when
+    none is known (built-ins, raw-HDL, etc.) -- for appending to stdout/
+    [sweep] messages that name a function, so a reader isn't left grepping a
+    second, much larger log file for a line number. Logic.ast_meta already
+    carries this; nothing printed it before now."""
+    logic = parser_state.FuncLogicLookupTable.get(func_name)
+    ast_meta = getattr(logic, "ast_meta", None)
+    if ast_meta is None:
+        return ""
+    return f" [{os.path.basename(ast_meta.src_file)}:{ast_meta.line}]"
+
+
 def GET_OUTPUT_DIRECTORY(Logic):
     if Logic.is_c_built_in or Logic.ast_meta is None:
         output_directory = (
@@ -4406,6 +4441,12 @@ def GET_CACHED_LOGIC_FILE_KEY(logic, parser_state):
             for input_port in logic.inputs:
                 c_type = logic.wire_to_c_type[input_port]
                 key += "_" + c_type
+    # Hard safety cap: this key becomes a filename with a suffix appended
+    # (".delay", ".timing.json"), so an unbounded number of input ports (each
+    # contributing its own, possibly already-near-cap, c_type name above)
+    # must never be allowed to exceed the filesystem's 255-byte filename
+    # limit. 235 leaves generous headroom under 255 for the longest suffix.
+    key = pypeline.collapse_overflow_name(key, logic.func_name, 235)
     return key
 
 
@@ -4941,7 +4982,11 @@ def MEASURE_DELAYS(func_names, parser_state):
     for func_name in funcs_to_measure:
         logic = parser_state.FuncLogicLookupTable[func_name]
         inst_name = list(parser_state.FuncToInstances[func_name])[0]
-        print("Synthesizing function:", func_name, flush=True)
+        print(
+            "Synthesizing function:",
+            func_name + FUNC_SRC_LOC_STR(parser_state, func_name),
+            flush=True,
+        )
         func_name_to_async_result[func_name] = my_thread_pool.apply_async(
             SYN_TOOL.SYN_AND_REPORT_TIMING,
             (inst_name, logic, parser_state, TimingParamsLookupTable),
@@ -5102,7 +5147,11 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                     )
                 else:
                     # Run real syn in parallel
-                    print("Synthesizing function:", logic.func_name, flush=True)
+                    print(
+                        "Synthesizing function:",
+                        logic.func_name + FUNC_SRC_LOC_STR(parser_state, logic.func_name),
+                        flush=True,
+                    )
                     # Start Syn
                     my_async_result = my_thread_pool.apply_async(
                         SYN_TOOL.SYN_AND_REPORT_TIMING,
@@ -5208,7 +5257,8 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         if mhz is not None and mhz > min_mhz:
             min_mhz_func_name = main_to_min_mhz_func_name[main_inst]
             print(
-                f"Design likely limited to ~{min_mhz:.3f} MHz due to function: {min_mhz_func_name}"
+                f"Design likely limited to ~{min_mhz:.3f} MHz due to function: "
+                f"{min_mhz_func_name}{FUNC_SRC_LOC_STR(parser_state, min_mhz_func_name)}"
             )
     WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE(parser_state)
 
@@ -5367,6 +5417,72 @@ def WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE(parser_state):
     f = open(out_file, "w")
     f.write(text)
     f.close()
+
+    WRITE_NAME_INDEX_LOG(parser_state)
+
+
+def WRITE_NAME_INDEX_LOG(parser_state):
+    """Write name_index.log next to module_instances.log: for every generated
+    entity/type name that appears anywhere else in this build's own output
+    (VHDL identifiers, module_instances.log, [sweep]/stdout messages), a
+    record giving its true source location and (when the name itself was
+    collapsed to fit the VHDL identifier length cap) the full, uncollapsed
+    name -- so a hash suffix is always decodable without cross-referencing a
+    second log file. Best-effort: sourced entirely from side-tables populated
+    during elaboration/synthesis (pypeline_name_full, pypeline_type_canonical,
+    pypeline_hash_ext_info), all absent (and therefore empty here, not an
+    error) for a plain C-frontend design.
+    """
+    name_full = getattr(parser_state, "pypeline_name_full", {})
+    type_canonical = getattr(parser_state, "pypeline_type_canonical", {})
+    hash_ext_info = getattr(parser_state, "pypeline_hash_ext_info", {})
+
+    lines = ["ENTITIES"]
+    for func_name in sorted(parser_state.FuncToInstances.keys()):
+        logic = parser_state.FuncLogicLookupTable.get(func_name)
+        if logic is None:
+            continue
+        loc = None
+        ast_meta = getattr(logic, "ast_meta", None)
+        if ast_meta is not None:
+            loc = f"{ast_meta.src_file}:{ast_meta.line}"
+            if ast_meta.col is not None:
+                loc += f":{ast_meta.col}"
+        full = name_full.get(func_name)
+        if loc is None and full is None:
+            continue  # nothing decodable to report (e.g. a plain built-in)
+        lines.append(f"  {func_name}")
+        if loc is not None:
+            lines.append(f"    source: {loc}")
+        if full is not None:
+            lines.append(f"    full:   {full}")
+        lines.append(f"    insts:  {len(parser_state.FuncToInstances[func_name])}")
+
+    lines.append("")
+    lines.append("TYPES")
+    for type_name in sorted(type_canonical.keys()):
+        lines.append(f"  {type_name}")
+        lines.append(f"    full:   {type_canonical[type_name]}")
+
+    lines.append("")
+    lines.append("GENERATED SOURCES")
+    try:
+        gen_dir = SYN_OUTPUT_DIRECTORY + "/pypeline_generated_source"
+        written = pypeline.dump_generated_sources(gen_dir)
+        for gen_path in sorted(written):
+            lines.append(f"  {gen_path}")
+    except Exception as e:
+        lines.append(f"  (failed to dump generated sources: {e})")
+
+    lines.append("")
+    lines.append("PIPELINE VARIANTS")
+    for hash_ext in sorted(hash_ext_info.keys()):
+        owner, detail = hash_ext_info[hash_ext]
+        lines.append(f"  {hash_ext} -> {owner}, {detail}")
+
+    out_file = SYN_OUTPUT_DIRECTORY + "/name_index.log"
+    with open(out_file, "w") as f:
+        f.write("\n".join(lines) + "\n")
 
 
 # Generalizing is a bad thing to do

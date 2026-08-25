@@ -3578,7 +3578,8 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     if func_logic.delay_is_estimated:
         SYN.MEASURE_DELAYS([hotspot_func], parser_state)
     print(
-        f"[sweep] Isolated coarse sweep of hotspot: {hotspot_func} "
+        f"[sweep] Isolated coarse sweep of hotspot: {hotspot_func}"
+        f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} "
         f"(goal {plan.target_mhz:.2f} MHz)",
         flush=True,
     )
@@ -3599,7 +3600,9 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     )
     if not inst_sweep_state.met_timing or working_slices is None:
         print(
-            f"[sweep] Hotspot {hotspot_func} could not meet timing in isolation.",
+            f"[sweep] Hotspot {hotspot_func}"
+            f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} could not meet "
+            "timing in isolation.",
             flush=True,
         )
         return False
@@ -3612,8 +3615,9 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     # per instance merely because a different path was blamed at top level.
     if len(working_slices) == 0:
         print(
-            f"[sweep] Hotspot {hotspot_func} meets timing in isolation without "
-            "internal cuts; not locking IO-only latency.",
+            f"[sweep] Hotspot {hotspot_func}"
+            f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} meets timing in "
+            "isolation without internal cuts; not locking IO-only latency.",
             flush=True,
         )
         return False
@@ -3634,7 +3638,8 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
         probes += 1
         mid = (lo + hi) // 2
         print(
-            f"[sweep] Hotspot minimality probe: {hotspot_func} at {mid} clks "
+            f"[sweep] Hotspot minimality probe: {hotspot_func}"
+            f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} at {mid} clks "
             f"(known failing: {lo}, met: {hi})",
             flush=True,
         )
@@ -3671,7 +3676,9 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     )
     boundary = plan.mini_sweep_boundary_diagnostics[hotspot_func]
     print(
-        f"[sweep] Locked {hotspot_func} at cuts={len(working_slices)} "
+        f"[sweep] Locked {hotspot_func}"
+        f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} at "
+        f"cuts={len(working_slices)} "
         f"({len(boundary['selected_inputs'])} input + "
         f"{len(boundary['selected_outputs'])} output boundary bank(s), "
         f"{len(boundary['direct_edges'])} direct edge(s)) on "
@@ -4315,7 +4322,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             if plan.same_mhz_count >= 1:
                                 print(
                                     f"[sweep] WARNING: {main_logic.func_name} cannot meet {target_mhz:.2f} MHz: "
-                                    f"the critical path is in function {hotspot_func}, which cannot be "
+                                    f"the critical path is in function {hotspot_func}"
+                                    f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)}, which cannot be "
                                     f"autopipelined ({unpipelinable_reason}). Adding pipeline registers cannot "
                                     f"subdivide this path - restructure {hotspot_func} or lower the clock goal. "
                                     "Keeping best result.",
@@ -4326,7 +4334,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             else:
                                 print(
                                     f"[sweep] NOTE: {main_logic.func_name} critical path attributed to "
-                                    f"{hotspot_func}, which cannot be autopipelined internally ({unpipelinable_reason}); "
+                                    f"{hotspot_func}{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)}, "
+                                    f"which cannot be autopipelined internally ({unpipelinable_reason}); "
                                     "registers at its boundaries may still help - replanning.",
                                     flush=True,
                                 )
@@ -4356,7 +4365,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             )
                             if next_boundary_strategy is not None:
                                 print(
-                                    f"[sweep] Locked {hotspot_func} remains on "
+                                    f"[sweep] Locked {hotspot_func}"
+                                    f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} remains on "
                                     f"the critical path; trying "
                                     f"{next_boundary_strategy} boundary policy.",
                                     flush=True,
@@ -4371,7 +4381,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             elif plan.same_mhz_count >= 1:
                                 print(
                                     f"[sweep] WARNING: {main_logic.func_name} limited by "
-                                    f"already-locked {hotspot_func} (best isolated pipelining applied); "
+                                    f"already-locked {hotspot_func}"
+                                    f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} "
+                                    "(best isolated pipelining applied); "
                                     "cannot improve further. Keeping best result.",
                                     flush=True,
                                 )

@@ -157,6 +157,18 @@ def get_tests() -> list:
             cmd=[INST_DIR / "cast_error_test.py"],
         )
     )
+    # name_index.log side-tables: pypeline_name_full/pypeline_type_canonical
+    # get populated exactly when a canonical name actually collapses, and
+    # pypeline_canonical_name_owner raises on a genuine collision (two
+    # different closures landing on one canonical name) instead of silently
+    # deduping onto the wrong Logic().
+    tests.append(
+        Test(
+            name="name_index_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "name_index_test.py"],
+        )
+    )
     return tests
 
 

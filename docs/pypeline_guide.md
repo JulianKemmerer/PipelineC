@@ -1173,6 +1173,12 @@ class state_t(IntEnum):
     DONE    = 2
 ```
 
+The generated canonical entity name for `state_t` is `state_t_IDLE_RUNNING_DONE` -- when
+every member's value is a plain `0..n-1` sequence in declaration order (the common case
+above, and whatever `auto()` produces), the redundant values are dropped from the name. An
+explicit non-sequential/sparse-valued enum keeps its values in the name instead (e.g.
+`IDLE=0, ERROR=5` becomes `..._IDLE_0_ERROR_5`).
+
 Members are accessed with dot notation and compare with `==`:
 
 ```python
@@ -1499,6 +1505,13 @@ Each specialised result (`add_u32`, `add_u8`) produces a separate VHDL entity wi
 correct bit widths.
 Calling the same specialisation multiple times reuses the same entity definition but
 creates separate instances.
+
+The generated entity's name spells out the factory's own parameter names and values --
+`make_adder(uint32_t)` becomes an entity named `add_T_uint32_t`, and a factory with
+several parameters (e.g. `make_fifo(data_t, depth, mode)`) gets every one of them in
+declaration order (`fifo_data_t_..._depth_16_mode_fwft`). This is why choosing clear
+factory parameter names pays off directly: they end up in build logs, synthesis
+reports, and VHDL entity names, not just in your own source.
 
 ### Generic structs
 

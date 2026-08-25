@@ -18,9 +18,10 @@ import functools as _functools
 import warnings as _warnings
 from enum import IntEnum as _IntEnum, auto as _auto
 
-# If a fully-expanded struct canonical name exceeds this length it is replaced
-# with "{class_name}_{sha256[:8]}" to keep VHDL type identifiers manageable.
-_MAX_MANGLE_NAME_LEN = 64
+# If a fully-expanded struct/enum canonical name exceeds this length, it is
+# collapsed via collapse_overflow_name (readable truncated prefix + sha256[:8])
+# to keep VHDL type identifiers manageable.
+_MAX_MANGLE_NAME_LEN = 96
 
 
 # ─────────────────────────────────────────────
@@ -872,23 +873,57 @@ def NamedTuple(cls=None, **kwargs):
 NamedTuple = typing.NamedTuple
 
 
-def _format_struct_param_value(val):
-    """Format one enclosing-factory parameter value for embedding in a struct's
-    canonical name. Mirrors the convention _canonical_func_name uses for
-    hw_func closure params in PY_TO_LOGIC.py (not imported -- pypeline.py has
-    zero dependency on the compiler and must stay that way): a pypeline C
-    type contributes its own canonical name, int/bool contributes its value
-    string, None contributes "None". Negative ints use a 'neg' prefix rather
-    than a bare '-', which is not legal inside a VHDL identifier. Anything
-    else falls back to a short hash of its repr so struct() never raises on
-    an unusual factory parameter type -- it just won't distinguish on it.
+_PARAM_VALUE_ADDR_RE = _re_ctype.compile(r" at 0x[0-9a-fA-F]+")
+_PARAM_VALUE_ILLEGAL_CHARS_RE = _re_ctype.compile(r"[^A-Za-z0-9_]+")
+
+
+def _sanitize_param_fragment(s: str) -> str:
+    """Collapse runs of non-identifier characters into single underscores and
+    trim leading/trailing underscores, for embedding a str/float/fallback
+    value into a generated name. Mirrors PY_TO_LOGIC._strip_qualname_markers'
+    character class; kept local since pypeline.py has zero dependency on the
+    compiler and must stay that way."""
+    s = _PARAM_VALUE_ILLEGAL_CHARS_RE.sub("_", s).strip("_")
+    return s or "v"
+
+
+def encode_param_value(val) -> str:
+    """Deterministic, VHDL-identifier-safe encoding of one factory-parameter/
+    closure value, for embedding in a generated canonical entity/type name.
+    Shared by struct()/enum() here and by PY_TO_LOGIC._canonical_func_name
+    (which imports it from here; pypeline.py itself has zero dependency on
+    the compiler and must stay that way, so this stays self-contained).
+
+    Must be a pure function of `val` -- no memory addresses, no id()s, no call
+    order -- since the AUTOPIPELINE .latency pin-and-confirm loop re-executes
+    a design in-process and matches entities across passes by these names.
     """
     if isinstance(val, type):
         return _mangle_type(getattr(val, "_pypeline_ctype_name", val.__name__))
-    if isinstance(val, bool) or isinstance(val, int):
+    if isinstance(val, bool):
+        return str(val)
+    if isinstance(val, int):
         return str(val) if val >= 0 else f"neg{-val}"
     if val is None:
         return "None"
+    if isinstance(val, str):
+        return _sanitize_param_fragment(val)
+    if isinstance(val, float):
+        s = repr(val).replace("-", "neg").replace(".", "p")
+        return _sanitize_param_fragment(s)
+    if isinstance(val, _IntEnum):
+        return f"{type(val).__name__}_{val.name}"
+    if isinstance(val, (list, tuple)):
+        if not val:
+            return "empty"
+        return "_".join(encode_param_value(e) for e in val)
+    if isinstance(val, dict):
+        if not val:
+            return "empty"
+        return "_".join(
+            f"{encode_param_value(k)}_{encode_param_value(val[k])}"
+            for k in sorted(val, key=repr)
+        )
     if callable(val):
         # Deterministic (no memory address): a function's default repr embeds
         # its address, which would rename the struct on every design
@@ -896,11 +931,14 @@ def _format_struct_param_value(val):
         # re-executes designs in-process, matching entities across passes by
         # name. module+qualname is enough identity for this suffix; the
         # struct's structural distinctness is already carried by its field
-        # types in the canonical name.
+        # types in the canonical name. (PY_TO_LOGIC._callable_canonical_name
+        # does a richer, factory-closure-recursing version of this same idea
+        # for hw_func closure params -- this is the simpler, dependency-free
+        # fallback used here and anywhere a live compiler isn't available.)
         import inspect
 
         if getattr(val, "_is_autopipeline_pragma", False):
-            return "AUTOPIPELINE_" + _format_struct_param_value(val.func)
+            return "AUTOPIPELINE_" + encode_param_value(val.func)
         unwrapped = inspect.unwrap(val)
         qual = getattr(unwrapped, "__qualname__", None)
         if qual:
@@ -909,37 +947,84 @@ def _format_struct_param_value(val):
             return _mangle_type(
                 dotted.replace(".", "_").replace("<", "_").replace(">", "_")
             )
-    return _hashlib.sha256(repr(val).encode()).hexdigest()[:8]
+        # Unintrospectable callable (no qualname) -- fall through below.
+    # Last resort: any other value (or an unintrospectable callable) gets a
+    # labeled hash of its address-stripped repr, so encoding never raises --
+    # an opaque-but-labeled term beats elaboration failing outright.
+    type_name = _sanitize_param_fragment(type(val).__name__)
+    addr_free_repr = _PARAM_VALUE_ADDR_RE.sub("", repr(val))
+    h = _hashlib.sha256(addr_free_repr.encode()).hexdigest()[:8]
+    return f"{type_name}_{h}"
 
 
-def _enclosing_factory_param_suffix(cls, frame):
-    """If `cls` was defined directly inside a factory function (its
-    __qualname__ contains '.<locals>.'), return a canonical-name suffix built
-    from that function's own declared parameters -- unconditionally, as a
-    pure function of the call's own inputs, so the result never depends on
-    what else has been elaborated before it (mirrors _canonical_func_name's
-    closure-param handling for @hw_func factories). Returns "" if there's no
-    enclosing function, it has no declared parameters, or (safety bail-out)
-    the live frame's function name doesn't match what the qualname lexically
-    implies -- e.g. a struct defined two factory levels deep, which no
-    current factory in this codebase does; degrading to "no suffix" here is
-    safe (same as the module-level case), not incorrect.
+def collapse_overflow_name(full: str, fallback_prefix: str, max_len: int) -> str:
+    """Collapse an over-length generated name to fit `max_len` while keeping a
+    readable prefix, instead of discarding all descriptive content down to
+    just `{fallback_prefix}_{hash}`.
+
+    The hash is computed over the FULL untruncated name (so two different
+    over-length names that happen to share a truncated prefix still get
+    distinct results); the kept prefix is trimmed back to the last '_'
+    boundary so it never ends mid-token -- a bare truncation can otherwise
+    slice a trailing hash or type-name token in half (e.g.
+    "..._out_t_8_b1dab4d2", where "_8_" is half of an unrelated 8-hex-digit
+    hash), which is valid-but-nonsense rather than merely short.
     """
-    qualname = getattr(cls, "__qualname__", "")
+    if len(full) <= max_len:
+        return full
+    h = _hashlib.sha256(full.encode()).hexdigest()[:8]
+    budget = max_len - 9  # "_" + 8 hex chars
+    prefix = full[:budget]
+    last_us = prefix.rfind("_")
+    if last_us > budget // 2:
+        prefix = prefix[:last_us]
+    prefix = prefix.rstrip("_") or fallback_prefix
+    return f"{prefix}_{h}"
+
+
+def capture_factory_args(qualname: str, frame) -> dict:
+    """Capture the REAL argument values of every enclosing factory function
+    named in `qualname`'s '.<locals>.' chain, by walking the live call stack
+    starting at `frame`.
+
+    Skips any leading frames belonging to pypeline.py itself (its own
+    decorator/registration plumbing -- @wires, @MAIN, _register_main -- sits
+    between the caller and _sim_type_wrap at varying depth), the same way
+    include/pypeline/interface/interface_func.py's _factory_suffix skips its
+    own module's frames, so every decorator call shape lands on the same
+    real factory frame regardless of how it got here.
+
+    Then matches each '.<locals>.'-separated qualname segment (innermost
+    enclosing factory first) against frame.f_code.co_name, capturing that
+    frame's own declared parameters (in declaration order) before moving to
+    frame.f_back for the next segment out. Returns {} (safe degrade, not an
+    error) the instant a name fails to match -- e.g. a struct/function built
+    from an unusual call shape just falls back to closure-only naming, same
+    as before this function existed.
+
+    Returns an insertion-ordered dict: innermost factory's params first, then
+    each enclosing factory's params outward -- this is what lets the
+    generated name's leading term be the most identifying one (the innermost
+    factory is always the one whose params most directly describe the
+    returned function/type).
+    """
+    while frame is not None and frame.f_code.co_filename == __file__:
+        frame = frame.f_back
     if ".<locals>." not in qualname:
-        return ""
-    expected_name = qualname.split(".<locals>.")[-2]
-    if frame.f_code.co_name != expected_name:
-        return ""
-    code = frame.f_code
-    n = code.co_argcount + code.co_kwonlyargcount
-    param_names = code.co_varnames[:n]
-    parts = [
-        f"{name}_{_format_struct_param_value(frame.f_locals[name])}"
-        for name in sorted(param_names)
-        if name in frame.f_locals
-    ]
-    return ("_" + "_".join(parts)) if parts else ""
+        return {}
+    enclosing = list(reversed(qualname.split(".<locals>.")[:-1]))
+    result = {}
+    f = frame
+    for expected_name in enclosing:
+        if f is None or f.f_code.co_name != expected_name:
+            return {}
+        code = f.f_code
+        n = code.co_argcount + code.co_kwonlyargcount
+        for name in code.co_varnames[:n]:
+            if name in f.f_locals and name not in result:
+                result[name] = f.f_locals[name]
+        f = f.f_back
+    return result
 
 
 class _CastDispatchMeta(type):
@@ -1020,13 +1105,15 @@ def struct(cls):
             ann_str = str(ann)
         parts.append(f"{field}_{_mangle_type(ann_str)}")
     canonical = cls.__name__ + ("_" + "_".join(parts) if parts else "")
-    canonical += _enclosing_factory_param_suffix(cls, _sys._getframe(1))
+    factory_args = capture_factory_args(cls.__qualname__, _sys._getframe(1))
+    if factory_args:
+        canonical += "_" + "_".join(
+            f"{name}_{encode_param_value(val)}" for name, val in factory_args.items()
+        )
     cls._pypeline_ctype_canonical = canonical  # full name retained for debugging
-    if len(canonical) > _MAX_MANGLE_NAME_LEN:
-        h = _hashlib.sha256(canonical.encode()).hexdigest()[:8]
-        cls._pypeline_ctype_name = f"{cls.__name__}_{h}"
-    else:
-        cls._pypeline_ctype_name = canonical
+    cls._pypeline_ctype_name = collapse_overflow_name(
+        canonical, cls.__name__, _MAX_MANGLE_NAME_LEN
+    )
 
     # Override __new__ so that scalar integer fields are auto-wrapped in SimVals.
     # This makes float32_t(sign=0, exp=127, man=0) produce typed SimVal fields for
@@ -1169,14 +1256,22 @@ def enum(cls):
                 counter = v + 1
         cls = _IntEnum(cls.__name__, members)
 
-    # Canonical name: name_MEMBER1_val1_MEMBER2_val2 sorted by value
-    parts = [f"{m.name}_{m.value}" for m in sorted(cls, key=lambda m: m.value)]
-    canonical = cls.__name__ + ("_" + "_".join(parts) if parts else "")
-    if len(canonical) > _MAX_MANGLE_NAME_LEN:
-        h = _hashlib.sha256(canonical.encode()).hexdigest()[:8]
-        ctype_name = f"{cls.__name__}_{h}"
+    # Canonical name: name_MEMBER1_val1_MEMBER2_val2 sorted by value. When
+    # every member's value is a plain 0..n-1 sequence in DECLARATION order
+    # (the auto()/near-universal case), the values are redundant with
+    # position and are dropped -- name_MEMBER1_MEMBER2 -- since spelling out
+    # e.g. "IDLE_0_RUNNING_1_DONE_2" wastes characters restating what the
+    # member order already says. A non-sequential (explicit/sparse-valued)
+    # enum keeps its values, so two differently-valued enums still can never
+    # collide on one name.
+    is_sequential = [m.value for m in cls] == list(range(len(cls.__members__)))
+    ordered_members = sorted(cls, key=lambda m: m.value)
+    if is_sequential:
+        parts = [m.name for m in ordered_members]
     else:
-        ctype_name = canonical
+        parts = [f"{m.name}_{m.value}" for m in ordered_members]
+    canonical = cls.__name__ + ("_" + "_".join(parts) if parts else "")
+    ctype_name = collapse_overflow_name(canonical, cls.__name__, _MAX_MANGLE_NAME_LEN)
 
     n_bits = _enum_bit_width(cls)
     cls._pypeline_ctype_name = ctype_name
@@ -3148,23 +3243,21 @@ def _bytes_type_key(t) -> str:
 
 
 def _finalize_hw_name(name: str) -> str:
-    """Collapse a generated hardware function name to fit _MAX_MANGLE_NAME_LEN,
-    using the same truncated-prefix + sha256[:8] fallback convention as
-    @struct/@enum.
+    """Collapse a generated hardware function name to fit _MAX_MANGLE_NAME_LEN
+    via collapse_overflow_name (readable prefix trimmed back to a '_'
+    boundary + sha256[:8] of the full name), the same convention @struct/
+    @enum use.
 
-    The truncation point is a fixed character offset, so it can land right
-    after a `_` already in the name -- `.rstrip("_")` before appending the
-    `_{hash}` separator, or the result has two consecutive underscores,
-    which GHDL rejects as an illegal VHDL identifier ("two underscores can't
-    be consecutive"). Caught by a real synthesis run of a long cast entity
-    name (`cast_stream_intrf_..._frac_bits_..._1edf40d4` truncating right
-    after `frac_bits_`), not by elaboration or native sim, which never
-    validate VHDL identifier syntax.
+    A fixed-offset truncation (this function's previous implementation) can
+    land mid-token -- e.g. right after the "8" in a trailing 8-hex-digit hash,
+    or mid-word -- producing a valid-but-nonsense identifier like
+    "cast_stream_intrf_..._out_t_8_b1dab4d2" (half of an unrelated hash) or
+    "..._frac_bits_..._1edf40d4" (right after "frac_bits_", which GHDL
+    additionally rejects outright as two consecutive underscores). Both were
+    found in real synthesis output; collapse_overflow_name's boundary-aware
+    trim avoids the whole class.
     """
-    if len(name) > _MAX_MANGLE_NAME_LEN:
-        h = _hashlib.sha256(name.encode()).hexdigest()[:8]
-        name = f"{name[: _MAX_MANGLE_NAME_LEN - 9].rstrip('_')}_{h}"
-    return name
+    return collapse_overflow_name(name, name.split("_", 1)[0] or "v", _MAX_MANGLE_NAME_LEN)
 
 
 def _collect_struct_types(t, out=None):
@@ -3218,6 +3311,61 @@ def _exec_generated_func(
     ns = dict(extra_globals)
     exec(code, ns)
     return ns[func_name]
+
+
+# Directory-name markers of the synthetic "/<marker>/<name>.py" absolute-path
+# convention used by _exec_generated_func (default folder
+# "pypeline_generated_bytes", or "pypeline_generated_casts" -- the
+# lazily-built @cast functions in include/pypeline/stream/stream.py -- via
+# its folder= override) and AUTOFSM._exec_generated ("pypeline_autofsm_gen");
+# see dump_generated_sources.
+_GENERATED_SOURCE_DIR_MARKERS = (
+    "pypeline_generated_bytes",
+    "pypeline_generated_casts",
+    "pypeline_autofsm_gen",
+)
+
+
+def dump_generated_sources(out_dir):
+    """Write every synthetic pypeline-generated Python source currently
+    registered in linecache to `out_dir`, so a `_py_lNN` location suffix
+    pointing at generated code (a to_bytes/from_bytes cast helper, an
+    AUTOFSM-opened FSM, an interface function's generated wiring module)
+    resolves to a real file on disk instead of a name nobody can open.
+
+    Covers every synthetic-filename convention in this codebase: the
+    "/<marker>/<name>.py" absolute-path convention (_exec_generated_func,
+    AUTOFSM._exec_generated) and interface_func.py's "ifgen_<...>.py" bare
+    relative filename. Best-effort and read-only against linecache: only
+    entries actually present in linecache.cache at call time are written, so
+    calling this before any design has been elaborated writes nothing.
+
+    Returns the list of file paths written.
+    """
+    import os as _os
+
+    written = []
+    for fake_path, entry in list(_linecache.cache.items()):
+        if not isinstance(fake_path, str):
+            continue
+        rel = fake_path.lstrip("/")
+        is_known_synthetic = rel.startswith("ifgen_") or any(
+            fake_path.startswith(f"/{marker}/")
+            for marker in _GENERATED_SOURCE_DIR_MARKERS
+        )
+        if not is_known_synthetic:
+            continue
+        lines = entry[2] if len(entry) > 2 else None
+        if not lines:
+            continue
+        dest = _os.path.join(out_dir, rel)
+        dest_dir = _os.path.dirname(dest)
+        if dest_dir:
+            _os.makedirs(dest_dir, exist_ok=True)
+        with open(dest, "w") as f:
+            f.writelines(lines)
+        written.append(dest)
+    return written
 
 
 _TYPE_TO_BYTES_CACHE: dict = {}
@@ -5440,6 +5588,13 @@ def _sim_type_wrap(fn):
     """
     if is_hw_func(fn):
         return fn
+    # Real argument values of every enclosing factory in fn's '.<locals>.'
+    # chain, captured NOW while the live call stack still has them -- this is
+    # the only point in time they're available. Stashed on both fn and the
+    # wrapper below so PY_TO_LOGIC._canonical_func_name can use the true
+    # values (e.g. make_fifo's depth/mode) instead of hashing whatever
+    # derived locals happen to survive into the closure.
+    _factory_args = capture_factory_args(fn.__qualname__, _sys._getframe(1))
     ann = fn.__annotations__
     try:
         params = list(_inspect.signature(fn).parameters.keys())
@@ -5569,6 +5724,8 @@ def _sim_type_wrap(fn):
         wrapper._is_hw_func = True
         wrapper._sim_model_cell = _model_cell
         wrapper._pypeline_has_state = has_state
+        wrapper._pypeline_factory_args = _factory_args
+        fn._pypeline_factory_args = _factory_args
         return wrapper
 
     if not has_state:
@@ -5650,6 +5807,8 @@ def _sim_type_wrap(fn):
     wrapper._is_hw_func = True
     wrapper._sim_model_cell = _model_cell
     wrapper._pypeline_has_state = has_state
+    wrapper._pypeline_factory_args = _factory_args
+    fn._pypeline_factory_args = _factory_args
     return wrapper
 
 
