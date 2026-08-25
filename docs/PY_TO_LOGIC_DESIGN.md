@@ -615,6 +615,16 @@ this extracts 6 scalar wires: `points[0].dim[0]`, `points[0].dim[1]`, `points[1]
 If any covering input is a variable alias (from a prior VAR_REF_ASSIGN), internal CONST_REF_RD
 submodules index into it using `_var_alias_internal_path`.
 
+**Covering-port selection is newest-first, not declaration-order-first.** `covering_wires`
+(and therefore the `ref_toks_i` port list) is still declared oldest-first, matching
+`_temporal_sort_covering_wires`'s contract above. But when more than one covering port could
+supply a given concrete leaf — e.g. a whole-array alias and a later, more specific
+single-element alias both cover position 0 — that leaf must be wired from whichever port is
+actually the *most recent* writer of it, or a newer, more specific write would be silently
+shadowed by an older, broader one. So the per-leaf covering-port search walks
+`covering_port_info` in **reverse** (newest port first) and takes the first (= newest) match,
+even though the ports themselves stay declared in oldest-first order.
+
 *Step 2 — Trimmed binary mux tree per variable dimension:*
 
 For each variable dimension of size N, a mux tree reduces N leaf wires to 1 output.
@@ -691,7 +701,9 @@ the MUX is a `MUX_my_struct_t` — compound-type MUXes are valid and produce cor
 
 *Step 1 — CONST_REF_RD extracts old elem-typed values* from the covering inputs for each
 concrete position. `_var_alias_internal_path` is used when a covering input is itself a
-variable alias.
+variable alias. Same newest-first covering-port selection as VAR_REF_RD's Step 1 above: when
+a position is covered by more than one port, the most recent write wins, not whichever port
+comes first in declaration order.
 
 *Step 2 — EQ comparators + AND tree + MUX per concrete position.* For multi-dimensional
 variable indices (e.g. `points[i].dim[j]`), comparators for each dimension are ANDed
@@ -717,6 +729,34 @@ logic.wire_to_c_type[alias] = "uint32_t[3]"
 This lets `_find_covering_wire` discover the alias later via `_var_ref_toks_covers`, and
 `_var_alias_internal_path` computes the correct index into the alias's output type when a
 subsequent CONST_REF_RD or VAR_REF_RD needs to extract a specific concrete element from it.
+
+**`self.env` invalidation.** Unlike `_write_ref` (concrete-path writes) and `_elab_if`'s
+post-MUX env update — both described in the `self.env` Staleness section above — a
+VAR_REF_ASSIGN call site cannot set a single `self.env` scalar entry for the position it
+wrote, since that position isn't known until runtime. But an *existing* `self.env` leaf entry
+under the write's longest concrete prefix (the ref_toks path up to, not including, the first
+variable-index token) can still be stale: a later scalar read of one of those exact paths
+would otherwise hit `_read_ref`'s fast path and return a wire that predates this write,
+never seeing it through the alias chain at all. `_emit_var_ref_assign` calls
+`_invalidate_env_for_var_write(ref_toks)` after recording the alias (and `_elab_if` calls the
+same helper from its variable-ref_toks branch, where the "write" is the if-mux's own output)
+to drop those stale descendants — the same purge `_invalidate_descendant_env` performs for a
+concrete write, just rooted at the longest concrete prefix instead of the full (partly
+variable) ref_toks, since the exact leaf touched isn't known statically.
+
+### Out-of-Range Dynamic Index: Silent Truncation, Not Rejection
+
+The `var_dim_i` port for a variable dimension of size `dim_size` is declared as
+`_select_type_for_dim(dim_size)` — the minimum unsigned type that holds `0..dim_size-1`
+(e.g. size 10 → `uint4_t`). The index expression itself is usually wider (e.g. a `uint33_t`
+sum). VHDL's implicit `resize()` at the port connection truncates the wide value down to the
+port's width modulo 2^N — for a non-power-of-two `dim_size` this means an out-of-range index
+can silently alias onto a real slot instead of being rejected (e.g. `dim_size=3` → `uint2_t`,
+index 4 wraps to slot 0). Native sim instead raises `IndexError` for the same access, since it
+operates on the full Python int. This divergence is real but orthogonal to the VAR_REF_ASSIGN
+/ VAR_REF_RD correctness issues described above — callers must keep dynamic indices in range
+themselves (as e.g. `make_axis_byte_sink` does, oversizing its buffer so every dynamic access
+it performs stays in bounds).
 
 ---
 
@@ -822,9 +862,17 @@ distinct names even when the covering wires are identical (see **CONST_REF_RD** 
 
 1. Temporarily swap `self.env` and `wire_aliases_over_time` to the branch snapshot
 2. Use `_get_var_ref_elem_positions` to enumerate all concrete elem positions
-3. Call `_read_ref` for each position — this naturally finds the right covering wire from
-   the branch state (the VAR_REF_ASSIGN alias in the true branch, or the original input in
-   the false/pre-if branch)
+3. Call `_read_ref` for each position, forwarding `branch_tag` — this naturally finds the
+   right covering wire from the branch state (the VAR_REF_ASSIGN alias in the true branch, or
+   the original input in the false/pre-if branch). Forwarding `branch_tag` here matters for
+   the same reason as the concrete-ref_toks case above: without it, a later loop iteration's
+   false branch reading a prior iteration's own variable-indexed if-mux alias can request the
+   exact same per-position CONST_REF_RD instance name as that same iteration's true branch
+   (variable ref tokens collapse to the literal `"VAR"` in the naming hash regardless of which
+   AST node produced them), and the two instances collide with a "Duplicate submodule instance
+   name" `ElaborationError` — this was a real crash, the shape documented and worked around in
+   `include/pypeline/axi/axis.py`'s `make_axis_byte_sink` (a conditional dynamic-indexed array
+   write inside a `for` loop), now fixed.
 4. Assemble the elem wires into `mux_type` via a CONST_REF_RD assembly submodule
 5. Restore `self.env` and `wire_aliases_over_time`
 

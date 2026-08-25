@@ -1375,9 +1375,17 @@ def swap(arr: uint32_t[4], i: uint2_t, j: uint2_t) -> uint32_t[4]:
 ```
 
 Variable indexing (where `i` or `j` is a hardware signal) infers a multiplexer tree in
-hardware.
+hardware. This works the same way for reads and writes, including writes nested inside
+other control flow (`if arr[i] == 0: arr[j] = val`).
 Like any combinational logic, those mux trees can be autopipelined by PypelineC when a
 frequency constraint is set.
+
+Keep dynamic indices within the array's declared bounds. An out-of-range *constant* index is
+a compile-time error, but an out-of-range *hardware* index is not rejected -- hardware
+truncates it to the index's minimum bit width (modulo the next power of two at or above the
+array length), which can silently alias onto a real element instead of the intended one.
+Native simulation instead raises an `IndexError` for the same access, so an out-of-bounds
+dynamic index is one of the few cases where native sim and real hardware can disagree.
 
 ### Compound initialisers
 

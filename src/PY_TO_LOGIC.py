@@ -1590,7 +1590,14 @@ def _build_var_ref_rd_logic(
 
     for concrete_leaf in all_concrete_leaves:
         covering_port = None
-        for cov_ref_toks, (port_name, port_type) in covering_port_info.items():
+        # covering_port_info is ordered oldest-first (matching port declaration
+        # order / _temporal_sort_covering_wires' contract). Select the NEWEST
+        # (last) match so a more specific, more recent write is not shadowed
+        # by a broader, older one that happens to also cover this leaf --
+        # mirrors _find_covering_wire's own newest-first alias walk.
+        for cov_ref_toks, (port_name, port_type) in reversed(
+            list(covering_port_info.items())
+        ):
             if _var_ref_toks_covers(cov_ref_toks, concrete_leaf):
                 covering_port = (cov_ref_toks, port_name, port_type)
                 break
@@ -1728,7 +1735,10 @@ def _build_var_ref_assign_logic(
     old_elem_wires = {}  # concrete_pos -> wire name of type elem_c_type
     for concrete_pos in all_elem_positions:
         covering_port = None
-        for cov_ref_toks, (port_name, port_type) in covering_port_info.items():
+        # Same newest-first selection contract as _build_var_ref_rd_logic above.
+        for cov_ref_toks, (port_name, port_type) in reversed(
+            list(covering_port_info.items())
+        ):
             if _var_ref_toks_covers(cov_ref_toks, concrete_pos):
                 covering_port = (cov_ref_toks, port_name, port_type)
                 break
@@ -3675,11 +3685,17 @@ class FuncElaborator:
             self.logic.alias_to_orig_var_name[mux_alias] = base_var
             self.logic.alias_to_driven_ref_toks[mux_alias] = ref_toks
 
-            # For concrete ref_toks, update env so future reads use the MUX output
+            # For concrete ref_toks, update env so future reads use the MUX output.
+            # For variable ref_toks there's no single scalar env entry to point
+            # at the MUX output, but stale descendants under the write's
+            # concrete prefix must still be dropped (mirrors
+            # _emit_var_ref_assign's own call to the same helper).
             if not _has_variable_index(ref_toks):
                 env_key = _ref_toks_to_env_key(ref_toks)
                 self.env[env_key] = (mux_alias, mux_type)
                 self._invalidate_descendant_env(env_key)
+            else:
+                self._invalidate_env_for_var_write(ref_toks)
 
     def _read_branch_coverage(
         self, ref_toks, mux_type, env_branch, aliases_branch, ast_node, branch_tag
@@ -3718,10 +3734,17 @@ class FuncElaborator:
             ref_toks, base_type, self.parser_state
         )
 
-        # Read each concrete position from current (branch) env/aliases
+        # Read each concrete position from current (branch) env/aliases.
+        # branch_tag must be forwarded (matches the concrete-ref_toks path in
+        # _read_branch_coverage) -- otherwise a later loop iteration's false
+        # branch, reading a prior iteration's own variable-indexed if-mux
+        # alias, can request the exact same CONST_REF_RD func_name as this
+        # iteration's true branch (variable tokens collapse to "VAR" in the
+        # naming hash regardless of which AST node produced them), and the
+        # two instances collide.
         pos_wires = []
         for pos in all_positions:
-            wire, _ = self._read_ref(pos, elem_c_type, ast_node)
+            wire, _ = self._read_ref(pos, elem_c_type, ast_node, branch_tag=branch_tag)
             pos_wires.append(wire)
 
         if len(pos_wires) == 1:
@@ -5611,6 +5634,7 @@ class FuncElaborator:
         self.logic.wire_aliases_over_time.setdefault(base_var, []).append(alias)
         self.logic.alias_to_orig_var_name[alias] = base_var
         self.logic.alias_to_driven_ref_toks[alias] = ref_toks  # AST nodes preserved
+        self._invalidate_env_for_var_write(ref_toks)
 
     def _emit_var_ref_rd(self, ref_toks, c_type, ast_node):
         """Elaborate a VAR_REF_RD call site and build/cache its Logic() definition."""
@@ -5736,6 +5760,30 @@ class FuncElaborator:
             and (k.startswith(env_key + ".") or k.startswith(env_key + "["))
         ]:
             del self.env[k]
+
+    def _invalidate_env_for_var_write(self, ref_toks):
+        """Drop stale self.env entries after a variable-index write.
+
+        Mirrors _write_ref's env upkeep (env assignment + descendant
+        invalidation), which _emit_var_ref_assign otherwise skips entirely.
+        A variable-index write's exact touched leaf can't be known until
+        elaboration is done (it's a runtime value), so no single scalar
+        self.env entry can be set the way _write_ref sets one for a concrete
+        path. But any existing self.env leaf entry strictly under the write's
+        longest CONCRETE prefix (the path up to, not including, the first
+        variable index token) might now be stale -- without invalidating it,
+        _read_ref's scalar fast path (`if env_key in self.env: return
+        self.env[env_key]`) can return a wire that predates this write
+        instead of resolving through the alias chain (_find_covering_wire),
+        which is the only path that correctly accounts for write recency.
+        """
+        concrete_prefix = []
+        for tok in ref_toks:
+            if _is_var_tok(tok):
+                break
+            concrete_prefix.append(tok)
+        env_key = _ref_toks_to_env_key(tuple(concrete_prefix))
+        self._invalidate_descendant_env(env_key)
 
     def _declare_var(self, var_name, typ, node):
         """First sight of a local variable: base wire driven by zeros, no alias."""

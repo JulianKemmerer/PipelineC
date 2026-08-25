@@ -509,10 +509,11 @@ def make_axis_byte_sink(axis_intrf, n, max_bytes):
         if stream_in_if.stream.valid & o.stream_in_if.ready:
             # Unconditional write at every lane (even unkept trailing lanes on
             # the last beat of a packet) -- safe, since bytes beyond the final
-            # frame_len are never read by a caller; this avoids a conditional
-            # dynamic-indexed array write inside a for-loop, which hits an
-            # unrelated elaborator limitation in branch-coverage inference for
-            # array writes (var-ref coverage) when nested inside a loop.
+            # frame_len are never read by a caller. (A conditional dynamic-indexed
+            # array write nested inside a for-loop -- e.g. gating this write on
+            # keep[i] -- used to hit an elaborator limitation in branch-coverage
+            # inference for variable-indexed array writes; that limitation is
+            # fixed now, but the unconditional form here is still simplest.)
             for i in range(n):
                 buf[count + i] = stream_in_if.stream.data.frag.data[i]
             new_count: uint32_t = count

@@ -75,6 +75,8 @@ COMB_TEST_FILES = [
     ("global_wire_cond_driver_test.py", INST_DIR, []),
     ("global_wire_array_split_test.py", INST_DIR, []),
     ("global_wire_dynamic_index_write_test.py", INST_DIR, []),
+    ("var_ref_assign_readback_test.py", INST_DIR, []),
+    ("var_ref_assign_cond_loop_test.py", INST_DIR, []),
 ]
 # Non---comb (pipelined/scheduled) compares: full build, then native sim runs
 # with the discovered latencies emulated, diffed against real pipelined VHDL.
