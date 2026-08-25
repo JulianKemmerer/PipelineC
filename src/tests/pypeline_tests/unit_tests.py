@@ -151,6 +151,23 @@ def get_tests() -> list:
             cmd=[INST_DIR / "divider_qor_bench_unit_test.py"],
         )
     )
+    # SWEEP.DROP_NON_DEEPENING_PLACEMENTS / CHUNK_SELECTED_MUX_OUTPUT_BANKS:
+    # the mux select-fanout cliff. A planned register can materialize (a
+    # real register was set) without deepening the schedule at all when it
+    # lands on a parallel branch whose sibling already bounds a shared
+    # downstream consumer's readiness -- found for real on soft_shift_rot's
+    # funnel-shift muxes under real sky130 STA (105.95 -> 377.41 MHz at an
+    # unchanged --no_hier_syn --no_sweep target, once both the wasted cut is
+    # dropped and the remaining wide MUX banks are chunked by default) --
+    # see the test file's own docstring and docs/SYN_DESIGN.md's dated
+    # result.
+    tests.append(
+        Test(
+            name="mux_fanout_planning_test",
+            category="unit",
+            cmd=[INST_DIR / "mux_fanout_planning_test.py"],
+        )
+    )
     return tests
 
 

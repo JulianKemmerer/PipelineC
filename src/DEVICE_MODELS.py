@@ -1173,6 +1173,12 @@ class PathReport:
         self.setup_ns = None
         self.critical_path_arc_count = None
         self.critical_path_max_capacitance_violations = None
+        # Design-wide count (every cell, not just the critical path) -- see
+        # "N max_capacitance violations:" below. This is what actually
+        # distinguished a select-fanout-overloaded plan from a merely-slow
+        # one in the mux select-fanout cliff: on that real path the
+        # critical-path-only count was 1 while this was 4.
+        self.n_max_capacitance_violations = None
         self.synthesis_recipe = None
         self.model_cache_identity = None
         self.synthesis_input_identity = None
@@ -1207,6 +1213,10 @@ class PathReport:
             elif "Critical path max_capacitance violations:" in line:
                 self.critical_path_max_capacitance_violations = int(
                     _val(line, "Critical path max_capacitance violations:")
+                )
+            elif "N max_capacitance violations:" in line:
+                self.n_max_capacitance_violations = int(
+                    _val(line, "N max_capacitance violations:")
                 )
             elif "Synthesis recipe:" in line:
                 self.synthesis_recipe = _val(line, "Synthesis recipe:")

@@ -145,7 +145,15 @@ def WHY_NOT_SLICEABLE(logic, parser_state):
 # module delay yet the design met 12.5 ns). Hard floors are pure comb spans
 # no register can ever land in (raw VHDL text leaves, comb logic trapped
 # inside a stateful container between its registers).
-SOFT_FLOOR_REASONS = ("state_regs", "feedback_vars", "fixed_latency")
+#
+# "mux_packed_bank" (a SPLIT_KIND_MUX_BITS leaf's SLICEABLE_1LL span) is
+# soft for a different reason than the others: it is not stateful, but its
+# floor is only the *unchunked* estimate. CHUNK_SELECTED_MUX_OUTPUT_BANKS
+# beats it at the same cut count (measured 105.95 -> 292.48 MHz on a real
+# 64-bit bank chunked alone, unchanged depth), so it must not stop the
+# sweep the way a genuine comb span does. A plain SPLIT_KIND_1LL span
+# (AND/OR/XOR/NOT/NEGATE/MULT) has no such escape and stays hard.
+SOFT_FLOOR_REASONS = ("state_regs", "feedback_vars", "fixed_latency", "mux_packed_bank")
 
 
 class Segment:
@@ -1016,7 +1024,21 @@ def BUILD_SLICE_LANDSCAPE(
                         )
                         else Segment.SLICEABLE
                     )
-                    seg = Segment(child_inst, sub_logic.func_name, s, e, seg_kind)
+                    # A real reason string, not "" -- PRINT_FLOOR_REPORT and
+                    # SOFT_FLOOR_REASONS both key off this. A packed MUX
+                    # bank's floor is beatable by chunking (see
+                    # CHUNK_SELECTED_MUX_OUTPUT_BANKS); a genuine 1LL span
+                    # is not.
+                    seg_reason = (
+                        "mux_packed_bank"
+                        if split_kind == RAW_VHDL.SPLIT_KIND_MUX_BITS
+                        else "1ll_atomic"
+                        if seg_kind == Segment.SLICEABLE_1LL
+                        else ""
+                    )
+                    seg = Segment(
+                        child_inst, sub_logic.func_name, s, e, seg_kind, seg_reason
+                    )
                     if seg_kind == Segment.SLICEABLE:
                         seg.max_legal_units = RAW_VHDL.GET_LEAF_BIT_WIDTH(
                             sub_logic, parser_state
@@ -1811,50 +1833,35 @@ def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
     return cuts, placements
 
 
-def BUILD_CHUNKED_MUX_REFINEMENT(placements, landscape, parser_state):
-    """Replace selected packed-MUX output banks with bit-chunk banks.
-
-    The replacement has the same local latency, but halves the load seen by
-    each stage's select.  Also split the terminal packed MUX when it was the
-    deliberately unregistered tail of the plan; this costs one additional
-    slice and prevents the output-only tail from retaining the old full
-    fanout.  Nothing here recognizes a design or function name beyond the
-    generic raw-HDL MUX split kind.
-    """
-    placements = list(placements)
-    segments = {segment.inst_path: segment for segment in landscape.segments}
-
-    def is_chunkable_mux_output(placement):
-        if not isinstance(placement, PipelinePlacement):
-            return False
-        if placement.kind != PipelinePlacement.INSTANCE_OUTPUT:
-            return False
-        logic = parser_state.LogicInstLookupTable.get(placement.inst_path)
-        return (
-            logic is not None
-            and len(logic.submodule_instances) == 0
-            and RAW_VHDL.GET_LEAF_SPLIT_KIND(logic)
-            == RAW_VHDL.SPLIT_KIND_MUX_BITS
-        )
-
-    selected_mux_outputs = [p for p in placements if is_chunkable_mux_output(p)]
-    mux_candidates = [
-        p for p in landscape.candidates if is_chunkable_mux_output(p)
-    ]
-    if not selected_mux_outputs or not mux_candidates:
-        return None
-    targets = {p.inst_path: p for p in selected_mux_outputs}
-    terminal = max(
-        mux_candidates, key=lambda p: (p.axis_position, p.candidate_id)
+def _IS_CHUNKABLE_MUX_OUTPUT(placement, parser_state):
+    if not isinstance(placement, PipelinePlacement):
+        return False
+    if placement.kind != PipelinePlacement.INSTANCE_OUTPUT:
+        return False
+    logic = parser_state.LogicInstLookupTable.get(placement.inst_path)
+    return (
+        logic is not None
+        and len(logic.submodule_instances) == 0
+        and RAW_VHDL.GET_LEAF_SPLIT_KIND(logic) == RAW_VHDL.SPLIT_KIND_MUX_BITS
     )
-    targets.setdefault(terminal.inst_path, terminal)
 
+
+def _LOWER_CHUNKED_MUX_TARGETS(targets, placements, landscape, parser_state):
+    """Shared lowering for both chunking paths below: replace each targeted
+    packed-MUX INSTANCE_OUTPUT placement with its same-depth bit-chunk
+    BIT_INTERNAL placement -- same latency contribution, half the select
+    fanout, but note the reported axis position moves to the leaf's own
+    geometric midpoint (a same-depth chunk is a physically different
+    lowering than the leaf's plain output boundary, not a cosmetic
+    relabeling of the same one). Returns (cuts, placements) or None if
+    nothing changed or a target's own geometry can't be resolved
+    (source="planner" callers
+    then keep what they already had)."""
+    segments = {segment.inst_path: segment for segment in landscape.segments}
     refined = [
         p
         for p in placements
-        if not (
-            is_chunkable_mux_output(p) and p.inst_path in targets
-        )
+        if not (_IS_CHUNKABLE_MUX_OUTPUT(p, parser_state) and p.inst_path in targets)
     ]
     for inst_path, output in sorted(
         targets.items(), key=lambda item: item[1].axis_position
@@ -1900,6 +1907,75 @@ def BUILD_CHUNKED_MUX_REFINEMENT(placements, landscape, parser_state):
     if new_ids == old_ids:
         return None
     return sorted(set(p.axis_unit for p in refined)), refined
+
+
+# Minimum packed-MUX output-bank width chunked by default at plan-build
+# time (see CHUNK_SELECTED_MUX_OUTPUT_BANKS). The measured select-fanout
+# cliff is on 64-bit banks (a real chacha20 decrypt path's funnel-shift
+# muxes, soft_shift_rot's 64-bit concat mux -- both 105.95 -> 292.48 MHz
+# chunked, unchanged cut count); narrow banks have far less fanout to shed
+# and should not be churned for no measured benefit -- wireguard's own MUX
+# candidates are all 8-bit. See the dated result in docs/SYN_DESIGN.md.
+DEFAULT_MUX_CHUNK_MIN_WIDTH = 32
+
+
+def CHUNK_SELECTED_MUX_OUTPUT_BANKS(placements, landscape, parser_state):
+    """(i) alone: chunk every already-selected packed-MUX INSTANCE_OUTPUT
+    placement of width >= DEFAULT_MUX_CHUNK_MIN_WIDTH into its same-depth
+    bit-chunk lowering -- same cut count, same latency, strictly lower
+    select fanout, so this is safe as the ordinary lowering applied when a
+    plan is built (including under --no_sweep, which never reaches
+    BUILD_CHUNKED_MUX_REFINEMENT's measured-failure escalation below).
+
+    Returns ``placements`` itself (the same object) when nothing qualifies,
+    so callers can cheaply test whether anything changed with ``is``.
+    """
+
+    def _is_target(p):
+        if not _IS_CHUNKABLE_MUX_OUTPUT(p, parser_state):
+            return False
+        logic = parser_state.LogicInstLookupTable[p.inst_path]
+        width = RAW_VHDL.GET_LEAF_BIT_WIDTH(logic, parser_state)
+        return width is not None and width >= DEFAULT_MUX_CHUNK_MIN_WIDTH
+
+    targets = {p.inst_path: p for p in placements if _is_target(p)}
+    if not targets:
+        return placements
+    result = _LOWER_CHUNKED_MUX_TARGETS(targets, placements, landscape, parser_state)
+    if result is None:
+        return placements
+    _cuts, refined = result
+    return refined
+
+
+def BUILD_CHUNKED_MUX_REFINEMENT(placements, landscape, parser_state):
+    """(ii): also split the terminal packed MUX when it was the deliberately
+    unregistered tail of the plan; this costs one additional slice and
+    prevents the output-only tail from retaining the old full fanout.
+
+    (i) (already-selected wide banks) is applied unconditionally when the
+    plan is built now -- see CHUNK_SELECTED_MUX_OUTPUT_BANKS -- so by the
+    time this measured-failure escalation runs, most selected banks have
+    typically already been chunked; this only adds the terminal one (plus
+    any selected bank narrower than DEFAULT_MUX_CHUNK_MIN_WIDTH the default
+    pass skipped). Nothing here recognizes a design or function name beyond
+    the generic raw-HDL MUX split kind.
+    """
+    placements = list(placements)
+    selected_mux_outputs = [
+        p for p in placements if _IS_CHUNKABLE_MUX_OUTPUT(p, parser_state)
+    ]
+    mux_candidates = [
+        p for p in landscape.candidates if _IS_CHUNKABLE_MUX_OUTPUT(p, parser_state)
+    ]
+    if not selected_mux_outputs or not mux_candidates:
+        return None
+    targets = {p.inst_path: p for p in selected_mux_outputs}
+    terminal = max(
+        mux_candidates, key=lambda p: (p.axis_position, p.candidate_id)
+    )
+    targets.setdefault(terminal.inst_path, terminal)
+    return _LOWER_CHUNKED_MUX_TARGETS(targets, placements, landscape, parser_state)
 
 
 def PIPELINE_PLACEMENT_FINGERPRINT(placements_by_subtree, locks=None):
@@ -2708,6 +2784,142 @@ def CHECK_PIPELINE_PLACEMENTS_REALIZED(
     return len(placements)
 
 
+def DROP_NON_DEEPENING_PLACEMENTS(
+    subtree_root, cuts, placements, parser_state, TimingParamsLookupTable
+):
+    """After real lowering, drop any INSTANCE_INPUT/INSTANCE_OUTPUT placement
+    that materialized (its register really was set) but did not deepen the
+    subtree's realized pipeline latency.
+
+    Found for real on a packed MUX select bus: a candidate admitted only by
+    PLAN_CUTS' own ``_straddled`` near-edge slack sits on a parallel branch
+    whose sibling already bounds GET_PIPELINE_MAP's schedule (both must be
+    ready before their shared next stage), so registering it alone is real
+    hardware that adds nothing -- the same waste class ``_straddled``'s own
+    comment already describes for the divider ("silently inflates the cut
+    count without deepening the pipeline"), just not one geometry alone can
+    reliably catch (a tighter ``_straddled`` rule rejects far more
+    legitimate candidates elsewhere, e.g. most of a real chacha20 decrypt
+    path's own landscape -- see docs/SYN_DESIGN.md). Ground truth after real
+    lowering (GET_TOTAL_LATENCY, itself a real synchronous schedule via
+    GET_PIPELINE_MAP) is the only signal that can't be fooled this way.
+
+    BIT_INTERNAL placements are left alone -- they set a raw-HDL leaf's own
+    internal ``_slices`` list, not an IO-boundary register, and are not
+    implicated in this failure mode.
+
+    A subtree's own landscape can reach into a nested AUTOPIPELINE-tagged
+    descendant (SUB_HAS_AUTOPIPELINE_IN_HIER already lets BUILD_SLICE_
+    LANDSCAPE descend through one) -- found for real on stream_pipeline_
+    test_top / div_inv's autopipelined soft_div_radix core. GET_SUBMODULE_
+    LATENCY deliberately reports such a region's own depth as 0 to ITS
+    container (the same convention SUMMARIZE_SUBTREE_PIPELINE's own
+    docstring documents, so balanced-latency reporting doesn't double count
+    an already-decoupled region), so subtree_root's own GET_TOTAL_LATENCY
+    alone would misread every one of that region's real registers as
+    "added no depth" and delete all of them -- each such region's own
+    GET_TOTAL_LATENCY is added back in below before comparing.
+
+    Cheap in the common case: the extra per-region-instance walk below only
+    ever runs once subtree_root's own monolithic latency alone already
+    looks short, and cache invalidation is bounded by this subtree's own
+    placement count times its hierarchy depth (no full LogicInstLookupTable
+    walk otherwise, unlike SYN.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES).
+    The per-candidate search loop only ever runs on a genuine mismatch.
+
+    Returns (cuts, placements), unchanged unless a mismatch is found and a
+    placement is provably redundant (removing it, alone, leaves the realized
+    latency exactly where it started).
+    """
+    if len(placements) == 0:
+        return cuts, placements
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+
+    def _invalidate_ancestors(inst_path):
+        toks = inst_path.split(marker)
+        for i in range(1, len(toks) + 1):
+            ancestor_params = TimingParamsLookupTable.get(marker.join(toks[0:i]))
+            if ancestor_params is not None:
+                ancestor_params.INVALIDATE_CACHE()
+
+    def _toggle(placement, value):
+        timing_params = TimingParamsLookupTable[placement.inst_path]
+        if placement.kind == PipelinePlacement.INSTANCE_INPUT:
+            timing_params.SET_HAS_IN_REGS(value)
+        else:
+            timing_params.SET_HAS_OUT_REGS(value)
+        _invalidate_ancestors(placement.inst_path)
+
+    # SET_HAS_*_REGS above only invalidated each toggled leaf's own cache
+    # (see TimingParams.SET_HAS_OUT_REGS); every container between a leaf
+    # and subtree_root (e.g. an intermediate hierarchy instance) still
+    # caches its pre-this-iteration GET_PIPELINE_MAP result and must be
+    # invalidated too before either total below means anything.
+    root_timing_params = TimingParamsLookupTable[subtree_root]
+    for placement in placements:
+        _invalidate_ancestors(placement.inst_path)
+    monolithic = root_timing_params.GET_TOTAL_LATENCY(
+        parser_state, TimingParamsLookupTable
+    )
+    if monolithic >= len(cuts):
+        return cuts, placements
+
+    in_subtree_prefix = subtree_root + marker
+    region_insts = [
+        inst_name + marker + local_sub
+        for inst_name, logic in parser_state.LogicInstLookupTable.items()
+        if logic.sub_inst_to_autopipeline_depth
+        and (inst_name == subtree_root or inst_name.startswith(in_subtree_prefix))
+        for local_sub in logic.sub_inst_to_autopipeline_depth
+    ]
+
+    def _realized_total():
+        total = root_timing_params.GET_TOTAL_LATENCY(
+            parser_state, TimingParamsLookupTable
+        )
+        for region_inst in region_insts:
+            region_params = TimingParamsLookupTable.get(region_inst)
+            if region_params is not None:
+                total += region_params.GET_TOTAL_LATENCY(
+                    parser_state, TimingParamsLookupTable
+                )
+        return total
+
+    realized = _realized_total()
+    if realized >= len(cuts):
+        return cuts, placements
+
+    remaining = list(placements)
+    # Bounded: each successful removal shrinks remaining by one, so this
+    # cannot run more than len(placements) full passes before the gap is
+    # either closed or provably unclosable by this mechanism.
+    for _ in range(len(placements)):
+        if realized >= len(remaining):
+            break
+        dropped_this_pass = False
+        for placement in list(remaining):
+            if placement.kind not in (
+                PipelinePlacement.INSTANCE_INPUT,
+                PipelinePlacement.INSTANCE_OUTPUT,
+            ):
+                continue
+            _toggle(placement, False)
+            trial_realized = _realized_total()
+            if trial_realized == realized:
+                remaining.remove(placement)
+                dropped_this_pass = True
+                if realized >= len(remaining):
+                    break
+            else:
+                _toggle(placement, True)
+        if not dropped_this_pass:
+            break
+    if len(remaining) == len(placements):
+        return cuts, placements
+    new_cuts = sorted(set(p.axis_unit for p in remaining))
+    return new_cuts, remaining
+
+
 def WRITE_PIPELINE_PLACEMENT_TRACE(
     plans, parser_state, TimingParamsLookupTable, internal_config=None
 ):
@@ -2828,6 +3040,7 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
                 "chunked_mux_attempted": (
                     plan.chunked_mux_refinement_attempted
                 ),
+                "default_chunked_banks": plan.default_chunked_banks,
                 "final_active_kind": plan.active_placement_refinement,
                 "attempted_physical_fingerprints": sorted(
                     plan.attempted_placement_fingerprints
@@ -2988,6 +3201,12 @@ class MainSweepPlan:
         self.pending_placement_refinement = None
         self.active_placement_refinement = None
         self.chunked_mux_refinement_attempted = False
+        # Whether the most recently applied placement set included at least
+        # one packed-MUX output bank chunked by CHUNK_SELECTED_MUX_OUTPUT_
+        # BANKS (the default, same-depth lowering -- distinct from the (ii)
+        # terminal-split escalation tracked by chunked_mux_refinement_
+        # attempted above). Recomputed every iteration, not sticky.
+        self.default_chunked_banks = False
         self.attempted_placement_fingerprints = set()
         self.current_placement_fingerprint = None
         # (func_name, reason) when the critical path was attributed to a
@@ -3785,8 +4004,16 @@ def PRINT_FLOOR_REPORT(plan, parser_state):
                 blame_str = f" due to {blame.inst_path.split(C_TO_LOGIC.SUBMODULE_MARKER)[-1]} ({blame.reason}, {landscape.floor_ns:.1f} ns unsliceable)"
             soft_str = "" if is_hard else " (soft)"
             msg += f", predicted fmax floor{soft_str} ~{floor:.1f} MHz{blame_str}"
+            is_mux_bank = blame is not None and blame.reason == "mux_packed_bank"
             if floor < plan.target_mhz:
-                if is_hard:
+                if is_mux_bank:
+                    msg += (
+                        f"\n[sweep] WARNING: predicted floor {floor:.1f} MHz is a "
+                        "select-fanout floor (an unchunked packed MUX bank), not a "
+                        "true hard limit - chunked output banks can beat it at the "
+                        "same cut count; not a reason to raise the goal"
+                    )
+                elif is_hard:
                     msg += f"\n[sweep] WARNING: predicted floor {floor:.1f} MHz is below the {plan.target_mhz:.1f} MHz goal - timing cannot be met by adding registers alone"
                 else:
                     msg += (
@@ -4005,12 +4232,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 else:
                     plan.global_scale *= 1.1  # failing - force more cuts
             plan.prev_total_cuts = total_cuts
-            plan.current_placement_fingerprint = PIPELINE_PLACEMENT_FINGERPRINT(
-                plan.placements, plan.locked
-            )
-            plan.attempted_placement_fingerprints.add(
-                plan.current_placement_fingerprint
-            )
+            plan.default_chunked_banks = False
             # Apply the cuts
             for subtree_root in plan.subtrees:
                 landscape = plan.landscapes.get(subtree_root)
@@ -4018,6 +4240,19 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 placements = plan.placements.get(subtree_root, [])
                 if landscape is None or len(placements) == 0:
                     continue
+                if plan.placement_mode != "replace":
+                    # Ordinary lowering for a selected wide packed-MUX output
+                    # boundary now: same depth, same cut count, half the
+                    # select fanout. "replace" mode is the internal
+                    # forced-placement hook and must build exactly what was
+                    # supplied. See CHUNK_SELECTED_MUX_OUTPUT_BANKS.
+                    chunked = CHUNK_SELECTED_MUX_OUTPUT_BANKS(
+                        placements, landscape, parser_state
+                    )
+                    if chunked is not placements:
+                        placements = chunked
+                        plan.placements[subtree_root] = placements
+                        plan.default_chunked_banks = True
                 tpl = APPLY_PIPELINE_PLACEMENTS(
                     placements,
                     parser_state,
@@ -4026,6 +4261,23 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 CHECK_PIPELINE_PLACEMENTS_REALIZED(
                     placements, parser_state, tpl
                 )
+                if plan.placement_mode != "replace":
+                    # A candidate can materialize (a real register was set)
+                    # without deepening the schedule at all -- see
+                    # DROP_NON_DEEPENING_PLACEMENTS. "replace" mode is the
+                    # internal forced-placement hook and must build exactly
+                    # what was supplied, waste and all.
+                    cuts, placements = DROP_NON_DEEPENING_PLACEMENTS(
+                        subtree_root, cuts, placements, parser_state, tpl
+                    )
+                    plan.cuts[subtree_root] = cuts
+                    plan.placements[subtree_root] = placements
+            plan.current_placement_fingerprint = PIPELINE_PLACEMENT_FINGERPRINT(
+                plan.placements, plan.locked
+            )
+            plan.attempted_placement_fingerprints.add(
+                plan.current_placement_fingerprint
+            )
             plan.placement_iterations.append(
                 {
                     "iteration": iteration,
@@ -4547,12 +4799,25 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 # e.g. "cuts=30 main_latency=30 pipeline_stages=30" look like
                 # 30 cuts bought 0 extra stages.
                 pipeline_stages = deepest + 1
+                # Not every SYN_TOOL's PathReport carries this (VIVADO's
+                # does not); a fanout overload is not fixed by more stages,
+                # which is exactly why the mux select-fanout cliff's 130 MHz
+                # plan measured worse than its 104 MHz one with no other
+                # visible cause in the rest of this line.
+                max_cap_violations = getattr(
+                    path_report, "n_max_capacitance_violations", None
+                )
+                max_cap_str = (
+                    f" max_cap_violations={max_cap_violations}"
+                    if max_cap_violations
+                    else ""
+                )
                 print(
                     f"[sweep] iter={iteration} main={main_logic.func_name} "
                     f"goal={target_mhz:.2f}MHz got={curr_mhz:.2f}MHz ({path_report.path_delay_ns:.2f}ns) "
                     f"cuts={total_cuts} main_latency={latency} pipeline_stages={pipeline_stages} "
                     f"predicted_stage={predicted_ns:.2f}ns"
-                    f"{bottleneck_str} action={action}",
+                    f"{bottleneck_str}{max_cap_str} action={action}",
                     flush=True,
                 )
                 plan.history.append(
@@ -4566,6 +4831,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         "pipeline_stages": pipeline_stages,
                         "predicted_stage_ns": round(predicted_ns, 3),
                         "bottleneck": hotspot_func,
+                        "max_cap_violations": max_cap_violations,
                         "action": action,
                     }
                 )

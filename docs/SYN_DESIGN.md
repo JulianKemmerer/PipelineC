@@ -96,8 +96,68 @@ Registers physically exist in two forms:
      placement may split the packed output bits, however, making each stage's
      select drive only that chunk. Aggregate data uses the generated
      `c_structs_pkg` SLV conversion functions around the stage-local selection.
-     This is the mechanism used by the bounded same-depth-neighbor refinement
-     below.
+     A selected bank at least `SWEEP.DEFAULT_MUX_CHUNK_MIN_WIDTH` (32) bits
+     wide is chunked this way by default when the plan is built
+     (`SWEEP.CHUNK_SELECTED_MUX_OUTPUT_BANKS`) — same latency contribution,
+     same cut count, half the select fanout, so `--no_sweep` gets it too.
+     The bounded same-depth-neighbor refinement below (`BUILD_CHUNKED_MUX_
+     REFINEMENT`) only adds the terminal, deliberately unregistered MUX on
+     top of that, after a real measurement fails — see the dated result.
+
+**Mux select-fanout cliff result (2026-08-25).** A single mux select bus
+registered *on top of* an already-registered, wider parallel sibling can
+materialize (a real register was set) while adding zero pipeline depth —
+`SWEEP.GET_PIPELINE_MAP` schedules a shared downstream consumer by the
+*max* of its inputs' readiness, so a short branch's register is free once a
+slower sibling already bounds that max. Found for real on `soft_shift_rot`
+(sky130, real liberty STA, `--no_hier_syn --no_sweep`): planning
+`MUX_uint5_t_if_eff_amt`'s output on top of an already-selected
+`MUX_uint64_t_if_w` cost nothing in depth but cost everything in fanout —
+`cuts=7, 6 slice(s) built` (the mismatch itself was the tell), 4
+design-wide max-capacitance violations, 8.50 ns combinational delay,
+105.95 MHz measured versus 252.13 MHz for the otherwise-identical 6-cut
+plan that omitted it. `SWEEP.DROP_NON_DEEPENING_PLACEMENTS` now drops any
+`INSTANCE_INPUT`/`INSTANCE_OUTPUT` placement whose removal, alone, leaves
+the subtree's real post-lowering `GET_TOTAL_LATENCY` exactly where it
+started — ground truth after real lowering, not a landscape estimate,
+since only the real synchronous schedule can see this. Measured effect,
+same target, same `--no_hier_syn --no_sweep` flags:
+
+| fix applied | cuts | measured fmax | max-cap violations |
+|---|---|---|---|
+| none (today's `master`) | 7 (6 slices) | 105.95 MHz | 4 |
+| drop the non-deepening cut alone | 6 | 252.13 MHz | 0 |
+| + chunk the remaining wide banks by default | 6 | **377.41 MHz** | 0 |
+
+The combined result (377.41 MHz) beats even the measured escalation's own
+best result on this design (317.36 MHz at 8 cuts) — with two fewer
+register banks. `--no_hier_syn`'s own floor estimate for this design
+(~192.3 MHz, summed isolated per-leaf delays) is separately known to run
+~2.5x high on a mux chain versus hierarchical synthesis (~483 MHz) — a
+pre-existing, unrelated limitation of that flag, not fixed here.
+
+**AUTOPIPELINE-region blind spot, found by the regression suite.** The
+initial `DROP_NON_DEEPENING_PLACEMENTS` compared a candidate's effect
+against `TimingParamsLookupTable[subtree_root].GET_TOTAL_LATENCY(...)`
+alone. `autopipeline_latency_test` (`stream_pipeline_test_top` /
+`div_inv`'s AUTOPIPELINE'd `soft_div_radix` core) failed against it: that
+subtree's own landscape reaches into a nested AUTOPIPELINE-tagged
+descendant (`BUILD_SLICE_LANDSCAPE`'s `SUB_HAS_AUTOPIPELINE_IN_HIER` check
+already permits descending through one), and `SYN.GET_SUBMODULE_LATENCY`
+deliberately reports such a region's own depth as 0 to its container — the
+same convention `SUMMARIZE_SUBTREE_PIPELINE`'s own docstring documents, so
+balanced-latency reporting doesn't double-count an already-decoupled
+region. A monolithic-only comparison therefore misread every one of that
+region's real registers as "added no depth" and deleted all 3 (then 6) of
+them, collapsing the plan to `cuts=0` and burning all 12 sweep iterations
+without ever placing a single register (17.16 MHz vs. 50 MHz goal,
+`TIMING NOT MET`). Fixed by adding each such region's own
+`GET_TOTAL_LATENCY` back into the comparison, mirroring `SUMMARIZE_
+SUBTREE_PIPELINE`'s own `monolithic + sum(regions)` formula exactly.
+Re-verified: `autopipeline_latency_test` passes (5-stage pinned
+confirmation, 266.72 MHz vs. 50 MHz goal), and the mux select-fanout cliff
+result above is unaffected (that design has no AUTOPIPELINE regions, so
+the region-sum contributes nothing extra there).
    - `SPLIT_KIND_1LL` ("one logic level" — AND/OR/XOR/NOT/NEGATE/MULT):
      these generators (`stage_for_1ll`) always place the *whole* operation in
      exactly one stage no matter the latency — only the register *boundary*
@@ -432,10 +492,15 @@ leaf-most **segments**:
 - `sliceable_1ll` — `SPLIT_KIND_1LL` and the initial-planner view of
   `SPLIT_KIND_MUX_BITS`; the operation-output boundary is legal and the
   interior blames like `atomic`. Ordinary planning therefore cannot waste a
-  2nd/3rd cut inside one 1LL operation. Built-in MUXes have a separate,
-  genuinely bit-chunked lowering, but only the bounded physical-neighbor
-  refinement opts into it after whole-design timing says the output-boundary
-  schedule is poor.
+  2nd/3rd cut inside one 1LL operation. A genuine `SPLIT_KIND_1LL` span's
+  own reason is `1ll_atomic` and stays a hard floor; a `SPLIT_KIND_MUX_BITS`
+  span's reason is `mux_packed_bank` and is a *soft* floor (in
+  `SOFT_FLOOR_REASONS`) — it is only the unchunked estimate, and a selected
+  wide bank is chunked into the genuinely bit-split lowering by default now
+  (see the `SPLIT_KIND_MUX_BITS` bullet above and the dated result below);
+  only the terminal, still-unregistered MUX split remains behind the
+  bounded physical-neighbor refinement, reached after whole-design timing
+  says the schedule is poor.
 - `atomic` — unsliceable span (reason recorded: `state_regs`,
   `feedback_vars`, `vhdl_module_text`, `inside_X_container`, ...),
 - `locked` — `params_are_fixed` (a mini-sweep result); already pipelined
@@ -951,8 +1016,13 @@ The history dumps to `<out_dir>/<top>/sweep_history.json`, one record per
           no
           |
    unused chunked-MUX physical neighbor available?
+          |           (wide selected output banks are already chunked by
+          |           default when the plan is built -- see
+          |           CHUNK_SELECTED_MUX_OUTPUT_BANKS above the top of this
+          |           diagram; this step only adds the still-unregistered
+          |           terminal MUX and any narrower selected bank the
+          |           default pass skipped)
           |-- yes --> try it once before any denser schedule
-          |           (selected output banks -> midpoint chunks + terminal MUX)
           |-- no/failed --> continue with ordinary feedback below
           |
    at hard floor? / soft floor + stagnant? --> stop, warn, keep best (exit 0)

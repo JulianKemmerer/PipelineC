@@ -36,7 +36,7 @@ lowering backstop:
 | kind | current operations | generated structure |
 |---|---|---|
 | `SPLIT_KIND_BITS` | `PLUS`, `MINUS`, `EQ`, `NEQ`, `GT`, `GTE`, `LT`, `LTE`, accumulator | genuinely partitions the operator's bit work across stages |
-| `SPLIT_KIND_MUX_BITS` | every built-in mux | partitions the packed output bits when a physical bit placement is selected, while remaining atomic in the initial planner landscape |
+| `SPLIT_KIND_MUX_BITS` | every built-in mux | partitions the packed output bits when a physical bit placement is selected (a selected bank at least `SWEEP.DEFAULT_MUX_CHUNK_MIN_WIDTH` bits wide gets this by default now), while remaining atomic in the initial planner landscape |
 | `SPLIT_KIND_1LL` | bitwise `AND`/`OR`/`XOR`, `NOT`, `NEGATE`, multiply | keeps the whole operation in one stage and moves registers to its boundaries |
 | `SPLIT_KIND_NONE` | zero-delay bit manipulation, casts and other unsupported interiors | accepts no pipeline slice |
 

@@ -658,6 +658,26 @@ def test_durable_qor_evidence_matrices_are_self_consistent():
     assert baseline["points"][-1]["timing_met"]
 
 
+def test_max_capacitance_violations_are_parsed():
+    # Design-wide count, distinct from the pre-existing critical-path-only
+    # field -- found for real on the mux select-fanout cliff, where the two
+    # differed (1 on the critical path, 4 design-wide) and only the
+    # design-wide one actually explained the measured fmax collapse.
+    text = (
+        "Worst period (ns): 9.438620\n"
+        "Critical path max_capacitance violations: 1\n"
+        "N max_capacitance violations: 4\n"
+    )
+    report = DEVICE_MODELS.PathReport(text)
+    assert report.critical_path_max_capacitance_violations == 1
+    assert report.n_max_capacitance_violations == 4
+
+
+def test_max_capacitance_violations_default_none_when_absent():
+    report = DEVICE_MODELS.PathReport("Worst period (ns): 1.0\n")
+    assert report.n_max_capacitance_violations is None
+
+
 if __name__ == "__main__":
     from _test_main import run_module_tests
 

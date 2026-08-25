@@ -508,14 +508,45 @@ build), before the `-fast` fix was even found.
   concave shape above is still worth knowing as context for why splitting
   helps at all and why gains taper off with more stages; it just isn't
   something the bit-allocation decision needs to fit a curve to.
-- **Packed-MUX bit chunking is deliberately feedback-only in the planned
-  sweep.** A 1-bit MUX select versus a 32-bit one carries different measured
-  delay here (`MUX_uint1_t` 0.983 ns versus `MUX_uint32_t` 3.268 ns), and the
-  raw generator can split the packed output bank for scalars and aggregates.
-  The initial landscape remains atomic to preserve its proven fewest-stage
-  geometry; after a whole-design miss, one bounded midpoint-chunk neighbor is
-  tried. This separation is intentional because isolated-leaf ranking did not
-  predict full-design fanout QoR.
+- **Packed-MUX bit chunking is now a default at plan-build time for wide
+  banks, but the initial landscape stays atomic.** A 1-bit MUX select versus
+  a 32-bit one carries different measured delay here (`MUX_uint1_t` 0.983 ns
+  versus `MUX_uint32_t` 3.268 ns), and the raw generator can split the
+  packed output bank for scalars and aggregates. The landscape's own
+  fewest-stage geometry is preserved (chunking never changes cut count or
+  latency), but a selected bank at least `SWEEP.DEFAULT_MUX_CHUNK_MIN_WIDTH`
+  (32) bits wide is chunked unconditionally once selected — see the mux
+  select-fanout cliff result below, where this alone was worth 105.95 ->
+  292.48 MHz at an unchanged cut count. A narrower selected bank, or the
+  still-unregistered terminal MUX, still only gets chunked after a
+  whole-design miss (one bounded midpoint-chunk neighbor); isolated-leaf
+  ranking did not predict full-design fanout QoR for those, hence the bound.
+- **Mux select-fanout cliff (2026-08-25): a register on a short parallel
+  branch can be free in depth but ruinous in fanout, and `--no_sweep`
+  planned it anyway.** `SWEEP.GET_PIPELINE_MAP` schedules a shared
+  downstream consumer by the *max* of its inputs' readiness, so a register
+  on a branch shorter than an already-registered sibling adds zero pipeline
+  depth — real hardware that materializes for nothing. Found on
+  `soft_shift_rot`'s parallel `MUX_uint5_t_if_eff_amt` (select) /
+  `MUX_uint64_t_if_w` (data) muxes under `--no_hier_syn --no_sweep`: the
+  planned 7th cut reported `cuts=7, 6 slice(s) built` (the mismatch was the
+  tell) and cost 4 design-wide max-capacitance violations for zero extra
+  depth — 105.95 MHz measured versus 252.13 MHz for the otherwise-identical
+  6-cut plan that omitted it. `SWEEP.DROP_NON_DEEPENING_PLACEMENTS` now
+  drops any placement whose removal, alone, leaves the subtree's real
+  post-lowering latency exactly where it started; this is the "never
+  actually benefits from the whole-design physics during planning"
+  limitation above turned fatal, not a new failure mode. See
+  `docs/SYN_DESIGN.md`'s own dated result for the full measurement table.
+- **`--no_hier_syn` sums isolated per-leaf delays, which runs high on a mux
+  chain specifically.** On `soft_shift_rot`, `--no_hier_syn` reports 38.2 ns
+  comb delay (`MUX_uint64_t` 5.363 ns/leaf) where hierarchical synthesis
+  measures 15.2 ns (2.1 ns/leaf) — a ~2.5x floor-estimate inflation
+  (192.3 MHz predicted vs. 483 MHz real), because cross-instance fanout
+  sharing between the mux's own select and its neighbors is invisible to
+  per-leaf isolated measurement (see the fanout-sharing bullet below). Not
+  fixed here: `--no_hier_syn` is a deliberate flag choice, and the
+  mismatched floor is just a misleading number, not a build failure.
 - **No net/interconnect delay.** Matches the sky130 flows measured against
   (all report zero net delay), but is therefore a pre-PnR estimate, not a
   post-route number — say so plainly wherever this tool's output is surfaced.
