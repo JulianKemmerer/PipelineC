@@ -7390,7 +7390,7 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
 ):
     # @@@@@@@@@ Maybe just require casting operation instead?  don't allow float + int  (bin op still changes to float+float  and errors connecting int to float ???
     #  Maybe?^ SEEMS RIGHT
-    f"""
+    rf"""
     # OTherwise? \/
     @TODO if defined in C code use parsed C def for types
     @OTHERwise  need to infer types with LOOKAHEAD "precast" wires  (TODO remove if extra?)
@@ -7769,7 +7769,7 @@ def PRTINTF_STRING_TO_FORMATS(format_string):
         (?:                                # first option
         (?:[-+0 #]"""
         + "{0,5})"
-        + f"""    # optional flags
+        + rf"""    # optional flags
         (?:\d+|\*)?                        # width
         (?:\.(?:\d+|\*))?                  # precision
         (?:h|l|ll|w|I|I32|I64)?            # size
@@ -11258,17 +11258,17 @@ def INFER_CLOCK_DOMAINS(
 def GET_CLK_CROSSING_INFO(preprocessed_c_text, parser_state):
     # Regex search c_text for pair of write and read funcs
     write_func_calls = []
-    r = f"\w+" + "_WRITE" + f"\s?\("
+    r = rf"\w+" + "_WRITE" + rf"\s?\("
     write_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
-    r = f"\w+" + "_WRITE_[0-9]+" + f"\s?\("
+    r = rf"\w+" + "_WRITE_[0-9]+" + rf"\s?\("
     write_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
     write_func_names = []
     for write_func_call in write_func_calls:
         write_func_names.append(write_func_call.strip("(").strip())
     read_func_calls = []
-    r = f"\w+" + "_READ" + f"\s?\("
+    r = rf"\w+" + "_READ" + rf"\s?\("
     read_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
-    r = f"\w+" + "_READ_[0-9]+" + f"\s?\("
+    r = rf"\w+" + "_READ_[0-9]+" + rf"\s?\("
     read_func_calls += SW_LIB.FIND_REGEX_MATCHES(r, preprocessed_c_text)
     read_func_names = []
     for read_func_call in read_func_calls:

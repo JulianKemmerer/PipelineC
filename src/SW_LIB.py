@@ -269,7 +269,7 @@ def GEN_EMPTY_SINGLE_INST_FUNC_HEADERS(
     new_regenerate_files = set()
     for inital_missing_file in inital_missing_files:
         # Regex search c_text for "<func>_SINGLE_INST.h"
-        r = f"\w+_SINGLE_INST.h"
+        r = rf"\w+_SINGLE_INST.h"
         header_str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
         func_names = []
         for header_str_quote in header_str_quotes:
@@ -345,7 +345,7 @@ def GEN_EMPTY_CLOCK_CROSS_HEADERS(all_code_files, inital_missing_files):
 
 
 def C_TYPE_IS_ARRAY_STRUCT(c_type, parser_state):
-    r = f"\w+_array(_[0-9]+)+_t"
+    r = rf"\w+_array(_[0-9]+)+_t"
     array_struct_types = FIND_REGEX_MATCHES(r, c_type)
     is_array_type = len(array_struct_types) == 1
     # print "c_type array struct?",c_type, is_array_type
@@ -371,7 +371,7 @@ def GEN_EMPTY_TYPE_ARRAY_N_HEADERS(all_code_files, inital_missing_files):
     #  text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
     for inital_missing_file in inital_missing_files:
         # Regex search c_text for "<type>_array_<num>_t.h"
-        r = f"\w+_array_N_t.h"
+        r = rf"\w+_array_N_t.h"
         array_type_header_str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
         var_names = []
         for array_type_header_str_quote in array_type_header_str_quotes:
@@ -401,7 +401,7 @@ def GEN_EMPTY_TYPE_BYTES_HEADERS(all_code_files, inital_missing_files):
     #  text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
     for inital_missing_file in inital_missing_files:
         # Regex search c_text for "<type>_bytes_t.h"
-        r = f"\w+_bytes_t.h"
+        r = rf"\w+_bytes_t.h"
         bytes_header_str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
         var_names = []
         for bytes_header_str_quote in bytes_header_str_quotes:
@@ -431,7 +431,7 @@ def GEN_EMPTY_FSM_CLK_FUNC_HEADERS(all_code_files, inital_missing_files, parser_
     #  text = C_TO_LOGIC.READ_FILE_REMOVE_COMMENTS(f)
     for inital_missing_file in inital_missing_files:
         # Regex search c_text
-        r = f"\w+" + C_TO_FSM.FSM_EXT + ".h"
+        r = rf"\w+" + C_TO_FSM.FSM_EXT + ".h"
         str_quotes = FIND_REGEX_MATCHES(r, inital_missing_file)
         var_names = []
         for str_quote in str_quotes:
@@ -523,7 +523,7 @@ void """
 
 def GEN_POST_PREPROCESS_FSM_CLK_HEADERS(preprocessed_c_text, regenerate_files):
     # Regex search c_text for <type>_bytes_t
-    r = f"\w+" + C_TO_FSM.FSM_EXT
+    r = rf"\w+" + C_TO_FSM.FSM_EXT
     func_names = FIND_REGEX_MATCHES(r, preprocessed_c_text)
 
     # #define replacing  Typedef each one
@@ -595,7 +595,7 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_FSM_CLK_FUNC_HEADERS(
 
 def GEN_POST_PREPROCESS_TYPE_BYTES_HEADERS(preprocessed_c_text, regenerate_files):
     # Regex search c_text for <type>_bytes_t
-    r = f"\w+_bytes_t"
+    r = rf"\w+_bytes_t"
     byte_types = FIND_REGEX_MATCHES(r, preprocessed_c_text)
 
     # #define replacing  Typedef each one
@@ -649,7 +649,7 @@ def GEN_POST_PREPROCESS_WITH_NONFUNCDEFS_TYPE_BYTES_HEADERS(
     new_regenerate_files = set()
     # print preprocessed_c_text
     # Regex search c_text for <type>_bytes_t
-    r = f"\w+_bytes_t"
+    r = rf"\w+_bytes_t"
     byte_types = FIND_REGEX_MATCHES(r, preprocessed_c_text)
 
     # #define replacing each one with array_n_t type
@@ -1466,7 +1466,7 @@ void bytes_to_"""
 
 def GEN_TYPE_ARRAY_N_HEADERS(preprocessed_c_text, regenerate_files):
     # Regex search c_text for <type>_array_<num>_t
-    r = f"\w+_array_[0-9]+_t"
+    r = rf"\w+_array_[0-9]+_t"
     array_types = FIND_REGEX_MATCHES(r, preprocessed_c_text)
     # print("preprocessed_c_text",preprocessed_c_text)
     # print("array_types",array_types)
@@ -1932,7 +1932,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     # Parse to list of width toks
     negate_func_names = []
     # uint24_negate(left_resized);
-    for type_regex in [f"uint[0-9]+_negate\s?\("]:  # DO int,float negate?
+    for type_regex in [rf"uint[0-9]+_negate\s?\("]:  # DO int,float negate?
         p = re.compile(type_regex)
         negate_func_names = p.findall(c_text)
         negate_func_names = list(set(negate_func_names))
@@ -1993,7 +1993,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     # Parse to list of width toks
     abs_func_names = []
     # int24_abs(left_resized);
-    for type_regex in [f"int[0-9]+_abs\s?\("]:  # Float abs is bit manip func
+    for type_regex in [rf"int[0-9]+_abs\s?\("]:  # Float abs is bit manip func
         p = re.compile(type_regex)
         abs_func_names = p.findall(c_text)
         abs_func_names = list(set(abs_func_names))
@@ -2079,7 +2079,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     nmux_func_names = []
     # uint24_mux24(sel, in0, in1,...);
     # print "DO any type NMUX"
-    for type_regex in [f"\w+_mux[0-9]+\s?\("]:
+    for type_regex in [rf"\w+_mux[0-9]+\s?\("]:
         p = re.compile(type_regex)
         nmux_func_names = p.findall(c_text)
         nmux_func_names = list(set(nmux_func_names))
@@ -2275,7 +2275,7 @@ typedef uint8_t """
     # Parse to list of width toks
     count0_func_names = []
     # count0s_uint24(left_resized) # Count from left, uint24_count0s counts from right
-    for type_regex in [f"count0s_uint[0-9]+\s?\("]:
+    for type_regex in [rf"count0s_uint[0-9]+\s?\("]:
         p = re.compile(type_regex)
         count0_func_names = p.findall(c_text)
         count0_func_names = list(set(count0_func_names))
@@ -2504,7 +2504,7 @@ typedef uint8_t """
         "float_array",
     ]:
         for op_regex in ["sum", "or", "and"]:
-            regex = type_regex + "_" + op_regex + f"[0-9]+\s?\("
+            regex = type_regex + "_" + op_regex + rf"[0-9]+\s?\("
             p = re.compile(regex)
             n_bin_op_func_names_w_paren = p.findall(c_text)
             n_bin_op_func_names_w_paren = list(set(n_bin_op_func_names_w_paren))
@@ -2871,7 +2871,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     bit_sel_func_names = []
     # uint64_39_39(input);
     for type_regex in [f"uint[0-9]+", "int[0-9]+", "float", "float_[0-9]+_[0-9]+_t"]:
-        p = re.compile(type_regex + f"_[0-9]+_[0-9]+\s?\(")
+        p = re.compile(type_regex + rf"_[0-9]+_[0-9]+\s?\(")
         bit_sel_func_names = p.findall(c_text)
         bit_sel_func_names = list(set(bit_sel_func_names))
         # Need bit concat and bit select
@@ -2907,7 +2907,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     # Parse to list of width toks
     bit_concat_func_names = []
     # uint64_uint15
-    p = re.compile(f"u?int[0-9]+_u?int[0-9]+\s?\(")
+    p = re.compile(rf"u?int[0-9]+_u?int[0-9]+\s?\(")
     bit_concat_func_names = p.findall(c_text)
     bit_concat_func_names = list(set(bit_concat_func_names))
     # uint5_t uint2_uint3(uint2 x, uint3 y)
@@ -2945,7 +2945,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     # Parse to list of width toks
     bit_dup_func_names = []
     # uint64_5
-    p = re.compile(f"[^_][u?]int[0-9]+_[0-9]+\s?\(")
+    p = re.compile(rf"[^_][u?]int[0-9]+_[0-9]+\s?\(")
     bit_dup_func_names = p.findall(c_text)
     bit_dup_func_names = list(set(bit_dup_func_names))
     # Questionable seems OK naming convention?
@@ -2985,7 +2985,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     # Rotate left
     # Parse to list of width toks
     rotl_func_names = []
-    p = re.compile(f"[^_]rotl[0-9]+_[0-9]+\s?\(")
+    p = re.compile(rf"[^_]rotl[0-9]+_[0-9]+\s?\(")
     rotl_func_names = p.findall(c_text)
     rotl_func_names = list(set(rotl_func_names))
     for rotl_func_name in rotl_func_names:
@@ -3018,7 +3018,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     # Rotate right
     # Parse to list of width toks
     rotr_func_names = []
-    p = re.compile(f"[^_]rotr[0-9]+_[0-9]+\s?\(")
+    p = re.compile(rf"[^_]rotr[0-9]+_[0-9]+\s?\(")
     rotr_func_names = p.findall(c_text)
     rotr_func_names = list(set(rotr_func_names))
     for rotr_func_name in rotr_func_names:
@@ -3053,7 +3053,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     # Parse to list of width toks
     bit_ass_func_names = []
     # uint64_uint15_2(uint64_t in, uint15_t x)  // out = in; out(16 downto 2) = x
-    p = re.compile(f"u?int[0-9]+_uint[0-9]+_[0-9]+\s?\(")
+    p = re.compile(rf"u?int[0-9]+_uint[0-9]+_[0-9]+\s?\(")
     bit_ass_func_names = p.findall(c_text)
     bit_ass_func_names = list(set(bit_ass_func_names))
     for bit_ass_func_name in bit_ass_func_names:
@@ -3094,7 +3094,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     float_const_func_names = []
     # float_1_8_23(left_resized);
     for type_regex in [f"float"]:
-        p = re.compile(type_regex + f"_uint[0-9]+_uint[0-9]+\s?\(")
+        p = re.compile(type_regex + rf"_uint[0-9]+_uint[0-9]+\s?\(")
         float_const_func_names = p.findall(c_text)
         float_const_func_names = list(set(float_const_func_names))
         for float_const_func_name in float_const_func_names:
@@ -3140,7 +3140,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     float_const_func_names = []
     # float_uint32(in);
     for type_regex in [f"float", "float_[0-9]+_[0-9]+_t"]:
-        p = re.compile(type_regex + f"_uint[0-9]+\s?\(")
+        p = re.compile(type_regex + rf"_uint[0-9]+\s?\(")
         float_const_func_names = p.findall(c_text)
         float_const_func_names = list(set(float_const_func_names))
         for float_const_func_name in float_const_func_names:
@@ -3177,7 +3177,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     float_const_func_names = []
     # float_abs(in);
     for type_regex in [f"float", "float_[0-9]+_[0-9]+_t"]:
-        p = re.compile(type_regex + f"_abs\s?\(")
+        p = re.compile(type_regex + rf"_abs\s?\(")
         float_const_func_names = p.findall(c_text)
         float_const_func_names = list(set(float_const_func_names))
         for float_const_func_name in float_const_func_names:
@@ -3213,7 +3213,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     float_const_func_names = []
     # float_sign(in);
     for type_regex in [f"float", "float_[0-9]+_[0-9]+_t"]:
-        p = re.compile(type_regex + f"_sign\s?\(")
+        p = re.compile(type_regex + rf"_sign\s?\(")
         float_const_func_names = p.findall(c_text)
         float_const_func_names = list(set(float_const_func_names))
         for float_const_func_name in float_const_func_names:
@@ -3245,7 +3245,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     # Byte swap, with same name as real C func
     # Parse to list of width toks
     bswap_func_names = []
-    p = re.compile(f"bswap_[0-9]+\s?\(")
+    p = re.compile(rf"bswap_[0-9]+\s?\(")
     bswap_func_names = p.findall(c_text)
     bswap_func_names = list(set(bswap_func_names))
     for bswap_func_name in bswap_func_names:
@@ -3279,7 +3279,7 @@ def GET_BIT_MANIP_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
     # Dont do casting since endianess makes everyone sad
     # C doesnt support casting like that anyway
     array_to_unsigned_func_names = []
-    p = re.compile(f"uint[0-9]+_array[0-9]+_(?:be|le)\s?\(")
+    p = re.compile(rf"uint[0-9]+_array[0-9]+_(?:be|le)\s?\(")
     array_to_unsigned_func_names = p.findall(c_text)
     array_to_unsigned_func_names = list(set(array_to_unsigned_func_names))
     # print "array_to_unsigned_func_names",array_to_unsigned_func_names

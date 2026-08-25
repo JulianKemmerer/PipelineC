@@ -1,5 +1,9 @@
 [lint]
 
+extend-select = [
+    "W605",  # invalid escape sequence
+]
+
 ignore = [
     "F841",
     "E721",
