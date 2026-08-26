@@ -96,6 +96,23 @@ def GET_GHDL_PLUGIN_FLAGS():
     return f"-m {shlex.quote(plugin)} "
 
 
+def WRITE_YOSYS_SCRIPT(commands, script_path):
+    """Write a list of yosys commands (one per line) to script_path and
+    return the "-s <script_path>" argv fragment to use in place of
+    "-p '<commands joined by ;>'".
+
+    A design's full VHDL file list, inlined into a single `ghdl ... -e top`
+    command passed via `-p`, can exceed Linux's MAX_ARG_STRLEN (any one
+    argv/envp string is capped at PAGE_SIZE * 32 = 131072 bytes, independent
+    of the much larger overall ARG_MAX) -- putting the same commands in a
+    script file sidesteps that entirely, since the file's contents never
+    become one shell/exec argument.
+    """
+    with open(script_path, "w") as f:
+        f.write("\n".join(commands) + "\n")
+    return f"-s {shlex.quote(script_path)}"
+
+
 # yosys shells out to a SEPARATE abc executable for its `abc` pass -- it is not
 # built into the yosys binary. It looks for `yosys-abc` next to its own exe
 # (what oss-cad-suite and most distro packages ship), unless built with
@@ -603,29 +620,23 @@ def SYN_AND_REPORT_TIMING_NEW(
                 exe_ext = "ecp5"
                 nowidelut = "-nowidelut"
                 dsp = ""
+            yosys_script_arg = WRITE_YOSYS_SCRIPT(
+                [
+                    f"ghdl --std=08 -frelaxed {vhdl_files_texts} -e {top_entity_name}",
+                    f"synth_{exe_ext} -abc9 {dsp} {nowidelut} -top {top_entity_name}"
+                    f" -json {top_entity_name}.json",
+                    f"write_edif -top {top_entity_name} {top_entity_name}.edf",
+                ],
+                output_directory + "/" + top_entity_name + "_yosys.ys",
+            )
             f.write(
                 """
 #!/usr/bin/env bash
 export GHDL_PREFIX="""
                 + GHDL_PREFIX
                 + f"""
-# Elab+Syn (json is output) $MODULE -g 
-{YOSYS_BIN_PATH}/yosys {m_ghdl} -p 'ghdl --std=08 -frelaxed """
-                + vhdl_files_texts
-                + """ -e """
-                + top_entity_name
-                + """; synth_"""
-                + exe_ext
-                + f""" -abc9 {dsp} {nowidelut}"""
-                + """ -top """
-                + top_entity_name
-                + """ -json """
-                + top_entity_name
-                + """.json; write_edif -top """
-                + top_entity_name
-                + """  """
-                + top_entity_name
-                + """.edf' &>> """
+# Elab+Syn (json is output) $MODULE -g
+{YOSYS_BIN_PATH}/yosys {m_ghdl} {yosys_script_arg} &>> """
                 + log_file_name
                 + f"""
 # P&R
@@ -647,6 +658,14 @@ export GHDL_PREFIX="""
             )
         else:
             # YOSYS_JSON_ONLY
+            yosys_script_arg = WRITE_YOSYS_SCRIPT(
+                [
+                    f"ghdl --std=08 -frelaxed {vhdl_files_texts} -e {top_entity_name}",
+                    f"synth -top {top_entity_name}",
+                    f"write_json {top_entity_name}.json",
+                ],
+                output_directory + "/" + top_entity_name + "_yosys.ys",
+            )
             f.write(
                 """
 # Only output yosys json
@@ -654,16 +673,8 @@ export GHDL_PREFIX="""
 export GHDL_PREFIX="""
                 + GHDL_PREFIX
                 + f"""
-# Elab+Syn (json is output) $MODULE -g 
-{YOSYS_BIN_PATH}/yosys {m_ghdl} -p 'ghdl --std=08 -frelaxed """
-                + vhdl_files_texts
-                + """ -e """
-                + top_entity_name
-                + """; synth -top """
-                + top_entity_name
-                + """; write_json """
-                + top_entity_name
-                + """.json' &>> """
+# Elab+Syn (json is output) $MODULE -g
+{YOSYS_BIN_PATH}/yosys {m_ghdl} {yosys_script_arg} &>> """
                 + log_file_name
                 + """
 """
@@ -703,7 +714,7 @@ def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
     # https://github.com/ghdl/ghdl/issues/2491
     """{GHDL_BIN_PATH}/ghdl synth --std=08 -frelaxed --out=verilog `cat ../vhdl_files.txt` -e {SYN.TOP_LEVEL_MODULE} > {SYN.TOP_LEVEL_MODULE}.v"""
     sh_text = f"""
-{GHDL_BIN_PATH}/ghdl -i --std=08 -frelaxed `cat ../vhdl_files.txt` && \
+{GHDL_BIN_PATH}/ghdl -i --std=08 -frelaxed @../vhdl_files.txt && \
 {GHDL_BIN_PATH}/ghdl -m --std=08 -frelaxed {SYN.TOP_LEVEL_MODULE} && \
 {YOSYS_BIN_PATH}/yosys -g {m_ghdl} -p "ghdl --std=08 -frelaxed {SYN.TOP_LEVEL_MODULE}; proc; opt; fsm; opt; memory; opt; write_verilog {SYN.TOP_LEVEL_MODULE}.v"
 """

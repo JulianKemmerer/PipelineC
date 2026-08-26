@@ -155,11 +155,27 @@ def SYN_AND_REPORT_TIMING_NEW(
     shutil.rmtree(temp_local_out_dir, ignore_errors=True)
     os.makedirs(temp_local_out_dir)
     os.makedirs(f"{output_directory}/net", exist_ok=True)
+    # Imported lazily (not at module scope) to avoid a circular-import order
+    # dependency: SYN imports CC_TOOLS before OPEN_TOOLS, and OPEN_TOOLS
+    # itself imports SYN back, so a top-level "import OPEN_TOOLS" here can
+    # observe a partially-initialized OPEN_TOOLS module depending on which
+    # module happens to be imported first.
+    import OPEN_TOOLS
+
+    yosys_script_arg = OPEN_TOOLS.WRITE_YOSYS_SCRIPT(
+        [
+            f"ghdl --std=08 --warn-no-binding -C --ieee=synopsys {vhdl_files_texts}"
+            f" -e {top_entity_name}",
+            f"synth_gatemate -top {top_entity_name} -nomx8"
+            f" -vlog {output_directory}/net/{top_entity_name}_synth.v",
+        ],
+        output_directory + "/" + top_entity_name + "_yosys.ys",
+    )
     sh_text = ""
     sh_text += f"""
 #!/bin/bash
 # -noiopad
-{CC_TOOLS_YOSYS} -ql {syn_log_path} -p 'ghdl --std=08 --warn-no-binding -C --ieee=synopsys {vhdl_files_texts} -e {top_entity_name}; synth_gatemate -top {top_entity_name} -nomx8 -vlog {output_directory}/net/{top_entity_name}_synth.v' &> /dev/null
+{CC_TOOLS_YOSYS} -ql {syn_log_path} {yosys_script_arg} &> /dev/null
 {CC_TOOLS_PR} -i {output_directory}/net/{top_entity_name}_synth.v -o {top_entity_name} {CC_TOOLS_PR_FLAGS} &> {log_path}
 """
     sh_file = top_entity_name + ".sh"

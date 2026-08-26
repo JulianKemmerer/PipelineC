@@ -115,6 +115,17 @@ early-flatten flow" below.
 `run_sta` then runs directly in-process — no second Python subprocess, unlike
 PyRTL's flow which shells out to run its own generated script.
 
+The recipe above reaches yosys as a `.ys` script file
+(`artifact_paths["synthesis_yosys_script"]`, `<stem>_syn.ys`) passed via
+`yosys -s <path>`, not inlined into a `yosys -p '<commands>'` shell argument
+— a large design's `ghdl --std=08 <files> -e <top>` command can otherwise
+exceed Linux's `MAX_ARG_STRLEN` (131072 bytes per single argv/envp string;
+see `pypeline_sim_DESIGN.md`'s cocotb section for the full mechanism).
+Cache/artifact identity is unaffected: `recipe_commands_sha256` hashes
+`_get_synthesis_recipe_commands()`'s return value directly, never the `.sh`
+or `.ys` file text, and `_vhdl_input_record` hashes the VHDL files' own
+bytes, not how their paths reach yosys.
+
 Every run writes both the traditional text log and a sibling
 `*_timing.json`. The structured report records `worst_period_ns`, `fmax_mhz`,
 launch clock-to-Q, combinational and setup components, launch/capture

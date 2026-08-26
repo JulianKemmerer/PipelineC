@@ -1890,6 +1890,24 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   case, which `make` (and `COCOTB.DO_SIM`) propagates. See `COCOTB.CHECK_COCOTB_RESULTS`'s
   docstring and `src/tests/pypeline_tests/inst/cocotb_verdict_test.py`, the regression guard for
   both halves.
+- **`VHDL_SOURCES` is a GHDL `@file` response file, not an inlined list.** `COCOTB.GET_MAKEFILE_TEXT`
+  sets `VHDL_SOURCES += @$(PIPELINEC_VHDL_FILES_TXT)` rather than the more obvious
+  `$(shell cat vhdl_files.txt)`. cocotb's `Makefile.ghdl` writes its `analyse` target as one
+  backslash-continued logical recipe line, so `make` hands the whole thing to the shell as a
+  *single* argv string; Linux caps any one argv/envp string at `MAX_ARG_STRLEN`
+  (`PAGE_SIZE * 32` = 131072 bytes here), independent of the much larger overall `ARG_MAX` — a
+  large design's own VHDL file list, once every absolute path is inlined, can exceed that on its
+  own (`make[1]: execvp: bash: Argument list too long`, failing before GHDL even starts). GHDL's
+  `@file` response-file syntax is whitespace-split like a normal argv, so the existing
+  space-separated `vhdl_files.txt` works unmodified as one. The `@...` token names no real file,
+  so it must be declared `.PHONY` (a phony target is never "missing") or `make` refuses it as an
+  unbuildable prerequisite; real dependency tracking moves to `CUSTOM_COMPILE_DEPS`, which
+  cocotb's `Makefile.inc` also wires into `analyse`. Every other GHDL/yosys call site with the
+  same shape (`OPEN_TOOLS`/`CXXRTL`/`PYRTL`/`CC_TOOLS`/`DEVICE_MODELS` writing a
+  `yosys -p '<huge ghdl file list>'` shell one-liner) hits the identical limit and is fixed the
+  same way via `OPEN_TOOLS.WRITE_YOSYS_SCRIPT`, which writes the commands to a `.ys` script file
+  and passes `-s <path>` instead of `-p '<commands>'` — a script file's contents are never one
+  exec argv, regardless of length. See `src/tests/pypeline_tests/inst/long_file_list_arg_len_test.py`.
 
 #### AUTOFSM call sites (non-`--comb` `--sim`)
 

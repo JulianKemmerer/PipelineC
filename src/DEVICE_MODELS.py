@@ -982,6 +982,7 @@ def _get_synthesis_recipe_artifact_paths(
         "mapped_json": stem + "_liberty.json",
         "synthesis_log": stem + "_synth.log",
         "synthesis_script": stem + "_syn.sh",
+        "synthesis_yosys_script": stem + "_syn.ys",
     }
 
 
@@ -1387,27 +1388,38 @@ def _run_synth_and_sta(
     timing_json_path = os.path.splitext(log_path)[0] + "_timing.json"
     # Each run must prove it produced a fresh mapped netlist. Exact generated
     # outputs are safe to clear; unrelated/user files are never touched.
+    yosys_script_path = artifact_paths["synthesis_yosys_script"]
     for stale_path in (
         json_path,
         temp_json_path,
         synth_log_path,
         log_path,
         timing_json_path,
+        yosys_script_path,
     ):
         if os.path.isfile(stale_path):
             os.unlink(stale_path)
     m_ghdl = OPEN_TOOLS.GET_GHDL_PLUGIN_FLAGS()
-    script = f"ghdl --std=08 {vhdl_files_texts} -e {top_entity_name}; "
-    script += _get_synthesis_recipe_commands(
+    # Recipe commands text is also the cache-identity input hashed into
+    # recipe_commands_sha256 above -- unaffected by whether it reaches yosys
+    # via -p or a script file, so cache identity is unchanged by this.
+    recipe_commands = _get_synthesis_recipe_commands(
         top_entity_name, lib_path, recipe_name
     )
-    script += f"write_json {temp_json_path}"
+    yosys_script_arg = OPEN_TOOLS.WRITE_YOSYS_SCRIPT(
+        [
+            f"ghdl --std=08 {vhdl_files_texts} -e {top_entity_name}",
+            recipe_commands,
+            f"write_json {temp_json_path}",
+        ],
+        yosys_script_path,
+    )
     sh_path = artifact_paths["synthesis_script"]
     with open(sh_path, "w") as f:
         f.write(
             "#!/usr/bin/env bash\nset -euo pipefail\n"
             f'export GHDL_PREFIX="{OPEN_TOOLS.GHDL_PREFIX}"\n'
-            f"{shlex.quote(yosys_path)} {m_ghdl}-p {shlex.quote(script)} "
+            f"{shlex.quote(yosys_path)} {m_ghdl}{yosys_script_arg} "
             f"> {shlex.quote(os.path.basename(synth_log_path))} 2>&1\n"
         )
     mapping_error = None

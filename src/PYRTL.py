@@ -234,6 +234,14 @@ print("Fmax (MHz):", timing.max_freq(tech_in_nm={TECH_IN_NM}, ffoverhead={FF_OVE
         # Write a shell script to execute
         m_ghdl = OPEN_TOOLS.GET_GHDL_PLUGIN_FLAGS()
 
+        yosys_script_arg = OPEN_TOOLS.WRITE_YOSYS_SCRIPT(
+            [
+                f"ghdl --std=08 {vhdl_files_texts} -e {top_entity_name}",
+                f"synth -flatten -top {top_entity_name}",
+                f"write_blif {top_entity_name}.blif",
+            ],
+            output_directory + "/" + top_entity_name + "_yosys.ys",
+        )
         f.write(
             """
 # Only output yosys json
@@ -242,15 +250,7 @@ export GHDL_PREFIX="""
             + OPEN_TOOLS.GHDL_PREFIX
             + f"""
 # Elab+Syn (blif is output) $MODULE
-{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys {m_ghdl} -p 'ghdl --std=08 """
-            + vhdl_files_texts
-            + """ -e """
-            + top_entity_name
-            + """; synth -flatten -top """
-            + top_entity_name
-            + """; write_blif """
-            + top_entity_name
-            + """.blif' &>> """
+{OPEN_TOOLS.YOSYS_BIN_PATH}/yosys {m_ghdl} {yosys_script_arg} &>> """
             + log_file_name
             + f"""
 # pyrtl

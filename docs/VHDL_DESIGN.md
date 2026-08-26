@@ -29,6 +29,14 @@ Downstream simulation and synthesis should consume `vhdl_files.txt`, not a
 directory glob. Intermediate sweep candidates can coexist in the output
 tree, and a glob can silently combine entities from different timing shapes.
 
+`vhdl_files.txt` is deliberately one whitespace-separated line of absolute
+paths with no other formatting: that makes it usable, unmodified, as a GHDL
+`@file` response file (`ghdl -i ... @vhdl_files.txt`, or cocotb's
+`VHDL_SOURCES += @$(...)` — see `pypeline_sim_DESIGN.md`'s cocotb section),
+which is how every large design's file list avoids Linux's `MAX_ARG_STRLEN`
+(131072 bytes per single argv/envp string) once it stops fitting on one
+command line.
+
 ## Entity identity and reuse
 
 `WRITE_LOGIC_ENTITY` renders one implementation and

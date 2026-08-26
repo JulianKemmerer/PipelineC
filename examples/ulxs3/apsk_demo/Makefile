@@ -13,10 +13,12 @@ build:
 
 apsk_demo.json:
 	cd $(DIR)
-	echo  -n "yosys -m ghdl  -p 'ghdl --std=08 -frelaxed " > build.sh
-	cat ../vhdl_files.txt >> build.sh
-	echo "-e pipelinec_top; read_verilog top.v; synth_ecp5 -abc9 -nowidelut -json apsk_demo.json' > ../yosyslog.log " >> build.sh
-	bash build.sh
+	echo -n "ghdl --std=08 -frelaxed " > yosys_build.ys
+	cat ../vhdl_files.txt >> yosys_build.ys
+	echo " -e pipelinec_top" >> yosys_build.ys
+	echo "read_verilog top.v" >> yosys_build.ys
+	echo "synth_ecp5 -abc9 -nowidelut -json apsk_demo.json" >> yosys_build.ys
+	yosys -m ghdl -s yosys_build.ys > ../yosyslog.log
 
 ulx3s.bit: ulx3s_out.config
 	cd $(DIR)

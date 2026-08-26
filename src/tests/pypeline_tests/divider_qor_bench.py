@@ -743,7 +743,12 @@ EXTRA_ARGS += --std=08 -Wno-hide
 # fixed-latency pipe fills.  Cocotb checks every externally valid result, so
 # suppress numeric_std's per-bit warning flood for those invalid cycles.
 SIM_ARGS += --ieee-asserts=disable
-VHDL_SOURCES += $(shell cat "$(DIVIDER_QOR_VHDL_FILES)")
+# GHDL "@file" response file, not $(shell cat ...): a large VHDL file list
+# inlined into cocotb's single-line "analyse" recipe can exceed Linux's
+# MAX_ARG_STRLEN (131072 bytes per argv/envp string).
+VHDL_SOURCES += @$(DIVIDER_QOR_VHDL_FILES)
+.PHONY: @$(DIVIDER_QOR_VHDL_FILES)
+CUSTOM_COMPILE_DEPS += $(DIVIDER_QOR_VHDL_FILES)
 VHDL_SOURCES += $(DIVIDER_QOR_WRAPPER)
 TOPLEVEL = divider_qor_tb
 MODULE = divider_qor_cocotb

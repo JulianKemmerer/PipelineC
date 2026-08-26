@@ -168,6 +168,19 @@ def get_tests() -> list:
             cmd=[INST_DIR / "mux_fanout_planning_test.py"],
         )
     )
+    # Byte-count regression for the cocotb/yosys "Argument list too long"
+    # bug: a large design's VHDL file list, inlined whole into a single
+    # generated recipe/command-line argument, can exceed Linux's
+    # MAX_ARG_STRLEN (131072 bytes per argv/envp string) independent of the
+    # much larger overall ARG_MAX -- see the test file's own docstring.
+    tests.append(
+        Test(
+            name="long_file_list_arg_len_test",
+            category="unit",
+            cmd=[INST_DIR / "long_file_list_arg_len_test.py"],
+            requires=["make", "ghdl"],
+        )
+    )
     return tests
 
 

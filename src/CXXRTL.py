@@ -107,7 +107,7 @@ int main()
 
     m_ghdl = OPEN_TOOLS.GET_GHDL_PLUGIN_FLAGS()
     sh_text = f"""
-{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i --std=08 `cat ../vhdl_files.txt` && \
+{OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -i --std=08 @../vhdl_files.txt && \
 {OPEN_TOOLS.GHDL_BIN_PATH}/ghdl -m --std=08 {SYN.TOP_LEVEL_MODULE} && \
 {OPEN_TOOLS.YOSYS_BIN_PATH}/yosys -g {m_ghdl}-p "ghdl --std=08 {SYN.TOP_LEVEL_MODULE}; write_cxxrtl ./{SYN.TOP_LEVEL_MODULE}.cpp" && \
 clang++ -g -O3 -std=c++14 -I `yosys-config --datdir`/include main.cpp -o ./{SYN.TOP_LEVEL_MODULE}

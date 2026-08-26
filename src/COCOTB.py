@@ -10,6 +10,51 @@ import VHDL
 from utilities import GET_TOOL_PATH
 
 
+def GET_MAKEFILE_TEXT(sim_make_args, vhdl_files_txt_path, toplevel, py_basename):
+    """Generate the cocotb Makefile text.
+
+    VHDL_SOURCES is set from a GHDL "@file" response file (plain
+    whitespace-split, so vhdl_files.txt -- already one space-separated line
+    of absolute paths -- works unmodified) rather than inlining every path
+    via $(shell cat ...). Needed because cocotb's Makefile.ghdl "analyse"
+    target is one backslash-continued logical recipe line, which make hands
+    to the shell as a single argv string; Linux caps any one argv string at
+    MAX_ARG_STRLEN (PAGE_SIZE * 32 = 131072 bytes) independent of the much
+    larger overall ARG_MAX, and a large design's full VHDL file list can
+    exceed that on its own ("Argument list too long").
+
+    The "@..." token names no real file, so make would otherwise refuse it
+    as an unbuildable prerequisite ("No rule to make target") -- declaring it
+    .PHONY (a phony target is never "missing") fixes that; analyse is already
+    .PHONY itself, so nothing is lost. Real dependency tracking moves to
+    CUSTOM_COMPILE_DEPS, which cocotb's Makefile.inc also wires into analyse.
+
+    Only correct for GHDL (the only supported cocotb SIM here, enforced by
+    DO_SIM's NotImplementedError for anything else) -- "@file" is a GHDL
+    response-file feature, not a generic make/shell one.
+    """
+    return f"""
+{sim_make_args}
+TOPLEVEL_LANG ?= vhdl
+
+#VERILOG_SOURCES += $(PWD)/my_design.sv
+# use VHDL_SOURCES for VHDL files
+PIPELINEC_VHDL_FILES_TXT = {vhdl_files_txt_path}
+VHDL_SOURCES += @$(PIPELINEC_VHDL_FILES_TXT)
+.PHONY: @$(PIPELINEC_VHDL_FILES_TXT)
+CUSTOM_COMPILE_DEPS += $(PIPELINEC_VHDL_FILES_TXT)
+
+# TOPLEVEL is the name of the toplevel module in your Verilog or VHDL file
+TOPLEVEL = {toplevel}
+
+# MODULE is the basename of the Python test file
+MODULE = {py_basename}
+
+# include cocotb's make rules to take care of the simulator setup
+include $(shell cocotb-config --makefiles)/Makefile.sim
+      """
+
+
 def DO_SIM(multimain_timing_params, parser_state, args):
     print(
         "================== Doing cocotb Simulation ================================",
@@ -200,23 +245,12 @@ async def my_first_test(dut):
             raise NotImplementedError("No supported cocotb simulator specified!")
 
         # Write make file
-        makefile_text = f"""
-{sim_make_args}
-TOPLEVEL_LANG ?= vhdl
-
-#VERILOG_SOURCES += $(PWD)/my_design.sv
-# use VHDL_SOURCES for VHDL files
-VHDL_SOURCES += $(shell cat "{SYN.SYN_OUTPUT_DIRECTORY}/vhdl_files.txt")
-
-# TOPLEVEL is the name of the toplevel module in your Verilog or VHDL file
-TOPLEVEL = {SYN.TOP_LEVEL_MODULE}
-
-# MODULE is the basename of the Python test file
-MODULE = {py_basename}
-
-# include cocotb's make rules to take care of the simulator setup
-include $(shell cocotb-config --makefiles)/Makefile.sim
-      """
+        makefile_text = GET_MAKEFILE_TEXT(
+            sim_make_args,
+            SYN.SYN_OUTPUT_DIRECTORY + "/vhdl_files.txt",
+            SYN.TOP_LEVEL_MODULE,
+            py_basename,
+        )
         f = open(makefile_path, "w")
         f.write(makefile_text)
         f.close()
