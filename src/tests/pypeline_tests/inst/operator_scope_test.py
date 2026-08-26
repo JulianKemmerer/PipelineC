@@ -102,6 +102,24 @@ def op_scope_main(a: uint9_t, b: uint9_t, c: uint9_t) -> uint9_t:
     return result
 
 
+# Regression design for array-typed == / != producing an illegal VHDL entity
+# name (BIN_OP_EQ_uint1_t[16]_uint1_t[16], unescaped brackets). A second,
+# independent @MAIN in the same file -- multimain-per-file is an established
+# pattern elsewhere in this suite (e.g. axis_test.py, bit_manip_test.py).
+# eq/neq deliberately compare DIFFERENT operand pairs (a,b) vs (b,c): the
+# same pair would make them tautological opposites (see
+# array_compare_bracket_name_test.py, which hit this for real under actual
+# synthesis).
+@MAIN
+def array_cmp_main(a: uint1_t[16], b: uint1_t[16], c: uint1_t[16]) -> uint1_t:
+    eq: uint1_t = (a == b)
+    neq: uint1_t = (b != c)
+    result: uint1_t = eq
+    if neq:
+        result = neq
+    return result
+
+
 def test_generic_operator_registry():
     import tempfile
     import PY_TO_LOGIC
@@ -173,5 +191,40 @@ def test_generic_operator_registry():
     print("test_generic_operator_registry passed")
 
 
+def test_array_equality_operator_names_are_bracket_free():
+    import tempfile
+    import PY_TO_LOGIC
+    import SYN
+    import C_TO_LOGIC
+
+    SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(
+        prefix="operator_scope_array_cmp_test_"
+    )
+    parser_state = PY_TO_LOGIC.PARSE_FILE(os.path.abspath(__file__))
+
+    all_instantiated = set()
+    for logic in parser_state.FuncLogicLookupTable.values():
+        all_instantiated.update(logic.submodule_instances.values())
+
+    # Regression: array-typed == / != used to f-string-interpolate the raw C
+    # type string ("uint1_t[16]") unsanitized into the BIN_OP_* entity name,
+    # producing e.g. "BIN_OP_EQ_uint1_t[16]_uint1_t[16]" -- illegal in a VHDL
+    # entity declaration. No instantiated submodule/entity name may contain
+    # '[' or ']'.
+    bracketed = {n for n in all_instantiated if "[" in n or "]" in n}
+    assert not bracketed, f"illegal VHDL identifier(s) with brackets: {sorted(bracketed)}"
+
+    eq_prefix = f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.BIN_OP_EQ_NAME}_"
+    neq_prefix = f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{C_TO_LOGIC.BIN_OP_NEQ_NAME}_"
+    eq_names = {n for n in all_instantiated if n.startswith(eq_prefix)}
+    neq_names = {n for n in all_instantiated if n.startswith(neq_prefix)}
+    assert eq_names, f"expected a {eq_prefix}* entity; instantiated={sorted(all_instantiated)}"
+    assert neq_names, f"expected a {neq_prefix}* entity; instantiated={sorted(all_instantiated)}"
+    assert all(n.isidentifier() for n in eq_names | neq_names), sorted(eq_names | neq_names)
+
+    print("test_array_equality_operator_names_are_bracket_free passed")
+
+
 if __name__ == "__main__":
     test_generic_operator_registry()
+    test_array_equality_operator_names_are_bracket_free()

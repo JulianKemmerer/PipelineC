@@ -5150,8 +5150,8 @@ in `FuncLogicLookupTable` and as VHDL component entity names:
 
 | Kind | Pattern | Example |
 |---|---|---|
-| Binary op | `BIN_OP_<op>_<lhs_type>_<rhs_type>` | `BIN_OP_plus_uint32_t_uint32_t` |
-| Unary op | `UNARY_OP_<op>_<type>` | `UNARY_OP_not_uint1_t` |
+| Binary op | `BIN_OP_<op>_<lhs_type>_<rhs_type>` | `BIN_OP_PLUS_uint32_t_uint32_t`, `BIN_OP_EQ_uint1_t_16_uint1_t_16` |
+| Unary op | `UNARY_OP_<op>_<type>` | `UNARY_OP_NOT_uint1_t`, `UNARY_OP_NOT_uint1_t_16` |
 | MUX | `MUX_<type>` | `MUX_uint32_t`, `MUX_point_t_x_uint32_t_y_uint32_t` |
 | Const wire | `CONST_<val>_<file>_l<l>_c<c>` | `CONST_1_my_design_py_l5_c12` |
 | CONST_REF_RD | `CONST_REF_RD_<out_type>_<base_type>_<path_toks>_<hash>` | |
@@ -5161,6 +5161,13 @@ in `FuncLogicLookupTable` and as VHDL component entity names:
 | Bit select | `BIT_SELECT_<type>_<pos>` | `BIT_SELECT_uint32_t_15` |
 | Bit slice | `BIT_SLICE_<type>_<hi>_<lo>` | `BIT_SLICE_uint32_t_15_0` |
 | Bit slice assign | `BIT_SLICE_ASSIGN_<type>_<hi>_<lo>` | |
+
+Array-typed operands sanitize the same way as `CONST_REF_RD`/`VAR_REF_RD`/`VAR_REF_ASSIGN`
+below: array brackets in `<lhs_type>`/`<rhs_type>`/`<type>` are replaced with `_` before
+interpolation (`_bin_func_name`/`_unary_func_name` in `PY_TO_LOGIC.py`, mirroring
+`C_TO_LOGIC.BUILD_FUNC_NAME`'s identical `.replace("[", "_").replace("]", "")` for the
+classic C-dialect frontend) — e.g. comparing two `uint1_t[16]` arrays with `==` builds
+`BIN_OP_EQ_uint1_t_16_uint1_t_16`, not the illegal `BIN_OP_EQ_uint1_t[16]_uint1_t[16]`.
 
 A registered soft-operator-library implementation is a plain `@hw_func`, so it does **not**
 follow the `BIN_OP_*`/`UNARY_OP_*`/`MUX_*` naming convention above — its entity name is
@@ -5232,6 +5239,15 @@ VHDL basic identifiers are more restrictive than Python identifiers:
   just its `inner_func_name` base (the innermost closure `def`'s own name) before
   composing the param/hash suffix, covering e.g. a factory whose inner function is
   itself named with a leading underscore.
+- **Built-in operator entity names** (`_bin_func_name`, `_unary_func_name` in
+  `PY_TO_LOGIC.py`): a narrower, separate mechanism from `_sanitize_vhdl_name` above --
+  these never call it. Each operand's C type string is interpolated directly into the
+  `BIN_OP_*`/`UNARY_OP_*` entity name (see [Built-in Primitive Function
+  Names](#built-in-primitive-function-names)), and an array type's `[`/`]` are replaced
+  with `_` first (e.g. `uint1_t[16]` -> `uint1_t_16`) so an array-typed comparison like
+  `uint1_t[16] == uint1_t[16]` doesn't leave `[`/`]` in the generated VHDL entity name --
+  mirrors `C_TO_LOGIC.BUILD_FUNC_NAME`'s identical `.replace("[", "_").replace("]", "")`
+  for the classic C-dialect frontend's built-in/library function names.
 - **Struct field names**: sanitized at every point a field identifier becomes a
   `struct_to_field_type_dict` key or a ref_toks token — `_register_struct_recursive`,
   `_discover_structs` (AST fallback), the closure-registered-struct block in

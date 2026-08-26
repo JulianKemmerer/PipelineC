@@ -674,6 +674,63 @@ def test_loc_str_omits_el_for_single_line_keeps_for_multiline():
     print("test_loc_str_omits_el_for_single_line_keeps_for_multiline PASS")
 
 
+# ─────────────────────────────────────────────────────────────────────────
+# Regression tests for built-in operator entity naming (_bin_func_name /
+# _unary_func_name, PY_TO_LOGIC.py:1044-1063) -- not factory-closure
+# canonical names like the rest of this file, but the smallest existing home
+# for a pure-unit test against a private PY_TO_LOGIC naming helper. Array-typed
+# operands (e.g. uint1_t[16] == / != uint1_t[16]) used to f-string-interpolate
+# the raw C type string unsanitized into the BIN_OP_*/UNARY_OP_* entity name,
+# producing e.g. "BIN_OP_EQ_uint1_t[16]_uint1_t[16]" -- illegal in a VHDL
+# entity declaration. Real-synthesis regression:
+# inst/array_compare_bracket_name_test.py (synth_tests.py). In-process check:
+# operator_scope_test.py's test_array_equality_operator_names_are_bracket_free.
+# ─────────────────────────────────────────────────────────────────────────
+
+
+def test_bin_func_name_sanitizes_array_brackets():
+    name = P._bin_func_name("EQ", "uint1_t[16]", "uint1_t[16]")
+    assert "[" not in name and "]" not in name, name
+    assert name.isidentifier(), name
+    assert name == "BIN_OP_EQ_uint1_t_16_uint1_t_16", name
+    print("test_bin_func_name_sanitizes_array_brackets PASS")
+
+
+def test_unary_func_name_sanitizes_array_brackets():
+    name = P._unary_func_name("NOT", "uint1_t[16]")
+    assert "[" not in name and "]" not in name, name
+    assert name.isidentifier(), name
+    assert name == "UNARY_OP_NOT_uint1_t_16", name
+    print("test_unary_func_name_sanitizes_array_brackets PASS")
+
+
+def test_bin_func_name_scalar_types_unaffected():
+    # Sanitization must be a no-op for the common scalar case -- guards
+    # against a fix that reshapes every built-in operator's entity name,
+    # not just array operands.
+    name = P._bin_func_name("PLUS", "uint32_t", "uint32_t")
+    assert name == "BIN_OP_PLUS_uint32_t_uint32_t", name
+    print("test_bin_func_name_scalar_types_unaffected PASS")
+
+
+def test_bin_func_name_builtin_op_info_keeps_unsanitized_types():
+    # parser_state.pypeline_builtin_op_info's value tuple must keep the TRUE
+    # (unsanitized) operand C type strings -- AUTOFSM._soft_equivalent_callable
+    # (AUTOFSM.py:1061) reads this back out to ask the soft-operator library
+    # for a decomposable equivalent; a bracket-stripped string is not a valid
+    # C type to look up.
+    class _FakeParserState:
+        def __init__(self):
+            self.pypeline_builtin_op_info = {}
+
+    ps = _FakeParserState()
+    name = P._bin_func_name("EQ", "uint1_t[16]", "uint1_t[16]", ps)
+    op_name, operand_types = ps.pypeline_builtin_op_info[name]
+    assert op_name == "EQ", op_name
+    assert operand_types == ["uint1_t[16]", "uint1_t[16]"], operand_types
+    print("test_bin_func_name_builtin_op_info_keeps_unsanitized_types PASS")
+
+
 if __name__ == "__main__":
     test_nested_factory_instances_get_distinct_readable_names()
     test_top_level_callable_closure_param_is_readable()
@@ -709,4 +766,8 @@ if __name__ == "__main__":
     test_overflow_collapse_never_lands_mid_token()
     test_generic_call_site_alias_labels_instance_with_callee_name()
     test_loc_str_omits_el_for_single_line_keeps_for_multiline()
+    test_bin_func_name_sanitizes_array_brackets()
+    test_unary_func_name_sanitizes_array_brackets()
+    test_bin_func_name_scalar_types_unaffected()
+    test_bin_func_name_builtin_op_info_keeps_unsanitized_types()
     print("All factory_closure_naming tests passed.")

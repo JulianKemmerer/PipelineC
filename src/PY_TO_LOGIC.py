@@ -1041,17 +1041,35 @@ def _alias(var_name, src_file, node):
     return f"{var_name}_{_loc_str(src_file, node)}"
 
 
+def _strip_array_brackets(type_str):
+    """Replace array brackets with '_' so a C type string is safe to
+    interpolate into a VHDL entity/component name (e.g. 'uint1_t[16]' ->
+    'uint1_t_16'). Mirrors C_TO_LOGIC.BUILD_FUNC_NAME's identical
+    .replace("[", "_").replace("]", "") for the classic C-dialect frontend."""
+    return type_str.replace("[", "_").replace("]", "")
+
+
 def _unary_func_name(op_name, typ):
-    return f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{op_name}_{typ}"
+    return (
+        f"{C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX}_{op_name}_"
+        f"{_strip_array_brackets(typ)}"
+    )
 
 
 def _bin_func_name(op_name, l_type, r_type, parser_state=None):
-    name = f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}_{l_type}_{r_type}"
+    name = (
+        f"{C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX}_{op_name}_"
+        f"{_strip_array_brackets(l_type)}_{_strip_array_brackets(r_type)}"
+    )
     if parser_state is not None:
         # See the pypeline_builtin_op_info note in PARSE_FILE: AUTOFSM needs the
         # (op, operand types) of a built-in operator to ask the soft-operator
         # library for a decomposable equivalent, and reading that back out of
         # the name would be re-deriving a formatting decision.
+        # NOTE: store the ORIGINAL (unsanitized) l_type/r_type here, not the
+        # bracket-stripped name components -- AUTOFSM._soft_equivalent_callable
+        # (AUTOFSM.py:1061) reads this back out to ask the soft-operator
+        # library for a decomposable equivalent, and needs the true C type.
         getattr(parser_state, "pypeline_builtin_op_info", {}).setdefault(
             name, (op_name, [l_type, r_type])
         )

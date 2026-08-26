@@ -64,6 +64,7 @@ SYNTH_TEST_FILES = [
     ("sim_assert_finish_test.py", INST_DIR, ["--comb"]),
     ("two_factory_wrappers_mixed_test.py", INST_DIR, ["--comb"]),
     ("underscore_name_test.py", INST_DIR, ["--comb"]),
+    ("array_compare_bracket_name_test.py", INST_DIR, ["--comb"]),
     ("fir_test.py", INST_DIR, ["--comb"]),
     ("fir_decim_test.py", INST_DIR, ["--comb"]),
     ("fir_interp_test.py", INST_DIR, ["--comb"]),
