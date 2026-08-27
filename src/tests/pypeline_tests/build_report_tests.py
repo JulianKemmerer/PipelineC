@@ -224,6 +224,19 @@ def get_tests() -> list:
             requires=["yosys", "ghdl"],
         )
     )
+    # sky130 area estimate/measurement reporting, both operating modes:
+    # mode 1 (--no_hier_syn --no_sweep) prints an estimate and leaves every
+    # leaf area-cached; mode 2 (a real confirmation/sweep synthesis) also
+    # prints the exact measured area from that run's own mapped netlist.
+    tests.append(
+        Test(
+            name="area_estimate_build_report_test",
+            category="build_report",
+            cmd=[INST_DIR / "area_estimate_build_report_test.py"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+        )
+    )
     return tests
 
 

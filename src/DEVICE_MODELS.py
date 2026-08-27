@@ -271,6 +271,53 @@ def LOAD_LIBERTY(library=DEFAULT_LIBRARY, corner=DEFAULT_CORNER):
     return models
 
 
+# Unit every area number in this file/its caches is expressed in. Not yet a
+# knob -- see docs/DEVICE_MODELS_DESIGN.md's area section for why an FPGA
+# regime is deliberately not built here, and GET_AREA_CACHE_DIR/leaf cache
+# files in SYN.py for where this string travels alongside the number.
+AREA_UNIT = "um2"
+
+_cell_area_cache = {}  # (library, corner) -> {cell_name: area_um2}
+
+
+def LOAD_CELL_AREAS(library=DEFAULT_LIBRARY, corner=DEFAULT_CORNER):
+    """Returns {cell_name: area} parsed directly from the raw vendored
+    liberty file's per-cell `area:` attribute. Unlike delay, area is an
+    unconditional per-cell constant (no NLDM table lookup), so this reads the
+    same raw .lib synthesis already maps against rather than the condensed
+    JSON pack.
+
+    Deliberately NOT folded into that condensed pack
+    (src/liberty_data/<lib>__<corner>.json): three committed QoR evidence
+    matrices pin that pack's sha256 as provenance, and area is not on
+    delay's hot per-arc lookup path -- adding a field to it would be exactly
+    the kind of change that should bump a cache-identity version for no
+    reason area actually needs. See src/liberty_data/README.
+    """
+    key = (library, corner)
+    if key in _cell_area_cache:
+        return _cell_area_cache[key]
+    path = os.path.join(_LIBERTY_DATA_DIR, f"{library}__{corner}.lib")
+    if not os.path.exists(path):
+        raise Exception(
+            f"No raw liberty file for library={library} corner={corner} "
+            f"(expected {path}). Only {DEFAULT_LIBRARY}/{DEFAULT_CORNER} ships today."
+        )
+    text = open(path).read()
+    areas = {}
+    starts = [
+        (m.start(), m.group(1).strip('"'))
+        for m in re.finditer(r'^\s*cell \((\S+?)\)\s*\{', text, re.M)
+    ]
+    for i, (start, name) in enumerate(starts):
+        end = starts[i + 1][0] if i + 1 < len(starts) else len(text)
+        m = re.search(r'^\s*area\s*:\s*([\d.]+)\s*;', text[start:end], re.M)
+        if m:
+            areas[name] = float(m.group(1))
+    _cell_area_cache[key] = areas
+    return areas
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Section (b): netlist graph + rise/fall-aware static timing analysis.
 #
@@ -789,6 +836,47 @@ def run_sta(
     }
 
 
+def MEASURE_NETLIST_AREA(json_path, top=None, library=DEFAULT_LIBRARY, corner=DEFAULT_CORNER):
+    """Exact area of a liberty-mapped yosys write_json netlist: sum each
+    instance's real per-cell area, split into sequential (is_sequential
+    cells, e.g. dfxtp_1) and combinational. No STA, no graph walk -- unlike
+    delay, area does not propagate through paths, so this is just a
+    histogram times a per-cell-type constant. Ground truth against
+    latchup.app: this exact computation reproduced their reported area to
+    0.00% error on 4 hash-verified designs (see docs/DEVICE_MODELS_DESIGN.md).
+    """
+    cells, _ports = _load_netlist_json(json_path, top)
+    areas = LOAD_CELL_AREAS(library, corner)
+    models = LOAD_LIBERTY(library, corner)
+    histogram = {}
+    combinational_area = 0.0
+    sequential_area = 0.0
+    n_sequential_cells = 0
+    n_unpriced_cells = 0
+    for c in cells.values():
+        ctype = c.get("type", "")
+        histogram[ctype] = histogram.get(ctype, 0) + 1
+        area = areas.get(ctype)
+        if area is None:
+            n_unpriced_cells += 1
+            continue
+        model = models.get(ctype)
+        if model is not None and model.is_sequential:
+            sequential_area += area
+            n_sequential_cells += 1
+        else:
+            combinational_area += area
+    return {
+        "total_cell_area": combinational_area + sequential_area,
+        "combinational_cell_area": combinational_area,
+        "sequential_cell_area": sequential_area,
+        "n_sequential_cells": n_sequential_cells,
+        "n_unpriced_cells": n_unpriced_cells,
+        "area_unit": AREA_UNIT,
+        "cell_area_histogram": histogram,
+    }
+
+
 # ═══════════════════════════════════════════════════════════════════════════
 # Section (c): the SYN_TOOL surface SYN.py actually calls.
 #
@@ -825,6 +913,35 @@ SELECTED_CORNER = DEFAULT_CORNER
 # suffix. Both identities join SYN.GET_PATH_DELAY_CACHE_DIR alongside the
 # library/corner, so no recipe can silently replay another recipe's delay.
 MODEL_VERSION = 4
+
+# Separate from MODEL_VERSION on purpose: leaf AREA depends only on which
+# cells the synthesis recipe maps to (MEASURE_NETLIST_AREA is a flat sum,
+# not a graph algorithm), not on run_sta()'s own STA physics. A future
+# STA-only MODEL_VERSION bump must not discard an otherwise-still-valid
+# committed area_cache, and vice versa -- see SYN.GET_AREA_CACHE_DIR, which
+# joins this alongside library/corner/recipe the same way
+# GET_PATH_DELAY_CACHE_DIR joins MODEL_VERSION.
+AREA_MODEL_VERSION = 1
+
+# The one cell dfflibmap actually maps every D flip-flop to for this
+# library/corner+recipe. Confirmed, not assumed: it is what every one of
+# latchup.app's own mapped netlists uses for 100% of their sequential cells
+# (docs/DEVICE_MODELS_DESIGN.md's area calibration table). Used only by
+# SYN.ESTIMATE_DESIGN_AREA's cheap whole-hierarchy estimate (FF count times
+# one cell's area) -- MEASURE_NETLIST_AREA above never assumes this; it sums
+# real area off each cell's own is_sequential flag regardless of name, so it
+# stays correct even if a future recipe or yosys version picks a different
+# FF cell.
+SEQUENTIAL_CELL_NAME = "sky130_fd_sc_hvl__dfxtp_1"
+
+
+def GET_SEQUENTIAL_CELL_AREA(library=None, corner=None):
+    """(area, unit) of SEQUENTIAL_CELL_NAME for (library, corner)."""
+    library = library or SELECTED_LIBRARY
+    corner = corner or SELECTED_CORNER
+    areas = LOAD_CELL_AREAS(library, corner)
+    return areas[SEQUENTIAL_CELL_NAME], AREA_UNIT
+
 
 # Extra flags passed to yosys' `abc` pass (see _run_synth_and_sta). Measured
 # (Phase 3.9 of the plan, not guessed): the plain `abc -liberty` invocation
@@ -1184,9 +1301,20 @@ class PathReport:
         self.model_cache_identity = None
         self.synthesis_input_identity = None
         self.mapping_succeeded = None
+        self.total_cell_area = None
+        self.combinational_cell_area = None
+        self.sequential_cell_area = None
+        self.n_sequential_cells = None
+        self.n_unpriced_cells = None
+        self.area_unit = None
+        self.area_model_version = None
 
         def _val(line, tok):
             return line.split(tok, 1)[1].strip()
+
+        def _val_and_unit(line, tok):
+            number_str, unit = _val(line, tok).rsplit(" ", 1)
+            return float(number_str), unit
 
         for line in path_report_text.split("\n"):
             if "Worst period (ns):" in line:
@@ -1230,6 +1358,24 @@ class PathReport:
                 self.mapping_succeeded = (
                     _val(line, "Mapping succeeded:").lower() == "true"
                 )
+            elif "Total cell area:" in line:
+                self.total_cell_area, self.area_unit = _val_and_unit(
+                    line, "Total cell area:"
+                )
+            elif "Combinational cell area:" in line:
+                self.combinational_cell_area, _unit = _val_and_unit(
+                    line, "Combinational cell area:"
+                )
+            elif "Sequential cell area:" in line:
+                self.sequential_cell_area, _unit = _val_and_unit(
+                    line, "Sequential cell area:"
+                )
+            elif "N sequential cells:" in line:
+                self.n_sequential_cells = int(_val(line, "N sequential cells:"))
+            elif "N unpriced cells:" in line:
+                self.n_unpriced_cells = int(_val(line, "N unpriced cells:"))
+            elif "Area model version:" in line:
+                self.area_model_version = int(_val(line, "Area model version:"))
 
 
 class ParsedTimingReport:
@@ -1292,6 +1438,17 @@ def _write_sta_log(
         f"N max_capacitance violations: {sta_result['n_max_capacitance_violations']}",
         f"Incomplete topo: {sta_result['incomplete_topo']}",
     ]
+    area_unit = sta_result.get("area_unit")
+    if area_unit is not None:
+        lines += [
+            f"Total cell area: {sta_result['total_cell_area']:.6f} {area_unit}",
+            "Combinational cell area: "
+            f"{sta_result['combinational_cell_area']:.6f} {area_unit}",
+            f"Sequential cell area: {sta_result['sequential_cell_area']:.6f} {area_unit}",
+            f"N sequential cells: {sta_result['n_sequential_cells']}",
+            f"N unpriced cells: {sta_result['n_unpriced_cells']}",
+            f"Area model version: {AREA_MODEL_VERSION}",
+        ]
     with open(log_path, "w") as f:
         f.write("\n".join(lines) + "\n")
 
@@ -1316,6 +1473,8 @@ def _write_sta_json(
     )
     structured["mapping_succeeded"] = sta_result.get("mapping_succeeded", True)
     structured["synthesis_inputs"] = synthesis_inputs
+    if structured.get("area_unit") is not None:
+        structured["area_model_version"] = AREA_MODEL_VERSION
     timing_json_path = os.path.splitext(log_path)[0] + "_timing.json"
     with open(timing_json_path, "w") as f:
         _json.dump(structured, f, indent=2, sort_keys=True)
@@ -1499,6 +1658,16 @@ def _run_synth_and_sta(
     sta_result["mapping_succeeded"] = True
     sta_result["mapped_json_sha256"] = _sha256_file(json_path)
     sta_result["mapped_json_path"] = os.path.abspath(json_path)
+    # Free alongside the STA above: area is a flat histogram sum over the
+    # same mapped netlist, no separate synthesis pass. This is what makes
+    # both an isolated leaf's cacheable area (mode 1, SYN.GET_AREA_CACHE_DIR)
+    # and a whole design's exact measured area (mode 2, the multimain
+    # confirmation run) come from this one call.
+    sta_result.update(
+        MEASURE_NETLIST_AREA(
+            json_path, top=top_entity_name, library=SELECTED_LIBRARY, corner=SELECTED_CORNER
+        )
+    )
     _write_sta_log(
         log_path,
         sta_result,

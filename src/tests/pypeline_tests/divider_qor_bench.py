@@ -380,11 +380,17 @@ def _mapped_netlist_metrics(path):
         for cell_type, count in histogram.items()
         if liberty_models.get(cell_type, {}).get("is_sequential", False)
     )
+    device_models = _compiler_module("DEVICE_MODELS")
+    area = device_models.MEASURE_NETLIST_AREA(str(path), top=top_name)
     return {
         "mapped_top": top_name,
         "mapped_cells": len(cells),
         "mapped_dffs": sequential,
         "mapped_cell_histogram": dict(sorted(histogram.items())),
+        "mapped_total_area": area["total_cell_area"],
+        "mapped_combinational_area": area["combinational_cell_area"],
+        "mapped_sequential_area": area["sequential_cell_area"],
+        "mapped_area_unit": area["area_unit"],
     }
 
 

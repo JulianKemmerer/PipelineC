@@ -1,0 +1,141 @@
+{
+  "schema_version": 1,
+  "created_utc": "2026-08-27T15:40:00+00:00",
+  "purpose": "Calibrate and validate the sky130 area model (DEVICE_MODELS.MEASURE_NETLIST_AREA / LOAD_CELL_AREAS, SYN.ESTIMATE_DESIGN_AREA) against latchup.app's own reported total cell area for the same radix-2 divider used to select the delay model's production recipe.",
+  "ground_truth": {
+    "17cycles_63mhz": {
+      "latchup_reported_area_um2": 255886.0,
+      "latchup_reported_mhz": 63.0,
+      "slices": 16,
+      "stages": 17,
+      "latchup_mapped_cells": 16430,
+      "latchup_dfxtp_1_cells": 1552
+    },
+    "33cycles_161mhz": {
+      "latchup_reported_area_um2": 294593.0,
+      "latchup_reported_mhz": 161.0,
+      "slices": 32,
+      "stages": 33,
+      "latchup_mapped_cells": 13873,
+      "latchup_dfxtp_1_cells": 3072
+    },
+    "34cycles_161mhz": {
+      "latchup_reported_area_um2": 297768.0,
+      "latchup_reported_mhz": 161.0,
+      "slices": 33,
+      "stages": 34,
+      "latchup_mapped_cells": 13938,
+      "latchup_dfxtp_1_cells": 3137
+    },
+    "65cycles_173mhz": {
+      "latchup_reported_area_um2": 473930.0,
+      "latchup_reported_mhz": 173.0,
+      "slices": 64,
+      "stages": 65,
+      "latchup_mapped_cells": 17782,
+      "latchup_dfxtp_1_cells": 6703
+    }
+  },
+  "definitional_area_sum_check": {
+    "description": "Sum of this repo's own vendored liberty area: attribute over latchup's OWN synth.v cell histogram (regex-extracted directly from their post-early-flatten mapped Verilog, no PipelineC build involved on either side). Establishes that 'area = sum of per-cell liberty area over a mapped netlist' is definitionally what latchup reports, independent of any recipe-reproduction question below.",
+    "liberty_sha256": "fb1c43d5971efa70df79d7f16de69f8bbe3c7f0de0432baae4c43e7c72e251e9",
+    "results": {
+      "17cycles_63mhz": {"sum_um2": 255886.4, "error_pct": 0.0002},
+      "33cycles_161mhz": {"sum_um2": 294593.1, "error_pct": 0.00003},
+      "34cycles_161mhz": {"sum_um2": 297767.7, "error_pct": -0.0001},
+      "65cycles_173mhz": {"sum_um2": 473929.7, "error_pct": -0.00006}
+    },
+    "mae_pct": 0.0001
+  },
+  "reproduced_builds": {
+    "description": "Each design rebuilt from latchup's own solution.py (CLK_RATE_MHZ/PART unchanged) via this repo's pypelinec, `--syn_tool sky130 --no_hier_syn --no_sweep` (latchup's own build flags, confirmed by their pypelinec.log). Slice count is whatever --no_sweep's planner guess produces at that target MHz -- NOT forced to match latchup's reported slice count.",
+    "compiler_commit": "9fb4be5878a96a9d1d05b5f5cc8d9352ea817cd5",
+    "commit_date_utc": "2026-08-27T15:08:34+00:00",
+    "recipe": "early_flatten_noabc",
+    "model_version": 4,
+    "area_model_version": 1,
+    "results": {
+      "17cycles_63mhz": {
+        "target_mhz": 69.0,
+        "reproduced_top_entity": "solution_16CLK_2c557bad",
+        "reproduced_slices": 16,
+        "slices_match_latchup": true,
+        "measured_worst_period_ns": 14.686417,
+        "measured_n_cells": 15715,
+        "measured_n_sequential_cells": 1853,
+        "measured_total_area_um2": 263167.5024,
+        "measured_combinational_area_um2": 172666.9824,
+        "measured_sequential_area_um2": 90500.52,
+        "measured_vs_latchup_error_pct": 2.8456,
+        "estimated_total_area_um2": 981891.1,
+        "estimated_combinational_area_um2": 464724.3,
+        "estimated_sequential_area_um2": 517166.8,
+        "estimated_n_ffs": 10589,
+        "estimated_vs_measured_error_pct": 273.1
+      },
+      "33cycles_161mhz": {
+        "target_mhz": 135.5,
+        "reproduced_top_entity": "solution_32CLK_0937586a",
+        "reproduced_slices": 32,
+        "slices_match_latchup": true,
+        "measured_worst_period_ns": 6.537684,
+        "measured_n_cells": 12843,
+        "measured_n_sequential_cells": 3584,
+        "measured_total_area_um2": 303114.7152,
+        "measured_combinational_area_um2": 128072.1552,
+        "measured_sequential_area_um2": 175042.56,
+        "measured_vs_latchup_error_pct": 2.8927,
+        "estimated_total_area_um2": 1489241.0,
+        "estimated_combinational_area_um2": 464724.3,
+        "estimated_sequential_area_um2": 1024516.7,
+        "estimated_n_ffs": 20977,
+        "estimated_vs_measured_error_pct": 391.31
+      },
+      "34cycles_161mhz": {
+        "target_mhz": 214.0,
+        "reproduced_top_entity": "solution_65CLK_1bbb2c21",
+        "reproduced_slices": 65,
+        "slices_match_latchup": false,
+        "slice_mismatch_note": "latchup reports 33 slices at this target; this repo's current --no_sweep planner guess is 65. Not an area-model question -- see planner_drift_note below.",
+        "measured_worst_period_ns": 4.47119,
+        "measured_n_cells": 18113,
+        "measured_n_sequential_cells": 7715,
+        "measured_total_area_um2": 511536.4848,
+        "measured_combinational_area_um2": 134735.8848,
+        "measured_sequential_area_um2": 376800.6,
+        "measured_vs_latchup_error_pct": null,
+        "estimated_total_area_um2": 2624087.2,
+        "estimated_combinational_area_um2": 464724.3,
+        "estimated_sequential_area_um2": 2159362.9,
+        "estimated_n_ffs": 44213,
+        "estimated_vs_measured_error_pct": 413.03
+      },
+      "65cycles_173mhz": {
+        "target_mhz": 284.0,
+        "reproduced_top_entity": "solution_97CLK_0ef6a133",
+        "reproduced_slices": 97,
+        "slices_match_latchup": false,
+        "slice_mismatch_note": "latchup reports 64 slices at this target; this repo's current --no_sweep planner guess is 97. Not an area-model question -- see planner_drift_note below.",
+        "measured_worst_period_ns": 3.865901,
+        "measured_n_cells": 21989,
+        "measured_n_sequential_cells": 11346,
+        "measured_total_area_um2": 698152.1712,
+        "measured_combinational_area_um2": 144013.5312,
+        "measured_sequential_area_um2": 554138.64,
+        "measured_vs_latchup_error_pct": null,
+        "estimated_total_area_um2": 3570459.9,
+        "estimated_combinational_area_um2": 464724.3,
+        "estimated_sequential_area_um2": 3105735.6,
+        "estimated_n_ffs": 63590,
+        "estimated_vs_measured_error_pct": 411.71
+      }
+    },
+    "slices_match_mae_pct": 2.8692,
+    "designs_with_matching_slices": 2
+  },
+  "planner_drift_note": "docs/DEVICE_MODELS_DESIGN.md's 2026-08-20 recipe-selection entry recorded all 4 designs reproducing latchup's exact top-entity hash under this same --no_sweep --no_hier_syn invocation. Rebuilt one week later (2026-08-27, commit 9fb4be5) against the same solution.py sources, only the 17- and 33-stage designs still reproduce latchup's slice count; the 34- and 65-stage targets now produce 65 and 97 slices instead of 33 and 64. This is planner-guess drift in --no_sweep's pipelining heuristics since 2026-08-20 (see recent 'autopipeline sweep improvements' commits), unrelated to this area model -- recorded here rather than silently worked around. The measured/estimated area at the ACTUAL slices built is still reported above for those two designs; only their comparison against latchup's reported number is suppressed (error_pct: null) since they are no longer the same design point.",
+  "interpretation": {
+    "measured_area": "DEVICE_MODELS.MEASURE_NETLIST_AREA on a real whole-design mapped netlist (mode 2, or mode 1's forced per-leaf remeasure) is highly accurate: 2.87% MAE against latchup's real reported area on the two cleanly-reproduced designs, consistent with the definitional check above (0.0001% MAE) once recipe/histogram fidelity is accounted for -- matching the delay model's own already-documented ~5% engine residual in magnitude.",
+    "estimated_area": "SYN.ESTIMATE_DESIGN_AREA (sum of isolated per-leaf cached areas plus PipelineC's own FF count, no synthesis) overshoots real measured area by 270-410% on every design here, and BOTH terms overshoot, not just the combinational one: the combinational term (fixed at 464724.3 um2, all 4 static leaf entities) runs 2.7-3.6x over real measured combinational area (172667/128072 um2 at 16/32 slices), which mirrors an ALREADY DOCUMENTED limitation of the isolated delay estimate on this exact design family (docs/DEVICE_MODELS_DESIGN.md: '--no_hier_syn sums isolated per-leaf delays, which runs high on a mux chain specifically', ~2.5x for delay) -- this divider unrolls the same MINUS/MUX operators dozens of times, and real synthesis's cross-instance optimization shares/dedupes across them in a way an isolated per-leaf sum cannot see. The sequential term is WORSE, not better: estimated_n_ffs overshoots real measured_n_sequential_cells by 5.7-5.9x (10589 vs 1853 at 16 slices, 20977 vs 3584 at 32 slices) -- GET_REGISTERS_ESTIMATE_TEXT_AND_FFS counts every declared pipeline-register bit before any of yosys's own FF-level optimization (constant/dead-bit elimination, retiming), which apparently removes the large majority of them on this design. Per-FF area itself is exact by construction (estimated_sequential_area_um2 / estimated_n_ffs == measured_sequential_area_um2 / measured_n_sequential_cells == GET_SEQUENTIAL_CELL_AREA's 48.84 um2), so 100% of the sequential term's error is in the FF COUNT, not the per-FF cost. Net: the cheap estimate is not a usable absolute area predictor on a design with this much structural repetition in either operators or registers -- at best a same-design, same-direction relative signal (more slices still costs more of both terms) until AUTOFSM-side work (out of scope here) closes the FF-count gap."
+  }
+}

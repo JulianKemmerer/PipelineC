@@ -74,7 +74,9 @@ stdenv.mkDerivation {
         --set PYTHONPATH "$out/lib/pypelinec/src:$out/lib/pypelinec/include/pypeline" \
         --set PYPELINEC_YOSYS_GHDL_PLUGIN "${yosys-ghdl}/share/yosys/plugins/ghdl.so" \
         --run "if [ ! -d .pypelinec_path_delay_cache ]; then ${coreutils}/bin/cp -r '$out/lib/pypelinec/path_delay_cache' .pypelinec_path_delay_cache && ${coreutils}/bin/chmod -R u+w .pypelinec_path_delay_cache; fi" \
-        --run 'export PYPELINEC_PATH_DELAY_CACHE_DIR="$PWD/.pypelinec_path_delay_cache/"'
+        --run 'export PYPELINEC_PATH_DELAY_CACHE_DIR="$PWD/.pypelinec_path_delay_cache/"' \
+        --run "if [ ! -d .pypelinec_area_cache ]; then ${coreutils}/bin/cp -r '$out/lib/pypelinec/area_cache' .pypelinec_area_cache && ${coreutils}/bin/chmod -R u+w .pypelinec_area_cache; fi" \
+        --run 'export PYPELINEC_AREA_CACHE_DIR="$PWD/.pypelinec_area_cache/"'
     done
 
     runHook postInstall

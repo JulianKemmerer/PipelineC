@@ -142,6 +142,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "device_models_sta_test.py"],
         )
     )
+    # sky130 area model: liberty area extraction, mapped-netlist area
+    # summation, the leaf area_cache (SYN.GET_AREA_CACHE_DIR and friends),
+    # and the whole-hierarchy estimate. Tiny synthetic fixtures only; no
+    # external synthesis tool is invoked.
+    tests.append(
+        Test(
+            name="area_model_test",
+            category="unit",
+            cmd=[INST_DIR / "area_model_test.py"],
+        )
+    )
     # Fast schema/parser coverage for the opt-in, hours-long Divider sky130
     # QoR harness.  The real benchmark itself is intentionally not in run_all.
     tests.append(

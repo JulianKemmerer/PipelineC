@@ -3031,6 +3031,183 @@ def WRITE_REGISTERS_ESTIMATE_FILE(
     f.close()
 
 
+def GET_ESTIMATED_COMBINATIONAL_AREA(logic, parser_state, area_memo=None):
+    """Sum of cached leaf areas (SYN.GET_CACHED_LEAF_AREA) across logic's
+    full instance hierarchy, one term per call site -- the combinational
+    counterpart to GET_REGISTERS_ESTIMATE_TEXT_AND_FFS's sequential walk.
+    Every non-shared call site becomes its own hardware instance, so a leaf
+    used N times contributes N times its area, exactly like the FF walk
+    counts every instance's own registers.
+
+    Returns (area, unit, missing_leaf_func_names). A leaf with no cached
+    area contributes 0.0 and its func_name to the missing set rather than
+    triggering synthesis here -- see ADD_PATH_DELAY_TO_LOOKUP's forced
+    remeasure clause for where area_cache actually gets filled in. The
+    exception is a leaf LOGIC_IS_ZERO_DELAY already excludes from synthesis
+    entirely (bit-manip/concat/const-ref wiring, black boxes, ...): it
+    correctly has no area_cache entry because nothing ever measured it, so
+    it contributes 0.0 without being counted as missing.
+    """
+    area_memo = {} if area_memo is None else area_memo
+    hit = area_memo.get(logic.func_name)
+    if hit is not None:
+        return hit
+    unit = DEVICE_MODELS.AREA_UNIT if SYN_TOOL is DEVICE_MODELS else None
+    area_memo[logic.func_name] = (0.0, unit, frozenset())  # cycle guard
+    if not logic.submodule_instances:
+        if LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=True):
+            result = (0.0, unit, frozenset())
+        else:
+            cached = GET_CACHED_LEAF_AREA(logic, parser_state)
+            if cached is None:
+                result = (0.0, unit, frozenset({logic.func_name}))
+            else:
+                value, cached_unit = cached
+                result = (value, cached_unit, frozenset())
+    else:
+        total = 0.0
+        missing = set()
+        for sub_func_name in logic.submodule_instances.values():
+            sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
+            sub_area, sub_unit, sub_missing = GET_ESTIMATED_COMBINATIONAL_AREA(
+                sub_logic, parser_state, area_memo
+            )
+            total += sub_area
+            missing |= sub_missing
+            unit = sub_unit or unit
+        result = (total, unit, frozenset(missing))
+    area_memo[logic.func_name] = result
+    return result
+
+
+def ESTIMATE_DESIGN_AREA(
+    parser_state, multimain_timing_params_or_TimingParamsLookupTable, inst_name=None
+):
+    """Whole-design area estimate: cached leaf areas summed across the
+    instance hierarchy (combinational) plus PipelineC's own already-computed
+    FF count times one flip-flop's real cell area (sequential). Pure
+    computation, no synthesis triggered -- see GET_ESTIMATED_COMBINATIONAL_AREA.
+    Same dual multimain/single-inst calling convention as
+    GET_REGISTERS_ESTIMATE_TEXT_AND_FFS/WRITE_REGISTERS_ESTIMATE_FILE.
+    """
+    if inst_name is None:
+        multimain_timing_params = multimain_timing_params_or_TimingParamsLookupTable
+        TimingParamsLookupTable = multimain_timing_params.TimingParamsLookupTable
+        mains = [
+            (parser_state.LogicInstLookupTable[main_func], main_func)
+            for main_func in parser_state.main_mhz
+        ]
+    else:
+        TimingParamsLookupTable = multimain_timing_params_or_TimingParamsLookupTable
+        mains = [(parser_state.LogicInstLookupTable[inst_name], inst_name)]
+
+    unit = None
+    dff_area = 0.0
+    if SYN_TOOL is DEVICE_MODELS:
+        dff_area, unit = DEVICE_MODELS.GET_SEQUENTIAL_CELL_AREA()
+
+    area_memo = {}
+    ff_est_cache = {}
+    combinational_area = 0.0
+    total_ffs = 0
+    missing_leaf_funcs = set()
+    for logic, full_inst_name in mains:
+        comb_area, comb_unit, missing = GET_ESTIMATED_COMBINATIONAL_AREA(
+            logic, parser_state, area_memo
+        )
+        combinational_area += comb_area
+        missing_leaf_funcs |= missing
+        unit = comb_unit or unit
+        _text, main_ffs = GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(
+            logic, full_inst_name, parser_state, TimingParamsLookupTable, ff_est_cache
+        )
+        total_ffs += main_ffs
+
+    sequential_area = total_ffs * dff_area
+    return {
+        "total_area": combinational_area + sequential_area,
+        "combinational_area": combinational_area,
+        "sequential_area": sequential_area,
+        "n_ffs": total_ffs,
+        "area_unit": unit,
+        "missing_leaf_area_funcs": sorted(missing_leaf_funcs),
+    }
+
+
+def WRITE_AREA_ESTIMATE_FILE(
+    parser_state, multimain_timing_params_or_TimingParamsLookupTable, inst_name=None
+):
+    """Print + JSON sidecar for ESTIMATE_DESIGN_AREA, written beside the
+    matching _registers.log (see WRITE_REGISTERS_ESTIMATE_FILE, same output
+    path convention with _area.json in place of _registers.log). No-op for
+    any SYN_TOOL other than DEVICE_MODELS -- area is a sky130-only estimate
+    today, and every non-DEVICE_MODELS tool's leaf area cache is empty by
+    construction (SYN.GET_AREA_CACHE_DIR returns None for them).
+    """
+    if SYN_TOOL is not DEVICE_MODELS:
+        return
+    if inst_name is None:
+        multimain_timing_params = multimain_timing_params_or_TimingParamsLookupTable
+        hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
+        output_dir = SYN_OUTPUT_DIRECTORY + "/" + TOP_LEVEL_MODULE
+        output_file = output_dir + "/" + TOP_LEVEL_MODULE + hash_ext + "_area.json"
+    else:
+        TimingParamsLookupTable = multimain_timing_params_or_TimingParamsLookupTable
+        logic = parser_state.LogicInstLookupTable[inst_name]
+        if C_TO_LOGIC.FUNC_IS_PRIMITIVE(logic.func_name, parser_state):
+            return
+        output_dir = GET_OUTPUT_DIRECTORY(logic)
+        timing_params = TimingParamsLookupTable[inst_name]
+        hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+        latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+        output_file = (
+            output_dir
+            + "/"
+            + f"{logic.func_name}_{latency}CLK"
+            + hash_ext
+            + "_area.json"
+        )
+
+    result = ESTIMATE_DESIGN_AREA(
+        parser_state, multimain_timing_params_or_TimingParamsLookupTable, inst_name
+    )
+    unit = result["area_unit"] or DEVICE_MODELS.AREA_UNIT
+    missing_note = (
+        f", {len(result['missing_leaf_area_funcs'])} leaf area(s) not yet cached"
+        if result["missing_leaf_area_funcs"]
+        else ""
+    )
+    print(
+        f"Estimated area: {result['total_area']:.1f} {unit} "
+        f"(comb {result['combinational_area']:.1f} + regs {result['sequential_area']:.1f}, "
+        f"{result['n_ffs']} FFs){missing_note} [estimate, pre-PnR]"
+    )
+    with open(output_file, "w") as f:
+        json.dump(dict(result, schema_version=1), f, indent=2, sort_keys=True)
+        f.write("\n")
+
+
+def PRINT_MEASURED_AREA_IF_AVAILABLE(timing_report, estimated_total_area=None):
+    """After a real whole-design confirmation synthesis (only DEVICE_MODELS
+    ever populates this -- see DEVICE_MODELS._run_synth_and_sta, which
+    measures area as a free byproduct of the same mapped netlist it already
+    STAs), print the exact measured area once. One number for the whole
+    design regardless of how many clock groups were reported, since they all
+    come from the same single mapped netlist.
+    """
+    for path_report in timing_report.path_reports.values():
+        area = getattr(path_report, "total_cell_area", None)
+        unit = getattr(path_report, "area_unit", None)
+        if area is None or unit is None:
+            return
+        delta_note = ""
+        if estimated_total_area:
+            delta_pct = (estimated_total_area - area) / area * 100.0
+            delta_note = f" (estimate {delta_pct:+.2f}%)"
+        print(f"Measured area: {area:.1f} {unit}{delta_note}", flush=True)
+        return
+
+
 # Todo just coarse for now until someone other than me care to squeeze performance?
 # Course then fine - knowhaimsayin
 def HARVEST_AUTOPIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
@@ -3201,6 +3378,7 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
     VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
     WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, False)
     WRITE_REGISTERS_ESTIMATE_FILE(parser_state, multimain_timing_params)
+    WRITE_AREA_ESTIMATE_FILE(parser_state, multimain_timing_params)
 
     if NO_SWEEP:
         # --no_sweep: skip the confirmation synthesis. The convergence loop's
@@ -3251,6 +3429,10 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
         print(timing_report.orig_text)
         print("Using a bad syn log file?")
         sys.exit(-1)
+    PRINT_MEASURED_AREA_IF_AVAILABLE(
+        timing_report,
+        ESTIMATE_DESIGN_AREA(parser_state, multimain_timing_params)["total_area"],
+    )
     import SWEEP
 
     met = True
@@ -3388,6 +3570,10 @@ def DO_THROUGHPUT_SWEEP(
                 f"{passfail}Clock {reported_clock_group} FMAX: {mhz:.3f} MHz ({path_report.path_delay_ns:.3f} ns)",
                 flush=True,
             )
+        PRINT_MEASURED_AREA_IF_AVAILABLE(
+            timing_report,
+            ESTIMATE_DESIGN_AREA(parser_state, multimain_timing_params)["total_area"],
+        )
 
         return multimain_timing_params
 
@@ -3855,6 +4041,7 @@ def BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS(
     WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(TimingParamsLookupTable, parser_state)
     # Write estimate of FF usage
     WRITE_REGISTERS_ESTIMATE_FILE(parser_state, TimingParamsLookupTable, inst_name)
+    WRITE_AREA_ESTIMATE_FILE(parser_state, TimingParamsLookupTable, inst_name)
 
     return TimingParamsLookupTable
 
@@ -4374,6 +4561,37 @@ def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
     return PATH_DELAY_CACHE_DIR
 
 
+def GET_AREA_CACHE_DIR(parser_state, dir_name="area_cache"):
+    """Leaf area cache directory, mirroring GET_PATH_DELAY_CACHE_DIR above.
+
+    Returns None for any SYN_TOOL that has no area source -- only
+    DEVICE_MODELS measures area today, unlike the delay cache which every
+    tool populates. Callers must check for None.
+
+    Keyed by DEVICE_MODELS.AREA_MODEL_VERSION, deliberately NOT
+    DEVICE_MODELS.MODEL_VERSION: leaf area depends only on which cells the
+    synthesis recipe maps to (a flat histogram sum, see
+    DEVICE_MODELS.MEASURE_NETLIST_AREA), not on run_sta()'s own STA physics.
+    A future STA-only MODEL_VERSION bump must not discard an
+    otherwise-still-valid committed area_cache, and vice versa.
+    """
+    if SYN_TOOL is not DEVICE_MODELS:
+        return None
+    cache_dir = os.environ.get(
+        "PYPELINEC_AREA_CACHE_DIR",
+        C_TO_LOGIC.EXE_ABS_DIR() + f"/../{dir_name}/",
+    )
+    AREA_CACHE_DIR = os.path.join(cache_dir, str(SYN_TOOL.__name__).lower())
+    AREA_CACHE_DIR += (
+        "_" + DEVICE_MODELS.SELECTED_LIBRARY
+        + "_" + DEVICE_MODELS.SELECTED_CORNER
+        + "_a" + str(DEVICE_MODELS.AREA_MODEL_VERSION)
+        + DEVICE_MODELS.GET_SYNTHESIS_RECIPE_CACHE_SUFFIX()
+    )
+    AREA_CACHE_DIR += "/syn"
+    return AREA_CACHE_DIR
+
+
 def LOGIC_IS_BUILT_IN_MUX(logic):
     return logic.is_c_built_in and logic.func_name.startswith(
         C_TO_LOGIC.MUX_LOGIC_NAME
@@ -4562,6 +4780,51 @@ def _WRITE_CACHED_PATH_DELAY_COMPONENTS(logic, parser_state, components):
     with open(path, "w") as f:
         json.dump(value, f, indent=2, sort_keys=True)
         f.write("\n")
+
+
+def GET_CACHED_LEAF_AREA_FILE_PATH(logic, parser_state):
+    """Same relative path as this leaf's .delay file (shared cache key), in
+    the separately-versioned area_cache tree. None when the active
+    SYN_TOOL has no area source (GET_AREA_CACHE_DIR)."""
+    cache_dir = GET_AREA_CACHE_DIR(parser_state)
+    if cache_dir is None:
+        return None
+    key = GET_CACHED_LOGIC_FILE_KEY(logic, parser_state)
+    return cache_dir + "/" + key + ".area"
+
+
+def GET_CACHED_LEAF_AREA(logic, parser_state):
+    """Read one leaf's cached area as (value, unit), or None on a cache
+    miss: no area source, no file on disk, or malformed contents. A stored
+    unit that disagrees with the active model's own unit
+    (DEVICE_MODELS.AREA_UNIT) is also treated as a miss rather than mixed --
+    the whole point of writing the unit into the file is to make that
+    mismatch loud instead of silently wrong."""
+    if not logic.is_c_built_in and C_TO_LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
+        return None
+    file_path = GET_CACHED_LEAF_AREA_FILE_PATH(logic, parser_state)
+    if file_path is None or not os.path.exists(file_path):
+        return None
+    text = open(file_path).read().strip()
+    try:
+        value_str, unit = text.rsplit(" ", 1)
+        value = float(value_str)
+    except ValueError:
+        return None
+    if SYN_TOOL is DEVICE_MODELS and unit != DEVICE_MODELS.AREA_UNIT:
+        return None
+    return value, unit
+
+
+def WRITE_CACHED_LEAF_AREA(logic, parser_state, value, unit):
+    file_path = GET_CACHED_LEAF_AREA_FILE_PATH(logic, parser_state)
+    if file_path is None:
+        return
+    cache_dir = os.path.dirname(file_path)
+    if not os.path.exists(cache_dir):
+        os.makedirs(cache_dir)
+    with open(file_path, "w") as f:
+        f.write(f"{value} {unit}\n")
 
 
 def FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(func_name, parser_state):
@@ -4916,6 +5179,14 @@ def SET_MEASURED_DELAY_FROM_REPORT(logic, parsed_timing_report, parser_state):
         _WRITE_CACHED_PATH_DELAY_COMPONENTS(
             logic, parser_state, delay_components
         )
+        # Cache leaf area alongside delay when the active tool measured one
+        # -- only DEVICE_MODELS does (GET_AREA_CACHE_DIR is None for every
+        # other SYN_TOOL, and their PathReport classes carry no area
+        # attributes, so this is a no-op there via getattr's default).
+        area_value = getattr(path_report, "total_cell_area", None)
+        area_unit = getattr(path_report, "area_unit", None)
+        if area_value is not None and area_unit is not None:
+            WRITE_CACHED_LEAF_AREA(logic, parser_state, area_value, area_unit)
 
 
 def ESTIMATE_HIER_PATH_DELAYS(funcs_to_estimate, parser_state, quiet=False):
@@ -5091,6 +5362,21 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
                 # The experimental planner cache identity requires timing
                 # components. A lone legacy/partial .delay file cannot supply
                 # its geometry, so measure once and populate the sidecar.
+                cached_path_delay = None
+            if (
+                SYN_TOOL is DEVICE_MODELS
+                and cached_path_delay is not None
+                and LOGIC_PATH_DELAY_IS_CACHEABLE(logic, parser_state)
+                and GET_CACHED_LEAF_AREA(logic, parser_state) is None
+            ):
+                # Leaf area is a free byproduct of the exact same synthesis
+                # run that produces delay (DEVICE_MODELS._run_synth_and_sta
+                # measures both from one mapped netlist), but a warm delay
+                # cache short-circuits before that run ever happens. Force
+                # one real synthesis so a cold area_cache entry gets filled
+                # exactly the way a cold path_delay_cache entry would --
+                # mirrors the combinational-planner-weights clause just
+                # above, which does the same thing for a missing sidecar.
                 cached_path_delay = None
         # Prefer cache over model
         if cached_path_delay is not None:

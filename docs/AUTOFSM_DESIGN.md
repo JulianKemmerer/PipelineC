@@ -1035,7 +1035,12 @@ and at `fsm.latency + 1` (scheduled).
   against yosys cell counts, which is not the same thing as LUTs on the part you
   are targeting — on an FPGA, flip-flops come paired with the LUTs in front of
   them and are far cheaper than a cell count suggests. The anchor guarantee
-  bounds the damage of a mis-ranking to a missed opportunity.
+  bounds the damage of a mis-ranking to a missed opportunity. This is no longer
+  true unconditionally: `DEVICE_MODELS`/`SYN.py` now measure and cache real
+  sky130 µm² per leaf (see `docs/DEVICE_MODELS_DESIGN.md`'s area section), so
+  "area cannot be read back from the tool" has a real exception for the sky130
+  backend. AUTOFSM's own search here is untouched by that work and still ranks
+  in abstract units — wiring it to real measured/cached µm² is future work.
 - An ARRAY-typed operand cannot be shared. Its operand multiplexer is an array
   of arrays, and `T[A][B]` currently mis-elaborates to VHDL — a bare
   `make_operand_mux(uint2_t[16], 4)` design fails GHDL import with "can't match

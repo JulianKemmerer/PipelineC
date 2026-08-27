@@ -603,3 +603,133 @@ build), before the `-fast` fix was even found.
   like transition-propagation/setup conventions we cannot read off their
   artifacts, and neither was fitted away with a fudge factor. Together they
   are essentially the whole remaining ~5% engine error.
+
+## 6. Area model
+
+Added alongside the delay model above, sky130 only, following the same
+measured-leaves/estimated-hierarchy shape as delay. See
+`src/tests/pypeline_tests/qor/latchup_area_match_matrix.json` for the full
+record this section summarizes.
+
+### The measurement is definitional
+
+latchup.app's own reported area is exactly `Σ liberty area:` over every cell
+in its mapped netlist — regex-summed directly against their own `synth.v`
+cell histograms (no PipelineC build on either side), 0.0001% MAE across all
+four ground-truth designs. `DEVICE_MODELS.MEASURE_NETLIST_AREA` computes
+precisely this over a mapped `write_json` netlist, splitting sequential
+(`is_sequential` liberty cells, e.g. `dfxtp_1`) from combinational. It runs
+as a free byproduct of `_run_synth_and_sta`'s existing mapped netlist — no
+separate synthesis pass, no STA graph walk, since area does not propagate
+through paths the way delay does.
+
+`DEVICE_MODELS.LOAD_CELL_AREAS` parses the vendored raw `.lib`'s
+unconditional per-cell `area:` attribute directly (57/57 cells), rather than
+extending the condensed JSON pack: three committed QoR evidence matrices pin
+that pack's sha256 as provenance, and area needs no NLDM table lookup, so
+there was nothing to gain by disturbing it.
+
+### Two numbers, two very different accuracies
+
+**Measured area** (a real mapped netlist exists — mode 2's whole-design
+confirmation synthesis, or mode 1's forced per-leaf remeasure, both below)
+is highly accurate: **2.87% MAE** against latchup's real reported area, on
+the two divider designs (16 and 32 slices) whose slice count this repo's
+current `--no_sweep` planner still reproduces exactly from latchup's own
+`solution.py` at latchup's own target MHz. This is in the same range as the
+delay engine's own ~5% residual (§3 above) and for the same reason — a real
+mapped netlist, summed exactly.
+
+**Estimated area** (`SYN.ESTIMATE_DESIGN_AREA`: cached per-leaf areas summed
+across the instance hierarchy, plus FF count × one flip-flop's real cell
+area — no synthesis) overshoots real measured area by **270-410%** on every
+design measured. Both terms overshoot, and the sequential one is worse:
+
+| | combinational | sequential (FF count) |
+|---|---|---|
+| overshoot vs. measured | 2.7-3.6x | 5.7-5.9x |
+| why | isolated per-leaf sum sees no cross-instance sharing — the SAME limitation already documented for isolated delay estimation on this exact design family (`--no_hier_syn` sums per-leaf delays ~2.5x high on a mux chain, §5 below) | `GET_REGISTERS_ESTIMATE_TEXT_AND_FFS` counts every declared pipeline-register bit before any of yosys's own FF-level optimization (constant/dead-bit elimination, retiming) — apparently a large majority of them, on this design |
+
+Per-FF area is exact by construction on both sides (both reduce to
+`GET_SEQUENTIAL_CELL_AREA`'s 48.84 µm² — see the matrix's own
+`math.isclose` check), so the sequential term's entire error is in the FF
+*count*, not the per-FF cost. **The cheap estimate is not a usable absolute
+area predictor on a design with this much structural repetition** — the
+radix-2 divider unrolls the same four operators (`BIN_OP_MINUS_uint34_t`,
+`MUX_uint32_t`, `BIN_OP_NEQ`, `UNARY_OP_NOT`) once per bit — and should be
+read as a same-design, same-direction relative signal only, until AUTOFSM's
+own consumption of this model (future work, not started here) closes the
+FF-count gap.
+
+### `--no_sweep` planner drift, found while calibrating (not an area bug)
+
+The 2026-08-20 delay-recipe-selection entry above (§3) recorded all four
+designs reproducing latchup's exact top-entity hash under
+`--no_sweep --no_hier_syn`. Rebuilt one week later against the identical
+`solution.py` sources (2026-08-27, commit `9fb4be5`), only the 16- and
+32-slice designs still reproduce latchup's slice count; the two designs
+latchup built at 33 and 64 slices now come out at 65 and 97 slices under the
+current planner. This is drift in `--no_sweep`'s own pipelining guess since
+2026-08-20 (see the recent "autopipeline sweep improvements" commits),
+unrelated to the area model — recorded in the matrix's
+`planner_drift_note` rather than silently worked around, and why only two of
+the four designs carry a `measured_vs_latchup_error_pct` (the other two are
+no longer the same design point latchup measured, so comparing their area to
+`area.log` would be apples to oranges — their real measured area is still
+recorded, just not scored against latchup's number).
+
+### Leaf area cache — `area_cache/`, mirrors `path_delay_cache/`
+
+Per-leaf area is measured and cached exactly like delay, in a **separately
+versioned** tree so the two invalidate independently:
+
+```
+area_cache/device_models_<library>_<corner>_a<AREA_MODEL_VERSION><recipe_suffix>/syn/<leaf_key>.area
+```
+
+`AREA_MODEL_VERSION` (currently 1) is deliberately not `MODEL_VERSION`: leaf
+area depends only on which cells the synthesis recipe maps to, not on
+`run_sta()`'s own STA algorithm, so a future STA-only `MODEL_VERSION` bump
+must not discard an otherwise-valid committed `area_cache`, and vice versa.
+`SYN.GET_AREA_CACHE_DIR` mirrors `GET_PATH_DELAY_CACHE_DIR` exactly (same
+`PYPELINEC_AREA_CACHE_DIR` env override pattern, same recipe suffix, `None`
+for every `SYN_TOOL` but `DEVICE_MODELS`). Cache files hold the value *and
+its unit* as text (`"255886.4 um2"`), not a bare number — deliberately,
+since a future non-sky130 profile would use a different unit and a silent
+mismatch would be far worse than a cache miss; `SYN.GET_CACHED_LEAF_AREA`
+rejects a stored unit that disagrees with the active model's own unit rather
+than mixing it in.
+
+**Two operating modes**, both real and both exercised by
+`area_estimate_build_report_test`:
+
+1. **latchup.app's own usage** (`--no_hier_syn --no_sweep`): every leaf
+   either hits a warm `area_cache` entry, or — when its `.delay` is cached
+   but its `.area` is missing — `ADD_PATH_DELAY_TO_LOOKUP` forces one real
+   synthesis to fill both, mirroring the existing clause that does the same
+   for a missing combinational-planner-weights sidecar. The hierarchy above
+   the leaves is always the cheap estimate; no whole-design synthesis
+   happens under `--no_sweep`.
+2. **Normal use** (a real confirmation or throughput-sweep synthesis runs):
+   the exact measured area comes free from that run's own mapped netlist,
+   reported alongside the estimate with their delta.
+
+Both print at the same call sites `WRITE_REGISTERS_ESTIMATE_FILE` already
+uses, and write a `<top><hash>_area.json` sidecar next to
+`<top><hash>_registers.log`:
+
+```
+Estimated area: 83788.0 um2 (comb 53311.8 + regs 30476.2, 624 FFs) [estimate, pre-PnR]
+Measured area: 6812.2 um2 (estimate +61.40%)
+```
+
+The `area_cache/` tree ships pre-populated for the same 43 leaf keys already
+committed to `path_delay_cache/`'s sky130 v4 set (see `git log` for the
+generating build), and `nix/package.nix` copies it out of the read-only
+store into `.pypelinec_area_cache/` + exports `PYPELINEC_AREA_CACHE_DIR`,
+mirroring `path_delay_cache`'s existing treatment exactly.
+
+This is not wired into any search or the pipelining planner — AUTOFSM's own
+abstract per-bit area model (`src/AUTOFSM.py`, documented in
+`docs/AUTOFSM_DESIGN.md`) is unchanged by this work. Consuming real sky130
+µm² here for AUTOFSM's min-area search is future work.

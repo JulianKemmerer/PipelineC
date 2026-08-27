@@ -284,6 +284,20 @@ whole-module run, collecting every `BIN_OP` leaf underneath them. Those leaves
 are small and disk-cacheable, but on a *cold* `path_delay_cache` a state-heavy
 design can trade one big synthesis run for many small ones.
 
+**Area rides the same leaf-synthesis path, sky130 only.** Every leaf syn run
+under `DEVICE_MODELS` measures real µm² for free from the same mapped
+netlist it already STAs, cached to `area_cache/` alongside
+`path_delay_cache/` (own `PYPELINEC_AREA_CACHE_DIR`, own version, so an
+STA-only cache bump can't invalidate it and vice versa). A `--no_hier_syn`
+build like the one above therefore leaves every touched leaf area-cached as
+a side effect, even though `--no_hier_syn` disables the delay
+estimate-vs-measure fallback. `SYN.WRITE_AREA_ESTIMATE_FILE` prints one
+`Estimated area: ...` line (cheap, hierarchy-summed from that cache) next to
+the existing `Estimated register usage: ...` line, and any real whole-design
+confirmation/sweep synthesis additionally prints the exact `Measured area:
+...` from its own mapped netlist. See `docs/DEVICE_MODELS_DESIGN.md`'s area
+section for the full model, its accuracy, and its known limits.
+
 New (default `HIER_SYN_MODE == "leaf"`): only functions whose delay
 *genuinely requires* synthesis get a run:
 

@@ -35,3 +35,13 @@ Both files are needed for a real `--syn_tool sky130` build: the .lib by the
 external EDA tools (yosys/GHDL/abc) that map and report which real cells got
 used, the .json by PipelineC's own STA to turn that mapping into an actual
 timing number.
+
+Area
+====
+As of the area model (see docs/DEVICE_MODELS_DESIGN.md's area section),
+`DEVICE_MODELS.LOAD_CELL_AREAS` also reads this .lib directly for each
+cell's unconditional `area:` attribute -- unlike delay, area needs no NLDM
+table lookup, so it was not worth adding to the condensed .json pack above.
+That pack's sha256 is pinned provenance in three committed QoR evidence
+matrices (see src/tests/pypeline_tests/qor/), so leaving it untouched avoids
+invalidating that provenance for a field its own hot path never needed.

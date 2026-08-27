@@ -4314,6 +4314,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         print("Updating output files...", flush=True)
         SYN.WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(tpl, parser_state, ancestor_insts)
         SYN.WRITE_REGISTERS_ESTIMATE_FILE(parser_state, multimain_timing_params)
+        SYN.WRITE_AREA_ESTIMATE_FILE(parser_state, multimain_timing_params)
 
         if SYN.NO_SWEEP:
             # First planned guess only -- no sweep synthesis iterations.
@@ -4418,6 +4419,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             print(timing_report.orig_text)
             print("Using a bad syn log file?")
             sys.exit(-1)
+        SYN.PRINT_MEASURED_AREA_IF_AVAILABLE(
+            timing_report,
+            SYN.ESTIMATE_DESIGN_AREA(parser_state, multimain_timing_params)["total_area"],
+        )
 
         # Evaluate each reported clock group
         made_change = False

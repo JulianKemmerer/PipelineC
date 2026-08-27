@@ -7,6 +7,7 @@ test needs neither yosys nor GHDL and belongs in the fast unit category.
 
 import json
 import hashlib
+import math
 import os
 import sys
 import tempfile
@@ -656,6 +657,42 @@ def test_durable_qor_evidence_matrices_are_self_consistent():
     assert point_73["timing_met"]
     assert baseline["points"][-1]["slices"] == 66
     assert baseline["points"][-1]["timing_met"]
+
+    with open(
+        os.path.join(qor_dir, "latchup_area_match_matrix.json")
+    ) as f:
+        area_match = json.load(f)
+    assert area_match["definitional_area_sum_check"]["mae_pct"] < 0.01
+    for design, truth in area_match["ground_truth"].items():
+        assert truth["stages"] == truth["slices"] + 1, design
+        sum_check = area_match["definitional_area_sum_check"]["results"][design]
+        assert abs(sum_check["error_pct"]) < 0.01, design
+    builds = area_match["reproduced_builds"]["results"]
+    matching = [
+        design for design, result in builds.items() if result["slices_match_latchup"]
+    ]
+    # At least the recipe-selection matrix's own historical designs must
+    # still be independently checkable against real measured area -- if this
+    # ever drops to zero, the whole matrix's headline MAE is meaningless.
+    assert len(matching) >= 2, matching
+    for design in matching:
+        result = builds[design]
+        assert result["measured_vs_latchup_error_pct"] is not None, design
+        assert abs(result["measured_vs_latchup_error_pct"]) < 5.0, design
+        # Sequential area is exact per-FF by construction on both sides.
+        assert math.isclose(
+            result["measured_sequential_area_um2"]
+            / result["measured_n_sequential_cells"],
+            DEVICE_MODELS.GET_SEQUENTIAL_CELL_AREA()[0],
+            rel_tol=1e-9,
+        ), design
+    for design, result in builds.items():
+        if result["slices_match_latchup"]:
+            continue
+        # A non-matching design's comparison against latchup must be
+        # explicitly suppressed, not silently wrong.
+        assert result["measured_vs_latchup_error_pct"] is None, design
+    assert area_match["reproduced_builds"]["slices_match_mae_pct"] < 5.0
 
 
 def test_max_capacitance_violations_are_parsed():
