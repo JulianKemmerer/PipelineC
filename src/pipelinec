@@ -12,6 +12,7 @@ import PY_TO_LOGIC
 import OPEN_TOOLS
 import SIM
 import pypeline_sim
+import utilities
 
 # import CLANG_TO_LOGIC
 import SYN
@@ -274,6 +275,46 @@ parser.add_argument(
 )
 args = parser.parse_args()
 
+# Resolve source file arg
+src_file = os.path.abspath(args.src_file)
+pins_file = os.path.abspath(args.pins) if args.pins else None
+if not (src_file.endswith(".c") or src_file.endswith(".py")):
+    sys.exit(f"Unrecognized source file type: {src_file} (expected .c or .py)")
+
+# Output dir:
+#   Use what user provided
+#   Or create a new dir for each run by default
+if args.out_dir is not None:
+    SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath(args.out_dir)
+else:
+    # Or create a unique dir for this run in current dir
+    src_filename = os.path.basename(src_file)
+    SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath(
+        "./" + SYN.OUTPUT_DIR_NAME + "_" + src_filename + "_" + str(os.getpid())
+    )
+
+# Ugh some python versions dont obey the coding comment at top of file?
+try:
+    print(
+        """
+██████╗ ██╗   ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
+██╔══██╗╚██╗ ██╔╝██╔══██╗██╔════╝██║     ██║████╗  ██║██╔════╝██╔════╝
+██████╔╝ ╚████╔╝ ██████╔╝█████╗  ██║     ██║██╔██╗ ██║█████╗  ██║     
+██╔═══╝   ╚██╔╝  ██╔═══╝ ██╔══╝  ██║     ██║██║╚██╗██║██╔══╝  ██║     
+██║        ██║   ██║     ███████╗███████╗██║██║ ╚████║███████╗╚██████╗
+╚═╝        ╚═╝   ╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
+""",
+        flush=True,
+    )
+except UnicodeEncodeError as e:
+    print("Old python versions do not obey utf-8 file encoding...")
+    print(e)
+
+print("Version:", utilities.GET_VERSION_STR())
+print("Command:", utilities.GET_COMMAND_LINE_STR())
+print("Parsing file:", src_file)
+print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY, flush=True)
+
 # Reject contradictory combinations
 if args.full_hier_syn and args.no_hier_syn:
     sys.exit("--full_hier_syn and --no_hier_syn are opposite ends of one axis (synthesize every hierarchy level vs. synthesize none) -- pick one.")
@@ -286,12 +327,6 @@ if args.sim and args.comb:
 if args.sim_comb:
     args.sim = True
     args.comb = True
-
-# Resolve source file arg
-src_file = os.path.abspath(args.src_file)
-pins_file = os.path.abspath(args.pins) if args.pins else None
-if not (src_file.endswith(".c") or src_file.endswith(".py")):
-    sys.exit(f"Unrecognized source file type: {src_file} (expected .c or .py)")
 
 # Apply arguments to global modules
 
@@ -307,17 +342,6 @@ SYN.HIER_SYN_MODE = (
 SYN.PIPELINE_MIN_EFFORT = args.pipeline_min_effort
 # Plan-only: skip all sweep synthesis iterations, emit the first guess as-is
 SYN.NO_SWEEP = args.no_sweep
-# Output dir:
-#   Use what user provided
-#   Or create a new dir for each run by default
-if args.out_dir is not None:
-    SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath(args.out_dir)
-else:
-    # Or create a unique dir for this run in current dir
-    src_filename = os.path.basename(src_file)
-    SYN.SYN_OUTPUT_DIRECTORY = os.path.abspath(
-        "./" + SYN.OUTPUT_DIR_NAME + "_" + src_filename + "_" + str(os.getpid())
-    )
 # Multiplier style
 C_TO_LOGIC.MULT_STYLE = args.mult
 # Open tools flag to not run nextpnr
@@ -345,30 +369,11 @@ elif args.syn_tool == "sky130":
 # Mux path-delay cache key override (None = automatic per SYN_TOOL)
 SYN.MUX_DELAY_KEY_BY_WIDTH = args.mux_delay_by_width
 
-# Ugh some python versions dont obey the coding comment at top of file?
-try:
-    print(
-        """
-██████╗ ██╗   ██╗██████╗ ███████╗██╗     ██╗███╗   ██╗███████╗ ██████╗
-██╔══██╗╚██╗ ██╔╝██╔══██╗██╔════╝██║     ██║████╗  ██║██╔════╝██╔════╝
-██████╔╝ ╚████╔╝ ██████╔╝█████╗  ██║     ██║██╔██╗ ██║█████╗  ██║     
-██╔═══╝   ╚██╔╝  ██╔═══╝ ██╔══╝  ██║     ██║██║╚██╗██║██╔══╝  ██║     
-██║        ██║   ██║     ███████╗███████╗██║██║ ╚████║███████╗╚██████╗
-╚═╝        ╚═╝   ╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
-""",
-        flush=True,
-    )
-except UnicodeEncodeError as e:
-    print("Old python versions do not obey utf-8 file encoding...")
-    print(e)
-
-print("Output directory:", SYN.SYN_OUTPUT_DIRECTORY)
 print(
     "================== Parsing C Code to Logical Hierarchy ================================",
     flush=True,
 )
 # Do parsing
-print("Parsing file:", src_file, flush=True)
 if src_file.endswith(".c"):
     parser_state = C_TO_LOGIC.PARSE_FILE(src_file)
 elif src_file.endswith(".py"):
