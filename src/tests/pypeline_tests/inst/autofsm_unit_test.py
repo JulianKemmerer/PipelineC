@@ -24,6 +24,7 @@ import copy
 import json
 import os
 import pickle
+import re
 import sys
 import tempfile
 import textwrap
@@ -87,16 +88,22 @@ DESIGN_SRC = textwrap.dedent(
     """
 )
 
+CROSS_FU_SRC = (
+    DESIGN_SRC.replace("x.a + x.b", "x.a ^ x.b")
+    .replace("t0 + x.c", "t0 & x.c")
+    .replace("t1 + x.d", "t1 | x.d")
+)
+
 REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../.."))
 
 
-def parse_design(tmpdir, mhz=25.0, name="af_unit_design"):
+def parse_design(tmpdir, mhz=25.0, name="af_unit_design", source=DESIGN_SRC):
     """Elaborate a fresh copy of the design and hand back the parser state plus
     its AUTOFSM tag. A distinct file name per call keeps Python's import
     machinery from returning a stale module."""
     path = os.path.join(tmpdir, name + ".py")
     with open(path, "w") as f:
-        f.write(DESIGN_SRC.format(repo=REPO, mhz=mhz))
+        f.write(source.format(repo=REPO, mhz=mhz))
     parser_state = PY_TO_LOGIC.PARSE_FILE(path)
     tags = AUTOFSM.GET_TAGS(parser_state)
     assert len(tags) == 1, f"expected one AUTOFSM tag, got {list(tags)}"
@@ -214,7 +221,10 @@ def main():
         )
         # 3 adds on one unit over 3 states: one select table, and the only
         # value crossing a state boundary is the running sum.
-        check("u0_slut: " in src, "the shared unit's select comes from a table")
+        check(
+            "u0_sel0_lut: " in src,
+            "the shared unit's select comes from a table",
+        )
         check(
             src.count("_wel: ") == 1,
             f"one write-enable table per cross-state register "
@@ -267,7 +277,7 @@ def main():
             "read",
         )
         check(
-            "u0_sel[0:0] = " in src_oh,
+            "u0_sel0[0:0] = " in src_oh,
             "the operand mux select is encoded back to binary from hot bits "
             "(the mux is a measured balanced tree and needs a binary select)",
         )
@@ -280,12 +290,28 @@ def main():
             "the idle-hold term complements one bit with ^ 1, not ~ (which "
             "would invert the whole promoted width)",
         )
-        # One flip-flop per state plus idle, where binary needs only log2 --
-        # the cost one-hot trades against its cheaper decode.
+        # One flip-flop per state plus idle, where binary needs only log2. The
+        # complete one-hot design can still win by eliminating enough decode,
+        # so pin the register term itself rather than assuming the total.
         check(
-            AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps_oh, sched_oh)
-            > AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps, sched),
+            AUTOFSM._register_bit_count(sched_oh)
+            > AUTOFSM._register_bit_count(sched),
             "the area model charges one-hot for its extra flip-flops",
+        )
+
+        print("[automatic control encoding]")
+        auto = AUTOFSM.HARVEST_AUTOFSM_SCHEDULES(
+            ps, area_sweep=False, ctl="auto"
+        )[key]
+        auto_scores = auto.get("ctl_auto_candidates", {})
+        check(
+            auto["ctl"] in ("v3", "onehot") and len(auto_scores) == 2,
+            "auto evaluates both supported area-oriented encodings",
+        )
+        check(
+            abs(AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps, auto) - min(auto_scores.values()))
+            < 0.01,
+            "auto returns the lowest-area feasible encoding",
         )
 
         print("[budget controls state count]")
@@ -377,6 +403,33 @@ def main():
             != repr(pypeline.AUTOFSM(tag.func)),
             "the cap is part of the tag's repr (it feeds canonical entity names)",
         )
+        unregistered_tag = pypeline.AUTOFSM(
+            tag.func, max_latency=1, register_output=False
+        )
+        check(
+            unregistered_tag.canonical_key != tag.canonical_key,
+            "output-register policy is part of the canonical schedule key",
+        )
+
+        print("[optional output register]")
+        unregistered = AUTOFSM.BUILD_SCHEDULE(
+            ps, unregistered_tag.canonical_key, unregistered_tag, 0.9, ctl="v3"
+        )
+        _nu, src_u, _gu = AUTOFSM.GENERATE_FSM_SOURCE(
+            unregistered_tag, unregistered, ps
+        )
+        check(
+            unregistered["latency"] == unregistered["n_states"],
+            "unregistered output removes the output cycle from latency",
+        )
+        check(
+            "out_data_r" not in src_u and "out_valid_r" not in src_u,
+            "unregistered output emits no redundant result register bank",
+        )
+        check(
+            "o.valid = ow" in src_u,
+            "unregistered output is valid directly in the final execution state",
+        )
 
         print("[max_latency caps the schedule]")
         # The cap is a HARD constraint. Sharing everything onto one adder needs
@@ -420,8 +473,69 @@ def main():
             "a shared unit's operands go through a generated mux entity",
         )
         check(
-            src4.count("_c0[") == 3 and src4.count("_c1[") == 3,
-            "each unit input port becomes one 3-entry array (one per user)",
+            len(re.findall(r"u0_c0\[\d+\] =", src4)) == 2
+            and len(re.findall(r"u0_c1\[\d+\] =", src4)) == 3,
+            "each operand mux contains only distinct values (the two running "
+            "sum operands share one register row; b/c/d remain distinct)",
+        )
+
+        repeated_src = DESIGN_SRC.replace("t1 + x.d", "t1 + x.b").replace(
+            "t0 + x.c", "t0 + x.b"
+        )
+        ps_same, key_same, tag_same = parse_design(
+            tmp, mhz=25.0, name="d_same_operand", source=repeated_src
+        )
+        fake_delays(ps_same, key_same, tag_same)
+        sched_same = schedule_with(ps_same, key_same, tag_same, 0.9)
+        _ns, src_same, _gs = AUTOFSM.GENERATE_FSM_SOURCE(
+            tag_same, sched_same, ps_same
+        )
+        check(
+            "u0_c1:" not in src_same and "u0_a1:" in src_same,
+            "identical operands across states bypass the operand mux entirely",
+        )
+
+        print("[cross-functional-unit register reuse]")
+        bind_nodes = {
+            "a": {
+                "delay_du": 1, "state": 1, "out_type": "uint8_t",
+                "fu": "add", "operands": [("in", "x")],
+            },
+            "b": {
+                "delay_du": 1, "state": 2, "out_type": "uint8_t",
+                "fu": "xor", "operands": [("node", "a")],
+            },
+            "c": {
+                "delay_du": 1, "state": 3, "out_type": "uint8_t",
+                "fu": "sub", "operands": [("node", "b")],
+            },
+        }
+        plain_regs, _ = AUTOFSM.ALLOCATE_REGISTERS(
+            bind_nodes, ("node", "c"), 3
+        )
+        shared_regs, _ = AUTOFSM.ALLOCATE_REGISTERS(
+            bind_nodes, ("node", "c"), 3, ("uint8_t",)
+        )
+        check(
+            len(set(plain_regs.values())) == 2
+            and len(set(shared_regs.values())) == 1,
+            "non-overlapping values from different units can share one register",
+        )
+        ps_cross, key_cross, tag_cross = parse_design(
+            tmp, mhz=25.0, name="d_cross_fu", source=CROSS_FU_SRC
+        )
+        fake_delays(ps_cross, key_cross, tag_cross)
+        sched_cross = schedule_with(ps_cross, key_cross, tag_cross, 0.35)
+        sched_cross["cross_fu_register_types"] = ["int16_t"]
+        _nc, src_cross, _gc = AUTOFSM.GENERATE_FSM_SOURCE(
+            tag_cross, sched_cross, ps_cross
+        )
+        cross_value_regs = re.findall(r"v\d+_r:", src_cross)
+        check(
+            "v0_wchoices:" in src_cross and "v1_r:" not in src_cross,
+            "codegen emits one measured writeback mux for a cross-unit register "
+            f"(write choices={src_cross.count('_wchoices:')}, "
+            f"value regs={cross_value_regs})",
         )
         # Forcing latency 2 unshares completely: three adders, one use each.
         # A unit with a single user needs no selection at all, and paying for a
@@ -465,6 +579,12 @@ def main():
             AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps6, gates) > base_area,
             "sharing gates instead of adders is estimated as BIGGER, not "
             "smaller -- the multiplexers and registers outweigh the units",
+        )
+        gate_required_win = AUTOFSM._sweep_required_improvement(base, gates)
+        check(
+            gate_required_win > AUTOFSM.SWEEP_MIN_IMPROVEMENT,
+            "opening into a much larger scheduled shape raises the confidence "
+            f"threshold ({gate_required_win * 100.0:.1f}% required win)",
         )
         swept = AUTOFSM.SWEEP_MIN_AREA_SCHEDULE(ps6, key6, tag6, 0.9)
         check(

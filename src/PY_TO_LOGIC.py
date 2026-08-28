@@ -726,7 +726,12 @@ def _callable_canonical_name(val, module_globals, _seen=None, _depth=0):
     # distinguishing qualname/closure of its own.
     if getattr(val, "_is_autofsm_pragma", False):
         inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
-        return _sanitize_vhdl_name(f"AUTOFSM_{inner}")
+        max_latency = getattr(val, "max_latency", None)
+        cap_suffix = f"_max_latency_{max_latency}" if max_latency is not None else ""
+        output_suffix = (
+            "" if getattr(val, "register_output", True) else "_unregistered_output"
+        )
+        return _sanitize_vhdl_name(f"AUTOFSM_{inner}{cap_suffix}{output_suffix}")
 
     if isinstance(val, functools.partial):
         inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)

@@ -30,20 +30,15 @@ later variants benefit from what an earlier one already measured, but never
 touching -- or depending on -- the real committed area_cache/) matching
 area_estimate_build_report_test.py's own pattern.
 
-What this design does NOT exercise: qor/divider/autofsm.py's schedule is AT
-FLOOR (one indivisible 34-bit subtract sets a hard per-state ceiling, see
-that file's own comment) -- the search has no open/unshare move available at
-all (0 kind(s) opened up, 0 kind(s) given extra unit(s) in every variant's
-own build log), so all three rankings necessarily land on the SAME schedule
-here and measure IDENTICAL real area. That is itself a useful check (a
-divergence between them on a floor design, where only one schedule is even
-feasible, would be a real bug), but it is not the stronger "does real data
-pick a DIFFERENT, smaller schedule than the abstract model would have"
-question -- autofsm_min_area_verify_test.py's div-share design is built
-specifically to have that decision, under PYRTL; redoing it under sky130
-would be the natural next step and is not attempted here.
+The default also exercises area-based automatic state encoding. Finally, the
+real result is compared with the lowest committed latchup.app AUTOPIPELINE
+divider area (255886.4 um2, reconstructed from its mapped cell histogram in
+qor/latchup_area_match_matrix.json). That is the primary, external area bar:
+the resource-shared divider must be smaller as actually synthesized, not merely
+look cheaper to AUTOFSM's estimator.
 """
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -53,6 +48,9 @@ import tempfile
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
 DESIGN = os.path.join(THIS_DIR, "..", "qor", "divider", "autofsm.py")
+LATCHUP_MATRIX = os.path.join(
+    THIS_DIR, "..", "qor", "latchup_area_match_matrix.json"
+)
 
 # The real-area-ranked build may not measure worse than the abstract-ranked
 # build by more than this. A tolerance, not a target -- both are per-leaf
@@ -61,6 +59,11 @@ DESIGN = os.path.join(THIS_DIR, "..", "qor", "divider", "autofsm.py")
 # between two reasonable rankings is expected; a real regression (real data
 # choosing a systematically worse schedule) blows straight through it.
 MAX_REGRESSION = 0.05
+# Pins the structural v4 area pass itself. The first real build after distinct
+# operand rows + output-bank elision measured 34592.3952 um2; leave ~4% room
+# for harmless recipe/library drift while still catching a return to the
+# 42777.9792 um2 pre-change shape.
+MAX_OPTIMIZED_DIVIDER_AREA_UM2 = 36000.0
 
 
 def fail(msg):
@@ -208,6 +211,18 @@ def main():
         / results["abstract"]["measured"]
     )
     print(f"  real vs abstract                : {real_vs_abstract * 100:+.1f}%")
+
+    with open(LATCHUP_MATRIX) as f:
+        matrix = json.load(f)
+    autopipeline_floor = min(
+        point["sum_um2"]
+        for point in matrix["definitional_area_sum_check"]["results"].values()
+    )
+    real_vs_autopipeline = results["real"]["measured"] / autopipeline_floor
+    print(
+        f"  vs lowest AUTOPIPELINE divider : {real_vs_autopipeline:.3f}x "
+        f"({autopipeline_floor:.1f} um2 reference)"
+    )
     print()
 
     if real_vs_abstract > MAX_REGRESSION:
@@ -220,6 +235,22 @@ def main():
             f"not winning -- see docs/AUTOFSM_DESIGN.md section 3.8 for the "
             f"known cross-instance-sharing and FF-count caveats before "
             f"assuming a fix is needed in the ranking itself."
+        )
+
+    if results["real"]["measured"] >= autopipeline_floor:
+        fail(
+            f"real AUTOFSM divider area {results['real']['measured']:.1f} um2 "
+            f"did not clear the lowest committed AUTOPIPELINE/latchup.app "
+            f"divider area {autopipeline_floor:.1f} um2"
+        )
+
+    if results["real"]["measured"] > MAX_OPTIMIZED_DIVIDER_AREA_UM2:
+        fail(
+            f"optimized AUTOFSM divider measured "
+            f"{results['real']['measured']:.1f} um2, above the "
+            f"{MAX_OPTIMIZED_DIVIDER_AREA_UM2:.1f} um2 v4 regression ceiling. "
+            f"Distinct operand mux rows and single output-bank storage first "
+            f"measured 34592.4 um2; the old shape was 42778.0 um2."
         )
 
     # The register-fidelity question section 3.8 asks to check explicitly:
@@ -245,7 +276,9 @@ def main():
     print(
         f"AUTOFSM real-area A/B passed: real sky130 um2 measured "
         f"{real_vs_abstract * 100:+.1f}% vs the abstract model, as built "
-        f"(within the {MAX_REGRESSION * 100:.0f}% regression tolerance)."
+        f"(within the {MAX_REGRESSION * 100:.0f}% regression tolerance), and "
+        f"{1.0 / real_vs_autopipeline:.2f}x smaller than the lowest committed "
+        f"AUTOPIPELINE divider."
     )
 
 

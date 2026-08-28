@@ -845,13 +845,17 @@ The differences worth knowing:
   zero dependency on the `include/pypeline` library. The two are structurally
   identical and duck-type compatible.
 - **`max_latency=`** caps the in→out latency, validated at construction (`int`,
-  `>= 2`, since latency is states + 1 accept cycle) so the error names the
-  user's own construction site. It is part of `__repr__` — these objects get
+  `>= 2` with the default registered output, `>= 1` with
+  `register_output=False`) so the error names the user's own construction site.
+  The output policy and cap are part of `__repr__` — these objects get
   captured in factory closures whose reprs feed canonical entity-name hashing,
   so two tags differing only in their cap must not collide. It is also recorded
   in the schedule dict, and a cached schedule whose recorded cap differs from
   the tag's is treated as a miss: building hardware that violates the cap the
   source asks for is not an acceptable failure mode.
+- **`register_output=False`** exposes data/valid in the final execution state
+  and removes that register bank. `make_stream_autofsm` uses it because its own
+  holding register already provides the registered/backpressured boundary.
 - **Native simulation** models the generated FSM's registers directly
   (`_sim_fsm`, keyed on `_SIM_AUTOFSM_STATE_KEY`), following the same
   committed-read / buffered-write discipline as `_sim_delay_line`.

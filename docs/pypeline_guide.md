@@ -2342,9 +2342,11 @@ implementations are available (`include/pypeline/operators/`) it can follow that
 all the way down to logic gates — and will normally decide, correctly, that
 gates are far too small a thing to share.
 
-The search never returns something bigger or slower than plain share-everything,
-so there is nothing to turn on. `--autofsm_no_area_sweep` turns it *off*, which
-is useful mainly for comparing the two.
+The search never returns something its model calls bigger than plain
+share-everything. It may spend unused timing margin, but never beyond the
+scaled clock budget; the real synthesis/tighten loop remains the final timing
+authority. `--autofsm_no_area_sweep` turns the search *off*, which is useful
+mainly for comparing the two.
 
 **How much the search can do depends on your clock goal**, and not in the
 direction people expect. A high goal FORCES decomposition — an operation that
@@ -2371,6 +2373,14 @@ passed over and count cells, which is what
 `src/tests/pypeline_tests/inst/autofsm_min_area_verify_test.py` does. An
 ambiguous or unmatched `SUBSTR` is an error rather than a silent no-op.
 
+The mux cost is based on **distinct values per port**, not simply the number of
+operations using the unit. If twenty states all feed the same coefficient or
+the same allocated register into one port, that port is a wire; if they use two
+values, it is a 2-row mux. State-to-row selectors are shared between ports with
+the same mapping. Under sky130, non-overlapping same-type values from different
+units may also share a register when the real FF saving exceeds the writeback
+mux cost and the mux still fits the clock budget.
+
 ### Control path — `--autofsm_ctl`
 
 Something has to decode the state into "which operand does this unit take",
@@ -2379,16 +2389,17 @@ picks how, and the default is normally right:
 
 | value | how state is decoded | comparators per FSM |
 |---|---|---|
-| `v3` (default) | constant lookup tables indexed by the state | one (the accept) |
+| `auto` (default) | area-rank v3 and onehot independently; keep the smaller feasible schedule | selected encoding's count |
+| `v3` | constant lookup tables indexed by the state | one (the accept) |
 | `v2` | an equality comparator per state per unit, in priority chains | O(states × units) |
 | `onehot` | one bit per state; every control signal is a bit read | zero |
 
 `v2` exists for A/B comparison — it is what the tool used to emit, and it is
-measurably both bigger and slower. `onehot` is smaller and faster still on every
-design measured so far, but spends a flip-flop per state where the others spend
-`log2(states)`, so it is not the default; try it on FSMs with few states and a
-tight clock. The choice is part of the schedule's identity, so switching it
-re-measures rather than reusing timing from the other one.
+measurably both bigger and slower. `onehot` can eliminate more decode but spends
+a flip-flop per state where v3 spends `log2(states)`. `auto` evaluates that
+trade with the active area model and prints both scores; the resolved choice is
+part of the schedule's identity, so switching it re-measures rather than
+reusing timing from the other one.
 
 Working examples: `examples/pypeline/autofsm_donut_update.py` (per-frame
 rotation math) and `examples/pypeline/float_sine_autofsm.py` (a float64
@@ -3495,8 +3506,11 @@ def top(stream_in: blob_fsm.in_stream_t, stream_out: blob_fsm.out_fb_t) -> blob_
 ```
 
 `make_stream_autofsm(func, max_latency=None)` infers `in_type`/`out_type` from `func`'s own
-parameter/return type annotations, constructs an `AUTOFSM(func, max_latency=max_latency)`
-instance internally, and returns `(func_autofsm, func_autofsm_t)`. Its ports are the two
+parameter/return type annotations, constructs an
+`AUTOFSM(func, max_latency=max_latency, register_output=False)` instance
+internally, and returns `(func_autofsm, func_autofsm_t)`. Disabling the raw
+result bank avoids duplicating the wrapper's own backpressure holding register.
+Its ports are the two
 halves of a stream `@interface`, exactly like `make_stream_pipeline`'s and
 `make_valid_ready_mcp`'s:
 
@@ -3508,8 +3522,10 @@ halves of a stream `@interface`, exactly like `make_stream_pipeline`'s and
 | `func_autofsm.fsm` | `AUTOFSM` | the underlying tag object — `func_autofsm.fsm.latency` reads the raw FSM's cycle count |
 | `func_autofsm.latency` | `int` | the wrapper's own latency, `fsm.latency + 1` |
 
-**Internally, a registered output.** A holding register latches the FSM's one-cycle pulse and a
-`busy` register tracks whether the FSM itself is occupied; `stream_in_if.ready` is asserted only
+**Internally, exactly one registered output.** A holding register latches the
+FSM's combinational final-state pulse and a `busy` register tracks whether the
+FSM itself is occupied; raw AUTOFSM's own optional result bank is disabled, so
+the same payload is not registered twice. `stream_in_if.ready` is asserted only
 when both are free. This means the wrapper's latency and initiation interval are both
 `FSM.latency + 1` — one cycle more than the raw AUTOFSM contract, spent latching the pulse — but
 in exchange a stalled consumer (`stream_out_if.ready` low) never loses a result: it stays valid,

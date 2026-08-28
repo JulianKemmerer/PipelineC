@@ -127,12 +127,14 @@ parser.add_argument(
 )
 parser.add_argument(
     "--autofsm_ctl",
-    help="How an AUTOFSM's control path is built (default v3). 'v3' decodes "
+    help="How an AUTOFSM's control path is built (default auto). 'auto' ranks "
+    "binary-table v3 and one-hot schedules by area and selects the smaller. "
+    "'v3' decodes "
     "state with constant lookup tables: one select LUT per shared unit, one "
     "write-enable LUT per register, one next-state LUT, leaving a single "
     "comparator per FSM. 'v2' is the older comparator chain (one equality "
-    "compare per state per unit), kept for A/B comparison. 'onehot' is "
-    "experimental: v3 with a one-hot state register.",
+    "compare per state per unit), kept for A/B comparison. 'onehot' uses "
+    "one bit per state so control enables decode directly.",
     choices=list(AUTOFSM.CTL_CHOICES),
     default=AUTOFSM.DEFAULT_CTL,
 )

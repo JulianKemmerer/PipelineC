@@ -130,8 +130,8 @@ This mirrors AUTOPIPELINE exactly, and it is why a well-written AUTOFSM
 testbench reacts to `resp.valid` rather than counting cycles: the same source is
 then correct at latency 0 and at latency 17.
 
-**`max_latency=N`** caps the FSM's in→out latency at N cycles (N−1 execution
-states plus the accept cycle). It is a **hard constraint**: if no schedule
+**`max_latency=N`** caps the FSM's in→out latency at N cycles (execution states
+plus the registered-output cycle). It is a **hard constraint**: if no schedule
 meeting the clock goal fits inside N cycles the build fails, with a message
 naming the FSM and the latency it actually needs. The tool meets a cap the only
 way a cap can be met — by giving back sharing and building a second (third, …)
@@ -143,12 +143,20 @@ and the cap bounds how much of it the search may spend.
 UPDATE = AUTOFSM(next_state, max_latency=8)   # never more than 8 cycles
 ```
 
+`register_output=False` is the area-oriented boundary form: the result and its
+one-cycle valid pulse are driven directly in the final execution state, so
+`.latency == n_states` and no result register bank is built. The default is
+`True` because a raw call site's `.data` then holds the previous result between
+pulses. Most designs should not set this directly; `make_stream_autofsm` uses it
+when its own backpressure holding register is already the output boundary.
+
 ### 2.1 Stream wrapper: `make_stream_autofsm`
 
 `include/pypeline/stream/stream_autofsm.py`'s `make_stream_autofsm(func,
 max_latency=None)` is pure library code (no compiler changes) built the same
 way `make_stream_pipeline`/`make_valid_ready_mcp` are: it constructs an
-`AUTOFSM(func, max_latency=max_latency)` internally and wraps its call site in
+`AUTOFSM(func, max_latency=max_latency, register_output=False)` internally and
+wraps its final-state result in
 a real valid/ready `@interface` stream port, so callers no longer hand-roll
 the `busy`-register spacing the raw contract above requires.
 
@@ -159,8 +167,11 @@ def top(stream_in: blob_fsm.in_stream_t, stream_out: blob_fsm.out_fb_t) -> blob_
     return blob_fsm(stream_in, stream_out)
 ```
 
-**Shape: a registered output.** A holding register latches the FSM's one-cycle
-pulse; a `busy` register tracks whether the FSM itself is occupied.
+**Shape: exactly one registered output.** A holding register latches the FSM's
+one-cycle final-state pulse; a `busy` register tracks whether the FSM itself is
+occupied. Raw AUTOFSM's optional output bank is disabled here: building it and
+then immediately copying it into the wrapper's holding register used to spend
+two full-width banks on a boundary that needs one.
 `stream_in_if.ready` is asserted only when both are free, and the output side
 is computed *first* in the body (the same same-cycle out→in trick
 `make_valid_ready_mcp` uses), so the slot a result just vacated is visible to
@@ -334,6 +345,17 @@ def autofsm_operand_mux(sel: uint3_t, choices: int16_t[6]) -> int16_t:
 
 Three things follow from that shape.
 
+**Rows are distinct values, not operation count.** Binding N operations to one
+unit does not imply N different values on every input port. `_operand_mux_plan`
+canonicalizes the expression each use actually sees after register allocation,
+including input fields, reused registers, same-state FU outputs, constants and
+inline glue trees. Equal values share one row; a port with one distinct value
+bypasses the mux; ports with the same state-to-row map share one narrow selector.
+The area estimator and code generator consume the same plan, so the ranking
+cannot claim a coalescing that the RTL fails to build. This matters especially
+under `--no_hier_syn --no_sweep`: it removes leaves and mux inputs before
+synthesis rather than relying on cross-instance optimization to discover them.
+
 **It is an array read, not an if/elif chain.** A variable array index elaborates
 to the balanced binary `VAR_REF_RD` selection tree — log2(N) deep. The nested
 if/elif form v1 emitted inline elaborates to a *priority* chain, N−1 deep.
@@ -399,14 +421,17 @@ the end of a state and reads see the snapshot committed at the last clock edge �
 that off-by-one is what lets a value written in state 5 reuse the register
 another value was last read from in state 5.
 
-Two values may share a register only if they have the same c type **and come
-from the same functional unit**. The type rule is obvious. The same-unit rule is
-what makes this free: the register's data input is then that unit's output local
-in every state that writes it, so the register only gains a wider write enable —
-no data path is added. Allowing cross-unit sharing puts a multiplexer directly
-in front of a flip-flop, usually on the critical path; measured on the donut,
-that cost 42.4 → 37.5 MHz in exchange for a handful of flip-flops. Registers are
-cheap and the clock period is not.
+Values of the same c type from the same functional unit always remain the first
+choice: this is free because the register's data input is unchanged and only
+its write-enable states grow. Values from different units may now share too,
+but only when the active area model says one register bank costs more than one
+additional mux input. Under sky130 this compares the real 48.84 µm²/bit FF
+against the real/cached 2:1 mux-bank cost; the abstract FPGA-oriented model
+usually retains same-FU-only binding. A measured/modelled writeback-mux delay is
+then added to every producer path, and cross-unit reuse is disabled for the
+entire type if any such path would exceed the state budget. The allocator also
+prefers a free register already sourced by the current FU, avoiding needless
+mux inputs introduced by greedy register numbering.
 
 `ALLOCATE_REGISTERS` is used by both the code generator (which declares the
 registers) and the area model (which prices them), so the model cannot drift
@@ -439,15 +464,13 @@ states (this is real generated output, with injected type names left as-is):
 def autofsm_chain_428aec93(s: _af_t0) -> _af_t1:
     st_r: Reg[_af_t4]           # 0 = idle, 1..3 = execution states
     in_r: Reg[_af_t2]           # input latch
-    v0_r: Reg[_af_t6]           # one register per value crossing a state boundary
-    v1_r: Reg[_af_t6]
+    v0_r: Reg[_af_t6]           # both non-overlapping sums share this register
     out_data_r: Reg[_af_t3]
     out_valid_r: Reg[_af_t5]
     # Snapshot committed state before any write below (pypeline assignment is sequential)
     st: _af_t4 = st_r
     in_v: _af_t2 = in_r
     v0: _af_t6 = v0_r
-    v1: _af_t6 = v1_r
     o: _af_t1
     o.data = out_data_r         # registered outputs: data holds, valid pulses
     o.valid = out_valid_r
@@ -457,28 +480,25 @@ def autofsm_chain_428aec93(s: _af_t0) -> _af_t1:
         in_r = s.data
         st_r = 1
     # BIN_OP_PLUS_int16_t_int16_t: 3 operation(s) sharing one unit
-    u0_slut: _af_t9 = [0, 0, 1, 2]      # state -> fold index
-    u0_sel: _af_t8 = u0_slut[st]
+    u0_sel0_lut: _af_t9 = [0, 0, 1, 1]  # state -> distinct port-0 value
+    u0_sel0: _af_t8 = u0_sel0_lut[st]
     u0_c0: _af_t10                      # one array per unit input port
     u0_c0[0] = in_v.a
     u0_c0[1] = v0
-    u0_c0[2] = v1
-    u0_a0: _af_t3 = _af_mux11(u0_sel, u0_c0)
+    u0_a0: _af_t3 = _af_mux11(u0_sel0, u0_c0)
+    u0_sel1_lut: _af_t9 = [0, 0, 1, 2]  # a different mapping needs a selector
+    u0_sel1: _af_t8 = u0_sel1_lut[st]
     u0_c1: _af_t12
     u0_c1[0] = in_v.b
     u0_c1[1] = in_v.c
     u0_c1[2] = in_v.d
-    u0_a1: _af_t3 = _af_mux11(u0_sel, u0_c1)
+    u0_a1: _af_t3 = _af_mux11(u0_sel1, u0_c1)
     u0_o: _af_t6 = (u0_a0 + u0_a1)      # THE one hardware adder
     # Writebacks: constant write-enable LUT per register, no state compares
-    v0_wel: _af_t13 = [0, 1, 0, 0]
+    v0_wel: _af_t13 = [0, 1, 1, 0]
     v0_we: _af_t5 = v0_wel[st]
     if v0_we:
         v0_r = u0_o
-    v1_wel: _af_t13 = [0, 0, 1, 0]
-    v1_we: _af_t5 = v1_wel[st]
-    if v1_we:
-        v1_r = u0_o
     ow_lut: _af_t13 = [0, 0, 0, 1]      # last-state pulse
     ow: _af_t5 = ow_lut[st]
     if ow:
@@ -490,8 +510,8 @@ def autofsm_chain_428aec93(s: _af_t0) -> _af_t1:
 #### The control path
 
 Everything above that reads `st` is **control**, and how it is built is selected
-by `--autofsm_ctl` (`v3` by default, `v2` and `onehot` also available). The
-shape shown is `v3`.
+by `--autofsm_ctl` (`auto` by default; `v3`, `v2` and `onehot` are explicit
+choices). The shape shown is `v3`.
 
 v2 decoded state with comparators: `u0_sel = 0; if st == 2: u0_sel = 1; elif
 st == 3: ...` per shared unit, and `if st == 1: ... elif st == 2: ...` for the
@@ -507,7 +527,7 @@ constant-folds to roughly one gate per table output bit. Three kinds appear:
 
 | table | what it drives | width |
 |---|---|---|
-| `u{n}_slut` | one shared unit's operand-mux select | `ceil(log2(folds))` bits |
+| `u{n}_sel{p}_lut` | one distinct state→operand-row map (shared by ports with the same map) | `ceil(log2(distinct values))` bits |
 | `v{n}_wel` | one register's write enable | 1 bit |
 | `ns_lut`, `ow_lut` | next state, output-write pulse | state width, 1 bit |
 
@@ -541,8 +561,11 @@ so every control signal is a constant-index bit read. Write enables become
 is a bit read — **zero** comparators. It pays for this with one flip-flop per
 state instead of `log2(states)`, and with a binary encoder per shared unit,
 since the operand mux is a measured balanced tree that needs a binary select.
-Measured results are in §4; it wins on every design tried so far but its
-flip-flop cost grows linearly in states, so `v3` remains the default.
+Measured results are in §4. `auto` independently performs the area search for
+v3 and onehot, rejects either encoding if it violates the timing budget or
+`max_latency`, and selects the smaller estimate. The resolved encoding is
+stored in the schedule and printed with both candidate costs. `v2` remains an
+explicit regression/A-B mode rather than an automatic candidate.
 
 Points that are easy to get wrong, and are deliberate here:
 
@@ -698,7 +721,9 @@ repeat up to MAX_SWEEP_MOVES times:
     for each openable entity:   reschedule the WHOLE function with it opened
     for each shared entity:     reschedule the WHOLE function with one more unit
     take the cheapest feasible result, even if it is worse than the incumbent
-    if it beats the best-so-far by > SWEEP_MIN_IMPROVEMENT: it becomes the best
+    if it beats the best-so-far by > SWEEP_MIN_IMPROVEMENT
+       and clears the anchor-relative OPEN shape-confidence guard:
+        it becomes the best
     else after MAX_SWEEP_UPHILL consecutive non-improvements: stop
 return the best
 ```
@@ -719,20 +744,31 @@ reach that, because the win is only visible from the far side of the move that
 pays for it.
 
 **The anchor guarantee.** The share-everything schedule is the incumbent, and
-the result is the best point ever seen. A mis-ranking costs an opportunity,
-never a regression — which is what makes it safe to leave on by default.
+the result is the best point ever seen. It therefore cannot regress according
+to its own model. A model can still mis-rank physical hardware — particularly
+where limited synthesis shares logic the per-leaf sum cannot see — so the
+whole-design A/B tests in §5 remain the ground truth and bound that risk.
 
-**The search may not spend timing margin.** A candidate whose worst state is
-longer than the anchor's is rejected outright, even though it still "fits the
-budget" by the delay model's reckoning. The budget is a guess at how much of the
-clock period the FSM's own control will leave, and a schedule that eats the
-difference is buying area with margin that may not be there. This is not
-hypothetical: on the donut example the search found a real 8% area saving by
-opening three comparators onto a shared subtractor, pushed the worst state from
-13.7 ns to 17.1 ns, and turned a design that met 40 MHz into one that missed at
-36 MHz. Trading latency for timing is the **driver's** job (§3.4 — it tightens
-the per-state budget and reschedules); the search's job is area at
-equal-or-better timing, and nothing else.
+OPEN moves get an additional, anchor-relative confidence guard for exactly
+that known blind spot. The base required win is `SWEEP_MIN_IMPROVEMENT` (25%),
+then it rises by eight percentage points per doubling of scheduled operations
+or state count relative to the written-grain anchor (capped at 95%). UNSHARE
+does not pay this margin: it keeps the same DAG, so its extra units and narrower
+mux/register banks are already the quantities the measured model prices. This
+is not a latency preference — a large, slow schedule is still eligible — but a
+requirement that a comparison spanning radically different hierarchy/control
+shapes show enough margin to survive the documented per-leaf modelling error.
+
+**The search may spend slack, but not miss the declared goal.** Area is the
+objective, so a candidate is not rejected merely because its modelled worst
+state is longer than the anchor's incidental critical state. It is rejected if
+that state exceeds the scaled clock budget, or if it violates `max_latency`.
+This lets a low-frequency design trade unused timing margin and latency for
+fewer cells. The normal real-synthesis confirmation loop remains the authority:
+if model optimism causes a miss, the driver tightens the budget and reschedules
+until the built FSM meets the goal. Consequently a larger-area schedule is
+accepted only when it is required to satisfy timing or the hard latency cap;
+otherwise the lowest-area feasible point wins.
 
 #### Why area is estimated and timing is measured
 
@@ -753,10 +789,12 @@ The model has five terms, which are exactly the things sharing trades between:
   because glue is re-rendered wherever needed rather than shared. Free when it
   really is wiring, emphatically not otherwise. Counting it is what stops
   decomposition from looking free.
-- **multiplexers** — one per unit input port, sized by fold count. The term
-  sharing grows, and the reason sharing more finely eventually stops paying.
+- **multiplexers** — one per unit input port, sized by its count of distinct
+  operand values after register allocation (not blindly by fold count), plus
+  writeback muxes for profitable cross-FU register reuse. The term sharing
+  grows, and the reason sharing more finely eventually stops paying.
 - **registers** — cross-state values after allocation, plus the output and state
-  registers.
+  registers (the output term is absent for `register_output=False`).
 - **state decode**.
 
 The constants are normalised so one bit of an adder is 1.0, with ratios taken
@@ -884,7 +922,8 @@ remain open, confirmed again on real in-repo builds while wiring this in:**
   flattened into one netlist — already documented for `--no_hier_syn`'s
   delay sum (§6 below), and the same mechanism affects the real-µm² area sum.
   `qor/divider/autofsm.py`'s whole-design `SYN.ESTIMATE_DESIGN_AREA` estimate
-  still overshot real `Measured area:` by 342% post-fix, concentrated
+  still overshot real `Measured area:` by 256% after the v4 structural area
+  pass, concentrated
   entirely in the wide (32/33-way) real operand-multiplexer trees the
   generated FSM instantiates — `qor/multiplier/autofsm.py`, which shares to
   one atomic unit with no wide muxes at all, overshot by only 4.65% on the
@@ -910,11 +949,11 @@ remain open, confirmed again on real in-repo builds while wiring this in:**
 
 Neither gap is specific to the search's ranking: both are as true of
 `_ff_area_um2`/the operand-mux term feeding `ESTIMATE_SCHEDULE_AREA` as of
-`SYN.ESTIMATE_DESIGN_AREA`'s build-log estimate. What keeps the search safe
-regardless is the same anchor guarantee that already protects the abstract
-model (§3.7): a systematic overshoot that hits every candidate similarly
-does not change which one ranks smallest, and the worst case of a mis-ranked
-edge case is a lost opportunity, never a regression, exactly as before.
+`SYN.ESTIMATE_DESIGN_AREA`'s build-log estimate. The anchor guarantees that the
+selected estimate is no worse than the plain schedule's estimate; it cannot
+guarantee physical area when the model mis-ranks an edge case. A systematic
+overshoot that hits every candidate similarly does not change which one ranks
+smallest, while whole-design synthesis tests bound the remaining risk.
 `inst/autofsm_real_area_compare_test.py` is where this is checked against
 real synthesis rather than assumed: real-µm²-ranked vs abstract-ranked vs
 the plain anchor, all three built and measured, not just estimated.
@@ -939,10 +978,11 @@ adds unit copies.
 big enough that the whole operation fits one state, keeping it atomic is the
 anchor, and opening it becomes something `SWEEP_MIN_AREA_SCHEDULE` decides on
 area grounds — the "split until multiplexers and registers cost more than the
-units saved" behaviour an area-first build wants. The search still never spends
-timing margin (the `worst_state_du > anchor["worst_state_du"]` guard), so a
-loose clock does not licence a slower schedule; it changes what the ANCHOR is,
-and therefore what the search is choosing between.
+units saved" behaviour an area-first build wants. A loose clock also provides
+slack the area search may spend, up to the scaled clock budget; real synthesis
+and the tighten/reschedule loop still enforce the declared FMAX. It changes
+both what the anchor is and which slower-but-feasible area points can be
+considered.
 
 `autofsm_min_area_verify_test.py` is where this is measured rather than
 asserted: it builds the alternatives the search passed over
@@ -951,36 +991,38 @@ their real yosys cell counts.
 
 #### What that measurement found, and why decomposition usually loses
 
-The first run of that test inverted the expected result, and the numbers are
-worth keeping because they are the clearest statement of the trade. Three
-uint8 divides at a 1 MHz goal, whole design, `$scopeinfo` excluded:
+The latest run of that test includes distinct-operand mux coalescing and the
+new register/control allocation. The numbers remain the clearest statement of
+the trade. Three uint8 divides at a 1 MHz goal, whole design, `$scopeinfo`
+excluded:
 
 | schedule | cells | shape |
 |---|---|---|
-| share the divider whole | **998** | 2 units, 3 states, multiplexers 50 + 33 cells |
-| open the divider up | 1700 | 10 units, 36 states, **1271 cells of operand multiplexing** |
+| share the divider whole | **966** | 5 ops → 2 units, 3 states |
+| open the divider up | 1493 | 254 ops → 9 units, 60 states |
 | two dividers, unopened | 1636 | 3 units, 2 states |
-| three dividers, unopened | 2360 | 4 units, 2 states |
+| three dividers, unopened | 2373 | 4 units, 2 states |
 
-Opening one unit into N pieces necessarily spreads them over N states, and that
-buys an N-way multiplexer on **every operand port**. Here that came to 76% of
-the resulting FSM — paid to save a single divider. The search had rated the
-same move a large win, for one reason: `AREA_PER_BIT_MUX` priced a 2:1
-multiplexer bit at about one yosys cell, where measurement across four
-multiplexer shapes puts it at 2.07-2.14. That constant is now set from those
-measurements, and it is the term that decides whether descent pays at all.
+Opening one unit into N pieces spreads work over many states and buys operand
+selection plus state/write control for the shared pieces. Distinct-operand
+coalescing reduced the old opened result (1700 cells) to 1493, but it remains
+54.6% larger than keeping the composite divider whole. The first calibration
+error was `AREA_PER_BIT_MUX`: it priced a 2:1 multiplexer bit at about one yosys
+cell, where measurement across four multiplexer shapes puts it at 2.07-2.14.
+That constant is set from those measurements and remains the term that decides
+ordinary sharing.
 
-Recalibrating narrowed the gap but did not close it: the model still rated the
-opened schedule a 3% improvement over one that real synthesis says is 72%
-worse. The residual is that synthesis optimizes ARITHMETIC far harder than a
-per-bit sum of submodules predicts, while it cannot optimize away data
-selection — so the model over-prices the shared whole unit and under-prices the
-multiplexers that replace it. Rather than tune constants past what was
-measured, `SWEEP_MIN_IMPROVEMENT` was raised to reflect the model's
-demonstrated accuracy: single-digit-percent differences are below its noise
-floor and the search is no longer allowed to act on them. The asymmetry
-justifies it — declining a real win costs an opportunity, while acting on a
-false one ships a design 70% larger than not searching at all.
+Recalibrating leaf constants does not close the hierarchy gap. With coalesced
+muxes the raw per-leaf model rates the 254-op point at 384 versus a 950 anchor
+(59.6% smaller), while whole-design yosys says it is 54.6% larger. Flattened
+synthesis already shares/optimizes repeated arithmetic inside the atomic
+divider; opening exposes that arithmetic to AUTOFSM's per-leaf sharing but also
+materializes a far larger FSM control/data-selection shape. A constant cannot
+correct one side without corrupting the directly measured leaf prices. The
+adaptive OPEN confidence guard therefore requires 70.3% at this 50.8x shape
+growth (25% base plus 8 points per doubling), declines the move, and returns
+the real 966-cell minimum. The asymmetry is intentional: declining a real win
+costs an opportunity, while accepting a false one ships a regression.
 
 #### Why donut and sine decline every move
 
@@ -999,10 +1041,11 @@ are correct rather than a search failure:
   packing more per state, not the search choosing differently.
 
 A design where opening pays needs a unit far more expensive than the
-multiplexers sharing its pieces costs. A divider is that case — the most
-expensive operation the area model knows, whose soft equivalent is a chain of
-ordinary compare-and-subtract steps that fold onto units the design already has
-— which is what `autofsm_div_share_test.py` exists to be.
+multiplexers and control sharing its pieces costs, with a modelled margin large
+enough for the resulting shape change. A divider is the strongest in-repo
+candidate — its soft equivalent is a chain of compare-and-subtract steps — and
+`autofsm_div_share_test.py` deliberately confirms that even this particular
+small divider is still cheaper left whole.
 
 #### Which built-in operators can be opened at all
 
@@ -1098,14 +1141,15 @@ This is also the first time the donut FSM is **smaller than the combinational
 logic it replaces** (2362 vs 2380 cells at the top level), where v2 was a net
 loss.
 
-The one-hot column is an experiment that was expected to lose and did not: its
+The one-hot column was an experiment that was expected to lose and did not: its
 extra flip-flops are cheaper than expected and its decode is cheaper still,
 because a write enable becomes an OR of already-decoded hot bits rather than a
 fresh boolean function of the state bits. It wins on all three designs, on both
-area and fmax. It remains off by default because its flip-flop cost grows
-linearly in state count while binary encoding grows logarithmically — the
-designs measured here have 6, 8 and 14 states, and nothing here says where the
-crossover is.
+area and fmax. Its flip-flop cost grows linearly in state count while binary
+encoding grows logarithmically — the designs measured here have 6, 8 and 14
+states, and nothing there says where the crossover is. That uncertainty is why
+the current default is `auto`: it prices both encodings for the actual schedule
+instead of treating either historical result as universal.
 
 What did **not** move: pricing v3's cheaper control in the area model did not
 change a single scheduling decision on these three designs. The control saving
@@ -1113,6 +1157,29 @@ is real, but it is small next to the unit and multiplexer terms that actually
 drive the search's choices, so "cheaper sharing lets the search share more" did
 not materialise here. The model terms are correct and in place; the lever simply
 has less leverage than expected.
+
+**Area-focused v4**, real sky130 divider, whole-design synthesis:
+
+| shape | total µm² | combinational µm² | sequential µm² | real FF cells | fmax |
+|---|---:|---:|---:|---:|---:|
+| previous v3 | 42,778.0 | 26,709.6 | 16,068.4 | 329 | 44.37 MHz |
+| distinct operands + single stream output bank | **34,592.4** | **21,698.6** | **12,893.8** | **264** | **55.82 MHz** |
+
+That is **−19.1% area** (1.24× smaller) while still clearing the design's
+25 MHz goal. Sixty-five redundant sequential cells — 64 result bits plus valid
+— disappeared because `make_stream_autofsm` now owns the only output bank. The
+remaining 5,011.0 µm² saving is combinational: the 33 uses of the divider's
+main `MUX_uint32_t` have only 2 distinct values on two ports, so those ports
+became 2-row muxes while only the genuinely changing port retained 33 rows;
+the subtractor's divisor and the NOT input became direct wires. This is
+structural before synthesis and therefore still pays under latchup's limited
+`--no_hier_syn --no_sweep` style flow.
+
+The default `auto` control comparison chose v3 for this 33-state FSM (estimated
+74,817 vs 78,539 µm² for onehot). The measured result is **7.40× smaller** than
+the lowest committed AUTOPIPELINE/latchup.app divider reference, 255,886.4 µm².
+Those absolute numbers are asserted by
+`autofsm_real_area_compare_test.py`; the estimator is only the ranking signal.
 
 Timing iteration, starting from a deliberately over-packed schedule
 (`--autofsm_budget_scale 1.5`): first build 30.46 MHz vs a 40 MHz goal (FAIL) →
@@ -1131,7 +1198,7 @@ at least 3"*.
 | test | category | what it proves |
 |---|---|---|
 | `autofsm_test.py` | native_sim, (synth via wrapper) | the pure function's semantics, and the passthrough behaviour when unscheduled |
-| `autofsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, register allocation, budget → states, floors, determinism, schedule is carryable data, soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--autofsm_abstract_area`, real flip-flop area) |
+| `autofsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing, same- and cross-FU register reuse, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--autofsm_abstract_area`, real flip-flop area) |
 | `area_model_test.py` (`src/tests/pypeline_tests/inst/`) | unit | not AUTOFSM-specific (SYN/DEVICE_MODELS leaf-area-cache coverage), but two tests here directly guard AUTOFSM.py's own constant: the committed `area_cache/` excludes STA-harness registers, and `AUTOFSM.UM2_PER_ABSTRACT_AREA_UNIT` refits to what is actually committed |
 | `self_check_autofsm_test.py` | native_sim, vhdl_sim, synth ×2 | the FSM computes what the function did — in native sim, in GHDL, at latency 0 and at real latency |
 | `stream_autofsm_test.py` | native_sim | `make_stream_autofsm`'s handshake protocol: ready deasserts while busy, latency/II == `fsm.latency + 1`, and — the property raw AUTOFSM cannot provide — a stalled consumer never loses a result and sees stable data while it's held |
@@ -1141,7 +1208,7 @@ at least 3"*.
 | `autofsm_resources_compare_test.py` | synth | the FSM is actually smaller than the logic it replaces |
 | `autofsm_area_sweep_compare_test.py` | synth | the area search does not make designs bigger, and its cost model agrees with yosys about which of two schedules is smaller — the calibration guard |
 | `autofsm_min_area_verify_test.py` | synth | the search actually MOVES on a design built to reward moving, the move is smaller in real yosys cells, and no alternative point of the search space (built via `--autofsm_open` / `--autofsm_unshare`) is smaller still |
-| `autofsm_real_area_compare_test.py` | build_report | same question under `--syn_tool sky130`, judged by real `Measured area:` rather than yosys cells: real-µm²-ranked vs `--autofsm_abstract_area` vs `--autofsm_no_area_sweep`, all three built; plus AUTOFSM's own `ALLOCATE_REGISTERS` bit count against the build's real sequential cell count (the register-fidelity question §3.8 raises explicitly) |
+| `autofsm_real_area_compare_test.py` | build_report | same question under `--syn_tool sky130`, judged by real `Measured area:` rather than yosys cells: real-µm²-ranked vs `--autofsm_abstract_area` vs `--autofsm_no_area_sweep`, all three built; asserts the default result beats the lowest committed AUTOPIPELINE/latchup.app divider area; plus AUTOFSM's own `ALLOCATE_REGISTERS` bit count against the build's real sequential cell count (the register-fidelity question §3.8 raises explicitly) |
 | `autofsm_max_latency_test.py` | synth | a meetable `max_latency` is met by unsharing; an unmeetable one fails the build naming the latency actually needed |
 | `autofsm_timing_iter_test.py` | synth | a critical path inside an FSM is found and fixed by rescheduling |
 | `autofsm_ctl_compare_test.py` | synth | the constant-table control path is not bigger than the comparator chains it replaced, and the donut FSM still meets the clock goal that v2 misses |
@@ -1183,9 +1250,9 @@ and at `fsm.latency + 1` (scheduled).
   fixes the FPGA-calibrated flip-flop term's biggest error (2.5x too cheap)
   but does not fix — because a per-leaf sum cannot see it — real synthesis's
   cross-instance sharing on wide operand-multiplexer trees, confirmed still
-  present (342% whole-design overshoot on `qor/divider/autofsm.py`) after the
-  sky130 wiring landed. The anchor guarantee bounds the damage of any of this
-  to a missed opportunity, in both the abstract and the sky130 case.
+  present (256% whole-design overshoot on `qor/divider/autofsm.py`) after the
+  sky130 wiring landed. The anchor bounds model-space regressions; the real
+  whole-design A/B tests guard the physical result.
 - An ARRAY-typed operand cannot be shared. Its operand multiplexer is an array
   of arrays, and `T[A][B]` currently mis-elaborates to VHDL — a bare
   `make_operand_mux(uint2_t[16], 4)` design fails GHDL import with "can't match
@@ -1230,29 +1297,28 @@ and at `fsm.latency + 1` (scheduled).
 - **Soft-operator flavor search.** One fixed flavor per operator today (ripple
   adder, shift-add multiplier, subtract comparator); the library ships several,
   and which one decomposes best is a second search axis.
-- **Cross-unit register sharing under a timing model.** Today registers merge
-  only within one producing unit, because merging across units puts a
-  multiplexer in front of a flip-flop and cost the donut example 5 MHz. With a
-  per-path timing estimate the safe cases could be taken. The enabling pieces
-  are in place: the writeback is already factored as {write-enable table +
-  source}, so a multi-source register needs only a source multiplexer (the same
-  measured `make_operand_mux` shape) in front of it, `ESTIMATE_SCHEDULE_AREA`
-  already carries the term that prices one, and codegen raises a named error
-  rather than mis-generating if the allocator ever hands it a multi-source
-  register.
+- **Globally optimal register/mux binding.** Cross-unit sharing now makes each
+  local merge only when FF area beats the incremental writeback mux and its
+  delay fits the state budget. The allocator is still a deterministic greedy
+  left-edge pass, not a global weighted matching across all free intervals;
+  such a solver could sometimes choose a different set of merges with fewer
+  total mux inputs.
 - **A max() chain fit.** The delay model sums a state's operation chain and its
   operand multiplexers. For the multiplexer that is not quite right: its select
   and its data arrive on independent paths, so the truth is
   `max(sel_path, data_path) + mux_delay`. Modelling that is what would let
   `CTL_LUT_DU` be charged honestly instead of pinned at 0.
-- **A ROM primitive.** Constant tables are built today as a constant local array
+- **A ROM/SRAM primitive.** Constant tables are built today as a constant local array
   read at a variable index, which elaborates to a full selection tree and only
   becomes cheap once synthesis folds the constants. It works (the whole v3
   control path depends on it) but the internal delay model prices the unfolded
   tree — a 5-entry table estimates at 4.8 ns where the module it sits in
   measures 1.9 ns. Harmless inside an AUTOFSM, whose delay is one measured
   whole-module number, but a real ROM/table primitive with its own cost model
-  would make the idiom usable in ordinary designs.
+  would make the idiom usable in ordinary designs. Likewise, a sufficiently
+  large register file or lookup table could eventually map to SRAM, but no
+  latchup-compatible inferred SRAM primitive exists in this flow yet; treating
+  an ordinary array as one today only produces combinational logic.
 - **A latent bit-slice bug in deeply-opened schedules.** Rescheduling the donut
   design under a tightened budget produces a 412-operation, 131-state plan whose
   generated source fails to elaborate: *"Bit index [14:14] out of range for

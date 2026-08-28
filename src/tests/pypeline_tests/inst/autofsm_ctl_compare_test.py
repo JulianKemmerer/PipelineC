@@ -11,7 +11,7 @@ number of comparators per FSM went from O(states x units) to exactly one.
 
 That is the claim, and it is entirely a claim about generated hardware, so it
 is measured rather than argued: build the same design under --autofsm_ctl v2
-and under the default v3 and compare yosys cell counts. The PYRTL timing flow
+and explicit --autofsm_ctl v3 and compare yosys cell counts. The PYRTL timing flow
 already runs yosys in both builds, so no extra tool invocation is needed. (Cell
 counts are read here, inside the test suite, never inside the area search --
 the search must work from its own model plus real timing measurements, since no
@@ -109,7 +109,9 @@ def check_area(base):
     v2_dir = os.path.join(base, "res_v2")
     v3_dir = os.path.join(base, "res_v3")
     v2_out, _ = run_build(RESOURCES_DESIGN, v2_dir, ["--autofsm_ctl", "v2"])
-    v3_out, _ = run_build(RESOURCES_DESIGN, v3_dir, [])
+    v3_out, _ = run_build(
+        RESOURCES_DESIGN, v3_dir, ["--autofsm_ctl", "v3"]
+    )
 
     # Same schedule under both, so any cell difference is the control path and
     # nothing else. (The area model does price the two differently, but on this
@@ -146,7 +148,11 @@ def check_area(base):
 
 
 def check_timing(base):
-    out, rc = run_build(DONUT_DESIGN, os.path.join(base, "donut_v3"), [])
+    out, rc = run_build(
+        DONUT_DESIGN,
+        os.path.join(base, "donut_v3"),
+        ["--autofsm_ctl", "v3"],
+    )
     m = re.search(
         r"synthesized as written \(standalone check\): "
         r"([\d.]+) MHz vs ([\d.]+) MHz goal - (PASS|FAIL)",

@@ -1617,7 +1617,12 @@ class AUTOPIPELINE:
         import sys
 
         if "PY_TO_LOGIC" in sys.modules:
-            inner = self.canonical_key
+            # Start from the wrapped function only; canonical_key already
+            # includes the policy suffixes appended below, and using it here
+            # would encode max_latency/register_output twice in a closure repr.
+            import PY_TO_LOGIC
+
+            inner = PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func)
         else:
             import inspect
 
@@ -1773,7 +1778,7 @@ class AUTOFSM:
     pipeline stages for AUTOPIPELINE.
 
     `max_latency=N` caps that: the tool may spend at most N cycles in->out
-    (N-1 execution states plus the accept cycle). Use it when the surrounding
+    (execution states plus the registered-output cycle). Use it when the surrounding
     design has a real deadline -- a result needed before the next frame, a
     protocol turnaround -- and you would rather have a bigger FSM than a late
     one. It is a HARD constraint, not a hint: if no schedule meeting the clock
@@ -1784,6 +1789,14 @@ class AUTOFSM:
     design it can (see the area sweep in docs/AUTOFSM_DESIGN.md), so a
     generous cap is not the same thing as no cap: sharing more finely costs
     latency, and the cap bounds how much of it the search may spend.
+
+    `register_output=False` exposes the result combinationally in the final
+    execution state and removes the result data/valid register bank. The
+    default is True so a raw call site's data holds between valid pulses.
+    `make_stream_autofsm` uses False because its backpressure holding register
+    is already the output boundary; registering the payload twice only costs
+    area. In this mode latency is the number of execution states, with no
+    additional output cycle.
 
     Contract at the call site (fixed latency, one computation in flight):
       - `func` must be @hw_func-decorated, pure (no Reg/Feedback/global wires
@@ -1798,8 +1811,10 @@ class AUTOFSM:
         an AUTOFSM instance instead of this manual spacing, see
         make_stream_autofsm (include/pypeline/stream/stream_autofsm.py).
       - The result appears with a one-cycle `valid` pulse exactly .latency
-        cycles after the accepted input cycle; `.data` holds the last result
-        between pulses. Initiation interval == .latency.
+        cycles after the accepted input cycle. With the default registered
+        output, `.data` holds the last result between pulses; with
+        `register_output=False`, only the valid cycle's data is meaningful.
+        Initiation interval == .latency.
 
     .latency reads 0 (and the call site is a zero-latency combinational
     passthrough, `o.data = func(s.data)`, `o.valid = s.valid`):
@@ -1824,27 +1839,34 @@ class AUTOFSM:
     # Duck-type marker probed by the elaborator (PY_TO_LOGIC._elab_call).
     _is_autofsm_pragma = True
 
-    def __init__(self, func, max_latency=None):
+    def __init__(self, func, max_latency=None, register_output=True):
         if not is_hw_func(func):
             raise TypeError(
                 f"AUTOFSM(func): {getattr(func, '__qualname__', func)!r} must be "
                 f"@hw_func-decorated before being passed in"
             )
+        if not isinstance(register_output, bool):
+            raise TypeError(
+                "AUTOFSM(func, register_output=...): must be a bool, got "
+                f"{type(register_output).__name__}"
+            )
+        self.register_output = register_output
         if max_latency is not None:
             # Validated here rather than at schedule time so the error names the
-            # user's own construction site. Latency is n_states + 1 (the extra
-            # cycle is the accept cycle) and an FSM has at least one execution
-            # state, so 2 is the smallest latency any schedule can have.
+            # user's own construction site. Registered latency is n_states + 1
+            # (the output bank); unregistered latency is n_states. Every FSM
+            # has at least one execution state.
             if not isinstance(max_latency, int) or isinstance(max_latency, bool):
                 raise TypeError(
                     f"AUTOFSM(func, max_latency=...): must be an int, got "
                     f"{type(max_latency).__name__}"
                 )
-            if max_latency < 2:
+            minimum_latency = 2 if register_output else 1
+            if max_latency < minimum_latency:
                 raise ValueError(
                     f"AUTOFSM(func, max_latency={max_latency}): the smallest "
-                    f"possible FSM latency is 2 (one accept cycle plus at least "
-                    f"one execution state)"
+                    f"possible FSM latency is {minimum_latency} with "
+                    f"register_output={register_output}"
                 )
         self.max_latency = max_latency
         arg_types = hw_arg_types(func)
@@ -1883,6 +1905,10 @@ class AUTOFSM:
                 "max_latency"
             ) != max_latency:
                 self._schedule = None
+            if self._schedule is not None and self._schedule.get(
+                "register_output", True
+            ) != register_output:
+                self._schedule = None
         else:
             self._schedule = None
         self._latency = self._schedule["latency"] if self._schedule else 0
@@ -1906,6 +1932,10 @@ class AUTOFSM:
             import PY_TO_LOGIC
 
             self._canonical_key = PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func)
+            if self.max_latency is not None:
+                self._canonical_key += f"_max_latency_{self.max_latency}"
+            if not self.register_output:
+                self._canonical_key += "_unregistered_output"
         return self._canonical_key
 
     def __call__(self, s):
@@ -1916,7 +1946,7 @@ class AUTOFSM:
                 f"AUTOFSM call argument must be a {{data, valid}} struct (e.g. "
                 f"MY_FSM.in_stream_t), got {type(s).__name__}"
             )
-        if _sim_active and self._latency > 1:
+        if _sim_active and self._schedule is not None:
             # Native sim with a pinned schedule (pipelinec non---comb --sim builds
             # install the harvested schedules before the sim's design import):
             # emulate the built FSM's registers instead of the zero-latency
@@ -1937,8 +1967,8 @@ class AUTOFSM:
 
     def _sim_fsm(self, data, valid):
         """Native-sim emulation of this call site as the generated FSM: a
-        register-level model of exactly the state/output registers the generated
-        hardware declares (see AUTOFSM.GENERATE_FSM_SOURCE), so the two are
+        register-level model of exactly the state and optional output registers
+        the generated hardware declares (see AUTOFSM.GENERATE_FSM_SOURCE), so the two are
         cycle-accurate against each other by construction rather than by a
         separate timing argument.
 
@@ -1949,7 +1979,7 @@ class AUTOFSM:
         the buffer, where last-write-wins and only the final pass's write lands
         at _sim_reg_flush_buffer.
         """
-        n_states = self._latency - 1
+        n_states = self._schedule["n_states"]
         inst_path = _sim_current_inst_path()
         st = _sim_reg_read(inst_path, _SIM_AUTOFSM_STATE_KEY, None)
         if st is None:
@@ -1960,8 +1990,16 @@ class AUTOFSM:
                 "out_data": sim_zero(self.out_type),
                 "out_valid": 0,
             }
-        # Outputs are the committed registers (registered outputs in hardware).
-        out = self.out_stream_t(data=st["out_data"], valid=st["out_valid"])
+        # Registered mode exposes committed output registers. Unregistered
+        # mode is used by make_stream_autofsm, whose own holding register is
+        # the output boundary: the raw result is combinational only in the last
+        # execution state and therefore avoids a redundant full-width bank.
+        if self.register_output:
+            out = self.out_stream_t(data=st["out_data"], valid=st["out_valid"])
+        elif st["st"] >= n_states:
+            out = self.out_stream_t(data=self.func(st["in"]), valid=1)
+        else:
+            out = self.out_stream_t(data=sim_zero(self.out_type), valid=0)
         # Next-state, mirroring the generated body's write order.
         nxt = {
             "st": st["st"],
@@ -1979,8 +2017,9 @@ class AUTOFSM:
             # rather than per-state; the FSM's per-state decomposition is a
             # hardware implementation detail with identical cycle-level
             # behavior at the boundary.)
-            nxt["out_data"] = _copy.deepcopy(self.func(st["in"]))
-            nxt["out_valid"] = 1
+            if self.register_output:
+                nxt["out_data"] = _copy.deepcopy(self.func(st["in"]))
+                nxt["out_valid"] = 1
             nxt["st"] = 0
         else:
             nxt["st"] = st["st"] + 1
@@ -2005,6 +2044,8 @@ class AUTOFSM:
             inner = f"{mod}.{qual}"
         if self.max_latency is not None:
             inner += f",max_latency={self.max_latency}"
+        if not self.register_output:
+            inner += ",register_output=False"
         return f"AUTOFSM({inner})"
 
 

@@ -28,6 +28,11 @@ def make_stream_autofsm(func, max_latency=None):
     behave like any other stream port -- including real backpressure (a result
     is held, not dropped, while the downstream `ready` is low).
 
+    The wrapper disables AUTOFSM's own optional result bank because the
+    backpressure holding register below already provides that boundary. This
+    leaves exactly one full-width output bank instead of registering every
+    result twice.
+
     `func` must already be @hw_func-decorated, with a single annotated parameter and
     an annotated return type, e.g.:
         @hw_func
@@ -53,7 +58,10 @@ def make_stream_autofsm(func, max_latency=None):
             f"make_stream_autofsm(func, ...): {func.__qualname__!r} must be "
             f"@hw_func-decorated before being passed in"
         )
-    fsm = AUTOFSM(func, max_latency=max_latency)
+    # The holding register below is already the stream's output boundary.
+    # Asking raw AUTOFSM for another full-width output register would only
+    # duplicate storage and add muxing; expose its final-state value directly.
+    fsm = AUTOFSM(func, max_latency=max_latency, register_output=False)
 
     in_intrf = make_stream_interface(fsm.in_type)
     out_intrf = make_stream_interface(fsm.out_type)

@@ -64,6 +64,7 @@ delay model and the sweep this rides on.
 
 import hashlib
 import json
+import math
 import os
 
 import C_TO_LOGIC
@@ -74,7 +75,10 @@ import C_TO_LOGIC
 # measured against different logic.
 # 3: v3 constant-LUT control path (`ctl` field, see _Codegen).
 # 4: glue operands materialize their port type (_render_operand at_port_type).
-SCHEDULE_VERSION = 4
+# 5: operand muxes select distinct values per port, rather than blindly
+#    allocating one row per operation sharing the functional unit.
+# 6: area-aware cross-FU register binding and optional combinational output.
+SCHEDULE_VERSION = 6
 
 # How the generated FSM's CONTROL path is rendered. This selects codegen shape
 # AND the matching area model -- the two must agree, so it is part of the
@@ -85,10 +89,11 @@ SCHEDULE_VERSION = 4
 #            enable LUTs, next-state LUT. One comparator survives per FSM.
 #   "v2"     the shipped comparator chains (`if st == k: ... elif ...`), kept
 #            for A/B measurement and debugging.
-#   "onehot" experimental: v3 with the binary state register replaced by a
-#            packed one-hot register (see the M6 experiment in AUTOFSM_DESIGN).
-CTL_CHOICES = ("v3", "v2", "onehot")
-DEFAULT_CTL = "v3"
+#   "onehot" direct one-hot decode: the state bits themselves are the enables.
+#   "auto"   build/rank v3 and onehot schedules independently and keep the
+#            smaller area estimate that satisfies timing and max_latency.
+CTL_CHOICES = ("auto", "v3", "v2", "onehot")
+DEFAULT_CTL = "auto"
 
 # Maximum schedule+synthesize passes before giving up on meeting timing by
 # adding states (mirrors SYN.AUTOPIPELINE_MAX_LATENCY_PASSES). Six rather than
@@ -139,7 +144,9 @@ _MAX_NAME_LEN = 96
 # real utilization number the way the fmax loop is closed around a real timing
 # report. The model therefore only ever RANKS candidate schedules against each
 # other, and the search always keeps the plain share-everything schedule as its
-# anchor -- so a mis-ranking costs an opportunity, never a regression.
+# anchor -- so it cannot regress according to the model. Whole-design synthesis
+# tests remain the authority for catching a model ranking that is wrong in
+# physical cells (especially under limited no-hierarchy/no-sweep synthesis).
 #
 # CALIBRATION. The ratios come from real yosys cell counts, which is the one
 # place in this project real area numbers exist (they are used in the test
@@ -267,6 +274,27 @@ MAX_SWEEP_MOVES = 24
 # symmetric, which is why this sits well above the largest mis-ranking seen
 # rather than just above it.
 SWEEP_MIN_IMPROVEMENT = 0.25
+
+# Extra confidence required when an OPEN move makes the scheduled shape much
+# larger than the written-grain anchor.  A per-leaf area sum cannot see
+# cross-instance sharing performed by flattened/no-hierarchy synthesis: it
+# prices every repeated leaf inside an atomic composite, then appears to remove
+# all those copies when the composite is opened and the leaves bind to one FU
+# each.  Real synthesis may already have shared much of the anchor, while the
+# opened FSM still pays for many more state-control decisions, live values and
+# mux inputs.  That is a systematic shape-dependent error, not noise that can
+# be fixed by retuning a measured mux or FF price.
+#
+# Require eight additional percentage points of modelled win per doubling of
+# scheduled operations or states relative to the anchor.  This applies only to
+# candidates that OPEN an entity; UNSHARE keeps the same DAG and its unit/mux/
+# register trade is represented directly by the measured model.  The value is
+# pinned by autofsm_min_area_verify_test.py: its 5-op/3-state anchor grows to
+# 254 ops/60 states, the raw per-leaf sum predicts a 59.6% win, and whole-design
+# yosys instead measures a 54.6% regression.  A 50.8x shape increase therefore
+# needs a 70.3% win before it is trusted.
+SWEEP_SHAPE_RISK_PER_DOUBLING = 0.08
+SWEEP_MAX_REQUIRED_IMPROVEMENT = 0.95
 
 # How many consecutive non-improving moves the search will walk through before
 # giving up.
@@ -1630,7 +1658,7 @@ def _LIVE_RANGES(nodes, output_ref, n_states):
     return out
 
 
-def ALLOCATE_REGISTERS(nodes, output_ref, n_states):
+def ALLOCATE_REGISTERS(nodes, output_ref, n_states, cross_fu_types=()):
     """Bind cross-state values to registers, letting values whose live ranges
     do not overlap SHARE one.
 
@@ -1647,11 +1675,13 @@ def ALLOCATE_REGISTERS(nodes, output_ref, n_states):
     interval graphs, and deterministic given the tie-break on node id -- which
     it has to be, since the generated source names come out of this.
 
-    TWO values may share a register only if they have the same c type AND COME
-    FROM THE SAME FUNCTIONAL UNIT. The type rule is obvious (a register is
-    declared at one type, and storing a narrower value in a wider one reads
-    back differently). The same-unit rule is the interesting one, and it is
-    what makes this optimization FREE:
+    Values always need the same c type. By default they must also come from the
+    same functional unit, which makes sharing free: the register has one data
+    source and merely gains more write-enable states. Types named by
+    `cross_fu_types` may additionally share across producing units; those
+    registers require a writeback mux, selected by the current state. The
+    schedule builder enables that only when real/modelled FF savings exceed the
+    mux area AND its measured/modelled delay fits the clock budget.
 
       * Same unit  -> the register's data input is that unit's output local in
         every state that writes it. The register gains extra write states, i.e.
@@ -1660,36 +1690,171 @@ def ALLOCATE_REGISTERS(nodes, output_ref, n_states):
         two units' outputs, sitting directly in front of a flip-flop, on what
         is usually already the critical path.
 
-    That second case is not a theoretical worry. Allowing it on the donut
-    example dropped the FSM from 42.4 MHz to 37.5 MHz -- one extra multiplexer
-    level in front of every shared register -- in exchange for a handful of
-    flip-flops. Registers are cheap and the clock period is not, so the
-    unconstrained version of this optimization is a bad trade even though it
-    does what it says on the tin.
+    That second case is not a theoretical worry: the old unconstrained
+    experiment dropped the donut FSM from 42.4 MHz to 37.5 MHz. That is why
+    this allocator never decides to cross units on its own; BUILD_SCHEDULE
+    supplies only the types whose FF/mux area comparison wins and whose
+    producer paths remain within budget after charging the writeback mux.
 
     Returns (nid -> register index, register index -> c type).
     """
     ranges = _LIVE_RANGES(nodes, output_ref, n_states)
     order = sorted(ranges, key=lambda nid: (ranges[nid][1], ranges[nid][2], nid))
-    free_at = []  # per register: (c type, producing unit, first state free)
+    cross_fu_types = set(cross_fu_types)
+    # per register: (c type, producing units, first state free)
+    free_at = []
     assignment = {}
     reg_types = {}
     for nid in order:
         ctype, lo, hi = ranges[nid]
         fu = nodes[nid].get("fu")
-        chosen = None
-        for idx, (reg_type, reg_fu, busy_until) in enumerate(free_at):
-            if reg_type == ctype and reg_fu == fu and busy_until < lo:
-                chosen = idx
-                break
+        candidates = []
+        for idx, (reg_type, reg_fus, busy_until) in enumerate(free_at):
+            same_source = fu in reg_fus
+            if (
+                reg_type == ctype
+                and (same_source or ctype in cross_fu_types)
+                and busy_until < lo
+            ):
+                # Preserve a single-source register whenever possible; after
+                # that, prefer the register with the fewest existing sources.
+                # Merely taking the first free interval can introduce a mux
+                # even though a later free register already has this FU as its
+                # source, losing area for no live-range benefit.
+                candidates.append((0 if same_source else 1, len(reg_fus), idx))
+        chosen = min(candidates)[2] if candidates else None
         if chosen is None:
             chosen = len(free_at)
-            free_at.append((ctype, fu, hi))
+            free_at.append((ctype, frozenset((fu,)), hi))
             reg_types[chosen] = ctype
         else:
-            free_at[chosen] = (ctype, fu, hi)
+            reg_fus = free_at[chosen][1] | frozenset((fu,))
+            free_at[chosen] = (ctype, reg_fus, hi)
         assignment[nid] = chosen
     return assignment, reg_types
+
+
+def _register_sources(nodes, reg_of):
+    sources = {}
+    for nid, idx in reg_of.items():
+        fu = nodes[nid].get("fu")
+        if fu is not None:
+            sources.setdefault(idx, set()).add(fu)
+    return sources
+
+
+def _stable_op_key(op):
+    """Hashable, deterministic identity for a decoded operation description."""
+    return json.dumps(op, sort_keys=True, default=str, separators=(",", ":"))
+
+
+def _value_equiv_key(nodes, ref, cur_state, reg_of, _seen=None):
+    """Structural identity of the expression `_Codegen._render_ref` emits.
+
+    Node ids alone are deliberately not an identity here.  Thirty-two
+    different subtract nodes bound to one FU all render as that FU's one output
+    local in their respective states; likewise, two separately elaborated glue
+    trees made from the same slices/constants render the same value.  This key
+    is the shared source of truth for operand-mux row coalescing in both the
+    area model and code generator.
+    """
+    kind = ref[0]
+    if kind == "in":
+        return ("in", ref[1])
+    if kind == "const":
+        return ("const", ref[1])
+    if kind != "node":
+        return ("unknown", tuple(ref))
+    nid = ref[1]
+    node = nodes.get(nid)
+    if node is None:
+        return ("missing", nid)
+    if node["delay_du"] > 0:
+        if node.get("state") == cur_state:
+            return ("fu_output", node.get("fu"), node.get("out_type"))
+        return ("register", reg_of.get(nid), node.get("out_type"))
+
+    _seen = set() if _seen is None else set(_seen)
+    if nid in _seen:
+        return ("glue_cycle", nid)
+    _seen.add(nid)
+    operands = []
+    assemble = node["op"].get("kind") == "assemble"
+    for i, operand in enumerate(node.get("operands", ())):
+        casts = tuple(node.get("casts", ())[i])
+        # Inline glue materializes its port type unless it is struct assembly;
+        # include that implicit cast in the equivalence key just as codegen does.
+        port_type = None if assemble else node.get("port_types", ())[i]
+        operands.append(
+            (
+                _value_equiv_key(nodes, operand, cur_state, reg_of, _seen),
+                casts,
+                port_type,
+            )
+        )
+    return (
+        "glue",
+        _stable_op_key(node["op"]),
+        node.get("out_type"),
+        tuple(operands),
+    )
+
+
+def _operand_equiv_key(nodes, node, port_i, reg_of):
+    return (
+        _value_equiv_key(
+            nodes, node["operands"][port_i], node["state"], reg_of
+        ),
+        tuple(node["casts"][port_i]),
+        node["port_types"][port_i],
+    )
+
+
+def _fu_nodes_in_emit_order(schedule, fu):
+    nodes = schedule["nodes"]
+    return sorted(
+        (
+            (nid, nodes[nid])
+            for nid in schedule["node_order"]
+            if nodes[nid].get("fu") == fu
+        ),
+        key=lambda pair: (pair[1]["state"], pair[0]),
+    )
+
+
+def _operand_mux_plan(schedule, fu, reg_of):
+    """Per-port distinct operand rows and state-to-row mappings for one FU.
+
+    Returns `(fu_nodes, ports)`, where each port is a dict containing the
+    representative node ids and one class index per FU user.  Class numbering
+    is first-use order, which is deterministic and keeps generated tables easy
+    to audit.
+    """
+    fu_nodes = _fu_nodes_in_emit_order(schedule, fu)
+    if not fu_nodes:
+        return fu_nodes, []
+    n_ports = len(fu_nodes[0][1]["operands"])
+    ports = []
+    for port_i in range(n_ports):
+        class_of = {}
+        representatives = []
+        mapping = []
+        for nid, node in fu_nodes:
+            key = _operand_equiv_key(schedule["nodes"], node, port_i, reg_of)
+            idx = class_of.get(key)
+            if idx is None:
+                idx = len(representatives)
+                class_of[key] = idx
+                representatives.append(nid)
+            mapping.append(idx)
+        ports.append(
+            {
+                "representatives": representatives,
+                "mapping": tuple(mapping),
+                "n_choices": len(representatives),
+            }
+        )
+    return fu_nodes, ports
 
 
 def _critical_path(dag, sched, preds):
@@ -1772,6 +1937,7 @@ def SCHEDULE_DAG(dag, budget_du, mux_du_of=None, max_states=None, copies=None):
 
     state_of = {}
     fu_of = {}
+    end_du_of = {}
     fu_edges = {}  # fu -> set of fus it feeds (within some state)
     at_floor = False
     worst_state_du = 0
@@ -1838,6 +2004,7 @@ def SCHEDULE_DAG(dag, budget_du, mux_du_of=None, max_states=None, copies=None):
             state_of[nid] = state
             fu_of[nid] = fu
             chain_end[nid] = end
+            end_du_of[nid] = end
             fus_used.add(fu)
             state_worst = max(state_worst, end)
             n_placed += 1
@@ -1872,6 +2039,7 @@ def SCHEDULE_DAG(dag, budget_du, mux_du_of=None, max_states=None, copies=None):
         "n_states": n_states,
         "state_of": state_of,
         "fu_of": fu_of,
+        "end_du_of": end_du_of,
         "at_floor": at_floor,
         "worst_state_du": worst_state_du,
         "fu_order": _topological_fu_order(used_fus, fu_edges),
@@ -1996,6 +2164,12 @@ def BUILD_SCHEDULE(
     two-bit multiplexer selecting its operands) sharing is a straight loss, and
     v1 had no way to decline it.
     """
+    # `auto` is a driver-level request because each encoding needs its own full
+    # area sweep. Keep the low-level builder useful to direct callers/tests by
+    # giving it the historical binary-table rendering when asked in isolation;
+    # HARVEST_AUTOFSM_SCHEDULES expands auto into both candidates below.
+    if ctl == "auto":
+        ctl = "v3"
     func_entity = _entity_key_for_callable(parser_state, tag.func)
     if func_entity is None:
         raise AutofsmError(
@@ -2032,11 +2206,10 @@ def BUILD_SCHEDULE(
             f"search will consider"
         )
 
-    # Operand-mux delays. A unit's fold count -- how many operations share it,
-    # and therefore how wide its operand mux must be -- is known BEFORE
-    # scheduling, because binding is by entity: every node of one entity binds
-    # to that entity's unit. So there is no fixpoint to chase here; the numbers
-    # the scheduler charges are the ones the generated FSM will actually build.
+    # Operand-mux delays. Scheduling conservatively charges the unit's fold
+    # count, which is known before states/registers exist. Codegen may later
+    # coalesce equal per-port values to a narrower mux (or a wire); it never
+    # emits anything wider than the delay the scheduler reserved here.
     types = _TypeResolver()
     for t in (tag.in_type, tag.out_type):
         types.seed(t)
@@ -2047,7 +2220,9 @@ def BUILD_SCHEDULE(
         e = dag["nodes"][nid]["entity"]
         folds[e] = folds.get(e, 0) + 1
     max_latency = getattr(tag, "max_latency", None)
-    max_states = (max_latency - 1) if max_latency else None
+    register_output = getattr(tag, "register_output", True)
+    output_cycles = 1 if register_output else 0
+    max_states = (max_latency - output_cycles) if max_latency else None
     copies = _replication_for_latency(folds, max_states)
     # The area search's unsharing choices, floored by whatever the latency cap
     # already forces and capped at one unit per operation (past which extra
@@ -2098,19 +2273,77 @@ def BUILD_SCHEDULE(
         nodes[nid] = dict(node)
         nodes[nid]["state"] = plan["state_of"].get(nid)
         nodes[nid]["fu"] = plan["fu_of"].get(nid)
+        nodes[nid]["end_du"] = plan["end_du_of"].get(nid)
     n_states = plan["n_states"]
+
+    # Cross-FU register reuse is an AREA decision with an explicit timing
+    # guard. A same-width sky130 FF costs 48.84 um2/bit while a 2:1 mux bank
+    # costs 29.304 um2/bit, so replacing a register with one more mux input is
+    # profitable there; the abstract FPGA-oriented model has the opposite
+    # ratio and keeps the old same-FU-only allocation. If any resulting
+    # writeback mux would exceed the state budget, disable cross-FU reuse for
+    # that type and allocate again. This conservative per-type fallback keeps
+    # the allocation pure and deterministic while never spending clock budget
+    # the model says is unavailable.
+    range_types = sorted(
+        {t for t, _lo, _hi in _LIVE_RANGES(nodes, dag["output"], n_states).values()}
+    )
+    cross_fu_types = set()
+    ff_area = _ff_area_um2(parser_state)
+    for ctype in range_types:
+        if (
+            _ctype_width(ctype) * ff_area
+            > _mux_bank_area_um2(parser_state, ctype)
+        ):
+            cross_fu_types.add(ctype)
+
+    writeback_mux_du = {}
+    while True:
+        reg_of, reg_types = ALLOCATE_REGISTERS(
+            nodes, dag["output"], n_states, cross_fu_types
+        )
+        sources = _register_sources(nodes, reg_of)
+        bad_types = set()
+        writeback_mux_du = {}
+        for idx, srcs in sorted(sources.items()):
+            if len(srcs) < 2:
+                continue
+            ctype = reg_types[idx]
+            du = _mux_delay_du(
+                parser_state, types, ctype, len(srcs), mux_snapshot
+            )
+            mux_snapshot.setdefault(f"{ctype}#{len(srcs)}", du)
+            writeback_mux_du[idx] = du
+            for nid, reg_idx in reg_of.items():
+                if reg_idx != idx:
+                    continue
+                end_du = nodes[nid].get("end_du") or 0
+                if end_du + du > budget_du:
+                    bad_types.add(ctype)
+                    break
+        if not (bad_types & cross_fu_types):
+            break
+        cross_fu_types -= bad_types
+
+    worst_state_du = plan["worst_state_du"]
+    for nid, idx in reg_of.items():
+        worst_state_du = max(
+            worst_state_du,
+            (nodes[nid].get("end_du") or 0) + writeback_mux_du.get(idx, 0),
+        )
     schedule_core = {
         "version": SCHEDULE_VERSION,
         "key": key,
         "ctl": ctl,
+        "register_output": register_output,
         "func_entity": func_entity,
         "n_states": n_states,
-        "latency": n_states + 1,
+        "latency": n_states + output_cycles,
         "max_latency": max_latency,
         "latency_infeasible": plan["latency_infeasible"],
         "budget_scale": budget_scale,
         "budget_du": budget_du,
-        "worst_state_du": plan["worst_state_du"],
+        "worst_state_du": worst_state_du,
         "at_floor": plan["at_floor"],
         "nodes": nodes,
         "node_order": sorted(nodes),
@@ -2121,6 +2354,7 @@ def BUILD_SCHEDULE(
         "out_type": dag["out_type"],
         "entity_delays_snapshot": delays,
         "mux_delays_snapshot": mux_snapshot,
+        "cross_fu_register_types": sorted(cross_fu_types),
         "opened": list(opened),
         "unshared": [list(pair) for pair in unshared],
     }
@@ -2480,53 +2714,113 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
         fu = node.get("fu")
         if fu:
             users.setdefault(fu, []).append(nid)
-    for fu, nids in sorted(users.items()):
-        n = len(nids)
-        if n < 2:
-            continue
-        for ctype in nodes[nids[0]]["port_types"]:
-            total += (n - 1) * _mux_bank_area_um2(parser_state, ctype, tally)
 
     reg_of, reg_types = ALLOCATE_REGISTERS(
-        nodes, schedule["output"], schedule["n_states"]
+        nodes,
+        schedule["output"],
+        schedule["n_states"],
+        schedule.get("cross_fu_register_types", ()),
     )
+    mux_plans = {}
+    for fu in sorted(users):
+        fu_nodes, ports = _operand_mux_plan(schedule, fu, reg_of)
+        mux_plans[fu] = (fu_nodes, ports)
+        if not fu_nodes:
+            continue
+        for port_i, port in enumerate(ports):
+            n = port["n_choices"]
+            if n < 2:
+                continue
+            ctype = fu_nodes[0][1]["port_types"][port_i]
+            total += (n - 1) * _mux_bank_area_um2(
+                parser_state, ctype, tally
+            )
     # The input latch is deliberately not counted: it is the same width in
     # every candidate for a given function, so it cannot change a ranking.
     total += _reg_bits_from_types(schedule, reg_types) * _ff_area_um2(parser_state)
 
     n_states = schedule["n_states"]
     statew = max(1, int(n_states).bit_length())
-    if schedule.get("ctl", DEFAULT_CTL) == "v2":
-        # No multiplexer term for shared registers: ALLOCATE_REGISTERS only
-        # merges values coming from the same unit, so a shared register's data
-        # input is one unchanged wire and only its write enable widens.
+    ctl = schedule.get("ctl", "v3")
+    if ctl == "v2":
         total += n_states * AREA_PER_STATE_DECODE * scale
-    else:
-        # One select table per shared unit, sized by its select width...
-        for fu, nids in sorted(users.items()):
-            n = len(nids)
-            if n < 2:
+    elif ctl == "onehot":
+        # State bits ARE the decode. Operand/writeback selectors only need OR
+        # trees when several hot states select the same output bit; next-state
+        # advance and the output pulse are wires. This is intentionally priced
+        # separately from v3's lookup tables so auto encoding has a meaningful
+        # area comparison rather than inheriting v3's control estimate.
+        for fu in sorted(users):
+            _fu_nodes, ports = mux_plans[fu]
+            selector_shapes = {
+                (port["mapping"], port["n_choices"])
+                for port in ports
+                if port["n_choices"] >= 2
+            }
+            for mapping, n in sorted(selector_shapes):
+                for bit in range(max(1, (n - 1).bit_length())):
+                    terms = sum(1 for row in mapping if (row >> bit) & 1)
+                    total += max(0, terms - 1) * AREA_PER_BIT_BITWISE * scale
+        writes_by_reg = {}
+        for nid, idx in reg_of.items():
+            writes_by_reg.setdefault(idx, set()).add(nodes[nid]["state"])
+        for states in writes_by_reg.values():
+            total += max(0, len(states) - 1) * AREA_PER_BIT_BITWISE * scale
+        for idx, srcs in sorted(_register_sources(nodes, reg_of).items()):
+            if len(srcs) < 2:
                 continue
-            total += max(1, (n - 1).bit_length()) * AREA_PER_CTL_LUT_BIT * scale
+            nids = sorted(
+                (nid for nid, reg_idx in reg_of.items() if reg_idx == idx),
+                key=lambda nid: (nodes[nid]["state"], nid),
+            )
+            source_rows = {}
+            rows = []
+            for nid in nids:
+                src = nodes[nid]["fu"]
+                if src not in source_rows:
+                    source_rows[src] = len(source_rows)
+                rows.append(source_rows[src])
+            for bit in range(max(1, (len(srcs) - 1).bit_length())):
+                terms = sum(1 for row in rows if (row >> bit) & 1)
+                total += max(0, terms - 1) * AREA_PER_BIT_BITWISE * scale
+        # idle-and-valid plus idle-and-not-valid in the one-hot transition.
+        total += 2 * AREA_PER_BIT_BITWISE * scale
+    else:
+        # One select table per DISTINCT state-to-choice mapping. Ports whose
+        # operands coalesce the same way share a selector; constant ports need
+        # none at all.
+        for fu in sorted(users):
+            _fu_nodes, ports = mux_plans[fu]
+            selector_shapes = {
+                (port["mapping"], port["n_choices"])
+                for port in ports
+                if port["n_choices"] >= 2
+            }
+            for _mapping, n in sorted(selector_shapes):
+                total += (
+                    max(1, (n - 1).bit_length())
+                    * AREA_PER_CTL_LUT_BIT
+                    * scale
+                )
         # ...one one-bit write-enable table per register, plus the next-state
         # table and the output-write pulse.
         total += len(reg_types) * AREA_PER_CTL_LUT_BIT * scale
-        total += (statew + 1) * AREA_PER_CTL_LUT_BIT * scale
-        # Writeback source multiplexers. Zero under today's allocator (a shared
-        # register's values all come from one unit), so this term exists to
-        # price cross-unit register sharing correctly if that is ever enabled:
-        # such a register needs a real mux in front of its data input.
-        srcs_per_reg = {}
-        for nid, idx in reg_of.items():
-            fu = nodes[nid].get("fu")
-            if fu is not None:
-                srcs_per_reg.setdefault(idx, set()).add(fu)
-        for idx, srcs in sorted(srcs_per_reg.items()):
+        for srcs in _register_sources(nodes, reg_of).values():
             if len(srcs) > 1:
-                total += (len(srcs) - 1) * _mux_bank_area_um2(
-                    parser_state, reg_types[idx], tally
+                total += (
+                    max(1, (len(srcs) - 1).bit_length())
+                    * AREA_PER_CTL_LUT_BIT
+                    * scale
                 )
+        total += (statew + 1) * AREA_PER_CTL_LUT_BIT * scale
         total += n_states * AREA_PER_STATE_CTL * scale
+    # A cross-FU shared register needs a real source mux regardless of control
+    # encoding. Same-FU reuse has one unchanged data wire and costs zero here.
+    for idx, srcs in sorted(_register_sources(nodes, reg_of).items()):
+        if len(srcs) > 1:
+            total += (len(srcs) - 1) * _mux_bank_area_um2(
+                parser_state, reg_types[idx], tally
+            )
     return total
 
 
@@ -2611,6 +2905,33 @@ def FORCE_SCHEDULE(
     )
     schedule["forced"] = True
     return schedule
+
+
+def _scheduled_op_count(schedule):
+    return sum(1 for node in schedule["nodes"].values() if node.get("fu"))
+
+
+def _sweep_required_improvement(anchor, candidate):
+    """Minimum raw model win needed to make `candidate` the incumbent.
+
+    SWEEP_MIN_IMPROVEMENT handles ordinary ranking noise. OPEN candidates
+    additionally pay a confidence margin based on how far their generated
+    control/data-selection shape moved from the written-grain anchor; see
+    SWEEP_SHAPE_RISK_PER_DOUBLING above.
+    """
+    if not candidate.get("opened"):
+        return SWEEP_MIN_IMPROVEMENT
+    growth = max(
+        1.0,
+        _scheduled_op_count(candidate)
+        / float(max(1, _scheduled_op_count(anchor))),
+        candidate["n_states"] / float(max(1, anchor["n_states"])),
+    )
+    return min(
+        SWEEP_MAX_REQUIRED_IMPROVEMENT,
+        SWEEP_MIN_IMPROVEMENT
+        + SWEEP_SHAPE_RISK_PER_DOUBLING * math.log(growth, 2.0),
+    )
 
 
 def SWEEP_MIN_AREA_SCHEDULE(
@@ -2711,25 +3032,15 @@ def SWEEP_MIN_AREA_SCHEDULE(
             # This made some state unschedulable at the clock goal. More area
             # for worse timing is never the trade being looked for here.
             return None, "rejected: a state stopped fitting the clock goal"
-        if sched["worst_state_du"] > anchor["worst_state_du"]:
-            # THE SEARCH MAY NOT SPEND TIMING MARGIN. A candidate whose worst
-            # state is longer than the anchor's still "fits the budget" by the
-            # delay model's reckoning, but the delay model is an estimate and
-            # the budget is a guess at how much of the clock period the FSM's
-            # own control will leave -- so a schedule that eats the difference
-            # is buying area with margin that may not have been there.
-            #
-            # This is not hypothetical: the donut example's search found a real
-            # 8% area saving by opening three comparators onto a shared
-            # subtractor, pushed the worst state from 13.7 ns to 17.1 ns, and
-            # turned a design that met 40 MHz into one that missed it at 36 MHz.
-            # Trading latency for timing is the DRIVER's job (it tightens the
-            # per-state budget and reschedules); the search's job is area at
-            # equal-or-better timing, and nothing else.
+        if sched["worst_state_du"] > sched["budget_du"]:
+            # Area is the objective; unused timing margin is available to buy
+            # it. The hard boundary is the declared clock budget, not the
+            # anchor's incidental (often much shorter) worst state. Real
+            # synthesis still confirms the result and the driver's existing
+            # tighten/reschedule loop recovers from model optimism.
             return None, (
                 f"rejected: worst state {sched['worst_state_du'] / 10.0:.2f} ns "
-                f"exceeds the anchor's {anchor['worst_state_du'] / 10.0:.2f} ns "
-                f"(may not spend timing margin)"
+                f"exceeds its {sched['budget_du'] / 10.0:.2f} ns budget"
             )
         return sched, "considered"
 
@@ -2788,12 +3099,29 @@ def SWEEP_MIN_AREA_SCHEDULE(
         # MAX_SWEEP_UPHILL. The incumbent BEST is what gets returned, so
         # walking uphill can only ever discover something, never lose anything.
         cur = sched
-        improved = cost < best_cost * (1.0 - SWEEP_MIN_IMPROVEMENT)
+        min_win = _sweep_required_improvement(anchor, sched)
+        # The ordinary best-to-best threshold suppresses local model noise.
+        # The anchor-relative threshold is the structural confidence guard:
+        # walking farther through an opened DAG must not make a known modelling
+        # blind spot look progressively more authoritative.
+        improved = (
+            cost < best_cost * (1.0 - SWEEP_MIN_IMPROVEMENT)
+            and cost < anchor_cost * (1.0 - min_win)
+        )
         if debug:
+            confidence = (
+                ""
+                if min_win == SWEEP_MIN_IMPROVEMENT
+                else f", shape guard needs {min_win * 100.0:.1f}% vs anchor"
+            )
             print(
                 f"AUTOFSM {key}: sweep move {_move}: took {label[0]} "
                 f"{label[1]} at est {cost:.0f} vs best {best_cost:.0f} -- "
-                + ("NEW BEST" if improved else f"uphill {uphill + 1}"),
+                + (
+                    "NEW BEST"
+                    if improved
+                    else f"uphill {uphill + 1}{confidence}"
+                ),
                 flush=True,
             )
         if improved:
@@ -2888,28 +3216,54 @@ def HARVEST_AUTOFSM_SCHEDULES(
             )
         budget_scale = budget_scales.get(key, DEFAULT_BUDGET_SCALE)
         prev = prev_schedules.get(key)
-        if force_open or force_unshare:
-            # An explicitly requested point of the search space overrides the
-            # search entirely -- this is the A/B measurement path, not a hint.
-            schedules[key] = FORCE_SCHEDULE(
-                parser_state,
-                key,
-                tag,
-                budget_scale,
-                prev,
-                ctl=ctl,
-                open_patterns=force_open,
-                unshare_patterns=force_unshare,
+
+        def build_mode(mode):
+            if force_open or force_unshare:
+                # An explicitly requested point of the search space overrides
+                # the grain/binding search, but auto may still compare its
+                # control encodings at that exact point.
+                return FORCE_SCHEDULE(
+                    parser_state,
+                    key,
+                    tag,
+                    budget_scale,
+                    prev,
+                    ctl=mode,
+                    open_patterns=force_open,
+                    unshare_patterns=force_unshare,
+                )
+            if area_sweep:
+                return SWEEP_MIN_AREA_SCHEDULE(
+                    parser_state,
+                    key,
+                    tag,
+                    budget_scale,
+                    prev,
+                    ctl=mode,
+                    debug=sweep_debug,
+                )
+            return BUILD_SCHEDULE(
+                parser_state, key, tag, budget_scale, prev, ctl=mode
             )
-        elif area_sweep:
-            schedules[key] = SWEEP_MIN_AREA_SCHEDULE(
-                parser_state, key, tag, budget_scale, prev, ctl=ctl,
-                debug=sweep_debug,
+
+        modes = ("v3", "onehot") if ctl == "auto" else (ctl,)
+        variants = []
+        for mode in modes:
+            candidate = build_mode(mode)
+            cost = candidate.get("est_area")
+            if cost is None:
+                cost = ESTIMATE_SCHEDULE_AREA(parser_state, candidate)
+            feasible = (
+                not candidate["latency_infeasible"]
+                and candidate["worst_state_du"] <= candidate["budget_du"]
             )
-        else:
-            schedules[key] = BUILD_SCHEDULE(
-                parser_state, key, tag, budget_scale, prev, ctl=ctl
-            )
+            variants.append((not feasible, cost, mode, candidate))
+        _bad, _cost, _mode, selected = min(variants, key=lambda v: v[:3])
+        if ctl == "auto":
+            selected["ctl_auto_candidates"] = {
+                mode: round(cost, 3) for _bad, cost, mode, _candidate in variants
+            }
+        schedules[key] = selected
     return schedules
 
 
@@ -2982,13 +3336,14 @@ def SCHEDULES_EQUAL(a, b) -> bool:
 
 def _reg_bits_from_types(schedule, reg_types):
     """Total register bits given an allocation's reg_types: every register's
-    own width, plus the output and state registers. Shared by
-    ESTIMATE_SCHEDULE_AREA (which already has reg_types from its own
+    own width, plus the state register and optional output data/valid bank.
+    Shared by ESTIMATE_SCHEDULE_AREA (which already has reg_types from its own
     ALLOCATE_REGISTERS call) and _register_bit_count (which needs the same
     total on its own, with no other area computation)."""
     reg_bits = sum(_ctype_width(t) for t in reg_types.values())
-    reg_bits += _ctype_width(schedule["out_type"])
-    if schedule.get("ctl", DEFAULT_CTL) == "onehot":
+    if schedule.get("register_output", True):
+        reg_bits += _ctype_width(schedule["out_type"]) + 1  # data + valid
+    if schedule.get("ctl", "v3") == "onehot":
         # One flip-flop per state plus idle, where binary needs only log2.
         reg_bits += schedule["n_states"] + 1
     else:
@@ -2999,7 +3354,7 @@ def _reg_bits_from_types(schedule, reg_types):
 def _register_bit_count(schedule):
     """Total register bits ALLOCATE_REGISTERS commits a schedule to: every
     cross-state value (sharing where live ranges and functional unit both
-    allow it) plus the output and state registers -- exactly what
+    allow it) plus the state and optional output registers -- exactly what
     ESTIMATE_SCHEDULE_AREA prices, recomputed here (cheap: pure function of
     an already-built schedule, no rescheduling) so DESCRIBE_SCHEDULE can
     print it regardless of whether the area sweep ran. This is AUTOFSM's OWN
@@ -3011,7 +3366,10 @@ def _register_bit_count(schedule):
     count is what checks whether AUTOFSM's allocator has a comparable gap.
     """
     _reg_of, reg_types = ALLOCATE_REGISTERS(
-        schedule["nodes"], schedule["output"], schedule["n_states"]
+        schedule["nodes"],
+        schedule["output"],
+        schedule["n_states"],
+        schedule.get("cross_fu_register_types", ()),
     )
     return _reg_bits_from_types(schedule, reg_types)
 
@@ -3037,6 +3395,14 @@ def DESCRIBE_SCHEDULE(parser_state, key, schedule) -> str:
         f"worst state {worst_ns:.2f} ns{floor}"
     )
     line += f"\n  register bits: {_register_bit_count(schedule)}"
+    ctl_candidates = schedule.get("ctl_auto_candidates")
+    if ctl_candidates:
+        scores = ", ".join(
+            f"{mode} {cost:.0f}" for mode, cost in sorted(ctl_candidates.items())
+        )
+        line += f"\n  control encoding: {schedule['ctl']} selected ({scores})"
+    else:
+        line += f"\n  control encoding: {schedule.get('ctl', 'v3')}"
     est = schedule.get("est_area")
     if est is not None:
         anchor = schedule.get("est_area_anchor") or est
@@ -3374,7 +3740,8 @@ class _Codegen:
            committed at the last clock edge (pypeline assignment is sequential,
            so a later write in the same body would otherwise be visible to an
            earlier-written read)
-        -> drive outputs from the output registers
+        -> drive registered outputs, or expose the final-state value directly
+           when an enclosing wrapper already owns the output register
         -> accept a new input when idle
         -> for each shared unit, in a fixed order: multiplex its operands by
            state, then ONE call site -- the single call site is the whole point,
@@ -3388,10 +3755,11 @@ class _Codegen:
         self.parser_state = parser_state
         self.nodes = schedule["nodes"]
         self.n_states = schedule["n_states"]
+        self.register_output = schedule.get("register_output", True)
         # Control-path rendering, see CTL_CHOICES. Schedules built before this
         # field existed cannot reach here (SCHEDULE_VERSION gates them), so the
         # default is for hand-built test schedules only.
-        self.ctl = schedule.get("ctl", DEFAULT_CTL)
+        self.ctl = schedule.get("ctl", "v3")
         self.em = _Emitter()
         self.types = _TypeResolver()
         self.local_of_node = {}  # node id -> local name holding its result
@@ -3618,8 +3986,12 @@ class _Codegen:
         # ALLOCATE_REGISTERS; on a heavily shared FSM this is typically the
         # largest single area saving available).
         reg_of, reg_types = ALLOCATE_REGISTERS(
-            self.nodes, schedule["output"], self.n_states
+            self.nodes,
+            schedule["output"],
+            self.n_states,
+            schedule.get("cross_fu_register_types", ()),
         )
+        self.reg_of = reg_of
         cross = sorted(reg_of)
         reg_names = {nid: f"v{reg_of[nid]}" for nid in cross}
 
@@ -3633,8 +4005,9 @@ class _Codegen:
         for idx in sorted(reg_types):
             t = em.inj(self.types.resolve(reg_types[idx]), "t")
             em.line(f"    v{idx}_r: Reg[{t}]")
-        em.line(f"    out_data_r: Reg[{out_t}]")
-        em.line(f"    out_valid_r: Reg[{u1_t}]")
+        if self.register_output:
+            em.line(f"    out_data_r: Reg[{out_t}]")
+            em.line(f"    out_valid_r: Reg[{u1_t}]")
         em.line(
             "    # Snapshot committed state before any write below "
             "(pypeline assignment is sequential)"
@@ -3650,8 +4023,9 @@ class _Codegen:
         for nid in cross:
             self.reg_of_node[nid] = reg_names[nid]
         em.line(f"    o: {out_stream_t}")
-        em.line("    o.data = out_data_r")
-        em.line("    o.valid = out_valid_r")
+        if self.register_output:
+            em.line("    o.data = out_data_r")
+            em.line("    o.valid = out_valid_r")
         if onehot:
             # Assemble the next one-hot state directly: shift the hot bit along
             # and wrap the last state back to idle. No override contract is
@@ -3670,7 +4044,7 @@ class _Codegen:
                 f"({self._st_bit(0)} & (s.valid ^ 1))"
             )
             em.line("    st1h_r = ns1h")
-        elif self.ctl == "v2":
+        elif self.ctl == "v2" and self.register_output:
             em.line("    out_valid_r = 0")
         else:
             # Next state from a constant LUT rather than a comparator per state.
@@ -3727,7 +4101,10 @@ class _Codegen:
         # and a local first declared inside one branch would have no type on
         # the other paths. Computing it unconditionally costs nothing -- it is
         # combinational either way, and only the register's enable is gated.
-        em.line("    # Final result (registered in the last state below)")
+        if self.register_output:
+            em.line("    # Final result (registered in the last state below)")
+        else:
+            em.line("    # Final result (visible directly in the last state)")
         self.cur_state = self.n_states
         out_expr = self._render_ref(schedule["output"])
         for ctype in schedule["output_casts"]:
@@ -3745,11 +4122,15 @@ class _Codegen:
                             f"        {reg_names[nid]}_r = {self.local_of_node[nid]}"
                         )
                 if state == self.n_states:
-                    em.line(f"        out_data_r = {out_expr}")
-                    em.line("        out_valid_r = 1")
+                    if self.register_output:
+                        em.line(f"        out_data_r = {out_expr}")
+                        em.line("        out_valid_r = 1")
                     em.line("        st_r = 0")
                 else:
                     em.line(f"        st_r = {state + 1}")
+            if not self.register_output:
+                em.line(f"    o.data = {out_expr}")
+                em.line(f"    o.valid = st == {self.n_states}")
         else:
             # One write-enable bit per register, read from a constant table.
             # `if <uint1>:` is pure clock-enable gating -- PY_TO_LOGIC only
@@ -3773,22 +4154,65 @@ class _Codegen:
             for nid in cross:
                 by_reg.setdefault(reg_of[nid], []).append(nid)
             for idx in sorted(by_reg):
-                nids = by_reg[idx]
-                srcs = sorted({self.local_of_node[nid] for nid in nids})
-                if len(srcs) != 1:
-                    # Structurally impossible today: ALLOCATE_REGISTERS shares a
-                    # register only between values produced by the SAME unit, and
-                    # every node of a unit reads back from that unit's one output
-                    # local. If the allocator is ever relaxed to share across
-                    # units, this register needs a source multiplexer (the
-                    # measured make_operand_mux shape) in front of it, not just an
-                    # enable -- see AUTOFSM_DESIGN.md's future work.
-                    raise AutofsmError(
-                        f"AUTOFSM: register v{idx} would be written from "
-                        f"{len(srcs)} different sources ({', '.join(srcs)}). "
-                        f"Cross-unit register sharing needs a writeback "
-                        f"multiplexer, which is not implemented."
-                    )
+                nids = sorted(
+                    by_reg[idx], key=lambda nid: (self.nodes[nid]["state"], nid)
+                )
+                src_index = {}
+                srcs = []
+                src_rows = []
+                for nid in nids:
+                    src = self.local_of_node[nid]
+                    if src not in src_index:
+                        src_index[src] = len(srcs)
+                        srcs.append(src)
+                    src_rows.append(src_index[src])
+                write_src = srcs[0]
+                if len(srcs) > 1:
+                    reg_t = self.types.resolve(reg_types[idx])
+                    t = em.inj(reg_t, "t")
+                    sel_t_obj = _mux_sel_type(len(srcs))
+                    sel_t = em.inj(sel_t_obj, "t")
+                    sel_name = f"v{idx}_wsel"
+                    if onehot:
+                        em.line(f"    {sel_name}: {sel_t} = 0")
+                        selw = max(1, (len(srcs) - 1).bit_length())
+                        for bit in range(selw):
+                            states = [
+                                self.nodes[nid]["state"]
+                                for nid, row in zip(nids, src_rows)
+                                if (row >> bit) & 1
+                            ]
+                            if states:
+                                em.line(
+                                    f"    {sel_name}[{bit}:{bit}] = "
+                                    f"{self._st_bits_or(states)}"
+                                )
+                    else:
+                        lut = [0] * (self.n_states + 1)
+                        for nid, row in zip(nids, src_rows):
+                            lut[self.nodes[nid]["state"]] = row
+                        lut_t = em.inj(sel_t_obj[self.n_states + 1], "t")
+                        em.line(f"    v{idx}_wslut: {lut_t} = {lut!r}")
+                        em.line(f"    {sel_name}: {sel_t} = v{idx}_wslut[st]")
+                    mux_fn = _mux_callable(reg_t, len(srcs))
+                    if mux_fn is not None:
+                        choices_t = em.inj(reg_t[len(srcs)], "t")
+                        em.line(f"    v{idx}_wchoices: {choices_t}")
+                        for row, src in enumerate(srcs):
+                            em.line(f"    v{idx}_wchoices[{row}] = {src}")
+                        write_src = f"v{idx}_wsrc"
+                        em.line(
+                            f"    {write_src}: {t} = "
+                            f"{em.inj(mux_fn, 'mux')}({sel_name}, v{idx}_wchoices)"
+                        )
+                        self._note_mux_entity(reg_t, len(srcs))
+                    else:
+                        write_src = f"v{idx}_wsrc"
+                        em.line(f"    {write_src}: {t} = {srcs[0]}")
+                        for row, src in enumerate(srcs[1:], start=1):
+                            kw = "if" if row == 1 else "elif"
+                            em.line(f"    {kw} {sel_name} == {row}:")
+                            em.line(f"        {write_src} = {src}")
                 if onehot:
                     states = {self.nodes[nid]["state"] for nid in nids}
                     em.line(
@@ -3801,7 +4225,7 @@ class _Codegen:
                     em.line(f"    v{idx}_wel: {we_lut_t} = {wel!r}")
                     em.line(f"    v{idx}_we: {u1_t} = v{idx}_wel[st]")
                 em.line(f"    if v{idx}_we:")
-                em.line(f"        v{idx}_r = {srcs[0]}")
+                em.line(f"        v{idx}_r = {write_src}")
             if onehot:
                 em.line(
                     f"    ow: {u1_t} = {self._st_bit(self.n_states)}"
@@ -3812,9 +4236,13 @@ class _Codegen:
                 ow[self.n_states] = 1
                 em.line(f"    ow_lut: {we_lut_t} = {ow!r}  # last-state pulse")
                 em.line(f"    ow: {u1_t} = ow_lut[st]")
-            em.line("    if ow:")
-            em.line(f"        out_data_r = {out_expr}")
-            em.line("    out_valid_r = ow")
+            if self.register_output:
+                em.line("    if ow:")
+                em.line(f"        out_data_r = {out_expr}")
+                em.line("    out_valid_r = ow")
+            else:
+                em.line(f"    o.data = {out_expr}")
+                em.line("    o.valid = ow")
         em.line("    return o")
 
         em.globals["hw_func"] = hw_func
@@ -3869,18 +4297,26 @@ class _Codegen:
             f"    # {self.schedule['fus'].get(fu, fu)}: {n_users} "
             f"operation(s) sharing one unit"
         )
-        exprs = {}
-        for nid, node in fu_nodes:
-            self.cur_state = node["state"]
-            exprs[nid] = [self._render_operand(node, i) for i in range(n_ports)]
-
         first_nid, first_node = fu_nodes[0]
-        if n_users > 1:
-            # Which of this unit's users is running: 0 for the first, 1 for the
-            # next, and so on in ascending state order (fu_nodes is emitted in
-            # node_order, so sort explicitly to make the mapping deterministic).
-            sel_name = f"{prefix}_sel"
-            sel_elem_t = _mux_sel_type(n_users)
+        _planned_nodes, port_plans = _operand_mux_plan(
+            self.schedule, fu, self.reg_of
+        )
+        assert [nid for nid, _node in _planned_nodes] == [
+            nid for nid, _node in fu_nodes
+        ]
+
+        # A selector belongs to a state-to-DISTINCT-CHOICE mapping, not to the
+        # FU as a whole. Constant ports need none; two ports with the same
+        # mapping share one table/encoder.
+        selector_of = {}
+
+        def selector(mapping, n_choices):
+            selector_key = (tuple(mapping), n_choices)
+            hit = selector_of.get(selector_key)
+            if hit is not None:
+                return hit
+            sel_name = f"{prefix}_sel{len(selector_of)}"
+            sel_elem_t = _mux_sel_type(n_choices)
             sel_t = em.inj(sel_elem_t, "t")
             if self.ctl == "onehot":
                 # The operand mux is a MEASURED balanced tree and needs a
@@ -3890,12 +4326,12 @@ class _Codegen:
                 # pays a constant table, and measuring which is cheaper is the
                 # entire point of the ctl "onehot" experiment.
                 em.line(f"    {sel_name}: {sel_t} = 0")
-                selw = max(1, (n_users - 1).bit_length())
+                selw = max(1, (n_choices - 1).bit_length())
                 for j in range(selw):
                     hot = [
                         node["state"]
-                        for idx, (_nid, node) in enumerate(fu_nodes)
-                        if (idx >> j) & 1
+                        for row, (_nid, node) in zip(mapping, fu_nodes)
+                        if (row >> j) & 1
                     ]
                     if hot:
                         em.line(
@@ -3903,52 +4339,66 @@ class _Codegen:
                         )
             elif self.ctl == "v2":
                 em.line(f"    {sel_name}: {sel_t} = 0")
-                for idx, (nid, node) in enumerate(fu_nodes[1:], start=1):
-                    kw = "if" if idx == 1 else "elif"
+                branch = 0
+                for row, (_nid, node) in zip(mapping, fu_nodes):
+                    if row == 0:
+                        continue
+                    kw = "if" if branch == 0 else "elif"
                     em.line(f"    {kw} st == {node['state']}:")
-                    em.line(f"        {sel_name} = {idx}")
+                    em.line(f"        {sel_name} = {row}")
+                    branch += 1
             else:
                 # One constant table read instead of a comparator per fold: the
                 # states this unit does NOT run in read 0, which is harmless
                 # because the unit's output is only captured where a write
                 # enable says so.
                 lut = [0] * (self.n_states + 1)
-                for idx, (_nid, node) in enumerate(fu_nodes):
-                    lut[node["state"]] = idx
+                for row, (_nid, node) in zip(mapping, fu_nodes):
+                    lut[node["state"]] = row
                 lut_t = em.inj(sel_elem_t[self.n_states + 1], "t")
-                em.line(f"    {prefix}_slut: {lut_t} = {lut!r}  # state -> fold index")
-                em.line(f"    {sel_name}: {sel_t} = {prefix}_slut[st]")
+                lut_name = f"{sel_name}_lut"
+                em.line(
+                    f"    {lut_name}: {lut_t} = {lut!r}  "
+                    "# state -> distinct operand"
+                )
+                em.line(f"    {sel_name}: {sel_t} = {lut_name}[st]")
+            selector_of[selector_key] = sel_name
+            return sel_name
 
         for i, arg in enumerate(arg_names):
             port_t = self.types.resolve(first_node["port_types"][i])
             t = em.inj(port_t, "t")
-            mux_fn = _mux_callable(port_t, n_users) if n_users > 1 else None
+            port_plan = port_plans[i]
+            reps = port_plan["representatives"]
+            n_choices = port_plan["n_choices"]
+            exprs = []
+            for nid in reps:
+                node = self.nodes[nid]
+                self.cur_state = node["state"]
+                exprs.append(self._render_operand(node, i))
+            if n_choices == 1:
+                em.line(f"    {arg}: {t} = {exprs[0]}")
+                continue
+            sel_name = selector(port_plan["mapping"], n_choices)
+            mux_fn = _mux_callable(port_t, n_choices)
             if mux_fn is None:
-                # One user, or a port type that cannot be arrayed: no mux entity
-                # (the fallback keeps v1's inline form, which is correct just
-                # not as fast).
-                em.line(f"    {arg}: {t} = {exprs[first_nid][i]}")
-                if n_users > 1:
-                    for idx, (nid, node) in enumerate(fu_nodes[1:], start=1):
-                        kw = "if" if idx == 1 else "elif"
-                        # Branch on the already-decoded fold index, not on the
-                        # state: v3's whole point is that `st` is compared once
-                        # per FSM, in the accept.
-                        if self.ctl == "v2":
-                            em.line(f"    {kw} st == {node['state']}:")
-                        else:
-                            em.line(f"    {kw} {sel_name} == {idx}:")
-                        em.line(f"        {arg} = {exprs[nid][i]}")
+                # A compound type that cannot be arrayed keeps an inline
+                # fallback, but still switches only among distinct values.
+                em.line(f"    {arg}: {t} = {exprs[0]}")
+                for idx, expr in enumerate(exprs[1:], start=1):
+                    kw = "if" if idx == 1 else "elif"
+                    em.line(f"    {kw} {sel_name} == {idx}:")
+                    em.line(f"        {arg} = {expr}")
                 continue
             arr_name = f"{prefix}_c{i}"
-            arr_t = em.inj(port_t[n_users], "t")
+            arr_t = em.inj(port_t[n_choices], "t")
             em.line(f"    {arr_name}: {arr_t}")
-            for idx, (nid, _node) in enumerate(fu_nodes):
-                em.line(f"    {arr_name}[{idx}] = {exprs[nid][i]}")
+            for idx, expr in enumerate(exprs):
+                em.line(f"    {arr_name}[{idx}] = {expr}")
             em.line(
                 f"    {arg}: {t} = {em.inj(mux_fn, 'mux')}({sel_name}, {arr_name})"
             )
-            self._note_mux_entity(port_t, n_users)
+            self._note_mux_entity(port_t, n_choices)
 
         out_ct = em.inj(self.types.resolve(first_node["out_type"]), "t")
         self.cur_state = first_node["state"]
