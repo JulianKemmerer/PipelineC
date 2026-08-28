@@ -89,6 +89,14 @@ parser.add_argument(
     action="store_true",
 )
 parser.add_argument(
+    "--autofsm_abstract_area",
+    help="Rank AUTOFSM's area search with the abstract per-bit model "
+    "(AREA_* constants) even under --syn_tool sky130, instead of real cached "
+    "leaf/register/multiplexer um2. Real area is used automatically whenever "
+    "it is available; this is the escape hatch for A/B comparison against it.",
+    action="store_true",
+)
+parser.add_argument(
     "--autofsm_sweep_debug",
     help="Print one line per candidate schedule the AUTOFSM minimum-area search "
     "considers: the move, its estimated area, and why it was accepted or "
@@ -368,6 +376,10 @@ elif args.syn_tool == "sky130":
     SYN.SYN_TOOL = SYN.DEVICE_MODELS
 # Mux path-delay cache key override (None = automatic per SYN_TOOL)
 SYN.MUX_DELAY_KEY_BY_WIDTH = args.mux_delay_by_width
+# AUTOFSM area-search escape hatch: real sky130 um2 is used automatically
+# whenever SYN.SYN_TOOL is DEVICE_MODELS; this forces the abstract per-bit
+# model instead, for A/B comparison.
+AUTOFSM.FORCE_ABSTRACT_AREA = args.autofsm_abstract_area
 
 print(
     "================== Parsing C Code to Logical Hierarchy ================================",

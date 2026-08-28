@@ -107,6 +107,21 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # Same question as the two tests above -- does ranking candidates with a
+    # model actually pick the smaller real design? -- but under real sky130
+    # synthesis (docs/AUTOFSM_DESIGN.md section 3.8): real cached leaf/
+    # register/multiplexer um2 vs the abstract per-bit model, judged by real
+    # measured area rather than yosys cell counts. Three real sky130 builds
+    # of qor/divider/autofsm.py, so this is the slowest AUTOFSM build_report
+    # test in the file.
+    tests.append(
+        Test(
+            name="autofsm_real_area_compare_test",
+            category="build_report",
+            cmd=[INST_DIR / "autofsm_real_area_compare_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # The FSM's CONTROL path, built under both --autofsm_ctl modes and compared
     # on yosys cell counts, plus the timing consequence on a design that sits at
     # its clock goal. Guards the constant-table decode that replaced v2's

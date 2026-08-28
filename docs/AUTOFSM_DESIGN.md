@@ -770,6 +770,18 @@ is about six of the things sharing costs, not one.
 `autofsm_area_sweep_compare_test.py` is where that correspondence is held to
 account.
 
+**Under `--syn_tool sky130`, this changes for three of the five terms.** The
+portability argument above is about *timing*, not area specifically — it is
+why the abstract model has to exist for every tool, not why it has to be the
+only source when a better one is available. Real per-leaf µm² exists for
+sky130 (§3.8), so under `SYN.SYN_TOOL is DEVICE_MODELS` the units, registers
+and operand-multiplexer terms use real cached measurements wherever one
+exists, falling back to the abstract model (scaled into µm²) only where one
+does not; the glue and state-decode terms stay abstract regardless, because
+neither has a synthesizable entity of its own to measure in isolation. Every
+other tool is completely unaffected — same five abstract terms, same
+`AREA_*` constants, same numbers as before §3.8 existed.
+
 #### Where the stopping point comes from
 
 Nothing in the code says "stop when the multiplexer delay exceeds the unit
@@ -778,6 +790,134 @@ enough and a 16-bit adder becomes 150-odd gates sharing three one-bit units
 across 150-odd states — three tiny units, and multiplexers and registers costing
 an order of magnitude more than the adder did. The estimate turns back up and
 the search stops.
+
+### 3.8 Consuming real sky130 area
+
+`DEVICE_MODELS`/`SYN.py` measure and cache real per-leaf µm² the same way
+they already measure and cache per-leaf delay (full story:
+`docs/DEVICE_MODELS_DESIGN.md`'s area section). The search above uses it:
+under `SYN.SYN_TOOL is DEVICE_MODELS`, `ESTIMATE_SCHEDULE_AREA`'s unit,
+register and operand-multiplexer terms are real cached µm² wherever a
+measurement exists, falling back leaf-by-leaf to the abstract §3.7 model
+(scaled into µm²) only where one does not. **Ground truth throughout is real
+sky130 synthesis, never the abstract model** — a cache hit always wins
+regardless of how far it sits from `_leaf_area`'s guess, and a mis-ranking
+from a stale or absent measurement is what needs fixing, not the other way
+round. `--autofsm_abstract_area` forces the old abstract-only ranking, for
+A/B comparison against real data.
+
+**Gating.** Every function below only returns real numbers when
+`SYN.SYN_TOOL is DEVICE_MODELS` (i.e. `PART("sky130...")` or
+`--syn_tool sky130`); for every other tool the cache is empty by
+construction (`SYN.GET_AREA_CACHE_DIR` returns `None`) and every AUTOFSM
+build outside sky130 is unaffected — same schedules, same numbers, as
+before this section existed.
+
+**The API, mirroring delay's own shape:**
+
+| delay (`_resolve_delay_du`) | area (`AUTOFSM._leaf_area_um2` et al.) |
+|---|---|
+| `SYN.GET_CACHED_PATH_DELAY(logic, parser_state)` — per-leaf disk cache read | `SYN.GET_CACHED_LEAF_AREA(logic, parser_state)` → `(value_um2, "um2")` or `None` |
+| — (no by-key form needed; delay is always looked up via a `Logic`) | `SYN.GET_CACHED_LEAF_AREA_BY_KEY(key, parser_state)` — same read, keyed directly (`"MUX_uint{width}_t"`) for operand multiplexers, priced from `(ctype, fold count)` during scheduling before any mux entity exists |
+| `_heuristic_leaf_delay_du` | `_leaf_area` (§3.7), scaled by `UM2_PER_ABSTRACT_AREA_UNIT` into µm² |
+| — | `DEVICE_MODELS.GET_SEQUENTIAL_CELL_AREA()` → `(48.84, "um2")` — a closed-form liberty lookup, not a per-shape measurement, so `_ff_area_um2` needs no cache at all |
+
+`AUTOFSM._area_unit_scale(parser_state)` is the single switch: `1.0`
+(abstract units, unchanged behavior) for every non-`DEVICE_MODELS` tool or
+when `FORCE_ABSTRACT_AREA` is set, `UM2_PER_ABSTRACT_AREA_UNIT` otherwise —
+every other area function multiplies its abstract fallback by this, so
+`est_area` is directly comparable to a build's own `Measured area: ...` line
+under sky130 without further conversion. `AUTOFSM._leaf_area_um2`,
+`_ff_area_um2` and `_mux_bank_area_um2` each implement the cache-hit →
+scaled-fallback tier for one kind of term; `ESTIMATE_ENTITY_AREA`'s own hierarchy
+walk stays AUTOFSM's, deliberately **not** delegated to
+`SYN.GET_ESTIMATED_COMBINATIONAL_AREA` — that function returns `0.0` for an
+uncached leaf and reports it as missing, which would read as free wiring and
+never get shared (the same failure mode v1's zero-delay bug had). A schedule
+carries how much of its `est_area` was measured vs estimated in its
+`DESCRIBE_SCHEDULE` build-log line (`area model: sky130 um2 (N measured, M
+estimated)`), alongside a new `register bits: N` line (`_register_bit_count`)
+recording AUTOFSM's own `ALLOCATE_REGISTERS` total independent of area —
+useful on its own for comparing against a real build's sequential cell count
+(see the register-count finding below).
+
+**A harness bug found and fixed while wiring this in.** An isolated leaf is
+wrapped in `dont_touch` input/output registers (`VHDL.WRITE_LOGIC_TOP`)
+purely to give it a register-to-register path for STA. The leaf area cache
+originally stored `total_cell_area`, which includes those registers — for a
+narrow leaf they dominate: `BIN_OP_AND_uint16_t_uint16_t`'s old cached
+value, 2563.1232 µm², was 91% harness flip-flop, 11.7x its real
+combinational area (218.8032 µm²). `SYN.ADD_PATH_DELAY_TO_LOOKUP` now caches
+`combinational_cell_area` instead (`DEVICE_MODELS.AREA_MODEL_VERSION` 1→2,
+see its comment for the full derivation), which also fixes a matching
+double-count in `SYN.ESTIMATE_DESIGN_AREA`'s own whole-design estimate (it
+was summing sequential cells into a term it separately calls
+"combinational" and then adding its own flip-flop term on top).
+
+**What real measurement corrected, once the harness was out of the way.**
+Fitting real cached µm² against width across every `BIN_OP_PLUS`/`MINUS`
+entry in `area_cache/` (both cost `AREA_PER_BIT_ADD` per `_leaf_area`, so one
+joint fit covers both) gives `UM2_PER_ABSTRACT_AREA_UNIT ≈ 98.93` µm² per
+adder bit. `AREA_PER_BIT_MUX` scaled by it is 1.15x the real cached
+`MUX_uintN_t` leaves — 29.304 µm²/bit, exact (not just close) across every
+measured width 1/8/32/34/64 — a real, independent confirmation of the ratio
+`autofsm_min_area_verify_test.py` set by a completely different method
+(yosys cell counts on one design). `AREA_PER_BIT_BITWISE` splits real cost
+roughly down the middle rather than tracking it: scaled it is 1.16x the real
+cached `BIN_OP_AND` leaves (13.6752 µm²/bit, exact across widths 1/16/32; a
+bare `and2_1` liberty cell matches it exactly) and 0.74x the real cached
+`BIN_OP_XOR`/`BIN_OP_OR` leaves (both 21.4896 µm²/bit, matching a raw
+`xor2_1` liberty cell exactly) — one abstract constant pricing two real
+costs 57% apart, overshooting one and undershooting the other by
+construction, not by fitting error. The one term that is not approximate
+but *wrong* is the flip-flop:
+`AREA_PER_BIT_FF` (0.20, an FPGA number — "paired with its LUT, nearly
+free") is 2.5x too cheap against a real sky130 `dfxtp_1` (0.49 abstract
+units). `_ff_area_um2` uses the real cell area directly under sky130, no
+fitting involved.
+
+**What real measurement did NOT fix — two gaps that predate this section and
+remain open, confirmed again on real in-repo builds while wiring this in:**
+
+- **Cross-instance combinational sharing.** A per-leaf sum cannot see what
+  real synthesis shares across structurally similar logic once everything is
+  flattened into one netlist — already documented for `--no_hier_syn`'s
+  delay sum (§6 below), and the same mechanism affects the real-µm² area sum.
+  `qor/divider/autofsm.py`'s whole-design `SYN.ESTIMATE_DESIGN_AREA` estimate
+  still overshot real `Measured area:` by 342% post-fix, concentrated
+  entirely in the wide (32/33-way) real operand-multiplexer trees the
+  generated FSM instantiates — `qor/multiplier/autofsm.py`, which shares to
+  one atomic unit with no wide muxes at all, overshot by only 4.65% on the
+  same post-fix model. The gap is real and design-shape-dependent, not a
+  constant to calibrate away.
+- **`SYN.GET_REGISTERS_ESTIMATE_TEXT_AND_FFS`'s FF-count overshoot.**
+  Already documented at 5.7-5.9x against `qor/latchup_area_match_matrix.json`
+  (see that file's `area_model_version_2_correction` note for how this
+  section's harness fix relates to its numbers); reconfirmed on
+  `qor/divider/arithmetic.py` (32290/20977/14343 estimated FFs across three
+  sweep iterations against a real design an order of magnitude smaller).
+  Per-FF area is exact — the error is entirely in the *count*, before any
+  yosys-level FF optimization (constant/dead-bit elimination, retiming).
+  **This is `SYN.ESTIMATE_DESIGN_AREA`'s own whole-design estimator, a
+  different and much cruder count than AUTOFSM's `ALLOCATE_REGISTERS`**
+  (§3.2c), which tracks genuinely live cross-state values rather than every
+  declared bit. Whether AUTOFSM's own allocator has a comparable gap is
+  checked directly, not assumed, in
+  `inst/autofsm_real_area_compare_test.py` (AUTOFSM's `register bits:` line
+  against a real build's `N sequential cells:`) — a real gap there would be a
+  finding about the allocator, not evidence against pricing each of its
+  registers at a real flip-flop's real cost.
+
+Neither gap is specific to the search's ranking: both are as true of
+`_ff_area_um2`/the operand-mux term feeding `ESTIMATE_SCHEDULE_AREA` as of
+`SYN.ESTIMATE_DESIGN_AREA`'s build-log estimate. What keeps the search safe
+regardless is the same anchor guarantee that already protects the abstract
+model (§3.7): a systematic overshoot that hits every candidate similarly
+does not change which one ranks smallest, and the worst case of a mis-ranked
+edge case is a lost opportunity, never a regression, exactly as before.
+`inst/autofsm_real_area_compare_test.py` is where this is checked against
+real synthesis rather than assumed: real-µm²-ranked vs abstract-ranked vs
+the plain anchor, all three built and measured, not just estimated.
 
 ### 3.9 What the clock goal does to allocation
 
@@ -991,7 +1131,8 @@ at least 3"*.
 | test | category | what it proves |
 |---|---|---|
 | `autofsm_test.py` | native_sim, (synth via wrapper) | the pure function's semantics, and the passthrough behaviour when unscheduled |
-| `autofsm_unit_test.py` | elab | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, register allocation, budget → states, floors, determinism, schedule is carryable data, soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction |
+| `autofsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, register allocation, budget → states, floors, determinism, schedule is carryable data, soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--autofsm_abstract_area`, real flip-flop area) |
+| `area_model_test.py` (`src/tests/pypeline_tests/inst/`) | unit | not AUTOFSM-specific (SYN/DEVICE_MODELS leaf-area-cache coverage), but two tests here directly guard AUTOFSM.py's own constant: the committed `area_cache/` excludes STA-harness registers, and `AUTOFSM.UM2_PER_ABSTRACT_AREA_UNIT` refits to what is actually committed |
 | `self_check_autofsm_test.py` | native_sim, vhdl_sim, synth ×2 | the FSM computes what the function did — in native sim, in GHDL, at latency 0 and at real latency |
 | `stream_autofsm_test.py` | native_sim | `make_stream_autofsm`'s handshake protocol: ready deasserts while busy, latency/II == `fsm.latency + 1`, and — the property raw AUTOFSM cannot provide — a stalled consumer never loses a result and sees stable data while it's held |
 | `self_check_stream_autofsm_test.py` | native_sim, vhdl_sim, synth ×2 | same shape as `self_check_autofsm_test.py`, one layer up: the wrapper's handshake + the real scheduled FSM underneath it compute and sequence what the function did, with real backpressure toggled from the testbench, in native sim, in GHDL, at latency 1 and at real latency |
@@ -1000,6 +1141,7 @@ at least 3"*.
 | `autofsm_resources_compare_test.py` | synth | the FSM is actually smaller than the logic it replaces |
 | `autofsm_area_sweep_compare_test.py` | synth | the area search does not make designs bigger, and its cost model agrees with yosys about which of two schedules is smaller — the calibration guard |
 | `autofsm_min_area_verify_test.py` | synth | the search actually MOVES on a design built to reward moving, the move is smaller in real yosys cells, and no alternative point of the search space (built via `--autofsm_open` / `--autofsm_unshare`) is smaller still |
+| `autofsm_real_area_compare_test.py` | build_report | same question under `--syn_tool sky130`, judged by real `Measured area:` rather than yosys cells: real-µm²-ranked vs `--autofsm_abstract_area` vs `--autofsm_no_area_sweep`, all three built; plus AUTOFSM's own `ALLOCATE_REGISTERS` bit count against the build's real sequential cell count (the register-fidelity question §3.8 raises explicitly) |
 | `autofsm_max_latency_test.py` | synth | a meetable `max_latency` is met by unsharing; an unmeetable one fails the build naming the latency actually needed |
 | `autofsm_timing_iter_test.py` | synth | a critical path inside an FSM is found and fixed by rescheduling |
 | `autofsm_ctl_compare_test.py` | synth | the constant-table control path is not bigger than the comparator chains it replaced, and the donut FSM still meets the clock goal that v2 misses |
@@ -1031,16 +1173,19 @@ and at `fsm.latency + 1` (scheduled).
 - Control overhead grows with the number of folded operations, because the
   operand multiplexers do. At tens of operations this is a clear win; at
   thousands the multiplexers would dominate (see "loop-preserving FSMs" below).
-- The area model is a model. It ranks candidates in abstract units calibrated
-  against yosys cell counts, which is not the same thing as LUTs on the part you
-  are targeting — on an FPGA, flip-flops come paired with the LUTs in front of
-  them and are far cheaper than a cell count suggests. The anchor guarantee
-  bounds the damage of a mis-ranking to a missed opportunity. This is no longer
-  true unconditionally: `DEVICE_MODELS`/`SYN.py` now measure and cache real
-  sky130 µm² per leaf (see `docs/DEVICE_MODELS_DESIGN.md`'s area section), so
-  "area cannot be read back from the tool" has a real exception for the sky130
-  backend. AUTOFSM's own search here is untouched by that work and still ranks
-  in abstract units — wiring it to real measured/cached µm² is future work.
+- The area model is still a model for every tool except sky130, and even under
+  sky130 it is a per-leaf sum, not a whole-design synthesis: it ranks
+  candidates in abstract units calibrated against yosys cell counts (§3.7),
+  which is not the same thing as LUTs on the part you are targeting — on an
+  FPGA, flip-flops come paired with the LUTs in front of them and are far
+  cheaper than a cell count suggests. Under `--syn_tool sky130` (§3.8) the
+  unit, register and multiplexer terms use real cached µm² instead, which
+  fixes the FPGA-calibrated flip-flop term's biggest error (2.5x too cheap)
+  but does not fix — because a per-leaf sum cannot see it — real synthesis's
+  cross-instance sharing on wide operand-multiplexer trees, confirmed still
+  present (342% whole-design overshoot on `qor/divider/autofsm.py`) after the
+  sky130 wiring landed. The anchor guarantee bounds the damage of any of this
+  to a missed opportunity, in both the abstract and the sky130 case.
 - An ARRAY-typed operand cannot be shared. Its operand multiplexer is an array
   of arrays, and `T[A][B]` currently mis-elaborates to VHDL — a bare
   `make_operand_mux(uint2_t[16], 4)` design fails GHDL import with "can't match
@@ -1062,6 +1207,14 @@ and at `fsm.latency + 1` (scheduled).
   struct-typed descended local, which the array fix alone would not). See
   `qor/multiplier/autofsm.py`, the design that found this, and the
   `[type resolver: array reconstruction]` section of `autofsm_unit_test.py`.
+- Fixed: the sky130 leaf area cache (§3.8) originally cached
+  `total_cell_area`, which includes the `dont_touch` STA-harness registers
+  every isolated leaf is wrapped in for STA (`VHDL.WRITE_LOGIC_TOP`) — for a
+  narrow leaf they dominate (`BIN_OP_AND_uint16_t_uint16_t`: 91% harness,
+  11.7x its real combinational area). Found while wiring real µm² into
+  AUTOFSM's ranking; fixed by caching `combinational_cell_area` instead
+  (`DEVICE_MODELS.AREA_MODEL_VERSION` 1→2), which also fixed a matching
+  double-count in `SYN.ESTIMATE_DESIGN_AREA`'s own whole-design estimate.
 
 **Future work**
 

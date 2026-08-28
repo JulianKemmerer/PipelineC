@@ -921,7 +921,19 @@ MODEL_VERSION = 4
 # committed area_cache, and vice versa -- see SYN.GET_AREA_CACHE_DIR, which
 # joins this alongside library/corner/recipe the same way
 # GET_PATH_DELAY_CACHE_DIR joins MODEL_VERSION.
-AREA_MODEL_VERSION = 1
+#
+# 1 -> 2: v1 cached total_cell_area, which includes the dont_touch STA
+# harness registers VHDL.WRITE_LOGIC_TOP wraps every isolated leaf in to give
+# it a register-to-register path. That harness was 60-91% of a v1 leaf's
+# cached area on narrow operators (confirmed against LOAD_CELL_AREAS: the
+# residual after subtracting 48.84*port_bits lands exactly on the leaf's real
+# library cell, e.g. BIN_OP_AND_uint16_t_uint16_t's 2563.1232 == 218.8032
+# (16-bit and2_1) + 2344.32 (48 harness flip-flops: 2 x 16-bit inputs + one
+# 16-bit output)). v2 caches
+# combinational_cell_area instead, which MEASURE_NETLIST_AREA already
+# reports split out by each cell's own is_sequential flag -- no new
+# measurement. See SYN.ADD_PATH_DELAY_TO_LOOKUP's WRITE_CACHED_LEAF_AREA call.
+AREA_MODEL_VERSION = 2
 
 # The one cell dfflibmap actually maps every D flip-flop to for this
 # library/corner+recipe. Confirmed, not assumed: it is what every one of

@@ -643,7 +643,28 @@ mapped netlist, summed exactly.
 **Estimated area** (`SYN.ESTIMATE_DESIGN_AREA`: cached per-leaf areas summed
 across the instance hierarchy, plus FF count × one flip-flop's real cell
 area — no synthesis) overshoots real measured area by **270-410%** on every
-design measured. Both terms overshoot, and the sequential one is worse:
+design measured under `AREA_MODEL_VERSION` 1. Part of that number is now
+understood to have been a measurement bug, not purely the
+cross-instance-sharing limitation described below: an isolated leaf is wrapped in
+`dont_touch` input/output registers (`VHDL.WRITE_LOGIC_TOP`) purely to give
+it a register-to-register path for STA, and v1 cached `total_cell_area`,
+which includes them. For a narrow leaf they dominate —
+`BIN_OP_AND_uint16_t_uint16_t`'s v1-cached value was 91% harness flip-flop,
+11.7x its real combinational area — and the fixed 464724.3 µm² combinational
+estimate the matrix records for this divider (all four static leaf
+entities, every design) is a v1 sum across exactly that kind of leaf. Fixed
+in `AREA_MODEL_VERSION` 2 (below): `combinational_cell_area` is cached
+instead of `total_cell_area`, which also fixes a matching double-count this
+whole-design estimate itself had (summing sequential cells into a term it
+calls "combinational", then adding its own FF term on top). The two 270-410%
+matrix designs were not rebuilt under v2 — their source is latchup's own
+`solution.py`, not committed to this repo — so a corrected number for those
+specific four points is not available; `qor/latchup_area_match_matrix.json`'s
+`area_model_version_2_correction` key has the full account, including two
+in-repo builds that confirm the fix's real size (4.65% overshoot post-fix on
+a design with no wide shared muxes, vs 342% still on one that has them) and
+that the two limitations named below are unaffected by it. Both terms
+overshoot, and the sequential one is worse:
 
 | | combinational | sequential (FF count) |
 |---|---|---|
@@ -657,9 +678,14 @@ Per-FF area is exact by construction on both sides (both reduce to
 area predictor on a design with this much structural repetition** — the
 radix-2 divider unrolls the same four operators (`BIN_OP_MINUS_uint34_t`,
 `MUX_uint32_t`, `BIN_OP_NEQ`, `UNARY_OP_NOT`) once per bit — and should be
-read as a same-design, same-direction relative signal only, until AUTOFSM's
-own consumption of this model (future work, not started here) closes the
-FF-count gap.
+read as a same-design, same-direction relative signal only. This is
+`SYN.GET_REGISTERS_ESTIMATE_TEXT_AND_FFS`'s whole-design estimate
+specifically, not AUTOFSM's own register allocator (`ALLOCATE_REGISTERS`,
+`docs/AUTOFSM_DESIGN.md` §3.2c) — a different and narrower count, tracking
+genuinely live cross-state values rather than every declared bit. Whether
+AUTOFSM's allocator has a comparable gap is checked directly (not assumed
+either way) in `inst/autofsm_real_area_compare_test.py`, now that AUTOFSM
+consumes this model (see the note at the end of this section).
 
 ### `--no_sweep` planner drift, found while calibrating (not an area bug)
 
@@ -687,7 +713,7 @@ versioned** tree so the two invalidate independently:
 area_cache/device_models_<library>_<corner>_a<AREA_MODEL_VERSION><recipe_suffix>/syn/<leaf_key>.area
 ```
 
-`AREA_MODEL_VERSION` (currently 1) is deliberately not `MODEL_VERSION`: leaf
+`AREA_MODEL_VERSION` (currently 2) is deliberately not `MODEL_VERSION`: leaf
 area depends only on which cells the synthesis recipe maps to, not on
 `run_sta()`'s own STA algorithm, so a future STA-only `MODEL_VERSION` bump
 must not discard an otherwise-valid committed `area_cache`, and vice versa.
@@ -699,6 +725,17 @@ since a future non-sky130 profile would use a different unit and a silent
 mismatch would be far worse than a cache miss; `SYN.GET_CACHED_LEAF_AREA`
 rejects a stored unit that disagrees with the active model's own unit rather
 than mixing it in.
+
+**1 → 2:** v1 cached `total_cell_area`, which includes the `dont_touch`
+STA-harness registers every isolated leaf is synthesized with
+(`VHDL.WRITE_LOGIC_TOP`) — 91% of a narrow leaf's v1-cached value, on the
+`BIN_OP_AND_uint16_t_uint16_t` example above. v2 caches
+`combinational_cell_area` instead (same `MEASURE_NETLIST_AREA` call, already
+split by each cell's own `is_sequential` flag — no new measurement). Found
+and fixed while wiring this cache into AUTOFSM's area-search ranking (see
+the note at the end of this section); the bump means every v1 `.area` file
+is superseded, not reinterpreted, since the two numbers differ by however
+many harness bits that leaf's own ports carried.
 
 **Two operating modes**, both real and both exercised by
 `area_estimate_build_report_test`:
@@ -723,13 +760,26 @@ Estimated area: 83788.0 um2 (comb 53311.8 + regs 30476.2, 624 FFs) [estimate, pr
 Measured area: 6812.2 um2 (estimate +61.40%)
 ```
 
-The `area_cache/` tree ships pre-populated for the same 43 leaf keys already
-committed to `path_delay_cache/`'s sky130 v4 set (see `git log` for the
-generating build), and `nix/package.nix` copies it out of the read-only
-store into `.pypelinec_area_cache/` + exports `PYPELINEC_AREA_CACHE_DIR`,
-mirroring `path_delay_cache`'s existing treatment exactly.
+The `area_cache/` tree ships pre-populated (18 leaf keys as of
+`AREA_MODEL_VERSION` 2 — every leaf a sky130 `build_report`/`synth` test in
+this repo's own registered suite happens to touch while running, not a
+deliberately curated set; see `git log` for the generating builds), and
+`nix/package.nix` copies it out of the read-only store into
+`.pypelinec_area_cache/` + exports `PYPELINEC_AREA_CACHE_DIR`, mirroring
+`path_delay_cache`'s existing treatment exactly.
 
-This is not wired into any search or the pipelining planner — AUTOFSM's own
-abstract per-bit area model (`src/AUTOFSM.py`, documented in
-`docs/AUTOFSM_DESIGN.md`) is unchanged by this work. Consuming real sky130
-µm² here for AUTOFSM's min-area search is future work.
+**Consumed by AUTOFSM's minimum-area search.** Under `--syn_tool sky130`,
+`AUTOFSM.py`'s ranking (`docs/AUTOFSM_DESIGN.md` §3.8) uses real cached
+leaf/register/multiplexer µm² from this cache wherever a measurement exists,
+falling back to its own abstract per-bit model (scaled into µm² by a
+constant refit from this cache, `AUTOFSM.UM2_PER_ABSTRACT_AREA_UNIT`) only
+where one does not — `--autofsm_abstract_area` forces the old abstract-only
+ranking for comparison. Every non-sky130 tool is unaffected: the abstract
+model is still the only signal there, unchanged. Real measurement confirmed
+most of the abstract model's combinational ratios to within ~30% (AND/XOR/
+mux bits) and found one large, genuine error (the flip-flop term, 2.5x too
+cheap, calibrated for an FPGA where a flip-flop pairs with its LUT) — but it
+does not fix the two limitations two paragraphs above (cross-instance
+sharing, the FF-count estimator's own overshoot), since neither is a per-leaf
+measurement problem. See `docs/AUTOFSM_DESIGN.md` §3.8 for the full account
+and `inst/autofsm_real_area_compare_test.py` for the real-synthesis check.

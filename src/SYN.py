@@ -3047,6 +3047,12 @@ def GET_ESTIMATED_COMBINATIONAL_AREA(logic, parser_state, area_memo=None):
     entirely (bit-manip/concat/const-ref wiring, black boxes, ...): it
     correctly has no area_cache entry because nothing ever measured it, so
     it contributes 0.0 without being counted as missing.
+
+    Genuinely combinational as of AREA_MODEL_VERSION 2: GET_CACHED_LEAF_AREA
+    reads combinational_cell_area, not total_cell_area, so a leaf's own
+    dont_touch STA harness registers (VHDL.WRITE_LOGIC_TOP) are excluded. A
+    v1 cache mixed them in, which is why ESTIMATE_DESIGN_AREA used to
+    double-count sequential area between this term and its own FF term.
     """
     area_memo = {} if area_memo is None else area_memo
     hit = area_memo.get(logic.func_name)
@@ -4621,34 +4627,50 @@ def CLAIM_MUX_PATH_DELAY_SYNTH_OWNER(
     return cache_key, owner
 
 
+def _mux_cache_key_is_width_collapsed():
+    """True when a MUX's cache key collapses every width onto the bare "mux"
+    string. True for PYRTL (measured: 1.640ns at every width 1..64, with the
+    cache deleted -- not a caching artifact) and every tool that predates
+    MUX_DELAY_KEY_BY_WIDTH, false for DEVICE_MODELS -- a real per-cell model
+    is not necessarily flat, since a wider mux's select really does drive
+    more sinks inside its own entity. --mux_delay_by_width/
+    --no_mux_delay_by_width force either, for any tool, for A/B measurement.
+    """
+    by_width = MUX_DELAY_KEY_BY_WIDTH
+    if by_width is None:
+        by_width = SYN_TOOL is DEVICE_MODELS
+    return not by_width
+
+
+def GET_MUX_CACHE_KEY(width):
+    """The cache key one width's 2:1 mux bank is stored under -- the same
+    string GET_CACHED_LOGIC_FILE_KEY resolves a MUX Logic object to, from
+    just the width, for a caller pricing a mux bank with no Logic object in
+    hand. AUTOFSM's operand multiplexers are that caller: ESTIMATE_SCHEDULE_
+    AREA prices one from (ctype, fold count) during scheduling, before any
+    MUX entity is ever built. Reconstructing this convention independently
+    (rather than calling through to it) is exactly how a caller would go
+    silently wrong under --no_mux_delay_by_width, where every width collapses
+    onto the bare "mux" key."""
+    if _mux_cache_key_is_width_collapsed():
+        return "mux"
+    return f"{C_TO_LOGIC.MUX_LOGIC_NAME}_uint{width}_t"
+
+
 def GET_CACHED_LOGIC_FILE_KEY(logic, parser_state):
     # Default sanity
     key = logic.func_name
 
-    # Mux is same delay no matter type -- true for PYRTL (measured: 1.640ns
-    # at every width 1..64, with the cache deleted -- not a caching
-    # artifact), but not necessarily for a real per-cell model where a wider
-    # mux's select really does drive more sinks inside its own entity. See
-    # MUX_DELAY_KEY_BY_WIDTH: defaults to collapsed (this original behavior,
-    # unchanged) for every tool that predates it, width-keyed only for
-    # DEVICE_MODELS; --mux_delay_by_width/--no_mux_delay_by_width force
-    # either, for any tool, for A/B measurement.
-    is_mux = LOGIC_IS_BUILT_IN_MUX(logic)
-    mux_collapsed = False
-    if is_mux:
-        by_width = MUX_DELAY_KEY_BY_WIDTH
-        if by_width is None:
-            by_width = SYN_TOOL is DEVICE_MODELS
-        mux_collapsed = not by_width
-
-    if mux_collapsed:
-        key = "mux"
-    elif is_mux:
-        # A 2:1 MUX over any N-bit packed type is physically the same bank as
-        # MUX_uintN_t.  Canonicalizing signed, float, enum, array, and struct
-        # names lets every representation share the existing integer cache.
-        width = RAW_VHDL.GET_MUX_DATA_WIDTH(logic, parser_state)
-        key = f"{C_TO_LOGIC.MUX_LOGIC_NAME}_uint{width}_t"
+    if LOGIC_IS_BUILT_IN_MUX(logic):
+        if _mux_cache_key_is_width_collapsed():
+            key = "mux"
+        else:
+            # A 2:1 MUX over any N-bit packed type is physically the same
+            # bank as MUX_uintN_t. Canonicalizing signed, float, enum, array,
+            # and struct names lets every representation share the existing
+            # integer cache.
+            width = RAW_VHDL.GET_MUX_DATA_WIDTH(logic, parser_state)
+            key = GET_MUX_CACHE_KEY(width)
     else:
         # MEM has var name - weird yo
         if SW_LIB.IS_MEM(logic):
@@ -4790,19 +4812,30 @@ def GET_CACHED_LEAF_AREA_FILE_PATH(logic, parser_state):
     if cache_dir is None:
         return None
     key = GET_CACHED_LOGIC_FILE_KEY(logic, parser_state)
+    return GET_CACHED_LEAF_AREA_FILE_PATH_BY_KEY(key, parser_state)
+
+
+def GET_CACHED_LEAF_AREA_FILE_PATH_BY_KEY(key, parser_state):
+    """Same cache path GET_CACHED_LEAF_AREA_FILE_PATH builds from a Logic
+    object, from an already-known cache key directly -- for a shape priced
+    with no Logic in hand. AUTOFSM's operand multiplexers are the case this
+    exists for: ESTIMATE_SCHEDULE_AREA prices one from (ctype, fold count)
+    alone during scheduling, before any MUX entity is ever built, but its
+    cache key (GET_MUX_CACHE_KEY(width), the same canonicalization
+    GET_CACHED_LOGIC_FILE_KEY uses for a real MUX Logic) is knowable without
+    one. None when the active SYN_TOOL has no area source
+    (GET_AREA_CACHE_DIR)."""
+    cache_dir = GET_AREA_CACHE_DIR(parser_state)
+    if cache_dir is None:
+        return None
     return cache_dir + "/" + key + ".area"
 
 
-def GET_CACHED_LEAF_AREA(logic, parser_state):
-    """Read one leaf's cached area as (value, unit), or None on a cache
-    miss: no area source, no file on disk, or malformed contents. A stored
-    unit that disagrees with the active model's own unit
-    (DEVICE_MODELS.AREA_UNIT) is also treated as a miss rather than mixed --
-    the whole point of writing the unit into the file is to make that
-    mismatch loud instead of silently wrong."""
-    if not logic.is_c_built_in and C_TO_LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
-        return None
-    file_path = GET_CACHED_LEAF_AREA_FILE_PATH(logic, parser_state)
+def _READ_CACHED_AREA_FILE(file_path):
+    """(value, unit) parsed from one .area file, or None on a missing or
+    malformed file, or a unit that disagrees with the active model's own
+    unit (DEVICE_MODELS.AREA_UNIT) -- the whole point of writing the unit
+    into the file is to make that mismatch loud instead of silently mixed."""
     if file_path is None or not os.path.exists(file_path):
         return None
     text = open(file_path).read().strip()
@@ -4814,6 +4847,25 @@ def GET_CACHED_LEAF_AREA(logic, parser_state):
     if SYN_TOOL is DEVICE_MODELS and unit != DEVICE_MODELS.AREA_UNIT:
         return None
     return value, unit
+
+
+def GET_CACHED_LEAF_AREA(logic, parser_state):
+    """Read one leaf's cached area as (value, unit), or None on a cache
+    miss: no area source, no file on disk, or malformed contents. See
+    _READ_CACHED_AREA_FILE for the unit-mismatch handling."""
+    if not logic.is_c_built_in and C_TO_LOGIC.FUNC_IS_OP_OVERLOAD(logic.func_name):
+        return None
+    return _READ_CACHED_AREA_FILE(
+        GET_CACHED_LEAF_AREA_FILE_PATH(logic, parser_state)
+    )
+
+
+def GET_CACHED_LEAF_AREA_BY_KEY(key, parser_state):
+    """GET_CACHED_LEAF_AREA's cache read, keyed directly rather than via a
+    Logic object -- see GET_CACHED_LEAF_AREA_FILE_PATH_BY_KEY."""
+    return _READ_CACHED_AREA_FILE(
+        GET_CACHED_LEAF_AREA_FILE_PATH_BY_KEY(key, parser_state)
+    )
 
 
 def WRITE_CACHED_LEAF_AREA(logic, parser_state, value, unit):
@@ -5183,7 +5235,17 @@ def SET_MEASURED_DELAY_FROM_REPORT(logic, parsed_timing_report, parser_state):
         # -- only DEVICE_MODELS does (GET_AREA_CACHE_DIR is None for every
         # other SYN_TOOL, and their PathReport classes carry no area
         # attributes, so this is a no-op there via getattr's default).
-        area_value = getattr(path_report, "total_cell_area", None)
+        #
+        # combinational_cell_area, deliberately NOT total_cell_area: an
+        # isolated leaf is wrapped in dont_touch input/output registers
+        # (VHDL.WRITE_LOGIC_TOP) purely to give it a register-to-register path
+        # for STA, and total_cell_area includes them. For a narrow leaf that
+        # harness dominates -- e.g. BIN_OP_AND_uint16_t_uint16_t's old
+        # (AREA_MODEL_VERSION 1) total_cell_area of 2563.1232 um2 was 91%
+        # harness flip-flop, 11.7x its real combinational area (218.8032
+        # um2). combinational_cell_area (MEASURE_NETLIST_AREA already splits
+        # it by each cell's own is_sequential flag) excludes them.
+        area_value = getattr(path_report, "combinational_cell_area", None)
         area_unit = getattr(path_report, "area_unit", None)
         if area_value is not None and area_unit is not None:
             WRITE_CACHED_LEAF_AREA(logic, parser_state, area_value, area_unit)

@@ -34,7 +34,9 @@ sys.path.insert(
 
 import AUTOFSM
 import C_TO_LOGIC
+import DEVICE_MODELS
 import PY_TO_LOGIC
+import SYN
 import pypeline
 
 FAILURES = []
@@ -676,6 +678,103 @@ def main():
         "(not the whole array name) -- a struct genuinely cannot be rebuilt "
         "from its name alone",
     )
+
+    # Real sky130 area (docs/AUTOFSM_DESIGN.md section 3.8): ESTIMATE_SCHEDULE_AREA's
+    # unit/mux/register terms consult SYN.GET_CACHED_LEAF_AREA under
+    # DEVICE_MODELS instead of the abstract AREA_* constants. A synthetic
+    # SYN_TOOL/cache-dir override here, no real synthesis -- same shape as
+    # area_model_test.py's own fixtures, just exercised through AUTOFSM's own
+    # entry points rather than SYN's directly.
+    print("\n[area model: real sky130 um2]")
+    with tempfile.TemporaryDirectory() as design_tmp, tempfile.TemporaryDirectory() as area_tmp:
+        ps2, key2, tag2 = parse_design(design_tmp, mhz=25.0, name="af_unit_area_design")
+        func_entity2 = AUTOFSM._entity_key_for_callable(ps2, tag2.func)
+        add_logic = None
+        for entity in set(
+            ps2.FuncLogicLookupTable[func_entity2].submodule_instances.values()
+        ):
+            if entity.startswith("BIN_OP_PLUS_") or entity.startswith("BIN_OP_"):
+                add_logic = (entity, ps2.FuncLogicLookupTable[entity])
+                break
+        assert add_logic is not None, "expected chain() to contain a BIN_OP entity"
+        add_entity, add_logic = add_logic
+
+        old_tool = SYN.SYN_TOOL
+        old_env = os.environ.get("PYPELINEC_AREA_CACHE_DIR")
+        old_force = AUTOFSM.FORCE_ABSTRACT_AREA
+        try:
+            # Not DEVICE_MODELS: unchanged from every tool's existing
+            # abstract-units-only behavior, regardless of cache contents.
+            SYN.SYN_TOOL = SYN.PYRTL
+            check(
+                AUTOFSM._area_unit_scale(ps2) == 1.0,
+                "non-DEVICE_MODELS tools stay in abstract units (scale 1.0)",
+            )
+
+            SYN.SYN_TOOL = DEVICE_MODELS
+            os.environ["PYPELINEC_AREA_CACHE_DIR"] = area_tmp + "/"
+            check(
+                AUTOFSM._area_unit_scale(ps2) == AUTOFSM.UM2_PER_ABSTRACT_AREA_UNIT,
+                "DEVICE_MODELS scales into real um2",
+            )
+
+            # Cold cache: falls back to the abstract estimate scaled into
+            # um2, NOT to zero -- a zero-area leaf would read as free wiring
+            # and never get shared (the same failure mode _resolve_delay_du's
+            # own tiering exists to avoid for delay).
+            cold_tally = {}
+            cold_val = AUTOFSM._leaf_area_um2(ps2, add_entity, add_logic, cold_tally)
+            expected_cold = (
+                AUTOFSM._leaf_area(add_entity, add_logic)
+                * AUTOFSM.UM2_PER_ABSTRACT_AREA_UNIT
+            )
+            check(
+                cold_val > 0.0 and abs(cold_val - expected_cold) < 1e-6,
+                "a leaf with no cached area falls back to the scaled abstract "
+                "estimate, not zero",
+            )
+            check(cold_tally == {"estimated": 1}, "cold leaf tallies as estimated")
+
+            # Warm cache: a real measurement wins outright, however far it
+            # sits from the abstract guess -- ground truth here is always
+            # synthesis, never the fallback model.
+            SYN.WRITE_CACHED_LEAF_AREA(add_logic, ps2, 999.5, "um2")
+            warm_tally = {}
+            warm_val = AUTOFSM._leaf_area_um2(ps2, add_entity, add_logic, warm_tally)
+            check(warm_val == 999.5, "a cached real area is used as-is")
+            check(warm_tally == {"measured": 1}, "warm leaf tallies as measured")
+
+            # --autofsm_abstract_area (FORCE_ABSTRACT_AREA): reproduces the
+            # non-DEVICE_MODELS numbers exactly, even with a warm cache --
+            # the escape hatch this session's own A/B measurement needs.
+            AUTOFSM.FORCE_ABSTRACT_AREA = True
+            check(
+                AUTOFSM._area_unit_scale(ps2) == 1.0,
+                "--autofsm_abstract_area forces scale back to 1.0",
+            )
+            forced_val = AUTOFSM._leaf_area_um2(ps2, add_entity, add_logic)
+            check(
+                forced_val == AUTOFSM._leaf_area(add_entity, add_logic),
+                "--autofsm_abstract_area ignores a warm cache entirely",
+            )
+            AUTOFSM.FORCE_ABSTRACT_AREA = False
+
+            # Flip-flop area needs no cache at all -- a closed-form liberty
+            # lookup, not a per-shape measurement.
+            ff_val = AUTOFSM._ff_area_um2(ps2)
+            expected_ff, _unit = DEVICE_MODELS.GET_SEQUENTIAL_CELL_AREA()
+            check(
+                ff_val == expected_ff,
+                f"_ff_area_um2 returns the real sequential cell area "
+                f"({expected_ff} um2), no cache needed",
+            )
+        finally:
+            SYN.SYN_TOOL = old_tool
+            AUTOFSM.FORCE_ABSTRACT_AREA = old_force
+            if old_env is None:
+                os.environ.pop("PYPELINEC_AREA_CACHE_DIR", None)
+            else:
+                os.environ["PYPELINEC_AREA_CACHE_DIR"] = old_env
 
     if FAILURES:
         print(f"\n{len(FAILURES)} AUTOFSM unit check(s) FAILED")

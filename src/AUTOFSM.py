@@ -194,7 +194,27 @@ AREA_PER_BIT_DEFAULT = 1.0  # unknown leaf: priced like an adder
 # is nearly free, but registers are also what the FSM's own control has to
 # route and enable, and a schedule holding dozens of live values is genuinely
 # harder than one holding three.
+#
+# This is the one term real sky130 measurement (see UM2_PER_ABSTRACT_AREA_UNIT
+# below) shows is badly off, not just approximate: a real dfxtp_1 flip-flop
+# measures 0.494 abstract units, 2.5x this constant. AREA_PER_BIT_FF stays the
+# FALLBACK for tools with no area measurement -- under DEVICE_MODELS,
+# _ff_area_um2 uses the real cell area instead and this constant is not
+# consulted at all.
 AREA_PER_BIT_FF = 0.2
+# um2 of one abstract area unit (one ripple-adder bit -- AREA_PER_BIT_ADD's
+# 1.0). Used ONLY to express an abstract fallback term in real um2 when
+# DEVICE_MODELS has no measurement for a shape (a cold cache, or a term like
+# control-path decode that has no synthesizable entity of its own to measure).
+# Measured, not chosen: least-squares fit (through the origin) of area vs
+# width across every BIN_OP_PLUS_uintA_t_uintB_t / BIN_OP_MINUS_uintA_t_uintB_t
+# entry in the committed area_cache, width = max(A, B) (both operators cost
+# AREA_PER_BIT_ADD per _leaf_area, so one joint fit covers both) -- 5 points,
+# widths 17-34, absolute residuals 29-159 um2 (1.2-6.3 um2/bit), MAE ~100
+# um2/point. Refit from the committed cache by area_model_test.py, so a
+# library/corner/recipe change that moves this value fails a test instead of
+# silently rescaling every fallback term.
+UM2_PER_ABSTRACT_AREA_UNIT = 98.93
 AREA_PER_STATE_DECODE = 1.0  # ctl "v2" only: per-state next-state/enable decode
 
 # ── Control path, ctl "v3" ────────────────────────────────────────────────
@@ -2215,8 +2235,158 @@ def _leaf_area(entity, logic):
     return w * AREA_PER_BIT_DEFAULT
 
 
-def ESTIMATE_ENTITY_AREA(parser_state, entity, memo=None):
-    """Estimated area of one entity INCLUDING everything it instantiates.
+# Set by src/pipelinec from --autofsm_abstract_area (default False = off).
+# _area_unit_scale consults this before SYN_TOOL: real sky130 um2 is used
+# automatically whenever it is available, and this is the only escape hatch
+# back to the abstract model, for A/B comparison against it. Module-level
+# rather than threaded through every area function's signature, matching
+# SYN.SYN_TOOL/SYN.MUX_DELAY_KEY_BY_WIDTH's own convention -- ESTIMATE_* is
+# called directly by tests and by the compare harness with fixed signatures,
+# not only through HARVEST_AUTOFSM_SCHEDULES.
+FORCE_ABSTRACT_AREA = False
+
+
+def _area_unit_scale(parser_state):
+    """The multiplier that converts one abstract area unit (one ripple-adder
+    bit, AREA_PER_BIT_ADD's 1.0) into the model's current output unit: 1.0 --
+    unchanged from every tool's existing abstract-units-only behavior -- for
+    every SYN_TOOL with no area measurement or when FORCE_ABSTRACT_AREA is
+    set, or UM2_PER_ABSTRACT_AREA_UNIT under DEVICE_MODELS so est_area lands
+    in real um2, directly comparable to a build's own "Measured area:" line
+    and to latchup.app's reported numbers."""
+    if FORCE_ABSTRACT_AREA:
+        return 1.0
+    try:
+        import SYN
+
+        if SYN.SYN_TOOL is SYN.DEVICE_MODELS:
+            return UM2_PER_ABSTRACT_AREA_UNIT
+    except Exception:
+        pass
+    return 1.0
+
+
+def _tally(tally, key):
+    if tally is not None:
+        tally[key] = tally.get(key, 0) + 1
+
+
+def _leaf_area_um2(parser_state, entity, logic, tally=None):
+    """One leaf's area, in the model's current output unit (_area_unit_scale):
+    the real cached sky130 measurement when there is one, the abstract
+    estimate scaled into that unit otherwise. Mirrors _resolve_delay_du's own
+    tiering for exactly the same reason -- a leaf that resolved to zero would
+    read as free wiring and never get shared. Ground truth throughout this
+    model is real synthesis output, never the abstract estimate: a cache hit
+    always wins regardless of how far it sits from _leaf_area's guess.
+
+    A leaf _leaf_area already prices at 0.0 (genuine wiring -- field reads,
+    constant shifts, bit_assign/concat/rotate) stays 0.0 with no cache lookup
+    and no tally: it was never a candidate for measurement, so counting it as
+    "estimated" would understate how much of a schedule's priced area is
+    real.
+
+    `tally`, when given, counts real-vs-fallback PRICED leaves so the caller
+    can report how much of a schedule's area came from measurement (see
+    _describe_area_model) -- a cold cache silently pulls a ranking onto
+    fallback numbers, which needs to be visible in the build log, not just in
+    the resulting number.
+    """
+    abstract = _leaf_area(entity, logic)
+    if abstract <= 0.0:
+        return 0.0
+    scale = _area_unit_scale(parser_state)
+    if scale != 1.0:
+        try:
+            import SYN
+
+            cached = SYN.GET_CACHED_LEAF_AREA(logic, parser_state)
+        except Exception:
+            cached = None
+        if cached is not None and cached[0] > 0.0:
+            _tally(tally, "measured")
+            return cached[0]
+    _tally(tally, "estimated")
+    return abstract * scale
+
+
+def _ff_area_um2(parser_state):
+    """One flip-flop's area, in the model's current output unit: the real
+    sky130 sequential cell area under DEVICE_MODELS (no cache needed --
+    DEVICE_MODELS.GET_SEQUENTIAL_CELL_AREA is a closed-form liberty lookup,
+    not a per-shape measurement), or the scaled AREA_PER_BIT_FF fallback
+    otherwise. This is the single largest correction real sky130 data makes
+    to this model: AREA_PER_BIT_FF is an FPGA number (a flip-flop paired with
+    its LUT is nearly free); a real sky130 dfxtp_1 measures 2.5x it."""
+    scale = _area_unit_scale(parser_state)
+    if scale != 1.0:
+        try:
+            import DEVICE_MODELS
+
+            value, _unit = DEVICE_MODELS.GET_SEQUENTIAL_CELL_AREA()
+            if value > 0.0:
+                return value
+        except Exception:
+            pass
+    return AREA_PER_BIT_FF * scale
+
+
+def _mux_bank_area_um2(parser_state, ctype, tally=None):
+    """One 2:1 multiplexer bank's area over `ctype`, in the model's current
+    output unit: the real cached sky130 measurement for this width's mux bank
+    when there is one, the scaled AREA_PER_BIT_MUX fallback otherwise.
+
+    Priced by width alone (no Logic object exists yet -- this is called
+    while SCHEDULING, before any mux entity is built), using the same
+    _ctype_width the abstract term already assumed as the physical SLV
+    width; a real cache entry for a struct or array ctype with padding would
+    disagree, but that approximation is not new here -- it is the one
+    AREA_PER_BIT_MUX already made.
+
+    The cache key itself goes through SYN.GET_MUX_CACHE_KEY rather than
+    being reconstructed here: under --no_mux_delay_by_width every mux width
+    collapses onto one shared "mux" key (SYN.GET_CACHED_LOGIC_FILE_KEY), and
+    a caller that always asked for "MUX_uint{width}_t" directly would miss
+    every real measurement in that mode, silently and without a wrong
+    answer -- just a 100% fallback rate this function's own tally would not
+    even flag as unusual, since a genuinely cold cache looks the same.
+    """
+    width = _ctype_width(ctype)
+    scale = _area_unit_scale(parser_state)
+    if scale != 1.0:
+        try:
+            import SYN
+
+            key = SYN.GET_MUX_CACHE_KEY(width)
+            cached = SYN.GET_CACHED_LEAF_AREA_BY_KEY(key, parser_state)
+        except Exception:
+            cached = None
+        if cached is not None and cached[0] > 0.0:
+            _tally(tally, "measured")
+            return cached[0]
+    _tally(tally, "estimated")
+    return width * AREA_PER_BIT_MUX * scale
+
+
+def _describe_area_model(parser_state, schedule):
+    """One line for DESCRIBE_SCHEDULE: which unit a schedule's est_area is in,
+    and -- under DEVICE_MODELS -- how many of its leaves were real
+    measurements versus abstract fallbacks. Recomputes the final schedule's
+    area once more with a fresh memo/tally purely to observe that split; the
+    cost itself is already known (schedule["est_area"]) and discarded here.
+    """
+    if _area_unit_scale(parser_state) == 1.0:
+        return "abstract"
+    tally = {}
+    ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo={}, tally=tally)
+    measured = tally.get("measured", 0)
+    estimated = tally.get("estimated", 0)
+    return f"sky130 um2 ({measured} leaf/leaves measured, {estimated} estimated)"
+
+
+def ESTIMATE_ENTITY_AREA(parser_state, entity, memo=None, tally=None):
+    """Estimated area of one entity INCLUDING everything it instantiates, in
+    the model's current output unit (see _area_unit_scale).
 
     Memoized per entity, which matters: a float64 multiplier's tree is large,
     and the sweep asks for these numbers hundreds of times.
@@ -2230,20 +2400,32 @@ def ESTIMATE_ENTITY_AREA(parser_state, entity, memo=None):
         return 0.0
     memo[entity] = 0.0  # cycle guard; real value written below
     if not logic.submodule_instances:
-        total = _leaf_area(entity, logic)
+        total = _leaf_area_um2(parser_state, entity, logic, tally)
     else:
         total = sum(
-            ESTIMATE_ENTITY_AREA(parser_state, sub, memo)
+            ESTIMATE_ENTITY_AREA(parser_state, sub, memo, tally)
             for sub in logic.submodule_instances.values()
         )
     memo[entity] = total
     return total
 
 
-def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None):
-    """Estimated area of the FSM a schedule describes, in abstract units.
+def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
+    """Estimated area of the FSM a schedule describes, in the model's current
+    output unit -- abstract units for any tool with no area measurement
+    (unchanged from before this function could measure anything), or real
+    sky130 um2 under DEVICE_MODELS (_area_unit_scale). Under sky130 this is a
+    MIX of measured and estimated terms, not a wholesale swap: the unit and
+    operand-multiplexer terms use a real cached measurement wherever one
+    exists and the abstract estimate (scaled into um2) as a per-leaf
+    fallback; the flip-flop term is always real (no cache needed, see
+    _ff_area_um2); the control-path terms stay abstract, scaled into um2,
+    because they price a decode LUT or comparator chain that has no
+    synthesizable entity of its own to measure in isolation. `tally`, when
+    given, is filled in by the unit/mux terms for _describe_area_model to
+    report how much of this number came from measurement.
 
-    Three terms, which are exactly the three things sharing trades between:
+    Five terms, which are exactly the things sharing trades between:
 
       units      one copy of each bound entity, however many operations use it.
                  This is the term sharing SHRINKS, and the reason AUTOFSM
@@ -2272,21 +2454,25 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None):
                  and therefore what lets the search share further before the
                  mux and register terms overtake it.
 
-    Ranking only -- see the note on the AREA_* constants for why this cannot be
-    a real utilization number.
+    Ranking only, even under sky130 -- a per-leaf sum still misses whatever
+    cross-instance sharing real synthesis finds across a whole design (see
+    the note on the AREA_* constants and docs/AUTOFSM_DESIGN.md section 3.8),
+    and the anchor guarantee (SWEEP_MIN_AREA_SCHEDULE) is what actually
+    bounds the risk of that, not the unit this returns.
     """
     memo = {} if memo is None else memo
     _seed_struct_widths(parser_state)
+    scale = _area_unit_scale(parser_state)
     nodes = schedule["nodes"]
     fus = schedule["fus"]
 
     total = 0.0
     for fu, entity in sorted(fus.items()):
-        total += ESTIMATE_ENTITY_AREA(parser_state, entity, memo)
+        total += ESTIMATE_ENTITY_AREA(parser_state, entity, memo, tally)
     for nid in schedule["node_order"]:
         node = nodes[nid]
         if not node.get("fu"):
-            total += ESTIMATE_ENTITY_AREA(parser_state, node["entity"], memo)
+            total += ESTIMATE_ENTITY_AREA(parser_state, node["entity"], memo, tally)
 
     users = {}
     for nid in schedule["node_order"]:
@@ -2299,21 +2485,14 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None):
         if n < 2:
             continue
         for ctype in nodes[nids[0]]["port_types"]:
-            total += _ctype_width(ctype) * (n - 1) * AREA_PER_BIT_MUX
+            total += (n - 1) * _mux_bank_area_um2(parser_state, ctype, tally)
 
     reg_of, reg_types = ALLOCATE_REGISTERS(
         nodes, schedule["output"], schedule["n_states"]
     )
-    reg_bits = sum(_ctype_width(t) for t in reg_types.values())
-    reg_bits += _ctype_width(schedule["out_type"])
-    if schedule.get("ctl", DEFAULT_CTL) == "onehot":
-        # One flip-flop per state plus idle, where binary needs only log2.
-        reg_bits += schedule["n_states"] + 1
-    else:
-        reg_bits += max(1, int(schedule["n_states"]).bit_length())
     # The input latch is deliberately not counted: it is the same width in
     # every candidate for a given function, so it cannot change a ranking.
-    total += reg_bits * AREA_PER_BIT_FF
+    total += _reg_bits_from_types(schedule, reg_types) * _ff_area_um2(parser_state)
 
     n_states = schedule["n_states"]
     statew = max(1, int(n_states).bit_length())
@@ -2321,18 +2500,18 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None):
         # No multiplexer term for shared registers: ALLOCATE_REGISTERS only
         # merges values coming from the same unit, so a shared register's data
         # input is one unchanged wire and only its write enable widens.
-        total += n_states * AREA_PER_STATE_DECODE
+        total += n_states * AREA_PER_STATE_DECODE * scale
     else:
         # One select table per shared unit, sized by its select width...
         for fu, nids in sorted(users.items()):
             n = len(nids)
             if n < 2:
                 continue
-            total += max(1, (n - 1).bit_length()) * AREA_PER_CTL_LUT_BIT
+            total += max(1, (n - 1).bit_length()) * AREA_PER_CTL_LUT_BIT * scale
         # ...one one-bit write-enable table per register, plus the next-state
         # table and the output-write pulse.
-        total += len(reg_types) * AREA_PER_CTL_LUT_BIT
-        total += (statew + 1) * AREA_PER_CTL_LUT_BIT
+        total += len(reg_types) * AREA_PER_CTL_LUT_BIT * scale
+        total += (statew + 1) * AREA_PER_CTL_LUT_BIT * scale
         # Writeback source multiplexers. Zero under today's allocator (a shared
         # register's values all come from one unit), so this term exists to
         # price cross-unit register sharing correctly if that is ever enabled:
@@ -2344,12 +2523,10 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None):
                 srcs_per_reg.setdefault(idx, set()).add(fu)
         for idx, srcs in sorted(srcs_per_reg.items()):
             if len(srcs) > 1:
-                total += (
-                    _ctype_width(reg_types[idx])
-                    * (len(srcs) - 1)
-                    * AREA_PER_BIT_MUX
+                total += (len(srcs) - 1) * _mux_bank_area_um2(
+                    parser_state, reg_types[idx], tally
                 )
-        total += n_states * AREA_PER_STATE_CTL
+        total += n_states * AREA_PER_STATE_CTL * scale
     return total
 
 
@@ -2803,8 +2980,45 @@ def SCHEDULES_EQUAL(a, b) -> bool:
     return all(a[k] == b[k] for k in sorted(a))
 
 
-def DESCRIBE_SCHEDULE(key, schedule) -> str:
-    """One-line build-log summary: what got folded onto what, and at what cost.
+def _reg_bits_from_types(schedule, reg_types):
+    """Total register bits given an allocation's reg_types: every register's
+    own width, plus the output and state registers. Shared by
+    ESTIMATE_SCHEDULE_AREA (which already has reg_types from its own
+    ALLOCATE_REGISTERS call) and _register_bit_count (which needs the same
+    total on its own, with no other area computation)."""
+    reg_bits = sum(_ctype_width(t) for t in reg_types.values())
+    reg_bits += _ctype_width(schedule["out_type"])
+    if schedule.get("ctl", DEFAULT_CTL) == "onehot":
+        # One flip-flop per state plus idle, where binary needs only log2.
+        reg_bits += schedule["n_states"] + 1
+    else:
+        reg_bits += max(1, int(schedule["n_states"]).bit_length())
+    return reg_bits
+
+
+def _register_bit_count(schedule):
+    """Total register bits ALLOCATE_REGISTERS commits a schedule to: every
+    cross-state value (sharing where live ranges and functional unit both
+    allow it) plus the output and state registers -- exactly what
+    ESTIMATE_SCHEDULE_AREA prices, recomputed here (cheap: pure function of
+    an already-built schedule, no rescheduling) so DESCRIBE_SCHEDULE can
+    print it regardless of whether the area sweep ran. This is AUTOFSM's OWN
+    register count, distinct from SYN.GET_REGISTERS_ESTIMATE_TEXT_AND_FFS's
+    whole-design FF estimate (which counts every declared pipeline-register
+    bit before yosys's own FF optimization, and is already documented to
+    overshoot real synthesized FF count by 5.7-5.9x on a state-heavy design)
+    -- comparing THIS number against a real build's measured sequential cell
+    count is what checks whether AUTOFSM's allocator has a comparable gap.
+    """
+    _reg_of, reg_types = ALLOCATE_REGISTERS(
+        schedule["nodes"], schedule["output"], schedule["n_states"]
+    )
+    return _reg_bits_from_types(schedule, reg_types)
+
+
+def DESCRIBE_SCHEDULE(parser_state, key, schedule) -> str:
+    """One-line (or, once the area search ran, multi-line) build-log summary:
+    what got folded onto what, and at what cost.
 
     This is the compiler-side resource statement -- deterministic and
     tool-independent, unlike utilization numbers, which only a real synthesis
@@ -2822,6 +3036,7 @@ def DESCRIBE_SCHEDULE(key, schedule) -> str:
         f"budget {budget_ns:.2f} ns/state (scale {schedule['budget_scale']:.3f}), "
         f"worst state {worst_ns:.2f} ns{floor}"
     )
+    line += f"\n  register bits: {_register_bit_count(schedule)}"
     est = schedule.get("est_area")
     if est is not None:
         anchor = schedule.get("est_area_anchor") or est
@@ -2835,6 +3050,7 @@ def DESCRIBE_SCHEDULE(key, schedule) -> str:
             f"opened up, {n_unshared} kind(s) given extra unit(s), "
             f"{schedule.get('sweep_candidates', 0)} candidate schedule(s) tried"
         )
+        line += f"\n  area model: {_describe_area_model(parser_state, schedule)}"
         for entity in schedule.get("opened") or ():
             line += f"\n    opened up: {entity}"
         for entity, n_units in schedule.get("unshared") or ():
@@ -2923,7 +3139,7 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
             force_unshare=force_unshare,
         )
         for key in sorted(schedules):
-            print(DESCRIBE_SCHEDULE(key, schedules[key]), flush=True)
+            print(DESCRIBE_SCHEDULE(parser_state, key, schedules[key]), flush=True)
             for fu_line in DESCRIBE_FUS(schedules[key]):
                 print(fu_line, flush=True)
         # A max_latency= cap is a hard constraint, so failing to meet it fails
