@@ -356,6 +356,25 @@ cannot claim a coalescing that the RTL fails to build. This matters especially
 under `--no_hier_syn --no_sweep`: it removes leaves and mux inputs before
 synthesis rather than relying on cross-instance optimization to discover them.
 
+**Muxes factor through common zero-delay structure.** Distinct complete values
+can still differ in only a small leaf. `_operand_factor_plan` recursively moves
+the state-selected choice through unscheduled glue, implementing identities
+such as
+
+```
+mux(sel, concat(common, a), concat(common, b))
+    -> concat(common, mux(sel, a, b))
+```
+
+Scheduled computation is always a leaf, so the transform cannot move or
+duplicate real work across states. It is especially useful for elaborated
+loops: accumulators, serializers, CRCs and iterative arithmetic often retain
+most of a word while selecting one new bit. On the 32-bit divider it replaced
+wide 32-row operand choices with two rolling-register bit reads and is the
+largest v7 combinational-area reduction. Again this is structural before
+synthesis, so it still helps when hierarchical optimization and sweeping are
+disabled.
+
 **It is an array read, not an if/elif chain.** A variable array index elaborates
 to the balanced binary `VAR_REF_RD` selection tree — log2(N) deep. The nested
 if/elif form v1 emitted inline elaborates to a *priority* chain, N−1 deep.
@@ -436,6 +455,31 @@ mux inputs introduced by greedy register numbering.
 `ALLOCATE_REGISTERS` is used by both the code generator (which declares the
 registers) and the area model (which prices them), so the model cannot drift
 from what gets built.
+
+Two conservative recurrence recoveries sit alongside the interval allocator:
+
+- `_OUTPUT_SHIFT_PACKS` recognizes a final, unrolled
+  `concat(old[W-2:0], produced_bit)` chain and emits one W-bit rolling register
+  instead of W separately-enabled result-bit lifetimes. This can reduce control
+  and muxing even when the synthesized FF count is unchanged.
+- For a full-width, consecutive consume/produce recurrence, it proves that a
+  same-width source is read only at the two descending bit positions that a
+  left-shifting register exposes. The source and output then share one rolling
+  vector, while the produced bits share one one-bit lifetime register. Any
+  whole-vector read, unexpected bit position, skipped state, compound/signed
+  mismatch, or combinational recurrence that still contains older source bits
+  rejects the transform. The model explicitly charges the W-bit source/shift
+  write-data mux.
+
+Transaction input storage is likewise lifetime-aware for top-level scalar
+struct fields. A field used after the first state receives its own input
+register; unused fields receive none. A uniquely matched first-state-only field
+that feeds a recovered rolling source preloads that work register on accept,
+instead of occupying a separate input bank for the entire transaction. Whole
+input uses, nested or compound fields, and ambiguous matches retain the original
+`Reg[in_t]` path. This is the common handwritten-FSM pattern “load early input
+straight into work storage,” expressed as a graph/lifetime proof rather than an
+algorithm-specific rewrite.
 
 ### 3.3 Code generation
 
@@ -875,9 +919,10 @@ never get shared (the same failure mode v1's zero-delay bug had). A schedule
 carries how much of its `est_area` was measured vs estimated in its
 `DESCRIBE_SCHEDULE` build-log line (`area model: sky130 um2 (N measured, M
 estimated)`), alongside a new `register bits: N` line (`_register_bit_count`)
-recording AUTOFSM's own `ALLOCATE_REGISTERS` total independent of area —
-useful on its own for comparing against a real build's sequential cell count
-(see the register-count finding below).
+recording AUTOFSM's live-range registers plus compacted transaction input,
+state and optional output storage independent of area — useful on its own for
+comparing against a real build's sequential cell count (see the register-count
+finding below).
 
 **A harness bug found and fixed while wiring this in.** An isolated leaf is
 wrapped in `dont_touch` input/output registers (`VHDL.WRITE_LOGIC_TOP`)
@@ -1181,6 +1226,35 @@ the lowest committed AUTOPIPELINE/latchup.app divider reference, 255,886.4 µm²
 Those absolute numbers are asserted by
 `autofsm_real_area_compare_test.py`; the estimator is only the ranking signal.
 
+**Area-focused v7**, same real sky130 divider and whole-design synthesis:
+
+| structural step | total µm² | combinational µm² | sequential µm² | real FF cells | fmax |
+|---|---:|---:|---:|---:|---:|
+| v4 baseline above | 34,592.4 | 21,698.6 | 12,893.8 | 264 | 55.82 MHz |
+| factor operand muxes through common glue | 28,290.1 | 15,396.3 | 12,893.8 | 264 | — |
+| recover one rolling output vector | 27,963.8 | 15,070.1 | 12,893.8 | 264 | 73.18 MHz |
+| fuse consumed source with produced output | 25,476.9 | 14,097.2 | 11,379.7 | 233 | 71.22 MHz |
+| compact/preload transaction input fields | **24,095.7** | **14,278.9** | **9,816.8** | **201** | **70.40 MHz** |
+
+The final result is **−30.3%** from v4 and **−43.7%** from the original v3
+shape. The consume/produce fusion removes 31 FFs (two W-bit banks become W+1
+bits) and also removes the large per-state source-bit choice, more than paying
+for its explicit 32-bit initialization mux. Field-granular input storage then
+removes another 32 FFs: `dividend` preloads the rolling work register on accept,
+while only the later-lived `divisor` retains a dedicated input register. That
+last trade increases combinational area by 181.7 µm² but saves 1,562.9 µm² of
+sequential area, a net 1,381.2 µm² win.
+
+These transformations are recurrence- and lifetime-based, not divider-name or
+operation based. The unit fixture exercises the same pattern with an XOR/
+subtract accumulator, and deliberately verifies that an uncaptured
+combinational recurrence is rejected because it still needs older source bits.
+The final divider is **10.62× smaller** than the 255,886.4 µm² committed
+AUTOPIPELINE reference. Human-written leaderboard implementations remain the
+next bar: roughly 10–17k µm² for the cluster in the supplied latchup.app view,
+so loop/control recovery and recurrent operator chaining still have meaningful
+headroom.
+
 Timing iteration, starting from a deliberately over-packed schedule
 (`--autofsm_budget_scale 1.5`): first build 30.46 MHz vs a 40 MHz goal (FAIL) →
 budget tightened → 44.23 MHz (PASS), with no source change.
@@ -1198,7 +1272,7 @@ at least 3"*.
 | test | category | what it proves |
 |---|---|---|
 | `autofsm_test.py` | native_sim, (synth via wrapper) | the pure function's semantics, and the passthrough behaviour when unscheduled |
-| `autofsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing, same- and cross-FU register reuse, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--autofsm_abstract_area`, real flip-flop area) |
+| `autofsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing and common-glue factoring, same- and cross-FU register reuse, recovered rolling output and consume/produce storage, field-lifetime input compaction, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--autofsm_abstract_area`, real flip-flop area) |
 | `area_model_test.py` (`src/tests/pypeline_tests/inst/`) | unit | not AUTOFSM-specific (SYN/DEVICE_MODELS leaf-area-cache coverage), but two tests here directly guard AUTOFSM.py's own constant: the committed `area_cache/` excludes STA-harness registers, and `AUTOFSM.UM2_PER_ABSTRACT_AREA_UNIT` refits to what is actually committed |
 | `self_check_autofsm_test.py` | native_sim, vhdl_sim, synth ×2 | the FSM computes what the function did — in native sim, in GHDL, at latency 0 and at real latency |
 | `stream_autofsm_test.py` | native_sim | `make_stream_autofsm`'s handshake protocol: ready deasserts while busy, latency/II == `fsm.latency + 1`, and — the property raw AUTOFSM cannot provide — a stalled consumer never loses a result and sees stable data while it's held |
@@ -1208,7 +1282,7 @@ at least 3"*.
 | `autofsm_resources_compare_test.py` | synth | the FSM is actually smaller than the logic it replaces |
 | `autofsm_area_sweep_compare_test.py` | synth | the area search does not make designs bigger, and its cost model agrees with yosys about which of two schedules is smaller — the calibration guard |
 | `autofsm_min_area_verify_test.py` | synth | the search actually MOVES on a design built to reward moving, the move is smaller in real yosys cells, and no alternative point of the search space (built via `--autofsm_open` / `--autofsm_unshare`) is smaller still |
-| `autofsm_real_area_compare_test.py` | build_report | same question under `--syn_tool sky130`, judged by real `Measured area:` rather than yosys cells: real-µm²-ranked vs `--autofsm_abstract_area` vs `--autofsm_no_area_sweep`, all three built; asserts the default result beats the lowest committed AUTOPIPELINE/latchup.app divider area; plus AUTOFSM's own `ALLOCATE_REGISTERS` bit count against the build's real sequential cell count (the register-fidelity question §3.8 raises explicitly) |
+| `autofsm_real_area_compare_test.py` | build_report | same question under `--syn_tool sky130`, judged by real `Measured area:` rather than yosys cells: real-µm²-ranked vs `--autofsm_abstract_area` vs `--autofsm_no_area_sweep`, all three built; pins the 25k µm² v7 structural ceiling and beats the lowest committed AUTOPIPELINE/latchup.app divider area; plus AUTOFSM's own allocated-storage bit count against the build's real sequential cell count (the register-fidelity question §3.8 raises explicitly) |
 | `autofsm_max_latency_test.py` | synth | a meetable `max_latency` is met by unsharing; an unmeetable one fails the build naming the latency actually needed |
 | `autofsm_timing_iter_test.py` | synth | a critical path inside an FSM is found and fixed by rescheduling |
 | `autofsm_ctl_compare_test.py` | synth | the constant-table control path is not bigger than the comparator chains it replaced, and the donut FSM still meets the clock goal that v2 misses |
@@ -1285,12 +1359,34 @@ and at `fsm.latency + 1` (scheduled).
 
 **Future work**
 
-- **Width subsumption in binding.** A 32-bit adder can serve a 16-bit add with
-  pad/truncate adapters on its ports; today those are two entities and therefore
-  two units. The seams are already in place: `schedule["fus"]` maps unit id →
-  entity as an explicit indirection rather than assuming they are the same
-  string, per-node operand cast chains are the adapter mechanism, and the area
-  model already prices "one bigger unit plus waste" against "two units".
+- **Width/capacity subsumption in binding and allocation.** This remains
+  unimplemented: entities and ordinary value registers still require exact C
+  types. A 32-bit adder can serve every compatible <=32-bit add by extending
+  inputs and truncating the result, and a `uint32_t` physical register can hold
+  non-overlapping `uint1_t`/`uint8_t`/`uint16_t`/`uint32_t` lifetimes if every
+  read narrows back to the value's declared type. The seams are already in
+  place: `schedule["fus"]` maps unit id → entity as an explicit indirection,
+  per-node cast chains are the FU adapter mechanism, and live ranges are
+  separate from physical register ids. The next implementation should be a
+  weighted capacity search, not unconditional widening: a bigger unit, wider
+  operand/writeback mux and extension logic can cost more than the narrow unit
+  or FF bank it replaces. Legality is operation-specific too — unsigned
+  add/bitwise operations are straightforward, while signed comparisons,
+  shifts, overflow-visible results and mixed signedness require explicit rules.
+  The current divider has only one scheduled width of each recurrent operation,
+  so this axis would not change its measurement; heterogeneous arithmetic FSMs
+  are the right regression designs for it.
+- **Recurrent operator-chain binding.** A human FSM often executes
+  `compute -> conditional select -> register` in one state and shares the whole
+  chain across iterations. AUTOFSM binds each entity independently, so a
+  one-time prologue use can phase-shift the recurrence and leave both the
+  compute result and selected recurrence value registered. A forced second
+  generic MUX experiment at the consume/produce-fusion stage did *not* help
+  (25,476.9 → 27,973.6 µm²): ordinary copy binding split recurrence uses
+  across both units and retained the same 105 working bits. A useful
+  implementation needs chain-aware/prologue-aware
+  binding, not merely another copy. This is likely the next large general gap
+  to handwritten FSM area.
 - **Per-node grain**, rather than per-entity. Opening an operation today opens
   every use of it, because every use must stay bound to one unit for sharing to
   mean anything.

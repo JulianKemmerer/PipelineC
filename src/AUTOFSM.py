@@ -78,7 +78,10 @@ import C_TO_LOGIC
 # 5: operand muxes select distinct values per port, rather than blindly
 #    allocating one row per operation sharing the functional unit.
 # 6: area-aware cross-FU register binding and optional combinational output.
-SCHEDULE_VERSION = 6
+# 7: structural mux factoring, rolling consume/produce storage, and compact
+#    field-granular transaction input registers change generated hardware even
+#    though the underlying operation schedule is unchanged.
+SCHEDULE_VERSION = 7
 
 # How the generated FSM's CONTROL path is rendered. This selects codegen shape
 # AND the matching area model -- the two must agree, so it is part of the
@@ -1610,6 +1613,469 @@ def _scheduled_deps(dag, ref, sched, out, _seen=None):
     return out
 
 
+def _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states):
+    """Find unrolled shift/concat accumulations used only by the final result.
+
+    Python loops are gone by the time AUTOFSM sees the Logic graph, but a very
+    common loop-carried value leaves an unmistakable dataflow shape::
+
+        x1 = concat(x0[W-2:0], bit1)
+        x2 = concat(x1[W-2:0], bit2)
+        ...
+
+    The ordinary live-range analysis sees every ``bitN`` in the final expanded
+    expression and allocates one separately-enabled register for each.  A
+    handwritten FSM uses one W-bit shift register instead.  Recover that form
+    conservatively when:
+
+      * the chain is at least four steps and has a constant/glue-only seed;
+      * each appended expression depends on exactly one scheduled one-bit
+        result, produced in strictly increasing states before the final state;
+      * no scheduled operation consumes the chain (it is output assembly only).
+
+    The returned description is derived data, not stored in the schedule, so
+    old schedule serialization stays simple and area/codegen always agree.
+    """
+    sched = {nid for nid, n in nodes.items() if n["delay_du"] > 0}
+    dag = {"nodes": nodes}
+
+    def glue_walk(ref, visit, seen=None):
+        if ref[0] != "node":
+            return
+        nid = ref[1]
+        seen = set() if seen is None else seen
+        if nid in seen:
+            return
+        seen.add(nid)
+        node = nodes.get(nid)
+        if node is None or node["delay_du"] > 0:
+            return
+        visit(nid, node)
+        for operand in node.get("operands", ()):
+            glue_walk(operand, visit, seen)
+
+    # A packed chain may not feed a scheduled operation: replacing it with the
+    # progressively updated register would then change what an intermediate
+    # state observes.  Final-output glue is the only allowed consumer.
+    consumed_by_schedule = set()
+    for node in nodes.values():
+        if node["delay_du"] <= 0:
+            continue
+        for operand in node.get("operands", ()):
+            glue_walk(
+                operand,
+                lambda nid, _node: consumed_by_schedule.add(nid),
+            )
+
+    def is_seed(ref):
+        if ref[0] == "const":
+            return True
+        if ref[0] != "node":
+            return False  # in/inlined/unknown: transaction-dependent seed
+        node = nodes.get(ref[1])
+        if node is None or node["delay_du"] > 0:
+            return False
+        return all(is_seed(operand) for operand in node.get("operands", ()))
+
+    def match_chain(root_ref):
+        if root_ref[0] != "node":
+            return None
+        root_id = root_ref[1]
+        root = nodes.get(root_id)
+        if root is None:
+            return None
+        width = _ctype_width(root.get("out_type"))
+        if width < 2 or _scalar_ctype_to_type(root.get("out_type")) is None:
+            return None
+
+        steps_outer_first = []
+        cur = root_ref
+        seed_casts = ()
+        while cur[0] == "node":
+            nid = cur[1]
+            node = nodes.get(nid)
+            if (
+                node is None
+                or node["delay_du"] > 0
+                or node["op"].get("kind") != "bitmanip"
+                or node["op"].get("builtin") != "concat"
+                or len(node.get("operands", ())) != 2
+                or _ctype_width(node.get("out_type")) != width
+                or _ctype_width(node.get("port_types", (None, None))[0]) != width - 1
+                or _ctype_width(node.get("port_types", (None, None))[1]) != 1
+            ):
+                break
+            left = node["operands"][0]
+            if left[0] != "node":
+                break
+            slice_node = nodes.get(left[1])
+            if (
+                slice_node is None
+                or slice_node["delay_du"] > 0
+                or slice_node["op"].get("kind") != "bitmanip"
+                or slice_node["op"].get("builtin") != "__slice__"
+                or slice_node["op"].get("consts") != [width - 2, 0]
+                or len(slice_node.get("operands", ())) != 1
+            ):
+                break
+            right = node["operands"][1]
+            deps = _scheduled_deps(dag, right, sched, set())
+            if len(deps) != 1:
+                break
+            (dep,) = tuple(deps)
+            # Keep the first implementation deliberately narrow: every append
+            # is one scheduled result directly.  Factored/glue append values
+            # are legal too, but can need a state-selected write-data mux whose
+            # area belongs in the model before enabling that broader case.
+            if right[0] != "node" or right[1] != dep:
+                break
+            dep_state = nodes[dep].get("state")
+            if dep_state is None or dep_state >= n_states:
+                break
+            steps_outer_first.append(
+                {
+                    "state": dep_state,
+                    "ref": right,
+                    "casts": tuple(node["casts"][1]),
+                    "dep": dep,
+                }
+            )
+            cur = slice_node["operands"][0]
+            seed_casts = tuple(slice_node["casts"][0])
+
+        steps = list(reversed(steps_outer_first))
+        states = [step["state"] for step in steps]
+        if (
+            len(steps) < 4
+            or states != sorted(states)
+            or len(states) != len(set(states))
+            or len({nodes[step["dep"]].get("fu") for step in steps}) != 1
+            or len(
+                {(nodes[step["dep"]].get("out_type"), step["casts"]) for step in steps}
+            )
+            != 1
+            or not is_seed(cur)
+            or root_id in consumed_by_schedule
+        ):
+            return None
+        return {
+            "root": root_id,
+            "ctype": root["out_type"],
+            "width": width,
+            "seed_ref": cur,
+            "seed_casts": seed_casts,
+            "steps": tuple(steps),
+        }
+
+    packs = []
+    claimed = set()
+
+    def search(ref, seen=None):
+        if ref[0] != "node":
+            return
+        nid = ref[1]
+        seen = set() if seen is None else seen
+        if nid in seen:
+            return
+        seen.add(nid)
+        pack = match_chain(ref)
+        if pack is not None and not ({s["dep"] for s in pack["steps"]} & claimed):
+            packs.append(pack)
+            claimed.update(s["dep"] for s in pack["steps"])
+            return
+        node = nodes.get(nid)
+        if node is None or node["delay_du"] > 0:
+            return
+        for operand in node.get("operands", ()):
+            search(operand, seen)
+
+    search(output_ref)
+
+    def one_bit_slice_of(ref, source_nid):
+        """Return the selected bit when ``ref`` is a direct scalar slice of
+        ``source_nid``.  Keeping this direct is intentional: looking through
+        arbitrary glue/casts would make it much harder to prove that replacing
+        the whole expression by a bit of a rolling register is exact."""
+        if ref[0] != "node":
+            return None
+        node = nodes.get(ref[1])
+        if (
+            node is None
+            or node["delay_du"] > 0
+            or node["op"].get("kind") != "bitmanip"
+            or node["op"].get("builtin") != "__slice__"
+            or len(node.get("operands", ())) != 1
+            or tuple(node["operands"][0]) != ("node", source_nid)
+            or _ctype_width(node.get("out_type")) != 1
+        ):
+            return None
+        consts = node["op"].get("consts")
+        if not isinstance(consts, (tuple, list)) or len(consts) != 2:
+            return None
+        hi, lo = consts
+        return hi if hi == lo and isinstance(hi, int) else None
+
+    def later_source_uses(ref, source_nid, state, found, seen=None):
+        """Collect replaceable source-bit reads in one later-state value.
+
+        Return false if the source is reachable by any route other than a
+        direct one-bit slice.  Scheduled nodes are leaves here: a consumer's
+        operand cannot inline another scheduled operation.
+        """
+        if ref[0] != "node":
+            return True
+        nid = ref[1]
+        if nid == source_nid:
+            return False
+        node = nodes.get(nid)
+        if node is None:
+            return True
+        bit = one_bit_slice_of(ref, source_nid)
+        if bit is not None:
+            found.append((nid, state, bit))
+            return True
+        if node["delay_du"] > 0:
+            return True
+        seen = set() if seen is None else set(seen)
+        if nid in seen:
+            return True
+        seen.add(nid)
+        return all(
+            later_source_uses(operand, source_nid, state, found, seen)
+            for operand in node.get("operands", ())
+        )
+
+    def source_fusion_for(pack):
+        """Recognize a consume/produce rolling-buffer recurrence.
+
+        A handwritten bit-serial FSM commonly keeps the unconsumed input bits
+        and already-produced output bits in ONE shift register.  Unrolled code
+        instead leaves two width-W values in the graph: a source read at
+        descending bit indices and an output assembled by W shifts.  Fuse them
+        only for the exact full-width, consecutive-state form.  After state
+        ``first`` captures the source, state ``first + d`` may read only the
+        two positions that a left shift has moved to W-1/W-2::
+
+            original[W-d]   -> rolling[W-1]  (the preceding step's bit)
+            original[W-1-d] -> rolling[W-2]  (this step's new bit)
+
+        Every other later use rejects the candidate.  The final output is the
+        rolling register's low W-1 bits plus the last produced bit, so it needs
+        one one-bit lifetime rather than a second W-bit bank.
+        """
+        width = pack["width"]
+        steps = pack["steps"]
+        states = [step["state"] for step in steps]
+        if (
+            len(steps) != width
+            or not states
+            or states != list(range(states[0], states[0] + width))
+            or n_states != states[-1] + 1
+        ):
+            return None
+        first = states[0]
+        step_deps = {step["dep"] for step in steps}
+        candidates = []
+        for source_nid, source in sorted(nodes.items()):
+            if (
+                source["delay_du"] <= 0
+                or source.get("state") != first
+                or source.get("out_type") != pack["ctype"]
+                or source_nid in step_deps
+            ):
+                continue
+
+            uses = []
+            valid = True
+            for consumer in nodes.values():
+                if consumer["delay_du"] <= 0 or consumer.get("state", 0) <= first:
+                    continue
+                for operand in consumer.get("operands", ()):
+                    if source_nid not in _scheduled_deps(dag, operand, sched, set()):
+                        continue
+                    if not later_source_uses(
+                        operand, source_nid, consumer["state"], uses
+                    ):
+                        valid = False
+                        break
+                if not valid:
+                    break
+            # A direct final-output use cannot be hidden by the rolling
+            # rewrite.  (The recovered output chain itself depends only on its
+            # appended bit results, not on this source.)
+            if valid and source_nid in _scheduled_deps(dag, output_ref, sched, set()):
+                valid = False
+            replacements = {}
+            if valid:
+                for slice_nid, state, source_bit in uses:
+                    delta = state - first
+                    if source_bit == width - delta:
+                        rolling_bit = width - 1
+                    elif source_bit == width - 1 - delta:
+                        rolling_bit = width - 2
+                    else:
+                        valid = False
+                        break
+                    key = (slice_nid, state)
+                    old = replacements.get(key)
+                    if old is not None and old != rolling_bit:
+                        valid = False
+                        break
+                    replacements[key] = rolling_bit
+            # Requiring at least one width's worth of distinct reads prevents
+            # an incidental short-lived source from paying for a wide init
+            # mux.  The divider-shaped recurrence has roughly 2W such reads;
+            # serializers/CRC-like recurrences ordinarily have W or more.
+            if valid and len(replacements) >= width:
+                candidates.append(
+                    {
+                        "source_dep": source_nid,
+                        "source_state": first,
+                        "replacements": replacements,
+                    }
+                )
+        # Ambiguity is a reason to stay conservative, not to choose whichever
+        # node id happens to sort first.
+        return candidates[0] if len(candidates) == 1 else None
+
+    for pack in packs:
+        fusion = source_fusion_for(pack)
+        if fusion is not None:
+            pack["source_fusion"] = fusion
+    return tuple(sorted(packs, key=lambda pack: pack["root"]))
+
+
+def _INPUT_STORAGE_PLAN(nodes, output_ref, n_states):
+    """Plan field-granular transaction input storage when it is provably safe.
+
+    The historical code keeps ``Reg[in_t]`` for the complete transaction even
+    when a top-level field is consumed only in state 1.  Handwritten FSMs tend
+    to load such a field straight into a work register and retain only the
+    operands needed by later states.  Recover that form for scalar top-level
+    struct fields represented by direct ``ref`` glue nodes.
+
+    A field used only in the source state of a consume/produce rolling pack,
+    and feeding that pack's source operation, may preload the pack on accept.
+    Every other referenced field gets its own ordinary input register.  If any
+    whole-input, nested-field or non-scalar use exists, return ``None`` and the
+    code generator keeps the original whole-value input register.
+    """
+    sched = {nid for nid, node in nodes.items() if node["delay_du"] > 0}
+    direct_input_consumers = set()
+    qualified = {}
+    for nid, node in nodes.items():
+        operands = node.get("operands", ())
+        has_direct_input = any(ref[0] == "in" for ref in operands)
+        if not has_direct_input:
+            continue
+        direct_input_consumers.add(nid)
+        toks = node.get("op", {}).get("toks")
+        if (
+            node["delay_du"] <= 0
+            and node.get("op", {}).get("kind") == "ref"
+            and isinstance(toks, (tuple, list))
+            and len(toks) == 1
+            and len(operands) == 1
+            and operands[0][0] == "in"
+            and _scalar_ctype_to_type(node.get("out_type")) is not None
+        ):
+            qualified[nid] = (str(toks[0]), node["out_type"])
+    if set(qualified) != direct_input_consumers or output_ref[0] == "in":
+        return None
+
+    fields = {}
+    for nid, (field, ctype) in qualified.items():
+        entry = fields.setdefault(
+            field, {"field": field, "ctype": ctype, "refs": set(), "states": set()}
+        )
+        if entry["ctype"] != ctype:
+            return None
+        entry["refs"].add(nid)
+
+    def mark_glue(ref, state, seen=None):
+        if ref[0] != "node":
+            return
+        nid = ref[1]
+        node = nodes.get(nid)
+        if node is None or node["delay_du"] > 0:
+            return
+        seen = set() if seen is None else set(seen)
+        if nid in seen:
+            return
+        seen.add(nid)
+        hit = qualified.get(nid)
+        if hit is not None:
+            fields[hit[0]]["states"].add(state)
+        for operand in node.get("operands", ()):
+            mark_glue(operand, state, seen)
+
+    for consumer in nodes.values():
+        if consumer["delay_du"] <= 0:
+            continue
+        for operand in consumer.get("operands", ()):
+            mark_glue(operand, consumer["state"])
+    mark_glue(output_ref, n_states)
+
+    def contains_any(refs, wanted, seen=None):
+        for ref in refs:
+            if ref[0] != "node":
+                continue
+            nid = ref[1]
+            if nid in wanted:
+                return True
+            node = nodes.get(nid)
+            if node is None or node["delay_du"] > 0:
+                continue
+            seen = set() if seen is None else set(seen)
+            if nid in seen:
+                continue
+            seen.add(nid)
+            if contains_any(node.get("operands", ()), wanted, seen):
+                return True
+        return False
+
+    packs = _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states)
+    preload_by_pack = {}
+    claimed_fields = set()
+    for pack in packs:
+        fusion = pack.get("source_fusion")
+        if fusion is None:
+            continue
+        source = nodes[fusion["source_dep"]]
+        candidates = []
+        for field, entry in sorted(fields.items()):
+            if (
+                field not in claimed_fields
+                and entry["ctype"] == pack["ctype"]
+                and entry["states"] == {fusion["source_state"]}
+                and contains_any(source.get("operands", ()), entry["refs"])
+            ):
+                candidates.append(field)
+        if len(candidates) == 1:
+            field = candidates[0]
+            preload_by_pack[pack["root"]] = field
+            claimed_fields.add(field)
+
+    stored_fields = tuple(
+        {
+            "field": field,
+            "ctype": entry["ctype"],
+            "refs": tuple(sorted(entry["refs"])),
+        }
+        for field, entry in sorted(fields.items())
+        if field not in claimed_fields
+    )
+    return {
+        "stored_fields": stored_fields,
+        "preload_by_pack": preload_by_pack,
+        "preloaded_fields": tuple(sorted(claimed_fields)),
+        "field_refs": {
+            field: tuple(sorted(entry["refs"]))
+            for field, entry in sorted(fields.items())
+        },
+    }
+
+
 def _CROSS_STATE_NODES(nodes, output_ref, n_states):
     """Scheduled results that must survive into a later state, and so need a
     register. Everything else stays a combinational local.
@@ -1622,9 +2088,10 @@ def _CROSS_STATE_NODES(nodes, output_ref, n_states):
     model (which prices them) -- one definition, so the model can never drift
     from what actually gets built.
     """
-    return {nid: t for nid, (t, _lo, _hi) in _LIVE_RANGES(
-        nodes, output_ref, n_states
-    ).items()}
+    return {
+        nid: t
+        for nid, (t, _lo, _hi) in _LIVE_RANGES(nodes, output_ref, n_states).items()
+    }
 
 
 def _LIVE_RANGES(nodes, output_ref, n_states):
@@ -1646,9 +2113,31 @@ def _LIVE_RANGES(nodes, output_ref, n_states):
         for operand in consumer["operands"]:
             for dep in _scheduled_deps(dag, operand, sched, set()):
                 used_in_states[dep].add(consumer["state"])
-    # The final result is assembled in the last state.
+    # The final result is assembled in the last state.  Results captured into
+    # a recovered rolling output register are consumed in their own producer
+    # states instead, so they do not each need a separate long-lived register.
+    output_packs = _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states)
+    packed_deps = {step["dep"] for pack in output_packs for step in pack["steps"]}
+    # A source fused into a rolling consume/produce register is captured in
+    # its producer state; all of its proven later slice reads come from that
+    # register instead.  Conversely each produced output bit now survives for
+    # exactly one cycle: step N is shifted in during step N+1, and the final
+    # bit is joined to the vector in the result state.  The interval allocator
+    # consequently binds all W bits to one physical one-bit register.
+    for pack in output_packs:
+        fusion = pack.get("source_fusion")
+        if fusion is None:
+            continue
+        source_nid = fusion["source_dep"]
+        born = nodes[source_nid]["state"]
+        used_in_states[source_nid] = {
+            state for state in used_in_states[source_nid] if state <= born
+        }
+        for step in pack["steps"]:
+            used_in_states[step["dep"]].add(step["state"] + 1)
     for dep in _scheduled_deps(dag, output_ref, sched, set()):
-        used_in_states[dep].add(n_states)
+        if dep not in packed_deps:
+            used_in_states[dep].add(n_states)
     out = {}
     for nid in sched:
         born = nodes[nid]["state"]
@@ -1748,7 +2237,21 @@ def _stable_op_key(op):
     return json.dumps(op, sort_keys=True, default=str, separators=(",", ":"))
 
 
-def _value_equiv_key(nodes, ref, cur_state, reg_of, _seen=None):
+def _rolling_replacements(schedule):
+    """(glue node, use state) -> structural rolling-register bit identity."""
+    out = {}
+    for pack in _OUTPUT_SHIFT_PACKS(
+        schedule["nodes"], schedule["output"], schedule["n_states"]
+    ):
+        fusion = pack.get("source_fusion")
+        if fusion is None:
+            continue
+        for key, bit in fusion["replacements"].items():
+            out[key] = (pack["root"], bit, pack["ctype"])
+    return out
+
+
+def _value_equiv_key(nodes, ref, cur_state, reg_of, replacements=None, _seen=None):
     """Structural identity of the expression `_Codegen._render_ref` emits.
 
     Node ids alone are deliberately not an identity here.  Thirty-two
@@ -1766,6 +2269,10 @@ def _value_equiv_key(nodes, ref, cur_state, reg_of, _seen=None):
     if kind != "node":
         return ("unknown", tuple(ref))
     nid = ref[1]
+    replacement = (replacements or {}).get((nid, cur_state))
+    if replacement is not None:
+        root, bit, ctype = replacement
+        return ("rolling_bit", root, bit, ctype)
     node = nodes.get(nid)
     if node is None:
         return ("missing", nid)
@@ -1787,7 +2294,16 @@ def _value_equiv_key(nodes, ref, cur_state, reg_of, _seen=None):
         port_type = None if assemble else node.get("port_types", ())[i]
         operands.append(
             (
-                _value_equiv_key(nodes, operand, cur_state, reg_of, _seen),
+                # Keep the replacement map on every recursive descent: the
+                # source slice is normally nested inside concat/MUX glue.
+                _value_equiv_key(
+                    nodes,
+                    operand,
+                    cur_state,
+                    reg_of,
+                    replacements,
+                    _seen,
+                ),
                 casts,
                 port_type,
             )
@@ -1800,14 +2316,171 @@ def _value_equiv_key(nodes, ref, cur_state, reg_of, _seen=None):
     )
 
 
-def _operand_equiv_key(nodes, node, port_i, reg_of):
+def _operand_equiv_key(nodes, node, port_i, reg_of, replacements=None):
     return (
         _value_equiv_key(
-            nodes, node["operands"][port_i], node["state"], reg_of
+            nodes,
+            node["operands"][port_i],
+            node["state"],
+            reg_of,
+            replacements,
         ),
         tuple(node["casts"][port_i]),
         node["port_types"][port_i],
     )
+
+
+def _operand_factor_plan(
+    nodes, alternatives, reg_of, n_users, target_type, replacements=None
+):
+    """Factor a state-selected value through common zero-delay structure.
+
+    ``alternatives`` contains ``(user_index, ref, casts, state)`` tuples.  The
+    old emitter rendered every complete expression and put one mux at the FU
+    port.  That loses a particularly important HLS simplification::
+
+        mux(sel, concat(common, a), concat(common, b))
+          -> concat(common, mux(sel, a, b))
+
+    Elaborated loops produce this shape constantly: accumulators, shift
+    registers, CRCs, serializers and iterative arithmetic all keep most of an
+    operand fixed while changing one small leaf.  Factoring the mux through
+    glue makes the generated hardware reflect that common structure directly,
+    rather than hoping whole-design synthesis rediscovers it across many
+    separately elaborated instances.
+
+    The transform is deliberately limited to zero-delay nodes.  Scheduled
+    operations remain FU/register leaves, so this cannot duplicate, move or
+    combine actual computation across state boundaries.  Mixed root shapes are
+    first partitioned and factored independently; this is what turns an
+    initial-value-versus-recurrence mux into a small outer mux around a factored
+    repeated body.
+    """
+    alternatives = tuple(alternatives)
+    if not alternatives:
+        raise AutofsmError("AUTOFSM: cannot factor an empty operand choice set")
+
+    def exact_key(alt):
+        _user_i, ref, casts, state = alt
+        return (
+            _value_equiv_key(nodes, ref, state, reg_of, replacements),
+            tuple(casts),
+            target_type,
+        )
+
+    exact = {}
+    for alt in alternatives:
+        exact.setdefault(exact_key(alt), []).append(alt)
+    if len(exact) == 1:
+        return {
+            "kind": "leaf",
+            "target_type": target_type,
+            "alternative": alternatives[0],
+        }
+
+    # A glue root can be shared only when re-emitting it means the same
+    # operation at the same types.  Include entity as well as decoded op:
+    # ordinary calls all decode as {"kind": "call"}, but calls to two
+    # different functions are of course not interchangeable.
+    def root_key(alt):
+        _user_i, ref, casts, state = alt
+        if ref[0] == "node" and (ref[1], state) in (replacements or {}):
+            return ("value", exact_key(alt))
+        if ref[0] == "node":
+            node = nodes.get(ref[1])
+            if (
+                node is not None
+                and node["delay_du"] <= 0
+                and node["op"].get("kind") != "assemble"
+                and all(t is not None for t in node.get("port_types", ()))
+            ):
+                return (
+                    "glue",
+                    node.get("entity"),
+                    _stable_op_key(node["op"]),
+                    node.get("out_type"),
+                    tuple(node.get("port_types", ())),
+                    tuple(casts),
+                )
+        # Exact values form one group; unrelated terminals become separate
+        # choices of the surrounding mux.
+        return ("value", exact_key(alt))
+
+    groups = {}
+    for alt in alternatives:
+        groups.setdefault(root_key(alt), []).append(alt)
+    if len(groups) > 1:
+        choices = []
+        mapping = [0] * n_users
+        for row, group in enumerate(groups.values()):
+            choices.append(
+                _operand_factor_plan(
+                    nodes,
+                    group,
+                    reg_of,
+                    n_users,
+                    target_type,
+                    replacements,
+                )
+            )
+            for user_i, _ref, _casts, _state in group:
+                mapping[user_i] = row
+        return {
+            "kind": "mux",
+            "target_type": target_type,
+            "mapping": tuple(mapping),
+            "choices": tuple(choices),
+        }
+
+    # Multiple non-identical alternatives with one root group must be the same
+    # zero-delay operation shape (distinct terminal values were split above).
+    first = alternatives[0]
+    first_node = nodes[first[1][1]]
+    children = []
+    for port_i, child_type in enumerate(first_node["port_types"]):
+        child_alts = []
+        for user_i, ref, _outer_casts, state in alternatives:
+            node = nodes[ref[1]]
+            child_alts.append(
+                (
+                    user_i,
+                    node["operands"][port_i],
+                    tuple(node["casts"][port_i]),
+                    state,
+                )
+            )
+        children.append(
+            _operand_factor_plan(
+                nodes,
+                child_alts,
+                reg_of,
+                n_users,
+                child_type,
+                replacements,
+            )
+        )
+    return {
+        "kind": "glue",
+        "target_type": target_type,
+        "node_id": first[1][1],
+        "casts": tuple(first[2]),
+        "children": tuple(children),
+    }
+
+
+def _factor_plan_muxes(plan):
+    """Yield ``(c_type, choice_count, state_mapping)`` for factored muxes."""
+    if plan["kind"] == "mux":
+        yield (
+            plan["target_type"],
+            len(plan["choices"]),
+            plan["mapping"],
+        )
+        for child in plan["choices"]:
+            yield from _factor_plan_muxes(child)
+    elif plan["kind"] == "glue":
+        for child in plan["children"]:
+            yield from _factor_plan_muxes(child)
 
 
 def _fu_nodes_in_emit_order(schedule, fu):
@@ -1833,6 +2506,7 @@ def _operand_mux_plan(schedule, fu, reg_of):
     fu_nodes = _fu_nodes_in_emit_order(schedule, fu)
     if not fu_nodes:
         return fu_nodes, []
+    replacements = _rolling_replacements(schedule)
     n_ports = len(fu_nodes[0][1]["operands"])
     ports = []
     for port_i in range(n_ports):
@@ -1840,18 +2514,43 @@ def _operand_mux_plan(schedule, fu, reg_of):
         representatives = []
         mapping = []
         for nid, node in fu_nodes:
-            key = _operand_equiv_key(schedule["nodes"], node, port_i, reg_of)
+            key = _operand_equiv_key(
+                schedule["nodes"], node, port_i, reg_of, replacements
+            )
             idx = class_of.get(key)
             if idx is None:
                 idx = len(representatives)
                 class_of[key] = idx
                 representatives.append(nid)
             mapping.append(idx)
+        alternatives = [
+            (
+                user_i,
+                node["operands"][port_i],
+                tuple(node["casts"][port_i]),
+                node["state"],
+            )
+            for user_i, (_nid, node) in enumerate(fu_nodes)
+        ]
+        target_type = fu_nodes[0][1]["port_types"][port_i]
+        factor_plan = _operand_factor_plan(
+            schedule["nodes"],
+            alternatives,
+            reg_of,
+            len(fu_nodes),
+            target_type,
+            replacements,
+        )
         ports.append(
             {
+                # Retained for diagnostics/tests and for compatibility with
+                # schedules inspected by downstream code.  Hardware emission
+                # and costing use the factored plan below.
                 "representatives": representatives,
                 "mapping": tuple(mapping),
                 "n_choices": len(representatives),
+                "factor_plan": factor_plan,
+                "muxes": tuple(_factor_plan_muxes(factor_plan)),
             }
         )
     return fu_nodes, ports
@@ -2185,9 +2884,7 @@ def BUILD_SCHEDULE(
     # many fit in a (now smaller) state.
     snapshot = (prev_schedule or {}).get("entity_delays_snapshot", {})
     live = _snapshot_subtree_delays(parser_state, func_entity)
-    delays = {
-        k: (v if v is not None else snapshot.get(k, 0)) for k, v in live.items()
-    }
+    delays = {k: (v if v is not None else snapshot.get(k, 0)) for k, v in live.items()}
     for k, v in snapshot.items():
         delays.setdefault(k, v)
 
@@ -2291,10 +2988,7 @@ def BUILD_SCHEDULE(
     cross_fu_types = set()
     ff_area = _ff_area_um2(parser_state)
     for ctype in range_types:
-        if (
-            _ctype_width(ctype) * ff_area
-            > _mux_bank_area_um2(parser_state, ctype)
-        ):
+        if _ctype_width(ctype) * ff_area > _mux_bank_area_um2(parser_state, ctype):
             cross_fu_types.add(ctype)
 
     writeback_mux_du = {}
@@ -2309,9 +3003,7 @@ def BUILD_SCHEDULE(
             if len(srcs) < 2:
                 continue
             ctype = reg_types[idx]
-            du = _mux_delay_du(
-                parser_state, types, ctype, len(srcs), mux_snapshot
-            )
+            du = _mux_delay_du(parser_state, types, ctype, len(srcs), mux_snapshot)
             mux_snapshot.setdefault(f"{ctype}#{len(srcs)}", du)
             writeback_mux_du[idx] = du
             for nid, reg_idx in reg_of.items():
@@ -2413,9 +3105,7 @@ def _bump_replication(plan, folds, copies):
 def _leaf_area(entity, logic):
     """Estimated area of one indivisible operation, in the abstract units
     documented at the top of this module."""
-    widths = [
-        _ctype_width(logic.wire_to_c_type.get(p)) for p in logic.inputs
-    ] or [1]
+    widths = [_ctype_width(logic.wire_to_c_type.get(p)) for p in logic.inputs] or [1]
     w = max(widths)
     pair = widths[0] * widths[1] if len(widths) >= 2 else w * w
 
@@ -2721,22 +3411,38 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
         schedule["n_states"],
         schedule.get("cross_fu_register_types", ()),
     )
+    output_packs = _OUTPUT_SHIFT_PACKS(nodes, schedule["output"], schedule["n_states"])
+    input_storage = _INPUT_STORAGE_PLAN(nodes, schedule["output"], schedule["n_states"])
+    fused_output_packs = [
+        pack for pack in output_packs if pack.get("source_fusion") is not None
+    ]
+    # A consume/produce fusion saves a second W-bit register bank, but its one
+    # physical rolling register has two write-data shapes: capture the source
+    # in the first state, then shift in produced bits.  Price that real wide
+    # mux explicitly so the optimization cannot win merely by hiding cost from
+    # the estimator.
+    for pack in fused_output_packs:
+        total += _mux_bank_area_um2(parser_state, pack["ctype"], tally)
+        if (
+            input_storage is not None
+            and pack["root"] in input_storage["preload_by_pack"]
+        ):
+            # Accept-time field preload is the third source of the rolling
+            # register (shift, transformed source, raw input field).
+            total += _mux_bank_area_um2(parser_state, pack["ctype"], tally)
     mux_plans = {}
     for fu in sorted(users):
         fu_nodes, ports = _operand_mux_plan(schedule, fu, reg_of)
         mux_plans[fu] = (fu_nodes, ports)
         if not fu_nodes:
             continue
-        for port_i, port in enumerate(ports):
-            n = port["n_choices"]
-            if n < 2:
-                continue
-            ctype = fu_nodes[0][1]["port_types"][port_i]
-            total += (n - 1) * _mux_bank_area_um2(
-                parser_state, ctype, tally
-            )
-    # The input latch is deliberately not counted: it is the same width in
-    # every candidate for a given function, so it cannot change a ranking.
+        for port in ports:
+            for ctype, n, _mapping in port["muxes"]:
+                if n < 2:
+                    continue
+                total += (n - 1) * _mux_bank_area_um2(parser_state, ctype, tally)
+    # Input storage is now field/lifetime aware and therefore can change a
+    # ranking (a first-state field may preload a rolling work register).
     total += _reg_bits_from_types(schedule, reg_types) * _ff_area_um2(parser_state)
 
     n_states = schedule["n_states"]
@@ -2744,6 +3450,7 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
     ctl = schedule.get("ctl", "v3")
     if ctl == "v2":
         total += n_states * AREA_PER_STATE_DECODE * scale
+        total += len(fused_output_packs) * AREA_PER_STATE_DECODE * scale
     elif ctl == "onehot":
         # State bits ARE the decode. Operand/writeback selectors only need OR
         # trees when several hot states select the same output bit; next-state
@@ -2753,9 +3460,10 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
         for fu in sorted(users):
             _fu_nodes, ports = mux_plans[fu]
             selector_shapes = {
-                (port["mapping"], port["n_choices"])
+                (mapping, n)
                 for port in ports
-                if port["n_choices"] >= 2
+                for _ctype, n, mapping in port["muxes"]
+                if n >= 2
             }
             for mapping, n in sorted(selector_shapes):
                 for bit in range(max(1, (n - 1).bit_length())):
@@ -2766,6 +3474,8 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
             writes_by_reg.setdefault(idx, set()).add(nodes[nid]["state"])
         for states in writes_by_reg.values():
             total += max(0, len(states) - 1) * AREA_PER_BIT_BITWISE * scale
+        for pack in output_packs:
+            total += max(0, len(pack["steps"]) - 1) * AREA_PER_BIT_BITWISE * scale
         for idx, srcs in sorted(_register_sources(nodes, reg_of).items()):
             if len(srcs) < 2:
                 continue
@@ -2785,6 +3495,10 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
                 total += max(0, terms - 1) * AREA_PER_BIT_BITWISE * scale
         # idle-and-valid plus idle-and-not-valid in the one-hot transition.
         total += 2 * AREA_PER_BIT_BITWISE * scale
+        if input_storage is not None:
+            total += (
+                len(input_storage["preload_by_pack"]) * AREA_PER_BIT_BITWISE * scale
+            )
     else:
         # One select table per DISTINCT state-to-choice mapping. Ports whose
         # operands coalesce the same way share a selector; constant ports need
@@ -2792,28 +3506,31 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
         for fu in sorted(users):
             _fu_nodes, ports = mux_plans[fu]
             selector_shapes = {
-                (port["mapping"], port["n_choices"])
+                (mapping, n)
                 for port in ports
-                if port["n_choices"] >= 2
+                for _ctype, n, mapping in port["muxes"]
+                if n >= 2
             }
             for _mapping, n in sorted(selector_shapes):
-                total += (
-                    max(1, (n - 1).bit_length())
-                    * AREA_PER_CTL_LUT_BIT
-                    * scale
-                )
+                total += max(1, (n - 1).bit_length()) * AREA_PER_CTL_LUT_BIT * scale
         # ...one one-bit write-enable table per register, plus the next-state
         # table and the output-write pulse.
-        total += len(reg_types) * AREA_PER_CTL_LUT_BIT * scale
+        total += (
+            (len(reg_types) + len(output_packs) + len(fused_output_packs))
+            * AREA_PER_CTL_LUT_BIT
+            * scale
+        )
         for srcs in _register_sources(nodes, reg_of).values():
             if len(srcs) > 1:
                 total += (
-                    max(1, (len(srcs) - 1).bit_length())
-                    * AREA_PER_CTL_LUT_BIT
-                    * scale
+                    max(1, (len(srcs) - 1).bit_length()) * AREA_PER_CTL_LUT_BIT * scale
                 )
         total += (statew + 1) * AREA_PER_CTL_LUT_BIT * scale
         total += n_states * AREA_PER_STATE_CTL * scale
+        if input_storage is not None:
+            total += (
+                len(input_storage["preload_by_pack"]) * AREA_PER_CTL_LUT_BIT * scale
+            )
     # A cross-FU shared register needs a real source mux regardless of control
     # encoding. Same-FU reuse has one unchanged data wire and costs zero here.
     for idx, srcs in sorted(_register_sources(nodes, reg_of).items()):
@@ -2886,9 +3603,7 @@ def FORCE_SCHEDULE(
     anchor = BUILD_SCHEDULE(
         parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl
     )
-    opened = sorted(
-        {_resolve_entity_pattern(anchor, p) for p in open_patterns}
-    )
+    opened = sorted({_resolve_entity_pattern(anchor, p) for p in open_patterns})
     unshared = {}
     for pattern, n_units in unshare_patterns:
         unshared[_resolve_entity_pattern(anchor, pattern)] = int(n_units)
@@ -2923,14 +3638,12 @@ def _sweep_required_improvement(anchor, candidate):
         return SWEEP_MIN_IMPROVEMENT
     growth = max(
         1.0,
-        _scheduled_op_count(candidate)
-        / float(max(1, _scheduled_op_count(anchor))),
+        _scheduled_op_count(candidate) / float(max(1, _scheduled_op_count(anchor))),
         candidate["n_states"] / float(max(1, anchor["n_states"])),
     )
     return min(
         SWEEP_MAX_REQUIRED_IMPROVEMENT,
-        SWEEP_MIN_IMPROVEMENT
-        + SWEEP_SHAPE_RISK_PER_DOUBLING * math.log(growth, 2.0),
+        SWEEP_MIN_IMPROVEMENT + SWEEP_SHAPE_RISK_PER_DOUBLING * math.log(growth, 2.0),
     )
 
 
@@ -3104,10 +3817,9 @@ def SWEEP_MIN_AREA_SCHEDULE(
         # The anchor-relative threshold is the structural confidence guard:
         # walking farther through an opened DAG must not make a known modelling
         # blind spot look progressively more authoritative.
-        improved = (
-            cost < best_cost * (1.0 - SWEEP_MIN_IMPROVEMENT)
-            and cost < anchor_cost * (1.0 - min_win)
-        )
+        improved = cost < best_cost * (
+            1.0 - SWEEP_MIN_IMPROVEMENT
+        ) and cost < anchor_cost * (1.0 - min_win)
         if debug:
             confidence = (
                 ""
@@ -3117,11 +3829,7 @@ def SWEEP_MIN_AREA_SCHEDULE(
             print(
                 f"AUTOFSM {key}: sweep move {_move}: took {label[0]} "
                 f"{label[1]} at est {cost:.0f} vs best {best_cost:.0f} -- "
-                + (
-                    "NEW BEST"
-                    if improved
-                    else f"uphill {uphill + 1}{confidence}"
-                ),
+                + ("NEW BEST" if improved else f"uphill {uphill + 1}{confidence}"),
                 flush=True,
             )
         if improved:
@@ -3242,9 +3950,7 @@ def HARVEST_AUTOFSM_SCHEDULES(
                     ctl=mode,
                     debug=sweep_debug,
                 )
-            return BUILD_SCHEDULE(
-                parser_state, key, tag, budget_scale, prev, ctl=mode
-            )
+            return BUILD_SCHEDULE(parser_state, key, tag, budget_scale, prev, ctl=mode)
 
         modes = ("v3", "onehot") if ctl == "auto" else (ctl,)
         variants = []
@@ -3336,11 +4042,27 @@ def SCHEDULES_EQUAL(a, b) -> bool:
 
 def _reg_bits_from_types(schedule, reg_types):
     """Total register bits given an allocation's reg_types: every register's
-    own width, plus the state register and optional output data/valid bank.
+    own width, compacted transaction-input storage, the state register and
+    optional output data/valid bank.
     Shared by ESTIMATE_SCHEDULE_AREA (which already has reg_types from its own
     ALLOCATE_REGISTERS call) and _register_bit_count (which needs the same
     total on its own, with no other area computation)."""
     reg_bits = sum(_ctype_width(t) for t in reg_types.values())
+    reg_bits += sum(
+        pack["width"]
+        for pack in _OUTPUT_SHIFT_PACKS(
+            schedule["nodes"], schedule["output"], schedule["n_states"]
+        )
+    )
+    input_storage = _INPUT_STORAGE_PLAN(
+        schedule["nodes"], schedule["output"], schedule["n_states"]
+    )
+    if input_storage is None:
+        reg_bits += _ctype_width(schedule["in_type"])
+    else:
+        reg_bits += sum(
+            _ctype_width(field["ctype"]) for field in input_storage["stored_fields"]
+        )
     if schedule.get("register_output", True):
         reg_bits += _ctype_width(schedule["out_type"]) + 1  # data + valid
     if schedule.get("ctl", "v3") == "onehot":
@@ -3354,7 +4076,7 @@ def _reg_bits_from_types(schedule, reg_types):
 def _register_bit_count(schedule):
     """Total register bits ALLOCATE_REGISTERS commits a schedule to: every
     cross-state value (sharing where live ranges and functional unit both
-    allow it) plus the state and optional output registers -- exactly what
+    allow it) plus compacted input, state and optional output registers -- exactly what
     ESTIMATE_SCHEDULE_AREA prices, recomputed here (cheap: pure function of
     an already-built schedule, no rescheduling) so DESCRIBE_SCHEDULE can
     print it regardless of whether the area sweep ran. This is AUTOFSM's OWN
@@ -3511,7 +4233,9 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
         # A max_latency= cap is a hard constraint, so failing to meet it fails
         # the build. Silently returning a slower FSM would defeat the point of
         # asking for the cap in the first place.
-        infeasible = [k for k in sorted(schedules) if schedules[k]["latency_infeasible"]]
+        infeasible = [
+            k for k in sorted(schedules) if schedules[k]["latency_infeasible"]
+        ]
         if infeasible:
             for key in infeasible:
                 print(LATENCY_INFEASIBLE_MESSAGE(key, schedules[key]), flush=True)
@@ -3541,8 +4265,7 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
             print(
                 "AUTOFSM: every implicated FSM is already at its floor -- its "
                 "slowest state is a single indivisible operation, so no number "
-                "of extra states can make the clock: "
-                + ", ".join(sorted(blamed)),
+                "of extra states can make the clock: " + ", ".join(sorted(blamed)),
                 flush=True,
             )
             break
@@ -3562,8 +4285,7 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
         for _attempt in range(MAX_TIGHTEN_STEPS):
             for key in blamed:
                 budget_scales[key] = (
-                    budget_scales.get(key, DEFAULT_BUDGET_SCALE)
-                    * BUDGET_TIGHTEN_FACTOR
+                    budget_scales.get(key, DEFAULT_BUDGET_SCALE) * BUDGET_TIGHTEN_FACTOR
                 )
             trial = HARVEST_AUTOFSM_SCHEDULES(
                 parser_state,
@@ -3764,6 +4486,10 @@ class _Codegen:
         self.types = _TypeResolver()
         self.local_of_node = {}  # node id -> local name holding its result
         self.reg_of_node = {}  # node id -> snapshot local of its register
+        self.pack_of_node = {}  # output concat-chain root -> rolling reg local
+        self.rolling_ref_of_node = {}  # (glue id, state) -> rolling bit expr
+        self.input_ref_of_node = {}  # ref id/(ref id,state) -> compact input expr
+        self.input_value_name = "in_v"
         self.cur_state = None
         self._tmp_n = 0
         self.mux_shapes = []  # (type, fold count) of every operand mux emitted
@@ -3798,15 +4524,30 @@ class _Codegen:
         """Render a ValueRef as an expression valid in the current state."""
         kind = ref[0]
         if kind == "in":
-            return "in_v"
+            if self.input_value_name is None:
+                raise AutofsmError(
+                    "AUTOFSM: whole transaction input reached codegen after "
+                    "field-granular input storage was selected"
+                )
+            return self.input_value_name
         if kind == "const":
             return self._render_const(ref[1])
         if kind != "node":
             raise AutofsmError(f"AUTOFSM: unsupported value reference {ref!r}")
         nid = ref[1]
+        input_expr = self.input_ref_of_node.get(
+            (nid, self.cur_state), self.input_ref_of_node.get(nid)
+        )
+        if input_expr is not None:
+            return input_expr
+        rolling_expr = self.rolling_ref_of_node.get((nid, self.cur_state))
+        if rolling_expr is not None:
+            return rolling_expr
         node = self.nodes.get(nid)
         if node is None:
             raise AutofsmError(f"AUTOFSM: reference to unknown operation {nid!r}")
+        if nid in self.pack_of_node:
+            return self.pack_of_node[nid]
         if node["delay_du"] > 0:
             # A shared unit's output local holds whichever operation that unit
             # is running THIS state. Only a same-state producer can be read
@@ -3926,9 +4667,7 @@ class _Codegen:
         """A literal operand, recovered from the constant wire's name (the
         compiler encodes the literal text there; see
         C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE)."""
-        logic = self.parser_state.FuncLogicLookupTable.get(
-            self.schedule["func_entity"]
-        )
+        logic = self.parser_state.FuncLogicLookupTable.get(self.schedule["func_entity"])
         try:
             val = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
                 wire_name, logic, self.parser_state
@@ -3977,9 +4716,7 @@ class _Codegen:
         if onehot:
             # One bit per state, bit 0 = idle. Reg initialiser makes idle the
             # reset state, which binary encoding gets for free from zero.
-            st1h_t = em.inj(
-                self.types.resolve(f"uint{self.n_states + 1}_t"), "t"
-            )
+            st1h_t = em.inj(self.types.resolve(f"uint{self.n_states + 1}_t"), "t")
 
         # Values crossing a state boundary, bound to registers -- SHARING one
         # register between values that are never live at the same time (see
@@ -3994,6 +4731,36 @@ class _Codegen:
         self.reg_of = reg_of
         cross = sorted(reg_of)
         reg_names = {nid: f"v{reg_of[nid]}" for nid in cross}
+        output_packs = _OUTPUT_SHIFT_PACKS(
+            self.nodes, schedule["output"], self.n_states
+        )
+        input_storage = _INPUT_STORAGE_PLAN(
+            self.nodes, schedule["output"], self.n_states
+        )
+        pack_names = {
+            pack["root"]: f"pack{idx}" for idx, pack in enumerate(output_packs)
+        }
+        input_field_names = {}
+        if input_storage is not None:
+            self.input_value_name = None
+            for idx, field in enumerate(input_storage["stored_fields"]):
+                local = f"in_f{idx}"
+                input_field_names[field["field"]] = local
+                for nid in field["refs"]:
+                    self.input_ref_of_node[nid] = local
+            pack_of_root = {pack["root"]: pack for pack in output_packs}
+            for root, field in input_storage["preload_by_pack"].items():
+                pack = pack_of_root[root]
+                state = pack["source_fusion"]["source_state"]
+                for nid in input_storage["field_refs"][field]:
+                    self.input_ref_of_node[(nid, state)] = pack_names[root]
+        for pack in output_packs:
+            fusion = pack.get("source_fusion")
+            if fusion is None:
+                continue
+            pack_name = pack_names[pack["root"]]
+            for key, bit in fusion["replacements"].items():
+                self.rolling_ref_of_node[key] = f"{pack_name}[{bit}:{bit}]"
 
         em.line("@hw_func")
         em.line(f"def {name}(s: {in_stream_t}) -> {out_stream_t}:")
@@ -4001,10 +4768,19 @@ class _Codegen:
             em.line(f"    st1h_r: Reg[{st1h_t}] = 1")
         else:
             em.line(f"    st_r: Reg[{st_t}]")
-        em.line(f"    in_r: Reg[{in_t}]")
+        if input_storage is None:
+            em.line(f"    in_r: Reg[{in_t}]")
+        else:
+            for field in input_storage["stored_fields"]:
+                local = input_field_names[field["field"]]
+                t = em.inj(self.types.resolve(field["ctype"]), "t")
+                em.line(f"    {local}_r: Reg[{t}]")
         for idx in sorted(reg_types):
             t = em.inj(self.types.resolve(reg_types[idx]), "t")
             em.line(f"    v{idx}_r: Reg[{t}]")
+        for pack in output_packs:
+            t = em.inj(self.types.resolve(pack["ctype"]), "t")
+            em.line(f"    {pack_names[pack['root']]}_r: Reg[{t}]")
         if self.register_output:
             em.line(f"    out_data_r: Reg[{out_t}]")
             em.line(f"    out_valid_r: Reg[{u1_t}]")
@@ -4016,10 +4792,22 @@ class _Codegen:
             em.line(f"    st1h: {st1h_t} = st1h_r")
         else:
             em.line(f"    st: {st_t} = st_r")
-        em.line(f"    in_v: {in_t} = in_r")
+        if input_storage is None:
+            em.line(f"    in_v: {in_t} = in_r")
+        else:
+            for field in input_storage["stored_fields"]:
+                local = input_field_names[field["field"]]
+                t = em.inj(self.types.resolve(field["ctype"]), "t")
+                em.line(f"    {local}: {t} = {local}_r")
         for idx in sorted(reg_types):
             t = em.inj(self.types.resolve(reg_types[idx]), "t")
             em.line(f"    v{idx}: {t} = v{idx}_r")
+        for pack in output_packs:
+            pack_name = pack_names[pack["root"]]
+            t = em.inj(self.types.resolve(pack["ctype"]), "t")
+            em.line(f"    {pack_name}: {t} = {pack_name}_r")
+            if pack.get("source_fusion") is None:
+                self.pack_of_node[pack["root"]] = pack_name
         for nid in cross:
             self.reg_of_node[nid] = reg_names[nid]
         em.line(f"    o: {out_stream_t}")
@@ -4068,13 +4856,50 @@ class _Codegen:
             )
             em.line(f"    ns_lut: {ns_lut_t} = {ns!r}")
             em.line("    st_r = ns_lut[st]")
+
+        # Constant/glue-only seeds for recovered rolling output registers.
+        # Rendered outside the accept branch because rendering a cast or slice
+        # can need a typed local declaration.
+        pack_seeds = {}
+        self.cur_state = 0
+        for pack in output_packs:
+            if pack.get("source_fusion") is not None:
+                continue
+            expr = self._render_ref(pack["seed_ref"])
+            for ctype in pack["seed_casts"]:
+                expr = self._cast_local(expr, ctype)
+            pack_seeds[pack["root"]] = expr
         em.line("    # Accept a new input only while idle (II == latency)")
         if onehot:
             em.line(f"    if {self._st_bit(0)} & s.valid:")
-            em.line("        in_r = s.data")
+            if input_storage is None:
+                em.line("        in_r = s.data")
+            else:
+                for field in input_storage["stored_fields"]:
+                    local = input_field_names[field["field"]]
+                    em.line(f"        {local}_r = s.data.{field['field']}")
+                for root, field in input_storage["preload_by_pack"].items():
+                    em.line(f"        {pack_names[root]}_r = s.data.{field}")
+            for pack in output_packs:
+                if pack.get("source_fusion") is not None:
+                    continue
+                pack_name = pack_names[pack["root"]]
+                em.line(f"        {pack_name}_r = {pack_seeds[pack['root']]}")
         else:
             em.line("    if (st == 0) & s.valid:")
-            em.line("        in_r = s.data")
+            if input_storage is None:
+                em.line("        in_r = s.data")
+            else:
+                for field in input_storage["stored_fields"]:
+                    local = input_field_names[field["field"]]
+                    em.line(f"        {local}_r = s.data.{field['field']}")
+                for root, field in input_storage["preload_by_pack"].items():
+                    em.line(f"        {pack_names[root]}_r = s.data.{field}")
+            for pack in output_packs:
+                if pack.get("source_fusion") is not None:
+                    continue
+                pack_name = pack_names[pack["root"]]
+                em.line(f"        {pack_name}_r = {pack_seeds[pack['root']]}")
             em.line("        st_r = 1")
 
         # ── shared functional units ──
@@ -4094,6 +4919,109 @@ class _Codegen:
             if not fu_nodes:
                 continue
             self._emit_fu(fu, fu_nodes)
+
+        # One write-data expression per recovered rolling register.  A plain
+        # output pack always shifts in the current shared-FU result.  A fused
+        # consume/produce pack captures its full source in the first state,
+        # then shifts in the PREVIOUS state's one-bit result; its wide 2:1
+        # write-data mux is explicit here and in ESTIMATE_SCHEDULE_AREA.
+        pack_write_srcs = {}
+        for pack in output_packs:
+            pack_name = pack_names[pack["root"]]
+            first_step = pack["steps"][0]
+            fusion = pack.get("source_fusion")
+            self.cur_state = (
+                first_step["state"] if fusion is None else first_step["state"] + 1
+            )
+            bit_expr = self._render_ref(first_step["ref"])
+            for ctype in first_step["casts"]:
+                bit_expr = self._cast_local(bit_expr, ctype)
+            root_node = self.nodes[pack["root"]]
+            shifted = f"({pack_name})[{pack['width'] - 2}:0]"
+            shift_expr = _render_op(
+                root_node["op"],
+                [shifted, bit_expr],
+                em,
+                self.parser_state,
+                root_node["entity"],
+            )
+            src = f"{pack_name}_wsrc"
+            pack_t_obj = self.types.resolve(pack["ctype"])
+            t = em.inj(pack_t_obj, "t")
+            if fusion is None:
+                em.line(f"    {src}: {t} = {shift_expr}")
+                pack_write_srcs[pack["root"]] = src
+                continue
+
+            # In the common case the one-cycle output-bit live ranges all bind
+            # to one register.  Assert that invariant instead of silently
+            # selecting the wrong bit if unrelated same-type lifetimes ever
+            # perturb allocation; declining/further generalizing the fusion is
+            # safer than generating a latent functional bug.
+            bit_regs = {reg_of[step["dep"]] for step in pack["steps"]}
+            if len(bit_regs) != 1:
+                raise AutofsmError(
+                    "AUTOFSM: rolling output bits did not bind to one register "
+                    f"for pack {pack['root']!r} (got {sorted(bit_regs)})"
+                )
+            source_expr = self.local_of_node[fusion["source_dep"]]
+            choices_t = em.inj(pack_t_obj[2], "t")
+            choices = f"{pack_name}_wchoices"
+            em.line(f"    {choices}: {choices_t}")
+            em.line(f"    {choices}[0] = {shift_expr}")
+            em.line(f"    {choices}[1] = {source_expr}")
+            sel = f"{pack_name}_wsel"
+            first_state = fusion["source_state"]
+            if onehot:
+                em.line(f"    {sel}: {u1_t} = {self._st_bit(first_state)}")
+            elif self.ctl == "v2":
+                em.line(f"    {sel}: {u1_t} = st == {first_state}")
+            else:
+                sel_lut_t = em.inj(
+                    self.types.resolve("uint1_t")[self.n_states + 1], "t"
+                )
+                sel_lut = [0] * (self.n_states + 1)
+                sel_lut[first_state] = 1
+                em.line(f"    {pack_name}_wslut: {sel_lut_t} = {sel_lut!r}")
+                em.line(f"    {sel}: {u1_t} = {pack_name}_wslut[st]")
+            mux_fn = _mux_callable(pack_t_obj, 2)
+            if mux_fn is not None:
+                em.line(
+                    f"    {src}: {t} = " f"{em.inj(mux_fn, 'mux')}({sel}, {choices})"
+                )
+                self._note_mux_entity(pack_t_obj, 2)
+            else:
+                em.line(f"    {src}: {t} = {shift_expr}")
+                em.line(f"    if {sel}:")
+                em.line(f"        {src} = {source_expr}")
+            pack_write_srcs[pack["root"]] = src
+
+        # A fused pack has shifted bits 0..W-2 into place by the final state;
+        # the last produced bit has a one-cycle scalar lifetime and forms bit
+        # zero directly.  Materialize that exact final value before rendering
+        # the surrounding output assembly.
+        self.cur_state = self.n_states
+        for pack in output_packs:
+            fusion = pack.get("source_fusion")
+            if fusion is None:
+                continue
+            pack_name = pack_names[pack["root"]]
+            last_step = pack["steps"][-1]
+            bit_expr = self._render_ref(last_step["ref"])
+            for ctype in last_step["casts"]:
+                bit_expr = self._cast_local(bit_expr, ctype)
+            root_node = self.nodes[pack["root"]]
+            expr = _render_op(
+                root_node["op"],
+                [f"({pack_name})[{pack['width'] - 2}:0]", bit_expr],
+                em,
+                self.parser_state,
+                root_node["entity"],
+            )
+            final_name = f"{pack_name}_final"
+            t = em.inj(self.types.resolve(pack["ctype"]), "t")
+            em.line(f"    {final_name}: {t} = {expr}")
+            self.pack_of_node[pack["root"]] = final_name
 
         # ── the final result ──
         # Rendered here, at this indentation, BEFORE the state branches below:
@@ -4116,6 +5044,13 @@ class _Codegen:
             for state in range(1, self.n_states + 1):
                 kw = "if" if state == 1 else "elif"
                 em.line(f"    {kw} st == {state}:")
+                for pack in output_packs:
+                    if state in {step["state"] for step in pack["steps"]}:
+                        pack_name = pack_names[pack["root"]]
+                        em.line(
+                            f"        {pack_name}_r = "
+                            f"{pack_write_srcs[pack['root']]}"
+                        )
                 for nid in cross:
                     if self.nodes[nid]["state"] == state:
                         em.line(
@@ -4139,17 +5074,14 @@ class _Codegen:
             # equality comparator per state plus a priority chain.
             if onehot:
                 em.line(
-                    "    # Writebacks: write enable is an OR of the states' "
-                    "hot bits"
+                    "    # Writebacks: write enable is an OR of the states' " "hot bits"
                 )
             else:
                 em.line(
                     "    # Writebacks: constant write-enable LUT per register, "
                     "no state compares"
                 )
-                we_lut_t = em.inj(
-                    self.types.resolve("uint1_t")[self.n_states + 1], "t"
-                )
+                we_lut_t = em.inj(self.types.resolve("uint1_t")[self.n_states + 1], "t")
             by_reg = {}
             for nid in cross:
                 by_reg.setdefault(reg_of[nid], []).append(nid)
@@ -4215,9 +5147,7 @@ class _Codegen:
                             em.line(f"        {write_src} = {src}")
                 if onehot:
                     states = {self.nodes[nid]["state"] for nid in nids}
-                    em.line(
-                        f"    v{idx}_we: {u1_t} = {self._st_bits_or(states)}"
-                    )
+                    em.line(f"    v{idx}_we: {u1_t} = {self._st_bits_or(states)}")
                 else:
                     wel = [0] * (self.n_states + 1)
                     for nid in nids:
@@ -4226,6 +5156,21 @@ class _Codegen:
                     em.line(f"    v{idx}_we: {u1_t} = v{idx}_wel[st]")
                 em.line(f"    if v{idx}_we:")
                 em.line(f"        v{idx}_r = {write_src}")
+            for pack in output_packs:
+                pack_name = pack_names[pack["root"]]
+                states = {step["state"] for step in pack["steps"]}
+                if onehot:
+                    em.line(
+                        f"    {pack_name}_we: {u1_t} = " f"{self._st_bits_or(states)}"
+                    )
+                else:
+                    wel = [0] * (self.n_states + 1)
+                    for state in states:
+                        wel[state] = 1
+                    em.line(f"    {pack_name}_wel: {we_lut_t} = {wel!r}")
+                    em.line(f"    {pack_name}_we: {u1_t} = {pack_name}_wel[st]")
+                em.line(f"    if {pack_name}_we:")
+                em.line(f"        {pack_name}_r = {pack_write_srcs[pack['root']]}")
             if onehot:
                 em.line(
                     f"    ow: {u1_t} = {self._st_bit(self.n_states)}"
@@ -4253,6 +5198,72 @@ class _Codegen:
         _seed_struct_globals(em, [t for t, _n in self.mux_shapes])
         _REGISTER_MUX_ENTITIES(self.parser_state, self.mux_shapes)
         return name, em.src(), em.globals
+
+    def _emit_operand_factor_plan(self, plan, result_name, selector):
+        """Emit one plan made by :func:`_operand_factor_plan`.
+
+        Every recursive result is materialized at its consumer's port type.
+        Besides keeping the elaborator's narrowing semantics exact, named
+        locals make bit slices safe (their base cannot be an arbitrary Python
+        expression in the current frontend).
+        """
+        em = self.em
+        target_t_obj = self.types.resolve(plan["target_type"])
+        target_t = em.inj(target_t_obj, "t")
+        kind = plan["kind"]
+
+        if kind == "leaf":
+            _user_i, ref, casts, state = plan["alternative"]
+            self.cur_state = state
+            expr = self._render_ref(ref)
+            for ctype in casts:
+                expr = self._cast_local(expr, ctype)
+            em.line(f"    {result_name}: {target_t} = {expr}")
+            return result_name
+
+        if kind == "glue":
+            node = self.nodes[plan["node_id"]]
+            args = []
+            for port_i, child in enumerate(plan["children"]):
+                child_name = f"af{self._tmp_n}_f"
+                self._tmp_n += 1
+                args.append(self._emit_operand_factor_plan(child, child_name, selector))
+            expr = _render_op(node["op"], args, em, self.parser_state, node["entity"])
+            for ctype in plan["casts"]:
+                expr = self._cast_local(expr, ctype)
+            em.line(f"    {result_name}: {target_t} = {expr}")
+            return result_name
+
+        if kind != "mux":
+            raise AutofsmError(f"AUTOFSM: unknown operand factor-plan kind {kind!r}")
+
+        choices = []
+        for child in plan["choices"]:
+            child_name = f"af{self._tmp_n}_f"
+            self._tmp_n += 1
+            choices.append(self._emit_operand_factor_plan(child, child_name, selector))
+        sel_name = selector(plan["mapping"], len(choices))
+        mux_fn = _mux_callable(target_t_obj, len(choices))
+        if mux_fn is None:
+            em.line(f"    {result_name}: {target_t} = {choices[0]}")
+            for row, expr in enumerate(choices[1:], start=1):
+                kw = "if" if row == 1 else "elif"
+                em.line(f"    {kw} {sel_name} == {row}:")
+                em.line(f"        {result_name} = {expr}")
+            return result_name
+
+        arr_name = f"af{self._tmp_n}_fc"
+        self._tmp_n += 1
+        arr_t = em.inj(target_t_obj[len(choices)], "t")
+        em.line(f"    {arr_name}: {arr_t}")
+        for row, expr in enumerate(choices):
+            em.line(f"    {arr_name}[{row}] = {expr}")
+        em.line(
+            f"    {result_name}: {target_t} = "
+            f"{em.inj(mux_fn, 'mux')}({sel_name}, {arr_name})"
+        )
+        self._note_mux_entity(target_t_obj, len(choices))
+        return result_name
 
     def _emit_fu(self, fu, fu_nodes):
         """Emit one shared unit: its per-state operand multiplexers and its
@@ -4298,9 +5309,7 @@ class _Codegen:
             f"operation(s) sharing one unit"
         )
         first_nid, first_node = fu_nodes[0]
-        _planned_nodes, port_plans = _operand_mux_plan(
-            self.schedule, fu, self.reg_of
-        )
+        _planned_nodes, port_plans = _operand_mux_plan(self.schedule, fu, self.reg_of)
         assert [nid for nid, _node in _planned_nodes] == [
             nid for nid, _node in fu_nodes
         ]
@@ -4334,9 +5343,7 @@ class _Codegen:
                         if (row >> j) & 1
                     ]
                     if hot:
-                        em.line(
-                            f"    {sel_name}[{j}:{j}] = {self._st_bits_or(hot)}"
-                        )
+                        em.line(f"    {sel_name}[{j}:{j}] = {self._st_bits_or(hot)}")
             elif self.ctl == "v2":
                 em.line(f"    {sel_name}: {sel_t} = 0")
                 branch = 0
@@ -4358,47 +5365,15 @@ class _Codegen:
                 lut_t = em.inj(sel_elem_t[self.n_states + 1], "t")
                 lut_name = f"{sel_name}_lut"
                 em.line(
-                    f"    {lut_name}: {lut_t} = {lut!r}  "
-                    "# state -> distinct operand"
+                    f"    {lut_name}: {lut_t} = {lut!r}  " "# state -> distinct operand"
                 )
                 em.line(f"    {sel_name}: {sel_t} = {lut_name}[st]")
             selector_of[selector_key] = sel_name
             return sel_name
 
         for i, arg in enumerate(arg_names):
-            port_t = self.types.resolve(first_node["port_types"][i])
-            t = em.inj(port_t, "t")
             port_plan = port_plans[i]
-            reps = port_plan["representatives"]
-            n_choices = port_plan["n_choices"]
-            exprs = []
-            for nid in reps:
-                node = self.nodes[nid]
-                self.cur_state = node["state"]
-                exprs.append(self._render_operand(node, i))
-            if n_choices == 1:
-                em.line(f"    {arg}: {t} = {exprs[0]}")
-                continue
-            sel_name = selector(port_plan["mapping"], n_choices)
-            mux_fn = _mux_callable(port_t, n_choices)
-            if mux_fn is None:
-                # A compound type that cannot be arrayed keeps an inline
-                # fallback, but still switches only among distinct values.
-                em.line(f"    {arg}: {t} = {exprs[0]}")
-                for idx, expr in enumerate(exprs[1:], start=1):
-                    kw = "if" if idx == 1 else "elif"
-                    em.line(f"    {kw} {sel_name} == {idx}:")
-                    em.line(f"        {arg} = {expr}")
-                continue
-            arr_name = f"{prefix}_c{i}"
-            arr_t = em.inj(port_t[n_choices], "t")
-            em.line(f"    {arr_name}: {arr_t}")
-            for idx, expr in enumerate(exprs):
-                em.line(f"    {arr_name}[{idx}] = {expr}")
-            em.line(
-                f"    {arg}: {t} = {em.inj(mux_fn, 'mux')}({sel_name}, {arr_name})"
-            )
-            self._note_mux_entity(port_t, n_choices)
+            self._emit_operand_factor_plan(port_plan["factor_plan"], arg, selector)
 
         out_ct = em.inj(self.types.resolve(first_node["out_type"]), "t")
         self.cur_state = first_node["state"]

@@ -18,8 +18,9 @@ Method: build qor/divider/autofsm.py three ways.
                           schedule, common anchor for both rankings above
 Then compare each variant's real measured area, and separately check the
 register-count fidelity question docs/AUTOFSM_DESIGN.md section 3.8 raises
-explicitly: does AUTOFSM's OWN register allocator (AUTOFSM.ALLOCATE_REGISTERS,
-printed as "register bits: ..." by DESCRIBE_SCHEDULE) have anything like the
+explicitly: does AUTOFSM's OWN allocated storage (live-range registers plus
+compacted input/output/control, printed as "register bits: ..." by
+DESCRIBE_SCHEDULE) have anything like the
 5.7-5.9x overshoot SYN.GET_REGISTERS_ESTIMATE_TEXT_AND_FFS's whole-design
 estimate is already known to have. If it does, a real-um2 register term
 (_ff_area_um2) would be amplifying a bad count rather than fixing one, and
@@ -59,11 +60,12 @@ LATCHUP_MATRIX = os.path.join(
 # between two reasonable rankings is expected; a real regression (real data
 # choosing a systematically worse schedule) blows straight through it.
 MAX_REGRESSION = 0.05
-# Pins the structural v4 area pass itself. The first real build after distinct
-# operand rows + output-bank elision measured 34592.3952 um2; leave ~4% room
-# for harmless recipe/library drift while still catching a return to the
-# 42777.9792 um2 pre-change shape.
-MAX_OPTIMIZED_DIVIDER_AREA_UM2 = 36000.0
+# Pins the structural v7 area pass itself. Factored operand glue, recovered
+# consume/produce rolling storage, and first-state input-field preloading
+# measured 24095.7024 um2; leave ~3.8% room for harmless recipe/library drift
+# while still catching loss of the latest 32-bit storage fusion (25476.8976
+# um2) as well as a return to the 34592.3952 um2 v4 shape.
+MAX_OPTIMIZED_DIVIDER_AREA_UM2 = 25000.0
 
 
 def fail(msg):
@@ -248,9 +250,10 @@ def main():
         fail(
             f"optimized AUTOFSM divider measured "
             f"{results['real']['measured']:.1f} um2, above the "
-            f"{MAX_OPTIMIZED_DIVIDER_AREA_UM2:.1f} um2 v4 regression ceiling. "
-            f"Distinct operand mux rows and single output-bank storage first "
-            f"measured 34592.4 um2; the old shape was 42778.0 um2."
+            f"{MAX_OPTIMIZED_DIVIDER_AREA_UM2:.1f} um2 v7 regression ceiling. "
+            f"Factored operand glue plus rolling consume/produce/input storage "
+            f"measured 24095.7 um2; v4 was 34592.4 um2 and the old shape was "
+            f"42778.0 um2."
         )
 
     # The register-fidelity question section 3.8 asks to check explicitly:

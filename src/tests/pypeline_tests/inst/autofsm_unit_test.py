@@ -94,7 +94,151 @@ CROSS_FU_SRC = (
     .replace("t1 + x.d", "t1 | x.d")
 )
 
-REPO = os.path.abspath(os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../.."))
+FACTOR_SRC = textwrap.dedent(
+    """
+    # pyright: reportInvalidTypeForm=none
+    import os, sys
+    sys.path.insert(0, {repo!r})
+    from pypeline import (AUTOFSM, MAIN, NamedTuple, Reg, concat, hw_func,
+                          struct, uint1_t, uint8_t)
+
+    @struct
+    class in_t(NamedTuple):
+        seed: uint8_t
+        word: uint8_t
+
+    @hw_func
+    def chain(x: in_t) -> uint8_t:
+        t0: uint8_t = concat(x.seed[6:0], x.word[0]) + x.seed
+        t1: uint8_t = concat(t0[6:0], x.word[1]) + x.seed
+        t2: uint8_t = concat(t1[6:0], x.word[2]) + x.seed
+        t3: uint8_t = concat(t2[6:0], x.word[3]) + x.seed
+        return t3
+
+    FSM = AUTOFSM(chain)
+
+    @MAIN({mhz})
+    def top(start: uint1_t, x: in_t) -> uint8_t:
+        s: FSM.in_stream_t
+        s.data = x
+        s.valid = start
+        o = FSM(s)
+        r: Reg[uint8_t]
+        if o.valid:
+            r = o.data
+        return r
+    """
+)
+
+PACK_SRC = textwrap.dedent(
+    """
+    # pyright: reportInvalidTypeForm=none
+    import os, sys
+    sys.path.insert(0, {repo!r})
+    from pypeline import (AUTOFSM, MAIN, NamedTuple, Reg, concat, hw_func,
+                          struct, uint1_t, uint8_t)
+
+    @struct
+    class in_t(NamedTuple):
+        word: uint8_t
+        key: uint8_t
+
+    @struct
+    class out_t(NamedTuple):
+        packed: uint8_t
+        tail: uint1_t
+
+    @hw_func
+    def chain(x: in_t) -> out_t:
+        b0: uint1_t = x.word[0] ^ x.key[0]
+        b1: uint1_t = x.word[1] ^ x.key[1]
+        b2: uint1_t = x.word[2] ^ x.key[2]
+        b3: uint1_t = x.word[3] ^ x.key[3]
+        b4: uint1_t = x.word[4] ^ x.key[4]
+        q: uint8_t = 0
+        q = concat(q[6:0], b0)
+        q = concat(q[6:0], b1)
+        q = concat(q[6:0], b2)
+        q = concat(q[6:0], b3)
+        return out_t(packed=q, tail=b4)
+
+    FSM = AUTOFSM(chain)
+
+    @MAIN({mhz})
+    def top(start: uint1_t, x: in_t) -> out_t:
+        s: FSM.in_stream_t
+        s.data = x
+        s.valid = start
+        o = FSM(s)
+        r: Reg[out_t]
+        if o.valid:
+            r = o.data
+        return r
+    """
+)
+
+FUSED_PACK_SRC = textwrap.dedent(
+    """
+    # pyright: reportInvalidTypeForm=none
+    import os, sys
+    sys.path.insert(0, {repo!r})
+    from pypeline import (AUTOFSM, MAIN, NamedTuple, Reg, concat, hw_func,
+                          struct, uint1_t, uint4_t, uint6_t)
+
+    @struct
+    class in_t(NamedTuple):
+        word: uint4_t
+        key: uint4_t
+
+    @struct
+    class out_t(NamedTuple):
+        packed: uint4_t
+        tail: uint4_t
+
+    @hw_func
+    def chain(x: in_t) -> out_t:
+        # A generic consume/produce recurrence: descending source bits enter a
+        # shared accumulator operation while one result bit is produced each
+        # step.  This is the same storage shape used by serializers, CRC-like
+        # walkers and iterative arithmetic, without relying on a special
+        # divider operation in AUTOFSM.
+        source: uint4_t = x.word ^ x.key
+        wide_key: uint6_t = x.key
+        accum: uint4_t = 0
+        packed: uint4_t = 0
+        for j in range(3, -1, -1):
+            source_bit: uint1_t = source[j]
+            accum_ext: uint6_t = concat(0, accum[3:0], source_bit)
+            delta: uint6_t = accum_ext - wide_key
+            produced: uint1_t = delta[5] ^ 1
+            if delta[5]:
+                accum = accum_ext[3:0]
+            else:
+                accum = delta[3:0]
+            packed = concat(packed[2:0], produced)
+        # One final use of the shared uint6 subtractor makes the result state
+        # explicit, just as a hand FSM has a state after its last produced bit.
+        tail_wide: uint6_t = concat(0, accum[3:0], 0) - wide_key
+        return out_t(packed=packed, tail=tail_wide[3:0])
+
+    FSM = AUTOFSM(chain)
+
+    @MAIN({mhz})
+    def top(start: uint1_t, x: in_t) -> out_t:
+        s: FSM.in_stream_t
+        s.data = x
+        s.valid = start
+        o = FSM(s)
+        r: Reg[out_t]
+        if o.valid:
+            r = o.data
+        return r
+    """
+)
+
+REPO = os.path.abspath(
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../..")
+)
 
 
 def parse_design(tmpdir, mhz=25.0, name="af_unit_design", source=DESIGN_SRC):
@@ -194,7 +338,10 @@ def main():
         print("[generated source]")
         name, src, _globals = AUTOFSM.GENERATE_FSM_SOURCE(tag, sched, ps)
         check(name == sched["entity"], "generated function name is the schedule entity")
-        check(src.count("+") == 1, f"exactly one '+' in the generated FSM (got {src.count('+')})")
+        check(
+            src.count("+") == 1,
+            f"exactly one '+' in the generated FSM (got {src.count('+')})",
+        )
         check("if (st == 0) & s.valid:" in src, "accepts input only while idle")
         # v3 drives valid straight from the last-state pulse bit rather than
         # defaulting it to 0 and setting 1 inside a state comparison.
@@ -273,8 +420,7 @@ def main():
         )
         check(
             "st == " not in src_oh,
-            "one-hot compares the state ZERO times -- even the accept is a bit "
-            "read",
+            "one-hot compares the state ZERO times -- even the accept is a bit " "read",
         )
         check(
             "u0_sel0[0:0] = " in src_oh,
@@ -294,15 +440,12 @@ def main():
         # complete one-hot design can still win by eliminating enough decode,
         # so pin the register term itself rather than assuming the total.
         check(
-            AUTOFSM._register_bit_count(sched_oh)
-            > AUTOFSM._register_bit_count(sched),
+            AUTOFSM._register_bit_count(sched_oh) > AUTOFSM._register_bit_count(sched),
             "the area model charges one-hot for its extra flip-flops",
         )
 
         print("[automatic control encoding]")
-        auto = AUTOFSM.HARVEST_AUTOFSM_SCHEDULES(
-            ps, area_sweep=False, ctl="auto"
-        )[key]
+        auto = AUTOFSM.HARVEST_AUTOFSM_SCHEDULES(ps, area_sweep=False, ctl="auto")[key]
         auto_scores = auto.get("ctl_auto_candidates", {})
         check(
             auto["ctl"] in ("v3", "onehot") and len(auto_scores) == 2,
@@ -456,8 +599,10 @@ def main():
             f"{len(capped['fus'])} units), the only thing that can buy latency",
         )
         check(
-            all(fu == entity or fu.startswith(entity + "#")
-                for fu, entity in capped["fus"].items()),
+            all(
+                fu == entity or fu.startswith(entity + "#")
+                for fu, entity in capped["fus"].items()
+            ),
             "every extra unit id maps back to the entity it is a copy of",
         )
         check(
@@ -473,10 +618,172 @@ def main():
             "a shared unit's operands go through a generated mux entity",
         )
         check(
-            len(re.findall(r"u0_c0\[\d+\] =", src4)) == 2
-            and len(re.findall(r"u0_c1\[\d+\] =", src4)) == 3,
+            [
+                p["n_choices"]
+                for p in AUTOFSM._operand_mux_plan(
+                    sched,
+                    sched["fu_order"][0],
+                    AUTOFSM.ALLOCATE_REGISTERS(
+                        sched["nodes"], sched["output"], sched["n_states"]
+                    )[0],
+                )[1]
+            ]
+            == [2, 3],
             "each operand mux contains only distinct values (the two running "
             "sum operands share one register row; b/c/d remain distinct)",
+        )
+
+        print("[operand muxes factor through common glue]")
+        ps_factor, key_factor, tag_factor = parse_design(
+            tmp, mhz=25.0, name="d_factor", source=FACTOR_SRC
+        )
+        fake_delays(ps_factor, key_factor, tag_factor)
+        sched_factor = schedule_with(ps_factor, key_factor, tag_factor, 0.9)
+        reg_factor, _types_factor = AUTOFSM.ALLOCATE_REGISTERS(
+            sched_factor["nodes"],
+            sched_factor["output"],
+            sched_factor["n_states"],
+            sched_factor.get("cross_fu_register_types", ()),
+        )
+        add_fu = next(
+            fu
+            for fu, entity in sched_factor["fus"].items()
+            if entity.startswith("BIN_OP_PLUS_")
+        )
+        _factor_nodes, factor_ports = AUTOFSM._operand_mux_plan(
+            sched_factor, add_fu, reg_factor
+        )
+        factor_shapes = [
+            (ctype, n) for port in factor_ports for ctype, n, _mapping in port["muxes"]
+        ]
+        check(
+            ("uint1_t", 4) in factor_shapes and ("uint8_t", 4) not in factor_shapes,
+            "four concat operands mux only their changing one-bit leaf, not "
+            "four complete uint8 values",
+        )
+        _nf, src_factor, _gf = AUTOFSM.GENERATE_FSM_SOURCE(
+            tag_factor, sched_factor, ps_factor
+        )
+        check(
+            src_factor.count("concat(") == 1,
+            "the shared concat structure is emitted once after factoring",
+        )
+
+        print("[unrolled output shifts use one rolling vector register]")
+        ps_pack, key_pack, tag_pack = parse_design(
+            tmp, mhz=25.0, name="d_pack", source=PACK_SRC
+        )
+        fake_delays(ps_pack, key_pack, tag_pack)
+        sched_pack = schedule_with(ps_pack, key_pack, tag_pack, 0.9)
+        packs = AUTOFSM._OUTPUT_SHIFT_PACKS(
+            sched_pack["nodes"], sched_pack["output"], sched_pack["n_states"]
+        )
+        check(
+            len(packs) == 1 and packs[0]["width"] == 8 and len(packs[0]["steps"]) == 4,
+            "four unrolled shift/concat updates are recovered as one uint8 "
+            "rolling value",
+        )
+        packed_deps = {step["dep"] for step in packs[0]["steps"]}
+        cross_pack = AUTOFSM._CROSS_STATE_NODES(
+            sched_pack["nodes"], sched_pack["output"], sched_pack["n_states"]
+        )
+        check(
+            not (packed_deps & set(cross_pack)),
+            "appended bits are captured in their producer states instead of "
+            "receiving separate final-state registers",
+        )
+        name_pack, src_pack, _gp = AUTOFSM.GENERATE_FSM_SOURCE(
+            tag_pack, sched_pack, ps_pack
+        )
+        check(
+            name_pack == sched_pack["entity"]
+            and src_pack.count("pack0_r: Reg[") == 1
+            and src_pack.count("pack0_wel:") == 1
+            and "asm" in src_pack,
+            "codegen emits one rolling register/write-enable and uses it in "
+            "the compound final result",
+        )
+
+        print("[input and output share one consume/produce rolling register]")
+        ps_fused, key_fused, tag_fused = parse_design(
+            tmp, mhz=25.0, name="d_fused_pack", source=FUSED_PACK_SRC
+        )
+        fake_delays(ps_fused, key_fused, tag_fused)
+        # Keep the one-bit result operation in the same state as its producer;
+        # real sky130 measures this tiny XOR far below the wide subtract.  The
+        # generic fake_delays helper intentionally gives every BIN_OP the same
+        # delay, which would defer the first result bit and destroy the rolling
+        # recurrence shape this fixture is meant to exercise.
+        for entity, logic in ps_fused.FuncLogicLookupTable.items():
+            if entity.startswith("BIN_OP_XOR_uint1_t"):
+                logic.delay = 10
+            if entity.startswith("MUX_uint4_t"):
+                # Make the recurrence value a scheduled/captured operation.
+                # Without that register the zero-delay graph deliberately
+                # retains every older source bit, so fusing storage would not
+                # be legal and the conservative detector must reject it.
+                logic.delay = 150
+        sched_fused = schedule_with(ps_fused, key_fused, tag_fused, 0.9)
+        fused_packs = AUTOFSM._OUTPUT_SHIFT_PACKS(
+            sched_fused["nodes"],
+            sched_fused["output"],
+            sched_fused["n_states"],
+        )
+        fusion = fused_packs[0].get("source_fusion") if len(fused_packs) == 1 else None
+        check(
+            fusion is not None
+            and fused_packs[0]["width"] == 4
+            and len(fusion["replacements"]) >= 4,
+            "a full-width descending source plus produced-bit shift is "
+            "recognized conservatively",
+        )
+        reg_fused, _types_fused = AUTOFSM.ALLOCATE_REGISTERS(
+            sched_fused["nodes"],
+            sched_fused["output"],
+            sched_fused["n_states"],
+            sched_fused.get("cross_fu_register_types", ()),
+        )
+        if fusion is not None:
+            produced_deps = {step["dep"] for step in fused_packs[0]["steps"]}
+            check(
+                fusion["source_dep"] not in reg_fused,
+                "the original width-W source register is removed after its "
+                "later reads move to the rolling vector",
+            )
+            check(
+                produced_deps <= set(reg_fused)
+                and len({reg_fused[nid] for nid in produced_deps}) == 1,
+                "all produced bits use one shared one-bit lifetime register "
+                "instead of W final-result registers",
+            )
+        input_plan = AUTOFSM._INPUT_STORAGE_PLAN(
+            sched_fused["nodes"],
+            sched_fused["output"],
+            sched_fused["n_states"],
+        )
+        check(
+            input_plan is not None
+            and input_plan["preloaded_fields"] == ("word",)
+            and [f["field"] for f in input_plan["stored_fields"]] == ["key"],
+            "the first-state-only input field preloads the rolling register "
+            "while the later-lived field keeps dedicated storage",
+        )
+        _nfp, src_fused, _gfp = AUTOFSM.GENERATE_FSM_SOURCE(
+            tag_fused, sched_fused, ps_fused
+        )
+        check(
+            "pack0_wchoices" in src_fused
+            and "pack0_final" in src_fused
+            and "pack0_r: Reg[" in src_fused,
+            "codegen captures the source, shifts produced bits, and joins the "
+            "last scalar bit directly in the final result",
+        )
+        check(
+            "in_r: Reg[" not in src_fused
+            and "in_f0_r: Reg[" in src_fused
+            and "pack0_r = s.data.word" in src_fused,
+            "codegen removes the whole input struct register, retaining only "
+            "the later-lived field and loading the early field into work storage",
         )
 
         repeated_src = DESIGN_SRC.replace("t1 + x.d", "t1 + x.b").replace(
@@ -487,9 +794,7 @@ def main():
         )
         fake_delays(ps_same, key_same, tag_same)
         sched_same = schedule_with(ps_same, key_same, tag_same, 0.9)
-        _ns, src_same, _gs = AUTOFSM.GENERATE_FSM_SOURCE(
-            tag_same, sched_same, ps_same
-        )
+        _ns, src_same, _gs = AUTOFSM.GENERATE_FSM_SOURCE(tag_same, sched_same, ps_same)
         check(
             "u0_c1:" not in src_same and "u0_a1:" in src_same,
             "identical operands across states bypass the operand mux entirely",
@@ -498,27 +803,33 @@ def main():
         print("[cross-functional-unit register reuse]")
         bind_nodes = {
             "a": {
-                "delay_du": 1, "state": 1, "out_type": "uint8_t",
-                "fu": "add", "operands": [("in", "x")],
+                "delay_du": 1,
+                "state": 1,
+                "out_type": "uint8_t",
+                "fu": "add",
+                "operands": [("in", "x")],
             },
             "b": {
-                "delay_du": 1, "state": 2, "out_type": "uint8_t",
-                "fu": "xor", "operands": [("node", "a")],
+                "delay_du": 1,
+                "state": 2,
+                "out_type": "uint8_t",
+                "fu": "xor",
+                "operands": [("node", "a")],
             },
             "c": {
-                "delay_du": 1, "state": 3, "out_type": "uint8_t",
-                "fu": "sub", "operands": [("node", "b")],
+                "delay_du": 1,
+                "state": 3,
+                "out_type": "uint8_t",
+                "fu": "sub",
+                "operands": [("node", "b")],
             },
         }
-        plain_regs, _ = AUTOFSM.ALLOCATE_REGISTERS(
-            bind_nodes, ("node", "c"), 3
-        )
+        plain_regs, _ = AUTOFSM.ALLOCATE_REGISTERS(bind_nodes, ("node", "c"), 3)
         shared_regs, _ = AUTOFSM.ALLOCATE_REGISTERS(
             bind_nodes, ("node", "c"), 3, ("uint8_t",)
         )
         check(
-            len(set(plain_regs.values())) == 2
-            and len(set(shared_regs.values())) == 1,
+            len(set(plain_regs.values())) == 2 and len(set(shared_regs.values())) == 1,
             "non-overlapping values from different units can share one register",
         )
         ps_cross, key_cross, tag_cross = parse_design(
@@ -553,7 +864,9 @@ def main():
         fake_delays(ps6, key6, tag6)
         base = schedule_with(ps6, key6, tag6, 0.9)
         base_area = AUTOFSM.ESTIMATE_SCHEDULE_AREA(ps6, base)
-        check(base_area > 0, f"a schedule has a positive estimated area ({base_area:.0f})")
+        check(
+            base_area > 0, f"a schedule has a positive estimated area ({base_area:.0f})"
+        )
         # Opening a 16-bit adder into gates: three shared gates instead of one
         # shared adder, but 150-odd states' worth of registers and multiplexers
         # to pay for them. The model has to see that as WORSE, or the search
