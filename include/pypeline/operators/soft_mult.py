@@ -11,7 +11,16 @@ inferred HDL `*` (correct for signed) instead of to wrong soft logic. Callers
 that bypass the registry and use these factories directly -- AUTOFSM.py's
 resource-sharing map does -- are responsible for that restriction themselves.
 A signed soft multiplier has not been written yet."""
-from pypeline import hw_func, uint1_t, bit_dup, arith_result_type, make_uint_t
+from pypeline import (
+    hw_func,
+    wires,
+    uint1_t,
+    bit_dup,
+    arith_result_type,
+    make_uint_t,
+    array_to_uint_le,
+    concat,
+)
 
 
 def make_soft_add_tree_shifted(n_leaves, leaf_t, out_t, level=0, max_width=None):
@@ -229,3 +238,612 @@ def make_soft_mult_karatsuba(l_t, r_t, threshold=16):
         return result
 
     return soft_mult_karatsuba
+
+
+# ─────────────────────────────────────────────
+# Carry-save (deferred-carry) multiplier
+# ─────────────────────────────────────────────
+#
+# Port of a CoHDL-generated uint16 x uint16 -> uint32 multiplier measured
+# against the same sky130 latchup target this library targets
+# (docs/SYN_DESIGN.md section 11). make_soft_mult_shift_add's tree does a FEW
+# FULL-WIDTH carry-propagate adds (15 adds up to 32 bits at uint16x16, ~97
+# bits of serial carry chain overall) -- cheap on an FPGA's dedicated carry
+# chain, expensive on an ASIC with none. This multiplier instead defers carry
+# propagation across MANY pipeline-visible stages: every add is capped at
+# `max_width` bits, and the add's own carry-out bit is never resolved in
+# place -- it is concatenated onto the result as an extra bit and becomes
+# part of the NEXT stage's input, exactly like a 2-row carry-save
+# representation except the "rows" are folded back together into one packed
+# bus after every stage rather than kept separate until the very end.
+#
+# The reduction is planned ENTIRELY in Python before any hardware is built
+# (mirrors the reference's own @cohdl.pyeval-driven pipelined_add/add_pair,
+# which is likewise a compile-time-only construction of a fixed structure).
+# _plan_carry_save_levels below is a pure-Python, hardware-free port of that
+# algorithm, independently validated against real integer arithmetic (1080/
+# 1080 exact across widths 4-16 and max_width 2-16, using ONLY the same
+# slice/shift/mask/concat primitives the generated HDL below actually uses --
+# not a shortcut model) before a single line of HDL was written from it.
+#
+# Composition is entirely nested factory-function calls, never text
+# generation: every level's operation COUNT and SHAPE varies (some pairs
+# need one chunk add, others several; some elements just pass through), which
+# rules out one uniform hw_func loop body (a loop iteration can vary its
+# elaboration-time INT/BOOL closure values -- see make_soft_add_carry_select
+# -- but not its declared locals' TYPES, and there is no existing precedent
+# in this codebase for the latter). Instead, each op gets its own small,
+# fixed-shape @hw_func (via memoized leaf factories), and a level's op list
+# is combined into one packed bus by a balanced BINARY TREE of 2-input
+# concat @hw_funcs, built via plain Python recursion at factory-construction
+# time -- the same nested-closure idiom make_soft_add_tree_shifted and
+# make_soft_mult_karatsuba already use, just with an extra recursive axis
+# (op-combining within a level) alongside the existing one (level-to-level
+# chaining). No exec()/text codegen anywhere.
+
+
+class _CSElem:
+    """Elaboration-time-only descriptor: one summand's (width, shift) in the
+    carry-save reduction. Pure Python bookkeeping consumed only by
+    _plan_carry_save_levels -- never touches hardware."""
+
+    __slots__ = ("width", "shift", "off")
+
+    def __init__(self, width, shift, off):
+        self.width = width
+        self.shift = shift
+        self.off = off
+
+
+def _plan_carry_save_levels(initial_widths_shifts, out_bits, max_width):
+    """Pure-Python (no hardware) planner. Ports the reference's
+    pipelined_add/add_pair: repeatedly sort summands by (shift, width), pair
+    adjacent OVERLAPPING ones (add, chunked to at most max_width bits per
+    chunk, with any lower non-overlapping 'rest' bits of the smaller-shift
+    operand split off and concatenated back on unchanged) and pass through
+    non-overlapping ones untouched, until one summand remains.
+
+    initial_widths_shifts: list of (width, shift) for the starting summands
+    (bare partial products for a fresh multiply; a Wallace-reduced (sum,
+    carry) pair if this is seeding the finishing stage of a different
+    front-end -- this function does not care which).
+
+    Returns (levels, final_width). levels[i] is level i's list of ops, each
+    an elaboration-time-constant tuple over BIT OFFSETS into that level's own
+    packed input/output bus (offset 0 = LSB):
+      ('pass', in_off, width, out_off)
+      ('add', ac_off, ac_w, bc_off, bc_w, op_w, rest_off, rest_w, out_off)
+    final_width may exceed out_bits (the carry-deferred sum can overshoot the
+    true product's width by a couple of bits before the final truncation);
+    the final single element's shift is asserted 0, matching the reference's
+    own final `.lsb(target_width)` truncation -- has held on every width/
+    max_width combination checked (4-32 bits, max_width 2-32); truncation is
+    only ever safe because it discards bits the real product cannot need.
+
+    Degenerate-width safety: if EVERY remaining summand is simultaneously
+    non-overlapping with its neighbors (only possible when every summand is
+    1 bit wide -- i.e. a multiply against a 1-bit operand, where every
+    partial product is a single disjoint bit), the pairing scan below marks
+    everything 'pass' and the naive element count would never shrink,
+    looping forever (confirmed: uint1 x uint5 hung indefinitely before this
+    was added). Consecutive 'pass' ops that are shift-CONTIGUOUS (one ends
+    exactly where the next starts -- true for disjoint single-bit leaves,
+    never true for a real, covered gap) are merged into one wider element
+    for the NEXT iteration's bookkeeping only; the HDL-facing op list itself
+    is unchanged (still one 'pass' per original sub-range, concatenated by
+    the same recursive combine tree every level already uses). A hard
+    iteration cap is kept as a safety net in case some other, un-anticipated
+    non-convergent shape exists.
+    """
+    init = []
+    off = 0
+    for width, shift in initial_widths_shifts:
+        init.append(_CSElem(width, shift, off))
+        off += width
+    levels = []
+    cur = init
+    max_iters = 4 * len(init) + 16
+    n_iters = 0
+    while len(cur) != 1:
+        n_iters += 1
+        if n_iters > max_iters:
+            raise RuntimeError(
+                f"_plan_carry_save_levels: did not converge after {max_iters} "
+                f"iterations (out_bits={out_bits}, max_width={max_width}, "
+                f"{len(cur)} summands remaining) -- likely a new non-shrinking "
+                "shape; needs investigation, not a larger cap."
+            )
+        order = sorted(cur, key=lambda e: (e.shift, e.width))
+        ops = []
+        prev = None
+        for el in order:
+            if prev is None:
+                prev = el
+                continue
+            if prev.shift + prev.width <= el.shift:
+                ops.append(("pass", prev.off, prev.width, prev.shift))
+                prev = el
+                continue
+            A_off, A_w, A_sh = prev.off, prev.width, prev.shift
+            B_off, B_w, B_sh = el.off, el.width, el.shift
+            offa = B_sh - A_sh
+            if offa != 0:
+                rest_off, rest_w = A_off, offa
+                A_off, A_w = A_off + offa, A_w - offa
+            else:
+                rest_off, rest_w = None, 0
+            sh = A_sh
+            a_rem, b_rem = A_w, B_w
+            a_cur_off, b_cur_off = A_off, B_off
+            while a_rem is not None and b_rem is not None:
+                if a_rem > max_width:
+                    ac_off, ac_w = a_cur_off, max_width
+                    a_cur_off += max_width
+                    a_rem -= max_width
+                else:
+                    ac_off, ac_w = a_cur_off, a_rem
+                    a_rem = None
+                if b_rem > max_width:
+                    bc_off, bc_w = b_cur_off, max_width
+                    b_cur_off += max_width
+                    b_rem -= max_width
+                else:
+                    bc_off, bc_w = b_cur_off, b_rem
+                    b_rem = None
+                op_w = max(ac_w, bc_w) + 1
+                if sh + op_w > out_bits:
+                    op_w = out_bits - sh
+                ops.append(("add", ac_off, ac_w, bc_off, bc_w, op_w, rest_off, rest_w, sh))
+                rest_off, rest_w = None, 0
+                sh += max_width + offa
+                offa = 0
+            if sh < out_bits:
+                if a_rem is not None:
+                    ops.append(("pass", a_cur_off, a_rem, sh))
+                if b_rem is not None:
+                    ops.append(("pass", b_cur_off, b_rem, sh))
+            prev = None
+        if prev is not None:
+            ops.append(("pass", prev.off, prev.width, prev.shift))
+
+        out_off = 0
+        new_elems = []
+        out_ops = []
+        for op in ops:
+            if op[0] == "pass":
+                _, ioff, w, sh = op
+                # Merge into the previous new_elem iff it's ALSO a bare pass
+                # and shift-contiguous with it (see the degenerate-width note
+                # above) -- purely a bookkeeping merge for the outer loop's
+                # progress; the op list itself always gets one 'pass' per
+                # original sub-range, unchanged.
+                if new_elems and new_elems[-1].shift + new_elems[-1].width == sh and (
+                    out_ops and out_ops[-1][0] == "pass"
+                ):
+                    prev_elem = new_elems[-1]
+                    new_elems[-1] = _CSElem(prev_elem.width + w, prev_elem.shift, prev_elem.off)
+                else:
+                    new_elems.append(_CSElem(w, sh, out_off))
+                out_ops.append(("pass", ioff, w, out_off))
+                out_off += w
+            else:
+                _, ac_off, ac_w, bc_off, bc_w, op_w, rest_off, rest_w, sh = op
+                total_w = op_w + rest_w
+                new_elems.append(_CSElem(total_w, sh, out_off))
+                out_ops.append(
+                    ("add", ac_off, ac_w, bc_off, bc_w, op_w, rest_off, rest_w, out_off)
+                )
+                out_off += total_w
+
+        levels.append(out_ops)
+        cur = new_elems
+
+    final = cur[0]
+    assert final.shift == 0, (
+        f"_plan_carry_save_levels: final element shift {final.shift} != 0 -- "
+        "the reduction did not converge to bit 0 as expected; this is a "
+        "planner bug, not a data problem."
+    )
+    return levels, final.width
+
+
+def _carry_save_level_out_width(ops):
+    def _op_end(op):
+        return op[3] + op[2] if op[0] == "pass" else op[8] + op[5] + op[7]
+
+    return max(_op_end(op) for op in ops)
+
+
+_CS_CHUNK_ADD_CACHE = {}
+
+
+def _make_carry_save_chunk_add(ac_w, bc_w, op_w, rest_w):
+    """Memoized leaf: ac + bc, truncated to op_w bits if the natural sum
+    width (max(ac_w,bc_w)+1) exceeds it (only happens against the very top of
+    out_bits), then concatenated with `rest` (bits below this chunk's shift,
+    unaffected by the add and wired through unchanged -- rest is the upper
+    bits of the concat result per the reference's `tmp @ rest`, sum chunk
+    above it). Real arithmetic delay; every other node in this reduction is
+    pure routing built on top of these."""
+    key = (ac_w, bc_w, op_w, rest_w)
+    cached = _CS_CHUNK_ADD_CACHE.get(key)
+    if cached is not None:
+        return cached
+
+    ac_t = make_uint_t(ac_w)
+    bc_t = make_uint_t(bc_w)
+    natural_w = max(ac_w, bc_w) + 1
+    sum_t = make_uint_t(natural_w)
+    needs_trunc = op_w < natural_w
+    trunc_t = make_uint_t(op_w) if needs_trunc else sum_t
+
+    if rest_w > 0:
+        rest_t = make_uint_t(rest_w)
+        out_t = make_uint_t(op_w + rest_w)
+        if needs_trunc:
+
+            @hw_func
+            def chunk_add(ac: ac_t, bc: bc_t, rest: rest_t) -> out_t:
+                sum_full: sum_t = ac + bc
+                sum_trunc: trunc_t = sum_full[op_w - 1:0]
+                result: out_t = concat(sum_trunc, rest)
+                return result
+
+        else:
+
+            @hw_func
+            def chunk_add(ac: ac_t, bc: bc_t, rest: rest_t) -> out_t:
+                sum_full: sum_t = ac + bc
+                result: out_t = concat(sum_full, rest)
+                return result
+
+    else:
+        out_t = make_uint_t(op_w)
+        if needs_trunc:
+
+            @hw_func
+            def chunk_add(ac: ac_t, bc: bc_t) -> out_t:
+                sum_full: sum_t = ac + bc
+                result: out_t = sum_full[op_w - 1:0]
+                return result
+
+        else:
+
+            @hw_func
+            def chunk_add(ac: ac_t, bc: bc_t) -> out_t:
+                result: out_t = ac + bc
+                return result
+
+    _CS_CHUNK_ADD_CACHE[key] = (chunk_add, out_t)
+    return chunk_add, out_t
+
+
+_CS_SLICE_CACHE = {}
+
+
+def _make_carry_save_slice(bus_t, off, w):
+    """Memoized leaf: a pure bit-range read of `bus_t[off+w-1:off]` (or a
+    single-bit read when w==1). Tagged @wires (not @hw_func): this reduces
+    to pure routing with no logic gates whatsoever -- confirmed against a
+    real synthesis run, where an equivalent leaf's own yosys cell count was
+    100% flip-flops (the isolated-measurement harness registers), zero
+    combinational cells. An @hw_func-tagged version of exactly this shape
+    is what make_soft_add_tree_shifted's own "rewire-only zero-delay
+    entity" note warns about: PyRTL's max_freq divides by the (zero)
+    critical-path delay and raises ZeroDivisionError the first time such an
+    entity is independently timing-estimated -- confirmed by hitting it for
+    real (uint8 x uint8, a perfectly ordinary width, well past the point
+    native sim alone had already validated -- this is exactly why the plan
+    called for a real synthesis check, not just elaboration or native sim).
+    @wires's contract ("this function's own synthesized result IS pure
+    wires") is true here, unlike wrapping a call to a REAL child in @wires
+    would be (see _build_carry_save_range below for where that distinction
+    matters), so this is @wires's correct, intended use, not a workaround."""
+    key = (bus_t, off, w)
+    cached = _CS_SLICE_CACHE.get(key)
+    if cached is not None:
+        return cached
+    elem_t = make_uint_t(w)
+    if w == 1:
+
+        @wires
+        def leaf(terms: bus_t) -> elem_t:
+            result: elem_t = terms[off]
+            return result
+
+    else:
+
+        @wires
+        def leaf(terms: bus_t) -> elem_t:
+            result: elem_t = terms[off + w - 1:off]
+            return result
+
+    _CS_SLICE_CACHE[key] = (leaf, elem_t)
+    return leaf, elem_t
+
+
+def _build_carry_save_op_leaf(op, bus_in_t):
+    """One op (pass or chunked add) as (fn, elem_t, is_wires). A 'pass' op
+    IS the @wires slice leaf directly (is_wires=True). An 'add' op's
+    WRAPPING leaf (the ac/bc/[rest] slicing plus the chunk_add call) is
+    always @hw_func/is_wires=False, even though its OWN slicing calls are
+    @wires -- it also calls chunk_fn, which does real arithmetic, so this
+    entity's true synthesized result is not pure wires and tagging it
+    @wires would be a lie the framework would believe (silently hiding
+    real delay from every estimate, not just failing to crash on it)."""
+    if op[0] == "pass":
+        _, ioff, w, _ = op
+        fn, elem_t = _make_carry_save_slice(bus_in_t, ioff, w)
+        return fn, elem_t, True
+
+    _, ac_off, ac_w, bc_off, bc_w, op_w, rest_off, rest_w, _ = op
+    chunk_fn, elem_t = _make_carry_save_chunk_add(ac_w, bc_w, op_w, rest_w)
+    ac_slice, ac_t = _make_carry_save_slice(bus_in_t, ac_off, ac_w)
+    bc_slice, bc_t = _make_carry_save_slice(bus_in_t, bc_off, bc_w)
+    if rest_w > 0:
+        rest_slice, rest_t = _make_carry_save_slice(bus_in_t, rest_off, rest_w)
+
+        @hw_func
+        def leaf(terms: bus_in_t) -> elem_t:
+            ac: ac_t = ac_slice(terms)
+            bc: bc_t = bc_slice(terms)
+            rest: rest_t = rest_slice(terms)
+            result: elem_t = chunk_fn(ac, bc, rest)
+            return result
+
+    else:
+
+        @hw_func
+        def leaf(terms: bus_in_t) -> elem_t:
+            ac: ac_t = ac_slice(terms)
+            bc: bc_t = bc_slice(terms)
+            result: elem_t = chunk_fn(ac, bc)
+            return result
+
+    return leaf, elem_t, False
+
+
+def _build_carry_save_range(ops, lo, hi, bus_in_t):
+    """Recursively combine ops[lo:hi] (a level's op list assigns output bit
+    offsets to ops in list order, LSB-first) into one packed (fn, elem_t,
+    is_wires) via a balanced binary tree of 2-input concat nodes. concat's
+    first argument is the MSB half, and ops[lo:mid] (earlier list position
+    -> LOWER output offset) belong at the LSB half, so the combine is
+    concat(right, left), not concat(left, right).
+
+    is_wires propagates bottom-up: a combine node is ONLY pure wires (safe
+    to tag @wires) if BOTH children are -- i.e. its entire reachable
+    subtree is bare passthrough, no chunk-add anywhere in it. This is
+    necessary in addition to _make_carry_save_slice's own @wires tag, not
+    instead of it: a combine-of-two-passthroughs node is JUST AS
+    genuinely zero-delay as a single slice leaf is (confirmed: uint1 x
+    uint5, section 11's degenerate-width case, converges in exactly one
+    level that is ENTIRELY passthrough -- its whole combine tree, root
+    included, would hit the same crash if left @hw_func)."""
+    if hi - lo == 1:
+        return _build_carry_save_op_leaf(ops[lo], bus_in_t)
+    mid = lo + (hi - lo) // 2
+    left_fn, left_t, left_wires = _build_carry_save_range(ops, lo, mid, bus_in_t)
+    right_fn, right_t, right_wires = _build_carry_save_range(ops, mid, hi, bus_in_t)
+    combined_t = make_uint_t(left_t.width + right_t.width)
+    is_wires = left_wires and right_wires
+
+    if is_wires:
+
+        @wires
+        def combine(terms: bus_in_t) -> combined_t:
+            left_val: left_t = left_fn(terms)
+            right_val: right_t = right_fn(terms)
+            result: combined_t = concat(right_val, left_val)
+            return result
+
+    else:
+
+        @hw_func
+        def combine(terms: bus_in_t) -> combined_t:
+            left_val: left_t = left_fn(terms)
+            right_val: right_t = right_fn(terms)
+            result: combined_t = concat(right_val, left_val)
+            return result
+
+    return combine, combined_t, is_wires
+
+
+def _build_carry_save_level(ops, in_width, out_width):
+    bus_in_t = make_uint_t(in_width)
+    root_fn, root_t, is_wires = _build_carry_save_range(ops, 0, len(ops), bus_in_t)
+    assert root_t.width == out_width
+    return root_fn, bus_in_t, is_wires
+
+
+def _build_carry_save_chain(levels, idx, in_width, out_bits, final_out_t):
+    """Recursively chain levels[idx:] into one (fn, is_wires), mirroring how
+    make_soft_add_tree_shifted's own levels call the next level by bare
+    name at their own tail. The last level's raw output is usually wider
+    than out_bits (see _plan_carry_save_levels) and gets truncated here,
+    once, at the very end -- except against a 1-bit operand (every partial
+    product a disjoint single bit, so the reduction never generates a
+    carry and never grows past the narrowest width that covers all of
+    them), where the natural result can instead be NARROWER than the
+    formal out_bits (arith_result_type's full-precision width is wider
+    than any value a 1-bit operand's product can actually take); that case
+    widens on assignment instead, same as this file's `ae: eff_l_t = a`
+    idiom (implicit zero-extension for unsigned types -- no explicit slice
+    needed, only narrowing needs one).
+
+    is_wires propagates the same way _build_carry_save_range's does: a
+    stage is only pure wires if its OWN level is AND (for a non-final
+    stage) the rest of the chain also is -- the 1-bit-operand degenerate
+    case converges in exactly one level, entirely passthrough, so this
+    function's own top-level wrapper needs the same @wires/@hw_func choice
+    every node beneath it does, all the way up to make_soft_add_tree_carry_save."""
+    ops = levels[idx]
+    out_width = _carry_save_level_out_width(ops)
+    level_fn, bus_in_t, level_wires = _build_carry_save_level(ops, in_width, out_width)
+
+    if idx == len(levels) - 1:
+        is_wires = level_wires
+        if out_width >= out_bits:
+            if out_width == out_bits:
+                if is_wires:
+
+                    @wires
+                    def stage(terms: bus_in_t) -> final_out_t:
+                        result: final_out_t = level_fn(terms)
+                        return result
+
+                else:
+
+                    @hw_func
+                    def stage(terms: bus_in_t) -> final_out_t:
+                        result: final_out_t = level_fn(terms)
+                        return result
+
+            else:
+                mid_t = make_uint_t(out_width)
+                if is_wires:
+
+                    @wires
+                    def stage(terms: bus_in_t) -> final_out_t:
+                        mid: mid_t = level_fn(terms)
+                        result: final_out_t = mid[out_bits - 1:0]
+                        return result
+
+                else:
+
+                    @hw_func
+                    def stage(terms: bus_in_t) -> final_out_t:
+                        mid: mid_t = level_fn(terms)
+                        result: final_out_t = mid[out_bits - 1:0]
+                        return result
+
+        else:
+            if is_wires:
+
+                @wires
+                def stage(terms: bus_in_t) -> final_out_t:
+                    result: final_out_t = level_fn(terms)
+                    return result
+
+            else:
+
+                @hw_func
+                def stage(terms: bus_in_t) -> final_out_t:
+                    result: final_out_t = level_fn(terms)
+                    return result
+
+        return stage, is_wires
+
+    rest_fn, rest_wires = _build_carry_save_chain(levels, idx + 1, out_width, out_bits, final_out_t)
+    mid_t = make_uint_t(out_width)
+    is_wires = level_wires and rest_wires
+
+    if is_wires:
+
+        @wires
+        def stage(terms: bus_in_t) -> final_out_t:
+            mid: mid_t = level_fn(terms)
+            result: final_out_t = rest_fn(mid)
+            return result
+
+    else:
+
+        @hw_func
+        def stage(terms: bus_in_t) -> final_out_t:
+            mid: mid_t = level_fn(terms)
+            result: final_out_t = rest_fn(mid)
+            return result
+
+    return stage, is_wires
+
+
+def make_soft_add_tree_carry_save(n_leaves, leaf_t, out_t, max_width=2):
+    """Sum n_leaves leaf_t values, where leaf i contributes `terms[i] << i`,
+    via the deferred-carry reduction described in this section's module
+    comment, capping every add at max_width bits. Signature-compatible with
+    make_soft_add_tree_shifted so callers (make_soft_mult_carry_save below)
+    use it the same way.
+
+    max_width sets the widest single add anywhere in the whole reduction --
+    the per-stage delay floor -- and therefore the stage count: smaller
+    max_width means more, narrower, faster stages. max_width >= leaf_t's
+    width degenerates toward a small number of wide adds (closer to, though
+    not identical in shape to, make_soft_add_tree_shifted's own tree)."""
+    if n_leaves < 2:
+        raise ValueError(
+            "make_soft_add_tree_carry_save needs >= 2 leaves; callers handle "
+            "the single-partial-product case inline (see make_soft_mult_carry_save)"
+        )
+    if max_width < 1:
+        raise ValueError(f"make_soft_add_tree_carry_save: max_width must be >= 1 (got {max_width})")
+
+    leaf_width = len(leaf_t)
+    out_bits = len(out_t)
+    initial = [(leaf_width, i) for i in range(n_leaves)]
+    levels, _final_width = _plan_carry_save_levels(initial, out_bits, max_width)
+
+    in_t = leaf_t[n_leaves]
+    initial_bus_t = make_uint_t(leaf_width * n_leaves)
+    chain_fn, chain_wires = _build_carry_save_chain(
+        levels, 0, leaf_width * n_leaves, out_bits, out_t
+    )
+
+    # array_to_uint_le is a zero-delay bit-manip primitive (like concat/
+    # bit_dup elsewhere in this codebase, its own delay is analytically
+    # known rather than something that gets independently timing-estimated
+    # and could crash) -- so this wrapper is pure wires iff chain_fn is.
+    if chain_wires:
+
+        @wires
+        def soft_add_tree_carry_save(terms: in_t) -> out_t:
+            packed: initial_bus_t = array_to_uint_le(terms)
+            result: out_t = chain_fn(packed)
+            return result
+
+    else:
+
+        @hw_func
+        def soft_add_tree_carry_save(terms: in_t) -> out_t:
+            packed: initial_bus_t = array_to_uint_le(terms)
+            result: out_t = chain_fn(packed)
+            return result
+
+    return soft_add_tree_carry_save
+
+
+def make_soft_mult_carry_save(l_t, r_t, max_width=2):
+    """Deferred-carry (carry-save-style) multiplier: same AND-mask partial
+    products as make_soft_mult_shift_add, summed via
+    make_soft_add_tree_carry_save instead of a full carry-propagate tree.
+    See this section's module comment and docs/SYN_DESIGN.md section 11 for
+    the sky130 measurements behind max_width's default."""
+    eff_l_t, eff_r_t, out_t = arith_result_type("INFERRED_MULT", l_t, r_t)
+    left_bits = len(eff_l_t)
+    r_bits = len(eff_r_t)
+
+    if r_bits == 1:
+        # Single partial product -- no tree at all, same as
+        # make_soft_mult_shift_add's own r_bits==1 special case.
+        @hw_func
+        def soft_mult_carry_save(a: l_t, b: r_t) -> out_t:
+            ae: eff_l_t = a
+            be: eff_r_t = b
+            bit_mask: eff_l_t = bit_dup(be[0], left_bits)
+            result: out_t = ae & bit_mask
+            return result
+
+        return soft_mult_carry_save
+
+    soft_add_tree = make_soft_add_tree_carry_save(r_bits, eff_l_t, out_t, max_width=max_width)
+
+    @hw_func
+    def soft_mult_carry_save(a: l_t, b: r_t) -> out_t:
+        ae: eff_l_t = a
+        be: eff_r_t = b
+        partials: eff_l_t[r_bits]
+        for i in range(r_bits):
+            bit_mask: eff_l_t = bit_dup(be[i], left_bits)
+            partials[i] = ae & bit_mask
+        return soft_add_tree(partials)
+
+    return soft_mult_carry_save

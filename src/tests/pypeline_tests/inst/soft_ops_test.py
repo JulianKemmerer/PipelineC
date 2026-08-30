@@ -48,6 +48,7 @@ from operators.soft_mult import (
     make_soft_mult_shift_add,
     make_soft_mult_karatsuba,
     make_soft_add_tree_shifted,
+    make_soft_mult_carry_save,
 )
 from operators.soft_div import (
     make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod,
@@ -142,6 +143,62 @@ def test_soft_mult_asymmetric():
             got_rl = sim_call(mult_rl, SimVal(b, rt), SimVal(a, lt))
             check(f"soft_mult_asymmetric_rl({b},{a})", got_rl, a * b)
     print("test_soft_mult_asymmetric passed")
+
+
+def test_soft_carry_save_mult():
+    """make_soft_mult_carry_save against the same golden sweep as
+    test_soft_mult, across several max_width values -- including
+    max_width >= the operand width, which degenerates toward a small number
+    of wide adds and is the closest thing this shape has to a built-in
+    control (though not byte-identical to make_soft_mult_shift_add's own
+    tree, unlike Karatsuba's T>=n_bits case -- see docs/SYN_DESIGN.md
+    section 11)."""
+    ut = make_uint_t(5)
+    for max_width in (1, 2, 3, 5, 8):
+        mult = make_soft_mult_carry_save(ut, ut, max_width=max_width)
+        for a, b in itertools.product(range(0, 32, 3), range(0, 32, 5)):
+            got = sim_call(mult, SimVal(a, ut), SimVal(b, ut))
+            check(f"soft_carry_save_mult(mw={max_width})({a},{b})", got, a * b)
+    print("test_soft_carry_save_mult passed")
+
+
+def test_soft_carry_save_mult_asymmetric():
+    """Non-square operand widths, both orders -- same rationale as
+    test_soft_mult_asymmetric."""
+    lt = make_uint_t(12)
+    rt = make_uint_t(5)
+    for max_width in (2, 4):
+        mult_lr = make_soft_mult_carry_save(lt, rt, max_width=max_width)
+        mult_rl = make_soft_mult_carry_save(rt, lt, max_width=max_width)
+        for a in range(0, 4096, 137):
+            for b in range(0, 32, 3):
+                got_lr = sim_call(mult_lr, SimVal(a, lt), SimVal(b, rt))
+                check(f"soft_carry_save_mult_asymmetric_lr(mw={max_width})({a},{b})", got_lr, a * b)
+                got_rl = sim_call(mult_rl, SimVal(b, rt), SimVal(a, lt))
+                check(f"soft_carry_save_mult_asymmetric_rl(mw={max_width})({b},{a})", got_rl, a * b)
+    print("test_soft_carry_save_mult_asymmetric passed")
+
+
+def test_soft_carry_save_mult_degenerate():
+    """Regression test for a real non-termination bug found while building
+    this multiplier: when EVERY remaining summand in the carry-save
+    reduction is simultaneously non-overlapping with its neighbors (only
+    possible when the left operand is 1 bit wide, so every partial product
+    is a single disjoint bit), the naive pairing scan marks everything
+    'pass' and the element count never shrinks -- uint1 x uint5 hung
+    indefinitely before _plan_carry_save_levels merged shift-contiguous
+    'pass' runs. Covers both operand orders (1-bit on the left forces the
+    tree path; 1-bit on the right is the already-handled r_bits==1
+    passthrough) and the exact-square 1x1 corner."""
+    for lw, rw in ((1, 5), (1, 8), (5, 1), (1, 1)):
+        for max_width in (2, 4):
+            lt, rt = make_uint_t(lw), make_uint_t(rw)
+            mult = make_soft_mult_carry_save(lt, rt, max_width=max_width)
+            for a in range(1 << lw):
+                for b in range(1 << rw):
+                    got = sim_call(mult, SimVal(a, lt), SimVal(b, rt))
+                    check(f"soft_carry_save_mult_degenerate(lw={lw},rw={rw},mw={max_width})({a},{b})", got, a * b)
+    print("test_soft_carry_save_mult_degenerate passed")
 
 
 def test_tree_add_shifted():
@@ -384,7 +441,12 @@ def test_soft_mult_registration_unsigned_only():
     PYPELINE_NO_SW_LIB_GUARD guard instead)."""
     import operators.soft as soft_lib
 
-    for register in (soft_lib.register_soft_mult, soft_lib.register_soft_mult_karatsuba):
+    for register in (
+        soft_lib.register_soft_mult,
+        soft_lib.register_soft_mult_shift_add,
+        soft_lib.register_soft_mult_karatsuba,
+        soft_lib.register_soft_mult_carry_save,
+    ):
         register()
         assert _resolve_generic_operator("INFERRED_MULT", "uint10_t", "uint10_t") is not None, (
             f"{register.__name__}: unsigned MULT should resolve to a soft multiplier"
@@ -421,6 +483,53 @@ def test_soft_mult_karatsuba_threshold_override():
     got = sim_call(kar_default, SimVal(731, ut10), SimVal(5, ut10))
     check("soft_karatsuba(default)(731,5)", got, 731 * 5)
     print("test_soft_mult_karatsuba_threshold_override passed")
+
+
+def test_soft_mult_carry_save_max_width_override():
+    """Same regression shape as test_soft_mult_karatsuba_threshold_override,
+    for register_soft_mult_carry_save(max_width=...)."""
+    import operators.soft as soft_lib
+
+    ut10 = make_uint_t(10)
+    soft_lib.register_soft_mult_carry_save(max_width=3)
+    cs_mw3 = _resolve_generic_operator("INFERRED_MULT", "uint10_t", "uint10_t")
+    assert cs_mw3 is not None, "register_soft_mult_carry_save(max_width=3) should register"
+    for a, b in [(0, 0), (1023, 1023), (731, 5), (17, 400)]:
+        got = sim_call(cs_mw3, SimVal(a, ut10), SimVal(b, ut10))
+        check(f"soft_carry_save(max_width=3)({a},{b})", got, a * b)
+
+    soft_lib.register_soft_mult_carry_save()  # default (max_width=None)
+    cs_default = _resolve_generic_operator("INFERRED_MULT", "uint10_t", "uint10_t")
+    got = sim_call(cs_default, SimVal(731, ut10), SimVal(5, ut10))
+    check("soft_carry_save(default)(731,5)", got, 731 * 5)
+    print("test_soft_mult_carry_save_max_width_override passed")
+
+
+def test_soft_mult_default_is_carry_save():
+    """register_soft_mult() must resolve to make_soft_mult_carry_save, not
+    make_soft_mult_shift_add -- regression test for the default switch
+    (docs/SYN_DESIGN.md section 11: the port of solution.vhd's sky130
+    reference design is now the default; the old tree stays reachable via
+    register_soft_mult_shift_add()). Distinguishes the two by canonical
+    entity name rather than by measuring anything -- soft_mult_carry_save
+    and soft_mult_shift_add name their top hw_func differently."""
+    import operators.soft as soft_lib
+    from PY_TO_LOGIC import CANONICAL_CALLABLE_KEY
+    from operators.soft_mult import make_soft_mult_carry_save, make_soft_mult_shift_add
+
+    ut8 = make_uint_t(8)
+    soft_lib.register_soft_mult()
+    default_mult = _resolve_generic_operator("INFERRED_MULT", "uint8_t", "uint8_t")
+    assert default_mult is not None, "register_soft_mult() should register"
+    assert CANONICAL_CALLABLE_KEY(default_mult) == CANONICAL_CALLABLE_KEY(
+        make_soft_mult_carry_save(ut8, ut8)
+    ), "register_soft_mult() must default to make_soft_mult_carry_save"
+    assert CANONICAL_CALLABLE_KEY(default_mult) != CANONICAL_CALLABLE_KEY(
+        make_soft_mult_shift_add(ut8, ut8)
+    ), "register_soft_mult() must NOT default to make_soft_mult_shift_add anymore"
+    got = sim_call(default_mult, SimVal(37, ut8), SimVal(6, ut8))
+    check("register_soft_mult default (37,6)", got, 37 * 6)
+    print("test_soft_mult_default_is_carry_save passed")
 
 
 def test_soft_cmp():
@@ -559,6 +668,9 @@ if __name__ == "__main__":
     test_soft_negate()
     test_soft_mult()
     test_soft_mult_asymmetric()
+    test_soft_carry_save_mult()
+    test_soft_carry_save_mult_asymmetric()
+    test_soft_carry_save_mult_degenerate()
     test_tree_add_shifted()
     test_soft_karatsuba_mult()
     test_soft_div_mod()
@@ -570,6 +682,8 @@ if __name__ == "__main__":
     test_soft_div_mod_registration()
     test_soft_mult_registration_unsigned_only()
     test_soft_mult_karatsuba_threshold_override()
+    test_soft_mult_carry_save_max_width_override()
+    test_soft_mult_default_is_carry_save()
     test_soft_cmp()
     test_soft_eq()
     test_soft_shift()

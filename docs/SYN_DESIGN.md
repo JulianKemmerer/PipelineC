@@ -2174,3 +2174,321 @@ both the override and default paths. Every threshold class from `T=3` to
 `uint16`, corners plus random pairs): 0 mismatches at every threshold --
 Karatsuba's correctness does not depend on where the recursion bottoms out,
 only its QoR does.
+
+## 11. Carry-save (deferred-carry) multiplier: porting a real sky130 reference design
+
+Sections 8-10 all measured *this library's own* multiplier ideas against
+*this library's own* soft-operator style. This round instead ports a real,
+externally-authored working design: `solution.vhd`, a CoHDL-generated
+`uint16 x uint16 -> uint32` multiplier built for the same sky130/latchup
+target this library's `PART("sky130")` designs target, reported at 33
+cycles / 684 MHz. Its partial-product stage is identical to
+`make_soft_mult_shift_add`'s (`a & bit_dup(b[i], 16)` per bit of `b`); its
+summation network is not, and the difference is exactly ASIC-shaped:
+`make_soft_mult_shift_add` sums partials via `make_soft_add_tree_shifted`,
+a balanced tree of a FEW FULL carry-propagate adds (15 adds up to 32 bits
+wide at `uint16 x uint16`, ~97 bits of serial carry chain overall) --
+cheap on an FPGA's dedicated carry chain, the wrong shape for an ASIC with
+none.
+
+### What the reference does
+
+A carry-save / deferred-carry reduction: every add is capped at a fixed
+`max_width` bits (2, in the reference), and the add's own carry-out bit is
+never resolved in place -- it is concatenated onto the result as an extra
+bit and folded into the NEXT stage's input, rather than propagated
+combinationally within one wide adder. Reproduced from the reference's own
+generated VHDL (not assumed): at `max_width=2`, all 464 additions in the
+16x16 design are <=3 bits wide (379 x 3b, 74 x 2b, 11 x 1b), spread across
+31 pipeline-visible stages, versus `make_soft_mult_shift_add`'s 4 levels /
+15 adds up to 32 bits.
+
+### Port strategy: same algorithm, not the same code
+
+The reference's own reduction (`pipelined_add`/`add_pair`, a
+`@cohdl.pyeval`-decorated, compile-time-only Python construction) was
+ported as a **pure-Python, hardware-free planner**
+(`_plan_carry_save_levels` in `soft_mult.py`) before any HDL was written
+from it, and independently validated against real integer arithmetic
+(1080/1080 exact across widths 4-16 and `max_width` 2-16, using only the
+same slice/shift/mask/concat primitives the generated HDL actually uses --
+not a shortcut model) before being trusted as a spec.
+
+Composition is entirely nested **factory-function** calls, never text
+generation, matching this library's existing idiom
+(`make_soft_add_tree_shifted`, Karatsuba's `mult_lo/mult_hi/mult_mid`).
+This was a deliberate choice, not just a style preference: a level's
+operation COUNT and SHAPE varies (some summand pairs need one chunk-add,
+others several; some elements just pass through), which rules out a single
+uniform `for`-loop body inside one `@hw_func` -- an elaboration-time loop
+can vary its closure INT/BOOL values per iteration (the established
+`make_soft_add_carry_select` idiom), but there is no precedent anywhere in
+this codebase for a loop body whose declared locals change TYPE per
+iteration, and that is exactly what a variable-shape op list would need.
+Instead, every op (a chunk-add, or a bare passthrough) gets its own small,
+fixed-shape `@hw_func` via a memoized leaf factory, and a level's op list
+is combined into one packed bus by a balanced BINARY TREE of 2-input
+concat nodes, built via plain Python recursion at factory-construction
+time -- an extra recursive axis alongside the existing level-to-level
+chaining, with no exec()/text codegen anywhere.
+
+### A real bug, found by going past native sim
+
+Native sim (`sim_call`) never exercises PY_TO_LOGIC's AST elaborator --
+this is documented library lore, not new -- but it is easy to forget how
+much further "exercises the elaborator" still falls short of "exercises
+real synthesis timing estimation". This round needed all three layers to
+find a real bug:
+
+1. **Native sim** (2452+ cases across widths, `max_width`, asymmetric and
+   degenerate operand pairs): 100% correct, including a genuine
+   non-termination bug found and fixed along the way (below).
+2. **Real elaboration** (`pipelinec --no_synth`) of the full `uint16 x
+   uint16` design at `max_width=2`: succeeded, ~2500 VHDL entities written.
+3. **Real GHDL behavioral simulation** (`--sim_comb --ghdl`): compiled and
+   ran without error.
+4. **Real PyRTL synthesis timing estimation** (`op_qor_bench.py`'s actual
+   `--coarse --sweep` path) on the identical `uint8 x uint8` design: this
+   is the one that crashed. A bare bit-slice leaf
+   (`_make_carry_save_slice`, the passthrough half of the reduction) is
+   pure routing -- confirmed against the actual synthesis run, whose yosys
+   cell count for that entity was 100% flip-flops (the isolated-
+   measurement harness registers), zero combinational cells. Timing-
+   estimating an entity whose own critical path is genuinely zero divides
+   by zero inside PyRTL's `max_freq` (a documented, pre-existing PyRTL
+   limitation this library already works around elsewhere --
+   `make_soft_add_tree_shifted`'s own "rewire-only zero-delay entity"
+   note). None of layers 1-3 exercise per-entity synthesis timing
+   estimation, so none of them could have caught this.
+
+The fix is `@wires`, used correctly rather than as a workaround: it is a
+claim about what an entity's OWN synthesized result actually is ("this
+reduces to pure wires"), not a delay-suppression flag over whatever it
+calls -- confirmed before relying on it, since misusing it to wrap a node
+that calls a REAL child would silently hide that child's real delay from
+every future estimate, a correctness bug far worse than the crash it would
+paper over. `is_wires` is threaded bottom-up through the whole recursive
+tree (leaf -> combine -> level -> chain): a combine node is only pure
+wires if BOTH children are, all the way up to the top-level multiplier
+function itself, because a combine-of-two-passthroughs is JUST AS
+genuinely zero-delay as a single slice leaf -- confirmed necessary, not
+theoretical, by the fully-degenerate case below.
+
+### A second real bug: 1-bit-operand non-termination
+
+Multiplying by a 1-bit operand (`uint1 x uintN`, `N>1`) makes every
+partial product a single, disjoint bit -- none of them overlap their
+neighbors, ever. The reduction's pairing scan marks non-overlapping
+summands `pass` and only shrinks the summand count on an `add`, so this
+case hung indefinitely (confirmed: `uint1 x uint5` never terminated).
+Fixed in `_plan_carry_save_levels` by merging shift-CONTIGUOUS consecutive
+`pass` ops into one element for the next iteration's bookkeeping only (the
+HDL-facing op list is unchanged -- still one `pass` per original
+sub-range); a hard iteration cap remains as a safety net. This is also
+what makes the fully-degenerate case above real: the whole reduction
+converges in exactly one, entirely-passthrough level, so the top-level
+multiplier function itself needed the `@wires` propagation to be correct,
+not just some interior node.
+
+A related, narrower-than-formal-width edge case: `arith_result_type`'s
+full-precision output width for `uint1 x uintN` is wider than any value
+the product can actually take (a 1-bit operand's product never needs a
+carry, so the natural reduction result can be narrower than the formal
+`out_bits`, not just wider as in the normal case). Handled by widening on
+assignment (implicit zero-extension, the same `ae: eff_l_t = a` idiom used
+throughout this file) rather than the usual truncating slice.
+
+### Outcome
+
+**Shipped as the new default.** `register_soft_mult()` now registers
+`make_soft_mult_carry_save` (`max_width=2`, matching the reference
+exactly) instead of `make_soft_mult_shift_add`. This is a port of a real,
+working reference design for the actual target (sky130/latchup), not a
+locally-measured winner the way sections 9-10's changes were -- landed
+directly rather than gated behind a comparison sweep. The prior default
+stays reachable via the new `register_soft_mult_shift_add()`.
+`register_soft_mult_carry_save(max_width=None, scope=None)` is also
+available directly, shaped like `register_soft_mult_karatsuba
+(threshold=None, ...)`, for callers who want a different `max_width`.
+
+A Wallace-tree/chunked-CPA hybrid (collapsing partial products to 2 rows
+via 3:2 compression in O(log n) levels, then finishing with this same
+chunked deferred-carry adder) was sketched as a possible improvement over
+the reference's own reduction -- 2-bit chunking multiplies element count
+every level, which is why the reference needs ~30 levels where a 6-level
+Wallace reduction plus a chunked finish could need fewer -- but was not
+built this round; the priority was reproducing the reference's own proven
+design faithfully and characterizing this compiler's autopipelining
+against its real, known-good performance number first. Worth returning to
+if the characterization below finds headroom worth chasing.
+
+### Characterizing the autopipeliner against the reference's own number
+
+Open question, not yet closed at the time this was written: does
+`--coarse --sweep` on the ported design, on sky130, reach anywhere near
+the reference's 33 cycles / 684 MHz? A direct `pipelinec --coarse --sweep
+--start 0 --stop 34 --syn_tool sky130` run against a minimal `uint16 x
+uint16` design (default `register_soft_mult()`, i.e. this section's
+multiplier) is the real characterization, launched as a long-running
+background job -- real sky130 synthesis at this depth is slow (the first,
+comb-only data point alone took ~9.5 minutes end to end: elaborating and
+either measuring or cache-hitting delays for **2708 distinct leaf
+entities**, then one real yosys+ghdl synthesis of the ~2000-instance
+flattened netlist). Partial result at `n_cuts=0`: **55.77 MHz (17.93 ns),
+52923 um2 combinational area** -- consistent with the reference's own
+comb-delay-dominated starting point before any pipelining. Deeper cuts
+were still running when this section was written; append the finished
+table here as `| n_cuts | MHz | ns | um2 |` rows once the job completes,
+and revise the "did the tool reach the target" verdict below accordingly.
+
+### Future work: autopipelining sweep algorithm improvements
+
+Written from two sources: the codebase investigation done before this
+multiplier was built (a very fine-grained, many-level, narrow-leaf design
+is a stress test the autopipeliner has apparently never faced), and what
+actually happened building and sweeping it. Numbered by expected value,
+not by where each was discovered.
+
+**Why this design is the right stress test.** It is a stack of ~30
+uniform ranks of parallel, mostly-identical 1-3-bit adds -- structurally
+the best possible input for the coarse placer's own mechanism (evenly-
+spaced delay fractions projected into every submodule alive at that
+offset, `SYN.GET_BEST_GUESS_IDEAL_SLICES` / `SLICE_DOWN_HIERARCHY_
+WRITE_VHDL_PACKAGES`), and the opposite of `make_soft_mult_shift_add`'s
+old lumpy 4-level, 18/21/26/32-bit tree. If the tool were ever going to
+slice something near-optimally, this is the shape. Whether it actually
+does is exactly what the characterization above answers.
+
+**1. The coarse path can crash on narrow leaves -- confirmed as a real
+risk, not yet confirmed as hit.** `RAW_VHDL.GET_BITS_PER_STAGE_DICT`
+raises on an interior zero-bit stage: a 3-bit adder handed 3 slices
+yields `{0:1, 1:1, 2:0, 3:1}` -> exception. The leaf-bit-width cap that
+would prevent this exists only in the PLANNED sweep
+(`SWEEP.BUILD_SLICE_LANDSCAPE`), not `--coarse`, which consults only
+`LEAF_MAX_SPLIT_SLICES` -- `None` (uncapped) for `SPLIT_KIND_BITS`. The
+running characterization sweep had not yet reached a deep enough cut
+count to hit this as of writing; if it does, that is itself the
+confirmation. **Recommended fix: port the cap into the coarse path** (or
+make `LEAF_MAX_SPLIT_SLICES` return `width-1` for `SPLIT_KIND_BITS`).
+Turns a hard crash into a clamp, benefits every design, not just this
+one, and removes the need for any impl-specific `--stop` ceiling in
+`op_qor_bench.py`'s `max_useful_cuts`.
+
+**2. The 0.1 ns delay raster is too coarse for these leaves.**
+`DELAY_UNIT_MULT = 10.0` (`SYN.py`), and `logic.delay = int(cached_ns *
+10)` truncates, with an explicit "too small to represent" clamp to 1
+unit. Every sub-0.1 ns leaf collapses to the same value, so a 3-bit add
+and a 1-bit XOR are indistinguishable to `PLAN_CUTS`. Measured sky130
+leaf delays for this exact design are ~1.0-1.4 ns (see the `chunk_add_*`/
+`leaf_op_*` lines in the characterization log) -- comfortably above the
+raster floor at THIS width, so this is less of a live risk for sky130
+specifically than it would be for a faster process or for PyRTL's
+comb-only estimate, but it is the strongest structural argument that
+**`max_width=2` is not obviously the right choice for a Pypeline port even
+though it is right for hand-written CoHDL**: leaves need to be big enough
+to be representable on whatever raster the target backend uses. Predict
+the per-target sweep optimum may sit above `max_width=2`, not at it --
+this is exactly what `CARRY_SAVE_MAX_WIDTHS = [2, 3, 4, 6, 8]` in
+`op_qor_bench.py` is there to check once the full matrix runs.
+**Suggested fix**: raise `DELAY_UNIT_MULT` (10 -> 100) and round rather
+than truncate.
+
+**3. Depth-proportional over-prediction is the main risk to ranking.**
+`ESTIMATE_HIER_PATH_DELAYS` sums each submodule's *full* cached delay
+(clk->Q + logic + setup), so a K-deep chain accumulates ~(K-1) copies of
+a floor that exists once in silicon -- precedent: `soft_bitwise` measured
+26.6-47x too slow; section 10's Karatsuba table degrades monotonically
+with recursion depth (1.22x flat -> 2.99x at the shallowest split). A
+~30-level tree is squarely in that regime, and the estimated area printed
+during the characterization run (`Estimated area: 52923.0 um2` at 0
+cuts, comb-only, before ANY of the ~2000 instantiated leaf adds could
+share logic under real synthesis) should be read the same way section
+6's latchup area-model finding already established: the isolated,
+per-leaf estimate overshoots real synthesized area by 270-410% on designs
+with this much structural repetition, because real synthesis dedupes/
+shares across repeated instances in a way an isolated per-leaf sum
+cannot see. **The measurement frontier is the existing mitigation** --
+`FUNC_IS_TOPMOST_COMB` gets one real synthesis, and `units_to_ns`
+rescales the inflated geometry onto that real total, so absolute fmax
+stays anchored even when the estimated *shape* is wrong. **Suggested
+fix**: `PIPELINEC_INTERNAL_COMBINATIONAL_PLANNER_WEIGHTS=1` (`DEVICE_
+MODELS`-only, off by default pending A/B evidence) already strips the
+per-leaf clk->Q+setup floor from the relative segment weights -- this
+design is close to the ideal A/B case for it (many nearly-identical short
+leaves, so the floor-vs-real-delay ratio is about as extreme as this
+codebase has); run the characterization sweep a second time with it set
+once the default run finishes, and compare. Note it can only move cut
+*positions*, not cut *count* -- a frontier-anchored *budget* (not just
+weights) would be needed to fix the count for a design this deep.
+
+**4. `SPLIT_KIND_1LL` atomicity will suppress part of the tree.** Every
+partial-product `AND` is 1LL (`RAW_VHDL.py`): at most 2 slices, and a
+parallel *blocker* -- `SliceLandscape.finalize`'s `_straddled` deletes
+candidates sitting inside a parallel atomic span. A real divider swept
+elsewhere in this codebase planned 48 cuts and built only 32 slices, 16
+wasted on NOT outputs, for the same reason.
+
+**5. One placement per axis unit; deep narrow leaves rank last.**
+`finalize` collapses every candidate rounding into the same 0.1 ns unit
+to a single legal bit, and materializes exactly one
+(`min(candidates, key=_PLACEMENT_RANK_KEY)`). A whole rank of parallel
+adders is therefore not registered as a rank in one step; one candidate
+is placed and the VHDL writer's emergent stage-crossing registration does
+the rest, pruned afterward by `DROP_NON_DEEPENING_PLACEMENTS`.
+`_PLACEMENT_RANK_KEY` prefers shallow hierarchy and real `INSTANCE_
+OUTPUT` boundaries over deep, narrow leaves -- ranking precisely this
+design's shape last. **Suggested fix**: let a whole rank of parallel
+identical ops be considered as one placement, matching how a uniform
+reduction tree actually wants to be sliced.
+
+**6. A related but distinct pitfall for any future soft-operator author
+building a deep, many-node tree of small entities: watch for
+"rewire-only" leaves.** Not an autopipelining-algorithm issue, but
+directly adjacent, and worth recording here since it will recur for
+anyone else who tries this style of port. A `@hw_func`-tagged entity
+whose own synthesized result is pure wiring (a bare bit-slice or a
+concat-of-slices with no arithmetic anywhere beneath its own call
+boundary) makes PyRTL's `max_freq` divide by a zero critical-path delay
+and crash the first time that entity is independently timing-estimated
+-- confirmed for real building this multiplier (`_make_carry_save_slice`,
+and more generally any combine node whose entire reachable subtree turns
+out to be pure passthrough, which is *guaranteed* for the 1-bit-operand
+degenerate case, section 11 above). `@wires` is the correct fix, but it
+must be applied truthfully and propagated all the way up: a node is only
+safe to tag `@wires` if its ENTIRE subtree is pure wiring, not just its
+own top-level statements -- tagging a node `@wires` that calls a real
+child would silently hide that child's delay from every future estimate,
+which is a worse, quieter bug than the crash it works around. Neither
+native sim nor `--no_synth` elaboration nor GHDL behavioral simulation
+exercise per-entity synthesis timing estimation, so none of them can
+catch this class of bug -- only a real `--coarse --sweep` (or planned
+sweep) run against a real backend can. This suggests op_qor_bench.py-
+style real-backend sweeps, not just native sim, may be worth running as a
+matter of course for any new deep/many-entity soft-operator design,
+regardless of whether a QoR comparison is the goal.
+
+**7. `AUTOPIPELINE(func, depth=N)` is documented but silently a no-op.**
+The value is stored (`PY_TO_LOGIC.py`, on `AutopipelineCall` elaboration)
+and never read by anything downstream -- every consumer does a membership
+or length test only. Either implement it or remove it from the docs; a
+knob that silently does nothing is worse than an absent one. Unrelated to
+this multiplier specifically, surfaced while researching whether a
+"pin exactly N stages" mechanism already existed (it does, just not via
+this knob -- `--coarse --start N --stop N+1` against a design with no
+`@MAIN` MHz goal is the actual "best fmax at a fixed latency" mode, and
+is what both the QoR harness and the characterization sweep above use).
+
+### Correctness
+
+`test_soft_carry_save_mult`/`test_soft_carry_save_mult_asymmetric` cover
+the same golden-sweep shape as the existing shift-and-add tests, across
+several `max_width` values. `test_soft_carry_save_mult_degenerate` is the
+regression test for the 1-bit-operand non-termination bug above (every
+`(lw,rw)` pair with a 1-bit side, exhaustive over both operands).
+`test_soft_mult_carry_save_max_width_override` covers
+`register_soft_mult_carry_save(max_width=...)` end-to-end, mirroring
+Karatsuba's threshold-override test. `test_soft_mult_default_is_carry_save`
+is the regression test for the default switch itself, distinguishing the
+two multipliers by canonical entity name (`CANONICAL_CALLABLE_KEY`) rather
+than by measuring anything. Full `soft_ops_test.py` suite green; full
+repo-wide `run_all.py` suite green (210/210) after the default switch.

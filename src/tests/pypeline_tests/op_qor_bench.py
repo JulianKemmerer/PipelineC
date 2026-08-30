@@ -63,7 +63,21 @@ PART = "xc7a200tffg1156-2"
 MAX_CUTS_CAP = 15
 
 
-def max_useful_cuts(l_bits, r_bits):
+def max_useful_cuts(l_bits, r_bits, impl=None):
+    """The '4 bits/stage' floor below is FPGA reasoning (CARRY4 packs 4
+    bits/prim) -- it does not apply to a carry-save/Wallace impl, which is
+    built from single- or few-bit-wide leaf adds by design (see
+    docs/SYN_DESIGN.md section 11) and wants a much deeper sweep to show
+    its actual advantage. Note the coarse-sweep leaf-bit-width cap that
+    would normally keep a cut from landing inside a too-narrow leaf only
+    exists in the PLANNED sweep, not --coarse -- a sufficiently high
+    --stop against a carry_save/wallace impl CAN legitimately crash the
+    pypelinec subprocess (RAW_VHDL.GET_BITS_PER_STAGE_DICT's interior
+    zero-bit-stage exception); this is a known, tracked compiler
+    limitation (fixing it is future work), and the harness already
+    records that as a normal error row rather than failing the run."""
+    if impl is not None and (impl.startswith("soft_carry_save") or impl.startswith("soft_wallace")):
+        return MAX_CUTS_CAP
     # Don't bother slicing below ~4 bits/stage -- CARRY4 packs 4 bits/prim.
     max_stages = max(1, max(l_bits, r_bits) // 4)
     return min(MAX_CUTS_CAP, max_stages - 1)
@@ -89,6 +103,26 @@ CSV_FIELDS = [
     "error",
 ]
 
+# sky130-only columns, kept OUT of the shared CSV_FIELDS list: it is one
+# global schema shared by every tool's CSV, and append_csv_rows only writes a
+# header for a brand-new file -- growing it would silently make future
+# pyrtl/vivado appends write more columns than an existing file's header
+# (this exact schema-drift bug already happened once and needed a git
+# recovery; see docs/SYN_DESIGN.md section 11). combinational_area_um2 is
+# measured, not estimated -- SYN.ESTIMATE_DESIGN_AREA overshoots real area by
+# 270-410% on designs with this much structural repetition (measured on the
+# latchup divider, docs/DEVICE_MODELS_DESIGN.md section 6), and a carry-save
+# tree declares a lot of pipeline registers, so only the real number is
+# trustworthy here. "Combinational", not "Total" cell area: an isolated-
+# entity run wraps the design in dont_touch harness registers, so the
+# sequential term mixes pipeline FFs with those -- the combinational term is
+# harness-free.
+SKY130_EXTRA_FIELDS = ["combinational_area_um2"]
+
+
+def csv_fields(tool):
+    return CSV_FIELDS + SKY130_EXTRA_FIELDS if tool == "sky130" else CSV_FIELDS
+
 # ---------------------------------------------------------------------------
 # Case matrix
 # ---------------------------------------------------------------------------
@@ -100,6 +134,11 @@ WIDTH_PAIRS = [
 
 PLUS_MINUS_IMPLS = ["raw_default", "soft_ripple", "soft_carry_select"]
 MULT_IMPLS = ["raw_default", "soft_shift_add", "soft_karatsuba"]
+
+# max_width values to sweep for the carry-save (deferred-carry) multiplier --
+# docs/SYN_DESIGN.md section 11. K is the widest single add anywhere in the
+# reduction; smaller K means more, narrower, faster-per-stage levels.
+CARRY_SAVE_MAX_WIDTHS = [2, 3, 4, 6, 8]
 CMP_IMPLS = [
     "soft_cmp_sub", "soft_cmp_sub_swapped", "soft_cmp_bitwise",
     "soft_cmp_borrow", "soft_cmp_prefix", "raw_revived_sliced",
@@ -175,6 +214,17 @@ def build_cases(tool):
             for T in reps:
                 cases.append(dict(tool=tool, op="INFERRED_MULT", impl=f"soft_karatsuba_t{T}",
                                    l_bits=l_bits, r_bits=r_bits, signed=False, stop=stop))
+        # Carry-save (deferred-carry) multiplier max_width sweep. Unlike
+        # Karatsuba, this handles asymmetric widths fine (verified: 252/252
+        # exact via native sim across (8,4)/(4,8)/(16,3)/(3,16)/(12,7)/(1,5)/
+        # (5,1) and several max_width values) -- swept at every width pair,
+        # not just same-width ones. Its own, much higher cut ceiling (see
+        # max_useful_cuts) since the whole point is a design that slices well
+        # far deeper than 4-bits/stage FPGA reasoning allows.
+        stop_cs = max_useful_cuts(l_bits, r_bits, impl="soft_carry_save")
+        for K in CARRY_SAVE_MAX_WIDTHS:
+            cases.append(dict(tool=tool, op="INFERRED_MULT", impl=f"soft_carry_save_k{K}",
+                               l_bits=l_bits, r_bits=r_bits, signed=False, stop=stop_cs))
         for op in CMP_OPS:
             for impl in CMP_IMPLS:
                 cases.append(dict(tool=tool, op=op, impl=impl, l_bits=l_bits, r_bits=r_bits,
@@ -297,6 +347,13 @@ def gen_source(case):
             lines.append(f'def _kar_factory_t{threshold}(l, r):')
             lines.append(f'    return make_soft_mult_karatsuba(l, r, threshold={threshold})')
             lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, _kar_factory_t{threshold})')
+        elif re.fullmatch(r"soft_carry_save_k\d+", impl) and op == "INFERRED_MULT":
+            # Same any_integer_t/signed=False note as soft_karatsuba_t{T} above.
+            max_width = int(impl[len("soft_carry_save_k"):])
+            lines.append('from operators.soft_mult import make_soft_mult_carry_save')
+            lines.append(f'def _cs_factory_k{max_width}(l, r):')
+            lines.append(f'    return make_soft_mult_carry_save(l, r, max_width={max_width})')
+            lines.append(f'register_operator({op!r}, any_integer_t, any_integer_t, _cs_factory_k{max_width})')
         else:
             raise SkipCase()
 
@@ -374,6 +431,13 @@ def run_single_case(case):
         "--out_dir", out_dir, "--top", "bench_main",
         "--coarse", "--sweep", "--start", "0", "--stop", str(stop + 1),
     ]
+    if case["tool"] == "sky130":
+        # Force the tool via the CLI flag rather than emitting PART(...) in
+        # gen_source -- no generated-source change, and it sidesteps the
+        # PART("sky130") vs PART("sky130_fd_sc_hvl") spelling split (both
+        # share one path_delay_cache tree either way, but only the flag is
+        # unambiguous about which was actually used).
+        cmd += ["--syn_tool", "sky130"]
     # No timeout: real (or pyrtl) synthesis runs legitimately take a while.
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
 
@@ -411,6 +475,28 @@ def run_single_case(case):
         }
         if got_latency != got_cuts:
             row["error"] = f"latency={got_latency} != cuts={got_cuts}"
+        if case["tool"] == "sky130":
+            row["combinational_area_um2"] = None
+
+        if case["tool"] == "sky130":
+            try:
+                sys.path.insert(0, SRC_DIR)
+                import DEVICE_MODELS
+                log_matches = glob.glob(os.path.join(out_dir, "bench_main", f"device_models_{got_cuts}CLK_*.log"))
+                # Excludes the *_synth.log yosys transcript, which is named
+                # off the entity, not "device_models_<N>CLK_..." -- same
+                # exclusion VIVADO's own glob relies on for its *.log naming.
+                log_matches = [m for m in log_matches if not m.endswith("_synth.log")]
+                if log_matches:
+                    log_text = open(log_matches[0]).read()
+                    timing_report = DEVICE_MODELS.ParsedTimingReport(log_text)
+                    if timing_report.path_reports:
+                        path_report = next(iter(timing_report.path_reports.values()))
+                        row["combinational_area_um2"] = getattr(
+                            path_report, "combinational_cell_area", None
+                        )
+            except Exception:
+                pass  # diagnostics only, never fail the row over these
 
         if case["tool"] == "vivado":
             try:
@@ -452,7 +538,7 @@ def append_csv_rows(case, results):
     path = csv_path(case["tool"])
     write_header = not os.path.exists(path)
     with open(path, "a", newline="") as f:
-        w = csv.DictWriter(f, fieldnames=CSV_FIELDS)
+        w = csv.DictWriter(f, fieldnames=csv_fields(case["tool"]))
         if write_header:
             w.writeheader()
         for result in results:
@@ -522,8 +608,10 @@ def main_driver(tool, jobs=1, ops=None, widths=None, impls=None):
 if __name__ == "__main__":
     parser = argparse.ArgumentParser()
     parser.add_argument("--case", default=None, help="JSON case dict; runs one sweep and prints JSON result list")
-    parser.add_argument("--tool", choices=["pyrtl", "vivado"], default="pyrtl",
-                         help="pyrtl = fast software timing estimate (no PART); vivado = real synthesis on xc7a200tffg1156-2")
+    parser.add_argument("--tool", choices=["pyrtl", "vivado", "sky130"], default="pyrtl",
+                         help="pyrtl = fast software timing estimate (no PART); vivado = real synthesis "
+                              "on xc7a200tffg1156-2; sky130 = real yosys+ghdl synthesis and liberty STA "
+                              "via --syn_tool sky130 (DEVICE_MODELS)")
     parser.add_argument("--ops", default=None,
                          help="Comma-separated op filter, e.g. PLUS,MINUS (default: all)")
     parser.add_argument("--widths", default=None,

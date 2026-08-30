@@ -28,7 +28,11 @@ from pypeline import (
 )
 
 from operators.soft_add import make_soft_add_ripple, make_soft_add_carry_select, make_soft_sub
-from operators.soft_mult import make_soft_mult_shift_add, make_soft_mult_karatsuba
+from operators.soft_mult import (
+    make_soft_mult_shift_add,
+    make_soft_mult_karatsuba,
+    make_soft_mult_carry_save,
+)
 from operators.soft_div import (
     make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod,
     make_soft_div_radix4, make_soft_mod_radix4,
@@ -59,15 +63,22 @@ def register_soft_sub(scope=None):
 
 
 def register_soft_mult(scope=None):
-    """make_soft_mult_shift_add registered for any_uint_t x any_uint_t only.
+    """make_soft_mult_carry_save (deferred-carry / carry-save-style reduction,
+    max_width=2) registered for any_uint_t x any_uint_t only -- the default
+    as of docs/SYN_DESIGN.md section 11. This is the port of a real,
+    working sky130 reference design (33 cycles / 684 MHz), not a locally-
+    measured winner; see register_soft_mult_shift_add() below for the prior
+    default (make_soft_mult_shift_add, a small number of full carry-
+    propagate adds -- cheaper on an FPGA with dedicated carry chains, the
+    wrong shape for an ASIC with none).
 
     Signed (and mixed-signedness) multiply is deliberately left unregistered.
-    Both soft multipliers sum `a << i` over the set bits of b treating b as
-    UNSIGNED, but for a signed b the MSB carries weight -2**(n-1), so the final
-    partial product would have to be subtracted rather than added. Registering
-    these for any_integer_t (as an earlier version did) silently emitted wrong
-    hardware for signed operands -- e.g. int5_t (-16) * (-16) elaborated to -256
-    instead of 256.
+    Every soft multiplier in this module sums `a << i` over the set bits of
+    b treating b as UNSIGNED, but for a signed b the MSB carries weight
+    -2**(n-1), so the final partial product would have to be subtracted
+    rather than added. Registering these for any_integer_t (as an earlier
+    version did) silently emitted wrong hardware for signed operands --
+    e.g. int5_t (-16) * (-16) elaborated to -256 instead of 256.
 
     Unlike the DIV/MOD split (where no inferred lowering exists, so signed hits
     the PYPELINE_NO_SW_LIB_GUARD guard and raises loudly), INFERRED_MULT *does*
@@ -80,6 +91,15 @@ def register_soft_mult(scope=None):
     still get one until a signed soft multiplier exists. When one is written,
     register it here for any_int_t the way make_soft_signed_div is.
     """
+    register_operator(
+        "INFERRED_MULT", any_uint_t, any_uint_t, make_soft_mult_carry_save, scope=scope
+    )
+
+
+def register_soft_mult_shift_add(scope=None):
+    """The prior register_soft_mult() default (make_soft_mult_shift_add), kept
+    reachable under its own name. Same unsigned-only restriction and reason
+    as register_soft_mult -- see that docstring."""
     register_operator(
         "INFERRED_MULT", any_uint_t, any_uint_t, make_soft_mult_shift_add, scope=scope
     )
@@ -100,6 +120,23 @@ def register_soft_mult_karatsuba(threshold=None, scope=None):
     factory = make_soft_mult_karatsuba
     if threshold is not None:
         factory = functools.partial(make_soft_mult_karatsuba, threshold=threshold)
+    register_operator("INFERRED_MULT", any_uint_t, any_uint_t, factory, scope=scope)
+
+
+def register_soft_mult_carry_save(max_width=None, scope=None):
+    """See register_soft_mult -- same unsigned-only restriction, same reason
+    (make_soft_mult_carry_save's partial products are the same AND-mask
+    construction, unsigned-only).
+
+    max_width: widest single add anywhere in the reduction, forwarded to
+    make_soft_mult_carry_save. Default None uses that factory's own default
+    rather than duplicating the number here, so there is one source of truth
+    for it -- see make_soft_mult_carry_save's docstring and
+    docs/SYN_DESIGN.md section 11 for the sky130 measurements behind the
+    current default."""
+    factory = make_soft_mult_carry_save
+    if max_width is not None:
+        factory = functools.partial(make_soft_mult_carry_save, max_width=max_width)
     register_operator("INFERRED_MULT", any_uint_t, any_uint_t, factory, scope=scope)
 
 
