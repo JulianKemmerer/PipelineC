@@ -457,6 +457,82 @@ representing the assignment history of that variable within the function. This t
 ordering is critical: it is the single source of truth for reconstructing partial writes
 when reading the variable back.
 
+### Reassigning a Different Width — One VHDL Type Per Signal, Not a Type-Changing Variable
+
+A Python local can be assigned values of *different* widths across its lifetime —
+different branches of an `if`, different iterations of an unrolled loop, or simply a
+narrower value into an already-wider-declared name:
+
+```python
+x: uint2_t = 0
+if sel == 1:
+    x = narrow      # narrow : uint1_t
+else:
+    x = wide         # wide : uint2_t
+```
+
+This does **not** mean the rendered VHDL variable for `x` has more than one type — VHDL
+signals/variables are always monomorphic, exactly one subtype, for their entire scope.
+What actually happens: `_write_ref` (`PY_TO_LOGIC.py:5798`) never mutates an existing wire
+in place. Every write — including this one — allocates a **fresh alias wire**, named from
+the write's own source location (e.g. `x_myfile_py_l15_c12_...`), and declares that alias
+at the **target's own declared type** (`lhs_type = _ref_toks_to_ctype(ref_toks, base_type,
+...)`), not the RHS's type:
+
+```python
+alias = _alias(f"{prefix}x", self.src_file, node)   # one alias per write SITE
+_add_wire(self.logic, alias, lhs_type)               # declared at x's type, uint2_t here
+_connect(self.logic, rhs_wire, alias)                 # rhs_wire (uint1_t) -> alias (uint2_t)
+```
+
+`_connect` (`PY_TO_LOGIC.py:1371`) is pure graph bookkeeping — `wire_driven_by`/
+`wire_drives` dict entries, nothing else. **No type-compatibility check or width
+reconciliation happens at elaboration time at all.** That happens exactly once, uniformly,
+for *every* driver→driven pair in the finished wire graph (a plain assignment, a mux
+input, a submodule port, a return wire — no special-casing between them), during the
+separate VHDL-rendering pass: `VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS(RHS, logic, driving_wire,
+driven_wire, parser_state)` (`VHDL.py:6962`, called from the generic per-connection text
+emitter at `VHDL.py:6862`) compares `logic.wire_to_c_type[driving_wire]` against
+`logic.wire_to_c_type[driven_wire]` and, if they differ, wraps `RHS` in the VHDL
+conversion the pair needs before emitting `driven_wire := <wrapped RHS>;`.
+
+If the two branches above alias to different wires (`x_..._l15_c12` at uint2_t,
+`x_..._l17_c9` — a bare `x = wide`, no width change, so no new resize needed either) the
+post-`if` MUX (see "`if` Statements" below) reconciles them into the value `x` carries
+after the branch — itself just another `_connect` pair, resolved by the same generic pass.
+The declared-but-superseded `x: uint2_t = 0` from the initial declaration is simply never
+read again if every path reassigns it; nothing forces it to be "the" wire for `x`.
+
+**This coercion is narrower than it looks, and is int/uint-shaped specifically** —
+verified by reading every branch of `TYPE_RESOLVE_ASSIGNMENT_RHS` (`VHDL.py:6962-7095`):
+
+- **Same-signedness int/uint, any width** (`VHDL.py:6992-7010`): a plain VHDL
+  `resize(RHS, left_width)`, in *either* direction. This is safe and exact because
+  `numeric_std.resize` on an `unsigned` zero-pads on widen and takes the low N bits on
+  narrow — precisely C's (and this codebase's native-sim `_sim_cast`'s) truncation
+  semantics, no separate narrowing code path needed.
+- **Signed narrowing** (`VHDL.py:6998-7008`) gets extra care: `numeric_std.resize` on a
+  `signed` value is sign-preserving (copies the sign bit into the new MSB, keeps the low
+  N−1 bits), which is *not* what C's truncation does. The generated conversion routes
+  through `unsigned` first (`signed(std_logic_vector(resize(unsigned(std_logic_vector(
+  RHS)), N)))`) so the truncation is a plain bit-select regardless of sign.
+- **Mixed int/uint signedness** (`VHDL.py:7013-7042`) inserts an explicit sign-bit
+  add/drop alongside the resize.
+- **Arrays** (`VHDL.py:7059-7095`) get a much narrower, size-only form: element types must
+  match exactly (with one hard-coded `char`/`uint8_t` exception) or elaboration prints
+  "Unhandled array assignment vhdl type resolve" and hard-exits (`sys.exit(-1)`, not an
+  `ElaborationError`) — there is no general element-type coercion the way int/uint widths
+  get one.
+- **General multi-field structs have no branch here at all.** A struct-to-struct
+  assignment across genuinely different struct types is not a case this function handles.
+
+A soft-operator author leaning on "just reassign a narrower/wider value, VHDL will sort it
+out" (as `include/pypeline/operators/soft_mult.py`'s carry-save multiplier does throughout
+its per-level reduction loop, and as the established `ae: eff_l_t = a` idiom used across
+`operators/soft_*.py` already relies on for fresh declarations) should keep this scoped to
+plain unsigned integers — it is not a general "any type reconciles automatically"
+guarantee.
+
 ### `self.env` Staleness — Invalidating Descendant Keys on a Coarser Write
 
 `self.env` is a flat, string-keyed cache (`env_key -> (wire, type)`) of the *last* wire

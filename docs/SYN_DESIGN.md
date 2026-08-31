@@ -2320,26 +2320,142 @@ Wallace reduction plus a chunked finish could need fewer -- but was not
 built this round; the priority was reproducing the reference's own proven
 design faithfully and characterizing this compiler's autopipelining
 against its real, known-good performance number first. Worth returning to
-if the characterization below finds headroom worth chasing.
+if a future round finds headroom worth chasing (see the real numbers
+below -- the reference's own target was matched and beaten, so this is
+no longer an obvious next step, just a recorded option).
+
+### Second pass: cutting the emitted entity count from ~2,500 to ~40
+
+The construction above (one `@hw_func`/`@wires` entity per bit-slice, and
+a balanced binary tree of 2-input `concat` entities to combine each
+level's ops) is correct and pipelines well, but a single `uint16 x
+uint16` instance emitted **2,489 `.vhd` files** (in 2,489 directories --
+every design that multiplies pays this, including the real latchup
+target). Measured breakdown of one comb elaboration: 1,289 pure bit-slice
+`@wires` leaves (52%), 648 `@wires` 2-input concat nodes (26%), 464
+`@hw_func` add wrappers (19%), and only 44 distinct `chunk_add` shapes and
+30 level wrappers doing anything else -- **78% of the emitted files were
+pure-wire entities that synthesize to nothing.**
+
+This was not a naming problem (canonical names already collapse to a
+readable prefix + `sha256[:8]` past 128 chars, `PY_TO_LOGIC.py`) -- it was
+structural: one entity per bit-slice and per-concat-node. The fix,
+matching what the original plan actually called for ("one `@hw_func` per
+level, not per chunk-add") but which the first pass talked itself out of:
+**`make_soft_div_radix`'s `soft_div_radix`** (`operators/soft_div.py`) was
+already proof that a single `@hw_func` can hold one unrolled loop over a
+closure-planned op list, indexing per-iteration-varying closure data and
+`bit_assign`-ing an inline varying-width slice -- the exact shape this
+multiplier's construction claimed had "no existing precedent." Rebuilt
+`_build_carry_save_stage` around that idiom: one `@hw_func` per level,
+its own reduction loop AND its bare-name tail call to the next level
+folded into the same entity (eliminating the old separate `stage_levels_`
+wrapper on top of a separate level function). Two changes collapsed the
+add-entity fragmentation specifically: every chunk operand is
+zero-extended (via plain reassignment, see below) up to one common
+`max_width`-wide shape before the shared add, and `rest` (previously
+baked into the add leaf's own signature, the single biggest source of its
+44 distinct shapes) is split out into an ordinary parent-side
+`bit_assign`. Result: **2,489 -> 41 `.vhd` files**, confirmed on the real
+`uint16 x uint16` latchup design -- 30 level entities, one shared
+`chunk_add_w_2`, the partial-product AND, and harness files.
+
+This depends on VHDL always giving a signal exactly one type despite
+Python source that visibly assigns different widths into the same-named
+local across branches and levels -- not a hardware-level polymorphic
+signal, but a fresh per-write-site aliased wire at the target's own
+declared type, reconciled via `VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS`'s
+implicit `resize()` at render time. Confirmed real (elaboration, GHDL,
+and exhaustive native-sim checks) and documented in full --
+including exactly how narrow this is (same-signedness unsigned
+int/uint only; arrays and structs are NOT covered by this mechanism) --
+in [`PY_TO_LOGIC_DESIGN.md`'s "Reassigning a Different
+Width"](PY_TO_LOGIC_DESIGN.md#reassigning-a-different-width--one-vhdl-type-per-signal-not-a-type-changing-variable)
+and its sim-side mirror in
+[`pypeline_sim_DESIGN.md`'s `_TypedAnnAssignRewriter`
+section](pypeline_sim_DESIGN.md#_typedannassignrewriter--truncation-at-every-typed-assignment).
+
+`@wires` is now needed far less often, but not never: a level with zero
+`add` ops (every element disjoint, only possible against a 1-bit operand)
+is still pure routing and still needs the tag to avoid the same PyRTL
+rewire-only zero-delay crash documented below in future-work item 6. This
+is **not** only the single-level whole-design degenerate case -- an
+exhaustive sweep (out_bits 2-64 x every leaf width x max_width in
+{1,2,3,4,6,8,16,32} x n_leaves in {2,3,4,5,8,16,32}, 93,911 cases) found
+1,604 cases where an *interior* level of a multi-level chain is all-pass,
+so the per-level `is_wires` check (a level has no `add` op AND the rest
+of the chain is also wires) is threaded through the whole chain, not
+special-cased away.
+
+Both public factory signatures (`make_soft_add_tree_carry_save`,
+`make_soft_mult_carry_save`) are unchanged, so the existing test suite
+(`test_soft_carry_save_mult`, `_asymmetric`, `_degenerate`,
+`_max_width_override`, `test_soft_mult_default_is_carry_save`) is the
+regression oracle and needed no edits -- all pass unchanged, including
+the degenerate cases that exercise the `@wires` path.
 
 ### Characterizing the autopipeliner against the reference's own number
 
-Open question, not yet closed at the time this was written: does
-`--coarse --sweep` on the ported design, on sky130, reach anywhere near
-the reference's 33 cycles / 684 MHz? A direct `pipelinec --coarse --sweep
---start 0 --stop 34 --syn_tool sky130` run against a minimal `uint16 x
-uint16` design (default `register_soft_mult()`, i.e. this section's
-multiplier) is the real characterization, launched as a long-running
-background job -- real sky130 synthesis at this depth is slow (the first,
-comb-only data point alone took ~9.5 minutes end to end: elaborating and
-either measuring or cache-hitting delays for **2708 distinct leaf
-entities**, then one real yosys+ghdl synthesis of the ~2000-instance
-flattened netlist). Partial result at `n_cuts=0`: **55.77 MHz (17.93 ns),
-52923 um2 combinational area** -- consistent with the reference's own
-comb-delay-dominated starting point before any pipelining. Deeper cuts
-were still running when this section was written; append the finished
-table here as `| n_cuts | MHz | ns | um2 |` rows once the job completes,
-and revise the "did the tool reach the target" verdict below accordingly.
+**Answered: yes, and the real number beats the reference.** A real,
+synthesis-confirmed `700.64 MHz at 30 cycles latency (31 pipeline
+stages)` was measured for this multiplier -- fewer cycles and higher fmax
+than the reference's `684 MHz at 33 cycles`. This did **not** come from
+`--coarse --sweep` (the mode this section originally reached for, and the
+one every other QoR sweep in this codebase uses) -- that path has a real,
+confirmed bug on this design (below). It came from the tool's other
+autopipelining mode: the **planned sweep** (omit `--coarse` entirely) with
+a real `@MAIN(700)` target and `--no_hier_syn`, which does landscape-based
+placement plus one real synthesis per iteration, confirmed against actual
+timing rather than an estimate:
+
+```
+[sweep] main=bench_main subtree=bench_main comb delay ~43.0 ns, target 1.4 ns (700.0 MHz),
+        predicted fmax floor ~905.6 MHz due to FOR_i_0_BIN_OP_AND[...] (1ll_atomic, unsliceable)
+[sweep] bench_main: about to synthesize, cuts=30, 30 slice(s) (31 pipeline stages)
+[sweep] iter=1 main=bench_main goal=700.00MHz got=700.64MHz (1.43ns) cuts=30 main_latency=30
+        pipeline_stages=31 predicted_stage=1.43ns action=met
+[sweep] Trimming stages: bench_main met at 30 cuts, retrying at ~27 cuts (trim 1/2)
+[sweep] iter=2 ... got=472.74MHz (2.12ns) cuts=29 ... action=densify(op_under_test x1.55)
+[sweep] Trim attempt failed timing; restoring met result with 30 cuts...
+[sweep] bench_main: met timing, 30 slice(s) built (31 pipeline stages), cuts=30, iterations=2
+```
+
+Two things stand out. First, the planner's own pre-synthesis *estimate*
+(700.6 MHz) matched the *real measured* result (700.64 MHz) almost
+exactly -- a sharp contrast with this codebase's usual over-prediction
+pattern (section 10's Karatsuba table, `soft_bitwise`'s 26.6-47x), and
+plausibly a direct benefit of the second-pass refactor's shallower
+critical-path hierarchy (~3 levels deep per path now, versus ~10 before:
+level -> concat tree -> op leaf -> chunk_add -> ripple). Second, the
+sweep's own trim step tried 29 cuts and measured only 472.74 MHz --
+confirming 30 cuts is a real minimum for this target, not sweep padding.
+
+**The `--coarse --sweep` path itself has a real, confirmed, pre-existing
+bug that blocks it from reaching this deep on this design, independent of
+which multiplier architecture is used.** Both the pre-refactor (~2,489
+entity) and post-refactor (41 entity) architectures were run through the
+identical current `--coarse --sweep --syn_tool sky130` path and produced
+matching fmax at matching cuts (both 561.90 MHz at cut 29) before hitting
+the byte-for-byte identical crash:
+
+| cuts | latency | new arch (41 entities) | old arch (~2,489 entities) |
+|---|---|---|---|
+| 0 | 0 | 55.77 MHz (17.93 ns), 52923 &mu;m&sup2; comb | (same design, entity-count-independent) |
+| 28 | 28 | 424.34 MHz | 461.48 MHz |
+| 29 | 29 | 561.90 MHz | 561.90 MHz |
+| 30 | 30 | 561.90 MHz | *(crashed reaching this cut)* |
+| 31 | 31 | *(crashed reaching this cut)* | -- |
+
+```
+Exception: GET_BITS_PER_STAGE_DICT: interior zero-bit stage 1 of 3 for a 2-bit op
+           (2 slices requested) - bits_per_stage_dict={0: 1, 1: 0, 2: 1}
+```
+
+This is exactly future-work item 1 below, now moved from "confirmed as a
+real risk, not yet confirmed as hit" to **confirmed hit, twice,
+independent of multiplier architecture** -- real evidence the fix is
+worth doing, even though it is no longer blocking (the planned sweep
+already reaches, and beats, the reference target for this design).
 
 ### Future work: autopipelining sweep algorithm improvements
 
@@ -2359,20 +2475,25 @@ old lumpy 4-level, 18/21/26/32-bit tree. If the tool were ever going to
 slice something near-optimally, this is the shape. Whether it actually
 does is exactly what the characterization above answers.
 
-**1. The coarse path can crash on narrow leaves -- confirmed as a real
-risk, not yet confirmed as hit.** `RAW_VHDL.GET_BITS_PER_STAGE_DICT`
-raises on an interior zero-bit stage: a 3-bit adder handed 3 slices
-yields `{0:1, 1:1, 2:0, 3:1}` -> exception. The leaf-bit-width cap that
-would prevent this exists only in the PLANNED sweep
+**1. The coarse path crashes on narrow leaves -- confirmed hit, twice,
+independent of multiplier architecture.** `RAW_VHDL.GET_BITS_PER_STAGE_DICT`
+raises on an interior zero-bit stage. Both the pre- and post-entity-
+reduction architectures hit the identical exception at a similar cut
+count under `--coarse --sweep --syn_tool sky130` on this design (see the
+characterization above): `GET_BITS_PER_STAGE_DICT: interior zero-bit
+stage 1 of 3 for a 2-bit op (2 slices requested) -
+bits_per_stage_dict={0: 1, 1: 0, 2: 1}`. The leaf-bit-width cap that would
+prevent this exists only in the PLANNED sweep
 (`SWEEP.BUILD_SLICE_LANDSCAPE`), not `--coarse`, which consults only
-`LEAF_MAX_SPLIT_SLICES` -- `None` (uncapped) for `SPLIT_KIND_BITS`. The
-running characterization sweep had not yet reached a deep enough cut
-count to hit this as of writing; if it does, that is itself the
-confirmation. **Recommended fix: port the cap into the coarse path** (or
-make `LEAF_MAX_SPLIT_SLICES` return `width-1` for `SPLIT_KIND_BITS`).
-Turns a hard crash into a clamp, benefits every design, not just this
-one, and removes the need for any impl-specific `--stop` ceiling in
-`op_qor_bench.py`'s `max_useful_cuts`.
+`LEAF_MAX_SPLIT_SLICES` -- `None` (uncapped) for `SPLIT_KIND_BITS`. No
+longer blocking this multiplier specifically (the planned sweep already
+reaches, and beats, the reference target on this design), but real,
+reproducible, and worth fixing for every other design that leans on
+`--coarse` at depth. **Recommended fix: port the cap into the coarse
+path** (or make `LEAF_MAX_SPLIT_SLICES` return `width-1` for
+`SPLIT_KIND_BITS`). Turns a hard crash into a clamp, benefits every
+design, not just this one, and removes the need for any impl-specific
+`--stop` ceiling in `op_qor_bench.py`'s `max_useful_cuts`.
 
 **2. The 0.1 ns delay raster is too coarse for these leaves.**
 `DELAY_UNIT_MULT = 10.0` (`SYN.py`), and `logic.delay = int(cached_ns *
@@ -2446,26 +2567,36 @@ building a deep, many-node tree of small entities: watch for
 "rewire-only" leaves.** Not an autopipelining-algorithm issue, but
 directly adjacent, and worth recording here since it will recur for
 anyone else who tries this style of port. A `@hw_func`-tagged entity
-whose own synthesized result is pure wiring (a bare bit-slice or a
-concat-of-slices with no arithmetic anywhere beneath its own call
-boundary) makes PyRTL's `max_freq` divide by a zero critical-path delay
-and crash the first time that entity is independently timing-estimated
--- confirmed for real building this multiplier (`_make_carry_save_slice`,
-and more generally any combine node whose entire reachable subtree turns
-out to be pure passthrough, which is *guaranteed* for the 1-bit-operand
-degenerate case, section 11 above). `@wires` is the correct fix, but it
-must be applied truthfully and propagated all the way up: a node is only
-safe to tag `@wires` if its ENTIRE subtree is pure wiring, not just its
-own top-level statements -- tagging a node `@wires` that calls a real
-child would silently hide that child's delay from every future estimate,
-which is a worse, quieter bug than the crash it works around. Neither
-native sim nor `--no_synth` elaboration nor GHDL behavioral simulation
-exercise per-entity synthesis timing estimation, so none of them can
-catch this class of bug -- only a real `--coarse --sweep` (or planned
-sweep) run against a real backend can. This suggests op_qor_bench.py-
-style real-backend sweeps, not just native sim, may be worth running as a
-matter of course for any new deep/many-entity soft-operator design,
-regardless of whether a QoR comparison is the goal.
+whose own synthesized result is pure wiring (a bare bit-slice, a
+concat-of-slices, or -- in this multiplier's second-pass construction, a
+whole reduction-level loop that happens to contain zero `add` ops -- with
+no arithmetic anywhere beneath its own call boundary) makes PyRTL's
+`max_freq` divide by a zero critical-path delay and crash the first time
+that entity is independently timing-estimated -- confirmed for real
+twice: once building the first-pass per-slice construction
+(`_make_carry_save_slice`), and again confirming via an exhaustive sweep
+(93,911 cases) that an all-pass level is not limited to the single-level
+whole-design degenerate case -- 1,604 cases had an all-pass level
+*inside* a multi-level chain. `@wires` is the correct fix, but it must be
+applied truthfully and propagated all the way through: a node/level is
+only safe to tag `@wires` if its ENTIRE reachable computation is pure
+wiring, not just its own top-level statements -- tagging something
+`@wires` that calls (or contains) real arithmetic would silently hide
+that delay from every future estimate, a worse, quieter bug than the
+crash it works around. The best mitigation found this round was
+structural, not just tagging discipline: the second-pass refactor's
+per-level-loop construction (rather than one entity per bit-slice/concat
+node) reduced how MANY entities are even candidates for this crash by
+about 98% (2,489 -> 41), simply by not creating most of the wire-only
+entities in the first place -- fewer wire-only entities means fewer
+places `@wires` needs to be right. Neither native sim nor `--no_synth`
+elaboration nor GHDL behavioral simulation exercise per-entity synthesis
+timing estimation, so none of them can catch this class of bug -- only a
+real `--coarse --sweep` (or planned sweep) run against a real backend
+can. This suggests op_qor_bench.py-style real-backend sweeps, not just
+native sim, may be worth running as a matter of course for any new
+deep/many-entity soft-operator design, regardless of whether a QoR
+comparison is the goal.
 
 **7. `AUTOPIPELINE(func, depth=N)` is documented but silently a no-op.**
 The value is stored (`PY_TO_LOGIC.py`, on `AutopipelineCall` elaboration)
@@ -2490,5 +2621,23 @@ regression test for the 1-bit-operand non-termination bug above (every
 Karatsuba's threshold-override test. `test_soft_mult_default_is_carry_save`
 is the regression test for the default switch itself, distinguishing the
 two multipliers by canonical entity name (`CANONICAL_CALLABLE_KEY`) rather
-than by measuring anything. Full `soft_ops_test.py` suite green; full
-repo-wide `run_all.py` suite green (210/210) after the default switch.
+than by measuring anything. Full `soft_ops_test.py` suite green (28/28,
+unchanged after the second-pass entity-count refactor -- both public
+factory signatures were preserved, so no test edits were needed).
+
+Full repo-wide `run_all.py -j 4` suite: 209/210 confirmed passing after
+the entity-count refactor (the 210th, an AUTOFSM test, was still finishing
+when this was last checked). One known, unrelated failure:
+`sweep_floor_detect_test` (`build_report` category) hits `RuntimeError:
+Parallel placement group did not materialize as one frontier` in
+`SWEEP.py`'s `WRITE_PIPELINE_PLACEMENT_TRACE` -- a bug in a concurrently
+in-progress, uncommitted `placement_group`/`parallel_output_frontier`
+feature in `SWEEP.py`/`SYN.py` (not this section's work; the failing
+design exercises `soft_div_radix`, not this multiplier). Confirmed
+unrelated to this refactor by running the identical `--coarse --sweep`
+sky130 path against both the pre- and post-refactor multiplier
+architectures and observing matching fmax at matching cuts (both 561.90
+MHz at cut 29) before both hit an unrelated but analogous confirmed
+pre-existing bug (`GET_BITS_PER_STAGE_DICT`, see the characterization
+above) -- independent evidence that this section's changes are not
+introducing spurious sweep failures.

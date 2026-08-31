@@ -16,10 +16,10 @@ from pypeline import (
     wires,
     uint1_t,
     bit_dup,
+    bit_assign,
     arith_result_type,
     make_uint_t,
     array_to_uint_le,
-    concat,
 )
 
 
@@ -267,19 +267,72 @@ def make_soft_mult_karatsuba(l_t, r_t, threshold=16):
 # not a shortcut model) before a single line of HDL was written from it.
 #
 # Composition is entirely nested factory-function calls, never text
-# generation: every level's operation COUNT and SHAPE varies (some pairs
-# need one chunk add, others several; some elements just pass through), which
-# rules out one uniform hw_func loop body (a loop iteration can vary its
-# elaboration-time INT/BOOL closure values -- see make_soft_add_carry_select
-# -- but not its declared locals' TYPES, and there is no existing precedent
-# in this codebase for the latter). Instead, each op gets its own small,
-# fixed-shape @hw_func (via memoized leaf factories), and a level's op list
-# is combined into one packed bus by a balanced BINARY TREE of 2-input
-# concat @hw_funcs, built via plain Python recursion at factory-construction
-# time -- the same nested-closure idiom make_soft_add_tree_shifted and
-# make_soft_mult_karatsuba already use, just with an extra recursive axis
-# (op-combining within a level) alongside the existing one (level-to-level
-# chaining). No exec()/text codegen anywhere.
+# generation: ONE @hw_func per reduction level (not per op). A level's op
+# list varies in count and shape between levels (some pairs need one chunk
+# add, others several; some elements just pass through) but each level's
+# own body is a SINGLE unrolled Python `for` loop over that level's
+# closure-planned op list, branching on each op's elaboration-time-constant
+# kind -- exactly the idiom make_soft_div_radix's soft_div_radix already
+# uses (operators/soft_div.py:204-277: `for step_idx in range(len(steps)):`
+# over a closure-planned `steps` list, indexing per-iteration-varying
+# closure data, bit_assign-ing an inline varying-width slice). An earlier
+# version of this file's comment claimed this was impossible ("rules out
+# one uniform hw_func loop body... no existing precedent") -- that was
+# wrong; soft_div_radix was already doing it two files over. Every
+# DECLARED LOCAL inside the loop keeps one fixed type across every
+# iteration (op_t, sum_t); only elaboration-time integers (bit offsets,
+# widths) vary, which is what the loop var and the closure-planned op
+# tuples actually carry.
+#
+# This collapses what used to be ~2,700 entities (one @wires leaf per bit
+# slice, one @wires node per 2-input concat, one @hw_func wrapper per add,
+# dozens of distinct add shapes from `rest`-width fragmentation) for a
+# uint16 x uint16 multiply down to roughly one entity per level plus ONE
+# shared add entity per max_width -- confirmed by measurement, not just
+# argued: 2,489 -> ~40 .vhd files for the same design (docs/SYN_DESIGN.md
+# section 11). Two things made the old per-op-entity shape seem necessary
+# and turned out not to matter:
+#
+# 1. An indexed call target is not callable (`leaf_fns[j](...)` fails --
+#    confirmed again at PY_TO_LOGIC.py:4697/5004, `callee_name =
+#    expr.func.id`; documented workaround at soft_cmp.py:530-546). This is
+#    real and still true, but it only forces every loop iteration to call
+#    the SAME bare-named entity, not a *different* entity per op -- which
+#    is exactly what one shared, WIDTH-NORMALIZED add entity already gives.
+# 2. Every add's operands are zero-extended (by plain reassignment into an
+#    already-declared max_width-wide local) up to one common shape before
+#    the call, and the result is narrowed back down via an inline slice at
+#    the bit_assign call site. This costs nothing measurable: a level's
+#    critical path is set by its WIDEST op, which is never padded, and
+#    real synthesis constant-folds the padded zero bits away, so measured
+#    combinational area is unaffected too (only the pre-synthesis estimate
+#    inflates, and section 11 never ranks on that estimate).
+#
+# A note on how this squares with VHDL giving every signal exactly one
+# type, since the Python source visibly assigns values of different
+# widths into the same-named local across branches/iterations: it does
+# NOT rely on a VHDL variable changing type. Every assignment SITE gets
+# its own freshly aliased VHDL variable (PY_TO_LOGIC names it after the
+# source line/column, e.g. `VAR_x_soft_mult_py_l123_c45_...`), and
+# VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS (VHDL.py:6962) inserts an explicit
+# `resize(...)` call at THAT alias's creation point whenever its width
+# differs from the declared target type; branches are then reconciled by
+# a MUX over the per-branch aliases (_elab_if). This is elaboration-time
+# bookkeeping, not a hardware-level polymorphic signal -- confirmed by
+# inspecting real generated VHDL (every declared `variable` has exactly
+# one, fixed subtype). It is also narrower than it might look: this free
+# same-signedness-any-width coercion is specific to the int/uint family
+# (TYPE_RESOLVE_ASSIGNMENT_RHS:6992-7010; VHDL's numeric_std.resize on an
+# UNSIGNED zero-pads on widen and takes the low N bits on narrow, i.e.
+# exactly C/this-file's-native-sim truncation semantics -- the extra
+# sign-routing at :6998-7008 is for SIGNED narrowing only, never exercised
+# here since every type in this reduction is unsigned). Arrays get a much
+# narrower form requiring an exact/near-exact element type
+# (VHDL.py:7059-7084, hard `sys.exit(-1)` on mismatch) and there is no
+# general multi-field struct branch at all -- this file only ever
+# reassigns uint-typed scalars, so none of that restriction is in play,
+# but a future soft-op author leaning on this same trick for a compound
+# type should not assume it "just works" the way it does here.
 
 
 class _CSElem:
@@ -457,302 +510,308 @@ def _carry_save_level_out_width(ops):
 _CS_CHUNK_ADD_CACHE = {}
 
 
-def _make_carry_save_chunk_add(ac_w, bc_w, op_w, rest_w):
-    """Memoized leaf: ac + bc, truncated to op_w bits if the natural sum
-    width (max(ac_w,bc_w)+1) exceeds it (only happens against the very top of
-    out_bits), then concatenated with `rest` (bits below this chunk's shift,
-    unaffected by the add and wired through unchanged -- rest is the upper
-    bits of the concat result per the reference's `tmp @ rest`, sum chunk
-    above it). Real arithmetic delay; every other node in this reduction is
-    pure routing built on top of these."""
-    key = (ac_w, bc_w, op_w, rest_w)
-    cached = _CS_CHUNK_ADD_CACHE.get(key)
+def _get_carry_save_chunk_add(w):
+    """Memoized SHARED adder: uint{w} + uint{w} -> uint{w+1}, inferred `+`
+    (same choice make_soft_add_tree_shifted's own terminal level makes for
+    its leaf add -- "soft" in this library names the DECOMPOSITION
+    strategy, not a rule that every scalar primitive must be hand-built
+    from raw gates). One entity per max_width, shared by EVERY add at
+    EVERY level of the whole reduction: every op's operands are
+    zero-extended up to w bits before the call (see the module comment
+    above), so the (ac_w, bc_w, op_w, rest_w)-keyed fragmentation the old
+    per-op-leaf construction had (44 distinct shapes at max_width=2 on a
+    uint16 x uint16 multiply) collapses to exactly one."""
+    cached = _CS_CHUNK_ADD_CACHE.get(w)
     if cached is not None:
         return cached
+    op_t = make_uint_t(w)
+    sum_t = make_uint_t(w + 1)
 
-    ac_t = make_uint_t(ac_w)
-    bc_t = make_uint_t(bc_w)
-    natural_w = max(ac_w, bc_w) + 1
-    sum_t = make_uint_t(natural_w)
-    needs_trunc = op_w < natural_w
-    trunc_t = make_uint_t(op_w) if needs_trunc else sum_t
+    @hw_func
+    def chunk_add(ac: op_t, bc: op_t) -> sum_t:
+        result: sum_t = ac + bc
+        return result
 
-    if rest_w > 0:
-        rest_t = make_uint_t(rest_w)
-        out_t = make_uint_t(op_w + rest_w)
-        if needs_trunc:
+    _CS_CHUNK_ADD_CACHE[w] = (chunk_add, sum_t)
+    return chunk_add, sum_t
 
-            @hw_func
-            def chunk_add(ac: ac_t, bc: bc_t, rest: rest_t) -> out_t:
-                sum_full: sum_t = ac + bc
-                sum_trunc: trunc_t = sum_full[op_w - 1:0]
-                result: out_t = concat(sum_trunc, rest)
-                return result
 
+def _flatten_carry_save_ops(ops):
+    """Normalize a level's op list (as _plan_carry_save_levels emits it)
+    into fixed-shape int tuples a single unrolled hw_func loop can index
+    (OPS[i][k] for a constant k) without ever tuple-unpacking -- the
+    elaborator tries to emit a whole tuple as one hardware value on
+    unpack, soft_div.py:214-217 -- and without ever indexing a Python list
+    of distinct per-op closures by a loop variable -- an indexed call
+    target is not callable, soft_cmp.py:530-546.
+
+    `rest` (the low bits below an add's shift, unaffected by the add)
+    becomes its own ordinary 'pass' entry at the add's output offset; the
+    add's own result is placed just above it. This is what lets one
+    shared add entity (see _get_carry_save_chunk_add) replace the 44
+    per-(ac_w,bc_w,op_w,rest_w) shapes the old construction needed --
+    `rest` used to be baked into the add leaf's own signature and was the
+    single biggest source of that fragmentation (rest_w ranged 0..31 on a
+    uint16 x uint16 multiply).
+
+    Returns a tuple of:
+      (0, in_off, width, out_off)                    -- pass
+      (1, ac_off, ac_w, bc_off, bc_w, op_w, out_off)  -- add
+    """
+    flat = []
+    for op in ops:
+        if op[0] == "pass":
+            _, ioff, w, ooff = op
+            flat.append((0, ioff, w, ooff))
         else:
-
-            @hw_func
-            def chunk_add(ac: ac_t, bc: bc_t, rest: rest_t) -> out_t:
-                sum_full: sum_t = ac + bc
-                result: out_t = concat(sum_full, rest)
-                return result
-
-    else:
-        out_t = make_uint_t(op_w)
-        if needs_trunc:
-
-            @hw_func
-            def chunk_add(ac: ac_t, bc: bc_t) -> out_t:
-                sum_full: sum_t = ac + bc
-                result: out_t = sum_full[op_w - 1:0]
-                return result
-
-        else:
-
-            @hw_func
-            def chunk_add(ac: ac_t, bc: bc_t) -> out_t:
-                result: out_t = ac + bc
-                return result
-
-    _CS_CHUNK_ADD_CACHE[key] = (chunk_add, out_t)
-    return chunk_add, out_t
+            _, ac_off, ac_w, bc_off, bc_w, op_w, rest_off, rest_w, out_off = op
+            if rest_w > 0:
+                flat.append((0, rest_off, rest_w, out_off))
+                flat.append((1, ac_off, ac_w, bc_off, bc_w, op_w, out_off + rest_w))
+            else:
+                flat.append((1, ac_off, ac_w, bc_off, bc_w, op_w, out_off))
+    return tuple(flat)
 
 
-_CS_SLICE_CACHE = {}
+def _build_carry_save_stage(levels, idx, in_width, out_bits, max_width, final_out_t):
+    """Build levels[idx:] as ONE @hw_func PER LEVEL: a single unrolled loop
+    over that level's flattened op list (_flatten_carry_save_ops), building
+    `result` up bit-by-bit via bit_assign -- the same "closure-planned op
+    list, one hw_func, per-iteration inline slices" idiom
+    make_soft_div_radix's soft_div_radix already uses (soft_div.py:204-
+    277) -- with the hand-off to the NEXT level folded into the SAME
+    entity's own tail call (bare name, like make_soft_add_tree_shifted's
+    own levels call each other) rather than a separate wrapper stage.
+    Deeper levels are built FIRST via plain Python recursion at
+    factory-construction time, so this level's body can close over the
+    next one's bare name -- the same ordering make_soft_add_tree_shifted's
+    own `next_add = make_soft_add_tree_shifted(...)` uses.
 
+    Every declared local inside the loop (ac_raw/bc_raw/s) keeps ONE fixed
+    type across every iteration; only the elaboration-time integers
+    (offsets, widths) vary, via branch elimination on OPS[i][0] (kind) --
+    a closure-constant int, so `if kind == 0: ... else: ...` never becomes
+    a hardware mux, exactly like soft_div_radix's own `if op ==
+    _OP_SHL1:`.
 
-def _make_carry_save_slice(bus_t, off, w):
-    """Memoized leaf: a pure bit-range read of `bus_t[off+w-1:off]` (or a
-    single-bit read when w==1). Tagged @wires (not @hw_func): this reduces
-    to pure routing with no logic gates whatsoever -- confirmed against a
-    real synthesis run, where an equivalent leaf's own yosys cell count was
-    100% flip-flops (the isolated-measurement harness registers), zero
-    combinational cells. An @hw_func-tagged version of exactly this shape
-    is what make_soft_add_tree_shifted's own "rewire-only zero-delay
-    entity" note warns about: PyRTL's max_freq divides by the (zero)
-    critical-path delay and raises ZeroDivisionError the first time such an
-    entity is independently timing-estimated -- confirmed by hitting it for
-    real (uint8 x uint8, a perfectly ordinary width, well past the point
-    native sim alone had already validated -- this is exactly why the plan
-    called for a real synthesis check, not just elaboration or native sim).
-    @wires's contract ("this function's own synthesized result IS pure
-    wires") is true here, unlike wrapping a call to a REAL child in @wires
-    would be (see _build_carry_save_range below for where that distinction
-    matters), so this is @wires's correct, intended use, not a workaround."""
-    key = (bus_t, off, w)
-    cached = _CS_SLICE_CACHE.get(key)
-    if cached is not None:
-        return cached
-    elem_t = make_uint_t(w)
-    if w == 1:
+    The final level's raw reduction result can be wider OR narrower than
+    out_bits (_plan_carry_save_levels's own docstring) -- handled by ONE
+    plain annotated assignment to final_out_t either way, relying on
+    VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS's implicit resize() (see the module
+    comment above): for same-signedness uint-to-uint, VHDL's numeric_std
+    resize() zero-pads on widen and takes the low N bits on narrow --
+    exactly the truncation semantics wanted, no explicit slice needed in
+    either direction, and no separate code path for the two cases.
 
-        @wires
-        def leaf(terms: bus_t) -> elem_t:
-            result: elem_t = terms[off]
-            return result
+    A level with NO 'add' op (every element disjoint -- only possible
+    when every summand is 1 bit wide, i.e. multiplying against a 1-bit
+    operand) produces a result that is pure routing -- confirmed NOT rare
+    enough to special-case away as "just the whole-design degenerate
+    case": an exhaustive sweep (out_bits 2-64 x every leaf width x
+    max_width in {1,2,3,4,6,8,16,32} x n_leaves in {2,3,4,5,8,16,32},
+    93,911 cases) found 1,604 cases where an INTERIOR level of a
+    multi-level chain -- not only a single-level whole design -- is
+    all-pass. Tagged @wires for the same reason the old per-slice leaves
+    were: an @hw_func whose own synthesized result is 100% flip-flops
+    with zero combinational cells makes PyRTL's max_freq divide by zero
+    the first time it is independently timing-estimated (confirmed by
+    hitting this for real during the prior construction's development,
+    uint8 x uint8 at the per-slice-leaf granularity). A level WITH at
+    least one add is genuinely combinational and must stay @hw_func --
+    tagging it @wires would be a lie the framework would believe, hiding
+    real delay from every estimate instead of merely avoiding a crash.
+    The loop body is IDENTICAL either way (the add branch, when present
+    in the source but never selected by any op in OPS, costs no hardware
+    -- elaboration-time branch elimination, not a runtime mux) so the
+    @wires/@hw_func branches below are a byte-for-byte copy of each other
+    except that one line; duplicated rather than chosen via a variable
+    decorator, matching this codebase's convention of never applying
+    @wires/@hw_func outside literal `@` syntax.
 
-    else:
-
-        @wires
-        def leaf(terms: bus_t) -> elem_t:
-            result: elem_t = terms[off + w - 1:off]
-            return result
-
-    _CS_SLICE_CACHE[key] = (leaf, elem_t)
-    return leaf, elem_t
-
-
-def _build_carry_save_op_leaf(op, bus_in_t):
-    """One op (pass or chunked add) as (fn, elem_t, is_wires). A 'pass' op
-    IS the @wires slice leaf directly (is_wires=True). An 'add' op's
-    WRAPPING leaf (the ac/bc/[rest] slicing plus the chunk_add call) is
-    always @hw_func/is_wires=False, even though its OWN slicing calls are
-    @wires -- it also calls chunk_fn, which does real arithmetic, so this
-    entity's true synthesized result is not pure wires and tagging it
-    @wires would be a lie the framework would believe (silently hiding
-    real delay from every estimate, not just failing to crash on it)."""
-    if op[0] == "pass":
-        _, ioff, w, _ = op
-        fn, elem_t = _make_carry_save_slice(bus_in_t, ioff, w)
-        return fn, elem_t, True
-
-    _, ac_off, ac_w, bc_off, bc_w, op_w, rest_off, rest_w, _ = op
-    chunk_fn, elem_t = _make_carry_save_chunk_add(ac_w, bc_w, op_w, rest_w)
-    ac_slice, ac_t = _make_carry_save_slice(bus_in_t, ac_off, ac_w)
-    bc_slice, bc_t = _make_carry_save_slice(bus_in_t, bc_off, bc_w)
-    if rest_w > 0:
-        rest_slice, rest_t = _make_carry_save_slice(bus_in_t, rest_off, rest_w)
-
-        @hw_func
-        def leaf(terms: bus_in_t) -> elem_t:
-            ac: ac_t = ac_slice(terms)
-            bc: bc_t = bc_slice(terms)
-            rest: rest_t = rest_slice(terms)
-            result: elem_t = chunk_fn(ac, bc, rest)
-            return result
-
-    else:
-
-        @hw_func
-        def leaf(terms: bus_in_t) -> elem_t:
-            ac: ac_t = ac_slice(terms)
-            bc: bc_t = bc_slice(terms)
-            result: elem_t = chunk_fn(ac, bc)
-            return result
-
-    return leaf, elem_t, False
-
-
-def _build_carry_save_range(ops, lo, hi, bus_in_t):
-    """Recursively combine ops[lo:hi] (a level's op list assigns output bit
-    offsets to ops in list order, LSB-first) into one packed (fn, elem_t,
-    is_wires) via a balanced binary tree of 2-input concat nodes. concat's
-    first argument is the MSB half, and ops[lo:mid] (earlier list position
-    -> LOWER output offset) belong at the LSB half, so the combine is
-    concat(right, left), not concat(left, right).
-
-    is_wires propagates bottom-up: a combine node is ONLY pure wires (safe
-    to tag @wires) if BOTH children are -- i.e. its entire reachable
-    subtree is bare passthrough, no chunk-add anywhere in it. This is
-    necessary in addition to _make_carry_save_slice's own @wires tag, not
-    instead of it: a combine-of-two-passthroughs node is JUST AS
-    genuinely zero-delay as a single slice leaf is (confirmed: uint1 x
-    uint5, section 11's degenerate-width case, converges in exactly one
-    level that is ENTIRELY passthrough -- its whole combine tree, root
-    included, would hit the same crash if left @hw_func)."""
-    if hi - lo == 1:
-        return _build_carry_save_op_leaf(ops[lo], bus_in_t)
-    mid = lo + (hi - lo) // 2
-    left_fn, left_t, left_wires = _build_carry_save_range(ops, lo, mid, bus_in_t)
-    right_fn, right_t, right_wires = _build_carry_save_range(ops, mid, hi, bus_in_t)
-    combined_t = make_uint_t(left_t.width + right_t.width)
-    is_wires = left_wires and right_wires
-
-    if is_wires:
-
-        @wires
-        def combine(terms: bus_in_t) -> combined_t:
-            left_val: left_t = left_fn(terms)
-            right_val: right_t = right_fn(terms)
-            result: combined_t = concat(right_val, left_val)
-            return result
-
-    else:
-
-        @hw_func
-        def combine(terms: bus_in_t) -> combined_t:
-            left_val: left_t = left_fn(terms)
-            right_val: right_t = right_fn(terms)
-            result: combined_t = concat(right_val, left_val)
-            return result
-
-    return combine, combined_t, is_wires
-
-
-def _build_carry_save_level(ops, in_width, out_width):
-    bus_in_t = make_uint_t(in_width)
-    root_fn, root_t, is_wires = _build_carry_save_range(ops, 0, len(ops), bus_in_t)
-    assert root_t.width == out_width
-    return root_fn, bus_in_t, is_wires
-
-
-def _build_carry_save_chain(levels, idx, in_width, out_bits, final_out_t):
-    """Recursively chain levels[idx:] into one (fn, is_wires), mirroring how
-    make_soft_add_tree_shifted's own levels call the next level by bare
-    name at their own tail. The last level's raw output is usually wider
-    than out_bits (see _plan_carry_save_levels) and gets truncated here,
-    once, at the very end -- except against a 1-bit operand (every partial
-    product a disjoint single bit, so the reduction never generates a
-    carry and never grows past the narrowest width that covers all of
-    them), where the natural result can instead be NARROWER than the
-    formal out_bits (arith_result_type's full-precision width is wider
-    than any value a 1-bit operand's product can actually take); that case
-    widens on assignment instead, same as this file's `ae: eff_l_t = a`
-    idiom (implicit zero-extension for unsigned types -- no explicit slice
-    needed, only narrowing needs one).
-
-    is_wires propagates the same way _build_carry_save_range's does: a
-    stage is only pure wires if its OWN level is AND (for a non-final
-    stage) the rest of the chain also is -- the 1-bit-operand degenerate
-    case converges in exactly one level, entirely passthrough, so this
-    function's own top-level wrapper needs the same @wires/@hw_func choice
-    every node beneath it does, all the way up to make_soft_add_tree_carry_save."""
+    Returns (stage_fn, is_wires): is_wires is true only when THIS level
+    has no add AND (for a non-final level) the rest of the chain is also
+    wires -- a real add anywhere from here down makes every stage above
+    it in the chain genuinely combinational, regardless of what deeper
+    levels do."""
     ops = levels[idx]
+    OPS = _flatten_carry_save_ops(ops)
+    n_ops = len(OPS)
     out_width = _carry_save_level_out_width(ops)
-    level_fn, bus_in_t, level_wires = _build_carry_save_level(ops, in_width, out_width)
+    has_add = any(o[0] == 1 for o in OPS)
+    is_last = idx == len(levels) - 1
+    bus_in_t = make_uint_t(in_width)
+    bus_out_t = make_uint_t(out_width)
+    op_t = make_uint_t(max_width)
+    sum_t = make_uint_t(max_width + 1)
+    chunk_add, _sum_t = _get_carry_save_chunk_add(max_width)
 
-    if idx == len(levels) - 1:
-        is_wires = level_wires
-        if out_width >= out_bits:
-            if out_width == out_bits:
-                if is_wires:
+    if is_last:
+        is_wires = not has_add
 
-                    @wires
-                    def stage(terms: bus_in_t) -> final_out_t:
-                        result: final_out_t = level_fn(terms)
-                        return result
+        if is_wires:
 
-                else:
-
-                    @hw_func
-                    def stage(terms: bus_in_t) -> final_out_t:
-                        result: final_out_t = level_fn(terms)
-                        return result
-
-            else:
-                mid_t = make_uint_t(out_width)
-                if is_wires:
-
-                    @wires
-                    def stage(terms: bus_in_t) -> final_out_t:
-                        mid: mid_t = level_fn(terms)
-                        result: final_out_t = mid[out_bits - 1:0]
-                        return result
-
-                else:
-
-                    @hw_func
-                    def stage(terms: bus_in_t) -> final_out_t:
-                        mid: mid_t = level_fn(terms)
-                        result: final_out_t = mid[out_bits - 1:0]
-                        return result
+            @wires
+            def stage(terms: bus_in_t) -> final_out_t:
+                result: bus_out_t = 0
+                for i in range(n_ops):
+                    kind = OPS[i][0]
+                    if kind == 0:
+                        ioff = OPS[i][1]
+                        w = OPS[i][2]
+                        ooff = OPS[i][3]
+                        if w == 1:
+                            result = bit_assign(result, terms[ioff], ooff)
+                        else:
+                            result = bit_assign(result, terms[ioff + w - 1:ioff], ooff)
+                    else:
+                        ac_off = OPS[i][1]
+                        ac_w = OPS[i][2]
+                        bc_off = OPS[i][3]
+                        bc_w = OPS[i][4]
+                        op_w = OPS[i][5]
+                        out_off = OPS[i][6]
+                        ac_raw: op_t = 0
+                        bc_raw: op_t = 0
+                        if ac_w == 1:
+                            ac_raw = terms[ac_off]
+                        else:
+                            ac_raw = terms[ac_off + ac_w - 1:ac_off]
+                        if bc_w == 1:
+                            bc_raw = terms[bc_off]
+                        else:
+                            bc_raw = terms[bc_off + bc_w - 1:bc_off]
+                        s: sum_t = chunk_add(ac_raw, bc_raw)
+                        if op_w == 1:
+                            result = bit_assign(result, s[0], out_off)
+                        else:
+                            result = bit_assign(result, s[op_w - 1:0], out_off)
+                final_result: final_out_t = result
+                return final_result
 
         else:
-            if is_wires:
 
-                @wires
-                def stage(terms: bus_in_t) -> final_out_t:
-                    result: final_out_t = level_fn(terms)
-                    return result
-
-            else:
-
-                @hw_func
-                def stage(terms: bus_in_t) -> final_out_t:
-                    result: final_out_t = level_fn(terms)
-                    return result
+            @hw_func
+            def stage(terms: bus_in_t) -> final_out_t:
+                result: bus_out_t = 0
+                for i in range(n_ops):
+                    kind = OPS[i][0]
+                    if kind == 0:
+                        ioff = OPS[i][1]
+                        w = OPS[i][2]
+                        ooff = OPS[i][3]
+                        if w == 1:
+                            result = bit_assign(result, terms[ioff], ooff)
+                        else:
+                            result = bit_assign(result, terms[ioff + w - 1:ioff], ooff)
+                    else:
+                        ac_off = OPS[i][1]
+                        ac_w = OPS[i][2]
+                        bc_off = OPS[i][3]
+                        bc_w = OPS[i][4]
+                        op_w = OPS[i][5]
+                        out_off = OPS[i][6]
+                        ac_raw: op_t = 0
+                        bc_raw: op_t = 0
+                        if ac_w == 1:
+                            ac_raw = terms[ac_off]
+                        else:
+                            ac_raw = terms[ac_off + ac_w - 1:ac_off]
+                        if bc_w == 1:
+                            bc_raw = terms[bc_off]
+                        else:
+                            bc_raw = terms[bc_off + bc_w - 1:bc_off]
+                        s: sum_t = chunk_add(ac_raw, bc_raw)
+                        if op_w == 1:
+                            result = bit_assign(result, s[0], out_off)
+                        else:
+                            result = bit_assign(result, s[op_w - 1:0], out_off)
+                final_result: final_out_t = result
+                return final_result
 
         return stage, is_wires
 
-    rest_fn, rest_wires = _build_carry_save_chain(levels, idx + 1, out_width, out_bits, final_out_t)
-    mid_t = make_uint_t(out_width)
-    is_wires = level_wires and rest_wires
+    rest_fn, rest_wires = _build_carry_save_stage(
+        levels, idx + 1, out_width, out_bits, max_width, final_out_t
+    )
+    is_wires = (not has_add) and rest_wires
 
     if is_wires:
 
         @wires
         def stage(terms: bus_in_t) -> final_out_t:
-            mid: mid_t = level_fn(terms)
-            result: final_out_t = rest_fn(mid)
-            return result
+            result: bus_out_t = 0
+            for i in range(n_ops):
+                kind = OPS[i][0]
+                if kind == 0:
+                    ioff = OPS[i][1]
+                    w = OPS[i][2]
+                    ooff = OPS[i][3]
+                    if w == 1:
+                        result = bit_assign(result, terms[ioff], ooff)
+                    else:
+                        result = bit_assign(result, terms[ioff + w - 1:ioff], ooff)
+                else:
+                    ac_off = OPS[i][1]
+                    ac_w = OPS[i][2]
+                    bc_off = OPS[i][3]
+                    bc_w = OPS[i][4]
+                    op_w = OPS[i][5]
+                    out_off = OPS[i][6]
+                    ac_raw: op_t = 0
+                    bc_raw: op_t = 0
+                    if ac_w == 1:
+                        ac_raw = terms[ac_off]
+                    else:
+                        ac_raw = terms[ac_off + ac_w - 1:ac_off]
+                    if bc_w == 1:
+                        bc_raw = terms[bc_off]
+                    else:
+                        bc_raw = terms[bc_off + bc_w - 1:bc_off]
+                    s: sum_t = chunk_add(ac_raw, bc_raw)
+                    if op_w == 1:
+                        result = bit_assign(result, s[0], out_off)
+                    else:
+                        result = bit_assign(result, s[op_w - 1:0], out_off)
+            return rest_fn(result)
 
     else:
 
         @hw_func
         def stage(terms: bus_in_t) -> final_out_t:
-            mid: mid_t = level_fn(terms)
-            result: final_out_t = rest_fn(mid)
-            return result
+            result: bus_out_t = 0
+            for i in range(n_ops):
+                kind = OPS[i][0]
+                if kind == 0:
+                    ioff = OPS[i][1]
+                    w = OPS[i][2]
+                    ooff = OPS[i][3]
+                    if w == 1:
+                        result = bit_assign(result, terms[ioff], ooff)
+                    else:
+                        result = bit_assign(result, terms[ioff + w - 1:ioff], ooff)
+                else:
+                    ac_off = OPS[i][1]
+                    ac_w = OPS[i][2]
+                    bc_off = OPS[i][3]
+                    bc_w = OPS[i][4]
+                    op_w = OPS[i][5]
+                    out_off = OPS[i][6]
+                    ac_raw: op_t = 0
+                    bc_raw: op_t = 0
+                    if ac_w == 1:
+                        ac_raw = terms[ac_off]
+                    else:
+                        ac_raw = terms[ac_off + ac_w - 1:ac_off]
+                    if bc_w == 1:
+                        bc_raw = terms[bc_off]
+                    else:
+                        bc_raw = terms[bc_off + bc_w - 1:bc_off]
+                    s: sum_t = chunk_add(ac_raw, bc_raw)
+                    if op_w == 1:
+                        result = bit_assign(result, s[0], out_off)
+                    else:
+                        result = bit_assign(result, s[op_w - 1:0], out_off)
+            return rest_fn(result)
 
     return stage, is_wires
 
@@ -784,8 +843,8 @@ def make_soft_add_tree_carry_save(n_leaves, leaf_t, out_t, max_width=2):
 
     in_t = leaf_t[n_leaves]
     initial_bus_t = make_uint_t(leaf_width * n_leaves)
-    chain_fn, chain_wires = _build_carry_save_chain(
-        levels, 0, leaf_width * n_leaves, out_bits, out_t
+    chain_fn, chain_wires = _build_carry_save_stage(
+        levels, 0, leaf_width * n_leaves, out_bits, max_width, out_t
     )
 
     # array_to_uint_le is a zero-delay bit-manip primitive (like concat/

@@ -436,6 +436,31 @@ earlier — matching hardware where a signal's type is fixed at declaration and 
 truncates. Bare declarations (`var: T` with no RHS) register `var`'s type for Rule 2 without
 generating an assignment.
 
+**This is the simulation-side mirror of the real elaborator's per-write width
+reconciliation** — see [`PY_TO_LOGIC_DESIGN.md`'s "Reassigning a Different Width"
+section](PY_TO_LOGIC_DESIGN.md#reassigning-a-different-width--one-vhdl-type-per-signal-not-a-type-changing-variable).
+There, `_write_ref` gives every write its own freshly aliased VHDL wire declared at the
+*target's* type, and `VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS` inserts a `resize()` wrapper at
+render time if the incoming wire's width/signedness differs. Here, `_sim_cast(expr,
+declared_type)` does the equivalent job in one step at rewrite time: both make the
+**declared type win**, with the actual value zero-extended or bit-truncated to fit —
+matching real unsigned VHDL truncation, not raising or silently widening the type. A
+narrower-into-wider reassignment (`x: uint2_t = 0` then, in some branch, `x = narrow_u1`)
+elaborates and simulates identically for exactly this reason: both backends resolve it to
+"the declared width wins, value reinterpreted to fit," independently of which branch or
+loop iteration produced the narrower value.
+
+Like the elaborator side, **this free reassignment-across-widths behavior is specific to
+scalar int/uint locals** (Rule 2's own guard: "scalar integer annotation"). A struct or
+array local does not get this treatment here either — it falls to the entirely separate
+Rule 3/3b/4 lens-based machinery below (`_sim_lens_set` + `_sim_cast_deep`), which casts
+only the specific *leaf* ctype it can statically resolve and has no notion of "resize the
+whole compound value to a differently-shaped declared type." A soft-operator author
+relying on "reassign a differently-sized value, the runtime/backend will reconcile it" —
+as `include/pypeline/operators/soft_mult.py`'s carry-save multiplier does throughout its
+per-level reduction loop — should keep that pattern to plain unsigned integers on both
+sides of the sim/elaborate boundary.
+
 The rewriter traverses the entire function body recursively; `_declared_types` is populated
 top-to-bottom so declarations always precede uses in well-structured hardware code.
 
