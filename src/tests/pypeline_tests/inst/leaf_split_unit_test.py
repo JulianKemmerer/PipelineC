@@ -199,6 +199,40 @@ def test_aggregate_mux_width_and_slv_chunks():
     ) in body
 
 
+def test_two_stage_two_bit_plus_uses_carry_prefix_split():
+    class PlusLogic:
+        func_name = "BIN_OP_PLUS_uint2_t_uint2_t"
+        inputs = ["left", "right"]
+        outputs = ["return_output"]
+        wire_to_c_type = {
+            "left": "uint2_t",
+            "right": "uint2_t",
+            "return_output": "uint3_t",
+        }
+
+    class ParserState:
+        LogicInstLookupTable = {}
+
+    decl, body = (
+        RAW_VHDL.GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
+            PlusLogic(), ParserState(), FakeTimingParams([0.5])
+        )
+    )
+    assert "prefix_propagate : std_logic_vector(1 downto 0)" in decl
+    assert "prefix_generate : std_logic_vector(1 downto 0)" in decl
+    assert "write_pipe.left_resized xor write_pipe.right_resized" in body
+    assert "write_pipe.left_resized and write_pipe.right_resized" in body
+    assert "prefix_propagate(1) xor write_pipe.prefix_generate(0)" in body
+    assert "prefix_generate(1) or" in body
+
+    _decl, unsplit_body = (
+        RAW_VHDL.GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEXT(
+            PlusLogic(), ParserState(), FakeTimingParams([])
+        )
+    )
+    assert "Two-stage two-bit carry-prefix adder" not in unsplit_body
+
+
 def test_bits_per_stage_dict_sum_and_balance_invariant_stress():
     # Random (num_bits, n_slices) combos within what a leaf's own width can
     # usefully support (n_slices <= num_bits - 1, the cap SWEEP.
@@ -229,4 +263,5 @@ if __name__ == "__main__":
     test_integer_mux_exact_boundary_renders_stage_local_bit_chunks()
     test_aggregate_mux_width_and_slv_chunks()
     test_bits_per_stage_dict_sum_and_balance_invariant_stress()
+    test_two_stage_two_bit_plus_uses_carry_prefix_split()
     print("All leaf split-model unit tests passed.")

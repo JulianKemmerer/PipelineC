@@ -97,7 +97,8 @@ Registers physically exist in two forms:
    branch's register is free once a slower sibling already bounds that max —
    a mismatch between requested cuts and actually-built slices is the tell.
    `SWEEP.DROP_NON_DEEPENING_PLACEMENTS` drops any `INSTANCE_INPUT`/
-   `INSTANCE_OUTPUT` placement whose removal, alone, leaves the subtree's
+   `INSTANCE_OUTPUT` placement, or a complete synchronized boundary-register
+   group, whose removal leaves the subtree's
    real post-lowering `GET_TOTAL_LATENCY` exactly where it started — ground
    truth after real lowering, not a landscape estimate, since only the real
    synchronous schedule can see this. The comparison also folds in each
@@ -108,6 +109,9 @@ Registers physically exist in two forms:
    region's real registers as adding no depth and drop them all.
    `DROP_NON_DEEPENING_PLACEMENTS` mirrors `SUMMARIZE_SUBTREE_PIPELINE`'s own
    `monolithic + sum(regions)` formula exactly to avoid this.
+   Group members are tested and removed atomically: testing one parallel bank
+   at a time would make every member appear redundant and leave an arbitrary
+   incomplete frontier behind.
    - `SPLIT_KIND_1LL` ("one logic level" — AND/OR/XOR/NOT/NEGATE/MULT):
      these generators (`stage_for_1ll`) always place the *whole* operation in
      exactly one stage no matter the latency — only the register *boundary*
@@ -439,9 +443,10 @@ leaf-most **segments**:
 - `sliceable` — `SPLIT_KIND_BITS` raw HDL leaf; cuts anywhere inside produce
   a register (§1: the leaf's own generator decides *how*, via an equal-width
   split, not the landscape), **capped** to at most `width - 1` legal units
-  (`RAW_VHDL.GET_LEAF_BIT_WIDTH`, the same "widest input/output wire" every
-  such leaf's own codegen already uses as `GET_BITS_PER_STAGE_DICT`'s
-  `num_bits`) — an N-bit leaf can hold at most N-1 interior registers (N
+  (`RAW_VHDL.GET_LEAF_BIT_WIDTH`, the effective operand width passed to the
+  generator's `GET_BITS_PER_STAGE_DICT`; binary arithmetic uses its widest
+  input rather than counting a widened carry output as another bit) — an
+  N-bit leaf can hold at most N-1 interior registers (N
   stages); offering more legal positions than that would let `PLAN_CUTS`
   request cuts `GET_BITS_PER_STAGE_DICT` could only honor with **interior
   zero-bit stages** (bare registers around no logic — a 4-bit op spread over
@@ -490,6 +495,16 @@ answers "may a cut land on unit u?", `weight[u]` is that unit's cost toward
 a stage budget (multiplied by the learned `func_delay_scale` during
 densification), `blame[u]` points at the atomic segment covering an illegal
 unit:
+
+When every active segment has a structured timing sidecar, `weight[u]` uses
+the measured combinational component rather than repeating clk-to-Q and setup
+for every leaf in a hierarchical path. The root measurement supplies the
+normalized combinational frontier total, and one root launch-plus-setup cost
+is reserved for each proposed stage: `budget_units_for_period()` subtracts it
+from the target period and `PREDICTED_STAGE_NS()` adds it back once. If any
+active segment lacks component evidence, the whole landscape falls back to
+the legacy full register-to-register weights; partial evidence is never mixed
+into an apparently precise stage budget.
 
 ```
 unit:    0    5    10   15   20   24
@@ -588,6 +603,19 @@ that silently destroys every intermediate pipeline depth: a 47-cut plan at
 3.85 ns — 33% more registers to beat a target already met — which collapses
 the whole 32..64 range onto 64.
 
+A selected delay-axis unit can require several synchronized physical
+register banks to cut a parallel or reconvergent frontier.
+`_PARALLEL_OUTPUT_FRONTIER` groups raw-operation outputs whose real intervals
+strictly overlap and end in that unit. `_PARALLEL_BIT_FRONTIER` groups genuine
+bit requests that strictly cross the same point, provided their equal-width
+one-cut boundaries all move to one common physical unit after materialization.
+A coherent ancestor output remains preferable when it covers the complete
+frontier with one bank. Every accepted group carries one deterministic group
+identity, member list, physical unit, and aggregate registered-bit cost: it is
+one logical cut even though lowering writes several physical banks. Final
+realization checks and non-deepening cleanup validate or remove these groups
+atomically.
+
 Bit splitting therefore survives whenever it genuinely pays and is dropped
 when it only looked like it would on the raster.
 
@@ -662,7 +690,7 @@ planner fills long remaining intervals. Unmatched or ambiguous selectors fail
 loudly. This exists for controlled physical-placement A/B tests and must not
 become a Divider-name rule or public slice-cap option.
 
-Every planned run writes `<out>/top/placement_trace.json`. Trace schema 5 keeps
+Every planned run writes `<out>/top/placement_trace.json`. Trace schema 6 keeps
 concrete output `candidates` separate from nonphysical bit `planning_sites`.
 Per-iteration and final selections contain only physical placements; a bit
 selection records its emitted width, boundary, split ordinal/count,
@@ -672,7 +700,10 @@ per-iteration physical fingerprints and whether the one bounded generic
 chunked-MUX refinement was attempted (`same_depth_refinement.chunked_mux_attempted`),
 plus instance/function metadata,
 estimated registered bits, internal forced mode, boundary-register type, and
-local stage assignment. A `locked_instances` entry separately records every
+local stage assignment. Schema 6 adds `placement_groups`, summarizing each
+synchronized frontier's planned and realized members, physical unit,
+registered-bit total, and atomic realization verdict. A `locked_instances`
+entry separately records every
 coarse mini-sweep lock, including its fixed internal slices, selected input/
 output banks, boundary strategy, rebuilt latency, and realization check.
 `mini_sweep_boundary_diagnostics` records the alias-only direct edges, the
@@ -680,6 +711,10 @@ minimum-cost input/output cover, and any edge ineligible because a no-I/O
 pragma applied. The trace, generated VHDL, mapped JSON, and STA report
 together are the evidence for a placement claim; requested cut counts alone
 are not.
+
+`PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG=1` is an internal benchmark switch
+that suppresses only diagnostic pipeline-map PNG rendering for very large
+fine-grained probes. The text map, placement trace, HDL, and default behavior
 
 The preserved
 [`divider_gate_clean_baseline_critical_paths.json`](../src/tests/pypeline_tests/qor/divider_gate_clean_baseline_critical_paths.json)
@@ -1430,28 +1465,27 @@ section, below.
    operator's own internal chunk width should be tuned per target rather
    than assumed fixed. Suggested fix: raise `DELAY_UNIT_MULT` and round
    rather than truncate.
-3. **Depth-proportional over-prediction is the main risk to ranking.**
-   `ESTIMATE_HIER_PATH_DELAYS` sums each submodule's full cached delay
-   (clk→Q + logic + setup), so a K-deep chain accumulates ~(K−1) copies of a
-   floor that exists once in real silicon — worse for deeper hierarchies
-   (§9's `soft_bitwise` comparator measured 26.6-47x its real delay this
-   way). The measurement frontier (§2) anchors absolute fmax against a real
-   synthesis run even when the estimated internal *shape* is wrong, but it
-   cannot fix cut-*count* decisions made off the inflated shape.
-   `PIPELINEC_INTERNAL_COMBINATIONAL_PLANNER_WEIGHTS=1` (`DEVICE_MODELS`-only,
-   off by default) strips the per-leaf clk→Q+setup floor from relative
-   segment weights and is worth an A/B on deep, many-leaf designs.
-4. **`SPLIT_KIND_1LL` atomicity suppresses cuts on parallel branches it
-   straddles** — the same mechanism (§3, "Parallel branches") that cost the
-   divider design 16 wasted NOT-output slices. Affects any design with many
-   parallel 1-logic-level ops (e.g. partial-product ANDs) feeding a shared
-   downstream boundary.
-5. **One candidate is materialized per axis unit**, so a whole rank of
-   parallel, structurally identical operations is not registered as one
-   placement — `_PLACEMENT_RANK_KEY` prefers shallow hierarchy and real
-   instance-output boundaries over deep, narrow leaves, which ranks a
-   uniform reduction tree's own shape last. Suggested fix: let a whole rank
-   of parallel identical ops be considered as one placement.
+3. **Component-aware stage budgeting requires complete timing sidecars.**
+   When every active segment has clk-to-Q, combinational, and setup fields,
+   the planner packs combinational work and reserves launch/setup exactly
+   once per proposed stage. If even one active segment lacks those fields,
+   the landscape deliberately falls back to legacy full register-to-register
+   weights instead of mixing incompatible costs. This preserves correctness
+   and reproducibility, but newly measured or non-sky130 designs can retain
+   depth-proportional over-prediction until their sidecars are complete.
+4. **Parallel-frontier grouping is deliberately conservative.** Output and
+   bit frontiers require strict interval overlap (an antichain), and grouped
+   bit requests must materialize their equal-width boundaries in one common
+   physical unit. The planner refuses the group when peers do not overlap,
+   move to different units, or a coherent ancestor output already cuts the
+   frontier more cheaply. This avoids inventing latency, but can miss a true
+   graph cut whose raster intervals do not expose that geometry.
+5. **Frontier discovery is local to one landscape unit.** It synchronizes
+   the operation-output and bit-internal candidates already represented at
+   that unit; it does not construct a complete dependency DAG or schedule a
+   multi-unit rank globally. More complex fork/join geometries can therefore
+   still require graph scheduling if local typed placement cannot express the
+   useful physical boundary.
 6. **Watch for "rewire-only" entities when building a deep, many-node
    soft-operator tree.** A `@hw_func`-tagged entity whose synthesized result
    is pure wiring (a bit-slice, a concat-of-slices, or a reduction level
@@ -1692,9 +1726,40 @@ dedicated carry chain, where `make_soft_mult_shift_add`'s balanced tree of a
 few full-width carry-propagate adds is the wrong (FPGA-carry-chain-shaped)
 tradeoff. Autopipelined via the *planned* sweep (not `--coarse`, which has
 an unrelated pre-existing crash on this design's many narrow leaves —
-Limitations item 1) with a real `@MAIN(700)` target and `--no_hier_syn`, the
-port reaches 700.64 MHz at 30 cycles (31 stages), beating the reference's
+Limitations item 1) with a real `@MAIN(700)` target and the latchup-style
+`--no_sweep --no_hier_syn` flags, the first emitted candidate reaches
+700.64 MHz at 30 cycles (31 stages), beating the reference's
 own 684 MHz/33 cycles.
+
+| requested `CLK_RATE_MHZ` | added-clock latency | comb stages | measured fmax |
+|---:|---:|---:|---:|
+| 700 | 30 | 31 | 700.640825 MHz |
+| 701 | 59 | 60 | 909.794952 MHz |
+| 720 | 60 | 61 | 909.794952 MHz |
+| 905 | 60 | 61 | 909.794952 MHz |
+
+The 700 MHz point preserves the established 31-stage baseline. The first
+deeper family is selected by a 701 MHz request and improves measured fmax by
+29.852% while remaining below 64 stages. Its frozen mapped netlist has 7,164
+cells, 4,605 sequential cells, and zero unmapped cells.
+
+The old plateau had two independent causes. A two-input-bit `PLUS` was capped
+from its widened three-bit output and its nominal one-bit-per-stage lowering
+still left a complete full-adder path in stage 1. At the same time, one
+logical delay-axis cut selected one arbitrary member of a parallel narrow-op
+rank instead of registering the complete frontier.
+
+The fixes are generic: binary split width comes from the operands, the
+two-stage two-bit unsigned add uses registered carry-prefix state, and typed
+placement can synchronize parallel output or bit frontiers. Selection remains
+based on measured timing components and requested stage budget; neither the
+elaborated multiplier architecture nor an operator-overload choice depends on
+the requested clock, target device, or a hard-coded multiplier boundary.
+
+The 909.794952 MHz critical path is 1.099148767 ns: 0.6644067045 ns launch
+clk-to-Q, one 0.2936405239 ns `and2_1` arc, and 0.1411015387 ns setup. The
+exact 720 MHz candidate's final VHDL also passed the 51-product GHDL test with
+bubbles, ordering, and exact 60-clock latency.
 
 Two real bugs surfaced while porting, both worth remembering as traps for a
 similar port: (1) a bare pure-wire entity (a bit-slice passthrough, or a

@@ -142,13 +142,15 @@ def GET_MUX_DATA_WIDTH(logic, parser_state):
 
 
 def GET_LEAF_BIT_WIDTH(logic, parser_state):
-    """Best-available proxy for a bit-splittable raw HDL leaf's own
-    carry/comparison width - the same "widest input/output" every such
-    leaf's own codegen (e.g. GET_BIN_OP_MINUS_C_BUILT_IN_UINT_N_..., which
-    sets width = max(left_width, right_width)) already uses as the
-    `num_bits` argument to GET_BITS_PER_STAGE_DICT. Returns None if no
-    widths are found (caller must then treat this leaf as uncapped, same as
-    before this existed).
+    """Return the bit width the raw leaf actually passes to its splitter.
+
+    Binary arithmetic partitions ``max(left_width, right_width)``. Its result
+    can be wider (a two-bit PLUS returns three bits), but counting that
+    carry-out as another splittable input bit permits one cut too many and
+    eventually asks GET_BITS_PER_STAGE_DICT to emit a zero-bit stage. Other
+    bit-splittable leaves retain the best-available widest-port proxy. Return
+    None if no widths are found (the caller then preserves the historical
+    uncapped behavior).
 
     Used by SWEEP.BUILD_SLICE_LANDSCAPE to cap how many legal cut units a
     SLICEABLE segment offers: an N-bit leaf can hold at most N-1 interior
@@ -158,6 +160,18 @@ def GET_LEAF_BIT_WIDTH(logic, parser_state):
     SPLIT_KIND_1LL's own 2-slice cap above exists to prevent)."""
     if GET_LEAF_SPLIT_KIND(logic) == SPLIT_KIND_MUX_BITS:
         return GET_MUX_DATA_WIDTH(logic, parser_state)
+
+    if logic.func_name.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_"):
+        widths = []
+        for wire in logic.inputs:
+            c_type = logic.wire_to_c_type.get(wire)
+            if c_type is None:
+                continue
+            try:
+                widths.append(VHDL.GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type))
+            except Exception:
+                continue
+        return max(widths) if widths else None
 
     widths = []
     for wire in list(logic.inputs) + list(logic.outputs):
@@ -2163,8 +2177,8 @@ def _EQUAL_WIDTH_BITS_PER_STAGE_DICT(num_bits, num_slices):
     suboptimal (48 slices at 164.69 MHz on the divider, below the 32-slice
     plan's 169.57 MHz), which is the shape of result a leaf-split interface
     able to honor a requested fraction might improve. Deciding that means
-    measuring both under the current model. See docs/SYN_DESIGN.md section 2,
-    "Open question (2026-08-21)"."""
+    measuring both under the current model. See docs/SYN_DESIGN.md#10-limitations-and-future-work,
+    item 9 (uneven bit-split boundaries)."""
     chunks = num_slices + 1
     boundaries = GET_EQUAL_WIDTH_BIT_BOUNDARIES(num_bits, num_slices)
     bits_per_stage_dict = {}
@@ -2302,6 +2316,55 @@ def GET_BIN_OP_PLUS_C_BUILT_IN_UINT_N_C_ENTITY_WIRES_DECL_AND_PACKAGE_STAGES_TEX
     # 0th stage is combinatorial logic
     num_stages = len(timing_params._slices) + 1
     bits_per_stage_dict = GET_BITS_PER_STAGE_DICT(width, timing_params)
+
+    # A two-bit add split one bit per stage otherwise leaves a complete
+    # one-bit full adder in stage 1.  More slices then cannot improve timing:
+    # the full-adder path is the same path as the unsplit two-bit leaf.  Compute
+    # both bits' propagate/generate state in stage 0 instead, then combine the
+    # registered upper prefix with the registered low carry in stage 1.  This
+    # is ordinary carry-prefix arithmetic, independent of target device or
+    # requested clock.  The unsplit leaf and every wider/chunkier split retain
+    # the existing inferred-add lowering.
+    if (
+        width == 2
+        and num_stages == 2
+        and bits_per_stage_dict == {0: 1, 1: 1}
+    ):
+        wires_decl_text += """
+  prefix_propagate : std_logic_vector(1 downto 0);
+  prefix_generate : std_logic_vector(1 downto 0);
+"""
+        text = """
+  --
+  -- Two-stage two-bit carry-prefix adder
+  -- width = 2
+  -- num_stages = 2
+  -- bits_per_stage_dict[0] = 1
+  -- bits_per_stage_dict[1] = 1
+    if STAGE = 0 then
+      write_pipe.carry := (others => '0');
+      write_pipe.left_resized := resize(write_pipe.left, 2);
+      write_pipe.right_resized := resize(write_pipe.right, 2);
+      write_pipe.return_output := (others => '0');
+      write_pipe.full_width_return_output := (others => '0');
+      write_pipe.prefix_propagate := std_logic_vector(
+        write_pipe.left_resized xor write_pipe.right_resized);
+      write_pipe.prefix_generate := std_logic_vector(
+        write_pipe.left_resized and write_pipe.right_resized);
+      write_pipe.full_width_return_output(0) :=
+        write_pipe.prefix_propagate(0);
+    elsif STAGE = 1 then
+      write_pipe.full_width_return_output(1) :=
+        write_pipe.prefix_propagate(1) xor write_pipe.prefix_generate(0);
+      write_pipe.full_width_return_output(2) :=
+        write_pipe.prefix_generate(1) or
+        (write_pipe.prefix_propagate(1) and write_pipe.prefix_generate(0));
+      write_pipe.return_output := resize(
+        write_pipe.full_width_return_output(2 downto 0), """ + str(output_width) + """);
+    end if;
+"""
+        return wires_decl_text, text
+
     # print "num_stages",num_stages
     # print "bits_per_stage_dict",bits_per_stage_dict
 

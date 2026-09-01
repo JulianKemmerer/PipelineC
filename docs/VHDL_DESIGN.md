@@ -115,12 +115,25 @@ canonical packed layout as all other VHDL connections. These cases remain
 distinct through lowering, so an output boundary does not get recursively
 pushed into every descendant.
 
+One logical delay-axis cut may lower to a synchronized placement group when a
+parallel or reconvergent frontier needs more than one physical register bank.
+Each member remains an ordinary instance-output or bit-internal placement in
+`TimingParams`; the shared group identity says that the banks form one stage
+boundary and must be materialized or removed atomically. PipelineMap then
+aligns their consumers exactly as it does for an ungrouped boundary. This is
+different from multiple serial slices: the group adds one unit of latency even
+though it contains several physical banks.
+
 The SLV alternatives and partial result are fields of the raw leaf's pipeline
 record. They consequently participate in the same register transfer and live
 wire alignment as native typed values. Slice coordinates, exact packed-bit
 boundaries, and the composite type all remain part of entity hashing; two
 typed entities may share a width-keyed timing-cache result without becoming
 the same VHDL entity or losing their type-specific conversion functions.
+The two-stage two-bit unsigned-adder specialization uses the same mechanism:
+its propagate/generate prefix fields cross the leaf's internal register, then
+the final stage reconstructs the upper sum and carry without leaving another
+complete full-adder path after that register.
 
 `TimingParams._has_input_regs` and `_has_output_regs` implement independent
 entity-boundary registers. They participate in latency, hashing,

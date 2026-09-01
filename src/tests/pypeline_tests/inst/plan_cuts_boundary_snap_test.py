@@ -165,7 +165,10 @@ def test_discarded_tail_boundary_never_hides_useful_legal_cuts():
     landscape.finalize({})
 
     cuts = SWEEP.PLAN_CUTS(landscape, 25.0)
-    assert cuts == [13, 28, 42, 56, 70, 85], cuts
+    # Seven legal internal sites (W-1 for W=8) let the budget walk use every
+    # other site. The discarded tail boundary no longer forces six needlessly
+    # dense cuts merely because the old cap exposed only six internal sites.
+    assert cuts == [24, 49, 74], cuts
     assert SWEEP.PREDICTED_STAGE_NS(cuts, landscape) <= 25.0
 
 

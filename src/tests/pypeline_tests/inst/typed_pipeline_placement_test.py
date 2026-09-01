@@ -597,6 +597,237 @@ def test_chunked_mux_refinement_replaces_outputs_and_covers_terminal_tail():
     assert forced[0].bit_boundaries == (3,)
 
 
+
+def _output_frontier_landscape(serial=False, common_boundary=False):
+    landscape = SWEEP.SliceLandscape("main", 12, 0.1)
+    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    parent = f"main{marker}pair" if common_boundary else "main"
+    intervals = ((0.0, 5.2), (5.2, 5.8)) if serial else ((0.0, 6.0),) * 2
+    for side, (start, end) in zip(("left", "right"), intervals):
+        inst = f"{parent}{marker}{side}"
+        seg = SWEEP.Segment(
+            inst,
+            f"BIN_OP_{side.upper()}_uint1_t_uint1_t",
+            start,
+            end,
+            SWEEP.Segment.SLICEABLE_1LL,
+            "1ll_atomic",
+        )
+        seg.registered_bits = 1
+        seg.ancestor_funcs = {"main", "pair", seg.func_name}
+        landscape.segments.append(seg)
+    if common_boundary:
+        landscape.add_candidate(
+            SWEEP.PipelinePlacement(
+                SWEEP.PipelinePlacement.INSTANCE_OUTPUT,
+                f"main{marker}pair",
+                "pair",
+                5,
+                5.5,
+                registered_bits=2,
+                hierarchy_depth=1,
+                span_units=6.0,
+                coherent_boundary=True,
+                ancestor_funcs={"main", "pair"},
+            )
+        )
+    landscape.finalize({})
+    return landscape
+
+
+def test_parallel_output_frontier_grouping_and_serial_rejection():
+    landscape = _output_frontier_landscape()
+    cuts, placements = SWEEP.PLAN_PIPELINE_PLACEMENTS(landscape, 6.0)
+    assert cuts == [5], cuts
+    assert len(placements) == 2, placements
+    assert all(
+        placement.kind == SWEEP.PipelinePlacement.INSTANCE_OUTPUT
+        and placement.source == "parallel_output_frontier"
+        and placement.placement_group_kind == "parallel_output_frontier"
+        and placement.placement_group_registered_bits == 2
+        for placement in placements
+    )
+
+    common = _output_frontier_landscape(common_boundary=True)
+    grouped = SWEEP._PARALLEL_OUTPUT_FRONTIER(
+        common.candidates_by_unit[5], 5, common
+    )
+    assert len(grouped) == 1
+    assert grouped[0].inst_path == (
+        f"main{SWEEP.C_TO_LOGIC.SUBMODULE_MARKER}pair"
+    )
+    assert grouped[0].placement_group_id is None
+
+    serial = _output_frontier_landscape(serial=True)
+    assert SWEEP._PARALLEL_OUTPUT_FRONTIER(
+        serial.candidates_by_unit[5], 5, serial
+    ) is None
+
+
+_COMPONENTS = {
+    "launch_clock_to_q_ns": 0.65,
+    "combinational_delay_ns": 0.5,
+    "setup_ns": 0.15,
+    "path_delay_ns": 1.3,
+}
+
+
+def _component_budget_landscape(with_components=True, root_components=None):
+    landscape = SWEEP.SliceLandscape(
+        "main", 20, 0.1, root_delay_components=root_components
+    )
+    seg = SWEEP.Segment(
+        "main__leaf",
+        "BIN_OP_PLUS_uint8_t_uint8_t",
+        0.0,
+        20.0,
+        SWEEP.Segment.SLICEABLE,
+    )
+    seg.max_legal_units = 8
+    seg.planner_scale = 0.25
+    if with_components:
+        seg.delay_components = dict(_COMPONENTS)
+    landscape.segments.append(seg)
+    landscape.finalize({})
+    return landscape
+
+
+def test_component_stage_budget_and_legacy_fallback():
+    landscape = _component_budget_landscape()
+    assert landscape.uses_combinational_stage_budget
+    assert abs(landscape.stage_overhead_ns - 0.8) < 1.0e-12
+    assert abs(SWEEP.PREDICTED_STAGE_NS([], landscape) - 1.3) < 1.0e-12
+    assert abs(landscape.budget_units_for_period(1.05) - 2.5) < 1.0e-12
+    cuts, _placements = SWEEP.PLAN_PIPELINE_PLACEMENTS(
+        landscape, landscape.budget_units_for_period(1.05)
+    )
+    assert SWEEP.PREDICTED_STAGE_NS(cuts, landscape) <= 1.05 + 1.0e-12
+
+    fallback = _component_budget_landscape(with_components=False)
+    assert not fallback.uses_combinational_stage_budget
+    assert fallback.stage_overhead_ns == 0.0
+    assert abs(SWEEP.PREDICTED_STAGE_NS([], fallback) - 2.0) < 1.0e-12
+
+    root_components = dict(_COMPONENTS)
+    root_components.update(
+        {
+            "launch_clock_to_q_ns": 0.6,
+            "combinational_delay_ns": 1.0,
+            "setup_ns": 0.1,
+            "path_delay_ns": 1.7,
+        }
+    )
+    normalized = _component_budget_landscape(
+        root_components=root_components
+    )
+    assert abs(normalized.stage_overhead_ns - 0.7) < 1.0e-12
+    assert abs(SWEEP.PREDICTED_STAGE_NS([], normalized) - 1.7) < 1.0e-12
+
+def _parallel_frontier_landscape(common_boundary):
+    landscape = SWEEP.SliceLandscape("main", 12, 0.1)
+    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    parent = f"main{marker}pair" if common_boundary else "main"
+    for side in ("left", "right"):
+        inst = f"{parent}{marker}{side}"
+        seg = SWEEP.Segment(
+            inst,
+            "BIN_OP_PLUS_uint8_t_uint8_t",
+            0.0,
+            12.0,
+            SWEEP.Segment.SLICEABLE,
+        )
+        seg.max_legal_units = 8
+        seg.ancestor_funcs = {"main", "pair", seg.func_name}
+        landscape.segments.append(seg)
+    boundary_inst = (
+        f"main{marker}pair" if common_boundary else f"main{marker}left"
+    )
+    landscape.add_candidate(
+        SWEEP.PipelinePlacement(
+            SWEEP.PipelinePlacement.INSTANCE_OUTPUT,
+            boundary_inst,
+            "pair" if common_boundary else "left_helper",
+            5,
+            5.5,
+            registered_bits=16 if common_boundary else 8,
+            hierarchy_depth=1,
+            span_units=12.0,
+            coherent_boundary=True,
+            ancestor_funcs={"main", "pair"},
+        )
+    )
+    landscape.finalize({})
+    return SWEEP._LANDSCAPE_WITH_EQUAL_WIDTH_BIT_SITES(
+        landscape,
+        {f"{parent}{marker}left": 1, f"{parent}{marker}right": 1},
+    )
+
+
+def test_parallel_bit_frontier_is_one_logical_cut():
+    landscape = _parallel_frontier_landscape(common_boundary=False)
+    cuts, placements = SWEEP.PLAN_PIPELINE_PLACEMENTS(landscape, 6.0)
+    assert cuts == [5], cuts
+    assert len(placements) == 2, placements
+    assert {placement.inst_path for placement in placements} == {
+        f"main{SWEEP.C_TO_LOGIC.SUBMODULE_MARKER}left",
+        f"main{SWEEP.C_TO_LOGIC.SUBMODULE_MARKER}right",
+    }
+    group_ids = {placement.placement_group_id for placement in placements}
+    assert len(group_ids) == 1 and None not in group_ids
+    assert all(
+        placement.kind == SWEEP.PipelinePlacement.BIT_INTERNAL
+        and placement.bit_boundary == 4
+        and placement.source == "parallel_bit_frontier"
+        and placement.placement_group_registered_bits == 16
+        and placement.placement_group_axis_unit == 5
+        and len(placement.placement_group_members) == 2
+        for placement in placements
+    )
+
+
+def test_parallel_bit_frontier_can_move_as_one_physical_group():
+    # Raster requests are provisional. A two-bit leaf requested at unit 4
+    # materializes its sole equal-width boundary at the true midpoint, unit 5.
+    # Rejecting that coherent movement used to select just one arbitrary peer
+    # and left the other parallel path unsliced.
+    requests = []
+    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    for side in ("left", "right"):
+        requests.append(
+            SWEEP.BitPlacementRequest(
+                f"main{marker}{side}",
+                "BIN_OP_PLUS_uint2_t_uint2_t",
+                4,
+                4.5,
+                requested_local_slice=4.5 / 12.0,
+                bit_width=2,
+                leaf_axis_start=0.0,
+                leaf_axis_end=12.0,
+                registered_bits=2,
+            )
+        )
+
+    grouped = SWEEP._PARALLEL_BIT_FRONTIER(requests, 4)
+    assert grouped is not None and len(grouped) == 2, grouped
+    assert {request.placement_group_axis_unit for request in grouped} == {5}
+
+    landscape = SWEEP.SliceLandscape("main", 12, 0.1)
+    physical = SWEEP.MATERIALIZE_BIT_PLACEMENT_REQUESTS(grouped, landscape)
+    assert {placement.axis_unit for placement in physical} == {5}
+    assert len({placement.placement_group_id for placement in physical}) == 1
+
+
+def test_common_coherent_boundary_beats_parallel_leaf_group():
+    landscape = _parallel_frontier_landscape(common_boundary=True)
+    cuts, placements = SWEEP.PLAN_PIPELINE_PLACEMENTS(landscape, 6.0)
+    assert cuts == [5], cuts
+    assert len(placements) == 1, placements
+    assert placements[0].kind == SWEEP.PipelinePlacement.INSTANCE_OUTPUT
+    assert placements[0].inst_path == (
+        f"main{SWEEP.C_TO_LOGIC.SUBMODULE_MARKER}pair"
+    )
+    assert placements[0].placement_group_id is None
+
 def test_internal_selector_is_deterministic_and_strict():
     landscape = _landscape()
     ps = FakeParserState({"main": FakeLogic("main"), "main__step": FakeLogic("step")})
@@ -647,6 +878,11 @@ if __name__ == "__main__":
     test_exact_typed_bit_boundaries_lower_and_hash_distinctly()
     test_internal_exact_bit_boundary_group_resolves_without_raster_aliasing()
     test_chunked_mux_refinement_replaces_outputs_and_covers_terminal_tail()
+    test_parallel_output_frontier_grouping_and_serial_rejection()
+    test_component_stage_budget_and_legacy_fallback()
+    test_parallel_bit_frontier_is_one_logical_cut()
+    test_parallel_bit_frontier_can_move_as_one_physical_group()
+    test_common_coherent_boundary_beats_parallel_leaf_group()
     test_internal_selector_is_deterministic_and_strict()
     test_internal_placement_file_rejects_empty_request()
     print("All typed pipeline-placement tests passed.")

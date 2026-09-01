@@ -123,6 +123,16 @@ def test_get_leaf_bit_width_uses_widest_wire():
     assert RAW_VHDL.GET_LEAF_BIT_WIDTH(logic, None) == 34
 
 
+def test_get_leaf_bit_width_uses_binary_inputs_not_carry_output():
+    logic = FakeLogic(
+        "BIN_OP_PLUS_uint2_t_uint2_t",
+        inputs=["left", "right"],
+        outputs=["out"],
+        wire_to_c_type={"left": "uint2_t", "right": "uint2_t", "out": "uint3_t"},
+    )
+    assert RAW_VHDL.GET_LEAF_BIT_WIDTH(logic, None) == 2
+
+
 def test_get_leaf_bit_width_none_when_no_types_resolve():
     logic = FakeLogic("mystery", inputs=["x"], outputs=[], wire_to_c_type={})
     assert RAW_VHDL.GET_LEAF_BIT_WIDTH(logic, None) is None
@@ -139,12 +149,24 @@ def _landscape_with_one_sliceable_segment(span_units, max_legal_units):
     return landscape
 
 
-def test_narrow_leaf_caps_legal_units_to_width_minus_one():
+def test_narrow_leaf_caps_internal_units_to_width_minus_one():
     # The plan's own documented bad case: a 4-bit op spread over 15 units
-    # used to offer all 15 as legal (accepting 14 cuts). Now capped to 3.
+    # used to offer all 15 as internal sites. It now exposes exactly three
+    # nonempty bit-internal sites plus the distinct operation-output boundary.
     landscape = _landscape_with_one_sliceable_segment(15, max_legal_units=4)
     legal_count = sum(1 for l in landscape.legal if l)
-    assert legal_count <= 3, legal_count
+    assert legal_count == 4, legal_count
+    internal_count = sum(
+        isinstance(p, SWEEP.BitPlacementRequest) for p in landscape.candidates
+    )
+    assert internal_count == 3, internal_count
+
+
+def test_two_bit_leaf_keeps_one_internal_and_one_output_boundary():
+    landscape = _landscape_with_one_sliceable_segment(14, max_legal_units=2)
+    kinds = [p.kind for p in landscape.candidates]
+    assert kinds.count(SWEEP.PipelinePlacement.BIT_INTERNAL) == 1, kinds
+    assert kinds.count(SWEEP.PipelinePlacement.INSTANCE_OUTPUT) == 1, kinds
 
 
 def test_wide_leaf_uncapped_when_width_exceeds_span():
@@ -222,7 +244,9 @@ if __name__ == "__main__":
     test_best_score_none_did_not_meet()
     test_get_leaf_bit_width_uses_widest_wire()
     test_get_leaf_bit_width_none_when_no_types_resolve()
-    test_narrow_leaf_caps_legal_units_to_width_minus_one()
+    test_get_leaf_bit_width_uses_binary_inputs_not_carry_output()
+    test_narrow_leaf_caps_internal_units_to_width_minus_one()
+    test_two_bit_leaf_keeps_one_internal_and_one_output_boundary()
     test_wide_leaf_uncapped_when_width_exceeds_span()
     test_unknown_width_exposes_only_truthful_output_boundary()
     test_bits_per_stage_dict_rejects_interior_zero_bit_stage()

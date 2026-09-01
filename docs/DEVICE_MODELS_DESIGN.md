@@ -291,6 +291,16 @@ barely matters (`early_flatten_opt` 207.74 MHz / 20,053 cells vs.
 `early_flatten_noabc` 207.84 MHz / 19,960 cells, identical DFF and `mux2_1`
 counts).
 
+**The carry-save multiplier improvement did not tune this model.** With
+`MODEL_VERSION = 4`, `early_flatten_noabc`, the liberty data, and all timing
+coefficients held byte-identical, the latchup-style
+`--no_sweep --no_hier_syn` candidate remains 700.640825 MHz at 31 stages for
+a 700 MHz request and reaches 909.794952 MHz at 60 stages for a 701 MHz
+request (the 720/905 MHz probes produce a 61-stage candidate at the same
+measured fmax). That 29.852% gain is attributable to planner/RAW-VHDL
+structure, not a different STA calibration; the full mechanism and evidence
+are recorded in [`SYN_DESIGN.md`](SYN_DESIGN.md)'s History section.
+
 The combined gate and arithmetic acceptance record — the actual divider build
 this model's own recipe and STA feed into — is tracked from
 [`pypeline_TESTS.md`](pypeline_TESTS.md#related); the pipeline-depth-scheduling
@@ -310,25 +320,26 @@ decisions this results section motivated are in
 | Per-stage bit-distribution readback (`*_registers.log`), all hash-verified builds | no zero-bit or degenerate pipeline splits silently wasting a stage |
 | Whole-design STA, our own synthesis, all 7 stage counts | the end-to-end shape bar: monotone, saturating, real 32→64 knee reproduced |
 | Real `pipelinec --syn_tool sky130` build, normal throughput sweep (not `--no_sweep`) | the full integration: per-leaf isolated synthesis, multimain confirmation, sweep convergence, all through the real CLI |
+| Carry-save multiplier, latchup-style first candidate at 31 and 60/61 stages | planner/RAW-VHDL structure raises fmax 700.640825→909.794952 MHz while model V4, recipe, liberty, and coefficients remain unchanged |
 | `run_all` regression suite | PyRTL/default behavior is unaffected — every shared `SYN.py` function this feature touches (`PART_SET_TOOL`, `TOOL_DOES_PNR`, cache-dir keying, mux cache-key logic) still does exactly what it did before for every other tool |
 
 ## 5. Limitations and future work
 
-- **Register overhead is modeled by STA but is not subtracted as one fixed
-  planner-wide constant.** Full registered paths include measured clk->Q,
-  combinational, and setup components in both text and JSON reports. The
-  planner's initial global slice-count budget still uses the measured
-  frontier total without a separate fixed overhead subtraction. A
-  `GET_REGISTER_OVERHEAD_NS()` hook
-  (subtracting `dfxtp_1`'s own clk->Q + `setup_rising` from the per-stage
-  budget) was built and tried, but reverted: on the divider design it
-  produced a sweep that no longer converged (a real planned-sweep run
-  spiraled past 270+ slices without settling, where the unmodified
-  planner reaches its answer in 4-6 iterations) — the tighter budget it
-  imposes appears to interact badly with the sweep's own densify/trim
-  heuristics rather than being a pure, harmless correction. Worth
-  retrying if the interaction is ever root-caused, but not as a silent
-  default.
+- **Component-aware register overhead is gated on complete evidence.** Full
+  registered paths report measured clk-to-Q, combinational, and setup fields
+  in both text and JSON. When every active landscape segment has those fields,
+  the planner normalizes relative weights to the measured combinational root,
+  subtracts one root launch-plus-setup cost from each proposed stage's period,
+  and adds that cost back once in the predicted stage delay. Incomplete
+  sidecar coverage falls back to the legacy full register-to-register weights
+  for the entire landscape rather than mixing cost conventions. This is not
+  the rejected fixed planner-wide subtraction: the old
+  `GET_REGISTER_OVERHEAD_NS()` hook used one `dfxtp_1` clk-to-Q plus setup
+  constant regardless of path evidence. It was tried and reverted because a
+  Divider sweep spiraled past 270 slices instead of converging in 4-6
+  iterations. The remaining limitation is coverage: a newly measured backend
+  without complete component sidecars retains legacy over-prediction until
+  those fields are available.
 - **A "bits"-kind raw HDL leaf's own delay is real and concave in width**
   (measured here: `D(10)=2.607ns`, `D(34)=3.851ns` for `BIN_OP_MINUS`, far
   from linear) but `RAW_VHDL.GET_BITS_PER_STAGE_DICT` does not try to fit or

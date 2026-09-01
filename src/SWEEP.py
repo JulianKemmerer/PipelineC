@@ -196,6 +196,10 @@ class Segment:
         # so the measured frontier total and initial cut-count budget stay
         # unchanged while relative placement geometry may move.
         self.planner_scale = 1.0
+        # Exact leaf timing decomposition, when supplied by the active backend.
+        # Kept separate from Logic.delay so DEVICE_MODELS remains untouched.
+        self.delay_components = None
+        self.registered_bits = None
 
     def __str__(self):
         return f"[{self.start:.1f},{self.end:.1f}) {self.kind} {self.inst_path.split(C_TO_LOGIC.SUBMODULE_MARKER)[-1]}({self.reason})"
@@ -249,6 +253,11 @@ class PipelinePlacement:
         requested_axis_unit=None,
         requested_axis_position=None,
         requested_local_slice=None,
+        placement_group_id=None,
+        placement_group_kind=None,
+        placement_group_members=None,
+        placement_group_registered_bits=None,
+        placement_group_axis_unit=None,
     ):
         if kind not in (
             self.INSTANCE_INPUT,
@@ -381,6 +390,15 @@ class PipelinePlacement:
         self.requested_axis_unit = requested_axis_unit
         self.requested_axis_position = requested_axis_position
         self.requested_local_slice = requested_local_slice
+        self.placement_group_id = placement_group_id
+        self.placement_group_kind = placement_group_kind
+        self.placement_group_members = (
+            None
+            if placement_group_members is None
+            else tuple(sorted(placement_group_members))
+        )
+        self.placement_group_registered_bits = placement_group_registered_bits
+        self.placement_group_axis_unit = placement_group_axis_unit
 
     @property
     def is_physical(self):
@@ -483,6 +501,17 @@ class PipelinePlacement:
                     ),
                 }
             )
+        if self.placement_group_id is not None:
+            rv.update(
+                {
+                    "placement_group_id": self.placement_group_id,
+                    "placement_group_kind": self.placement_group_kind,
+                    "placement_group_members": list(self.placement_group_members),
+                    "placement_group_member_count": len(self.placement_group_members),
+                    "placement_group_registered_bits": self.placement_group_registered_bits,
+                    "placement_group_axis_unit": self.placement_group_axis_unit,
+                }
+            )
         return rv
 
     def __repr__(self):
@@ -519,6 +548,11 @@ class BitPlacementRequest:
         ancestor_funcs=None,
         fixed=False,
         source="planner",
+        placement_group_id=None,
+        placement_group_kind=None,
+        placement_group_members=None,
+        placement_group_registered_bits=None,
+        placement_group_axis_unit=None,
     ):
         self.inst_path = inst_path
         self.func_name = func_name
@@ -536,6 +570,15 @@ class BitPlacementRequest:
         self.ancestor_funcs = tuple(sorted(ancestor_funcs or ()))
         self.fixed = bool(fixed)
         self.source = source
+        self.placement_group_id = placement_group_id
+        self.placement_group_kind = placement_group_kind
+        self.placement_group_members = (
+            None
+            if placement_group_members is None
+            else tuple(sorted(placement_group_members))
+        )
+        self.placement_group_registered_bits = placement_group_registered_bits
+        self.placement_group_axis_unit = placement_group_axis_unit
 
     @property
     def is_physical(self):
@@ -557,7 +600,7 @@ class BitPlacementRequest:
         return rv
 
     def to_dict(self):
-        return {
+        rv = {
             "candidate_id": self.candidate_id,
             "kind": self.kind,
             "placement_role": "planning_site",
@@ -577,6 +620,18 @@ class BitPlacementRequest:
             "fixed": self.fixed,
             "source": self.source,
         }
+        if self.placement_group_id is not None:
+            rv.update(
+                {
+                    "placement_group_id": self.placement_group_id,
+                    "placement_group_kind": self.placement_group_kind,
+                    "placement_group_members": list(self.placement_group_members),
+                    "placement_group_member_count": len(self.placement_group_members),
+                    "placement_group_registered_bits": self.placement_group_registered_bits,
+                    "placement_group_axis_unit": self.placement_group_axis_unit,
+                }
+            )
+        return rv
 
     def __repr__(self):
         return f"BitPlacementRequest({self.candidate_id})"
@@ -585,10 +640,19 @@ class BitPlacementRequest:
 class SliceLandscape:
     """Flattened delay axis of one cut subtree with per-unit legality/weight."""
 
-    def __init__(self, subtree_root_inst, total_units, units_to_ns):
+    def __init__(
+        self,
+        subtree_root_inst,
+        total_units,
+        units_to_ns,
+        root_delay_components=None,
+    ):
         self.subtree_root_inst = subtree_root_inst
         self.total_units = total_units  # int number of delay units
         self.units_to_ns = units_to_ns  # ns per (unweighted) delay unit
+        self.root_delay_components = root_delay_components
+        self.uses_combinational_stage_budget = False
+        self.stage_overhead_ns = 0.0
         self.segments = []
         # Rasterized per delay unit (filled by finalize()):
         self.legal = None  # bool per unit: cut here produces >= 1 register
@@ -630,6 +694,7 @@ class SliceLandscape:
                 seg.func_name,
                 out_u,
                 out_u + 0.5,
+                registered_bits=seg.registered_bits,
                 hierarchy_depth=max(0, depth),
                 span_units=max(0.0, seg.end - seg.start),
                 coherent_boundary=False,
@@ -675,6 +740,27 @@ class SliceLandscape:
 
     def finalize(self, func_delay_scale):
         n = self.total_units
+        component_segments = [
+            seg
+            for seg in self.segments
+            if seg.kind != Segment.LOCKED and seg.end > seg.start
+        ]
+        self.uses_combinational_stage_budget = bool(component_segments) and all(
+            seg.delay_components is not None for seg in component_segments
+        )
+        if self.uses_combinational_stage_budget:
+            overhead_source = self.root_delay_components
+            if overhead_source is None:
+                self.stage_overhead_ns = max(
+                    float(seg.delay_components["launch_clock_to_q_ns"])
+                    + float(seg.delay_components["setup_ns"])
+                    for seg in component_segments
+                )
+            else:
+                self.stage_overhead_ns = (
+                    float(overhead_source["launch_clock_to_q_ns"])
+                    + float(overhead_source["setup_ns"])
+                )
         self.legal = [False] * n
         covered = [False] * n
         locked_only = [True] * n
@@ -699,13 +785,13 @@ class SliceLandscape:
                 and seg.max_legal_units is not None
                 and seg.max_legal_units - 1 < hi - lo
             ):
-                # Reserve one of the width-derived legal positions for the
-                # operation-output boundary added below.  It is a useful
-                # physical boundary, but must not silently increase the
-                # leaf's total useful cut capacity beyond the existing
-                # width-1 model (except a 1-bit op, which has no genuine
-                # interior position but still has a legal output boundary).
-                cap = max(0, seg.max_legal_units - 2)
+                # The width cap applies to INTERNAL bit boundaries only:
+                # W input bits permit W-1 nonempty interior splits.  The
+                # operation-output boundary is an additional graph boundary
+                # after all W bits and can separate downstream logic; counting
+                # it against the interior cap incorrectly leaves a two-bit
+                # adder with no legal midpoint at all.
+                cap = max(0, seg.max_legal_units - 1)
                 span = hi - lo
                 bits_cap_units = set()
                 for k in range(1, cap + 1):
@@ -731,7 +817,18 @@ class SliceLandscape:
                         self.blame[u] = seg
                 elif seg.kind == Segment.ATOMIC and self.blame[u] is None:
                     self.blame[u] = seg
-                planner_scale[u] = max(planner_scale[u], seg.planner_scale)
+                if self.uses_combinational_stage_budget:
+                    seg_planner_scale = seg.planner_scale
+                elif (
+                    seg.delay_components is None
+                    or SYN.USE_COMBINATIONAL_PLANNER_WEIGHTS
+                ):
+                    # Preserve explicit/test-only relative scales. Real partial
+                    # sidecar coverage remains legacy unless the old opt-in is set.
+                    seg_planner_scale = seg.planner_scale
+                else:
+                    seg_planner_scale = 1.0
+                planner_scale[u] = max(planner_scale[u], seg_planner_scale)
                 feedback_scale[u] = max(feedback_scale[u], seg_scale)
         # Deduplicate positions added both as hierarchical child boundaries
         # and leaf-segment boundaries, then make legality derive from what the
@@ -819,14 +916,27 @@ class SliceLandscape:
                 planner_weight[u] = 0.0
             else:
                 planner_weight[u] = planner_scale[u] if covered[u] else 1.0
-        # Normalize planner-only relative geometry back to the old measured
-        # frontier total.  This explicitly avoids the failed fixed-overhead
-        # behavior: component timing can move cuts, but cannot by itself ask
-        # for more stages.  Learned synthesis feedback is applied afterward
-        # and therefore retains its intended ability to densify a hotspot.
+        # With complete component evidence, stage packing uses the measured
+        # combinational path and reserves launch/setup once per proposed stage.
+        # A measured root supplies the exact combinational frontier total;
+        # otherwise the leaf graph composes it. Incomplete evidence retains
+        # the legacy full register-to-register cost byte-for-byte.
         old_total = sum(1.0 for w in planner_weight if w > 0.0)
         planner_total = sum(planner_weight)
-        planner_norm = old_total / planner_total if planner_total > 0.0 else 1.0
+        if self.uses_combinational_stage_budget:
+            root_components = self.root_delay_components
+            if root_components is None:
+                target_total = planner_total
+            else:
+                target_total = (
+                    float(root_components["combinational_delay_ns"])
+                    / self.units_to_ns
+                )
+        else:
+            target_total = old_total
+        planner_norm = (
+            target_total / planner_total if planner_total > 0.0 else 1.0
+        )
         self.weight = [
             planner_weight[u] * planner_norm * feedback_scale[u]
             for u in range(n)
@@ -864,9 +974,17 @@ class SliceLandscape:
                 hard_run_w = 0.0
                 hard_run_blame = None
         self.floor_ns = best_w * self.units_to_ns
+        if best_w > 0.0:
+            self.floor_ns += self.stage_overhead_ns
         self.floor_blame = best_blame
         self.hard_floor_ns = hard_best_w * self.units_to_ns
+        if hard_best_w > 0.0:
+            self.hard_floor_ns += self.stage_overhead_ns
         self.hard_floor_blame = hard_best_blame
+
+    def budget_units_for_period(self, period_ns):
+        combinational_ns = float(period_ns) - self.stage_overhead_ns
+        return max(0.0, combinational_ns) / self.units_to_ns
 
     def floor_mhz(self):
         if self.floor_ns <= 0.0:
@@ -919,7 +1037,12 @@ def BUILD_SLICE_LANDSCAPE(
     # SLICE_DOWN maps fraction f to offset floor(f*map_total); real time size of
     # one map unit follows from the root's (possibly measured) delay
     units_to_ns = (root_logic.delay / SYN.DELAY_UNIT_MULT) / total_units_f
-    landscape = SliceLandscape(subtree_root_inst, int(round(total_units_f)), units_to_ns)
+    landscape = SliceLandscape(
+        subtree_root_inst,
+        int(round(total_units_f)),
+        units_to_ns,
+        root_delay_components=getattr(root_logic, "delay_components", None),
+    )
 
     def output_register_bits(logic):
         bits = 0
@@ -1078,14 +1201,17 @@ def BUILD_SLICE_LANDSCAPE(
                 )
                 continue
             seg.ancestor_funcs = child_ancestors
-            planner_delay = SYN.GET_PLANNER_DELAY(sub_logic)
+            seg.registered_bits = output_register_bits(sub_logic)
+            components = getattr(sub_logic, "delay_components", None)
             if (
-                planner_delay is not None
-                and planner_delay > 0
+                components is not None
                 and sub_logic.delay is not None
                 and sub_logic.delay > 0
             ):
-                seg.planner_scale = planner_delay / float(sub_logic.delay)
+                full_delay_ns = sub_logic.delay / float(SYN.DELAY_UNIT_MULT)
+                combinational_ns = float(components["combinational_delay_ns"])
+                seg.delay_components = dict(components)
+                seg.planner_scale = combinational_ns / full_delay_ns
             landscape.segments.append(seg)
 
     rec(
@@ -1398,6 +1524,193 @@ def _PLACEMENT_RANK_KEY(placement):
     )
 
 
+
+def _IS_INST_ANCESTOR(ancestor, descendant):
+    """True when ``ancestor`` is a strict instance-path ancestor."""
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    return descendant.startswith(ancestor + marker)
+
+
+def _PARALLEL_BIT_FRONTIER(candidates, axis_unit):
+    """Return one synchronized bit-cut group for a parallel timing frontier.
+
+    A delay-axis unit is one *logical* stage boundary, but multiple independent
+    operations can cross it.  Choosing only one such operation is not a cut of
+    the graph frontier: the unsliced peers retain the old critical path.  Group
+    every genuine bit-internal request that strictly crosses the unit center
+    when all members' one-cut physical boundaries materialize in that same
+    unit.  Serial operations cannot both strictly cross one point, so this is
+    an antichain without requiring design- or operator-specific knowledge.
+
+    A coherent instance-output boundary that contains every member already
+    cuts the complete frontier with one register bank and remains preferable.
+    """
+    frontier = axis_unit + 0.5
+    requests_by_inst = {}
+    for candidate in candidates:
+        if not isinstance(candidate, BitPlacementRequest):
+            continue
+        if not (
+            candidate.leaf_axis_start < frontier < candidate.leaf_axis_end
+        ):
+            continue
+        requests_by_inst.setdefault(candidate.inst_path, candidate)
+    requests = sorted(requests_by_inst.values(), key=lambda p: p.candidate_id)
+    if len(requests) < 2:
+        return None
+
+    # Defensive antichain check. Leaves normally make this automatic, but keep
+    # it explicit so future candidate kinds cannot silently turn one logical
+    # frontier into multiple serial stages.
+    paths = [request.inst_path for request in requests]
+    for index, left in enumerate(paths):
+        for right in paths[index + 1:]:
+            if _IS_INST_ANCESTOR(left, right) or _IS_INST_ANCESTOR(right, left):
+                return None
+
+    physical_units = set()
+    for request in requests:
+        if request.bit_width is None or request.bit_width < 2:
+            return None
+        boundary = RAW_VHDL.GET_EQUAL_WIDTH_BIT_BOUNDARIES(
+            request.bit_width, 1
+        )[0]
+        local_slice = boundary / float(request.bit_width)
+        position = request.leaf_axis_start + local_slice * (
+            request.leaf_axis_end - request.leaf_axis_start
+        )
+        physical_units.add(int(math.ceil(position)) - 1)
+    # The raster site is only a request.  Equal-width lowering can move every
+    # member to another unit (for example, a provisional crossing can round
+    # into the unit before the leaf's exact equal-width midpoint). That
+    # movement is safe when the whole frontier
+    # moves together to one physical unit; requiring it to remain in the
+    # provisional unit silently reduced the frontier to one arbitrary leaf.
+    if len(physical_units) != 1:
+        return None
+    physical_axis_unit = next(iter(physical_units))
+
+    # Do not replace a cheaper coherent boundary that encloses the whole
+    # frontier. A branch-local helper boundary encloses only some members and
+    # therefore cannot stand in for this synchronized cut.
+    for candidate in candidates:
+        if not (
+            isinstance(candidate, PipelinePlacement)
+            and candidate.kind == PipelinePlacement.INSTANCE_OUTPUT
+            and candidate.coherent_boundary
+        ):
+            continue
+        if all(
+            candidate.inst_path == request.inst_path
+            or _IS_INST_ANCESTOR(candidate.inst_path, request.inst_path)
+            for request in requests
+        ):
+            return None
+
+    member_ids = tuple(request.candidate_id for request in requests)
+    digest = hashlib.sha256("\n".join(member_ids).encode("utf-8")).hexdigest()[:16]
+    group_id = f"parallel_bit_frontier:{physical_axis_unit}:{digest}"
+    registered_bits = sum(
+        request.bit_width
+        if request.registered_bits is None
+        else request.registered_bits
+        for request in requests
+    )
+    selected = []
+    for request in requests:
+        grouped = request.copy_with(source="parallel_bit_frontier")
+        grouped.placement_group_id = group_id
+        grouped.placement_group_kind = "parallel_bit_frontier"
+        grouped.placement_group_members = member_ids
+        grouped.placement_group_registered_bits = registered_bits
+        grouped.placement_group_axis_unit = physical_axis_unit
+        selected.append(grouped)
+    return selected
+
+def _PARALLEL_OUTPUT_FRONTIER(candidates, axis_unit, landscape):
+    """Return synchronized raw-operation outputs for one graph frontier.
+
+    Multiple parallel gates may end in the same delay-axis unit. Registering
+    only one leaves a reconvergent sibling combinational, so it is not a graph
+    cut. Group the largest set whose real segment intervals overlap strictly;
+    strict overlap excludes serial operations merely quantized into one unit.
+    A coherent ancestor output that covers the set remains the cheaper choice.
+    """
+    segments_by_inst = {
+        seg.inst_path: seg
+        for seg in landscape.segments
+        if seg.end > seg.start
+    }
+    outputs = {
+        candidate.inst_path: candidate
+        for candidate in candidates
+        if (
+            isinstance(candidate, PipelinePlacement)
+            and candidate.kind == PipelinePlacement.INSTANCE_OUTPUT
+            and candidate.inst_path in segments_by_inst
+        )
+    }
+    if len(outputs) < 2:
+        return None
+
+    groups = []
+    for end in sorted(
+        {segments_by_inst[inst].end for inst in outputs}
+    ):
+        probe = end - max(1.0e-12, abs(end) * 1.0e-12)
+        group = [
+            outputs[inst]
+            for inst in sorted(outputs)
+            if (
+                segments_by_inst[inst].start < probe
+                and probe < segments_by_inst[inst].end
+                and int(math.ceil(segments_by_inst[inst].end)) - 1 == axis_unit
+            )
+        ]
+        if len(group) >= 2:
+            groups.append(group)
+    if not groups:
+        return None
+
+    def group_rank(group):
+        known_bits = sum(
+            candidate.registered_bits or 0 for candidate in group
+        )
+        return (-len(group), known_bits, tuple(p.candidate_id for p in group))
+
+    selected = min(groups, key=group_rank)
+    for candidate in candidates:
+        if not (
+            isinstance(candidate, PipelinePlacement)
+            and candidate.kind == PipelinePlacement.INSTANCE_OUTPUT
+            and candidate.coherent_boundary
+        ):
+            continue
+        if all(
+            candidate.inst_path == member.inst_path
+            or _IS_INST_ANCESTOR(candidate.inst_path, member.inst_path)
+            for member in selected
+        ):
+            return [candidate]
+
+    member_ids = tuple(member.candidate_id for member in selected)
+    digest = hashlib.sha256("\n".join(member_ids).encode("utf-8")).hexdigest()[:16]
+    group_id = f"parallel_output_frontier:{axis_unit}:{digest}"
+    registered_bits = None
+    if all(member.registered_bits is not None for member in selected):
+        registered_bits = sum(member.registered_bits for member in selected)
+    grouped_outputs = []
+    for member in selected:
+        grouped = member.copy_with(source="parallel_output_frontier")
+        grouped.placement_group_id = group_id
+        grouped.placement_group_kind = "parallel_output_frontier"
+        grouped.placement_group_members = member_ids
+        grouped.placement_group_registered_bits = registered_bits
+        grouped.placement_group_axis_unit = axis_unit
+        grouped_outputs.append(grouped)
+    return grouped_outputs
+
+
 def MATERIALIZE_BIT_PLACEMENT_REQUESTS(
     placements, landscape, exact_requested=False
 ):
@@ -1513,6 +1826,13 @@ def MATERIALIZE_BIT_PLACEMENT_REQUESTS(
                     requested_axis_unit=request.axis_unit,
                     requested_axis_position=request.axis_position,
                     requested_local_slice=request.requested_local_slice,
+                    placement_group_id=request.placement_group_id,
+                    placement_group_kind=request.placement_group_kind,
+                    placement_group_members=request.placement_group_members,
+                    placement_group_registered_bits=(
+                        request.placement_group_registered_bits
+                    ),
+                    placement_group_axis_unit=request.placement_group_axis_unit,
                 )
             )
     return sorted(physical, key=lambda p: (p.axis_position, p.candidate_id))
@@ -1689,7 +2009,15 @@ def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
                         f"{view.subtree_root_inst}, but no typed physical "
                         "candidate exists there"
                     )
-                selected = [min(candidates, key=_PLACEMENT_RANK_KEY)]
+                selected = None
+                if not exact_requested:
+                    selected = _PARALLEL_OUTPUT_FRONTIER(
+                        candidates, unit, view
+                    )
+                    if selected is None:
+                        selected = _PARALLEL_BIT_FRONTIER(candidates, unit)
+                if selected is None:
+                    selected = [min(candidates, key=_PLACEMENT_RANK_KEY)]
             for placement in selected:
                 if placement.candidate_id in used_ids:
                     continue
@@ -1739,7 +2067,9 @@ def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
     # stage" - 33% more registers to beat a target that was already met. That
     # collapsed the whole 32..64 range onto 64 and left the fmax goal unable
     # to ask for anything in between.
-    budget_ns = budget_units * landscape.units_to_ns
+    budget_ns = (
+        budget_units * landscape.units_to_ns + landscape.stage_overhead_ns
+    )
 
     def _consider(candidate_cuts, candidate_placements):
         nonlocal cuts, placements
@@ -1820,7 +2150,12 @@ def PLAN_PIPELINE_PLACEMENTS(landscape, budget_units, fixed_placements=None):
         # value back into units, so the very stage weight it came from can
         # land a few ULPs above it and be rejected as not fitting.
         relaxed_cuts, relaxed_placements = _lower_at(
-            landscape, (realized / landscape.units_to_ns) + 1e-6
+            landscape,
+            (
+                max(0.0, realized - landscape.stage_overhead_ns)
+                / landscape.units_to_ns
+            )
+            + 1e-6,
         )
         if len(relaxed_cuts) == 0:
             break
@@ -2507,7 +2842,8 @@ def PRINT_TIMING_FAILURES(multimain_timing_params) -> bool:
 
 
 def PREDICTED_STAGE_NS(cuts, landscape):
-    # Worst stage delay implied by the cuts (weighted units -> ns)
+    # Worst combinational stage plus one launch/setup cost. The latter is zero
+    # for legacy backends or incomplete component evidence.
     bounds = [-1] + list(cuts) + [landscape.total_units - 1]
     worst = 0.0
     for i in range(len(bounds) - 1):
@@ -2515,7 +2851,10 @@ def PREDICTED_STAGE_NS(cuts, landscape):
         for u in range(bounds[i] + 1, bounds[i + 1] + 1):
             w += landscape.weight[u]
         worst = max(worst, w)
-    return worst * landscape.units_to_ns
+    stage_ns = worst * landscape.units_to_ns
+    if worst > 0.0:
+        stage_ns += landscape.stage_overhead_ns
+    return stage_ns
 
 
 def APPLY_PIPELINE_PLACEMENTS(
@@ -2890,28 +3229,48 @@ def DROP_NON_DEEPENING_PLACEMENTS(
         return cuts, placements
 
     remaining = list(placements)
-    # Bounded: each successful removal shrinks remaining by one, so this
-    # cannot run more than len(placements) full passes before the gap is
-    # either closed or provably unclosable by this mechanism.
+
+    def _logical_cut_count(active):
+        return len({placement.axis_unit for placement in active})
+
+    # A synchronized physical frontier is one logical cut. Its members are
+    # mutually redundant when tested one at a time, so toggle the complete
+    # group atomically or this cleanup leaves one arbitrary branch registered.
+    # Bounded: every successful pass removes at least one placement group.
     for _ in range(len(placements)):
-        if realized >= len(remaining):
+        if realized >= _logical_cut_count(remaining):
             break
-        dropped_this_pass = False
-        for placement in list(remaining):
+        removal_groups = {}
+        for placement in remaining:
             if placement.kind not in (
                 PipelinePlacement.INSTANCE_INPUT,
                 PipelinePlacement.INSTANCE_OUTPUT,
             ):
                 continue
-            _toggle(placement, False)
+            group_key = placement.placement_group_id
+            if group_key is None:
+                group_key = "single:" + placement.candidate_id
+            removal_groups.setdefault(group_key, []).append(placement)
+
+        dropped_this_pass = False
+        for group_key in sorted(removal_groups):
+            group = removal_groups[group_key]
+            for placement in group:
+                _toggle(placement, False)
             trial_realized = _realized_total()
             if trial_realized == realized:
-                remaining.remove(placement)
+                member_ids = {placement.candidate_id for placement in group}
+                remaining = [
+                    placement
+                    for placement in remaining
+                    if placement.candidate_id not in member_ids
+                ]
                 dropped_this_pass = True
-                if realized >= len(remaining):
+                if realized >= _logical_cut_count(remaining):
                     break
             else:
-                _toggle(placement, True)
+                for placement in group:
+                    _toggle(placement, True)
         if not dropped_this_pass:
             break
     if len(remaining) == len(placements):
@@ -2928,7 +3287,7 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
     os.makedirs(out_dir, exist_ok=True)
     trace_path = os.path.join(out_dir, "placement_trace.json")
     trace = {
-        "schema_version": 5,
+        "schema_version": 6,
         "planner": "typed_physical_placement",
         "internal_forced_mode": (
             None if internal_config is None else internal_config.get("mode")
@@ -2994,6 +3353,46 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
         final_selected.sort(
             key=lambda p: (p["axis_position"], p["candidate_id"])
         )
+        placement_groups_by_id = {}
+        for record in final_selected:
+            group_id = record.get("placement_group_id")
+            if group_id is None:
+                continue
+            group = placement_groups_by_id.setdefault(
+                group_id,
+                {
+                    "placement_group_id": group_id,
+                    "kind": record["placement_group_kind"],
+                    "planned_members": record["placement_group_members"],
+                    "member_count": record["placement_group_member_count"],
+                    "registered_bits": record[
+                        "placement_group_registered_bits"
+                    ],
+                    "planned_axis_unit": record["placement_group_axis_unit"],
+                    "realized_members": [],
+                    "realized_axis_units": [],
+                },
+            )
+            group["realized_members"].append(record["candidate_id"])
+            group["realized_axis_units"].append(record["axis_unit"])
+        placement_groups = []
+        for group_id in sorted(placement_groups_by_id):
+            group = placement_groups_by_id[group_id]
+            group["realized_members"].sort()
+            group["realized_axis_units"] = sorted(
+                set(group["realized_axis_units"])
+            )
+            group["realized"] = (
+                len(group["realized_members"]) == group["member_count"]
+                and group["realized_axis_units"] == [group["planned_axis_unit"]]
+            )
+            if not group["realized"]:
+                raise RuntimeError(
+                    f"Parallel placement group did not materialize as one "
+                    f"frontier: {group}"
+                )
+            placement_groups.append(group)
+
         # A mini-sweep fixes a helper's *interior*.  Its edge banks are a
         # separate full-design choice and are retained here with the topology
         # evidence that selected them.
@@ -3047,6 +3446,7 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
                 ),
             },
             "final_selected": final_selected,
+            "placement_groups": placement_groups,
             "locked_instances": locked_instances,
             "mini_sweep_boundary_diagnostics": plan.mini_sweep_boundary_diagnostics,
         }
@@ -4210,8 +4610,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     if landscape is None:
                         continue
                     budget = (
-                        plan.target_period_ns / landscape.units_to_ns
-                    ) / plan.global_scale
+                        landscape.budget_units_for_period(plan.target_period_ns)
+                        / plan.global_scale
+                    )
                     fixed = plan.fixed_placements.get(subtree_root, ())
                     if plan.placement_mode == "replace":
                         placements = MATERIALIZE_BIT_PLACEMENT_REQUESTS(

@@ -5595,8 +5595,10 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
         f = open(out_path, "w")
         f.write(zero_clk_pipeline_map_str)
         f.close()
-        # Picture too?
-        zero_added_clks_pipeline_map.write_png(out_dir, parser_state)
+        # Large fine-grained designs can have thousands of functions; opt-in
+        # QoR probes may skip diagnostic graph rendering without changing HDL.
+        if os.environ.get("PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG") != "1":
+            zero_added_clks_pipeline_map.write_png(out_dir, parser_state)
 
     # Report worst timing modules
     for main_inst in main_to_min_mhz:

@@ -112,6 +112,31 @@ Each category module can also run standalone, e.g.
 - `src/tests/pypeline_tests/op_qor_bench.py` -- QoR benchmark (not a correctness test,
   not part of `run_all.py`), driving `pypelinec --coarse --sweep` and comparing yosys
   cell-count estimates against synthesized results across the operator library.
+
+- Carry-save multiplier first-candidate QoR probe -- a manual, opt-in sky130
+  acceptance check using the external latchup `solution.py`. Variants change
+  only `CLK_RATE_MHZ`; the latchup-equivalent command is:
+
+  ```text
+  pypelinec <solution.py> --no_sweep --no_hier_syn --out_dir <out>
+  ```
+
+  Accepted model-V4/`early_flatten_noabc` results, with timing inputs held
+  fixed, are:
+
+  | requested MHz | added-clock latency | comb stages | measured fmax |
+  |---:|---:|---:|---:|
+  | 700 | 30 | 31 | 700.640825 MHz |
+  | 701 | 59 | 60 | 909.794952 MHz |
+  | 720 | 60 | 61 | 909.794952 MHz |
+  | 905 | 60 | 61 | 909.794952 MHz |
+
+  The 700 MHz result is the preserved baseline; the first deeper family at a
+  701 MHz request is 29.852% faster and remains below 64 stages. The accepted
+  mapped candidate has 7,164 cells, 4,605 sequential cells, and zero unmapped
+  cells. The exact 720 MHz final VHDL passes 51 products with continuous data,
+  bubbles, ordering, and exact 60-clock latency.
+
 - `src/tests/pypeline_tests/divider_qor_bench.py` -- opt-in sky130 autopipelining
   benchmark and correctness gate, also excluded from `run_all.py` because a full gate
   Divider sweep can take about an hour. It has unchanged-logic arithmetic and gate-level
@@ -233,13 +258,20 @@ Each category module can also run standalone, e.g.
   rendering/reconstruction, scalar and aggregate cache-key equivalence,
   collapsed-mode compatibility, and the exception that makes built-in typed
   MUXes cacheable while leaving unrelated user functions non-cacheable.
+
 - `src/tests/pypeline_tests/inst/typed_pipeline_placement_test.py` -- fast
   unit coverage for typed placement lowering and mini-sweep boundary
   coalescing. It builds synthetic serial, fanout, fanin, alias, and
   intervening-operation graphs without an external synthesis tool, proving
   that a repeated helper chain uses one input-or-output bank per direct edge,
   respects `FUNC_NO_ADD_IO_REGS`, and fingerprints the selected lock banks.
+  It also covers synchronized parallel-output and bit-internal frontiers,
+  rejects serial peers, proves a provisional bit frontier may move together
+  to one equal-width physical unit, and preserves a cheaper coherent ancestor
+  boundary. The floor/bit-cap tests cover grouped physical fingerprints and
+  atomic removal of a non-deepening boundary group.
   Full WireGuard synthesis remains the integration/physical QoR gate.
+
 - WireGuard integration (opt-in, long-running) -- from a generated-output-free
   copy of `wireguard-fpga/3.build/pypeline_build`, run
   `PYPELINEC=<repo>/src/pypelinec ./build.py --shared --sim --syn_tb`.

@@ -73,13 +73,27 @@ emit uneven chunks without changing the legacy equal-width behavior. It is
 used by controlled QoR experiments and by the bounded packed-MUX refinement
 described below.
 
-`GET_LEAF_BIT_WIDTH` gives the planner the same widest-input/output width the
-generators use. An `N`-bit operation has at most `N - 1` useful internal
-registers. Both the placement candidate inventory and
+`GET_LEAF_BIT_WIDTH` gives the planner the same effective packed width the
+generators use. Binary arithmetic is sized from its inputs, so a widened carry
+output is not mistaken for another splittable operand bit. An `N`-bit
+operation has at most `N - 1` useful internal registers. Both the placement
+candidate inventory and
 `GET_BITS_PER_STAGE_DICT` reject schedules that would create an interior
 zero-bit stage. Leading or trailing zero-bit work can be meaningful when it
 represents an operation-boundary register; an empty stage in the interior is
 padding and is not legal.
+
+The two-stage, two-input-bit unsigned `PLUS` case uses a carry-prefix lowering.
+Stage 0 registers both bits' propagate/generate values and the low result bit;
+stage 1 combines the registered upper prefix with the registered low carry.
+The ordinary one-bit-at-a-time lowering left a complete full-adder path in the
+second stage, so splitting the leaf did not shorten its critical path. This
+specialization changes neither the arithmetic nor the requested latency and
+is independent of the target clock, device, and multiplier source shape.
+Unsplit additions and all wider/chunkier additions retain the existing
+inferred-add lowering. The additional prefix fields are part of the normal raw
+leaf pipeline record, so hashing and stage transfer include them exactly like
+the existing carry and partial-result fields.
 
 ## Packed MUX bit chunks and one-logic-level leaves
 
@@ -135,9 +149,9 @@ useful metadata and a tie-break, not a requirement for finding stages.
 
 Fast tests under `src/tests/pypeline_tests/inst/` cover leaf split
 classification, the 1LL cap, width caps, equal-width and exact allocation,
-typed bit-internal placement, chunked packed-MUX refinement, composite
-SLV conversion/reconstruction, and the absence
-of padding-only interior stages. Any
+typed bit-internal placement, chunked packed-MUX refinement, composite SLV
+conversion/reconstruction, the two-stage two-bit carry-prefix structure, and
+the absence of padding-only interior stages. Any
 new generator or classification change should add both structure assertions
 and a generated-VHDL elaboration/simulation case. Real sky130 comparisons are
 opt-in benchmarks because they are too expensive for the normal unit suite.
