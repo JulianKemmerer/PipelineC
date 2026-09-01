@@ -280,7 +280,8 @@ pypelinec ./examples/pypeline/pipeline.py --comb
 ```
 **To produce a pipeline that meets timing at operating frequency `F`**:
 
-* First [have tools installed](https://github.com/JulianKemmerer/PipelineC/wiki/Running-the-Tool). (Or install the free [PyRTL](https://ucsbarchlab.github.io/PyRTL/) Python package and provide no `PART()`, for fast generic gate-delay estimation. For real, calibrated sky130 ASIC timing instead, use `PART("sky130_fd_sc_hvl")` or `--syn_tool sky130` — see [`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md).)
+* First [have tools installed](https://github.com/JulianKemmerer/PipelineC/wiki/Running-the-Tool).
+  * Or use `PART("sky130")` / `--syn_tool sky130` to use a custom internal ASIC timing model.
 * And then [open and edit](../examples/pypeline/pipeline.py) `pipeline.py` to specify the target frequency and FPGA part:
   * Ex. `@MAIN(F)` says the `my_pipeline` function is a single top level `@MAIN` function intended to run at `F`MHz — see [Top-Level Entry Points](pypeline_guide.md#top-level-entry-points).
   * Ex. `PART("LFE5UM5G-85F-8BG756C")` for `ghdl+yosys+nextpnr` `ECP5U` flow.
@@ -360,38 +361,3 @@ for `--context` cycles before and after the first divergence (default 10; pass
 `--context 0` to suppress it). See the guide's
 [`sim_print(..., debug=True)`](pypeline_guide.md#sim_print-debugtrue--tagged-prints-for-pypeline_sim_debugpy)
 section for how to tag prints for this tool.
-
-# Documentation conventions
-
-`docs/*.md` are **reference documents**: they describe the compiler and language as
-they are today, in the present tense. They are not logbooks.
-
-- **`git log` is the change record.** Don't duplicate it in prose — no dated entries,
-  no "recently added"/"now supports"/"used to"/"this round", no session write-ups, no
-  status updates.
-- When behavior changes, **edit the affected section in place** so it states the
-  current behavior.
-- If the *reason* something is the way it is is worth keeping — an alternative that
-  was tried and lost, a bug class that shaped an invariant — put it in that file's
-  `## History` section, if it has one. History entries are keyed by **topic, not
-  date**: revise the existing entry that owns the topic rather than appending a new
-  one. Keep a fact there only if it still changes a decision today (an alternative
-  someone would otherwise retry, or a measurement still used as a regression
-  reference).
-- **Numbers carry the conditions they were measured under** (tool, FPGA/ASIC part,
-  model version, a commit hash where it pins a specific artifact) — not the date they
-  were taken. A bare number with the date stripped rots silently; state the
-  conditions instead and it stays meaningful indefinitely.
-- **Cite another doc by anchor, never by section number**, from source comments as
-  much as from other docs — `SYN_DESIGN.md#karatsuba-base-case-threshold`, not
-  "`SYN_DESIGN.md` section 10". A numbered section is a moving target the moment
-  that file's structure changes; a named anchor keyed to a heading's own text
-  survives renumbering, and a stale one is at least greppable by the words in it.
-
-**Recording a change — worked example.** Say you switch the default comparator
-implementation. Don't add a dated changelog line announcing the switch. Instead: (1)
-update the section that states the current default so it now names the new one; (2) if
-the previous default is something a future reader might reasonably retry, revise the
-`History` entry that already owns comparator selection so it names the new winner and
-why the previous one lost. The entry stays about one paragraph — it does not grow by
-one paragraph per change.

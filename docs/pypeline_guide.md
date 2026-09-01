@@ -4,11 +4,6 @@ Pypeline is the Python front-end for PypelineC.
 
 For getting started information see the [README](README.md).
 
-> **Reference, not a logbook.** Describe the language as it is now, in the present
-> tense. No dated entries, no session write-ups — `git log` is the change record.
-> When behavior changes, edit the affected section in place. See
-> [documentation conventions](README.md#documentation-conventions).
-
 ## Table of Contents
 
 **Part I — The language**
