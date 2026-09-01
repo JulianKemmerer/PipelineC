@@ -4,6 +4,11 @@ Pypeline is the Python front-end for PypelineC.
 
 For getting started information see the [README](README.md).
 
+> **Reference, not a logbook.** Describe the language as it is now, in the present
+> tense. No dated entries, no session write-ups — `git log` is the change record.
+> When behavior changes, edit the affected section in place. See
+> [documentation conventions](README.md#documentation-conventions).
+
 ## Table of Contents
 
 **Part I — The language**
@@ -2394,8 +2399,8 @@ picks how, and the default is normally right:
 | `v2` | an equality comparator per state per unit, in priority chains | O(states × units) |
 | `onehot` | one bit per state; every control signal is a bit read | zero |
 
-`v2` exists for A/B comparison — it is what the tool used to emit, and it is
-measurably both bigger and slower. `onehot` can eliminate more decode but spends
+`v2` exists for A/B comparison against `v3` — it is measurably both bigger and
+slower. `onehot` can eliminate more decode but spends
 a flip-flop per state where v3 spends `log2(states)`. `auto` evaluates that
 trade with the active area model and prints both scores; the resolved choice is
 part of the schedule's identity, so switching it re-measures rather than
@@ -2919,7 +2924,7 @@ on the argument side and one on the return side. The name itself is yours (by co
 suffixed `_if`); there is no `_ready` or `ready_for_` affix anywhere in the mechanism. Direction
 comes from whichever side holds the feedforward half. Declaring only one half is a hard error
 *when such a module is instantiated by an interface function*, naming the port and the missing
-side — that shape used to mis-wire silently. `@hw_func` also raises `InterfacePortError` at
+side, since an undetected single half would mis-wire silently. `@hw_func` also raises `InterfacePortError` at
 decoration time whenever a signature declares one half of a port without the other, so the
 mistake surfaces even for a module no interface function has composed yet. The one legitimate
 lone half is an intentional [valid-only stream](#streams-stream_t) (data + valid,
@@ -3949,6 +3954,11 @@ built yet."
 | Language | **Multiple/early `return` statements** | Not supported | A function may have at most one `return`, and it must be the function's final top-level statement; assign to a variable inside `if`/`else` branches and return it once at the end (see [Control flow](#your-first-hardware-function)) |
 | Language | **Casting to `char_t`, an `@enum`, or an array type** | Not supported | Scalar int/uint casting, and compound (struct/`@interface`-half) casting via `@cast`/`register_cast`, are supported (see [Casting](#casting)) — these three destination kinds are the exceptions |
 | Language | **Hardware signals as loop conditions** | Not supported | `for`/`while` loop bounds must be compile-time Python integers (fully unrollable) |
+| Language | **`break` inside a loop** | Not supported | Restructure the loop body (e.g. an early-exit flag checked each iteration) instead |
+| Language | **Tuple unpacking in a `for` loop target, or of a closure constant** | Not supported | `for a, b in pairs:` and `a, b = some_closure_tuple` both fail to elaborate; index the tuple/pair explicitly instead (`p[0]`, `p[1]`) |
+| Language | **Exotic closure value types** | Restricted | A closure capture must be a C-type, `int`/`bool`/`None`, a callable, or a list/tuple of the above — other captured Python object types fail to elaborate |
+| Language | **A call target that is a subscript expression** | Not supported | `leaf_fns[j](...)` (indexing into a list of distinct per-index closures) fails with `AttributeError: 'Subscript' object has no attribute 'id'`; give each differently-shaped callable its own bare-name local instead of indexing into a list of them |
+| Language | **A slice used directly as a call argument** | Not supported | `f(ae[hi:lo], ...)` fails the same way as a subscripted call target; assign the slice to a typed local first (`x: t = ae[hi:lo]`, then `f(x, ...)`) |
 | Language | **`from module import *`** | Not supported | Only qualified imports (`import module`) are supported |
 | Language | **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead |
 | Language | **Control flow inside an interface function** | Rejected | `if`/`for`/`while` and conditional expressions in an interface-function body raise an `InterfaceError`; route conditional steering through an explicit handshake mux/demux module instead (see [`@interface`](#bidirectional-ports-interface)). Interfaces are also point-to-point: fan-out of a single interface, dangling outputs and input-to-output bypass are rejected — fan out through a module with an [array port](#array-ports-fan-out) instead. Array *input* ports are not supported. Compile-time `for`/`while` unrolling in ordinary `@hw_func`s is unaffected |

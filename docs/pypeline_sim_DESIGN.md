@@ -7,6 +7,13 @@ For the shared pypeline.py type system and `SimVal` foundations, see
 [`pypeline_DESIGN.md`](pypeline_DESIGN.md). For the hardware elaborator, see
 [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md).
 
+> **Reference, not a logbook.** Describe the system as it is now, in the present
+> tense. No dated entries, no session write-ups — `git log` is the change record.
+> When behavior changes, edit the affected section in place; when the *reason* is
+> worth keeping, revise the matching entry in this file's `History` section rather
+> than appending a new one. See
+> [documentation conventions](README.md#documentation-conventions).
+
 ## Table of Contents
 
 **In-Process Sim Layer (`pypeline.py`)**
@@ -254,27 +261,27 @@ under `id(wrapped_float_add)` (since `scope=float_add` refers to the wrapped nam
 non-zero from `Reg[T] = val`) or zero when no initializer was given. This models hardware
 power-on reset that applies VHDL signal initial values.
 
-**Outermost-call register buffer (bug fixed 2026-07-11).** `prev_active` (already used to
+**Outermost-call register buffer.** `prev_active` (already used to
 gate the once-per-cycle `_sim_input_cache` reset) also gates a register-write buffer: the
 outermost `sim_call()` opens one via `_sim_reg_begin_buffer()` before running `func`, and
 flushes it via `_sim_reg_flush_buffer()` in `finally` — the same buffered-commit machinery
 `pypeline_sim.py` opens once per clock cycle (see below). This makes one top-level
 `sim_call()` behave like one atomic hardware clock edge for every `Reg[T]`/`@sim_model`
-write in the whole call tree, no matter how deep. It fixes a state-consistency bug where a
-`Feedback[T]` convergence loop (see below) re-invoking a *stateful child* `@hw_func`
-multiple times per call let a later convergence pass observe the child's `Reg` value as
-already written by an earlier pass — since `_sim_reg_write` committed immediately with no
-buffer active, unlike the parent's own `Reg` locals (which are reset from a local
-`__reg_init_<name>` snapshot each pass, never re-committed until final convergence). Because
-`_sim_reg_read` only ever reads committed `_sim_reg_state` (see [`Reg[T]`
+write in the whole call tree, no matter how deep: without it, a `Feedback[T]` convergence
+loop (see below) re-invoking a *stateful child* `@hw_func` multiple times per call would let
+a later convergence pass observe the child's `Reg` value as already written by an earlier
+pass, since an unbuffered `_sim_reg_write` commits immediately — unlike the parent's own
+`Reg` locals, which reset from a local `__reg_init_<name>` snapshot each pass and never
+re-commit until final convergence. Because `_sim_reg_read` only ever reads committed
+`_sim_reg_state` (see [`Reg[T]`
 Simulation](#regt-simulation--stateful-registers-across-clock-cycles) below), buffering every
 write for the whole outer call is sufficient: every convergence pass, at any nesting depth,
-now sees the same true cycle-start state, and only the last pass's write survives once the
-outermost call's buffer flushes. `pypeline_sim.py` was never vulnerable to this bug — it
-already brackets an entire clock cycle (every MAIN, every convergence re-evaluation) with
-its own single `_sim_reg_begin_buffer()`/`_sim_reg_flush_buffer()` pair, and never resets
-`_sim_active` between cycles, so `sim_call(main_fn)` always sees `prev_active == True` there
-and skips this branch — no double-buffering conflict.
+sees the same true cycle-start state, and only the last pass's write survives once the
+outermost call's buffer flushes. `pypeline_sim.py` is never at risk of the corresponding
+failure mode — it already brackets an entire clock cycle (every MAIN, every convergence
+re-evaluation) with its own single `_sim_reg_begin_buffer()`/`_sim_reg_flush_buffer()` pair,
+and never resets `_sim_active` between cycles, so `sim_call(main_fn)` always sees
+`prev_active == True` there and skips this branch — no double-buffering conflict.
 
 ### `sys.path` bootstrap — and the one case it doesn't cover
 
@@ -348,8 +355,10 @@ via a small `_bitwise_ctype(self, o)` helper: `self._ctype` if set, else `o._cty
 is a `SimVal`, else `None` (bare, untyped result — same as arithmetic ops with no typed
 operand). When a ctype is resolved, the result is also masked to that ctype's width/
 signedness under `SIM_STRICT_ARITH` (mirroring `__invert__`/`__lshift__` and every
-arithmetic dunder) — see "Bug fixed 2026-07-11" below for why this masking step is required,
-not just the ctype tag.
+arithmetic dunder) — tagging without masking is unsound, since `_sim_cast`'s fast path
+(`if type(val) is SimVal and val._ctype is ctype: return val`, used by every struct-field/
+typed-local assignment) trusts an existing matching ctype tag without re-checking the
+value's range; see History for the real bug this class of gap once caused.
 
 `__rand__`/`__ror__`/`__rxor__` (plain-int `op` `SimVal`, e.g. `0xFF & some_uint32`) mirror
 `__radd__`/`__rsub__`: `o` is always a non-`SimVal` int here (Python only calls the reflected
@@ -357,63 +366,20 @@ method when the left operand isn't a `SimVal` subclass instance), so they just r
 `self._ctype` directly (and mask against it) — AND/OR/XOR are commutative, so no promotion
 logic is needed.
 
-**Bug fixed 2026-07-04:** `__and__`/`__or__`/`__xor__` originally did
-`return SimVal(int(self) ^ int(o))` — constructing a **`_ctype=None`** result even when both
-operands were fully-typed. Bit-manipulation primitives (`rotl`, `rotr`, `bswap`, `bit_dup`,
-`bit_assign`) infer their operand's width via `_bit_manip_width`, which — when `_ctype` is
-`None` — falls back to `int(v).bit_length()`. That fallback silently returns a width
-*narrower* than the real type whenever the value happens to have leading zero bits (e.g.
-`0x0EFAF702` has `_ctype` uint32_t but `.bit_length() == 28`), so `rotl(x ^ y, n)` on an
-untyped XOR result rotated within the wrong (too-narrow) field — a completely different,
-but equally plausible-looking, 32-bit result. This was the root cause of a native-sim-only
-ciphertext corruption in the wireguard-fpga ChaCha20 port: `rotl(state[d] ^ a1, 16)` inside
-`quarter_round` lost `_ctype` at the `^`, corrupting every round's output while
-`chacha20_init` (no bitwise ops) matched GHDL exactly and scalar `rotl` alone (independently
-tested) was fine. Found by bisecting with matched `sim_print` probes between
-`pypeline_sim.py` and `pipelinec --comb --sim --cocotb --ghdl` at successively earlier
-points in the call chain (chacha20_block_step → chacha20_init) until one boundary matched
-and the next didn't, then hand-verifying the suspect intermediate value against the `rotl`
-formula directly in Python — the 28-bit-vs-32-bit rotation was diagnostic. See
-`project_pypeline_fixes` memory (Fix 9) for the full bisection method, worth reusing for any
-future "native sim disagrees with GHDL on a bit-manipulated value" bug.
-
-**Bug fixed 2026-07-11:** the 2026-07-04 fix above made `__and__`/`__or__`/`__xor__` (and the
-reflected forms) *preserve* a ctype tag, but none of them actually *masked* the raw int
-result to that ctype's width — unlike every other typed dunder in the class. This made
-`_sim_cast`'s fast path (`if type(val) is SimVal and val._ctype is ctype: return val`, used
-by every struct-field/typed-local assignment) unsound: a bitwise op combining an
-out-of-range operand with a properly-typed sibling could produce a `SimVal` tagged with the
-*correct* target ctype but an out-of-range value, which `_sim_cast` then let through
-unmasked. Concretely: `o.field = ~some_reg | y` where `some_reg: Reg[uint1_t]` holds a value
-*committed from a previous sim cycle* — see the `_TypedAnnAssignRewriter` scalar-`Reg[T]`
-tracking gap fixed below, which is what actually produced the out-of-range operand in this
-case — masked correctly on cycle 1 (power-on) but returned raw two's-complement (`-2`/`-1`
-instead of `0`/`1`) on later cycles, because `~some_reg` lost its ctype (untyped fallback),
-picked the *sibling* operand's ctype back up via `_bitwise_ctype` in the `|`, and `_sim_cast`
-trusted that tag without re-masking. Fixed by adding the same mask/sign-extend step already
-used by `__invert__`/`__lshift__`/arithmetic to all six bitwise dunders. Root-caused via
-three cross-checked codebase explorations plus direct source reads while debugging
-`dsp/fir_interp.py`'s zero-stuffer (`~have | last_beat`); see `project-uint1-field-mask-bug`
-memory for the full repro and cycle-by-cycle trace.
-
-**Bug fixed 2026-07-24:** `_typed_new` (struct constructor kwargs, see
-[pypeline_DESIGN.md](pypeline_DESIGN.md#struct-decorator)) had the same class of
-unsound "trust the existing ctype tag" shortcut, but for the *constructor* path rather than
-bitwise dunders: it only cast a scalar-int kwarg to the field's declared `ftype` when the
-value wasn't already a typed `SimVal` (`if type(v) is not SimVal or v._ctype is None`). This
-assumed any already-typed `SimVal` must already be typed *to this field* — false whenever
-arithmetic promotes width, e.g. `uint4_t + int` yields a `SimVal` tagged `uint5_t`, not
-`uint4_t`. So `p_t(c=a.c+1)` at `uint4_t` max (`a.c=15`) constructed a field holding the raw,
-unmasked `16` tagged `uint5_t`, while the corresponding field-assignment form
-`o.c = a.c+1` correctly wrapped to `0` (assignment always recasts unconditionally via
-`_sim_cast_deep`, regardless of the RHS's existing ctype). Fixed by making the constructor
-path unconditionally call `_sim_cast(v, ftype)` too — `_sim_cast`'s own fast path already
-no-ops when the ctype already matches `ftype` exactly, so this costs nothing in the common
-already-correctly-typed case. Native-sim-only divergence: VHDL elaboration
+**Struct constructor kwargs are always re-cast to the field's declared type**, not trusted
+from an existing ctype tag. `_typed_new` (struct constructor kwargs, see
+[pypeline_DESIGN.md](pypeline_DESIGN.md#struct-decorator)) unconditionally calls
+`_sim_cast(v, ftype)` on every kwarg — it must not skip the cast merely because `v` already
+arrives as a typed `SimVal`, since an already-typed value is not necessarily typed *to this
+field*: arithmetic promotion can widen a ctype (`uint4_t + int` yields a `SimVal` tagged
+`uint5_t`, not `uint4_t`), so `p_t(c=a.c+1)` at `uint4_t` max (`a.c=15`) must still wrap to
+`0`, matching what the corresponding field-assignment form (`o.c = a.c+1`, which always
+recasts unconditionally via `_sim_cast_deep`) computes. `_sim_cast`'s own fast path already
+no-ops when the ctype matches `ftype` exactly, so the unconditional call costs nothing in
+the common already-correctly-typed case. Native-sim-only: VHDL elaboration
 (`PY_TO_LOGIC.py`) never calls `_typed_new` — it detects struct-construction call nodes
-structurally and generates per-field VHDL assignments directly from annotated types, so
-hardware codegen was never affected. Regression test:
-`src/tests/pypeline_tests/inst/struct_ctor_narrow_test.py`.
+structurally and generates per-field VHDL assignments directly from annotated types.
+Regression test: `src/tests/pypeline_tests/inst/struct_ctor_narrow_test.py`.
 
 ### `_TypedAnnAssignRewriter` — Truncation at Every Typed Assignment
 
@@ -601,9 +567,8 @@ matching C's `T x[A][B]` and `PY_TO_LOGIC.py`'s elaboration-side `_array_first_d
   A scalar inner type (e.g. `have: Reg[uint1_t]`) is exempt from Rule 4 (no nested `.field=`/
   `[i]=` chain to rewrite), but **is** tracked into `_declared_types` (Rule 2's dict) so a
   later bare `have = expr` reassignment in the same body is still auto-cast, exactly like a
-  non-`Reg` scalar local — fixed 2026-07-11 (see "Bug fixed 2026-07-11" above); previously
-  this tracking was skipped entirely for scalar `Reg[T]`/`Feedback[T]`, letting a plain
-  reassignment commit an untyped/unmasked raw Python int as the register's persisted state
+  non-`Reg` scalar local — without this tracking, a plain reassignment could commit an
+  untyped/unmasked raw Python int as the register's persisted state
 - Tuple-unpack targets: `a, b = f()`
 - Whole-variable reassignment of a compound local (`rv = some_full_value`) — no cast or
   lens rewrite applies; plain Python rebinding is already correct
@@ -659,9 +624,7 @@ This is what lets every sim-side string boundary — `sim_call` args/kwargs, `si
 return values, `Reg[T]` init, struct-field construction, and local var/field assignment
 inside a simulated function body — accept a bare Python `str` on the way in and compare
 equal / `str()`-format correctly on the way out, with **no user-facing conversion
-functions**. (Earlier revisions of this feature required calling
-`str_to_char_array`/`char_array_to_str` explicitly at each of these boundaries; both were
-removed once `CharArray` made the conversion automatic everywhere.)
+functions** — `CharArray` makes the conversion automatic at every boundary.
 
 `CharArray`'s `__str__` is deliberately distinct from `strlen()`, which returns the array's
 *declared capacity* (see [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support)), not
@@ -688,20 +651,19 @@ function instead of a bespoke `isinstance(v, str)` branch:
    bare string *and* a nested list-of-strings (2D grid) are handled uniformly. This covers
    a string literal passed directly as a call argument (e.g. `echo_name("Current:")`) and
    `sim_call(fn, s="hello")`.
-3. **Return-value casting** (`_run_body`) — previously array-typed return values were never
-   cast at all (only scalar-int returns were); now a `_is_char_like_array(ret_t)` return
-   type routes the result through `_sim_cast_deep` too, which is what makes
-   `sim_call(some_char_returning_fn)` produce a `CharArray` (comparable to `str`) rather
-   than a plain list.
+3. **Return-value casting** (`_run_body`) — every returned value is cast, not just
+   scalar-int returns: a `_is_char_like_array(ret_t)` return type routes the result through
+   `_sim_cast_deep` too, which is what makes `sim_call(some_char_returning_fn)` produce a
+   `CharArray` (comparable to `str`) rather than a plain list.
 4. **`_typed_new`** (struct construction) — the array-of-scalar field-casting branch now
    also accepts a bare `str` kwarg (e.g. `packet_t(name="sensor_1", ...)`), routed through
    `_sim_cast_deep` the same way.
 
 `_build_reg_sim_func`'s per-register init-value evaluation routes **every** `Reg[T] = <literal>`
 init value through `_sim_cast_deep(init_val, T)` before storing it in `reg_zeros` — not just
-the `str` case described next (fixed 2026-07-11; previously a scalar or array-of-scalar
-literal init, e.g. `have: Reg[uint1_t] = 1`, was stored as a bare untyped Python value,
-the same failure mode as the `_declared_types` gap above but present from cycle 0). This is
+the `str` case above, but every scalar or array-of-scalar literal init (e.g.
+`have: Reg[uint1_t] = 1`), so an unmasked bare Python value can never become a register's
+persisted state, from cycle 0 onward. This is
 safe/idempotent for every shape `_sim_cast_deep` accepts: struct dict/ctor values pass
 through its `_fields` fast path unchanged, arrays recurse element-wise, and scalars get
 cast/masked.
@@ -1141,9 +1103,9 @@ register land in that one shared buffer, and `_sim_reg_read` never observes them
 whole outer call finishes and the buffer flushes, so a child re-invoked mid-convergence always
 reads the true cycle-start value regardless of what earlier passes wrote.
 
-**Bug fixed 2026-07-11:** before the outermost-`sim_call` buffer existed, a `Feedback[T]`
-wire driven from a *stateful child's* `Reg`-backed output corrupted values on cycles where
-that child's old and new `Reg` value differed. Concretely:
+**Without the outermost-call buffer, a `Feedback[T]` wire driven from a *stateful child's*
+`Reg`-backed output would corrupt values** on cycles where that child's old and new `Reg`
+value differ. Concretely:
 
 ```python
 @hw_func
@@ -1163,15 +1125,16 @@ def parent(x: uint1_t) -> p2_t:
 ```
 
 `consumer_child`'s presence (any consumer of `fb`, stateful or not, forces at least one extra
-convergence pass) meant `producer_child` was re-invoked more than once per outer call. Each
-invocation's `finally`-block commit (`_sim_reg_write(__ip__, "r", r)`) wrote straight to
-`_sim_reg_state` with no buffer active, so the *second* pass's read of `r` returned the
-*first* pass's freshly-written value instead of the true previous-cycle value — one cycle's
-output ended up a mix of two convergence passes. This exact composition is what corrupted
-`include/pypeline/dsp/fir_interp.py`'s window state (`fir_ready: Feedback[uint1_t]` driven
-from `make_stream_pipeline`'s `Reg`-backed ready signal), producing `[15, 75, 45, 0, 0]`
-instead of the correct impulse response `[15, 30, 45, 30, 15]`. Regression coverage:
-`inst/feedback_reeval_test.py` (`native_sim_tests.py`).
+convergence pass) means `producer_child` is re-invoked more than once per outer call. Without
+the buffer, each invocation's `finally`-block commit (`_sim_reg_write(__ip__, "r", r)`) would
+write straight to `_sim_reg_state` with no buffer active, so the *second* pass's read of `r`
+would return the *first* pass's freshly-written value instead of the true previous-cycle
+value — one cycle's output ending up a mix of two convergence passes. This is the composition
+`inst/feedback_reeval_test.py` (`native_sim_tests.py`) regression-tests, transcribed from a
+real corruption in `include/pypeline/dsp/fir_interp.py`'s window state
+(`fir_ready: Feedback[uint1_t]` driven from `make_stream_pipeline`'s `Reg`-backed ready
+signal): the wrong composition produces `[15, 75, 45, 0, 0]` instead of the correct impulse
+response `[15, 30, 45, 30, 15]`.
 
 **Interface-function-generated instances simulate through this exact path.** A function annotated
 with a whole `@interface` (see `docs/PY_TO_LOGIC_DESIGN.md`) compiles to an ordinary `@hw_func`
@@ -1189,10 +1152,11 @@ against hand-written explicit twins.
 
 **Annotation re-evaluation.** `_build_reg_sim_func` re-`exec`s the function definition, so its
 parameter and return annotations are re-evaluated in a rebuilt namespace. A name used *only* in
-an annotation is not captured as a free variable, which used to make factory-local types
+an annotation is not captured as a free variable — naively, that would make factory-local types
 invisible here (`x: some_fb_t[n]` → `NameError` on `some_fb_t`, even though `n`, used in the body,
-resolved). Each parameter's already-resolved annotation object is now bound to a generated name
-and substituted into the AST, which works for every annotation form rather than bare names only.
+resolves). Each parameter's already-resolved annotation object is instead bound to a generated
+name and substituted into the AST, which works for every annotation form rather than bare names
+only.
 
 Note the limit of that guarantee: it covers the *wiring*, not port **types**. Native sim is
 duck-typed, so passing a bare `uint1_t` where a module expects an interface's `{ready}` struct
@@ -1273,13 +1237,13 @@ Consequences per context:
   converges exactly like ordinary comb logic. The final post-convergence pass's buffered
   copy is what `_sim_reg_flush_buffer` commits — state advances exactly once per cycle,
   computed from converged inputs.
-- **`Feedback[T]` loops in Layer 1** (bug fixed 2026-07-11) — a model called inside a
-  feedback convergence loop now also commits once per outermost `sim_call`, not once per
-  convergence iteration, since the outermost call's write buffer covers the whole call
-  tree the same way `pypeline_sim.py`'s per-cycle buffer does. This is the same fix that
-  makes nested `Reg[T]` hw_funcs inside feedback loops convergence-safe — both write
-  through the identical `_sim_reg_write` buffered-commit path (a `sim_model` instance is
-  just another `_sim_reg_state` entry, keyed by `"__sim_model__"`).
+- **`Feedback[T]` loops in Layer 1** — a model called inside a feedback convergence loop
+  commits once per outermost `sim_call`, not once per convergence iteration, since the
+  outermost call's write buffer covers the whole call tree the same way `pypeline_sim.py`'s
+  per-cycle buffer does. This is the same mechanism that makes nested `Reg[T]` hw_funcs
+  inside feedback loops convergence-safe — both write through the identical
+  `_sim_reg_write` buffered-commit path (a `sim_model` instance is just another
+  `_sim_reg_state` entry, keyed by `"__sim_model__"`).
 - **Side effects** — model `__call__` bodies multi-fire during convergence; keep them
   side-effect-free or check `pypeline._sim_converging` (the rule `@sim_output` encodes).
 
@@ -1352,9 +1316,9 @@ Wire names are singletons — not keyed by instance path. Every wire discovered 
 so reading a wire that simply hasn't been driven yet this cycle returns that zero — never a
 bare `0` for a struct/array-typed wire. Reading a wire name that was never discovered at all
 (an actual bug, not a normal "not yet driven" state) raises `RuntimeError` rather than
-silently returning `0` — this used to fall back to a bare `int 0`, which crashed confusingly
-several frames away the first time a caller accessed a field on it (see `_discover_wire_names`
-below for the discovery gap that used to trigger this).
+silently returning `0` — a bare `int 0` fallback would instead crash confusingly several
+frames away, the first time a caller accessed a field on it. See `_discover_wire_names`
+below for how wire names are discovered.
 
 ```python
 def _sim_wire_read(name: str)               # returns current value; records reader dependency; raises if name was never discovered
@@ -1467,8 +1431,8 @@ helper — not just one fixed call site.
 `_build_reg_sim_func`'s bailout check (whether to run `fn` unmodified vs. a rewritten body)
 is keyed on whether *this function's own body* actually references a wire
 (`_GlobalWireRewriter.modified`), not merely whether the defining *module* declares any
-wire — this is what keeps every pre-existing `@sim_output` usage (none of which reference a
-wire directly) running the exact same code path as before this capability was added.
+wire — so an ordinary `@sim_output` usage that never references a wire directly always runs
+the unmodified body, unaffected by this capability.
 
 **Caveat:** a `@sim_output` function that *does* reference a wire directly, and *also* uses
 `global x; x = ...` to mutate an unrelated plain Python module-level variable, only sees
@@ -1804,8 +1768,8 @@ The per-cycle sequence in `_run_clock_cycle` (`pypeline_sim.py`):
    cycle-constant and every MAIN starts queued each cycle, so no requeue is needed.
 2. Convergence loop and final pass run as usual. Reads of the pipelined MAIN's output wires see
    the step-1 delayed values; the MAIN's own writes this cycle go into its collector.
-   `_sim_current_main` is now set around the **final pass** too (previously only the convergence
-   loop set it), so final-pass writes divert correctly.
+   `_sim_current_main` is set around the **final pass** too, not just the convergence loop, so
+   final-pass writes divert correctly.
 3. `_sim_reg_flush_buffer()` — the clock edge for ordinary `Reg[T]`.
 4. **Push** — append `deepcopy(collector)` to each pipelined MAIN's queue and clear the
    collector. The deepcopy prevents later-cycle mutation from aliasing queued values.
@@ -1821,16 +1785,16 @@ back) needs no read-set discovery or snapshotting, and it keeps `sim_assert`s *i
 pipelined MAIN evaluating on real current values (no spurious warm-up failures). The cost is the
 per-wire-uniformity assumption in Limitations below.
 
-#### Driver-side correctness fixes this required
+#### Latency invariants the driver depends on
 
-Two pre-existing behaviours in the build had to change so that the latency the native sim
-emulates provably equals the latency the VHDL was built with:
+Two invariants in the build make the latency the native sim emulates provably equal the
+latency the VHDL was built with:
 
 - **`HARVEST_AUTOPIPELINE_LATENCIES` invalidates every `TimingParams` memo first.** The sweep
   planner mutates submodule `_slices` *after* container totals were first memoized, so a stale
-  memoized `GET_TOTAL_LATENCY` could report e.g. 10 while the entity actually written (and
-  confirmed by synthesis) is 26 clocks. The harvest now clears all caches before walking.
-- **The pin-and-confirm loop no longer stops on "timing met" alone.** It stops only when the
+  memoized `GET_TOTAL_LATENCY` could otherwise report e.g. 10 while the entity actually written
+  (and confirmed by synthesis) is 26 clocks. The harvest clears all caches before walking.
+- **The pin-and-confirm loop does not stop on "timing met" alone.** It stops only when the
   post-confirmation harvest *equals* the latencies this pass's Python consumed. Realizing the
   seeded fractional slices hierarchically (into pipelined built-in `div`/`mult` entities with
   their own stage granularity) can change an instance's total latency even on a *passing*
@@ -2081,11 +2045,11 @@ subclass has `__getitem__`.
   `make_fifo` Simulation Model below), so it and, transitively, `make_stream_fifo`/
   `make_stream_pipeline` are now simulable.
 - **`sim_model` class models and nested `Reg[T]` hw_funcs inside Layer-1 `Feedback[T]`
-  loops** — commit once per outermost `sim_call`, not once per convergence iteration
-  (fixed 2026-07-11: the outermost `sim_call` now opens a register-write buffer for its
-  whole duration, the same machinery `pypeline_sim.py` uses per clock cycle; see
-  `sim_call` above). Model side effects still multi-fire during convergence in both
-  layers — keep model bodies side-effect-free or check `_sim_converging`.
+  loops** — commit once per outermost `sim_call`, not once per convergence iteration, since
+  the outermost `sim_call` opens a register-write buffer for its whole duration, the same
+  machinery `pypeline_sim.py` uses per clock cycle (see `sim_call` above). Model side
+  effects still multi-fire during convergence in both layers — keep model bodies
+  side-effect-free or check `_sim_converging`.
 
 ---
 
@@ -2125,9 +2089,9 @@ keyed by `(int_value, ctype)`. VGA control signals and step counters produce hea
 
 The hot path for `+`, `-`, `*`, `<<`, `>>`, `~`, `-` (unary):
 
-**Inline masking**: operators previously called `_sim_cast(result, out_ctype)`. Now the
-`_sim_cast_param_cache` lookup and masking are inlined directly in each operator, eliminating
-one function-call frame per arithmetic operation. **~0.5 s saved.**
+**Inline masking**: the `_sim_cast_param_cache` lookup and masking are inlined directly in
+each operator (rather than a separate `_sim_cast(result, out_ctype)` call), eliminating one
+function-call frame per arithmetic operation. **~0.5 s saved.**
 
 **Direct `._ctype_name` access**: replaced `str(self._ctype)` (Python method dispatch) with
 `self._ctype._ctype_name` (direct slot access). The `r` operand from `_infer_literal_ctype`
@@ -2289,3 +2253,43 @@ invokes `pipelinec`), no `pipelinec` elaboration/synthesis happens in this scrip
 [pypeline_TESTS.md](pypeline_TESTS.md) for the full category breakdown (`elab`,
 `elab_introspect`, `unit`, `synth`, `build_report`, `native_vs_vhdl_sim`, `known_issues`), the
 `run_all.py` CLI, and the `native_vs_vhdl_sim` probe-placement rules.
+
+## History
+
+Why things are the way they are. Entries are keyed by **topic, not date** — when something
+changes, revise the entry that owns that topic rather than adding a new one. Keep a fact
+here only if it still changes a decision today: an alternative someone would otherwise
+retry, or a measurement that is still a live regression reference.
+
+### Bitwise operator ctype preservation and masking
+
+`SimVal.__and__`/`__or__`/`__xor__` (and their reflected/inverted forms) must both
+*preserve* a ctype tag when an operand has one, and *mask* the result to that ctype's
+width/signedness — tagging without masking is unsound, because `_sim_cast`'s fast path
+(`if type(val) is SimVal and val._ctype is ctype: return val`, used by every struct-field/
+typed-local assignment) trusts an existing matching ctype tag without re-checking the
+value's range. A `SimVal` combining an out-of-range operand with a correctly-typed sibling
+can end up tagged with the *correct* target ctype but an out-of-range value, which then
+passes through `_sim_cast` unmasked. Concretely: `o.field = ~some_reg | y` where
+`some_reg: Reg[uint1_t]` and `y` is an ordinary correctly-typed `uint1_t` local can leave
+`o.field` holding a raw two's-complement `int` instead of `0`/`1` — `~some_reg` is the
+operand that loses its masking, `_bitwise_ctype` still picks up `y`'s ctype for the `|`
+result (see `_bitwise_ctype`'s own docstring above), and `_sim_cast` trusts that tag
+downstream without re-checking the value. This is unrelated to whether `some_reg`'s own
+*write* is masked — `_TypedAnnAssignRewriter`'s [Rule 2 tracking of `Reg[T]`
+scalars](#_typedannassignrewriter--truncation-at-every-typed-assignment) already
+guards that side; this bug is entirely on the *read* side, at the bitwise combine. A
+second, independent real instance of this same shape (found separately from the
+wireguard one below) is `include/pypeline/dsp/fir_interp.py`'s output-ready computation,
+`o.stream_in_if.ready = ~have | last_beat` with `have: Reg[uint1_t]`. This class of bug
+produces a recognizable symptom:
+native sim disagrees with GHDL only on a bit-manipulated value, because bit-manipulation
+primitives (`rotl`, `rotr`, `bswap`, `bit_dup`, `bit_assign`) infer operand width via
+`_bit_manip_width`, which falls back to `int(v).bit_length()` when `_ctype` is `None` —
+silently narrower than the real type whenever the value has leading zero bits. Found via a
+real native-sim-only ciphertext corruption in the wireguard-fpga ChaCha20 port
+(`rotl(state[d] ^ a1, 16)` inside `quarter_round` losing its ctype at the `^`, corrupting
+every round's output while `chacha20_init`, which uses no bitwise ops, matched GHDL
+exactly). Bisecting with matched `sim_print` probes between `pypeline_sim.py` and
+`pipelinec --comb --sim --cocotb --ghdl` at successively earlier points in the call chain is
+the general technique for localizing this class of divergence.

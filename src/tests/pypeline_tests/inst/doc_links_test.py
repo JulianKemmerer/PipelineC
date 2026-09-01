@@ -18,6 +18,14 @@ Also asserts, specific to the post-restructure `docs/pypeline_guide.md`:
   - no heading anchor in the file starts with a digit (i.e. no leftover
     `#11-types`-style numbered anchors from the old numbered-heading scheme).
 
+And asserts the docs/ directory reads as reference material, not a logbook
+(see "Documentation conventions" in docs/README.md):
+  - no heading under docs/ names a date, outside a '## History' section.
+  - no body text under docs/ names an ISO date, outside a '## History'
+    section or a fenced code block.
+  - every docs/*.md design doc and guide carries the convention note, and
+    docs/README.md itself carries the anchor that note links to.
+
 Run standalone: python3 doc_links_test.py
 """
 
@@ -222,6 +230,135 @@ def test_guide_has_no_numbered_anchors():
         f"docs/pypeline_guide.md has heading anchor(s) starting with a digit "
         f"(leftover numbered-heading scheme): {numbered}"
     )
+
+
+DOCS_DIR = os.path.join(REPO_ROOT, "docs")
+
+_DATED_HEADING_RE = re.compile(r"\d{4}-\d{2}(-\d{2})?")
+_DATED_TEXT_RE = re.compile(r"\d{4}-\d{2}-\d{2}")
+_HISTORY_HEADING_RE = re.compile(r"^##\s+History\s*$")
+_CONVENTION_MARKER = "Reference, not a logbook"
+
+# design docs + guides that must carry the convention note (docs/README.md
+# carries the anchor the note links to, and is checked separately).
+_DOCS_WITH_CONVENTION_NOTE = [
+    "AUTOFSM_DESIGN.md",
+    "DEVICE_MODELS_DESIGN.md",
+    "PY_TO_LOGIC_DESIGN.md",
+    "RAW_VHDL_DESIGN.md",
+    "SYN_DESIGN.md",
+    "VHDL_DESIGN.md",
+    "pipelinec_to_pypeline.md",
+    "pypeline_DESIGN.md",
+    "pypeline_TESTS.md",
+    "pypeline_guide.md",
+    "pypeline_sim_DESIGN.md",
+]
+
+
+def _history_line_range(text: str):
+    """1-indexed (start, end) range [start, end) covered by a top-level
+    '## History' section: from the heading itself to just before the next
+    heading of level 1 or 2, or end of file. None if there is no such
+    section."""
+    lines = text.split("\n")
+    start = None
+    for i, line in enumerate(lines, start=1):
+        if _HISTORY_HEADING_RE.match(line):
+            start = i
+            break
+    if start is None:
+        return None
+    end = len(lines) + 1
+    for i in range(start + 1, len(lines) + 1):
+        if re.match(r"^#{1,2}\s", lines[i - 1]):
+            end = i
+            break
+    return (start, end)
+
+
+def _docs_md_files() -> list:
+    prefix = DOCS_DIR + os.sep
+    return [f for f in _find_md_files(REPO_ROOT) if f.startswith(prefix)]
+
+
+def test_docs_have_no_dated_headings():
+    violations = []
+    for f in _docs_md_files():
+        with open(f, encoding="utf-8") as fh:
+            text = fh.read()
+        hist_range = _history_line_range(text)
+        lines = text.split("\n")
+        in_fence = False
+        for i, line in enumerate(lines, start=1):
+            stripped = line.strip()
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            m = _HEADING_RE.match(line)
+            if not m:
+                continue
+            if hist_range and hist_range[0] <= i < hist_range[1]:
+                continue
+            if _DATED_HEADING_RE.search(m.group(2)):
+                violations.append((f, i, line.strip()))
+    if violations:
+        out = [f"{len(violations)} dated heading(s) found outside any History section:"]
+        for f, i, line in violations:
+            rel = os.path.relpath(f, REPO_ROOT)
+            out.append(f"  {rel}:{i}: {line}")
+        raise AssertionError("\n".join(out))
+
+
+def test_docs_have_no_dated_body_text():
+    violations = []
+    for f in _docs_md_files():
+        with open(f, encoding="utf-8") as fh:
+            text = fh.read()
+        hist_range = _history_line_range(text)
+        lines = text.split("\n")
+        in_fence = False
+        for i, line in enumerate(lines, start=1):
+            stripped = line.strip()
+            if stripped.startswith("```") or stripped.startswith("~~~"):
+                in_fence = not in_fence
+                continue
+            if in_fence:
+                continue
+            if hist_range and hist_range[0] <= i < hist_range[1]:
+                continue
+            if _DATED_TEXT_RE.search(line):
+                violations.append((f, i, line.strip()))
+    if violations:
+        out = [f"{len(violations)} dated body line(s) found outside History/code fences:"]
+        for f, i, line in violations:
+            rel = os.path.relpath(f, REPO_ROOT)
+            out.append(f"  {rel}:{i}: {line}")
+        raise AssertionError("\n".join(out))
+
+
+def test_docs_have_convention_note():
+    missing = []
+    for name in _DOCS_WITH_CONVENTION_NOTE:
+        path = os.path.join(DOCS_DIR, name)
+        if not os.path.isfile(path):
+            missing.append(f"{name}: file not found")
+            continue
+        with open(path, encoding="utf-8") as fh:
+            text = fh.read()
+        if _CONVENTION_MARKER not in text:
+            missing.append(f"{name}: missing '{_CONVENTION_MARKER}' convention note")
+    readme = os.path.join(DOCS_DIR, "README.md")
+    with open(readme, encoding="utf-8") as fh:
+        readme_text = fh.read()
+    if "documentation-conventions" not in _anchor_set(readme_text):
+        missing.append("README.md: missing '#documentation-conventions' anchor")
+    if missing:
+        raise AssertionError(
+            "Documentation convention note check failed:\n  " + "\n  ".join(missing)
+        )
 
 
 if __name__ == "__main__":

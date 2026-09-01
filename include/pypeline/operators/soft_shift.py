@@ -29,7 +29,7 @@ Masking tricks that avoid the MUX entity looked competitive on *comb* delay
 alone but priced worse once sliced, because PyRTL's per-op delay model
 under-predicts them relative to what real synthesis measures, which throws
 off the coarse slicer's even-fraction cut placement -- a reminder that comb
-delay alone is not the decision metric (see docs/SYN_DESIGN.md section 8's
+delay alone is not the decision metric (see docs/SYN_DESIGN.md#9-operator-qor-benchmark's
 "pipelined per-stage delay at n_cuts >= 1, not comb delay" rule, which
 applies here too).
 """

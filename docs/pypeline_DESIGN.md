@@ -7,6 +7,13 @@ internals (Logic() graph, FuncElaborator, CONST_REF_RD, etc.) see
 (`@hw_func`, `_build_reg_sim_func`, multi-MAIN runner, performance tuning) see
 [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md).
 
+> **Reference, not a logbook.** Describe the system as it is now, in the present
+> tense. No dated entries, no session write-ups — `git log` is the change record.
+> When behavior changes, edit the affected section in place; when the *reason* is
+> worth keeping, revise the matching entry in this file's `History` section, if it
+> has one, rather than appending a new one. See
+> [documentation conventions](README.md#documentation-conventions).
+
 ## Table of Contents
 
 - [Overview](#overview)
@@ -109,15 +116,15 @@ make_int_t(width: int)  → intN_t        # e.g. make_int_t(33) → int33_t
 `_make_ctype(name)` is the primitive: creates a class with `_CTypeMeta` metaclass and
 `_ctype_name = name`. Both factories call it.
 
-### Floating-point types have moved to `include/pypeline/floating_point.py`
+### Floating-point types
 
 `make_float_t(E, M)` (builds a `@struct` NamedTuple type with three fields: `sign`
 (1 bit), `exp` (E bits), `man` (M bits), matching IEEE 754 layout for standard
 sizes, plus a `.as_const(value)` staticmethod converting a Python `float` to the
 field dict at elaboration time using `struct.pack` for FP32/FP64 or a rebased
 FP64 approximation for other widths, and a `__float__` method — the inverse of
-`.as_const` — for reading a value back out as a Python `float`) is no longer part
-of core `pypeline.py`: it lives in the `floating_point` library alongside the
+`.as_const` — for reading a value back out as a Python `float`) lives in the
+`floating_point` library, not core `pypeline.py`, alongside the
 arithmetic/conversion factories built on it (`make_float_adder`,
 `make_float_subtractor`, `make_float_multiplier`, `make_float_divider`,
 `make_float_converter`, `make_float_to_int`, `make_int_to_float`,
@@ -306,11 +313,8 @@ Python's own `NamedTuple.__new__` semantics). Two code paths:
   `ftype` exactly. This matters because arithmetic on a struct field's value can promote its
   width (e.g. `uint4_t + int` yields a `uint5_t`-tagged `SimVal`) — a value carrying *any*
   ctype is not the same as a value already typed to *this* field, so recasting down to `ftype`
-  is required. (Bug fixed 2026-07-24: an earlier version skipped the cast whenever `v` was
-  already a typed `SimVal`, so `p_t(c=a.c+1)` at `uint4_t` max silently returned `16` instead
-  of wrapping to `0` — divergent from field assignment (`o.c = a.c+1`), which always recasts
-  via `_sim_cast_deep` regardless of the RHS's existing ctype. See
-  [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#regt-simulation--stateful-registers-across-clock-cycles).)
+  is required, matching what field assignment (`o.c = a.c+1`) already does via
+  `_sim_cast_deep` regardless of the RHS's existing ctype.
   A field whose type is an array of a scalar pypeline int (e.g. `keep: uint1_t[n]`) and whose
   value is a plain Python `list` (e.g. a list-literal argument) has each element cast
   individually via `_sim_cast(e, elem_ctype)`, using the element ctype resolved by
@@ -324,10 +328,10 @@ Nested-struct fields are passed through unchanged in both modes — a struct-typ
 arriving here is either already a typed instance (built through its own `_typed_new`) or a
 raw object the elaborator/sim layer doesn't need to touch at this level. Without the
 array-of-scalar handling above, a raw list literal passed straight into a struct constructor
-(e.g. `narrow_bus_t(data=[0]*n, keep=[0]*n)`) would silently keep untyped `int` elements —
-this previously broke `~`/other bit-width-sensitive ops on values read back out of such a
-field (see [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#regt-simulation--stateful-registers-across-clock-cycles)
-for the full mechanism and the matching `_make_sim_zero`/Rule 4 fixes).
+(e.g. `narrow_bus_t(data=[0]*n, keep=[0]*n)`) would silently keep untyped `int` elements,
+breaking `~`/other bit-width-sensitive ops on values read back out of such a field (see
+[`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#regt-simulation--stateful-registers-across-clock-cycles)
+for the full mechanism, including the matching `_make_sim_zero`/Rule 4 handling).
 
 **Hardware transparency:** `SimVal` subclasses `int`, and `_RawField` subclasses `int`, so
 struct instances returned by `as_const` or any constant helper are seen as plain integers by
@@ -992,9 +996,8 @@ register_unary_operator(op, operand_t, impl, scope=None)
 
 (`BIN_OP_MAP` in `PY_TO_LOGIC.py` is the source of truth mapping each `ast`
 operator node type to its op string.) Comparison operators are consulted by
-`PY_TO_LOGIC._elab_compare` the same way `_elab_binop` consults `PLUS`/`MINUS`/etc
--- previously `_elab_compare` never looked at the registry at all, so no type
-(struct or int) could override `<`/`<=`/`>`/`>=`; that gap is closed.
+`PY_TO_LOGIC._elab_compare` the same way `_elab_binop` consults `PLUS`/`MINUS`/etc,
+so any type (struct or int) can override `<`/`<=`/`>`/`>=` by registering against it.
 
 ### Global Registries
 
@@ -1281,15 +1284,13 @@ no future copy/serialization protocol can silently reintroduce the corruption; a
 `test_deepcopy_and_copy_not_reinterpreted_as_cast` is the direct regression test.
 
 On a registry **miss**: a destination struct with exactly **one field** falls back to
-positional field-fill — the same thing `T(x)` meant before casting existed, and what
+positional field-fill — the same thing `T(x)` means when no cast is involved, and what
 `copy.deepcopy`'s `__getnewargs__`-based reconstruction of an *unregistered* one-field
 struct relies on continuing to mean. Any other miss (multi-field struct, no cast
-registered) is a hard `ElaborationError` naming both types — this is a **strict
-improvement** over the previous behavior in one respect: before casting existed, a
-1-positional-arg call on a multi-field struct silently bound only the first field via
-`zip(callee._fields, init_node.args)`, leaving the rest undriven (the same class of bug
-`struct_ctor_positional_test.py` guards against for the *0-positional-args-missing*
-case) — now it raises instead of silently under-driving.
+registered) is a hard `ElaborationError` naming both types, rather than silently binding
+only the first field via `zip(callee._fields, init_node.args)` and leaving the rest
+undriven (the same class of bug `struct_ctor_positional_test.py` guards against for the
+*0-positional-args-missing* case).
 
 At elaboration, casts are recognized in `PY_TO_LOGIC._elab_call` (`_is_cast_call`/
 `_is_pypeline_type`, checked immediately after the `AUTOPIPELINE`/`AUTOFSM` special
@@ -1317,22 +1318,21 @@ equivalently, a callee whose `_pypeline_interface_role` resolves it directly):
 3. `PY_TO_LOGIC._check_no_indirect_interface_pairing_return` — would otherwise ban a
    plain function from returning an interface half.
 
-(3) also got a real fix along the way: it used to whitelist the sanctioned
-`intrf.fwd_t(...)`/`intrf.fb_t(...)` idiom by **literal AST attribute name**
-(`call_node.func.attr in ("fwd_t", "fb_t")`), which misses every factory-stamped alias of
-the exact same class — `fir.out_fb_t(...)`, `stream_fifo.fb_t(...)`, a closure alias with
-a different name — wrongly raising whenever such a call happened to const-fold. It now
-resolves the callee via `_try_eval_const` and checks `_pypeline_interface_role`/
-`_pypeline_is_cast` on the **value**, which is alias-proof by construction.
+(3) resolves the callee via `_try_eval_const` and checks `_pypeline_interface_role`/
+`_pypeline_is_cast` on the **value**, which is alias-proof by construction — it does not
+key off literal AST attribute names, so a factory-stamped alias of the sanctioned
+`intrf.fwd_t(...)`/`intrf.fb_t(...)` idiom (`fir.out_fb_t(...)`, `stream_fifo.fb_t(...)`,
+a closure alias with a different name) is recognized correctly rather than wrongly
+raising whenever such a call happens to const-fold. See
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#interface-half-bans-three-exemptions)
+for the elaborator-side counterpart of this same exemption.
 
 The bans this does **not** touch: `.fwd_t`/`.fb_t` may still only be constructed inline at
 a real port crossing — a bare local of that type is still an `ElaborationError`
 regardless of whether the value came from a cast or a keyword constructor, since that ban
-keys off the *declared type*, not the call shape. (An earlier version of the cast
-de-classification accidentally skipped this ban for cast-shaped calls, since the ban check
-lived inside the same `if ... and not is_cast_call` block as the struct-ctor routing it
-was gating — `cast_error_test.py`'s
-`test_bare_local_fwd_t_still_banned_via_cast_call` is the regression test.)
+keys off the *declared type*, not the call shape. `cast_error_test.py`'s
+`test_bare_local_fwd_t_still_banned_via_cast_call` is the regression test for this
+distinction.
 
 ### Interface wrap/unwrap casts (`stream.make_stream_interface`)
 
@@ -1397,8 +1397,8 @@ above, using generic (matcher-based) registrations so one call covers every widt
 soft_add.py    make_soft_add_ripple, make_soft_add_carry_select, make_soft_sub
 soft_mult.py   make_soft_mult_shift_add, make_soft_mult_karatsuba
 soft_div.py    make_soft_div, make_soft_mod           (restoring division, unsigned)
-soft_cmp.py    make_soft_cmp_sub(op)                  (widen/subtract/sign-bit, default)
-               make_soft_cmp_bitwise(op)              (MSB-first magnitude compare, alt)
+soft_cmp.py    make_soft_cmp_prefix(op)               (parallel-prefix magnitude compare, default)
+               make_soft_cmp_sub_swapped(op)          (widen/subtract/sign-bit, narrow-width alt)
 soft_shift.py  make_soft_shift_barrel_sl, make_soft_shift_barrel_sr
 soft_misc.py   make_soft_negate, make_soft_eq(negate), make_soft_mux
 soft.py        activation layer -- register_soft_*() functions, register_soft_ops()
@@ -1428,11 +1428,26 @@ register_soft_mult_karatsuba()     # overrides it -- last registration wins
 the built-in inferred path (via the `INFERRED` sentinel) for one scope, overriding a broader
 soft registration everywhere else.
 
-### Default replacements (SW_LIB removal)
+### Current defaults
 
-Five operator families never had an inferred/raw-VHDL lowering and used to reach
-`C_TO_LOGIC.BUILD_LOGIC_AS_C_CODE` — `SW_LIB.py`'s C generation, shelled out through `cpp`
-and pycparser: int unary `NEGATE`, int `GT`/`GTE`/`LT`/`LTE`, `DIV`, `MOD`, and
+Four operator families are QoR-selected, not arbitrary:
+
+| operator | current default | why |
+|---|---|---|
+| `GT`/`GTE`/`LT`/`LTE` | parallel-prefix soft comparator (`make_soft_cmp_prefix`) | Vivado-confirmed wins 28/32 (op,width) combinations at `n_cuts≥1`, margin widening with width (up to 40% faster at uint64 `GTE`); the 4 losses are `GTE`/`LTE` at 8/16-bit widths, where the older operand-swapped subtract is still cheaper — PyRTL's own sweep missed all four |
+| variable-amount `SL`/`SR` (`make_soft_shift_barrel_sl/sr`) | minimal mux-stage-count barrel | comb delay, the slicing floor, and cuts-to-floor are all set purely by how many mux stages the chain has |
+| `register_soft_mult_karatsuba`'s `threshold` | 16 | below 16 bits, Karatsuba's recombination cost is never earned back — splitting is pure loss at every cut count measured |
+| `register_soft_mult()` (`INFERRED_MULT`) | carry-save / deferred-carry (`make_soft_mult_carry_save`, `max_width=2`) | a direct port of a real sky130 reference design; its ASIC-shaped reduction beats `make_soft_mult_shift_add`'s FPGA-carry-chain-shaped tree |
+
+The QoR investigations that established these live in
+[`SYN_DESIGN.md`](SYN_DESIGN.md#history)'s History section.
+
+### Default replacements for SW_LIB-only operators
+
+Five operator families have no inferred/raw-VHDL lowering, so without an explicit soft
+registration they would reach `C_TO_LOGIC.BUILD_LOGIC_AS_C_CODE` — `SW_LIB.py`'s C
+generation, shelled out through `cpp` and pycparser: int unary `NEGATE`, int
+`GT`/`GTE`/`LT`/`LTE`, `DIV`, `MOD`, and
 variable-amount shift (`SL`/`SR` with a non-constant right operand). `PY_TO_LOGIC.PARSE_FILE`
 and `pypeline_sim.py`'s `_import_design` both call
 `operators.soft.register_sw_lib_replacements()` once per process, globally, *before* the

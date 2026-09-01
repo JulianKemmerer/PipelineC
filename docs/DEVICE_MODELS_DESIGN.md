@@ -17,6 +17,13 @@ never reproduce. See [`SYN_DESIGN.md`](SYN_DESIGN.md) for the pipelining
 sweep this feeds into, and [`AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md) for the
 sibling feature whose delay budget comes from the same `SYN_TOOL` interface.
 
+> **Reference, not a logbook.** Describe the system as it is now, in the present
+> tense. No dated entries, no session write-ups — `git log` is the change record.
+> When behavior changes, edit the affected section in place; when the *reason* is
+> worth keeping, revise the matching entry in this file's `History` section rather
+> than appending a new one. See
+> [documentation conventions](README.md#documentation-conventions).
+
 ---
 
 ## 1. Selecting the tool
@@ -85,8 +92,8 @@ than adding an unvalidated wire-load guess.
 Sections (a) and (b) depend on nothing but the stdlib — no `SYN`/`VHDL`
 import anywhere in them — so both can be driven standalone, with zero
 PipelineC integration, directly against an externally-supplied netlist. That
-property is what let the engine be validated (Results, below) before any
-compiler wiring existed at all.
+property is what let the engine be validated (§3) before any compiler wiring
+existed at all.
 
 **(c) The `SYN_TOOL` surface.** `IS_INSTALLED`, `SYN_AND_REPORT_TIMING[_MULTIMAIN]`,
 `ParsedTimingReport`/`PathReport` — modelled directly on `src/PYRTL.py`, the
@@ -108,9 +115,8 @@ flatten;
 write_json <out>.json
 ```
 
-This is recipe `early_flatten_noabc`, selected 2026-08-20 by reproducing
-latchup.app's own post-early-flatten netlists — see "Matching latchup's
-early-flatten flow" below.
+This is recipe `early_flatten_noabc` — chosen because it reproduces
+latchup.app's own post-early-flatten netlists; see §3.
 
 `run_sta` then runs directly in-process — no second Python subprocess, unlike
 PyRTL's flow which shells out to run its own generated script.
@@ -135,12 +141,12 @@ and the full model/cache identity. A purely combinational isolated leaf has
 zero clock-to-Q and setup by construction; a registered full design normally
 has all three components.
 
-The historical no-early-flatten flow remains the `current` **control recipe**.
-The opt-in synthesis-recipe matrix also has fixed internal variants for
-`synth -flatten`, flattening with `-noabc` before the single liberty ABC pass,
-and the former production `early_flatten_opt` sequence. Each variant has a
-distinct artifact and cache identity. There is no public arbitrary-flags
-interface.
+The no-early-flatten flow remains available as the `current` **control
+recipe**. The opt-in synthesis-recipe matrix also has fixed internal variants
+for `synth -flatten`, flattening with `-noabc` before the single liberty ABC
+pass, and the `early_flatten_opt` sequence (production under `MODEL_VERSION`
+3, before it was superseded — see History). Each variant has a distinct
+artifact and cache identity. There is no public arbitrary-flags interface.
 
 The closed recipe IDs are `current`, `synth_flatten`, `synth_flatten_noabc`,
 `early_flatten_opt`, and the production `early_flatten_noabc`, selected only
@@ -148,14 +154,15 @@ by the opt-in benchmark's internal `PIPELINEC_INTERNAL_SKY130_RECIPE`
 environment variable. The production identity has no recipe suffix. Every
 non-production mapped netlist, script, log, leaf-delay cache, and
 minimum-period cache carries a versioned `__recipe_<id>_v1` suffix, including
-the historical `current` control.
+the `current` control.
 
 **The empty-suffix rule makes a `MODEL_VERSION` bump mandatory on every
 promotion.** Because the default recipe is exactly the one whose cache
 identity has no suffix, promoting a different recipe without bumping the
 version would leave the identity string unchanged and silently replay the
-*previous* recipe's leaf delays out of the same directory. Promotions so far:
-2 → 3 with `early_flatten_opt`, 3 → 4 with `early_flatten_noabc`.
+*previous* recipe's leaf delays out of the same directory. The current
+production model is `MODEL_VERSION` 4, recipe `early_flatten_noabc` — see
+History for why it replaced the recipe before it.
 
 **Per-leaf isolation (an architectural limit, not a bug).** Like every
 existing `SYN_TOOL`, a leaf-entity `SYN_AND_REPORT_TIMING` call synthesizes
@@ -163,7 +170,7 @@ existing `SYN_TOOL`, a leaf-entity `SYN_AND_REPORT_TIMING` call synthesizes
 see fanout from a sibling instance elsewhere in the design. Only the
 whole-design multimain path ever sees more than one leaf's logic at once.
 Real cross-instance net sharing can only be captured by that whole-design
-path — see Limitations.
+path — see §5.
 
 ### The `-fast` finding
 
@@ -188,23 +195,24 @@ from +33.6% to −1.6%. Adding a `-D` target back on top of `-fast` made it
 *worse* — the fix is the bare flag, not a tuned target. `ABC_EXTRA_ARGS` in
 `DEVICE_MODELS.py` is the single switch if this ever needs revisiting.
 
-**Re-validated 2026-08-20, with one cited fact now obsolete.** `-fast` is
-still right (it is part of the recipe that reproduces latchup's current
-netlists exactly), but "`mux2_1` usage goes to exactly zero" was a property
-of *their pre-flatten flow*, not of the flag. Their post-early-flatten
-netlists contain 838 `mux2_1` at 33 stages and 745 at 65 — and `-fast` under
-the current recipe reproduces those counts exactly too. Mux inference is a
-property of the network abc is handed; do not treat "zero `mux2_1`" as the
-signature to match.
+`-fast` remains part of the production recipe (it reproduces latchup's
+current netlists exactly), but "`mux2_1` usage goes to exactly zero" is not a
+property of the flag — it was a property of latchup's pre-flatten flow
+specifically. Their post-early-flatten netlists contain 838 `mux2_1` at 33
+stages and 745 at 65, and `-fast` under the current recipe reproduces those
+counts exactly too. Mux inference is a property of the network abc is
+handed, not of `-fast` in isolation; treat cell-histogram match against a
+real target netlist as the signature to match, not any one cell count.
 
 ### Mux path-delay cache key
 
-`SYN.GET_CACHED_LOGIC_FILE_KEY` special-cases mux delay: historically every
-mux width/type collapsed to one shared cache key `"mux"`, because PyRTL's own
-measurement is provably width-blind (1.640ns at every width 1..64, measured
-with the cache deleted). A real per-cell model doesn't share that property —
-a 32-bit mux's select really does drive 32 sinks inside its own entity, so it
-measures slower than a 2-bit one even in complete per-leaf isolation.
+`SYN.GET_CACHED_LOGIC_FILE_KEY` special-cases mux delay. Collapsed mode
+(every mux width/type sharing one cache key, `"mux"`) is right for PyRTL,
+whose own measurement is provably width-blind (1.640ns at every width 1..64,
+measured with the cache deleted); a real per-cell model doesn't share that
+property — a 32-bit mux's select really does drive 32 sinks inside its own
+entity, so it measures slower than a 2-bit one even in complete per-leaf
+isolation.
 
 `SYN.MUX_DELAY_KEY_BY_WIDTH` (tri-state: `None`/`True`/`False`) resolves
 automatically per tool when unset — collapsed for every tool that predates
@@ -241,239 +249,53 @@ that identity with their recipe suffix. Promoting a different recipe requires
 a `MODEL_VERSION` bump; merely running an isolated alternate recipe does not
 invalidate the unchanged production cache.
 
-### Frozen recipe screen (2026-08-14)
-
-The primary recipe matrix has been run on byte-identical VHDL for the
-unchanged gate Divider's isolated `step_gates` entity. The durable evidence is
-[`synthesis_recipe_step_gates_matrix.json`](../src/tests/pypeline_tests/qor/synthesis_recipe_step_gates_matrix.json),
-including source/VHDL/tool/liberty hashes, exact commands, timing components,
-mapped-artifact hashes, and relative deltas:
-
-| recipe | period | fmax | cells | versus `current` |
-|---|---:|---:|---:|---|
-| `current` | 5.817 ns | 171.90 MHz | 754 | control |
-| `synth_flatten` | 4.909 ns | 203.71 MHz | 414 | 15.6% less period, 45.1% fewer cells |
-| `synth_flatten_noabc` | 4.948 ns | 202.10 MHz | 425 | 14.9% less period, 43.6% fewer cells |
-| `early_flatten_opt` | 4.849 ns | 206.25 MHz | 427 | 16.7% less period, 43.4% fewer cells |
-
-This first screen established that early flattening was materially beneficial
-for the isolated step under the pinned tools. It did not by itself justify a
-production change; the full-design screen below made that decision.
-
-### Pre-step compare/select cone and clean-baseline floor (2026-08-14)
-
-Two further durable artifacts isolate a different effect and keep their
-provenance deliberately separate:
-
-- [`divider_gate_clean_baseline_critical_paths.json`](../src/tests/pypeline_tests/qor/divider_gate_clean_baseline_critical_paths.json)
-  is the unchanged gate fixture run by clean commit `c81ca31f`, with the
-  `current` recipe and no superseded handoff patch. At 28, 50, 63, 67, and 70
-  slices, the winning path starts at the divisor input and traverses the
-  pre-step `right != 0` reduction and 32-bit `left_eff` select before entering
-  the first radix step. At 67 slices it is 7.010 ns (142.647 MHz); 70 slices
-  adds 1,135 mapped cells but changes timing by exactly zero. The shared
-  pre-step prefix is about 5.67 ns, dominated by a 4.325 ns fanout-64 NAND3
-  arc that violates `max_capacitance`. A hierarchy-delay fallback finally
-  gives the mux two near-edge slices at 73, jumping to 224.314 MHz; trim then
-  restores a different 66-slice / 67-stage result at 184.348 MHz. The exact
-  final 66-slice VHDL passes 141 ordered vectors at 66-cycle latency. That is
-  the clean baseline, and it still fails the 48-slice acceptance limit.
-- [`synthesis_recipe_pre_divzero_matrix.json`](../src/tests/pypeline_tests/qor/synthesis_recipe_pre_divzero_matrix.json)
-  holds the source-generated compare and mux VHDL byte-identical under a
-  small frozen wrapper
-  ([`synthesis_recipe_pre_divzero_wrapper.vhd`](../src/tests/pypeline_tests/qor/synthesis_recipe_pre_divzero_wrapper.vhd)).
-  The leaf VHDL came from clean `c81ca31f`; the synthetic wrapper was mapped
-  with this session's diagnostic backend. `current` measures 5.541 ns, 130
-  cells, and three capacitance violations. Each early-flatten variant measures
-  2.630 ns, 94 cells, and zero violations.
-
-The controlled cone matrix is strong evidence that hierarchy visible to ABC
-creates the pre-step fanout cliff, and that early flattening can remove it. It
-remains mechanism evidence rather than an acceptance result; the clean
-baseline, forced control, and automatic production results retain separate
-provenance.
-
-### Full frozen recipe selection and production result (2026-08-15)
-
-The full recipe matrix held the 16 ordered VHDL files byte-identical at the
-generic hand-equivalent 32-slice placement (divide-zero select plus the first
-31 repeated-step outputs). Every row passed the same 141-vector exact-VHDL
-test. The durable summary is
-[`synthesis_recipe_forced32_matrix.json`](../src/tests/pypeline_tests/qor/synthesis_recipe_forced32_matrix.json).
-
-| recipe | period | fmax | cells | DFFs | cap violations | map time |
-|---|---:|---:|---:|---:|---:|---:|
-| historical `current` | 6.703 ns | 149.19 MHz | 27,330 | 3,072 | 3 | 226 s |
-| `synth_flatten` | 5.918 ns | 168.98 MHz | 16,359 | 3,072 | 0 | 1,692 s |
-| `synth_flatten_noabc` | 5.919 ns | 168.95 MHz | 16,285 | 3,072 | 0 | 1,769 s |
-| **`early_flatten_opt`** | **5.667 ns** | **176.47 MHz** | 16,594 | 3,072 | 0 | 242 s |
-
-> **Superseded as the production selection** by "Matching latchup's
-> early-flatten flow" below. This matrix stands as the record of the V3
-> decision, but its selection policy — maximise *our own* fmax at equal
-> latency — turned out to be the wrong objective for a model whose job is to
-> predict what latchup will report. `early_flatten_opt` remains available as
-> a named recipe.
-
-At equal latency, `early_flatten_opt` has the largest fmax margin, is 39.3%
-smaller than the control, and maps in roughly the control's runtime. It was
-the production recipe at `MODEL_VERSION = 3`. `synth_flatten_noabc` saves 74
-cells versus `synth_flatten` but is a timing tie, takes longer, and loses to
-the production recipe by 7.52 MHz. No-`-fast`, `-D`, custom ABC scripts,
-buffering/upsize, and register retiming were not promoted; the earlier
-no-`-fast`/`-D` evidence was worse or inert, and the higher-return primary
-matrix already met the acceptance target without sequential retiming risk.
-
-The first generic automatic planner result produced 33 slices / 34
-combinational stages: the divide-zero select, 31 coherent repeated-step
-outputs, and one legal operation output inside the last step. A later
-minimal-stage regression run with the same production recipe trimmed that to
-31 coherent repeated-step output boundaries. Early flattening removes the
-former pre-step fanout floor, so no dedicated divide-zero boundary is needed.
-An immutable remap of the current 16-file result is **160.43 MHz**, 16,514
-cells, 3,007 DFFs, zero unmapped cells, zero capacitance violations, and
-complete timing topology. Exact GHDL/cocotb simulation passed 141 ordered
-vectors at 31-cycle latency. The combined gate and arithmetic acceptance record is
-[`divider_qor_acceptance.json`](../src/tests/pypeline_tests/qor/divider_qor_acceptance.json).
-
 ## 3. Results
 
 Measured against real sky130 synthesis of a radix-2 divider — `latchup.app`'s
-own sky130 fmax scoring, with entity hashes verified bit-identical to theirs —
-and a held-out different design/language reference (`TARGET_33cycles_140mhz`).
-The first subsection is the current calibration; the two after it are the
-historical record it was built on.
-
-### Matching latchup's early-flatten flow (2026-08-20)
-
-latchup.app adopted an early synthesis flatten, invalidating the flow this
-model had been calibrated against. Four fresh scored builds of the
-*arithmetic* radix-2 divider were used as ground truth. Every one was rebuilt
-locally with the same `--no_sweep --no_hier_syn` invocation and produced the
-**same top entity hash** latchup's netlists carry
-(`solution_16clk_48e99f0c`, `solution_32clk_42c98b59`, `solution_33clk_f2083cc2`,
-`solution_64clk_17c0b934`), so the VHDL under test is identical to theirs and
-every comparison below is apples-to-apples. Full record:
+own sky130 fmax scoring, with entity hashes verified bit-identical to theirs
+on 4 fresh scored builds (rebuilt locally under `--no_sweep --no_hier_syn`,
+same top-entity hash as latchup's own netlists: `solution_16clk_48e99f0c`,
+`solution_32clk_42c98b59`, `solution_33clk_f2083cc2`,
+`solution_64clk_17c0b934`) — and a held-out different design/language
+reference (`TARGET_33cycles_140mhz`). Full record:
 [`latchup_early_flatten_match_matrix.json`](../src/tests/pypeline_tests/qor/latchup_early_flatten_match_matrix.json).
 
-**(a) STA engine alone, fed latchup's OWN mapped netlists** — isolates the
-physics from any recipe question, the same methodology as the historical
-9-netlist table below:
+**STA engine accuracy, fed real (not self-synthesized) netlists** — isolates
+the physics from any synthesis-recipe question. Across a broader,
+recipe-independent corpus of 9 real sky130 netlists, MAE is 4.66% with the
+held-out design at −0.4%; the same engine also reproduces the real,
+non-linear sky130 delay-vs-register-count curve (e.g. only a 3.8% predicted
+fmax gain from 32→64 pipeline registers on the divider, where every other
+stage-count doubling gains 40%+ — a shape a naive linear model cannot
+produce). On latchup's 4 post-early-flatten netlists specifically, MAE is
+4.82% (worst 6.35%), and on a shared 33-stage critical path 10 of its 11 arcs
+agree with latchup's own reported delays to within 8 ps, including a
+35-fanout `nand2_1` arc at 1.990 ns against their 1.989 ns. The entire
+residual concentrates in one arc, the final `mux2_1` `S→X` (0.904 ns here vs.
+their 1.132 ns, at a 2.592 ns input slew well inside that cell's
+characterized range) — see §5 for why this is read as an unrecoverable
+convention difference rather than a modeling gap.
 
-| netlists | MAE | worst |
-|---|---|---|
-| 4 post-early-flatten | **4.82%** | 6.35% |
-| 3 pre-flatten (control) | 5.83% | 6.81% |
+**Recipe/mapping fidelity, our own synthesis of the identical frozen VHDL**,
+scored against latchup's reported period and mapped cell histogram: period
+MAE is 5.42% (worst 6.52%), and 3 of the 4 hash-identical designs match
+latchup's own cell histogram exactly across all 19 cell types — 13,873/13,873
+cells at 33 stages, zero difference in any type. The 65-stage design is the
+one that doesn't reproduce (+1.4% cells, +5.04% period); see §5 for the
+likely cause (a yosys version gap between this repo's toolchain and
+latchup's).
 
-The engine is unaffected by their flatten change. On the 33- and 34-stage
-designs it independently picks *the same critical path endpoints* latchup
-reports, and an arc-by-arc diff of the 33-stage path shows 10 of its 11 arcs
-agreeing to **within 8 ps** — including a 35-fanout `nand2_1` arc at 1.990 ns
-against their 1.989 ns. The entire residual is one arc: the final
-`mux2_1` `S→X`, where we compute 0.904 ns against their 1.132 ns at a 2.592 ns
-input slew. This is *not* out-of-range extrapolation (that cell's slew axis
-runs to 3.75 ns); reproducing their number would need a ~3.85 ns input
-transition, i.e. their tool derives a larger transition out of the preceding
-cell than we do while agreeing on its delay to 1 ps. Their implied setup is
-also consistently ~1.5x ours. Both are conventions we cannot read off their
-artifacts, so they are recorded here rather than fitted away.
-
-**(b) Recipe selection, our own synthesis on the identical frozen VHDL**,
-scored against latchup's reported period and mapped cell histogram:
-
-| recipe | period MAE | worst | designs reproducing their histogram exactly |
-|---|---|---|---|
-| `current` | 24.52% | 39.32% | 0/4 |
-| `synth_flatten` | 13.09% | 29.18% | 0/4 |
-| `synth_flatten_noabc` | 12.61% | 34.72% | 3/4 |
-| `early_flatten_opt` (was production) | 11.12% | 21.29% | 0/4 |
-| **`early_flatten_noabc`** | **5.42%** | **6.52%** | **3/4** |
-
-"Exactly" is literal: at 33 stages `early_flatten_noabc` maps to 13,873 cells
-against their 13,873, matching all 19 cell types with zero difference in every
-one. Its remaining error is (a)'s engine residual, not a mapping difference.
-The 65-stage design is the one it does not reproduce (+1.4% cells, 7.0%
-histogram distance, +5.04% period) — the likely cause is that latchup runs
-**yosys 0.55** while this repo's oss-cad-suite is **0.48+51**, a difference no
-repo change can close. `synth_flatten_noabc` is the cautionary result: exact on
-the same three designs, then +34.72% on the fourth. Promotion bumped
-`MODEL_VERSION` 3 → 4 and the whole shipped leaf cache was regenerated; 23 of
-its 35 entries changed value, so no V3 number could have been carried over.
-
-**The gate-level Divider variant is recipe-insensitive**, checked directly on
-one frozen build: `early_flatten_opt` 207.74 MHz / 20,053 cells vs
+**The gate-level Divider variant is recipe-insensitive**: already a flat
+netlist of single-gate entities, so ABC's own structural mapping choice
+barely matters (`early_flatten_opt` 207.74 MHz / 20,053 cells vs.
 `early_flatten_noabc` 207.84 MHz / 19,960 cells, identical DFF and `mux2_1`
-counts. Expected — that design is already a flat netlist of single-gate
-entities, so `synth`'s internal ABC pass has nothing structural left to do and
-`-noabc` is a no-op for it. The promotion therefore does not move the gate
-acceptance point in `divider_qor_acceptance.json`, which was taken under V3.
+counts).
 
-**Two divergences from latchup's flow that remain, both recorded not fixed:**
-their yosys version as above, and their frontend path — they go VHDL → ghdl →
-`write_verilog` (`rtl/PipelineC_inner.v`) → `read_verilog` → synth behind a
-hand-written `rtl/Solution.v` wrapper, where PipelineC reads the VHDL directly
-through the ghdl-yosys plugin.
-
-**Planner follow-up, with this model frozen:** the arithmetic continuity work
-did not edit `DEVICE_MODELS.py`, its coefficients, the liberty pack, recipe,
-or model V4. It confirmed that the former 49-stage first guess maps to only
-164.69 MHz between 169.57 MHz at 33 stages and 221.94 MHz at 65 stages.
-Whole-design critical paths, not changes to this STA, led to the generic
-chunked-MUX refinement now documented in
-[`SYN_DESIGN.md`](SYN_DESIGN.md#budget-to-latency-continuity-result-2026-08-21):
-a normal 180 MHz sweep returns 50 stages at 194.22 MHz and passes the exact
-final-VHDL functional test. This is also direct evidence for the limitation
-below: the isolated subtract boundary with the best modeled fmax became one
-of the worst full-Divider schedules once flattened fanout was present.
-
-The follow-up one-field-struct Divider check began with an empty cache and
-reproduced the same 49-slice/50-stage, 194.2227 MHz result. Its typed 32-bit
-MUX measurement populated `MUX_uint32_t.delay` plus the canonical timing
-sidecar and no struct-named entry, while all 141 functional vectors passed.
-That test validates cache/type canonicalization without changing the frozen
-model.
-
-### Historical calibration corpus (pre-early-flatten)
-
-These tables were taken against latchup's *older* flow, on designs
-historically labeled 1→128 cycles.
-
-The `N` values in this historical calibration table are the source design's
-cycle labels. They are retained as evidence metadata and must not be confused
-with current compiler reporting, where `N` inserted slices means `N + 1`
-combinational stages.
-
-**Engine alone, fed real (not self-synthesized) netlists** — isolates the STA
-physics from any synthesis-recipe question:
-
-| | MAE across 9 real netlists | held-out `TARGET_33` |
-|---|---|---|
-| STA engine (sections a+b) | **4.66%** | **−0.4%** (was +35.4% under the prior fitted-linear model) |
-
-**Historical calibrated `current` control, our own hash-verified builds** —
-retained because it validates the original `-fast` calibration across the
-external corpus. The production full-Divider result is reported above:
-
-| historical source label N (cycles) | real (ns) | predicted (ns) | err% |
-|---|---|---|---|
-| 1 | 253.000 | 236.608 | −6.5% |
-| 4 | 68.670 | 64.742 | −5.7% |
-| 8 | 34.130 | 32.286 | −5.4% |
-| 16 | 18.680 | 17.902 | −4.2% |
-| 32 | 10.980 | 10.719 | −2.4% |
-| 64 | 10.500 | 10.314 | −1.8% |
-| 128 | 7.774 | 8.105 | +4.3% |
-
-MAE 4.3%. The real sky130 curve is not smooth — 32→64 buys only 4% despite
-doubling the registers, while every other doubling buys 40%+ — and this is
-the shape that decides whether local rankings agree with real synthesis.
-Predicted 32→64 gain: **3.8%**. Before the `-fast` fix (default abc script,
-otherwise identical): MAE 37.5%, predicted 32→64 gain 35.7% — monotone, but
-completely flat, no knee at all.
-
-Real synthesis mapping was cross-checked independently of period: sequential
-mapping (`dfflibmap`) matches exactly (4029/4029 flip-flops, one hash-verified
-build), before the `-fast` fix was even found.
+The combined gate and arithmetic acceptance record — the actual divider build
+this model's own recipe and STA feed into — is tracked from
+[`pypeline_TESTS.md`](pypeline_TESTS.md#related); the pipeline-depth-scheduling
+decisions this results section motivated are in
+[`SYN_DESIGN.md`](SYN_DESIGN.md)'s History section.
 
 ## 4. Verification
 
@@ -526,29 +348,16 @@ build), before the `-fast` fix was even found.
   packed output bank for scalars and aggregates. The landscape's own
   fewest-stage geometry is preserved (chunking never changes cut count or
   latency), but a selected bank at least `SWEEP.DEFAULT_MUX_CHUNK_MIN_WIDTH`
-  (32) bits wide is chunked unconditionally once selected — see the mux
-  select-fanout cliff result below, where this alone was worth 105.95 ->
-  292.48 MHz at an unchanged cut count. A narrower selected bank, or the
-  still-unregistered terminal MUX, still only gets chunked after a
-  whole-design miss (one bounded midpoint-chunk neighbor); isolated-leaf
-  ranking did not predict full-design fanout QoR for those, hence the bound.
-- **Mux select-fanout cliff (2026-08-25): a register on a short parallel
-  branch can be free in depth but ruinous in fanout, and `--no_sweep`
-  planned it anyway.** `SWEEP.GET_PIPELINE_MAP` schedules a shared
-  downstream consumer by the *max* of its inputs' readiness, so a register
-  on a branch shorter than an already-registered sibling adds zero pipeline
-  depth — real hardware that materializes for nothing. Found on
-  `soft_shift_rot`'s parallel `MUX_uint5_t_if_eff_amt` (select) /
-  `MUX_uint64_t_if_w` (data) muxes under `--no_hier_syn --no_sweep`: the
-  planned 7th cut reported `cuts=7, 6 slice(s) built` (the mismatch was the
-  tell) and cost 4 design-wide max-capacitance violations for zero extra
-  depth — 105.95 MHz measured versus 252.13 MHz for the otherwise-identical
-  6-cut plan that omitted it. `SWEEP.DROP_NON_DEEPENING_PLACEMENTS` now
-  drops any placement whose removal, alone, leaves the subtree's real
-  post-lowering latency exactly where it started; this is the "never
-  actually benefits from the whole-design physics during planning"
-  limitation above turned fatal, not a new failure mode. See
-  `docs/SYN_DESIGN.md`'s own dated result for the full measurement table.
+  (32) bits wide is chunked unconditionally once selected. A narrower
+  selected bank, or the still-unregistered terminal MUX, still only gets
+  chunked after a whole-design miss (one bounded midpoint-chunk neighbor);
+  isolated-leaf ranking did not predict full-design fanout QoR for those,
+  hence the bound.
+- **Mux select-fanout cliff.** A register on a short parallel branch can be
+  free in pipeline depth but ruinous in fanout, and planning did not always
+  catch it — the fix (`SWEEP.DROP_NON_DEEPENING_PLACEMENTS`) and the
+  measured cliff it closes live in [`SYN_DESIGN.md`](SYN_DESIGN.md)'s
+  History section, since the fix itself is in the planner, not this model.
 - **`--no_hier_syn` sums isolated per-leaf delays, which runs high on a mux
   chain specifically.** On `soft_shift_rot`, `--no_hier_syn` reports 38.2 ns
   comb delay (`MUX_uint64_t` 5.363 ns/leaf) where hierarchical synthesis
@@ -558,6 +367,18 @@ build), before the `-fast` fix was even found.
   per-leaf isolated measurement (see the fanout-sharing bullet below). Not
   fixed here: `--no_hier_syn` is a deliberate flag choice, and the
   mismatched floor is just a misleading number, not a build failure.
+- **`--no_sweep`'s own pipelining guess has drifted from a past calibration
+  point.** Two of the four latchup-matched designs (§3) no longer reproduce
+  latchup's slice count under the current planner: designs latchup built at
+  33 and 64 slices now come out at 65 and 97 slices under
+  `--no_sweep --no_hier_syn`, rebuilt from the identical `solution.py`
+  sources at commit `9fb4be5`. This drift is in the planner's own
+  pipelining guess, unrelated to this file's delay/area model — recorded
+  rather than silently worked around
+  (`latchup_area_match_matrix.json`'s `planner_drift_note`); only the two
+  designs that still reproduce latchup's slice count carry a scored area
+  comparison, since comparing area at a different slice count than latchup
+  measured would be apples to oranges.
 - **No net/interconnect delay.** Matches the sky130 flows measured against
   (all report zero net delay), but is therefore a pre-PnR estimate, not a
   post-route number — say so plainly wherever this tool's output is surfaced.
@@ -577,8 +398,8 @@ build), before the `-fast` fix was even found.
 - **`-fast` was found empirically on one yosys version (0.48+51) against one
   design family.** It is not derived from first principles, and a different
   yosys/abc version could plausibly need a different flag. If this stops
-  matching real sky130 results well on a different design, re-run the flag
-  sweep documented in the project history before assuming the physics model
+  matching real sky130 results well on a different design, re-run the same
+  methodology (§2, "The -fast finding") before assuming the physics model
   itself regressed.
 - **We are a yosys minor version behind the thing we model.** latchup runs
   yosys 0.55; this repo's oss-cad-suite is 0.48+51. On three of four
@@ -592,17 +413,12 @@ build), before the `-fast` fix was even found.
   wrapper; PipelineC reads VHDL straight through the ghdl-yosys plugin. Not
   currently believed to matter (the histograms match), but it is a real
   structural difference between the two flows.
-- **Setup/hold constraint table axis convention is standard but still not
-  isolated.** The 2026-08-20 arc-by-arc comparison narrowed it usefully:
-  against latchup, our setup term is consistently ~1.5x smaller (0.141 ns vs
-  their implied 0.201 ns at 33 stages), and separately our final high-slew
-  cell arc is smaller (0.904 ns vs 1.132 ns for a `mux2_1` `S→X` at 2.592 ns
-  input slew — in range, not extrapolated). Reproducing their number requires
-  a ~3.85 ns input transition, i.e. they derive a larger *transition* out of
-  the preceding cell while agreeing with us on its *delay* to 1 ps. Both look
-  like transition-propagation/setup conventions we cannot read off their
-  artifacts, and neither was fitted away with a fudge factor. Together they
-  are essentially the whole remaining ~5% engine error.
+- **Setup/hold constraint conventions are not fully isolated.** Our setup
+  term and final high-slew cell-arc delay are both consistently smaller than
+  latchup's implied numbers (§3) — read as differences in how their tool
+  derives transition/setup conventions that cannot be recovered from their
+  published artifacts, not fitted away with a fudge factor. Together these
+  account for essentially all of the remaining ~5% engine error.
 
 ## 6. Area model
 
@@ -637,72 +453,41 @@ is highly accurate: **2.87% MAE** against latchup's real reported area, on
 the two divider designs (16 and 32 slices) whose slice count this repo's
 current `--no_sweep` planner still reproduces exactly from latchup's own
 `solution.py` at latchup's own target MHz. This is in the same range as the
-delay engine's own ~5% residual (§3 above) and for the same reason — a real
+delay engine's own ~5% residual (§3) and for the same reason — a real
 mapped netlist, summed exactly.
 
 **Estimated area** (`SYN.ESTIMATE_DESIGN_AREA`: cached per-leaf areas summed
 across the instance hierarchy, plus FF count × one flip-flop's real cell
-area — no synthesis) overshoots real measured area by **270-410%** on every
-design measured under `AREA_MODEL_VERSION` 1. Part of that number is now
-understood to have been a measurement bug, not purely the
-cross-instance-sharing limitation described below: an isolated leaf is wrapped in
-`dont_touch` input/output registers (`VHDL.WRITE_LOGIC_TOP`) purely to give
-it a register-to-register path for STA, and v1 cached `total_cell_area`,
-which includes them. For a narrow leaf they dominate —
-`BIN_OP_AND_uint16_t_uint16_t`'s v1-cached value was 91% harness flip-flop,
-11.7x its real combinational area — and the fixed 464724.3 µm² combinational
-estimate the matrix records for this divider (all four static leaf
-entities, every design) is a v1 sum across exactly that kind of leaf. Fixed
-in `AREA_MODEL_VERSION` 2 (below): `combinational_cell_area` is cached
-instead of `total_cell_area`, which also fixes a matching double-count this
-whole-design estimate itself had (summing sequential cells into a term it
-calls "combinational", then adding its own FF term on top). The two 270-410%
-matrix designs were not rebuilt under v2 — their source is latchup's own
-`solution.py`, not committed to this repo — so a corrected number for those
-specific four points is not available; `qor/latchup_area_match_matrix.json`'s
-`area_model_version_2_correction` key has the full account, including two
-in-repo builds that confirm the fix's real size (4.65% overshoot post-fix on
-a design with no wide shared muxes, vs 342% still on one that has them) and
-that the two limitations named below are unaffected by it. Both terms
-overshoot, and the sequential one is worse:
-
-| | combinational | sequential (FF count) |
-|---|---|---|
-| overshoot vs. measured | 2.7-3.6x | 5.7-5.9x |
-| why | isolated per-leaf sum sees no cross-instance sharing — the SAME limitation already documented for isolated delay estimation on this exact design family (`--no_hier_syn` sums per-leaf delays ~2.5x high on a mux chain, §5 below) | `GET_REGISTERS_ESTIMATE_TEXT_AND_FFS` counts every declared pipeline-register bit before any of yosys's own FF-level optimization (constant/dead-bit elimination, retiming) — apparently a large majority of them, on this design |
-
-Per-FF area is exact by construction on both sides (both reduce to
+area — no synthesis) overshoots real measured area, and by how much depends
+heavily on structural sharing an isolated per-leaf sum cannot see: on two
+in-repo designs rebuilt under the current (v2) model, overshoot is 4.65% on
+a design with no wide shared muxes, versus 342% on one that has them — the
+same cross-instance-sharing limitation the delay estimate already has
+(`--no_hier_syn` sums per-leaf delays ~2.5x high on a mux chain, §5). The
+sequential (FF-count) term overshoots worse than the combinational term
+specifically because `GET_REGISTERS_ESTIMATE_TEXT_AND_FFS` counts every
+declared pipeline-register bit before any of yosys's own FF-level
+optimization (constant/dead-bit elimination, retiming) — apparently a large
+majority of them, on designs with heavy structural repetition. Per-FF area
+is exact by construction on both sides (both reduce to
 `GET_SEQUENTIAL_CELL_AREA`'s 48.84 µm² — see the matrix's own
 `math.isclose` check), so the sequential term's entire error is in the FF
-*count*, not the per-FF cost. **The cheap estimate is not a usable absolute
-area predictor on a design with this much structural repetition** — the
-radix-2 divider unrolls the same four operators (`BIN_OP_MINUS_uint34_t`,
-`MUX_uint32_t`, `BIN_OP_NEQ`, `UNARY_OP_NOT`) once per bit — and should be
-read as a same-design, same-direction relative signal only. This is
+*count*, not the per-FF cost.
+
+**The cheap estimate is not a usable absolute area predictor on a design
+with this much structural repetition** — the radix-2 divider unrolls the
+same four operators (`BIN_OP_MINUS_uint34_t`, `MUX_uint32_t`, `BIN_OP_NEQ`,
+`UNARY_OP_NOT`) once per bit — and should be read as a same-design,
+same-direction relative signal only. This is
 `SYN.GET_REGISTERS_ESTIMATE_TEXT_AND_FFS`'s whole-design estimate
 specifically, not AUTOFSM's own register allocator (`ALLOCATE_REGISTERS`,
 `docs/AUTOFSM_DESIGN.md` §3.2c) — a different and narrower count, tracking
 genuinely live cross-state values rather than every declared bit. Whether
 AUTOFSM's allocator has a comparable gap is checked directly (not assumed
 either way) in `inst/autofsm_real_area_compare_test.py`, now that AUTOFSM
-consumes this model (see the note at the end of this section).
-
-### `--no_sweep` planner drift, found while calibrating (not an area bug)
-
-The 2026-08-20 delay-recipe-selection entry above (§3) recorded all four
-designs reproducing latchup's exact top-entity hash under
-`--no_sweep --no_hier_syn`. Rebuilt one week later against the identical
-`solution.py` sources (2026-08-27, commit `9fb4be5`), only the 16- and
-32-slice designs still reproduce latchup's slice count; the two designs
-latchup built at 33 and 64 slices now come out at 65 and 97 slices under the
-current planner. This is drift in `--no_sweep`'s own pipelining guess since
-2026-08-20 (see the recent "autopipeline sweep improvements" commits),
-unrelated to the area model — recorded in the matrix's
-`planner_drift_note` rather than silently worked around, and why only two of
-the four designs carry a `measured_vs_latchup_error_pct` (the other two are
-no longer the same design point latchup measured, so comparing their area to
-`area.log` would be apples to oranges — their real measured area is still
-recorded, just not scored against latchup's number).
+consumes this model (see the note at the end of this section). See History
+for why the model landed on these v2 numbers rather than the much larger
+ones an early version reported.
 
 ### Leaf area cache — `area_cache/`, mirrors `path_delay_cache/`
 
@@ -713,29 +498,19 @@ versioned** tree so the two invalidate independently:
 area_cache/device_models_<library>_<corner>_a<AREA_MODEL_VERSION><recipe_suffix>/syn/<leaf_key>.area
 ```
 
-`AREA_MODEL_VERSION` (currently 2) is deliberately not `MODEL_VERSION`: leaf
-area depends only on which cells the synthesis recipe maps to, not on
-`run_sta()`'s own STA algorithm, so a future STA-only `MODEL_VERSION` bump
-must not discard an otherwise-valid committed `area_cache`, and vice versa.
-`SYN.GET_AREA_CACHE_DIR` mirrors `GET_PATH_DELAY_CACHE_DIR` exactly (same
-`PYPELINEC_AREA_CACHE_DIR` env override pattern, same recipe suffix, `None`
-for every `SYN_TOOL` but `DEVICE_MODELS`). Cache files hold the value *and
-its unit* as text (`"255886.4 um2"`), not a bare number — deliberately,
-since a future non-sky130 profile would use a different unit and a silent
-mismatch would be far worse than a cache miss; `SYN.GET_CACHED_LEAF_AREA`
-rejects a stored unit that disagrees with the active model's own unit rather
-than mixing it in.
-
-**1 → 2:** v1 cached `total_cell_area`, which includes the `dont_touch`
-STA-harness registers every isolated leaf is synthesized with
-(`VHDL.WRITE_LOGIC_TOP`) — 91% of a narrow leaf's v1-cached value, on the
-`BIN_OP_AND_uint16_t_uint16_t` example above. v2 caches
-`combinational_cell_area` instead (same `MEASURE_NETLIST_AREA` call, already
-split by each cell's own `is_sequential` flag — no new measurement). Found
-and fixed while wiring this cache into AUTOFSM's area-search ranking (see
-the note at the end of this section); the bump means every v1 `.area` file
-is superseded, not reinterpreted, since the two numbers differ by however
-many harness bits that leaf's own ports carried.
+`AREA_MODEL_VERSION` (currently 2; see History for why it was bumped from 1)
+is deliberately not `MODEL_VERSION`: leaf area depends only on which cells
+the synthesis recipe maps to, not on `run_sta()`'s own STA algorithm, so a
+future STA-only `MODEL_VERSION` bump must not discard an otherwise-valid
+committed `area_cache`, and vice versa. `SYN.GET_AREA_CACHE_DIR` mirrors
+`GET_PATH_DELAY_CACHE_DIR` exactly (same `PYPELINEC_AREA_CACHE_DIR` env
+override pattern, same recipe suffix, `None` for every `SYN_TOOL` but
+`DEVICE_MODELS`). Cache files hold the value *and its unit* as text
+(`"255886.4 um2"`), not a bare number — deliberately, since a future
+non-sky130 profile would use a different unit and a silent mismatch would be
+far worse than a cache miss; `SYN.GET_CACHED_LEAF_AREA` rejects a stored
+unit that disagrees with the active model's own unit rather than mixing it
+in.
 
 **Two operating modes**, both real and both exercised by
 `area_estimate_build_report_test`:
@@ -760,8 +535,8 @@ Estimated area: 83788.0 um2 (comb 53311.8 + regs 30476.2, 624 FFs) [estimate, pr
 Measured area: 6812.2 um2 (estimate +61.40%)
 ```
 
-The `area_cache/` tree ships pre-populated (18 leaf keys as of
-`AREA_MODEL_VERSION` 2 — every leaf a sky130 `build_report`/`synth` test in
+The `area_cache/` tree ships pre-populated (18 leaf keys at the current
+`AREA_MODEL_VERSION` — every leaf a sky130 `build_report`/`synth` test in
 this repo's own registered suite happens to touch while running, not a
 deliberately curated set; see `git log` for the generating builds), and
 `nix/package.nix` copies it out of the read-only store into
@@ -783,3 +558,78 @@ does not fix the two limitations two paragraphs above (cross-instance
 sharing, the FF-count estimator's own overshoot), since neither is a per-leaf
 measurement problem. See `docs/AUTOFSM_DESIGN.md` §3.8 for the full account
 and `inst/autofsm_real_area_compare_test.py` for the real-synthesis check.
+
+## History
+
+Why things are the way they are. Entries are keyed by **topic, not date** —
+when something changes, revise the entry that owns that topic rather than
+adding a new one. Keep a fact here only if it still changes a decision
+today: an alternative someone would otherwise retry, a measurement that is
+still a live regression reference, or the reason a default is what it is.
+Numbers carry the conditions they were measured under, not the date they
+were taken.
+
+### Delay-recipe selection: early flattening, and matching latchup exactly
+
+ABC seeing pre-flatten hierarchy creates a fanout cliff at a pre-loop
+compare/select cone (measured directly: a 4.325 ns fanout-64 NAND3 arc
+violating `max_capacitance`, on the unchanged gate-Divider fixture at clean
+commit `c81ca31f`) — both an isolated-step screen
+([`synthesis_recipe_step_gates_matrix.json`](../src/tests/pypeline_tests/qor/synthesis_recipe_step_gates_matrix.json))
+and a controlled cone matrix
+([`synthesis_recipe_pre_divzero_matrix.json`](../src/tests/pypeline_tests/qor/synthesis_recipe_pre_divzero_matrix.json),
+reproducing just the pre-step divisor-nonzero compare/select via
+[`synthesis_recipe_pre_divzero_wrapper.vhd`](../src/tests/pypeline_tests/qor/synthesis_recipe_pre_divzero_wrapper.vhd))
+confirmed early flattening (before the single liberty ABC pass, §2) removes
+it, at a cost of no functional difference on 141 ordered test vectors.
+`early_flatten_opt` was promoted first (`MODEL_VERSION` 3), selected by
+maximizing this repo's *own* fmax at equal latency (39.3% smaller than the
+un-flattened control, at roughly the control's own runtime).
+
+That selection policy turned out to be the wrong objective: this model's job
+is to predict what latchup will report, not to maximize our own fmax.
+Re-scored directly against latchup's own reported netlists and cell
+histograms, `early_flatten_opt` was only the 4th-best of 5 recipes by that
+metric (11.12% period MAE, 0/4 designs matching latchup's cell histogram
+exactly). The runner-up, `synth_flatten_noabc`, is the cautionary case for
+scoring on mean error alone: 12.61% MAE looks close to the eventual winner,
+and it reproduces latchup's cell histogram exactly on 3 of 4 designs — the
+same three the winner matches — but its 4th design misses by **34.72%**,
+nearly 3x its own mean. `early_flatten_noabc` (skip ABC's own structural
+mapping entirely, leaving all of it to the single liberty pass) is both
+closer on average and far more even — 5.42% MAE, worst case 6.52%, 3 of 4
+hash-identical designs matching every one of 19 cell types exactly.
+Promoted to `MODEL_VERSION` 4; the whole shipped leaf cache was
+regenerated, and 23 of its 35 entries changed value versus V3.
+
+The remaining ~5% gap under V4 concentrates almost entirely in two
+identified, unrecoverable conventions rather than distributed error: our
+final `mux2_1` `S→X` arc measures smaller than latchup's on one shared
+critical path (0.904 ns vs. 1.132 ns, both in-range — reproducing their
+number would need a ~3.85 ns input transition on that arc even though the
+preceding cell's *delay* already agrees with theirs to 1 ps), and our setup
+term is consistently ~1.5x smaller (0.141 ns vs. their implied 0.201 ns at
+33 stages). Both read as transition-propagation/setup conventions in
+latchup's own tool that cannot be read off their published artifacts, and
+neither was fitted away with a fudge factor.
+
+### Area model V1 → V2
+
+V1 cached `total_cell_area` for each leaf, which includes the `dont_touch`
+input/output registers every isolated leaf is synthesized with
+(`VHDL.WRITE_LOGIC_TOP`, purely to give the leaf a register-to-register path
+for STA) — on one measured narrow leaf
+(`BIN_OP_AND_uint16_t_uint16_t`), those harness registers were 91% of the
+cached value, 11.7x the leaf's real combinational area, and the whole-design
+*estimate* built on top of such leaves separately double-counted (summing
+sequential cells into a term it called "combinational", then adding its own
+FF term on top). V2 caches `combinational_cell_area` instead — the same
+`MEASURE_NETLIST_AREA` call, already split by each cell's own
+`is_sequential` flag, so no new measurement was needed — and fixes the
+double-count at the same time. Found while wiring the leaf-area cache into
+AUTOFSM's area-search ranking. The two designs originally measured at
+270-410% overshoot under V1 were never rebuilt under V2 (their source is
+latchup's own `solution.py`, not committed to this repo), so no corrected
+number exists for those specific points; current V2 accuracy is
+characterized instead by two in-repo designs (§6, "Two numbers, two very
+different accuracies").

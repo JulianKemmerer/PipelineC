@@ -361,8 +361,8 @@ def _uint2_t():
 
 def make_soft_cmp_prefix(op):
     """Default comparator flavor as of 2026-08 (see
-    soft.py:register_soft_cmp; docs/SYN_DESIGN.md section 8 has the full
-    investigation writeup). log2(n)-deep parallel-prefix magnitude compare
+    soft.py:register_soft_cmp; docs/SYN_DESIGN.md#comparator-implementation-selection
+    has the full investigation writeup). log2(n)-deep parallel-prefix magnitude compare
     -- the missing member of the family make_soft_cmp_bitwise's docstring
     calls out (that one is a SERIAL MSB-first scan, O(n) depth; this
     combines per-bit (gt,lt) pairs with an associative leader-select

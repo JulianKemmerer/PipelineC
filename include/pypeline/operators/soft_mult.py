@@ -180,7 +180,7 @@ def make_soft_mult_karatsuba(l_t, r_t, threshold=16):
     sub-multiply recurses into an identical 3-bit split forever
     (RecursionError, confirmed by measurement).
 
-    Default raised from 8 to 16 (docs/SYN_DESIGN.md section 10): swept every
+    Default raised from 8 to 16 (docs/SYN_DESIGN.md#karatsuba-base-case-threshold): swept every
     structurally-distinct threshold at uint8 and uint16 (PyRTL, --coarse
     --sweep) and found NO threshold in [3, n_bits) ever beats the trivial
     n_bits<=threshold case (no split at all) at any cut count -- comb delay
@@ -194,7 +194,7 @@ def make_soft_mult_karatsuba(l_t, r_t, threshold=16):
     change can only remove already-confirmed-harmful splitting and cannot by
     construction make an untested wider design recurse less than it already
     would have. Whether a real optimum exists above 16 bits is open; see
-    docs/SYN_DESIGN.md section 10."""
+    docs/SYN_DESIGN.md#karatsuba-base-case-threshold."""
     if threshold < 3:
         raise ValueError(
             f"make_soft_mult_karatsuba: threshold must be >= 3 (got {threshold}). A "
@@ -246,7 +246,8 @@ def make_soft_mult_karatsuba(l_t, r_t, threshold=16):
 #
 # Port of a CoHDL-generated uint16 x uint16 -> uint32 multiplier measured
 # against the same sky130 latchup target this library targets
-# (docs/SYN_DESIGN.md section 11). make_soft_mult_shift_add's tree does a FEW
+# (docs/SYN_DESIGN.md#carry-save-multiplier-default-and-why-it-replaced-shift-and-add).
+# make_soft_mult_shift_add's tree does a FEW
 # FULL-WIDTH carry-propagate adds (15 adds up to 32 bits at uint16x16, ~97
 # bits of serial carry chain overall) -- cheap on an FPGA's dedicated carry
 # chain, expensive on an ASIC with none. This multiplier instead defers carry
@@ -874,8 +875,9 @@ def make_soft_mult_carry_save(l_t, r_t, max_width=2):
     """Deferred-carry (carry-save-style) multiplier: same AND-mask partial
     products as make_soft_mult_shift_add, summed via
     make_soft_add_tree_carry_save instead of a full carry-propagate tree.
-    See this section's module comment and docs/SYN_DESIGN.md section 11 for
-    the sky130 measurements behind max_width's default."""
+    See this section's module comment and
+    docs/SYN_DESIGN.md#carry-save-multiplier-default-and-why-it-replaced-shift-and-add
+    for the sky130 measurements behind max_width's default."""
     eff_l_t, eff_r_t, out_t = arith_result_type("INFERRED_MULT", l_t, r_t)
     left_bits = len(eff_l_t)
     r_bits = len(eff_r_t)

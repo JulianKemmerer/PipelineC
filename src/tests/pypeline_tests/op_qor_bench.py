@@ -67,8 +67,9 @@ def max_useful_cuts(l_bits, r_bits, impl=None):
     """The '4 bits/stage' floor below is FPGA reasoning (CARRY4 packs 4
     bits/prim) -- it does not apply to a carry-save/Wallace impl, which is
     built from single- or few-bit-wide leaf adds by design (see
-    docs/SYN_DESIGN.md section 11) and wants a much deeper sweep to show
-    its actual advantage. Note the coarse-sweep leaf-bit-width cap that
+    docs/SYN_DESIGN.md#carry-save-multiplier-default-and-why-it-replaced-shift-and-add)
+    and wants a much deeper sweep to show its actual advantage. Note the
+    coarse-sweep leaf-bit-width cap that
     would normally keep a cut from landing inside a too-narrow leaf only
     exists in the PLANNED sweep, not --coarse -- a sufficiently high
     --stop against a carry_save/wallace impl CAN legitimately crash the
@@ -108,12 +109,13 @@ CSV_FIELDS = [
 # header for a brand-new file -- growing it would silently make future
 # pyrtl/vivado appends write more columns than an existing file's header
 # (this exact schema-drift bug already happened once and needed a git
-# recovery; see docs/SYN_DESIGN.md section 11). combinational_area_um2 is
-# measured, not estimated -- SYN.ESTIMATE_DESIGN_AREA overshoots real area by
-# 270-410% on designs with this much structural repetition (measured on the
-# latchup divider, docs/DEVICE_MODELS_DESIGN.md section 6), and a carry-save
-# tree declares a lot of pipeline registers, so only the real number is
-# trustworthy here. "Combinational", not "Total" cell area: an isolated-
+# recovery). combinational_area_um2 is measured, not estimated --
+# SYN.ESTIMATE_DESIGN_AREA overshoots real area by up to 342% on designs
+# with this much structural repetition and wide operand multiplexers
+# (measured on the latchup divider; see
+# docs/DEVICE_MODELS_DESIGN.md#two-numbers-two-very-different-accuracies),
+# and a carry-save tree declares a lot of pipeline registers, so only the
+# real number is trustworthy here. "Combinational", not "Total" cell area: an isolated-
 # entity run wraps the design in dont_touch harness registers, so the
 # sequential term mixes pipeline FFs with those -- the combinational term is
 # harness-free.
@@ -136,8 +138,9 @@ PLUS_MINUS_IMPLS = ["raw_default", "soft_ripple", "soft_carry_select"]
 MULT_IMPLS = ["raw_default", "soft_shift_add", "soft_karatsuba"]
 
 # max_width values to sweep for the carry-save (deferred-carry) multiplier --
-# docs/SYN_DESIGN.md section 11. K is the widest single add anywhere in the
-# reduction; smaller K means more, narrower, faster-per-stage levels.
+# docs/SYN_DESIGN.md#carry-save-multiplier-default-and-why-it-replaced-shift-and-add.
+# K is the widest single add anywhere in the reduction; smaller K means
+# more, narrower, faster-per-stage levels.
 CARRY_SAVE_MAX_WIDTHS = [2, 3, 4, 6, 8]
 CMP_IMPLS = [
     "soft_cmp_sub", "soft_cmp_sub_swapped", "soft_cmp_bitwise",

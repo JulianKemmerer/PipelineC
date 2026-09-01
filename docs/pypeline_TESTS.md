@@ -4,6 +4,13 @@
 `.py` design files in `inst/`. There is no test-discovery mechanism -- every test is a
 hand-written entry in one of eight category modules, run together via `run_all.py`.
 
+> **Reference, not a logbook.** Describe the system as it is now, in the present
+> tense. No dated entries, no session write-ups — `git log` is the change record.
+> When behavior changes, edit the affected section in place; when the *reason* is
+> worth keeping, revise the matching entry in this file's `History` section rather
+> than appending a new one. See
+> [documentation conventions](README.md#documentation-conventions).
+
 ## Categories
 
 | Category | What it checks | Verdict |
@@ -21,12 +28,6 @@ hand-written entry in one of eight category modules, run together via `run_all.p
 `PARSE_FILE` happens to appear in it: a 600-line scheduler/codegen test that calls
 `PARSE_FILE` incidentally is `unit`; a test whose whole point is parsing a design and
 inspecting the resulting `parser_state` is `elab_introspect`.
-
-There used to be a `vhdl_sim` category (self-checking designs run through
-`--cocotb --ghdl`, proving each sim self-checks). It's gone: every one of its entries
-was the same source file as a `native_sim` entry with `--cocotb --ghdl` added, so all
-14 became one `native_vs_vhdl_sim` cycle-diff test each -- strictly stronger, since it
-proves the two sims *agree*, not just that each one separately passes.
 
 ## Naming convention in `inst/`
 
@@ -136,18 +137,17 @@ Each category module can also run standalone, e.g.
   latency, input readiness, and pipeline flush. The fixture has no output-ready port,
   so this test intentionally makes no output-backpressure claim.
 
-  The accepted 2026-08-16 results are preserved in
-  `qor/divider_qor_acceptance.json`: the automatic gate result is 160.43 MHz
-  at 31 slices / 32 combinational stages, and the arithmetic result is
+  `qor/divider_qor_acceptance.json` holds the acceptance record, taken under the
+  V3 production recipe (`early_flatten_opt`, full decision in
+  `qor/synthesis_recipe_forced32_matrix.json`): the automatic gate result is
+  160.43 MHz at 31 slices / 32 combinational stages, and the arithmetic result is
   180.05 MHz at 32 slices / 33 stages. Both exact final-VHDL runs pass 141
   ordered vectors, have zero unmapped cells, and satisfy their slice limits.
   The corresponding clean-commit baselines required 66 and 64 slices. The
-  full byte-frozen recipe decision is in
-  `qor/synthesis_recipe_forced32_matrix.json`; `early_flatten_opt` was the
-  production default under model V3. Those numbers were NOT re-taken for the
-  V4 promotion: the production default is now `early_flatten_noabc`, selected
-  in `qor/latchup_early_flatten_match_matrix.json` on latchup-match evidence
-  rather than on our own fmax. Full sky130 runs remain opt-in.
+  current production recipe is `early_flatten_noabc` (see
+  [`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md#history)'s History
+  section) — this V3-era acceptance record has not been re-taken against it.
+  Full sky130 runs remain opt-in.
 
   Controlled physical and recipe experiments remain internal to this harness. Use
   `--placement step-boundaries` to force every gate `step_gates` output boundary, or
@@ -197,15 +197,17 @@ Each category module can also run standalone, e.g.
   The accepted midpoint mechanism first measures the 48-slice/49-stage control
   at 164.69 MHz, then tries one generic chunked-MUX neighbor and returns
   49 slices / 50 stages at 194.22 MHz. Negative A/B evidence is retained for
-  all exact subtract boundaries, periodic phase variants, stage-local ripple
-  borrow, and chunking without the terminal MUX. `--plans-only`, `--continue`,
+  all exact subtract boundaries, periodic phase variants (see
+  [`SYN_DESIGN.md`'s Divider acceptance entry](SYN_DESIGN.md#divider-acceptance-and-the-48-slice-intermediate-level)
+  for what distinguishes a phase variant from a real level), stage-local
+  ripple borrow, and chunking without the terminal MUX. `--plans-only`, `--continue`,
   and the exact-boundary options support diagnosis; none is a public compiler
   interface.
 
-  The harness still normalizes the trailing per-build content hash out of
+  The harness normalizes the trailing per-build content hash out of
   `_DUPLICATE_<hash>` names for placement deduplication (it is unrelated to
-  physical placement identity); the source-coordinate fragment itself is now
-  compiler-sorted and no longer needs canonicalizing. Actual VHDL hashes and
+  physical placement identity); the source-coordinate fragment itself is
+  compiler-sorted and does not need canonicalizing. Actual VHDL hashes and
   immutable mapped bytes are never canonicalized.
 - `src/tests/pypeline_tests/divider_struct_mux_bench.py` -- focused opt-in
   verification of generic packed-MUX lowering and canonical delay caching. Its
@@ -241,8 +243,34 @@ Each category module can also run standalone, e.g.
 - WireGuard integration (opt-in, long-running) -- from a generated-output-free
   copy of `wireguard-fpga/3.build/pypeline_build`, run
   `PYPELINEC=<repo>/src/pypelinec ./build.py --shared --sim --syn_tb`.
-  The 2026-08-23 fresh result passed cocotb/GHDL and Vivado confirmation at
-  84.45 MHz against 80 MHz, with 19 slices / 20 stages. Its schema-5 trace
-  records ten half-sliced block steps and nine shared producer-output banks.
+  The accepted result passes cocotb/GHDL and Vivado confirmation at
+  84.45 MHz against an 80 MHz goal, with 19 slices / 20 stages. Its schema-5 trace
+  records ten half-sliced block steps and nine shared producer-output banks. A
+  superseded baseline from before topology-aware boundary-lock selection (the
+  older per-instance input-plus-output lock policy) is kept as a regression
+  floor, not a target: that policy met 80 MHz only at 30 slices / 31 stages,
+  against a failing 62.3 MHz at 40 slices / 41 stages -- the current result
+  must never regress past this older, strictly worse shape.
 - `src/tests/c_tests/test_builds.sh` -- legacy smoke-build script for the C frontend
   (`.c` designs under `examples/`), independent of this Python suite.
+
+## History
+
+Why things are the way they are. Entries are keyed by **topic, not date** — when
+something changes, revise the entry that owns that topic rather than adding a new
+one. Keep a fact here only if it still changes a decision today: an alternative
+someone would otherwise retry, or a measurement that is still a live regression
+reference.
+
+### Why there is no `vhdl_sim` category
+
+A `vhdl_sim` category once existed: self-checking designs run through `--cocotb
+--ghdl`, proving each sim self-checks on its own. It was removed rather than kept
+alongside `native_sim`, because every one of its entries turned out to be the same
+source file as a `native_sim` entry with `--cocotb --ghdl` added -- so all 14
+collapsed into one `native_vs_vhdl_sim` cycle-diff test each. That merge is
+strictly stronger, not just smaller: a cycle-diff test proves the native and VHDL
+sims *agree*, where the two separate tests it replaced only proved each one
+passed on its own (which two independently-buggy-but-matching sims could still
+do). Adding a new `vhdl_sim`-style test today would be a step backward for the
+same reason -- fold it into `native_vs_vhdl_sim_tests.py` instead.

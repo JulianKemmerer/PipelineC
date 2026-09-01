@@ -65,7 +65,8 @@ def register_soft_sub(scope=None):
 def register_soft_mult(scope=None):
     """make_soft_mult_carry_save (deferred-carry / carry-save-style reduction,
     max_width=2) registered for any_uint_t x any_uint_t only -- the default
-    as of docs/SYN_DESIGN.md section 11. This is the port of a real,
+    as of docs/SYN_DESIGN.md#carry-save-multiplier-default-and-why-it-replaced-shift-and-add.
+    This is the port of a real,
     working sky130 reference design (33 cycles / 684 MHz), not a locally-
     measured winner; see register_soft_mult_shift_add() below for the prior
     default (make_soft_mult_shift_add, a small number of full carry-
@@ -113,7 +114,8 @@ def register_soft_mult_karatsuba(threshold=None, scope=None):
     threshold: base-case width override, forwarded to make_soft_mult_karatsuba.
     Default None uses that factory's own default rather than duplicating the
     number here, so there is one source of truth for it -- see
-    make_soft_mult_karatsuba's docstring and docs/SYN_DESIGN.md section 10 for
+    make_soft_mult_karatsuba's docstring and
+    docs/SYN_DESIGN.md#karatsuba-base-case-threshold for
     the measurement behind the current default (16: no threshold below the
     operand width ever beat "don't split" at uint8/uint16, measured directly;
     unmeasured above 16 bits, where a real optimum may still exist)."""
@@ -132,8 +134,8 @@ def register_soft_mult_carry_save(max_width=None, scope=None):
     make_soft_mult_carry_save. Default None uses that factory's own default
     rather than duplicating the number here, so there is one source of truth
     for it -- see make_soft_mult_carry_save's docstring and
-    docs/SYN_DESIGN.md section 11 for the sky130 measurements behind the
-    current default."""
+    docs/SYN_DESIGN.md#carry-save-multiplier-default-and-why-it-replaced-shift-and-add
+    for the sky130 measurements behind the current default."""
     factory = make_soft_mult_carry_save
     if max_width is not None:
         factory = functools.partial(make_soft_mult_carry_save, max_width=max_width)
@@ -243,8 +245,8 @@ def register_soft_cmp_sub_swapped(scope=None):
     """Alternate comparator flavor: widen, subtract (operand order swapped
     per op), take the sign bit -- one subtract, no extra EQ+MUX for any of
     the four ops. The library default through 2026-08 (see
-    docs/SYN_DESIGN.md section 8); superseded by register_soft_cmp's
-    parallel-prefix default, but still Vivado-confirmed faster than it for
+    docs/SYN_DESIGN.md#comparator-implementation-selection); superseded by
+    register_soft_cmp's parallel-prefix default, but still Vivado-confirmed faster than it for
     GTE/LTE specifically at 8/16-bit operand widths -- reach for this via
     scope= on a function known to do narrow-width GTE/LTE comparisons."""
     for op in ("GT", "GTE", "LT", "LTE"):

@@ -11,6 +11,13 @@ See [`RAW_VHDL_DESIGN.md`](RAW_VHDL_DESIGN.md) for built-in leaf operators,
 [`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md) for sky130 mapping and
 STA.
 
+> **Reference, not a logbook.** Describe the system as it is now, in the present
+> tense. No dated entries, no session write-ups — `git log` is the change record.
+> When behavior changes, edit the affected section in place; when the *reason* is
+> worth keeping, revise the matching entry in this file's `History` section, if it
+> has one, rather than appending a new one. See
+> [documentation conventions](README.md#documentation-conventions).
+
 ## Artifact layers
 
 A normal build emits:
@@ -59,14 +66,14 @@ rendering. Source-coordinate fragments in generated `_DUPLICATE_<hash>` names
 (from `C_TO_LOGIC.py`'s duplicate-submodule-collapsing pass) are sorted the
 same way: the pass collects one `ASTMeta` per collapsed source location into a
 set, and `ASTMeta.__hash__` is a `PYTHONHASHSEED`-salted string hash, so
-iterating that set directly used to make the same design spell the fragment
+iterating that set directly would make the same design spell the fragment
 `_py_l35_l34_` in one process and `_py_l34_l35_` in another -- same entity
 hash, different VHDL bytes, an intermittent miss on a byte-hash synthesis
-cache. The coordinates are now sorted by `(src_file, line, col, end_col)`
+cache. The coordinates are instead sorted by `(src_file, line, col, end_col)`
 before rendering, not by the string each `ASTMeta` hashes on, which for the C
 frontend embeds a per-process memory address and would not be stable across
 processes. Regression-tested by `duplicate_collapse_naming_test.py`, which
-pins two `PYTHONHASHSEED` values confirmed to disagree pre-fix.
+pins two `PYTHONHASHSEED` values confirmed to disagree without this sort.
 
 ## Building a pipelined architecture
 
@@ -199,25 +206,22 @@ always-ready input. Fast unit/elaboration tests cover entity hashing,
 dependency lists, I/O registers, fork/join and bypass alignment, and
 flat-versus-hierarchical placement; full sky130 runs remain opt-in.
 
-The accepted gate artifact exercises this association end to end: the generic
-planner's 31-slice / 32-stage VHDL snapshot passes 141 ordered vectors at
-31-cycle latency, and mapping those same bytes produces 160.43 MHz with zero
-unmapped cells. The arithmetic fixture independently passes at 32 slices /
-33 stages and 180.05 MHz despite having no stage-sized helper function. Exact
-hashes are recorded in
+The accepted gate and arithmetic artifacts exercise this association end to
+end: a VHDL snapshot passes its full ordered-vector functional test at the
+generic planner's chosen slice count, and mapping those same bytes produces
+the accepted fmax with zero unmapped cells. Exact hashes are recorded in
 [`divider_qor_acceptance.json`](../src/tests/pypeline_tests/qor/divider_qor_acceptance.json).
 
-The arithmetic continuity benchmark independently freezes and verifies the
-model-V4 artifacts returned by normal sweeps. At 180 MHz, the first 49-stage
-shape measured 164.69 MHz; the bounded chunked-MUX neighbor then produced 49
-slices / 50 stages, passed all 141 vectors at 49-cycle latency, and remapped
-to 194.22 MHz from the same VHDL bytes. Its machine-readable evidence lives
-under the benchmark's caller-selected output directory rather than in the
-normal test suite.
-
 `divider_struct_mux_bench.py` applies the same immutable-byte check after
-wrapping the Divider's loop-carried 32-bit values in a struct. The emitted
-composite-MUX VHDL compiles and simulates all 141 vectors, and the exact
-49-slice snapshot remaps to 194.2227 MHz. This specifically exercises the
-stage-0 pack, two stage-local SLV selections, final unpack, and ordinary
-pipeline-map alignment rather than merely testing the scalar MUX path again.
+wrapping the Divider's loop-carried 32-bit values in a struct. This
+specifically exercises the stage-0 SLV pack, two stage-local SLV selections,
+and the final unpack — the composite-MUX lowering path ("Building a
+pipelined architecture", above) — rather than merely testing the scalar MUX
+path again.
+
+Current accepted fmax/slice numbers for all of these (which recipe and
+`MODEL_VERSION` they were taken under, and which remain live acceptance
+gates) are tracked in [`pypeline_TESTS.md`](pypeline_TESTS.md#related), not
+here — they are evidence about the synthesis recipe and device model, not
+about this file's own VHDL-lowering correctness, and belong to one owner so
+they can't drift out of sync with it.

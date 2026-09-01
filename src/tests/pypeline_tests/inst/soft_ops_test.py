@@ -467,7 +467,7 @@ def test_soft_mult_karatsuba_threshold_override():
     make_soft_mult_karatsuba's own default), and the default (threshold=None)
     must resolve to a working multiplier at all. Regression test for the
     functools.partial-based override added alongside the threshold=16 default
-    (docs/SYN_DESIGN.md section 10)."""
+    (docs/SYN_DESIGN.md#karatsuba-base-case-threshold)."""
     import operators.soft as soft_lib
 
     ut10 = make_uint_t(10)
@@ -508,9 +508,10 @@ def test_soft_mult_carry_save_max_width_override():
 def test_soft_mult_default_is_carry_save():
     """register_soft_mult() must resolve to make_soft_mult_carry_save, not
     make_soft_mult_shift_add -- regression test for the default switch
-    (docs/SYN_DESIGN.md section 11: the port of solution.vhd's sky130
-    reference design is now the default; the old tree stays reachable via
-    register_soft_mult_shift_add()). Distinguishes the two by canonical
+    (docs/SYN_DESIGN.md#carry-save-multiplier-default-and-why-it-replaced-shift-and-add:
+    the port of solution.vhd's sky130 reference design is now the default;
+    the old tree stays reachable via register_soft_mult_shift_add()).
+    Distinguishes the two by canonical
     entity name rather than by measuring anything -- soft_mult_carry_save
     and soft_mult_shift_add name their top hw_func differently."""
     import operators.soft as soft_lib

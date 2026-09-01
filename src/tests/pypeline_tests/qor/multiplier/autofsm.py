@@ -9,7 +9,8 @@ from operators.soft import (
 # Toggle multiplier implementation:
 # "inferred" : HDL '*' operator
 # "soft" : the current register_soft_mult() default -- carry-save/deferred-carry
-#          (docs/SYN_DESIGN.md section 11), NOT shift-and-add anymore
+#          (docs/SYN_DESIGN.md#carry-save-multiplier-default-and-why-it-replaced-shift-and-add),
+#          NOT shift-and-add anymore
 # "soft_shift_add": the PRIOR register_soft_mult() default (full carry-propagate
 #          adds), kept reachable
 # "soft_karatsuba": Karatsuba

@@ -1,14 +1,20 @@
 # Autopipelining and the Throughput Sweep
 
-How PypelineC turns combinational logic into pipelines to meet an fmax goal,
-and how the *planned throughput sweep* replaced the old "middle out" sweep.
+How PypelineC turns combinational logic into pipelines to meet an fmax goal.
+
+> **Reference, not a logbook.** Describe the system as it is now, in the present
+> tense. No dated entries, no session write-ups — `git log` is the change record.
+> When behavior changes, edit the affected section in place; when the *reason* is
+> worth keeping, revise the matching entry in this file's `History` section rather
+> than appending a new one. See
+> [documentation conventions](README.md#documentation-conventions).
 
 ## 0. Who does what
 
 | file | role |
 |---|---|
-| `src/SYN.py` | The infrastructure that already existed and remains: timing params (`TimingParams`, slices, IO regs), the pipeline map (`GET_PIPELINE_MAP`), recursive slicing (`SLICE_DOWN_HIERARCHY_...`), per-function path delay collection (`ADD_PATH_DELAY_TO_LOOKUP`), the coarse sweep engine (`DO_COARSE_THROUGHPUT_SWEEP`, kept for `--coarse` and mini-sweeps), entity writing, and the `DO_THROUGHPUT_SWEEP` entry point. |
-| `src/SWEEP.py` | New. The *brains* of autopipelining: cut subtrees, slice landscapes, floor prediction, cut planning, and the synthesis-feedback refinement loop (`DO_PLANNED_THROUGHPUT_SWEEP`). Replaces the old middle-out sweep that lived in SYN.py. |
+| `src/SYN.py` | Shared infrastructure: timing params (`TimingParams`, slices, IO regs), the pipeline map (`GET_PIPELINE_MAP`), recursive slicing (`SLICE_DOWN_HIERARCHY_...`), per-function path delay collection (`ADD_PATH_DELAY_TO_LOOKUP`), the coarse sweep engine (`DO_COARSE_THROUGHPUT_SWEEP`, used by `--coarse` and mini-sweeps), entity writing, and the `DO_THROUGHPUT_SWEEP` entry point. |
+| `src/SWEEP.py` | The planner: cut subtrees, slice landscapes, floor prediction, cut planning, and the synthesis-feedback refinement loop (`DO_PLANNED_THROUGHPUT_SWEEP`). |
 | `src/PYRTL.py`, `src/DEVICE_MODELS.py` | The `SYN_TOOL` backends this document's delay model and sweep are built on top of — see [`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md) for the real sky130 liberty STA backend (`PART("sky130...")` / `--syn_tool sky130`) and why it exists (PyRTL's own cost model has no fanout/load term at all). |
 
 Vocabulary used throughout (each defined in detail later):
@@ -27,29 +33,15 @@ Vocabulary used throughout (each defined in detail later):
 | **lock** | a mini-sweep result whose internal slices are frozen onto all instances of a func (`params_are_fixed`); optional input/output banks are selected from parent dataflow rather than assumed per instance |
 | **trim** | post-met iterations that retry with fewer cuts to prove the stage count is minimal |
 
-## 1. Old vs new, in one table
-
-| | old middle-out sweep | new planned sweep |
-|---|---|---|
-| where do registers go? | evenly spaced "best guess" slices over the whole delay, count grown by a multiplier when timing failed | cuts placed by a static delay model (the *landscape*) that knows where delay lives and where cuts are legal |
-| how many stages? | however many the growing multiplier reached when timing first passed | fewest-stages first: budgets calibrated by the *measurement frontier* (topmost fully-comb funcs, measured) start at the theoretical minimum (usually just missing timing) and stages are added only from synthesis feedback; met-with-slack results get trimmed (`--pipeline_min_effort`) |
-| how many syn runs? | every hierarchy level synthesized up front, including MAINs + a full-design run per guess + per-module coarse sweeps when guesses plateaued (wireguard: ~16 full runs) | leaf functions + the measurement frontier (topmost fully-comb funcs) + topmost untagged stateful modules (everything else estimated — never MAINs, never anything with state inside) + one full-design run per iteration, max 12 (+ trim/probe runs) |
-| unmet timing at the end | exit 0, results written, sim runs — silent | results written for debugging, then `ERROR: TIMING NOT MET` block + **non-zero exit**; sim/bitstream skipped |
-| reaction to failing timing | grow `best_guess_sweep_mult`, or step `hier_sweep_mult` down the hierarchy and coarse-sweep smaller modules (4 interacting multipliers) | escalation ladder: densify the attributed hotspot once → after a second attribution, measure and mini-sweep that helper in isolation, then lock its proven-minimal nonzero split; measure remaining estimates if feedback still stagnates; global rescale when attribution is impossible |
-| unreachable goals | plateaued for many runs, then gave up | fmax *floor* predicted and blamed before any syn run; sweep stops at the floor |
-| slices vs latency | conflated in logs ("0 clks 53 slices") | reported separately: `cuts=N main_latency=M pipeline_stages=D` |
-| pipeline depth | only the top module's own latency (0 for a stream) | a `Pipeline depth summary` at *Writing Results* totals every slice built, including inside decoupled sub-pipelines |
-| state | `SweepState` + 4 multipliers, pickled `.sweep` resume files | `MainSweepPlan` per main; no resume (syn log caching already makes re-runs cheap); history written to `sweep_history.json` |
-
-## 2. How pipelines physically form
+## 1. How pipelines physically form
 
 Registers physically exist in two forms:
 
 1. **Leaf slices** — a raw HDL leaf (no submodules, e.g. `BIN_OP_PLUS`) with
    `TimingParams._slices = [0.5]` becomes a 2-stage adder, carry chain broken
    at 50% of its delay (a slice value is a fraction 0.0–1.0 of that module's
-   *own* delay, but see below — what that fraction turns into differs by leaf
-   kind). Leaf latency = `len(_slices)`:
+   *own* delay, but what that fraction turns into differs by leaf kind). Leaf
+   latency = `len(_slices)`:
 
    ```
    4 ns ADD, _slices = [0.5]:
@@ -69,28 +61,22 @@ Registers physically exist in two forms:
      the exact emitted split. Typed `exact` placements may instead carry a
      strictly increasing integer boundary group; that group is validated,
      hashed, and emitted without changing the compatibility path. The normal
-     equal-width conversion looks like it throws away
-     information, but it doesn't: once a boundary is registered, each stage
-     computes its own chunk from scratch off a registered 1-bit carry-in, so
-     that stage's delay depends only on its own chunk width, not on where
-     along the leaf's *unregistered* delay axis the cut nominally sits. Since
-     real per-width delay is monotonic (and concave — sky130 measured
+     equal-width conversion looks like it throws away information, but it
+     doesn't: once a boundary is registered, each stage computes its own
+     chunk from scratch off a registered 1-bit carry-in, so that stage's
+     delay depends only on its own chunk width, not on where along the
+     leaf's *unregistered* delay axis the cut nominally sits. Since real
+     per-width delay is monotonic (and concave — sky130 measured
      `D(10)=2.607ns`, `D(34)=3.851ns` for a 34-bit `MINUS`, nowhere near
      linear), minimizing the worst stage's delay for a given stage count
-     means equal-width chunks, full stop — an earlier version of this fix
-     instead inverted a delay-fraction curve to place *uneven* boundaries,
-     which measurably missed real sky130 timing goals that the plain
-     equal-width split (and even the original linear-fraction model) met.
-
-     **Current-model exact-boundary result (2026-08-21).** All subtract
-     boundaries 1..33 were mapped in isolation under unchanged model V4.
-     Bit 24 was best in isolation (345.96 MHz versus 314.96 MHz at the equal
-     bit-17 split), but the full 49-stage Divider became much worse at
-     144.43 MHz; bits 28 and 33 reached only 152.06 and 162.99 MHz. The bit-24
-     full path contained a 64-fanout NOR and a 3.92 ns max-capacitance
-     violation. Local leaf optimality therefore did not predict flattened
-     whole-design QoR, and exact subtract boundaries were retained as an
-     internal mechanism rather than made the ordinary allocation policy.
+     means equal-width chunks, full stop — an uneven, delay-fraction-derived
+     boundary measurably misses real sky130 timing goals that the plain
+     equal-width split meets, even when it looks better for one isolated
+     leaf in isolation. Locally optimal per-leaf boundaries do not reliably
+     predict whole-design QoR after real lowering (fanout and
+     max-capacitance effects dominate there instead), so exact per-leaf
+     boundaries remain available as an internal placement mechanism
+     (`exact_bit_boundaries`) rather than the default allocation policy.
    - `SPLIT_KIND_MUX_BITS` (every built-in MUX): the initial landscape deliberately
      exposes only the normal operation-output boundary. A typed physical
      placement may split the packed output bits, however, making each stage's
@@ -102,62 +88,26 @@ Registers physically exist in two forms:
      same cut count, half the select fanout, so `--no_sweep` gets it too.
      The bounded same-depth-neighbor refinement below (`BUILD_CHUNKED_MUX_
      REFINEMENT`) only adds the terminal, deliberately unregistered MUX on
-     top of that, after a real measurement fails — see the dated result.
+     top of that, after a real measurement fails.
 
-**Mux select-fanout cliff result (2026-08-25).** A single mux select bus
-registered *on top of* an already-registered, wider parallel sibling can
-materialize (a real register was set) while adding zero pipeline depth —
-`SWEEP.GET_PIPELINE_MAP` schedules a shared downstream consumer by the
-*max* of its inputs' readiness, so a short branch's register is free once a
-slower sibling already bounds that max. Found for real on `soft_shift_rot`
-(sky130, real liberty STA, `--no_hier_syn --no_sweep`): planning
-`MUX_uint5_t_if_eff_amt`'s output on top of an already-selected
-`MUX_uint64_t_if_w` cost nothing in depth but cost everything in fanout —
-`cuts=7, 6 slice(s) built` (the mismatch itself was the tell), 4
-design-wide max-capacitance violations, 8.50 ns combinational delay,
-105.95 MHz measured versus 252.13 MHz for the otherwise-identical 6-cut
-plan that omitted it. `SWEEP.DROP_NON_DEEPENING_PLACEMENTS` now drops any
-`INSTANCE_INPUT`/`INSTANCE_OUTPUT` placement whose removal, alone, leaves
-the subtree's real post-lowering `GET_TOTAL_LATENCY` exactly where it
-started — ground truth after real lowering, not a landscape estimate,
-since only the real synchronous schedule can see this. Measured effect,
-same target, same `--no_hier_syn --no_sweep` flags:
-
-| fix applied | cuts | measured fmax | max-cap violations |
-|---|---|---|---|
-| none (today's `master`) | 7 (6 slices) | 105.95 MHz | 4 |
-| drop the non-deepening cut alone | 6 | 252.13 MHz | 0 |
-| + chunk the remaining wide banks by default | 6 | **377.41 MHz** | 0 |
-
-The combined result (377.41 MHz) beats even the measured escalation's own
-best result on this design (317.36 MHz at 8 cuts) — with two fewer
-register banks. `--no_hier_syn`'s own floor estimate for this design
-(~192.3 MHz, summed isolated per-leaf delays) is separately known to run
-~2.5x high on a mux chain versus hierarchical synthesis (~483 MHz) — a
-pre-existing, unrelated limitation of that flag, not fixed here.
-
-**AUTOPIPELINE-region blind spot, found by the regression suite.** The
-initial `DROP_NON_DEEPENING_PLACEMENTS` compared a candidate's effect
-against `TimingParamsLookupTable[subtree_root].GET_TOTAL_LATENCY(...)`
-alone. `autopipeline_latency_test` (`stream_pipeline_test_top` /
-`div_inv`'s AUTOPIPELINE'd `soft_div_radix` core) failed against it: that
-subtree's own landscape reaches into a nested AUTOPIPELINE-tagged
-descendant (`BUILD_SLICE_LANDSCAPE`'s `SUB_HAS_AUTOPIPELINE_IN_HIER` check
-already permits descending through one), and `SYN.GET_SUBMODULE_LATENCY`
-deliberately reports such a region's own depth as 0 to its container — the
-same convention `SUMMARIZE_SUBTREE_PIPELINE`'s own docstring documents, so
-balanced-latency reporting doesn't double-count an already-decoupled
-region. A monolithic-only comparison therefore misread every one of that
-region's real registers as "added no depth" and deleted all 3 (then 6) of
-them, collapsing the plan to `cuts=0` and burning all 12 sweep iterations
-without ever placing a single register (17.16 MHz vs. 50 MHz goal,
-`TIMING NOT MET`). Fixed by adding each such region's own
-`GET_TOTAL_LATENCY` back into the comparison, mirroring `SUMMARIZE_
-SUBTREE_PIPELINE`'s own `monolithic + sum(regions)` formula exactly.
-Re-verified: `autopipeline_latency_test` passes (5-stage pinned
-confirmation, 266.72 MHz vs. 50 MHz goal), and the mux select-fanout cliff
-result above is unaffected (that design has no AUTOPIPELINE regions, so
-the region-sum contributes nothing extra there).
+   A single mux select bus registered *on top of* an already-registered,
+   wider parallel sibling can materialize a real register while adding
+   **zero pipeline depth**: `SWEEP.GET_PIPELINE_MAP` schedules a shared
+   downstream consumer by the *max* of its inputs' readiness, so a short
+   branch's register is free once a slower sibling already bounds that max —
+   a mismatch between requested cuts and actually-built slices is the tell.
+   `SWEEP.DROP_NON_DEEPENING_PLACEMENTS` drops any `INSTANCE_INPUT`/
+   `INSTANCE_OUTPUT` placement whose removal, alone, leaves the subtree's
+   real post-lowering `GET_TOTAL_LATENCY` exactly where it started — ground
+   truth after real lowering, not a landscape estimate, since only the real
+   synchronous schedule can see this. The comparison also folds in each
+   AUTOPIPELINE-tagged descendant region's own latency: such a region
+   reports 0 latency to its immediate container by convention (so
+   balanced-latency reporting doesn't double-count an already-decoupled
+   region), so a monolithic-only comparison would misread every one of that
+   region's real registers as adding no depth and drop them all.
+   `DROP_NON_DEEPENING_PLACEMENTS` mirrors `SUMMARIZE_SUBTREE_PIPELINE`'s own
+   `monolithic + sum(regions)` formula exactly to avoid this.
    - `SPLIT_KIND_1LL` ("one logic level" — AND/OR/XOR/NOT/NEGATE/MULT):
      these generators (`stage_for_1ll`) always place the *whole* operation in
      exactly one stage no matter the latency — only the register *boundary*
@@ -165,7 +115,7 @@ the region-sum contributes nothing extra there).
      0.5 the slice falls; latency 2 puts registers on both sides with the op
      untouched in the middle. A 3rd slice is provably wasted (a bare register
      around logic that never shrinks), so `RAW_VHDL.LEAF_MAX_SPLIT_SLICES`
-     caps these at 2 — enforced primarily in the landscape (§4: only a
+     caps these at 2 — enforced primarily in the landscape (§3: only a
      `SPLIT_KIND_1LL` segment's own two boundary units are ever legal cut
      positions) and backstopped by a hard error in
      `SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES` if anything else ever
@@ -182,12 +132,12 @@ Everything else is *emergent*: a hierarchical module's latency is rebuilt
 bottom-up from its children by `GET_PIPELINE_MAP`, and the VHDL writer
 registers wires crossing stage boundaries (`REG_STAGEn_<wire>`).
 
-The planned sweep now preserves a concrete `PipelinePlacement` through
-selection and lowering rather than immediately projecting a fractional cut
-through every descendant. `instance_input`/`instance_output` set one entity
-boundary flag; `bit_internal` adds a local slice only to a genuinely
-bit-splittable raw leaf. The older recursive fraction mechanism remains for
-the coarse sweep and compatibility paths:
+The planned sweep preserves a concrete `PipelinePlacement` through selection
+and lowering rather than immediately projecting a fractional cut through
+every descendant. `instance_input`/`instance_output` set one entity boundary
+flag; `bit_internal` adds a local slice only to a genuinely bit-splittable
+raw leaf. An older recursive fraction mechanism remains for the coarse
+sweep and compatibility paths:
 
 ```
         MAIN  cut at 30% of 100ns
@@ -197,19 +147,18 @@ the coarse sweep and compatibility paths:
        adder  -> cut lands at 50% of adder's 5ns   <- real register here
 ```
 
-**Cuts != latency.** The two are related but distinct numbers, now always
+**Cuts != latency.** The two are related but distinct numbers, always
 reported separately. Latency can exceed the cut count (children of one cut
 sliced at misaligned positions, IO regs, `make_stream_pipeline`-style
 factories with internal `autopipeline()` calls). A mini-swept WireGuard
-`block_step` accepts one internal half-way slice. Its external banks are then
-chosen over direct parent-dataflow edges: a ten-instance serial chain needs
-the ten internal slices plus nine shared boundaries, not both banks on every
-instance. The historical compatibility shape was 3 clocks per instance; it
-is now only the final fallback when compact boundary policies miss timing.
-An **autopipeline-tagged call
-site reports latency 0 to its container** (so FSMs keep their cycle
-accounting) — a stateful MAIN prints `main_latency=0` while a deep pipeline
-runs inside it. That is expected, not a bug.
+`block_step` accepts one internal half-way slice, with its external banks
+then chosen over direct parent-dataflow edges: a ten-instance serial chain
+needs the ten internal slices plus nine shared boundaries, not both banks on
+every instance — three clocks per instance is only the final fallback when
+compact boundary policies miss timing. An **autopipeline-tagged call site
+reports latency 0 to its container** (so FSMs keep their cycle accounting) —
+a stateful MAIN prints `main_latency=0` while a deep pipeline runs inside
+it. That is expected, not a bug.
 
 **A module's latency is not its slice count.** A module's total latency is
 its own leaf slices *plus* the summed latencies of its submodule instances,
@@ -232,14 +181,14 @@ total = (slices inserted directly into the cut-subtree roots)
 The two parts never overlap: a subtree root's own latency already zeroes its
 decoupled children (they report 0 to it), and the second term adds exactly
 those back. This equals the input-to-output register count when the regions
-sit in series, as in a stream pipeline. The historical WireGuard
-compatibility result was 0 monolithic + `block_step` 3 clocks x 10 = 30
-slices — not the "3" a single-instance view would show. A topology-aware
-lock instead records its shared boundary cover and reports the realized total.
-The `Pipeline depth summary` at *Writing Results* prints
-this figure as "N slice(s) total (N+1 pipeline stages)" (computed at *Writing Results*
-on the final, actually-emitted table, so it reflects any extra depth the
-AUTOPIPELINE pin-and-confirm re-elaboration (§6.5) added).
+sit in series, as in a stream pipeline — a topology-aware lock records its
+shared boundary cover and reports the realized total (a WireGuard-shaped
+design's `block_step` repeated ten times reports its true shared-boundary
+total, not a naive per-instance sum). The `Pipeline depth summary` at
+*Writing Results* prints this figure as "N slice(s) total (N+1 pipeline
+stages)" (computed at *Writing Results* on the final, actually-emitted
+table, so it reflects any extra depth the AUTOPIPELINE pin-and-confirm
+re-elaboration (§6) added).
 
 **Slices vs. pipeline stages — `stages = slices + 1`.** A slice
 count is not the same number as "how many pipeline stages". 0 slices (comb
@@ -249,21 +198,18 @@ and written to `sweep_history.json` is always **realized deepest slices + 1**,
 not the requested `cuts` count. The requested cut count and realized slice
 count are often equal for one pure-comb subtree (so `pipeline_stages` is then
 `cuts + 1`), but those two counts can differ after boundary lowering or with
-decoupled regions.
-Conflating these values can make a print like `cuts=0
-main_latency=0 pipeline_stages=20` look like no registers were added at all.
-The compact WireGuard result has no remaining *global* cuts, but does have 19
-realized locked slices (ten internal helper slices and nine shared
-boundaries), i.e. **20** pipeline stages end-to-end.
+decoupled regions — a print like `cuts=0 main_latency=0 pipeline_stages=20`
+can look like no registers were added at all when in fact locked slices
+distributed across decoupled regions account for all 20 stages.
 
 Entity naming is also unchanged: each distinct (IO regs + leaf slices)
 combination hashes to its own VHDL entity `funcname_<latency>CLK_<hash>`.
 
-## 3. Delay model: leaf-only synthesis with estimates
+## 2. Delay model: leaf-only synthesis with estimates
 
-Old: `ADD_PATH_DELAY_TO_LOOKUP` synthesized **every** function individually —
-adder, foo, bar, and MAIN each got a syn run — because composing delays from
-children was thought too inaccurate. This mode still exists as
+`ADD_PATH_DELAY_TO_LOOKUP` can synthesize **every** function individually —
+adder, foo, bar, and MAIN each get a syn run — because composing delays from
+children can be too inaccurate for some designs. This mode is
 `--full_hier_syn` (`HIER_SYN_MODE == "full"`).
 
 There is also a third, opposite mode: `--no_hier_syn`
@@ -289,17 +235,17 @@ under `DEVICE_MODELS` measures real µm² for free from the same mapped
 netlist it already STAs, cached to `area_cache/` alongside
 `path_delay_cache/` (own `PYPELINEC_AREA_CACHE_DIR`, own version, so an
 STA-only cache bump can't invalidate it and vice versa). A `--no_hier_syn`
-build like the one above therefore leaves every touched leaf area-cached as
-a side effect, even though `--no_hier_syn` disables the delay
-estimate-vs-measure fallback. `SYN.WRITE_AREA_ESTIMATE_FILE` prints one
-`Estimated area: ...` line (cheap, hierarchy-summed from that cache) next to
-the existing `Estimated register usage: ...` line, and any real whole-design
-confirmation/sweep synthesis additionally prints the exact `Measured area:
-...` from its own mapped netlist. See `docs/DEVICE_MODELS_DESIGN.md`'s area
-section for the full model, its accuracy, and its known limits.
+build therefore leaves every touched leaf area-cached as a side effect, even
+though `--no_hier_syn` disables the delay estimate-vs-measure fallback.
+`SYN.WRITE_AREA_ESTIMATE_FILE` prints one `Estimated area: ...` line (cheap,
+hierarchy-summed from that cache) next to the existing `Estimated register
+usage: ...` line, and any real whole-design confirmation/sweep synthesis
+additionally prints the exact `Measured area: ...` from its own mapped
+netlist. See `docs/DEVICE_MODELS_DESIGN.md`'s area section for the full
+model, its accuracy, and its known limits.
 
-New (default `HIER_SYN_MODE == "leaf"`): only functions whose delay
-*genuinely requires* synthesis get a run:
+Default (`HIER_SYN_MODE == "leaf"`): only functions whose delay *genuinely
+requires* synthesis get a run:
 
 - raw HDL leaves (adders, muxes, raw VHDL text modules, ...), heavily
   disk-cached across builds;
@@ -307,14 +253,15 @@ New (default `HIER_SYN_MODE == "leaf"`): only functions whose delay
 - the **measurement frontier**: topmost *fully-combinational* funcs (see
   below).
 
-**MAINs are no longer force-synthesized** (they were in the old flow, to
-seed coarse sweep guesses). A fully-comb main IS the measurement frontier
-and gets measured there; a main with state anywhere below is always
+**MAINs are not force-synthesized.** A fully-comb main IS the measurement
+frontier and gets measured there; a main with state anywhere below is always
 estimated — its whole-design zero-clk critical path (which includes the
 regions about to be pipelined, and internal reg-involved paths) feeds no
-planning decision, wastes a near-whole-design syn run, and used to print
-as a bogus `Design likely limited to X MHz` report. `--coarse` measures its
-main lazily when needed (estimate used if the main has state below).
+planning decision, and would waste a near-whole-design syn run on a number
+that isn't the right quantity anyway (an internal critical path, not the
+input-to-output through-delay dataflow slicing geometry needs).
+`--coarse` measures its main lazily when needed (estimate used if the main
+has state below).
 
 **Modules with Reg/Feedback state in their subtree** (recursive —
 `FUNC_SUBTREE_HAS_STATE`): a per-module synthesis run of such a module
@@ -343,16 +290,16 @@ empirical floor), not in the geometry model.
 
 **There are no exceptions**: nothing with state in its subtree is ever
 synthesized per-module — a subtree root like wireguard's `encrypt_dataflow`
-(Reg/Feedback in its FIFOs/interlocks) is estimated, not measured. The
-calibration that used to come from measuring subtree roots comes instead
-from the **measurement frontier** (`FUNC_IS_TOPMOST_COMB`): the topmost
-fully-combinational funcs — the largest subtrees with no Reg/Feedback
-anywhere inside, where measured == input→output through-delay *by
-construction* — each get one real synthesis run in the presynth wave.
-Estimates above the frontier are built from those measured totals (plus
-measured atomic spans), so first plans stay at the fewest-stages guess;
-interior comb funcs below the frontier stay estimated, and the landscape
-rescales their relative geometry into the measured frontier total.
+(Reg/Feedback in its FIFOs/interlocks) is estimated, not measured.
+Calibration comes instead from the **measurement frontier**
+(`FUNC_IS_TOPMOST_COMB`): the topmost fully-combinational funcs — the
+largest subtrees with no Reg/Feedback anywhere inside, where measured ==
+input→output through-delay *by construction* — each get one real synthesis
+run in the presynth wave. Estimates above the frontier are built from those
+measured totals (plus measured atomic spans), so first plans stay at the
+fewest-stages guess; interior comb funcs below the frontier stay estimated,
+and the landscape rescales their relative geometry into the measured
+frontier total.
 
 Hierarchical functions on the pipelining path are **estimated** instead:
 `delay = zero-clk pipeline map total` (the critical topological path through
@@ -361,15 +308,14 @@ written to the disk cache. Estimates over-estimate badly — they can't see
 cross-boundary synthesis optimizations (wireguard: leaf-sum 1128 ns vs
 ~150 ns synthesized, mostly collapsed carry chains).
 
-That inflation is why the **measurement frontier** exists (previous
-paragraph): the topmost fully-comb funcs are measured so the estimated
-totals above them are realistic. The landscape keeps estimated geometry
-(*where* delay lives, relatively) while measured frontier totals calibrate
-*how many* cuts — the first plan is the fewest-stages guess
-(`~real_delay / target_period`), which typically just misses timing, and
-stages are added from synthesis feedback. Under-pipelining and iterating up
-is the default; over-pipelining to meet timing fast is what makes people
-distrust HLS tools.
+That inflation is why the **measurement frontier** exists: the topmost
+fully-comb funcs are measured so the estimated totals above them are
+realistic. The landscape keeps estimated geometry (*where* delay lives,
+relatively) while measured frontier totals calibrate *how many* cuts — the
+first plan is the fewest-stages guess (`~real_delay / target_period`), which
+typically just misses timing, and stages are added from synthesis feedback.
+Under-pipelining and iterating up is the default; over-pipelining to meet
+timing fast is what makes people distrust HLS tools.
 
 **Estimates are never allowed to be why a sweep fails** (in the default
 `"leaf"` and `"full"` modes):
@@ -379,7 +325,7 @@ distrust HLS tools.
   estimates are still in play (streamsoc: `Falling back to full hierarchy
   synthesis: replacing 21 estimated delays with measured results...` — after
   which sample_power's plan shrank from 25 cuts to 14 and still met timing);
-- `--full_hier_syn` forces the old synthesize-everything behavior up front.
+- `--full_hier_syn` forces the synthesize-everything behavior up front.
 
 `--no_hier_syn` (`HIER_SYN_MODE == "prim"`) deliberately gives this guarantee
 up: the fallback is gated on `HIER_SYN_MODE == "leaf"` exactly, so it never
@@ -388,7 +334,7 @@ any func with submodules there. A `--no_hier_syn` sweep that stalls on
 estimate-driven cut placement stops at its best result instead of measuring
 for real -- the tradeoff for never paying for a hierarchical syn run.
 
-## 4. New concepts (SWEEP.py)
+## 3. Concepts: cut subtrees, landscapes, and cut planning
 
 ### A running example
 
@@ -465,23 +411,24 @@ so registers may only be added inside explicitly tagged regions:
                                                    chacha_loop = cut subtree root
 ```
 
-This replaces the old question "which module should the middle-out sweep
-coarse-sweep next?" — instead of discovering boundaries by trial synthesis,
-the cut subtrees are computed once from the sliceability rules.
+Instead of discovering boundaries by trial synthesis, the cut subtrees are
+computed once from the sliceability rules below.
 
-The descend rule (used both by the old recursive slicer and the landscape,
-now fixed): descend into a child iff
+The descend rule (used both by the recursive slicer and the landscape):
+descend into a child iff
 
 ```
 call site is AUTOPIPELINE tagged (or contains a tag deeper)     # override
 OR (parent is sliceable AND child is sliceable)                 # plain comb
 ```
 
-The child-side check is new — previously a sliceable parent descended into
-stateful children where cuts produced no registers and silently vanished
-("Finding #1"). Now such a cut stops and the child boundary becomes the
-stage boundary. Sliceability itself (`CAN_HAVE_ADDED_LATENCY`) is unchanged:
-no fixed-latency/vhdl-text/clock-crossing/state-regs/memory/blackbox/feedback.
+The child-side check matters: a sliceable parent does not by itself license
+descending into a stateful child. Without it, a cut could be planned against
+a stateful child where it produces no register and silently vanishes; the
+descend rule prevents that class of bug by construction — such a cut now
+stops and the child boundary becomes the stage boundary instead.
+Sliceability itself (`CAN_HAVE_ADDED_LATENCY`): no fixed-latency/vhdl-text/
+clock-crossing/state-regs/memory/blackbox/feedback.
 
 ### Landscape, segments, and typed candidates
 
@@ -490,19 +437,19 @@ cost?* `BUILD_SLICE_LANDSCAPE` flattens a subtree onto its delay axis into
 leaf-most **segments**:
 
 - `sliceable` — `SPLIT_KIND_BITS` raw HDL leaf; cuts anywhere inside produce
-  a register (§2: the leaf's own generator decides *how*, via an equal-width
+  a register (§1: the leaf's own generator decides *how*, via an equal-width
   split, not the landscape), **capped** to at most `width - 1` legal units
   (`RAW_VHDL.GET_LEAF_BIT_WIDTH`, the same "widest input/output wire" every
   such leaf's own codegen already uses as `GET_BITS_PER_STAGE_DICT`'s
   `num_bits`) — an N-bit leaf can hold at most N-1 interior registers (N
-  stages); offering more legal positions than that let `PLAN_CUTS` request
-  cuts `GET_BITS_PER_STAGE_DICT` could only honor with **interior zero-bit
-  stages** (bare registers around no logic — found for real: a 4-bit op
-  spread over 15 units accepted 14 cuts, `[0,1,0,0,0,1,0,0,0,1,0,0,0,1,0]`
-  bits per stage). Backstopped by a hard error in `GET_BITS_PER_STAGE_DICT`
-  itself if an interior zero-bit stage ever slips through anyway (a leading
-  or trailing zero-bit stage is fine — an IO-boundary register with no
-  logic on the outer side).
+  stages); offering more legal positions than that would let `PLAN_CUTS`
+  request cuts `GET_BITS_PER_STAGE_DICT` could only honor with **interior
+  zero-bit stages** (bare registers around no logic — a 4-bit op spread over
+  15 units would otherwise accept 14 cuts,
+  `[0,1,0,0,0,1,0,0,0,1,0,0,0,1,0]` bits per stage). Backstopped by a hard
+  error in `GET_BITS_PER_STAGE_DICT` itself if an interior zero-bit stage
+  ever slips through anyway (a leading or trailing zero-bit stage is fine —
+  an IO-boundary register with no logic on the outer side).
 - `sliceable_1ll` — `SPLIT_KIND_1LL` and the initial-planner view of
   `SPLIT_KIND_MUX_BITS`; the operation-output boundary is legal and the
   interior blames like `atomic`. Ordinary planning therefore cannot waste a
@@ -510,11 +457,10 @@ leaf-most **segments**:
   own reason is `1ll_atomic` and stays a hard floor; a `SPLIT_KIND_MUX_BITS`
   span's reason is `mux_packed_bank` and is a *soft* floor (in
   `SOFT_FLOOR_REASONS`) — it is only the unchunked estimate, and a selected
-  wide bank is chunked into the genuinely bit-split lowering by default now
-  (see the `SPLIT_KIND_MUX_BITS` bullet above and the dated result below);
-  only the terminal, still-unregistered MUX split remains behind the
-  bounded physical-neighbor refinement, reached after whole-design timing
-  says the schedule is poor.
+  wide bank is chunked into the genuinely bit-split lowering by default (see
+  the `SPLIT_KIND_MUX_BITS` bullet in §1); only the terminal, still-
+  unregistered MUX split remains behind the bounded physical-neighbor
+  refinement, reached after whole-design timing says the schedule is poor.
 - `atomic` — unsliceable span (reason recorded: `state_regs`,
   `feedback_vars`, `vhdl_module_text`, `inside_X_container`, ...),
 - `locked` — `params_are_fixed` (a mini-sweep result); already pipelined
@@ -587,19 +533,11 @@ legal bit site 2 bits into a 34-bit subtractor — so passes 1–2 alone keep th
 same 32 cuts while placing them as ragged mid-operation register banks
 instead of on the clean MUX boundary.
 
-This replaced a walk that cut when the budget filled and then, via a
-`PLAN_CUTS_BOUNDARY_SNAP_FRAC = 0.85` tolerance, allowed itself to accumulate
-up to 0.85 of an **extra** budget to reach a `_RUN_BOUNDARY_UNITS` position.
-That tolerance existed for a real reason (without any snap, a low cut count
-merged an iteration's tail, the 1LL MUX between iterations, and the next
-iteration's head into one ~11 ns stage) — but being a fraction of the budget
-it scaled with the budget, and once the budget fell *below* one repeated unit
-it did the opposite of its job: a 4.7 ns budget snapped forward to the
-7.119 ns iteration boundary, a 51% overrun, and reported 33 cuts where 64
-were needed. Every goal from 167 to 250 MHz produced the identical 33-cut
-plan. The rule above cannot do that — a stage never exceeds the budget when a
-legal position inside it would have fit — so the ~11 ns merge is forbidden
-outright rather than by tolerance.
+A cut is never placed later than the budget allows: unlike a tolerance-based
+snap to a preferred boundary, this algorithm cannot accumulate slack across
+stages, so it cannot merge an iteration's tail, an inter-iteration MUX, and
+the next iteration's head into one oversized stage the way a fixed-fraction
+tolerance can at low cut counts.
 
 `PLAN_CUTS` still chooses delay-axis units, preserving the existing budget,
 floor, and feedback machinery. `PLAN_PIPELINE_PLACEMENTS` then
@@ -623,7 +561,8 @@ asked for cuts at 3.9%, 11.8% and 51.3% of its subtractors and got the
 midpoint for all three. The stage structure the planner costed then does not
 exist, and the extra registers can buy nothing: at a 190 MHz goal that
 produced 48 cuts whose realized worst stage was 7.00 ns, identical to the
-32-cut boundary-only plan, for 16 more register banks. So `PLAN_PIPELINE_PLACEMENTS` lowers several candidate plans and keeps the
+32-cut boundary-only plan, for 16 more register banks. So
+`PLAN_PIPELINE_PLACEMENTS` lowers several candidate plans and keeps the
 best, ranked by `_PLAN_RANK`:
 
 - the plan as first planned on the raster;
@@ -652,11 +591,6 @@ the whole 32..64 range onto 64.
 Bit splitting therefore survives whenever it genuinely pays and is dropped
 when it only looked like it would on the raster.
 
-Note this makes the planner *honest about* the generator's equal-width
-contract rather than changing it. Whether that constraint itself should stay
-is an open question — see the "Open question (2026-08-21)" note under
-`SPLIT_KIND_BITS` in §2.
-
 `APPLY_PIPELINE_PLACEMENTS` lowers the selected types directly. After the
 pipeline map is rebuilt, `CHECK_PIPELINE_PLACEMENTS_REALIZED` verifies every
 selected candidate materialized; a missing placement is a hard compiler error.
@@ -678,29 +612,26 @@ raster unit of slack at the near edge: a candidate's nominal position is its
 unit + 0.5 while the boundary it stands for is the segment's exact `.end`, so
 an operation output whose true edge is where the next segment *begins* can
 round to a hair inside it. Without that slack half the `BIN_OP_MINUS` outputs
-disappeared and the planner had nothing to use between whole iterations.
+would disappear, leaving the planner nothing to use between whole iterations.
 
-`--coarse` (and the hotspot mini-sweep, which is a
-`--coarse` run in isolation) uses `GET_BEST_GUESS_IDEAL_SLICES(n)` = n
-evenly spaced global fractions with no idea what they'd hit (a cut at 0.5
-here would have landed inside `acc` and been silently lost — the "Finding
-#1" bug class the invariant above guards against). A landscape-aware,
-exact-cut-count replacement for this (`SEARCH_EXACT_CUT_COUNT`/
-`GET_EVEN_SLICES_OVER_LANDSCAPE`) was built and measured against real
-sky130 synthesis: on the divider design it consistently placed cuts *worse*
-than the blind fractions it was meant to improve on (~16% lower fmax at an
-equal, fixed cut count, holding every other change constant) with no
-counter-example found where it did better — reverted rather than shipped.
-See the project's autopipelining-fmax investigation handoff notes if
-revisiting this.
+`--coarse` (and the hotspot mini-sweep, which is a `--coarse` run in
+isolation) uses `GET_BEST_GUESS_IDEAL_SLICES(n)` = n evenly spaced global
+fractions with no landscape awareness — a cut at a blind fraction can land
+inside an atomic span and be silently lost, exactly the failure class the
+sliceability/descend-rule invariants above guard against for the planned
+sweep. A landscape-aware, exact-cut-count replacement for `--coarse`
+(`SEARCH_EXACT_CUT_COUNT`/`GET_EVEN_SLICES_OVER_LANDSCAPE`) was measured
+against real sky130 synthesis on the divider design and consistently placed
+cuts worse than the blind fractions it was meant to improve on (~16% lower
+fmax at an equal, fixed cut count, holding every other change constant, with
+no counter-example found) — not shipped.
 
 Compatibility/coarse paths still use `CHECK_CUTS_VS_LATENCY` to compare a
-fractional cut count
-against the leaf slices that actually materialized in the subtree.
-Its strictness follows the landscape:
+fractional cut count against the leaf slices that actually materialized in
+the subtree. Its strictness follows the landscape:
 
-- **Zero leaf slices** while cuts were planned: always a hard error
-  (the Finding #1 class — every register vanished).
+- **Zero leaf slices** while cuts were planned: always a hard error — every
+  register vanishing is always a hard error.
 - **Fully sliceable subtree** (every delay unit legal — pure comb, a
   register can go anywhere): fewer leaf slices than cuts is a hard error —
   nothing in the subtree may absorb a cut, so a shortfall means slicing
@@ -746,172 +677,34 @@ coarse mini-sweep lock, including its fixed internal slices, selected input/
 output banks, boundary strategy, rebuilt latency, and realization check.
 `mini_sweep_boundary_diagnostics` records the alias-only direct edges, the
 minimum-cost input/output cover, and any edge ineligible because a no-I/O
-pragma applied. The trace,
-generated VHDL, mapped JSON, and STA report
+pragma applied. The trace, generated VHDL, mapped JSON, and STA report
 together are the evidence for a placement claim; requested cut counts alone
 are not.
 
-The clean gate-Divider baseline demonstrates why this distinction matters.
 The preserved
 [`divider_gate_clean_baseline_critical_paths.json`](../src/tests/pypeline_tests/qor/divider_gate_clean_baseline_critical_paths.json)
-comes from unchanged commit `c81ca31f`, the historical `current` synthesis
-recipe, and no
-handoff patch. Its 28/50/63/67/70-slice winning paths all contain the pre-step
-divide-by-zero compare/select cone before the first repeated radix step. By 67
-slices that invariant prefix is about 5.67 ns; adding three more old-planner
-slices changes the 7.010 ns period by exactly zero. A fallback placement at 73
-slices jumps to 224.31 MHz after finally isolating that mux, then trimming
-finds a different 66-slice/67-stage placement at 184.35 MHz. Its exact final
-VHDL passes 141 ordered vectors at 66-cycle latency, but it remains well over
-the 48-slice limit. This is evidence for a missing legal operation boundary
-and a mapping/fanout effect, not evidence that the repeated step itself needs
-still more cuts. The frozen compare/select
-recipe matrix is documented in
-[`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md#pre-step-compareselect-cone-and-clean-baseline-floor-2026-08-14).
-Typed-placement results retain their own modified-tree hashes and must not be
-described as part of that clean baseline.
+records a clean, unmodified-planner baseline for the gate-Divider design
+(commit `c81ca31f`, no handoff patch): its winning paths at 66-73 slices all
+contain the same pre-loop divide-by-zero compare/select cone, and additional
+slices beyond the point where that cone is isolated buy zero fmax. This is
+evidence for a missing legal operation boundary and a mapping/fanout effect,
+not evidence that the repeated step itself needs more cuts — see
+[`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md) for the frozen
+compare/select recipe matrix this motivated. Typed-placement results retain
+their own modified-tree hashes and are not part of this baseline.
 
-### Divider acceptance result (2026-08-16)
-
-The generic typed planner and the production sky130 recipe now meet the
-Divider target without a Divider-name rule, exact-cut search, public slice
-cap, or required stage-sized helper function. The durable record is
-[`divider_qor_acceptance.json`](../src/tests/pypeline_tests/qor/divider_qor_acceptance.json).
-
-| unchanged fixture | compiler/recipe | slices | combinational stages | fmax | cells | DFFs | verdict |
-|---|---|---:|---:|---:|---:|---:|---|
-| gate | clean `c81ca31f` / historical control | 66 | 67 | 184.35 MHz | 34,585 | 10,327 | fails 48-slice limit |
-| gate | typed planner / `early_flatten_opt` V3 | **31** | **32** | **160.43 MHz** | 16,514 | 3,007 | **pass** |
-| arithmetic | clean `c81ca31f` / historical control | 64 | 65 | 149.16 MHz | 22,563 | 8,749 | fails fewer-than-64 limit |
-| arithmetic | typed planner / `early_flatten_opt` V3 | **32** | **33** | **180.05 MHz** | 13,779 | 3,072 | **pass** |
-
-These fmax figures are under the V3 production recipe `early_flatten_opt`.
-The production recipe is now `early_flatten_noabc` (model V4), chosen because
-it reproduces latchup's real netlists rather than because it maximises our own
-fmax — under it the same arithmetic design maps to 13,873 cells at 169.6 MHz.
-See docs/DEVICE_MODELS_DESIGN.md, "Matching latchup's early-flatten flow".
-
-The current automatic gate trace contains the first 31 coherent `step_gates`
-outputs.  With `early_flatten_opt`, that is enough to remove the former
-pre-loop divide-zero fanout floor without an explicit divide-zero placement.
-This is one slice fewer than the 32-slice physical control and comfortably
-inside the 48-slice allowance. Its exact final VHDL
-passes 141 vectors with continuous traffic, bubbles, divide-by-zero, edge
-cases, ordering, valid timing, `input_ready == 1`, and flush at 31-cycle
-latency; its immutable mapped netlist has zero unmapped cells and zero
-capacitance violations.
-
-The arithmetic fixture has no stage-sized helper at all. Its successful trace
-selects the pre-loop divide-zero output followed by the first 31 flat loop
-remainder-select operations. That 64-to-32-slice improvement is the direct
-regression proof that operation-boundary scheduling applies to ordinary flat
-dataflow, not merely to the gate fixture's convenient helper hierarchy.
-
-The first automatic gate plan met timing, so full dependency-DAG scheduling,
-custom ABC scripts, sequential retiming, flatter stage-oriented VHDL, and
-source reshaping were not deepened. Those remain escalation paths if a future
-design exposes a typed-landscape limitation; hierarchy remains metadata and a
-tie-break, never the unit of scheduling.
-
-### Budget-to-latency continuity result (2026-08-21)
-
-The three-pass `PLAN_CUTS`, the parallel-branch legality rule, and
-realized-plan judging were accepted together against the `--no_sweep
---no_hier_syn` radix-2 divider (`early_flatten` shape, sky130 model V4,
-`early_flatten_noabc`). The acceptance rule was stated per **latency**, not
-per MHz target: a deeper pipeline at a given goal is fine, a slower pipeline
-at a given stage count is not.
-
-Measured on the first planned guess (`iter=1` is the same
-`PLAN_PIPELINE_PLACEMENTS` call `--no_sweep` writes, taken before any
-`global_scale` adjustment, so the sweep's own synthesis measures the
-`--no_sweep` artifact):
-
-| slices / stages | before | after | |
-|---:|---:|---:|---|
-| 16 / 17 | 67.40 MHz | **68.09 MHz** | +1.0% |
-| 32 / 33 | 169.57 MHz | **169.57 MHz** | equal; placement-identical (32 MUX outputs, same units) |
-| 33 / 34 | 169.57 MHz | not produced | the 33rd cut measured zero gain — pure waste |
-| 48 / 49 | not produced | 164.69 MHz | new intermediate level, see below |
-| 64 / 65 | 164.69 MHz | **221.94 MHz** | +34.8% |
-| 65 / 66 | not produced | 221.94 MHz | |
-
-The accepted gate is **the 33-stage solution must maintain or improve**; it is
-equal, and no other measured latency regressed. Goal-to-slice mapping,
-before → after: 69→16/16, 100→32/32, 135.5→32/32, 167→33/**48**,
-190→33/**48**, 200→33/**64**, 214→33/**65**, 284→64/65. The 33-slice plateau
-spanning 167–250 MHz is gone.
-
-The reachable levels are structural, not arbitrary. One loop iteration is
-`BIN_OP_MINUS` 3.851 ns + `MUX_uint32_t` 3.268 ns = 7.119 ns, so "one cut per
-iteration" (32) and "two" (64) fall out for free. A real level sits between
-them — cut at a MINUS's output, the *next* MINUS's midpoint, then that MUX's
-output: 3 cuts per 2 iterations, **48**, predicted ~5.1 ns. Reaching it needs
-both halves of the plan/lower contract working (see "Landscape, segments, and
-typed candidates"): the bit site must be planned *at* the equal-width
-boundary lowering will emit, and plans must be ranked by `_PLAN_RANK` (meet
-the goal, then fewest cuts) rather than by raw worst stage.
-
-Do not confuse an intermediate level with a **phase variant**. The old
-planner emitted 33–48-slice plans whose realized worst stage was 7.00 ns —
-identical to the 32-slice plan's — registers spent for no speed. Those are
-what realized-plan judging discards. A genuine level is a different stage
-structure: 48 slices at ~5.1 ns is ~72% of the coarse level, where a phase
-variant sits within a raster unit of it.
-
-The 48-slice first guess exposed the remaining defect rather than becoming a
-returned result: it mapped to 164.69 MHz, below the 32-slice plan's 169.57
-MHz. The follow-up investigation held `DEVICE_MODELS.py`, model V4, the
-liberty data, timing coefficients, and `early_flatten_noabc` byte-identical.
-Its controlled results were:
-
-| 49-stage structural A/B | full-Divider fmax | result |
-|---|---:|---|
-| equal-width subtract split, output-boundary MUX | 164.69 MHz | control; plateau |
-| best isolated subtract boundary (bit 24) | 144.43 MHz | rejected; full-design fanout/max-capacitance dominated |
-| exact subtract bit 28 | 152.06 MHz | rejected |
-| exact subtract bit 33 | 162.99 MHz | rejected |
-| explicit ripple-borrow stage-local subtract | 99.16 MHz | rejected |
-| chunk selected integer MUXes, tail unchanged | 170.15 MHz | only +0.3% over 33 stages |
-| chunk selected integer MUXes plus terminal MUX | **194.22 MHz at 50 stages** | accepted |
-
-The promoted response is generic. After a full-design timing miss, before a
-denser landscape plan is synthesized, the sweep constructs at most one
-physical neighbor: each selected built-in MUX output bank becomes one exact
-midpoint packed-bit boundary, and the last candidate MUX is included to
-remove a formerly unsplit tail. Selected output banks retain one clock of
-local latency; the terminal split costs one additional slice. Physical
-fingerprints prevent duplicate synthesis. If the neighbor fails, the already
-computed stage-specific/global feedback resumes normal densification; no
-Divider name, iteration count, target frequency, or public slice cap appears
-in the rule.
-
-At the 180 MHz goal the normal sweep now measures the 48-slice/49-stage
-control at 164.69 MHz, then returns **49 slices / 50 stages at 194.22 MHz**.
-The immutable final VHDL passes all 141 ordered vectors at 49-cycle latency,
-including bubbles and divide-by-zero, and maps with complete topology and
-zero unmapped cells. The 32-slice/33-stage endpoint remains 169.57 MHz and
-the 64-slice/65-stage endpoint remains 221.94 MHz because neither renders a
-bit-chunked MUX. Thus the accepted returned sequence is approximately
-169.57 → 194.22 → 221.94 MHz at 33 → 50 → 65 stages, with meaningful gains
-on both depth increases instead of a flat intermediate plateau.
-
-The generic lowering was subsequently checked with the Divider's 32-bit
-loop-carried values wrapped in a one-field user struct. The normal 180 MHz
-sweep, starting from an empty temporary path-delay cache, took the same route:
-the 48-slice control missed, then the packed-MUX neighbor returned 49 slices /
-50 stages at **194.2227 MHz**. The immutable VHDL passed the same 141-vector
-test at 49-cycle latency. Trace schema 5 recorded 17 wrapper-MUX midpoint
-placements (including the terminal refinement), and cache output contained
-only canonical `MUX_uint32_t.delay` and `MUX_uint32_t.timing.json` files.
-There is no wrapper-type cache filename or Divider-specific production rule.
+The generic typed planner and the production sky130 recipe meet the Divider
+design's QoR target without a Divider-name rule, exact-cut search, public
+slice cap, or required stage-sized helper function; see this file's History
+section for how the acceptance result was reached and
+[`pypeline_TESTS.md`](pypeline_TESTS.md#related) for the durable acceptance
+record.
 
 ### Floor
 
 *What fmax can this subtree never exceed?* The longest run of illegal units
 is the predicted minimum stage delay — reported with a blamed instance
-**before any synthesis run**. Old behavior: this was discovered empirically
-by watching 5+ full syn runs plateau at the same MHz.
+**before any synthesis run**.
 
 In the running example the longest illegal run is `acc`'s 5 units → floor =
 1000/5 = 200 MHz, comfortably above the 100 MHz goal, so the report is just
@@ -946,13 +739,11 @@ Floors come in two strengths:
 **"At the floor" is a symmetric band, not a one-sided threshold.**
 `SWEEP.AT_PREDICTED_FLOOR(curr_mhz, floor, target_mhz)` requires curr_mhz
 within `[FLOOR_TOLERANCE*floor, floor/FLOOR_TOLERANCE]` — both a lower bound
-*and* an upper bound. An earlier version checked only the lower bound
-(`curr_mhz >= FLOOR_TOLERANCE*floor`), which is satisfied by any fmax above
-the floor however far above: seen for real, a sweep stopped at 124.18 MHz
-citing a ~71.6 MHz predicted floor (73% above it, nowhere near stagnating)
-and reported `TIMING NOT MET` despite comfortably beating its own 147 MHz
-goal. A curr_mhz far above the floor means the *prediction* was wrong, not
-that a ceiling was reached, so it must not count as "at the floor".
+*and* an upper bound. A curr_mhz far above the floor means the *prediction*
+was wrong, not that a ceiling was reached, so it must not count as "at the
+floor" — checking only the lower bound would let a sweep stop and report
+`TIMING NOT MET` while sitting 73% above its own predicted floor and
+comfortably beating its actual goal.
 
 **Restoring the best-seen result must re-check whether it actually met
 its goal.** When the sweep stops without the final iteration meeting
@@ -960,17 +751,16 @@ timing, it restores whichever earlier iteration had the best worst-case
 achieved/target ratio (`best_tpl`/`best_score`) and writes that out instead.
 `SWEEP.BEST_SNAPSHOT_MET_ALL_GOALS(best_score)` (`best_score >= 1.0`) then
 re-derives `met_timing` for that restored snapshot — without it, a build
-could restore a snapshot that measured 244.72 MHz against a 147.00 MHz
-target and still exit `TIMING NOT MET`, because `met_timing` was last
-written by a later, worse iteration (e.g. one a floor-stop landed on
-afterward) and never re-checked against the snapshot actually written out.
+could restore a snapshot that measured well above its target and still exit
+`TIMING NOT MET`, because `met_timing` was last written by a later, worse
+iteration (e.g. one a floor-stop landed on afterward) and never re-checked
+against the snapshot actually written out.
 
 ### Plan
 
-`MainSweepPlan` (one per MAIN with a target MHz) replaces the old
-`SweepState`/`InstSweepState` multiplier bookkeeping. For the running
-example, mid-sweep after one failed iteration that was attributed to
-`mul_add`, the plan would look like:
+`MainSweepPlan` (one per MAIN with a target MHz) holds the sweep's
+per-main state. For the running example, mid-sweep after one failed
+iteration that was attributed to `mul_add`, the plan would look like:
 
 ```python
 MainSweepPlan(
@@ -979,8 +769,7 @@ MainSweepPlan(
   subtrees         = ["my_main"],            # cut subtree roots
   landscapes       = {"my_main": <SliceLandscape above>},
   cuts             = {"my_main": [9, 19]},   # planned cut units per subtree
-  # learned calibration (successors of the old global multipliers,
-  # but per-func where attribution allows):
+  # learned calibration, per-func where attribution allows:
   func_delay_scale = {"mul_add": 1.75},      # densify: mul_add units now
                                              #  cost 1.75x stage budget
   global_scale     = 1.0,                    # no-attribution fallback knob
@@ -1003,12 +792,12 @@ The history dumps to `<out_dir>/<top>/sweep_history.json`, one record per
  "action": "densify(mul_add x1.75)"}
 ```
 
-## 5. The refinement loop
+## 4. The refinement loop
 
 ```
                  +--------------------------------------------+
                  | plan cuts per subtree (landscape + budget)  |
-                 | apply locks, slice, write VHDL              |
+                 | apply locks, slice, write VHDL               |
                  +--------------------+-----------------------+
                                       |
                         one full-design synthesis run
@@ -1086,21 +875,28 @@ compact repeated-helper solution before global densification skips past it:
 A same-fmax comparison uses a *relative* tolerance (1% of target):
 62.92 → 62.99 MHz is the same result, not progress.
 
-The old loop's outer structure ("reset to zero clocks, slice, synthesize,
-adjust") survives, but the *adjust* step changed from multiplier growth +
-hierarchy step-down to the table above. The old per-module coarse sweep
-survives in two places: the `--coarse` CLI path, and as the **mini-sweep**
-run on an attributed hotspot (streamsoc: fft attributed 3x → `Isolated
-coarse sweep of hotspot: fft_2pt_pipeline_no_handshake` → met 129 MHz in
-isolation with 2 cuts → locked interior plus a parent-dataflow boundary
-policy).
+**Judging a change to this loop is stated per latency, not per MHz target:**
+a deeper pipeline at a given goal is an acceptable outcome; a slower
+pipeline at a given stage count is not. Comparing two planner behaviors (or
+two commits) means holding stage count fixed and comparing fmax, or holding
+the MHz goal fixed and asking whether the reachable depth changed — never
+comparing MHz-goal outcomes reached at two different stage counts as if
+they were the same axis.
+
+The loop resets to zero clocks, slices, synthesizes, and adjusts;
+adjustment follows the escalation ladder above. The per-module coarse sweep
+is also used in two other places: the `--coarse` CLI path, and as the
+**mini-sweep** run on an attributed hotspot (streamsoc: fft attributed 3x →
+`Isolated coarse sweep of hotspot: fft_2pt_pipeline_no_handshake` → met
+129 MHz in isolation with 2 cuts → locked interior plus a parent-dataflow
+boundary policy).
 
 **Attribution is approximate by design.** Post-synthesis names below the
 top-level MAIN are mangled differently by every tool, and keep/dont_touch
 attributes bloat designs — so exact hierarchical matching is never
 attempted. Instead:
 
-1. MAINs resolve via entity-name prefixes (unchanged
+1. MAINs resolve via entity-name prefixes (
    `GET_MAIN_INSTS_FROM_PATH_REPORT` — MAIN entities survive unmangled);
 2. function-name *fragments* from the subtree's landscape (`SWEEP.
    RANK_PATH_FUNC_CANDIDATES`) are substring-matched against the report's
@@ -1119,24 +915,25 @@ attempted. Instead:
    register with the top entity name, so the root would match everything
    and always win, a meaningless attribution;
 
-   *Why length alone was wrong:* every ancestor func's name is itself a
+   *Why length alone is wrong:* every ancestor func's name is itself a
    substring of a descendant register's fully-qualified name (each
    hierarchy level just prepends its own instance name), so a pure
    matched-length score carries no depth signal — it always favors
-   whichever candidate name is longest. Seen for real on wireguard-fpga's
-   decrypt path: a 58-character auto-generated interface-func wrapper name
-   (`if8040c842_decrypt_dataflow_core_..._inst18`) scored 14112 and beat
-   the 29-character `chacha20_chacha20_block_step` at 7056, even though
-   Vivado's own timing report showed the critical path running entirely
-   between two registers *inside* the latter, many levels deeper than the
-   wrapper. `SWEEP.RESOLVE_PIPELINABLE_HOTSPOT` additionally guards a
-   related case: the correctly-attributed deepest common ancestor can
-   itself be unsliceable (state/feedback at its own level, e.g. a
-   `feedback_vars` submodule threaded through an interface-func wrapper)
-   while wrapping other, unrelated sliceable logic — before declaring the
-   path unpipelinable it scans the remaining ranked candidates for the
-   deepest one that autopipelining *can* help, so one stuck ancestor never
-   masks a densifiable one on the same path;
+   whichever candidate name is longest. On wireguard-fpga's decrypt path a
+   58-character auto-generated interface-func wrapper name
+   (`if8040c842_decrypt_dataflow_core_..._inst18`) scores 14112 under
+   length-alone and would beat the 29-character `chacha20_chacha20_
+   block_step` at 7056, even though the actual timing report shows the
+   critical path running entirely between two registers *inside* the
+   latter, many levels deeper than the wrapper — depth-ranked matching
+   attributes this correctly. `SWEEP.RESOLVE_PIPELINABLE_HOTSPOT`
+   additionally guards a related case: the correctly-attributed deepest
+   common ancestor can itself be unsliceable (state/feedback at its own
+   level, e.g. a `feedback_vars` submodule threaded through an
+   interface-func wrapper) while wrapping other, unrelated sliceable logic
+   — before declaring the path unpipelinable it scans the remaining ranked
+   candidates for the deepest one that autopipelining *can* help, so one
+   stuck ancestor never masks a densifiable one on the same path;
 3. entity-local `REG_STAGEn` stage numbers are logged only — stage indices
    are local to the entity the FF lives in, never global;
 4. low confidence → no attribution → global rescale. PYRTL (the no-PART
@@ -1145,7 +942,7 @@ attempted. Instead:
 5. mains never implicated in any *failing* report count as met once every
    reported path meets its goal (per clock group reports only show the
    group-worst path, which can live in a different main — same semantics as
-   the old sweep).
+   the coarse sweep).
 
 Every iteration logs one line per main — a real one from WireGuard showing
 targeted densification of the correctly-attributed interior hotspot:
@@ -1157,58 +954,21 @@ targeted densification of the correctly-attributed interior hotspot:
         action=densify(chacha20_chacha20_block_step x1.75)
 ```
 
-(An early version of this sweep once "met timing in one iteration" on this
-design — with 88 stages, because the cut budget was computed against a 7.5×
-inflated estimated delay axis. Meeting timing fast by drowning the design
-in registers is the failure mode that makes people distrust HLS tools; a
-few more iterations converging from below is always the better trade.)
+Meeting timing in very few iterations is not automatically a good sign: a
+cut budget computed against a badly-inflated estimated delay axis can "meet
+timing in one iteration" by drowning the design in far more registers than
+necessary. Meeting timing fast by over-pipelining is the failure mode that
+makes people distrust HLS tools; a few more iterations converging from below
+is always the better trade.
 
-One from streamsoc (compare: the old sweep would have re-sliced the *whole*
-design more finely):
+One from streamsoc (compare: a per-module coarse re-slice of the whole
+design would cost far more synthesis runs to reach the same result):
 
 ```
 [sweep] iter=1 main=fft_2pt_pipeline_no_handshake goal=110.00MHz got=98.86MHz
         (10.11ns) cuts=3 main_latency=4 pipeline_stages=5 predicted_stage=9.10ns
         bottleneck=fft_2pt_pipeline_no_handshake action=densify(fft_... x1.17)
 ```
-
-### Attribution depth-ranking result (2026-08-24)
-
-`./build.py --dec --sim --native` (wireguard-fpga, 80 MHz goal) used to fail
-after 2 iterations: iter=1 attributed the critical path to
-`if8040c842_decrypt_dataflow_core_..._inst18` — an auto-generated
-interface-func wrapper, unsliceable because a `Feedback[uint1_t]` inside
-`strip_auth_tag` makes it report `feedback_vars` — and iter=2 stopped there
-(`action=stop(unpipelinable if8040c842_...)`), despite Vivado's own timing
-report showing the actual worst path running entirely between two
-registers inside `chacha20_chacha20_block_step`, many levels deeper and
-fully sliceable. Replaying the real timing report through the old scorer
-confirmed why: all four matched candidates matched every endpoint name and
-every one of 250 netlist resources, so the summed-length score just picked
-the longest name (14112 for the 58-char wrapper vs 7056 for the 29-char
-`chacha20_chacha20_block_step`) — no depth signal at all.
-
-With `RANK_PATH_FUNC_CANDIDATES` (rank by deepest shared substring match,
-not name length) and `RESOLVE_PIPELINABLE_HOTSPOT` (skip past an
-unsliceable match to a deeper sliceable one on the same path), the same
-build now attributes correctly from iteration 1 and meets timing:
-
-```
-[sweep] iter=1 ... got=31.34MHz (31.91ns) cuts=7 ... bottleneck=chacha20_chacha20_block_step
-        action=densify(chacha20_chacha20_block_step x2.68)
-[sweep] iter=2 ... got=63.13MHz (15.84ns) cuts=35 ... action=minisweep(chacha20_chacha20_block_step)
-[sweep]   Locked chacha20_chacha20_block_step at cuts=1 (0 input + 9 output boundary bank(s)) on 10 instance(s)
-[sweep] iter=3 ... got=95.91MHz (10.43ns) cuts=1 ... action=met
-PASS decrypt_dataflow_decrypt_dataflow: 95.91 MHz vs 80.00 MHz goal (confirmation run)
-```
-
-3 iterations, 21 pipeline stages, met with margin (95.91 vs 80.00 MHz) —
-where the unfixed build never got past 31.34 MHz. `./build.py --enc
---sim --native` (no `feedback_vars` submodule in its call graph, so never
-exercised this bug) was not re-run as part of this fix; it already passed
-at iter=1 before and after, and the change only touches how a hotspot is
-*chosen* when multiple candidates match a path, not the sweep's
-convergence mechanics.
 
 **Unmet timing fails the build.** The best pipeline found (largest
 worst-case achieved/target ratio across iterations) is still written out —
@@ -1223,14 +983,14 @@ ERROR: TIMING NOT MET: encrypt_dataflow achieved 73.01 MHz vs 80.00 MHz
 Results were written for debugging; skipping simulation/bitstream.
 ```
 
-(A silent version of exactly this — sweep stops unmet, results written,
-cocotb sim runs and passes, exit 0 — is how a failing wireguard build once
-went unnoticed.)
+Silently continuing past unmet timing — writing results, running sim,
+exiting 0 — would let a real timing failure go unnoticed, since simulation
+only checks logical correctness, not fmax.
 
 **Pipeline depth summary.** Right after the *Writing Results* banner, one
 block reports how deeply each main ended up pipelined (total slices and stages,
-see §2), broken down by decoupled region — computed on the final emitted
-table so it includes any depth the §6.5 re-elaboration added:
+see §1), broken down by decoupled region — computed on the final emitted
+table so it includes any depth the §6 re-elaboration added:
 
 ```
 [sweep] Pipeline depth summary:
@@ -1270,7 +1030,7 @@ explicitly during the sweep:
   goal (soft number — its standalone critical path includes IO paths that
   boundary registers may cut in context).
 
-## 6. Command line
+## 5. Command line
 
 | flag | meaning |
 |---|---|
@@ -1326,7 +1086,7 @@ line in `SWEEP.py` that names a hotspot or a MAIN. Reading a failing build's own
 output no longer requires separately grepping `module_instances.log`/`pipeline_map.log`
 just to find which line of which file a printed name refers to.
 
-## 6.5 AUTOPIPELINE `.latency` pin-and-confirm loop (Pypeline designs only)
+## 6. AUTOPIPELINE `.latency` pin-and-confirm loop (Pypeline designs only)
 
 Pypeline's `AUTOPIPELINE(func)` tag exposes the sweep's discovered stage count back to
 the design's Python as `.latency` (e.g. `make_stream_pipeline` sizes its output FIFO
@@ -1365,13 +1125,14 @@ repeat-the-sweep one:
    invalidating EVERY entry's cached hash/latency strings — cached hash
    chains embed child func names, and any cache carried across the
    re-elaboration boundary may reference since-renamed entities (the class
-   of bug behind the shared-wireguard GHDL "unit not found" failure). Then
-   `SYN.DO_SEEDED_CONFIRM_OR_SWEEP` runs **one** full-design synthesis. The loop
-   stops only when the post-confirmation harvest **equals** the values this pass's
-   Python consumed — meeting timing alone is not sufficient: realizing the seeded
-   fractional slices hierarchically (e.g. into pipelined built-in div/mult entities
-   with their own stage granularity) can change an instance's total latency even on
-   a passing confirmation, and exiting then would build VHDL whose actual depth
+   of bug behind a "unit not found" GHDL failure on a shared-across-instances
+   design). Then `SYN.DO_SEEDED_CONFIRM_OR_SWEEP` runs **one** full-design
+   synthesis. The loop stops only when the post-confirmation harvest
+   **equals** the values this pass's Python consumed — meeting timing alone
+   is not sufficient: realizing the seeded fractional slices hierarchically
+   (e.g. into pipelined built-in div/mult entities with their own stage
+   granularity) can change an instance's total latency even on a passing
+   confirmation, and exiting then would build VHDL whose actual depth
    contradicts every `.latency`-derived constant baked into it (and desync the
    native simulator's latency emulation). When the totals change, the loop simply
    re-elaborates with the fresh numbers (an extra pass, typically converging
@@ -1424,7 +1185,7 @@ The converged harvest has one more consumer: a non-`--comb` `--sim` run hands it
 which re-imports the design with the cache installed and emulates every latency —
 see `pypeline_sim_DESIGN.md` §"Pipelined native sim".
 
-## 6.6 AUTOFSM schedule-and-confirm loop (Pypeline designs only)
+## 7. AUTOFSM schedule-and-confirm loop (Pypeline designs only)
 
 `AUTOFSM(func)` is the resource-minimizing dual of AUTOPIPELINE: instead of
 cutting one copy of a function's hardware into pipeline stages, it keeps ONE
@@ -1432,7 +1193,7 @@ copy of each distinct operation and runs the function over several cycles. Full
 design in [`AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md); what matters here is how it
 sits around everything above.
 
-**Loop nesting.** `SYN.DO_SWEEP_AND_AUTOPIPELINE` is the whole of §5 + §6.5 factored
+**Loop nesting.** `SYN.DO_SWEEP_AND_AUTOPIPELINE` is the whole of §4 + §6 factored
 into one function; `src/pipelinec` calls it via `SYN.DO_PIPELINED_BUILD`, which is
 the dispatch point. When a design contains AUTOFSM call sites,
 `AUTOFSM.DO_SCHEDULE_PASSES` wraps it instead:
@@ -1443,7 +1204,7 @@ for each schedule pass:
     ADD_PATH_DELAY_TO_LOOKUP          <- measure the operations, do NOT sweep
     schedule + bind each AUTOFSM
     install schedules, re-PARSE_FILE  <- call sites become the generated FSMs
-    SYN.DO_SWEEP_AND_AUTOPIPELINE     <- §5 sweep + §6.5 AUTOPIPELINE loop
+    SYN.DO_SWEEP_AND_AUTOPIPELINE     <- §4 sweep + §6 AUTOPIPELINE loop
     timing met, or nothing/only-floors blamed?  -> done
     otherwise shrink the blamed FSMs' per-state budget and go again
 ```
@@ -1462,7 +1223,7 @@ it drives.
 
 **Why a generated FSM needs no sweep support.** It holds non-volatile `Reg`
 state, so `CAN_HAVE_ADDED_LATENCY` is already False: the sweep treats it as an
-unsliceable atomic block whose measured delay is a soft floor (§4's
+unsliceable atomic block whose measured delay is a soft floor (§3's
 `state_regs` reason), and `CALC_TOTAL_LATENCY` reports 0 added latency to its
 container. Everything it needs was already there.
 
@@ -1477,9 +1238,9 @@ container. Everything it needs was already there.
   below it is correctly an atomic span (its one whole-module synthesis measures
   the register-to-register path, i.e. its worst state — exactly the number
   timing attribution needs).
-- **`parser_state.func_force_estimated`**, a new escape hatch checked at the top
+- **`parser_state.func_force_estimated`**, an escape hatch checked at the top
   of `FUNC_PATH_DELAY_IS_ESTIMABLE`. The bootstrap passthrough looks exactly
-  like a measurement frontier (§3) and would otherwise get one whole-blob
+  like a measurement frontier (§2) and would otherwise get one whole-blob
   synthesis of precisely the parallel logic the user asked *not* to build — for
   a float64 polynomial, that does not finish in reasonable time. Nothing
   consumes that number: the scheduler works from the individual operations
@@ -1493,17 +1254,11 @@ container. Everything it needs was already there.
   to guess at with a flat constant. Those few entities are therefore named
   explicitly and collected for measurement in their own right. They are small —
   one 3-to-8-way multiplexer per shared unit input port — so this is a handful
-  of quick runs, not a meaningful build cost.
-
-  They live under `include/pypeline/operators/` intending
-  `_IS_PYPELINE_OPERATOR_LIBRARY_CODE` to classify them as non-user code and so
-  make each shape cacheable in `path_delay_cache`. That predicate does not
-  currently fire, for these or for the soft-operator library it was written for:
-  it calls `inspect.getsourcefile` on the callable in
-  `pypeline_entity_callables`, which is deliberately the `@hw_func` **wrapper**
-  (see `_elaborate_live_func`), and a wrapper's source file is `pypeline.py`.
-  An `inspect.unwrap` at that lookup would fix it. Nothing is wrong with the
-  delays meanwhile — they are measured every build instead of once.
+  of quick runs, not a meaningful build cost. They live under
+  `include/pypeline/operators/`, intending `_IS_PYPELINE_OPERATOR_LIBRARY_CODE`
+  to classify them as non-user code and so make each shape cacheable in
+  `path_delay_cache` (a caching gap here is tracked in Limitations and future
+  work, below).
 
 **Scheduling inside the pass loop.** Each pass now runs AUTOFSM's minimum-area
 search rather than a single greedy schedule
@@ -1525,7 +1280,7 @@ attribution (PYRTL reports no path detail) it falls back to blaming every
 AUTOFSM under the failing MAIN — over-blaming costs one extra pass,
 under-blaming would silently give up.
 
-**Convergence** is easier than §6.5's. A schedule is a pure function of (the
+**Convergence** is easier than §6's. A schedule is a pure function of (the
 function's Logic graphs, its operations' delays, the budget scale) and is
 independent of the surrounding design, so nothing can oscillate: only an
 explicit tightening changes the answer, and tightening is monotonic and capped
@@ -1533,7 +1288,7 @@ explicit tightening changes the answer, and tightening is monotonic and capped
 `at_floor` — one indivisible operation too slow for the clock, which no number
 of extra states can fix.
 
-## 7. Test matrix
+## 8. Test matrix
 
 Fast tests (no `PART()` → PYRTL software timing model, seconds per synth
 run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
@@ -1543,15 +1298,14 @@ run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
 | `sweep_comb_test.py` | pure comb MAIN: planner places cuts, meets timing |
 | `sweep_two_mains_test.py` | two MAINs: per-main plans, no-attribution fallback |
 | `sweep_fsm_autopipeline_test.py` | Reg-FSM main + AUTOPIPELINE region (via `_autopipeline_with_io_regs`): cut subtree is the tagged child, FSM latency stays 0 |
-| `sweep_stateful_boundary_test.py` | comb→stateful→comb: cuts stop at the stateful boundary (Finding #1 regression) |
+| `sweep_stateful_boundary_test.py` | comb→stateful→comb: cuts stop at the stateful boundary |
 | `sweep_floor_detect_test.py` | unreachable goal: floor predicted & blamed up front, sweep stops after a few syn runs, results written, then `TIMING NOT MET` + non-zero exit |
 | `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that autopipelining cannot help (planning time + standalone as-written check FAIL + failing report), one full syn run, `TIMING NOT MET` + non-zero exit |
 | `sweep_planless_test.py` | stateful MAIN with a met goal but nothing cuttable: one standalone as-written check synthesis prints PASS, its critical path is NOT stored as the func delay, one full syn run, exit 0 |
-| `autopipeline_latency_test.py` | end-to-end factory design (`make_stream_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6.5 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, seeded confirmation syn passes with no fallback sweep, loop settles within the pass cap (extra realization passes allowed) |
-
-| `autofsm_latency_test.py` | §6.6 end-to-end: schedule pass runs, several same-kind operations fold onto fewer shared units, latency == states + 1, and exactly ONE instance of each shared unit appears in the generated VHDL |
-| `autofsm_resources_compare_test.py` | §6.6 area: same design built `--comb` (no sharing) and scheduled, compared by yosys cell count — guards the reason the feature exists |
-| `autofsm_timing_iter_test.py` | §6.6 iteration: a deliberately over-packed first schedule misses the clock, the FSM is blamed, its budget is tightened, and a later build passes — with no source change |
+| `autopipeline_latency_test.py` | end-to-end factory design (`make_stream_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, seeded confirmation syn passes with no fallback sweep, loop settles within the pass cap (extra realization passes allowed) |
+| `autofsm_latency_test.py` | §7 end-to-end: schedule pass runs, several same-kind operations fold onto fewer shared units, latency == states + 1, and exactly ONE instance of each shared unit appears in the generated VHDL |
+| `autofsm_resources_compare_test.py` | §7 area: same design built `--comb` (no sharing) and scheduled, compared by yosys cell count — guards the reason the feature exists |
+| `autofsm_timing_iter_test.py` | §7 iteration: a deliberately over-packed first schedule misses the clock, the FSM is blamed, its budget is tightened, and a later build passes — with no source change |
 
 Unit/in-process coverage (registered in `elab_tests.py`):
 `autopipeline_harvest_test.py` (harvest grouping + divergence, seed two-tier matching
@@ -1561,27 +1315,16 @@ invariants, budget→states, floors, byte-identical generated source across
 re-elaborations) and `double_parse_file_test.py` (repeated `PARSE_FILE`
 equivalence, including an AUTOFSM design).
 
-Real-toolchain validation: the wireguard-fpga ChaCha20-Poly1305 shared build
-(`wireguard-fpga/3.build/pypeline_build/build.py --shared --sim --syn_tb`,
-Vivado plus cocotb/GHDL) and the multi-clock streamsoc example
-(`examples/stream_soc/cpu/hardware/top.c`).
-
-## 8. Operator QoR: raw VHDL vs. soft-operator-library implementations
+## 9. Operator QoR benchmark
 
 `src/tests/pypeline_tests/op_qor_bench.py` measures pipelined (sliced) fmax
 for candidate implementations of `PLUS`/`MINUS`/`INFERRED_MULT`/`GT`/`GTE`/
 `LT`/`LTE`/`EQ`/`NEQ`, across a width matrix including wireguard-fpga's actual
 instantiated widths (mixed `uint32×uint3`, `uint32×uint4`, `uint16×uint1`,
-`uint8×uint1`, plus `uint8/16/32/64` same-width pairs). It exists because the
-soft-operator-library default flip (NEGATE, compares, DIV, MOD, variable shift
-moved off SW_LIB/cpp onto ordinary Pypeline HDL) was never QoR-validated, and
-wireguard-fpga was then seen missing timing with pipeline depth no longer
-helping (40→52 stages barely moved fmax).
-
-**That regression is resolved -- see "Outcome" below.** The cause was the
-comparator implementation, and it hurt twice over: the old flavor was both
-slower in silicon *and* badly over-modeled, so the sweep planner densified
-the wrong function while also paying real delay.
+`uint8×uint1`, plus `uint8/16/32/64` same-width pairs). It validates each
+soft-operator implementation choice against sliced (not just combinational)
+fmax, since a combinational win can vanish or reverse once a design is
+actually pipelined.
 
 **The decision metric is pipelined per-stage delay at n_cuts ≥ 1, not comb
 delay at n_cuts = 0.** An implementation that wins combinationally can lose
@@ -1607,20 +1350,20 @@ data point: that cut count is the operator's floor). Two tools:
   falls back to PyRTL's software gate-delay estimate -- seconds per case
   instead of minutes. Used for broad matrix sweeps. `INFERRED_MULT`
   raw-vs-soft is skipped under this tool (no DSP-inference model; see
-  "Known blind spot").
+  Limitations, below).
 - **`--tool vivado`**: `PART("xc7a200tffg1156-2")` (wireguard-fpga's actual
   part), real OOC synthesis, minutes per case. Ground truth.
 
 `--ops` / `--widths` / `--impls` narrow the matrix; results land in
 `op_qor_results_<tool>.csv`, one row per `(op, impl, widths, n_cuts)`,
-resumable by `(tool, op, impl, l_type, r_type)`. `--impls` (added 2026-08) is
-the one to reach for when following up a PyRTL finding with a scoped Vivado
-head-to-head, e.g. `--tool vivado --impls soft_cmp_sub_swapped,soft_cmp_prefix`
--- without it, a full `--tool vivado` run re-measures every impl in
+resumable by `(tool, op, impl, l_type, r_type)`. `--impls` is the flag to
+reach for when following up a PyRTL finding with a scoped Vivado head-to-head,
+e.g. `--tool vivado --impls soft_cmp_sub_swapped,soft_cmp_prefix` -- without
+it, a full `--tool vivado` run re-measures every impl in
 `CMP_IMPLS`/`PLUS_MINUS_IMPLS`/etc., which is minutes-per-case across the
 whole matrix.
 
-Four harness properties that are easy to get wrong, and were:
+Five harness properties that are easy to get wrong:
 
 - **`--stop` is exclusive.** `SYN.py` stops once `coarse_latency >=
   stop_at_latency`, so `--stop N` measures cut counts `0..N-1`. The harness
@@ -1641,1003 +1384,339 @@ Four harness properties that are easy to get wrong, and were:
   real measurements of real entities, so this is harmless for anything
   reachable by default. The exception is `raw_revived_sliced`, whose
   `FORCE_RAW_INT_CMP_FOR_QOR_BENCH` path emits a raw comparator under the same
-  canonical `BIN_OP_GT_*`/`BIN_OP_GTE_*` name a soft build would use -- see
-  "Cache hygiene" below.
-
-### Comparator results (Vivado, xc7a200tffg1156-2)
-
-Best sliced fmax (`n_cuts ≥ 1`), winner first:
-
-| op | widths | ranking (MHz) |
-|---|---|---|
-| `GT` | `uint16×uint1` | **soft_fixed 696** · soft_bitwise 572 · raw_revived 560 · soft_default 521 |
-| `GT` | `uint32×uint32` | **soft_fixed 530** · raw_revived 521 · soft_bitwise 440 · soft_default 419 |
-| `GT` | `uint32×uint3` | **soft_fixed 585** · raw_revived 527 · soft_bitwise 524 · soft_default 419 |
-| `LTE` | `uint16×uint1` | **raw_revived 687** · soft_bitwise 561 · soft_fixed 530 · soft_default 521 |
-| `LTE` | `uint32×uint32` | **soft_fixed 530** · raw_revived 521 · soft_bitwise 424 · soft_default 419 |
-| `LTE` | `uint32×uint3` | **raw_revived 579** · soft_fixed 530 · soft_bitwise 510 · soft_default 419 |
-
-`soft_fixed` (the operand-swapped flavor) wins 4 of 6; `raw_revived_sliced`
-(the otherwise-dead RAW_VHDL hand-pipelined comparator,
-`RAW_VHDL.py:3050-3665`) wins the other 2 and is genuinely competitive --
-but it *degrades when first sliced* (`GT uint32×uint32`: 449 MHz comb → 367
-MHz at 1 cut, recovering only by 7 cuts), which is the wrong shape for a
-deeply pipelined design. **`soft_default` finishes last in all six cases.**
-
-### Why the old comparator was over-modeled
-
-Every cached delay is a full out-of-context register-to-register measurement:
-clk→Q + routing + logic + setup. A *single* bitwise op measures the same
-**1.019 ns** regardless of width (`BIN_OP_AND_uint1_t_uint1_t` ==
-`BIN_OP_AND_uint32_t_uint32_t` == 1.019 ns) -- that is one logic level plus a
-fixed floor. `ESTIMATE_HIER_PATH_DELAYS` derives a hierarchical func's delay by
-walking the topological path and adding each submodule's **full** cached delay,
-so a chain of K leaves accumulates roughly (K−1) copies of a floor that exists
-only once in real silicon.
-
-That penalty applies only to implementations that decompose to gate level:
-
-| impl | est_op_ns | measured @0 cut | est/meas |
-|---|---|---|---|
-| `soft_fixed` (swapped) | 2.40 | 2.34 | **1.03×** |
-| `soft_default` (un-swapped) | 7.60 | 4.37 | **1.74×** |
-| `soft_bitwise` | 115.60 | 4.34 | **26.6×** (35× avg across widths) |
-| `raw_revived_sliced` | *(none)* | 2.23 | measured leaf, never estimated |
-
-(`GT uint32×uint32`.) `make_soft_cmp_sub` computes one fixed `diff = a - b`
-and derives all four ops from it, which forces an extra `is_zero` term for
-`GT`/`LTE` -- `1 if diff == 0 else 0` becomes `BIN_OP_EQ` + `MUX_uint1_t`, and
-`(1-neg) & (1-is_zero)` adds a 1-bit `MINUS` and an `AND`. Three gate-level
-ops, each charged a full 1.019 ns, is most of the 74% inflation.
-`make_soft_cmp_sub_swapped` instead reorders operands per op
-(`a>b ≡ neg(b-a)`, `a>=b ≡ !neg(a-b)`, `a<b ≡ neg(a-b)`, `a<=b ≡ !neg(b-a)`),
-so every op is one subtract plus one sign-bit read -- matching the structure
-the old SW_LIB C generator used (`GET_BIN_OP_GT_GTE_LT_LTE_UINT_C_CODE`). Its
-generated entity contains exactly one submodule (`BIN_OP_MINUS_int33_t_int33_t`
-for a 32-bit compare) and models at 1.03×.
-
-`soft_bitwise` is the extreme case: fine in hardware (440 MHz sliced) but
-modeled 27-47× too slow, because it is 32 serial 1-bit levels. It is not
-registered by default; anything opting into it would be wildly over-pipelined.
-
-**No estimator scaling constant was added.** The default models at 1.03×; the
-fix belonged in the implementation, not in a correction factor. A constant
-would have papered over `soft_default` while leaving `soft_bitwise` off by 35×.
-
-### Outcome
-
-**Shipped:** `soft.py:register_soft_cmp` registers
-`make_soft_cmp_sub_swapped` for all four ops (previously `make_soft_cmp_sub`).
-`make_soft_cmp_sub` is unchanged and kept for QoR comparison. Compares stay
-soft by default -- `raw_revived_sliced` was measured head-to-head and does not
-justify reverting `C_BUILT_IN_FUNC_IS_RAW_HDL`. No change to `EQ`/`NEQ`/
-`MINUS`, which remain correctly raw-HDL by default.
-
-Historical WireGuard baseline before mini-sweep boundary coalescing, shared
-encrypt+decrypt syn_tb build on
-`xc7a200tffg1156-2`, with that one change:
-
-```
-chacha20_pipeline_shared: met timing, 30 slice(s) built (31 pipeline stages), iterations=6
-PASS decrypt_dataflow_shared: 91.17 MHz vs 80.00 MHz goal (confirmation run)
-```
-
-**80 MHz met at 30 slices / 31 stages**, against a failing baseline of
-62.3 MHz at 40 slices / 41 stages. The plateau itself was never the bug -- the sweep's escalation ladder
-(densify → measured fallback → minisweep → lock) is designed to climb out of
-one, and does, in 6 iterations. What broke it was feeding that ladder a
-comparator that was simultaneously slower and 74% over-modeled.
-
-That 30-slice result used the old per-instance input-plus-output lock policy;
-it is retained as a regression baseline, not as the target for the
-topology-aware boundary policy described above.
-
-**Current topology-aware result (fresh generated output, 2026-08-23):** the
-same shared `build.py --shared --sim --syn_tb` flow selected one internal
-half-way `block_step` slice on all ten instances, then found nine direct
-producer-to-consumer edges and selected only the first nine producer output
-banks. No input bank was selected and the final block has no output bank.
-The schema-5 trace therefore realizes **10 + 9 = 19 slices / 20 stages**,
-rather than the old 30/31 shape. The pinned Vivado confirmation met 80 MHz at
-**84.45 MHz** (0.658 ns MET slack; 11.796 ns data path), and the cocotb/GHDL
-shared encrypt+decrypt test exited zero with no test failures. This is a
-physical integration result, not a Divider-specific rule.
-
-### Cache hygiene
-
-`path_delay_cache/.../BIN_OP_{GT,GTE,LT,LTE}_*.delay` entries have mixed
-provenance: some predate the operator overhaul (measuring the SW_LIB
-C-generated comparator), some were written by this harness under
-`FORCE_RAW_INT_CMP_FOR_QOR_BENCH` (measuring the RAW_VHDL one) -- two
-different implementations under one canonical entity name. They are inert
-today, because with compares soft by default no build ever generates a
-`BIN_OP_GT_*` entity to look up. They are worth deleting anyway: if compares
-were ever flipped back to raw, the SW_LIB-era values would silently supply
-numbers for an implementation that no longer exists.
-
-### Known blind spot: primitive-aware operators (pyrtl only)
-
-PyRTL's estimate is a generic gate-delay model with no awareness of
-FPGA-specific fast-path primitives. This was expected to matter for
-`INFERRED_MULT` (DSP inference) and does -- soft multiplier variants are only
-compared against each other under `--tool pyrtl`, and `INFERRED_MULT` stays on
-the inferred path regardless, because wireguard-fpga specifically needs its
-multiplies inferred.
-
-**The same blind spot applies to `PLUS`.** The pyrtl sweep shows
-`soft_carry_select` beating `raw_default` by a wide margin (`uint32 + uint32`
-at 6 cuts: 219 MHz vs 119 MHz), but Xilinx's CARRY4 gives the raw adder a
-dedicated fast-carry chain a generic gate model cannot represent. `PLUS` was
-deliberately left on its raw default rather than flipped from that data. It is
-also not implicated in the wireguard regression: chacha20's quarter round uses
-only `+`, `^`, `|` and *constant* rotates, none of which the operator overhaul
-touched (constant shift amounts resolve to `CONST_SL/SR_<n>_<type>` built-ins
-before any registry lookup -- only variable shifts reach the operator
-registry). Re-measure `PLUS` under `--tool vivado` before drawing any
-conclusion from the pyrtl numbers.
-
-### Naming cleanup (2026-08): `soft_<op>_<algorithm>`, not `soft_<algorithm>_<op>`
-
-Every soft-operator factory and its generated hardware entity name now leads
-with the op family, algorithm second -- e.g. the default comparator's
-generated entity is `soft_cmp_sub_swapped_...`, not the old
-`soft_sub_cmp_swapped_...`. The old order read as an overloaded
-*subtraction* operator rather than a subtract-based *comparator* (`sub`
-there has always meant "built via subtract," never "substituted"). Renamed
-throughout: `make_soft_cmp_sub`/`_sub_swapped`/`_bitwise` (soft_cmp.py),
-`make_soft_add_ripple`/`_carry_select` and `make_soft_sub` (soft_add.py),
-`make_soft_mult_shift_add`/`_karatsuba` and `make_soft_add_tree_shifted`
-(soft_mult.py), `make_soft_div_radix[4]`/`make_soft_mod_radix[4]` and their
-`_signed` counterparts (soft_div.py), `make_soft_shift_barrel_sl/sr` and
-`make_soft_rot_barrel_l/r` (soft_shift.py). Pure rename, no behavior change --
-verified via the full `synth` test category (58/58 passing, including real
-Vivado builds) and the native-sim golden tests. `path_delay_cache/` is
-unaffected: it is keyed on entity name, but every cached file (2530 across
-all tool subdirectories) is a built-in leaf (`BIN_OP_*`/`UNARY_OP_*`/`MUX_*`/
-`CONST_*`/`BIT_*`) -- no soft-op composite entity, old or new name, has ever
-had its own cache entry, because a soft op's *leaves* are what get cached,
-and those leaf names don't change when the soft op around them is renamed.
-
-### fmax follow-up (2026-08): a parallel-prefix comparator beats the default under PyRTL
-
-Revisited whether a better-autopipelining comparator exists, since the
-comparator sits on the soft divider's critical path (a 32-bit radix-4 divide
-instantiates ~48 of them).
-
-**The recorded PyRTL sweep looked corrupted but wasn't.** GT/uint32/
-`soft_cmp_sub_swapped` in `op_qor_results_pyrtl.csv` goes
-10.88ns@0cuts → **18.11ns@1cut** → 15.51 → 12.50 → 12.64 → 10.72 → 10.72
-(identical at 5 and 6 cuts) -- the signature of "the harness re-measured the
-same design twice." Verified directly (re-running single cases through
-`pipelinec`, diffing generated VHDL) that it is real, distinct data at every
-cut count (`-- Pipeline Slices: [...]` differs every time, the tool's own log
-says `Same or worse timing result...` at 1 cut). The 0→1cut dip: the coarse
-sweep places cuts at naive even clock-count fractions
-(`GET_BEST_GUESS_IDEAL_SLICES`), not by where delay concentrates, and at 1
-cut that lands a register mid-way through the single 33-bit `BIN_OP_MINUS`'s
-carry chain, splitting it unevenly under PyRTL's flat per-op delay model. The
-5==6-cut plateau is the opposite effect: once cuts have isolated the true
-bottleneck segment, further cuts land in already-zero-delay regions and stop
-changing the number (a real slicing floor). Lesson: judge a comparator by its
-whole curve, never a single `n_cuts` point, and don't assume non-monotonic
-data is a harness bug without checking the generated VHDL first.
-
-**Three new candidates were built, sim-verified (directed edges + signed
-sign-boundary crossings + mismatched operand widths), and elaboration-gated:**
-
-- `make_soft_cmp_borrow` -- explicit LSB-to-MSB borrow-propagate chain
-  instead of the HDL `-` operator, reading the sign as the top difference bit
-  rather than a final borrow-out (those are NOT the same bit -- a
-  two's-complement sign bit is `x_msb^y_msb^borrow-in`, not the borrow that
-  ripples past it; conflating them broke only the signed sim_call sweep).
-  **Measured 7-8x WORSE than the default** (uint32 GT @0cuts: 79.86ns vs.
-  10.61-10.88ns). Not because the sum-bits hypothesis was right (a
-  subtractor's critical path is its carry chain regardless of whether sum
-  bits are also produced) but because hand-unrolling 31 bits into individual
-  bitwise `@hw_func` leaf operations forfeits the flat/lumped delay PyRTL
-  gives the native `-` operator and prices 31 serial gate levels
-  individually instead -- the exact same "primitive-aware operators (pyrtl
-  only)" blind spot documented above for `PLUS`/CARRY4, now confirmed to
-  apply to comparators too. Not evidence of worse real hardware; a `--tool
-  vivado` re-measurement (which infers fast-carry primitives from bitwise
-  ripple patterns) would be needed to actually rank it.
-- `make_soft_cmp_prefix` -- log2(n)-deep parallel-prefix magnitude compare,
-  combining per-bit `(gt,lt)` codes with an associative leader-select
-  operator, one `@hw_func` per tree level (same per-level-entity idiom that
-  measurably helped `make_soft_mult_shift_add`'s estimation accuracy, section
-  above). **Measured BETTER than the default at every PyRTL cut count**,
-  confirmed across all 24 measurable (op, width-pair) combinations in the
-  full sweep (GT/GTE/LT/LTE × uint16/32/64, plus mismatched uint32×uint3/4;
-  the two narrowest pairs have no `n_cuts>=1` default data to compare against
-  since the default's design is too small to slice at all there) -- 24/24
-  wins, 0 losses, 0 ties. Representative point, uint32 GT: 13.66/7.79/6.83/
-  6.75/4.84/4.24/4.16 ns at cuts 0-6 vs. the default's
-  10.88/18.11/15.51/12.50/12.64/10.72/10.72 -- roughly 2-2.5x better once
-  pipelined. The per-level entity boundary is doing real work here: unlike
-  the borrow chain, PyRTL prices each level's small 2-bit combine as its own
-  submodule rather than unrolling one giant flat per-bit scan.
-- `make_soft_cmp_chunked` -- c-bit chunks compared in parallel (each chunk's
-  *internal* compare a small serial bitwise scan), reduced across chunks via
-  the same tree `make_soft_cmp_prefix` uses. uint32 GT, chunk_bits=8:
-  29.48/16.83/12.01/9.20/8.31 ns at cuts 0-4 -- beats the default at
-  n_cuts>=2, loses at 0-1, loses to the prefix tree throughout (each chunk
-  still pays the serial-scan PyRTL penalty internally, just amortized over
-  fewer/wider chunks).
-
-**Vivado result (xc7a200tffg1156-2, all 32 (op, width) combinations
-measured): confirms the PyRTL direction, but not unconditionally.**
-`soft_cmp_prefix` wins 28/32 combinations at `n_cuts>=1` against the then
-default `soft_cmp_sub_swapped`. The win is decisive and *widens* with
-operand width across all four ops -- uint32 and uint64, GT/GTE/LT/LTE all
-favor `soft_cmp_prefix`, e.g. uint64 GTE up to 40% faster at deep cuts. But
-at the two narrowest widths (uint8, uint16) **GTE and LTE specifically
-lose** to `soft_cmp_sub_swapped`, consistently at every cut count, not
-noise (uint16 GTE: `soft_cmp_sub_swapped` 1.83-1.97ns vs. `soft_cmp_prefix`
-2.15-2.79ns at every measured cut). GT/LT still win even at those narrow
-widths -- only the non-strict ops regress. The mechanism:
-`soft_cmp_sub_swapped`'s GTE/LTE cost is identical to its GT/LT cost (same
-one-subtract-one-sign-bit structure, just operand-swapped), and Vivado
-already optimizes that single small subtract extremely well at 8-16 bits
-(~1.7-2ns) -- `soft_cmp_prefix`'s fixed per-level tree overhead (extra
-`MUX_uint2_t` entities per level) doesn't pay for itself until the base
-comparator is wide enough to actually be the bottleneck.
-
-**Outcome: promoted as the unconditional library default.**
-`soft.py:register_soft_cmp` now registers `make_soft_cmp_prefix` for all
-four ops (previously `make_soft_cmp_sub_swapped`) -- a net win across the
-full measured matrix (28/32), accepted with eyes open on the narrow-width
-GTE/LTE tradeoff: those 4 losing combinations are real, not noise, and
-notably invisible to the PyRTL-only sweep (PyRTL's 24/24 never flagged
-them; every one of its measured combinations favored `soft_cmp_prefix`,
-including the narrow-width GTE/LTE cases where Vivado disagrees -- see
-"Known blind spot" above; PyRTL's flat delay model doesn't distinguish "a
-tiny subtract Vivado optimizes very well" from "a larger one it doesn't,"
-so it missed the exact crossover Vivado exposed). Since
-`register_soft_cmp` is called automatically by
-`register_sw_lib_replacements` (`PY_TO_LOGIC.PARSE_FILE`), this changes the
-comparator every Pypeline build gets by default. `make_soft_cmp_sub_swapped`
-remains available via `register_soft_cmp_sub_swapped` for a design known to
-be narrow-width-GTE/LTE-heavy, where it is still the Vivado-confirmed
-better choice. `AUTOFSM.py`'s `_SOFT_FACTORY_FOR_OP` was deliberately left
-on `make_soft_cmp_sub_swapped` -- that map selects for even decomposition
-as FSM resource-sharing candidates, a different criterion its own comment
-calls out as "deliberately not" about speed, which this investigation never
-measured. See `soft_cmp.py`'s module docstring and both registration
-functions' docstrings in `soft.py` for the up-to-date numbers.
-
-Elaborator constraints newly hit while building these (beyond the existing
-divider-work list -- `break` unsupported, no tuple loop variables, no
-tuple-unpacking of closure constants, closure values limited to
-C-types/ints/bools/None/callables/lists-tuples thereof): a call target must
-be a bare name, not a subscript (`leaf_fns[j](...)` where `leaf_fns` is a
-Python list of distinct per-index closures fails with `AttributeError:
-'Subscript' object has no attribute 'id'` -- give each differently-shaped
-callable its own bare-name local instead of indexing into a list of them);
-and a slice used as a call argument must be assigned to a typed local first
-(`f(ae[hi:lo], ...)` fails the same way -- write `x: t = ae[hi:lo]` then
-`f(x, ...)`).
-
-## 9. Soft barrel shifter: mux count is the only lever
-
-`include/pypeline/operators/soft_shift.py`'s variable-amount barrel shifter
-(`make_soft_shift_barrel_sl`/`make_soft_shift_barrel_sr`) is a chain of stages, each a
-`if amount[i]: result = shifted` conditional assignment beside a *constant*
-shift (`result << (1<<i)`). This investigation started from the hypothesis
-that mirrors the multiplier investigation above: does the barrel have the
-same uniform-width-stage mispricing the flat multiplier had, where genuinely
-cheaper early levels get priced the same as the expensive final one?
-
-**The hypothesis does not hold, for a structural reason specific to muxes.**
-The constant shift beside each stage is pure rewiring (`CONST_SL/SR_<n>_<type>`
-built-ins, zero delay, PY_TO_LOGIC.py:4293-4311) -- so a barrel shifter is
-*exactly* a chain of raw-HDL `MUX_<type>` leaf entities and nothing else
-(PY_TO_LOGIC.py:3573-3592). Under the PyRTL tool used by this investigation,
-**every mux in a design shares one cached delay, regardless of width or
-type**: `GET_CACHED_LOGIC_FILE_KEY` uses the collapsed literal key `"mux"`,
-and the measured `path_delay_cache/pyrtl_20nm_0ff/syn/mux.delay` value is
-1.640 ns for every width. (`DEVICE_MODELS` instead canonicalizes by packed
-width; see `DEVICE_MODELS_DESIGN.md`.) An unsplit MUX is one logic level and
-the initial landscape treats it atomically; the later bounded packed-bit
-refinement is feedback-only and was not active in these PyRTL barrel results.
-So initial stage pricing *is* uniform -- but for a chain of genuinely
-identical muxes that is correct, not a mispricing: there is no analogue of the multiplier's
-narrower-early-level structure to expose, and splitting a stage into a
-narrower "active" sub-mux plus a wide passthrough (as a narrow analogy to
-the multiplier's per-level-width fix would suggest) prices *worse* --
-two 1.640 ns muxes instead of one -- no matter how cheap it is in real
-silicon.
-
-**Consequence: the only lever that matters is how many serial muxes the
-barrel has.** It sets comb delay, the slicing floor (one mux, 1.640 ns/2.66
-ns on Vivado -- see table below), and the cut count needed to reach that
-floor, all simultaneously.
-
-**The shipped shape had one dead stage.** `amount_bits =
-max(1, n_bits.bit_length())` gives 6 stages for `uint32_t`, though shift/
-rotate amounts 0..31 need only 5 -- the 6th stage (shift-by-32) can only ever
-produce zero. Fixed to `amount_bits = max(1, (n_bits - 1).bit_length())`.
-This mirrors what the C flow's SW_LIB generator already does correctly
-(`shift_bit_width = min(max_shift.bit_length(), right_unsigned_width)` with
-`max_shift = left_width - 1`, `SW_LIB.py:7081-7083`) -- the Pypeline soft
-library had regressed behind its own C-flow sibling.
-
-### Structural variants tried, PyRTL `uint32_t`, `--coarse --sweep --start 0 --stop 9`
-
-| variant | shape | comb ns | floor ns | cuts to floor |
-|---|---|---|---|---|
-| baseline (was shipped) | 6 stages (dead 6th stage) | 7.84 | 1.64 | 5 |
-| **minimal stages (now shipped)** | 5 stages, no dead stage | **6.94** | **1.64** | **4** |
-| masked/AND-OR select | 5 stages, `(shifted&mask)\|(result&~mask)` instead of a mux | 6.94 (tie) | 1.91 (worse) | never reaches 1.64 |
-| one-hot decode + OR-reduce | all n shifted versions in parallel, one-hot select | 24.54 | 3.42 | far worse throughout |
-| reversed stage order | minimal stages, largest-shift-first | 6.94 (tie) | 1.64 | 4 (tie) |
-| one `@hw_func` per stage | minimal stages, composed chain instead of inline loop | 6.94 (tie) | 1.64 | 4 (tie) |
-| `VAR_REF_RD` array-index select | `opts[k]=v<<k` for all k, `result=opts[amount]` | 6.94 (tie) | 1.64 | 4 (tie) |
-
-Minimal-stage-count wins outright at every cut count and is never worse than
-any other shape measured. Reversed order, per-stage composition, and
-array-index select all tie it exactly -- confirming, directly from measured
-data, that stage *count* is what governs delay; composition style,
-ordering, and codegen shape do not. Two results are worth flagging on their
-own:
-
-- **The masked/AND-OR variant ties on comb but is measurably worse once
-  sliced** (1.91 ns vs 1.64 ns -- never reaches the true floor within 8
-  cuts measured). Its estimated delay (`est_op_ns` = 6.3) *under-predicts*
-  its own measured comb delay (6.94), the mirror image of the multiplier's
-  over-prediction problem -- and an under-prediction is worse for cut
-  placement, since `BUILD_SLICE_LANDSCAPE`'s even-fraction coarse slicer
-  places cuts assuming the estimate is trustworthy. This is a caution
-  against judging a soft-op redesign by comb delay (or by a delay-model
-  estimate) alone; §8's "the decision metric is pipelined per-stage delay
-  at n_cuts >= 1, not comb delay at n_cuts = 0" rule applies here too, and
-  this round is direct evidence for it, not just the comparator round's.
-- **One-hot decode is decisively the worst shape**, because "free rewiring"
-  for the n parallel shifted versions does not make the *selection* free:
-  a one-hot decode is n equality comparators, and the OR-reduce is a wide
-  tree -- both real logic, unlike a barrel's single-bit mux select per
-  stage.
-
-### Confirmed on real Vivado hardware (`xc7a200tffg1156-2`)
-
-The minimal-stage-count result was not left as a PyRTL-only estimate --
-re-run head-to-head against the shipped baseline shape, `--coarse --sweep`,
-`uint32_t`:
-
-| cuts | baseline (6 stages) ns | minimal (5 stages) ns |
-|---|---|---|
-| 0 (comb) | 2.660 | 2.640 |
-| 1 | 1.930 | 1.930 |
-| 2 | 1.460 | 1.460 |
-| 3 | 1.460 | 1.460 |
-| 4 | 1.460 | **1.300 (floor)** |
-| 5 | **1.300 (floor)** | 1.300 |
-| 6 | 1.300 | 1.300 |
-
-Same shape as PyRTL: minimal-stage-count reaches the true floor at 4 cuts
-instead of 5, and is never worse at any cut count. **The comb-delay gap is
-much smaller on real Vivado than PyRTL predicted** (0.8% vs PyRTL's 12.9%)
--- real synthesis evidently optimizes away much of the dead stage's
-unreachable logic during its own passes, where PyRTL's flatten-only flow
-does not. This is exactly why the decision metric is the full sweep, not
-comb delay on either backend alone: the *cut-count-to-floor* signal held
-up identically on both tools even though the comb-delay magnitude did not.
-
-### Bidirectional shift/rotate: one funnel barrel instead of four
-
-Pypeline had no variable-amount rotate at all before this round (`rotl`/
-`rotr` are constant-only -- `PY_TO_LOGIC.py:4778-4798`'s `_require_const`).
-Three new factories in `soft_shift.py`:
-
-- `make_soft_rot_barrel_l` / `make_soft_rot_barrel_r` -- the same minimal-stage
-  barrel, using the constant `rotl`/`rotr` built-in (also free rewiring, VHDL
-  `rol`/`ror`) as each stage's operation instead of a shift. Rotation is mod
-  `n_bits`, so this needs no oversize guard and no dead stage at all.
-- `make_soft_shift_rot` -- a unified 4-mode primitive (`direction` x
-  `rotate`), answering the motivating C idiom
-  (`(n<<d)|(n>>(N-d))` for rotate, composed from up to four separate barrel
-  calls plus a subtract plus an OR) with **one** left-shift-only funnel
-  barrel: `hi = rotate ? v : 0`; fold `v`/`hi` into a `2n`-bit word (`concat`,
-  free rewiring, with the concat order and effective shift amount chosen by
-  `direction`); barrel-shift that word left; slice out the correct half.
-  The identity (right-shift-by-d == left-funnel-shift-by-(n-d), taking the
-  same upper half) was verified both by direct calculation and by the
-  correctness gate below.
-
-Measured PyRTL, `uint32_t`, funnel vs. a faithful Pypeline transcription of
-the pasted four-barrel C idiom (both built from the shipped minimal-stage
-barrels):
-
-| cuts | four-barrel composition ns | funnel (`make_soft_shift_rot`) ns |
-|---|---|---|
-| 0 (comb) | 11.910 | 10.860 |
-| 1 | 8.950 | 8.260 |
-| 2 | 6.300 | 6.290 |
-| 3 | 4.660 | 4.290 |
-| 4 | 4.290 | 4.290 |
-| 5 | 3.650 | **2.960 (floor)** |
-| 6 | **2.960 (floor)** | 2.960 |
-
-The funnel is equal-or-better at every cut count and reaches the floor one
-cut sooner, at roughly half the total mux-entity count (one barrel instead
-of up to two run in parallel plus a merge), matching the area argument made
-before landing.
-
-### Correctness
-
-Every shipped factory (`make_soft_shift_barrel_sl/sr`, the new rotl/rotr, and
-`make_soft_shift_rot`) is exhaustively swept in
-`src/tests/pypeline_tests/inst/soft_ops_test.py` over tiny widths
-(1, 2, 3 bits, where the amount-width formula is most likely to be off by
-one) plus `uint8_t`, both directions, and (for `make_soft_shift_rot`) all
-four `direction`/`rotate` combinations. A signed sweep of
-`make_soft_shift_barrel_sr` against Python's arithmetic `>>` was also checked and
-found already correct: each stage's *constant* shift lowers through VHDL's
-`numeric_std.shift_right`, which is arithmetic (sign-extending) for a signed
-operand type by construction (`RAW_VHDL.py:4251-4310`) -- so no separate
-signed barrel implementation was needed, unlike the signed-multiply defect
-found in the mult round.
-
-## 10. Karatsuba base-case threshold: no split beats every split, below 16 bits
-
-Two multiplier shapes exist in `soft_mult.py`: `make_soft_mult_shift_add` (the
-default, `INFERRED_MULT` registered for `any_uint_t x any_uint_t` by
-`register_soft_mult`) and `make_soft_mult_karatsuba(l_t, r_t, threshold)`, a
-recursive Karatsuba split that falls back to shift-and-add once an operand
-narrows to `threshold` bits. That threshold had never been measured -- it was
-`8` from when the factory was written, and every prior comparison (this doc's
-mult-recursion work, `op_qor_bench.py`'s matrix) ran at that one fixed value.
-
-That matters because `threshold=8` is not even the shallowest possible
-Karatsuba shape at 16 bits: `uint16 x uint16` at `T=8` still recurses once
-more (its 9-bit middle term splits again), where `T=9..15` stops immediately.
-The prior verdict on this doc's multiplier round -- "Karatsuba loses to
-shift-and-add at every cut count" -- was measured against a shape carrying a
-gratuitous extra recursion level, never the cheapest one available.
-
-### Only a handful of thresholds build distinct hardware
-
-`threshold` only changes shape at specific values; every integer between two
-of those values builds byte-identical hardware (confirmed via
-`CANONICAL_CALLABLE_KEY`, which two different thresholds map to the *same*
-hash whenever they produce the same recursion tree). At `uint16`, for
-example: `T=6` and `T=7` are identical; `T=9..15` are identical; `T>=16` all
-degenerate to `make_soft_mult_shift_add` directly (Karatsuba never actually
-fires). Sweeping every integer would re-measure the same design up to 15x
-over; `op_qor_bench.py`'s `karatsuba_threshold_reps(n_bits)` enumerates one
-representative per distinct class instead.
-
-`threshold < 3` does not terminate: a 3-bit operand splits into `half=1` /
-`hi=2` with `mid = max(1,2)+1 = 3`, so the middle sub-multiply is the same
-width as its parent and recurses forever (confirmed: `RecursionError` at
-`threshold=2`). Fixed with an explicit guard in `make_soft_mult_karatsuba`.
-
-### Sweep, PyRTL `--coarse --sweep`, uint8 and uint16 (in scope this round; 32/64-bit widths not yet measured)
-
-Best sliced fmax (`n_cuts >= 1`), and the est/measured ratio at `n_cuts=0`
-(§8's over-prediction mechanism -- a hierarchical soft implementation sums
-every leaf's full measured delay with no cross-module optimization credit,
-so deeper hierarchies over-predict worse):
-
-| width | threshold | best fmax (cuts>=1) | comb ns | est/measured @ 0 cuts |
-|---|---|---|---|---|
-| 8 | T=3 | 32.75 MHz (1 cut) | 43.46 | 3.27x |
-| 8 | T=4 | 34.20 MHz (1 cut) | 39.37 | 2.68x |
-| 8 | T=5 | 35.94 MHz (1 cut) | 35.74 | 2.14x |
-| 8 | **T=8 (=no split)** | **61.41 MHz (1 cut)** | 23.31 | 1.21x |
-| 16 | T=3 | 27.66 MHz (3 cuts) | 70.80 | 2.99x |
-| 16 | T=4 / T=5 | 28.45 MHz (3 cuts) | 67.33 | 2.61x |
-| 16 | T=6 / old default T=8 | 38.33 MHz (3 cuts) | 62.71 | 2.28x |
-| 16 | T=9 | 39.77 MHz (3 cuts) | 54.95 | 1.95x |
-| 16 | **T=16 (=no split)** | **77.73 MHz (3 cuts)** | 38.73 | 1.22x |
-
-**The result is simpler than the mult-recursion round's per-level-width fix:
-there is no interior optimum.** Comb delay falls monotonically as `threshold`
-rises (confirming the structural model directly), but sliced fmax rises
-monotonically right along with it, all the way to the trivial `T=n_bits`
-case -- Karatsuba's recombination cost (`a_lo+a_hi`, `b_lo+b_hi`, a 3-way
-`z1_full - z0 - z2` subtract, and a 3-way shifted sum, all at or near full
-`out_t` width) is a fixed-ish overhead per split that a 16-bit-or-smaller
-design's actual multiply work never earns back. Splitting is pure loss in
-this range, at every cut count measured, not just at `n_cuts=0`.
-
-Sanity control confirmed the harness itself: `soft_karatsuba_t{n_bits}` rows
-are bit-identical (same measured ns at every cut count) to the corresponding
-`soft_shift_add` rows -- as they must be, since `T>=n_bits` makes
-`make_soft_mult_karatsuba` return `make_soft_mult_shift_add` directly.
-
-### Outcome
-
-**Shipped:** `make_soft_mult_karatsuba`'s default `threshold` raised from `8`
-to `16`. `register_soft_mult_karatsuba` gained a `threshold=None` parameter
-(forwarded via `functools.partial` when set, so the emitted entity stays
-readably named rather than falling into `_callable_canonical_name`'s opaque
-lambda-hash fallback) so a caller can still reach any measured or unmeasured
-threshold explicitly.
-
-Deliberately conservative: 16 is the ceiling of what was actually measured
-this round, not an estimate of some wider optimum. Raising the default only
-removes recursion this data directly shows is harmful at widths <= 16 bits;
-it cannot, by construction, make an untested 32- or 64-bit design recurse
-*less* than it otherwise would have (a 32-bit multiply's first split still
-produces two 16-bit halves, exactly where this round's data ends). Whether a
-real (non-degenerate) optimum threshold exists above 16 bits -- the original
-hypothesis motivating Karatsuba's presence in this library at all -- is still
-open and was explicitly out of scope this round.
-
-### Correctness
-
-`test_soft_karatsuba_mult` covers the `threshold<3` guard (must raise);
-`test_soft_mult_karatsuba_threshold_override` covers
-`register_soft_mult_karatsuba(threshold=...)` end-to-end through native sim,
-both the override and default paths. Every threshold class from `T=3` to
-`T=n_bits` was also swept for pure correctness (native sim, `uint8`/`uint12`/
-`uint16`, corners plus random pairs): 0 mismatches at every threshold --
-Karatsuba's correctness does not depend on where the recursion bottoms out,
-only its QoR does.
-
-## 11. Carry-save (deferred-carry) multiplier: porting a real sky130 reference design
-
-Sections 8-10 all measured *this library's own* multiplier ideas against
-*this library's own* soft-operator style. This round instead ports a real,
-externally-authored working design: `solution.vhd`, a CoHDL-generated
-`uint16 x uint16 -> uint32` multiplier built for the same sky130/latchup
-target this library's `PART("sky130")` designs target, reported at 33
-cycles / 684 MHz. Its partial-product stage is identical to
-`make_soft_mult_shift_add`'s (`a & bit_dup(b[i], 16)` per bit of `b`); its
-summation network is not, and the difference is exactly ASIC-shaped:
-`make_soft_mult_shift_add` sums partials via `make_soft_add_tree_shifted`,
-a balanced tree of a FEW FULL carry-propagate adds (15 adds up to 32 bits
-wide at `uint16 x uint16`, ~97 bits of serial carry chain overall) --
-cheap on an FPGA's dedicated carry chain, the wrong shape for an ASIC with
-none.
-
-### What the reference does
-
-A carry-save / deferred-carry reduction: every add is capped at a fixed
-`max_width` bits (2, in the reference), and the add's own carry-out bit is
-never resolved in place -- it is concatenated onto the result as an extra
-bit and folded into the NEXT stage's input, rather than propagated
-combinationally within one wide adder. Reproduced from the reference's own
-generated VHDL (not assumed): at `max_width=2`, all 464 additions in the
-16x16 design are <=3 bits wide (379 x 3b, 74 x 2b, 11 x 1b), spread across
-31 pipeline-visible stages, versus `make_soft_mult_shift_add`'s 4 levels /
-15 adds up to 32 bits.
-
-### Port strategy: same algorithm, not the same code
-
-The reference's own reduction (`pipelined_add`/`add_pair`, a
-`@cohdl.pyeval`-decorated, compile-time-only Python construction) was
-ported as a **pure-Python, hardware-free planner**
-(`_plan_carry_save_levels` in `soft_mult.py`) before any HDL was written
-from it, and independently validated against real integer arithmetic
-(1080/1080 exact across widths 4-16 and `max_width` 2-16, using only the
-same slice/shift/mask/concat primitives the generated HDL actually uses --
-not a shortcut model) before being trusted as a spec.
-
-Composition is entirely nested **factory-function** calls, never text
-generation, matching this library's existing idiom
-(`make_soft_add_tree_shifted`, Karatsuba's `mult_lo/mult_hi/mult_mid`).
-This was a deliberate choice, not just a style preference: a level's
-operation COUNT and SHAPE varies (some summand pairs need one chunk-add,
-others several; some elements just pass through), which rules out a single
-uniform `for`-loop body inside one `@hw_func` -- an elaboration-time loop
-can vary its closure INT/BOOL values per iteration (the established
-`make_soft_add_carry_select` idiom), but there is no precedent anywhere in
-this codebase for a loop body whose declared locals change TYPE per
-iteration, and that is exactly what a variable-shape op list would need.
-Instead, every op (a chunk-add, or a bare passthrough) gets its own small,
-fixed-shape `@hw_func` via a memoized leaf factory, and a level's op list
-is combined into one packed bus by a balanced BINARY TREE of 2-input
-concat nodes, built via plain Python recursion at factory-construction
-time -- an extra recursive axis alongside the existing level-to-level
-chaining, with no exec()/text codegen anywhere.
-
-### A real bug, found by going past native sim
-
-Native sim (`sim_call`) never exercises PY_TO_LOGIC's AST elaborator --
-this is documented library lore, not new -- but it is easy to forget how
-much further "exercises the elaborator" still falls short of "exercises
-real synthesis timing estimation". This round needed all three layers to
-find a real bug:
-
-1. **Native sim** (2452+ cases across widths, `max_width`, asymmetric and
-   degenerate operand pairs): 100% correct, including a genuine
-   non-termination bug found and fixed along the way (below).
-2. **Real elaboration** (`pipelinec --no_synth`) of the full `uint16 x
-   uint16` design at `max_width=2`: succeeded, ~2500 VHDL entities written.
-3. **Real GHDL behavioral simulation** (`--sim_comb --ghdl`): compiled and
-   ran without error.
-4. **Real PyRTL synthesis timing estimation** (`op_qor_bench.py`'s actual
-   `--coarse --sweep` path) on the identical `uint8 x uint8` design: this
-   is the one that crashed. A bare bit-slice leaf
-   (`_make_carry_save_slice`, the passthrough half of the reduction) is
-   pure routing -- confirmed against the actual synthesis run, whose yosys
-   cell count for that entity was 100% flip-flops (the isolated-
-   measurement harness registers), zero combinational cells. Timing-
-   estimating an entity whose own critical path is genuinely zero divides
-   by zero inside PyRTL's `max_freq` (a documented, pre-existing PyRTL
-   limitation this library already works around elsewhere --
-   `make_soft_add_tree_shifted`'s own "rewire-only zero-delay entity"
-   note). None of layers 1-3 exercise per-entity synthesis timing
-   estimation, so none of them could have caught this.
-
-The fix is `@wires`, used correctly rather than as a workaround: it is a
-claim about what an entity's OWN synthesized result actually is ("this
-reduces to pure wires"), not a delay-suppression flag over whatever it
-calls -- confirmed before relying on it, since misusing it to wrap a node
-that calls a REAL child would silently hide that child's real delay from
-every future estimate, a correctness bug far worse than the crash it would
-paper over. `is_wires` is threaded bottom-up through the whole recursive
-tree (leaf -> combine -> level -> chain): a combine node is only pure
-wires if BOTH children are, all the way up to the top-level multiplier
-function itself, because a combine-of-two-passthroughs is JUST AS
-genuinely zero-delay as a single slice leaf -- confirmed necessary, not
-theoretical, by the fully-degenerate case below.
-
-### A second real bug: 1-bit-operand non-termination
-
-Multiplying by a 1-bit operand (`uint1 x uintN`, `N>1`) makes every
-partial product a single, disjoint bit -- none of them overlap their
-neighbors, ever. The reduction's pairing scan marks non-overlapping
-summands `pass` and only shrinks the summand count on an `add`, so this
-case hung indefinitely (confirmed: `uint1 x uint5` never terminated).
-Fixed in `_plan_carry_save_levels` by merging shift-CONTIGUOUS consecutive
-`pass` ops into one element for the next iteration's bookkeeping only (the
-HDL-facing op list is unchanged -- still one `pass` per original
-sub-range); a hard iteration cap remains as a safety net. This is also
-what makes the fully-degenerate case above real: the whole reduction
-converges in exactly one, entirely-passthrough level, so the top-level
-multiplier function itself needed the `@wires` propagation to be correct,
-not just some interior node.
-
-A related, narrower-than-formal-width edge case: `arith_result_type`'s
-full-precision output width for `uint1 x uintN` is wider than any value
-the product can actually take (a 1-bit operand's product never needs a
-carry, so the natural reduction result can be narrower than the formal
-`out_bits`, not just wider as in the normal case). Handled by widening on
-assignment (implicit zero-extension, the same `ae: eff_l_t = a` idiom used
-throughout this file) rather than the usual truncating slice.
-
-### Outcome
-
-**Shipped as the new default.** `register_soft_mult()` now registers
-`make_soft_mult_carry_save` (`max_width=2`, matching the reference
-exactly) instead of `make_soft_mult_shift_add`. This is a port of a real,
-working reference design for the actual target (sky130/latchup), not a
-locally-measured winner the way sections 9-10's changes were -- landed
-directly rather than gated behind a comparison sweep. The prior default
-stays reachable via the new `register_soft_mult_shift_add()`.
-`register_soft_mult_carry_save(max_width=None, scope=None)` is also
-available directly, shaped like `register_soft_mult_karatsuba
-(threshold=None, ...)`, for callers who want a different `max_width`.
-
-A Wallace-tree/chunked-CPA hybrid (collapsing partial products to 2 rows
-via 3:2 compression in O(log n) levels, then finishing with this same
-chunked deferred-carry adder) was sketched as a possible improvement over
-the reference's own reduction -- 2-bit chunking multiplies element count
-every level, which is why the reference needs ~30 levels where a 6-level
-Wallace reduction plus a chunked finish could need fewer -- but was not
-built this round; the priority was reproducing the reference's own proven
-design faithfully and characterizing this compiler's autopipelining
-against its real, known-good performance number first. Worth returning to
-if a future round finds headroom worth chasing (see the real numbers
-below -- the reference's own target was matched and beaten, so this is
-no longer an obvious next step, just a recorded option).
-
-### Second pass: cutting the emitted entity count from ~2,500 to ~40
-
-The construction above (one `@hw_func`/`@wires` entity per bit-slice, and
-a balanced binary tree of 2-input `concat` entities to combine each
-level's ops) is correct and pipelines well, but a single `uint16 x
-uint16` instance emitted **2,489 `.vhd` files** (in 2,489 directories --
-every design that multiplies pays this, including the real latchup
-target). Measured breakdown of one comb elaboration: 1,289 pure bit-slice
-`@wires` leaves (52%), 648 `@wires` 2-input concat nodes (26%), 464
-`@hw_func` add wrappers (19%), and only 44 distinct `chunk_add` shapes and
-30 level wrappers doing anything else -- **78% of the emitted files were
-pure-wire entities that synthesize to nothing.**
-
-This was not a naming problem (canonical names already collapse to a
-readable prefix + `sha256[:8]` past 128 chars, `PY_TO_LOGIC.py`) -- it was
-structural: one entity per bit-slice and per-concat-node. The fix,
-matching what the original plan actually called for ("one `@hw_func` per
-level, not per chunk-add") but which the first pass talked itself out of:
-**`make_soft_div_radix`'s `soft_div_radix`** (`operators/soft_div.py`) was
-already proof that a single `@hw_func` can hold one unrolled loop over a
-closure-planned op list, indexing per-iteration-varying closure data and
-`bit_assign`-ing an inline varying-width slice -- the exact shape this
-multiplier's construction claimed had "no existing precedent." Rebuilt
-`_build_carry_save_stage` around that idiom: one `@hw_func` per level,
-its own reduction loop AND its bare-name tail call to the next level
-folded into the same entity (eliminating the old separate `stage_levels_`
-wrapper on top of a separate level function). Two changes collapsed the
-add-entity fragmentation specifically: every chunk operand is
-zero-extended (via plain reassignment, see below) up to one common
-`max_width`-wide shape before the shared add, and `rest` (previously
-baked into the add leaf's own signature, the single biggest source of its
-44 distinct shapes) is split out into an ordinary parent-side
-`bit_assign`. Result: **2,489 -> 41 `.vhd` files**, confirmed on the real
-`uint16 x uint16` latchup design -- 30 level entities, one shared
-`chunk_add_w_2`, the partial-product AND, and harness files.
-
-This depends on VHDL always giving a signal exactly one type despite
-Python source that visibly assigns different widths into the same-named
-local across branches and levels -- not a hardware-level polymorphic
-signal, but a fresh per-write-site aliased wire at the target's own
-declared type, reconciled via `VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS`'s
-implicit `resize()` at render time. Confirmed real (elaboration, GHDL,
-and exhaustive native-sim checks) and documented in full --
-including exactly how narrow this is (same-signedness unsigned
-int/uint only; arrays and structs are NOT covered by this mechanism) --
-in [`PY_TO_LOGIC_DESIGN.md`'s "Reassigning a Different
-Width"](PY_TO_LOGIC_DESIGN.md#reassigning-a-different-width--one-vhdl-type-per-signal-not-a-type-changing-variable)
-and its sim-side mirror in
-[`pypeline_sim_DESIGN.md`'s `_TypedAnnAssignRewriter`
-section](pypeline_sim_DESIGN.md#_typedannassignrewriter--truncation-at-every-typed-assignment).
-
-`@wires` is now needed far less often, but not never: a level with zero
-`add` ops (every element disjoint, only possible against a 1-bit operand)
-is still pure routing and still needs the tag to avoid the same PyRTL
-rewire-only zero-delay crash documented below in future-work item 6. This
-is **not** only the single-level whole-design degenerate case -- an
-exhaustive sweep (out_bits 2-64 x every leaf width x max_width in
-{1,2,3,4,6,8,16,32} x n_leaves in {2,3,4,5,8,16,32}, 93,911 cases) found
-1,604 cases where an *interior* level of a multi-level chain is all-pass,
-so the per-level `is_wires` check (a level has no `add` op AND the rest
-of the chain is also wires) is threaded through the whole chain, not
-special-cased away.
-
-Both public factory signatures (`make_soft_add_tree_carry_save`,
-`make_soft_mult_carry_save`) are unchanged, so the existing test suite
-(`test_soft_carry_save_mult`, `_asymmetric`, `_degenerate`,
-`_max_width_override`, `test_soft_mult_default_is_carry_save`) is the
-regression oracle and needed no edits -- all pass unchanged, including
-the degenerate cases that exercise the `@wires` path.
-
-### Characterizing the autopipeliner against the reference's own number
-
-**Answered: yes, and the real number beats the reference.** A real,
-synthesis-confirmed `700.64 MHz at 30 cycles latency (31 pipeline
-stages)` was measured for this multiplier -- fewer cycles and higher fmax
-than the reference's `684 MHz at 33 cycles`. This did **not** come from
-`--coarse --sweep` (the mode this section originally reached for, and the
-one every other QoR sweep in this codebase uses) -- that path has a real,
-confirmed bug on this design (below). It came from the tool's other
-autopipelining mode: the **planned sweep** (omit `--coarse` entirely) with
-a real `@MAIN(700)` target and `--no_hier_syn`, which does landscape-based
-placement plus one real synthesis per iteration, confirmed against actual
-timing rather than an estimate:
-
-```
-[sweep] main=bench_main subtree=bench_main comb delay ~43.0 ns, target 1.4 ns (700.0 MHz),
-        predicted fmax floor ~905.6 MHz due to FOR_i_0_BIN_OP_AND[...] (1ll_atomic, unsliceable)
-[sweep] bench_main: about to synthesize, cuts=30, 30 slice(s) (31 pipeline stages)
-[sweep] iter=1 main=bench_main goal=700.00MHz got=700.64MHz (1.43ns) cuts=30 main_latency=30
-        pipeline_stages=31 predicted_stage=1.43ns action=met
-[sweep] Trimming stages: bench_main met at 30 cuts, retrying at ~27 cuts (trim 1/2)
-[sweep] iter=2 ... got=472.74MHz (2.12ns) cuts=29 ... action=densify(op_under_test x1.55)
-[sweep] Trim attempt failed timing; restoring met result with 30 cuts...
-[sweep] bench_main: met timing, 30 slice(s) built (31 pipeline stages), cuts=30, iterations=2
-```
-
-Two things stand out. First, the planner's own pre-synthesis *estimate*
-(700.6 MHz) matched the *real measured* result (700.64 MHz) almost
-exactly -- a sharp contrast with this codebase's usual over-prediction
-pattern (section 10's Karatsuba table, `soft_bitwise`'s 26.6-47x), and
-plausibly a direct benefit of the second-pass refactor's shallower
-critical-path hierarchy (~3 levels deep per path now, versus ~10 before:
-level -> concat tree -> op leaf -> chunk_add -> ripple). Second, the
-sweep's own trim step tried 29 cuts and measured only 472.74 MHz --
-confirming 30 cuts is a real minimum for this target, not sweep padding.
-
-**The `--coarse --sweep` path itself has a real, confirmed, pre-existing
-bug that blocks it from reaching this deep on this design, independent of
-which multiplier architecture is used.** Both the pre-refactor (~2,489
-entity) and post-refactor (41 entity) architectures were run through the
-identical current `--coarse --sweep --syn_tool sky130` path and produced
-matching fmax at matching cuts (both 561.90 MHz at cut 29) before hitting
-the byte-for-byte identical crash:
-
-| cuts | latency | new arch (41 entities) | old arch (~2,489 entities) |
-|---|---|---|---|
-| 0 | 0 | 55.77 MHz (17.93 ns), 52923 &mu;m&sup2; comb | (same design, entity-count-independent) |
-| 28 | 28 | 424.34 MHz | 461.48 MHz |
-| 29 | 29 | 561.90 MHz | 561.90 MHz |
-| 30 | 30 | 561.90 MHz | *(crashed reaching this cut)* |
-| 31 | 31 | *(crashed reaching this cut)* | -- |
-
-```
-Exception: GET_BITS_PER_STAGE_DICT: interior zero-bit stage 1 of 3 for a 2-bit op
-           (2 slices requested) - bits_per_stage_dict={0: 1, 1: 0, 2: 1}
-```
-
-This is exactly future-work item 1 below, now moved from "confirmed as a
-real risk, not yet confirmed as hit" to **confirmed hit, twice,
-independent of multiplier architecture** -- real evidence the fix is
-worth doing, even though it is no longer blocking (the planned sweep
-already reaches, and beats, the reference target for this design).
-
-### Future work: autopipelining sweep algorithm improvements
-
-Written from two sources: the codebase investigation done before this
-multiplier was built (a very fine-grained, many-level, narrow-leaf design
-is a stress test the autopipeliner has apparently never faced), and what
-actually happened building and sweeping it. Numbered by expected value,
-not by where each was discovered.
-
-**Why this design is the right stress test.** It is a stack of ~30
-uniform ranks of parallel, mostly-identical 1-3-bit adds -- structurally
-the best possible input for the coarse placer's own mechanism (evenly-
-spaced delay fractions projected into every submodule alive at that
-offset, `SYN.GET_BEST_GUESS_IDEAL_SLICES` / `SLICE_DOWN_HIERARCHY_
-WRITE_VHDL_PACKAGES`), and the opposite of `make_soft_mult_shift_add`'s
-old lumpy 4-level, 18/21/26/32-bit tree. If the tool were ever going to
-slice something near-optimally, this is the shape. Whether it actually
-does is exactly what the characterization above answers.
-
-**1. The coarse path crashes on narrow leaves -- confirmed hit, twice,
-independent of multiplier architecture.** `RAW_VHDL.GET_BITS_PER_STAGE_DICT`
-raises on an interior zero-bit stage. Both the pre- and post-entity-
-reduction architectures hit the identical exception at a similar cut
-count under `--coarse --sweep --syn_tool sky130` on this design (see the
-characterization above): `GET_BITS_PER_STAGE_DICT: interior zero-bit
-stage 1 of 3 for a 2-bit op (2 slices requested) -
-bits_per_stage_dict={0: 1, 1: 0, 2: 1}`. The leaf-bit-width cap that would
-prevent this exists only in the PLANNED sweep
-(`SWEEP.BUILD_SLICE_LANDSCAPE`), not `--coarse`, which consults only
-`LEAF_MAX_SPLIT_SLICES` -- `None` (uncapped) for `SPLIT_KIND_BITS`. No
-longer blocking this multiplier specifically (the planned sweep already
-reaches, and beats, the reference target on this design), but real,
-reproducible, and worth fixing for every other design that leans on
-`--coarse` at depth. **Recommended fix: port the cap into the coarse
-path** (or make `LEAF_MAX_SPLIT_SLICES` return `width-1` for
-`SPLIT_KIND_BITS`). Turns a hard crash into a clamp, benefits every
-design, not just this one, and removes the need for any impl-specific
-`--stop` ceiling in `op_qor_bench.py`'s `max_useful_cuts`.
-
-**2. The 0.1 ns delay raster is too coarse for these leaves.**
-`DELAY_UNIT_MULT = 10.0` (`SYN.py`), and `logic.delay = int(cached_ns *
-10)` truncates, with an explicit "too small to represent" clamp to 1
-unit. Every sub-0.1 ns leaf collapses to the same value, so a 3-bit add
-and a 1-bit XOR are indistinguishable to `PLAN_CUTS`. Measured sky130
-leaf delays for this exact design are ~1.0-1.4 ns (see the `chunk_add_*`/
-`leaf_op_*` lines in the characterization log) -- comfortably above the
-raster floor at THIS width, so this is less of a live risk for sky130
-specifically than it would be for a faster process or for PyRTL's
-comb-only estimate, but it is the strongest structural argument that
-**`max_width=2` is not obviously the right choice for a Pypeline port even
-though it is right for hand-written CoHDL**: leaves need to be big enough
-to be representable on whatever raster the target backend uses. Predict
-the per-target sweep optimum may sit above `max_width=2`, not at it --
-this is exactly what `CARRY_SAVE_MAX_WIDTHS = [2, 3, 4, 6, 8]` in
-`op_qor_bench.py` is there to check once the full matrix runs.
-**Suggested fix**: raise `DELAY_UNIT_MULT` (10 -> 100) and round rather
-than truncate.
-
-**3. Depth-proportional over-prediction is the main risk to ranking.**
-`ESTIMATE_HIER_PATH_DELAYS` sums each submodule's *full* cached delay
-(clk->Q + logic + setup), so a K-deep chain accumulates ~(K-1) copies of
-a floor that exists once in silicon -- precedent: `soft_bitwise` measured
-26.6-47x too slow; section 10's Karatsuba table degrades monotonically
-with recursion depth (1.22x flat -> 2.99x at the shallowest split). A
-~30-level tree is squarely in that regime, and the estimated area printed
-during the characterization run (`Estimated area: 52923.0 um2` at 0
-cuts, comb-only, before ANY of the ~2000 instantiated leaf adds could
-share logic under real synthesis) should be read the same way section
-6's latchup area-model finding already established: the isolated,
-per-leaf estimate overshoots real synthesized area by 270-410% on designs
-with this much structural repetition, because real synthesis dedupes/
-shares across repeated instances in a way an isolated per-leaf sum
-cannot see. **The measurement frontier is the existing mitigation** --
-`FUNC_IS_TOPMOST_COMB` gets one real synthesis, and `units_to_ns`
-rescales the inflated geometry onto that real total, so absolute fmax
-stays anchored even when the estimated *shape* is wrong. **Suggested
-fix**: `PIPELINEC_INTERNAL_COMBINATIONAL_PLANNER_WEIGHTS=1` (`DEVICE_
-MODELS`-only, off by default pending A/B evidence) already strips the
-per-leaf clk->Q+setup floor from the relative segment weights -- this
-design is close to the ideal A/B case for it (many nearly-identical short
-leaves, so the floor-vs-real-delay ratio is about as extreme as this
-codebase has); run the characterization sweep a second time with it set
-once the default run finishes, and compare. Note it can only move cut
-*positions*, not cut *count* -- a frontier-anchored *budget* (not just
-weights) would be needed to fix the count for a design this deep.
-
-**4. `SPLIT_KIND_1LL` atomicity will suppress part of the tree.** Every
-partial-product `AND` is 1LL (`RAW_VHDL.py`): at most 2 slices, and a
-parallel *blocker* -- `SliceLandscape.finalize`'s `_straddled` deletes
-candidates sitting inside a parallel atomic span. A real divider swept
-elsewhere in this codebase planned 48 cuts and built only 32 slices, 16
-wasted on NOT outputs, for the same reason.
-
-**5. One placement per axis unit; deep narrow leaves rank last.**
-`finalize` collapses every candidate rounding into the same 0.1 ns unit
-to a single legal bit, and materializes exactly one
-(`min(candidates, key=_PLACEMENT_RANK_KEY)`). A whole rank of parallel
-adders is therefore not registered as a rank in one step; one candidate
-is placed and the VHDL writer's emergent stage-crossing registration does
-the rest, pruned afterward by `DROP_NON_DEEPENING_PLACEMENTS`.
-`_PLACEMENT_RANK_KEY` prefers shallow hierarchy and real `INSTANCE_
-OUTPUT` boundaries over deep, narrow leaves -- ranking precisely this
-design's shape last. **Suggested fix**: let a whole rank of parallel
-identical ops be considered as one placement, matching how a uniform
-reduction tree actually wants to be sliced.
-
-**6. A related but distinct pitfall for any future soft-operator author
-building a deep, many-node tree of small entities: watch for
-"rewire-only" leaves.** Not an autopipelining-algorithm issue, but
-directly adjacent, and worth recording here since it will recur for
-anyone else who tries this style of port. A `@hw_func`-tagged entity
-whose own synthesized result is pure wiring (a bare bit-slice, a
-concat-of-slices, or -- in this multiplier's second-pass construction, a
-whole reduction-level loop that happens to contain zero `add` ops -- with
-no arithmetic anywhere beneath its own call boundary) makes PyRTL's
-`max_freq` divide by a zero critical-path delay and crash the first time
-that entity is independently timing-estimated -- confirmed for real
-twice: once building the first-pass per-slice construction
-(`_make_carry_save_slice`), and again confirming via an exhaustive sweep
-(93,911 cases) that an all-pass level is not limited to the single-level
-whole-design degenerate case -- 1,604 cases had an all-pass level
-*inside* a multi-level chain. `@wires` is the correct fix, but it must be
-applied truthfully and propagated all the way through: a node/level is
-only safe to tag `@wires` if its ENTIRE reachable computation is pure
-wiring, not just its own top-level statements -- tagging something
-`@wires` that calls (or contains) real arithmetic would silently hide
-that delay from every future estimate, a worse, quieter bug than the
-crash it works around. The best mitigation found this round was
-structural, not just tagging discipline: the second-pass refactor's
-per-level-loop construction (rather than one entity per bit-slice/concat
-node) reduced how MANY entities are even candidates for this crash by
-about 98% (2,489 -> 41), simply by not creating most of the wire-only
-entities in the first place -- fewer wire-only entities means fewer
-places `@wires` needs to be right. Neither native sim nor `--no_synth`
-elaboration nor GHDL behavioral simulation exercise per-entity synthesis
-timing estimation, so none of them can catch this class of bug -- only a
-real `--coarse --sweep` (or planned sweep) run against a real backend
-can. This suggests op_qor_bench.py-style real-backend sweeps, not just
-native sim, may be worth running as a matter of course for any new
-deep/many-entity soft-operator design, regardless of whether a QoR
-comparison is the goal.
-
-**7. `AUTOPIPELINE(func, depth=N)` is documented but silently a no-op.**
-The value is stored (`PY_TO_LOGIC.py`, on `AutopipelineCall` elaboration)
-and never read by anything downstream -- every consumer does a membership
-or length test only. Either implement it or remove it from the docs; a
-knob that silently does nothing is worse than an absent one. Unrelated to
-this multiplier specifically, surfaced while researching whether a
-"pin exactly N stages" mechanism already existed (it does, just not via
-this knob -- `--coarse --start N --stop N+1` against a design with no
-`@MAIN` MHz goal is the actual "best fmax at a fixed latency" mode, and
-is what both the QoR harness and the characterization sweep above use).
-
-### Correctness
-
-`test_soft_carry_save_mult`/`test_soft_carry_save_mult_asymmetric` cover
-the same golden-sweep shape as the existing shift-and-add tests, across
-several `max_width` values. `test_soft_carry_save_mult_degenerate` is the
-regression test for the 1-bit-operand non-termination bug above (every
-`(lw,rw)` pair with a 1-bit side, exhaustive over both operands).
-`test_soft_mult_carry_save_max_width_override` covers
-`register_soft_mult_carry_save(max_width=...)` end-to-end, mirroring
-Karatsuba's threshold-override test. `test_soft_mult_default_is_carry_save`
-is the regression test for the default switch itself, distinguishing the
-two multipliers by canonical entity name (`CANONICAL_CALLABLE_KEY`) rather
-than by measuring anything. Full `soft_ops_test.py` suite green (28/28,
-unchanged after the second-pass entity-count refactor -- both public
-factory signatures were preserved, so no test edits were needed).
-
-Full repo-wide `run_all.py -j 4` suite: 209/210 confirmed passing after
-the entity-count refactor (the 210th, an AUTOFSM test, was still finishing
-when this was last checked). One known, unrelated failure:
-`sweep_floor_detect_test` (`build_report` category) hits `RuntimeError:
-Parallel placement group did not materialize as one frontier` in
-`SWEEP.py`'s `WRITE_PIPELINE_PLACEMENT_TRACE` -- a bug in a concurrently
-in-progress, uncommitted `placement_group`/`parallel_output_frontier`
-feature in `SWEEP.py`/`SYN.py` (not this section's work; the failing
-design exercises `soft_div_radix`, not this multiplier). Confirmed
-unrelated to this refactor by running the identical `--coarse --sweep`
-sky130 path against both the pre- and post-refactor multiplier
-architectures and observing matching fmax at matching cuts (both 561.90
-MHz at cut 29) before both hit an unrelated but analogous confirmed
-pre-existing bug (`GET_BITS_PER_STAGE_DICT`, see the characterization
-above) -- independent evidence that this section's changes are not
-introducing spurious sweep failures.
+  canonical `BIN_OP_GT_*`/`BIN_OP_GTE_*` name a soft build would use -- a
+  build that runs the benchmark and then a normal build against the same
+  cache directory can pick up a comparator shape it never asked for. This is
+  already latent, not just hypothetical: the cache's `BIN_OP_{GT,GTE,LT,LTE}_*`
+  entries have mixed provenance today, some measuring the SW_LIB C-generated
+  comparator and some the `FORCE_RAW_INT_CMP_FOR_QOR_BENCH` RAW_VHDL one, both
+  filed under the same canonical entity name. Harmless only because compares
+  are soft by default today; flipping any of `GT`/`GTE`/`LT`/`LTE` back to
+  raw would silently pull numbers from an implementation that no longer
+  matches what gets built.
+- **Only a handful of Karatsuba thresholds build structurally distinct
+  hardware.** `op_qor_bench.py`'s `karatsuba_threshold_reps` groups the
+  threshold sweep by `CANONICAL_CALLABLE_KEY` before measuring, since most
+  threshold values collapse onto the same entity (at uint16: `T=6`≡`T=7`,
+  `T=9..15` all identical, `T>=16` degenerates to no-split/shift-add) --
+  sweeping every integer threshold would just re-measure the same few shapes
+  repeatedly. Separately, `make_soft_mult_karatsuba` itself rejects
+  `threshold < 3`: a 3-bit operand's middle sub-multiply recurses at the
+  same width as its parent, so anything below 3 never terminates (confirmed
+  by measurement: `RecursionError`).
+
+Current soft-operator defaults (comparator, barrel shifter, Karatsuba
+threshold, carry-save multiplier) and the QoR reasoning behind each are in
+[`pypeline_DESIGN.md`'s Soft Operator Library section](pypeline_DESIGN.md#soft-operator-library-includepypelineoperators);
+the investigations that established them are recorded in this file's History
+section, below.
+
+## 10. Limitations and future work
+
+1. **The coarse path crashes on narrow leaves.** `--coarse --sweep` can
+   raise `GET_BITS_PER_STAGE_DICT: interior zero-bit stage ... for a 2-bit
+   op` on a design with many narrow (1-3 bit) leaves at a high cut count —
+   reproducible independent of which design triggers it. The leaf-bit-width
+   cap that prevents this exists only in the planned sweep
+   (`SWEEP.BUILD_SLICE_LANDSCAPE`, §3), not `--coarse`, which consults only
+   `LEAF_MAX_SPLIT_SLICES` (`None`/uncapped for `SPLIT_KIND_BITS`). Suggested
+   fix: port the cap into the coarse path, or make `LEAF_MAX_SPLIT_SLICES`
+   return `width-1` for `SPLIT_KIND_BITS`.
+2. **The 0.1 ns delay raster (`DELAY_UNIT_MULT = 10.0`) is coarse for narrow
+   leaves.** Every sub-0.1 ns leaf collapses to the same weight, so e.g. a
+   3-bit add and a 1-bit XOR are indistinguishable to `PLAN_CUTS`. Not a live
+   risk for sky130 at ordinary widths (measured leaf delays sit comfortably
+   above the raster floor), but the strongest argument that a soft
+   operator's own internal chunk width should be tuned per target rather
+   than assumed fixed. Suggested fix: raise `DELAY_UNIT_MULT` and round
+   rather than truncate.
+3. **Depth-proportional over-prediction is the main risk to ranking.**
+   `ESTIMATE_HIER_PATH_DELAYS` sums each submodule's full cached delay
+   (clk→Q + logic + setup), so a K-deep chain accumulates ~(K−1) copies of a
+   floor that exists once in real silicon — worse for deeper hierarchies
+   (§9's `soft_bitwise` comparator measured 26.6-47x its real delay this
+   way). The measurement frontier (§2) anchors absolute fmax against a real
+   synthesis run even when the estimated internal *shape* is wrong, but it
+   cannot fix cut-*count* decisions made off the inflated shape.
+   `PIPELINEC_INTERNAL_COMBINATIONAL_PLANNER_WEIGHTS=1` (`DEVICE_MODELS`-only,
+   off by default) strips the per-leaf clk→Q+setup floor from relative
+   segment weights and is worth an A/B on deep, many-leaf designs.
+4. **`SPLIT_KIND_1LL` atomicity suppresses cuts on parallel branches it
+   straddles** — the same mechanism (§3, "Parallel branches") that cost the
+   divider design 16 wasted NOT-output slices. Affects any design with many
+   parallel 1-logic-level ops (e.g. partial-product ANDs) feeding a shared
+   downstream boundary.
+5. **One candidate is materialized per axis unit**, so a whole rank of
+   parallel, structurally identical operations is not registered as one
+   placement — `_PLACEMENT_RANK_KEY` prefers shallow hierarchy and real
+   instance-output boundaries over deep, narrow leaves, which ranks a
+   uniform reduction tree's own shape last. Suggested fix: let a whole rank
+   of parallel identical ops be considered as one placement.
+6. **Watch for "rewire-only" entities when building a deep, many-node
+   soft-operator tree.** A `@hw_func`-tagged entity whose synthesized result
+   is pure wiring (a bit-slice, a concat-of-slices, or a reduction level
+   with zero arithmetic ops) makes PyRTL's `max_freq` divide by a zero
+   critical-path delay and crash the first time it is independently
+   timing-estimated. `@wires` is the fix, but must be applied truthfully and
+   propagated through the *entire* reachable computation — tagging
+   something `@wires` that calls real arithmetic would silently hide that
+   delay from every future estimate. Preferring fewer, coarser-grained
+   entities (one `@hw_func` per structural level rather than per bit-slice/
+   concat node) reduces how many entities are even candidates for this.
+7. **`AUTOPIPELINE(func, depth=N)` is documented but silently a no-op.** The
+   value is stored on `AutopipelineCall` elaboration and never read by
+   anything downstream. `--coarse --start N --stop N+1` against a design
+   with no `@MAIN` MHz goal is the actual "best fmax at a fixed latency"
+   mechanism today.
+8. **Caching for AUTOFSM's operand-mux measurement entities doesn't fire**
+   (§7). `_IS_PYPELINE_OPERATOR_LIBRARY_CODE` is meant to classify
+   `include/pypeline/operators/` entities as non-user code so their delays
+   are cacheable in `path_delay_cache`, but it calls `inspect.getsourcefile`
+   on the `@hw_func` wrapper callable rather than the wrapped function, so
+   it always resolves to `pypeline.py` and never fires. An `inspect.unwrap`
+   at that lookup would fix it. Nothing is incorrect meanwhile — the
+   affected delays are just measured every build instead of once.
+9. **Whether raw HDL leaves should support genuinely uneven bit-split
+   boundaries** (rather than always equal-width, §1) is open. Measured
+   evidence so far favors equal-width — real per-width delay is monotonic
+   and concave, so minimizing the worst stage at a given stage count means
+   equal-width chunks — but the constraint itself has not been revisited
+   since.
+10. **`INFERRED_MULT` raw-vs-soft comparison is skipped under the PyRTL tool**
+    in the operator QoR benchmark (§9) — PyRTL has no DSP-inference cost
+    model, so multiplier coverage there is sky130/Vivado-only.
+11. **`PLUS` has the same PyRTL blind spot as `INFERRED_MULT`, with a bigger
+    real-hardware caveat.** PyRTL's own sweep shows `soft_carry_select`
+    beating `raw_default` by a wide margin (uint32 `+` uint32 at 6 cuts: 219
+    vs. 119 MHz) — flipping the default on that data alone would be a
+    one-line change, and is deliberately not done: Xilinx's `CARRY4`
+    primitive gives the raw adder a dedicated fast-carry chain that a
+    generic gate-delay model cannot represent, so the PyRTL numbers are not
+    trustworthy here without a `--tool vivado` re-measurement, which hasn't
+    been done. Not implicated by the wireguard regression either way:
+    chacha20's quarter round uses only `+`, `^`, `|`, and constant-amount
+    rotates, and a constant shift/rotate amount resolves to a
+    `CONST_SL`/`SR_<n>_<type>` built-in before it ever reaches the operator
+    registry, so only variable-amount shifts in that design reach a
+    soft/raw choice at all.
+
+## History
+
+Why things are the way they are. Entries are keyed by **topic, not date** —
+when something changes, revise the entry that owns that topic rather than
+adding a new one. Keep a fact here only if it still changes a decision
+today: an alternative someone would otherwise retry, a measurement that is
+still a live regression reference, or the reason a default is what it is.
+Numbers carry the conditions they were measured under, not the date they
+were taken.
+
+### Why the planned sweep replaced the middle-out sweep
+
+The original autopipelining sweep grew pipeline depth via four interacting
+multiplier knobs (`best_guess_sweep_mult`, `hier_sweep_mult`, and two more)
+against evenly-spaced "best guess" register placements, synthesizing every
+hierarchy level up front (a full wireguard build cost roughly 16 full
+synthesis runs) and silently exiting 0 on unmet timing. The planned sweep
+(`src/SWEEP.py`) instead builds a static delay model of where delay actually
+lives (the *landscape*) and where cuts are legal, starts from a
+measurement-frontier-calibrated fewest-stages guess, and adds stages only
+from synthesis feedback — typically far fewer syn runs, and a hard non-zero
+exit on unmet timing rather than a silent pass. See §0's vocabulary table
+for the terms this introduced.
+
+### Mux select-fanout cliff
+
+A single mux select bus registered on top of an already-registered, wider
+parallel sibling can materialize a real register while adding zero pipeline
+depth, since `GET_PIPELINE_MAP` schedules a shared downstream consumer by
+the max of its inputs' readiness — a short branch's register is free once a
+slower sibling already bounds that max (§1). Found on `soft_shift_rot`
+(sky130, real liberty STA): a 7-cut plan with this placement measured
+105.95 MHz with 4 max-capacitance violations, where dropping the
+non-deepening placement alone reached 252.13 MHz at 6 cuts with none, and
+additionally chunking the remaining wide selected banks by default reached
+377.41 MHz — beating even the escalation ladder's own best result on that
+design (317.36 MHz at 8 cuts), with fewer register banks.
+`DROP_NON_DEEPENING_PLACEMENTS` (§1) is the fix, and defaulting wide
+selected-mux banks to chunked lowering is now unconditional, not gated
+behind hitting this cliff first.
+
+### Divider acceptance and the 48-slice intermediate level
+
+The generic typed planner meets the divider design's QoR target without any
+divider-specific naming rule, exact-cut search, public slice cap, or
+required stage-sized helper function; the durable acceptance record is
+[`divider_qor_acceptance.json`](../src/tests/pypeline_tests/qor/divider_qor_acceptance.json),
+tracked from [`pypeline_TESTS.md`](pypeline_TESTS.md#related). The reachable
+pipeline depths are structural: one register per loop iteration gives 32
+slices, two gives 64, and a real intermediate level exists at 48 (cut at one
+subtract's output, the next subtract's midpoint, then that MUX's output —
+three cuts per two iterations) — but reaching it needs the bit-boundary
+lowering to land exactly on the equal-width split the leaf generator will
+actually emit (§3) *and* realized-plan judging to rank by
+budget-met-then-fewest-cuts rather than raw worst stage (§3, `_PLAN_RANK`);
+getting either wrong collapses the plan back onto 32 or 64. The packed-MUX
+physical-neighbor refinement (chunk selected integer MUXes, including the
+terminal one) is what the sweep tries automatically after a full-design
+miss, before densifying further — this is what lets 48 slices reach its
+full potential fmax rather than plateauing well below the 64-slice level;
+[`divider_continuity_bench.py`](pypeline_TESTS.md#related)
+confirms the terminal MUX is the entire effect (chunking every *other*
+selected bank first buys +0.3%; adding the terminal one reaches 194.22 MHz
+at 50 stages).
+
+A **phase variant** realizes the same worst stage as a coarser accepted
+plan — registers spent without moving fmax, landing within one delay-raster
+unit of it — where a **real level** is a genuinely different stage
+structure at a measurably different fmax (the 48→50-slice step above is a
+real level; a same-worst-stage restructuring at 49 slices would be a phase
+variant of one of its neighbors). This is exactly what realized-plan
+judging exists to reject: ranking by budget-met-then-fewest-cuts rather
+than raw worst stage (above, `_PLAN_RANK`) means a phase variant loses to
+the plan it duplicates on cut count, not fmax. The negative A/B evidence
+behind the 48-slice/49-stage control is the concrete reason to trust that
+control rather than retry its neighbors: an isolated per-leaf model ranks
+an exact-bit subtract boundary as the *best* modeled fmax of the group, but
+built into the full divider it is one of the *worst* full schedules
+(144.43 MHz vs. the equal-width control's 164.69 MHz) — full-design fanout
+and max-capacitance dominate in a way no isolated leaf measurement sees
+(neighboring exact boundaries also lose: 152.06, 162.99; an explicit
+stage-local ripple-borrow subtract is far worse still, 99.16). Isolated
+leaf delay is a planning heuristic, not a QoR prediction — this is the
+concrete instance to point to when that distinction needs defending.
+
+### Comparator implementation selection
+
+`GT`/`GTE`/`LT`/`LTE` default to `make_soft_cmp_prefix` — a log2(n)-deep
+parallel-prefix magnitude compare (per-bit (gt,lt) codes combined by an
+associative leader-select tree, one `@hw_func` per level) — not the older
+operand-swapped subtract (`make_soft_cmp_sub_swapped`, still available via
+`register_soft_cmp_sub_swapped`) or a bitwise-decomposed one. Every cached
+leaf delay is a full out-of-context register-to-register measurement
+(clk→Q + routing + logic + setup) that is the same regardless of operand
+width — one logic level plus a fixed floor — so a hierarchical
+implementation that decomposes into many small leaves is estimated far
+worse than it measures (a fully bitwise-decomposed comparator's estimate
+ran 26-47x its measured delay). The prefix tree sidesteps that: pricing
+each tree level as its own entity, rather than unrolling one flat serial
+scan, is what let it clear PyRTL's sweep (24/24 (op,width) combinations,
+every `n_cuts>=1`) beating the previous default outright — the same
+per-level-entity structure that the rejected borrow-chain candidate below
+lacks, which is why PyRTL over-prices it so badly.
+
+Vivado (`xc7a200tffg1156-2`, all 32 (op,width) combinations) confirmed the
+prefix tree wins 28/32 at `n_cuts>=1`, margin widening with operand width
+across all four ops (up to 40% faster than the swapped-subtract shape at
+deep cuts for uint64 `GTE`) — enough to promote it as the unconditional
+default. The 4 losses are `GTE`/`LTE` specifically at the two narrowest
+widths (uint8, uint16): swapped-subtract's `GTE`/`LTE` costs the same as
+its `GT`/`LT` (one subtract, operand order swapped per op), and real
+synthesis already optimizes that single small subtract very well at 8-16
+bits, so the tree's fixed per-level overhead doesn't pay off until the
+comparator is wide enough to be the actual bottleneck — PyRTL's own sweep
+missed all four losses entirely, the sharpest concrete instance of its
+serial-vs-tree blind spot anywhere in this doc. `register_soft_cmp_sub_swapped`
+therefore stays the right pick, via `scope=`, for a design known to be
+narrow-width-`GTE`/`LTE`-heavy; `AUTOFSM._SOFT_FACTORY_FOR_OP` also stays
+pinned to it deliberately (unrelated to this speed tradeoff — the pin
+selects for even decomposition as a sharing candidate, not fmax, and
+prefix's decomposition properties there haven't been evaluated).
+
+Two other candidates were measured and rejected. `make_soft_cmp_borrow`
+(explicit LSB-to-(width-2) bitwise borrow-propagate loop, same
+operand-swap identity as swapped-subtract) measured 7-8x worse under PyRTL
+(uint32 `GT` @0cuts: 79.86ns vs. swapped-subtract's 10.61-10.88ns) for a
+tool-artifact reason, not a real one: hand-unrolling 31 bits into
+individual bitwise leaves forfeits the lumped delay PyRTL gives the native
+`-` operator and prices 31 serial gate levels individually — not evidence
+about real hardware, and re-ranking it honestly needs a Vivado
+remeasurement that hasn't been done. `make_soft_cmp_chunked` (parallel
+`chunk_bits`-wide chunks, each an internal serial scan, reduced through the
+same prefix tree) beats swapped-subtract at `n_cuts>=2` but loses to the
+full prefix tree at every cut count measured, since each chunk still pays
+the serial-scan penalty internally — kept as a distinct point on the
+granularity spectrum between the two, not a leading candidate. Only a
+hand-pipelined raw-VHDL comparator (`raw_revived_sliced`, otherwise dead
+code, `RAW_VHDL.py`) is occasionally faster than the prefix tree, but
+degrades badly on first slicing, the wrong shape for a deeply pipelined
+design. Decision metric throughout ([§9](#9-operator-qor-benchmark)):
+pipelined per-stage delay at `n_cuts >= 1`, never comb delay at
+`n_cuts = 0` — synthesis collapses a comb blob in ways that vanish the
+moment registers are inserted, so a combinational win can invert once
+sliced.
+
+### Barrel shifter shape
+
+`make_soft_shift_barrel_sl/sr` is a chain of `MUX` leaf entities, one per
+bit of the shift amount; comb delay, the slicing floor, and the cuts needed
+to reach it are all set purely by *how many* stages the chain has, not by
+composition style, stage ordering, or codegen shape (all measured equal).
+The shipped shape carried one dead stage (`amount_bits` sized from
+`n_bits.bit_length()` instead of `(n_bits-1).bit_length()`, so a 32-bit
+shifter had an unreachable shift-by-32 stage) — fixed to the minimal stage
+count, which reaches the true floor one cut sooner on both PyRTL and real
+Vivado synthesis. A masked/AND-OR select (no mux) ties on combinational
+delay but is measurably worse once sliced, and a one-hot decode is
+decisively worse (the "free" parallel shifted versions still need real
+comparator+OR-tree logic to select among them) — both rejected. Rotate
+(`rotl`/`rotr`, previously constant-amount only) and a unified 4-mode
+shift/rotate primitive (`make_soft_shift_rot`) are now built from the same
+minimal-stage barrel via a single left-only funnel shift, rather than
+composing up to four separate barrels — equal-or-better at every cut count,
+roughly half the mux-entity count of the naive four-barrel composition.
+
+### Karatsuba base-case threshold
+
+`make_soft_mult_karatsuba`'s recursion floor (`threshold`) is 16, not 8.
+Below 16 bits, splitting is pure loss at every cut count: comb delay falls
+monotonically as `threshold` rises, but so does sliced fmax, all the way to
+the trivial no-split case — Karatsuba's recombination cost (two adds, a
+3-way subtract, a 3-way shifted sum, all at or near full output width) is
+fixed-ish overhead that a 16-bit-or-smaller multiply's actual work never
+earns back. 16 is deliberately the ceiling of what was measured, not an
+estimate of some wider optimum; a real (non-degenerate) optimum above 16
+bits — the original motivation for Karatsuba's presence in this library —
+remains open. `register_soft_mult_karatsuba(threshold=...)` still reaches
+any threshold explicitly.
+
+### Carry-save multiplier: default, and why it replaced shift-and-add
+
+`register_soft_mult()` registers `make_soft_mult_carry_save` (`max_width=2`),
+not `make_soft_mult_shift_add` (still available via
+`register_soft_mult_shift_add()`). The carry-save reduction is a direct
+algorithm port of a real, externally-authored sky130-targeted design (a
+CoHDL-generated `uint16 x uint16` multiplier, 684 MHz at 33 cycles): every
+add is capped at a fixed small width, and its carry-out is folded into the
+next stage's input rather than resolved in place — cheap on an ASIC with no
+dedicated carry chain, where `make_soft_mult_shift_add`'s balanced tree of a
+few full-width carry-propagate adds is the wrong (FPGA-carry-chain-shaped)
+tradeoff. Autopipelined via the *planned* sweep (not `--coarse`, which has
+an unrelated pre-existing crash on this design's many narrow leaves —
+Limitations item 1) with a real `@MAIN(700)` target and `--no_hier_syn`, the
+port reaches 700.64 MHz at 30 cycles (31 stages), beating the reference's
+own 684 MHz/33 cycles.
+
+Two real bugs surfaced while porting, both worth remembering as traps for a
+similar port: (1) a bare pure-wire entity (a bit-slice passthrough, or a
+reduction level with zero `add` ops) crashes PyRTL's `max_freq` with a
+divide-by-zero the first time it's independently timing-estimated — fixed
+with `@wires`, which must be applied truthfully and threaded through the
+*entire* reachable computation (a combine node is only pure wires if both
+children are), since a false `@wires` tag would silently hide a real
+child's delay from every future estimate; (2) multiplying by a 1-bit
+operand makes every partial product disjoint, so the pairing scan that only
+shrinks the summand count on an `add` hung indefinitely — fixed by merging
+contiguous non-overlapping (`pass`) elements for bookkeeping only, with a
+hard iteration cap as a backstop.
+
+The first construction pass emitted one `@hw_func`/`@wires` entity per
+bit-slice and per 2-input concat node — 2,489 `.vhd` files for one
+`uint16 x uint16` instance, ~78% of them pure-wire entities synthesizing to
+nothing. Rebuilding around one `@hw_func` per reduction level (each owning
+its own reduction loop *and* its tail call to the next level, matching the
+precedent `soft_div_radix` already set for a loop body whose per-iteration
+closure data varies) cut that to 41 files with no change to either public
+factory signature. General lesson: prefer one entity per structural level
+over one entity per primitive operation when building a deep, repetitive
+soft-operator tree — fewer entities also means fewer places a `@wires` tag
+needs to be correct.

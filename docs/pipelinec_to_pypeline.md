@@ -7,6 +7,13 @@ side-by-side. For the full pypeline API reference see [pypeline_guide.md](pypeli
 
 PipelineC documentation: [GitHub wiki](https://github.com/JulianKemmerer/PipelineC/wiki)
 
+> **Reference, not a logbook.** Describe the system as it is now, in the present
+> tense. No dated entries, no session write-ups — `git log` is the change record.
+> When behavior changes, edit the affected section in place; when the *reason* is
+> worth keeping, revise the matching entry in this file's `History` section, if it
+> has one, rather than appending a new one. See
+> [documentation conventions](README.md#documentation-conventions).
+
 ## Table of Contents
 
 1. [Files and Includes](#1-files-and-includes)

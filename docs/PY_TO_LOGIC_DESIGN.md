@@ -6,6 +6,13 @@ Python design files into PypelineC's internal `Logic()` graph representation. Fo
 [`pypeline_DESIGN.md`](pypeline_DESIGN.md). For simulation, see
 [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md).
 
+> **Reference, not a logbook.** Describe the system as it is now, in the present
+> tense. No dated entries, no session write-ups — `git log` is the change record.
+> When behavior changes, edit the affected section in place; when the *reason* is
+> worth keeping, revise the matching entry in this file's `History` section, if it
+> has one, rather than appending a new one. See
+> [documentation conventions](README.md#documentation-conventions).
+
 ## Table of Contents
 
 **Architecture & Overview**
@@ -367,46 +374,45 @@ MUX_point2d_t          ← compound-type MUX is valid
 
 ### Bare (Void) Call Statements
 
-`_elab_stmt`'s `ast.Expr(ast.Call(...))` branch used to only recognize a fixed whitelist of
-special markers (`_is_sim_output`, `_is_sim_input`, `_is_sim_print`, bare-name `vhdl`) and
-unconditionally raised `NotImplementedError` for anything else — there was no fallback that
-elaborated a bare call to an *ordinary* Pypeline hardware function:
-
-```python
-foo()          # bare statement, result discarded -- used to always raise NotImplementedError
-x = foo()      # assignment form always worked fine, via _elab_call
-```
-
-The fallback now calls `self._elab_call(stmt.value)` and discards the result:
+`_elab_stmt`'s `ast.Expr(ast.Call(...))` branch recognizes a fixed whitelist of special
+markers (`_is_sim_output`, `_is_sim_input`, `_is_sim_print`, bare-name `vhdl`) and, for
+everything else, falls through to `self._elab_call(stmt.value)`, discarding the result:
 
 ```python
 else:
     self._elab_call(stmt.value)
 ```
 
-This covers both a genuinely `void` callee (no `->` annotation) *and* a non-void function
-called purely for its side effects — ordinary, legal Python either way. If the callee can't be
-resolved at all, `_elab_call` itself still raises `NotImplementedError` ("Call to unknown
-function ..."), so invalid code is still rejected — this only removes the artificial rejection
-of an otherwise-resolvable bare call.
+```python
+foo()          # bare statement, result discarded -- elaborates foo via _elab_call
+x = foo()      # assignment form -- also via _elab_call
+```
 
-`_elab_call` itself needed a matching fix: it used to unconditionally do
-`ret_typ = callee_def.wire_to_c_type[RETURN_WIRE_NAME]`, a `KeyError` for a void callee (`_setup_outputs`
-never adds `RETURN_WIRE_NAME` to `wire_to_c_type` when a function has no `->` annotation). Now:
+This covers both a genuinely `void` callee (no `->` annotation) *and* a non-void function
+called purely for its side effects — ordinary, legal Python either way. `_elab_call` itself
+handles a void callee's return type correctly:
 
 ```python
 ret_typ = callee_def.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME)
 port_return = _port_wire(inst, C_TO_LOGIC.RETURN_WIRE_NAME) if ret_typ is not None else None
 ```
 
-`_add_submodule_instance(..., port_return, ret_typ, ...)` already tolerates
-`output_wire=None`/`output_type=None` (added for `sim_print`'s own printf submodule instance —
-see "`sim_print` — printf-style Console Output" above), so passing `None`/`None` for a void
-callee here simply skips registering a `return_output` wire, with no further changes needed.
+`callee_def.wire_to_c_type` never gains a `RETURN_WIRE_NAME` entry for a void callee
+(`_setup_outputs` only adds one when a function has a `->` annotation), so `ret_typ` is
+`None` for a void call — `.get()` rather than a bare subscript avoids a `KeyError` on that
+case. `_add_submodule_instance(..., port_return, ret_typ, ...)` already tolerates
+`output_wire=None`/`output_type=None` (needed for `sim_print`'s own printf submodule
+instance — see "`sim_print` — printf-style Console Output" above), so a void callee here
+simply skips registering a `return_output` wire.
 
-This gap was found via (but is not specific to) `sim_print`: `sim_print_test.py`'s `main_a_b`
-calls two plain helper functions, `print_a()` and `print_b(i)` — each containing a
-`sim_print(...)` call — as bare statements from inside an `if` branch.
+If the callee can't be resolved at all, `_elab_call` still raises `NotImplementedError`
+("Call to unknown function ..."), so invalid code is still rejected — only an
+otherwise-resolvable bare call is accepted. (An earlier version of this branch recognized
+only the fixed marker whitelist and unconditionally raised `NotImplementedError` for
+anything else, rejecting a bare call to an ordinary Pypeline hardware function even though
+the assignment form `x = foo()` always worked; found via, but not specific to, `sim_print`:
+`sim_print_test.py`'s `main_a_b` calls two plain helper functions, each containing a
+`sim_print(...)` call, as bare statements from inside an `if` branch.)
 
 ---
 
@@ -1109,11 +1115,11 @@ it's defined in an imported sub-file (looked up via `parser_state.file_to_module
 the same `module_prefix` `PARSE_FILE` Step 6/7 already use for that function) — **never**
 the call-site alias text (`"func"`), which is just the name of the factory's own internal
 parameter and is shared by every wrapper of every one of these factories. Keying on that
-shared alias instead of the function's own identity is what a real bug in this exact spot
-used to do: two different top-level functions, each wrapped by a different factory (or two
-instantiations of the same factory), would both resolve their inner `func(...)` call through
-whichever entry got written under `"func"` first, silently reusing the first function's
-hardware for the second wrapper.
+shared alias instead of the function's own identity would let two different top-level
+functions, each wrapped by a different factory (or two instantiations of the same factory),
+both resolve their inner `func(...)` call through whichever entry got written under `"func"`
+first, silently reusing the first function's hardware for the second wrapper — exactly why
+the identity-based key above is used instead.
 
 The dedup check (step 5) runs for this case too, gated on `existing.ast_meta is not None`
 rather than merely the key being present in the table — `Logic.ast_meta` is assigned as
@@ -1196,9 +1202,11 @@ with flag-shaped parameters trailing.
    consumed by the factory (absent from the closure) is represented by hashing the
    *derived* closure vars instead and labeling the term with the param name — a strictly
    weaker signal than case 1, since the hash isn't guaranteed to change when the missing
-   param's value does (this was the ONLY mechanism before `capture_factory_args`, and is
-   why `make_fifo`-shaped factories used to hash the very params a reader most wants to
-   see — see the wireguard build audit note above).
+   param's value does. This fallback path is why a `make_fifo`-shaped factory hashes the
+   very params a reader most wants to see instead of their real values whenever case 1
+   doesn't apply — case 1 (`capture_factory_args`) resolves it whenever the factory chain
+   is `@hw_func`/`@wires`/`@MAIN`-decorated; see the wireguard build audit note above for a
+   concrete instance.
 
 **Value encoding per parameter type (`pypeline.encode_param_value`):**
 
@@ -1275,12 +1283,10 @@ site, or a re-parse pass, has the identical identity), and a mismatch raises a c
 
 ```python
 # make_fifo.<locals>.fifo  factory params (declaration order): data_t, depth, mode
-# ALL THREE are real captured arguments now (capture_factory_args), even though only
+# ALL THREE are real captured arguments (capture_factory_args), even though only
 # `capacity` (a derived local, rounded up to the next power of two) appears in fifo's
-# own closure -- depth/mode were previously invisible to naming entirely and got
-# hashed derived-closure-var suffixes instead. Both calls below round to the same
-# capacity (16) but now correctly get DISTINCT names, since depth/mode are real
-# captured arguments, not derived from capacity:
+# own closure. Both calls below round to the same capacity (16) but get DISTINCT
+# names, since depth/mode are real captured arguments, not derived from capacity:
 # → "fifo_data_t_uint32_t_depth_16_mode_fwft"     (for make_fifo(uint32_t, 16))
 # → "fifo_data_t_uint32_t_depth_9_mode_fwft"      (for make_fifo(uint32_t, 9))
 
@@ -1302,13 +1308,13 @@ site, or a re-parse pass, has the identical identity), and a mismatch raises a c
 # make_double_inv.<locals>.double_inv  factory params: T (from make_double_inv)
 # → "double_inv_T_uint32_t"
 
-# _autopipeline_with_io_regs(func, has_input_reg, has_output_reg)  all three are now real
+# _autopipeline_with_io_regs(func, has_input_reg, has_output_reg)  all three are real
 # captured arguments, in declaration order -- `func` (the wrapped function itself) leads,
 # so the name finally says WHICH function was autopipelined:
 # → "autopipelined_func_chacha20_chacha20_loop_body_has_input_reg_True_has_output_reg_True"
-# (previously "autopipelined_func_has_input_reg_has_output_reg_d077aabe" -- func/
-# has_input_reg/has_output_reg were all consumed before the closure's own body, so every
-# one of them used to be represented only by a hash of unrelated derived closure vars)
+# (func/has_input_reg/has_output_reg are all consumed before the closure's own body, so
+# without real argument capture each would be represented only by a hash of unrelated
+# derived closure vars, e.g. "autopipelined_func_has_input_reg_has_output_reg_d077aabe")
 
 # make_stream_pipeline.<locals>.stream_pipeline  factory params (declaration order): func, MAX_IN_FLIGHT
 # → "stream_pipeline_func_chacha20_round_a_MAX_IN_FLIGHT_4"
@@ -1324,14 +1330,14 @@ site, or a re-parse pass, has the identical identity), and a mismatch raises a c
 # → "dot_coeffs_1_1_neg1_4"           (for make_dot([1, 1, -1, 4]) -- distinct instance)
 ```
 
-**No manual naming needed.** Because factory-closure names are now both informative and
-guaranteed-unique from `_canonical_func_name`/`_callable_canonical_name` alone, hardware
-design source code should never need to manually assign `__name__`/`__qualname__` on a
-factory-produced function to make its generated name readable or unique — doing so is
-unsupported and unnecessary (a legacy pattern predating this naming scheme; e.g. a
-`quarter_round.__name__ = f"quarter_round_{a}_{b}_{c}_{d}"` override once used in the
-wireguard-fpga ChaCha20 port produces the exact same name automatically today, and has
-been removed).
+**No manual naming needed.** Factory-closure names are informative and guaranteed-unique
+from `_canonical_func_name`/`_callable_canonical_name` alone, so hardware design source
+code never needs to manually assign `__name__`/`__qualname__` on a factory-produced
+function to make its generated name readable or unique — doing so is unsupported and
+unnecessary. (A `quarter_round.__name__ = f"quarter_round_{a}_{b}_{c}_{d}"`-style override
+— a pattern from before this naming scheme existed — produces the exact same name
+automatically now, without the override; the wireguard-fpga ChaCha20 port's own copy of
+this override has been removed.)
 
 ### Specialised Types
 
@@ -1603,38 +1609,40 @@ fallback exists for other legitimate reasons (annotations that generally can't b
 gives no direct signal that *this* is what happened.
 
 **A same-named local variable in two different factory closures can still shadow a correct
-recovery, one level up.** `_elaborate_live_func`'s merged namespace used to include
-`self.module_globals` — the *calling* `FuncElaborator`'s own already-merged namespace — as a
-fallback so names imported at the top of a closure's defining file stayed reachable. But when
-elaboration of one factory closure is reached *from inside* another's (e.g. `make_stream_pipeline`'s
-returned function, called while elaborating `make_fir`'s), `self` at that point is the *caller's*
-`FuncElaborator`, and its `module_globals` already contains the caller's own `_annotation_attr_base_ns`
-recovery. If both factories happen to name their own interface variable identically — a likely
-coincidence given the `_intrf` naming convention above (`fir.py`'s own `in_intrf`, scalar
-per-sample data, vs. `stream_pipeline.py`'s internal `in_intrf`, the windowed/array-shaped data
-`fir_core` actually operates on) — the caller's stale `in_intrf` was merged at *higher* priority
-than the callee's own correctly-recovered one, silently overriding it. The callee's `stream_in_if`
-parameter then elaborated with the caller's (wrong) interface type, producing a scalar-typed
-`CONST_REF_RD` wire feeding an array-typed field — an elaboration-time mistake invisible until
-VHDL writing, where `TYPE_RESOLVE_ASSIGNMENT_RHS` (`VHDL.py`) has no array/scalar broadcast branch
-and hard-fails with "Cant support this assignment in vhdl?". Fixed by keeping a separate,
-never-mutated `parser_state.top_level_module_globals` (the true design-file globals, set once in
-`PARSE_FILE`) and using that in place of `self.module_globals` here — `func_own_globals`
-(`func_for_source.__globals__`, the closure's *own* defining module) already covers the original
+recovery, one level up.** `_elaborate_live_func`'s merged namespace uses a separate,
+never-mutated `parser_state.top_level_module_globals` (the true design-file globals, set
+once in `PARSE_FILE`) as its fallback for names imported at the top of a closure's defining
+file — not `self.module_globals` (the *calling* `FuncElaborator`'s own already-merged
+namespace). This matters because when elaboration of one factory closure is reached *from
+inside* another's (e.g. `make_stream_pipeline`'s returned function, called while elaborating
+`make_fir`'s), `self` at that point is the *caller's* `FuncElaborator`, and
+`self.module_globals` would already contain the caller's own `_annotation_attr_base_ns`
+recovery. If both factories happen to name their own interface variable identically — a
+likely coincidence given the `_intrf` naming convention above (`fir.py`'s own `in_intrf`,
+scalar per-sample data, vs. `stream_pipeline.py`'s internal `in_intrf`, the windowed/
+array-shaped data `fir_core` actually operates on) — using `self.module_globals` would merge
+the caller's stale `in_intrf` at *higher* priority than the callee's own correctly-recovered
+one, silently overriding it: the callee's `stream_in_if` parameter would elaborate with the
+caller's (wrong) interface type, producing a scalar-typed `CONST_REF_RD` wire feeding an
+array-typed field — an elaboration-time mistake invisible until VHDL writing, where
+`TYPE_RESOLVE_ASSIGNMENT_RHS` (`VHDL.py`) has no array/scalar broadcast branch and hard-fails
+with "Cant support this assignment in vhdl?". `func_own_globals`
+(`func_for_source.__globals__`, the closure's *own* defining module) already covers the
 "names imported at the top of the file" intent without risking a nested caller's recovered,
-closure-local names leaking into the callee.
+closure-local names leaking into the callee — `top_level_module_globals` is what makes that
+safe.
 
 Relatedly, `Reg[T]`/`Feedback[T]` local declarations and global `Wire[T]`/`Input[T]`/`Output[T]`
 declarations resolve their inner type via `_inner_ctype_to_str`, a different, narrower path than
 a plain `x: some_t` local annotation (which goes through `_annotation_to_ctype`'s eval_ns branch
 and, as a side effect, registers any struct/enum type it evaluates to via
-`_register_struct_recursive`/`_register_enum`). `_inner_ctype_to_str` used to skip that
-registration entirely, so a struct reached only through one of these three declaration forms —
-never separately bound to a name that some other annotation would register — could reach
-elaboration with its fields never entered into `struct_to_field_type_dict`, surfacing later as a
-`KeyError` keyed on the *whole struct's canonical name* (not a single field, unlike the
-attribute-annotation case above) the first time a nested field read needed it. Fixed by having
-`_inner_ctype_to_str` optionally accept `parser_state` and perform the same registration.
+`_register_struct_recursive`/`_register_enum`). `_inner_ctype_to_str` optionally accepts
+`parser_state` and performs the same registration, for the same reason: without it, a struct
+reached only through one of these three declaration forms — never separately bound to a name
+that some other annotation would register — could reach elaboration with its fields never
+entered into `struct_to_field_type_dict`, surfacing later as a `KeyError` keyed on the *whole
+struct's canonical name* (not a single field, unlike the attribute-annotation case above) the
+first time a nested field read needed it.
 
 `Reg[T]` additionally rejects `T` being one of an `@interface`'s derived `.fwd_t`/`.fb_t`
 types outright — a **hard error**, checked in `_elab_ann_assign` right where the `_RegType`
@@ -1649,20 +1657,21 @@ carries a `_pypeline_interface` back-reference (for the annotation-closure recov
 described above) — `_pypeline_interface_role` is what distinguishes "a real paired half" from
 "the plain type that happens to know which interface it came from."
 
-**`Feedback[T]` is banned the same way, not exempt.** An earlier version of this check treated
-`Feedback[some_intrf.fwd_t]` as legitimate, reasoning that a Feedback wire stands in for a real,
-forward-referenced port value rather than internal state. In practice this just relocated the
-same problem: a Feedback wire is not itself a port either (nothing else ever binds to it as a
-port), so allowing the paired type there let `.fwd_t`/`.fb_t` values sit in a named variable
-across statements — exactly what the rest of this restriction exists to prevent. `_elab_ann_assign`'s
-`_FeedbackType` branch now runs the identical `_pypeline_interface_role` check (right after
+**`Feedback[T]` is banned the same way, not exempt.** `Feedback[some_intrf.fwd_t]` might look
+legitimate — a `Feedback` wire stands in for a real, forward-referenced port value rather than
+internal state — but exempting it would just relocate the same problem: a `Feedback` wire is
+not itself a port either (nothing else ever binds to it as a port), so allowing the paired
+type there would let `.fwd_t`/`.fb_t` values sit in a named variable across statements —
+exactly what the rest of this restriction exists to prevent. `_elab_ann_assign`'s
+`_FeedbackType` branch runs the identical `_pypeline_interface_role` check (right after
 computing `inner_ctype`'s array-unwrapped element) and raises the same shape of
 `ElaborationError` naming `Feedback[uint1_t]` (for a bare ready/valid signal) or
-`Feedback[some_intrf.stream_t]` (for a stream) as the replacement. Every real design that used
-to declare `foo_ready: Feedback[some_intrf.fb_t]` now declares `foo_ready: Feedback[uint1_t]`
-and constructs `some_intrf.fb_t(ready=foo_ready)` inline at the one real call site that needs
-the paired type (mirroring the existing `f(port=intrf.fwd_t(stream=x))` idiom below) — the same
-mechanical transform applies to a `.fwd_t`-typed Feedback feeding back a whole stream.
+`Feedback[some_intrf.stream_t]` (for a stream) as the replacement. A design that would
+otherwise declare `foo_ready: Feedback[some_intrf.fb_t]` instead declares
+`foo_ready: Feedback[uint1_t]` and constructs `some_intrf.fb_t(ready=foo_ready)` inline at the
+one real call site that needs the paired type (mirroring the existing
+`f(port=intrf.fwd_t(stream=x))` idiom below) — the same mechanical transform applies to a
+`.fwd_t`-typed Feedback feeding back a whole stream.
 
 **Generalized beyond `Reg[T]`**: the same `_pypeline_interface_role` check also fires for
 *any* plain local `AnnAssign` in `_elab_ann_assign` — not just `Reg[T]`-wrapped ones — right
@@ -1672,30 +1681,30 @@ uniformly; the only exemptions are hw_func signature args and return-struct fiel
 entirely different code, never reaching `_elab_ann_assign` at all) and an inline
 `intrf.fwd_t(...)`/`intrf.fb_t(...)` constructor-call *expression* used directly as a call
 argument or return value — never stored in any local, `Reg[T]`, `Feedback[T]`, or global
-`Wire[T]` first. This generalization required one companion fix in `_elab_call`: previously,
-an `intrf.fwd_t(...)`/`intrf.fb_t(...)` (or any NamedTuple struct) constructor call was only
-elaborable as a whole assignment's right-hand side (`_elab_ann_assign`/`_elab_assign`
-special-case it via `_elab_compound_init` before general expression elaboration ever sees it)
-— as a call *argument*, the same constructor call fell through to `_elab_call`'s
-plain-Name-call/module-qualified-call resolution and raised `NotImplementedError`
-(`'intrf' is not a module in call 'intrf.fwd_t'`), since `_elab_call` had no
-struct-constructor awareness of its own. Fixed by detecting, in the argument-binding loop
-(`for port_name, arg_expr in bound_args`), whether `arg_expr` is an `ast.Call` whose callee
-resolves (via `_try_eval_const`) to something with `_fields` (i.e. a NamedTuple/struct type)
-— if so, a synthetic call-site-unique wire name is declared (`_declare_var`, zero-init, same
-as any local) and populated via the same `_elab_compound_init` walk used for variable
-initializers, then used as the argument's wire. This makes `f(port=intrf.fwd_t(stream=x))`
-elaborate with no local variable ever declared, which is what makes banning local
-`.fwd_t`/`.fb_t` declarations practical rather than just moving the boilerplate around.
+`Wire[T]` first. This generalization depends on a struct-constructor call being elaborable as
+a call *argument*, not just as a whole assignment's right-hand side (`_elab_ann_assign`/
+`_elab_assign` special-case that via `_elab_compound_init` before general expression
+elaboration ever sees it): without it, `f(port=intrf.fwd_t(stream=x))` would have nowhere to
+go — as a call argument, the constructor call would fall through to `_elab_call`'s
+plain-Name-call/module-qualified-call resolution, which has no struct-constructor awareness
+of its own, and raise `NotImplementedError` (`'intrf' is not a module in call 'intrf.fwd_t'`).
+`_elab_call`'s argument-binding loop (`for port_name, arg_expr in bound_args`) instead detects
+whether `arg_expr` is an `ast.Call` whose callee resolves (via `_try_eval_const`) to something
+with `_fields` (i.e. a NamedTuple/struct type) — if so, a synthetic call-site-unique wire name
+is declared (`_declare_var`, zero-init, same as any local) and populated via the same
+`_elab_compound_init` walk used for variable initializers, then used as the argument's wire.
+This is what makes `f(port=intrf.fwd_t(stream=x))` elaborate with no local variable ever
+declared, which is what makes banning local `.fwd_t`/`.fb_t` declarations practical rather
+than just moving the boilerplate around.
 
 **Closing the bare-assignment loophole.** `_elab_ann_assign` only ever sees an *annotated*
 declaration (`x: T = ...` or `x: T`); a bare `x = intrf.fwd_t(...)` (no annotation at all) is a
 plain `ast.Assign`, handled by `_elab_assign`'s own struct-constructor-call path (the one that
 also backs `x = MyStruct(field=val)` compound-init and infers `x`'s ctype from the callee's
-name) — a different code path that never consulted `_pypeline_interface_role` at all, so it was
-a live loophole around the entire restriction above: nothing stopped `x = intrf.fwd_t(...)`
-followed by ordinary reuse of `x` across several statements, even though `x: intrf.fwd_t = ...`
-right next to it would hard-error. `_elab_assign` now runs the identical
+name) — a different code path, so it must independently consult `_pypeline_interface_role`:
+without that, `x = intrf.fwd_t(...)` followed by ordinary reuse of `x` across several
+statements would bypass the entire restriction above, even though `x: intrf.fwd_t = ...`
+right next to it hard-errors. `_elab_assign` runs the identical
 `_pypeline_interface_role` check in two places: once early, when the RHS folds to a plain
 Python constant via `_try_eval_const` and gets cached into `const_env` (the common case for a
 directly-constructed `.fwd_t`/`.fb_t` value, since its inner fields are themselves usually
@@ -1759,16 +1768,16 @@ with `ast.get_source_segment`.
 
 **Port introspection is structural, not name-based.** A port's two halves share a name across
 args and return fields; whichever side holds the feedforward half sets the direction
-(`callee_ports`). This replaced an earlier `ready_for_<name>` prefix convention, which real
-code had already outgrown — wireguard's `chacha20_fsm` mixed `ready_for_from_pipeline`
-(prefix) with `to_pipeline_ready` (suffix). Because pairing is by the port's own name plus the
-interface the two halves derive from, port names are arbitrary and hand-written modules,
-generated modules, and multi-output modules all introspect identically.
+(`callee_ports`). A `ready_for_<name>`-style prefix convention would not generalize —
+wireguard's `chacha20_fsm` mixes `ready_for_from_pipeline` (prefix) with `to_pipeline_ready`
+(suffix) — so pairing instead goes by the port's own name plus the interface the two halves
+derive from. Because of that, port names are arbitrary and hand-written modules, generated
+modules, and multi-output modules all introspect identically.
 
 Declaring only one half of a port is a **hard error** that names the port and the missing side.
-That shape — an interface-typed `axis_in` next to a leftover scalar `axis_in_ready` — used to be
-half-recognized and then failed much later with an unrecognizable message (or, worse, dropped
-the reverse connection silently). The diagnostic *quotes* a likely legacy scalar
+Without this check, that shape — an interface-typed `axis_in` next to a leftover scalar
+`axis_in_ready` — would be half-recognized and then fail much later with an unrecognizable
+message (or, worse, silently drop the reverse connection). The diagnostic *quotes* a likely legacy scalar
 (`<port>_ready`, `ready_for_<port>`, `<port>_rdy`) to say what to replace, but no affix is ever
 consulted to decide a connection; reviving a naming convention was considered and rejected.
 
@@ -1777,7 +1786,7 @@ instantiates the module). A complementary, earlier signal lives in `pypeline.py`
 itself: `_check_partial_interface_ports` raises `InterfacePortError` at decoration time for a
 signature that declares one half of a port without the other, catching it even for a module no
 interface function has composed yet -- also a **hard error**, not a warning. The identical shape
-is legitimate for a valid-only stream, but that case no longer overlaps with the check at all:
+is legitimate for a valid-only stream, but that case does not overlap with the check at all:
 a valid-only signal is built with `make_stream_t`/`axi.make_axis_t` (`dsp/fir.py`'s
 `handshake="valid_only"`, the dwidth chunk helpers), which is a genuinely one-directional plain
 struct with no `@interface` and no reverse half to omit, so the check's own
@@ -1813,10 +1822,11 @@ struct) also carries an 8-hex tag derived from the interface function's module +
 factory suffix — `_Emitter.gensym` puts it LAST (`{hint}{n}_if{tag}`, not `if{tag}_{hint}{n}`),
 so the readable part of every name it mints leads. Two generated modules would otherwise both
 define `if_t1`, `if_t2`, … — and because `_elaborate_live_func` merges `{**func_own_globals,
-**self.module_globals, **closure_ns}`, a *caller's* globals outrank the callee's own. A generated
-module calling another generated module then resolved the caller's same-numbered type, silently
-giving a local the wrong port type; it surfaced only as an unrelatable "Cant support this
-assignment in vhdl?" during VHDL writing. Interface functions nest in real designs (wireguard's
+**self.module_globals, **closure_ns}`, a *caller's* globals outrank the callee's own, so a
+generated module calling another generated module would then resolve the caller's
+same-numbered type, silently giving a local the wrong port type — surfacing only as an
+unrelatable "Cant support this assignment in vhdl?" during VHDL writing. Interface functions
+nest in real designs (wireguard's
 dataflow cores call `poly1305_mac_instance`), so the tag is load-bearing, and being a hash of
 identity it keeps generated source byte-identical across runs.
 
@@ -1862,20 +1872,21 @@ call site — not a downstream `KeyError`.
   ([interface_func.py:~750](../include/pypeline/interface/interface_func.py)) is still emitted
   positionally in callee-declaration order regardless of how the caller wrote it, so native sim
   and VHDL elaboration consume an unchanged artifact either way.
-- In `PY_TO_LOGIC.py`'s generic submodule-call elaborator (`_elab_call`, around line 4171), the
-  binding was previously `zip(expr.args, callee_def.inputs)` — **positional only**; `expr.keywords`
-  was never read. A keyword-argument call to an ordinary (non-interface) `hw_func`/`@MAIN` left
-  the matching input ports with no driver, surfacing much later and unrelatably as a `KeyError` in
-  `TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE`'s `wire_driven_by` lookup (duplicate-submodule detection,
-  `C_TO_LOGIC.py:9758`) — a Layer-2-only failure, invisible to native sim (Layer 1, plain Python,
-  which always handled keywords) and only reachable once autopipelining/VHDL generation actually
-  walked the wiring. Found via wireguard's `chacha20_pipeline_shared.py`'s
-  `pipeline_func(stream_in=..., stream_out=...)`, whose `stream_in` input had no driver. Fixed the
-  same way as the interface-function layer: bind positional-then-keyword by the callee's input-port
-  name (VHDL port maps are named, not positional, so binding order never matters downstream).
-  Regression test: `keyword_call_test.py` (elab tier, `--no_synth`) — an all-keyword call, the same
-  call with arguments in reversed source order, and a mixed positional+keyword call, each checked
-  both for correct elaboration and (via `sim_call`) for landing on the intended port.
+- In `PY_TO_LOGIC.py`'s generic submodule-call elaborator (`_elab_call`, around line 4171),
+  binding is positional-then-keyword by the callee's input-port name — the same shape as the
+  interface-function layer above (VHDL port maps are named, not positional, so binding order
+  never matters downstream). This matters because a purely positional binding
+  (`zip(expr.args, callee_def.inputs)`, ignoring `expr.keywords` entirely) would leave a
+  keyword-argument call's matching input ports with no driver, surfacing much later and
+  unrelatably as a `KeyError` in `TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE`'s `wire_driven_by` lookup
+  (duplicate-submodule detection, `C_TO_LOGIC.py:9758`) — a Layer-2-only failure, invisible to
+  native sim (Layer 1, plain Python, which always handles keywords) and only reachable once
+  autopipelining/VHDL generation actually walks the wiring. A purely positional `zip` produces
+  exactly this failure on wireguard's `chacha20_pipeline_shared.py`'s
+  `pipeline_func(stream_in=..., stream_out=...)` call: `stream_in` would have no driver.
+  Regression test: `keyword_call_test.py` (elab tier, `--no_synth`) — an all-keyword call, the
+  same call with arguments in reversed source order, and a mixed positional+keyword call, each
+  checked both for correct elaboration and (via `sim_call`) for landing on the intended port.
 
 **Core touchpoints.** Interfaces are library-level, but three small changes were needed:
 
@@ -2401,8 +2412,8 @@ unmodified for `Attribute`/`Subscript` targets, including global-wire fields
 - Global wires can be read from any number of functions (including non-`@MAIN`
   functions), including their own writer functions (see readback above).
 - The writer function itself may also read the wire it writes (see "Write side" above) —
-  this is no longer an error; only a genuinely different function attempting to write a
-  wire another function already writes remains an error (the exactly-one-writer rule).
+  this is not an error; only a genuinely different function attempting to write a
+  wire another function already writes is an error (the exactly-one-writer rule).
 
 ### Implementation mapping
 
@@ -2607,49 +2618,45 @@ regardless of which path reaches it first. Imports nested inside a `def`/`if`/`t
 block are still not recognized — only top-level statements in each file's own
 `tree.body`.
 
-**Framework/stdlib modules are now queued too — harmless for struct/enum/wire
-discovery, but Step 5/7's "which top-level defs count as hardware" checks had to be
-hardened against it.** Every design file does `from pypeline import ...`, and every
-`ast.ImportFrom` target is now followed, so `pypeline.py` itself — and everything it
-transitively imports (`enum`, `functools`, `typing`, standard library and all) — gets
-discovered exactly like any other sub-file. `_discover_structs_from_module` /
-`_discover_enums_from_module` / `_discover_global_wires` are unaffected by this: they
-only match specific structural shapes (a `NamedTuple` with `_fields`, an `IntEnum` with
-`_pypeline_is_enum`, a `Wire[T]`/`Input[T]`/`Output[T]` `AnnAssign`), so scanning
-`pypeline.py` or the standard library for them is a safe no-op (a little wasted
-parsing, nothing more). A path- or module-identity-based allowlist/denylist was
-considered and rejected — a design's own source files, and shared libraries it
-depends on, can live anywhere (there's no fixed "framework" directory to exclude that
-holds in general), so **Step 5 and Step 7 were fixed instead of trying to keep
-non-design files out of discovery**:
+**Framework/stdlib modules are queued for discovery too**, since every design file does
+`from pypeline import ...` and every `ast.ImportFrom` target is followed — so
+`pypeline.py` itself, and everything it transitively imports (`enum`, `functools`,
+`typing`, standard library and all), gets discovered exactly like any other sub-file.
+`_discover_structs_from_module` / `_discover_enums_from_module` / `_discover_global_wires`
+are unaffected by this: they only match specific structural shapes (a `NamedTuple` with
+`_fields`, an `IntEnum` with `_pypeline_is_enum`, a `Wire[T]`/`Input[T]`/`Output[T]`
+`AnnAssign`), so scanning `pypeline.py` or the standard library for them is a safe no-op (a
+little wasted parsing, nothing more). A path- or module-identity-based allowlist/denylist is
+not used — a design's own source files, and shared libraries it depends on, can live
+anywhere (there's no fixed "framework" directory to exclude that holds in general) — so
+**Step 5 and Step 7's own "which top-level defs count as hardware" checks are what have to
+be robust to it**:
 
 - **`_is_hardware_func(func_def, eval_ns=None)`** (`PARSE_FILE` Step 5's "is this
-  top-level def hardware" check) used to be purely syntactic — any def with a return
-  annotation or a typed argument qualified, decorator or not, so `pypeline.py`'s
-  plain-Python `_make_ctype(name: str)` (or a shared library's own plain-Python
-  elaboration-time factory, e.g. a VGA timing library's `make_vga_timing(spec:
-  VgaTimingSpec, ...)`, where `VgaTimingSpec` is an ordinary, non-`@struct` dataclass)
-  would qualify too. With `eval_ns` (Step 5 now passes each file's own module globals),
-  it additionally evaluates each annotation and requires *at least one* to resolve to
-  a genuine Pypeline hardware type — `_is_real_hw_ctype`: a scalar ctype
-  (`_make_ctype`'s `_CTypeMeta` classes carry `_ctype_name`), an `@struct` NamedTuple
-  (`_pypeline_ctype_name`), or an `@enum` IntEnum (`_pypeline_is_enum`). A plain
-  Python type annotation (`str`, `int`, an undecorated dataclass) no longer counts by
-  itself. If every annotation present fails to evaluate at all (as opposed to
-  evaluating successfully to a non-hardware type), that's not evidence either way, so
-  it falls back to the old, purely syntactic check rather than risk a false negative
+  top-level def hardware" check) is not purely syntactic — a def with a return
+  annotation or a typed argument alone would qualify anything, including
+  `pypeline.py`'s own plain-Python `_make_ctype(name: str)` (or a shared library's own
+  plain-Python elaboration-time factory, e.g. a VGA timing library's `make_vga_timing(spec:
+  VgaTimingSpec, ...)`, where `VgaTimingSpec` is an ordinary, non-`@struct` dataclass).
+  With `eval_ns` (Step 5 passes each file's own module globals), it additionally evaluates
+  each annotation and requires *at least one* to resolve to a genuine Pypeline hardware
+  type — `_is_real_hw_ctype`: a scalar ctype (`_make_ctype`'s `_CTypeMeta` classes carry
+  `_ctype_name`), an `@struct` NamedTuple (`_pypeline_ctype_name`), or an `@enum` IntEnum
+  (`_pypeline_is_enum`). A plain Python type annotation (`str`, `int`, an undecorated
+  dataclass) does not count by itself. If every annotation present fails to evaluate at all
+  (as opposed to evaluating successfully to a non-hardware type), that's not evidence either
+  way, so the check falls back to the purely syntactic form rather than risk a false negative
   for some unanticipated case — this is also why plain undecorated hardware helpers
   like `src/tests/pypeline_tests/def/file_c.py`'s `def bump(x: uint1_t) -> uint1_t`
   still work unchanged (`uint1_t` resolves to a real ctype).
-- **`node.name in main_names` became identity-based.** Both Step 5 (deciding which
-  top-level defs to collect) and Step 7 (assigning `main_mhz`/clock-domain info) used
-  to check membership by *bare Python name* against
-  `{f.__name__ for f in pypeline._main_registry}`. Once arbitrary stdlib modules are
-  reachable, this is a real name-collision hazard — e.g. the standard library's own
-  `tokenize.py` defines a plain, unrelated top-level `def main():` for its own CLI
-  entry point, which would match this check purely because *some* real `@MAIN`
-  function elsewhere in the design happens to also be named `main` (an extremely
-  common name to pick). Fixed by comparing the *actual function object* instead:
+- **`node.name in main_names` is identity-based, not name-based.** Comparing bare Python
+  names against `{f.__name__ for f in pypeline._main_registry}` would be a real
+  name-collision hazard once arbitrary stdlib modules are reachable — e.g. the standard
+  library's own `tokenize.py` defines a plain, unrelated top-level `def main():` for its own
+  CLI entry point, which would match a name-based check purely because *some* real `@MAIN`
+  function elsewhere in the design happens to also be named `main` (an extremely common name
+  to pick). Both Step 5 (deciding which top-level defs to collect) and Step 7 (assigning
+  `main_mhz`/clock-domain info) instead compare the *actual function object*:
   `main_func_ids = {id(f) for f in pypeline._main_registry}`, checked via
   `id(fglobals.get(node.name)) in main_func_ids` — true only for the exact function
   object `@MAIN` registered, never a same-named unrelated function in another file.
@@ -2852,9 +2859,9 @@ are pre-existing and documented.
   an `import` statement nested inside a function/`if`/`try` body is still invisible
   to this discovery pass (it is not an `ast.walk` over the whole file, only
   `tree.body`).
-- Because every file's own aliases are now folded into the same shared
+- Because every file's own aliases are folded into the same shared
   `parser_state.module_alias_to_actual` dict, two different files that reuse the
-  same local alias name for two *different* modules raises `ElaborationError`
+  same local alias name for two *different* modules raise `ElaborationError`
   immediately rather than silently letting whichever file was processed second
   win.
 
@@ -2922,18 +2929,18 @@ pair_t(a_val, active)  on a struct return  (positional form)
   └─ field "b" (2nd declared field) → path_toks = ("b",)
 ```
 
-Before this positional-arg support was added, the `ast.Call` branch only ever iterated
+Without the positional-arg zip above, the `ast.Call` branch would only iterate
 `init_node.keywords` — an all-positional constructor call (`pair_t(a_val, active)`) would
 silently iterate zero times, leaving every field (and, for a `return` statement, the
-function's entire `return_output` wire) permanently undriven. Because nothing raised an
-error at the point the field went unwritten, this surfaced only much later and far away:
-`SYN.py`'s pipeline-stage scheduler (`PIPELINE_DONE()`) would spin for `stage_num >= 5000`
-iterations waiting for `return_output` to become driven and then hard `sys.exit(-1)`, with
-no traceback pointing at the actual defect. Two things now guard against a regression of
-this shape: the positional-arg zip above (the actual fix), and a safety-net check at the
-end of `elaborate()` (see below) that raises a clear `ElaborationError` immediately if a
-function's `return_output` wire is left undriven, rather than letting the bug surface only
-inside the scheduler's stage-count cap.
+function's entire `return_output` wire) permanently undriven, with nothing raising an
+error at the point the field went unwritten: `SYN.py`'s pipeline-stage scheduler
+(`PIPELINE_DONE()`) would spin for `stage_num >= 5000` iterations waiting for
+`return_output` to become driven and then hard `sys.exit(-1)`, with no traceback pointing
+at the actual defect. Two things guard against this shape of bug: the positional-arg zip
+above (the actual protection), and a safety-net check at the end of `elaborate()` (see
+below) that raises a clear `ElaborationError` immediately if a function's `return_output`
+wire is left undriven, rather than letting a defect surface only inside the scheduler's
+stage-count cap.
 
 When the `ast.Call` callee does **not** resolve to a NamedTuple (e.g. a plain
 elaboration-time helper function called inline as a field initializer, like
@@ -3006,21 +3013,23 @@ through to the generic `_elab_expr`-based hardware path unchanged — a brand-ne
 variable can't be inferred from a bare list/dict literal or a constructor call the way the
 declaration-time forms can.
 
-Before the list/dict case was added, `_elab_expr` had no handling for a bare `ast.List`/`ast.Dict`
-node at all, so any nested-field write with a list/dict RHS (not just whole-array writes — even a
-single-level `obj.field = [...]`) raised `NotImplementedError: Unsupported expr: List(...)` at
-elaboration time. This is the `PY_TO_LOGIC.py` counterpart to the simulation-side fix described
-in [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#_typedannassignrewriter--truncation-at-every-typed-assignment)
-(Rule 3b/4) — both backends now support the same `reg.nested.field = [...]` pattern.
+Without the list/dict case above, `_elab_expr` would have no handling for a bare
+`ast.List`/`ast.Dict` node at all, so any nested-field write with a list/dict RHS (not just
+whole-array writes — even a single-level `obj.field = [...]`) would raise
+`NotImplementedError: Unsupported expr: List(...)` at elaboration time. This is the
+`PY_TO_LOGIC.py` counterpart to the simulation-side handling described in
+[`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#_typedannassignrewriter--truncation-at-every-typed-assignment)
+(Rule 3b/4) — both backends support the same `reg.nested.field = [...]` pattern.
 
-The struct-constructor case (`obj.field = T(...)`) was added separately and later: before it,
-`_elab_call` was the only thing that ever saw a struct-constructor call as an `ast.Call` RHS in
-this position (the other three struct-ctor-call sites above only match a `Name` or
-module-qualified-`Attribute` target, never an ordinary local struct's field). `_elab_call` always
-treats its callee as a hardware function/submodule to instantiate, so it would try to find a
-`FunctionDef` for the struct's source and fail with `Could not find FunctionDef in source of
-'<struct_name>'` — this surfaced in practice via `o.out_stream = stream_t(...)` in
-`include/pypeline/stream/stream_fifo.py`, where `stream_t` is a closure-local struct type.
+The struct-constructor case (`obj.field = T(...)`) matters as its own case because the
+other three struct-ctor-call sites above only match a `Name` or module-qualified-`Attribute`
+target, never an ordinary local struct's field: without it, `_elab_call` would be the only
+thing that ever saw a struct-constructor call as an `ast.Call` RHS in this position, and
+`_elab_call` always treats its callee as a hardware function/submodule to instantiate, so it
+would try to find a `FunctionDef` for the struct's source and fail with `Could not find
+FunctionDef in source of '<struct_name>'` — exactly the shape `o.out_stream = stream_t(...)`
+in `include/pypeline/stream/stream_fifo.py` hits, where `stream_t` is a closure-local struct
+type.
 
 **Rules (all forms):**
 - Leaf values can be any hardware expression (constants, input wires, sub-expressions).
@@ -3222,7 +3231,7 @@ This only needs to run for the destination: by the time a design casts *from* so
 that type was necessarily already constructed (and therefore already registered) earlier
 in the same function.
 
-### Interface-half bans: three exemptions, one bug fix
+### Interface-half bans: three exemptions
 
 A cast converts between one interface half and its plain payload — not a port crossing —
 so it needs to take (or return) a lone half without the pairing checks written for real
@@ -3231,32 +3240,33 @@ ports objecting. `pypeline.py`'s `_check_partial_interface_ports` and PY_TO_LOGI
 `_pypeline_is_cast`-marked function; see `pypeline_DESIGN.md` for the full mechanism and
 why the marker must be stamped *before* `@wires`/`@hw_func`-wrapping runs.
 
-`_check_no_indirect_interface_pairing_return` also got a real bug fix while adding this
-exemption, unrelated to casting itself: it used to recognize the sanctioned
-`intrf.fwd_t(...)`/`intrf.fb_t(...)` inline-constructor idiom by literal AST attribute
-name (`call_node.func.attr in ("fwd_t", "fb_t")`), which misses every factory-stamped
-alias of the identical class object — `fir.out_fb_t(...)`, `stream_fifo.fb_t(...)`,
-`divider_mcp.out_fb_t(...)`. Any of those, called where its result happens to
-const-fold, would have wrongly raised "a plain function cannot return an @interface's
-port-pairing type." Now resolved by evaluating the callee via `_try_eval_const` and
-checking `_pypeline_interface_role`/`_pypeline_is_cast` on the resulting **value**, which
-is unaffected by which attribute name reached that value.
+`_check_no_indirect_interface_pairing_return` recognizes the sanctioned
+`intrf.fwd_t(...)`/`intrf.fb_t(...)` inline-constructor idiom by evaluating the callee via
+`_try_eval_const` and checking `_pypeline_interface_role`/`_pypeline_is_cast` on the
+resulting **value** — not by literal AST attribute name
+(`call_node.func.attr in ("fwd_t", "fb_t")`), which would miss every factory-stamped alias
+of the identical class object (`fir.out_fb_t(...)`, `stream_fifo.fb_t(...)`,
+`divider_mcp.out_fb_t(...)`) and wrongly raise "a plain function cannot return an
+@interface's port-pairing type" for any of them called where its result happens to
+const-fold. Resolving the value rather than the syntax makes the check unaffected by which
+attribute name reached that value.
 
 The bans this does **not** touch — `.fwd_t`/`.fb_t` may still only be constructed inline
 at a real port crossing, never stashed in a bare local — key off the *declared type* at
 each of their own sites (`_elab_assign`'s brand-new-local branch, `_elab_ann_assign`,
 `Reg[T]`/`Feedback[T]` annotations, global `Wire`/`Input`/`Output`), not the call shape,
-so in principle they need no cast-awareness. One of them needed a real fix anyway:
-`_elab_assign`'s bare-local ban (`bad = intrf.fwd_t(x)`, no annotation) originally lived
-*inside* the same `if hasattr(callee, "_fields") and not self._is_cast_call(...)` block
-as the struct-ctor routing being de-classified — so de-classifying a cast-shaped call
-skipped the ban check along with the routing it was meant to skip, and
-`bad = chan_intrf.fwd_t(some_stream)` silently bypassed a ban that already correctly
-blocks the keyword form `bad = chan_intrf.fwd_t(stream=some_stream)`. Fixed by hoisting
-the ban check above the `_is_cast_call` branch so it runs unconditionally once `callee`
-is known to be an interface half, regardless of call shape.
+so in principle they need no cast-awareness. `_elab_assign`'s bare-local ban
+(`bad = intrf.fwd_t(x)`, no annotation) runs unconditionally once `callee` is known to be
+an interface half, ahead of the `_is_cast_call` branch — deliberately hoisted there,
+since living *inside* the same `if hasattr(callee, "_fields") and not
+self._is_cast_call(...)` block as the struct-ctor routing would let de-classifying a
+cast-shaped call skip the ban check along with the routing it was meant to skip, silently
+letting `bad = chan_intrf.fwd_t(some_stream)` bypass a ban that already correctly blocks
+the keyword form `bad = chan_intrf.fwd_t(stream=some_stream)`.
 `cast_error_test.py`'s `test_bare_local_fwd_t_still_banned_via_cast_call` is the
-regression test; it failed against the first version of this fix.
+regression test for this ordering — not a hypothetical guard: it failed against the
+first version of this fix, which put the ban inside the cast-aware branch instead of
+ahead of it.
 
 ---
 
@@ -3283,9 +3293,10 @@ This reuses the full `_elab_if` MUX machinery, including clock-enable propagatio
 temporal sorting of covering wires. If the condition evaluates to a compile-time constant
 via `_try_eval_const`, the unused branch is eliminated entirely.
 
-`uint4_t(0)` above is a cast (see Casting, below) — this example previously did not
-elaborate at all (a ctype class is callable, so it reached `_elaborate_live_func` and
-died on an uncaught `OSError` from `inspect.getsourcelines`); it is real now.
+`uint4_t(0)` above is a cast (see Casting, below) — a ctype class is callable, so before
+cast recognition existed this exact shape would have reached `_elaborate_live_func`
+instead and died on an uncaught `OSError` from `inspect.getsourcelines`; this example
+elaborates for real.
 
 ---
 
@@ -3569,12 +3580,12 @@ constant-index compound-write resolution used everywhere else — no bit-slicing
 involved on the write side at all.
 
 **Nested struct auto-registration.** `_elaborate_live_func`'s live-closure struct scan
-(`PY_TO_LOGIC.py`) now delegates to `_register_struct_recursive` for every struct type it
+(`PY_TO_LOGIC.py`) delegates to `_register_struct_recursive` for every struct type it
 finds directly as a value in the function's own closure vars/`__globals__`, so it
-correctly recurses into that struct's own field types too — it used to build each
-struct's field-type dict by hand with bare `str(a)` and no recursion, which broke as
-soon as a struct-typed field's value only had a raw `str(class)` repr to fall back on
-(see "`_process_imports` import pre-pass" above for the real-world case this caused).
+correctly recurses into that struct's own field types too — building each struct's
+field-type dict by hand with bare `str(a)` and no recursion would instead break as soon
+as a struct-typed field's value only had a raw `str(class)` repr to fall back on (see
+"`_process_imports` import pre-pass" above for the real-world case this caused).
 Even so, the generated `make_type_to_bytes`/`_from_bytes` function's `exec()` globals
 deliberately only contain `t`/`out_t` — nothing else from the caller's module is
 exposed there — so if `t` itself is never one of the values `_elaborate_live_func`'s
@@ -3763,23 +3774,24 @@ trap.
 ### Entity naming: why source coordinates alone aren't enough
 
 `func_base_name` (the printf submodule's VHDL **entity** name, as opposed to its per-call-site
-**instance** name) originally was just `f"{PRINTF_FUNC_NAME}_{coord}"` — file+line+column,
-unique per `sim_print`/`sim_assert` *statement* in the source. That's sufficient for an ordinary
-C `for` loop, where the same AST node is only ever elaborated once. It is **not** sufficient for
-Pypeline's own compile-time Python `for` loops, which are unrolled by re-visiting the same AST
-statement once per loop iteration (`_elab_for`, via `loop_instance_prefix` — see the "Python
-`for` loop unrolling" section) — each unrolled visit gets its own unique **instance** name, but
-without a type-signature suffix they'd all share the *same* entity, even when a literal
-interpolated in the message (e.g. the loop variable itself, `sim_print(f"lane {i}")` inside
-`for i in range(16):`) elaborates to a different minimal literal width on each iteration (`i=0/1`
-→ `uint1_t`, `i=2/3` → `uint2_t`, etc.). One shared entity ending up with N differently-typed
-`argN` ports (whichever iteration happened to define it) is invisible in native sim (which
-doesn't care about VHDL port widths) but fails real synthesis — this exact bug shipped once in
-wireguard-fpga's `encrypt_tb.py`/`decrypt_tb.py`, which had `sim_print(f"... lane {i} ...")`
-inside `for i in range(16):`, and failed Vivado RTL elaboration with a port-width mismatch on
-first real build.
+**instance** name) needs more than `f"{PRINTF_FUNC_NAME}_{coord}"` (file+line+column, unique
+per `sim_print`/`sim_assert` *statement* in the source) to be correct. Coordinates alone are
+sufficient for an ordinary C `for` loop, where the same AST node is only ever elaborated once.
+They are **not** sufficient for Pypeline's own compile-time Python `for` loops, which are
+unrolled by re-visiting the same AST statement once per loop iteration (`_elab_for`, via
+`loop_instance_prefix` — see the "Python `for` loop unrolling" section): each unrolled visit
+gets its own unique **instance** name, but a coordinate-only entity name would give them all
+the *same* entity, even when a literal interpolated in the message (e.g. the loop variable
+itself, `sim_print(f"lane {i}")` inside `for i in range(16):`) elaborates to a different
+minimal literal width on each iteration (`i=0/1` → `uint1_t`, `i=2/3` → `uint2_t`, etc.). One
+shared entity ending up with N differently-typed `argN` ports (whichever iteration happened to
+define it) is invisible in native sim (which doesn't care about VHDL port widths) but fails
+real synthesis — this exact shape shipped once in wireguard-fpga's
+`encrypt_tb.py`/`decrypt_tb.py`, which had `sim_print(f"... lane {i} ...")` inside
+`for i in range(16):`, and failed Vivado RTL elaboration with a port-width mismatch on first
+real build.
 
-The fix: both `_elab_sim_print_stmt` and `_elab_sim_assert_stmt` append a `type_sig` suffix to
+Both `_elab_sim_print_stmt` and `_elab_sim_assert_stmt` append a `type_sig` suffix to
 `func_base_name`, built from the already-elaborated `input_ports` list right before use —
 
 ```python
@@ -3792,11 +3804,12 @@ type_sig = "".join(
 entities (same bracket-sanitization, same `"_" + ctype` per-argument join) rather than inventing
 a new mechanism. Call sites that share identical argument types (the overwhelming common case —
 most `sim_print`/`sim_assert` calls aren't inside a literal-varying unrolled loop) still
-correctly collapse onto one shared entity, unchanged from before; only call sites whose argument
-types actually differ now get their own entity. Verified via a minimal `for i in range(16): if
-n==i: sim_print(f"lane {i} matched")` repro: pre-fix, one shared (broken) entity; post-fix, four
-correctly-typed entities (`uint1_t`/`uint2_t`/`uint3_t`/`uint4_t`, one per distinct literal width
-actually used across the 16 iterations), and the build succeeds.
+correctly collapse onto one shared entity; only call sites whose argument types actually differ
+get their own entity. Verified via a minimal `for i in range(16): if n==i: sim_print(f"lane
+{i} matched")` repro: a coordinate-only name would produce one shared (broken) entity; the
+`type_sig` suffix produces four correctly-typed entities
+(`uint1_t`/`uint2_t`/`uint3_t`/`uint4_t`, one per distinct literal width actually used across
+the 16 iterations), and the build succeeds.
 
 The C-frontend printf path (`C_AST_PRINTF_FUNC_CALL_TO_LOGIC`) deliberately does **not** get this
 suffix (`base_name_is_name = True`, with a comment noting the coordinate string was assumed
@@ -3815,9 +3828,8 @@ scalar and `uint8_t[N]` arrays still cannot:
 
 - **`char_t[N]` arrays**: the sim-side value is a `CharArray` (`pypeline.py`), whose
   `__str__` NUL-stops exactly like hardware's `%s` — Python's own f-string formatting of a
-  bare `{name}` already produces the correct text, so inference is safe. (Earlier revisions
-  required an explicit `char_array_to_str(expr)` wrapper here, before `CharArray` existed;
-  it's no longer needed or recognized — see `pypeline_sim_DESIGN.md`.)
+  bare `{name}` already produces the correct text, so inference is safe and no explicit
+  wrapper is needed (see `pypeline_sim_DESIGN.md`).
 - **A single `char_t` scalar**: `SimVal` is a plain `int` subclass, so Python's default
   `str()`/f-string formatting of a bare value gives a raw ordinal, not a character — and the
   ambiguity is genuine even in hardware (is a lone `char_t` meant as a number or a
@@ -3834,37 +3846,34 @@ identical text in both simulation (evaluated for real, before `sim_print` is eve
 see `pypeline_sim_DESIGN.md`) and hardware (structurally recognized and unwrapped by the
 elaborator).
 
-### `%s` real array-size fix (both frontends)
+### `%s` uses the argument's real array size (both frontends)
 
-PipelineC C's `printf`'s `%s` historically forced every string argument's port to a fixed
-`char[256]` (`PRTINTF_STRING_TO_FORMATS`, "some max size for now...todo inspect driving wire
-type" — the code's own long-standing TODO), regardless of the argument's real declared array
-size. Fixed for **both** frontends as part of this work, since the VHDL codegen never actually
-needed the fixed size: `to_string(bytes : byte_array_t)` operates on the *unconstrained*
-`byte_array_t` (`array (natural range <>) of unsigned(7 downto 0)`), so any real length already
-works.
+`%s` uses each string argument's real declared array size, in both frontends — the VHDL
+codegen never actually needs a fixed size: `to_string(bytes : byte_array_t)` operates on the
+*unconstrained* `byte_array_t` (`array (natural range <>) of unsigned(7 downto 0)`), so any
+real length already works.
 
-- `PRTINTF_STRING_TO_FORMATS`'s `%s` case now sets `f.c_type = None` instead of the `char[256]`
+- `PRTINTF_STRING_TO_FORMATS`'s `%s` case sets `f.c_type = None` rather than a fixed
   placeholder — `None` is legal here since printf's `base_name_is_name=True` path skips the
   "all types must be concrete" check in `BUILD_FUNC_NAME`, and `.c_type` isn't consumed
   anywhere else in the `%s` codegen path (only `.specifier`/`.vhdl_to_string_toks` are).
-- `C_AST_PRINTF_FUNC_CALL_TO_LOGIC` (the C frontend's printf call-site elaboration) now
+- `C_AST_PRINTF_FUNC_CALL_TO_LOGIC` (the C frontend's printf call-site elaboration)
   pre-elaborates each `%s` argument into its own port wire — mirroring the existing
   `C_AST_STRLEN_FUNC_CALL_TO_LOGIC` precedent — and substitutes the argument's *real*
-  discovered type/wire for that port, in place of the removed placeholder.
-- Pypeline's `_elab_sim_print_stmt` needed no equivalent fix: it already elaborates each
-  interpolated value directly and uses its real type as the port type by construction (step 4
-  above), never a format-implied placeholder.
+  discovered type/wire for that port.
+- Pypeline's `_elab_sim_print_stmt` elaborates each interpolated value directly and uses its
+  real type as the port type by construction (step 4 above), never a format-implied
+  placeholder — no separate handling needed.
 
 ### Frontend-agnostic format-string plumbing (`Logic.printf_format_string`)
 
-`VHDL.py`'s `GET_PRINTF_MODULE_TEXT` used to read the format string via
-`Logic.c_ast_node.args.exprs[0].value` — a pycparser-`FuncCall`-shaped read only the C frontend
-could produce. Rather than have Pypeline fabricate a duck-typed stand-in node just to satisfy
-that shape (rejected during design review as needlessly confusing — `ASTMeta.raw` is
-specifically "the original AST node," not a general-purpose data stash), `Logic` gained two
-real fields, mirroring the *existing* `vhdl_module_text` (plain field) /
-`submodule_instance_to_ast_meta` (per-instance relay dict) precedent pair:
+`VHDL.py`'s `GET_PRINTF_MODULE_TEXT` cannot read the format string via
+`Logic.c_ast_node.args.exprs[0].value` for a Pypeline design — that pycparser-`FuncCall`-shaped
+read only the C frontend can produce. Rather than have Pypeline fabricate a duck-typed
+stand-in node just to satisfy that shape (rejected during design review as needlessly
+confusing — `ASTMeta.raw` is specifically "the original AST node," not a general-purpose data
+stash), `Logic` carries two real fields instead, mirroring the *existing* `vhdl_module_text`
+(plain field) / `submodule_instance_to_ast_meta` (per-instance relay dict) precedent pair:
 
 ```python
 self.printf_format_string = None                        # Logic.__init__
@@ -3880,19 +3889,19 @@ self.submodule_instance_to_printf_format_string = {}     # Logic.__init__
   its existing `ast_meta` extraction — the same relay mechanism already used for instance
   source-location metadata.
 - **Read**: `GET_PRINTF_MODULE_TEXT` reads `Logic.printf_format_string` directly and calls
-  `C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS(format_string)` (already frontend-agnostic — it always
-  took a plain string, it just wasn't being called directly at this site before).
+  `C_TO_LOGIC.PRTINTF_STRING_TO_FORMATS(format_string)`, which is already frontend-agnostic —
+  it always takes a plain string.
 
-`Logic.__init__`/`DEEPCOPY`/`MERGE_COMB_LOGIC` were updated for both new fields, following the
-exact `vhdl_module_text`/`submodule_instance_to_ast_meta` patterns respectively (keep-whichever-
-set for the plain field; `UNIQUE_KEY_DICT_MERGE` — the plain-value variant, not
-`C_AST_VAL_UNIQUE_KEY_DICT_MERGE`, since values here are ordinary strings — for the dict).
-`Logic.REMOVE_SUBMODULE`/`COPY_SUBMODULE_INFO` were deliberately **not** touched: printf
-instances are always uniquely named per call site (the coord string is baked into
-`func_base_name`), so the duplicate-instance dedup/rename pass those two methods serve
-essentially never has two printf instances to collapse or rename into each other, and a stale
-dict entry left behind after a printf instance is removed as dead code is a harmless leak
-(never looked up again), not a correctness bug.
+`Logic.__init__`/`DEEPCOPY`/`MERGE_COMB_LOGIC` follow the exact
+`vhdl_module_text`/`submodule_instance_to_ast_meta` patterns respectively for both fields
+(keep-whichever-set for the plain field; `UNIQUE_KEY_DICT_MERGE` — the plain-value variant,
+not `C_AST_VAL_UNIQUE_KEY_DICT_MERGE`, since values here are ordinary strings — for the dict).
+`Logic.REMOVE_SUBMODULE`/`COPY_SUBMODULE_INFO` need no matching handling: printf instances are
+always uniquely named per call site (the coord string is baked into `func_base_name`), so the
+duplicate-instance dedup/rename pass those two methods serve essentially never has two printf
+instances to collapse or rename into each other, and a stale dict entry left behind after a
+printf instance is removed as dead code is a harmless leak (never looked up again), not a
+correctness bug.
 
 ### `_add_submodule_instance`'s optional output wire
 
@@ -3912,19 +3921,10 @@ No format-spec or wrapper function maps to a float specifier — `sim_print` has
 
 ### VHDL console output is clocked, not value-change-triggered
 
-`GET_PRINTF_MODULE_TEXT` (`VHDL.py`) used to emit a VHDL `postponed process(CLOCK_ENABLE,
-arg0, arg1, ...)` for a printf/`sim_print` submodule's console `write(output, ...)` statement.
-A `postponed process` only re-executes at the end of a delta-cycle when something in its
-sensitivity list actually transitions — so if `CLOCK_ENABLE` stayed `'1'` across consecutive
-clock cycles but none of the printed argument signals changed value, the process never got a
-new event and silently skipped printing. This didn't match native simulation, which prints
-every time the `sim_print`/`printf` statement executes while enabled, regardless of whether the
-printed values repeat from the previous cycle (like a real register clocking every enabled
-cycle, not just on value change).
-
-The fix replaces the `postponed process` with an ordinary clocked process gated only by
-`rising_edge(clk)` and `CLOCK_ENABLE(0) = '1'`, with no argument signals in its sensitivity
-list, so it fires once per enabled clock cycle unconditionally:
+`GET_PRINTF_MODULE_TEXT` (`VHDL.py`) emits an ordinary clocked process, gated only by
+`rising_edge(clk)` and `CLOCK_ENABLE(0) = '1'`, for a printf/`sim_print` submodule's console
+`write(output, ...)` statement — with no argument signals in its sensitivity list, so it
+fires once per enabled clock cycle unconditionally:
 
 ```vhdl
 process(clk) is
@@ -3937,17 +3937,22 @@ begin
 end process;
 ```
 
-Since printf submodules previously had no timing latency or state regs, `LOGIC_NEEDS_CLOCK`
-(`VHDL.py`) never declared a `clk` port for them (`CLOCK_ENABLE` was already available
-independently, via `C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE`'s existing
-`func_name.startswith(PRINTF_FUNC_NAME)` special case). `LOGIC_NEEDS_CLOCK` gained a matching
-special case — `or Logic.func_name.startswith(C_TO_LOGIC.PRINTF_FUNC_NAME)` — so printf
-submodules now get a `clk` port declared and wired via the same generic
-port-declaration/instantiation machinery every other clocked module already uses.
+A VHDL `postponed process(CLOCK_ENABLE, arg0, arg1, ...)` looks like the more natural shape
+but is wrong: a `postponed process` only re-executes at the end of a delta-cycle when
+something in its sensitivity list actually transitions, so if `CLOCK_ENABLE` stays `'1'`
+across consecutive clock cycles but none of the printed argument signals change value, the
+process never gets a new event and silently skips printing — diverging from native
+simulation, which prints every time the `sim_print`/`printf` statement executes while
+enabled, regardless of whether the printed values repeat from the previous cycle (like a
+real register clocking every enabled cycle, not just on value change).
 
-(Note: `LOGIC_NEEDS_CLOCK`'s printf-only check above has since been generalized to
-`C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(Logic.func_name)`, covering `sim_assert`/`sim_finish` too —
-see the next section.)
+Printf submodules have no timing latency or state regs of their own, so `LOGIC_NEEDS_CLOCK`
+(`VHDL.py`) needs a special case to declare a `clk` port for them at all —
+`or (Logic.is_c_built_in and C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(Logic.func_name))`, matching the
+existing `C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE`'s `func_name.startswith(PRINTF_FUNC_NAME)` special
+case that already makes `CLOCK_ENABLE` available independently. `IS_SIM_CTRL_FUNC_NAME` covers
+`sim_assert`/`sim_finish` as well as printf, so all three get a `clk` port declared and wired via
+the same generic port-declaration/instantiation machinery every other clocked module uses.
 
 ---
 
@@ -3966,9 +3971,9 @@ printf backend as everything else). `debug=False` (the default) is a no-op at th
 absolute path (rather than a bare basename) is deliberate: `path:line` text is recognized by most
 terminals/editors as a clickable jump target.
 
-The `debug` keyword is stripped before the "exactly one argument" check that already existed for
-`sim_print`'s message — any other keyword, or a non-constant `debug` value, is still a hard
-`ElaborationError`, same as before this keyword existed.
+The `debug` keyword is stripped before the "exactly one argument" check that applies to
+`sim_print`'s message — any other keyword, or a non-constant `debug` value, is a hard
+`ElaborationError`.
 
 The tag must render **byte-for-byte identically** between native sim (built from
 `sys._getframe(1)` at runtime, `pypeline.py`) and VHDL sim (built from `stmt.lineno`/
@@ -4008,16 +4013,16 @@ if n >= 3:
 
 ### Shared printf-family naming: `IS_SIM_CTRL_FUNC_NAME`
 
-`C_TO_LOGIC.py` gained `SIM_ASSERT_FUNC_NAME = "sim_assert"` and `SIM_FINISH_FUNC_NAME =
+`C_TO_LOGIC.py` defines `SIM_ASSERT_FUNC_NAME = "sim_assert"` and `SIM_FINISH_FUNC_NAME =
 "sim_finish"` alongside the existing `PRINTF_FUNC_NAME = "printf"`, plus a helper —
 `IS_SIM_CTRL_FUNC_NAME(func_name)` — that's `True` for any of the three prefixes. Every place
-that used to special-case `func_name.startswith(PRINTF_FUNC_NAME)` for "this is a void,
-simulation-console-facing builtin that needs `CLOCK_ENABLE`/`clk` and whose output never drives
-anything" now calls `IS_SIM_CTRL_FUNC_NAME` instead — `LOGIC_NEEDS_CLOCK` and
-`C_BUILT_IN_FUNC_IS_RAW_HDL` in `VHDL.py`, `LOGIC_NEEDS_CLOCK_ENABLE` and the various
-void-output/no-ripup checks in `C_TO_LOGIC.py`. C-frontend-specific printf parsing
-(`C_AST_PRINTF_FUNC_CALL_TO_LOGIC` and friends) was left untouched — `sim_assert`/`sim_finish`
-have no C-callable form.
+that needs to recognize "this is a void, simulation-console-facing builtin that needs
+`CLOCK_ENABLE`/`clk` and whose output never drives anything" calls `IS_SIM_CTRL_FUNC_NAME`
+rather than special-casing `func_name.startswith(PRINTF_FUNC_NAME)` alone —
+`LOGIC_NEEDS_CLOCK` and `C_BUILT_IN_FUNC_IS_RAW_HDL` in `VHDL.py`, `LOGIC_NEEDS_CLOCK_ENABLE`
+and the various void-output/no-ripup checks in `C_TO_LOGIC.py`. C-frontend-specific printf
+parsing (`C_AST_PRINTF_FUNC_CALL_TO_LOGIC` and friends) has no matching `sim_assert`/
+`sim_finish` counterpart, since neither has a C-callable form.
 
 ### Elaboration: `_elab_sim_assert_stmt` / `_elab_sim_finish_stmt`
 
@@ -4167,9 +4172,9 @@ def add_floats(a: float32_t, b: float32_t) -> float32_t:
 
 ### Comparison operator lookup in `_elab_compare`
 
-Previously `_elab_compare` consulted no registry at all — `<`/`<=`/`>`/`>=` could not be
-overloaded for any type, struct or int. It now mirrors `_elab_binop`'s exact/generic lookup,
-inserted before the sign-promotion/built-in-compare-emission code:
+`_elab_compare` mirrors `_elab_binop`'s exact/generic lookup, inserted before the
+sign-promotion/built-in-compare-emission code, so `<`/`<=`/`>`/`>=` can be overloaded for
+any type, struct or int:
 
 ```
 1. lhs_wire, l_type = _elab_expr(left)
@@ -4291,8 +4296,9 @@ The logic lives in `C_TO_LOGIC.INFER_CLOCK_DOMAINS(var_to_rw_main_funcs, var_to_
   `var_to_rw_main_funcs`; these are empty for the Python path.
 - Repeats until no further propagation occurs (fixed-point loop).
 
-This function was **extracted from `GET_CLK_CROSSING_INFO`** (which previously embedded
-the same loop but was only called on the C code path) so it can be reused by both paths.
+`INFER_CLOCK_DOMAINS` is a standalone function so it can be reused by both paths —
+`GET_CLK_CROSSING_INFO` (C path only) calls it too, rather than embedding its own copy of
+the loop.
 
 `PARSE_FILE` calls it with empty dicts after registering all MAINs:
 
@@ -4962,13 +4968,12 @@ def vga_test_pattern():
 
 **`@sim_input`'s return-value form needs a second guard.** `in1 = in_return()` is an
 `ast.Assign`, not a bare `ast.Expr(ast.Call)`, so it doesn't hit the guard above at all —
-it's handled by `_elab_assign` instead. Tracing `_elab_assign`: after resolving the RHS
-callee (`ctor_callee = self._try_eval_const(stmt.value.func)`, a cheap name lookup that
-does not call it), the very next step used to be `const_val =
-self._try_eval_const(stmt.value)` — which **actually invokes** `in_return()` during
-elaboration, a sim-only function that may not even be representable as hardware. A guard
-inserted immediately after resolving `ctor_callee`, before that call, makes the whole
-assignment a no-op instead:
+it's handled by `_elab_assign` instead. In `_elab_assign`, a guard runs immediately after
+resolving the RHS callee (`ctor_callee = self._try_eval_const(stmt.value.func)`, a cheap
+name lookup that does not call it) and before `_try_eval_const(stmt.value)` — evaluating
+the whole call expression would **actually invoke** `in_return()` during elaboration, a
+sim-only function that may not even be representable as hardware. The guard makes the
+whole assignment a no-op instead:
 
 ```python
 if isinstance(stmt.value, ast.Call):

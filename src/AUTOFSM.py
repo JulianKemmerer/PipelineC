@@ -1048,8 +1048,8 @@ def _soft_equivalents(parser_state):
 # than as fast hardware -- NOTE this is a different criterion than fmax, so
 # this map intentionally still pins the comparator to make_soft_cmp_sub_swapped
 # even though make_soft_cmp_prefix is now the fmax-optimized default elsewhere
-# (soft.py:register_soft_cmp, see docs/SYN_DESIGN.md section 8) -- prefix's
-# even-decomposition properties as a sharing candidate haven't been evaluated.
+# (soft.py:register_soft_cmp, see docs/SYN_DESIGN.md#comparator-implementation-selection)
+# -- prefix's even-decomposition properties as a sharing candidate haven't been evaluated.
 _SOFT_FACTORY_FOR_OP = {
     "PLUS": ("operators.soft_add", "make_soft_add_ripple", None),
     "MINUS": ("operators.soft_add", "make_soft_sub", None),

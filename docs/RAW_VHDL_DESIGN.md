@@ -10,6 +10,13 @@ placements is documented in [`SYN_DESIGN.md`](SYN_DESIGN.md); construction of
 complete entities and inter-stage wiring is documented in
 [`VHDL_DESIGN.md`](VHDL_DESIGN.md).
 
+> **Reference, not a logbook.** Describe the system as it is now, in the present
+> tense. No dated entries, no session write-ups — `git log` is the change record.
+> When behavior changes, edit the affected section in place; when the *reason* is
+> worth keeping, revise the matching entry in this file's `History` section, if it
+> has one, rather than appending a new one. See
+> [documentation conventions](README.md#documentation-conventions).
+
 ## Dispatch
 
 `GET_RAW_HDL_WIRES_DECL_TEXT` and
