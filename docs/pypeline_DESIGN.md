@@ -9,8 +9,9 @@ internals (Logic() graph, FuncElaborator, CONST_REF_RD, etc.) see
 
 # Documentation conventions
 
-`docs/*.md` are **reference documents**: they describe the compiler and language as
-they are today, in the present tense. They are not logbooks.
+**Reference, not a logbook.** `docs/*.md` are **reference documents**: they describe
+the compiler and language as they are today, in the present tense. They are not
+logbooks.
 
 - **`git log` is the change record.** Don't duplicate it in prose — no dated entries,
   no "recently added"/"now supports"/"used to"/"this round", no session write-ups, no

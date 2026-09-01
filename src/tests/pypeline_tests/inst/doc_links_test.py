@@ -251,7 +251,6 @@ _DOCS_WITH_CONVENTION_NOTE = [
     "pipelinec_to_pypeline.md",
     "pypeline_DESIGN.md",
     "pypeline_TESTS.md",
-    "pypeline_guide.md",
     "pypeline_sim_DESIGN.md",
 ]
 
@@ -350,11 +349,11 @@ def test_docs_have_convention_note():
             text = fh.read()
         if _CONVENTION_MARKER not in text:
             missing.append(f"{name}: missing '{_CONVENTION_MARKER}' convention note")
-    readme = os.path.join(DOCS_DIR, "README.md")
-    with open(readme, encoding="utf-8") as fh:
-        readme_text = fh.read()
-    if "documentation-conventions" not in _anchor_set(readme_text):
-        missing.append("README.md: missing '#documentation-conventions' anchor")
+    owner = os.path.join(DOCS_DIR, "pypeline_DESIGN.md")
+    with open(owner, encoding="utf-8") as fh:
+        owner_text = fh.read()
+    if "documentation-conventions" not in _anchor_set(owner_text):
+        missing.append("pypeline_DESIGN.md: missing '#documentation-conventions' anchor")
     if missing:
         raise AssertionError(
             "Documentation convention note check failed:\n  " + "\n  ".join(missing)

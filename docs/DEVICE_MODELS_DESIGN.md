@@ -22,7 +22,7 @@ sibling feature whose delay budget comes from the same `SYN_TOOL` interface.
 > When behavior changes, edit the affected section in place; when the *reason* is
 > worth keeping, revise the matching entry in this file's `History` section rather
 > than appending a new one. See
-> [documentation conventions](README.md#documentation-conventions).
+> [documentation conventions](pypeline_DESIGN.md#documentation-conventions).
 
 ---
 

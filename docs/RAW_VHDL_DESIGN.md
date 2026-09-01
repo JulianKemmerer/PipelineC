@@ -15,7 +15,7 @@ complete entities and inter-stage wiring is documented in
 > When behavior changes, edit the affected section in place; when the *reason* is
 > worth keeping, revise the matching entry in this file's `History` section, if it
 > has one, rather than appending a new one. See
-> [documentation conventions](README.md#documentation-conventions).
+> [documentation conventions](pypeline_DESIGN.md#documentation-conventions).
 
 ## Dispatch
 

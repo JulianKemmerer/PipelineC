@@ -25,7 +25,7 @@ figures out the rest — how many stages, or how many states.
 > When behavior changes, edit the affected section in place; when the *reason* is
 > worth keeping, revise the matching entry in this file's `History` section rather
 > than appending a new one. See
-> [documentation conventions](README.md#documentation-conventions).
+> [documentation conventions](pypeline_DESIGN.md#documentation-conventions).
 
 ---
 
