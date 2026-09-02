@@ -270,6 +270,20 @@ operator for which the soft-operator library supplied an equivalent that does
 to keeping the operation atomic (reported as a floor) rather than failing the
 build.
 
+**Descent depth is capped** at `_MAX_DESCEND_DEPTH = 8` levels, for the same
+best-effort reason: past that many nested calls, the recursive walk gives up
+and the entity that would have been descended into stays atomic instead,
+reported as a floor. This matters for a deeply-nested soft-operator body —
+`register_soft_mult()`'s default carry-save multiplier is a 30-level
+deferred-carry chain at `uint16 x uint16`, shedding only a few delay units per
+level, so an 8-level cap strands a still-slow atomic node well before the
+chain bottoms out (this is exactly what made `qor/multiplier/autofsm.py`
+narrow its operands to `uint8` — see that file's own comment). The build log
+names it: when a descent stopped purely because of this cap, `DESCRIBE_SCHEDULE`
+appends a `descend cap: gave up after 8 levels for N entity/ies (...)` line
+next to `AT FLOOR`, distinguishing "this genuinely cannot be split further"
+from "the cap gave up before reaching a state that fits."
+
 Also skipped while walking: submodule instances whose names contain
 `CLOCK_ENABLE`. Those are clock-gating plumbing the backend adds to a `Logic`
 when it gates submodules inside an `if`, and they only appear on passes where
@@ -1225,9 +1239,19 @@ and at `fsm.latency + 1` (scheduled).
   but does not fix two gaps a per-leaf sum cannot see by construction: (1)
   **cross-instance combinational sharing** on wide operand-multiplexer
   trees — confirmed still present as a 256% whole-design overshoot on
-  `qor/divider/autofsm.py`, versus only 4.65% on `qor/multiplier/autofsm.py`
-  (which shares to one atomic unit with no wide muxes at all), so the gap is
-  design-shape-dependent, not a constant to calibrate away; and (2)
+  `qor/divider/autofsm.py`. `qor/multiplier/autofsm.py` used to be the
+  contrasting low-overshoot case (4.65%, per
+  `qor/latchup_area_match_matrix.json`'s `in_repo_evidence`) precisely
+  *because* it shared its multiplier to one atomic unit with no wide muxes at
+  all — that stopped being true once its operands were narrowed to `uint8`
+  to fix a search-time hang (see that file's own comment and §6's AUTOFSM
+  search-cost entry below): AUTOFSM now opens the multiplier up into a real
+  36-fold-shared `chunk_add_w_2` unit with a genuine operand mux, and a local
+  build now measures 242.45% overshoot (83385.5 estimated vs 24349.7 um2
+  measured) — close to the divider's number, for the same reason. This is
+  not a matrix re-run (no latchup.app PnR comparison behind it, just this
+  repo's own `Measured area:` build-log line) but it is consistent with the
+  gap being design-shape-dependent, not a constant to calibrate away; and (2)
   **`SYN.GET_REGISTERS_ESTIMATE_TEXT_AND_FFS`'s own FF-count overshoot**
   (5.7-5.9x; per-FF area is exact, so the error is entirely in the *count*,
   before any yosys-level FF optimization) — a different and much cruder count
@@ -1247,6 +1271,46 @@ and at `fsm.latency + 1` (scheduled).
   **Not the same bug** as the array-reconstruction guarantee in §3.7's
   "Descending past the operator level" — this one is about SHARING an
   array-typed value across states (the mux), which is still open.
+- **The search's own cost is superlinear in folds-per-shared-unit, and has no
+  wall-clock bound by design** (§3.7 — a schedule must stay a pure function of
+  the source, so the only caps are size-based: `MAX_SWEEP_DAG_NODES`,
+  `MAX_SWEEP_MOVES`, `_MAX_DESCEND_DEPTH`). `SCHEDULE_DAG`'s placement search,
+  `ALLOCATE_REGISTERS`, and the operand-mux plan all scale with the busiest
+  unit's fold count, so a schedule where one entity folds a few hundred
+  operations onto one unit can run for a very long time on a SINGLE
+  `BUILD_SCHEDULE` call — before the min-area search even starts multiplying
+  that cost by candidates. This is exactly what happened when
+  `register_soft_mult()`'s default switched to a 30-level carry-save
+  multiplier: `qor/multiplier/autofsm.py` (then `uint16 x uint16`) folded 247
+  adds onto one unit — past `_MAX_DESCEND_DEPTH`, which stopped it from
+  descending the other 24 levels — and did not finish scheduling in any
+  reasonable time, with nothing printed after the pass banner (no synthesis
+  was involved; `ADD_PATH_DELAY_TO_LOOKUP` had already finished). Fixed by
+  narrowing the test to `uint8`, which fits under the cap with the shipping
+  default (see that file's own comment). Two things now make the NEXT such
+  case visible instead of silent: `BUILD_SCHEDULE` prints a one-time
+  `AUTOFSM <key>: '<entity>' folds N operations onto one shared unit (>
+  SWEEP_LARGE_SCHEDULE_FOLDS) ...` notice *before* calling `SCHEDULE_DAG`, so
+  it fires even under `--autofsm_no_area_sweep`'s single anchor build; and
+  `DESCRIBE_SCHEDULE` reports when `_MAX_DESCEND_DEPTH` (not a genuine floor)
+  is why an entity stayed atomic (§3.1). The notice names only knobs that
+  actually shrink the FIRST schedule built — `max_latency=`, a lower clock
+  goal, a shallower/narrower operator source — deliberately NOT
+  `--autofsm_unshare`/`--autofsm_open`: confirmed by testing that both route
+  through `FORCE_SCHEDULE`, which resolves its pattern against an
+  already-scheduled anchor (`_resolve_entity_pattern` reads `schedule["fus"]`)
+  and so unconditionally pays for one full, uncapped `BUILD_SCHEDULE` before
+  applying anything forced — no help at all when that anchor alone is what
+  does not finish. This is itself an open gap: entity names are already known
+  from the cheap, unscheduled DAG (`BUILD_DAG` + `_resolve_inlined`, no
+  `SCHEDULE_DAG` involved), so `FORCE_SCHEDULE` resolving patterns against
+  that instead of a fully scheduled anchor would make both force flags a
+  genuine escape hatch even when the anchor itself is the bottleneck — not
+  done here, since it touches a function two other tests
+  (`autofsm_min_area_verify_test.py`, `autofsm_div_share_test.py`) depend on.
+  Both the notice and the descend-cap report are advisory —
+  neither raises, and there is still no hard cap — because a legitimate
+  large design should still build, just no longer in silence.
 
 **Future work**
 

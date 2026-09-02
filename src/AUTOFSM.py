@@ -326,6 +326,21 @@ MAX_SWEEP_DAG_NODES = 20000
 # max_latency cap before declaring the cap infeasible.
 MAX_REPLICATION_STEPS = 8
 
+# Advisory threshold (never a cap -- see _warn_large_schedule): folds onto one
+# shared unit past which BUILD_SCHEDULE prints a one-time notice before
+# calling SCHEDULE_DAG. AUTOFSM's own scheduling cost is superlinear in
+# folds-per-unit (SCHEDULE_DAG's placement search deep-copies and re-walks
+# the whole FU-edge graph per attempt; ALLOCATE_REGISTERS and the
+# operand-mux plan both scale with live cross-state values), and a single
+# schedule at a few hundred folds can run for a long time with nothing
+# printed -- exactly what happened when register_soft_mult()'s default
+# switched to a 30-level carry-save multiplier (folds 247 adds onto one unit
+# at uint16 x uint16) and qor_multiplier_autofsm_test hung silently for
+# hours. Calibrated off every default-flag schedule in the repo: divider 32,
+# sqrt 16, the multiplier's shipping uint8 default 36 -- all comfortably
+# under this; the uint16 runaway is 247, well past it.
+SWEEP_LARGE_SCHEDULE_FOLDS = 64
+
 
 class AutofsmError(Exception):
     """A design-level AUTOFSM problem (unschedulable function, unsupported
@@ -1050,6 +1065,24 @@ def _soft_equivalents(parser_state):
 # even though make_soft_cmp_prefix is now the fmax-optimized default elsewhere
 # (soft.py:register_soft_cmp, see docs/SYN_DESIGN.md#comparator-implementation-selection)
 # -- prefix's even-decomposition properties as a sharing candidate haven't been evaluated.
+#
+# Same reasoning is WHY INFERRED_MULT/MULT stay pinned to
+# make_soft_mult_shift_add even though register_soft_mult() (the registry
+# default everything else goes through) switched to make_soft_mult_carry_save
+# -- do not "fix" this inconsistency. Carry-save is the worst possible shape by
+# THIS map's own criterion: at max_width=2 it is a 30-level serial tail-call
+# chain (uint16 x uint16), and _MAX_DESCEND_DEPTH=8 cannot reach a fitting
+# stage, so descent strands a slow atomic node instead of decomposing evenly.
+# Confirmed directly: qor/multiplier/autofsm.py registered plain
+# register_soft_mult() and AUTOFSM (which reaches a multiplier through THIS
+# map, not the registry, only when descending a BUILT-IN MULT/INFERRED_MULT --
+# that test's own soft_mult_carry_save call site is reached by descent, not by
+# this map, and still hung) folded 247 adds onto one shared unit and never
+# finished scheduling; see qor/multiplier/autofsm.py's own comment and
+# docs/AUTOFSM_DESIGN.md section 3.7. Switching this pin would carry the same
+# failure mode into every OTHER AUTOFSM design that multiplies without
+# registering a soft flavor itself, e.g. examples/pypeline/
+# vga_donut_autofsm_next_state.py.
 _SOFT_FACTORY_FOR_OP = {
     "PLUS": ("operators.soft_add", "make_soft_add_ripple", None),
     "MINUS": ("operators.soft_add", "make_soft_sub", None),
@@ -1297,6 +1330,7 @@ def BUILD_DAG(parser_state, func_entity, delays, budget_du, opened=()):
     bound to one shared unit for sharing to mean anything.
     """
     nodes = {}
+    truncated = []
     _build_dag_level(
         parser_state,
         func_entity,
@@ -1305,6 +1339,7 @@ def BUILD_DAG(parser_state, func_entity, delays, budget_du, opened=()):
         nodes,
         prefix="",
         depth=0,
+        truncated=truncated,
         opened=frozenset(opened),
     )
     logic = parser_state.FuncLogicLookupTable[func_entity]
@@ -1314,6 +1349,10 @@ def BUILD_DAG(parser_state, func_entity, delays, budget_du, opened=()):
         "output": output_ref,
         "output_casts": output_casts,
         "out_type": logic.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME),
+        # Entities the depth cap stopped AUTOFSM from descending into further
+        # (see _MAX_DESCEND_DEPTH) -- diagnostic only, read by
+        # DESCRIBE_SCHEDULE's AT FLOOR text, never consulted by scheduling.
+        "descend_truncated": truncated,
     }
 
 
@@ -1321,7 +1360,15 @@ _MAX_DESCEND_DEPTH = 8
 
 
 def _build_dag_level(
-    parser_state, entity, delays, budget_du, nodes, prefix, depth, opened=frozenset()
+    parser_state,
+    entity,
+    delays,
+    budget_du,
+    nodes,
+    prefix,
+    depth,
+    truncated,
+    opened=frozenset(),
 ):
     """Add one function's operations to the DAG, descending where needed.
 
@@ -1329,6 +1376,10 @@ def _build_dag_level(
     ids stay unique and remain a pure function of the source (op name + source
     coordinates, joined by the same submodule marker the compiler uses for
     instance paths).
+
+    `truncated` collects (node_id, sub_entity, delay_du) for every operation
+    the depth cap stopped from descending further -- see the append below and
+    _MAX_DESCEND_DEPTH.
     """
     if depth > _MAX_DESCEND_DEPTH:
         raise AutofsmError(
@@ -1422,6 +1473,7 @@ def _build_dag_level(
                     child_nodes,
                     child_prefix,
                     depth + 1,
+                    truncated,
                     opened,
                 )
                 child_out_ref, child_out_casts = _trace_operand(
@@ -1429,6 +1481,12 @@ def _build_dag_level(
                 )
             except AutofsmError:
                 child_nodes = None
+                # depth+1 exceeding the cap is the ONLY raise _build_dag_level
+                # can hit before any other check (see its first line) -- so
+                # this condition being true means that is exactly why the
+                # child call failed, not some other AutofsmError deeper in it.
+                if depth + 1 > _MAX_DESCEND_DEPTH:
+                    truncated.append((node_id, sub_entity, delay_du))
             if child_nodes is not None:
                 nodes.update(child_nodes)
                 nodes[node_id] = {
@@ -2830,6 +2888,52 @@ def _schedule_entity_name(func_entity: str, schedule_core: dict) -> str:
     return f"{base}_{h}"
 
 
+_LARGE_SCHEDULE_WARNED_ATTR = "_autofsm_large_schedule_warned"
+
+
+def _warn_large_schedule(parser_state, key, busiest_entity, predicted_folds):
+    """One-time (per key, per parser_state -- see _DELAY_MEMO_ATTR for the
+    same pattern) notice that a schedule's busiest shared unit is about to
+    fold a lot of operations, printed BEFORE calling SCHEDULE_DAG so it lands
+    even when a single schedule (e.g. under --autofsm_no_area_sweep, or the
+    sweep's own anchor) is what runs long -- see SWEEP_LARGE_SCHEDULE_FOLDS.
+
+    Advisory only: never raises, never changes the schedule. Names only the
+    knobs that actually shrink predicted_folds on the FIRST schedule built --
+    NOT --autofsm_unshare/--autofsm_open: those route through FORCE_SCHEDULE,
+    which resolves its pattern against an already-scheduled anchor
+    (_resolve_entity_pattern reads schedule["fus"]) and so unconditionally
+    pays for one full, uncapped BUILD_SCHEDULE before the forced one -- no
+    help when THAT is what is slow (confirmed: killed after 10+ minutes on
+    the design that motivated this constant). Recommending it here would
+    point at a knob that cannot possibly land in time.
+    """
+    warned = getattr(parser_state, _LARGE_SCHEDULE_WARNED_ATTR, None)
+    if warned is None:
+        warned = set()
+        setattr(parser_state, _LARGE_SCHEDULE_WARNED_ATTR, warned)
+    if key in warned:
+        return
+    warned.add(key)
+    print(
+        f"AUTOFSM {key}: {busiest_entity!r} folds {predicted_folds} "
+        f"operations onto one shared unit (> {SWEEP_LARGE_SCHEDULE_FOLDS}) -- "
+        f"scheduling this needs at least {predicted_folds} states, and "
+        f"AUTOFSM's own scheduling cost grows faster than linearly with that, "
+        f"so this may take a while (no synthesis is involved; it is pure "
+        f"Python). To shrink it before this build even starts scheduling: a "
+        f"max_latency= cap on the AUTOFSM/make_stream_autofsm call (forces "
+        f"replication up front), a lower @MAIN clock goal (widens the "
+        f"per-state budget, so fewer -- or no -- operations need descending "
+        f"in the first place), or a shallower/narrower source for whatever "
+        f"is being shared (e.g. a soft-multiplier's max_width, or its "
+        f"operand widths). --autofsm_unshare/--autofsm_open do NOT help here "
+        f"-- they still schedule this exact shape once, unmodified, before "
+        f"applying anything you asked for.",
+        flush=True,
+    )
+
+
 def BUILD_SCHEDULE(
     parser_state,
     key,
@@ -2927,6 +3031,17 @@ def BUILD_SCHEDULE(
     for entity, n in unshared:
         if entity in folds:
             copies[entity] = min(folds[entity], max(copies.get(entity, 1), int(n)))
+
+    busiest_entity, predicted_folds = max(
+        (
+            (e, _fold_count_per_unit(folds[e], copies.get(e, 1)))
+            for e in folds
+        ),
+        key=lambda pair: pair[1],
+        default=(None, 0),
+    )
+    if predicted_folds > SWEEP_LARGE_SCHEDULE_FOLDS:
+        _warn_large_schedule(parser_state, key, busiest_entity, predicted_folds)
 
     mux_du_cache = {}
 
@@ -3052,6 +3167,10 @@ def BUILD_SCHEDULE(
     }
     schedule = dict(schedule_core)
     schedule["entity"] = _schedule_entity_name(func_entity, schedule_core)
+    # NOT part of schedule_core: it must never affect _schedule_entity_name's
+    # hash (see that function's docstring) -- it is diagnostic-only, read by
+    # DESCRIBE_SCHEDULE, and must not perturb entity names / cache keys.
+    schedule["descend_truncated"] = dag.get("descend_truncated", [])
     return schedule
 
 
@@ -3705,10 +3824,14 @@ def SWEEP_MIN_AREA_SCHEDULE(
     n_considered = 0
     uphill = 0
 
-    def trace(label, sched, verdict):
+    def trace(label, sched, verdict, cost):
         """One auditable line per candidate. Every 'the search declined to
         move' claim in the docs and tests is only as good as being able to see
-        WHICH candidates were considered and why each lost."""
+        WHICH candidates were considered and why each lost.
+
+        `cost` is evaluate()'s own estimate, passed in rather than recomputed
+        -- this function used to call ESTIMATE_SCHEDULE_AREA a second time on
+        every surviving candidate just to print what evaluate() already knew."""
         if not debug:
             return
         move = f"{label[0]} {label[1]}"
@@ -3717,14 +3840,20 @@ def SWEEP_MIN_AREA_SCHEDULE(
             return
         print(
             f"AUTOFSM {key}: sweep candidate {move}: est "
-            f"{ESTIMATE_SCHEDULE_AREA(parser_state, sched, memo):.0f}, "
+            f"{cost:.0f}, "
             f"{len(sched['fus'])} unit(s), {sched['n_states']} states, worst "
             f"state {sched['worst_state_du'] / 10.0:.2f} ns: {verdict}",
             flush=True,
         )
 
     def evaluate(trial_opened, trial_unshared):
-        """The candidate schedule, or None with the reason it was rejected."""
+        """The candidate schedule, or None with the reason it was rejected.
+        Third element is the candidate's estimated cost, computed here (once)
+        rather than by trace() or the caller -- ESTIMATE_SCHEDULE_AREA is not
+        cheap (register allocation + operand-mux planning over the whole
+        function), memo only covers its per-entity area lookups, and this
+        function used to be called a second time per surviving candidate
+        under --autofsm_sweep_debug just to print the same number."""
         try:
             sched = BUILD_SCHEDULE(
                 parser_state,
@@ -3738,24 +3867,26 @@ def SWEEP_MIN_AREA_SCHEDULE(
                 ctl=ctl,
             )
         except AutofsmError:
-            return None, "rejected: too many operations to score (DAG cap)"
+            return None, "rejected: too many operations to score (DAG cap)", None
         if sched["latency_infeasible"] and not anchor["latency_infeasible"]:
-            return None, "rejected: cannot meet the max_latency cap"
+            return None, "rejected: cannot meet the max_latency cap", None
         if sched["at_floor"] and not anchor["at_floor"]:
             # This made some state unschedulable at the clock goal. More area
             # for worse timing is never the trade being looked for here.
-            return None, "rejected: a state stopped fitting the clock goal"
+            return None, "rejected: a state stopped fitting the clock goal", None
         if sched["worst_state_du"] > sched["budget_du"]:
             # Area is the objective; unused timing margin is available to buy
             # it. The hard boundary is the declared clock budget, not the
             # anchor's incidental (often much shorter) worst state. Real
             # synthesis still confirms the result and the driver's existing
             # tighten/reschedule loop recovers from model optimism.
-            return None, (
+            return (
+                None,
                 f"rejected: worst state {sched['worst_state_du'] / 10.0:.2f} ns "
-                f"exceeds its {sched['budget_du'] / 10.0:.2f} ns budget"
+                f"exceeds its {sched['budget_du'] / 10.0:.2f} ns budget",
+                None,
             )
-        return sched, "considered"
+        return sched, "considered", ESTIMATE_SCHEDULE_AREA(parser_state, sched, memo)
 
     if debug:
         print(
@@ -3769,13 +3900,13 @@ def SWEEP_MIN_AREA_SCHEDULE(
         candidates = []  # (cost, tie-break label, schedule, opened, unshared)
         for entity in sorted(_openable_entities(parser_state, cur, opened)):
             trial_opened = sorted(opened + [entity])
-            sched, why = evaluate(trial_opened, unshared)
+            sched, why, cost = evaluate(trial_opened, unshared)
             n_considered += 1
-            trace(("open", entity), sched, why)
+            trace(("open", entity), sched, why, cost)
             if sched is not None:
                 candidates.append(
                     (
-                        ESTIMATE_SCHEDULE_AREA(parser_state, sched, memo),
+                        cost,
                         ("open", entity),
                         sched,
                         trial_opened,
@@ -3785,13 +3916,13 @@ def SWEEP_MIN_AREA_SCHEDULE(
         for entity, n_units in sorted(_unshareable_entities(cur, unshared).items()):
             trial_unshared = dict(unshared)
             trial_unshared[entity] = n_units
-            sched, why = evaluate(opened, trial_unshared)
+            sched, why, cost = evaluate(opened, trial_unshared)
             n_considered += 1
-            trace(("unshare", f"{entity} -> {n_units} units"), sched, why)
+            trace(("unshare", f"{entity} -> {n_units} units"), sched, why, cost)
             if sched is not None:
                 candidates.append(
                     (
-                        ESTIMATE_SCHEDULE_AREA(parser_state, sched, memo),
+                        cost,
                         ("unshare", entity),
                         sched,
                         opened,
@@ -4116,6 +4247,21 @@ def DESCRIBE_SCHEDULE(parser_state, key, schedule) -> str:
         f"budget {budget_ns:.2f} ns/state (scale {schedule['budget_scale']:.3f}), "
         f"worst state {worst_ns:.2f} ns{floor}"
     )
+    truncated = schedule.get("descend_truncated") or []
+    if truncated:
+        # Surfaces a fallback that used to be silent: descent gave up on
+        # these entities purely because of _MAX_DESCEND_DEPTH, not because
+        # nothing more could be shared -- worth knowing when AT FLOOR shows
+        # up right after it (see the depth cap's own docstring).
+        entities = sorted({e for _nid, e, _du in truncated})
+        worst = max(du for _nid, _e, du in truncated)
+        more = f", +{len(entities) - 3} more" if len(entities) > 3 else ""
+        line += (
+            f"\n  descend cap: gave up after {_MAX_DESCEND_DEPTH} levels for "
+            f"{len(entities)} entity/ies (worst {worst / 10.0:.2f} ns vs "
+            f"{budget_ns:.2f} ns/state budget), kept atomic: "
+            f"{', '.join(entities[:3])}{more}"
+        )
     line += f"\n  register bits: {_register_bit_count(schedule)}"
     ctl_candidates = schedule.get("ctl_auto_candidates")
     if ctl_candidates:
@@ -4287,12 +4433,25 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
                 budget_scales[key] = (
                     budget_scales.get(key, DEFAULT_BUDGET_SCALE) * BUDGET_TIGHTEN_FACTOR
                 )
+            if args.autofsm_sweep_debug:
+                # Without this header, a tighten-loop sweep's own "sweep
+                # candidate ..." trace lines (below) are indistinguishable
+                # from the pass's primary sweep -- this was previously
+                # invisible outright, since sweep_debug was never passed to
+                # this HARVEST_AUTOFSM_SCHEDULES call at all (see the one
+                # right below).
+                print(
+                    f"AUTOFSM: tighten attempt {_attempt + 1}/{MAX_TIGHTEN_STEPS} "
+                    f"for {sorted(blamed)}",
+                    flush=True,
+                )
             trial = HARVEST_AUTOFSM_SCHEDULES(
                 parser_state,
                 budget_scales,
                 schedules,
                 area_sweep=not args.autofsm_no_area_sweep,
                 ctl=args.autofsm_ctl,
+                sweep_debug=args.autofsm_sweep_debug,
                 force_open=force_open,
                 force_unshare=force_unshare,
             )

@@ -138,7 +138,18 @@ def get_tests() -> list:
     # what exposed and pins the _TypeResolver array-reconstruction fix in
     # AUTOFSM.py (an AUTOFSM over a descended soft multiplier's local
     # partial-products array used to crash codegen with "cannot reconstruct a
-    # live Python type for C type 'uint16_t[16]'").
+    # live Python type for C type 'uint8_t[8]'").
+    #
+    # timeout=1800: these are the only registered tests that run AUTOFSM's
+    # min-area search (see AUTOFSM.py's Area sweep constants), whose cost is
+    # superlinear in folds-per-shared-unit -- when register_soft_mult()'s
+    # default switched to a 30-level carry-save multiplier, this design (then
+    # uint16 x uint16) folded 247 adds onto one unit and hung for hours with
+    # no output before the fix (uint16 -> uint8) landed. Measured after the
+    # fix: divider ~30-50s, sqrt ~100-200s, multiplier (the slowest, and the
+    # only one of the three that actually opens up an operator) ~400-450s.
+    # 1800s keeps real headroom without hiding a real regression behind the
+    # 7200s category default.
     for qor_name in ("multiplier", "divider", "sqrt"):
         tests.append(
             Test(
@@ -146,6 +157,7 @@ def get_tests() -> list:
                 category="synth",
                 cmd=[PYPELINEC, QOR_DIR / qor_name / "autofsm.py"],
                 needs_out_dir=True,
+                timeout=1800,
             )
         )
     return tests

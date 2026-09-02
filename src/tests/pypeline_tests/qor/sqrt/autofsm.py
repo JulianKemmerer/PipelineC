@@ -59,12 +59,14 @@ def isqrt_u32(i: input_payload_t) -> output_payload_t:
 SQRT_FSM, SQRT_FSM_T = make_stream_autofsm(isqrt_u32)
 
 # Original AUTOPIPELINE version's 300 MHz goal is unreachable here: AUTOFSM
-# folds the 16 unrolled steps into 54 states, one op per state, but each
-# step's own indivisible subtract is already at its floor -- no amount of
-# extra states shrinks a single operation's delay. Measured ~69.7 MHz (pyrtl
-# estimate, floor); 40 MHz passed with only ~2.5% margin (41.00 measured),
-# too thin for a regression test, so lowered further for headroom. The goal
-# here is a clean synthesizing build, not matching the pipelined design's fmax.
+# folds the 16 unrolled steps' operations onto 18 shared units across 16
+# states (measured banner: "47 ops -> 18 shared unit(s), 16 states"), but
+# each step's own indivisible subtract is already at its floor -- no amount
+# of extra states shrinks a single operation's delay. Measured ~69.7 MHz
+# (pyrtl estimate, floor); 40 MHz passed with only ~2.5% margin (41.00
+# measured), too thin for a regression test, so lowered further for
+# headroom. The goal here is a clean synthesizing build, not matching the
+# pipelined design's fmax.
 CLK_RATE_MHZ = 30.0
 clk: Input[uint1_t] = make_clock(CLK_RATE_MHZ)
 input: Input[SQRT_FSM.in_intrf.stream_t]

@@ -99,12 +99,18 @@ def get_tests() -> list:
     # asserts the search actually opens it up, that the move is smaller in real
     # cells, and that no alternative point of the search space -- built
     # explicitly with --autofsm_open/--autofsm_unshare -- is smaller still.
+    # Four sequential full builds (default, share-everything, and two forced
+    # points), each verifying a distinct point of the search space -- this is
+    # the slowest AUTOFSM test in the suite (measured 840-1800s across three
+    # runs). timeout=2700 documents that cost as known rather than letting it
+    # run against the 7200s category default unremarked.
     tests.append(
         Test(
             name="autofsm_min_area_verify_test",
             category="build_report",
             cmd=[INST_DIR / "autofsm_min_area_verify_test.py"],
             needs_out_dir=True,
+            timeout=2700,
         )
     )
     # Same question as the two tests above -- does ranking candidates with a

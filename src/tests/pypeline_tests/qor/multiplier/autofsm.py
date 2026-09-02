@@ -18,12 +18,6 @@ MULT_IMPL = "soft"
 
 if MULT_IMPL == "soft":
     register_soft_mult()
-    # Stale -- measured against the OLD (shift-and-add) default, before
-    # register_soft_mult() switched to carry-save. Not yet re-measured.
-    # cycles, sky130 MHz, sky130 um^2, pypeline estimate MHz
-    # 1, 97, 33213, 20
-    # 2, 130, 40303, 40
-    #
 elif MULT_IMPL == "soft_shift_add":
     register_soft_mult_shift_add()
 elif MULT_IMPL == "soft_karatsuba":
@@ -31,14 +25,23 @@ elif MULT_IMPL == "soft_karatsuba":
 elif MULT_IMPL != "inferred":
     raise ValueError(f"unknown MULT_IMPL: {MULT_IMPL}")
 
+# uint8 x uint8, not uint16 x uint16: register_soft_mult()'s carry-save
+# default (max_width=2) is a 30-level deferred-carry chain at 16 bits, ~14 du/
+# level, and AUTOFSM's descent gives up after _MAX_DESCEND_DEPTH=8 levels --
+# nowhere near a state that fits the clock. That both hangs the min-area
+# search (each candidate reschedules ~250 folded ops) and fails timing anyway
+# (a ~349 du atomic node stays stranded). At uint8 the same chain is 15
+# levels and descent reaches a fitting stage well inside the depth limit --
+# see docs/AUTOFSM_DESIGN.md section 3.7/3.8 and the commit that added this
+# comment for the measured before/after.
 @struct
 class input_payload_t(NamedTuple):
-    a: uint16_t
-    b: uint16_t
+    a: uint8_t
+    b: uint8_t
 
 @struct
 class output_payload_t(NamedTuple):
-    result: uint32_t
+    result: uint16_t
 
 @hw_func
 def mult(x: input_payload_t) -> output_payload_t:

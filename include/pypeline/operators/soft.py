@@ -11,7 +11,7 @@ for new library code). Register once, globally, or scoped to one function:
     register_soft_ops(scope=my_func)          # only my_func's own body
 
     from operators.soft import register_soft_mult, register_soft_mult_karatsuba
-    register_soft_mult()                      # shift-and-add (default flavor)
+    register_soft_mult()                      # carry-save, max_width=2 (default flavor)
     register_soft_mult_karatsuba()            # overrides it -- last registration wins
 """
 import functools
