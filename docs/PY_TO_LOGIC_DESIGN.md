@@ -85,6 +85,7 @@ Python design files into PypelineC's internal `Logic()` graph representation. Fo
 - [Compound Initializer Syntax](#compound-initializer-syntax)
 - [Casting](#casting)
 - [Ternary (IfExp) Assignment](#ternary-ifexp-assignment)
+- [Tuple/List-Unpacking Assignment](#tuplelist-unpacking-assignment)
 - [Augmented Assignment (`+=`, `-=`, etc.)](#augmented-assignment----etc)
 - [Boolean Operators (`and` / `or`)](#boolean-operators-and--or)
 - [Bit Manipulation Syntax](#bit-manipulation-syntax)
@@ -371,6 +372,26 @@ UNARY_OP_LOGIC_NAME_PREFIX_not_uint1_t
 MUX_uint32_t
 MUX_point2d_t          ← compound-type MUX is valid
 ```
+
+### Callee Expression Shapes
+
+`_elab_call` resolves the callee (`expr.func`) in priority order: an AUTOPIPELINE/AUTOFSM
+tag object (detected by value, via `_try_eval_const(expr.func)` — the callee needn't be a
+literal direct-call expression for these), a cast (`dst_t(x)`), a module-qualified
+`ast.Attribute` (`module.func(x)`), then a bare `ast.Name` (`func(x)`, the common case,
+resolved against `FuncLogicLookupTable` / `module_globals`). Anything else — an indexed or
+otherwise computed expression, e.g. `LEAF_FNS[j](x)` selecting one closure from a
+closure-planned list inside an unrolled loop — falls to a final branch: if the same
+`_try_eval_const(expr.func)` probe already computed for the tag checks above resolved to a
+live callable, it is elaborated exactly like a bare-name call (`_elaborate_live_func`,
+labeled with the resolved callable's own `__name__` since the call-site expression has no
+useful name of its own); otherwise elaboration raises `NotImplementedError("Unsupported
+call form: ...")`, naming the AST shape. This is what lets a per-iteration closure list
+built at elaboration time (`ADDERS = [make_adder(1), make_adder(2), ...]`, each call site
+indexed by an unrolled loop's ordinal) be called directly, without funneling every op
+through one shared bare-named entity the way `include/pypeline/operators/soft_cmp.py`'s
+chunk-compare leaves still deliberately do (a QoR choice — one shared, width-normalized
+entity beats N per-op ones — not a compiler limitation).
 
 ### Bare (Void) Call Statements
 
@@ -992,14 +1013,29 @@ are generated for loop control; loops exist purely at elaboration time.
 for i in range(LO_SIZE):   # range(3) evaluated by _try_eval_const
     bits[b] = bits_lo[i]   # unrolled 3 times with concrete i=0,1,2
     b = b + 1
+
+for kind, x, y in OPS:     # nested-tuple/list targets destructure too
+    ...                    # (OPS a closure-constant list of tuples)
 ```
 
-The loop variable `i` is stored in `const_env` at each iteration. Body statements are
-elaborated once per value, producing distinct hardware for each unrolled copy.
+The loop variable (or every leaf of a nested Tuple/List target) is stored in `const_env`
+at each iteration via `_bind_const_target`. Body statements are elaborated once per
+value, producing distinct hardware for each unrolled copy.
 
-Supported iterables: `range(...)`, `tuple`, `list`. String field iteration
-(`for f in point_t._fields:`) works too — `f` becomes a string in `const_env` and
-subscript access `rv[f]` resolves to a struct field via `_parse_ref_toks`.
+Supported iterables: anything Python can iterate over a plain value returned by
+`_try_eval_const` — `range`, `tuple`, `list`, `dict` (yields keys), `str`, `enumerate(...)`,
+`zip(...)`, a generator expression, etc. — **except** `set`/`frozenset`: their iteration
+order is `PYTHONHASHSEED`-dependent, not a pure function of the design source, which the
+canonical-naming determinism contract (`_stable_val_repr`, above) requires; `_elab_for`
+rejects them with an `ElaborationError` naming the fix (`sorted(...)` the set first).
+String field iteration (`for f in point_t._fields:`) works the same way — `f` becomes a
+string in `const_env` and subscript access `rv[f]` resolves to a struct field via
+`_parse_ref_toks`.
+
+The target may be a bare `Name` or a nested `Tuple`/`List` (module-level
+`_const_target_names` walks the target tree; `FuncElaborator._bind_const_target` does the
+per-iteration binding) — a starred target (`a, *rest = ...`) is not supported
+(`NotImplementedError`, naming the target).
 
 ### While Loops
 
@@ -1022,9 +1058,9 @@ A concern when unrolling is that multiple iterations of the same source line mig
 colliding wire/instance names. The primary mechanism is `loop_instance_prefix`:
 
 **`loop_instance_prefix`** (the general solution) — `_elab_for` accumulates a string prefix
-like `"FOR_i_0_"` (or `"FOR_i_0_FOR_j_2_"` when nested) that is prepended to **every**
-alias wire name and submodule instance name emitted inside the loop body. This prefix is
-applied in three places:
+like `"FOR_i_ITER_0_"` (or `"FOR_i_ITER_0_FOR_j_ITER_2_"` when nested) that is prepended
+to **every** alias wire name and submodule instance name emitted inside the loop body.
+This prefix is applied in three places:
 
 - `_write_ref` — all assignment aliases (`result`, `bits[0]`, struct fields, etc.)
 - `_elab_if` — MUX output aliases produced by if-statements inside the loop
@@ -1032,7 +1068,23 @@ applied in three places:
 
 When `loop_instance_prefix` is `""` (outside any loop), the names are identical to before.
 
-**Additional natural uniqueness** for some patterns that also helps (but is not sufficient alone):
+The `ITER_<n>` component is the **iteration ordinal** (`enumerate(items)`'s `n`), never the
+iterator value itself — only the loop-variable *name(s)* appear in the prefix (sanitized via
+`_sanitize_vhdl_name`), joined with `_` for a tuple/list target. This is deliberate: the
+iterator value can be any Python object a `for` loop can range over (a tuple, a float, a
+negative int, a dict key, an opaque struct instance) and is not guaranteed to be a legal,
+unique, or deterministic VHDL name fragment, whereas the ordinal always is, by construction,
+regardless of what the loop iterates over. (An earlier scheme named iterations after the
+*value* — `FOR_i_0_`, `FOR_i_1_`, ... for `range(...)` — which happened to read naturally for
+plain integer ranges but broke down anywhere else: a tuple value's `repr()` contains parens,
+commas and spaces, which are not legal in a VHDL identifier and were never sanitized; a
+negative int's `-` survived as far as `VHDL.WIRE_TO_VHDL_NAME`, which maps `-` to `_`,
+colliding two otherwise-distinct names into one; and a duplicate value produced a genuine
+alias collision with no guard against it, since `_add_wire`/`_connect` — unlike
+`_add_submodule_instance` — never check for one.)
+
+**Additional natural uniqueness** for some patterns that also helps (but is not needed for
+the loop-unrolling problem itself, since the ordinal alone is already sufficient):
 
 - **Concrete-index writes:** `bits[b] = bits_lo[i]` — the alias prefix includes `b`'s
   resolved value (`"bits_0_..."`, `"bits_1_..."`), producing different alias names even
@@ -3300,6 +3352,39 @@ elaborates for real.
 
 ---
 
+## Tuple/List-Unpacking Assignment
+
+`a, b = <rhs>` (including a nested target, `a, (b, c) = <rhs>`) is handled by
+`_elab_unpack_assign`, dispatched from `_elab_assign` before any of the single-Name
+paths (`_parse_ref_toks` has no `ast.Tuple`/`ast.List` case, so an unpacking target must
+be intercepted first). Two cases:
+
+**Case A — fully compile-time-constant RHS.** If `_try_eval_const(stmt.value)` succeeds
+*and* no target leaf is already a declared hardware wire or global wire name (mirroring
+`_elab_assign`'s own single-Name constant fast path: once a name is hardware, it stays
+hardware on every later reassignment), the value is destructured directly into `const_env`
+via `_bind_const_target` — the same helper `_elab_for`'s loop target uses, so it recurses
+through nested tuples/lists for free. No hardware is built; this is the
+`op, pa, pb = plan[m]` shape (`plan` a closure constant, `m` a constant loop index) that
+`include/pypeline/operators/soft_div.py`/`soft_mult.py` used to route around by indexing
+each field separately (`plan[m][0]`, `plan[m][1]`, ...) — the elaborator previously tried
+to build the whole RHS tuple as one hardware value before ever reaching the target.
+
+**Case B — literal Tuple/List RHS of hardware expressions, flat target.** `a, b = b, a`
+(a swap) lowers to synthetic single-target assignments through per-element temporaries
+(`UNPACK_<i>_<loc_str>`, evaluated in RHS order before any real target is written, so swap
+semantics match Python's), each run back through the ordinary `_elab_assign` machinery —
+struct ctors, compound init, global wires, bit-slice assign, existing-hardware widening,
+all reused rather than duplicated. A nested target under a hardware-valued RHS is not
+supported (`NotImplementedError`); a non-literal-Tuple/List RHS that also isn't fully
+constant-foldable is an `ElaborationError` naming both shapes.
+
+Anything else (arity mismatch, a starred target, a non-iterable constant RHS) raises a
+precise `ElaborationError`/`NotImplementedError` — see `loop_iter_naming_test.py`'s error-
+path coverage.
+
+---
+
 ## Augmented Assignment (`+=`, `-=`, etc.)
 
 Python's in-place operators (`+=`, `-=`, `*=`, `/=`, `%=`) are supported on both
@@ -5170,30 +5255,47 @@ adder[my_design_py_l10_c4]
 ```
 
 Inside a for-loop body, iterations are distinguished by `loop_instance_prefix`, which
-accumulates the loop variable name and its current value. This prefix is applied to
-**both submodule instance names and alias wire names**, ensuring every wire and instance
-produced inside an unrolled loop body is unique:
+accumulates the loop target's name(s) and the iteration's **ordinal** — never the
+iterator value itself (see [Why Naming Stays Unique Across Iterations](#why-naming-stays-unique-across-iterations)
+for why: a value can be any Python object, an ordinal is always a legal, unique,
+deterministic VHDL fragment). This prefix is applied to **both submodule instance names
+and alias wire names**, ensuring every wire and instance produced inside an unrolled loop
+body is unique:
 
 ```
-FOR_<safe_var>_<val>_<func_name>[<loc_str>]    ← submodule instance
-FOR_<safe_var>_<val>_<var_name>_<loc_str>      ← alias wire (_write_ref)
-FOR_<safe_var>_<val>_<key>_if_mux_<loc_str>   ← MUX alias wire (_elab_if)
+FOR_<safe_target>_ITER_<n>_<func_name>[<loc_str>]    ← submodule instance
+FOR_<safe_target>_ITER_<n>_<var_name>_<loc_str>      ← alias wire (_write_ref)
+FOR_<safe_target>_ITER_<n>_<key>_if_mux_<loc_str>    ← MUX alias wire (_elab_if)
 ```
 
-`<safe_var>` is the loop variable name after VHDL sanitization (see
-[VHDL Identifier Safety](#vhdl-identifier-safety--name-sanitization)). The loop
-variable is also stored in `const_env` under its raw Python name so that elaboration-time
-`eval()` still resolves it correctly.
+`<safe_target>` is the loop target's leaf name(s) after VHDL sanitization (see
+[VHDL Identifier Safety](#vhdl-identifier-safety--name-sanitization)), joined with `_` for
+a tuple/list target (`for kind, a, b in OPS:` → `kind_a_b`) — truncated to `<first_leaf>_etc`
+past 32 characters so a long unpack target can't blow up nested-loop prefix length. `<n>`
+is the plain iteration ordinal (`enumerate(items)`'s index), starting at 0. Every leaf name
+is also bound into `const_env` (via `_bind_const_target`) under its raw Python name each
+iteration, so elaboration-time `eval()` still resolves it correctly.
 
 `while` loop prefixes use only an integer iteration counter (`WHILE_<n>_`) and are always
-VHDL-safe.
+VHDL-safe — the same ordinal idea `_elab_for` now shares via `_MAX_LOOP_UNROLL`, the single
+constant both loop kinds check their unroll count against.
 
 Nested loops prefix left-to-right with the outermost loop first:
 ```python
 for i in range(2):
     for j in range(3):
-        foo(x)   # → FOR_i_0_FOR_j_0_foo[...], FOR_i_0_FOR_j_1_foo[...], ...
-        result = val  # alias → FOR_i_0_FOR_j_0_result_..., FOR_i_0_FOR_j_1_result_..., ...
+        foo(x)   # → FOR_i_ITER_0_FOR_j_ITER_0_foo[...], FOR_i_ITER_0_FOR_j_ITER_1_foo[...], ...
+        result = val  # alias → FOR_i_ITER_0_FOR_j_ITER_0_result_..., ...
+```
+
+The same scheme extends to any iterable and any target shape, which is what makes it a
+strict superset of the old value-based one — a tuple-valued or dict-valued loop, or a
+nested-tuple target, elaborates exactly the same way an `int` `range(...)` loop always did:
+```python
+for op in OPS:                    # OPS a list of tuples — illegal to name by VALUE
+    ...                            # (repr() has parens/commas/spaces); fine by ordinal
+for kind, a, b in OPS:             # nested-tuple target
+    ...                            # → FOR_kind_a_b_ITER_0_..., FOR_kind_a_b_ITER_1_..., ...
 ```
 
 ### Port Wire Names
@@ -5295,7 +5397,7 @@ VHDL basic identifiers are more restrictive than Python identifiers:
 - **All path reads/writes** (`_parse_ref_toks`): the base `ast.Name.id` is passed through `_hw_name`.
 - **Bare name reads** (`_elab_name`): sanitized before `env` lookup.
 - **Bit-slice reads/assigns** (`_try_elab_bit_slice`, `_try_elab_bit_slice_assign`): base name sanitized before `env` lookup.
-- **For-loop prefix** (`_elab_for`): loop variable sanitized for the `loop_instance_prefix` string (but kept raw in `const_env` so elaboration-time `eval()` still resolves it).
+- **For-loop prefix** (`_elab_for`): every loop-target leaf name sanitized for the `loop_instance_prefix` string (but each also kept raw in `const_env` so elaboration-time `eval()` still resolves it) — the iteration ordinal alongside it needs no sanitization, being already a plain non-negative int.
 - **Global `Wire[T]`** (`_discover_global_wires`): auto-mangled with a stderr warning (internal wires have no constraint-file dependency).
 - **Global `Input[T]` / `Output[T]`** (`_discover_global_wires`): **`ElaborationError`** — these names appear in VHDL entity ports that must match XDC/SDC constraint files exactly; silent renaming would break synthesis.
 - **Submodule instance names** (`_inst_name`): the callee-derived component (e.g. a
@@ -5385,7 +5487,7 @@ Loop counters and elaboration-time constants stored in `const_env` use raw Pytho
 | Imported sub-file Wire | `<actual_module_name>_<safe_bare_name>` |
 | Input[T] / Output[T] (any file) | **bare Python name** — no module prefix; must be a legal VHDL identifier (error if not) |
 | Local variable / function parameter | sanitized Python name (`_hw_name`) |
-| Submodule instance | `<sanitized_func_name>[<loc_str>]` (`_inst_name`; + `FOR_<safe_v>_<n>_` prefix per loop level) |
+| Submodule instance | `<sanitized_func_name>[<loc_str>]` (`_inst_name`; + `FOR_<safe_v>_ITER_<n>_` prefix per loop level) |
 | Port wire | `<inst>____<port>` (four underscores) |
 | Return port | `<inst>____return_output` |
 | Alias wire | `<safe_var_name>_<loc_str>` |

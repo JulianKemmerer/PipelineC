@@ -210,13 +210,9 @@ def _make_radix_restoring(bits_per_step, want_remainder):
             d: wide_t[top + 1]
             d[1] = be
             for m in range(2, top + 1):
-                # Not tuple-unpacking (op, a, b = plan[m]) -- the elaborator
-                # tries to emit the whole tuple as one hardware value first.
                 # plan is a closure constant and m a constant loop index, so
-                # this indexing is elaboration-time-free either way.
-                op = plan[m][0]
-                pa = plan[m][1]
-                pb = plan[m][2]
+                # this unpack is elaboration-time-free Python bookkeeping.
+                op, pa, pb = plan[m]
                 if op == _OP_SHL1:
                     d[m] = d[pa] << 1
                 elif op == _OP_ADD:
@@ -226,12 +222,7 @@ def _make_radix_restoring(bits_per_step, want_remainder):
 
             rem: eff_l_t = 0
             quot: eff_l_t = 0
-            # Loop over an int index, not the step tuple itself -- the
-            # elaborator names each unrolled loop instance from the loop
-            # variable's repr, and a tuple repr like "(31,)" contains
-            # characters that aren't legal in a VHDL identifier.
-            for step_idx in range(len(steps)):
-                step_bits = steps[step_idx]
+            for step_bits in steps:
                 sw = len(step_bits)
                 if sw == 1:
                     i = step_bits[0]

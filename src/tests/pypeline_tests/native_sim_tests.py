@@ -237,6 +237,20 @@ def get_tests() -> list:
             ],
         )
     )
+    tests.append(
+        Test(
+            name="self_check_loop_unpack_test",
+            category="native_sim",
+            cmd=[
+                PYPELINEC,
+                INST_DIR / "self_check_loop_unpack_test.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "all",
+            ],
+        )
+    )
     # AUTOFSM in --comb mode: the call site is still the combinational
     # passthrough (latency 0), so this also proves the self-checking testbench
     # is latency-agnostic -- the same source is correct whether the FSM is

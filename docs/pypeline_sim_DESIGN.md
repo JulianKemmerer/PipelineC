@@ -2050,6 +2050,33 @@ subclass has `__getitem__`.
   machinery `pypeline_sim.py` uses per clock cycle (see `sim_call` above). Model side
   effects still multi-fire during convergence in both layers — keep model bodies
   side-effect-free or check `_sim_converging`.
+- **A stateful `hw_func` called more than once from the same source line inside an
+  unrolled `for`/`while` loop shares ONE register bank across all those calls in native
+  sim, but gets an independent bank per unrolled call site in real hardware.** Loops
+  themselves just run as plain Python here — native sim never touches PY_TO_LOGIC's
+  elaborator, so `loop_instance_prefix`'s `FOR_<var>_ITER_<n>_` naming plays no role in
+  sim at all — so nothing distinguishes one unrolled call site from another: instance
+  identity is `_sim_inst_stack`'s
+  `(fn.__qualname__, call_loc)` (`pypeline.py`), and `call_loc` is the call's *source
+  location*, not its iteration ordinal — every call from one `for`-loop line shares one
+  `call_loc`, hence one `_sim_reg_state` key. With calls chained within a cycle (one
+  call's output feeding the next call's input, both updating the same accumulator), this
+  is not just an internal-bookkeeping difference: native sim's shared register (reads
+  always see the value committed at the *last* clock edge, never a same-cycle write — see
+  the buffered-write discipline above — so every call within a cycle reads identically,
+  and the last call's write simply overwrites the others', last-write-wins) can settle
+  into a steady state real hardware's independent registers never reach. Confirmed via
+  `pypeline_sim_debug.py` (`sim_loop_reg_state_known_issue.py`,
+  `src/tests/pypeline_tests/known_issues_tests.py`): native sim's shared counter sticks at
+  a constant value while the equivalent hardware's two independent registers keep
+  diverging, cycle-print output MISMATCHing from cycle 2 on. Not fixed — no attempt is
+  made to give native sim a per-ordinal instance-stack component, since that would mean
+  AST-rewriting every loop body that might contain a stateful call (today's
+  `_build_reg_sim_func` rewrite triggers per-*function*, not per-loop) for a divergence
+  that only bites a call chained within one cycle, not the far more common "N independent
+  counters with no cross-call dependency" shape (where the two engines already agree, by
+  the same reasoning that makes the shared register's value trajectory match an
+  independent one when nothing chains through it mid-cycle).
 
 ---
 

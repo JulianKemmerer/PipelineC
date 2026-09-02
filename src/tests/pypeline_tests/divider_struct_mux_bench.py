@@ -91,8 +91,12 @@ def main(argv=None):
         and placement.get("bit_boundary") == 16
         and placement.get("realized")
     ]
+    # Terminal step is bit-index i == 0; the source counts i DOWN via
+    # `for i in range(31, -1, -1)`, so instance names (which carry the
+    # unroll ORDINAL, not the loop value) place i == 0 at the LAST
+    # unrolled copy, ordinal 31.
     terminal_chunked = any(
-        "FOR_i_0_MUX_" in placement.get("instance_path", "")
+        "FOR_i_ITER_31_MUX_" in placement.get("instance_path", "")
         and "if_remainder" in placement.get("instance_path", "")
         for placement in chunked
     )

@@ -332,11 +332,19 @@ def _exact_boundary_config(
         minus_by_iteration = {}
         mux_by_iteration = {}
         for inst_path, candidate_id in output_by_instance.items():
-            match = re.search(r"FOR_i_(\d+)_(BIN_OP_MINUS|MUX_uint32_t_if_remainder)", inst_path)
+            match = re.search(
+                r"FOR_i_ITER_(\d+)_(BIN_OP_MINUS|MUX_uint32_t_if_remainder)", inst_path
+            )
             if match is None:
                 continue
+            # Instance names carry the unroll ORDINAL (0 = first unrolled
+            # copy), not the loop value -- and the source counts i DOWN via
+            # `for i in range(31, -1, -1)`, so ordinal n is bit-index
+            # i = 31 - n. Recover the bit index the rest of this function
+            # keys on (it needs "which bit", not "which unroll order").
+            bit_index = 31 - int(match.group(1))
             table = minus_by_iteration if match.group(2) == "BIN_OP_MINUS" else mux_by_iteration
-            table[int(match.group(1))] = (inst_path, candidate_id)
+            table[bit_index] = (inst_path, candidate_id)
         if set(minus_by_iteration) != set(range(32)) or set(mux_by_iteration) != set(range(32)):
             raise ValueError("reference trace lacks the 32 Divider iteration operations")
         output_selectors = []
@@ -387,7 +395,11 @@ def _exact_boundary_config(
                 terminal_muxes.extend(
                     placement
                     for placement in main.get("candidates", ())
-                    if "FOR_i_0_MUX_uint32_t_if_remainder"
+                    # Terminal step is bit-index i == 0; the source counts i
+                    # DOWN via `for i in range(31, -1, -1)`, so i == 0 is the
+                    # LAST unrolled copy, ordinal 31 (see the matching note
+                    # above output_by_instance's own FOR_i_ITER_ scan).
+                    if "FOR_i_ITER_31_MUX_uint32_t_if_remainder"
                     in placement.get("instance_path", "")
                 )
             if len(terminal_muxes) != 1:

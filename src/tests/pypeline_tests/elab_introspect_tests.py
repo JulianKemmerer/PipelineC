@@ -169,6 +169,20 @@ def get_tests() -> list:
             cmd=[INST_DIR / "name_index_test.py"],
         )
     )
+    # Iteration-ordinal loop naming (_elab_for/_bind_const_target/
+    # _elab_unpack_assign, plus _elab_call's expression-callee branch):
+    # FOR_<var>_ITER_<n>_ shape + legality across tuple/dict/string/
+    # enumerate/zip iteration, tuple-target and tuple-unpack-assignment
+    # destructuring, an indexed call target, determinism across two
+    # PARSE_FILE calls, and every rejection path (set/frozenset, starred
+    # targets, arity mismatch, non-iterable, non-callable call target).
+    tests.append(
+        Test(
+            name="loop_iter_naming_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "loop_iter_naming_test.py"],
+        )
+    )
     return tests
 
 

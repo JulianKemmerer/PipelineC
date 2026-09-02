@@ -58,6 +58,13 @@ COMB_TEST_FILES = [
     ("self_check_autofsm_test.py", INST_DIR, []),
     # make_stream_autofsm's handshake wrapper, same --comb/non---comb split.
     ("self_check_stream_autofsm_test.py", INST_DIR, []),
+    # Iteration-ordinal loop naming (_elab_for/_bind_const_target/
+    # _elab_unpack_assign) through real GHDL: tuple/enumerate/zip/dict/str
+    # iteration, tuple-target and tuple-unpack-assignment destructuring, a
+    # negative loop value, an indexed call target, and the rewritten
+    # make_soft_mult_carry_save (soft_mult.py) all in one accumulation
+    # chain -- see the design file's own docstring for the full list.
+    ("self_check_loop_unpack_test.py", INST_DIR, []),
     ("global_wire_partial_field_test.py", INST_DIR, []),
     ("global_wire_read_write_test.py", INST_DIR, []),
     ("global_wire_split_driver_test.py", INST_DIR, []),

@@ -535,15 +535,17 @@ def make_soft_cmp_chunked(op, chunk_bits=8):
             hi -= c
         n_chunks = len(bounds)
 
-        # The elaborator only accepts a bare-name call target (confirmed by
-        # hitting "'Subscript' object has no attribute 'id'" from
-        # leaf_fns[j](...)) -- a Python list of distinct per-chunk closures
-        # indexed at HDL-loop time is not callable. By construction only the
-        # leading (most-significant) chunk can have a width other than `c`,
-        # so every OTHER chunk shares one width and can share ONE leaf
-        # hw_func, called identically (same bare name) across the unrolled
-        # loop; only the top chunk (which alone needs the sign-bit special
-        # case) gets its own separate hw_func, called once, also by name.
+        # By construction only the leading (most-significant) chunk can have
+        # a width other than `c`, so every OTHER chunk shares one width and
+        # deliberately shares ONE leaf hw_func -- called identically (same
+        # bare name) across the unrolled loop -- rather than one leaf per
+        # chunk: a distinct per-chunk closure indexed by the loop variable
+        # (`leaf_fns[j](...)`) would elaborate fine, but would fragment this
+        # back into N near-identical leaf entities for no QoR benefit, the
+        # same one-shared-entity-beats-N-per-op tradeoff soft_mult.py's
+        # carry-save add entity makes (see that file's module comment).
+        # Only the top chunk (which alone needs the sign-bit special case)
+        # gets its own separate hw_func, called once, also by name.
         top_width = bounds[0][0] - bounds[0][1] + 1
         top_t = make_uint_t(top_width)
         leaf_fn_top = _make_chunk_leaf(top_width, True, is_signed)

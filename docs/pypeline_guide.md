@@ -285,8 +285,9 @@ idea worked out for a specific piece of syntax.
   elaborated into real logic; a multiplexer picks between their results every cycle (see
   [Control flow](#your-first-hardware-function)).
 - **`for`/`while` loops are unrolled at compile time.** The loop variable is a plain
-  Python integer; the compiler emits one copy of the loop body per iteration (see
-  [`for`/`while` → loop unrolling](#your-first-hardware-function)).
+  Python value (an int, or any other compile-time-constant object — a tuple, a string,
+  whatever the loop iterates over); the compiler emits one copy of the loop body per
+  iteration (see [`for`/`while` → loop unrolling](#your-first-hardware-function)).
 - **Registers have cycle semantics, not variable semantics.** A `Reg[T]` read returns
   the value latched at the *previous* clock edge; a write schedules the value latched at
   the *next* one (see [Registers: `Reg[T]`](#registers-regt)).
@@ -635,8 +636,10 @@ The result type is always `uint1_t`.
 #### `for` / `while` → loop unrolling
 
 Loops are **fully unrolled at compile time**.
-The loop variable is a Python integer (not a hardware signal); the compiler emits one
-copy of the body for each iteration.
+The loop variable is a plain Python value (not a hardware signal) — an int is the common
+case, but anything Python can iterate works: a `tuple`/`list` (including one of tuples, with
+the target destructuring each element), `dict`, `str`, `enumerate(...)`, `zip(...)`, a
+generator expression. The compiler emits one copy of the body for each iteration.
 
 ```python
 def sum_array(arr: uint32_t[4]) -> uint32_t:
@@ -644,14 +647,21 @@ def sum_array(arr: uint32_t[4]) -> uint32_t:
     for i in range(4):        # unrolled 4 times; i is 0, 1, 2, 3 at elaboration time
         total = total + arr[i]
     return total
+
+def sum_scaled(arr: uint32_t[3]) -> uint32_t:
+    total: uint32_t = 0
+    for i, scale in [(0, 2), (1, 3), (2, 4)]:   # tuple target, tuple-valued iterable
+        total = total + arr[i] * scale
+    return total
 ```
 
 `while` loops work the same way: the condition must be evaluable at compile time
 (i.e. it must only reference plain Python values, not hardware signals).
 
 The loop body may contain hardware expressions (reads from inputs, assignments to wires),
-but the loop *control* itself (the range, the condition, the counter variable) is always
-pure Python.
+but the loop *control* itself (the range, the condition, the counter variable(s)) is always
+pure Python. One exception: don't iterate a `set`/`frozenset` — its order isn't guaranteed
+across runs (`sorted(...)` it first if you need one).
 
 ---
 
@@ -3950,10 +3960,9 @@ built yet."
 | Language | **Casting to `char_t`, an `@enum`, or an array type** | Not supported | Scalar int/uint casting, and compound (struct/`@interface`-half) casting via `@cast`/`register_cast`, are supported (see [Casting](#casting)) — these three destination kinds are the exceptions |
 | Language | **Hardware signals as loop conditions** | Not supported | `for`/`while` loop bounds must be compile-time Python integers (fully unrollable) |
 | Language | **`break` inside a loop** | Not supported | Restructure the loop body (e.g. an early-exit flag checked each iteration) instead |
-| Language | **Tuple unpacking in a `for` loop target, or of a closure constant** | Not supported | `for a, b in pairs:` and `a, b = some_closure_tuple` both fail to elaborate; index the tuple/pair explicitly instead (`p[0]`, `p[1]`) |
+| Language | **Iterating a `set`/`frozenset` in a `for` loop** | Not supported | Iteration order is `PYTHONHASHSEED`-dependent, not a deterministic function of the design source; `sorted(...)` it first — tuple/list/dict/str/`enumerate`/`zip`/generator iteration, and a nested-tuple loop target (`for kind, a, b in ops:`), are all fine |
 | Language | **Exotic closure value types** | Restricted | A closure capture must be a C-type, `int`/`bool`/`None`, a callable, or a list/tuple of the above — other captured Python object types fail to elaborate |
-| Language | **A call target that is a subscript expression** | Not supported | `leaf_fns[j](...)` (indexing into a list of distinct per-index closures) fails with `AttributeError: 'Subscript' object has no attribute 'id'`; give each differently-shaped callable its own bare-name local instead of indexing into a list of them |
-| Language | **A slice used directly as a call argument** | Not supported | `f(ae[hi:lo], ...)` fails the same way as a subscripted call target; assign the slice to a typed local first (`x: t = ae[hi:lo]`, then `f(x, ...)`) |
+| Language | **A slice used directly as a call argument** | Not supported | `f(ae[hi:lo], ...)` fails the same way a subscripted call target used to; assign the slice to a typed local first (`x: t = ae[hi:lo]`, then `f(x, ...)`) |
 | Language | **`from module import *`** | Not supported | Only qualified imports (`import module`) are supported |
 | Language | **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead |
 | Language | **Control flow inside an interface function** | Rejected | `if`/`for`/`while` and conditional expressions in an interface-function body raise an `InterfaceError`; route conditional steering through an explicit handshake mux/demux module instead (see [`@interface`](#bidirectional-ports-interface)). Interfaces are also point-to-point: fan-out of a single interface, dangling outputs and input-to-output bypass are rejected — fan out through a module with an [array port](#array-ports-fan-out) instead. Array *input* ports are not supported. Compile-time `for`/`while` unrolling in ordinary `@hw_func`s is unaffected |

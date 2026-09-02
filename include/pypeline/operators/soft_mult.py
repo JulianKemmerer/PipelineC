@@ -274,16 +274,15 @@ def make_soft_mult_karatsuba(l_t, r_t, threshold=16):
 # own body is a SINGLE unrolled Python `for` loop over that level's
 # closure-planned op list, branching on each op's elaboration-time-constant
 # kind -- exactly the idiom make_soft_div_radix's soft_div_radix already
-# uses (operators/soft_div.py:204-277: `for step_idx in range(len(steps)):`
-# over a closure-planned `steps` list, indexing per-iteration-varying
-# closure data, bit_assign-ing an inline varying-width slice). An earlier
-# version of this file's comment claimed this was impossible ("rules out
-# one uniform hw_func loop body... no existing precedent") -- that was
-# wrong; soft_div_radix was already doing it two files over. Every
-# DECLARED LOCAL inside the loop keeps one fixed type across every
-# iteration (op_t, sum_t); only elaboration-time integers (bit offsets,
-# widths) vary, which is what the loop var and the closure-planned op
-# tuples actually carry.
+# uses (operators/soft_div.py:204-271: `for step_bits in steps:` over a
+# closure-planned `steps` list, indexing per-iteration-varying closure data,
+# bit_assign-ing an inline varying-width slice). An earlier version of this
+# file's comment claimed this was impossible ("rules out one uniform
+# hw_func loop body... no existing precedent") -- that was wrong;
+# soft_div_radix was already doing it two files over. Every DECLARED LOCAL
+# inside the loop keeps one fixed type across every iteration (op_t,
+# sum_t); only elaboration-time integers (bit offsets, widths) vary, which
+# is what the loop var and the closure-planned op tuples actually carry.
 #
 # This collapses what used to be ~2,700 entities (one @wires leaf per bit
 # slice, one @wires node per 2-input concat, one @hw_func wrapper per add,
@@ -294,12 +293,14 @@ def make_soft_mult_karatsuba(l_t, r_t, threshold=16):
 # section 11). Two things made the old per-op-entity shape seem necessary
 # and turned out not to matter:
 #
-# 1. An indexed call target is not callable (`leaf_fns[j](...)` fails --
-#    confirmed again at PY_TO_LOGIC.py:4697/5004, `callee_name =
-#    expr.func.id`; documented workaround at soft_cmp.py:530-546). This is
-#    real and still true, but it only forces every loop iteration to call
-#    the SAME bare-named entity, not a *different* entity per op -- which
-#    is exactly what one shared, WIDTH-NORMALIZED add entity already gives.
+# 1. Every loop iteration calls the SAME bare-named add entity, never a
+#    *different* entity per op. (An indexed/expression call target --
+#    `leaf_fns[j](...)`, a Python list of distinct per-op closures indexed
+#    by the loop variable -- elaborates fine too now; PY_TO_LOGIC._elab_call
+#    resolves any const-foldable callee expression, not just a bare name.
+#    That would still be the wrong shape here, though: it swaps the
+#    fragmentation this file is deliberately avoiding back in, one leaf
+#    entity per op instead of one shared, WIDTH-NORMALIZED add entity.)
 # 2. Every add's operands are zero-extended (by plain reassignment into an
 #    already-declared max_width-wide local) up to one common shape before
 #    the call, and the result is narrowed back down via an inline slice at
@@ -539,12 +540,9 @@ def _get_carry_save_chunk_add(w):
 
 def _flatten_carry_save_ops(ops):
     """Normalize a level's op list (as _plan_carry_save_levels emits it)
-    into fixed-shape int tuples a single unrolled hw_func loop can index
-    (OPS[i][k] for a constant k) without ever tuple-unpacking -- the
-    elaborator tries to emit a whole tuple as one hardware value on
-    unpack, soft_div.py:214-217 -- and without ever indexing a Python list
-    of distinct per-op closures by a loop variable -- an indexed call
-    target is not callable, soft_cmp.py:530-546.
+    into fixed-shape int tuples a single unrolled hw_func loop can unpack
+    (kind, then either a 'pass' or an 'add' payload -- see the Returns note
+    below) each iteration via `for op in OPS:`.
 
     `rest` (the low bits below an add's shift, unaffected by the add)
     becomes its own ordinary 'pass' entry at the add's output offset; the
@@ -580,7 +578,7 @@ def _build_carry_save_stage(levels, idx, in_width, out_bits, max_width, final_ou
     `result` up bit-by-bit via bit_assign -- the same "closure-planned op
     list, one hw_func, per-iteration inline slices" idiom
     make_soft_div_radix's soft_div_radix already uses (soft_div.py:204-
-    277) -- with the hand-off to the NEXT level folded into the SAME
+    271) -- with the hand-off to the NEXT level folded into the SAME
     entity's own tail call (bare name, like make_soft_add_tree_shifted's
     own levels call each other) rather than a separate wrapper stage.
     Deeper levels are built FIRST via plain Python recursion at
@@ -590,10 +588,10 @@ def _build_carry_save_stage(levels, idx, in_width, out_bits, max_width, final_ou
 
     Every declared local inside the loop (ac_raw/bc_raw/s) keeps ONE fixed
     type across every iteration; only the elaboration-time integers
-    (offsets, widths) vary, via branch elimination on OPS[i][0] (kind) --
-    a closure-constant int, so `if kind == 0: ... else: ...` never becomes
-    a hardware mux, exactly like soft_div_radix's own `if op ==
-    _OP_SHL1:`.
+    (offsets, widths) vary, via branch elimination on kind (op[0], unpacked
+    fresh each iteration from OPS) -- a closure-constant int, so `if kind
+    == 0: ... else: ...` never becomes a hardware mux, exactly like
+    soft_div_radix's own `if op == _OP_SHL1:`.
 
     The final level's raw reduction result can be wider OR narrower than
     out_bits (_plan_carry_save_levels's own docstring) -- handled by ONE
@@ -636,7 +634,6 @@ def _build_carry_save_stage(levels, idx, in_width, out_bits, max_width, final_ou
     levels do."""
     ops = levels[idx]
     OPS = _flatten_carry_save_ops(ops)
-    n_ops = len(OPS)
     out_width = _carry_save_level_out_width(ops)
     has_add = any(o[0] == 1 for o in OPS)
     is_last = idx == len(levels) - 1
@@ -654,23 +651,16 @@ def _build_carry_save_stage(levels, idx, in_width, out_bits, max_width, final_ou
             @wires
             def stage(terms: bus_in_t) -> final_out_t:
                 result: bus_out_t = 0
-                for i in range(n_ops):
-                    kind = OPS[i][0]
+                for op in OPS:
+                    kind = op[0]
                     if kind == 0:
-                        ioff = OPS[i][1]
-                        w = OPS[i][2]
-                        ooff = OPS[i][3]
+                        _, ioff, w, ooff = op
                         if w == 1:
                             result = bit_assign(result, terms[ioff], ooff)
                         else:
                             result = bit_assign(result, terms[ioff + w - 1:ioff], ooff)
                     else:
-                        ac_off = OPS[i][1]
-                        ac_w = OPS[i][2]
-                        bc_off = OPS[i][3]
-                        bc_w = OPS[i][4]
-                        op_w = OPS[i][5]
-                        out_off = OPS[i][6]
+                        _, ac_off, ac_w, bc_off, bc_w, op_w, out_off = op
                         ac_raw: op_t = 0
                         bc_raw: op_t = 0
                         if ac_w == 1:
@@ -694,23 +684,16 @@ def _build_carry_save_stage(levels, idx, in_width, out_bits, max_width, final_ou
             @hw_func
             def stage(terms: bus_in_t) -> final_out_t:
                 result: bus_out_t = 0
-                for i in range(n_ops):
-                    kind = OPS[i][0]
+                for op in OPS:
+                    kind = op[0]
                     if kind == 0:
-                        ioff = OPS[i][1]
-                        w = OPS[i][2]
-                        ooff = OPS[i][3]
+                        _, ioff, w, ooff = op
                         if w == 1:
                             result = bit_assign(result, terms[ioff], ooff)
                         else:
                             result = bit_assign(result, terms[ioff + w - 1:ioff], ooff)
                     else:
-                        ac_off = OPS[i][1]
-                        ac_w = OPS[i][2]
-                        bc_off = OPS[i][3]
-                        bc_w = OPS[i][4]
-                        op_w = OPS[i][5]
-                        out_off = OPS[i][6]
+                        _, ac_off, ac_w, bc_off, bc_w, op_w, out_off = op
                         ac_raw: op_t = 0
                         bc_raw: op_t = 0
                         if ac_w == 1:
@@ -741,23 +724,16 @@ def _build_carry_save_stage(levels, idx, in_width, out_bits, max_width, final_ou
         @wires
         def stage(terms: bus_in_t) -> final_out_t:
             result: bus_out_t = 0
-            for i in range(n_ops):
-                kind = OPS[i][0]
+            for op in OPS:
+                kind = op[0]
                 if kind == 0:
-                    ioff = OPS[i][1]
-                    w = OPS[i][2]
-                    ooff = OPS[i][3]
+                    _, ioff, w, ooff = op
                     if w == 1:
                         result = bit_assign(result, terms[ioff], ooff)
                     else:
                         result = bit_assign(result, terms[ioff + w - 1:ioff], ooff)
                 else:
-                    ac_off = OPS[i][1]
-                    ac_w = OPS[i][2]
-                    bc_off = OPS[i][3]
-                    bc_w = OPS[i][4]
-                    op_w = OPS[i][5]
-                    out_off = OPS[i][6]
+                    _, ac_off, ac_w, bc_off, bc_w, op_w, out_off = op
                     ac_raw: op_t = 0
                     bc_raw: op_t = 0
                     if ac_w == 1:
@@ -780,23 +756,16 @@ def _build_carry_save_stage(levels, idx, in_width, out_bits, max_width, final_ou
         @hw_func
         def stage(terms: bus_in_t) -> final_out_t:
             result: bus_out_t = 0
-            for i in range(n_ops):
-                kind = OPS[i][0]
+            for op in OPS:
+                kind = op[0]
                 if kind == 0:
-                    ioff = OPS[i][1]
-                    w = OPS[i][2]
-                    ooff = OPS[i][3]
+                    _, ioff, w, ooff = op
                     if w == 1:
                         result = bit_assign(result, terms[ioff], ooff)
                     else:
                         result = bit_assign(result, terms[ioff + w - 1:ioff], ooff)
                 else:
-                    ac_off = OPS[i][1]
-                    ac_w = OPS[i][2]
-                    bc_off = OPS[i][3]
-                    bc_w = OPS[i][4]
-                    op_w = OPS[i][5]
-                    out_off = OPS[i][6]
+                    _, ac_off, ac_w, bc_off, bc_w, op_w, out_off = op
                     ac_raw: op_t = 0
                     bc_raw: op_t = 0
                     if ac_w == 1:

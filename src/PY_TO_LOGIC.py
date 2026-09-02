@@ -492,6 +492,10 @@ _MAX_MANGLE_NAME_LEN = 128
 # recursion (each nesting level consumes ~2 of these, one per direction).
 _MAX_CALLABLE_RECURSION_DEPTH = 16
 
+# Safety limit shared by _elab_for and _elab_while: prevents a non-terminating
+# (or absurdly long) compile-time loop from hanging the compiler.
+_MAX_LOOP_UNROLL = 65536
+
 # Call-site aliases too generic to name a submodule instance with (see
 # _elab_submodule_instance) -- typically a factory's own pass-through
 # parameter name (make_stream_pipeline's `func`, etc.), never the thing
@@ -2011,6 +2015,27 @@ class ElaborationError(Exception):
     pass
 
 
+def _const_target_names(target):
+    """Flat tuple of every leaf ast.Name id in a (possibly nested) constant
+    assignment target -- a bare Name, or a Tuple/List of the same. Used by
+    _elab_for (the loop target) and _elab_unpack_assign (an unpacking
+    assignment target) -- both bind their values via _bind_const_target,
+    never by building a hardware value for the tuple/list itself."""
+    if isinstance(target, ast.Name):
+        return (target.id,)
+    if isinstance(target, (ast.Tuple, ast.List)):
+        names = []
+        for elt in target.elts:
+            if isinstance(elt, ast.Starred):
+                raise NotImplementedError(
+                    f"starred assignment targets (a, *rest = ...) are not "
+                    f"supported: {ast.dump(target)}"
+                )
+            names.extend(_const_target_names(elt))
+        return tuple(names)
+    raise NotImplementedError(f"Unsupported assignment target: {ast.dump(target)}")
+
+
 class FuncElaborator:
     def __init__(
         self, func_def, parser_state, src_file, module_globals=None, module_prefix=None
@@ -2275,6 +2300,13 @@ class FuncElaborator:
                 # The slice/index expression is a genuine READ context -- do not
                 # add it to the store chain (ast.walk visits it normally below).
                 visit_target(node.value, into)
+            elif isinstance(node, (ast.Tuple, ast.List)):
+                # a, b = ... / a, (b, c) = ... -- unpacking assignment target;
+                # recurse into every element (each is its own store chain).
+                for elt in node.elts:
+                    visit_target(
+                        elt.value if isinstance(elt, ast.Starred) else elt, into
+                    )
 
         for node in ast.walk(self.func_def):
             if isinstance(node, ast.Assign):
@@ -2843,6 +2875,12 @@ class FuncElaborator:
                 ast.fix_missing_locations(synthetic_if)
                 self._elab_if(synthetic_if)
             return
+        # a, b = <rhs>  (including nested a, (b, c) = <rhs>) -- unpacking
+        # assignment. Handled entirely separately from the single-target
+        # paths below (_parse_ref_toks has no Tuple/List case).
+        if isinstance(target, (ast.Tuple, ast.List)):
+            self._elab_unpack_assign(stmt, target)
+            return
         # For simple Name targets not already declared as hardware:
         # try to evaluate RHS as a pure Python elaboration constant first.
         # Global wire names are never cached as elaboration constants — always hardware.
@@ -3077,6 +3115,71 @@ class FuncElaborator:
             ref_toks = (base_var,)
             self._declare_var(base_var, rhs_type, target)
         self._write_ref(ref_toks, rhs_wire, rhs_type, stmt.value)
+
+    def _elab_unpack_assign(self, stmt, target):
+        """a, b = <rhs>  (or nested a, (b, c) = <rhs>) -- tuple/list-unpacking
+        assignment.
+
+        Case A: <rhs> evaluates fully at elaboration time (no hardware wires
+        involved) -- e.g. `op, pa, pb = plan[m]` where plan is a closure
+        constant and m a constant loop index, or `i, j = 0, 1`. Pure Python
+        bookkeeping via _bind_const_target (which recurses through nested
+        tuple/list targets for free); no hardware is built. Mirrors
+        _elab_assign's single-Name fast path: only taken when no target leaf
+        is already a declared hardware wire or global wire name -- once a
+        name is hardware, it stays hardware on every later reassignment.
+
+        Case B: <rhs> is a literal Tuple/List of hardware expressions with a
+        flat (non-nested) target, e.g. `a, b = b, a`. Lowered to synthetic
+        single-target assignments through per-element temporaries, reusing
+        the ordinary _elab_assign machinery for each element (struct ctors,
+        compound init, global wires, bit-slice assign, existing-hardware
+        widening, ...) instead of duplicating it here.
+        """
+        target_names = _const_target_names(target)
+        loc = _loc_str(self.src_file, stmt)
+        const_val = None
+        if all(
+            _sanitize_vhdl_name(n) not in self.env
+            and self._resolve_global_wire(n) is None
+            for n in target_names
+        ):
+            const_val = self._try_eval_const(stmt.value)
+        if const_val is not None:
+            self._bind_const_target(target, const_val, stmt)
+            return
+        if not isinstance(stmt.value, (ast.Tuple, ast.List)):
+            raise ElaborationError(
+                f"unpacking assignment requires either a compile-time-constant "
+                f"RHS or a literal tuple/list RHS of hardware expressions "
+                f"(at {loc}): {ast.dump(stmt.value)}"
+            )
+        if not all(isinstance(elt, ast.Name) for elt in target.elts):
+            raise NotImplementedError(
+                f"a hardware-valued unpacking RHS only supports a flat "
+                f"(non-nested) target -- e.g. 'a, b = b, a' (at {loc})"
+            )
+        if len(stmt.value.elts) != len(target.elts):
+            raise ElaborationError(
+                f"cannot unpack {len(stmt.value.elts)} value(s) into "
+                f"{len(target.elts)} target(s) (at {loc})"
+            )
+        temps = []
+        for i, elt in enumerate(stmt.value.elts):
+            tmp_target = ast.Name(id=f"UNPACK_{i}_{loc}", ctx=ast.Store())
+            ast.copy_location(tmp_target, elt)
+            tmp_assign = ast.Assign(targets=[tmp_target], value=elt)
+            ast.copy_location(tmp_assign, elt)
+            ast.fix_missing_locations(tmp_assign)
+            self._elab_assign(tmp_assign)
+            temps.append(tmp_target.id)
+        for leaf_target, tmp_name in zip(target.elts, temps):
+            tmp_read = ast.Name(id=tmp_name, ctx=ast.Load())
+            ast.copy_location(tmp_read, stmt)
+            real_assign = ast.Assign(targets=[leaf_target], value=tmp_read)
+            ast.copy_location(real_assign, stmt)
+            ast.fix_missing_locations(real_assign)
+            self._elab_assign(real_assign)
 
     def _elab_ann_assign(self, stmt):
         var_name = self._hw_name(stmt.target.id)
@@ -3432,28 +3535,94 @@ class FuncElaborator:
             self._elab_assign(synth)
 
     def _elab_for(self, stmt):
-        """for i in range(...): ...  or  for f in some_tuple: ...
-        The iter must evaluate to a constant Python iterable at elaboration time.
-        Loop variable stored in const_env at each iteration value.
+        """for i in range(...): ...  or  for kind, a, b in OPS: ...
+        The iter must evaluate to a constant Python iterable at elaboration
+        time -- any iterable Python supports (range/tuple/list/dict/str/
+        enumerate/zip/generator/...) except set/frozenset, whose iteration
+        order is not a deterministic function of the design source
+        (PYTHONHASHSEED-dependent -- sorted(...) it instead).
+
+        The target may be a bare Name or a nested Tuple/List (destructuring
+        unpack), bound into const_env each iteration by _bind_const_target --
+        never a hardware value.
+
+        Instances/aliases emitted inside the body are named by ITERATION
+        ORDINAL (FOR_<target>_ITER_<n>_), not by the iterator value: the
+        value can be any Python object (a tuple, a float, a negative int, an
+        opaque object) and is not guaranteed to be a legal, unique or
+        deterministic VHDL name fragment, whereas the ordinal always is.
         """
+        if stmt.orelse:
+            raise NotImplementedError("for/else is not supported")
         iter_val = self._try_eval_const(stmt.iter)
-        if not isinstance(iter_val, (range, tuple, list)):
+        if iter_val is None:
             raise ElaborationError(
-                f"for loop iter must be a constant range/tuple/list, got: {type(iter_val)} "
-                f"from {ast.dump(stmt.iter)}"
+                f"for loop iter must be a constant iterable at elaboration "
+                f"time (it may reference a hardware wire): "
+                f"{ast.dump(stmt.iter)}"
             )
-        if not isinstance(stmt.target, ast.Name):
-            raise NotImplementedError("for loop target must be a simple name")
-        loop_var = stmt.target.id
-        safe_loop_var = _sanitize_vhdl_name(loop_var)  # for wire/inst prefix only
+        if isinstance(iter_val, (set, frozenset)):
+            raise ElaborationError(
+                f"for loop iter must not be a set/frozenset -- iteration "
+                f"order is not a deterministic function of the design "
+                f"source (PYTHONHASHSEED-dependent); use sorted(...) "
+                f"instead: {ast.dump(stmt.iter)}"
+            )
+        try:
+            it = iter(iter_val)
+        except TypeError:
+            raise ElaborationError(
+                f"for loop iter is not iterable at elaboration time (got "
+                f"{type(iter_val).__name__}): {ast.dump(stmt.iter)}"
+            )
+        items = []
+        for val in it:
+            items.append(val)
+            if len(items) > _MAX_LOOP_UNROLL:
+                raise ElaborationError(
+                    f"for loop exceeded {_MAX_LOOP_UNROLL} unroll "
+                    f"iterations: {ast.dump(stmt.iter)}"
+                )
+        target_names = _const_target_names(stmt.target)
+        label = "_".join(_sanitize_vhdl_name(n) for n in target_names) or "v"
+        if len(label) > 32:
+            label = _sanitize_vhdl_name(target_names[0]) + "_etc"
         outer_prefix = self.loop_instance_prefix
-        for val in iter_val:
-            self.const_env[loop_var] = val  # const_env uses raw Python name for eval
-            self.loop_instance_prefix = f"{outer_prefix}FOR_{safe_loop_var}_{val}_"
+        for n, val in enumerate(items):
+            self._bind_const_target(stmt.target, val, stmt)
+            self.loop_instance_prefix = f"{outer_prefix}FOR_{label}_ITER_{n}_"
             for s in stmt.body:
                 self._elab_stmt(s)
         self.loop_instance_prefix = outer_prefix
-        # leave loop_var at its last value (matches PipelineC behaviour)
+        # leave loop var(s) at their last value (matches PipelineC behaviour)
+
+    def _bind_const_target(self, target, value, node):
+        """Recursively destructure `value` onto a (possibly nested) Name/
+        Tuple/List assignment target, writing every leaf into const_env.
+        Pure elaboration-time bookkeeping -- never builds a hardware value.
+        Used by _elab_for (the loop target, every iteration) and
+        _elab_unpack_assign (a fully compile-time-constant unpack RHS)."""
+        if isinstance(target, ast.Name):
+            self.const_env[target.id] = value
+            return
+        if isinstance(target, (ast.Tuple, ast.List)):
+            try:
+                items = list(value)
+            except TypeError:
+                raise ElaborationError(
+                    f"cannot unpack non-iterable {type(value).__name__} "
+                    f"value (at {_loc_str(self.src_file, node)})"
+                )
+            if len(items) != len(target.elts):
+                raise ElaborationError(
+                    f"cannot unpack {len(items)} value(s) into "
+                    f"{len(target.elts)} target(s) (at "
+                    f"{_loc_str(self.src_file, node)})"
+                )
+            for elt, item in zip(target.elts, items):
+                self._bind_const_target(elt, item, node)
+            return
+        raise NotImplementedError(f"Unsupported assignment target: {ast.dump(target)}")
 
     def _elab_while(self, stmt):
         """while condition: body
@@ -3473,7 +3642,8 @@ class FuncElaborator:
 
         A safety limit prevents infinite loops from hanging the compiler.
         """
-        _MAX_UNROLL = 65536
+        if stmt.orelse:
+            raise NotImplementedError("while/else is not supported")
         iteration = 0
         outer_prefix = self.loop_instance_prefix
         while True:
@@ -3486,9 +3656,9 @@ class FuncElaborator:
                 )
             if not cond_val:
                 break
-            if iteration >= _MAX_UNROLL:
+            if iteration >= _MAX_LOOP_UNROLL:
                 raise ElaborationError(
-                    f"while loop exceeded {_MAX_UNROLL} unroll iterations — "
+                    f"while loop exceeded {_MAX_LOOP_UNROLL} unroll iterations — "
                     f"ensure the condition becomes False at elaboration time. "
                     f"Condition: {ast.dump(stmt.test)}"
                 )
@@ -4692,7 +4862,7 @@ class FuncElaborator:
             callee_def = self.parser_state.FuncLogicLookupTable.get(callee_name)
             if callee_def is None:
                 callee_def = self._elaborate_live_func(callee_name, live_func)
-        else:
+        elif isinstance(expr.func, ast.Name):
             # Simple name call: abs_int32(a)
             callee_name = expr.func.id
             if callee_name == "strlen":
@@ -4718,6 +4888,19 @@ class FuncElaborator:
                     raise NotImplementedError(
                         f"Call to unknown function '{callee_name}'"
                     )
+        elif callable(tag_probe):
+            # Any other callee expression that resolves, at elaboration time,
+            # to a live callable -- e.g. an indexed closure from an unrolled
+            # loop (leaf_fns[j](x)). tag_probe was already const-evaluated
+            # above; label the instance with the resolved callable's own
+            # name (mirrors the AUTOPIPELINE branch above), since a
+            # subscript/expression callee has no useful name of its own --
+            # _elaborate_live_func only uses this as call-site alias text,
+            # never as a lookup key, so a generic fallback name is safe.
+            callee_name = getattr(tag_probe, "__name__", "func")
+            callee_def = self._elaborate_live_func(callee_name, tag_probe)
+        else:
+            raise NotImplementedError(f"Unsupported call form: {ast.dump(expr.func)}")
         input_ports = []
         # Bind call arguments to the callee's input ports, mirroring Python:
         # positional args fill inputs left to right, keyword args bind by the
