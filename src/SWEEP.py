@@ -1586,6 +1586,15 @@ def _PARALLEL_BIT_FRONTIER(candidates, axis_unit):
     # movement is safe when the whole frontier
     # moves together to one physical unit; requiring it to remain in the
     # provisional unit silently reduced the frontier to one arbitrary leaf.
+    #
+    # This check (and placement_group_axis_unit below) assume each leaf
+    # collects exactly one request -- the only count known at formation time.
+    # A leaf that goes on to collect more than one (this group's own sibling
+    # group, e.g.) moves ALL of its requests together to a different but
+    # still common equal-width boundary once MATERIALIZE_BIT_PLACEMENT_
+    # REQUESTS sees the real count. That later, better-informed move is
+    # legitimate; SUMMARIZE_PLACEMENT_GROUPS records it (moved_from_planned)
+    # but does not require the realized unit to match this one-cut guess.
     if len(physical_units) != 1:
         return None
     physical_axis_unit = next(iter(physical_units))
@@ -2191,7 +2200,31 @@ def _LOWER_CHUNKED_MUX_TARGETS(targets, placements, landscape, parser_state):
     relabeling of the same one). Returns (cuts, placements) or None if
     nothing changed or a target's own geometry can't be resolved
     (source="planner" callers
-    then keep what they already had)."""
+    then keep what they already had).
+
+    A synchronized placement group (see _PARALLEL_OUTPUT_FRONTIER /
+    _PARALLEL_BIT_FRONTIER) must be materialized or removed atomically
+    (docs/VHDL_DESIGN.md). Chunking only some of a group's members would
+    leave the rest at their old, unchunked geometry while the group identity
+    still claims they form one synchronized frontier -- so a target is
+    dropped whenever a placement_group sibling of it (present in
+    ``placements``) is not also a target, e.g. a wide MUX output grouped
+    with a narrower one that does not itself clear the chunking width gate.
+    """
+    targets = dict(targets)
+    group_members = {}
+    for p in placements:
+        if p.placement_group_id is not None:
+            group_members.setdefault(p.placement_group_id, set()).add(
+                p.inst_path
+            )
+    target_paths = set(targets)
+    for member_paths in group_members.values():
+        if member_paths & target_paths and not member_paths <= target_paths:
+            for inst_path in member_paths:
+                targets.pop(inst_path, None)
+    if not targets:
+        return None
     segments = {segment.inst_path: segment for segment in landscape.segments}
     refined = [
         p
@@ -2234,6 +2267,13 @@ def _LOWER_CHUNKED_MUX_TARGETS(targets, placements, landscape, parser_state):
                 bit_boundaries=(boundary,),
                 leaf_axis_start=segment.start,
                 leaf_axis_end=segment.end,
+                placement_group_id=output.placement_group_id,
+                placement_group_kind=output.placement_group_kind,
+                placement_group_members=output.placement_group_members,
+                placement_group_registered_bits=(
+                    output.placement_group_registered_bits
+                ),
+                placement_group_axis_unit=output.placement_group_axis_unit,
             )
         )
     refined.sort(key=lambda p: (p.axis_position, p.candidate_id))
@@ -3279,6 +3319,86 @@ def DROP_NON_DEEPENING_PLACEMENTS(
     return new_cuts, remaining
 
 
+def SUMMARIZE_PLACEMENT_GROUPS(final_selected, main_func):
+    """Summarize each synchronized placement group's planned/realized members
+    and raise if it did not materialize as one atomic frontier.
+
+    ``planned_axis_unit`` is only a *provisional* one-cut estimate stamped by
+    ``_PARALLEL_BIT_FRONTIER`` before a leaf's final request count is known --
+    ``MATERIALIZE_BIT_PLACEMENT_REQUESTS`` runs afterward and can move every
+    member of a bit frontier together to a different (but still common)
+    equal-width boundary once the leaf's real count of collected requests is
+    known (see ``_PARALLEL_BIT_FRONTIER``'s own docstring). A 16-bit leaf
+    predicted alone lowers at bit 8 (unit 299); the same leaf collecting a
+    second parallel request instead lowers both members to bit 5 (unit 277).
+    That move is the documented, safe case -- the real invariant a
+    synchronized group must satisfy is that every planned member realized
+    AND all realized members share one physical axis unit, not that the
+    realized unit matches the stale one-cut prediction.
+
+    ``planned_members`` (``bit_internal_request:...@<raster position>`` ids,
+    from the planning-time request) and ``realized_members``
+    (``bit_internal:...#<ordinal>/<count>@bit<n>/<width>`` ids, from the
+    materialized placement) use different id schemes for the same logical
+    member and are therefore only ever compared by length, never by set
+    equality.
+    """
+    placement_groups_by_id = {}
+    for record in final_selected:
+        group_id = record.get("placement_group_id")
+        if group_id is None:
+            continue
+        group = placement_groups_by_id.setdefault(
+            group_id,
+            {
+                "placement_group_id": group_id,
+                "kind": record["placement_group_kind"],
+                "planned_members": record["placement_group_members"],
+                "member_count": record["placement_group_member_count"],
+                "registered_bits": record[
+                    "placement_group_registered_bits"
+                ],
+                "planned_axis_unit": record["placement_group_axis_unit"],
+                "realized_members": [],
+                "realized_axis_units": [],
+            },
+        )
+        group["realized_members"].append(record["candidate_id"])
+        group["realized_axis_units"].append(record["axis_unit"])
+    placement_groups = []
+    for group_id in sorted(placement_groups_by_id):
+        group = placement_groups_by_id[group_id]
+        group["realized_members"].sort()
+        group["realized_axis_units"] = sorted(
+            set(group["realized_axis_units"])
+        )
+        complete = len(group["realized_members"]) == group["member_count"]
+        one_unit = len(group["realized_axis_units"]) == 1
+        group["realized"] = complete and one_unit
+        group["realized_axis_unit"] = (
+            group["realized_axis_units"][0] if one_unit else None
+        )
+        group["moved_from_planned"] = (
+            one_unit and group["realized_axis_unit"] != group["planned_axis_unit"]
+        )
+        if not complete:
+            raise RuntimeError(
+                f"Parallel placement group {group_id!r} for {main_func} lost "
+                f"member(s): expected {group['member_count']}, realized "
+                f"{len(group['realized_members'])} "
+                f"({group['realized_members']})"
+            )
+        if not one_unit:
+            raise RuntimeError(
+                f"Parallel placement group {group_id!r} for {main_func} "
+                f"split across physical units {group['realized_axis_units']} "
+                "instead of materializing as one frontier; members: "
+                f"{group['realized_members']}"
+            )
+        placement_groups.append(group)
+    return placement_groups
+
+
 def WRITE_PIPELINE_PLACEMENT_TRACE(
     plans, parser_state, TimingParamsLookupTable, internal_config=None
 ):
@@ -3353,45 +3473,7 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
         final_selected.sort(
             key=lambda p: (p["axis_position"], p["candidate_id"])
         )
-        placement_groups_by_id = {}
-        for record in final_selected:
-            group_id = record.get("placement_group_id")
-            if group_id is None:
-                continue
-            group = placement_groups_by_id.setdefault(
-                group_id,
-                {
-                    "placement_group_id": group_id,
-                    "kind": record["placement_group_kind"],
-                    "planned_members": record["placement_group_members"],
-                    "member_count": record["placement_group_member_count"],
-                    "registered_bits": record[
-                        "placement_group_registered_bits"
-                    ],
-                    "planned_axis_unit": record["placement_group_axis_unit"],
-                    "realized_members": [],
-                    "realized_axis_units": [],
-                },
-            )
-            group["realized_members"].append(record["candidate_id"])
-            group["realized_axis_units"].append(record["axis_unit"])
-        placement_groups = []
-        for group_id in sorted(placement_groups_by_id):
-            group = placement_groups_by_id[group_id]
-            group["realized_members"].sort()
-            group["realized_axis_units"] = sorted(
-                set(group["realized_axis_units"])
-            )
-            group["realized"] = (
-                len(group["realized_members"]) == group["member_count"]
-                and group["realized_axis_units"] == [group["planned_axis_unit"]]
-            )
-            if not group["realized"]:
-                raise RuntimeError(
-                    f"Parallel placement group did not materialize as one "
-                    f"frontier: {group}"
-                )
-            placement_groups.append(group)
+        placement_groups = SUMMARIZE_PLACEMENT_GROUPS(final_selected, main_func)
 
         # A mini-sweep fixes a helper's *interior*.  Its edge banks are a
         # separate full-design choice and are retained here with the topology

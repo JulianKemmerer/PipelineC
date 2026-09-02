@@ -269,7 +269,18 @@ Each category module can also run standalone, e.g.
   rejects serial peers, proves a provisional bit frontier may move together
   to one equal-width physical unit, and preserves a cheaper coherent ancestor
   boundary. The floor/bit-cap tests cover grouped physical fingerprints and
-  atomic removal of a non-deepening boundary group.
+  atomic removal of a non-deepening boundary group. A dedicated case covers
+  two peer leaves each collecting two crossing bit requests -- the shape
+  that once crashed a real build
+  (`src/tests/pypeline_tests/inst/typed_placement_alignment_test.py`, run
+  under `native_vs_vhdl_sim_tests.py`): both leaves' realized boundaries
+  move together off the one-cut
+  prediction their groups were stamped with when formed, and
+  `SUMMARIZE_PLACEMENT_GROUPS` must accept that coherent move while still
+  rejecting a genuine split (members realizing on different units) or a lost
+  member. Two more cases confirm `CHUNK_SELECTED_MUX_OUTPUT_BANKS` carries a
+  group's identity through its same-depth lowering and leaves a group alone
+  when only some of its members clear the chunking width gate.
   Full WireGuard synthesis remains the integration/physical QoR gate.
 
 - WireGuard integration (opt-in, long-running) -- from a generated-output-free

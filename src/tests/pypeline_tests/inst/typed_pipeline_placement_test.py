@@ -597,6 +597,146 @@ def test_chunked_mux_refinement_replaces_outputs_and_covers_terminal_tail():
     assert forced[0].bit_boundaries == (3,)
 
 
+def _wide_mux_output(inst_path, func_name, axis_unit, axis_position, width,
+                      group_id=None, group_members=None,
+                      group_bits=None, group_unit=None):
+    return SWEEP.PipelinePlacement(
+        SWEEP.PipelinePlacement.INSTANCE_OUTPUT,
+        inst_path,
+        func_name,
+        axis_unit,
+        axis_position,
+        registered_bits=width,
+        span_units=10.0,
+        placement_group_id=group_id,
+        placement_group_kind="parallel_output_frontier" if group_id else None,
+        placement_group_members=group_members,
+        placement_group_registered_bits=group_bits,
+        placement_group_axis_unit=group_unit,
+    )
+
+
+def test_chunked_mux_lowering_preserves_group_identity():
+    # A parallel_output_frontier group of two wide (>=32 bit) MUX outputs
+    # must keep its group identity through CHUNK_SELECTED_MUX_OUTPUT_BANKS's
+    # same-depth lowering -- _LOWER_CHUNKED_MUX_TARGETS used to build a bare
+    # PipelinePlacement with no placement_group_* fields at all, silently
+    # detaching each chunked member from the group that claims they form one
+    # synchronized frontier.
+    insts = ["main__mux_a", "main__mux_b"]
+    muxes = {
+        inst: FakeLogic(
+            "MUX_uint64_t",
+            ["cond", "iftrue", "iffalse"],
+            ["return_output"],
+            {
+                "cond": "uint1_t",
+                "iftrue": "uint64_t",
+                "iffalse": "uint64_t",
+                "return_output": "uint64_t",
+            },
+        )
+        for inst in insts
+    }
+    ps = FakeParserState({"main": FakeLogic("main"), **muxes})
+    landscape = SWEEP.SliceLandscape("main", 20, 1.0)
+    for index, inst in enumerate(insts):
+        start = float(index * 10)
+        landscape.segments.append(SWEEP.Segment(
+            inst, "MUX_uint64_t", start, start + 10.0,
+            SWEEP.Segment.SLICEABLE_1LL,
+        ))
+    landscape.finalize({})
+
+    member_ids = (
+        "instance_output:main__mux_a@0.95",
+        "instance_output:main__mux_b@0.95",
+    )
+    group_id = "parallel_output_frontier:9:testgroup"
+    placements = [
+        _wide_mux_output(
+            "main__mux_a", "MUX_uint64_t", 9, 9.5, 64,
+            group_id, member_ids, 128, 9,
+        ),
+        _wide_mux_output(
+            "main__mux_b", "MUX_uint64_t", 19, 19.5, 64,
+            group_id, member_ids, 128, 9,
+        ),
+    ]
+
+    refined = SWEEP.CHUNK_SELECTED_MUX_OUTPUT_BANKS(placements, landscape, ps)
+    assert refined is not placements
+    assert len(refined) == 2
+    assert all(p.kind == SWEEP.PipelinePlacement.BIT_INTERNAL for p in refined)
+    assert all(p.placement_group_id == group_id for p in refined)
+    assert all(
+        p.placement_group_members == tuple(sorted(member_ids)) for p in refined
+    )
+    assert all(p.placement_group_registered_bits == 128 for p in refined)
+    assert all(p.placement_group_axis_unit == 9 for p in refined)
+
+
+def test_chunked_mux_skips_partially_qualifying_group():
+    # A group mixing a wide (chunkable) and narrow (never chunkable) MUX
+    # output must chunk NEITHER member -- chunking only the wide one would
+    # leave the group's synchronized-frontier claim half true.
+    wide_inst, narrow_inst = "main__mux_wide", "main__mux_narrow"
+    logics = {
+        wide_inst: FakeLogic(
+            "MUX_uint64_t",
+            ["cond", "iftrue", "iffalse"],
+            ["return_output"],
+            {
+                "cond": "uint1_t",
+                "iftrue": "uint64_t",
+                "iffalse": "uint64_t",
+                "return_output": "uint64_t",
+            },
+        ),
+        narrow_inst: FakeLogic(
+            "MUX_uint8_t",
+            ["cond", "iftrue", "iffalse"],
+            ["return_output"],
+            {
+                "cond": "uint1_t",
+                "iftrue": "uint8_t",
+                "iffalse": "uint8_t",
+                "return_output": "uint8_t",
+            },
+        ),
+    }
+    ps = FakeParserState({"main": FakeLogic("main"), **logics})
+    landscape = SWEEP.SliceLandscape("main", 20, 1.0)
+    landscape.segments.append(SWEEP.Segment(
+        wide_inst, "MUX_uint64_t", 0.0, 10.0, SWEEP.Segment.SLICEABLE_1LL,
+    ))
+    landscape.segments.append(SWEEP.Segment(
+        narrow_inst, "MUX_uint8_t", 10.0, 20.0, SWEEP.Segment.SLICEABLE_1LL,
+    ))
+    landscape.finalize({})
+
+    member_ids = (
+        f"instance_output:{wide_inst}@0.95",
+        f"instance_output:{narrow_inst}@0.95",
+    )
+    group_id = "parallel_output_frontier:9:mixedwidth"
+    placements = [
+        _wide_mux_output(
+            wide_inst, "MUX_uint64_t", 9, 9.5, 64,
+            group_id, member_ids, 72, 9,
+        ),
+        _wide_mux_output(
+            narrow_inst, "MUX_uint8_t", 19, 19.5, 8,
+            group_id, member_ids, 72, 9,
+        ),
+    ]
+
+    refined = SWEEP.CHUNK_SELECTED_MUX_OUTPUT_BANKS(placements, landscape, ps)
+    assert refined is placements
+    assert all(
+        p.kind == SWEEP.PipelinePlacement.INSTANCE_OUTPUT for p in refined
+    )
+
 
 def _output_frontier_landscape(serial=False, common_boundary=False):
     landscape = SWEEP.SliceLandscape("main", 12, 0.1)
@@ -828,6 +968,178 @@ def test_common_coherent_boundary_beats_parallel_leaf_group():
     )
     assert placements[0].placement_group_id is None
 
+
+def test_two_cuts_per_leaf_move_the_whole_bit_frontier():
+    # Reproduces the typed_placement_alignment_test regression: two peer
+    # 16-bit leaves each collect TWO crossing bit requests (one per parallel
+    # frontier, formed one at a time by separate _PARALLEL_BIT_FRONTIER
+    # calls). Once MATERIALIZE_BIT_PLACEMENT_REQUESTS sees both leaves'
+    # real per-leaf count of 2, it lowers to GET_EQUAL_WIDTH_BIT_BOUNDARIES
+    # (16, 2) == [5, 11] -- not the one-cut boundary (8, unit 5) either
+    # frontier's own group predicted when formed in isolation.
+    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    landscape = SWEEP.SliceLandscape("main", 12, 0.1)
+    for side in ("left", "right"):
+        seg = SWEEP.Segment(
+            f"main{marker}{side}", "BIN_OP_PLUS_uint16_t_uint16_t",
+            0.0, 12.0, SWEEP.Segment.SLICEABLE,
+        )
+        seg.max_legal_units = 8
+        landscape.segments.append(seg)
+    landscape.finalize({})
+
+    def _request(side, axis_unit, axis_position):
+        return SWEEP.BitPlacementRequest(
+            f"main{marker}{side}",
+            "BIN_OP_PLUS_uint16_t_uint16_t",
+            axis_unit,
+            axis_position,
+            requested_local_slice=axis_position / 12.0,
+            bit_width=16,
+            leaf_axis_start=0.0,
+            leaf_axis_end=12.0,
+            registered_bits=16,
+        )
+
+    first = SWEEP._PARALLEL_BIT_FRONTIER(
+        [_request("left", 3, 3.5), _request("right", 3, 3.5)], 3
+    )
+    second = SWEEP._PARALLEL_BIT_FRONTIER(
+        [_request("left", 8, 8.5), _request("right", 8, 8.5)], 8
+    )
+    assert first is not None and second is not None
+    # Both frontiers predict the same one-cut midpoint in isolation (boundary
+    # 8 of 16 -> local 0.5 -> axis position 6.0 -> unit 5): neither knows yet
+    # that its leaf will end up collecting a second request.
+    assert {r.placement_group_axis_unit for r in first} == {5}
+    assert {r.placement_group_axis_unit for r in second} == {5}
+    assert first[0].placement_group_id != second[0].placement_group_id
+
+    physical = SWEEP.MATERIALIZE_BIT_PLACEMENT_REQUESTS(
+        first + second, landscape
+    )
+    assert len(physical) == 4
+    for side in ("left", "right"):
+        boundaries = sorted(
+            p.bit_boundary
+            for p in physical
+            if p.inst_path == f"main{marker}{side}"
+        )
+        assert boundaries == [5, 11], boundaries
+
+    by_group = {}
+    for p in physical:
+        by_group.setdefault(p.placement_group_id, []).append(p)
+    assert len(by_group) == 2
+    for members in by_group.values():
+        assert len(members) == 2
+        units = {p.axis_unit for p in members}
+        # Each group's members still land together on ONE physical unit --
+        # just not the stale unit (5) either group was stamped with.
+        assert len(units) == 1, units
+        assert units != {5}
+
+
+def test_moved_bit_frontier_group_is_accepted():
+    # SUMMARIZE_PLACEMENT_GROUPS must accept a group whose realized unit
+    # differs from its stale planned_axis_unit, as long as every member
+    # realized and they all share one common realized unit. Must fail
+    # against master: comparing realized_axis_units to [planned_axis_unit]
+    # rejects exactly this shape (the actual typed_placement_alignment_test
+    # crash).
+    members = (
+        "bit_internal_request:main__left@0.291666666666667",
+        "bit_internal_request:main__right@0.291666666666667",
+    )
+    final_selected = [
+        {
+            "candidate_id": "bit_internal:main__left#1/2@bit5/16",
+            "axis_unit": 3,
+            "placement_group_id": "parallel_bit_frontier:5:abc123",
+            "placement_group_kind": "parallel_bit_frontier",
+            "placement_group_members": members,
+            "placement_group_member_count": 2,
+            "placement_group_registered_bits": 32,
+            "placement_group_axis_unit": 5,
+        },
+        {
+            "candidate_id": "bit_internal:main__right#1/2@bit5/16",
+            "axis_unit": 3,
+            "placement_group_id": "parallel_bit_frontier:5:abc123",
+            "placement_group_kind": "parallel_bit_frontier",
+            "placement_group_members": members,
+            "placement_group_member_count": 2,
+            "placement_group_registered_bits": 32,
+            "placement_group_axis_unit": 5,
+        },
+    ]
+    groups = SWEEP.SUMMARIZE_PLACEMENT_GROUPS(final_selected, "solution")
+    assert len(groups) == 1
+    group = groups[0]
+    assert group["realized"] is True
+    assert group["moved_from_planned"] is True
+    assert group["realized_axis_unit"] == 3
+    assert group["planned_axis_unit"] == 5
+
+
+def test_split_bit_frontier_group_is_rejected():
+    # A group whose members genuinely realize on different physical units
+    # (not merely a stale prediction) must still be a hard build error, per
+    # docs/VHDL_DESIGN.md's "materialized or removed atomically" contract.
+    members = ("a", "b")
+    final_selected = [
+        {
+            "candidate_id": "bit_internal:main__left#1/2@bit5/16",
+            "axis_unit": 3,
+            "placement_group_id": "parallel_bit_frontier:5:def456",
+            "placement_group_kind": "parallel_bit_frontier",
+            "placement_group_members": members,
+            "placement_group_member_count": 2,
+            "placement_group_registered_bits": 32,
+            "placement_group_axis_unit": 5,
+        },
+        {
+            "candidate_id": "bit_internal:main__right#1/2@bit6/16",
+            "axis_unit": 4,
+            "placement_group_id": "parallel_bit_frontier:5:def456",
+            "placement_group_kind": "parallel_bit_frontier",
+            "placement_group_members": members,
+            "placement_group_member_count": 2,
+            "placement_group_registered_bits": 32,
+            "placement_group_axis_unit": 5,
+        },
+    ]
+    try:
+        SWEEP.SUMMARIZE_PLACEMENT_GROUPS(final_selected, "solution")
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        msg = str(e)
+        assert "split across physical units" in msg
+        assert "3" in msg and "4" in msg
+
+
+def test_incomplete_group_is_rejected():
+    # A group missing a realized member (dropped elsewhere, or never
+    # lowered) must raise naming the expected/realized member counts.
+    final_selected = [
+        {
+            "candidate_id": "bit_internal:main__left#1/2@bit5/16",
+            "axis_unit": 3,
+            "placement_group_id": "parallel_bit_frontier:5:ghi789",
+            "placement_group_kind": "parallel_bit_frontier",
+            "placement_group_members": ("a", "b"),
+            "placement_group_member_count": 2,
+            "placement_group_registered_bits": 32,
+            "placement_group_axis_unit": 5,
+        },
+    ]
+    try:
+        SWEEP.SUMMARIZE_PLACEMENT_GROUPS(final_selected, "solution")
+        assert False, "expected RuntimeError"
+    except RuntimeError as e:
+        assert "lost member" in str(e)
+
+
 def test_internal_selector_is_deterministic_and_strict():
     landscape = _landscape()
     ps = FakeParserState({"main": FakeLogic("main"), "main__step": FakeLogic("step")})
@@ -878,11 +1190,17 @@ if __name__ == "__main__":
     test_exact_typed_bit_boundaries_lower_and_hash_distinctly()
     test_internal_exact_bit_boundary_group_resolves_without_raster_aliasing()
     test_chunked_mux_refinement_replaces_outputs_and_covers_terminal_tail()
+    test_chunked_mux_lowering_preserves_group_identity()
+    test_chunked_mux_skips_partially_qualifying_group()
     test_parallel_output_frontier_grouping_and_serial_rejection()
     test_component_stage_budget_and_legacy_fallback()
     test_parallel_bit_frontier_is_one_logical_cut()
     test_parallel_bit_frontier_can_move_as_one_physical_group()
     test_common_coherent_boundary_beats_parallel_leaf_group()
+    test_two_cuts_per_leaf_move_the_whole_bit_frontier()
+    test_moved_bit_frontier_group_is_accepted()
+    test_split_bit_frontier_group_is_rejected()
+    test_incomplete_group_is_rejected()
     test_internal_selector_is_deterministic_and_strict()
     test_internal_placement_file_rejects_empty_request()
     print("All typed pipeline-placement tests passed.")

@@ -608,13 +608,26 @@ register banks to cut a parallel or reconvergent frontier.
 `_PARALLEL_OUTPUT_FRONTIER` groups raw-operation outputs whose real intervals
 strictly overlap and end in that unit. `_PARALLEL_BIT_FRONTIER` groups genuine
 bit requests that strictly cross the same point, provided their equal-width
-one-cut boundaries all move to one common physical unit after materialization.
-A coherent ancestor output remains preferable when it covers the complete
-frontier with one bank. Every accepted group carries one deterministic group
-identity, member list, physical unit, and aggregate registered-bit cost: it is
-one logical cut even though lowering writes several physical banks. Final
-realization checks and non-deepening cleanup validate or remove these groups
-atomically.
+boundaries — assuming each leaf gets exactly one cut, the only count known
+at formation time — all move to one common physical unit after
+materialization. A coherent ancestor output remains preferable when it covers
+the complete frontier with one bank. Every accepted group carries one
+deterministic group identity, member list, physical unit, and aggregate
+registered-bit cost: it is one logical cut even though lowering writes
+several physical banks. Final realization checks and non-deepening cleanup
+validate or remove these groups atomically.
+
+The stamped physical unit is only that one-cut estimate, though: a leaf that
+goes on to collect a second bit request (its own group's sibling frontier)
+moves ALL of that leaf's requests together to a different, but still common,
+equal-width boundary once `MATERIALIZE_BIT_PLACEMENT_REQUESTS` sees the real
+per-leaf count — the group's *planned* unit is provisional diagnostic
+metadata, not an invariant to hold the realized placements to.
+`SUMMARIZE_PLACEMENT_GROUPS` therefore verifies every planned member realized
+and that all realized members share one physical unit, records the realized
+unit and whether it moved from the plan in `placement_trace.json`, and raises
+only on a genuine loss (a missing member) or a genuine split (realized
+members on different units) — not on a moved-but-coherent frontier.
 
 Bit splitting therefore survives whenever it genuinely pays and is dropped
 when it only looked like it would on the raster.
@@ -701,9 +714,13 @@ chunked-MUX refinement was attempted (`same_depth_refinement.chunked_mux_attempt
 plus instance/function metadata,
 estimated registered bits, internal forced mode, boundary-register type, and
 local stage assignment. Schema 6 adds `placement_groups`, summarizing each
-synchronized frontier's planned and realized members, physical unit,
-registered-bit total, and atomic realization verdict. A `locked_instances`
-entry separately records every
+synchronized frontier's planned and realized members, registered-bit total,
+and atomic realization verdict. `planned_axis_unit` is the provisional
+one-cut estimate the group was formed with; `realized_axis_unit` is the
+actual common physical unit (`None` if the group did not realize to one
+unit), and `moved_from_planned` says whether the two differ — a coherent
+frontier is free to move as a whole (see above) and is not an error. A
+`locked_instances` entry separately records every
 coarse mini-sweep lock, including its fixed internal slices, selected input/
 output banks, boundary strategy, rebuilt latency, and realization check.
 `mini_sweep_boundary_diagnostics` records the alias-only direct edges, the
@@ -1475,11 +1492,18 @@ section, below.
    depth-proportional over-prediction until their sidecars are complete.
 4. **Parallel-frontier grouping is deliberately conservative.** Output and
    bit frontiers require strict interval overlap (an antichain), and grouped
-   bit requests must materialize their equal-width boundaries in one common
-   physical unit. The planner refuses the group when peers do not overlap,
-   move to different units, or a coherent ancestor output already cuts the
-   frontier more cheaply. This avoids inventing latency, but can miss a true
-   graph cut whose raster intervals do not expose that geometry.
+   bit requests must materialize their equal-width boundaries — predicted
+   assuming one cut per leaf, at formation time — in one common physical
+   unit. The planner refuses to *form* the group when peers do not overlap
+   under that one-cut prediction, or a coherent ancestor output already cuts
+   the frontier more cheaply. This avoids inventing latency, but can miss a
+   true graph cut whose raster intervals do not expose that geometry. A group
+   that *did* form can still see its realized unit move once
+   `MATERIALIZE_BIT_PLACEMENT_REQUESTS` learns a leaf's real request count
+   (e.g. a sibling group on the same leaf); `SUMMARIZE_PLACEMENT_GROUPS`
+   accepts that move as long as the whole group still lands on one common
+   unit, and only raises when realized members genuinely split across
+   different units or a member is lost.
 5. **Frontier discovery is local to one landscape unit.** It synchronizes
    the operation-output and bit-internal candidates already represented at
    that unit; it does not construct a complete dependency DAG or schedule a
