@@ -23,6 +23,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "float_ops_test.py",
     "fixed_point_test.py",
     "pypeline_test.py",
+    "sim_loop_reg_state_test.py",
     "reg_init_test.py",
     "reg_bitwise_mask_test.py",
     "struct_ctor_narrow_test.py",
@@ -82,6 +83,25 @@ def get_tests() -> list:
             cmd=[PYPELINE_SIM, INST_DIR / "global_wires_sim_test.py", "--run", "10"],
         )
     )
+    # Loop-instance identity is arithmetic-mode independent.  Strict mode is
+    # covered by the direct sim_call regression above and the native-vs-GHDL
+    # compare; exercise the two alternate wrapper variants through the
+    # multi-MAIN clock-cycle runner as well.
+    for mode in ("loose", "raw"):
+        tests.append(
+            Test(
+                name=f"sim_loop_reg_state_{mode}_test",
+                category="native_sim",
+                cmd=[
+                    PYPELINE_SIM,
+                    INST_DIR / "sim_loop_reg_state_test.py",
+                    "--run",
+                    "all",
+                    "--mode",
+                    mode,
+                ],
+            )
+        )
     tests.append(
         Test(
             name="sim_model_convergence_test",

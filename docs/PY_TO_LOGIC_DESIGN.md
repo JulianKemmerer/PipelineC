@@ -1083,6 +1083,13 @@ colliding two otherwise-distinct names into one; and a duplicate value produced 
 alias collision with no guard against it, since `_add_wire`/`_connect` — unlike
 `_add_submodule_instance` — never check for one.)
 
+Native simulation mirrors this structural choice without changing the elaborated C/Logic/VHDL
+graph: `pypeline.py`'s `_SimLoopInstanceRewriter` pushes a temporary source-span-plus-ordinal
+frame onto `_sim_inst_stack` for each Python-executed loop body. A stateful call therefore uses
+the same independent iteration identity in native simulation as this elaborator assigns to the
+hardware instance, including duplicate iterable values, nested loops, and runtime-gated calls.
+See [pypeline_sim_DESIGN.md](pypeline_sim_DESIGN.md#instance-path-stack).
+
 **Additional natural uniqueness** for some patterns that also helps (but is not needed for
 the loop-unrolling problem itself, since the ordinal alone is already sufficient):
 

@@ -3842,9 +3842,13 @@ import types as _types
 # Sim register state: instance path tracking and per-instance register storage
 # ─────────────────────────────────────────────
 
-# Stack of (func_qualname, call_loc) entries tracking the current simulation
-# instance path. call_loc = (filename, lineno, col_offset, end_col_offset),
-# mirroring the hardware elaborator's _loc_str(src_file, node) convention.
+# Stack of instance-path entries tracking the current simulation hierarchy.
+# Hardware-function entries are (func_qualname, call_loc), where call_loc =
+# (filename, lineno, col_offset, end_col_offset).  The simulation AST loop
+# rewriter also contributes synthetic ("FOR_<target>_ITER_<n>" / "WHILE_ITER_<n>",
+# loop_loc) entries while a source-loop iteration is executing.  This mirrors
+# PY_TO_LOGIC.py's per-unrolled-iteration hierarchy so stateful calls from one
+# physical source line get separate register banks in native simulation too.
 _sim_inst_stack = []
 
 # Register state keyed by instance path tuple.
@@ -3935,6 +3939,32 @@ _sim_input_cache: dict = {}  # id(@sim_input wrapper) → cached result for the 
 def _sim_current_inst_path():
     """Return the current simulation instance path as an immutable tuple."""
     return tuple(_sim_inst_stack)
+
+
+def _sim_loop_enter(label, loop_loc, ordinal):
+    """Push one source-loop iteration onto the native simulation hierarchy.
+
+    ``label`` is readable diagnostic context (``FOR_i``/``WHILE``); ``loop_loc``
+    identifies the loop source span; and ``ordinal`` is the zero-based iteration
+    number.  This intentionally matches the elaborator's value-independent
+    unrolled-loop identity: duplicate iterator values and runtime-gated calls
+    must not merge otherwise-distinct hardware instances.
+    """
+    frame = (f"{label}_ITER_{ordinal}", loop_loc)
+    _sim_inst_stack.append(frame)
+    return frame
+
+
+def _sim_loop_exit(frame):
+    """Pop the exact iteration frame entered by ``_sim_loop_enter``.
+
+    A mismatched stack is a simulator implementation error, not a recoverable
+    design condition: continuing would key all later register accesses beneath
+    the wrong hierarchy.
+    """
+    if not _sim_inst_stack or _sim_inst_stack[-1] != frame:
+        raise RuntimeError("native sim loop-instance stack corruption")
+    _sim_inst_stack.pop()
 
 
 def _is_compound_pypeline_type(ctype):
@@ -4910,12 +4940,211 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
         return node
 
 
+class _SimLoopInstanceRewriter(_ast.NodeTransformer):
+    """Give every source-loop iteration a stable native-simulation identity.
+
+    PY_TO_LOGIC unrolls a hardware ``for``/``while`` loop and prefixes every
+    emitted instance inside iteration *n* with that iteration's ordinal.  A
+    native-sim call instead executes the source loop as Python, so stateful
+    calls made from one physical source line need a temporary instance-stack
+    entry while each iteration body runs.  The entry is structural -- source
+    span plus ordinal -- rather than based on the iterator value or the count
+    of calls that happened to execute.  This remains correct for duplicate
+    values and runtime-gated call sites.
+
+    The generated ``try/finally`` is intentional: ``continue``, ``break``,
+    ``return``, and exceptions must all pop the frame before control leaves the
+    loop body.  Source functions are the only scope rewritten; nested Python
+    function definitions (which are not Pypeline hardware bodies) are left
+    untouched.
+    """
+
+    def __init__(self, src_file):
+        self._src_file = src_file
+        self._used_names = set()
+        self._next_name_id = 0
+        self._at_root = False
+        self.modified = False
+
+    def _new_name(self, hint):
+        while True:
+            name = f"__pypeline_sim_{hint}_{self._next_name_id}__"
+            self._next_name_id += 1
+            if name not in self._used_names:
+                self._used_names.add(name)
+                return name
+
+    @staticmethod
+    def _for_target_label(target):
+        """Return the readable, value-independent portion of a for-loop frame.
+
+        Pypeline's elaborator accepts Name/Tuple/List targets.  Preserve those
+        names in the native key to make debugging paths familiar, while the
+        source location below remains the actual disambiguator for unusual
+        Python-only targets.
+        """
+        if isinstance(target, _ast.Name):
+            return target.id
+        if isinstance(target, (_ast.Tuple, _ast.List)):
+            labels = [
+                _SimLoopInstanceRewriter._for_target_label(elt)
+                for elt in target.elts
+            ]
+            labels = [label for label in labels if label]
+            return "_".join(labels) or "v"
+        return "v"
+
+    def _loop_loc(self, node):
+        """Make an immutable loop source descriptor for a stack entry."""
+        return _ast.Tuple(
+            elts=[
+                _ast.Constant(value=self._src_file),
+                _ast.Constant(value=node.lineno),
+                _ast.Constant(value=getattr(node, "col_offset", None)),
+                _ast.Constant(value=getattr(node, "end_lineno", None)),
+                _ast.Constant(value=getattr(node, "end_col_offset", None)),
+            ],
+            ctx=_ast.Load(),
+        )
+
+    def _enter_stmt(self, frame_name, label, node, ordinal_name):
+        stmt = _ast.Assign(
+            targets=[_ast.Name(id=frame_name, ctx=_ast.Store())],
+            value=_ast.Call(
+                func=_ast.Name(id="_sim_loop_enter", ctx=_ast.Load()),
+                args=[
+                    _ast.Constant(value=label),
+                    self._loop_loc(node),
+                    _ast.Name(id=ordinal_name, ctx=_ast.Load()),
+                ],
+                keywords=[],
+            ),
+        )
+        return _ast.copy_location(stmt, node)
+
+    @staticmethod
+    def _exit_stmt(frame_name, node):
+        stmt = _ast.Expr(
+            value=_ast.Call(
+                func=_ast.Name(id="_sim_loop_exit", ctx=_ast.Load()),
+                args=[_ast.Name(id=frame_name, ctx=_ast.Load())],
+                keywords=[],
+            )
+        )
+        return _ast.copy_location(stmt, node)
+
+    def _iteration_body(self, body, frame_name, label, node, ordinal_name, postlude=()):
+        """Return entry + exception-safe source body + exit/postlude."""
+        finalbody = [self._exit_stmt(frame_name, node)] + list(postlude)
+        guarded_body = _ast.Try(
+            body=body,
+            handlers=[],
+            orelse=[],
+            finalbody=finalbody,
+        )
+        guarded_body = _ast.copy_location(guarded_body, node)
+        return [
+            self._enter_stmt(frame_name, label, node, ordinal_name),
+            guarded_body,
+        ]
+
+    def _visit_stmt_list(self, stmts):
+        """Visit statements and flatten a rewritten ``while`` into its setup/body."""
+        out = []
+        for stmt in stmts:
+            rewritten = self.visit(stmt)
+            if rewritten is None:
+                continue
+            if isinstance(rewritten, list):
+                out.extend(rewritten)
+            else:
+                out.append(rewritten)
+        return out
+
+    def visit_FunctionDef(self, node):
+        # ``visit(func_def)`` starts here.  Do not descend into a nested Python
+        # function definition encountered while transforming its parent body.
+        if self._at_root:
+            return node
+        self._at_root = True
+        self._used_names = {
+            n.id for n in _ast.walk(node) if isinstance(n, _ast.Name)
+        }
+        self._used_names.update(
+            arg.arg for arg in _ast.walk(node) if isinstance(arg, _ast.arg)
+        )
+        node.body = self._visit_stmt_list(node.body)
+        self._at_root = False
+        return node
+
+    def visit_For(self, node):
+        # Transform nested loops in the original body first, then guard this
+        # iteration.  The injected Try is never revisited, so its synthetic
+        # statements cannot be transformed a second time.
+        node.target = self.visit(node.target)
+        node.iter = self.visit(node.iter)
+        node.body = self._visit_stmt_list(node.body)
+        node.orelse = self._visit_stmt_list(node.orelse)
+
+        ordinal_name = self._new_name("for_ordinal")
+        frame_name = self._new_name("for_frame")
+        label = f"FOR_{self._for_target_label(node.target)}"
+        original_target = node.target
+        node.target = _ast.Tuple(
+            elts=[
+                _ast.Name(id=ordinal_name, ctx=_ast.Store()),
+                original_target,
+            ],
+            ctx=_ast.Store(),
+        )
+        node.iter = _ast.Call(
+            func=_ast.Name(id="_sim_enumerate", ctx=_ast.Load()),
+            args=[node.iter],
+            keywords=[],
+        )
+        node.body = self._iteration_body(
+            node.body, frame_name, label, node, ordinal_name
+        )
+        self.modified = True
+        return node
+
+    def visit_While(self, node):
+        node.test = self.visit(node.test)
+        node.body = self._visit_stmt_list(node.body)
+        node.orelse = self._visit_stmt_list(node.orelse)
+
+        ordinal_name = self._new_name("while_ordinal")
+        frame_name = self._new_name("while_frame")
+        ordinal_init = _ast.Assign(
+            targets=[_ast.Name(id=ordinal_name, ctx=_ast.Store())],
+            value=_ast.Constant(value=0),
+        )
+        ordinal_init = _ast.copy_location(ordinal_init, node)
+        ordinal_advance = _ast.AugAssign(
+            target=_ast.Name(id=ordinal_name, ctx=_ast.Store()),
+            op=_ast.Add(),
+            value=_ast.Constant(value=1),
+        )
+        ordinal_advance = _ast.copy_location(ordinal_advance, node)
+        node.body = self._iteration_body(
+            node.body,
+            frame_name,
+            "WHILE",
+            node,
+            ordinal_name,
+            postlude=[ordinal_advance],
+        )
+        self.modified = True
+        return [ordinal_init, node]
+
+
 def _build_reg_sim_func(fn):
     """Build a simulation-mode function body for fn that manages Reg[T] and Feedback[T].
 
-    Scans the function body's AST for `var: Reg[T]` and `var: Feedback[T]`
-    annotation-only statements. Returns None if neither are found or if source
-    extraction fails.
+    Scans and rewrites the function body's AST for register/feedback annotations,
+    typed locals, global wires, and source-loop instance frames. Returns None only
+    when none of those simulation transformations are needed (or source extraction
+    fails).
 
     Unified transformation — each section is emitted only when the corresponding
     collection is non-empty:
@@ -4976,6 +5205,9 @@ def _build_reg_sim_func(fn):
     func_def = next((n for n in tree.body if isinstance(n, _ast.FunctionDef)), None)
     if func_def is None:
         return None, False
+    _sim_src_file = getattr(
+        getattr(orig_fn, "__code__", None), "co_filename", "<sim_reg>"
+    )
 
     # Build eval namespace: globals + closure variables (for closures like make_vga_timing).
     # Closure variables (e.g. h_uint, V_MAX) appear in Reg[T] annotations and body
@@ -5072,6 +5304,17 @@ def _build_reg_sim_func(fn):
         _ast.fix_missing_locations(func_def)
         _typed_rewriter_modified = _typed_rewriter.modified
 
+    # Native simulation executes source loops as ordinary Python, while the
+    # hardware elaborator unrolls them into one independent hierarchy per
+    # ordinal. Give each source iteration a temporary stack frame before
+    # deciding whether this function needs an exec-built sim body: a pure
+    # wrapper can contain a loop that calls a stateful descendant even when it
+    # declares no Reg[T]/Feedback[T] itself.
+    _loop_rewriter = _SimLoopInstanceRewriter(_sim_src_file)
+    _loop_rewriter.visit(func_def)
+    _ast.fix_missing_locations(func_def)
+    _loop_rewriter_modified = _loop_rewriter.modified
+
     # Discover register and feedback variable names by evaluating each AnnAssign
     # annotation against the function's eval namespace.
     # Typed local AnnAssigns (e.g. x: int16_t = 512) were already rewritten to plain
@@ -5162,6 +5405,7 @@ def _build_reg_sim_func(fn):
         and not _wire_rewriter_modified
         and not ann_ctypes_out
         and not _typed_rewriter_modified
+        and not _loop_rewriter_modified
     ):
         return None, False
 
@@ -5324,9 +5568,8 @@ def _build_reg_sim_func(fn):
 
     _ast.fix_missing_locations(tree)
 
-    src_file = getattr(getattr(orig_fn, "__code__", None), "co_filename", "<sim_reg>")
     try:
-        code = compile(tree, src_file, "exec")
+        code = compile(tree, _sim_src_file, "exec")
     except Exception:
         return None, bool(reg_names or feedback_names)
 
@@ -5337,6 +5580,9 @@ def _build_reg_sim_func(fn):
         _make_sim_zero=_make_sim_zero,
         _sim_lens_set=_sim_lens_set,
         _sim_current_inst_path=_sim_current_inst_path,
+        _sim_loop_enter=_sim_loop_enter,
+        _sim_loop_exit=_sim_loop_exit,
+        _sim_enumerate=enumerate,
         _sim_reg_read=_sim_reg_read,
         _sim_reg_write=_sim_reg_write,
         _SIM_FEEDBACK_MAX_ITER=_SIM_FEEDBACK_MAX_ITER,
@@ -5646,9 +5892,11 @@ def _sim_type_wrap(fn):
     # Hard error if a port declares only one of its two interface halves.
     _check_partial_interface_ports(fn, ann, params, ret_t)
 
-    # Scan source for Reg[T]/Feedback[T] annotations and build register-aware sim body.
-    # Returns (fn_or_None, has_state) where has_state=True means the body calls
-    # _sim_current_inst_path() so the instance stack must be maintained.
+    # Scan source for Reg[T]/Feedback[T] annotations and build a simulation body.
+    # Returns (fn_or_None, has_state), where has_state=True means the body owns
+    # persistent Reg/Feedback state and therefore needs a function stack frame.
+    # A stateless transformed source loop maintains only temporary iteration
+    # frames inside sim_body_fn and keeps the wrapper fast path.
     sim_body_fn, has_state = _build_reg_sim_func(fn)
 
     # sim_model routing cell: sim_model(target) fills this one-element list
@@ -5771,8 +6019,9 @@ def _sim_type_wrap(fn):
 
     if not has_state:
         # ── Fast path: no Reg[T] / Feedback[T] in this function ─────────────
-        # _sim_current_inst_path() is never called inside this body, so the
-        # instance stack and _getframe capture are pure overhead. Skip both.
+        # The body owns no persistent instance-keyed state, so a function frame
+        # and _getframe capture are pure overhead. A transformed source loop may
+        # still push its own short-lived iteration frame around its body.
         # Functions with typed locals but no registers take this path.
         # Multi-instance register designs should set SIM_TRACE_LOCATIONS=True
         # to restore full ancestor-path tracking.

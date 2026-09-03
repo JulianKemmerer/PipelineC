@@ -27,7 +27,6 @@ import sys
 from common import (
     EXAMPLES_PYPELINE_DIR,
     INST_DIR,
-    PYPELINE_SIM_DEBUG,
     PYPELINEC,
     Test,
     main,
@@ -98,33 +97,6 @@ def get_tests() -> list:
             cmd=[PYPELINEC, INST_DIR / "global_wire_nested_split_test.py", "--comb"],
             needs_out_dir=True,
             expect_fail=True,
-        )
-    )
-    # Two unrolled-loop calls to the same stateful hw_func (same source
-    # line) get independent Reg[T] banks in real hardware but share ONE
-    # register bank in native sim (_sim_inst_stack carries no per-iteration
-    # component -- see pypeline_sim_DESIGN.md's Limitations section).
-    # Chained within one cycle, this isn't just internal bookkeeping: native
-    # sim's shared counter gets stuck at 0 forever while hardware's two
-    # independent registers diverge to 0, 0, 10, 30, ... -- confirmed via
-    # pypeline_sim_debug.py, whose own exit code is already 1 on a
-    # MISMATCH (first divergence at cycle 2), so this needs no custom
-    # wrapper.
-    tests.append(
-        Test(
-            name="sim_loop_reg_state_known_issue",
-            category="known_issues",
-            cmd=[
-                PYPELINE_SIM_DEBUG,
-                INST_DIR / "sim_loop_reg_state_known_issue.py",
-                "--sim",
-                "--comb",
-                "--run",
-                "all",
-            ],
-            needs_out_dir=True,
-            expect_fail=True,
-            requires=["ghdl"],
         )
     )
     return tests

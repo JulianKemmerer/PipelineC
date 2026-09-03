@@ -58,6 +58,10 @@ COMB_TEST_FILES = [
     ("self_check_autofsm_test.py", INST_DIR, []),
     # make_stream_autofsm's handshake wrapper, same --comb/non---comb split.
     ("self_check_stream_autofsm_test.py", INST_DIR, []),
+    # Stateful calls from one physical source line in an unrolled loop must
+    # retain one native register bank per iteration ordinal, matching the
+    # hardware elaborator's loop_instance_prefix hierarchy.
+    ("sim_loop_reg_state_test.py", INST_DIR, []),
     # Iteration-ordinal loop naming (_elab_for/_bind_const_target/
     # _elab_unpack_assign) through real GHDL: tuple/enumerate/zip/dict/str
     # iteration, tuple-target and tuple-unpack-assignment destructuring, a

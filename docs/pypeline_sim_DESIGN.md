@@ -112,7 +112,7 @@ in raw mode) wrapper variants is emitted:
 
 ### `has_state=False` — Fast Combinational Path
 
-No register state; no instance tracking needed:
+No register state owned by this wrapper; no *function* instance frame is needed:
 
 ```python
 def wrapper(*args, **kwargs):
@@ -127,8 +127,10 @@ def wrapper(*args, **kwargs):
         _pop_scoped_registrations(saved)
 ```
 
-Skips `sys._getframe`, `_sim_inst_stack` push/pop, and `co_positions()` entirely (~1.7 s
-saved on the VGA donut benchmark).
+Skips `sys._getframe`, a function `_sim_inst_stack` push/pop, and `co_positions()` entirely
+(~1.7 s saved on the VGA donut benchmark). A transformed source loop still pushes its own
+temporary iteration frame while its body runs, so a pure helper containing a loop can call a
+stateful descendant without collapsing its unrolled instances.
 
 ### `has_state=True` — State-Aware Path
 
@@ -709,7 +711,7 @@ uses for hardware variables.
 Called once when `@hw_func` (or `@MAIN`) is applied to a function. Builds a transformed
 function body and compiles it via `exec`. Returns `(transformed_fn_or_None, has_state)`.
 
-**7-step pipeline:**
+**8-step pipeline:**
 
 1. **Retrieve source** — `inspect.getsourcelines(inspect.unwrap(fn))` + `textwrap.dedent` to
    normalize indentation. Unlike plain `getsource`, `getsourcelines` also returns the function's
@@ -729,7 +731,16 @@ function body and compiles it via `exec`. Returns `(transformed_fn_or_None, has_
 5. **Apply `_TypedAnnAssignRewriter`** — rewrites typed local variable assignments (two rules
    above). Skipped entirely when `SIM_RAW_INTS=True`.
 
-6. **Detect `Reg[T]`/`Feedback[T]`** — walks the (now rewritten) body in source order,
+6. **Apply `_SimLoopInstanceRewriter`** — wraps each source `for`/`while` iteration in an
+   exception-safe `_sim_loop_enter`/`_sim_loop_exit` pair. The frame contains the source-loop
+   span and zero-based ordinal (plus a readable `FOR_<target>`/`WHILE` label), matching
+   PY_TO_LOGIC's value-independent unrolled-loop identity. `for` uses an injected
+   `enumerate(iterable)` ordinal; `while` maintains an injected ordinal incremented from its
+   `finally` block, so `continue`, `break`, `return`, and exceptions cannot leak a frame.
+   Nested loop frames compose. The rewriter runs even for an otherwise stateless function so a
+   stateful descendant reached through a pure helper gets the correct path.
+
+7. **Detect `Reg[T]`/`Feedback[T]`** — walks the (now rewritten) body in source order,
    evaluating each `AnnAssign` annotation node against `_eval_ns` = `fn.__globals__` +
    closure variables (the only way to detect `_RegType`/`_FeedbackType` without running the
    hardware elaborator, since Python never stores local annotations in `fn.__annotations__`).
@@ -749,7 +760,8 @@ function body and compiles it via `exec`. Returns `(transformed_fn_or_None, has_
    `_try_eval_const` in `PY_TO_LOGIC.py`). Each `AnnAssign` annotation is then evaluated
    against the merged `{**_eval_ns, **_local_const_ns}` namespace instead of `_eval_ns` alone.
 
-7. **If no Reg/Feedback/wires found and no typed-rewriter changes:** return `(None, False)`,
+8. **If no Reg/Feedback/wires found and no typed- or loop-rewriter changes:** return
+   `(None, False)`,
    meaning the original undecorated `fn` runs as-is. "No typed-rewriter changes" means
    `ann_ctypes_out` is empty (Rule 1/2 scalar casts) **and** `_typed_rewriter.modified` is
    `False` (Rule 3/4 compound zero-init/lens rewrites — tracked separately since Rule 4 lens
@@ -799,7 +811,7 @@ Annotation-only uses (`a: value_t`, `def f(a: value_t)`) are not captured. Fix: 
 
 ### Traceback Line Numbers
 
-`compile(tree, src_file, "exec")` (step 7) passes the **real** file path as `src_file`, so that
+`compile(tree, src_file, "exec")` (step 8) passes the **real** file path as `src_file`, so that
 errors raised from the exec'd body show real, navigable file/line references rather than a
 synthetic name. But `ast.parse` numbers any standalone source snippet starting from line 1,
 regardless of where in the real file that snippet actually starts — and `inspect.getsource`
@@ -934,11 +946,19 @@ Both are solved by **`_build_reg_sim_func`** + the **instance path stack** in `_
 
 ### Instance Path Stack
 
-`_sim_inst_stack` is a module-level list. Each `@hw_func`/`@MAIN` wrapper pushes
+`_sim_inst_stack` is a module-level list. Each stateful `@hw_func`/`@MAIN` wrapper pushes
 `(func_qualname, (filename, lineno, col_offset, end_col_offset))` before calling and pops in
 `finally`. The `call_loc` tuple is read from the **caller's** frame (`sys._getframe(1)`) so
 that two calls to the same function at different source lines produce different entries —
 exactly as the hardware elaborator produces distinct instance names from `_loc_str`.
+
+`_SimLoopInstanceRewriter` adds a second, temporary entry shape while a source loop body is
+executing: `(FOR_<target>_ITER_<n> | WHILE_ITER_<n>, loop_source_span)`. `n` is the zero-based
+iteration ordinal, never the iterator value or the count of stateful calls that happened to
+execute. Thus duplicate iterable values, nested loops, and an input-gated call in only one
+iteration still select the same register bank that elaboration assigned to that unrolled
+hardware copy. The generated `try/finally` always removes the loop frame before control leaves
+the body; the ordinary wrapper frames remain unchanged.
 
 `_sim_current_inst_path()` returns `tuple(_sim_inst_stack)` — an immutable snapshot used
 as the dict key for register state.
@@ -2050,33 +2070,14 @@ subclass has `__getitem__`.
   machinery `pypeline_sim.py` uses per clock cycle (see `sim_call` above). Model side
   effects still multi-fire during convergence in both layers — keep model bodies
   side-effect-free or check `_sim_converging`.
-- **A stateful `hw_func` called more than once from the same source line inside an
-  unrolled `for`/`while` loop shares ONE register bank across all those calls in native
-  sim, but gets an independent bank per unrolled call site in real hardware.** Loops
-  themselves just run as plain Python here — native sim never touches PY_TO_LOGIC's
-  elaborator, so `loop_instance_prefix`'s `FOR_<var>_ITER_<n>_` naming plays no role in
-  sim at all — so nothing distinguishes one unrolled call site from another: instance
-  identity is `_sim_inst_stack`'s
-  `(fn.__qualname__, call_loc)` (`pypeline.py`), and `call_loc` is the call's *source
-  location*, not its iteration ordinal — every call from one `for`-loop line shares one
-  `call_loc`, hence one `_sim_reg_state` key. With calls chained within a cycle (one
-  call's output feeding the next call's input, both updating the same accumulator), this
-  is not just an internal-bookkeeping difference: native sim's shared register (reads
-  always see the value committed at the *last* clock edge, never a same-cycle write — see
-  the buffered-write discipline above — so every call within a cycle reads identically,
-  and the last call's write simply overwrites the others', last-write-wins) can settle
-  into a steady state real hardware's independent registers never reach. Confirmed via
-  `pypeline_sim_debug.py` (`sim_loop_reg_state_known_issue.py`,
-  `src/tests/pypeline_tests/known_issues_tests.py`): native sim's shared counter sticks at
-  a constant value while the equivalent hardware's two independent registers keep
-  diverging, cycle-print output MISMATCHing from cycle 2 on. Not fixed — no attempt is
-  made to give native sim a per-ordinal instance-stack component, since that would mean
-  AST-rewriting every loop body that might contain a stateful call (today's
-  `_build_reg_sim_func` rewrite triggers per-*function*, not per-loop) for a divergence
-  that only bites a call chained within one cycle, not the far more common "N independent
-  counters with no cross-call dependency" shape (where the two engines already agree, by
-  the same reasoning that makes the shared register's value trajectory match an
-  independent one when nothing chains through it mid-cycle).
+- **Stateful calls in unrolled `for`/`while` loops have independent native register banks.**
+  `_SimLoopInstanceRewriter` gives every executed iteration a source-span-plus-ordinal frame
+  before the body runs, matching `PY_TO_LOGIC.loop_instance_prefix`'s independent hardware
+  hierarchy. This also applies through a stateless helper, to nested loops, and to class
+  `sim_model`/AUTOPIPELINE state keyed by `_sim_inst_stack`. The ordinal is structural rather
+  than value- or execution-count-based: duplicate values and runtime-gated iterations cannot
+  swap state. `sim_loop_reg_state_test.py` verifies the chained two-call trajectory (0, 0, 10,
+  30) with direct `sim_call`, all native arithmetic modes, and a native-vs-GHDL cycle diff.
 
 ---
 
@@ -2227,6 +2228,12 @@ document directly — `Reg[T]`/`Feedback[T]`/`Wire[T]` simulation, bit-accurate 
 asserts on `sim_call()` results and exits non-zero on failure. It also covers the
 multi-MAIN clock-cycle runner (`pypeline_sim.py` § above) via `global_wires_sim_test.py`,
 invoked as `python3 src/pypeline_sim.py inst/global_wires_sim_test.py --run 10`.
+
+`inst/sim_loop_reg_state_test.py` specifically covers loop-instance identity: chained stateful
+calls in `for` and `while` loops, duplicate iterator values, nested loops, two lexical loops
+reaching one stateful call through a pure helper, and runtime-gated iterations. It runs as direct
+`sim_call` assertions, through the multi-MAIN runner in loose and raw modes, and through the
+strict `native_vs_vhdl_sim` GHDL comparison.
 
 `sim_model` is covered by `inst/sim_model_test.py`, registered twice: as a plain-`python3`
 run (both model forms on vhdl-bodied accumulators, two-call-site instance independence,

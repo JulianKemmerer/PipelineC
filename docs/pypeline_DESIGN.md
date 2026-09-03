@@ -1743,7 +1743,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `sim_call(func, *args)` | Call a pypeline function in simulation mode with scoped operators active |
 | `sim_reset()` | Clear all simulated register state and global wire state; restores declared init values |
 | `sim_wire_reset()` | Clear only `_sim_wire_state`; leaves register state intact |
-| `_sim_inst_stack` | Module-level list: current simulation instance path; pushed/popped by `@hw_func`/`@MAIN` wrappers |
+| `_sim_inst_stack` | Module-level list: current simulation instance path; stateful `@hw_func`/`@MAIN` wrappers and transformed `for`/`while` iteration bodies push/pop frames |
 | `_sim_reg_state` | Module-level dict: `inst_path → {reg_name: value}`; persistent register values across `sim_call` |
 | `_sim_wire_state` | Module-level dict: `wire_name → int`; current global wire values (keyed by name, not instance) |
 | `_sim_wire_readers` | Module-level dict: `wire_name → set[MAIN fn]`; dependency graph for convergence queue |
