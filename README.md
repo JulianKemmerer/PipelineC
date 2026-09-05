@@ -7,6 +7,8 @@
 ╚═╝        ╚═╝   ╚═╝     ╚══════╝╚══════╝╚═╝╚═╝  ╚═══╝╚══════╝ ╚═════╝
 ```
 
+![Painted PypelineC](./docs/images/painted_pypelinec.png)
+
 # What is PypelineC?
 
 A hardware description language (HDL) adding high level synthesis(HLS)-like automatic pipelining as a language construct/compiler feature. 
