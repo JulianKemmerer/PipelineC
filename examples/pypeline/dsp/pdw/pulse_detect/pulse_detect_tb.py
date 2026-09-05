@@ -274,6 +274,24 @@ def pulse_detect_cw_tb():
 
     sim_assert((~o.gate_last) | o.gate_valid, "gate_last without gate_valid (CW)")
 
+    # The gate_last <-> candidate same-cycle pairing, asserted here for the
+    # CW/force-close path too -- the two @MAINs above only ever exercise the
+    # normal below_low close. It used to hold ONLY for the normal close: a
+    # force-close fires one accepted sample before the RECOVER transition that
+    # drives gate_last, so the candidate led its own packet's end marker by a
+    # cycle. make_pulse_detect_fsm now holds the force-close candidate one
+    # sample to fix that (see its force-close branch); this is the regression
+    # test. The storage engine's descriptor construction depends on it.
+    if o.gate_last:
+        sim_assert(
+            o.pdw_out_if.stream.valid,
+            "CW: gate_last fired without a candidate the same cycle",
+        )
+    if o.pdw_out_if.stream.valid:
+        sim_assert(
+            o.gate_last, "CW: candidate fired without gate_last the same cycle"
+        )
+
     candidates_seen: Reg[uint32_t]
     if o.pdw_out_if.stream.valid:
         sim_assert(

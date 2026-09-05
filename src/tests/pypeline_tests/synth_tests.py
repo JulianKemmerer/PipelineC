@@ -83,6 +83,14 @@ SYNTH_TEST_FILES = [
         EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_detect",
         ["--comb"],
     ),
+    (
+        "pdw_engine_synth_top.py",
+        EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_engine",
+        ["--comb"],
+    ),
+    # (The composed PDW design, examples/pypeline/dsp/pdw/top.py, is registered
+    # in get_tests() below rather than here -- this list names each test after
+    # its file, and a bare "top" is too generic for a suite-wide registry.)
     # global_wire_nested_split_test.py (structurally richest multi-writer global
     # wire design: 3 writers splitting nested struct leaves + a mixed-depth
     # whole-subtree claim + readback) moved to known_issues_tests.py --
@@ -103,6 +111,20 @@ def get_tests() -> list:
         )
         for filename, source_dir, extra_args in SYNTH_TEST_FILES
     ]
+    # The composed PDW design (pulse_gen + detect_pulses + pdw_engine). The
+    # pulse_detect/pdw_engine entries above check their blocks in isolation;
+    # only this one proves the whole thing builds together, and that the
+    # README-sized 16,384-deep packet FIFO plus the Path B delay line really do
+    # infer Block RAM rather than a wall of flops. Named explicitly because the
+    # source file is just "top.py".
+    tests.append(
+        Test(
+            name="pdw_top",
+            category="synth",
+            cmd=[PYPELINEC, EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "top.py", "--comb"],
+            needs_out_dir=True,
+        )
+    )
     # Pipelined (non---comb) NATIVE simulation: full build first, then the
     # native sim runs with the discovered latencies emulated. Self-checking
     # elastic stream design -- proves build -> harvest -> latency-emulated

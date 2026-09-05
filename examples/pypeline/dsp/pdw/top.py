@@ -1,10 +1,14 @@
 # pyright: reportInvalidTypeForm=none
 """Top-level synthesis entry point for the AIR7310 PDW project (see README.md).
 
-Only the Pulse Generator (step 1, pulse_gen/pulse_gen.py) is implemented so
-far -- the rest of the pipeline (Time-Aligned Detect & Delay Module,
-Qualified Storage & PDW Engine) isn't built yet. This wires pulse_gen up
-to real top-level ports:
+All three boxes of the README's architecture are wired up here: the Pulse
+Generator (pulse_gen/pulse_gen.py), the Time-Aligned Detect & Delay Module
+(pulse_detect/pulse_detect.py), and the Qualified AXIS Storage & PDW Engine
+(pdw_engine/pdw_engine.py). What remains unbuilt is inside them, not between
+them -- N_pre/N_post margin capture and the TX2 replay fanout; see
+README.md's own notes.
+
+pulse_gen_main wires the generator to real top-level ports:
 
   * flat Input[T] control registers for pri/width/amplitude (as if from
     host config regs -- see README.md section 2), matching how pulse_gen
@@ -22,16 +26,23 @@ to real top-level ports:
 `rx0_s_axis_tvalid`) or pulse_gen_main's own generated sample+valid directly
 (internal loopback, no external cable needed), selected at runtime by
 `pulse_loopback_en` -- see the `pulse_gen_sample`/`pulse_gen_valid` Wires and
-`pdw_main` below. `pdw_main` also exposes the detector's bounded pulse
-sample stream (Path A gate x Path B delay line, see `detect_pulses.gated_out`)
-as a flattened AXI-Stream master output, `rx0_m_axis_*` (RX-side naming, same
-tdata packing convention as tx0/rx1) -- `rx0_m_axis_tready` is a real port for
-a future consumer to drive but isn't wired to anything internally yet (the
-gate stream has no backpressure of its own; see pulse_detect.py's own
-"gate_ready" TODO).
+`pdw_main` below. It exposes three output boundaries:
 
-As more of the PDW pipeline gets built, this file is where subsequent
-stages get wired in and where TX2/host-DMA ports will eventually live.
+  * `candidate_pdw_*` -- Path A's raw, unqualified guess, one per pulse the
+    hysteresis SM closes. Observability only, and deliberately kept even
+    though the engine downstream is the real consumer: a rejection is only
+    visible from outside by seeing a candidate here with no matching
+    valid_pdw.
+  * `valid_pdw_*` -- README section 4's `valid_pdw_t`, flattened, one per
+    ACCEPTED pulse, on a real valid/ready handshake.
+  * `rx0_m_axis_*` -- that pulse's released I/Q packet, framed with tlast,
+    with `rx0_m_axis_tready` as real backpressure (the store-and-forward FIFO
+    is what lets a real-time, un-stallable gate stream feed a consumer that
+    can stall).
+
+README section 4 also routes the released packet to TX2 for target replay.
+That fanout is not built: a fixed-rate DAC sink cannot drive tready, so
+sharing this stream with it needs a policy decision first.
 """
 
 import os
@@ -45,6 +56,10 @@ sys.path.insert(
     0,
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "pulse_detect"),
 )
+sys.path.insert(
+    0,
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdw_engine"),
+)
 
 from pypeline import (
     MAIN,
@@ -57,10 +72,12 @@ from pypeline import (
     uint1_t,
     uint16_t,
     uint32_t,
+    uint64_t,
 )
 
 from pulse_gen import make_pulse_gen
 from pulse_detect import make_detect_pulses
+from pdw_engine import make_pdw_engine
 
 PART("xc7a100tcsg324-1")  # Artix-7 100T, same part as board/arty/part100t.py
 
@@ -98,18 +115,26 @@ def pulse_gen_main():
 
 
 # ---------------------------------------------------------------------------
-# pdw_main -- Path A "TIME-ALIGNED DETECT & DELAY MODULE" front end
-# (detect_pulses: magnitude -> dc_block -> moving_avg -> pulse_detect, see
-# pulse_detect/pulse_detect.py). Standalone @MAIN; its input sample+valid are
-# muxed between the real RX0 ADC input and pulse_gen_main's own generated
-# sample+valid (internal loopback) via `pulse_loopback_en` -- only the candidate PDW
-# output stream (data + ready) AND the gated pulse sample stream (data/
-# valid/last, flattened to rx0_m_axis_*) are exposed as real top-level ports.
-# The Qualified Storage & PDW Engine is still out of scope; `overflow` and
-# rx0_m_axis_tready's backpressure are computed/declared but left
-# unconnected (see pulse_detect.py's own TODOs on both).
+# pdw_main -- README boxes 2 and 3 end to end:
+#   Path A/B "TIME-ALIGNED DETECT & DELAY MODULE" (detect_pulses: magnitude ->
+#   dc_block -> moving_avg -> hysteresis SM, plus the Path B delay line, see
+#   pulse_detect/pulse_detect.py), feeding
+#   "QUALIFIED AXIS STORAGE & PDW ENGINE" (pdw_engine: glitch/CW
+#   qualification + store-and-forward release, see pdw_engine/pdw_engine.py).
+#
+# Standalone @MAIN; its input sample+valid are muxed between the real RX0 ADC
+# input and pulse_gen_main's own generated sample+valid (internal loopback)
+# via `pulse_loopback_en`.
+#
+# rx0_m_axis_* carries the QUALIFIED, released packet -- glitches and CW
+# events never reach it -- and its tready is real backpressure the
+# store-and-forward FIFO absorbs. The raw candidate stream stays exposed
+# alongside it (candidate_pdw_*) as a Path A observability tap: every
+# candidate appears there, accepted or not, which is what makes a rejection
+# visible from outside.
 # ---------------------------------------------------------------------------
 detect_pulses, detect_pulses_t = make_detect_pulses()
+pdw_engine, pdw_engine_t = make_pdw_engine(detect_pulses)
 
 # Raw RX0 ADC input -- flattened AXI-Stream-style slave port, same tdata
 # packing convention as pulse_gen_main's tx0 output above (Q=tdata[31:16],
@@ -125,31 +150,52 @@ rx0_s_axis_tvalid: Input[uint1_t]
 # widens to).
 threshold_high: Input[uint32_t]
 threshold_low: Input[uint32_t]
+# max_width is BOTH Path A's force-close cap (it stops a CW/jamming input
+# wedging the hysteresis SM in PULSE forever) and the engine's CW-rejection
+# rule, so it feeds both. min_width is the engine's glitch-rejection rule
+# only -- Path A has no notion of a minimum. See make_pdw_qualify.
 max_width: Input[uint32_t]
+min_width: Input[uint32_t]
 
 # Loopback select: 1 = feed pdw_main from pulse_gen_main's own generated
 # sample (internal, no external cable needed); 0 = feed from the real RX1
 # ADC input below. See README.md section 1 "Stimulus & External Loopback".
 pulse_loopback_en: Input[uint1_t]
 
-# Candidate PDW output -- the only boundary this task exposes as real ports.
+# Candidate PDW output -- Path A's raw, unqualified guess, every pulse the
+# hysteresis SM closes. Observability only (no ready port: the PDW engine is
+# the real consumer and is always ready, see make_pdw_engine).
 candidate_pdw_valid: Output[uint1_t]
+candidate_pdw_toa: Output[uint64_t]
 candidate_pdw_pulse_width: Output[uint32_t]
 candidate_pdw_peak_power: Output[uint32_t]
-candidate_pdw_ready: Input[uint1_t]
 
-# Bounded pulse sample stream (Path A gate x Path B delay line), flattened
-# AXI-Stream master -- same tdata packing convention as tx0/rx1 above
-# (Q=tdata[31:16], I=tdata[15:0]). Named rx0_ to match rx1_s_axis_tdata's
-# RX-side naming (this is the RX1 datapath's own detected-pulse output).
-# tready is a real port for a future consumer (DMA/TX2) to drive, but is NOT
-# wired to anything internally yet -- gated_sample_t has no backpressure of
-# its own (see pulse_detect.py's "gate_ready / backpressure on the gate
-# stream" TODO); this is that same still-open TODO, not a new one.
+# Validated PDW output -- README section 4's valid_pdw_t, flattened, one per
+# ACCEPTED pulse, emitted just ahead of that pulse's released packet on
+# rx0_m_axis_* below. Real valid/ready handshake to the host.
+valid_pdw_valid: Output[uint1_t]
+valid_pdw_ready: Input[uint1_t]
+valid_pdw_toa: Output[uint64_t]
+valid_pdw_pulse_width: Output[uint32_t]
+valid_pdw_peak_power: Output[uint32_t]
+valid_pdw_pkt_samples: Output[uint32_t]
+valid_pdw_status_flags: Output[uint16_t]
+
+# Released pulse packet -- the qualified, store-and-forwarded AXIS master,
+# same tdata packing convention as tx0 above (Q=tdata[31:16], I=tdata[15:0]).
+# Named rx0_ to match rx0_s_axis_*'s RX-side naming (this is the RX0
+# datapath's own detected-pulse output). README section 4 also routes this to
+# TX2 for target replay; that fanout is not built (a fixed-rate DAC sink
+# cannot drive tready, so it needs its own policy).
 rx0_m_axis_tdata: Output[uint32_t]
 rx0_m_axis_tvalid: Output[uint1_t]
 rx0_m_axis_tlast: Output[uint1_t]
 rx0_m_axis_tready: Input[uint1_t]
+
+# Sticky: some packet lost beats to a full store-and-forward FIFO (that
+# packet is force-rejected and flagged in its own status_flags bit 2; this
+# port is the run-level "it happened at least once" summary).
+pkt_fifo_full: Output[uint1_t]
 
 
 @MAIN(125.0)
@@ -180,20 +226,43 @@ def pdw_main():
         sample, sample_valid
     )
 
+    # The engine's candidate-stream ready is a constant 1 (see
+    # make_pdw_engine), so it can be fed in directly here rather than routed
+    # back out of `e` -- there is no combinational loop to break.
     o = detect_pulses(
         stream_in_if,
-        detect_pulses.out_fb_t(candidate_pdw_ready),
+        detect_pulses.out_fb_t(1),
         detect_pulses.power_t(val=threshold_high),
         detect_pulses.power_t(val=threshold_low),
         max_width,
     )
 
     candidate_pdw_valid = o.pdw_out_if.stream.valid
+    candidate_pdw_toa = o.pdw_out_if.stream.data.toa
     candidate_pdw_pulse_width = o.pdw_out_if.stream.data.pulse_width
     candidate_pdw_peak_power = o.pdw_out_if.stream.data.peak_power.val
 
-    gated_i_bits: uint16_t = o.gated_out.data.i.val[15:0]
-    gated_q_bits: uint16_t = o.gated_out.data.q.val[15:0]
+    e = pdw_engine(
+        o.gated_out,
+        o.pdw_out_if,
+        o.overflow,
+        min_width,
+        max_width,
+        rx0_m_axis_tready,
+        valid_pdw_ready,
+    )
+
+    valid_pdw_valid = e.pdw_out.valid
+    valid_pdw_toa = e.pdw_out.data.toa
+    valid_pdw_pulse_width = e.pdw_out.data.pulse_width
+    valid_pdw_peak_power = e.pdw_out.data.peak_power
+    valid_pdw_pkt_samples = e.pdw_out.data.pkt_samples
+    valid_pdw_status_flags = e.pdw_out.data.status_flags
+
+    gated_i_bits: uint16_t = e.pkt_out.data.i.val[15:0]
+    gated_q_bits: uint16_t = e.pkt_out.data.q.val[15:0]
     rx0_m_axis_tdata = concat(gated_q_bits, gated_i_bits)
-    rx0_m_axis_tvalid = o.gated_out.valid
-    rx0_m_axis_tlast = o.gated_out.last
+    rx0_m_axis_tvalid = e.pkt_out.valid
+    rx0_m_axis_tlast = e.pkt_out.last
+
+    pkt_fifo_full = e.fifo_full

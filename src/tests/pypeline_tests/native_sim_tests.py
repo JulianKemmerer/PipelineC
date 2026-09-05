@@ -215,16 +215,43 @@ def get_tests() -> list:
             ],
         )
     )
+    # PDW project: Qualified AXIS Storage & PDW Engine unit tests -- 5 @MAINs
+    # (accept path + PDW/packet ordering, glitch reject, CW reject,
+    # status_flags, long-stall backpressure), synthetic gate streams so the
+    # cases the real detector cannot produce on demand are reachable.
+    tests.append(
+        Test(
+            name="pdw_engine_tb",
+            category="native_sim",
+            cmd=[
+                PYPELINEC,
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_engine" / "pdw_engine_tb.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "800",
+            ],
+        )
+    )
     # PDW project: top-level testbench (top.py) -- exact golden model of the
-    # whole pulse_gen -> detect_pulses chain, several pulse settings incl.
-    # filtered-out ones and the CW/max_width cap.
-    #
-    # pdw_tb.py itself is registered in known_issues_tests.py, not here:
-    # PATH_B_SKEW = 0 -- the CORRECT Path B alignment -- is EXPECTED to fail
-    # until pulse_detect.py's delay line is fixed to match (see that
-    # function's docstring and README.md section 5's "Known gap" note). Once
-    # that hardware fix lands, pdw_tb.py becomes its acceptance test and
-    # should move here.
+    # WHOLE pipeline, pulse_gen -> detect_pulses -> pdw_engine, across seven
+    # pulse settings: released ones, two that Path A never detects, and two
+    # that it detects and the engine then rejects (glitch and CW). Also the
+    # acceptance test for Path B's sample-exact delay-line alignment.
+    tests.append(
+        Test(
+            name="pdw_tb",
+            category="native_sim",
+            cmd=[
+                PYPELINEC,
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_tb.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "8000",
+            ],
+        )
+    )
     # Self-checking sim_assert/sim_finish designs -- no external Python
     # sim_call/assert harness needed. Same source files are also registered in
     # native_vs_vhdl_sim_tests.py, where the native and cocotb+GHDL sims are

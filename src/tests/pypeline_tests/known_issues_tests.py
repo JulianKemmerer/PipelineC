@@ -63,26 +63,9 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
-    # pdw_tb.py's PATH_B_SKEW = 0 is the CORRECT Path B alignment and is
-    # expected to fail until pulse_detect.py's delay line is fixed to match
-    # (see that function's docstring and README.md section 5's "Known gap").
-    # Once that hardware fix lands, this becomes pdw_tb.py's acceptance test
-    # and should move to native_sim_tests.py.
-    tests.append(
-        Test(
-            name="pdw_tb",
-            category="known_issues",
-            cmd=[
-                PYPELINEC,
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_tb.py",
-                "--sim",
-                "--comb",
-                "--run",
-                "6200",
-            ],
-            expect_fail=True,
-        )
-    )
+    # (pdw_tb was here while Path B's delay line was misaligned. That is
+    # fixed -- make_delay_line is now self-timed off the FSM's gate_advance --
+    # so it lives in native_sim_tests.py as a normal passing test.)
     # Structurally richest multi-writer global wire design (3 writers splitting
     # nested struct leaves + a mixed-depth whole-subtree claim + readback), moved
     # here from synth_tests.py: PY_TO_LOGIC.PARSE_FILE raises ElaborationError
