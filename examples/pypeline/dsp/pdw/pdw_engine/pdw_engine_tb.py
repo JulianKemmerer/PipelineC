@@ -52,6 +52,7 @@ sys.path.insert(
 from pypeline import (
     MAIN,
     Reg,
+    hw_func,
     int16_t,
     sim_assert,
     uint1_t,
@@ -65,6 +66,7 @@ from pulse_detect import make_detect_pulses
 from pdw_engine import (
     STATUS_ADC_CLIP,
     STATUS_DSP_OVERFLOW,
+    STATUS_PRI_INVALID,
     make_pdw_engine,
 )
 
@@ -100,6 +102,37 @@ ACC_PERIOD = 64
 ACC_MIN_WIDTH = 8
 ACC_MAX_WIDTH = 1000
 
+# --- synthetic measurement inputs -----------------------------------------
+# The real detector produces these in ../pulse_detect/pulse_detect.py; here
+# they are synthesized so the engine can be exercised on its own. The ONE
+# thing that must be right is the timing: freq_acc.valid trails gate_last by
+# exactly `_DP.freq_latency` cycles, which is the contract the engine's
+# measurement FIFO is built around. Read it from the metadata rather than
+# writing 1, so this testbench follows the hardware if that register moves.
+FL = _DP.freq_latency
+ACC_T = _DP.freq_acc_t
+# A phasor at +45 degrees: atan2 gives +0.125 turns, i.e. freq = fs/8.
+TB_PHASOR = 1 << 30
+TB_NOISE = 1 << 20
+
+
+@hw_func
+def synth_freq_acc(gate_last: uint1_t, re_in: ACC_T, im_in: ACC_T) -> _DP.freq_accum_t:
+    d: Reg[uint1_t[FL + 1]]
+    nd: uint1_t[FL + 1]
+    nd[0] = gate_last
+    for k in range(FL):
+        nd[k + 1] = d[k]
+    d = nd
+    o: _DP.freq_accum_t
+    o.first_re = re_in
+    o.first_im = im_in
+    o.last_re = re_in
+    o.last_im = im_in
+    o.valid = d[FL]
+    return o
+
+
 engine_acc, engine_acc_t = make_pdw_engine(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
@@ -127,7 +160,17 @@ def pdw_engine_accept_tb():
     pdw_in.stream.data.pulse_width = ACC_WIDTH
     pdw_in.stream.data.peak_power = _DP.power_t(val=cyc)
 
-    o = engine_acc(gated, pdw_in, 0, ACC_MIN_WIDTH, ACC_MAX_WIDTH, 1, 1)
+    o = engine_acc(
+        gated,
+        pdw_in,
+        0,
+        ACC_MIN_WIDTH,
+        ACC_MAX_WIDTH,
+        synth_freq_acc(gated.last, TB_PHASOR, TB_PHASOR),
+        _DP.noise_t(val=TB_NOISE),
+        1,
+        1,
+    )
 
     cyc = cyc + 1
 
@@ -163,7 +206,7 @@ def pdw_engine_accept_tb():
             "so pkt_samples must equal pulse_width)",
         )
         sim_assert(
-            o.pdw_out.data.status_flags == 0,
+            (o.pdw_out.data.status_flags & ~STATUS_PRI_INVALID) == 0,
             "accept: valid_pdw status_flags set with no clip/overflow driven",
         )
         sim_assert(
@@ -230,7 +273,17 @@ def pdw_engine_glitch_tb():
     pdw_in.stream.data.pulse_width = GLITCH_WIDTH
     pdw_in.stream.data.peak_power = _DP.power_t(val=cyc)
 
-    o = engine_glitch(gated, pdw_in, 0, GLITCH_MIN_WIDTH, 1000, 1, 1)
+    o = engine_glitch(
+        gated,
+        pdw_in,
+        0,
+        GLITCH_MIN_WIDTH,
+        1000,
+        synth_freq_acc(gated.last, TB_PHASOR, TB_PHASOR),
+        _DP.noise_t(val=TB_NOISE),
+        1,
+        1,
+    )
 
     cyc = cyc + 1
 
@@ -283,7 +336,17 @@ def pdw_engine_cw_tb():
     pdw_in.stream.data.pulse_width = CW_WIDTH
     pdw_in.stream.data.peak_power = _DP.power_t(val=cyc)
 
-    o = engine_cw(gated, pdw_in, 0, 4, CW_MAX_WIDTH, 1, 1)
+    o = engine_cw(
+        gated,
+        pdw_in,
+        0,
+        4,
+        CW_MAX_WIDTH,
+        synth_freq_acc(gated.last, TB_PHASOR, TB_PHASOR),
+        _DP.noise_t(val=TB_NOISE),
+        1,
+        1,
+    )
 
     cyc = cyc + 1
 
@@ -343,7 +406,17 @@ def pdw_engine_status_tb():
     pdw_in.stream.data.pulse_width = ST_WIDTH
     pdw_in.stream.data.peak_power = _DP.power_t(val=cyc)
 
-    o = engine_st(gated, pdw_in, ovf_now, 4, 1000, 1, 1)
+    o = engine_st(
+        gated,
+        pdw_in,
+        ovf_now,
+        4,
+        1000,
+        synth_freq_acc(gated.last, TB_PHASOR, TB_PHASOR),
+        _DP.noise_t(val=TB_NOISE),
+        1,
+        1,
+    )
 
     cyc = cyc + 1
 
@@ -352,11 +425,16 @@ def pdw_engine_status_tb():
         # for without any separate counter to keep in sync.
         want_clip: uint1_t = o.pdw_out.data.toa == 1
         want_ovf: uint1_t = o.pdw_out.data.toa == 2
-        want_flags: uint16_t = 0
+        want_flags: uint32_t = 0
         if want_clip:
             want_flags = STATUS_ADC_CLIP
         elif want_ovf:
             want_flags = STATUS_DSP_OVERFLOW
+        # The first accepted pulse has no predecessor to measure an interval
+        # against, so the engine reports pri=0 and flags it rather than
+        # emitting a meaningless number.
+        if o.pdw_out.data.toa == 0:
+            want_flags = want_flags | STATUS_PRI_INVALID
         sim_assert(
             o.pdw_out.data.status_flags == want_flags,
             "status: status_flags wrong -- a flag was missed, spuriously set, "
@@ -418,7 +496,17 @@ def pdw_engine_backpressure_tb():
     pkt_ready: uint1_t = slot >= 12
     pdw_ready: uint1_t = slot < 8
 
-    o = engine_bp(gated, pdw_in, 0, 4, 1000, pkt_ready, pdw_ready)
+    o = engine_bp(
+        gated,
+        pdw_in,
+        0,
+        4,
+        1000,
+        synth_freq_acc(gated.last, TB_PHASOR, TB_PHASOR),
+        _DP.noise_t(val=TB_NOISE),
+        pkt_ready,
+        pdw_ready,
+    )
 
     cyc = cyc + 1
 

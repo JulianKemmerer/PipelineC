@@ -53,9 +53,12 @@ need the Path B delay line deepened by N_pre and the gate held open past
 gate_last, and belong to a later increment.
 """
 
+import os
+import sys
 from enum import IntEnum
 
 from pypeline import (
+    int16_t,
     NamedTuple,
     Reg,
     enum,
@@ -69,12 +72,24 @@ from pypeline import (
 )
 
 from fifo import make_fifo
+
+sys.path.insert(
+    0,
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pdw_measure"),
+)
+from pdw_measure import make_pdw_measure
 from dsp.fir_common import data_range
 
 # README section 4's status_flags bitfield.
 STATUS_ADC_CLIP = 1 << 0
 STATUS_DSP_OVERFLOW = 1 << 1
 STATUS_PKT_FIFO_FULL = 1 << 2
+# Set when the accumulated phasor was exactly zero, so freq_start/freq_stop
+# are 0 by convention rather than by measurement.
+STATUS_FREQ_DEGENERATE = 1 << 3
+# Set on the first accepted pulse after reset, where there is no previous
+# pulse to measure an interval against and `pri` is 0 by convention.
+STATUS_PRI_INVALID = 1 << 4
 
 # README section 4: valid_pdw_t is 192 bits / 24 bytes, so peak_power is a
 # uint32_t regardless of how wide the detector's internal power_t is. See
@@ -128,7 +143,13 @@ def make_pdw_qualify(width_t=uint32_t):
 
 
 def make_packet_store(
-    sample_t, gated_sample_t, candidate_pdw_t, width_t=uint32_t, depth=16384, n_pkts=16
+    sample_t,
+    gated_sample_t,
+    candidate_pdw_t,
+    meas_t,
+    width_t=uint32_t,
+    depth=16384,
+    n_pkts=16,
 ):
     """Store-and-forward packet FIFO + release/flush engine (README box 3
     steps 1 and 3). Returns (packet_store, packet_store_t).
@@ -167,6 +188,9 @@ def make_packet_store(
         EMIT_PDW -- hold pdw_out.valid until pdw_out_ready. Metadata is
                     emitted BEFORE its payload, which is the order a DMA
                     consumer needs to size the transfer that follows.
+        WAIT_MEAS-- wait for this pulse's measurement and merge it into the
+                    descriptor. Each FIFO is popped in its own state, so
+                    neither can ever pop without the other.
         SEND_PKT -- forward `remaining` beats under real backpressure, with
                     `last` on the final one.
         FLUSH    -- pop and discard `remaining` beats at full rate.
@@ -181,19 +205,35 @@ def make_packet_store(
         # pdw_engine_synth_top.py is what catches this class of thing.)
         # `reject` is reserved too, hence is_glitch/is_cw in verdict_t.
         IDLE = 0
-        EMIT_PDW = 1
-        SEND_PKT = 2
-        FLUSH = 3
+        # Descriptor popped, waiting for that pulse's measurement to arrive on
+        # the measurement FIFO. (Not named WAIT: `wait` is a VHDL reserved
+        # word, and an @enum member becomes a VHDL enum literal verbatim.)
+        WAIT_MEAS = 1
+        EMIT_PDW = 2
+        SEND_PKT = 3
+        FLUSH = 4
 
     @struct
     class valid_pdw_t(NamedTuple):
-        # README section 4's 192-bit / 24-byte host DMA struct, field for field.
-        toa: uint64_t
-        pulse_width: width_t
-        peak_power: uint32_t
-        pkt_samples: uint32_t
-        status_flags: uint16_t
-        padding: uint16_t
+        # README section 4's host DMA struct: 320 bits / 40 bytes, which is ten
+        # 32-bit AXIS beats. The measurement fields (pri, the two dB values and
+        # the two frequencies) arrive later than the rest -- see the
+        # measurement FIFO below -- and are merged in at release time.
+        #
+        # Field widths are chosen so this totals exactly 320 bits with
+        # width_t == uint32_t. If width_t is changed, the padding must be too.
+        toa: uint64_t  # 64
+        pulse_width: width_t  # 32
+        peak_power: uint32_t  # 32   linear, power_t truncated
+        pkt_samples: uint32_t  # 32
+        pri: uint32_t  # 32   samples since the previous ACCEPTED pulse
+        peak_power_db: int16_t  # 16   Q8.8 dBFS
+        noise_power_db: int16_t  # 16   Q8.8 dBFS
+        freq_start: int16_t  # 16   turns x 2^16; multiply by fs for Hz
+        freq_stop: int16_t  # 16
+        status_flags: uint32_t  # 32
+        channel: uint16_t  # 16   single channel today; always 0
+        padding: uint16_t  # 16
 
     @struct
     class desc_t(NamedTuple):
@@ -221,6 +261,14 @@ def make_packet_store(
 
     data_fifo, _data_fifo_t = make_fifo(sample_t, depth)
     desc_fifo, _desc_fifo_t = make_fifo(desc_t, n_pkts)
+    # A pulse's descriptor is complete on its gate_last cycle, but its
+    # measurement (frequency, dB, PRI) only lands some fixed number of cycles
+    # later -- the CORDIC and the log converter are pipelines. Rather than hold
+    # the ~200-bit descriptor in a shift register that long, both go into
+    # FIFOs and are popped together. Each FIFO gets exactly one entry per
+    # closed pulse, in the same order, so they stay in lockstep by
+    # construction.
+    meas_fifo, _meas_fifo_t = make_fifo(meas_t, n_pkts)
 
     verdict_t = make_pdw_qualify(width_t)[1]
 
@@ -230,7 +278,9 @@ def make_packet_store(
         pdw_in: candidate_pdw_t,
         pdw_in_valid: uint1_t,
         verdict: verdict_t,
-        beat_status: uint16_t,
+        beat_status: uint32_t,
+        meas_in: meas_t,
+        meas_in_valid: uint1_t,
         pkt_out_ready: uint1_t,
         pdw_out_ready: uint1_t,
     ) -> packet_store_t:
@@ -239,7 +289,7 @@ def make_packet_store(
         state: Reg[store_state_t]
         cur: Reg[valid_pdw_t]  # descriptor being released/flushed
         remaining: Reg[uint32_t]  # beats left in it
-        acc_status: Reg[uint16_t]  # per-packet sticky status, write side
+        acc_status: Reg[uint32_t]  # per-packet sticky status, write side
         acc_bad: Reg[uint1_t]  # per-packet sticky "lost a beat"
         n_pushed: Reg[uint32_t]  # beats of this packet actually in the FIFO
         fifo_full_sticky: Reg[uint1_t]
@@ -253,7 +303,7 @@ def make_packet_store(
         df = data_fifo(data_ready, gated_in.data, gated_in.valid)
 
         # ---- write side: accumulate this packet, close it on `last` ----
-        new_status: uint16_t = acc_status
+        new_status: uint32_t = acc_status
         new_bad: uint1_t = acc_bad
         new_pushed: uint32_t = n_pushed
         if gated_in.valid:
@@ -281,7 +331,15 @@ def make_packet_store(
         desc_in.pdw.peak_power = pdw_in.peak_power.val[PEAK_POWER_BITS - 1 : 0]
         desc_in.pdw.pkt_samples = new_pushed
         desc_in.pdw.status_flags = new_status
+        desc_in.pdw.channel = 0  # single RX chain
         desc_in.pdw.padding = 0
+        # Measurement fields are not known yet -- they arrive on the
+        # measurement FIFO and are merged in when this descriptor is popped.
+        desc_in.pdw.pri = 0
+        desc_in.pdw.peak_power_db = 0
+        desc_in.pdw.noise_power_db = 0
+        desc_in.pdw.freq_start = 0
+        desc_in.pdw.freq_stop = 0
 
         if desc_push:
             acc_status = 0  # re-arm for the next packet
@@ -292,9 +350,22 @@ def make_packet_store(
             acc_bad = new_bad
             n_pushed = new_pushed
 
-        # ---- descriptor FIFO ----
+        # ---- descriptor + measurement FIFOs ----
+        # Each is popped in its OWN state, so the two can never fall out of
+        # step: a descriptor is taken in IDLE, and that pulse's measurement is
+        # taken in WAIT_MEAS. Gating one pop on the other FIFO's
+        # `data_out_valid` would be the obvious alternative, but the value is
+        # only available from the call that also consumes it -- the same
+        # circular call-order problem detect_pulses documents for chained
+        # elastic stages.
+        awaiting: uint1_t = state == store_state_t.WAIT_MEAS
         desc_pop: uint1_t = state == store_state_t.IDLE
         sf = desc_fifo(desc_pop, desc_in, desc_push)
+        mf = meas_fifo(awaiting, meas_in, meas_in_valid)
+        sim_assert(
+            (~meas_in_valid) | mf.data_in_ready,
+            f"packet_store: measurement FIFO full (n_pkts={n_pkts})",
+        )
         sim_assert(
             (~desc_push) | sf.data_in_ready,
             f"packet_store: descriptor FIFO full (n_pkts={n_pkts}) -- more "
@@ -310,17 +381,39 @@ def make_packet_store(
         o.pdw_out.valid = state == store_state_t.EMIT_PDW
         o.fifo_full = fifo_full_sticky
 
+        accept_r: Reg[uint1_t]
+        empty_r: Reg[uint1_t]
         if state == store_state_t.IDLE:
             if sf.data_out_valid:
                 cur = sf.data_out.pdw
                 remaining = sf.data_out.pdw.pkt_samples
-                if sf.data_out.pdw.pkt_samples == 0:
-                    # Only reachable when a full FIFO ate every beat of the
-                    # packet, which also forces accept=0 -- nothing buffered
-                    # to flush, so skip straight back to IDLE rather than
-                    # waiting forever for beats that were never stored.
+                accept_r = sf.data_out.accept
+                # pkt_samples == 0 is only reachable when a full FIFO ate every
+                # beat of the packet, which also forces accept=0 -- nothing is
+                # buffered to flush. It still has to collect its measurement,
+                # or every later packet would be paired with the wrong one.
+                empty_r = sf.data_out.pdw.pkt_samples == 0
+                state = store_state_t.WAIT_MEAS
+        elif state == store_state_t.WAIT_MEAS:
+            if mf.data_out_valid:
+                # Merge the measurement in. Everything else in the descriptor
+                # was already final when the pulse closed.
+                cur.pri = mf.data_out.pri
+                cur.peak_power_db = mf.data_out.peak_power_db
+                cur.noise_power_db = mf.data_out.noise_power_db
+                cur.freq_start = mf.data_out.freq_start
+                cur.freq_stop = mf.data_out.freq_stop
+                degen_set: uint32_t = STATUS_FREQ_DEGENERATE
+                priinv_set: uint32_t = STATUS_PRI_INVALID
+                zero_st: uint32_t = 0
+                degen_bit: uint32_t = (
+                    degen_set if mf.data_out.freq_degenerate else zero_st
+                )
+                priinv_bit: uint32_t = zero_st if mf.data_out.pri_valid else priinv_set
+                cur.status_flags = cur.status_flags | degen_bit | priinv_bit
+                if empty_r:
                     state = store_state_t.IDLE
-                elif sf.data_out.accept:
+                elif accept_r:
                     state = store_state_t.EMIT_PDW
                 else:
                     state = store_state_t.FLUSH
@@ -351,6 +444,7 @@ def make_packet_store(
     packet_store.store_state_t = store_state_t
     packet_store.depth = depth
     packet_store.n_pkts = n_pkts
+    packet_store.meas_t = meas_t
     return packet_store, packet_store_t
 
 
@@ -387,15 +481,24 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
     rail_lo, rail_hi = data_range(rail_t)
     rail_val_t = rail_t.typeof("val")
 
+    pdw_measure, pdw_measure_t = make_pdw_measure(detect_pulses)
     packet_store, _packet_store_t = make_packet_store(
         detect_pulses.complex_t,
         detect_pulses.gated_sample_t,
         detect_pulses.candidate_pdw_t,
+        pdw_measure_t,
         width_t=detect_pulses.width_t,
         depth=depth,
         n_pkts=n_pkts,
     )
     pdw_qualify, verdict_t = make_pdw_qualify(detect_pulses.width_t)
+    power_val_t = detect_pulses.power_t.typeof("val")
+    # freq_acc/noise_est land this many cycles after gate_last (freq_accum
+    # carries a pipeline register -- see make_freq_accum). Anything latched on
+    # gate_last has to be delayed by the same amount before it can be paired
+    # with them, or a pulse would be measured with its own frequency and the
+    # NEXT pulse's peak power.
+    FL = detect_pulses.freq_latency
 
     @struct
     class pdw_engine_t(NamedTuple):
@@ -404,6 +507,7 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
         pdw_out: packet_store.valid_pdw_stream_t
         verdict: verdict_t
         fifo_full: uint1_t
+        measure: pdw_measure_t  # observability tap on the measurement stream
 
     @hw_func
     def pdw_engine(
@@ -412,6 +516,8 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
         dsp_overflow: uint1_t,
         min_width: detect_pulses.width_t,
         max_width: detect_pulses.width_t,
+        freq_acc: detect_pulses.freq_accum_t,
+        noise_est: detect_pulses.noise_t,
         pkt_out_ready: uint1_t,
         pdw_out_ready: uint1_t,
     ) -> pdw_engine_t:
@@ -430,12 +536,41 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
         # `STATUS_ADC_CLIP` literal infers as uint1_t and the elaborator
         # rejects the mix (native sim does not, which is what
         # pdw_engine_synth_top.py is for).
-        zero16: uint16_t = 0
-        clip_set: uint16_t = STATUS_ADC_CLIP
-        dsp_set: uint16_t = STATUS_DSP_OVERFLOW
-        clip_bit: uint16_t = clip_set if clipped else zero16
-        dsp_bit: uint16_t = dsp_set if dsp_overflow else zero16
-        beat_status: uint16_t = clip_bit | dsp_bit
+        zero32: uint32_t = 0
+        clip_set: uint32_t = STATUS_ADC_CLIP
+        dsp_set: uint32_t = STATUS_DSP_OVERFLOW
+        clip_bit: uint32_t = clip_set if clipped else zero32
+        dsp_bit: uint32_t = dsp_set if dsp_overflow else zero32
+        beat_status: uint32_t = clip_bit | dsp_bit
+
+        # Delay the gate_last-timed inputs of the measurement by FL so they
+        # arrive with freq_acc. Only the fields the measurement consumes are
+        # delayed; the descriptor still uses the undelayed candidate.
+        peak_d: Reg[power_val_t[FL + 1]]
+        toa_d: Reg[uint64_t[FL + 1]]
+        acc_d: Reg[uint1_t[FL + 1]]
+        npeak: power_val_t[FL + 1]
+        ntoa: uint64_t[FL + 1]
+        nacc: uint1_t[FL + 1]
+        npeak[0] = candidate.peak_power.val
+        ntoa[0] = candidate.toa
+        nacc[0] = v.accept & pdw_in_if.stream.valid
+        for k in range(FL):
+            npeak[k + 1] = peak_d[k]
+            ntoa[k + 1] = toa_d[k]
+            nacc[k + 1] = acc_d[k]
+        peak_d = npeak
+        toa_d = ntoa
+        acc_d = nacc
+
+        m = pdw_measure(
+            freq_acc,
+            noise_est,
+            detect_pulses.power_t(val=peak_d[FL]),
+            toa_d[FL],
+            freq_acc.valid,
+            acc_d[FL],
+        )
 
         ps = packet_store(
             gated_in,
@@ -443,6 +578,8 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
             pdw_in_if.stream.valid,
             v,
             beat_status,
+            m,
+            m.valid,
             pkt_out_ready,
             pdw_out_ready,
         )
@@ -453,6 +590,7 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
         o.pdw_out = ps.pdw_out
         o.verdict = v
         o.fifo_full = ps.fifo_full
+        o.measure = m
         return o
 
     pdw_engine.detect_pulses = detect_pulses
@@ -465,4 +603,7 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
     pdw_engine.width_t = detect_pulses.width_t
     pdw_engine.depth = depth
     pdw_engine.n_pkts = n_pkts
+    pdw_engine.pdw_measure = pdw_measure
+    pdw_engine.pdw_measure_t = pdw_measure_t
+    pdw_engine.measure_latency = pdw_measure.latency
     return pdw_engine, pdw_engine_t

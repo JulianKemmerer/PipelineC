@@ -1,12 +1,21 @@
 # pyright: reportInvalidTypeForm=none
 """Top-level synthesis entry point for the AIR7310 PDW project (see README.md).
 
-All three boxes of the README's architecture are wired up here: the Pulse
-Generator (pulse_gen/pulse_gen.py), the Time-Aligned Detect & Delay Module
-(pulse_detect/pulse_detect.py), and the Qualified AXIS Storage & PDW Engine
+All of the README's architecture is wired up here: the Pulse Generator
+(pulse_gen/pulse_gen.py), the Time-Aligned Detect & Delay Module
+(pulse_detect/pulse_detect.py), the per-pulse measurement engine
+(pdw_measure/pdw_measure.py), and the Qualified AXIS Storage & PDW Engine
 (pdw_engine/pdw_engine.py). What remains unbuilt is inside them, not between
 them -- N_pre/N_post margin capture and the TX2 replay fanout; see
 README.md's own notes.
+
+This file is also the ONLY place several critical paths exist. The generator's
+output feeds the detector's magnitude multiplier, and the detector's phasor
+accumulators feed the measurement CORDIC, both in the same clock domain and
+both across a module boundary. Each block met its 125 MHz target on its own
+while the composed design ran at 63 MHz; see README.md's synthesis table. That
+is why `top.py` is registered as its own synthesis test rather than treated as
+covered by the block-level ones.
 
 pulse_gen_main wires the generator to real top-level ports:
 
@@ -34,7 +43,9 @@ pulse_gen_main wires the generator to real top-level ports:
     visible from outside by seeing a candidate here with no matching
     valid_pdw.
   * `valid_pdw_*` -- README section 4's `valid_pdw_t`, flattened, one per
-    ACCEPTED pulse, on a real valid/ready handshake.
+    ACCEPTED pulse, on a real valid/ready handshake. Carries the measured
+    fields (frequency start/stop, peak and noise power in dB, PRI) alongside
+    the detected ones; `gr_pdw_record.py` maps them to gr-pdw's own record.
   * `rx0_m_axis_*` -- that pulse's released I/Q packet, framed with tlast,
     with `rx0_m_axis_tready` as real backpressure (the store-and-forward FIFO
     is what lets a real-time, un-stallable gate stream feed a consumer that
@@ -69,6 +80,7 @@ from pypeline import (
     Wire,
     concat,
     int16_t,
+    int32_t,
     uint1_t,
     uint16_t,
     uint32_t,
@@ -87,6 +99,14 @@ pulse_gen, out_stream_t = make_pulse_gen()
 pulse_gen_pri: Input[uint32_t]
 pulse_gen_width: Input[uint32_t]
 pulse_gen_amplitude: Input[int16_t]
+# Carrier controls. `pulse_gen_freq` is the phase increment per sample in
+# turns x 2^32 (0 = DC, 2^31 = Fs/2); `pulse_gen_chirp_rate` ramps that
+# increment within each pulse to make an LFM chirp; `pulse_gen_noise_amp`
+# scales a deterministic LFSR noise source. See pulse_gen.py on why a
+# stimulus without these makes every frequency measurement untestable.
+pulse_gen_freq: Input[int32_t]
+pulse_gen_chirp_rate: Input[int32_t]
+pulse_gen_noise_amp: Input[uint16_t]
 
 # Flattened AXI-Stream master output, TX1/TX0 (first TX port).
 tx0_m_axis_tdata: Output[uint32_t]
@@ -101,7 +121,14 @@ pulse_gen_valid: Wire[uint1_t]
 
 @MAIN(125.0)
 def pulse_gen_main():
-    o = pulse_gen(pulse_gen_pri, pulse_gen_width, pulse_gen_amplitude)
+    o = pulse_gen(
+        pulse_gen_pri,
+        pulse_gen_width,
+        pulse_gen_amplitude,
+        pulse_gen_freq,
+        pulse_gen_chirp_rate,
+        pulse_gen_noise_amp,
+    )
     # concat() requires unsigned args -- full-width bit-slice reinterprets
     # each int16_t field's raw bits as uint16_t. concat()'s first arg is
     # MSBs, so Q (tdata[31:16]) goes first, I (tdata[15:0]) second, per
@@ -179,7 +206,13 @@ valid_pdw_toa: Output[uint64_t]
 valid_pdw_pulse_width: Output[uint32_t]
 valid_pdw_peak_power: Output[uint32_t]
 valid_pdw_pkt_samples: Output[uint32_t]
-valid_pdw_status_flags: Output[uint16_t]
+valid_pdw_status_flags: Output[uint32_t]
+valid_pdw_pri: Output[uint32_t]
+valid_pdw_peak_power_db: Output[int16_t]
+valid_pdw_noise_power_db: Output[int16_t]
+valid_pdw_freq_start: Output[int16_t]
+valid_pdw_freq_stop: Output[int16_t]
+valid_pdw_channel: Output[uint16_t]
 
 # Released pulse packet -- the qualified, store-and-forwarded AXIS master,
 # same tdata packing convention as tx0 above (Q=tdata[31:16], I=tdata[15:0]).
@@ -248,6 +281,8 @@ def pdw_main():
         o.overflow,
         min_width,
         max_width,
+        o.freq_acc,
+        o.noise_est,
         rx0_m_axis_tready,
         valid_pdw_ready,
     )
@@ -258,6 +293,14 @@ def pdw_main():
     valid_pdw_peak_power = e.pdw_out.data.peak_power
     valid_pdw_pkt_samples = e.pdw_out.data.pkt_samples
     valid_pdw_status_flags = e.pdw_out.data.status_flags
+    # The measurements (see pdw_measure/pdw_measure.py). freq_* are turns x
+    # 2^16 -- multiply by the sample rate for Hz; the dB fields are Q8.8 dBFS.
+    valid_pdw_pri = e.pdw_out.data.pri
+    valid_pdw_peak_power_db = e.pdw_out.data.peak_power_db
+    valid_pdw_noise_power_db = e.pdw_out.data.noise_power_db
+    valid_pdw_freq_start = e.pdw_out.data.freq_start
+    valid_pdw_freq_stop = e.pdw_out.data.freq_stop
+    valid_pdw_channel = e.pdw_out.data.channel
 
     gated_i_bits: uint16_t = e.pkt_out.data.i.val[15:0]
     gated_q_bits: uint16_t = e.pkt_out.data.q.val[15:0]

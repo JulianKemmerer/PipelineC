@@ -10,7 +10,7 @@ Synthesize (requires Vivado):
     pypelinec examples/pypeline/dsp/pdw/pulse_gen/pulse_gen_synth_top.py
 """
 
-from pypeline import MAIN, PART, Input, int16_t, uint32_t
+from pypeline import MAIN, PART, Input, int16_t, int32_t, uint16_t, uint32_t
 
 from pulse_gen import make_pulse_gen
 
@@ -21,8 +21,14 @@ pulse_gen, out_stream_t = make_pulse_gen()
 pri: Input[uint32_t]
 width: Input[uint32_t]
 amplitude: Input[int16_t]
+# Carrier, chirp and noise controls -- the NCO is by far the largest part of
+# the generator now (a 16-iteration rotation CORDIC), so this file is what
+# proves that addition closes timing.
+freq: Input[int32_t]
+chirp_rate: Input[int32_t]
+noise_amp: Input[uint16_t]
 
 
 @MAIN(125.0)
 def pulse_gen_top() -> out_stream_t:
-    return pulse_gen(pri, width, amplitude)
+    return pulse_gen(pri, width, amplitude, freq, chirp_rate, noise_amp)

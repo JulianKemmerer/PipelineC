@@ -16,6 +16,8 @@ from pypeline import (
     register_unary_operator,
 )
 
+from bits import make_clz, make_shifter_sl, make_shifter_sr
+
 
 def _float_to_fields(value, exponent_width, mantissa_width):
     """Convert a Python float to an IEEE 754-like sign/exp/man dict at elaboration time."""
@@ -152,78 +154,14 @@ def _make_abs(in_t, out_t):
     return abs_val
 
 
-def _make_shifter_sl(value_t, amount_t=None):
-    n_bits = len(value_t)
-    narrow_bits = n_bits.bit_length()
-    narrow_t = make_uint_t(narrow_bits)
-    actual_amount_t = narrow_t if amount_t is None else amount_t
-    # Bit positions at or beyond actual_amount_t's own width don't exist on
-    # it (and can never be set), so the doubling loop below must not probe
-    # them -- e.g. a caller-supplied amount_t narrower than value_t needs
-    # (a CLZ result reused to align a wider register) would otherwise index
-    # out of range on effective[i] for i >= len(actual_amount_t).
-    loop_bits = min(narrow_bits, len(actual_amount_t))
-
-    @hw_func
-    def shifter_sl(v: value_t, amount: actual_amount_t) -> value_t:
-        effective: actual_amount_t
-        if amount_t is None or len(actual_amount_t) <= narrow_bits:
-            effective = amount
-        else:
-            if amount > n_bits:
-                effective = n_bits
-            else:
-                effective = amount
-        result: value_t = v
-        for i in range(loop_bits):
-            shifted: value_t = result << (1 << i)
-            if effective[i]:
-                result = shifted
-        return result
-
-    return shifter_sl
-
-
-def _make_shifter_sr(value_t, amount_t=None):
-    n_bits = len(value_t)
-    narrow_bits = n_bits.bit_length()
-    narrow_t = make_uint_t(narrow_bits)
-    actual_amount_t = narrow_t if amount_t is None else amount_t
-    loop_bits = min(narrow_bits, len(actual_amount_t))
-
-    @hw_func
-    def shifter_sr(v: value_t, amount: actual_amount_t) -> value_t:
-        effective: actual_amount_t
-        if amount_t is None or len(actual_amount_t) <= narrow_bits:
-            effective = amount
-        else:
-            if amount > n_bits:
-                effective = n_bits
-            else:
-                effective = amount
-        result: value_t = v
-        for i in range(loop_bits):
-            shifted: value_t = result >> (1 << i)
-            if effective[i]:
-                result = shifted
-        return result
-
-    return shifter_sr
-
-
-def _make_clz(value_t):
-    n_bits = len(value_t)
-    out_t = make_uint_t(n_bits.bit_length())
-
-    @hw_func
-    def clz(v: value_t) -> out_t:
-        result: out_t = n_bits
-        for i in range(n_bits):
-            if v[i]:
-                result = n_bits - 1 - i
-        return result
-
-    return clz
+# Bit primitives (count-leading-zeros, barrel shifters) live in bits.py so
+# the fixed-point side of the library -- dsp/log2_db.py needs exactly the
+# same normalize step -- can use them without importing this module and its
+# float cast/operator registration side effects. Aliased here under their
+# original private names, which the factories below still use.
+_make_shifter_sl = make_shifter_sl
+_make_shifter_sr = make_shifter_sr
+_make_clz = make_clz
 
 
 # ─────────────────────────────────────────────

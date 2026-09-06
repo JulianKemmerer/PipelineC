@@ -46,6 +46,19 @@ SYNTH_TEST_FILES = [
     ("float32_add_test.py", INST_DIR, ["--comb"]),
     ("float_ops_test.py", INST_DIR, ["--comb"]),
     ("fixed_point_test.py", INST_DIR, ["--comb"]),
+    # DSP primitives added for the PDW measurement engine. Native sim never
+    # emits VHDL, so a synthesis run is the only thing that can catch e.g. a
+    # local variable whose name is a VHDL reserved word (this file's PDW
+    # entries below were bitten by exactly that, three times).
+    #
+    # dsp/cordic.py is deliberately NOT listed here. Its own --comb build takes
+    # ~21 minutes under the default PyRTL timing model -- an unrolled
+    # 14-iteration pipeline, twice -- and it buys nothing: both of its modes
+    # are already synthesized against the real xc7a100t part in under three
+    # minutes each, vectoring mode inside pdw_engine_synth_top.py and rotation
+    # mode inside pulse_gen_synth_top.py. Those give better coverage (real
+    # part, real timing) for a twentieth of the runtime.
+    ("log2_db_test.py", INST_DIR, ["--comb"]),
     ("pypeline_test.py", INST_DIR, ["--comb"]),
     ("reg_init_test.py", INST_DIR, ["--comb"]),
     ("if_test.py", INST_DIR, ["--comb"]),
@@ -86,6 +99,11 @@ SYNTH_TEST_FILES = [
     (
         "pdw_engine_synth_top.py",
         EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_engine",
+        ["--comb"],
+    ),
+    (
+        "pulse_gen_synth_top.py",
+        EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_gen",
         ["--comb"],
     ),
     # (The composed PDW design, examples/pypeline/dsp/pdw/top.py, is registered

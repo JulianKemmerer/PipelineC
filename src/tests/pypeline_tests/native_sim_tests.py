@@ -22,6 +22,8 @@ PLAIN_PYTHON_TEST_FILES = [
     "float32_add_test.py",
     "float_ops_test.py",
     "fixed_point_test.py",
+    "cordic_test.py",
+    "log2_db_test.py",
     "pypeline_test.py",
     "sim_loop_reg_state_test.py",
     "reg_init_test.py",
@@ -233,11 +235,49 @@ def get_tests() -> list:
             ],
         )
     )
+    # PDW project: the pulse generator. Registered here because it was not
+    # registered anywhere before -- the file existed and never ran. It now
+    # covers the carrier, the LFM chirp and the noise source, including the
+    # zero-mean check that a DC-biased noise source would fail.
+    tests.append(
+        Test(
+            name="pulse_gen_tb",
+            category="native_sim",
+            cmd=[
+                PYPELINEC,
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_gen" / "pulse_gen_tb.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "600",
+            ],
+        )
+    )
+    # PDW project: the per-pulse measurement engine on its own. pdw_tb.py
+    # already checks it bit-exactly inside the whole pipeline, but only over
+    # the few phasor magnitudes and power levels the real detector happens to
+    # produce; this drives the full input range, where a width or
+    # normalization mistake would show up.
+    tests.append(
+        Test(
+            name="pdw_measure_test",
+            category="native_sim",
+            cmd=[
+                EXAMPLES_PYPELINE_DIR
+                / "dsp"
+                / "pdw"
+                / "pdw_measure"
+                / "pdw_measure_test.py"
+            ],
+        )
+    )
     # PDW project: top-level testbench (top.py) -- exact golden model of the
-    # WHOLE pipeline, pulse_gen -> detect_pulses -> pdw_engine, across seven
-    # pulse settings: released ones, two that Path A never detects, and two
-    # that it detects and the engine then rejects (glitch and CW). Also the
-    # acceptance test for Path B's sample-exact delay-line alignment.
+    # WHOLE pipeline, pulse_gen -> detect_pulses -> pdw_measure -> pdw_engine,
+    # across eight pulse settings: released ones, two that Path A never
+    # detects, two that it detects and the engine then rejects (glitch and
+    # CW), and an LFM chirp. Also the acceptance test for Path B's
+    # sample-exact delay-line alignment, and for every measured field
+    # (frequency, dB power, noise floor, PRI) against a bit-exact model.
     tests.append(
         Test(
             name="pdw_tb",
@@ -248,7 +288,7 @@ def get_tests() -> list:
                 "--sim",
                 "--comb",
                 "--run",
-                "8000",
+                "9000",
             ],
         )
     )

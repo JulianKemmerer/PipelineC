@@ -31,6 +31,10 @@
  |   | 3. Hysteresis SM           [L_sm] |  |   L_mag + L_dsp + L_sm    |  |
  |   |    (High/Low Thresh Guard Bands)  |  |   + N_pre                 |  |
  |   | 4. Extract Candidate PDW          |  |                           |  |
+ |   | 5. Phasor accumulate (freq) +     |  | reads the DELAYED raw     |  |
+ |   |    noise-floor track (dB):        |  | I/Q, so a measurement     |  |
+ |   |    4 mults, no CORDIC here        |  | describes exactly the     |  |
+ |   |                                   |  | samples the host gets     |  |
  |   +-----------------------------------+  +---------------------------+  |
  +-------------------------------------------------------------------------+
                    |                   |                   |
@@ -48,6 +52,12 @@
  |     -> CW Rejection:     Reject if pulse_width > Max_Width              |
  |     -> Rule Validation:  Verify Candidate PDW against Host Regs         |
  |                                                                         |
+ |  2b. MEASURE (once per pulse, ~16 cycles, pipelined):                   |
+ |     -> Frequency:  CORDIC atan2 of the accumulated phasors              |
+ |                    (start AND stop -> modulation on pulse)              |
+ |     -> Power/Noise: log2 -> dBFS                                        |
+ |     -> PRI:        toa - previous accepted toa                          |
+ |                                                                         |
  |  3. Execute:                                                     |
  |     -> If Valid:   Emit valid_pdw_t & Commit/Release AXIS Packet        |
  |     -> If Invalid: Suppress PDW & Rollback/Flush FIFO                   |
@@ -57,6 +67,9 @@
        (toa, width,|                                       | (w/ tlast)
         peak_power,|                                       +---------+
         pkt_samples|                                                 |
+        pri, dB,   |                                                 |
+        freq start/|                                                 |
+        stop,      |                                                 |
         status)    |                                                 |
                    v                                                 v
        +-------------------+                           +-------------+-------------+
@@ -80,7 +93,7 @@ To make this a self-contained demonstration, the system generates its own test s
 ## 2. The Time-Aligned Detect & Delay Module
 Once the raw I/Q samples enter the FPGA, the datapath splits into two parallel tracks to solve the latency problem of real-time detection:
 
-* **Path A (The Brain):** Calculates the instantaneous power (I^2 + Q^2), runs it through lightweight DSP (like DC blocking and smoothing), and feeds it into a Hysteresis State Machine. When a pulse ends, this path generates a **`candidate_pdw_t`**—a raw, unvalidated guess containing the start time, width, and peak power.
+* **Path A (The Brain):** Calculates the instantaneous power (I^2 + Q^2), runs it through lightweight DSP (like DC blocking and smoothing), and feeds it into a Hysteresis State Machine. When a pulse ends, this path generates a **`candidate_pdw_t`**—a raw, unvalidated guess containing the start time, width, and peak power. It also accumulates, on the time-aligned raw I/Q, the phasor sums the frequency measurement is built from, and tracks the noise floor between pulses.
 * **Path B (The Time Machine):** While Path A is doing math, Path B routes the untouched raw I/Q samples through a Delay Line FIFO. This FIFO is mathematically sized to delay the physical waveform by the exact time it takes Path A to compute, plus a pre-trigger safety margin (`N_pre`). 
 
 ## 3. The Qualified Storage & PDW Engine
@@ -92,7 +105,16 @@ This is the gatekeeper of the system. It takes the real-time triggers from Path 
   * If the pulse is **invalid**, the hardware drops the metadata and resets/flushes FIFO, completely erasing the glitch.
   * If the pulse is **valid**, the engine commits the packet for output.
 
-## 4. The Outputs
+## 4. Measurement
+Detecting a pulse is not the same as describing one. Between qualification and
+output, a per-pulse **measurement engine** turns the accumulations Path A
+gathered into the quantities a PDW actually carries: the pulse's **frequency**
+(start and stop, so a chirp is visible as modulation on pulse), its **peak
+power and the noise floor in dB**, and the **interval since the previous
+pulse**. This runs once per pulse rather than once per sample, which is what
+makes a CORDIC and two logarithms affordable. See section 5.
+
+## 5. The Outputs
 When a pulse is validated, two things happen simultaneously in hardware:
 
 1. **Metadata to Host:** The engine upgrades the candidate struct to a **`valid_pdw_t`** (adding the total packet sample count and hardware status flags) and sends it over a standard data/valid/ready handshake bus to the host software.
@@ -123,6 +145,27 @@ Runtime-configurable knobs, each a flat input wire into the design (no register 
 | `n_post_margin` | `uint16_t` | 16 | 128 ns; samples captured after dropping below threshold |
 | `test_gen_pri` | `uint32_t` | 125,000 | 1 ms; PRI for the internal loopback tester |
 | `test_gen_width` | `uint32_t` | 125 | 1 µs; width of the internally generated test pulse |
+| `test_gen_freq` | `int32_t` | 0 | Carrier: phase increment per sample, in turns × 2³². 0 is DC, 2³¹ is Fs/2, negative is a negative frequency |
+| `test_gen_chirp_rate` | `int32_t` | 0 | Added to that increment on every sample of a pulse, giving a linear-FM chirp |
+| `test_gen_noise_amp` | `uint16_t` | 0 | Scales a deterministic LFSR noise source added to both rails |
+
+**The generator's carrier is not decoration.** The first version emitted a flat
+DC amplitude step with `Q` hardwired to zero — a signal at exactly 0 Hz. Every
+frequency measurement downstream is untestable against such a stimulus: an
+estimator with an inverted sign, a broken quadrant fix, or one that returns a
+constant zero all agree with the correct answer on a real-only input. The chirp
+control matters for the same reason one level up: with a pure tone, start
+frequency and stop frequency are bit-identical, so a wrong stop-frequency
+implementation still passes. The noise source mirrors the Gaussian source in
+gr-pdw's own reference flowgraph, and is what makes a measured noise floor and
+SNR mean anything. All three are deterministic, so golden models stay
+bit-exact.
+
+The carrier comes from a phase accumulator driving a rotation-mode CORDIC
+(`include/pypeline/dsp/cordic.py`), not a lookup table: there is no RAM or ROM
+primitive in the Pypeline library, and a table coarse enough to be affordable
+as an unrolled constant mux would quantize the phase badly enough to bias the
+very measurement it exists to test.
 
 **Threshold scaling (as actually built in `top.py`/`pulse_detect.py`).** `threshold_high`/
 `threshold_low` are compared against `detect_pulses.power_t` — the DC-blocked,
@@ -133,7 +176,7 @@ power level in `magnitude`'s own units (raw $I^2+Q^2$, 0 fractional bits) —
 the example values above are illustrative round numbers, not derived from
 this scaling. The `uint32_t` port width in turn caps the usable range to real
 power $\lesssim$ 1,048,576 (i.e. a rail amplitude of roughly $\lesssim$ 1024
-before `threshold_high` can no longer represent it). `pdw_tb.py` (section 5
+before `threshold_high` can no longer represent it). `pdw_tb.py` (section 6
 below) derives its thresholds programmatically from the golden power model
 for exactly this reason, rather than hand-picking round numbers.
 
@@ -250,16 +293,27 @@ the threshold-scaling note in section 2) truncated to `uint32_t`. Keep a
 pulse's peak under $2^{32}$ in `power_t`'s scaled units or this field silently
 wraps; `pdw_tb.py` asserts this at build time for every phase it drives.
 
-**`valid_pdw_t`** (sent to host via DMA — 192 bits / 24 bytes total)
+**`valid_pdw_t`** (sent to host via DMA — 320 bits / 40 bytes, ten 32-bit beats)
 
 | Field | Type | Meaning |
 |---|---|---|
 | `toa` | `uint64_t` | Time of arrival, carried through from the candidate |
-| `pulse_width` | `uint32_t` | Validated width |
-| `peak_power` | `uint32_t` | Validated peak power |
+| `pulse_width` | `uint32_t` | Validated width, in samples |
+| `peak_power` | `uint32_t` | Validated peak power, linear |
 | `pkt_samples` | `uint32_t` | Total AXI-Stream payload size ($N_{pre} + width + N_{post}$); tells DMA how many samples to slice. **Equals `pulse_width` today** — margins are unbuilt |
-| `status_flags` | `uint16_t` | Bitfield: Bit 0 = ADC Clip, Bit 1 = DSP Overflow, Bit 2 = Packet FIFO Full |
-| `padding` | `uint16_t` | Reserved, aligns struct to a 192-bit (24-byte) / 256-bit (32-byte) DMA boundary |
+| `pri` | `uint32_t` | Samples since the previous **accepted** pulse |
+| `peak_power_db` | `int16_t` | Peak power in dBFS, Q8.8 (1 LSB = 1/256 dB) |
+| `noise_power_db` | `int16_t` | Noise floor in dBFS, Q8.8 |
+| `freq_start` | `int16_t` | Frequency over the first samples of the pulse, in turns × 2¹⁶ — the full `int16` range spans ±½ turn, so multiply by the sample rate for Hz |
+| `freq_stop` | `int16_t` | Frequency over the last samples of the pulse. Differs from `freq_start` exactly when the pulse is modulated |
+| `status_flags` | `uint32_t` | Bit 0 = ADC Clip, 1 = DSP Overflow, 2 = Packet FIFO Full, 3 = Frequency Degenerate, 4 = PRI Invalid |
+| `channel` | `uint16_t` | RX chain index. Always 0 — this is a single-channel design |
+| `padding` | `uint16_t` | Reserved, aligns the struct to 320 bits / 40 bytes |
+
+There is deliberately **no SNR field**: it is `peak_power_db - noise_power_db`
+and both are present, so the host subtracts. A hardware SNR would span ±135 dB
+and not fit the Q8.8 the other two use. gr-pdw's own file record likewise
+carries pulse power and noise power as separate columns rather than an SNR.
 
 `status_flags` is accumulated per packet across all of its beats and re-armed
 on each `last`. ADC clip is measured on the **stored** sample — the
@@ -270,13 +324,153 @@ A `valid_pdw_t` is emitted **before** its own packet's first beat, on a real
 valid/ready handshake, which is the order a DMA consumer needs to size the
 transfer that follows.
 
-## 5. Testbenches
+## 5. Pulse Measurements
+
+Detection alone makes an energy detector. What makes a PDW is the measurement,
+and this is where most of the work went.
+
+### The fast path / measurement path split
+
+The organizing idea, and what makes a CORDIC and two logarithms fit in a design
+that had ~5% timing margin to spare:
+
+* **Fast path — every sample, 125 MSPS.** Kept tiny. It gained exactly four
+  multipliers (a conjugate product), a few accumulators, and one leaky
+  integrator. No CORDIC, no logarithm, no division.
+* **Measurement path — once per pulse.** Iterative and pipelined, ~16 cycles.
+  A pulse closes at most every `min_width` samples and realistically every PRI
+  (~125,000 samples), so this hardware is idle almost all the time.
+
+Measured cost of the fast-path addition: **zero timing margin** (the detector
+subsystem closes at 130.9 MHz both before and after) and about 400 LUTs, 350
+flip-flops and 4 DSP48s.
+
+### Frequency
+
+The instantaneous frequency between consecutive samples is the angle of
+$z[n]\cdot\overline{z[n-1]}$. The obvious implementation takes an arctangent
+per sample and averages the angles; this one **accumulates the products first
+and takes a single angle per pulse**. That is both far cheaper — one `atan2`
+per pulse instead of one per sample at 125 MSPS — and more accurate: summing
+the phasors is the maximum-likelihood estimator for a tone in white noise,
+whereas averaging angles weights a noisy sample as heavily as a strong one.
+
+`freq_start` and `freq_stop` come from two accumulator sets: the first
+`block_k` products of the pulse, and a ping-pong block accumulator holding the
+most recent `block_k`..`2·block_k`. An unmodulated pulse gives the same angle
+for both; an LFM chirp gives two different ones, which is modulation-on-pulse
+detection for the cost of one extra accumulator pair.
+
+The angle itself comes from a vectoring-mode CORDIC
+(`include/pypeline/dsp/cordic.py`) — 14 iterations, no multiplier, no lookup
+table, one register stage per iteration. Angles are carried in **turns**, not
+radians, so converting to Hz is a pure scale by the sample rate with no π
+anywhere. Measured worst-case error is 3.4 × 10⁻⁵ turns (≈4.3 kHz at 125 MSPS),
+and it is *flat* from a phasor magnitude of 2³ to 2³⁷ — the input is normalized
+by count-leading-zeros first, so a weak pulse is measured as accurately as a
+strong one.
+
+**This is a deliberate divergence from gr-pdw's algorithm**, and the first
+thing its authors would ask about. gr-pdw zero-pads the pulse, takes an FFT and
+picks the peak bin, because in numpy that is free. In an FPGA it is not: there
+is no RAM/ROM primitive in the Pypeline library for the twiddle table, and a
+256-point FFT would dwarf the entire rest of this design. The phasor-sum
+estimator costs 4 DSP48s and gives a continuous-valued frequency rather than
+one quantized to an FFT bin.
+
+### Power and the noise floor
+
+`peak_power_db` and `noise_power_db` come from a shared conversion
+(`include/pypeline/dsp/log2_db.py`): count-leading-zeros for the exponent, plus
+a 4-segment piecewise-linear correction for the mantissa, with the
+$10/\log_2 10$ scaling folded into the stored constants. Worst-case error is
+**0.046 dB** measured over 300k random inputs against `10·log10`.
+
+Two things are easy to get wrong here and are worth stating:
+
+* **The fractional bits must be subtracted.** `power_t` is a fixed-point type,
+  so the integer the hardware holds is $2^{12}$ times the value it represents.
+  Taking dB of the raw integer both reports the wrong number and overflows the
+  output — the raw range reaches 135.5 dB, past Q8.8's +128, while the true
+  represented range is −36.1 … +99.4 dB and fits comfortably.
+* **The noise floor cannot be measured after the DC blocker.** `dc_block`
+  subtracts the running mean of the power, which *is* the noise floor, leaving
+  a residual that sits at zero. The estimator therefore runs on the
+  **pre-`dc_block` magnitude**, gated by the hysteresis SM's `in_idle`.
+
+That gate needs one more thing. `in_idle` is aligned with the SM's input, which
+lags the magnitude stream, so on every pulse's leading edge a few samples the SM
+still calls idle have already risen. Folding those in makes the reported noise
+floor a duty-cycle-weighted fraction of the *pulse* power — measured at ~10 dB
+below peak regardless of the actual noise, which is a plausible-looking number
+that means nothing. So a sample must also *look* like noise: no more than 4×
+the running estimate, plus a seed so the estimator can start from zero. This is
+the standard sample-excision guard a CFAR noise estimator uses, and it needs no
+knowledge of the pipeline latency — which matters, because those latencies are
+AUTOPIPELINE results that deliberately are not available at elaboration time.
+
+With the guard in place, a phase driven with `noise_amp=8` measures a
+**16.22 dBFS** floor, against **16.2 dBFS** predicted by hand from the LFSR's
+statistics; phases with no noise report the converter's floor, as they should.
+
+### PRI
+
+`toa - prev_toa`, taken between **accepted** pulses so a rejected glitch cannot
+corrupt the interval reported for the next real one. PRI is also the one
+measurement immune to `toa`'s documented DSP-latency bias, since a constant
+offset cancels in a difference. The first accepted pulse after reset has no
+predecessor, so it reports 0 and sets `status_flags` bit 4 rather than emitting
+a meaningless number.
+
+### Mapping to gr-pdw's record
+
+`gr_pdw_record.py` (host-side Python, no hardware) parses the 40-byte records
+and produces gr-pdw's own nine-column `float64` array, so its `pdw.py` reader,
+pandas and HDF5 flow work on FPGA output unmodified:
+
+| gr-pdw column | from this design |
+|---|---|
+| `pdw_channel` | `channel` |
+| `pulse_width_samps` | `pulse_width` |
+| `pulse_width_secs` | `pulse_width / fs` |
+| `pulse_power` | `peak_power_db / 256 + ref_level` |
+| `noise_power` | `noise_power_db / 256 + ref_level` |
+| `freq_start` | `freq_start / 65536 × fs` |
+| `stop_freq` | `freq_stop / 65536 × fs` |
+| `toa_course` | `toa // fs` |
+| `toa_fine` | `toa % fs` |
+
+Two honest caveats, both stated in that module's docstring rather than papered
+over:
+
+* **`ref_level` is a host-side additive offset**, exactly as in gr-pdw
+  (`pulse_power = dbfs + ref_level`). Its USRP calibration-table blocks stay on
+  the host; the FPGA emits dBFS.
+* **TOA is not a unix timestamp.** gr-pdw's coarse column is integer unix
+  seconds from the host clock. This design has no PPS input and no
+  time-of-day register, so `toa` counts samples since FPGA reset and the split
+  above is a formatting convenience. It also carries the constant DSP-latency
+  bias described in section 4.
+
+### Known limitation: I/Q DC offset
+
+The frequency estimator runs on the raw I/Q, and `dc_block` operates on the
+*power*, not on the I/Q rails. A DC offset on either rail therefore adds a 0 Hz
+component that pulls the measurement toward zero, roughly in proportion to
+$|d|^2/|s|^2$. The internal generator is zero-mean by construction (the LFSR
+noise is read as signed, deliberately — see `pulse_gen.py`), so this does not
+show up in simulation, but a real receiver's ADC/mixer offset would. Correcting
+it needs an I/Q DC blocker ahead of the conjugate product, which is not built.
+
+## 6. Testbenches
 
 | File | Scope | Style |
 |---|---|---|
 | `pulse_gen/pulse_gen_tb.py` | Pulse generator alone | `sim_assert`, hardware-generated stimulus |
 | `pulse_detect/pulse_detect_tb.py` | Bare hysteresis FSM (`make_pulse_detect_fsm`), hand-fed a power stream — elastic, valid_only, and CW/`max_width`-cap variants | `sim_assert`, hardware-generated stimulus |
 | `pdw_engine/pdw_engine_tb.py` | The PDW engine alone (`make_pdw_engine`), hand-fed synthetic gate streams — accept path + PDW/packet ordering, glitch reject, CW reject, `status_flags`, long-stall backpressure | `sim_assert`, hardware-generated stimulus |
+| `src/tests/pypeline_tests/inst/cordic_test.py` | `dsp/cordic.py` alone — atan2 across all four quadrants and both axes, the (0,0) degenerate case, the ±½-turn boundary, pipeline throughput, and a second instantiation at different widths | `sim_call` vs a bit-exact model and vs `math.atan2` |
+| `src/tests/pypeline_tests/inst/log2_db_test.py` | `dsp/log2_db.py` alone — accuracy vs `10·log10`, decade/octave steps, the fractional-bits subtraction, non-positive input, monotonicity, and two instances with different binary points | `sim_call` vs a bit-exact model |
 | `pdw_tb.py` | The whole `top.py` — pulse generator through the composed DSP chain (`make_detect_pulses`: magnitude → dc_block → moving_avg → hysteresis FSM), the Path B delay line, the loopback mux, and the PDW engine, all driven through real top-level ports | `@sim_input`/`@sim_output`, exact Python golden model |
 
 `pdw_engine_tb.py` exists alongside `pdw_tb.py` rather than being folded into
@@ -307,14 +501,34 @@ per output stream, `expect()`ed from the golden model, `check()`ed in arrival
 order. Both consumers are deliberately stalled on mutually prime periods, so
 the store-and-forward path is genuinely exercised.
 
-Seven phases (three PRI periods each): a baseline pulse, a short pulse (tests
-`moving_avg`'s edge smear), a **glitch** narrower than `min_width`, a
-`max_width` cap that forces the **CW** force-close path, a long pulse at a
-different amplitude, a threshold deliberately set to suppress every pulse in
-that phase, and an amplitude too weak to cross a calibrated threshold. All
-thresholds are calibrated programmatically from the golden power model (see
-section 2's scaling note), never hand-picked round numbers. Net: 15 candidates
-detected, 9 released, 6 rejected (3 glitch + 3 CW).
+Eight phases (three PRI periods each): a baseline pulse at +Fs/8, a short pulse
+at **−Fs/8** (a negative frequency, which a sign-flipped `atan2` fails), a
+**glitch** narrower than `min_width`, a `max_width` cap that forces the **CW**
+force-close path, a long pulse at a different amplitude, an **LFM chirp** (the
+only phase where `freq_start` and `freq_stop` must differ), a threshold
+deliberately set to suppress every pulse in that phase, and an amplitude too
+weak to cross a calibrated threshold. All thresholds are calibrated
+programmatically from the golden power model (see section 2's scaling note),
+never hand-picked round numbers. Net: 18 candidates detected, 12 released,
+6 rejected (3 glitch + 3 CW).
+
+The measurement fields are checked the same way as everything else — against a
+bit-exact Python model, not a tolerance. That model mirrors the NCO, the
+conjugate product, the ping-pong block accumulators, all 14 CORDIC iterations
+(including the arithmetic-shift floor semantics and the quadrant pre-rotation),
+the piecewise-linear logarithm, and the noise estimator's excision guard. The
+numbers it produces are independently checkable by hand: the baseline phase
+measures **+0.125000 turns/sample** against a carrier set to exactly Fs/8, and
+the noise phase measures a **16.22 dBFS** floor against 16.2 dBFS predicted
+from the LFSR's statistics.
+
+**The noise phase's placement is load-bearing too.** `dc_block`'s running mean
+carries across phases, so the first pulse after a change in signal level is
+measured against a mean still settling from the previous phase — its DC-blocked
+power comes out several times lower than its siblings'. Adding noise on top of
+that pushes it below `threshold_low` mid-pulse, and the hysteresis SM then
+correctly reports one pulse as several. The noise lives on a phase whose three
+peaks agree to ~12%, which has the headroom.
 
 **The phase order is load-bearing.** Both rejecting phases sit *before* a
 releasing one. A rejected pulse is erased by draining its buffered beats and
@@ -339,20 +553,67 @@ perturbing the golden model's `raw_idx` by ±1 fails it.
 
 | File | Checks |
 |---|---|
-| `pulse_gen/pulse_gen_synth_top.py` | Pulse generator alone |
+| `pulse_gen/pulse_gen_synth_top.py` | Pulse generator alone, including its NCO |
 | `pulse_detect/pulse_detect_synth_top.py` | Hysteresis FSM alone (elastic, the heavier path) |
-| `pdw_engine/pdw_engine_synth_top.py` | PDW engine alone, at the README's real 16K FIFO depth |
+| `pdw_engine/pdw_engine_synth_top.py` | PDW engine alone, at the README's real 16K FIFO depth. Also the only real timing check on the measurement engine — its CORDIC and both logarithm converters are instantiated inside it |
+| `cordic_test.py`, `log2_db_test.py` | The two new DSP primitives, `--comb` elaboration |
 | `top.py` | Everything composed |
 
 These are not redundant with the native-sim testbenches: native sim never
-emits VHDL, so it cannot catch anything Vivado rejects. Two real bugs in this
-project were only visible here — a ternary whose branches had different
-integer widths, and an `@enum` member named `RELEASE`, which becomes a VHDL
-enum literal verbatim and collides with a reserved word (`reject` is reserved
-too, hence `verdict_t`'s `is_glitch`/`is_cw`).
+emits VHDL, so it cannot catch anything Vivado rejects. Several real bugs in
+this project were only visible here — a ternary whose branches had different
+integer widths, and three identifiers that collide with VHDL reserved words: an
+`@enum` member named `RELEASE`, a local named `use` in the phasor accumulator,
+and a local named `rem` in the count-leading-zeros helper. `reject` and `wait`
+are reserved too, hence `verdict_t`'s `is_glitch`/`is_cw` and the packet
+store's `WAIT_MEAS`.
+
+They are also where the *timing* work happened, and none of it was guesswork —
+each fix came from reading the reported critical path:
+
+* the conjugate product's multiply chaining into a 40-bit accumulate
+  (10.13 ns) → one register between them;
+* the logarithm's barrel shift chaining into the mantissa multiply
+  (12.90 ns) → split into two stages, and the piecewise-linear constants
+  narrowed so the multiply stops inferring a DSP48;
+* the CORDIC's wide absolute-value and compare chaining into
+  count-leading-zeros (12.92 ns) → setup split across two registers;
+* `make_clz` itself, whose original form was an `n`-deep chain of dependent
+  muxes — at 39 bits that was an entire CORDIC's critical path on its own. It
+  is now a `log2(n)`-level binary search, which is strictly better and is
+  shared with the floating-point library.
 
 Latest results on `xc7a100tcsg324-1` at the 125 MHz target: `pdw_engine`
-alone closes at **161.9 MHz**; the composed `top.py` at **130.9 MHz** — it
-meets the target, but with only ~5% margin, so it is worth re-checking after
-any change to the detector's arithmetic. Both the 16,384-deep packet FIFO and
-the Path B delay line infer Block RAM.
+(including the measurement engine) closes at **126.7 MHz**, and the composed
+`top.py` at **127.1 MHz** — 16.7% of the part's LUTs, 4.6% of its flip-flops,
+16.3% of its block RAM and 3.3% of its DSP48s. Both the 16,384-deep packet
+FIFO and the Path B delay line infer block RAM.
+
+**Every one of those numbers started out failing.** The measurement path added
+a CORDIC, two logarithm converters and an NCO to a design that had ~5% margin,
+and getting back to 125 MHz took eight separate fixes, each one read off the
+reported critical path rather than guessed:
+
+| Path | Was | Fix |
+|---|---|---|
+| conjugate product → 40-bit accumulate | 10.13 ns | register between product and accumulator |
+| log2 barrel shift → mantissa multiply | 12.90 ns | split into two stages |
+| log2 exponent scaling | 10.96 / 11.91 ns | constant multiply → **balanced** shift-add tree in its own stage (a *serial* shift-add was worse than the DSP it replaced) |
+| CORDIC abs/compare → count-leading-zeros | 12.92 ns | setup split across two registers |
+| CORDIC angle table lookup (`make_clz`) | — | `n`-deep mux chain → `log2(n)` binary search |
+| generator LFSR → detector's magnitude DSP | 15.32 ns | pipeline the generator's output |
+| phasor accumulator → CORDIC front end | 11.65 ns | register the accumulator output |
+| NCO quadrant unfold → output adder | 8.23 ns | register the rotator's output |
+
+Two of those are worth calling out. The **generator-to-detector** path and the
+**accumulator-to-CORDIC** path are both cross-block: each block met timing
+comfortably on its own, and only the composed build showed them. A per-block
+synthesis check cannot find that class of problem, which is why `top.py` is
+registered as its own synthesis test rather than treated as covered by the
+three block-level ones.
+
+Every register added along the way is reported through a `.latency` attribute
+and consumed as one — `freq_accum.latency`, `cordic_atan2.latency`,
+`log2_db.latency`, `pulse_gen.latency`. Nothing downstream hardcodes a delay,
+so all of these changes were made without touching the testbenches' alignment
+logic or the golden model's structure.

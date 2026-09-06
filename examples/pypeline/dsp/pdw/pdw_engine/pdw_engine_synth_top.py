@@ -12,6 +12,10 @@ the small ones pdw_engine_tb.py uses -- the point of this file is to check
 what actually gets built, including that the data FIFO infers block RAM rather
 than a wall of flops.
 
+This is also the only place the per-pulse measurement engine
+(../pdw_measure/pdw_measure.py) gets a real timing check: its 14-iteration
+CORDIC and its two logarithm converters are instantiated inside pdw_engine.
+
 Synthesize (requires Vivado):
     pypelinec examples/pypeline/dsp/pdw/pdw_engine/pdw_engine_synth_top.py
 """
@@ -51,7 +55,10 @@ dsp_overflow: Input[uint1_t]
 
 @MAIN(125.0)
 def pdw_engine_top(
-    gated_in: detect_pulses.gated_sample_t, pdw_in_if: detect_pulses.out_fwd_t
+    gated_in: detect_pulses.gated_sample_t,
+    pdw_in_if: detect_pulses.out_fwd_t,
+    freq_acc: detect_pulses.freq_accum_t,
+    noise_est: detect_pulses.noise_t,
 ) -> pdw_engine_t:
     return pdw_engine(
         gated_in,
@@ -59,6 +66,8 @@ def pdw_engine_top(
         dsp_overflow,
         min_width,
         max_width,
+        freq_acc,
+        noise_est,
         pkt_out_ready,
         pdw_out_ready,
     )

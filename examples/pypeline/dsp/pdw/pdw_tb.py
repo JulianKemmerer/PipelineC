@@ -57,6 +57,9 @@ from pypeline import MAIN, sim_finish, sim_input, sim_output, sim_print
 
 import top
 from dsp.dsp_tb import golden_dc_block, golden_magnitude, golden_moving_avg
+from pulse_gen import golden_pulse_gen
+from pdw_measure import golden_pdw_measure
+from pdw_engine import STATUS_FREQ_DEGENERATE, STATUS_PRI_INVALID
 from axi.axis_sim import Scoreboard
 
 # ---------------------------------------------------------------------------
@@ -93,8 +96,23 @@ assert _DP.delay_depth > _DP.get_path_b_delay(), (
 # 1. Phase schedule
 # ---------------------------------------------------------------------------
 N_PERIODS = 3  # repetitions of each phase's own pri, back to back
-IDLE_MARGIN = 32  # min idle samples after each pulse before the next period
+# Min idle samples after each pulse before the next period. Must also cover
+# the generator's own NCO pipeline latency, since a phase's settings take
+# GEN_LAT cycles to reach its output and the boundary skew has to land in
+# genuinely idle signal.
+IDLE_MARGIN = 64
 SUPPRESS_THRESHOLD = 4_000_000_000  # < 2**32; see build-time assert below
+
+# Carrier settings, in pulse_gen's turns x 2^32 phase-increment units.
+FS_OVER_8 = 1 << 29  # 0.125 turns/sample
+# The chirp sweeps from ~fs/16 upward. Over a 192-sample pulse the increment
+# grows by 192 * CHIRP_RATE, which must stay well inside +-0.5 turns/sample
+# (Nyquist) or the tone aliases and the "start != stop" check becomes a lie.
+CHIRP_START_FREQ = 1 << 28  # 0.0625 turns/sample
+CHIRP_RATE = 1 << 21
+assert abs(CHIRP_START_FREQ + 192 * CHIRP_RATE) < (1 << 31), (
+    "the chirp must not sweep past Nyquist within its pulse"
+)
 
 
 @dataclass
@@ -108,6 +126,13 @@ class Phase:
     auto_threshold: bool = True  # False for phases 3/4, which set thr_hi/thr_lo below
     thr_hi: int = 0
     thr_lo: int = 0
+    # Carrier controls (see pulse_gen.py). `freq` is the phase increment per
+    # sample in turns x 2^32; `chirp_rate` ramps it within a pulse, which is
+    # the only way to make freq_start differ from freq_stop; `noise_amp`
+    # scales the deterministic LFSR noise.
+    freq: int = 0
+    chirp_rate: int = 0
+    noise_amp: int = 0
     # expect_pdws: Path A must produce a CANDIDATE per period (detection).
     # expect_valid: the engine must ACCEPT it (qualification). The two differ
     # exactly where this testbench is interesting: phases 5 and 6 are detected
@@ -123,8 +148,18 @@ class Phase:
 # phases are placed BEFORE a releasing one -- otherwise a flush-count bug
 # would leave no evidence anywhere and this testbench would pass regardless.
 PHASES = [
-    Phase(name="baseline", pri=256, width=64, amplitude=600),
-    Phase(name="short pulse (moving_avg edge smear)", pri=192, width=16, amplitude=800),
+    # A carrier at fs/8 (2^32 / 8). Every phase that is meant to be DETECTED
+    # carries a tone -- a 0 Hz stimulus would let a broken frequency estimator
+    # pass, since atan2 of a real-only phasor is 0 whatever the sign
+    # conventions are.
+    Phase(name="baseline", pri=256, width=64, amplitude=600, freq=FS_OVER_8),
+    Phase(
+        name="short pulse (moving_avg edge smear)",
+        pri=192,
+        width=16,
+        amplitude=800,
+        freq=-FS_OVER_8,  # negative frequency: catches a sign-flipped atan2
+    ),
     # Detected but GLITCH-rejected: min_width is set above anything this
     # pulse's width can smear out to (asserted exactly, below).
     Phase(
@@ -145,7 +180,38 @@ PHASES = [
         expect_valid=False,
     ),
     # Released, and deliberately AFTER both rejecting phases -- see above.
-    Phase(name="long pulse, different amplitude", pri=384, width=200, amplitude=400),
+    Phase(
+        name="long pulse, different amplitude",
+        pri=384,
+        width=200,
+        amplitude=400,
+        freq=FS_OVER_8 // 2,
+    ),
+    # LINEAR FM CHIRP. The only phase where freq_start and freq_stop must
+    # DIFFER, which is the only way to test the stop-frequency measurement at
+    # all: for every other phase a stop-frequency implementation that simply
+    # returned the start frequency would pass.
+    Phase(
+        name="LFM chirp",
+        pri=384,
+        width=192,
+        amplitude=600,
+        freq=CHIRP_START_FREQ,
+        chirp_rate=CHIRP_RATE,
+        # A real noise floor, so noise_power_db measures something rather than
+        # the log converter's zero-input floor. The LFSR's peak excursion is
+        # +-(512*noise_amp >> 8), so 8 gives +-16 against an amplitude of 600.
+        #
+        # It lives on THIS phase, not an earlier one, and that is not
+        # arbitrary. dc_block's running mean carries across phases, so the
+        # first pulse after a change in signal level is measured against a mean
+        # still settling from the previous phase -- its dc-blocked power comes
+        # out several times lower than its siblings'. Adding noise on top of
+        # that is what pushes it below threshold_low mid-pulse, and the
+        # hysteresis SM then (correctly) reports one pulse as several. This
+        # phase's own three peaks agree to ~12%, so it has the headroom.
+        noise_amp=8,
+    ),
     Phase(
         name="threshold-suppressed",
         pri=256,
@@ -198,18 +264,10 @@ for _p in PHASES:
 # ---------------------------------------------------------------------------
 
 
-def _golden_pulse_gen_raw(pri, width, amplitude, n_cycles):
-    """Mirrors pulse_gen.py's pulse_gen() exactly (see pulse_gen.py:35-46):
-    pri_counter is a free-running mod-pri counter; since every phase's own
-    duration is an exact multiple of its own pri (asserted above) and the
-    counter starts each phase reading 0 (guaranteed by the previous phase
-    ending on a wrap-around cycle), `k % pri` reproduces the counter's value
-    at local cycle k with no need to track cross-phase register state."""
-    out = []
-    for k in range(n_cycles):
-        active = (k % pri) < width
-        out.append((amplitude if active else 0, 0))  # (i, q); pulse_gen never sets q
-    return out
+# The generator's output trails its control inputs by the NCO pipeline depth
+# (the pulse envelope is applied as the CORDIC's seed amplitude -- see
+# pulse_gen.py). Read it from the hardware rather than writing a number.
+GEN_LAT = top.pulse_gen.latency
 
 
 def _nominal_windows(start, pri, width, n_periods):
@@ -217,24 +275,61 @@ def _nominal_windows(start, pri, width, n_periods):
     in-pulse sample ranges, used only to calibrate auto thresholds (the FSM's
     real detected pulse_width can differ by a few samples at the edges due to
     moving_avg's smoothing -- that's fine, expected values below come from
-    walking the FSM model, not from these nominal windows)."""
-    return [(start + p * pri, start + p * pri + width) for p in range(n_periods)]
+    walking the FSM model, not from these nominal windows).
+
+    Shifted by GEN_LAT: the generator's PRI counter reaches p*pri at cycle
+    p*pri, but the sample that counter selected does not appear on its output
+    until GEN_LAT cycles later."""
+    return [
+        (start + p * pri + GEN_LAT, start + p * pri + width + GEN_LAT)
+        for p in range(n_periods)
+    ]
 
 
-raw = []
+# Per-cycle generator control schedules. The generator's state -- two LFSRs, a
+# phase accumulator and the NCO pipeline -- is CONTINUOUS across the whole run,
+# so the model has to be driven through it in one call, exactly as the hardware
+# is. (The old model could build each phase independently only because the
+# generator was stateless apart from a PRI counter that wrapped cleanly at each
+# boundary.)
+pri_sched = []
+width_sched = []
+amp_sched = []
+freq_sched = []
+chirp_sched = []
+noise_sched = []
 phase_bounds = []  # (start, end) absolute sample-index range per phase
+_pos = 0
 for _ph in PHASES:
-    _start = len(raw)
-    raw.extend(_golden_pulse_gen_raw(_ph.pri, _ph.width, _ph.amplitude, N_PERIODS * _ph.pri))
-    phase_bounds.append((_start, len(raw)))
+    _n = N_PERIODS * _ph.pri
+    phase_bounds.append((_pos, _pos + _n))
+    _pos += _n
+    pri_sched.extend([_ph.pri] * _n)
+    width_sched.extend([_ph.width] * _n)
+    amp_sched.extend([_ph.amplitude] * _n)
+    freq_sched.extend([_ph.freq] * _n)
+    chirp_sched.extend([_ph.chirp_rate] * _n)
+    noise_sched.extend([_ph.noise_amp] * _n)
 
-TOTAL_SAMPLES = len(raw)
+TOTAL_SAMPLES = _pos
+raw = golden_pulse_gen(
+    top.pulse_gen,
+    TOTAL_SAMPLES,
+    pri_sched,
+    width_sched,
+    amp_sched,
+    freq_sched,
+    chirp_sched,
+    noise_sched,
+)
+assert len(raw) == TOTAL_SAMPLES
 
 # dc_block's mean is one continuous IIR state across the WHOLE run (a single
 # hardware instance, never reset between phases) -- so golden_dc_block must
 # see the whole concatenated stimulus in one call, exactly like the hardware.
+_mag_for_power = golden_magnitude(_DP.magnitude, raw)
 power = golden_moving_avg(
-    _DP.moving_avg, golden_dc_block(_DP.dc_block, golden_magnitude(_DP.magnitude, raw))
+    _DP.moving_avg, golden_dc_block(_DP.dc_block, _mag_for_power)
 )
 assert len(power) == TOTAL_SAMPLES
 
@@ -313,6 +408,20 @@ def _new_fsm_state():
     }
 
 
+NOISE_K = _DP.noise_k
+_NOISE_BITS = len(_DP.noise_t.typeof("val")) + NOISE_K + 1
+# The noise estimator runs on the PRE-dc_block magnitude, which the hardware
+# sees dc_block + moving_avg cycles EARLIER than the sample the hysteresis SM
+# is classifying at the same moment. Mirror that skew rather than pairing them
+# by index.
+MAG_SKEW = _DP.dc_block.get_latency() + _DP.moving_avg.get_latency()
+
+
+def _sext(v, bits):
+    m = 1 << (bits - 1)
+    return (v & ((1 << bits) - 1)) - ((v & m) << 1)
+
+
 def _fsm_step(st, p, thr_hi, thr_lo, max_width):
     """One simulated hardware cycle. Registers are read here as committed
     from the PREVIOUS call (matching hardware's read-before-write Reg
@@ -322,11 +431,14 @@ def _fsm_step(st, p, thr_hi, thr_lo, max_width):
     out_pdw_valid, out_pdw_data = st["pdw_valid"], st["pdw_data"]
     out_gate_valid, out_gate_last = st["gate_valid_r"], st["gate_last_r"]
 
+
     if st["pdw_valid"]:  # drain (the engine's candidate ready is always 1)
         st["pdw_valid"] = 0
 
     above_high = p > thr_hi
     below_low = p < thr_lo
+    # Combinational from the state as it stands on entry, like the hardware.
+    out_in_idle = 1 if (st["state"] == "IDLE" and not above_high) else 0
 
     in_pulse = 0
     if st["state"] == "IDLE":
@@ -374,7 +486,97 @@ def _fsm_step(st, p, thr_hi, thr_lo, max_width):
 
     st["toa_counter"] += 1  # last: every read above is pre-increment
 
-    return out_pdw_valid, out_pdw_data, out_gate_valid, out_gate_last
+    return out_pdw_valid, out_pdw_data, out_gate_valid, out_gate_last, out_in_idle
+
+
+class _NoiseModel:
+    """Mirror of the leaky noise-floor integrator in make_detect_pulses."""
+
+    def __init__(self):
+        self.acc = 0
+
+    GUARD = _DP.noise_guard_shift
+    SEED = _DP.noise_seed
+
+    def step(self, mag_val, in_idle):
+        est = self.acc >> NOISE_K
+        looks_like_noise = mag_val <= ((est << self.GUARD) + self.SEED)
+        if in_idle and looks_like_noise:
+            self.acc = _sext(
+                self.acc + (((mag_val << NOISE_K) - self.acc) >> NOISE_K),
+                _NOISE_BITS,
+            )
+        return self.acc >> NOISE_K  # read post-update, as the hardware does
+
+
+class _FreqAccumModel:
+    """Untimed mirror of make_freq_accum's ping-pong block accumulators.
+
+    Untimed is exact here: the hardware registers the conjugate product, and
+    delays the accumulate-enable and the pulse-start reset by the SAME cycle,
+    so the sequence of operations is identical and only its phase shifts. The
+    values presented on the cycle after gate_last are the values this model
+    holds after processing the gate_last beat.
+    """
+
+    K = _DP.freq_block_k
+    BITS = len(_DP.freq_acc_t)
+
+    def __init__(self):
+        self.prev_i = 0
+        self.prev_q = 0
+        self.prev_valid = 0
+        self._reset_accums()
+
+    def _reset_accums(self):
+        self.first_re = 0
+        self.first_im = 0
+        self.blk_re = 0
+        self.blk_im = 0
+        self.prv_re = 0
+        self.prv_im = 0
+        self.blk_cnt = 0
+        self.beat_cnt = 0
+
+    def step(self, cur_i, cur_q, beat_valid, beat_advance):
+        d_re = cur_i * self.prev_i + cur_q * self.prev_q
+        d_im = cur_q * self.prev_i - cur_i * self.prev_q
+        pair_ok = beat_valid and self.prev_valid
+        pulse_start = beat_valid and not self.prev_valid
+
+        nb_re, nb_im, nb_cnt = self.blk_re, self.blk_im, self.blk_cnt
+        nf_re, nf_im, nbeat = self.first_re, self.first_im, self.beat_cnt
+        np_re, np_im = self.prv_re, self.prv_im
+        if pair_ok:
+            nb_re = _sext(nb_re + d_re, self.BITS)
+            nb_im = _sext(nb_im + d_im, self.BITS)
+            nb_cnt = self.blk_cnt + 1
+            if self.beat_cnt < self.K:
+                nf_re = _sext(nf_re + d_re, self.BITS)
+                nf_im = _sext(nf_im + d_im, self.BITS)
+                nbeat = self.beat_cnt + 1
+            if nb_cnt == self.K:
+                np_re, np_im = nb_re, nb_im
+                nb_re, nb_im, nb_cnt = 0, 0, 0
+
+        out = (
+            nf_re,
+            nf_im,
+            _sext(np_re + nb_re, self.BITS),
+            _sext(np_im + nb_im, self.BITS),
+        )
+
+        if pulse_start:
+            self._reset_accums()
+        else:
+            self.first_re, self.first_im = nf_re, nf_im
+            self.blk_re, self.blk_im, self.blk_cnt = nb_re, nb_im, nb_cnt
+            self.prv_re, self.prv_im = np_re, np_im
+            self.beat_cnt = nbeat
+
+        if beat_advance:
+            self.prev_i, self.prev_q, self.prev_valid = cur_i, cur_q, beat_valid
+        return out
 
 
 def _phase_of(sample_idx):
@@ -387,17 +589,35 @@ def _phase_of(sample_idx):
 expected_pdws = []  # candidates: (phase_idx, toa, pulse_width, peak_power_u32)
 expected_gate_packets = []  # every gate packet: (phase_idx, tuple_of_tdata_words)
 # What the ENGINE should let through (README box 3): the accepted subset.
-expected_valid_pdws = []  # (phase_idx, toa, width, peak, pkt_samples, status)
+# (phase_idx, toa, width, peak, pkt_samples, status, pri, peak_db, noise_db,
+#  freq_start, freq_stop)
+expected_valid_pdws = []
 expected_released = []  # (phase_idx, tuple_of_tdata_words)
 expected_rejects = []  # (phase_idx, "glitch" | "cw") -- for non-vacuity only
 first_gate_beat_sample_idx = None
 
+_MEAS = top.pdw_engine.pdw_measure
+_mag_seq = _mag_for_power
 _fsm_st = _new_fsm_state()
+_fa = _FreqAccumModel()
+_nm = _NoiseModel()
 _cur_packet = []
+_prev_toa = 0
+_have_prev = False
 for _s in range(TOTAL_SAMPLES):
-    pdw_valid, pdw_data, gate_valid, gate_last = _fsm_step(
+    pdw_valid, pdw_data, gate_valid, gate_last, in_idle = _fsm_step(
         _fsm_st, power[_s], thr_hi_sched[_s], thr_lo_sched[_s], max_width_sched[_s]
     )
+    _mi = _s + MAG_SKEW
+    noise_now = _nm.step(_mag_seq[_mi] if _mi < TOTAL_SAMPLES else 0, in_idle)
+    # Path B: the delay line advances on gate_advance, which is the gate
+    # register chain's structural twin and so first asserts GATE_LAT accepted
+    # samples in. The sample it presents at index _s is raw[_s - GATE_LAT] --
+    # the same relation the packet content check below rests on.
+    _b_adv = 1 if _s >= GATE_LAT else 0
+    _bi = _s - GATE_LAT
+    _rri, _rrq = raw[_bi] if 0 <= _bi < TOTAL_SAMPLES else (0, 0)
+    _fa_out = _fa.step(_rri, _rrq, gate_valid, _b_adv)
     if pdw_valid:
         toa, width, peak = pdw_data
         expected_pdws.append((_phase_of(_s), toa, width, peak & 0xFFFFFFFF))
@@ -433,13 +653,37 @@ for _s in range(TOTAL_SAMPLES):
         if _is_glitch or _is_cw:
             expected_rejects.append((_phase_of(_s), "glitch" if _is_glitch else "cw"))
         else:
-            # status_flags is 0 for every packet this testbench produces: no
-            # amplitude here reaches the int16 rail (ADC clip), the FSM's
-            # overflow cannot set with the engine always ready, and the
-            # packet FIFO is far larger than any packet. Asserting 0 is the
-            # negative check that no flag sets spuriously; the flags' positive
-            # paths are exercised in pdw_engine/pdw_engine_tb.py, where the
-            # engine's inputs can be driven directly.
+            # ADC-clip and DSP-overflow flags stay 0 for every packet here (no
+            # amplitude reaches the int16 rail, and the FSM's overflow cannot
+            # set with the engine always ready); their positive paths are
+            # exercised in pdw_engine/pdw_engine_tb.py. The two measurement
+            # flags below CAN legitimately set, so they are modelled rather
+            # than asserted away.
+            # The measurement, from the accumulations this same walk built.
+            # `_fa_out` is what the hardware presents one cycle after
+            # gate_last; `noise_now` and the candidate's peak/toa are what it
+            # delays by freq_latency to meet it there.
+            _m = golden_pdw_measure(
+                _MEAS,
+                _fa_out[0],
+                _fa_out[1],
+                _fa_out[2],
+                _fa_out[3],
+                noise_now,
+                _peak,
+                _toa,
+                _prev_toa,
+                _have_prev,
+            )
+            # PRI is measured between ACCEPTED pulses, so this advances here
+            # and not at every candidate -- a rejected glitch must not corrupt
+            # the interval reported for the next real pulse.
+            _prev_toa, _have_prev = _toa, True
+            _status = 0
+            if _m["freq_degenerate"]:
+                _status |= STATUS_FREQ_DEGENERATE
+            if not _m["pri_valid"]:
+                _status |= STATUS_PRI_INVALID
             expected_valid_pdws.append(
                 (
                     _phase_of(_s),
@@ -447,7 +691,12 @@ for _s in range(TOTAL_SAMPLES):
                     _width,
                     _peak & 0xFFFFFFFF,
                     len(_cur_packet),  # pkt_samples == beats pushed
-                    0,  # status_flags
+                    _status,
+                    _m["pri"],
+                    _m["peak_power_db"],
+                    _m["noise_power_db"],
+                    _m["freq_start"],
+                    _m["freq_stop"],
                 )
             )
             expected_released.append((_phase_of(_s), tuple(_cur_packet)))
@@ -576,6 +825,11 @@ def _populate_scoreboards():
         _pkt_sb.expect(pkt, phase=phase_idx, idx=idx)
 
 
+def _s16(v):
+    """Ports are read as raw unsigned; the dB and frequency fields are signed."""
+    return v - 65536 if v >= 32768 else v
+
+
 # ---------------------------------------------------------------------------
 # 7. Drivers + checkers
 # ---------------------------------------------------------------------------
@@ -618,6 +872,9 @@ def drive_stimulus():
     # further pulse the golden model never modelled -- and the engine's
     # store-and-forward latency means this testbench is still draining then.
     top.pulse_gen_amplitude = 0 if past_end else PHASES[_phase_of(idx)].amplitude
+    top.pulse_gen_freq = freq_sched[idx]
+    top.pulse_gen_chirp_rate = chirp_sched[idx]
+    top.pulse_gen_noise_amp = 0 if past_end else noise_sched[idx]
     top.threshold_high = thr_hi_sched[idx]
     top.threshold_low = thr_lo_sched[idx]
     top.max_width = max_width_sched[idx]
@@ -694,6 +951,11 @@ def check_valid_pdw():
         int(top.valid_pdw_peak_power),
         int(top.valid_pdw_pkt_samples),
         int(top.valid_pdw_status_flags),
+        int(top.valid_pdw_pri),
+        _s16(int(top.valid_pdw_peak_power_db)),
+        _s16(int(top.valid_pdw_noise_power_db)),
+        _s16(int(top.valid_pdw_freq_start)),
+        _s16(int(top.valid_pdw_freq_stop)),
     )
     result = _vpdw_sb.check(got)
     idx = result.get("idx", "?")
@@ -705,7 +967,8 @@ def check_valid_pdw():
         exp, got_v = result["expected"], result["got"]
         sim_print(
             f"ERROR: pdw_tb: valid_pdw {idx} (phase {phase}) mismatch: "
-            f"expected (toa,width,peak,pkt_samples,status)={exp}, got {got_v}"
+            f"expected (toa,width,peak,pkt_samples,status,pri,peak_db,"
+            f"noise_db,freq_start,freq_stop)={exp}, got {got_v}"
         )
         raise AssertionError(
             f"pdw_tb: valid_pdw {idx} (phase {phase}): expected {exp}, got {got_v}"
@@ -718,7 +981,9 @@ def check_valid_pdw():
     )
     sim_print(
         f"pdw_tb: valid_pdw {idx} (phase {phase}) OK: toa={got[0]} width={got[1]} "
-        f"peak={got[2]} pkt_samples={got[3]} status=0x{got[4]:04x}"
+        f"peak={got[2]} pkt_samples={got[3]} status=0x{got[4]:08x} pri={got[5]} "
+        f"peak={got[6] / 256.0:.2f}dB noise={got[7] / 256.0:.2f}dB "
+        f"f0={got[8] / 65536.0:+.5f} f1={got[9] / 65536.0:+.5f} turns/sample"
     )
     ST["n_vpdw_done"] += 1
 
