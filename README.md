@@ -128,6 +128,7 @@ Simulation:
   EDAPlayground
 ```
 
+![PypelineC Tool Flow](./docs/images/flow.svg)
 
 _An easy to understand hardware description language with a powerful autopipelining compiler and growing set of real life hardware design inspired features._
 

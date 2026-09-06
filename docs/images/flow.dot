@@ -1,0 +1,239 @@
+digraph PypelineC {
+  // PypelineC tool flow overview.
+  //
+  // Render with graphviz after editing:
+  //   dot -Tpng docs/flow.dot > docs/images/flow.png
+  //   dot -Tsvg docs/flow.dot > docs/images/flow.svg
+  //
+  // Style follows CIRCT's docs/dialects.dot:
+  //   white ellipse  = design representation inside the tool
+  //   orange box     = PypelineC stage (src/*.py)
+  //   yellow octagon = external tool
+  //   green note     = input file        blue note = output file
+  //   white note     = intermediate file
+  //   solid arrow    = default flow, dashed arrow = optional (flag/pragma gated)
+  //   blue arrow     = the autopipelining measurement loop
+
+  rankdir = TB
+  splines = spline
+  compound = true
+  newrank = true
+  nodesep = 0.3
+  ranksep = 0.5
+  fontname = "Helvetica"
+  node [shape=box style=filled fillcolor="white" fontname="Helvetica" fontsize=11]
+  edge [fontname="Helvetica" fontsize=9]
+
+  // ============================== Legend ==============================
+  subgraph cluster_legend {
+    label = ""
+    style = filled
+    fillcolor = "white"
+    color = "black"
+
+    leg_stage [label="Design representation" shape=ellipse]
+    leg_tool  [label="PypelineC stage" fillcolor="#fdc086"]
+    leg_ext   [label="External tool" shape=octagon fillcolor="#ffff99"]
+
+    leg_in    [label="Input file" shape=note fillcolor="#7fc97f"]
+    leg_out   [label="Output file" shape=note fillcolor="#a6cee3"]
+    leg_mid   [label="Intermediate file" shape=note fillcolor="white"]
+
+    leg_def_src [label="Default flow" shape=plaintext style="" fillcolor="none"]
+    leg_def_dst [label="" shape=point style=invis width=0.01]
+    leg_opt_src [label="Optional (flag/pragma)" shape=plaintext style="" fillcolor="none"]
+    leg_opt_dst [label="" shape=point style=invis width=0.01]
+    leg_it_src  [label="Autopipelining loop" shape=plaintext style="" fillcolor="none" fontcolor="#1f5fbf"]
+    leg_it_dst  [label="" shape=point style=invis width=0.01]
+
+    leg_def_src -> leg_def_dst
+    leg_opt_src -> leg_opt_dst [style=dashed]
+    leg_it_src  -> leg_it_dst  [color="#1f5fbf" penwidth=2]
+
+  }
+
+  // ============================== Inputs ==============================
+  subgraph cluster_inputs {
+    label = "Input languages"
+    node [shape=note fillcolor="#7fc97f"]
+    CSrc  [label="C\nPipelineC"]
+    PySrc [label="Python\nPypeline"]
+  }
+  RawVHDL  [label="Existing VHDL\nvhdl() / #pragma passthrough" shape=note fillcolor="#7fc97f"]
+  PinsFile [label="Pin constraints\n--pins" shape=note fillcolor="#7fc97f"]
+
+  // ============================ Front ends ============================
+  C_TO_LOGIC  [label="C_TO_LOGIC" fillcolor="#fdc086"]
+  PY_TO_LOGIC [label="PY_TO_LOGIC" fillcolor="#fdc086"]
+
+  LogicGraph [label="Logic graph IR\npure functions + stateful logic,\ninstance hierarchy, global wires" shape=ellipse]
+
+  // ======================= Autopipelining loop =======================
+  Autopipeline [label="Autopipelining\ncut the logic graph into N pipeline stages,\nsynthesize, read fmax, re-cut -- iterate until\nthe @MAIN target frequency is met"
+                fillcolor="#fdc086" color="#1f5fbf" penwidth=2]
+
+  DelayCache [label="path_delay_cache/  area_cache/\nper part + tool + operator delays and areas,\ncommitted in the repo" shape=note fillcolor="#7fc97f"]
+
+  AUTOFSM [label="AUTOFSM(f)   experimental (Pypeline only)\none pure function -> resource-shared FSM\n(schedule + bind): area over throughput"
+           fillcolor="#fdc086" color="#b35806" penwidth=2 style="filled,dashed"]
+
+  NativeSim [label="Native Python simulation\npypelinec --sim   (Pypeline only)" fillcolor="#fdc086"]
+  SimDebug  [label="pypeline_sim_debug\nnative vs VHDL cycle diff" fillcolor="#fdc086"]
+
+  VHDLFiles [label="VHDL\ntop.vhd + entities\n(human readable)" shape=note fillcolor="#a6cee3"]
+
+  // ================ Shared open-source tool front/back end ================
+  subgraph cluster_ossflow {
+    label = "GHDL + Yosys   (every open-source backend and both Verilog/C++ conversions go through here)"
+    node [shape=octagon fillcolor="#ffff99"]
+    GHDL  [label=<<B>ghdl</B><BR/>VHDL analysis + elaboration,<BR/>yosys' VHDL front end, and a simulator>]
+    Yosys [label=<<B>yosys</B> (+ <B>abc</B>)<BR/>synthesis and netlist output<BR/>for every flow below>]
+  }
+
+  // Intermediate netlists yosys hands to each consumer
+  NetlistJson [label=".json netlist (+ .edf)" shape=note fillcolor="white"]
+  BlifFile    [label=".blif netlist" shape=note fillcolor="white"]
+  LibertyJson [label="liberty-mapped .json" shape=note fillcolor="white"]
+  GateMateV   [label="top_synth.v" shape=note fillcolor="white"]
+  VerilogFile [label="Verilog\ntop.v, --verilog" shape=note fillcolor="#a6cee3"]
+  CxxrtlCpp   [label="top.cpp" shape=note fillcolor="white"]
+
+  // ============= Synthesis / P&R / timing backends =============
+  subgraph cluster_syn {
+    label = "Synthesis / place-and-route / timing backends   (one SYN_TOOL, picked from PART or --syn_tool)"
+
+    subgraph cluster_yosysbased {
+      label = "Yosys-based -- fed by the netlists above"
+      NextPnr    [label=<<B>nextpnr</B><BR/>ECP5 / ice40 place-and-route>
+                  shape=octagon fillcolor="#ffff99"]
+      PnR        [label=<<B>p_r</B><BR/>Cologne Chip place-and-route>
+                  shape=octagon fillcolor="#ffff99"]
+      PyRTLModel [label=<<B>PyRTL</B><BR/>timing estimate from the netlist<BR/>(default backend)> shape=octagon fillcolor="#ffff99"]
+      Sky130STA  [label=<<B>sky130</B> ASIC model<BR/>liberty STA + cell area<BR/>--syn_tool sky130> fillcolor="#fdc086"]
+    }
+
+    subgraph cluster_vendor {
+      label = "Vendor tools -- read the VHDL directly"
+      node [shape=octagon fillcolor="#ffff99"]
+      Vivado  [label=<<B>Xilinx Vivado</B><BR/>xc*>]
+      Quartus [label=<<B>Intel Quartus</B><BR/>ep* / 10c* / 5c*>]
+      Diamond [label=<<B>Lattice Diamond</B><BR/>ice40>]
+      Efinity [label=<<B>Efinix Efinity</B><BR/>T8* / Ti*>]
+      Gowin   [label=<<B>Gowin EDA</B><BR/>GW*>]
+    }
+  }
+
+  // ========================= HDL simulators =========================
+  subgraph cluster_sim {
+    label = "HDL simulation"
+    node [shape=octagon fillcolor="#ffff99"]
+    Cocotb    [label=<<B>cocotb</B><BR/>--cocotb --ghdl>]
+    Modelsim  [label=<<B>Modelsim</B><BR/>--modelsim>]
+    EDAPlay   [label=<<B>EDA Playground</B><BR/>--edaplay>]
+    Verilator [label=<<B>Verilator</B><BR/>--verilator>]
+    Clangpp   [label=<<B>CXXRTL</B><BR/>--cxxrtl, compiled with clang++>]
+  }
+
+  // ============================= Outputs =============================
+  Bitstream  [label="Bitstream" shape=note fillcolor="#a6cee3"]
+  YosysJSON  [label="Yosys netlist\n--yosys_json" shape=note fillcolor="#a6cee3"]
+  XOFile     [label="Vitis IP\n.xo AXIS, --xo_axis" shape=note fillcolor="#a6cee3"]
+  VCD        [label="Trace (vcd)" shape=note fillcolor="#a6cee3"]
+  SimBinary  [label="Sim binary (C++)" shape=note fillcolor="#a6cee3"]
+  SimOut     [label="Console output\nsim_print / sim_assert" shape=note fillcolor="#a6cee3"]
+  Report     [label="Pipeline + timing report\nname_index.log, stdout" shape=note fillcolor="#a6cee3"]
+  SWCode     [label="Software C helper code\nstruct un/packing, drivers" shape=note fillcolor="#a6cee3"]
+
+  // ============================== Edges ==============================
+  CSrc -> C_TO_LOGIC
+  PySrc -> PY_TO_LOGIC
+  C_TO_LOGIC -> LogicGraph
+  PY_TO_LOGIC -> LogicGraph
+  RawVHDL -> CSrc
+  RawVHDL -> PySrc
+  C_TO_LOGIC -> SWCode [style=dashed]
+  PySrc -> NativeSim [style=dashed label="  --sim --comb\l  no build, no tools\l"]
+
+  // Combinational, un-pipelined output: no synthesis iterations at all
+  LogicGraph -> VHDLFiles [style=dashed color="#1a7f1a" fontcolor="#1a7f1a" weight=20
+                           label="  --comb / --no_synth\l  0-clock comb. logic: no autopipelining,\l  no synth/P&R iterations (also the automatic\l  fallback when no synth tool is found)\l"]
+
+  // The autopipelining loop
+  LogicGraph -> Autopipeline
+  LogicGraph -> AUTOFSM [style=dashed color="#b35806" fontcolor="#b35806" label="  experimental\l"]
+  AUTOFSM -> Autopipeline [style=dashed color="#b35806" fontcolor="#b35806" label="  scheduled FSM\l"]
+  DelayCache -> Autopipeline [color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
+                              label="  cache hit: reuse a\l  measured delay/area,\l  run no tool at all\l"]
+  Autopipeline -> DelayCache [color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
+                              label="  cache miss:\l  store measurement\l"]
+  Autopipeline -> Report
+  Autopipeline -> VHDLFiles [color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
+                             label="  candidate pipelining ->\l  synthesize it for real\l"]
+
+  // Every backend consumes the generated VHDL...
+  VHDLFiles -> GHDL
+  VHDLFiles -> Vivado [lhead=cluster_vendor]
+  VHDLFiles -> XOFile [style=dashed]
+
+  // ...and the timing they report is what closes the autopipelining loop
+  Vivado -> Autopipeline [ltail=cluster_syn constraint=false color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
+                          label="  measured fmax / slack -> re-cut and try again\l"]
+
+  // GHDL/Yosys chain and the netlists it produces
+  GHDL -> Yosys
+  GHDL -> Cocotb
+  Yosys -> NetlistJson
+  Yosys -> BlifFile
+  Yosys -> LibertyJson
+  Yosys -> GateMateV
+  Yosys -> VerilogFile [style=dashed weight=30]
+  Yosys -> CxxrtlCpp [style=dashed weight=30]
+  NetlistJson -> NextPnr [label="  OPEN_TOOLS\l"]
+  NetlistJson -> YosysJSON [style=dashed label="  --yosys_json\l"]
+  BlifFile -> PyRTLModel [label="  PYRTL\l"]
+  LibertyJson -> Sky130STA [label="  DEVICE_MODELS\l"]
+  GateMateV -> PnR [label="  CC_TOOLS\l"]
+
+  // Bitstreams
+  PinsFile -> Vivado [lhead=cluster_syn style=dashed]
+  Vivado -> Bitstream [ltail=cluster_syn style=dashed label="  --pins\l"]
+
+  // Simulation of the generated HDL
+  VHDLFiles -> Modelsim
+  VHDLFiles -> EDAPlay
+  VerilogFile -> Verilator [weight=30]
+  CxxrtlCpp -> Clangpp [weight=30]
+  Cocotb -> SimOut
+  Cocotb -> VCD
+  Modelsim -> VCD
+  Verilator -> SimBinary
+  Clangpp -> SimBinary
+  NativeSim -> SimOut
+  NativeSim -> SimDebug
+  SimDebug -> SimOut
+  Cocotb -> SimDebug
+
+  // ==================== Layout only (invisible) ====================
+  // Park the legend in the empty space to the left of the top rows:
+  // share their ranks, then use flat invisible edges to order it first.
+  { rank=same; CSrc PySrc leg_stage leg_tool leg_ext }
+  { rank=same; C_TO_LOGIC PY_TO_LOGIC leg_in leg_out leg_mid }
+  { rank=same; LogicGraph leg_def_src leg_def_dst leg_opt_src leg_opt_dst leg_it_src leg_it_dst }
+  leg_ext -> CSrc [style=invis]
+  CSrc -> PySrc [style=invis]
+  leg_mid -> C_TO_LOGIC [style=invis]
+  C_TO_LOGIC -> PY_TO_LOGIC [style=invis]
+  leg_it_dst -> LogicGraph [style=invis]
+  leg_it_dst -> GHDL [style=invis weight=20]
+  { rank=same; Autopipeline AUTOFSM DelayCache }
+  { rank=same; NetlistJson BlifFile LibertyJson GateMateV VerilogFile CxxrtlCpp }
+  { rank=same; NextPnr PnR PyRTLModel Sky130STA }
+  { rank=same; Vivado Quartus Diamond Efinity Gowin }
+  { rank=same; Cocotb Modelsim EDAPlay Verilator Clangpp NativeSim }
+  { rank=same; SimOut VCD SimBinary SimDebug }
+  NetlistJson -> NextPnr [style=invis weight=50]
+  NextPnr -> Vivado [style=invis weight=50]
+  PnR -> Quartus [style=invis weight=50]
+  Sky130STA -> Gowin [style=invis weight=50]
+  Vivado -> Cocotb [style=invis weight=50]
+}
