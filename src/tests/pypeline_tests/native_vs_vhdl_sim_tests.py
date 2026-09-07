@@ -88,6 +88,12 @@ COMB_TEST_FILES = [
     ("global_wire_dynamic_index_write_test.py", INST_DIR, []),
     ("var_ref_assign_readback_test.py", INST_DIR, []),
     ("var_ref_assign_cond_loop_test.py", INST_DIR, []),
+    # struct -> AXI-Stream -> struct through real GHDL: the byte-lane muxing,
+    # variable-index buffer writes and keep arithmetic of stream/serializer.py,
+    # stream/deserializer.py and axi/type_axis.py all lower to VHDL here, on a
+    # 7-byte struct over a 4-byte bus so the partial-beat path is what gets
+    # diffed rather than the aligned happy path.
+    ("self_check_type_axis_test.py", INST_DIR, []),
 ]
 # Non---comb (pipelined/scheduled) compares: full build, then native sim runs
 # with the discovered latencies emulated, diffed against real pipelined VHDL.

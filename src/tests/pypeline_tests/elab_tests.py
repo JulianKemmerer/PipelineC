@@ -32,6 +32,7 @@ NO_SYNTH_TEST_FILES = [
     "func_wires_test.py",
     "dangling_logic_test.py",
     "type_bytes_test.py",
+    "type_bytes_sw_test.py",
     "sim_input_output_elab_test.py",
     "array_2d_order_test.py",
     "pylist_value_context_test.py",

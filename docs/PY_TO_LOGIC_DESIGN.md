@@ -3700,6 +3700,42 @@ byte-rounding rule, enum rejection, `@wires` tagging, and a regression proof mir
 wireguard-fpga's `chacha20_state`/`u320_t` shapes (registered in both `native_sim_tests.py`
 and `elab_tests.py`).
 
+### `@enum` leaves
+
+An `@enum` leaf is always materialized into a same-width `uintN_t` local, in both
+directions and even when it occupies a single byte:
+
+```python
+@wires
+def rec_t_..._to_bytes_le(x: t) -> out_t:
+    rv: out_t
+    tmp0: _leaf_t0 = x.state      # _leaf_t0 is uint2_t
+    rv[0] = tmp0
+    ...
+```
+
+The temp is mandatory here for a different reason than the array-indexed-leaf case
+above. `@enum` lowers to `unsigned(N-1 downto 0)`, and `VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS`
+substitutes the enum's `int_c_type` for both sides' width and signedness -- so an
+enum <-> uint assignment of *identical* width is plain wiring needing no cast entity,
+while a direct `rv[i] = x.state` (an enum into a `uint8_t` array element) or
+`rv.state = src[i]` (a byte into a narrower enum) is a width mismatch. Routing through
+the temp makes the enum <-> uint step width-identical and leaves the widening or
+narrowing to the ordinary uint assignment on the other side of it. Casting is not an
+alternative: `some_enum_t(x)` already means `IntEnum` member lookup.
+
+`_leaf_type_name` therefore registers `_leaf_uint_ctype(leaf_t)` -- the *carrier* type --
+so an enum leaf and a plain uint leaf of the same width share one synthetic global.
+
+Both factories additionally seed their `exec()` globals with `_collect_enum_types(t)`,
+the enum twin of `_collect_struct_types`. This is needed because
+`_register_struct_recursive` calls `_inner_ctype_to_str(annotation)` *without*
+`parser_state`, so an enum reachable only through a struct field is never
+`_register_enum`'d; the live-closure scan for `_pypeline_is_enum` over a generated
+function's own `__globals__` does see it, so seeding closes the gap from the pypeline
+side. (Threading `parser_state` through `_register_struct_recursive` would be the
+cleaner upstream fix.)
+
 ---
 
 ## Raw VHDL Passthrough (`vhdl(...)`)

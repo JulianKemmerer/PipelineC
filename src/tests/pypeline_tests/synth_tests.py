@@ -71,6 +71,14 @@ SYNTH_TEST_FILES = [
     ("axis_test.py", INST_DIR, ["--comb"]),
     ("dwidth_converter_test.py", INST_DIR, ["--comb"]),
     ("axis_byte_stream_test.py", INST_DIR, ["--comb"]),
+    # One --comb synth entry per new byte-stream/AXIS module: native sim never
+    # emits VHDL, so these are what catch reserved words, mismatched operand
+    # widths and the rest of the VHDL-only error class.
+    ("serdes_test.py", INST_DIR, ["--comb"]),
+    ("type_byte_stream_test.py", INST_DIR, ["--comb"]),
+    ("axis_max_len_limiter_test.py", INST_DIR, ["--comb"]),
+    ("type_axis_test.py", INST_DIR, ["--comb"]),
+    ("type_axis_synth_test.py", INST_DIR, ["--comb"]),
     ("enum_test.py", INST_DIR, ["--comb"]),
     ("char_array_test.py", INST_DIR, ["--comb"]),
     ("sim_print_test.py", INST_DIR, ["--comb"]),

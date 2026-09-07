@@ -81,6 +81,12 @@ A design registered in `native_vs_vhdl_sim_tests.py` must:
   MAIN, and valid-/count-gate it, since VHDL's undefined (`'U'`) warm-up registers
   can't be compared against native's typed zeros.
 
+- Keep every probed value under 2**31 if it is a `uint32_t`. `sim_print` lowers to
+  `integer'image(to_integer(x))` and VHDL's `integer` is 32-bit *signed*, so GHDL
+  aborts with `overflow detected` on a larger value while native sim prints it
+  happily -- a VHDL-only failure by construction. `self_check_type_axis_test.py`
+  carries a comment marking where it deliberately stays under the limit.
+
 See `docs/pypeline_sim_DESIGN.md`'s Limitations section for the full contract
 (including the two hard-error cases enforced by the elaborator/simulator directly).
 

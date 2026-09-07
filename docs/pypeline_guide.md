@@ -37,10 +37,12 @@ For getting started information see the [README](README.md).
 21. [Streams: `stream_t`](#streams-stream_t)
 22. [Bidirectional Ports: `@interface`](#bidirectional-ports-interface)
 23. [AXI-Stream: `axis_t`](#axi-stream-axis_t)
-24. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
-25. [Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline)
-26. [Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp)
-27. [Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm)
+24. [Byte-Stream Serialization: `make_serializer` / `make_deserializer`](#byte-stream-serialization-make_serializer--make_deserializer)
+25. [Struct ↔ AXI-Stream: `make_axis_to_type` / `make_type_to_axis`](#struct--axi-stream-make_axis_to_type--make_type_to_axis)
+26. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
+27. [Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline)
+28. [Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp)
+29. [Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm)
 
 **Part IV — Escape hatches**
 
@@ -1479,9 +1481,64 @@ since they are pure bit rewiring with no real combinational delay.
 Works for any combination of arrays and structs, e.g.
 `make_type_to_bytes(uint32_t[3])` or `make_type_to_bytes(my_struct_t[3])`.
 
-**Enum types are not supported** by `byte_length`/`make_type_to_bytes`/
-`make_type_from_bytes` in this version — including an enum nested inside a struct or
-array field — and raise `NotImplementedError`.
+`@enum` fields work too — an enum leaf occupies `ceil(enum_bit_width / 8)` bytes, the
+same rule as any other scalar:
+
+```python
+@enum
+class mode_t(PypelineEnum):
+    OFF = auto(); ON = auto(); STANDBY = auto()
+
+@struct
+class record_t(NamedTuple):
+    mode: mode_t     # 2 bits -> 1 byte
+    seq:  uint16_t   # 2 bytes
+
+byte_length(record_t)   # 3
+```
+
+An *array of* enums (`mode_t[4]`) is not expressible in pypeline at all — `@struct`
+installs `__class_getitem__` but `@enum` does not, so the subscript is an `IntEnum`
+member lookup. Put the enum in a struct and make an array of that.
+
+### Software-side conversion: `type_to_bytes` / `T.to_bytes`
+
+The functions above generate *hardware*. Their plain-Python twins convert the same
+values in software, with no elaboration and no `sim_call`:
+
+```python
+from pypeline import type_to_bytes, type_from_bytes, byte_length
+
+raw = type_to_bytes(header_t, h)         # -> bytes, len == byte_length(header_t)
+write_stream(raw)
+
+h2 = type_from_bytes(header_t, read_stream(byte_length(header_t)))
+
+# equivalently, as classmethods on any @struct:
+raw = header_t.to_bytes(h)
+h2  = header_t.from_bytes(raw)
+```
+
+This is what makes a pypeline design usable from ordinary software: if you have
+`readStream`/`writeStream` functions that deal in byte arrays, these give you the
+structs on the other side, with no hand-maintained `struct.pack` format string to keep
+in sync. Both take an optional `endian` argument, defaulting to `"little"`.
+
+The software and hardware layouts cannot drift, because they are one layout: both walk
+the same leaf enumeration over the type. `type_bytes_sw_test.py` asserts it directly,
+comparing `type_to_bytes(...)` against what `make_type_to_bytes(...)` actually produces
+in simulation, for every fixture type and both endians.
+
+| `t` | `type_to_bytes` accepts | `type_from_bytes` returns |
+|---|---|---|
+| scalar | `int`, `bool`, `SimVal` | `SimVal` typed to `t` (signed leaves come back negative) |
+| `@enum` | an `IntEnum` member or an int | a `SimVal` of the enum's carrier uint — compare it against members directly (`rv.mode == mode_t.ON`), which is also what native sim holds |
+| array | `list`, `tuple`, `bytes`, `bytearray`, `CharArray` | `list` (a `CharArray` for `char_t[N]`, so `str(rv)` works) |
+| `@struct` | an instance of `t` | an instance of `t` |
+
+`type_from_bytes` builds its result exactly the way native simulation does, so the value
+it returns can be passed straight back into `sim_call()` as an argument. It raises
+`ValueError` if `len(data) != byte_length(t)`.
 
 
 ---
@@ -3303,6 +3360,111 @@ and `set_pause_generator`.
 
 ---
 
+## Byte-Stream Serialization: `make_serializer` / `make_deserializer`
+
+`include/pypeline/stream/serializer.py` and `stream/deserializer.py` move a value across
+a narrower (or wider) bus, one keep-tagged beat at a time, with valid/ready handshaking
+on both sides. They are the pypeline replacements for old PipelineC's
+`serializer_in_to_out`/`deserializer_in_to_out`.
+
+```python
+from stream.serializer import make_serializer
+from stream.deserializer import make_deserializer
+
+ser, ser_t     = make_serializer(uint8_t, 13, 4)    # 13-element value -> 4-lane beats
+deser, deser_t = make_deserializer(uint8_t, 4, 13)  # the inverse
+```
+
+Both take the usual paired ports and return the usual `(hw_func, struct_t)`:
+
+```python
+@MAIN
+def top(stream_in_if: ser.in_intrf.fwd_t, stream_out_if: ser.out_fb_t) -> ser_t:
+    return ser(stream_in_if, stream_out_if)
+```
+
+**Padding lives in `keep`, never in the data.** A value whose length is not a multiple of
+the bus width simply ends in a partial beat whose `keep` gives the real count — so 13
+elements on a 4-lane bus is three full beats plus one carrying a single element. (The old
+C macros deadlocked outright on any non-divisible size, silently and with no diagnostic.)
+
+| Option | Values | Meaning |
+|---|---|---|
+| `align` | `"beat"` (default), `"packed"` | Whether each value starts on a fresh beat boundary, or values run back-to-back through the stream |
+| `padding` | `"pad"` (default), `"exact"` | `"exact"` demands divisibility and raises `ValueError` at factory-call time if it does not hold, naming both sizes |
+| `on_eod` *(deserializer)* | `"discard"` (default), `"zero_pad"`, `"ignore"` | What a partial value does when the stream ends: drop and resync (pulsing `.runt`), emit it zero-filled (also pulsing `.runt`), or carry the residue forward |
+| `registered_ready` *(deserializer)* | `False` (default) | Break the combinational `ready` path, at the cost of one bubble cycle per value |
+
+Both modules are **bubble-free** by default: an output drains and an input beat is
+accepted in the same cycle. That is worth knowing because the old deserializer was not —
+its `ready` was gated on the output register being empty, costing a cycle per value,
+which *halves* throughput whenever a value is one beat wide. `registered_ready=True`
+restores the old behaviour if a design needs that combinational path broken.
+
+**See also:** [Streams: `stream_t`](#streams-stream_t) ·
+[Struct ↔ AXI-Stream](#struct--axi-stream-make_axis_to_type--make_type_to_axis) ·
+[the library-local guide](../include/pypeline/stream/pypeline_stream_guide.md)
+
+---
+
+## Struct ↔ AXI-Stream: `make_axis_to_type` / `make_type_to_axis`
+
+`include/pypeline/axi/type_axis.py` puts a `@struct` on an AXI-Stream and takes it off
+again — the pypeline replacement for old PipelineC's `axis_packet_to_type`,
+`axis_to_type` and `type_to_axis`. Under the hood it is
+`stream/type_byte_stream.py` (the byte-layout functions plus a serializer) with framing
+policy on top.
+
+```python
+from axi.type_axis import make_axis_to_type, make_type_to_axis
+
+rx, rx_t = make_axis_to_type(hdr_t, 4)   # AXIS frames -> hdr_t values
+tx, tx_t = make_type_to_axis(hdr_t, 4)   # hdr_t values -> AXIS frames
+
+@MAIN
+def rx_top(axis_in_if: rx.axis_intrf.fwd_t, stream_out_if: rx.out_fb_t) -> rx_t:
+    return rx(axis_in_if, stream_out_if)
+```
+
+The bytes on the wire are exactly `type_to_bytes(hdr_t, value)` — so a host program can
+build and parse frames with nothing but
+[the software helpers above](#software-side-conversion-type_to_bytes--tto_bytes).
+
+### Framing modes
+
+`frame="one_per_packet"` (default) gives each value its own frame, with `tlast` on its
+final beat and a **length limiter** that drops anything a frame carries beyond
+`byte_length(t)`. That limiter is not optional decoration: Ethernet pads frames to a
+60-byte minimum, so without it a struct smaller than the minimum frame leaves trailing
+pad bytes in the deserializer and desyncs every value after it.
+
+`frame="many_per_packet"` packs values back-to-back inside one frame, with `tlast` only
+at the end. End a frame either by driving `stream_in_if.stream.data.eod[0]` on the last
+value, or by passing `structs_per_packet=k` to have an internal counter do it. Value
+boundaries may straddle beats freely; `byte_length(t)` need not divide the bus width.
+
+### Short frames
+
+`on_runt` controls what happens when a frame ends mid-value — `"discard"` (default,
+resync and pulse `.runt`), `"zero_pad"` (emit it zero-filled, also pulsing `.runt`), or
+`"ignore"`. The old code did none of these: one runt frame permanently desynced the
+value boundary for every frame after it, silently. `"ignore"` exists only to reproduce
+that behaviour for comparison.
+
+### `tkeep`
+
+Consumed on receive and produced on transmit, in both directions, as a contiguous
+prefix (Xilinx-style: full keep on every beat but the last). A 7-byte struct on a 4-byte
+bus transmits as two beats, the second with `keep == [1, 1, 1, 0]`. The old code
+hardcoded `tkeep` all-ones on transmit and ignored it entirely on receive.
+
+**See also:** [AXI-Stream: `axis_t`](#axi-stream-axis_t) ·
+[Byte-Stream Serialization](#byte-stream-serialization-make_serializer--make_deserializer) ·
+[Struct/type ↔ bytes conversion](#structtype--bytes-conversion) ·
+[the library-local guide](../include/pypeline/stream/pypeline_stream_guide.md)
+
+---
+
 ## FIFOs: `make_stream_fifo`
 
 `include/pypeline/stream/stream_fifo.py`'s `make_stream_fifo` wraps a single-clock-domain FIFO
@@ -3973,7 +4135,9 @@ built yet."
 | Synthesis | **`MULTI_CYCLE[...]`** | Synthesis only | No effect without `PART()` / Vivado; ignored in simulation |
 | Synthesis | **`AUTOPIPELINE(...).latency` before synthesis** | Reads `0` | Real value only exists after a synthesizing build's pin-and-confirm pass; plain native sim and `--comb`/`--no_synth`/`--yosys_json` builds always read 0 (a non-`--comb` `pypelinec --sim` run's native sim reads the built value) |
 | Simulation | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo` now does, covering `make_stream_fifo`/`make_stream_pipeline` too); this still includes `make_valid_ready_mcp` |
-| Library | **Enum types in `byte_length`/`make_type_to_bytes`/`make_type_from_bytes`** | Not supported | Raises `NotImplementedError`, including for an enum nested inside a struct or array field (see [Basic Types](#basic-types)) |
+| Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine |
+| Language | **`@enum` member names that are VHDL reserved words** | Fails in VHDL only | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. Native simulation cannot see this — only a `synth`/GHDL run can, which is why every enum-bearing design wants one |
+| Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it |
 
 Coming from PipelineC? See also [docs/pipelinec_to_pypeline.md](pipelinec_to_pypeline.md)
 for a pattern-by-pattern translation reference.

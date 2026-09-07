@@ -90,10 +90,42 @@ class small_state_t(PypelineEnum):
     RUNNING = auto()
 
 
+# 12 members -> 4 bits -> still 1 byte, but a ragged (non-byte-multiple) width,
+# so the generated uintN_t temp is genuinely narrower than the byte it rides in.
+@enum
+class wide_state_t(PypelineEnum):
+    S0 = auto()
+    S1 = auto()
+    S2 = auto()
+    S3 = auto()
+    S4 = auto()
+    S5 = auto()
+    S6 = auto()
+    S7 = auto()
+    S8 = auto()
+    S9 = auto()
+    S10 = auto()
+    S11 = auto()
+
+
 @struct
 class has_enum_t(NamedTuple):
     s: small_state_t
     x: uint8_t
+
+
+@struct
+class nested_enum_t(NamedTuple):
+    hdr: uint16_t
+    inner: has_enum_t
+    w: wide_state_t
+
+
+# Same throwaway-wrapper trick as _u16x4_wrap above, for a typed
+# has_enum_t[3] value.
+@struct
+class _has_enum_x3_wrap(NamedTuple):
+    v: has_enum_t[3]
 
 
 # ── generated functions (module scope, so @MAIN wrappers below can call them
@@ -197,6 +229,48 @@ def elab_chacha20_state_from_bytes(src: uint8_t[CHACHA20_BLOCK_SIZE]) -> chacha2
     return chacha20_state_from_bytes(src)
 
 
+has_enum_to_bytes = make_type_to_bytes(has_enum_t)
+has_enum_from_bytes = make_type_from_bytes(has_enum_t)
+nested_enum_to_bytes = make_type_to_bytes(nested_enum_t)
+nested_enum_from_bytes = make_type_from_bytes(nested_enum_t)
+enum_arr_to_bytes = make_type_to_bytes(has_enum_t[3])
+enum_arr_from_bytes = make_type_from_bytes(has_enum_t[3])
+
+HAS_ENUM_NBYTES = byte_length(has_enum_t)
+NESTED_ENUM_NBYTES = byte_length(nested_enum_t)
+ENUM_ARR_NBYTES = byte_length(has_enum_t[3])
+
+
+@MAIN
+def elab_has_enum_to_bytes(x: has_enum_t) -> uint8_t[HAS_ENUM_NBYTES]:
+    return has_enum_to_bytes(x)
+
+
+@MAIN
+def elab_has_enum_from_bytes(src: uint8_t[HAS_ENUM_NBYTES]) -> has_enum_t:
+    return has_enum_from_bytes(src)
+
+
+@MAIN
+def elab_nested_enum_to_bytes(x: nested_enum_t) -> uint8_t[NESTED_ENUM_NBYTES]:
+    return nested_enum_to_bytes(x)
+
+
+@MAIN
+def elab_nested_enum_from_bytes(src: uint8_t[NESTED_ENUM_NBYTES]) -> nested_enum_t:
+    return nested_enum_from_bytes(src)
+
+
+@MAIN
+def elab_enum_arr_to_bytes(x: has_enum_t[3]) -> uint8_t[ENUM_ARR_NBYTES]:
+    return enum_arr_to_bytes(x)
+
+
+@MAIN
+def elab_enum_arr_from_bytes(src: uint8_t[ENUM_ARR_NBYTES]) -> has_enum_t[3]:
+    return enum_arr_from_bytes(src)
+
+
 @MAIN
 def elab_u320_to_bytes(x: u320_t) -> uint8_t[U320_NBYTES]:
     return u320_to_bytes(x)
@@ -223,23 +297,75 @@ def test_byte_length():
     print("test_byte_length PASS")
 
 
-def test_byte_length_enum_rejected():
+def test_byte_length_enum():
+    # An enum leaf sizes like any other scalar: ceil(enum_bit_width / 8).
+    assert byte_length(small_state_t) == 1  # 2 members -> 1 bit
+    assert byte_length(wide_state_t) == 1  # 12 members -> 4 bits
+    assert byte_length(has_enum_t) == 2  # 1 + 1
+    assert byte_length(nested_enum_t) == 5  # 2 + (1 + 1) + 1
+    assert byte_length(has_enum_t[3]) == 6
+    print("test_byte_length_enum PASS")
+
+
+def test_enum_array_not_expressible():
+    """`some_enum_t[N]` is not a pypeline type at all: @struct installs
+    __class_getitem__ but @enum does not, so the subscript hits
+    EnumMeta.__getitem__ (member lookup by name). An enum inside a struct
+    inside an array -- has_enum_t[3] above -- is the supported spelling."""
     try:
-        byte_length(small_state_t)
-        raise AssertionError("expected NotImplementedError for bare enum type")
-    except NotImplementedError:
+        small_state_t[4]
+        raise AssertionError("expected enum-array subscript to fail")
+    except (KeyError, TypeError):
         pass
-    try:
-        byte_length(has_enum_t)
-        raise AssertionError("expected NotImplementedError for enum nested in struct")
-    except NotImplementedError:
-        pass
-    try:
-        make_type_to_bytes(has_enum_t)
-        raise AssertionError("expected NotImplementedError from make_type_to_bytes")
-    except NotImplementedError:
-        pass
-    print("test_byte_length_enum_rejected PASS")
+    print("test_enum_array_not_expressible PASS")
+
+
+def test_enum_struct_roundtrip():
+    for state in (small_state_t.IDLE, small_state_t.RUNNING):
+        v = has_enum_t(s=state, x=0xA5)
+        raw = sim_call(has_enum_to_bytes, x=v)
+        assert [int(b) for b in raw] == [int(state), 0xA5]
+        back = sim_call(has_enum_from_bytes, src=raw)
+        assert back.s == state, (back.s, state)
+        assert int(back.x) == 0xA5
+    print("test_enum_struct_roundtrip PASS")
+
+
+def test_nested_enum_roundtrip():
+    v = nested_enum_t(
+        hdr=0xBEEF,
+        inner=has_enum_t(s=small_state_t.RUNNING, x=0x5A),
+        w=wide_state_t.S11,
+    )
+    raw = sim_call(nested_enum_to_bytes, x=v)
+    assert [int(b) for b in raw] == [0xEF, 0xBE, 1, 0x5A, 11], [int(b) for b in raw]
+    back = sim_call(nested_enum_from_bytes, src=raw)
+    assert int(back.hdr) == 0xBEEF
+    assert back.inner.s == small_state_t.RUNNING
+    assert int(back.inner.x) == 0x5A
+    assert back.w == wide_state_t.S11
+    print("test_nested_enum_roundtrip PASS")
+
+
+def test_array_of_enum_bearing_struct_roundtrip():
+    states = [small_state_t.RUNNING, small_state_t.IDLE, small_state_t.RUNNING]
+    v = _has_enum_x3_wrap(v=[has_enum_t(s=st, x=i) for i, st in enumerate(states)]).v
+    raw = sim_call(enum_arr_to_bytes, x=v)
+    assert [int(b) for b in raw] == [1, 0, 0, 1, 1, 2], [int(b) for b in raw]
+    back = sim_call(enum_arr_from_bytes, src=raw)
+    for i, st in enumerate(states):
+        assert back[i].s == st
+        assert int(back[i].x) == i
+    print("test_array_of_enum_bearing_struct_roundtrip PASS")
+
+
+def test_enum_ragged_width_masking():
+    """A wide_state_t leaf is 4 bits in a 1-byte slot. Hardware truncates the
+    upper nibble; native sim must agree (this is what the generated uintN_t
+    temp buys -- a direct `rv.w = src[i]` would keep all 8 bits in sim only)."""
+    back = sim_call(nested_enum_from_bytes, src=[0, 0, 0, 0, 0xFF])
+    assert int(back.w) == 0xF, int(back.w)
+    print("test_enum_ragged_width_masking PASS")
 
 
 def test_wires_tagged():
@@ -339,7 +465,12 @@ def test_u320_regression():
 
 if __name__ == "__main__":
     test_byte_length()
-    test_byte_length_enum_rejected()
+    test_byte_length_enum()
+    test_enum_array_not_expressible()
+    test_enum_struct_roundtrip()
+    test_nested_enum_roundtrip()
+    test_array_of_enum_bearing_struct_roundtrip()
+    test_enum_ragged_width_masking()
     test_wires_tagged()
     test_scalar_roundtrip_le()
     test_scalar_roundtrip_be()

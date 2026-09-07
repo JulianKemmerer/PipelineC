@@ -1203,6 +1203,28 @@ def struct(cls):
     cls.__gt__ = lambda self, other: _struct_dispatch_binary_op("GT", self, other)
     cls.__ge__ = lambda self, other: _struct_dispatch_binary_op("GTE", self, other)
 
+    # T.to_bytes(v) / T.from_bytes(b): thin classmethod sugar over the module-level
+    # type_to_bytes/type_from_bytes, which share _enumerate_leaves with
+    # make_type_to_bytes -- so the software and hardware layouts are one walk, not
+    # two that must be kept in sync. Referenced lazily inside the lambdas, so
+    # definition order within this module does not matter.
+    #
+    # Deliberately NOT attached by enum(): an @enum returns an IntEnum subclass
+    # whose members already carry int.to_bytes/int.from_bytes, and shadowing those
+    # would be actively harmful. Use pypeline.type_to_bytes(some_enum_t, v).
+    for _bytes_method in ("to_bytes", "from_bytes"):
+        if _bytes_method in cls._fields:
+            raise TypeError(
+                f"@struct {cls.__name__!r} has a field named {_bytes_method!r}, which "
+                f"collides with the generated {_bytes_method} classmethod; rename the field"
+            )
+    cls.to_bytes = classmethod(
+        lambda c, value, endian="little": type_to_bytes(c, value, endian)
+    )
+    cls.from_bytes = classmethod(
+        lambda c, data, endian="little": type_from_bytes(c, data, endian)
+    )
+
     # Rebuild through _CastDispatchMeta so T(x) can dispatch a registered cast
     # (see that class's docstring for why this must be a metaclass, not a
     # __new__ override). Last step: every attribute set above (by this
@@ -3225,16 +3247,20 @@ def byte_length(t) -> int:
     (this is NOT C natural alignment). Works for scalars, arrays (any
     nesting), and @struct types.
 
-    Enum types are not supported in this version -- raises NotImplementedError,
-    including when an enum appears nested inside a struct or array.
+    @enum leaves are supported: an enum occupies ceil(enum_bit_width(t) / 8)
+    bytes, the same rule every other scalar leaf follows. (An ARRAY of enums,
+    `some_enum_t[N]`, is not expressible in pypeline at all -- @struct installs
+    __class_getitem__ but @enum does not, so `some_enum_t[4]` hits
+    EnumMeta.__getitem__ (member lookup by name). An enum inside a struct
+    inside an array is fine.)
 
     Pure Python; no hardware elaboration required (analogous to enum_bit_width()).
     """
+    # The enum probe must come first: an @enum class has neither _ctype_name
+    # (so _array_elem_ctype would not see it) nor _fields, but it also has no
+    # .width -- its metaclass is EnumMeta, not _CTypeMeta.
     if getattr(t, "_pypeline_is_enum", False):
-        raise NotImplementedError(
-            f"byte_length: enum type {t!r} is not supported by "
-            "byte_length/make_type_to_bytes/make_type_from_bytes in this version"
-        )
+        return (_leaf_bit_width(t) + 7) // 8
     elem = _array_elem_ctype(t)
     if elem is not None:
         return byte_length(elem) * _array_len(t)
@@ -3243,17 +3269,44 @@ def byte_length(t) -> int:
     return (t.width + 7) // 8
 
 
+def _leaf_bit_width(t) -> int:
+    """Bit width of a scalar leaf, including @enum leaves. An @enum class's
+    metaclass is EnumMeta, not _CTypeMeta, so it has no `.width` property --
+    its width is enum_bit_width() (min bits for its largest member value),
+    which is exactly the width VHDL.py lowers it to."""
+    if getattr(t, "_pypeline_is_enum", False):
+        return enum_bit_width(t)
+    return t.width
+
+
+def _leaf_uint_ctype(t):
+    """The uint ctype an enum leaf is carried through in generated hardware.
+
+    @enum lowers to `unsigned(N-1 downto 0)` in VHDL (VHDL.C_TYPE_STR_TO_VHDL_TYPE_STR)
+    and TYPE_RESOLVE_ASSIGNMENT_RHS substitutes the enum's int_c_type for both
+    sides' width/signedness -- so an assignment between an enum wire and its
+    same-width uintN_t wire is a width-identical no-op needing no cast entity.
+    That assignment is the ONLY viable enum<->bits mechanism here: casting *to*
+    an enum via `some_enum_t(x)` is unsupported by design (an @enum returns an
+    IntEnum subclass, and `some_enum_t(2)` already means member lookup).
+
+    Non-enum leaves are returned unchanged.
+    """
+    if getattr(t, "_pypeline_is_enum", False):
+        return make_uint_t(enum_bit_width(t))
+    return t
+
+
 def _enumerate_leaves(t, path=()):
     """Yield (access_path, leaf_ctype) for every scalar leaf of t, in
     declaration order. access_path tokens are int (array index) or str
-    (struct field name); () for a bare scalar t. Raises NotImplementedError
-    if an enum is encountered anywhere (leaf, nested struct field, or array
-    element)."""
+    (struct field name); () for a bare scalar t.
+
+    An @enum is a leaf like any other scalar -- callers must size it with
+    _leaf_bit_width(), not `.width` (an @enum class has no .width)."""
     if getattr(t, "_pypeline_is_enum", False):
-        raise NotImplementedError(
-            f"enum type {t!r} is not supported by "
-            "byte_length/make_type_to_bytes/make_type_from_bytes in this version"
-        )
+        yield (path, t)
+        return
     elem = _array_elem_ctype(t)
     if elem is not None:
         for i in range(_array_len(t)):
@@ -3321,6 +3374,35 @@ def _collect_struct_types(t, out=None):
             out[name] = t
             for f in t._fields:
                 _collect_struct_types(t.__annotations__[f], out)
+    return out
+
+
+def _collect_enum_types(t, out=None):
+    """Recursively collect every distinct @enum type reachable from t, keyed by
+    canonical name -- the enum twin of _collect_struct_types, and seeded into a
+    generated to_bytes/from_bytes function's exec() globals for the same reason.
+
+    Needed because PY_TO_LOGIC._register_struct_recursive calls
+    _inner_ctype_to_str(annotation) WITHOUT parser_state, so an enum reachable
+    only through a struct field is never _register_enum'd; but PY_TO_LOGIC does
+    scan a generated function's own __globals__ for _pypeline_is_enum, so
+    seeding closes the hole from this side. (Passing parser_state through
+    _register_struct_recursive is the cleaner upstream fix -- separate change.)
+    """
+    if out is None:
+        out = {}
+    if getattr(t, "_pypeline_is_enum", False):
+        name = getattr(t, "_pypeline_ctype_name", None)
+        if name is not None:
+            out[name] = t
+        return out
+    elem = _array_elem_ctype(t)
+    if elem is not None:
+        _collect_enum_types(elem, out)
+        return out
+    if hasattr(t, "_fields"):
+        for f in t._fields:
+            _collect_enum_types(t.__annotations__[f], out)
     return out
 
 
@@ -3421,8 +3503,8 @@ def make_type_to_bytes(t, endian: str = "little"):
     (little = least-significant byte first). The returned function is tagged
     @wires (pure bit rewiring, zero synthesis delay).
 
-    Enum types (including nested in structs/arrays) are not supported in this
-    version -- raises NotImplementedError at factory-call time.
+    @enum leaves are supported (an enum occupies ceil(enum_bit_width/8) bytes);
+    see _leaf_uint_ctype for why they route through a uintN_t temp.
 
     Usage:
         my_struct_to_bytes = make_type_to_bytes(my_struct_t)
@@ -3444,22 +3526,37 @@ def make_type_to_bytes(t, endian: str = "little"):
     extra_globals = {"t": t, "out_t": out_t, "wires": wires}
 
     def _leaf_type_name(leaf_t) -> str:
-        key = str(leaf_t)
+        # Register the leaf's CARRIER type: an enum leaf is materialized into a
+        # same-width uintN_t local (see _leaf_uint_ctype), so an enum leaf and a
+        # plain uint leaf of the same width share one synthetic global.
+        carrier_t = _leaf_uint_ctype(leaf_t)
+        key = str(carrier_t)
         varname = leaf_type_names.get(key)
         if varname is None:
             varname = f"_leaf_t{len(leaf_type_names)}"
             leaf_type_names[key] = varname
-            extra_globals[varname] = leaf_t
+            extra_globals[varname] = carrier_t
         return varname
 
     lines = ["@wires", f"def {func_name}(x: t) -> out_t:", "    rv: out_t"]
     base = 0
     for path, leaf_t in _enumerate_leaves(t):
-        w = leaf_t.width
+        w = _leaf_bit_width(leaf_t)
         k = (w + 7) // 8
         access = _access_expr("x", path)
-        if k == 1:
+        is_enum = getattr(leaf_t, "_pypeline_is_enum", False)
+        if k == 1 and not is_enum:
             lines.append(f"    rv[{base}] = {access}")
+        elif k == 1:
+            # An enum leaf ALWAYS materializes through a same-width uintN_t
+            # local, even for a single byte: `rv[i] = x.some_enum_field` would
+            # assign an enum-typed wire straight into a uint8_t array element,
+            # a width mismatch (enum width is rarely 8). The temp makes the
+            # enum->uint step an explicit width-identical assignment, and the
+            # uint->uint8_t element assignment then zero-extends as usual.
+            tmp = f"tmp{base}"
+            lines.append(f"    {tmp}: {_leaf_type_name(leaf_t)} = {access}")
+            lines.append(f"    rv[{base}] = {tmp}")
         else:
             # Bit-slicing is only elaborator-supported on a bare Name or a
             # single struct-attribute chain (PY_TO_LOGIC._try_elab_bit_slice),
@@ -3481,6 +3578,7 @@ def make_type_to_bytes(t, endian: str = "little"):
     src = "\n".join(lines) + "\n"
 
     extra_globals.update(_collect_struct_types(t))
+    extra_globals.update(_collect_enum_types(t))
     fn = _exec_generated_func(func_name, src, extra_globals)
     _TYPE_TO_BYTES_CACHE[cache_key] = fn
     return fn
@@ -3492,8 +3590,8 @@ def make_type_from_bytes(t, endian: str = "little"):
     for the same t/endian. The returned function is tagged @wires (pure bit
     rewiring, zero synthesis delay).
 
-    Enum types (including nested in structs/arrays) are not supported in this
-    version -- raises NotImplementedError at factory-call time.
+    @enum leaves are supported (an enum occupies ceil(enum_bit_width/8) bytes);
+    see _leaf_uint_ctype for why they route through a uintN_t temp.
 
     Usage:
         my_struct_from_bytes = make_type_from_bytes(my_struct_t)
@@ -3513,29 +3611,190 @@ def make_type_from_bytes(t, endian: str = "little"):
         f"{raw_name}_from_bytes_{_ENDIAN_BYTE_SUFFIX[endian]}"
     )
 
+    leaf_type_names: dict = {}  # ctype-name str -> synthetic global var name
+    extra_globals = {"t": t, "in_t": in_t, "concat": concat, "wires": wires}
+
+    def _leaf_type_name(leaf_t) -> str:
+        carrier_t = _leaf_uint_ctype(leaf_t)
+        key = str(carrier_t)
+        varname = leaf_type_names.get(key)
+        if varname is None:
+            varname = f"_leaf_t{len(leaf_type_names)}"
+            leaf_type_names[key] = varname
+            extra_globals[varname] = carrier_t
+        return varname
+
     lines = ["@wires", f"def {func_name}(src: in_t) -> t:", "    rv: t"]
     base = 0
     for path, leaf_t in _enumerate_leaves(t):
-        w = leaf_t.width
+        w = _leaf_bit_width(leaf_t)
         k = (w + 7) // 8
         access = _access_expr("rv", path)
         if k == 1:
-            lines.append(f"    {access} = src[{base}]")
+            rhs = f"src[{base}]"
         else:
             chunks = []
             for j in range(k - 1, -1, -1):
                 dst = base + j if endian == "little" else base + (k - 1 - j)
                 chunks.append(f"src[{dst}]")
-            lines.append(f"    {access} = concat({', '.join(chunks)})")
+            rhs = f"concat({', '.join(chunks)})"
+        if getattr(leaf_t, "_pypeline_is_enum", False):
+            # Route an enum leaf through a same-width uintN_t local. The byte
+            # (or concat) is WIDER than the enum, and only an enum<->uint
+            # assignment of IDENTICAL width is the width-identical no-op that
+            # VHDL's TYPE_RESOLVE_ASSIGNMENT_RHS turns into plain wiring; the
+            # narrowing has to happen on the uint side first. (`some_enum_t(x)`
+            # is not an option -- that spelling means IntEnum member lookup.)
+            tmp = f"tmp{base}"
+            lines.append(f"    {tmp}: {_leaf_type_name(leaf_t)} = {rhs}")
+            lines.append(f"    {access} = {tmp}")
+        else:
+            lines.append(f"    {access} = {rhs}")
         base += k
     lines.append("    return rv")
     src = "\n".join(lines) + "\n"
 
-    extra_globals = {"t": t, "in_t": in_t, "concat": concat, "wires": wires}
     extra_globals.update(_collect_struct_types(t))
+    extra_globals.update(_collect_enum_types(t))
     fn = _exec_generated_func(func_name, src, extra_globals)
     _TYPE_FROM_BYTES_CACHE[cache_key] = fn
     return fn
+
+
+# ─────────────────────────────────────────────
+# Software-side type <-> bytes conversion
+#
+# The plain-Python twin of make_type_to_bytes/make_type_from_bytes, for code
+# that has bytes rather than hardware: a testbench scoreboard, a host script
+# driving a real device, anything with readStream/writeStream functions that
+# take and return byte arrays. No elaboration, no sim_call, no generated
+# module -- just int.to_bytes over the same leaf walk.
+#
+# Consistency with the hardware is structural, not by convention: both sides
+# walk _enumerate_leaves(t) and size each leaf with _leaf_bit_width(), so they
+# cannot disagree about field order, leaf byte count, or where padding lands.
+# (src/tests/pypeline_tests/inst/type_bytes_sw_test.py asserts the two agree
+# for every fixture type and both endians.)
+# ─────────────────────────────────────────────
+
+
+def _sw_leaf_get(value, path):
+    """Read the leaf at `path` out of a Python/sim value (str tokens are struct
+    attributes, int tokens are array indices) -- the runtime twin of the
+    _access_expr() string the hardware generator emits for the same path."""
+    v = value
+    for tok in path:
+        v = v[tok] if isinstance(tok, int) else getattr(v, tok)
+    return v
+
+
+def _sw_leaf_value(raw: int, leaf_t):
+    """Turn a decoded unsigned leaf integer into the value shape native sim
+    would produce for that leaf ctype."""
+    if getattr(leaf_t, "_pypeline_is_enum", False):
+        # A SimVal of the enum's carrier uint, NOT the IntEnum member -- because
+        # that is what native sim itself holds: @struct's _typed_new casts every
+        # scalar field to its declared width, so even `r_t(s=state_t.RUNNING)`
+        # stores a SimVal, and so does every sim_call return value. Returning a
+        # member here would make type_from_bytes results structurally different
+        # from sim_call results, defeating the point of building them with
+        # sim_zero/_sim_lens_set. Comparisons still read naturally, since
+        # SimVal == state_t.RUNNING compares by integer value.
+        return _sim_cast(raw, _leaf_uint_ctype(leaf_t))
+    return _sim_cast(raw, leaf_t)
+
+
+def _sw_finish(value, t):
+    """Wrap char arrays as CharArray so str(rv) works, matching what sim_call
+    returns for a char_t[N]. Recurses so a char array nested in a struct/array
+    is wrapped too."""
+    elem = _array_elem_ctype(t)
+    if elem is not None:
+        inner = [_sw_finish(v, elem) for v in value]
+        if getattr(elem, "_ctype_name", None) == "char":
+            return CharArray(inner)
+        return inner
+    if hasattr(t, "_fields"):
+        return t(*(_sw_finish(getattr(value, f), t.__annotations__[f]) for f in t._fields))
+    return value
+
+
+def type_to_bytes(t, value, endian: str = "little") -> bytes:
+    """Pack a Python/simulation value of pypeline type `t` into byte_length(t)
+    bytes, in the identical layout the generated hardware function
+    make_type_to_bytes(t, endian) produces.
+
+    Pure Python: no hardware elaboration, no sim_call.
+
+    Accepted `value` shapes -- anything native sim produces or accepts:
+        scalar t   int, bool, SimVal, or (for an @enum t) an IntEnum member
+        array t    list, tuple, CharArray, bytes, bytearray
+        @struct t  an instance of t (fields may be SimVal, plain int, list,
+                   or nested struct instances)
+
+    Each leaf is masked to its own bit width, then emitted as ceil(width / 8)
+    bytes in `endian` order; a ragged-width leaf's top byte carries width % 8
+    significant bits, zero-extended -- exactly the `rv[dst] = tmp[hi:lo]`
+    assignments the hardware generator emits.
+
+    Usage:
+        raw = type_to_bytes(header_t, h)      # -> bytes, len == byte_length(header_t)
+        write_stream(raw)
+    """
+    _check_endian(endian, "type_to_bytes")
+    _check_bytes_type(t, "type_to_bytes")
+    out = bytearray()
+    for path, leaf_t in _enumerate_leaves(t):
+        w = _leaf_bit_width(leaf_t)
+        k = (w + 7) // 8
+        v = int(_sw_leaf_get(value, path)) & ((1 << w) - 1)
+        out += v.to_bytes(k, endian)
+    return bytes(out)
+
+
+def type_from_bytes(t, data, endian: str = "little"):
+    """Unpack `data` into a value of pypeline type `t`. Exact inverse of
+    type_to_bytes(t, value, endian), and layout-identical to the hardware
+    make_type_from_bytes(t, endian).
+
+    `data` is any bytes-like (bytes/bytearray/memoryview) or an iterable of
+    ints -- so a uint8_t[N] value straight out of sim_call round-trips without
+    conversion. len(data) must equal byte_length(t).
+
+    Returns the same value shape native sim would produce:
+        scalar t   SimVal typed to t (signed leaves come back negative)
+        @enum t    a SimVal of the enum's carrier uint (what native sim holds
+                   for an enum too -- compare against members directly, e.g.
+                   `rv.state == state_t.RUNNING`)
+        char_t[N]  CharArray, so str(rv) gives the string
+        array t    list
+        @struct t  an instance of t
+
+    Because it builds the result with sim_zero() + _sim_lens_set() -- the very
+    functions native sim uses -- the returned value can be handed straight back
+    to sim_call() as an argument.
+
+    Usage:
+        h = type_from_bytes(header_t, read_stream(byte_length(header_t)))
+    """
+    _check_endian(endian, "type_from_bytes")
+    _check_bytes_type(t, "type_from_bytes")
+    buf = bytes(bytearray(int(b) & 0xFF for b in data))
+    n = byte_length(t)
+    if len(buf) != n:
+        raise ValueError(
+            f"type_from_bytes({_bytes_type_key(t)}): expected {n} bytes "
+            f"(byte_length), got {len(buf)}"
+        )
+    rv = sim_zero(t)
+    base = 0
+    for path, leaf_t in _enumerate_leaves(t):
+        w = _leaf_bit_width(leaf_t)
+        k = (w + 7) // 8
+        raw = int.from_bytes(buf[base : base + k], endian) & ((1 << w) - 1)
+        rv = _sim_lens_set(rv, list(path), _sw_leaf_value(raw, leaf_t))
+        base += k
+    return _sw_finish(rv, t)
 
 
 # ─────────────────────────────────────────────

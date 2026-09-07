@@ -527,7 +527,26 @@ Generic packing of any pypeline type (scalar, array, `@struct`, or any nesting) 
 fixed `uint8_t[N]` array and back, as a packed/unpadded layout (each leaf scalar field
 rounds up to a whole byte; no other padding). Replaces hand-written per-type
 `concat()`/bit-slicing conversion code such as wireguard-fpga's `bytes_to_uint320()`.
-Enum types are not supported (raise `NotImplementedError`, checked recursively).
+
+`@enum` leaves are supported. They are carried through a same-width `uintN_t` temporary
+in the generated source, in *both* directions and even for a single-byte enum. That is
+not a stylistic choice: `@enum` lowers to `unsigned(N-1 downto 0)` in VHDL and
+`TYPE_RESOLVE_ASSIGNMENT_RHS` substitutes the enum's `int_c_type` for both sides' width
+and signedness, so an assignment between an enum wire and its same-width uint wire is a
+width-identical no-op needing no cast entity — while a direct assignment to or from a
+`uint8_t` array element would be a width mismatch. Casting *to* an enum is not an option
+either: `@enum` returns an `IntEnum` subclass whose metaclass is `EnumMeta`, and
+`some_enum_t(2)` already means member lookup (see the Casting section). Arrays *of* enums
+remain inexpressible, for the same `__class_getitem__` reason.
+
+A pure-Python `type_to_bytes(t, value)`/`type_from_bytes(t, data)` pair (plus
+`T.to_bytes`/`T.from_bytes` classmethods, attached by `struct()` immediately before its
+`_CastDispatchMeta` rebuild) provides the same layout in software, for host code that
+only has byte arrays. They share `_enumerate_leaves` and `_leaf_bit_width` with the
+hardware factories rather than reimplementing the walk, which is what makes drift between
+the two impossible rather than merely unlikely; `type_from_bytes` builds its result with
+`sim_zero` + `_sim_lens_set`, so what it returns is structurally identical to a
+`sim_call` return value and can be fed straight back in as an argument.
 
 `byte_length(t)` is a pure-Python recursive walk over the type object — `ceil(width /
 8)` per leaf, summed/multiplied through arrays and structs — with no elaborator
@@ -540,6 +559,48 @@ patching `linecache` so `inspect.getsource()` succeeds on the result, and tag it
 `_try_elab_bit_slice` restriction that requires materializing array-indexed leaves into
 a plain local before bit-slicing them, and the nested-struct auto-registration helper
 — are in [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#type-to-bytes-conversion-byte_length-make_type_to_bytes-make_type_from_bytes).
+
+---
+
+## Byte-Stream Serialization
+
+`include/pypeline/stream/{serdes_common,serializer,deserializer,type_byte_stream}.py` and
+`include/pypeline/axi/type_axis.py` port old PipelineC's `serializer.h`/`deserializer.h`/
+`axis.h` conversion macros. Three design decisions are worth recording.
+
+**One algorithm, mirrored.** Both directions are a fill-index elastic buffer, not the old
+shift register: `buf: Reg[elem_t[buf_n]]` plus a fill count, output taken from the bottom
+`out_n` elements, input landing at `buf[fill + i]`. The sizing `buf_n = in_n + out_n - 1`
+is the exact value that makes "there is room for another input beat" and "the buffer does
+not already hold a whole output" the same condition —
+
+```
+nbase + in_n <= buf_n   <=>   nbase <= out_n - 1   <=>   nbase < out_n
+```
+
+— so `ready` collapses to a single comparison and neither module needs a full/empty flag.
+
+**No barrel shifter on receive.** The obvious way to consume a partial-keep beat is a
+running-prefix scatter (`if keep[i]: buf[base + running] = data[i]`), which builds an
+`in_n`-way barrel shifter per lane. It is unnecessary: `keep` is a contiguous prefix
+(Xilinx-style, and `make_axis_byte_sink` and the deserializer both assert it), so kept
+lane `i` always sits at `nbase + i` and the write can be unconditional, with only the
+*count* conditional. The `in_n - n_kept` garbage elements written past the kept prefix
+are provably never read — a following beat overwrites the whole garbage region, and if
+none follows then the value completed and the garbage all sits at an index ≥ `out_n`,
+outside the output window. That proof is the second reason `buf_n` is `in_n + out_n - 1`.
+
+**Padding is expressed in `keep`, never in data.** A non-divisible size produces a partial
+final beat rather than zero-filled data, and `padding="exact"` rejects the case at
+factory-call time. The old macros instead stepped their counters *over* the target
+(`deserializer.h:41`, `serializer.h:42`) and wedged forever with no diagnostic — the
+single worst property of the code being replaced, and the reason the sizing checks live
+in a pure-Python module that runs during design import.
+
+One consequence worth noting for module authors: unkept lanes' data is explicitly zeroed
+rather than left holding stale buffer contents, because an unwritten register reads `'U'`
+in GHDL but `0` in native simulation, which would otherwise surface as a spurious
+mismatch in a cycle-by-cycle native-vs-VHDL diff.
 
 ---
 

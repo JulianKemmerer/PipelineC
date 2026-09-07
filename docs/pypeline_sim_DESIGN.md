@@ -2029,6 +2029,34 @@ subclass has `__getitem__`.
 
 ---
 
+## Software-Side Byte Conversion in Testbenches
+
+`type_to_bytes(t, value)` / `type_from_bytes(t, data)` (and the `T.to_bytes` /
+`T.from_bytes` classmethods) are elaboration-free: they walk the type in plain Python and
+never touch `sim_call`. Two properties make them directly usable as testbench
+scoreboards.
+
+They produce and consume the *same value shapes* simulation does -- `type_from_bytes`
+builds its result with `sim_zero()` + `_sim_lens_set()`, the very functions the simulator
+uses for a struct-field write, so its return value is structurally indistinguishable from
+a `sim_call` return and can be passed straight back in as an argument. And they are
+layout-identical to the generated hardware by construction, sharing `_enumerate_leaves`
+with `make_type_to_bytes`, so a testbench comparing hardware wire bytes against
+`type_to_bytes(...)` is comparing against one source of truth rather than a parallel
+implementation of the layout.
+
+Two traps when writing a design that will be diffed against real VHDL:
+
+- **Zero unkept lanes explicitly.** A `Reg` element that is never written reads `'U'` in
+  GHDL but `0` in native simulation. `stream/serializer.py` and `axi/type_axis.py` both
+  zero the data on lanes they do not keep for exactly this reason; a module that leaves
+  stale buffer contents there passes native simulation and then fails the cycle diff on
+  the final beat of every packet.
+- **`sim_print` cannot show a `uint32_t` value >= 2**31.** It lowers to
+  `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises
+  `overflow detected` at runtime while native simulation prints the value happily. Narrow
+  or mask a wide probe value before printing it.
+
 ## Limitations
 
 - **Registers (`Reg[T]`)** — supported; functions must carry `@hw_func` (or `@MAIN`).
