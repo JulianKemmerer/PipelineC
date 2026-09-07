@@ -115,10 +115,103 @@ pulse**. This runs once per pulse rather than once per sample, which is what
 makes a CORDIC and two logarithms affordable. See section 5.
 
 ## 5. The Outputs
-When a pulse is validated, two things happen simultaneously in hardware:
+When a pulse is validated, two things happen in hardware:
 
-1. **Metadata to Host:** The engine upgrades the candidate struct to a **`valid_pdw_t`** (adding the total packet sample count and hardware status flags) and sends it over a standard data/valid/ready handshake bus to the host software.
-2. **Raw Waveform Replay:** The Store-and-Forward FIFO releases the bounded AXI-Stream packet, framed with a `tlast` marker at the end. This pristine I/Q packet is routed both to the **Host DMA** (for software analysis) and out of the **TX2 RF Out** port to physically replay the pulse back to the target.
+1. **Metadata to Host:** The engine upgrades the candidate struct to a **`valid_pdw_t`** (adding the total packet sample count and hardware status flags) and serializes it onto its own AXI-Stream master as one 40-byte frame.
+2. **Raw Waveform Replay:** The Store-and-Forward FIFO releases the bounded AXI-Stream packet, framed with a `tlast` marker at the end. This pristine I/Q packet is **broadcast** to two masters at once: the **Host DMA** (for software analysis) and the **TX replay** port, to physically replay the pulse back to the target.
+
+**On ordering.** Inside the engine the record is still handed over in
+`EMIT_PDW` before `SEND_PKT` begins. On the wire that no longer means the
+record's first beat comes first: it goes through a serializer whose first beat
+costs a fill cycle the packet path does not pay, so the record's first beat is
+measured landing **one cycle after** its packet's, and the two then stream
+concurrently on separate ports. What still holds — and what `pdw_tb.py` asserts
+— is that record *k* begins before packet *k+1* does, so a record never slips
+into the next pulse's slot. A consumer that needs `pkt_samples` before the
+payload must therefore buffer or use `tlast`, rather than assume the metadata
+stream leads.
+
+# Top-Level Ports
+
+Every top-level port is a flattened 32-bit AXI-Stream: `_tdata` (`uint32_t`),
+`_tkeep` (4 bits), `_tlast`, `_tvalid`, `_tready`. Interface types live inside
+the design; the boundary is plain `uintN_t`.
+
+| Port | Dir | Carries | Beats/frame |
+|---|---|---|---|
+| `rx0_s_axis_*` | slave in | ADC I/Q samples, one sample per beat | free-running |
+| `tx0_s_axis_*` | slave in | `pdw_ctrl_t` control-register struct | 10 |
+| `rx0_m_axis_*` | master out | released pulse packet (broadcast leg 0) | N samples |
+| `rx1_m_axis_*` | master out | `valid_pdw_t` records | 10 |
+| `rx2_m_axis_*` | master out | `candidate_rec_t` records (observability) | 4 |
+| `tx0_m_axis_*` | master out | pulse generator stimulus | free-running |
+| `tx1_m_axis_*` | master out | released pulse packet (broadcast leg 1, replay) | N samples |
+
+**Signals present for uniformity but not carrying information.** Each is
+commented at its declaration in `top.py`:
+
+* `rx0_s_axis_tkeep` — ignored; a sample beat is always four real bytes.
+* `rx0_s_axis_tlast` — ignored; the ADC stream is continuous and unframed.
+* `rx0_s_axis_tready` — **driven constant 1**; an ADC cannot be back-pressured.
+* `tx0_m_axis_tkeep` / `_tlast` — constant `0xF` / `0`; the stimulus is
+  continuous and unframed.
+* `tx0_m_axis_tready` — **ignored**; a fixed-rate DAC cannot back-pressure a
+  fixed-rate generator.
+* `rx0_m_axis_tkeep` / `tx1_m_axis_tkeep` — constant `0xF`, one whole sample
+  per beat.
+
+> ⚠ **Tie `tx1_m_axis_tready` high if the replay port is unused.** The
+> broadcast is a combinational valid/ready interlock, so it ANDs both legs'
+> ready together — a leg held low wedges the host capture port as well.
+
+**Backpressure policy.** Ready propagates backwards as each block already
+intends and **stops at the store-and-forward FIFO**, which is the design's one
+overflow point: `rx1_m_axis_tready` reaches the engine's `EMIT_PDW` state and
+`rx0_m`/`tx1_m` reach `SEND_PKT`, so a stalled host backs up into that FIFO,
+and when it fills, beats are dropped and the affected packet is flagged in-band
+with `status_flags` bit 2. The datapath ahead of it is valid-only and
+real-time; nothing back-pressures the ADC.
+
+`rx2_m_axis` (candidates) is the exception: its `tready` is fully functional —
+the serializer honours it and holds mid-frame — but it does **not** reach Path
+A, which cannot stall. A candidate offered while the serializer is still busy
+is dropped silently, with no status field. A deployed system is expected to tie
+this port ready and ignore it; `pdw_tb.py` stalls it anyway so the path stays
+real rather than decorative.
+
+## Control registers (`pdw_ctrl_t`)
+
+Written as one 40-byte frame on `tx0_s_axis_*` into a local register file with
+power-on defaults (`pdw_ctrl/pdw_ctrl.py`). Framing policy is exactly sized:
+a frame **longer** than 40 bytes has its excess dropped, and a frame
+**shorter** is discarded, leaving the registers untouched — neither can desync
+the frames that follow.
+
+| Field | Type | Meaning |
+|---|---|---|
+| `pulse_gen_pri` | `uint32_t` | Generator PRI, in samples |
+| `pulse_gen_width` | `uint32_t` | Generator pulse width, in samples |
+| `pulse_gen_freq` | `int32_t` | Carrier phase increment/sample, turns × 2³² |
+| `pulse_gen_chirp_rate` | `int32_t` | Added to that increment each pulse sample (LFM) |
+| `pulse_gen_amplitude` | `int16_t` | Peak I/Q amplitude |
+| `pulse_gen_noise_amp` | `uint16_t` | LFSR noise scale; 0 disables |
+| `threshold_high` | `uint32_t` | Hysteresis SM upper threshold |
+| `threshold_low` | `uint32_t` | Hysteresis SM lower threshold |
+| `max_width` | `uint32_t` | Path A force-close cap **and** CW rejection |
+| `min_width` | `uint32_t` | Glitch rejection |
+| `flags` | `uint32_t` | bit 0 = `CTRL_FLAG_LOOPBACK_EN` |
+
+Control is never back-pressured (`tx0_s_axis_tready` is always 1) and new
+values are readable `pdw_ctrl.latency` cycles after a frame's last beat is
+accepted. That number is measured by `pdw_ctrl/pdw_ctrl_test.py` rather than
+asserted, and `pdw_tb.py` reads the attribute rather than hardcoding it.
+
+The defaults leave an unconfigured device **quiet and in a known state**, not
+merely zeroed: amplitude 0 and `pri = 1` mean the generator emits zeros with
+its PRI counter pinned at 0 (so it starts from a defined phase the instant a
+real PRI is written), and the thresholds sit at their maximum so the hysteresis
+SM cannot leave IDLE. Zero thresholds would instead declare one continuous
+pulse forever.
 
 # Parameters
 
@@ -271,13 +364,20 @@ separate field rather than a derived one.
 
 ## 4. PDW Output Structures
 
-**`candidate_pdw_t`** (internal to FPGA — 128 bits total)
+**`candidate_pdw_t`** (internal to FPGA)
 
 | Field | Type | Meaning |
 |---|---|---|
 | `toa` | `uint64_t` | Time of arrival (~4,424 years to roll over) |
 | `pulse_width` | `uint32_t` | Raw duration in clock cycles |
-| `peak_power` | `uint32_t` | Highest $I^2+Q^2$ value recorded during the pulse |
+| `peak_power` | `power_t` | Highest $I^2+Q^2$ value recorded during the pulse |
+
+**`candidate_rec_t`** (the port-facing form, on `rx2_m_axis_*` — 16 bytes, four
+beats) is the same three fields with `peak_power` truncated to `uint32_t`.
+`candidate_pdw_t`'s own `peak_power` is the 46-bit `power_t`, which would make
+an 18-byte record with a ragged final beat; truncating is exactly what
+`valid_pdw_t.peak_power` already does, so the two observability views of the
+same pulse report the same number.
 
 **`toa` as built.** A free-running counter inside `make_pulse_detect_fsm`,
 latched on the `IDLE -> PULSE` edge (read-before-increment, so it is the index
@@ -471,7 +571,8 @@ it needs an I/Q DC blocker ahead of the conjugate product, which is not built.
 | `pdw_engine/pdw_engine_tb.py` | The PDW engine alone (`make_pdw_engine`), hand-fed synthetic gate streams — accept path + PDW/packet ordering, glitch reject, CW reject, `status_flags`, long-stall backpressure | `sim_assert`, hardware-generated stimulus |
 | `src/tests/pypeline_tests/inst/cordic_test.py` | `dsp/cordic.py` alone — atan2 across all four quadrants and both axes, the (0,0) degenerate case, the ±½-turn boundary, pipeline throughput, and a second instantiation at different widths | `sim_call` vs a bit-exact model and vs `math.atan2` |
 | `src/tests/pypeline_tests/inst/log2_db_test.py` | `dsp/log2_db.py` alone — accuracy vs `10·log10`, decade/octave steps, the fractional-bits subtraction, non-positive input, monotonicity, and two instances with different binary points | `sim_call` vs a bit-exact model |
-| `pdw_tb.py` | The whole `top.py` — pulse generator through the composed DSP chain (`make_detect_pulses`: magnitude → dc_block → moving_avg → hysteresis FSM), the Path B delay line, the loopback mux, and the PDW engine, all driven through real top-level ports | `@sim_input`/`@sim_output`, exact Python golden model |
+| `pdw_ctrl/pdw_ctrl_test.py` | The control register file alone — reset defaults, apply latency (measured, then checked against the advertised attribute), ready never dropping, back-to-back writes, and the two malformed cases: a padded frame whose excess must be dropped and a runt that must leave the registers untouched, neither desyncing the frame after it | `sim_call`, `type_to_bytes` + `AxisSimSource` |
+| `pdw_tb.py` | The whole `top.py` — pulse generator through the composed DSP chain (`make_detect_pulses`: magnitude → dc_block → moving_avg → hysteresis FSM), the Path B delay line, the loopback mux, the PDW engine, and all seven AXIS ports: control written as real frames, both record streams decoded, and the released-packet broadcast compared leg against leg | `@sim_input`/`@sim_output`, exact Python golden model |
 
 `pdw_engine_tb.py` exists alongside `pdw_tb.py` rather than being folded into
 it because it reaches cases the real detector cannot produce on demand — most
@@ -483,23 +584,48 @@ up as a wrong integer with no golden model in the way.
 
 `pdw_tb.py` is the only one that exercises `top.py` itself rather than a
 submodule in isolation — the only test of `make_detect_pulses`, the Path B
-delay/gate, the engine against real detector output, and any top-level
-`Input[T]`/`Output[T]` port of this project. It drives `pulse_loopback_en=1`
-throughout (exercising the internal generator loopback path, not the external
-`rx0_s_axis_*` cable path — a garbage pattern is deliberately driven on that
-port so a broken loopback mux fails loudly rather than silently passing),
-configures the generator, detector and engine through real ports, and checks
-all three output streams (`candidate_pdw_*`, `valid_pdw_*`, `rx0_m_axis_*`)
-against a golden model built from `include/pypeline/dsp/dsp_tb.py`'s exact
-integer models (`golden_magnitude`/`golden_dc_block`/`golden_moving_avg`, run
-against the *same* `magnitude`/`dc_block`/`moving_avg` instances `top.py`
-built — exposed via `detect_pulses.magnitude`/`.dc_block`/`.moving_avg`) plus
-a hand-transcribed Python model of the hysteresis FSM, the gate, and the
-engine's qualification. Checking follows the wireguard-fpga testbenches'
-`Scoreboard` pattern (`include/pypeline/axi/axis_sim.py`): one `Scoreboard`
-per output stream, `expect()`ed from the golden model, `check()`ed in arrival
-order. Both consumers are deliberately stalled on mutually prime periods, so
-the store-and-forward path is genuinely exercised.
+delay/gate, the engine against real detector output, and every top-level AXIS
+port of this project. It configures the generator, detector and engine by
+**writing real control frames** on `tx0_s_axis_*` (one per phase, built with
+`type_to_bytes`, driven by `AxisSimSource`), setting `CTRL_FLAG_LOOPBACK_EN`
+from phase 0 onward — exercising the internal generator loopback path, not the
+external `rx0_s_axis_*` cable path, on which a garbage pattern is deliberately
+driven so a broken loopback mux fails loudly rather than silently passing.
+
+It then checks all four master streams — `rx0_m_axis_*` (released packets),
+`tx1_m_axis_*` (the replay leg), `rx1_m_axis_*` (PDW records) and
+`rx2_m_axis_*` (candidate records) — against a golden model built from
+`include/pypeline/dsp/dsp_tb.py`'s exact integer models
+(`golden_magnitude`/`golden_dc_block`/`golden_moving_avg`, run against the
+*same* `magnitude`/`dc_block`/`moving_avg` instances `top.py` built — exposed
+via `detect_pulses.magnitude`/`.dc_block`/`.moving_avg`) plus a
+hand-transcribed Python model of the hysteresis FSM, the gate, and the engine's
+qualification. Records are decoded with `type_from_bytes`, and each PDW frame
+is *additionally* pushed through `gr_pdw_record.unpack_records()` and compared
+field by field, so the host-side decoder is tested against real hardware bytes
+rather than only against a synthetic record.
+
+Checking follows the wireguard-fpga testbenches' `AxisSimSource`/`AxisSimSink`/
+`Scoreboard` pattern (`include/pypeline/axi/axis_sim.py`): one sink and one
+scoreboard per output stream, `expect()`ed from the golden model, `check()`ed
+in arrival order. Every sink also enforces Xilinx-style `tkeep` compliance on
+every beat it accepts, which is what checks the constant-keep sample ports.
+All four consumers are stalled on mutually prime periods — the two
+released-packet legs on *different* ones, which is what exercises the broadcast
+interlock's ready AND rather than merely passing one ready through. The replay
+leg's frames are compared byte-for-byte against the capture leg's; that is the
+only check of the fanout, since leg 1 could be mis-wired to a stale register
+and everything else would still pass.
+
+**Control timing is pinned, not assumed.** Each phase's frame is scheduled from
+`pdw_ctrl.n_beats`/`.latency` so it lands exactly on that phase's first sample;
+the testbench then asserts the final beat's handshake really happened on the
+predicted cycle and that `tx0_s_axis_tready` never went low. A `PRE_ROLL`
+window before sample 0 carries phase 0's frame, during which the registers hold
+their defaults — amplitude 0 and `pri = 1`, so the generator emits zeros from a
+pinned counter and the same `golden_pulse_gen` models the window exactly. A
+build-time assertion checks every frame lands over signal the golden model says
+is idle, so a future phase edit cannot reconfigure the generator mid-pulse.
 
 Eight phases (three PRI periods each): a baseline pulse at +Fs/8, a short pulse
 at **−Fs/8** (a negative frequency, which a sign-flipped `atan2` fails), a
@@ -557,7 +683,7 @@ perturbing the golden model's `raw_idx` by ±1 fails it.
 | `pulse_detect/pulse_detect_synth_top.py` | Hysteresis FSM alone (elastic, the heavier path) |
 | `pdw_engine/pdw_engine_synth_top.py` | PDW engine alone, at the README's real 16K FIFO depth. Also the only real timing check on the measurement engine — its CORDIC and both logarithm converters are instantiated inside it |
 | `cordic_test.py`, `log2_db_test.py` | The two new DSP primitives, `--comb` elaboration |
-| `top.py` | Everything composed |
+| `top.py` | Everything composed, including all seven AXIS ports, both record serializers, the control deserializer and the broadcast interlock |
 
 These are not redundant with the native-sim testbenches: native sim never
 emits VHDL, so it cannot catch anything Vivado rejects. Several real bugs in
@@ -583,11 +709,14 @@ each fix came from reading the reported critical path:
   is now a `log2(n)`-level binary search, which is strictly better and is
   shared with the floating-point library.
 
-Latest results on `xc7a100tcsg324-1` at the 125 MHz target: `pdw_engine`
-(including the measurement engine) closes at **126.7 MHz**, and the composed
-`top.py` at **127.1 MHz** — 16.7% of the part's LUTs, 4.6% of its flip-flops,
-16.3% of its block RAM and 3.3% of its DSP48s. Both the 16,384-deep packet
-FIFO and the Path B delay line infer block RAM.
+Latest results on `xc7a100tcsg324-1` at the 125 MHz target: `pulse_detect`
+closes at **132.1 MHz**, `pdw_engine` (including the measurement engine) at
+**126.7 MHz**, and the composed `top.py` at **127.1 MHz** — 22.9% of the part's
+LUTs, 5.4% of its flip-flops, 16.7% of its block RAM and 3.3% of its DSP48s.
+Both the 16,384-deep packet FIFO and the Path B delay line infer block RAM.
+Making every top-level port an AXI-Stream cost **no FMAX at all** (127.097 MHz
+before and after, the same critical path in both) and about 3,900 LUTs — the
+two record serializers, the control deserializer and the broadcast interlock.
 
 **Every one of those numbers started out failing.** The measurement path added
 a CORDIC, two logarithm converters and an NCO to a design that had ~5% margin,
@@ -604,6 +733,7 @@ reported critical path rather than guessed:
 | generator LFSR → detector's magnitude DSP | 15.32 ns | pipeline the generator's output |
 | phasor accumulator → CORDIC front end | 11.65 ns | register the accumulator output |
 | NCO quadrant unfold → output adder | 8.23 ns | register the rotator's output |
+| delay-line BRAM → conjugate-product DSP chain | 9.69 ns | register all four raw products, not just their sums |
 
 Two of those are worth calling out. The **generator-to-detector** path and the
 **accumulator-to-CORDIC** path are both cross-block: each block met timing
@@ -611,6 +741,19 @@ comfortably on its own, and only the composed build showed them. A per-block
 synthesis check cannot find that class of problem, which is why `top.py` is
 registered as its own synthesis test rather than treated as covered by the
 three block-level ones.
+
+The last row is a different lesson: **a path can break with nothing on it
+having changed.** `d_im = cur_q·prev_i − cur_i·prev_q` is two multiplies and a
+subtract, so it needs two DSP48s — and with only one pipeline register
+(`d_im_r`) to place, the synthesizer must choose which DSP absorbs it. In the
+first DSP the path is BRAM → DSP(A→MREG), about 3.7 ns; in the second, the
+first DSP runs combinationally and the path becomes BRAM (2.45) → DSP A→P
+(3.84) → DSP C setup (1.70) = 9.69 ns, i.e. 103 MHz. Both are legal, and
+Vivado has picked each: this design met 127.1 MHz until adding the AXIS ports
+grew the netlist and flipped the choice. Registering all four products removes
+the choice — every multiply now has its own register to absorb. A path that
+depends on a synthesizer's packing decision is not "meeting timing", it is
+winning a coin toss; the fix is to stop offering the coin.
 
 Every register added along the way is reported through a `.latency` attribute
 and consumed as one — `freq_accum.latency`, `cordic_atan2.latency`,

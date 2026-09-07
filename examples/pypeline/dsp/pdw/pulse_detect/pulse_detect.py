@@ -606,6 +606,9 @@ def make_freq_accum(complex_t, block_k=32):
     # I*I + Q*Q with both rails at full negative scale is exactly 2^(2*RB-1),
     # which needs 2*RB+1 bits signed -- 33 for int16 rails, not 32.
     prod_t = make_int_t(2 * RB + 1)
+    # One raw int16 x int16 product on its own: 2*RB bits is exact (the largest
+    # magnitude is 2^(2*RB-2), from (-2^15)^2).
+    pprod_t = make_int_t(2 * RB)
     # Up to 2*block_k products in the `last` window.
     acc_bits = (2 * RB + 1) + (2 * block_k).bit_length()
     acc_t = make_int_t(acc_bits)
@@ -641,10 +644,14 @@ def make_freq_accum(complex_t, block_k=32):
         cur_i: rail_val_t = sample.i.val
         cur_q: rail_val_t = sample.q.val
 
-        # ---- stage 1 (combinational): the conjugate product ---------------
-        # z[n] * conj(z[n-1])
-        d_re: prod_t = (cur_i * prev_i) + (cur_q * prev_q)
-        d_im: prod_t = (cur_q * prev_i) - (cur_i * prev_q)
+        # ---- stage 1a (combinational): the four raw products --------------
+        # z[n] * conj(z[n-1]) is four int16 x int16 multiplies. They are kept
+        # SEPARATE and each registered, rather than written as the two sums
+        # below and left to the synthesizer -- see the note on the registers.
+        p_ii: pprod_t = cur_i * prev_i
+        p_qq: pprod_t = cur_q * prev_q
+        p_qi: pprod_t = cur_q * prev_i
+        p_iq: pprod_t = cur_i * prev_q
 
         # A product is only meaningful when BOTH samples are inside the pulse.
         # The first beat of a pulse pairs with the sample before it, which is
@@ -652,19 +659,42 @@ def make_freq_accum(complex_t, block_k=32):
         pair_ok: uint1_t = beat_valid & prev_valid
         pulse_start: uint1_t = beat_valid & (~prev_valid)
 
-        # ---- the pipeline register, and why it has to be here -------------
-        # Without it the path is: delay-line output -> 16x16 DSP multiply ->
-        # DSP subtract -> the full-width accumulator add -> mux -> register.
-        # Measured on xc7a100t that is 10.13 ns against an 8 ns budget --
-        # 98 MHz, where the design's target is 125. The multiply and the
-        # accumulate are each comfortable on their own; it is only their sum
-        # that misses, so one register between them fixes it and nothing else
-        # in the 125 MSPS datapath needs to change.
+        # ---- the pipeline registers, and why there are two stages ----------
+        # Stage 1b's register came first: without it the path is delay-line
+        # output -> DSP multiply -> DSP subtract -> the full-width accumulator
+        # add -> mux -> register, measured at 10.13 ns on xc7a100t against an
+        # 8 ns budget. The multiply and the accumulate are each comfortable
+        # alone; only their sum misses.
         #
-        # The cost is that everything this block emits is one cycle behind the
-        # gate stream, which is why `.latency` exists and why detect_pulses
-        # delays `noise_est` to match rather than leaving callers to discover
-        # the skew.
+        # Stage 1a exists because ONE register is not enough for a chain of TWO
+        # DSPs. `d_im = cur_q*prev_i - cur_i*prev_q` is two multiplies and a
+        # subtract, so the synthesizer needs two DSP48s -- and with only
+        # `d_im_r` to place, it must choose which one absorbs it. Put it in the
+        # first DSP and the path is BRAM -> DSP(A->MREG), about 3.7 ns; put it
+        # in the second and the first DSP runs combinationally, making the path
+        # BRAM(2.45) -> DSP A->P(3.84) -> DSP C setup(1.70) = 9.69 ns, i.e.
+        # 103 MHz. Both are legal and Vivado has picked each: this design met
+        # 127.1 MHz until an unrelated growth in the netlist flipped the
+        # choice, with nothing on this path having changed. Registering all
+        # four products removes the choice -- every multiply now has its own
+        # register to absorb, and the combining add is a plain fabric adder.
+        #
+        # The cost is that everything this block emits is `.latency` cycles
+        # behind the gate stream, which is why that attribute exists and why
+        # detect_pulses delays `noise_est` to match rather than leaving callers
+        # to discover the skew.
+        p_ii_r: Reg[pprod_t]
+        p_qq_r: Reg[pprod_t]
+        p_qi_r: Reg[pprod_t]
+        p_iq_r: Reg[pprod_t]
+        pair_ok_a: Reg[uint1_t]
+        last_a: Reg[uint1_t]
+        start_a: Reg[uint1_t]
+
+        # ---- stage 1b: combine the REGISTERED products --------------------
+        d_re: prod_t = p_ii_r + p_qq_r
+        d_im: prod_t = p_qi_r - p_iq_r
+
         d_re_r: Reg[prod_t]
         d_im_r: Reg[prod_t]
         pair_ok_r: Reg[uint1_t]
@@ -745,11 +775,24 @@ def make_freq_accum(complex_t, block_k=32):
         # final product is in the accumulators above by the time it is seen.
         o_valid = last_r
 
+        # Register updates in reverse pipeline order. Every control bit is
+        # delayed by exactly the same number of stages as the products it
+        # qualifies, which is what keeps the sequence of accumulate operations
+        # identical to an untimed model of this block (see pdw_tb.py's
+        # _FreqAccumModel) -- adding a stage shifts the phase, never the order.
         d_re_r = d_re
         d_im_r = d_im
-        pair_ok_r = pair_ok
-        last_r = beat_last
-        start_r = pulse_start
+        pair_ok_r = pair_ok_a
+        last_r = last_a
+        start_r = start_a
+
+        p_ii_r = p_ii
+        p_qq_r = p_qq
+        p_qi_r = p_qi
+        p_iq_r = p_iq
+        pair_ok_a = pair_ok
+        last_a = beat_last
+        start_a = pulse_start
 
         if beat_advance:
             prev_i = cur_i
@@ -762,12 +805,13 @@ def make_freq_accum(complex_t, block_k=32):
     freq_accum.acc_t = acc_t
     freq_accum.prod_t = prod_t
     freq_accum.out_t = freq_accum_t
-    # Cycles from `beat_last` to the matching `.valid`: one register between
-    # the product and the accumulator, and one on the output. Both are there to
-    # break specific measured critical paths -- see the comments at each.
-    # Consumers must read this rather than assume a value; detect_pulses and
-    # pdw_engine both delay their own gate_last-timed signals by it.
-    freq_accum.latency = 2
+    # Cycles from `beat_last` to the matching `.valid`: one register on the raw
+    # products, one between their combination and the accumulator, and one on
+    # the output. All three break specific measured critical paths -- see the
+    # comments at each. Consumers must read this rather than assume a value;
+    # detect_pulses and pdw_engine both delay their own gate_last-timed signals
+    # by it, and pdw_tb.py's whole measurement alignment follows from it.
+    freq_accum.latency = 3
     return freq_accum, freq_accum_t
 
 

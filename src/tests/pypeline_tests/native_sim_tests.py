@@ -276,13 +276,34 @@ def get_tests() -> list:
             ],
         )
     )
+    # PDW project: the AXIS-written control register file. pdw_tb.py exercises
+    # it inside the pipeline, but only with well-formed frames arriving at
+    # convenient moments; this drives the malformed traffic a real host
+    # eventually produces (short writes, padded writes, back-to-back writes)
+    # and pins the always-ready and apply-latency promises pdw_tb.py's whole
+    # phase schedule is built on.
+    tests.append(
+        Test(
+            name="pdw_ctrl_test",
+            category="native_sim",
+            cmd=[
+                EXAMPLES_PYPELINE_DIR
+                / "dsp"
+                / "pdw"
+                / "pdw_ctrl"
+                / "pdw_ctrl_test.py"
+            ],
+        )
+    )
     # PDW project: top-level testbench (top.py) -- exact golden model of the
     # WHOLE pipeline, pulse_gen -> detect_pulses -> pdw_measure -> pdw_engine,
     # across eight pulse settings: released ones, two that Path A never
     # detects, two that it detects and the engine then rejects (glitch and
     # CW), and an LFM chirp. Also the acceptance test for Path B's
-    # sample-exact delay-line alignment, and for every measured field
-    # (frequency, dB power, noise floor, PRI) against a bit-exact model.
+    # sample-exact delay-line alignment, for every measured field (frequency,
+    # dB power, noise floor, PRI) against a bit-exact model, and -- since every
+    # top-level port is now a flattened AXI-Stream -- for the control-frame
+    # write path, both record serializers and the released-packet broadcast.
     tests.append(
         Test(
             name="pdw_tb",
@@ -293,7 +314,7 @@ def get_tests() -> list:
                 "--sim",
                 "--comb",
                 "--run",
-                "9000",
+                "9200",
             ],
         )
     )

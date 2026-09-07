@@ -9,9 +9,16 @@ The FPGA does NOT emit gr-pdw's float64 rows directly, and pretending
 otherwise would be silly: it emits a compact fixed-point record and this
 module does the conversion, in the same place gr-pdw does its own scaling.
 
-    FPGA (40-byte fixed-point record)  ->  unpack_records()  ->  to_gr_pdw_rows()
-                                                                       |
-                                             gr-pdw's pdw.py / pandas / HDF5
+    rx1_m_axis_* (40-byte frames)  ->  unpack_records()  ->  to_gr_pdw_rows()
+                                                                    |
+                                          gr-pdw's pdw.py / pandas / HDF5
+
+These are literally the bytes on `rx1_m_axis_*`: one 40-byte frame per accepted
+pulse, ten 32-bit beats, tlast on the last. No host-side reassembly beyond
+concatenating a frame's beats is needed. `pdw_tb.py` feeds captured frames
+straight into `unpack_records()` and compares field by field against its golden
+model, so this module is checked against real hardware output rather than only
+against the synthetic record in `__main__` below.
 
 WHAT MAPS CLEANLY, AND WHAT DOES NOT
 ------------------------------------

@@ -1,17 +1,41 @@
 # pyright: reportInvalidTypeForm=none
 """Top-level native-sim testbench for top.py (see README.md section 5).
 
-Drives top.py's real Input[T] ports -- pulse generator config, detector
-thresholds/max_width, pulse_loopback_en -- and checks both of its output
-streams (candidate_pdw_*, rx0_m_axis_*) against an exact Python golden model
-of the whole chain (pulse_gen -> magnitude -> dc_block -> moving_avg ->
-hysteresis FSM -> Path B delay + gate), across a handful of pulse settings,
-including settings that must be filtered out entirely (threshold too high,
-signal too weak) and one that forces the max_width/CW-cap path.
+Every top-level port of top.py is a flattened 32-bit AXI-Stream, so this
+testbench speaks AXIS in both directions: it WRITES the control registers as a
+framed `pdw_ctrl_t` struct on tx0_s_axis_*, and READS three master streams --
+released packets (rx0_m_axis_*), PDW records (rx1_m_axis_*) and candidate
+records (rx2_m_axis_*) -- checking each against an exact Python golden model of
+the whole chain (pulse_gen -> magnitude -> dc_block -> moving_avg -> hysteresis
+FSM -> Path B delay + gate -> measurement -> engine), across a handful of pulse
+settings, including settings that must be filtered out entirely (threshold too
+high, signal too weak) and one that forces the max_width/CW-cap path.
 
-`pulse_loopback_en` is held at 1 throughout -- this exercises the internal
-pulse_gen loopback path, not the external rx0_s_axis_* cable path (a garbage
-walking pattern is driven on rx0_s_axis_tdata/tvalid specifically so a broken
+Framing is done with the library helpers rather than by hand: `type_to_bytes` /
+`type_from_bytes` produce the same bytes the hardware serializers do (that is
+the point of them), and `AxisSimSource` / `AxisSimSink` handle the beat-level
+protocol -- the sink additionally enforces Xilinx-style tkeep compliance on
+every beat it accepts, which is free coverage of top.py's constant-keep sample
+ports.
+
+CONTROL TIMING. Control values are no longer present on every cycle; they take
+effect `pdw_ctrl.latency` cycles after their frame's last beat is accepted.
+Rather than assume that, this testbench:
+  * sends each phase's frame so it lands exactly on that phase's first sample,
+    computed from `pdw_ctrl.n_beats`/`.latency` (never hardcoded);
+  * ASSERTS the final beat handshake actually happened on the predicted cycle,
+    so a regression in the control path fails loudly here instead of silently
+    skewing every downstream expectation;
+  * asserts every frame lands in a window the golden model says is idle, so a
+    future phase edit cannot reconfigure the generator mid-pulse.
+A PRE_ROLL window before sample 0 carries phase 0's frame. During it the
+registers hold `pdw_ctrl.defaults`, whose amplitude is 0 and whose pri is 1 --
+so the generator emits zeros from a pinned counter, and the same
+`golden_pulse_gen` models the window exactly.
+
+`pulse_loopback_en` is set from phase 0's frame onward -- this exercises the
+internal pulse_gen loopback path, not the external rx0_s_axis_* cable path (a
+garbage walking pattern is driven on rx0_s_axis_tdata specifically so a broken
 loopback mux would show up as a golden-model mismatch, not silently pass).
 
 Style: @sim_input/@sim_output (the only mechanism that can drive a real
@@ -22,9 +46,9 @@ sim_input_test.py). Only runs under `pypelinec ... --sim --comb --run N`;
 Checking follows the wireguard-fpga testbenches' shape (encrypt_tb.py /
 decrypt_tb.py): a `Scoreboard` (include/pypeline/axi/axis_sim.py) per output
 stream, populated from the golden model at import time, `expect()`ed once and
-`check()`ed in arrival order as real output beats show up. Unlike those
-testbenches (which only sim_print "ERROR: ..." because their build script
-greps the log), `run_all.py` judges purely on process exit code
+`check()`ed in arrival order as real frames show up. Unlike those testbenches
+(which only sim_print "ERROR: ..." because their build script greps the log),
+`run_all.py` judges purely on process exit code
 (src/tests/pypeline_tests/common.py), so every mismatch here prints a rich
 diagnostic AND raises AssertionError -- the dsp_tb.py convention.
 
@@ -44,23 +68,39 @@ or Path B's wiring fails here with a clear message rather than as opaque
 packet-content garbage.
 
 Run:
-    pypelinec examples/pypeline/dsp/pdw/pdw_tb.py --sim --comb --run 6200
+    pypelinec examples/pypeline/dsp/pdw/pdw_tb.py --sim --comb --run 9200
 """
 
 import os
+import struct as _pystruct
 import sys
 from dataclasses import dataclass, field
 
 sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
 
-from pypeline import MAIN, sim_finish, sim_input, sim_output, sim_print
+from pypeline import (
+    MAIN,
+    byte_length,
+    sim_finish,
+    sim_input,
+    sim_output,
+    sim_print,
+    type_from_bytes,
+    type_to_bytes,
+)
 
+import gr_pdw_record
 import top
 from dsp.dsp_tb import golden_dc_block, golden_magnitude, golden_moving_avg
 from pulse_gen import golden_pulse_gen
 from pdw_measure import golden_pdw_measure
-from pdw_engine import STATUS_FREQ_DEGENERATE, STATUS_PRI_INVALID
-from axi.axis_sim import Scoreboard
+from pdw_ctrl import CTRL_FLAG_LOOPBACK_EN, pdw_ctrl_t
+from pdw_engine import (
+    STATUS_FREQ_DEGENERATE,
+    STATUS_PKT_FIFO_FULL,
+    STATUS_PRI_INVALID,
+)
+from axi.axis_sim import AxisSimSink, AxisSimSource, Scoreboard
 
 # ---------------------------------------------------------------------------
 # 0. Latency metadata -- read from the instances top.py already built, never
@@ -90,6 +130,66 @@ assert _DP.delay_depth > _DP.get_path_b_delay(), (
     f"pdw_tb: delay_depth={_DP.delay_depth} must exceed the Path B hold window "
     f"({_DP.get_path_b_delay()} samples) or the delay line drops pushes"
 )
+
+# ---------------------------------------------------------------------------
+# 0b. AXIS boundary: control frame timing, and flat <-> word adapters.
+# ---------------------------------------------------------------------------
+AXIS_N = top.AXIS_N
+_CTRL = top.pdw_ctrl
+CTRL_BEATS = _CTRL.n_beats  # 40 bytes / 4 lanes = 10
+CTRL_LAT = _CTRL.latency  # last beat accepted -> registers readable
+
+# A frame whose first beat is driven on cycle S occupies S .. S+CTRL_BEATS-1
+# (control is never back-pressured, which test_ready_is_always_high in
+# pdw_ctrl_test.py is what pins), so its values are live from:
+CTRL_APPLY_OFFSET = CTRL_BEATS - 1 + CTRL_LAT
+# Cycles before sample 0, used to deliver phase 0's configuration. The
+# generator free-runs through this window at pdw_ctrl.defaults -- amplitude 0
+# and pri 1, so it emits zeros with its PRI counter pinned at 0 and its phase
+# accumulator held at 0. Only the LFSRs and the NCO pipeline advance, and
+# golden_pulse_gen models both, so the window costs the golden model nothing
+# but a prefix on its schedules.
+PRE_ROLL = CTRL_APPLY_OFFSET
+
+
+def _ctrl_frame_start(sample_idx):
+    """Cycle on which to drive a frame's first beat so its values are live on
+    exactly the cycle sample `sample_idx` enters the detector."""
+    return PRE_ROLL + sample_idx - CTRL_APPLY_OFFSET
+
+
+def _axis_flat(word, n=AXIS_N):
+    """(tdata, tkeep, tlast, tvalid) from an AxisSimSource's interface word."""
+    d = word.stream.data.frag.data
+    k = word.stream.data.frag.keep
+    tdata = 0
+    tkeep = 0
+    for i in range(n):
+        tdata |= (int(d[i]) & 0xFF) << (8 * i)
+        tkeep |= (int(k[i]) & 1) << i
+    return tdata, tkeep, int(word.stream.data.eod[0]), int(word.stream.valid)
+
+
+def _axis_word(intrf, tdata, tkeep, tlast, transferred, n=AXIS_N):
+    """An interface word for AxisSimSink, built from flat output ports.
+
+    `transferred` (tvalid AND tready), not tvalid: AxisSimSink assumes its own
+    ready is always 1 and records every valid beat it is shown, so a held beat
+    handed to it would be counted twice."""
+    frag_t = intrf.stream_t.typeof("data")
+    bus_t = frag_t.typeof("frag")
+    return intrf.fwd_t(
+        intrf.stream_t(
+            data=frag_t(
+                frag=bus_t(
+                    data=[(tdata >> (8 * i)) & 0xFF for i in range(n)],
+                    keep=[(tkeep >> i) & 1 for i in range(n)],
+                ),
+                eod=[tlast],
+            ),
+            valid=transferred,
+        )
+    )
 
 
 # ---------------------------------------------------------------------------
@@ -292,12 +392,17 @@ def _nominal_windows(start, pri, width, n_periods):
 # is. (The old model could build each phase independently only because the
 # generator was stateless apart from a PRI counter that wrapped cleanly at each
 # boundary.)
-pri_sched = []
-width_sched = []
-amp_sched = []
-freq_sched = []
-chirp_sched = []
-noise_sched = []
+#
+# The lists are built PRE_ROLL entries long before sample 0, holding
+# pdw_ctrl.defaults -- the configuration the hardware really is running while
+# phase 0's control frame is still on the wire.
+_CD = _CTRL.defaults
+pri_sched = [int(_CD.pulse_gen_pri)] * PRE_ROLL
+width_sched = [int(_CD.pulse_gen_width)] * PRE_ROLL
+amp_sched = [int(_CD.pulse_gen_amplitude)] * PRE_ROLL
+freq_sched = [int(_CD.pulse_gen_freq)] * PRE_ROLL
+chirp_sched = [int(_CD.pulse_gen_chirp_rate)] * PRE_ROLL
+noise_sched = [int(_CD.pulse_gen_noise_amp)] * PRE_ROLL
 phase_bounds = []  # (start, end) absolute sample-index range per phase
 _pos = 0
 for _ph in PHASES:
@@ -312,9 +417,9 @@ for _ph in PHASES:
     noise_sched.extend([_ph.noise_amp] * _n)
 
 TOTAL_SAMPLES = _pos
-raw = golden_pulse_gen(
+_raw_all = golden_pulse_gen(
     top.pulse_gen,
-    TOTAL_SAMPLES,
+    PRE_ROLL + TOTAL_SAMPLES,
     pri_sched,
     width_sched,
     amp_sched,
@@ -322,7 +427,17 @@ raw = golden_pulse_gen(
     chirp_sched,
     noise_sched,
 )
+# `raw` stays indexed by SAMPLE index, as every downstream model expects. The
+# pre-roll outputs are dropped rather than modelled further, because the
+# hardware holds rx0_s_axis_tvalid low through that window (loopback is off
+# until phase 0's frame lands), so nothing enters the detector there.
+raw = _raw_all[PRE_ROLL:]
 assert len(raw) == TOTAL_SAMPLES
+assert all(v == (0, 0) for v in _raw_all[:PRE_ROLL]), (
+    "the pre-roll window must be silent -- pdw_ctrl.defaults should give "
+    "amplitude 0 and noise_amp 0, or the golden model's power sequence starts "
+    "from a state the hardware never had"
+)
 
 # dc_block's mean is one continuous IIR state across the WHOLE run (a single
 # hardware instance, never reset between phases) -- so golden_dc_block must
@@ -384,6 +499,63 @@ for _ph in PHASES:
     min_width_sched.extend([_ph.min_width] * (N_PERIODS * _ph.pri))
 assert len(thr_hi_sched) == TOTAL_SAMPLES
 assert len(min_width_sched) == TOTAL_SAMPLES
+
+
+# ---------------------------------------------------------------------------
+# 3b. Control frames -- one per phase, scheduled to land on its first sample.
+# ---------------------------------------------------------------------------
+def _phase_ctrl(ph):
+    return pdw_ctrl_t(
+        pulse_gen_pri=ph.pri,
+        pulse_gen_width=ph.width,
+        pulse_gen_freq=ph.freq,
+        pulse_gen_chirp_rate=ph.chirp_rate,
+        pulse_gen_amplitude=ph.amplitude,
+        pulse_gen_noise_amp=ph.noise_amp,
+        threshold_high=ph.thr_hi,
+        threshold_low=ph.thr_lo,
+        max_width=ph.max_width,
+        min_width=ph.min_width,
+        # Loopback on from phase 0 onward: the detector is fed pulse_gen's own
+        # samples, not the garbage driven on rx0_s_axis_tdata.
+        flags=CTRL_FLAG_LOOPBACK_EN,
+    )
+
+
+# {first-beat cycle: (phase index, frame bytes)}. type_to_bytes produces
+# exactly what the hardware deserializer expects, by construction -- the two
+# share their layout function (see stream/pypeline_stream_guide.md).
+CTRL_FRAMES = {}
+for _i, _ph in enumerate(PHASES):
+    _start = _ctrl_frame_start(phase_bounds[_i][0])
+    assert _start >= 0, (
+        f"phase {_i}: control frame would start at cycle {_start}; PRE_ROLL "
+        f"({PRE_ROLL}) is too small for {CTRL_BEATS} beats + latency {CTRL_LAT}"
+    )
+    assert _start not in CTRL_FRAMES, f"two control frames collide at cycle {_start}"
+    CTRL_FRAMES[_start] = (_i, type_to_bytes(pdw_ctrl_t, _phase_ctrl(_ph)))
+
+# A final QUIESCE frame, landing exactly on sample TOTAL_SAMPLES. The last
+# phase ends exactly on a pri boundary, so without this the generator's counter
+# would wrap and start a further pulse the golden model never modelled -- while
+# the engine's store-and-forward latency means this testbench is still draining
+# then. (The old flat-port version did the same thing by dropping amplitude to
+# 0 once `past_end`; framed control makes it an explicit write.)
+_QUIESCE = _phase_ctrl(PHASES[-1])
+_QUIESCE = _QUIESCE._replace(pulse_gen_amplitude=0, pulse_gen_noise_amp=0)
+CTRL_QUIESCE_AT = _ctrl_frame_start(TOTAL_SAMPLES)
+assert CTRL_QUIESCE_AT not in CTRL_FRAMES
+CTRL_FRAMES[CTRL_QUIESCE_AT] = (len(PHASES), type_to_bytes(pdw_ctrl_t, _QUIESCE))
+for _a, _b in zip(sorted(CTRL_FRAMES), sorted(CTRL_FRAMES)[1:]):
+    assert _b - _a >= CTRL_BEATS, (
+        f"control frames at cycles {_a} and {_b} overlap -- a phase is shorter "
+        f"than one {CTRL_BEATS}-beat frame"
+    )
+# The cycle each frame's LAST beat is accepted, asserted against the real
+# handshake during the run (see check_ctrl below). If control ever stalls or
+# the deserializer's sizing changes, that assertion fires rather than every
+# expectation downstream quietly shifting.
+CTRL_LAST_BEAT = {s + CTRL_BEATS - 1: p for s, (p, _f) in CTRL_FRAMES.items()}
 
 
 # ---------------------------------------------------------------------------
@@ -604,10 +776,12 @@ _nm = _NoiseModel()
 _cur_packet = []
 _prev_toa = 0
 _have_prev = False
+_gate_act = []  # per-sample gate_valid, for the control-frame quiet-window check
 for _s in range(TOTAL_SAMPLES):
     pdw_valid, pdw_data, gate_valid, gate_last, in_idle = _fsm_step(
         _fsm_st, power[_s], thr_hi_sched[_s], thr_lo_sched[_s], max_width_sched[_s]
     )
+    _gate_act.append(gate_valid)
     _mi = _s + MAG_SKEW
     noise_now = _nm.step(_mag_seq[_mi] if _mi < TOTAL_SAMPLES else 0, in_idle)
     # Path B: the delay line advances on gate_advance, which is the gate
@@ -780,7 +954,23 @@ assert len(expected_released) > 0 and len(expected_rejects) > 0, (
     "packets"
 )
 
-TOTAL_CYCLES = TOTAL_SAMPLES
+# Every control frame must be in flight over genuinely idle signal. The apply
+# cycle is exact, so this is not needed for correctness -- it is here so that a
+# future phase edit which shortens an idle gap fails with a clear message
+# instead of reconfiguring the generator in the middle of a pulse.
+for _i, _b in enumerate([b for b, _e in phase_bounds] + [TOTAL_SAMPLES]):
+    if _b == 0:
+        continue  # phase 0's frame is in the pre-roll, before any sample
+    _who = PHASES[_i].name if _i < len(PHASES) else "quiesce"
+    _win = range(max(0, _b - CTRL_APPLY_OFFSET), _b)
+    _busy = [s for s in _win if _gate_act[s]]
+    assert not _busy, (
+        f"control frame for {_who!r} occupies samples "
+        f"{_win.start}..{_win.stop - 1}, but the previous phase still has gate "
+        f"beats at {_busy} -- raise IDLE_MARGIN or that phase's pri"
+    )
+
+TOTAL_CYCLES = PRE_ROLL + TOTAL_SAMPLES
 sim_print(
     f"pdw_tb: {len(PHASES)} phases, {TOTAL_SAMPLES} stimulus samples, "
     f"{len(expected_pdws)} candidates -> {len(expected_valid_pdws)} released + "
@@ -810,9 +1000,9 @@ sim_print(
 # decoration) makes that same speculative probe hit an empty, harmless
 # queue instead.
 # ---------------------------------------------------------------------------
-_pdw_sb = Scoreboard()  # candidate_pdw_*  -- Path A, every detected pulse
-_vpdw_sb = Scoreboard()  # valid_pdw_*      -- engine, accepted pulses only
-_pkt_sb = Scoreboard()  # rx0_m_axis_*     -- engine, released packets only
+_pdw_sb = Scoreboard()  # rx2_m_axis_* -- Path A candidates, every detected pulse
+_vpdw_sb = Scoreboard()  # rx1_m_axis_* -- engine PDW records, accepted only
+_pkt_sb = Scoreboard()  # rx0_m_axis_* -- engine, released packets only
 
 
 def _populate_scoreboards():
@@ -825,9 +1015,33 @@ def _populate_scoreboards():
         _pkt_sb.expect(pkt, phase=phase_idx, idx=idx)
 
 
-def _s16(v):
-    """Ports are read as raw unsigned; the dB and frequency fields are signed."""
-    return v - 65536 if v >= 32768 else v
+# One sink per master port. Each enforces Xilinx-style tkeep compliance on
+# every beat it accepts, which is what checks top.py's constant-keep sample
+# ports as well as the serializers' real fill counts.
+_CAND_T = top.candidate_rec_t
+_VPDW_T = top.pdw_engine.valid_pdw_t
+_ctrl_src = AxisSimSource(_CTRL.axis_intrf, AXIS_N)
+_pkt_snk = AxisSimSink(top.axis32_intrf, AXIS_N)  # rx0_m -- released packets
+_rep_snk = AxisSimSink(top.axis32_intrf, AXIS_N)  # tx1_m -- the replay leg
+_vpdw_snk = AxisSimSink(top.pdw_tx.axis_intrf, AXIS_N)  # rx1_m -- PDW records
+_cand_snk = AxisSimSink(top.cand_tx.axis_intrf, AXIS_N)  # rx2_m -- candidates
+
+# gr_pdw_record.py parses the rx1_m_axis_* bytes directly on the host side, so
+# its layout has to agree with the hardware's, not merely with itself.
+VPDW_N_BYTES = byte_length(_VPDW_T)
+CAND_N_BYTES = byte_length(_CAND_T)
+assert _pystruct.calcsize(gr_pdw_record.RECORD_FORMAT) == VPDW_N_BYTES, (
+    f"gr_pdw_record.RECORD_FORMAT is "
+    f"{_pystruct.calcsize(gr_pdw_record.RECORD_FORMAT)} bytes but a PDW record "
+    f"frame is {VPDW_N_BYTES} -- the host-side decoder and the hardware's "
+    f"serializer have drifted apart"
+)
+
+
+def _words(frame):
+    """A sample packet's frame bytes -> the tdata words it was sent as."""
+    assert len(frame) % 4 == 0, f"sample packet frame is {len(frame)} bytes"
+    return _pystruct.unpack(f"<{len(frame) // 4}I", frame)
 
 
 # ---------------------------------------------------------------------------
@@ -840,22 +1054,39 @@ def _s16(v):
 ST = {
     "cycle": 0,
     "announced": False,
-    "cur_packet": [],
     "first_beat_cycle": None,
     "alignment_checked": False,
     "n_pdw_done": 0,
     "n_vpdw_done": 0,
     "n_pkt_done": 0,
+    "n_ctrl_frames": 0,
+    "pdw_starts": [],
+    "pkt_starts": [],
+    "in_pdw_frame": False,
+    "in_pkt_frame": False,
 }
 
-# Backpressure patterns on the two engine output streams. Store-and-forward is
-# the whole point of box 3 -- a real-time gate stream feeding a consumer that
-# can stall -- so both consumers deliberately stall, on mutually prime periods
-# so their stalls drift against each other and against every phase's pri.
-# The golden model is unaffected: scoreboards compare content in arrival
-# order, and backpressure only changes when beats arrive, never which.
+# Backpressure patterns on all four master ports. Store-and-forward is the
+# whole point of box 3 -- a real-time gate stream feeding consumers that can
+# stall -- so every consumer deliberately stalls, on mutually prime periods so
+# the stalls drift against each other and against every phase's pri. The two
+# released-packet legs stall on DIFFERENT periods, which is what exercises the
+# broadcast interlock's ready AND rather than just passing one ready through.
+#
+# The golden model is unaffected: scoreboards compare content in arrival order,
+# and backpressure only changes when frames arrive, never which. The one stream
+# where that is not automatic is rx2_m (candidates), which has no path back
+# into Path A and drops rather than stalls -- see CAND_READY_PERIOD below.
 PKT_READY_PERIOD = 5
 PDW_READY_PERIOD = 7
+TX1_READY_PERIOD = 13
+# Candidates are ~4 beats every pri (>= 192 cycles), so a 1-in-11 stall cannot
+# make one frame still be draining when the next arrives -- no candidate is
+# ever dropped here, which check_done asserts. The stall is real backpressure
+# on a port a deployed system will tie high; the drop path itself is a
+# negative control (hold this ready low for a whole phase), not a committed
+# expectation.
+CAND_READY_PERIOD = 11
 
 
 @sim_input
@@ -863,30 +1094,41 @@ def drive_stimulus():
     if ST["cycle"] == 0:
         _populate_scoreboards()
     n = ST["cycle"]
-    past_end = n >= TOTAL_SAMPLES
-    idx = n if not past_end else TOTAL_SAMPLES - 1
-    top.pulse_gen_pri = PHASES[_phase_of(idx)].pri
-    top.pulse_gen_width = PHASES[_phase_of(idx)].width
-    # Amplitude drops to 0 once the scheduled stimulus is over. The last phase
-    # ends exactly on a pri boundary, so leaving it running would start a
-    # further pulse the golden model never modelled -- and the engine's
-    # store-and-forward latency means this testbench is still draining then.
-    top.pulse_gen_amplitude = 0 if past_end else PHASES[_phase_of(idx)].amplitude
-    top.pulse_gen_freq = freq_sched[idx]
-    top.pulse_gen_chirp_rate = chirp_sched[idx]
-    top.pulse_gen_noise_amp = 0 if past_end else noise_sched[idx]
-    top.threshold_high = thr_hi_sched[idx]
-    top.threshold_low = thr_lo_sched[idx]
-    top.max_width = max_width_sched[idx]
-    top.min_width = min_width_sched[idx]
-    top.pulse_loopback_en = 1
-    top.rx0_m_axis_tready = 0 if (n % PKT_READY_PERIOD) == 0 else 1
-    top.valid_pdw_ready = 0 if (n % PDW_READY_PERIOD) == 0 else 1
-    # Deliberately wrong data on the unselected mux leg: if pulse_loopback_en
+
+    # -- control: one framed pdw_ctrl_t per phase -------------------------
+    if n in CTRL_FRAMES:
+        assert _ctrl_src.idle(), (
+            f"cycle {n}: the previous control frame has not finished -- control "
+            f"was back-pressured, which pdw_ctrl promises never happens"
+        )
+        _ctrl_src.send(CTRL_FRAMES[n][1])
+    # Driving ready=1 rather than reading top.tx0_s_axis_tready: that output is
+    # combinational, so reading it here (before convergence) would be a race.
+    # check_ctrl asserts its real value is 1 on every cycle instead, which is
+    # the same guarantee and a stronger check.
+    _cf = _axis_flat(_ctrl_src.step(1))
+    top.tx0_s_axis_tdata = _cf[0]
+    top.tx0_s_axis_tkeep = _cf[1]
+    top.tx0_s_axis_tlast = _cf[2]
+    top.tx0_s_axis_tvalid = _cf[3]
+
+    # -- samples ----------------------------------------------------------
+    # Deliberately wrong data on the unselected mux leg: if the loopback flag
     # ever failed to select pulse_gen's own sample, this garbage would flow
     # through instead and fail the golden comparison loudly.
     top.rx0_s_axis_tdata = (0xDEAD0000 + (n & 0xFFFF)) & 0xFFFFFFFF
-    top.rx0_s_axis_tvalid = 1
+    top.rx0_s_axis_tkeep = (1 << AXIS_N) - 1
+    top.rx0_s_axis_tlast = 0
+    # Held low through the pre-roll: loopback is off until phase 0's frame
+    # lands, so a valid beat there would push that garbage into the detector.
+    top.rx0_s_axis_tvalid = 0 if n < PRE_ROLL else 1
+
+    # -- master-port backpressure -----------------------------------------
+    top.rx0_m_axis_tready = 0 if (n % PKT_READY_PERIOD) == 0 else 1
+    top.tx1_m_axis_tready = 0 if (n % TX1_READY_PERIOD) == 0 else 1
+    top.rx1_m_axis_tready = 0 if (n % PDW_READY_PERIOD) == 0 else 1
+    top.rx2_m_axis_tready = 0 if (n % CAND_READY_PERIOD) == 0 else 1
+    top.tx0_m_axis_tready = 1  # ignored by design; driven for completeness
     ST["cycle"] = n + 1
 
 
@@ -895,6 +1137,11 @@ def announce():
     if not ST["announced"]:
         ST["announced"] = True
         sim_print("=== pdw_tb: top-level PDW pipeline testbench ===")
+        sim_print(
+            f"  control: {len(CTRL_FRAMES)} frames of {CTRL_BEATS} beats, "
+            f"apply latency {CTRL_LAT}, PRE_ROLL {PRE_ROLL} cycles; "
+            f"records: PDW {VPDW_N_BYTES}B, candidate {CAND_N_BYTES}B"
+        )
         for _i, _ph in enumerate(PHASES):
             sim_print(
                 f"  phase {_i} ({_ph.name}): pri={_ph.pri} width={_ph.width} "
@@ -905,14 +1152,55 @@ def announce():
 
 
 @sim_output
-def check_pdw():
-    if not int(top.candidate_pdw_valid):
-        return
-    got = (
-        int(top.candidate_pdw_toa),
-        int(top.candidate_pdw_pulse_width),
-        int(top.candidate_pdw_peak_power),
+def check_ctrl():
+    """The control port's two structural promises, checked every cycle.
+
+    Both are what makes the schedule above exact rather than approximate: if
+    ready ever dropped, a frame would stretch and land late; if a frame's last
+    beat landed anywhere but where CTRL_LAST_BEAT says, every expectation in
+    this file would shift with it."""
+    n = ST["cycle"] - 1  # drive_stimulus already advanced past this cycle
+    assert int(top.tx0_s_axis_tready), (
+        f"pdw_tb: tx0_s_axis_tready went low on cycle {n} -- pdw_ctrl promises "
+        f"control is never back-pressured, and this testbench's frame timing "
+        f"depends on it"
     )
+    if int(top.tx0_s_axis_tvalid) and int(top.tx0_s_axis_tlast):
+        assert n in CTRL_LAST_BEAT, (
+            f"pdw_tb: a control frame ended on cycle {n}, which is not one of "
+            f"the predicted cycles {sorted(CTRL_LAST_BEAT)}"
+        )
+        ST["n_ctrl_frames"] += 1
+
+
+@sim_output
+def check_pdw():
+    """rx2_m_axis_*: Path A's candidate records, one 16-byte frame per detected
+    pulse whether the engine accepts it or not."""
+    # Only build the interface word on a real transfer. AxisSimSink.step()
+    # returns immediately for an invalid beat, so skipping the call is exactly
+    # equivalent -- and it matters: assembling one costs a nested struct
+    # construction, and doing that on all four ports every cycle for the whole
+    # run dominated this testbench's wall time.
+    transferred = int(top.rx2_m_axis_tvalid) and int(top.rx2_m_axis_tready)
+    if transferred:
+        _cand_snk.step(
+            _axis_word(
+                top.cand_tx.axis_intrf,
+                int(top.rx2_m_axis_tdata),
+                int(top.rx2_m_axis_tkeep),
+                int(top.rx2_m_axis_tlast),
+                1,
+            )
+        )
+    frame = _cand_snk.recv_nowait()
+    if frame is None:
+        return
+    assert len(frame) == CAND_N_BYTES, (
+        f"pdw_tb: candidate frame is {len(frame)} bytes, expected {CAND_N_BYTES}"
+    )
+    rec = type_from_bytes(_CAND_T, frame)
+    got = (int(rec.toa), int(rec.pulse_width), int(rec.peak_power))
     result = _pdw_sb.check(got)
     idx = result.get("idx", "?")
     phase = result.get("phase", "?")
@@ -938,24 +1226,62 @@ def check_pdw():
 
 @sim_output
 def check_valid_pdw():
-    """README box 3's metadata output: only ACCEPTED pulses, and each one must
-    arrive BEFORE its own released packet (the ordering a DMA consumer needs
-    to size the transfer that follows) -- checked against n_pkt_done below."""
-    if not int(top.valid_pdw_valid):
+    """rx1_m_axis_*: README box 3's metadata output, only ACCEPTED pulses, one
+    40-byte frame each. Each must START before its own released packet -- the
+    ordering a DMA consumer needs to size the transfer that follows -- which is
+    checked against pkt_starts in check_done.
+
+    The frame bytes are also handed to gr_pdw_record.unpack_records() and the
+    result compared field for field, so the host-side decoder is tested against
+    real hardware bytes rather than only against a synthetic record."""
+    transferred = int(top.rx1_m_axis_tvalid) and int(top.rx1_m_axis_tready)
+    if transferred and not ST["in_pdw_frame"]:
+        ST["in_pdw_frame"] = True
+        ST["pdw_starts"].append(ST["cycle"] - 1)
+    if transferred:  # see the note in check_pdw on why this is gated
+        _vpdw_snk.step(
+            _axis_word(
+                top.pdw_tx.axis_intrf,
+                int(top.rx1_m_axis_tdata),
+                int(top.rx1_m_axis_tkeep),
+                int(top.rx1_m_axis_tlast),
+                1,
+            )
+        )
+    if transferred and int(top.rx1_m_axis_tlast):
+        ST["in_pdw_frame"] = False
+    frame = _vpdw_snk.recv_nowait()
+    if frame is None:
         return
-    if not int(top.valid_pdw_ready):
-        return  # held, not transferred -- no handshake, nothing to check yet
+    assert len(frame) == VPDW_N_BYTES, (
+        f"pdw_tb: PDW frame is {len(frame)} bytes, expected {VPDW_N_BYTES}"
+    )
+    rec = type_from_bytes(_VPDW_T, frame)
     got = (
-        int(top.valid_pdw_toa),
-        int(top.valid_pdw_pulse_width),
-        int(top.valid_pdw_peak_power),
-        int(top.valid_pdw_pkt_samples),
-        int(top.valid_pdw_status_flags),
-        int(top.valid_pdw_pri),
-        _s16(int(top.valid_pdw_peak_power_db)),
-        _s16(int(top.valid_pdw_noise_power_db)),
-        _s16(int(top.valid_pdw_freq_start)),
-        _s16(int(top.valid_pdw_freq_stop)),
+        int(rec.toa),
+        int(rec.pulse_width),
+        int(rec.peak_power),
+        int(rec.pkt_samples),
+        int(rec.status_flags),
+        int(rec.pri),
+        int(rec.peak_power_db),
+        int(rec.noise_power_db),
+        int(rec.freq_start),
+        int(rec.freq_stop),
+    )
+    # The same bytes through the host-side reader must give the same numbers.
+    host = gr_pdw_record.unpack_records(frame)
+    assert len(host) == 1, f"pdw_tb: unpack_records returned {len(host)} records"
+    for _f in ("toa", "pulse_width", "peak_power", "pkt_samples", "status_flags",
+               "pri", "peak_power_db", "noise_power_db", "freq_start", "freq_stop"):
+        assert host[0][_f] == int(getattr(rec, _f)), (
+            f"pdw_tb: gr_pdw_record decoded {_f}={host[0][_f]} but the frame "
+            f"holds {int(getattr(rec, _f))} -- RECORD_FORMAT no longer matches "
+            f"valid_pdw_t's field order"
+        )
+    assert not (got[4] & STATUS_PKT_FIFO_FULL), (
+        "pdw_tb: this PDW's packet lost beats to a full store-and-forward FIFO "
+        "-- packet contents are corrupted; increase pdw_engine's depth"
     )
     result = _vpdw_sb.check(got)
     idx = result.get("idx", "?")
@@ -973,11 +1299,14 @@ def check_valid_pdw():
         raise AssertionError(
             f"pdw_tb: valid_pdw {idx} (phase {phase}): expected {exp}, got {got_v}"
         )
-    assert ST["n_vpdw_done"] == ST["n_pkt_done"], (
+    # Ordering is checked on FRAME STARTS, not completions: the PDW record is
+    # now a ten-beat frame streaming out of a serializer, so while the engine
+    # still hands it over before it starts sending the packet, the record's
+    # last beat can legitimately land after the packet's first ones.
+    assert len(ST["pdw_starts"]) > ST["n_pkt_done"], (
         f"pdw_tb: valid_pdw {idx} arrived out of order -- "
-        f"{ST['n_vpdw_done']} PDWs vs {ST['n_pkt_done']} packets already done; "
-        f"each PDW must be emitted before its own packet, and no two PDWs may "
-        f"be emitted back to back without the first one's packet in between"
+        f"{len(ST['pdw_starts'])} PDW frames started vs {ST['n_pkt_done']} "
+        f"packets already done; each PDW must begin before its own packet"
     )
     sim_print(
         f"pdw_tb: valid_pdw {idx} (phase {phase}) OK: toa={got[0]} width={got[1]} "
@@ -1002,13 +1331,51 @@ def check_packet():
             # same clock cycle), so the cycle this beat landed on is
             # ST["cycle"] - 1.
             ST["first_beat_cycle"] = ST["cycle"] - 1
-        ST["cur_packet"].append(int(top.rx0_m_axis_tdata))
+        if not ST["in_pkt_frame"]:
+            ST["in_pkt_frame"] = True
+            ST["pkt_starts"].append(ST["cycle"] - 1)
     if int(top.rx0_m_axis_tlast) and not int(top.rx0_m_axis_tvalid):
         raise AssertionError("pdw_tb: rx0_m_axis_tlast asserted without tvalid -- illegal AXIS")
-    if not (transferred and int(top.rx0_m_axis_tlast)):
+    if transferred:  # see the note in check_pdw on why this is gated
+        _pkt_snk.step(
+            _axis_word(
+                top.axis32_intrf,
+                int(top.rx0_m_axis_tdata),
+                int(top.rx0_m_axis_tkeep),
+                int(top.rx0_m_axis_tlast),
+                1,
+            )
+        )
+    # The replay leg gets the same beat from the broadcast interlock, so it must
+    # produce a byte-identical frame. This is the only check of the fanout: leg
+    # 1 could be mis-wired to a stale register or to leg 0's ready and
+    # everything else here would still pass.
+    if int(top.tx1_m_axis_tvalid) and int(top.tx1_m_axis_tready):
+        _rep_snk.step(
+            _axis_word(
+                top.axis32_intrf,
+                int(top.tx1_m_axis_tdata),
+                int(top.tx1_m_axis_tkeep),
+                int(top.tx1_m_axis_tlast),
+                1,
+            )
+        )
+    if transferred and int(top.rx0_m_axis_tlast):
+        ST["in_pkt_frame"] = False
+    frame = _pkt_snk.recv_nowait()
+    if frame is None:
         return
-    got_pkt = tuple(ST["cur_packet"])
-    ST["cur_packet"] = []
+    replay = _rep_snk.recv_nowait()
+    assert replay is not None, (
+        "pdw_tb: rx0_m_axis_* completed a packet with no matching frame on the "
+        "replay leg tx1_m_axis_* -- the broadcast interlock let the two legs "
+        "diverge"
+    )
+    assert replay == frame, (
+        f"pdw_tb: the replay leg's packet differs from the capture leg's "
+        f"({len(replay)} vs {len(frame)} bytes)"
+    )
+    got_pkt = _words(frame)
     result = _pkt_sb.check(got_pkt)
     idx = result.get("idx", "?")
     phase = result.get("phase", "?")
@@ -1023,7 +1390,7 @@ def check_packet():
         # with a clear message; the fine-grained check is the content
         # comparison below, which is exact to the sample.
         ST["alignment_checked"] = True
-        earliest = first_gate_beat_sample_idx + DSP_LAT
+        earliest = PRE_ROLL + first_gate_beat_sample_idx + DSP_LAT
         actual_cycle = ST["first_beat_cycle"]
         assert actual_cycle >= earliest, (
             f"pdw_tb: first released beat landed at cycle {actual_cycle}, before "
@@ -1072,10 +1439,35 @@ def check_done():
             f"pdw_tb: emitted {ST['n_vpdw_done']} valid PDWs, expected "
             f"{len(expected_valid_pdws)}"
         )
-        assert not int(top.pkt_fifo_full), (
-            "pdw_tb: the store-and-forward FIFO overflowed at some point -- "
-            "packets were corrupted; increase pdw_engine's depth"
+        # rx2_m_axis_* drops rather than stalls (Path A cannot be stopped), so
+        # "every candidate arrived" is a real result here, not a given -- and
+        # it is what lets check_pdw compare exactly instead of tolerating gaps.
+        assert ST["n_pdw_done"] == len(expected_pdws), (
+            f"pdw_tb: received {ST['n_pdw_done']} candidate records, expected "
+            f"{len(expected_pdws)} -- rx2_m_axis_* dropped {len(expected_pdws) - ST['n_pdw_done']} "
+            f"(CAND_READY_PERIOD={CAND_READY_PERIOD} is stalling it too hard for "
+            f"a {CAND_N_BYTES // 4}-beat frame to drain between pulses)"
         )
+        assert ST["n_ctrl_frames"] == len(CTRL_FRAMES), (
+            f"pdw_tb: {ST['n_ctrl_frames']} control frames were accepted, sent "
+            f"{len(CTRL_FRAMES)}"
+        )
+        # Record k must belong to packet k, not be deferred into the next
+        # pulse's slot: its frame has to start before packet k+1 does.
+        #
+        # NOT "before packet k does". The engine still hands the record over in
+        # EMIT_PDW before entering SEND_PKT, but the record now goes through a
+        # serializer whose first beat costs a fill cycle the packet path does
+        # not pay -- measured, the record's first beat lands one cycle AFTER
+        # its packet's. The two streams then run concurrently on separate
+        # ports. See the README's note on this.
+        for _k in range(ST["n_pkt_done"] - 1):
+            assert ST["pdw_starts"][_k] < ST["pkt_starts"][_k + 1], (
+                f"pdw_tb: PDW record {_k} started at cycle "
+                f"{ST['pdw_starts'][_k]}, not before the NEXT pulse's packet at "
+                f"{ST['pkt_starts'][_k + 1]} -- a record has slipped out of its "
+                f"own pulse's slot"
+            )
         sim_print(
             f"pdw_tb: {ST['n_pdw_done']} candidates detected, "
             f"{ST['n_vpdw_done']} released with packets, "
@@ -1097,6 +1489,7 @@ def check_done():
 def pdw_tb_main():
     drive_stimulus()
     announce()
+    check_ctrl()
     check_pdw()
     check_valid_pdw()
     check_packet()
