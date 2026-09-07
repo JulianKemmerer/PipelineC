@@ -164,6 +164,17 @@ commented at its declaration in `top.py`:
 > broadcast is a combinational valid/ready interlock, so it ANDs both legs'
 > ready together — a leg held low wedges the host capture port as well.
 
+Every master's `tlast` is qualified by that master's own `tvalid`, and on the
+two broadcast legs that is not cosmetic. The interlock copies the source word
+to every leg and then zeroes `valid` on a leg whose sibling is not ready yet,
+so a leg can present `eod = 1` with `valid = 0`. That is legal *inside* the
+library — AXI leaves `tlast` don't-care while `tvalid` is low — but a top-level
+master must not emit it, and this design did until the reset work shifted the
+stall alignment enough for `pdw_tb` to catch it. It is the same defect
+`include/pypeline/axi/type_axis.py` records as `axis.h:539`, which is why that
+testbench asserts the stricter invariant on every port rather than trusting the
+producer.
+
 **Backpressure policy.** Ready propagates backwards as each block already
 intends and **stops at the store-and-forward FIFO**, which is the design's one
 overflow point: `rx1_m_axis_tready` reaches the engine's `EMIT_PDW` state and
@@ -178,6 +189,128 @@ A, which cannot stall. A candidate offered while the serializer is still busy
 is dropped silently, with no status field. A deployed system is expected to tie
 this port ready and ignore it; `pdw_tb.py` stalls it anyway so the path stays
 real rather than decorative.
+
+## Reset
+
+Every channel carries an active-high `*_axis_rst` — `rx0_s_axis_rst`,
+`tx0_s_axis_rst`, `rx0_m_axis_rst`, `rx1_m_axis_rst`, `rx2_m_axis_rst`,
+`tx0_m_axis_rst`, `tx1_m_axis_rst`. All seven OR into one `global_rst`, one
+register stage behind the pins (`RST_LATENCY`, exported from `top.py`). That
+register is a fanout break, not a metastability synchroniser: these resets are
+synchronous to the design clock, but the reset reaches the detector's input
+valid, a 320-bit control-register mux, three FIFO read enables and a few dozen
+register clears, which is more than a seven-input OR of pins should drive
+combinationally in a design with ~2 ns of margin.
+
+> ⚠ **Tie an unused channel's reset LOW.** A channel whose reset a platform
+> holds asserted because the host never opened it holds the *entire* design in
+> reset forever. `rx2_m_axis` is the likeliest to be hit, being already
+> expected-unused above.
+
+### Two domains, and the bring-up sequence they exist for
+
+The control register file follows **`tx0_s_axis_rst` alone**, not the combined
+reset. That is what makes a staged bring-up possible:
+
+1. all seven resets asserted — everything held, buffers draining;
+2. `tx0_s_axis_rst` deasserts — the register file is live, the datapath is not;
+3. the host writes one `pdw_ctrl_t` frame — configuration lands;
+4. the remaining six deassert — **the datapath starts already configured**.
+
+Step 4 is the point. The detector's first sample is measured against real
+thresholds rather than running on `CTRL_DEFAULTS` for however long a control
+frame takes to arrive, so those defaults stop being the configuration a running
+design starts from and become purely a power-on safety state. If the control
+channel drops mid-session the datapath resets with it, which is the right
+response given its configuration has just reverted to defaults.
+
+### Block, drain, clear
+
+**Block.** The generator's output valid and the detector's input valid are
+gated. One gate stops the whole detector: `detect_pulses` drives Path A and
+Path B from the same input stream, and every piece of state behind it — the
+hysteresis SM, the noise estimator, the phasor accumulators, `toa_counter` —
+advances only on an accepted sample. All four master `tvalid`s (and their
+`tlast`s) are gated too, so no drain traffic is ever visible outside.
+
+**Drain.** While reset is asserted, every FIFO read enable is forced and the
+buffers empty into the bit bucket. This is not a convenience — it is the only
+mechanism available. The three FIFOs in `packet_store` and Path B's delay line
+are `make_fifo` instances, black-box wrappers over `pipelinec_fifo_fwft.vhd`
+exposing only push/pop, with no flush. Nothing can *clear* them, so their
+contents have to be clocked out. Each block forces its own read enables
+(`data_ready |= rst` and friends), so the packet path drains with no help from
+the consumer: `pdw_reset_test.py` holds `pkt_out_ready` low for the entire reset
+window and still gets a byte-exact drain.
+
+Because the drain is only as fast as the data, **reset must be held**: emptying
+a full packet FIFO takes up to its depth in cycles, ~131 µs at 125 MHz.
+`top.py` exports `RST_MIN_HOLD_CYCLES`. Any real platform reset exceeds it
+comfortably; a shorter one leaves buffers partly full.
+
+> **Known gap: the two record serializers.** `rx1_m`/`rx2_m` are fed by library
+> serializers whose `buf`/`fill` can only empty through `tready`. They *do*
+> drain during reset whenever the host leaves `tready` asserted — their internal
+> valid is not gated, only the port's `tvalid` is, so beats are consumed while
+> the host sees nothing. A host that holds `tready` **low** across its own reset
+> is not covered: that serializer keeps its partial frame and emits the tail
+> after release.
+>
+> Forcing `rx1_m_axis_tready | rst` closes the gap and was measured at
+> **−8.3 MHz** (128.5 → 120.2, i.e. missing the 125 MHz target). The cause is
+> specific: it puts a LUT into the ready path that feeds the serializer's
+> `nfill`, which is the *variable index* of a 43-element buffer write already 12
+> logic levels deep — `serializer.py` notes that path is combinational on
+> `stream_out_if.ready` deliberately, and `make_type_to_axis` exposes no
+> `registered_ready` knob to break it (only the deserializer side has one).
+> Since this design resets at power-on, where the serializers are provably
+> empty, the timing was worth more than the coverage.
+>
+> The proper fix is a real AXIS skid buffer on those two ports, which would
+> break the path and let the drain be unconditional. `make_stream_fifo(t, 2)`
+> would work today — its `data_in_ready` is occupancy-based rather than
+> combinational on the output ready — but it is a wrapped BRAM FIFO, the wrong
+> primitive for a two-deep pipeline break. Backlog: add `make_axis_skid_buffer`
+> to `include/pypeline/axi/axis.py`.
+
+**Clear.** Every register in this project's own code returns to its power-on
+value — the generator's LFSRs and phase accumulator (so the stimulus is
+bit-reproducible across a reset), the hysteresis SM, the phasor accumulators,
+the noise estimator, `packet_store`'s FSM and its write-side accumulators, and
+`toa_counter`. Two pairings in that list are not optional:
+
+* **`gate_armed` with the delay-line drain.** Path B's delay is
+  self-establishing — it is however many pushes happen before the first drain,
+  latched when the sticky `gate_armed` first sets. Drain the line without
+  clearing `gate_armed` and the alignment is destroyed silently, with no
+  symptom but wrong packet contents. `pdw_reset_test.py` has that as a negative
+  control.
+* **`prev_toa`/`have_prev` with `toa_counter`.** PRI is `toa - prev_toa`.
+  Clearing the counter while leaving `prev_toa` holding a value from the
+  previous epoch makes the first pulse after release report a wrapped, enormous
+  PRI as though it were real. Cleared together, it reports
+  `STATUS_PRI_INVALID`, exactly as the first pulse after power-on does.
+
+Since `toa_counter` restarts, TOA is **not unique across a session**: two
+pulses in different reset epochs can carry the same TOA. A host correlating
+pulses across a channel reopen needs its own epoch counter.
+
+### What reset does not reach
+
+`magnitude`, `dc_block`, `moving_avg` and the CORDIC/`log2_db` pipelines are
+library blocks in `include/pypeline/dsp/`, which this project does not put a
+reset into. The pipelines are valid-gated and self-flush, but `dc_block`'s
+running mean and `moving_avg`'s window are *frozen* by the input gate and thaw
+still holding pre-reset power.
+
+The visible consequence: for a sample or two after release the conditioned
+power reads high, and the hysteresis SM declares a tiny pulse that never
+happened. `min_width` (glitch rejection) is exactly the mechanism for it, so a
+deployment that sets `min_width` at all never sees it — but a deployment that
+leaves `min_width` at its default of 0 will see one spurious short PDW after
+each mid-stream reset. `pdw_reset_test.py` measures the artifact (2 samples)
+and asserts it stays below the `min_width` used there, so a future change that
+lengthened it fails loudly instead of quietly leaking real-looking PDWs.
 
 ## Control registers (`pdw_ctrl_t`)
 
@@ -211,7 +344,15 @@ merely zeroed: amplitude 0 and `pri = 1` mean the generator emits zeros with
 its PRI counter pinned at 0 (so it starts from a defined phase the instant a
 real PRI is written), and the thresholds sit at their maximum so the hysteresis
 SM cannot leave IDLE. Zero thresholds would instead declare one continuous
-pulse forever.
+pulse forever. With the staged bring-up above, a device that follows the
+sequence never actually runs on them — they are the safety state for one that
+does not.
+
+Reset for this block is `tx0_s_axis_rst` alone (see **Reset**). While it is
+asserted the registers are pinned to the defaults, so a frame arriving then is
+decoded and discarded; the deserializer is flushed at the same time, so a host
+torn down mid-frame cannot leave a byte prefix that joins up with the next
+frame into a struct that is wrong but perfectly well formed.
 
 # Parameters
 
@@ -571,8 +712,9 @@ it needs an I/Q DC blocker ahead of the conjugate product, which is not built.
 | `pdw_engine/pdw_engine_tb.py` | The PDW engine alone (`make_pdw_engine`), hand-fed synthetic gate streams — accept path + PDW/packet ordering, glitch reject, CW reject, `status_flags`, long-stall backpressure | `sim_assert`, hardware-generated stimulus |
 | `src/tests/pypeline_tests/inst/cordic_test.py` | `dsp/cordic.py` alone — atan2 across all four quadrants and both axes, the (0,0) degenerate case, the ±½-turn boundary, pipeline throughput, and a second instantiation at different widths | `sim_call` vs a bit-exact model and vs `math.atan2` |
 | `src/tests/pypeline_tests/inst/log2_db_test.py` | `dsp/log2_db.py` alone — accuracy vs `10·log10`, decade/octave steps, the fractional-bits subtraction, non-positive input, monotonicity, and two instances with different binary points | `sim_call` vs a bit-exact model |
-| `pdw_ctrl/pdw_ctrl_test.py` | The control register file alone — reset defaults, apply latency (measured, then checked against the advertised attribute), ready never dropping, back-to-back writes, and the two malformed cases: a padded frame whose excess must be dropped and a runt that must leave the registers untouched, neither desyncing the frame after it | `sim_call`, `type_to_bytes` + `AxisSimSource` |
-| `pdw_tb.py` | The whole `top.py` — pulse generator through the composed DSP chain (`make_detect_pulses`: magnitude → dc_block → moving_avg → hysteresis FSM), the Path B delay line, the loopback mux, the PDW engine, and all seven AXIS ports: control written as real frames, both record streams decoded, and the released-packet broadcast compared leg against leg | `@sim_input`/`@sim_output`, exact Python golden model |
+| `pdw_ctrl/pdw_ctrl_test.py` | The control register file alone — reset defaults, apply latency (measured, then checked against the advertised attribute), ready never dropping, back-to-back writes, and the two malformed cases: a padded frame whose excess must be dropped and a runt that must leave the registers untouched, neither desyncing the frame after it; plus reset — writes refused while held, normal service after release, and an abandoned frame flushed rather than joined to the next | `sim_call`, `type_to_bytes` + `AxisSimSource` |
+| `pdw_reset_test.py` | Reset semantics for the composed datapath — a reset landing **mid-pulse**: nothing emitted for the interrupted pulse, its buffered samples drained rather than prepended to the next packet, TOA and PRI restarting, and the release artifact bounded below `min_width`. Both the drain term and the `gate_armed` clear have negative controls | `sim_call` on `detect_pulses` + `pdw_engine` wired as `top.py` wires them |
+| `pdw_tb.py` | The whole `top.py` — pulse generator through the composed DSP chain (`make_detect_pulses`: magnitude → dc_block → moving_avg → hysteresis FSM), the Path B delay line, the loopback mux, the PDW engine, and all seven AXIS ports: control written as real frames, both record streams decoded, the released-packet broadcast compared leg against leg, and the staged two-domain reset bring-up | `@sim_input`/`@sim_output`, exact Python golden model |
 
 `pdw_engine_tb.py` exists alongside `pdw_tb.py` rather than being folded into
 it because it reaches cases the real detector cannot produce on demand — most
@@ -679,11 +821,11 @@ perturbing the golden model's `raw_idx` by ±1 fails it.
 
 | File | Checks |
 |---|---|
-| `pulse_gen/pulse_gen_synth_top.py` | Pulse generator alone, including its NCO |
-| `pulse_detect/pulse_detect_synth_top.py` | Hysteresis FSM alone (elastic, the heavier path) |
-| `pdw_engine/pdw_engine_synth_top.py` | PDW engine alone, at the README's real 16K FIFO depth. Also the only real timing check on the measurement engine — its CORDIC and both logarithm converters are instantiated inside it |
+| `pulse_gen/pulse_gen_synth_top.py` | Pulse generator alone, including its NCO. `rst` is a real port, so the reset's fanout to every register in the block is measured rather than optimised away |
+| `pulse_detect/pulse_detect_synth_top.py` | Hysteresis FSM alone (elastic, the heavier path), `rst` likewise a real port |
+| `pdw_engine/pdw_engine_synth_top.py` | PDW engine alone, at the README's real 16K FIFO depth. Also the only real timing check on the measurement engine — its CORDIC and both logarithm converters are instantiated inside it. `rst` is a real port: it drives the three FIFO read enables, so it sits directly in the release path |
 | `cordic_test.py`, `log2_db_test.py` | The two new DSP primitives, `--comb` elaboration |
-| `top.py` | Everything composed, including all seven AXIS ports, both record serializers, the control deserializer and the broadcast interlock |
+| `top.py` | Everything composed, including all seven AXIS ports, both record serializers, the control deserializer, the broadcast interlock and the seven-input reset OR |
 
 These are not redundant with the native-sim testbenches: native sim never
 emits VHDL, so it cannot catch anything Vivado rejects. Several real bugs in

@@ -28,10 +28,21 @@ Rather than assume that, this testbench:
     skewing every downstream expectation;
   * asserts every frame lands in a window the golden model says is idle, so a
     future phase edit cannot reconfigure the generator mid-pulse.
-A PRE_ROLL window before sample 0 carries phase 0's frame. During it the
-registers hold `pdw_ctrl.defaults`, whose amplitude is 0 and whose pri is 1 --
-so the generator emits zeros from a pinned counter, and the same
-`golden_pulse_gen` models the window exactly.
+RESET, AND WHY THERE IS NO PRE-ROLL. The design has two reset domains: the
+control register file follows `tx0_s_axis_rst` alone, everything else the OR of
+all seven channel resets. So this testbench does what a real host should --
+release the control channel, write phase 0's configuration while the datapath is
+still held, then release the rest. The detector's FIRST sample is therefore
+already measured against real thresholds, and there is no default-configured
+window left for the golden model to reproduce: `golden_pulse_gen` starts at the
+first out-of-reset cycle with the generator's LFSRs at their seeds, exactly as
+the hardware does.
+
+Two things are checked about reset itself (see `check_reset`): a POISON frame
+sent at cycle 0, entirely inside the control reset, must be decoded and thrown
+away; and phase 0's values must be live by `RST_RELEASE`. The second is the one
+that matters -- without it the two reset domains could quietly collapse into one
+and only surface as a golden mismatch thousands of cycles later.
 
 `pulse_loopback_en` is set from phase 0's frame onward -- this exercises the
 internal pulse_gen loopback path, not the external rx0_s_axis_* cable path (a
@@ -143,19 +154,60 @@ CTRL_LAT = _CTRL.latency  # last beat accepted -> registers readable
 # (control is never back-pressured, which test_ready_is_always_high in
 # pdw_ctrl_test.py is what pins), so its values are live from:
 CTRL_APPLY_OFFSET = CTRL_BEATS - 1 + CTRL_LAT
-# Cycles before sample 0, used to deliver phase 0's configuration. The
-# generator free-runs through this window at pdw_ctrl.defaults -- amplitude 0
-# and pri 1, so it emits zeros with its PRI counter pinned at 0 and its phase
-# accumulator held at 0. Only the LFSRs and the NCO pipeline advance, and
-# golden_pulse_gen models both, so the window costs the golden model nothing
-# but a prefix on its schedules.
-PRE_ROLL = CTRL_APPLY_OFFSET
+
+# ---- reset, and the staged bring-up it exists for -------------------------
+# The design has two reset domains (see top.py's rst_main): the control
+# register file follows tx0_s_axis_rst alone, everything else follows the OR of
+# all seven. That is what lets this schedule configure the device BEFORE the
+# datapath starts, which is the sequence a real host should use:
+#
+#   0                     all seven asserted -- held, and buffers drain
+#   CTRL_RST_HOLD         tx0_s_axis_rst drops; ctrl block live one cycle later
+#   CTRL_FRAME0_AT        phase 0's frame goes out, datapath still held
+#   RST_HOLD              the remaining six drop
+#   RST_RELEASE           sample 0 -- the detector's FIRST sample is already
+#                         measured against phase 0's real thresholds
+#
+# A POISON frame goes out at cycle 0, entirely inside the control reset, and
+# must NOT apply -- check_reset asserts that, and asserts the positive half too
+# (phase 0's values ARE live by RST_RELEASE).
+#
+# Everything here is derived, not hardcoded: change pdw_ctrl.latency or the
+# beat count and the whole schedule moves with it.
+CTRL_RST_HOLD = CTRL_APPLY_OFFSET + 4  # room for the poison frame to be refused
+CTRL_FRAME0_AT = CTRL_RST_HOLD + top.RST_LATENCY
+# Sample 0, and the cycle phase 0's write becomes live -- the same cycle, which
+# is exactly what _ctrl_frame_start means by "live on the cycle this sample
+# enters the detector". RST_HOLD is then derived backwards from it.
+RST_RELEASE = CTRL_FRAME0_AT + CTRL_APPLY_OFFSET
+RST_HOLD = RST_RELEASE - top.RST_LATENCY
+
+# Cycles before sample 0. Unlike the pre-AXIS-reset version there is no
+# "default-configured" window left to model: the generator is reset too, so it
+# leaves reset with its LFSRs at their seeds, an empty CORDIC pipeline and phase
+# 0's real config already loaded. The golden model's first cycle IS the
+# hardware's first out-of-reset cycle.
+PRE_ROLL = RST_RELEASE
 
 
 def _ctrl_frame_start(sample_idx):
     """Cycle on which to drive a frame's first beat so its values are live on
     exactly the cycle sample `sample_idx` enters the detector."""
     return PRE_ROLL + sample_idx - CTRL_APPLY_OFFSET
+
+
+assert _ctrl_frame_start(0) == CTRL_FRAME0_AT, (
+    f"pdw_tb: phase 0's frame would start at {_ctrl_frame_start(0)}, not at "
+    f"CTRL_FRAME0_AT={CTRL_FRAME0_AT} -- the reset schedule and the control "
+    "schedule have drifted apart"
+)
+assert CTRL_FRAME0_AT + CTRL_APPLY_OFFSET <= RST_RELEASE, (
+    "pdw_tb: phase 0's frame is not live by the time the datapath leaves reset"
+)
+assert CTRL_FRAME0_AT > CTRL_RST_HOLD, (
+    "pdw_tb: phase 0's frame would start while the control block is still in "
+    "reset, so it would be discarded along with the poison frame"
+)
 
 
 def _axis_flat(word, n=AXIS_N):
@@ -393,16 +445,19 @@ def _nominal_windows(start, pri, width, n_periods):
 # generator was stateless apart from a PRI counter that wrapped cleanly at each
 # boundary.)
 #
-# The lists are built PRE_ROLL entries long before sample 0, holding
-# pdw_ctrl.defaults -- the configuration the hardware really is running while
-# phase 0's control frame is still on the wire.
+# No pre-roll prefix. The generator is held in reset until RST_RELEASE and its
+# registers -- LFSRs, phase accumulator, PRI counter, NCO output -- are all
+# returned to their power-on values there, so the model's cycle 0 is the
+# hardware's first out-of-reset cycle with phase 0's configuration ALREADY
+# live. That is the payoff of resetting pulse_gen and of the staged bring-up:
+# there is no default-configured window left to model at all.
 _CD = _CTRL.defaults
-pri_sched = [int(_CD.pulse_gen_pri)] * PRE_ROLL
-width_sched = [int(_CD.pulse_gen_width)] * PRE_ROLL
-amp_sched = [int(_CD.pulse_gen_amplitude)] * PRE_ROLL
-freq_sched = [int(_CD.pulse_gen_freq)] * PRE_ROLL
-chirp_sched = [int(_CD.pulse_gen_chirp_rate)] * PRE_ROLL
-noise_sched = [int(_CD.pulse_gen_noise_amp)] * PRE_ROLL
+pri_sched = []
+width_sched = []
+amp_sched = []
+freq_sched = []
+chirp_sched = []
+noise_sched = []
 phase_bounds = []  # (start, end) absolute sample-index range per phase
 _pos = 0
 for _ph in PHASES:
@@ -417,9 +472,12 @@ for _ph in PHASES:
     noise_sched.extend([_ph.noise_amp] * _n)
 
 TOTAL_SAMPLES = _pos
-_raw_all = golden_pulse_gen(
+# Indexed by SAMPLE index, which is what every downstream model expects, and
+# now identical to the model's own index: sample k is driven on hardware cycle
+# PRE_ROLL + k.
+raw = golden_pulse_gen(
     top.pulse_gen,
-    PRE_ROLL + TOTAL_SAMPLES,
+    TOTAL_SAMPLES,
     pri_sched,
     width_sched,
     amp_sched,
@@ -427,17 +485,7 @@ _raw_all = golden_pulse_gen(
     chirp_sched,
     noise_sched,
 )
-# `raw` stays indexed by SAMPLE index, as every downstream model expects. The
-# pre-roll outputs are dropped rather than modelled further, because the
-# hardware holds rx0_s_axis_tvalid low through that window (loopback is off
-# until phase 0's frame lands), so nothing enters the detector there.
-raw = _raw_all[PRE_ROLL:]
 assert len(raw) == TOTAL_SAMPLES
-assert all(v == (0, 0) for v in _raw_all[:PRE_ROLL]), (
-    "the pre-roll window must be silent -- pdw_ctrl.defaults should give "
-    "amplitude 0 and noise_amp 0, or the golden model's power sequence starts "
-    "from a state the hardware never had"
-)
 
 # dc_block's mean is one continuous IIR state across the WHOLE run (a single
 # hardware instance, never reset between phases) -- so golden_dc_block must
@@ -535,6 +583,33 @@ for _i, _ph in enumerate(PHASES):
     assert _start not in CTRL_FRAMES, f"two control frames collide at cycle {_start}"
     CTRL_FRAMES[_start] = (_i, type_to_bytes(pdw_ctrl_t, _phase_ctrl(_ph)))
 
+# The POISON frame: a well-formed write sent at cycle 0, entirely inside the
+# control block's own reset, which must be decoded and then thrown away. Its
+# values are chosen to be loud if they ever leaked -- thresholds low enough to
+# declare a pulse immediately and an amplitude large enough to see -- so a
+# failure shows up as detected pulses that the golden model never predicted,
+# not as a subtle numeric drift.
+POISON_CTRL = pdw_ctrl_t(
+    pulse_gen_pri=7,
+    pulse_gen_width=5,
+    pulse_gen_freq=1 << 20,
+    pulse_gen_chirp_rate=0,
+    pulse_gen_amplitude=20000,
+    pulse_gen_noise_amp=0,
+    threshold_high=1,
+    threshold_low=0,
+    max_width=0xFFFFFFFF,
+    min_width=0,
+    flags=CTRL_FLAG_LOOPBACK_EN,
+)
+POISON_AT = 0
+assert POISON_AT + CTRL_BEATS - 1 + CTRL_LAT < CTRL_RST_HOLD, (
+    "pdw_tb: the poison frame must finish applying while tx0_s_axis_rst is "
+    "still asserted, or it is not testing what it claims"
+)
+assert POISON_AT not in CTRL_FRAMES
+CTRL_FRAMES[POISON_AT] = (-1, type_to_bytes(pdw_ctrl_t, POISON_CTRL))
+
 # A final QUIESCE frame, landing exactly on sample TOTAL_SAMPLES. The last
 # phase ends exactly on a pri boundary, so without this the generator's counter
 # would wrap and start a further pulse the golden model never modelled -- while
@@ -556,6 +631,14 @@ for _a, _b in zip(sorted(CTRL_FRAMES), sorted(CTRL_FRAMES)[1:]):
 # the deserializer's sizing changes, that assertion fires rather than every
 # expectation downstream quietly shifting.
 CTRL_LAST_BEAT = {s + CTRL_BEATS - 1: p for s, (p, _f) in CTRL_FRAMES.items()}
+
+# What check_reset compares the live control registers against, and the cycle
+# from which phase 0's write is guaranteed live.
+_CTRL_FIELDS = tuple(pdw_ctrl_t._fields)
+_DEFAULT_REGS = {f: int(getattr(_CTRL.defaults, f)) for f in _CTRL_FIELDS}
+_PHASE0_REGS = {f: int(getattr(_phase_ctrl(PHASES[0]), f)) for f in _CTRL_FIELDS}
+CTRL_REGS_SETTLED = CTRL_FRAME0_AT + CTRL_APPLY_OFFSET
+assert CTRL_REGS_SETTLED <= RST_RELEASE
 
 
 # ---------------------------------------------------------------------------
@@ -960,7 +1043,7 @@ assert len(expected_released) > 0 and len(expected_rejects) > 0, (
 # instead of reconfiguring the generator in the middle of a pulse.
 for _i, _b in enumerate([b for b, _e in phase_bounds] + [TOTAL_SAMPLES]):
     if _b == 0:
-        continue  # phase 0's frame is in the pre-roll, before any sample
+        continue  # phase 0's frame lands during reset, before any sample
     _who = PHASES[_i].name if _i < len(PHASES) else "quiesce"
     _win = range(max(0, _b - CTRL_APPLY_OFFSET), _b)
     _busy = [s for s in _win if _gate_act[s]]
@@ -1060,6 +1143,8 @@ ST = {
     "n_vpdw_done": 0,
     "n_pkt_done": 0,
     "n_ctrl_frames": 0,
+    "n_rst_cycles": 0,
+    "phase0_live": False,
     "pdw_starts": [],
     "pkt_starts": [],
     "in_pdw_frame": False,
@@ -1095,6 +1180,20 @@ def drive_stimulus():
         _populate_scoreboards()
     n = ST["cycle"]
 
+    # -- reset: two domains, staged ---------------------------------------
+    # tx0_s_axis_rst drops first so the control block can be configured while
+    # the datapath is still held; the other six drop at RST_HOLD. See top.py's
+    # rst_main and the schedule derivation in section 0b.
+    ctrl_rst_pin = 1 if n < CTRL_RST_HOLD else 0
+    other_rst_pin = 1 if n < RST_HOLD else 0
+    top.tx0_s_axis_rst = ctrl_rst_pin
+    top.rx0_s_axis_rst = other_rst_pin
+    top.rx0_m_axis_rst = other_rst_pin
+    top.rx1_m_axis_rst = other_rst_pin
+    top.rx2_m_axis_rst = other_rst_pin
+    top.tx0_m_axis_rst = other_rst_pin
+    top.tx1_m_axis_rst = other_rst_pin
+
     # -- control: one framed pdw_ctrl_t per phase -------------------------
     if n in CTRL_FRAMES:
         assert _ctrl_src.idle(), (
@@ -1119,8 +1218,9 @@ def drive_stimulus():
     top.rx0_s_axis_tdata = (0xDEAD0000 + (n & 0xFFFF)) & 0xFFFFFFFF
     top.rx0_s_axis_tkeep = (1 << AXIS_N) - 1
     top.rx0_s_axis_tlast = 0
-    # Held low through the pre-roll: loopback is off until phase 0's frame
-    # lands, so a valid beat there would push that garbage into the detector.
+    # Held low until the datapath leaves reset. The reset gate would drop these
+    # beats anyway, so this is belt and braces -- but it keeps the stimulus
+    # honest about what a host would really be doing.
     top.rx0_s_axis_tvalid = 0 if n < PRE_ROLL else 1
 
     # -- master-port backpressure -----------------------------------------
@@ -1171,6 +1271,65 @@ def check_ctrl():
             f"the predicted cycles {sorted(CTRL_LAST_BEAT)}"
         )
         ST["n_ctrl_frames"] += 1
+
+
+@sim_output
+def check_reset():
+    """Both halves of the staged bring-up, checked directly on the wire.
+
+    NEGATIVE: the poison frame -- a well-formed write sent at cycle 0, wholly
+    inside the control block's reset -- must be decoded and thrown away, and no
+    master port may assert tvalid while the datapath is held.
+
+    POSITIVE, and the more interesting one: phase 0's configuration must be
+    LIVE by RST_RELEASE, i.e. the detector's very first sample is measured
+    against real thresholds rather than CTRL_DEFAULTS. That is the whole reason
+    pdw_ctrl sits in its own reset domain, and without this assertion the two
+    domains could quietly collapse into one and only show up as a golden
+    mismatch thousands of cycles later.
+    """
+    n = ST["cycle"] - 1
+    if n > RST_RELEASE:
+        return  # nothing here applies once the design is running
+    regs = {f: int(getattr(top.ctrl_regs, f)) for f in _CTRL_FIELDS}
+    if n < CTRL_REGS_SETTLED:
+        assert regs == _DEFAULT_REGS, (
+            f"pdw_tb: cycle {n}: control registers are not at their defaults "
+            f"during reset -- the poison frame applied. Got {regs}"
+        )
+        ST["n_rst_cycles"] += 1
+    if n == RST_RELEASE:
+        assert regs == _PHASE0_REGS, (
+            f"pdw_tb: cycle {n} is the datapath's first out-of-reset cycle but "
+            f"phase 0's configuration is not live yet -- the staged bring-up is "
+            f"broken (is pdw_ctrl on global_rst instead of ctrl_rst?). "
+            f"Got {regs}"
+        )
+        ST["phase0_live"] = True
+    if n < RST_RELEASE:
+        # Read each port by name, NOT via getattr(top, <string>): the sim
+        # framework decides which @sim_output functions to invoke from the
+        # top.<port> references it can see statically in the body, so a
+        # dynamic lookup makes the whole function look like it touches no
+        # ports at all -- and it is then never called. That failure is silent:
+        # every assertion here simply never runs.
+        live = (
+            int(top.tx0_m_axis_tvalid)
+            | int(top.rx0_m_axis_tvalid)
+            | int(top.tx1_m_axis_tvalid)
+            | int(top.rx1_m_axis_tvalid)
+            | int(top.rx2_m_axis_tvalid)
+        )
+        assert not live, (
+            f"pdw_tb: cycle {n}: a master port asserted tvalid while the "
+            f"design is in reset -- AXI forbids it, and a host must not see "
+            f"the previous session's data on a channel it has just opened "
+            f"(tx0_m={int(top.tx0_m_axis_tvalid)} "
+            f"rx0_m={int(top.rx0_m_axis_tvalid)} "
+            f"tx1_m={int(top.tx1_m_axis_tvalid)} "
+            f"rx1_m={int(top.rx1_m_axis_tvalid)} "
+            f"rx2_m={int(top.rx2_m_axis_tvalid)})"
+        )
 
 
 @sim_output
@@ -1452,6 +1611,17 @@ def check_done():
             f"pdw_tb: {ST['n_ctrl_frames']} control frames were accepted, sent "
             f"{len(CTRL_FRAMES)}"
         )
+        # check_reset only asserts inside a window, so prove that window was
+        # actually visited rather than skipped -- otherwise a scheduling
+        # mistake would silently turn the reset test into nothing at all.
+        assert ST["n_rst_cycles"] == CTRL_REGS_SETTLED, (
+            f"pdw_tb: check_reset saw {ST['n_rst_cycles']} in-reset cycles, "
+            f"expected {CTRL_REGS_SETTLED} -- the reset window was not driven"
+        )
+        assert ST["phase0_live"], (
+            "pdw_tb: check_reset never reached RST_RELEASE, so the "
+            "configure-before-release path went unverified"
+        )
         # Record k must belong to packet k, not be deferred into the next
         # pulse's slot: its frame has to start before packet k+1 does.
         #
@@ -1490,6 +1660,7 @@ def pdw_tb_main():
     drive_stimulus()
     announce()
     check_ctrl()
+    check_reset()
     check_pdw()
     check_valid_pdw()
     check_packet()

@@ -64,8 +64,8 @@ from dsp.log2_db import golden_log2_db, make_log2_db
 def make_pdw_measure(detect_pulses, cordic_iters=14):
     """Build the per-pulse measurement block. Returns (pdw_measure, pdw_measure_t).
 
-        pdw_measure(freq_acc, noise_est, peak_power, toa, valid_in, count_pri)
-            -> pdw_measure_t
+        pdw_measure(freq_acc, noise_est, peak_power, toa, valid_in, count_pri,
+                    rst) -> pdw_measure_t
 
     `valid_in` is the gate_last / candidate cycle. `count_pri` should be the
     qualification verdict's accept bit: PRI is measured between ACCEPTED
@@ -73,6 +73,11 @@ def make_pdw_measure(detect_pulses, cordic_iters=14):
     next real pulse. (PRI is also the one measurement immune to `toa`'s
     documented DSP-latency bias, since a constant offset cancels in a
     difference.)
+
+    `rst` is active high and clears the PRI state. It MUST be driven from the
+    same reset that clears pulse_detect's `toa_counter`, since PRI is a
+    difference of two TOAs and the two would otherwise straddle a counter
+    epoch -- see the reset block for what that produces.
 
     All outputs are co-timed, `.latency` cycles after `valid_in`.
     """
@@ -119,6 +124,7 @@ def make_pdw_measure(detect_pulses, cordic_iters=14):
         toa: uint64_t,
         valid_in: uint1_t,
         count_pri: uint1_t,
+        rst: uint1_t,
     ) -> pdw_measure_t:
         # ---- frequency: one atan2 per endpoint, in parallel ---------------
         cs = cordic(freq_acc.first_re, freq_acc.first_im, valid_in)
@@ -170,6 +176,22 @@ def make_pdw_measure(detect_pulses, cordic_iters=14):
         db_n = ndb_n
         pri_d = npri
         priv_d = npriv
+
+        # ---- reset ---------------------------------------------------------
+        # NOT optional, and not merely tidy: pulse_detect's `toa_counter` is
+        # cleared by the same reset, so a `prev_toa` carried across it would be
+        # a TOA from a counter epoch that no longer exists. `delta = toa -
+        # prev_toa` on the first pulse after release would then be a huge
+        # wrapped value reported as a real PRI. Clearing `have_prev` alongside
+        # makes that pulse report pri_valid=0 / STATUS_PRI_INVALID instead --
+        # exactly what the first accepted pulse after power-on already does.
+        # The valid flags in the delay lines go with it so nothing in flight
+        # when reset hit reappears as a measurement afterwards.
+        if rst:
+            prev_toa = 0
+            have_prev = 0
+            for k in range(LAT + 1):
+                priv_d[k] = 0
 
         o: pdw_measure_t
         o.freq_start = cs.angle

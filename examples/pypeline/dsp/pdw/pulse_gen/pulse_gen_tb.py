@@ -61,7 +61,7 @@ def _expected_active_delayed(phase_reg_name_unused=None):
 
 @MAIN(125.0)
 def pulse_gen_dc_tb():
-    o = pulse_gen(TEST_PRI, TEST_WIDTH, TEST_AMPLITUDE, 0, 0, 0)
+    o = pulse_gen(TEST_PRI, TEST_WIDTH, TEST_AMPLITUDE, 0, 0, 0, 0)
 
     # Golden reference: an independent free-running PRI counter, DELAYED by the
     # generator's own latency. The envelope is applied as the NCO's seed
@@ -142,7 +142,7 @@ def pulse_gen_tone_tb():
     that varies with phase, while the individual I and Q samples still look
     like plausible numbers.
     """
-    o = pulse_gen(TEST_PRI, TEST_WIDTH, TEST_AMPLITUDE, TONE_FREQ, 0, 0)
+    o = pulse_gen(TEST_PRI, TEST_WIDTH, TEST_AMPLITUDE, TONE_FREQ, 0, 0, 0)
 
     phase: Reg[uint32_t] = 0
     active_now: uint1_t = phase < TEST_WIDTH
@@ -198,7 +198,7 @@ def pulse_gen_noise_tb():
     frequency measurement downstream toward DC. That bug produces noise that
     looks perfectly reasonable on a scope.
     """
-    o = pulse_gen(TEST_PRI, TEST_WIDTH, 0, 0, 0, NOISE_AMP)
+    o = pulse_gen(TEST_PRI, TEST_WIDTH, 0, 0, 0, NOISE_AMP, 0)
 
     # amplitude=0, so everything here is noise.
     bound: int16_t = (512 * NOISE_AMP) >> 8

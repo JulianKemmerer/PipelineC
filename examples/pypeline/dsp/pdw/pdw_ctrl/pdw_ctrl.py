@@ -23,6 +23,25 @@ precisely the requested behaviour and needs no code here:
   * a frame SHORTER than that is discarded and the deserializer resyncs, so a
     truncated write leaves the registers untouched rather than half-applied.
 
+RESET -- ITS OWN DOMAIN, AND THAT IS THE POINT. This block is reset by
+`tx0_s_axis_rst` alone, NOT by the design's combined global reset. That makes a
+staged bring-up possible, which is the sequence a host should actually use:
+
+    1. all seven channel resets asserted     -- everything held, buffers drain
+    2. tx0_s_axis_rst deasserts              -- this block live, datapath held
+    3. host writes one pdw_ctrl_t frame      -- config lands, datapath held
+    4. the remaining resets deassert         -- datapath starts CONFIGURED
+
+Step 4 is the payoff: the detector's first sample is measured against real
+thresholds instead of running on CTRL_DEFAULTS for however long a control frame
+takes to arrive. CTRL_DEFAULTS stops being the configuration a running design
+starts from and becomes purely a power-on safety state.
+
+While reset is asserted the registers are pinned to CTRL_DEFAULTS -- a frame
+that lands during it is decoded and then discarded -- and the deserializer is
+flushed, so nothing a torn-down host left half-written can join up with the
+next frame.
+
 TIMING. The register file is the consumer, and a register file is never busy:
 `stream_out_if.ready` is tied high, so `tx0_s_axis_tready` is always 1 and a
 host is never back-pressured. Two register stages then separate the frame from
@@ -135,7 +154,11 @@ CTRL_DEFAULTS = pdw_ctrl_t(
 def make_pdw_ctrl(n=4, registered_ready=False):
     """Build the control register file. Returns (pdw_ctrl, pdw_ctrl_out_t).
 
-        pdw_ctrl(axis_in_if: pdw_ctrl.axis_intrf.fwd_t) -> pdw_ctrl_out_t
+        pdw_ctrl(axis_in_if: pdw_ctrl.axis_intrf.fwd_t, rst: uint1_t)
+            -> pdw_ctrl_out_t
+
+    `rst` is active high and must be driven from `tx0_s_axis_rst` alone, not
+    from the combined global reset -- see this module's docstring.
 
     Result fields:
         .regs        (pdw_ctrl_t) the live register values
@@ -166,13 +189,35 @@ def make_pdw_ctrl(n=4, registered_ready=False):
         runt: uint1_t
 
     @hw_func
-    def pdw_ctrl(axis_in_if: rx.axis_intrf.fwd_t) -> pdw_ctrl_out_t:
+    def pdw_ctrl(
+        axis_in_if: rx.axis_intrf.fwd_t, rst: uint1_t
+    ) -> pdw_ctrl_out_t:
         o: pdw_ctrl_out_t
         regs: Reg[pdw_ctrl_t] = CTRL_DEFAULTS
 
+        # While reset is asserted, replace whatever is on the port with an
+        # empty end-of-frame beat: valid, no bytes kept, eod set. That is a
+        # FLUSH, and it is the only one available here -- the deserializer's
+        # ready is already tied high, so unlike every buffer downstream there is
+        # no ready to force. The limiter clears its byte counter on any real
+        # eod, and the deserializer's on_eod="discard" throws away a partial
+        # value and resyncs, so both stages come out of reset empty.
+        #
+        # Without it, a host torn down mid-frame leaves a byte prefix behind
+        # (those counters clear only on a real eod), and the NEXT frame's bytes
+        # complete it into a struct that is wrong but perfectly well-formed --
+        # silently applied, no runt, no error.
+        flush_in: rx.axis_intrf.stream_t = axis_in_if.stream
+        if rst:
+            flush_in.valid = 1
+            for i in range(n):
+                flush_in.data.frag.keep[i] = 0
+                flush_in.data.frag.data[i] = 0
+            flush_in.data.eod[0] = 1
+
         # Ready tied high: a register file is never busy, and this is what makes
         # the apply moment a pure function of when the last beat lands.
-        r = rx(axis_in_if, rx.out_fb_t(1))
+        r = rx(rx.axis_intrf.fwd_t(flush_in), rx.out_fb_t(1))
 
         # Present the CURRENT register contents, THEN latch the new ones. That
         # ordering is the second of the two cycles in `.latency`: consumers see
@@ -187,6 +232,31 @@ def make_pdw_ctrl(n=4, registered_ready=False):
 
         if r.stream_out_if.stream.valid:
             regs = r.stream_out_if.stream.data.frag
+
+        # Reset LAST, so it wins on a cycle where a frame also lands. Driven
+        # from `tx0_s_axis_rst` ALONE, not the design's combined reset -- see
+        # this module's docstring on the bring-up sequence.
+        if rst:
+            # Rebuilt field by field rather than assigned from CTRL_DEFAULTS
+            # directly. `Reg[T] = CTRL_DEFAULTS` above works because a register
+            # initialiser is evaluated at elaboration time; this is a RUNTIME
+            # assignment, and the elaborator rejects a module-global struct as a
+            # hardware value ("not a hardware-usable value"). Reading the
+            # constant's fields is fine -- they fold to literals -- so
+            # CTRL_DEFAULTS stays the single source of truth for the values.
+            regs = pdw_ctrl_t(
+                pulse_gen_pri=CTRL_DEFAULTS.pulse_gen_pri,
+                pulse_gen_width=CTRL_DEFAULTS.pulse_gen_width,
+                pulse_gen_freq=CTRL_DEFAULTS.pulse_gen_freq,
+                pulse_gen_chirp_rate=CTRL_DEFAULTS.pulse_gen_chirp_rate,
+                pulse_gen_amplitude=CTRL_DEFAULTS.pulse_gen_amplitude,
+                pulse_gen_noise_amp=CTRL_DEFAULTS.pulse_gen_noise_amp,
+                threshold_high=CTRL_DEFAULTS.threshold_high,
+                threshold_low=CTRL_DEFAULTS.threshold_low,
+                max_width=CTRL_DEFAULTS.max_width,
+                min_width=CTRL_DEFAULTS.min_width,
+                flags=CTRL_DEFAULTS.flags,
+            )
         return o
 
     pdw_ctrl.ctrl_t = pdw_ctrl_t

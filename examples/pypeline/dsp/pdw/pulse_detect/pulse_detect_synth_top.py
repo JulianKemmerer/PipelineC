@@ -16,7 +16,7 @@ Synthesize (requires Vivado):
     pypelinec examples/pypeline/dsp/pdw/pulse_detect/pulse_detect_synth_top.py
 """
 
-from pypeline import MAIN, PART, Input, uint32_t
+from pypeline import MAIN, PART, Input, uint1_t, uint32_t
 
 from pulse_detect import make_pulse_detect_fsm
 
@@ -33,6 +33,9 @@ pulse_detect, pulse_detect_t = make_pulse_detect_fsm(power_t)
 threshold_high: Input[uint32_t]
 threshold_low: Input[uint32_t]
 max_width: Input[uint32_t]
+# A real port rather than a tied 0: the reset fans out to the whole state
+# machine, so its routing is part of what this check should be measuring.
+rst: Input[uint1_t]
 
 
 @MAIN(125.0)
@@ -45,4 +48,5 @@ def pulse_detect_top(
         power_t(val=threshold_high),
         power_t(val=threshold_low),
         max_width,
+        rst,
     )

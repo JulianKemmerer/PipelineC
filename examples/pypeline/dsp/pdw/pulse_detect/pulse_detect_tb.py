@@ -88,6 +88,7 @@ def pulse_detect_elastic_tb():
         data_t(val=THRESHOLD_HIGH),
         data_t(val=THRESHOLD_LOW),
         MAX_WIDTH_NORMAL,
+        0,  # rst: this testbench never resets
     )
 
     accepted: uint1_t = stream_in_if.valid & o.stream_in_if.ready
@@ -185,6 +186,7 @@ def pulse_detect_valid_only_tb():
         data_t(val=THRESHOLD_HIGH),
         data_t(val=THRESHOLD_LOW),
         MAX_WIDTH_NORMAL,
+        0,  # rst: this testbench never resets
     )
 
     if phase == (TEST_PRI - 1):
@@ -270,6 +272,7 @@ def pulse_detect_cw_tb():
         data_t(val=THRESHOLD_HIGH),
         data_t(val=THRESHOLD_LOW),
         CW_MAX_WIDTH,
+        0,  # rst: this testbench never resets
     )
 
     sim_assert((~o.gate_last) | o.gate_valid, "gate_last without gate_valid (CW)")

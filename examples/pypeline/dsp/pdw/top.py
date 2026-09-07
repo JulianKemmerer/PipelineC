@@ -26,6 +26,10 @@ that AXI-Stream is only the top-level interface shape.
 I/Q packing on every sample-carrying port is the project-wide convention
 I = tdata[15:0], Q = tdata[31:16].
 
+Every channel also carries an active-high `*_axis_rst`. All seven OR into
+`global_rst`; the control register file follows `tx0_s_axis_rst` alone so it can
+be configured while the datapath is still held. See rst_main below.
+
 This file is also the ONLY place several critical paths exist. The generator's
 output feeds the detector's magnitude multiplier, the detector's phasor
 accumulators feed the measurement CORDIC, and now the two masters' tready pins
@@ -63,6 +67,7 @@ from pypeline import (
     Input,
     NamedTuple,
     Output,
+    Reg,
     Wire,
     array_to_uint_le,
     concat,
@@ -94,6 +99,82 @@ axis32_intrf = make_axis_interface(AXIS_N)
 
 pulse_gen, out_stream_t = make_pulse_gen()
 pdw_ctrl, pdw_ctrl_out_t = make_pdw_ctrl(AXIS_N)
+
+# ---------------------------------------------------------------------------
+# rst_main -- the reset tree (README's "Reset").
+#
+# Every AXIS channel carries its own active-high reset, and all seven OR
+# together into `global_rst`. `ctrl_rst` is deliberately NARROWER: the control
+# register file follows tx0_s_axis_rst alone, so a host can bring that channel
+# up on its own, write a configuration, and only then release the rest -- the
+# datapath's first sample is then processed against real thresholds instead of
+# CTRL_DEFAULTS. See pdw_ctrl.py's docstring for the four-step sequence.
+#
+# Reset does three things, and only these three (README has the full list):
+#   BLOCK  gate the generator's and the detector's valid, so nothing enters
+#   DRAIN  force every downstream ready/pop high, so buffers empty into the bit
+#          bucket -- the ONLY way to clear the make_fifo instances and the
+#          serializers, which are library black boxes with no flush
+#   CLEAR  return this project's own registers to their power-on values
+#
+# Because the drain is only as fast as the data, reset must be HELD: emptying a
+# full packet FIFO takes up to its depth in cycles. RST_MIN_HOLD_CYCLES below.
+# ---------------------------------------------------------------------------
+
+# ⚠ TIE AN UNUSED CHANNEL'S RESET LOW. `global_rst` is the OR of all seven, so a
+# channel whose reset a platform holds asserted because the host never opened it
+# holds this entire design in reset forever. rx2_m_axis (candidate records) is
+# the likeliest to be left unused -- see its port declaration below.
+rx0_s_axis_rst: Input[uint1_t]
+tx0_s_axis_rst: Input[uint1_t]
+rx0_m_axis_rst: Input[uint1_t]
+rx1_m_axis_rst: Input[uint1_t]
+rx2_m_axis_rst: Input[uint1_t]
+tx0_m_axis_rst: Input[uint1_t]
+tx1_m_axis_rst: Input[uint1_t]
+
+# Cycles from a reset pin changing to the internal reset following it. NOT a
+# metastability synchroniser -- these resets are synchronous to this clock. It
+# is a fanout break: the reset reaches the detector's input valid, a 320-bit
+# control-register mux, three FIFO read enables, four tready overrides, four
+# tvalid gates and a few dozen register clears, and running a seven-input OR of
+# top-level pins combinationally into all of that is not something this design's
+# ~2 ns of margin can absorb. pdw_tb.py reads this rather than hardcoding it.
+RST_LATENCY = 1
+
+# The minimum a host should hold reset for the drain to actually finish: the
+# packet FIFO empties at one beat per cycle, plus the record serializers' own
+# frames and the pipeline latencies feeding them. ~131 us at 125 MHz, which any
+# real platform reset comfortably exceeds -- stated so it is a number rather
+# than an assumption.
+RST_MIN_HOLD_CYCLES = 16384 + 64
+
+global_rst: Wire[uint1_t]  # OR of all seven -- everything except pdw_ctrl
+ctrl_rst: Wire[uint1_t]  # tx0_s_axis_rst alone -- pdw_ctrl only
+
+
+@MAIN(125.0)
+def rst_main():
+    any_rst: uint1_t = (
+        rx0_s_axis_rst
+        | tx0_s_axis_rst
+        | rx0_m_axis_rst
+        | rx1_m_axis_rst
+        | rx2_m_axis_rst
+        | tx0_m_axis_rst
+        | tx1_m_axis_rst
+    )
+    # Both initialise to 1, so the design is held in reset for cycle 0 whatever
+    # the pins are doing before their value has propagated.
+    rst_r: Reg[uint1_t] = 1
+    ctrl_rst_r: Reg[uint1_t] = 1
+    global_rst = rst_r
+    ctrl_rst = ctrl_rst_r
+    # Same RST_LATENCY on both, so the bring-up sequence's ordering is
+    # preserved by construction rather than depending on two different
+    # pin-to-logic delays.
+    rst_r = any_rst
+    ctrl_rst_r = tx0_s_axis_rst
 
 # ---------------------------------------------------------------------------
 # ctrl_main -- the control register file (README section 2).
@@ -128,7 +209,9 @@ def ctrl_main():
     ci.data.eod[0] = tx0_s_axis_tlast
     ci.valid = tx0_s_axis_tvalid
 
-    c = pdw_ctrl(pdw_ctrl.axis_intrf.fwd_t(ci))
+    # ctrl_rst, NOT global_rst -- this block comes out of reset first so it can
+    # be configured while the datapath is still held. See pdw_ctrl.py.
+    c = pdw_ctrl(pdw_ctrl.axis_intrf.fwd_t(ci), ctrl_rst)
     tx0_s_axis_tready = c.axis_in_if.ready
     ctrl_regs = c.regs
 
@@ -165,20 +248,25 @@ def pulse_gen_main():
         ctrl_regs.pulse_gen_freq,
         ctrl_regs.pulse_gen_chirp_rate,
         ctrl_regs.pulse_gen_noise_amp,
+        global_rst,
     )
+    # BLOCK: pulse_gen's own contract is an always-valid fixed-rate stream, so
+    # stopping the flow is done here, at the boundary, for both the external DAC
+    # port and the internal loopback wire.
+    gen_valid: uint1_t = o.valid & (~global_rst)
     # concat() requires unsigned args -- full-width bit-slice reinterprets
     # each int16_t field's raw bits as uint16_t. concat()'s first arg is
     # MSBs, so Q (tdata[31:16]) goes first, I (tdata[15:0]) second.
     i_bits: uint16_t = o.data.i[15:0]
     q_bits: uint16_t = o.data.q[15:0]
     tx0_m_axis_tdata = concat(q_bits, i_bits)
-    tx0_m_axis_tvalid = o.valid
+    tx0_m_axis_tvalid = gen_valid
     # Every beat is one whole sample, and the stimulus is a continuous
     # unframed stream -- so keep is constant and tlast never asserts.
     tx0_m_axis_tkeep = KEEP_ALL
     tx0_m_axis_tlast = 0
     pulse_gen_sample = o.data
-    pulse_gen_valid = o.valid
+    pulse_gen_valid = gen_valid
 
 
 # ---------------------------------------------------------------------------
@@ -269,6 +357,10 @@ rx1_m_axis_tready: Input[uint1_t]
 # stall. A candidate arriving while the serializer is still busy is dropped
 # silently. In a real system this port is expected to be tied ready=1 and
 # ignored; pdw_tb.py stalls it anyway so the path stays real.
+#
+# ⚠ If this channel is unused, tie rx2_m_axis_rst LOW as well as tready HIGH.
+# An unused channel whose reset a platform leaves asserted holds the WHOLE
+# design in reset -- see rst_main.
 rx2_m_axis_tdata: Output[uint32_t]
 rx2_m_axis_tkeep: Output[tkeep_t]
 rx2_m_axis_tlast: Output[uint1_t]
@@ -304,9 +396,16 @@ def pdw_main():
     sample: detect_pulses.complex_t = (
         loopback_sample if loopback_en else rx_sample
     )
-    sample_valid: uint1_t = (
+    src_valid: uint1_t = (
         pulse_gen_valid if loopback_en else rx0_s_axis_tvalid
     )
+    # BLOCK: one gate stops the whole detector. detect_pulses drives Path A
+    # (magnitude) and Path B (the delay line) from this same stream, and every
+    # piece of state downstream -- the hysteresis SM, the noise estimator, the
+    # phasor accumulators, toa_counter -- advances only on an accepted sample.
+    # detect_pulses deliberately does not gate its own input: whether the ADC
+    # feed stops is this level's decision, not the block's.
+    sample_valid: uint1_t = src_valid & (~global_rst)
     stream_in_if: detect_pulses.in_stream_t = detect_pulses.in_stream_t(
         sample, sample_valid
     )
@@ -321,6 +420,7 @@ def pdw_main():
         detect_pulses.power_t(val=ctrl_regs.threshold_high),
         detect_pulses.power_t(val=ctrl_regs.threshold_low),
         ctrl_regs.max_width,
+        global_rst,
     )
 
     e = pdw_engine(
@@ -333,7 +433,43 @@ def pdw_main():
         o.noise_est,
         pkt_ready,
         pdw_ready,
+        global_rst,
     )
+
+    # DRAIN. The packet path empties itself: packet_store forces its own three
+    # FIFO read enables during reset (`data_ready |= rst` and friends) and
+    # clears its FSM, so nothing here has to help it -- pdw_reset_test.py holds
+    # pkt_out_ready LOW for the whole reset window and still gets a byte-exact
+    # drain. Path B's delay line is drained inside detect_pulses the same way.
+    #
+    # The two record SERIALIZERS are the exception: they are library blocks
+    # whose buf/fill can only empty through ready. They still drain during
+    # reset whenever the host leaves tready asserted -- their internal valid is
+    # not gated, only the port's tvalid is, so beats are consumed while the
+    # host sees nothing. What is NOT covered is a host that holds tready LOW
+    # across its own reset: such a serializer keeps its partial frame and emits
+    # the tail after release.
+    #
+    # An `| global_rst` here would close that gap, and it was measured: it costs
+    # 8.3 MHz (128.5 -> 120.2, i.e. missing the 125 MHz target), because it puts
+    # a LUT into the ready path that feeds this serializer's `nfill` -- the
+    # variable index of a 43-element buffer write, already 12 logic levels deep.
+    # See serializer.py's own note that this path is "combinational on
+    # stream_out_if.ready ... deliberately". make_type_to_axis has no
+    # `registered_ready` knob to break it (only the deserializer side does), and
+    # library code is out of scope here.
+    #
+    # TODO: a real AXIS skid buffer on rx1_m/rx2_m would break that path and
+    # let the drain be unconditional. `make_stream_fifo(t, 2)` would work today
+    # -- its data_in_ready is occupancy-based, not combinational on the output
+    # ready -- but it is a wrapped BRAM FIFO, the wrong primitive for a
+    # two-deep pipeline break. Prefer adding make_axis_skid_buffer to
+    # include/pypeline/axi/axis.py.
+    #
+    # No traffic may appear outside during reset: AXI forbids tvalid then, and a
+    # host must not see the previous session's records on a channel it has just
+    # opened.
+    out_en: uint1_t = ~global_rst
 
     # -- released packet -> broadcast -> rx0_m (host) and tx1_m (replay) -----
     # One sample is exactly one 4-byte beat, so this is a repack, not a
@@ -356,14 +492,23 @@ def pdw_main():
     )
     pkt_ready = b.axis_in_if.ready
 
+    # tlast is qualified by THIS leg's own tvalid, not just driven from the
+    # interlock's eod. The interlock copies the source word to every leg and
+    # then zeroes `valid` on a leg whose sibling is not ready yet -- so a leg
+    # can present eod=1 with valid=0. Inside the library that is legal (AXI
+    # leaves tlast don't-care under tvalid low), but a top-level master must
+    # not do it, and pdw_tb asserts so. Same defect type_axis.py records as
+    # axis.h:539.
+    pkt0_valid: uint1_t = b.axis_out_if[0].stream.valid & out_en
+    pkt1_valid: uint1_t = b.axis_out_if[1].stream.valid & out_en
     rx0_m_axis_tdata = array_to_uint_le(b.axis_out_if[0].stream.data.frag.data)
     rx0_m_axis_tkeep = array_to_uint_le(b.axis_out_if[0].stream.data.frag.keep)
-    rx0_m_axis_tlast = b.axis_out_if[0].stream.data.eod[0]
-    rx0_m_axis_tvalid = b.axis_out_if[0].stream.valid
+    rx0_m_axis_tlast = b.axis_out_if[0].stream.data.eod[0] & pkt0_valid
+    rx0_m_axis_tvalid = pkt0_valid
     tx1_m_axis_tdata = array_to_uint_le(b.axis_out_if[1].stream.data.frag.data)
     tx1_m_axis_tkeep = array_to_uint_le(b.axis_out_if[1].stream.data.frag.keep)
-    tx1_m_axis_tlast = b.axis_out_if[1].stream.data.eod[0]
-    tx1_m_axis_tvalid = b.axis_out_if[1].stream.valid
+    tx1_m_axis_tlast = b.axis_out_if[1].stream.data.eod[0] & pkt1_valid
+    tx1_m_axis_tvalid = pkt1_valid
 
     # -- valid_pdw_t -> rx1_m ------------------------------------------------
     vs: pdw_tx.in_intrf.stream_t
@@ -375,8 +520,9 @@ def pdw_main():
 
     rx1_m_axis_tdata = array_to_uint_le(vt.axis_out_if.stream.data.frag.data)
     rx1_m_axis_tkeep = array_to_uint_le(vt.axis_out_if.stream.data.frag.keep)
-    rx1_m_axis_tlast = vt.axis_out_if.stream.data.eod[0]
-    rx1_m_axis_tvalid = vt.axis_out_if.stream.valid
+    rx1_m_valid: uint1_t = vt.axis_out_if.stream.valid & out_en
+    rx1_m_axis_tlast = vt.axis_out_if.stream.data.eod[0] & rx1_m_valid
+    rx1_m_axis_tvalid = rx1_m_valid
 
     # -- candidate_pdw_t -> rx2_m -------------------------------------------
     # `ct.stream_in_if.ready` is deliberately NOT fed back anywhere: Path A is
@@ -395,5 +541,6 @@ def pdw_main():
 
     rx2_m_axis_tdata = array_to_uint_le(ct.axis_out_if.stream.data.frag.data)
     rx2_m_axis_tkeep = array_to_uint_le(ct.axis_out_if.stream.data.frag.keep)
-    rx2_m_axis_tlast = ct.axis_out_if.stream.data.eod[0]
-    rx2_m_axis_tvalid = ct.axis_out_if.stream.valid
+    rx2_m_valid: uint1_t = ct.axis_out_if.stream.valid & out_en
+    rx2_m_axis_tlast = ct.axis_out_if.stream.data.eod[0] & rx2_m_valid
+    rx2_m_axis_tvalid = rx2_m_valid

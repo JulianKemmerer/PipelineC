@@ -170,6 +170,7 @@ def pdw_engine_accept_tb():
         _DP.noise_t(val=TB_NOISE),
         1,
         1,
+        0,  # rst: this testbench never resets
     )
 
     cyc = cyc + 1
@@ -283,6 +284,7 @@ def pdw_engine_glitch_tb():
         _DP.noise_t(val=TB_NOISE),
         1,
         1,
+        0,  # rst: this testbench never resets
     )
 
     cyc = cyc + 1
@@ -346,6 +348,7 @@ def pdw_engine_cw_tb():
         _DP.noise_t(val=TB_NOISE),
         1,
         1,
+        0,  # rst: this testbench never resets
     )
 
     cyc = cyc + 1
@@ -416,6 +419,7 @@ def pdw_engine_status_tb():
         _DP.noise_t(val=TB_NOISE),
         1,
         1,
+        0,  # rst: this testbench never resets
     )
 
     cyc = cyc + 1
@@ -506,6 +510,7 @@ def pdw_engine_backpressure_tb():
         _DP.noise_t(val=TB_NOISE),
         pkt_ready,
         pdw_ready,
+        0,  # rst: this testbench never resets
     )
 
     cyc = cyc + 1

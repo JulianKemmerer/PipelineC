@@ -109,14 +109,18 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
     handshake: "elastic"    -> pulse_detect_fsm(stream_in_if: in_intrf.fwd_t,
                                              pdw_out_if: out_intrf.fb_t,
                                              threshold_high, threshold_low,
-                                             max_width) -> pulse_detect_fsm_t
+                                             max_width, rst) -> pulse_detect_fsm_t
                                (candidate stream is always valid/ready;
                                only the INPUT power stream's handshake mode
                                varies)
                "valid_only" -> pulse_detect_fsm(stream_in_if: make_stream_t(data_t),
                                              pdw_out_if: out_intrf.fb_t,
                                              threshold_high, threshold_low,
-                                             max_width) -> pulse_detect_fsm_t
+                                             max_width, rst) -> pulse_detect_fsm_t
+
+    `rst` is active high and returns the SM to IDLE with its counters, gate
+    registers and toa_counter cleared. It must be paired with a drain of Path
+    B's delay line -- see make_detect_pulses and the reset block below.
 
     Besides gate_valid/gate_last, the returned struct carries `gate_advance`:
     1 on exactly those cycles where the gate output registers are presenting a
@@ -178,6 +182,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
             threshold_high: data_t,
             threshold_low: data_t,
             max_width: width_t,
+            rst: uint1_t,
         ) -> pulse_detect_fsm_t:
             o: pulse_detect_fsm_t
             state: Reg[state_t]
@@ -307,6 +312,31 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
                 gate_last_r = 0
                 gate_advance_r = 0
 
+            # ---- reset ----------------------------------------------------
+            # LAST, so it overrides every branch above. `gate_armed` is the
+            # load-bearing one: Path B's delay line is drained during reset
+            # (see make_detect_pulses), and its delay is SELF-ESTABLISHING --
+            # exactly the number of pushes before the first drain, latched the
+            # moment gate_armed sticks. Clearing gate_armed alongside that
+            # drain is what makes the alignment re-establish on release exactly
+            # as it does at power-on. Drain without this clear and Path A/B
+            # alignment is silently destroyed, with no symptom but garbage
+            # packet contents.
+            if rst:
+                state = state_t.IDLE
+                width = 0
+                peak = 0
+                pdw_reg.valid = 0
+                overflow = 0
+                held_in_pulse = 0
+                gate_valid_r = 0
+                gate_last_r = 0
+                gate_armed = 0
+                gate_advance_r = 0
+                toa_counter = 0
+                toa_latch = 0
+                pdw_pending = 0
+
             o.overflow = overflow  # last, so it reads post-update
             return o
 
@@ -329,6 +359,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
             threshold_high: data_t,
             threshold_low: data_t,
             max_width: width_t,
+            rst: uint1_t,
         ) -> pulse_detect_fsm_t:
             o: pulse_detect_fsm_t
             state: Reg[state_t]
@@ -435,6 +466,23 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
                 gate_valid_r = 0
                 gate_last_r = 0
                 gate_advance_r = 0
+
+            # Reset -- see the elastic branch above, in particular why
+            # gate_armed must be cleared alongside the delay line's drain.
+            if rst:
+                state = state_t.IDLE
+                width = 0
+                peak = 0
+                pdw_reg.valid = 0
+                overflow = 0
+                held_in_pulse = 0
+                gate_valid_r = 0
+                gate_last_r = 0
+                gate_armed = 0
+                gate_advance_r = 0
+                toa_counter = 0
+                toa_latch = 0
+                pdw_pending = 0
 
             o.overflow = overflow
             return o
@@ -573,7 +621,8 @@ def make_freq_accum(complex_t, block_k=32):
     it is the maximum-likelihood estimator for a tone in white noise, whereas
     averaging angles weights a noisy sample as heavily as a strong one.
 
-        freq_accum(sample, beat_valid, beat_advance, beat_last) -> freq_accum_t
+        freq_accum(sample, beat_valid, beat_advance, beat_last, rst)
+            -> freq_accum_t
 
     `beat_valid`/`beat_last` are the hysteresis SM's gate stream and
     `beat_advance` is its delay-line drain enable, so this block sees exactly
@@ -628,6 +677,7 @@ def make_freq_accum(complex_t, block_k=32):
         beat_valid: uint1_t,
         beat_advance: uint1_t,
         beat_last: uint1_t,
+        rst: uint1_t,
     ) -> freq_accum_t:
         prev_i: Reg[rail_val_t]
         prev_q: Reg[rail_val_t]
@@ -798,6 +848,43 @@ def make_freq_accum(complex_t, block_k=32):
             prev_i = cur_i
             prev_q = cur_q
             prev_valid = beat_valid
+
+        # ---- reset --------------------------------------------------------
+        # LAST, overriding every update above. `prev_valid` is the one that
+        # matters: leave it set and the first sample after release forms a
+        # phasor difference against a PRE-reset sample, and because
+        # `pulse_start = beat_valid & ~prev_valid` the accumulators would never
+        # re-arm for that pulse -- so the error persists for the whole pulse
+        # rather than for one product.
+        if rst:
+            prev_i = 0
+            prev_q = 0
+            prev_valid = 0
+            first_re = 0
+            first_im = 0
+            blk_re = 0
+            blk_im = 0
+            prv_re = 0
+            prv_im = 0
+            blk_cnt = 0
+            beat_cnt = 0
+            p_ii_r = 0
+            p_qq_r = 0
+            p_qi_r = 0
+            p_iq_r = 0
+            pair_ok_a = 0
+            last_a = 0
+            start_a = 0
+            d_re_r = 0
+            d_im_r = 0
+            pair_ok_r = 0
+            last_r = 0
+            start_r = 0
+            o_first_re = 0
+            o_first_im = 0
+            o_last_re = 0
+            o_last_im = 0
+            o_valid = 0
         return o
 
     freq_accum.complex_t = complex_t
@@ -840,6 +927,14 @@ def make_detect_pulses(
              gives latency estimates for FIFO sizing, not real filter
              parameters) -- both are placeholder defaults, tunable here.
     width_t: integer type for pulse_width/max_width (see make_pulse_detect_fsm).
+
+    `detect_pulses(stream_in_if, pdw_out_if, threshold_high, threshold_low,
+    max_width, rst)`. `rst` is active high and does two things that must happen
+    together: it clears Path A's state machine (including the sticky
+    `gate_armed`) and it drains Path B's delay line. Neither alone is correct --
+    see the call to make_delay_line below. Callers must also hold
+    `stream_in_if.valid` low while it is asserted; this block does not gate its
+    own input, because whether the ADC feed stops is the top level's decision.
 
     Input: a raw I/Q stream, `handshake="valid_only"` (a fixed-rate ADC feed
     that is never stalled -- see this module's own docstring above for why the
@@ -931,25 +1026,36 @@ def make_detect_pulses(
         threshold_high: moving_avg.out_t,
         threshold_low: moving_avg.out_t,
         max_width: width_t,
+        rst: uint1_t,
     ) -> detect_pulses_t:
         mag_o = magnitude(stream_in_if)
         dc_o = dc_block(mag_o)
         avg_o = moving_avg(dc_o)
         pd_o = detect_fsm(
-            avg_o, pdw_out_if, threshold_high, threshold_low, max_width
+            avg_o, pdw_out_if, threshold_high, threshold_low, max_width, rst
         )
         # Path B advances one raw sample per gate-stream beat slot, so the two
         # paths stay locked together with no latency constant anywhere -- see
         # make_delay_line and pulse_detect_fsm's gate_advance.
-        delayed_sample = delay_line(
-            stream_in_if.data, stream_in_if.valid, pd_o.gate_advance
-        )
+        #
+        # RESET DRAINS IT. The FIFO is a make_fifo instance -- a black-box VHDL
+        # entity with no flush -- so the only way to empty it is to clock its
+        # contents out, which is what forcing drain_en high for the length of
+        # the reset does. Pushes are held off at the same time. This is only
+        # correct because detect_fsm clears `gate_armed` under the same reset:
+        # the achieved delay is the number of pushes before the first drain, so
+        # emptying the queue and re-arming the drain enable together is what
+        # rebuilds the alignment exactly as at power-on.
+        push_en: uint1_t = stream_in_if.valid & (~rst)
+        drain_en: uint1_t = pd_o.gate_advance | rst
+        delayed_sample = delay_line(stream_in_if.data, push_en, drain_en)
         gate_o = pdw_gate(delayed_sample, pd_o.gate_valid, pd_o.gate_last)
         # Frequency front end, on the SAME time-aligned raw I/Q the packet
         # carries -- so the measurement describes exactly the samples the host
         # receives, not an internally-conditioned version of them.
         fa_o = freq_accum(
-            delayed_sample, pd_o.gate_valid, pd_o.gate_advance, pd_o.gate_last
+            delayed_sample, pd_o.gate_valid, pd_o.gate_advance, pd_o.gate_last,
+            rst,
         )
         # gate_valid without gate_advance would mean Path B never popped the
         # sample that beat is carrying -- impossible by construction (they are
@@ -1014,6 +1120,16 @@ def make_detect_pulses(
         for k in range(FA_LAT):
             nnse[k + 1] = nse_d[k]
         nse_d = nnse
+
+        # Reset the noise estimator too. It would re-converge on its own, but
+        # letting it carry a pre-reset floor across means the first pulses
+        # after release report an SNR against a level that no longer applies --
+        # a plausible-looking number measured against the wrong reference,
+        # which is the failure mode the excision guard above exists to avoid.
+        if rst:
+            noise_acc = 0
+            for k in range(FA_LAT + 1):
+                nse_d[k] = 0
 
         o.pdw_out_if = pd_o.pdw_out_if
         o.gated_out = gate_o

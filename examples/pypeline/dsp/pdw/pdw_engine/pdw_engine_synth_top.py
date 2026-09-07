@@ -52,6 +52,11 @@ pdw_out_ready: Input[uint1_t]
 
 dsp_overflow: Input[uint1_t]
 
+# A real port rather than a tied 0. Reset drives the three FIFO read enables as
+# well as the store FSM's clears, so it sits directly in the release path this
+# file exists to measure.
+rst: Input[uint1_t]
+
 
 @MAIN(125.0)
 def pdw_engine_top(
@@ -70,4 +75,5 @@ def pdw_engine_top(
         noise_est,
         pkt_out_ready,
         pdw_out_ready,
+        rst,
     )

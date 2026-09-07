@@ -95,7 +95,7 @@ def make_pulse_gen(
 ):
     """Build a pulse generator. Returns (pulse_gen, out_stream_t).
 
-        pulse_gen(pri, width, amplitude, freq, chirp_rate, noise_amp)
+        pulse_gen(pri, width, amplitude, freq, chirp_rate, noise_amp, rst)
             -> stream(iq_t)
 
     pri:        pulse repetition interval, in samples.
@@ -106,6 +106,10 @@ def make_pulse_gen(
     chirp_rate: added to the phase increment on each sample of a pulse, so the
                 instantaneous frequency ramps linearly (LFM). 0 gives a tone.
     noise_amp:  0 disables noise entirely.
+    rst:        active high. Returns every register to its power-on value,
+                including the LFSR seeds and the phase accumulator, so the
+                output sequence after a reset is bit-identical to the one after
+                configuration. Does NOT gate `valid` -- see the reset block.
     """
     out_stream_t = make_stream_t(iq_t)
     nco, nco_t = make_cordic_rotate(
@@ -125,6 +129,7 @@ def make_pulse_gen(
         freq: int32_t,
         chirp_rate: int32_t,
         noise_amp: uint16_t,
+        rst: uint1_t,
     ) -> out_stream_t:
         pri_counter: Reg[pri_t] = 0
         phase_acc: Reg[uint32_t] = 0
@@ -235,6 +240,29 @@ def make_pulse_gen(
         noise_q_r = noise_q_next
         nsum_i_r = nsum_i
         nsum_q_r = nsum_q
+
+        # ---- reset --------------------------------------------------------
+        # LAST, so it overrides every advance above. Every register goes back
+        # to its power-on value, which makes the stimulus BIT-REPRODUCIBLE
+        # across a reset: reset the design and you get the identical waveform,
+        # including the LFSR noise. ../pdw_tb.py depends on that -- its golden
+        # model starts at the cycle reset releases, with no state to carry in.
+        #
+        # `valid` is deliberately NOT gated here: this block's contract is a
+        # fixed-rate always-valid DAC stream. top.py gates the stream's valid
+        # with the same reset, which is where the flow actually stops.
+        if rst:
+            pri_counter = 0
+            phase_acc = 0
+            chirp_acc = 0
+            lfsr_i = LFSR_SEED_I
+            lfsr_q = LFSR_SEED_Q
+            nsum_i_r = 0
+            nsum_q_r = 0
+            noise_i_r = 0
+            noise_q_r = 0
+            out_i_r = 0
+            out_q_r = 0
         return out_stream_t(sample, 1)  # always valid: fixed-rate DAC stream
 
     pulse_gen.iq_t = iq_t

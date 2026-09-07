@@ -50,9 +50,9 @@ def _drive(stim):
                 last_re=s["lre"], last_im=s["lim"], valid=1,
             )
             r = sim_call(meas, fa, NT(val=s["noise"]), PT(val=s["peak"]),
-                         s["toa"], 1, s["accept"])
+                         s["toa"], 1, s["accept"], 0)  # rst
         else:
-            r = sim_call(meas, zero, NT(val=0), PT(val=0), 0, 0, 0)
+            r = sim_call(meas, zero, NT(val=0), PT(val=0), 0, 0, 0, 0)  # rst
         if int(r.valid):
             got.append({
                 "freq_start": int(r.freq_start), "freq_stop": int(r.freq_stop),

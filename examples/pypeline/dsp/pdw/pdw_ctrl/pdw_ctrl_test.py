@@ -82,8 +82,13 @@ def _want(cfg):
     return {f: int(getattr(cfg, f)) for f in FIELDS}
 
 
-def _run(script, n_cycles, dut=None):
-    """script: {cycle: bytes} frames to start. Returns one dict per cycle."""
+def _run(script, n_cycles, dut=None, rst_until=0):
+    """script: {cycle: bytes} frames to start. Returns one dict per cycle.
+
+    `rst_until`: hold rst high for cycles [0, rst_until). Note the block is
+    reset from tx0_s_axis_rst ALONE, not the design's global reset -- being
+    able to bring this block up on its own is the point (see pdw_ctrl.py).
+    """
     dut = dut or ctrl
     sim_reset()
     src = AxisSimSource(dut.axis_intrf, N)
@@ -96,7 +101,8 @@ def _run(script, n_cycles, dut=None):
         # 1, so driving the source with 1 unconditionally is only legitimate
         # because every cycle's real value is asserted to be 1.
         word = src.step(1)
-        r = sim_call(dut, word)
+        rst = 1 if c < rst_until else 0
+        r = sim_call(dut, word, rst)
         log.append(
             {
                 "ready": int(r.axis_in_if.ready),
@@ -104,6 +110,7 @@ def _run(script, n_cycles, dut=None):
                 "runt": int(r.runt),
                 "valid_in": int(word.stream.valid),
                 "last_in": int(word.stream.data.eod[0]),
+                "rst": rst,
                 "regs": _regs(r),
             }
         )
@@ -229,6 +236,112 @@ def test_runt_frame_is_discarded():
     print("test_runt_frame_is_discarded passed")
 
 
+def test_reset_holds_defaults():
+    """A well-formed frame written while rst is high must be refused. This is
+    the whole reason the block has a reset: an unconfigured device must present
+    the safe defaults (max thresholds, silent generator), not whatever a host
+    wrote before it was ready to be listened to."""
+    frame = type_to_bytes(pdw_ctrl_t, CFG_A)
+    # Frame at cycle 1 lands well inside the reset window.
+    log = _run({1: frame}, 40, rst_until=1 + ctrl.n_beats + ctrl.latency + 4)
+    in_rst = [s for s in log if s["rst"]]
+    assert in_rst, "test drove no reset cycles"
+    for c, s in enumerate(log):
+        if s["rst"]:
+            assert s["regs"] == _want(CTRL_DEFAULTS), (
+                f"cycle {c}: a frame applied while in reset: {s['regs']}"
+            )
+    # And it stays refused after release -- the frame is gone, not deferred.
+    for c, s in enumerate(log):
+        if not s["rst"]:
+            assert s["regs"] == _want(CTRL_DEFAULTS), (
+                f"cycle {c}: a frame written during reset applied after "
+                f"release: {s['regs']}"
+            )
+    print("test_reset_holds_defaults passed")
+
+
+def test_frame_applies_after_reset_release():
+    """Reset must leave nothing behind: the next frame applies normally, on
+    exactly the usual schedule. Pairs with the test above -- together they say
+    reset refuses writes without also breaking the port."""
+    rst_until = 8
+    start = rst_until + 2
+    log = _run({start: type_to_bytes(pdw_ctrl_t, CFG_B)}, 40, rst_until=rst_until)
+    last = max(c for c, s in enumerate(log) if s["valid_in"])
+    got = log[last + ctrl.latency]["regs"]
+    assert got == _want(CFG_B), (
+        f"frame after reset release did not apply on schedule: {got}"
+    )
+    print("test_frame_applies_after_reset_release passed")
+
+
+def _beat(dut, chunk, last):
+    """One hand-built AXIS beat. AxisSimSource always terminates the bytes it
+    is given with tlast, which makes a short frame a RUNT -- something the
+    deserializer's on_eod="discard" already handles. Reproducing an ABANDONED
+    frame, the case reset actually has to clean up, means driving beats that
+    carry no tlast at all, so they are built here rather than sent."""
+    stream_t = dut.axis_intrf.stream_t
+    frag_t = stream_t.typeof("data")
+    bus_t = frag_t.typeof("frag")
+    data = [0] * N
+    keep = [0] * N
+    for i, b in enumerate(chunk):
+        data[i] = b
+        keep[i] = 1
+    return dut.axis_intrf.fwd_t(
+        stream_t(
+            data=frag_t(frag=bus_t(data=data, keep=keep), eod=[1 if last else 0]),
+            valid=1,
+        )
+    )
+
+
+def test_reset_flushes_an_abandoned_frame():
+    """The deserializer must not carry bytes across a reset.
+
+    A host torn down mid-DMA leaves a byte prefix behind with NO tlast ever
+    arriving -- and the limiter's and deserializer's counters clear only on a
+    real eod. Without the flush in pdw_ctrl, the next frame's bytes complete
+    that prefix into a struct that is wrong but perfectly well formed: applied
+    silently, no runt, no error. That is strictly worse than a dropped write,
+    which is why it is tested rather than assumed.
+
+    Verified to fail with the flush disabled."""
+    stale = type_to_bytes(pdw_ctrl_t, CFG_A)
+    good = type_to_bytes(pdw_ctrl_t, CFG_B)
+    n_stale = 3  # beats of a frame that is then abandoned, no tlast
+    rst_from, rst_until = n_stale, 20
+    start = rst_until + 2
+
+    sim_reset()
+    src = AxisSimSource(ctrl.axis_intrf, N)
+    log = []
+    for c in range(60):
+        if c == start:
+            src.send(good)
+        if c < n_stale:
+            word = _beat(ctrl, stale[c * N : (c + 1) * N], last=False)
+        else:
+            word = src.step(1)
+        rst = 1 if rst_from <= c < rst_until else 0
+        r = sim_call(ctrl, word, rst)
+        log.append({"updated": int(r.updated), "rst": rst, "regs": _regs(r)})
+
+    ups = [c for c, s in enumerate(log) if s["updated"] and not s["rst"]]
+    assert len(ups) == 1, (
+        f"expected exactly one post-reset update, got {ups} -- the abandoned "
+        "prefix joined up with the good frame"
+    )
+    got = log[ups[0] + ctrl.latency]["regs"]
+    assert got == _want(CFG_B), (
+        f"the frame after the reset decoded as something other than itself: "
+        f"{got}"
+    )
+    print("test_reset_flushes_an_abandoned_frame passed")
+
+
 if __name__ == "__main__":
     print(f"pdw_ctrl: {CTRL_N_BYTES} bytes, {ctrl.n_beats} beats of {N}, "
           f"latency {ctrl.latency}")
@@ -239,4 +352,7 @@ if __name__ == "__main__":
     test_back_to_back_frames_both_apply()
     test_oversized_frame_drops_padding()
     test_runt_frame_is_discarded()
+    test_reset_holds_defaults()
+    test_frame_applies_after_reset_release()
+    test_reset_flushes_an_abandoned_frame()
     print("All pdw_ctrl tests passed")

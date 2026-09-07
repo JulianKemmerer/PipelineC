@@ -295,6 +295,21 @@ def get_tests() -> list:
             ],
         )
     )
+    # PDW project: reset semantics -- block, drain, clear. pdw_tb.py only ever
+    # resets at power-on, where nothing is buffered; this drives a reset
+    # MID-PULSE, with a part-written packet in the data FIFO whose descriptor
+    # was never pushed. That case is unreachable by the normal release path,
+    # so it is what the drain exists for. Composed with sim_call rather than a
+    # pipelinec build -- seconds instead of pdw_tb.py's ~18 minutes.
+    tests.append(
+        Test(
+            name="pdw_reset_test",
+            category="native_sim",
+            cmd=[
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_reset_test.py"
+            ],
+        )
+    )
     # PDW project: top-level testbench (top.py) -- exact golden model of the
     # WHOLE pipeline, pulse_gen -> detect_pulses -> pdw_measure -> pdw_engine,
     # across eight pulse settings: released ones, two that Path A never
