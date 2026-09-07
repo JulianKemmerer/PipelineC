@@ -2,8 +2,7 @@ digraph PypelineC {
   // PypelineC tool flow overview.
   //
   // Render with graphviz after editing:
-  //   dot -Tpng docs/flow.dot > docs/images/flow.png
-  //   dot -Tsvg docs/flow.dot > docs/images/flow.svg
+  //   ./flow.sh        (writes flow.png and flow.svg alongside this file)
   //
   // Style follows CIRCT's docs/dialects.dot:
   //   white ellipse  = design representation inside the tool
@@ -135,6 +134,7 @@ digraph PypelineC {
   }
 
   // ============================= Outputs =============================
+  SynReport  [label="Synthesis + P&amp;R report\nfmax / slack timing and area" shape=note fillcolor="#a6cee3"]
   Bitstream  [label="Bitstream" shape=note fillcolor="#a6cee3"]
   YosysJSON  [label="Yosys netlist\n--yosys_json" shape=note fillcolor="#a6cee3"]
   XOFile     [label="Vitis IP\n.xo AXIS, --xo_axis" shape=note fillcolor="#a6cee3"]
@@ -176,8 +176,9 @@ digraph PypelineC {
   VHDLFiles -> XOFile [style=dashed]
 
   // ...and the timing they report is what closes the autopipelining loop
-  Vivado -> Autopipeline [ltail=cluster_syn constraint=false color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
-                          label="  measured fmax / slack -> re-cut and try again\l"]
+  Vivado -> SynReport [ltail=cluster_syn color="#1f5fbf" penwidth=2]
+  SynReport -> Autopipeline [constraint=false color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
+                             label="  measured timing and area -> re-cut and try again\l"]
 
   // GHDL/Yosys chain and the netlists it produces
   GHDL -> Yosys
@@ -213,27 +214,29 @@ digraph PypelineC {
   SimDebug -> SimOut
   Cocotb -> SimDebug
 
-  // ==================== Layout only (invisible) ====================
-  // Park the legend in the empty space to the left of the top rows:
-  // share their ranks, then use flat invisible edges to order it first.
+  // ============================ Layout hints ============================
+  // The only hand-tuned part of this file; everything above is content and
+  // dot places it on its own. These few lines say:
+  //   1. the legend shares the three top ranks and orders left of them,
+  //   2. rows that are really one stage stay together on one rank,
+  //   3. vendor tools sit below the yosys-fed ones, simulators below both,
+  //   4. the native simulator sits up beside the source it reads (it needs no
+  //      build), which fills the top right and shortens its long input edge.
+  // If an edit makes the picture worse, delete a hint rather than add one.
   { rank=same; CSrc PySrc leg_stage leg_tool leg_ext }
-  { rank=same; C_TO_LOGIC PY_TO_LOGIC leg_in leg_out leg_mid }
+  { rank=same; C_TO_LOGIC PY_TO_LOGIC leg_in leg_out leg_mid NativeSim }
   { rank=same; LogicGraph leg_def_src leg_def_dst leg_opt_src leg_opt_dst leg_it_src leg_it_dst }
   leg_ext -> CSrc [style=invis]
   CSrc -> PySrc [style=invis]
   leg_mid -> C_TO_LOGIC [style=invis]
   C_TO_LOGIC -> PY_TO_LOGIC [style=invis]
+  PY_TO_LOGIC -> NativeSim [style=invis]
   leg_it_dst -> LogicGraph [style=invis]
-  leg_it_dst -> GHDL [style=invis weight=20]
-  { rank=same; Autopipeline AUTOFSM DelayCache }
+  leg_def_dst -> XOFile [style=invis]
   { rank=same; NetlistJson BlifFile LibertyJson GateMateV VerilogFile CxxrtlCpp }
   { rank=same; NextPnr PnR PyRTLModel Sky130STA }
   { rank=same; Vivado Quartus Diamond Efinity Gowin }
-  { rank=same; Cocotb Modelsim EDAPlay Verilator Clangpp NativeSim }
-  { rank=same; SimOut VCD SimBinary SimDebug }
-  NetlistJson -> NextPnr [style=invis weight=50]
+  { rank=same; Cocotb Modelsim EDAPlay Verilator Clangpp }
   NextPnr -> Vivado [style=invis weight=50]
-  PnR -> Quartus [style=invis weight=50]
-  Sky130STA -> Gowin [style=invis weight=50]
   Vivado -> Cocotb [style=invis weight=50]
 }
