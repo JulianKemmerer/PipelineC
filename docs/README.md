@@ -95,18 +95,19 @@ export PATH=$PATH:$(pwd)/src
 
 For installing/configuring simulation, synthesis, and bitstream generation tools see the wiki's [Set up your tools](https://github.com/JulianKemmerer/PipelineC/wiki/Running-the-Tool) page.
 
-For a more complete, officially-packaged install, the repo also ships a Nix package
-(`default.nix`/`nix/package.nix`) that installs a self-contained PyRTL + GHDL + Yosys (+
-the Yosys GHDL plugin) toolchain in one step — the same free/open PyRTL+GHDL+Yosys-based
-flow tools like [Latchup.app](https://latchup.app) are built around:
+Vendor toolchains (Vivado/Quartus/Diamond/etc.) still need their own proprietary installs
+regardless of which path you take.
+
+### Nix
+
+For a more officially-packaged install currently limited to open source tools, the repo provides a Nix package
+(`default.nix`/`nix/package.nix`). It installs a self-contained PyRTL + GHDL + Yosys toolchain in one step, the same flow tools like [Latchup.app](https://latchup.app) are built around:
 ```
 nix-build default.nix
 export PATH=$PATH:$(pwd)/result/bin
 pypelinec examples/pypeline/blink.py --comb   # runs the real PyRTL+GHDL+Yosys flow
+# can specify --syn_tool sky130 (or source code PART('sky130')) to use an alternative ASIC timing model instead
 ```
-
-Vendor toolchains (Vivado/Quartus/Diamond/etc.) still need their own proprietary installs
-regardless of which path you take.
 
 ## Next Steps
 
