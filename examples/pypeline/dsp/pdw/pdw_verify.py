@@ -1,0 +1,432 @@
+"""Independent software check of a PDW record against its own pulse samples.
+
+The design emits, for every accepted pulse, a 40-byte `valid_pdw_t` record on
+one AXIS port and the pulse's own I/Q samples on another. Once both are in
+software they can be checked against each other -- and this module is that
+check.
+
+WHY FFT, AND WHY THAT MATTERS. The hardware measures frequency by accumulating
+a phasor across the pulse and taking ONE CORDIC atan2 per endpoint (see
+`pdw_measure/pdw_measure.py`). This module measures it with a windowed FFT and
+parabolic peak interpolation. That difference is the entire point: two
+independent algorithms agreeing is evidence the hardware is right, whereas a
+Python re-implementation of the phasor method would only re-check the
+arithmetic and would happily agree with a conceptually wrong hardware design.
+gr-pdw likewise does its analysis on captured pulse I/Q (its `pulse_extract`
+block) rather than trusting a detector's own numbers.
+
+THREE-WAY, NOT TWO-WAY. Because the stimulus comes from the design's internal
+pulse generator, commanded by the host, there is a third reference:
+
+    commanded  (the pdw_ctrl_t written)   -- ground truth
+    software   (numpy/FFT over the samples read back)
+    hardware   (the valid_pdw_t record)
+
+commanded<->software proves the samples really are the pulse that was ordered;
+software<->hardware proves the measurement matches those samples. A fault in
+either leg is localised rather than just "something is wrong".
+
+WHAT IS AND IS NOT CHECKABLE -- stated plainly, because a check that quietly
+proves nothing is worse than no check at all:
+
+  * `freq_start` / `freq_stop`  fully independent and absolute. The best check
+    here, and unaffected by any fixed-point scaling question below.
+  * `pkt_samples`, `pulse_width`, `pri`, `toa`  exact integers, exactly checked.
+  * `peak_power_db` vs `peak_power`  exact to the log block's own documented
+    0.046 dB worst-case error. Needs no knowledge of the samples at all, so it
+    isolates the log converter.
+  * `peak_power` vs the samples  APPROXIMATE, AND DUTY-CYCLE DEPENDENT. Path A
+    is magnitude -> dc_block -> moving_avg, so the reported peak is a
+    DC-blocked, 4-sample-smoothed envelope, not `max(I^2+Q^2)`. The DC blocker
+    subtracts a running mean, so the higher the duty cycle the more of the
+    pulse's own power that mean contains and the more it is subtracted back
+    out. This is not a small correction: measured across ../pdw_tb.py's phases,
+    which run at duty cycles up to ~50%, the ratio lands anywhere from 0.035 to
+    0.64. At a realistic radar duty cycle it is close to 1 -- the host script's
+    default is 500 samples every 31.25M, i.e. 0.0016% -- but the check is a
+    wide-tolerance ratio and the measured value is always reported, because
+    there is no single right answer for it. pdw_tb.py runs this row
+    informationally rather than asserting on it, for exactly this reason.
+  * `noise_power_db`  NOT CHECKABLE from a packet. The noise floor is estimated
+    between pulses and the packet contains only the pulse. Bounded via SNR > 0
+    and nothing more.
+
+The constants below mirror the hardware and are pinned by
+`pdw_verify_test.py`, which reads them out of the real design -- so a change to
+`power_t` or the log format fails a test rather than silently biasing results.
+"""
+
+import math
+
+# `power_t` is a 46-bit fixed_t with 12 fraction bits (int_bits 34), so the
+# integer in `valid_pdw_t.peak_power` represents `raw / 2**12` in units of
+# I^2+Q^2. 12 = dc_block's k-shift contribution (10) + log2(moving_avg n = 4).
+POWER_FRAC_BITS = 12
+
+# Q8.8 dB: one LSB = 1/256 dB. Both dB fields use it.
+DB_Q8_8 = 256.0
+
+# freq_start/freq_stop are turns x 2^16 in an int16, so the full int16 range is
+# exactly one circle and the field resolves the whole +-fs/2.
+TURNS_16 = 65536.0
+
+# The hardware's frequency window, mirroring `make_freq_accum`'s `block_k`:
+# `first_*` accumulates phasor products over the first FREQ_BLOCK_K pairs of the
+# pulse, and `last_*` is a ping-pong block holding the most recent
+# FREQ_BLOCK_K..2*FREQ_BLOCK_K.
+#
+# MATCHING THIS WINDOW IS WHAT MAKES THE COMPARISON FAIR, and it matters only
+# for a modulated pulse: on an unmodulated one every window gives the same
+# answer, but on a chirp the frequency is genuinely different at different
+# points, so an FFT taken over a different span would disagree with the
+# hardware for a completely legitimate reason and the check would be measuring
+# window choice rather than correctness. Measured over this design's own chirp
+# with matched windows, the two methods agree to under 30 counts of turns x
+# 2^16 -- against a tolerance below of half an FFT bin, i.e. 1024 counts.
+#
+# Matching the window costs precision on long unmodulated pulses (32 samples is
+# a coarse bin) and that is the right trade: the estimate is exact there anyway,
+# because a clean tone lands dead on a bin centre after interpolation.
+FREQ_BLOCK_K = 32
+FREQ_STOP_BLOCKS = 2  # the `last` window spans up to 2*FREQ_BLOCK_K
+
+# log2_db.py's own measured worst-case end-to-end error, over 300k random
+# inputs against 10*log10. The dB consistency check allows this plus Q8.8
+# quantisation.
+LOG2_DB_MAX_ERR_DB = 0.046
+
+# status_flags bits, mirroring pdw_engine.py (and gr_pdw_record.py).
+STATUS_PRI_INVALID = 1 << 4
+
+
+def _as_complex(samples):
+    """Accept CS16 interleaved int16, or an already-complex array."""
+    import numpy as np
+
+    a = np.asarray(samples)
+    if np.iscomplexobj(a):
+        return a.astype(np.complex128)
+    a = a.astype(np.float64).ravel()
+    if a.size % 2:
+        raise ValueError(f"interleaved I/Q needs an even length, got {a.size}")
+    return a[0::2] + 1j * a[1::2]
+
+
+def _tone_turns(x):
+    """Dominant tone of `x`, in turns/sample on [-0.5, 0.5).
+
+    Hann-windowed FFT, peak bin, then parabolic interpolation on the log
+    magnitudes for sub-bin accuracy -- the standard way to beat the 1/N bin
+    grid, and what makes the tolerance below a fraction of a bin rather than a
+    whole one.
+    """
+    import numpy as np
+
+    n = len(x)
+    if n < 4:
+        raise ValueError(f"need at least 4 samples to estimate a tone, got {n}")
+    mag = np.abs(np.fft.fft(x * np.hanning(n)))
+    k = int(np.argmax(mag))
+    tiny = 1e-300
+    a = math.log(mag[(k - 1) % n] + tiny)
+    b = math.log(mag[k] + tiny)
+    c = math.log(mag[(k + 1) % n] + tiny)
+    denom = a - 2.0 * b + c
+    # denom == 0 means a perfectly flat top (or an all-zero block): fall back
+    # to the raw bin rather than dividing by zero.
+    delta = 0.5 * (a - c) / denom if denom != 0.0 else 0.0
+    f = (k + delta) / n
+    return f - 1.0 if f >= 0.5 else f
+
+
+def _bin_turns(n):
+    """FFT bin spacing in turns/sample, i.e. the raw resolution of a block."""
+    return 1.0 / n
+
+
+def measure(samples, fs, block=None, guard=2):
+    """Independent measurements of one pulse's samples.
+
+    `block` is how many samples feed the start frequency estimate, and
+    FREQ_STOP_BLOCKS x that many feed the stop estimate. It defaults to
+    FREQ_BLOCK_K so both windows match the hardware's own -- see that constant.
+    `guard` drops a few samples at each edge, where the envelope is still
+    rising or falling and the tone is not yet clean.
+
+    Returns a dict in engineering units; `*_turns` fields are turns/sample so a
+    caller can compare against the record's raw fields without a round trip
+    through Hz.
+    """
+    import numpy as np
+
+    x = _as_complex(samples)
+    n = len(x)
+    inst = np.abs(x) ** 2
+
+    core = x[guard : n - guard] if n > 2 * guard + 8 else x
+    # Windows matched to the hardware's freq_accum -- see FREQ_BLOCK_K.
+    nb = block if block is not None else FREQ_BLOCK_K
+    nb = max(4, min(nb, len(core)))
+    nb_stop = max(4, min(FREQ_STOP_BLOCKS * nb, len(core)))
+
+    f_start = _tone_turns(core[:nb])
+    f_stop = _tone_turns(core[-nb_stop:])
+    f_ctr = _tone_turns(core)
+
+    return {
+        "n_samples": n,
+        "peak_power": float(inst.max()) if n else 0.0,
+        "mean_power": float(inst.mean()) if n else 0.0,
+        "peak_amplitude": float(np.abs(x).max()) if n else 0.0,
+        "peak_i": float(np.abs(x.real).max()) if n else 0.0,
+        "peak_q": float(np.abs(x.imag).max()) if n else 0.0,
+        "freq_start_turns": f_start,
+        "freq_stop_turns": f_stop,
+        "freq_center_turns": f_ctr,
+        "freq_start_hz": f_start * fs,
+        "freq_stop_hz": f_stop * fs,
+        "freq_center_hz": f_ctr * fs,
+        "block": nb,
+        "block_stop": nb_stop,
+        "bin_turns": _bin_turns(nb),
+        "bin_turns_stop": _bin_turns(nb_stop),
+    }
+
+
+def _row(name, ok, hw, sw, tol, note=""):
+    return {
+        "name": name,
+        "ok": bool(ok),
+        "hw": hw,
+        "sw": sw,
+        "tol": tol,
+        "note": note,
+    }
+
+
+def check(
+    rec,
+    samples,
+    fs,
+    cfg=None,
+    prev_toa=None,
+    # Half an FFT bin. Measured agreement between the two methods on this
+    # design's own chirp is under 30 counts against the ~1024 this allows, so
+    # there is ~35x of headroom for hardware noise and quantisation while still
+    # catching an error of a few hundred counts.
+    freq_tol_bins=0.5,
+    power_ratio_tol=0.35,
+    amplitude_tol=0.10,
+):
+    """Check one record against its samples. Returns a list of check rows.
+
+    `rec` is a dict from `gr_pdw_record.unpack_records`, `samples` the packet
+    read for that record, `cfg` the `pdw_ctrl_record` config that produced it
+    (optional -- enables the commanded<->software/hardware comparisons), and
+    `prev_toa` the previous record's `toa` (enables the PRI check).
+
+    Every row carries the hardware value, the software value and the tolerance
+    actually applied, so a failure reports numbers rather than just False.
+    """
+    m = measure(samples, fs)
+    rows = []
+
+    # ---- exact integer checks ------------------------------------------
+    rows.append(
+        _row(
+            "pkt_samples == samples read",
+            rec["pkt_samples"] == m["n_samples"],
+            rec["pkt_samples"],
+            m["n_samples"],
+            0,
+        )
+    )
+    # The gate window is the whole packet today (no N_pre/N_post margin is
+    # captured yet), so these must be equal. If margin capture lands, this
+    # becomes pkt_samples == pulse_width + margins and must be revisited.
+    rows.append(
+        _row(
+            "pulse_width == pkt_samples",
+            rec["pulse_width"] == rec["pkt_samples"],
+            rec["pulse_width"],
+            rec["pkt_samples"],
+            0,
+            "gate window is the whole packet",
+        )
+    )
+
+    # ---- frequency: the independent check ------------------------------
+    # Tolerance is derived from each window's own FFT resolution rather than
+    # picked: a fraction of a bin, scaled into the record's turns x 2^16 units.
+    # The two windows differ in length (see FREQ_BLOCK_K), so they get
+    # different tolerances rather than a shared worst case.
+    for field, sw_turns, bin_t in (
+        ("freq_start", m["freq_start_turns"], m["bin_turns"]),
+        ("freq_stop", m["freq_stop_turns"], m["bin_turns_stop"]),
+    ):
+        tol_counts = freq_tol_bins * bin_t * TURNS_16
+        hw_counts = rec[field]
+        sw_counts = sw_turns * TURNS_16
+        rows.append(
+            _row(
+                f"{field} (FFT vs CORDIC)",
+                abs(hw_counts - sw_counts) <= tol_counts,
+                hw_counts,
+                round(sw_counts, 1),
+                round(tol_counts, 1),
+                f"{hw_counts / TURNS_16 * fs / 1e6:+.4f} MHz hw, "
+                f"{sw_turns * fs / 1e6:+.4f} MHz sw, "
+                f"d={abs(hw_counts - sw_counts):.1f}",
+            )
+        )
+
+    # ---- dB vs linear: isolates the log converter, needs no samples ----
+    if rec["peak_power"] > 0:
+        expect_db = 10.0 * math.log10(rec["peak_power"] / (1 << POWER_FRAC_BITS))
+        got_db = rec["peak_power_db"] / DB_Q8_8
+        tol_db = LOG2_DB_MAX_ERR_DB + 1.0 / DB_Q8_8
+        rows.append(
+            _row(
+                "peak_power_db vs peak_power",
+                abs(got_db - expect_db) <= tol_db,
+                round(got_db, 4),
+                round(expect_db, 4),
+                round(tol_db, 4),
+                "log2_db self-consistency",
+            )
+        )
+
+    # ---- power vs the samples: APPROXIMATE, see the module docstring ----
+    sw_scaled = m["peak_power"] * (1 << POWER_FRAC_BITS)
+    if sw_scaled > 0:
+        ratio = rec["peak_power"] / sw_scaled
+        rows.append(
+            _row(
+                "peak_power vs max|x|^2",
+                abs(ratio - 1.0) <= power_ratio_tol,
+                rec["peak_power"],
+                round(sw_scaled, 1),
+                power_ratio_tol,
+                f"ratio {ratio:.4f}; approximate -- DC-blocked and smoothed",
+            )
+        )
+
+    # ---- noise: only a bound is honest ---------------------------------
+    snr_db = (rec["peak_power_db"] - rec["noise_power_db"]) / DB_Q8_8
+    rows.append(
+        _row(
+            "SNR > 0",
+            snr_db > 0.0,
+            round(snr_db, 3),
+            None,
+            0.0,
+            "noise floor is measured between pulses; not checkable from a packet",
+        )
+    )
+
+    # ---- commanded <-> software ----------------------------------------
+    if cfg is not None:
+        want_turns = cfg["pulse_gen_freq"] / float(1 << 32)
+        tol_c = freq_tol_bins * m["bin_turns"]
+        rows.append(
+            _row(
+                "commanded carrier vs FFT",
+                abs(m["freq_center_turns"] - want_turns) <= tol_c,
+                round(want_turns, 6),
+                round(m["freq_center_turns"], 6),
+                round(tol_c, 6),
+                "proves the samples are the pulse that was ordered",
+            )
+        )
+        amp = cfg["pulse_gen_amplitude"]
+        if amp:
+            rel = abs(m["peak_amplitude"] - amp) / amp
+            rows.append(
+                _row(
+                    "commanded amplitude vs samples",
+                    rel <= amplitude_tol,
+                    amp,
+                    round(m["peak_amplitude"], 1),
+                    amplitude_tol,
+                    f"rel err {rel:.4f}",
+                )
+            )
+        rows.append(
+            _row(
+                "pulse_width vs commanded",
+                abs(rec["pulse_width"] - cfg["pulse_gen_width"])
+                <= max(4, cfg["pulse_gen_width"] // 50),
+                rec["pulse_width"],
+                cfg["pulse_gen_width"],
+                max(4, cfg["pulse_gen_width"] // 50),
+                "threshold crossing, so a few samples of slop",
+            )
+        )
+
+    # ---- PRI ------------------------------------------------------------
+    if prev_toa is not None:
+        delta = rec["toa"] - prev_toa
+        rows.append(_row("toa strictly increasing", delta > 0, rec["toa"], prev_toa, 0))
+        if not (rec["status_flags"] & STATUS_PRI_INVALID):
+            rows.append(
+                _row("pri == toa delta", rec["pri"] == delta, rec["pri"], delta, 0)
+            )
+        if cfg is not None:
+            rows.append(
+                _row(
+                    "pri vs commanded",
+                    abs(delta - cfg["pulse_gen_pri"]) <= 2,
+                    delta,
+                    cfg["pulse_gen_pri"],
+                    2,
+                )
+            )
+
+    return rows
+
+
+def format_rows(rows, indent="    "):
+    """Check rows -> printable lines, failures marked."""
+    out = []
+    for r in rows:
+        mark = "ok  " if r["ok"] else "FAIL"
+        line = f"{indent}[{mark}] {r['name']}: hw={r['hw']} sw={r['sw']}"
+        if r["tol"]:
+            line += f" tol={r['tol']}"
+        if r["note"]:
+            line += f"  ({r['note']})"
+        out.append(line)
+    return out
+
+
+def all_ok(rows):
+    return all(r["ok"] for r in rows)
+
+
+if __name__ == "__main__":
+    import numpy as np
+
+    # A synthetic pulse: 500 samples of a +fs/8 tone at amplitude 12000.
+    FS, N, AMP, FRAC = 125e6, 500, 12000, 0.125
+    t = np.arange(N)
+    x = AMP * np.exp(2j * np.pi * FRAC * t)
+    iq = np.empty(2 * N, np.int16)
+    iq[0::2] = np.round(x.real)
+    iq[1::2] = np.round(x.imag)
+
+    m = measure(iq, FS)
+    print(f"synthetic pulse: {m['n_samples']} samples, block {m['block']}")
+    print(f"  peak |x|      {m['peak_amplitude']:.1f}  (commanded {AMP})")
+    print(
+        f"  freq centre   {m['freq_center_hz'] / 1e6:+.4f} MHz "
+        f"(commanded {FRAC * FS / 1e6:+.4f})"
+    )
+    print(f"  freq start    {m['freq_start_hz'] / 1e6:+.4f} MHz")
+    print(f"  freq stop     {m['freq_stop_hz'] / 1e6:+.4f} MHz")
+    err = abs(m["freq_center_turns"] - FRAC) * TURNS_16
+    print(
+        f"  centre error  {err:.2f} counts of turns x 2^16 "
+        f"({err / TURNS_16 * FS:.1f} Hz)"
+    )
+    assert err < 5.0, f"FFT estimator is off by {err} counts"
+    print("estimator self-test OK")

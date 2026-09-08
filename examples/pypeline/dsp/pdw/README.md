@@ -348,6 +348,147 @@ decoded and discarded; the deserializer is flushed at the same time, so a host
 torn down mid-frame cannot leave a byte prefix that joins up with the next
 frame into a struct that is wrong but perfectly well formed.
 
+# Host software (AirStack / SoapySDR)
+
+`airt_pdw_test.py` brings the design up on a Deepwave AIR-T and verifies its
+output. It is **not** part of `run_all.py` — it needs SoapySDR and hardware —
+but everything it depends on is covered in-repo without a radio (see
+**Testbenches**).
+
+**Three files copy to the radio**, with no Pypeline checkout: `pdw_ctrl_record.py`
+(builds control frames), `gr_pdw_record.py` (parses records, and gr-pdw's
+columns) and `pdw_verify.py` (checks a record against its samples). Each carries
+its layout in pure `struct`; `pdw_host_types_test.py` guards those copies
+against drift.
+
+## Channel map (2-channel bitstream mode)
+
+Deepwave names its ports from **its** side, so every `m`/`s` letter is mirrored
+relative to this design's names. They pair correctly — only the letter flips —
+and assuming a match silently swaps a whole channel.
+
+| SoapySDR call | Deepwave port | This design | Carries |
+|---|---|---|---|
+| `writeStream(TX,0)` | `dwd_tx0_m_axis` | `tx0_s_axis` | `pdw_ctrl_t`, 10 beats, END_BURST |
+| — (to radio) | `dwd_tx0_s_axis` | `tx0_m_axis` | generator stimulus |
+| `readStream(RX,0)` | `dwd_rx0_s_axis` | `rx0_m_axis` | pulse packets, variable length |
+| — (from radio) | `dwd_rx0_m_axis` | `rx0_s_axis` | ADC samples |
+| `readStream(RX,1)` | `dwd_rx1_s_axis` | `rx1_m_axis` | `valid_pdw_t`, 40 bytes |
+| `writeStream(TX,1)` priming | `dwd_tx1_m_axis` | *(unconnected)* | dummy, discarded |
+| — (to radio) | `dwd_tx1_s_axis` | `tx1_m_axis` | packet replay |
+
+**Wrapper tie-offs, all three required.** There is no RX2 in 2-channel mode, so
+tie `rx2_m_axis_rst` **LOW** and `rx2_m_axis_tready` **HIGH**; `global_rst` is
+the OR of every channel reset, so an asserted or floating one holds the whole
+design in reset forever and the host simply sees no pulses. Tie
+`dwd_tx1_m_axis_tready` **HIGH** as well: this design has no `tx1_s_axis` port
+to consume software's writes to that channel, so without it the priming write
+below blocks on the very port it is meant to unblock.
+
+## CS16 is the design's own packing
+
+Deepwave specifies `I = tdata[15:0]; Q = tdata[31:16]` — identical to this
+project's convention. A CS16 buffer is interleaved little-endian `int16`, so
+four bytes of an `np.int16` buffer **are** one 32-bit AXIS beat. Conversion is
+`np.frombuffer(raw, '<i2')` and `.tobytes()`: a reinterpret, never a conversion,
+with no byte swapping anywhere. A 40-byte record or control frame is exactly ten
+CS16 elements.
+
+## Thresholds are scaled, and amplitude is capped
+
+The easiest thing for a host program to get wrong. `threshold_high`/`threshold_low`
+are compared against `power_t`, which carries **12 fractional bits**, so the
+integer on the wire is `power × 4096` — see the threshold-scaling note in
+section 2. `pdw_ctrl_record.POWER_SCALE` holds that factor and
+`pdw_host_types_test.py` pins it against `power_t.frac_bits`.
+
+It fails silently in both directions: 4096× too small is crossed by the noise
+floor and the detector declares one endless pulse; 4096× too large is never
+crossed and the device looks dead. Both present as "the hardware is broken".
+
+The same scaling caps amplitude near **1024** (`MAX_AMPLITUDE`), since
+`threshold_high` and the record's `peak_power` are both `uint32_t` holding
+`power × 4096`. `build_config` refuses anything larger rather than letting it
+wrap, and `--dry-run` prints thresholds in both raw and power units so the
+factor is visible before a frame is ever sent.
+
+## Bring-up order
+
+The two reset domains exist for this sequence, and it is not optional:
+
+1. nothing activated — all resets asserted, buffers draining
+2. `activateStream(TX,0)` **alone** — control block live, datapath still held
+3. write one `pdw_ctrl_t` frame — config lands, datapath still held
+4. activate RX0, RX1, TX1 — datapath starts **already configured**
+
+Step 4 is the payoff, and it also gives the capture loop its RX0/RX1 lockstep
+for free: because `global_rst` is the OR, nothing is emitted until every stream
+is open, so both streams start empty whatever order they activate in.
+
+Hold reset at least `RST_MIN_HOLD_CYCLES` (16448, ≈132 µs at 125 MHz) before
+re-activating — the drain is only as fast as the data (see **Reset**).
+
+## Framing, without an end-of-burst on receive
+
+`writeStream` produces a `tlast` cycle via `SOAPY_SDR_END_BURST`, which is how
+the control frame gets framed. **`readStream` surfaces no such marker**, so the
+receive side is framed by counting: records are a fixed 40 bytes, and each
+record's `pkt_samples` gives the exact length of the packet that follows it.
+
+That works because `pkt_samples` is the **true on-wire length** — it is written
+from `n_pushed`, which counts only beats that actually entered the FIFO, so even
+a packet that lost beats to a full FIFO stays length-accurate and one damaged
+packet cannot desync the stream.
+
+## The TX1 replay leg can wedge the packet path
+
+`packet_store`'s FSM is `IDLE → WAIT_MEAS → EMIT_PDW → SEND_PKT`. `EMIT_PDW`
+waits on the PDW port's ready (RX1), but `SEND_PKT` waits on the broadcast
+interlock's `all_sinks_ready` — the AND of RX0's ready **and** the TX1 replay
+leg's. So a TX1 `tready` that never rises parks the FSM in `SEND_PKT` forever,
+with a distinctive signature:
+
+> **one PDW record on RX1, zero bytes on RX0, then silence.**
+
+Two mitigations, since neither is certain alone: the script writes a short dummy
+burst to TX1 after activating it (`--no-prime-tx1` to skip), and it detects that
+signature and reports it rather than hanging. The fallback is the
+`tx1_m_axis_tready` tie-off above.
+
+## Verifying the records against their own samples
+
+`pdw_verify.py` checks each record against the packet it describes, using an
+**FFT** — where the hardware uses phasor accumulation plus a CORDIC atan2. That
+difference is the point: two independent algorithms agreeing is evidence, while
+a Python re-implementation of the phasor method would only re-check the
+arithmetic and would agree with a conceptually wrong design. It takes its FFT
+over the same window `freq_accum` accumulates over (`block_k` = 32), which
+matters only for a modulated pulse but matters a lot there.
+
+Because the generator is internal and the host commanded it, the comparison is
+three-way — **commanded** (the `pdw_ctrl_t` written) ↔ **software** (numpy over
+the samples read back) ↔ **hardware** (the record). The first leg proves the
+samples are the pulse that was ordered; the second proves the measurement
+matches those samples.
+
+What is honestly checkable is narrower than the record, and the module says so:
+
+| Field | Check |
+|---|---|
+| `freq_start`, `freq_stop` | independent and absolute — the strongest here |
+| `pkt_samples`, `pulse_width`, `pri`, `toa` | exact integers |
+| `peak_power_db` | exact against `peak_power`, to the log block's own 0.046 dB |
+| `peak_power` | **approximate, and duty-cycle dependent** — Path A is `magnitude → dc_block → moving_avg`, so the reported peak is a DC-blocked, smoothed envelope, not `max(I²+Q²)`. The DC blocker subtracts a running mean, so the higher the duty cycle the more of the pulse's own power gets subtracted back out: measured across `pdw_tb.py`'s phases (duty cycles up to ~50%) the ratio ranges **0.035–0.64**. Near 1 at a realistic duty cycle. A wide-tolerance ratio check whose measured value is always reported |
+| `noise_power_db` | **not checkable** from a packet — the floor is estimated between pulses. Bounded by SNR > 0 only |
+
+`--csv` writes gr-pdw's own nine columns via `gr_pdw_record.write_csv`, readable
+by its `pdw.py` tooling unmodified; `--ref-level-db` matches what gr-pdw's
+`usrp_power_cal_table` block adds.
+
+**RF note.** With loopback enabled the detector is fed internally, but TX0 still
+carries the generator's samples to the radio. Bench work wants a cable and
+terminator, not an antenna.
+
 # Parameters
 
 ## 1. Base Clock & Data Path
@@ -708,7 +849,9 @@ it needs an I/Q DC blocker ahead of the conjugate product, which is not built.
 | `src/tests/pypeline_tests/inst/log2_db_test.py` | `dsp/log2_db.py` alone — accuracy vs `10·log10`, decade/octave steps, the fractional-bits subtraction, non-positive input, monotonicity, and two instances with different binary points | `sim_call` vs a bit-exact model |
 | `pdw_ctrl/pdw_ctrl_test.py` | The control register file alone — reset defaults, apply latency (measured, then checked against the advertised attribute), ready never dropping, back-to-back writes, and the two malformed cases: a padded frame whose excess must be dropped and a runt that must leave the registers untouched, neither desyncing the frame after it; plus reset — writes refused while held, normal service after release, and an abandoned frame flushed rather than joined to the next | `sim_call`, `type_to_bytes` + `AxisSimSource` |
 | `pdw_reset_test.py` | Reset semantics for the composed datapath — a reset landing **mid-pulse**: nothing emitted for the interrupted pulse, its buffered samples drained rather than prepended to the next packet, TOA and PRI restarting, and the release artifact bounded below `min_width`. Both the drain term and the `gate_armed` clear have negative controls | `sim_call` on `detect_pulses` + `pdw_engine` wired as `top.py` wires them |
-| `pdw_tb.py` | The whole `top.py` — pulse generator through the composed DSP chain (`make_detect_pulses`: magnitude → dc_block → moving_avg → hysteresis FSM), the Path B delay line, the loopback mux, the PDW engine, and all seven AXIS ports: control written as real frames, both record streams decoded, the released-packet broadcast compared leg against leg, and the staged two-domain reset bring-up | `@sim_input`/`@sim_output`, exact Python golden model |
+| `pdw_host_types_test.py` | The host-side copies of both wire formats (`pdw_ctrl_record.py`, `gr_pdw_record.py`) and `pdw_verify.py`'s pinned constants, against the real `pdw_ctrl_t`/`valid_pdw_t`/`power_t`/`block_k`. Test vectors set every unsigned field's top bit and make every signed field negative, so a wrong width or signedness changes the bytes — an earlier version's plausible-looking values let a deliberate `uint64→int64` corruption pass unnoticed | pure Python vs `type_to_bytes` |
+| `pdw_verify_test.py` | That `pdw_verify.py` actually catches a wrong record. Mostly negative controls: corrupt one field, assert the check for **that** field fails and the others do not — a dB-only error must not fail the linear check, and a corrupted `freq_start` must not fail `freq_stop` | numpy, synthetic pulses (tone, chirp, negative carrier) |
+| `pdw_tb.py` | The whole `top.py` — pulse generator through the composed DSP chain (`make_detect_pulses`: magnitude → dc_block → moving_avg → hysteresis FSM), the Path B delay line, the loopback mux, the PDW engine, and all seven AXIS ports: control written as real frames, both record streams decoded, the released-packet broadcast compared leg against leg, the staged two-domain reset bring-up, and `pdw_verify.py` run over every (record, packet) pair | `@sim_input`/`@sim_output`, exact Python golden model |
 
 `pdw_engine_tb.py` exists alongside `pdw_tb.py` rather than being folded into
 it because it reaches cases the real detector cannot produce on demand — most
@@ -740,6 +883,18 @@ qualification. Records are decoded with `type_from_bytes`, and each PDW frame
 is *additionally* pushed through `gr_pdw_record.unpack_records()` and compared
 field by field, so the host-side decoder is tested against real hardware bytes
 rather than only against a synthetic record.
+
+At the end of the run it also feeds every (record, packet) pair to
+`pdw_verify.py` — the same code that will judge records on the radio, here meeting
+real hardware output for the only time it can without a radio. That adds
+something the golden model cannot: the model reproduces the hardware's *own*
+phasor/CORDIC arithmetic, so it would agree with a conceptually wrong frequency
+estimator, whereas `pdw_verify` takes an FFT of the released samples and so
+disagrees if the measurement is wrong rather than merely self-consistent. Only
+the unambiguous rows are asserted; the `peak_power` ratio is printed, because
+Path A's DC blocker and moving average make it approximate by construction and
+these phases run down to amplitude 400 with noise enabled, where that
+approximation is weakest.
 
 Checking follows the wireguard-fpga testbenches' `AxisSimSource`/`AxisSimSink`/
 `Scoreboard` pattern (`include/pypeline/axi/axis_sim.py`): one sink and one

@@ -1127,6 +1127,42 @@ def _words(frame):
     return _pystruct.unpack(f"<{len(frame) // 4}I", frame)
 
 
+# --- the host-side verifier, checked here against real hardware output ------
+#
+# pdw_verify.py is what will judge records on the radio, where there is no
+# golden model to compare against -- so it had better be right. Its own test
+# feeds it synthetic pulses; this feeds it the bytes THIS DESIGN actually
+# emitted, which is the only place that can happen without hardware.
+#
+# It adds something the golden model does not, rather than duplicating it. The
+# model reproduces the hardware's own phasor/CORDIC arithmetic exactly, so it
+# would agree with a conceptually wrong frequency estimator; pdw_verify takes
+# an FFT of the released samples instead, which is a genuinely different
+# algorithm. Agreement between them is evidence the measurement is right, not
+# merely self-consistent.
+#
+# ASSERTED ON ONLY THE ROBUST CHECKS. The `peak_power vs max|x|^2` row is
+# approximate by construction -- Path A is magnitude -> dc_block -> moving_avg,
+# so the reported peak is a DC-blocked, smoothed envelope -- and these phases
+# run at amplitudes as low as 400 with noise enabled, where that approximation
+# is weakest. It is printed, not asserted. The frequency and exact-integer
+# rows are asserted.
+import pdw_verify  # noqa: E402
+
+_VERIFY_ASSERT = ("FFT vs CORDIC", "pkt_samples ==", "pulse_width ==",
+                  "peak_power_db vs", "toa strictly", "pri == toa delta")
+try:
+    import numpy as _np  # noqa: F401
+
+    _VERIFY_OK = True
+except ImportError:  # pragma: no cover - numpy is present in this repo's env
+    _VERIFY_OK = False
+# The tb has no physical sample rate; fs only scales pdw_verify's display
+# fields (every comparison it makes is in turns/sample), so top.py's clock
+# target is used to make the printed Hz meaningful.
+VERIFY_FS = 125e6
+
+
 # ---------------------------------------------------------------------------
 # 7. Drivers + checkers
 # ---------------------------------------------------------------------------
@@ -1149,6 +1185,12 @@ ST = {
     "pkt_starts": [],
     "in_pdw_frame": False,
     "in_pkt_frame": False,
+    # (record dict, packet bytes) pairs, fed to pdw_verify in check_done. Both
+    # streams carry exactly one entry per ACCEPTED pulse, in order, so the k-th
+    # record describes the k-th packet -- the same pairing the host script
+    # relies on, checked here against real output.
+    "verify_recs": [],
+    "verify_pkts": [],
 }
 
 # Backpressure patterns on all four master ports. Store-and-forward is the
@@ -1474,6 +1516,7 @@ def check_valid_pdw():
         f"f0={got[8] / 65536.0:+.5f} f1={got[9] / 65536.0:+.5f} turns/sample"
     )
     ST["n_vpdw_done"] += 1
+    ST["verify_recs"].append(host[0])
 
 
 @sim_output
@@ -1575,6 +1618,59 @@ def check_packet():
         raise AssertionError(f"pdw_tb: packet {idx} (phase {phase}) mismatch")
     sim_print(f"pdw_tb: packet {idx} (phase {phase}) OK: {len(got_pkt)} beats")
     ST["n_pkt_done"] += 1
+    ST["verify_pkts"].append(frame)
+
+
+def _verify_records_against_packets():
+    """Run the host-side verifier over every (record, packet) pair this run
+    produced -- the one place pdw_verify.py meets real hardware output.
+
+    Deliberately NOT a re-check of the golden model. The model already proves
+    every field bit-exactly, by reproducing the hardware's own phasor/CORDIC
+    arithmetic; what it cannot do is notice that arithmetic being conceptually
+    wrong, because it would make the same mistake. pdw_verify takes an FFT of
+    the released samples instead, so the two disagree if the frequency
+    measurement is wrong rather than merely inconsistent.
+    """
+    recs, pkts = ST["verify_recs"], ST["verify_pkts"]
+    if not _VERIFY_OK:
+        sim_print("pdw_tb: numpy not available -- skipping the pdw_verify cross-check")
+        return
+    assert len(recs) == len(pkts), (
+        f"pdw_tb: {len(recs)} records but {len(pkts)} packets -- the two "
+        f"streams are not 1:1, which the host script's framing relies on"
+    )
+    assert recs, "pdw_tb: no (record, packet) pairs were captured to verify"
+
+    prev_toa = None
+    n_checks = 0
+    for k, (rec, frame) in enumerate(zip(recs, pkts)):
+        # Packet bytes are 4 per sample, I in the low half -- byte-identical to
+        # the CS16 buffer a readStream would hand the host, so this is the same
+        # input pdw_verify sees on the radio.
+        samples = _np.frombuffer(frame, dtype="<i2")
+        rows = pdw_verify.check(rec, samples, VERIFY_FS, prev_toa=prev_toa)
+        for r in rows:
+            asserted = any(key in r["name"] for key in _VERIFY_ASSERT)
+            if asserted:
+                n_checks += 1
+                assert r["ok"], (
+                    f"pdw_tb: pdw_verify rejected record {k}: {r['name']} "
+                    f"hw={r['hw']} sw={r['sw']} tol={r['tol']} ({r['note']}) "
+                    f"-- the independent FFT check disagrees with the "
+                    f"hardware's own measurement"
+                )
+            elif not r["ok"]:
+                # Reported, not asserted: see _VERIFY_ASSERT's note above.
+                sim_print(
+                    f"pdw_tb: (informational) record {k} {r['name']}: "
+                    f"hw={r['hw']} sw={r['sw']} ({r['note']})"
+                )
+        prev_toa = rec["toa"]
+    sim_print(
+        f"pdw_tb: pdw_verify cross-checked {len(recs)} records against their "
+        f"own released samples ({n_checks} asserted checks, FFT vs CORDIC)"
+    )
 
 
 @sim_output
@@ -1641,6 +1737,7 @@ def check_done():
                 f"{ST['pkt_starts'][_k + 1]} -- a record has slipped out of its "
                 f"own pulse's slot"
             )
+        _verify_records_against_packets()
         sim_print(
             f"pdw_tb: {ST['n_pdw_done']} candidates detected, "
             f"{ST['n_vpdw_done']} released with packets, "
