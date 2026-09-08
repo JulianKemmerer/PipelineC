@@ -1,5 +1,7 @@
 # Exploring Pypeline Native Simulation with ChaCha20-Poly1305 Cryptography
 
+![wireguard pypeline diagram](https://raw.githubusercontent.com/chili-chips-ba/wireguard-fpga/refs/heads/main/3.build/pypeline_build/0.doc/wireguard-pypeline-sim-light.png)
+
 Hey folks this is Julian, author of [PypelineC](https://github.com/JulianKemmerer/PipelineC).
 
 **PypelineC = Pypeline + PipelineC.** PipelineC is the original C-like hardware
@@ -17,7 +19,7 @@ Questions? Comments? Reach out, see links from the [Pypeline getting started pag
 ## What Is This Design?
 
 <p align="center">
-  <img width="80%" src="https://raw.githubusercontent.com/chili-chips-ba/wireguard-fpga/refs/heads/main/0.doc/Wireguard/wireguard-fpga-muxed-Architecture-HW-SW-Partitioning.webp">
+  <img width="60%" src="https://raw.githubusercontent.com/chili-chips-ba/wireguard-fpga/refs/heads/main/0.doc/Wireguard/wireguard-fpga-muxed-Architecture-HW-SW-Partitioning.webp">
 </p>
 
 `wireguard-fpga` is an open-source, FPGA-based implementation of the
@@ -181,6 +183,8 @@ for the full menu of flags, and the port's own
 source layout.
 
 ### Cycle Accuracy
+
+![pypeline sim debug diagram](https://raw.githubusercontent.com/chili-chips-ba/wireguard-fpga/refs/heads/main/3.build/pypeline_build/0.doc/pypeline-sim-debug-diagram-light.png)
 
 The old PipelineC design had no way to inspect how many cycles any of the
 design's automatically pipelined functions actually elaborated to after synthesis iterations.
