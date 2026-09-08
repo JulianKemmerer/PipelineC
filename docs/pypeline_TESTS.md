@@ -107,6 +107,31 @@ A design registered in `native_vs_vhdl_sim_tests.py` must:
 See `docs/pypeline_sim_DESIGN.md`'s Limitations section for the full contract
 (including the two hard-error cases enforced by the elaborator/simulator directly).
 
+## Testing generated host code
+
+The standalone host module a build writes to `<out_dir>/host/` (see
+[Host-Side Generated Types](pypeline_guide.md#host-side-generated-types)) is tested in a
+way worth copying whenever "this artifact must work somewhere else" is the claim:
+
+- `inst/host_types_test.py` (`native_sim`) checks the GENERATOR. It runs the generated
+  text in a **subprocess whose `sys.path` cannot reach this repo** — and which asserts
+  `import pypeline` fails before doing anything else — then compares what that process
+  decodes and encodes against `pypeline.type_to_bytes`/`type_from_bytes`, over random
+  frames in both endians.
+- `inst/host_types_build_test.py` (`build_report`) checks the BUILD: it runs `pypelinec`
+  for real, lifts the file out of the output directory, and repeats that comparison on it.
+
+Two rules make those tests mean something, both learned by mutation-testing them:
+
+- Drive them with **raw random bytes, not bytes canonicalized through pypeline first**. A
+  canonicalized frame already has every ragged leaf (`uint3_t`) reduced to fit, so a
+  generator that masked such a leaf to a whole byte decodes it identically and the bug
+  walks straight through. Raw bytes force each leaf's mask to discard something.
+- Compare the DECODED value field by field, not just the re-encoded bytes. Round-tripping
+  inside the generated module alone passes for any self-consistent layout, including a
+  wrong one — which is the exact failure mode (a well-formed frame of the right length,
+  loading the wrong values) that generating the host's copy exists to prevent.
+
 ## Running
 
 ```

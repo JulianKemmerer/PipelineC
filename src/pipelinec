@@ -12,6 +12,7 @@ import PY_TO_LOGIC
 import OPEN_TOOLS
 import SIM
 import pypeline_sim
+import pypeline_host
 import utilities
 
 # import CLANG_TO_LOGIC
@@ -392,6 +393,27 @@ if src_file.endswith(".c"):
     parser_state = C_TO_LOGIC.PARSE_FILE(src_file)
 elif src_file.endswith(".py"):
     parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
+    # Every struct this design serializes to bytes registered itself while the
+    # design was imported (pypeline._host_register, called from
+    # make_type_to_bytes/make_type_from_bytes). Write the standalone Python
+    # module a host program copies to a machine with no Pypeline checkout.
+    # Nothing is written if the design puts no struct on a wire. C designs keep
+    # the older SW_LIB.py generated-header path instead.
+    # Non-fatal on purpose: the host module is an additional artifact, not part
+    # of the hardware, so a design that cannot express one (a struct field named
+    # like a generated attribute, say) must still finish its build and get its
+    # VHDL. The warning is what makes the omission visible.
+    try:
+        host_types_path = pypeline_host.write_host_types(
+            SYN.SYN_OUTPUT_DIRECTORY, src_file
+        )
+        if host_types_path is not None:
+            print("Host software types:", host_types_path, flush=True)
+    except Exception as host_types_err:
+        print(
+            f"WARNING: could not generate host software types: {host_types_err}",
+            flush=True,
+        )
 
 
 print(

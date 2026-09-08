@@ -267,6 +267,16 @@ def get_tests() -> list:
             requires=["yosys", "ghdl"],
         )
     )
+    # The generated host module: a real build must drop one in <out_dir>/host/
+    # whose bytes agree with pypeline's own type_to_bytes for the design's type.
+    tests.append(
+        Test(
+            name="host_types_build_test",
+            category="build_report",
+            cmd=[INST_DIR / "host_types_build_test.py"],
+            needs_out_dir=True,
+        )
+    )
     return tests
 
 

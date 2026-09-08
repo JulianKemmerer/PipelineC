@@ -102,7 +102,7 @@ uint1_t blink()
 | User visible automatic pipeline depths | [Yes](docs/pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm) | No |
 | Automatic resource sharing (pure func → shared-resource FSM) | [Yes](docs/pypeline_guide.md#autofsm-the-opposite-trade-off) | No |
 | SoC system bus helpers | No | Yes |
-| Generates software Helper Code | No | Yes |
+| Generates software Helper Code | [Yes](docs/pypeline_guide.md#host-side-generated-types) | Yes |
 | Derived FSM style code | No | Yes |
 | Documentation | Comprehensive, planned | Ad-hoc, organic |
 | Compiler tests | Many, Automated | Limited, Hand-run |

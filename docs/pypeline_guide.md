@@ -39,11 +39,12 @@ For getting started information see the [README](README.md).
 23. [AXI-Stream: `axis_t`](#axi-stream-axis_t)
 24. [Byte-Stream Serialization: `make_serializer` / `make_deserializer`](#byte-stream-serialization-make_serializer--make_deserializer)
 25. [Struct ↔ AXI-Stream: `make_axis_to_type` / `make_type_to_axis`](#struct--axi-stream-make_axis_to_type--make_type_to_axis)
-26. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
-27. [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer)
-28. [Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline)
-29. [Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp)
-30. [Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm)
+26. [Host-Side Generated Types](#host-side-generated-types)
+27. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
+28. [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer)
+29. [Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline)
+30. [Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp)
+31. [Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm)
 
 **Part IV — Escape hatches**
 
@@ -3463,6 +3464,92 @@ hardcoded `tkeep` all-ones on transmit and ignored it entirely on receive.
 [Byte-Stream Serialization](#byte-stream-serialization-make_serializer--make_deserializer) ·
 [Struct/type ↔ bytes conversion](#structtype--bytes-conversion) ·
 [the library-local guide](../include/pypeline/stream/pypeline_stream_guide.md)
+
+---
+
+## Host-Side Generated Types
+
+The sections above put a struct on a wire. Something on the other end has to parse it —
+usually a program on a host machine, written in plain Python, with no Pypeline checkout.
+[`type_to_bytes`](#software-side-conversion-type_to_bytes--tto_bytes) covers that only
+while Pypeline is importable, which on a target board it generally is not.
+
+So every `pypelinec` build of a `.py` design writes one standalone file:
+
+```
+<out_dir>/host/pypeline_host_types.py
+```
+
+Copy that file next to the host program. It imports nothing but the Python standard
+library, and gives the same API by the same names as in-repo:
+
+```python
+from pypeline_host_types import pdw_ctrl_t, valid_pdw_t
+
+frame = pdw_ctrl_t.to_bytes(pdw_ctrl_t.zero()._replace(threshold_high=4096))
+writeStream(tx, frame)                       # your own byte-array function
+
+rec = valid_pdw_t.from_bytes(readStream(rx, valid_pdw_t.BYTE_LENGTH))
+print(rec.toa, rec.peak_power_db)            # named fields, signed correctly
+print(rec._asdict())                         # namedtuple, so dict interop is free
+```
+
+`@struct` types become namedtuples (every field required, exactly as in Pypeline — use
+`zero()` and `_replace` for partial construction); `@enum` types become `IntEnum`s;
+`byte_length` / `type_to_bytes` / `type_from_bytes` exist at module level too and accept
+anything in the module's `TYPES` dict.
+
+### What gets exported
+
+Any type the hardware serializes registers itself, because
+`make_type_to_bytes` / `make_type_from_bytes` is the choke point that
+[`make_type_to_axis`](#struct--axi-stream-make_axis_to_type--make_type_to_axis),
+`make_axis_to_type`, `make_type_to_byte_stream` and `make_byte_stream_to_type` all go
+through. A design that already streams its structs needs no change at all.
+
+`host_export` covers the rest — types the design never streams, and the named constants a
+host would otherwise transcribe by hand:
+
+```python
+from pypeline import host_export
+
+host_export(some_t,                       # a type never put on a wire
+            CTRL_DEFAULTS=CTRL_DEFAULTS,  # a real @struct value
+            CTRL_FLAG_LOOPBACK_EN=1,      # a plain constant
+            RECORD_T=valid_pdw_t)         # a friendlier alias for a type
+```
+
+### Why it cannot drift
+
+Nothing in the generated file is re-derived. The leaf walk, the leaf sizing, the total
+size and the mask/sign rule are the same functions the hardware generator and
+`type_to_bytes` use — one walk, three consumers. Since `type_to_bytes` is itself asserted
+equal to simulated hardware, and the generated module is asserted equal to `type_to_bytes`
+(in a subprocess that cannot import Pypeline), the chain is: generated host module ≡
+in-repo software ≡ native-sim hardware ≡ VHDL hardware.
+
+Two details worth knowing. A flat struct of standard-width, non-enum scalars also gets a
+`struct`-module `FORMAT` string as a fast path for bulk parsing — derived from the same
+walk, never authored, and checked against `BYTE_LENGTH` when the module loads. And a type
+the design serialized both little- and big-endian defaults to little, saying so in the
+generated file's docstring; pass `endian=` explicitly in that case.
+
+### In practice
+
+`examples/pypeline/dsp/pdw` is the case this was built for. Its host files
+(`pdw_ctrl_record.py`, `gr_pdw_record.py`) currently re-express two struct layouts by hand
+as `struct` format strings, with `pdw_host_types_test.py` existing solely to catch drift
+between those copies and the hardware. That project could instead copy the generated
+`pypeline_host_types.py` off a build and keep only its genuinely host-side logic — the
+gr-pdw column scaling, `build_config`, the dB conversions — with the layout, the defaults
+struct and the drift guard all gone. (The generator derives exactly the format strings
+those files hand-wrote, `"<IIiihHIIIII"` and `"<QIIIIhhhhIHH"`, which is asserted as a
+regression test.) That migration has not been made; the files still work as they are.
+
+**See also:**
+[Struct/type ↔ bytes conversion](#structtype--bytes-conversion) ·
+[Struct ↔ AXI-Stream](#struct--axi-stream-make_axis_to_type--make_type_to_axis) ·
+`src/pypeline_host.py`
 
 ---
 

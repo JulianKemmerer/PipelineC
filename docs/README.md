@@ -72,6 +72,12 @@ Output directory: ./pipelinec_output_blink.py_304105
 Output VHDL files: ./pipelinec_output_blink.py_304105/vhdl_files.txt
 ```
 
+Alongside the VHDL, a build of a design that moves `@struct` values over a byte stream
+also writes `host/pypeline_host_types.py` into that output directory: one standalone,
+standard-library-only Python module that packs and unpacks the design's wire formats, for
+a host program on a machine with no Pypeline checkout. See
+[Host-Side Generated Types](pypeline_guide.md#host-side-generated-types).
+
 The generated top-level VHDL entity (`top.vhd`) has one input clock (named from the
 `@MAIN(25.0)` frequency) and one output port (from `blink`'s `-> uint1_t` return value):
 ```vhdl

@@ -124,7 +124,14 @@ port.
 | `type_axis_test.py` | all four AXIS variants |
 | `self_check_type_axis_test.py` | the whole path through real GHDL, cycle-diffed against native sim |
 | `type_bytes_sw_test.py` | the software helpers, cross-checked against the generated hardware |
+| `host_types_test.py`, `host_types_build_test.py` | the generated standalone host module, run where Pypeline cannot be imported |
 
 **See also:** [the main guide's Byte-Stream Serialization section](../../../docs/pypeline_guide.md#byte-stream-serialization-make_serializer--make_deserializer) ·
 [Struct ↔ AXI-Stream](../../../docs/pypeline_guide.md#struct--axi-stream-make_axis_to_type--make_type_to_axis) ·
 [Struct/type ↔ bytes conversion](../../../docs/pypeline_guide.md#structtype--bytes-conversion)
+
+One thing that falls out of using any of these factories: because they all reach
+`make_type_to_bytes`/`make_type_from_bytes` underneath, a design that streams a struct
+also gets a standalone Python module for the host on the other end of the wire, written
+to `<out_dir>/host/pypeline_host_types.py` by every build — no design change needed. See
+[Host-Side Generated Types](../../../docs/pypeline_guide.md#host-side-generated-types).

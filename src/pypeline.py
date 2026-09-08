@@ -3572,6 +3572,9 @@ def make_type_to_bytes(t, endian: str = "little"):
     """
     _check_endian(endian, "make_type_to_bytes")
     _check_bytes_type(t, "make_type_to_bytes")
+    # Before the memo check below, so the registration happens on every call
+    # rather than only the one that misses the cache.
+    _host_register(t, endian)
     raw_name = _bytes_type_key(t)
     cache_key = (raw_name, endian)
     cached = _TYPE_TO_BYTES_CACHE.get(cache_key)
@@ -3659,6 +3662,9 @@ def make_type_from_bytes(t, endian: str = "little"):
     """
     _check_endian(endian, "make_type_from_bytes")
     _check_bytes_type(t, "make_type_from_bytes")
+    # Before the memo check below, so the registration happens on every call
+    # rather than only the one that misses the cache.
+    _host_register(t, endian)
     raw_name = _bytes_type_key(t)
     cache_key = (raw_name, endian)
     cached = _TYPE_FROM_BYTES_CACHE.get(cache_key)
@@ -3855,6 +3861,132 @@ def type_from_bytes(t, data, endian: str = "little"):
         rv = _sim_lens_set(rv, list(path), _sw_leaf_value(raw, leaf_t))
         base += k
     return _sw_finish(rv, t)
+
+
+# ─────────────────────────────────────────────
+# Host-side export registry
+#
+# What gets written into a build's `<out_dir>/host/pypeline_host_types.py` --
+# the standalone, stdlib-only module a host program copies to a machine that
+# has no Pypeline checkout (see src/pypeline_host.py for the generator, and
+# docs/pypeline_guide.md's "Host-Side Generated Types").
+#
+# Registration is automatic at the choke point EVERY hardware serialization
+# path already goes through: make_type_to_bytes / make_type_from_bytes. The
+# layered stream factories (make_type_to_byte_stream, make_byte_stream_to_type,
+# make_type_to_axis, make_axis_to_type) all call one of those, so any struct
+# the hardware actually puts on a wire registers itself with no design edit --
+# which is the point, since a struct that has been serialized to bytes IS by
+# construction a wire format that something on the other end must parse.
+#
+# host_export() covers the rest: types the design never streams itself, and
+# named constant VALUES (a defaults struct, a flags bitmask) that a host would
+# otherwise have to transcribe by hand.
+# ─────────────────────────────────────────────
+
+# canonical name -> {"type": t, "endians": set of str}. Insertion-ordered, so
+# generated output is a pure function of the design source (see
+# docs/pypeline_DESIGN.md on canonical-name determinism).
+_HOST_EXPORTS: dict = {}
+# exported constant name -> value, insertion-ordered.
+_HOST_VALUES: dict = {}
+
+
+def _host_register(t, endian: str = "little") -> None:
+    """Record `t` as a host-facing wire format, serialized with `endian`.
+
+    Called from make_type_to_bytes/make_type_from_bytes, so it must stay cheap
+    and must never raise for a type those already accepted.
+
+    Both endians for one type is legal (a testbench commonly exercises both),
+    so this accumulates a SET rather than conflicting: the generated module
+    defaults that type to the hardware's endian when there is exactly one, and
+    to "little" when a design genuinely used both -- with the ambiguity spelled
+    out in the generated file rather than hidden. Either way the generated
+    to_bytes/from_bytes still take an explicit `endian` override.
+    """
+    if not (_is_compound_pypeline_type(t) or _is_scalar_pypeline_int(t)):
+        return
+    name = _bytes_type_key(t)
+    entry = _HOST_EXPORTS.get(name)
+    if entry is None:
+        _HOST_EXPORTS[name] = {"type": t, "endians": {endian}}
+    else:
+        entry["endians"].add(endian)
+
+
+def host_export(*types, **values) -> None:
+    """Explicitly add types and named constants to the generated host module.
+
+    For anything the design does not itself serialize -- and for the constants
+    a host would otherwise hand-transcribe alongside the layout:
+
+        host_export(pdw_ctrl_t,
+                    CTRL_DEFAULTS=CTRL_DEFAULTS,
+                    CTRL_FLAG_LOOPBACK_EN=1)
+
+    Values may be @struct instances, @enum members, int/bool/float/str, lists of
+    those, or a pypeline TYPE (which emits an alias, `NAME = canonical_t`, and
+    is how to give a factory-derived type a friendlier host-side name). A struct
+    or enum value implicitly exports its own type, so naming the type separately
+    is never required.
+
+    Idempotent, and safe to call at module import time -- which is where it
+    belongs, since a build registers whatever the design's import produced.
+    """
+    for t in types:
+        if not (_is_compound_pypeline_type(t) or _is_scalar_pypeline_int(t)):
+            raise TypeError(f"host_export: not a pypeline type: {t!r}")
+        _host_register(t)
+    for name, value in values.items():
+        _host_export_value(name, value)
+
+
+def _host_export_value(name: str, value) -> None:
+    """Register one named constant, exporting whatever type it implies."""
+    if isinstance(value, type) or getattr(value, "_pypeline_is_enum", False):
+        # A type object exported under a name: an alias.
+        if not (_is_compound_pypeline_type(value) or _is_scalar_pypeline_int(value)):
+            raise TypeError(f"host_export({name}=...): not a pypeline type: {value!r}")
+        _host_register(value)
+        _HOST_VALUES[name] = value
+        return
+    t = _host_value_type(value)
+    if t is not None:
+        _host_register(t)
+    _HOST_VALUES[name] = value
+
+
+def _host_value_type(value):
+    """The pypeline type a constant VALUE implies, or None for a plain Python
+    literal (int/bool/float/str/list) that needs no layout to be emitted."""
+    cls = type(value)
+    if getattr(cls, "_pypeline_is_enum", False):
+        return cls
+    if hasattr(cls, "_fields") and hasattr(cls, "_pypeline_ctype_name"):
+        return cls
+    return None
+
+
+def host_exports():
+    """Snapshot of what a build should generate: (types, values).
+
+    `types` maps canonical name -> {"type": t, "endians": set}; `values` maps
+    exported constant name -> value. Copies, so the generator cannot perturb
+    the registry it is reading.
+    """
+    return (
+        {k: dict(v, endians=set(v["endians"])) for k, v in _HOST_EXPORTS.items()},
+        dict(_HOST_VALUES),
+    )
+
+
+def _host_reset() -> None:
+    """Drop every registration. For tests that need a clean registry, and for
+    repeated in-process PARSE_FILE runs (which already evict sys.modules --
+    see docs on canonical-name determinism)."""
+    _HOST_EXPORTS.clear()
+    _HOST_VALUES.clear()
 
 
 # ─────────────────────────────────────────────

@@ -548,6 +548,46 @@ patching `linecache` so `inspect.getsource()` succeeds on the result, and tag it
 a plain local before bit-slicing them, and the nested-struct auto-registration helper
 — are in [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#type-to-bytes-conversion-byte_length-make_type_to_bytes-make_type_from_bytes).
 
+### One walk, three consumers
+
+There are three places that must agree about where a field's bytes are: the generated
+hardware (`make_type_to_bytes`), in-repo software (`type_to_bytes`), and the standalone
+host module `pypelinec` writes into `<out_dir>/host/` (`src/pypeline_host.py`). None of
+them re-derives the layout. All three walk `_enumerate_leaves(t)`, size each leaf with
+`_leaf_bit_width()`, total with `byte_length()`, and take mask/sign from
+`_sim_cast_params()` — the same function `_sim_cast` uses, so an `int16_t` comes back
+negative identically in all three.
+
+That is a structural argument, not a convention, and it is what makes a *generated* host
+module the right answer rather than a hand-written one. A hand copy of a wire format
+(old PipelineC hosts wrote `struct` format strings; so does
+`examples/pypeline/dsp/pdw`'s host code today) fails in the worst way available: a
+drifted copy still produces a well-formed frame of the right length, and the receiver
+loads the wrong values into the wrong registers with nothing to flag it. Hence the
+generator, and hence the test chain — `type_to_bytes` is asserted equal to simulated
+hardware (`inst/type_bytes_sw_test.py`), and the generated module is asserted equal to
+`type_to_bytes` from a subprocess that cannot import Pypeline
+(`inst/host_types_test.py`), so: host module ≡ software ≡ native-sim hardware ≡ VHDL.
+
+### The host-export registry
+
+`_host_register` is called from `make_type_to_bytes`/`make_type_from_bytes` rather than
+from the stream factories, because that is the single choke point every serialization
+path passes through — `make_type_to_axis`, `make_axis_to_type`,
+`make_type_to_byte_stream` and `make_byte_stream_to_type` all reach it. A struct the
+hardware has serialized is by construction a wire format someone must parse, so the
+registration needs no design edit; `host_export()` adds types the design never streams,
+plus constant values.
+
+Two deliberate choices in the generator. Emission is topological (nested types first)
+over exports visited in canonical-name order, so the output text is a pure function of
+the design rather than of import sequence — the same determinism rule entity names
+follow. And generated `@struct` types get `to_bytes`/`from_bytes` attributes while
+`@enum` types do not: an `@enum` lowers to an `IntEnum`, whose members already inherit
+`int.to_bytes`, and shadowing that would break ordinary integer code on the host. Enums
+convert through the module-level functions instead — the same call `pypeline.struct()`
+declines to make for the same reason.
+
 ---
 
 ## Byte-Stream Serialization
