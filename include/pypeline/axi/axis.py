@@ -13,6 +13,7 @@ from pypeline import (
 
 from kept_data_bus import make_kept_data_bus_t
 from ndarray import make_ndarray_fragment_t
+from stream.skid_buffer import make_skid_buffer
 from stream.stream import make_stream_interface, make_stream_t
 
 
@@ -93,6 +94,48 @@ def make_axis_broadcast_interlock(axis_intrf, n):
     axis_broadcast_interlock.fwd_t = axis_intrf.fwd_t
     axis_broadcast_interlock.fb_t = axis_intrf.fb_t
     return axis_broadcast_interlock, axis_broadcast_interlock_t
+
+
+def make_axis_skid_buffer(axis_intrf, mode="full"):
+    """A skid buffer / register slice on an axis stream, for cutting a
+    combinational path (usually `ready`) without dropping in a whole FIFO.
+
+    Thin by construction, and legitimately so: `make_axis_interface` composes
+    down to `make_stream_interface(fragment_t)`, so an axis interface already
+    *is* a stream interface and `stream.skid_buffer.make_skid_buffer` handles it
+    directly. See that module for what each `mode` -- "full" (the default),
+    "forward", "reverse", "bypass" -- cuts and costs.
+
+    tdata/tkeep/tlast (`.frag.data` / `.frag.keep` / `.eod[0]`) are carried
+    through opaquely: the buffer stores and replays whole beats and never
+    inspects or re-derives `keep`/`eod`, so a Xilinx-style-compliant stream in
+    is byte-identically the same compliant stream out, one or more cycles later.
+    Nothing here needs the tkeep compliance check `make_axis_byte_sink` does.
+
+    Takes an already-built `axis_intrf` (like `make_axis_broadcast_interlock`
+    and the byte source/sink) so the ports match whatever the caller already
+    has; `make_axis_interface(n)` builds one in a line.
+
+    A design that needs skid buffers at two DIFFERENT axis widths cannot use
+    this face today: two interface-taking factory instantiations at different
+    widths in one design hit a compiler naming bug and fail VHDL writing with
+    "Cant support this assignment in vhdl?" (`make_axis_broadcast_interlock`
+    has the same problem, so it is not introduced here). Until that is fixed,
+    build those from the fragment type instead --
+    `make_skid_buffer(axis_intrf.stream_t.typeof("data"), mode=...)` -- which
+    is unaffected, at the cost of the interface identity `@interface_func`
+    port matching relies on. Reproducer:
+    `src/tests/pypeline_tests/inst/interface_factory_two_widths_known_issue.py`.
+
+    Returns (axis_skid_buffer, axis_skid_buffer_t):
+        axis_skid_buffer(stream_in_if: axis_intrf.fwd_t, stream_out_if: axis_intrf.fb_t)
+            -> axis_skid_buffer_t
+        axis_skid_buffer_t fields: .stream_out_if (axis_intrf.fwd_t),
+                                   .stream_in_if  (axis_intrf.fb_t)
+    """
+    axis_skid_buffer, axis_skid_buffer_t = make_skid_buffer(axis_intrf, mode=mode)
+    axis_skid_buffer.axis_intrf = axis_intrf
+    return axis_skid_buffer, axis_skid_buffer_t
 
 
 def make_keep_count(bus_t, n):

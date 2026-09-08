@@ -82,6 +82,29 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
+    # Two instantiations of the same interface-taking factory at two different
+    # payload widths in one design: one Python struct class resolves to two
+    # different canonical names, and VHDL.py's type-resolve sys.exit(-1)s with
+    # "Cant support this assignment in vhdl?". An @interface class is always
+    # named `stream_intrf` whatever its payload, so both widths' generated
+    # names share every readable token and only the collapsed-name hash
+    # separates them. Reproduced with long-standing make_axis_broadcast_interlock
+    # so it is clear this is not any one factory's bug; make_axis_skid_buffer
+    # and make_skid_buffer(some_intrf, ...) hit it identically. Passing the
+    # payload TYPE instead of the interface is a verified workaround.
+    tests.append(
+        Test(
+            name="interface_factory_two_widths_known_issue",
+            category="known_issues",
+            cmd=[
+                PYPELINEC,
+                INST_DIR / "interface_factory_two_widths_known_issue.py",
+                "--comb",
+            ],
+            needs_out_dir=True,
+            expect_fail=True,
+        )
+    )
     return tests
 
 

@@ -68,6 +68,9 @@ SYNTH_TEST_FILES = [
     ("vhdl_text_test.py", INST_DIR, ["--comb"]),
     ("fifo_test.py", INST_DIR, ["--comb"]),
     ("stream_fifo_test.py", INST_DIR, ["--comb"]),
+    # All four skid-buffer modes plus the AXIS face are separate @MAIN tops in
+    # this one file, so this entry elaborates every generated body.
+    ("skid_buffer_test.py", INST_DIR, ["--comb"]),
     ("axis_test.py", INST_DIR, ["--comb"]),
     ("dwidth_converter_test.py", INST_DIR, ["--comb"]),
     ("axis_byte_stream_test.py", INST_DIR, ["--comb"]),

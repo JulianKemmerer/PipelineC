@@ -545,7 +545,42 @@ def fifo_name_main():
 
 See [pypeline_guide.md §24](pypeline_guide.md#fifos-make_stream_fifo).
 
-### 8e. GLOBAL_VALID_READY_MCP_INST — multi-cycle path pipeline
+### 8e. SKID_BUF — registered stream handshake
+
+```c
+// PipelineC
+SKID_BUF(T, name)
+// name(stream_in, ready_for_stream_out)
+//   -> {.stream_out, .ready_for_stream_in}
+```
+```python
+# pypeline
+from stream.skid_buffer import make_skid_buffer
+
+skid, skid_t = make_skid_buffer(T)      # mode="full" matches SKID_BUF
+
+@MAIN
+def name(stream_in_if: skid.fwd_t, stream_out_if: skid.fb_t) -> skid_t:
+    return skid(stream_in_if, stream_out_if)
+```
+
+The C macro has exactly one behaviour: the two-register ping-pong that cuts
+*both* the data/valid and the `ready` paths at full throughput. That is
+`mode="full"`, the default, so a straight port needs no `mode` argument.
+
+The other three modes have no C equivalent. `"forward"` and `"reverse"` each cut
+one direction for one register instead of two, and `"bypass"` is pure wires — see
+[pypeline_guide.md §27](pypeline_guide.md#skid-buffers-make_skid_buffer) for the
+trade-offs. On an AXI-Stream port use
+`axi.axis.make_axis_skid_buffer(axis_intrf, mode=...)`, which is the same module
+behind a one-line face.
+
+The `GLOBAL_STREAM_FIFO_SKID_BUFF` / `_SKID_IN_BUFF` / `_SKID_OUT_BUFF` variants
+in `include/global_fifo.h` are a `SKID_BUF` composed with a
+`GLOBAL_STREAM_FIFO`; build them by instantiating both (8d above) rather than
+looking for a single combined factory.
+
+### 8f. GLOBAL_VALID_READY_MCP_INST — multi-cycle path pipeline
 
 ```c
 // PipelineC
@@ -563,11 +598,11 @@ name_mcp_func, name_mcp_t = make_valid_ready_mcp(func, ncycles)
 
 See [pypeline_guide.md §16](pypeline_guide.md#multi-cycle-paths-multi_cycle).
 
-### 8f. Stream wrapper for AUTOFSM — `make_stream_autofsm`
+### 8g. Stream wrapper for AUTOFSM — `make_stream_autofsm`
 
 No PipelineC macro maps onto this one directly — `AUTOFSM` (the resource-shared
 FSM builder) is pypeline-only, with no C-side equivalent to wrap. Included here
-because it completes the family started by 8c/8e above: a third
+because it completes the family started by 8c/8f above: a third
 function-to-stream wrapper, same port shape, this time around `AUTOFSM` instead
 of `AUTOPIPELINE`/`MULTI_CYCLE[...]`.
 

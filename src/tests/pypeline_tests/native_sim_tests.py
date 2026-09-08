@@ -38,6 +38,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "vhdl_text_test.py",
     "fifo_test.py",
     "stream_fifo_test.py",
+    "skid_buffer_test.py",
     "axis_test.py",
     "dwidth_converter_test.py",
     "axis_byte_stream_test.py",

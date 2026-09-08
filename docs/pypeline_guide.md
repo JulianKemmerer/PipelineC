@@ -40,9 +40,10 @@ For getting started information see the [README](README.md).
 24. [Byte-Stream Serialization: `make_serializer` / `make_deserializer`](#byte-stream-serialization-make_serializer--make_deserializer)
 25. [Struct ↔ AXI-Stream: `make_axis_to_type` / `make_type_to_axis`](#struct--axi-stream-make_axis_to_type--make_type_to_axis)
 26. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
-27. [Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline)
-28. [Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp)
-29. [Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm)
+27. [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer)
+28. [Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline)
+29. [Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp)
+30. [Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm)
 
 **Part IV — Escape hatches**
 
@@ -3518,8 +3519,111 @@ hardware, just not cycle-accurate internally. See `pypeline_sim_DESIGN.md`'s
 `src/tests/pypeline_tests/inst/stream_fifo_test.py`.
 
 **See also:** [Streams: `stream_t`](#streams-stream_t) ·
+[Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer) ·
 [Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline) ·
 [Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp)
+
+---
+
+## Skid Buffers: `make_skid_buffer`
+
+`include/pypeline/stream/skid_buffer.py`'s `make_skid_buffer` is a **register slice** for a
+valid/ready stream: it breaks combinational paths through a stream port without dropping a
+whole [FIFO](#fifos-make_stream_fifo) into the design. It's the pypeline answer to old
+PipelineC's `SKID_BUF` macro (`include/stream/stream.h`).
+
+Reach for it when timing fails on a long `ready` path (a consumer whose `ready` fans back
+through several blocks), or on a long data path between two modules that each met timing
+alone. A FIFO would also work, but costs a BRAM/LUTRAM and several cycles of latency for a
+problem that needs one or two registers.
+
+```python
+from pypeline import uint32_t, MAIN
+from stream.skid_buffer import make_skid_buffer
+
+skid, skid_t = make_skid_buffer(uint32_t)          # mode="full" by default
+
+@MAIN
+def buffered(
+    stream_in_if: skid.fwd_t, stream_out_if: skid.fb_t
+) -> skid_t:
+    return skid(stream_in_if, stream_out_if)
+```
+
+`make_skid_buffer(data_t_or_intrf, mode="full")` returns `(skid_buffer, skid_buffer_t)`, with
+one input port `stream_in_if` and one output port `stream_out_if` declared as the two halves
+of the same [interface](#bidirectional-ports-interface). The first argument is either a plain
+payload type (the interface is built for you) **or** an already-built `@interface` — pass the
+interface when you already have one, since interface ports are matched by Python identity, not
+just by name.
+
+### Choosing a mode
+
+`mode` names which combinational paths get cut, using the same vocabulary as Xilinx's AXI
+Register Slice `REG_CONFIG`:
+
+| `mode` | Slots | Latency | Throughput | Cuts |
+|---|---|---|---|---|
+| `"full"` (default) | 2 | 1 | 100% | data/valid **and** `ready` |
+| `"forward"` | 1 | 1 | 100% | data/valid only |
+| `"reverse"` | 1 | 0 | 100% steady, 1 bubble to recover from a stall | `ready` only |
+| `"bypass"` | 0 | 0 | 100% | nothing (pure wires) |
+
+Full throughput with *both* directions cut needs two slots, and that is the whole reason a skid
+buffer is not just a register: one slot presents a beat downstream while the other catches the
+beat already accepted upstream when the consumer stalls. The one-slot modes each leave one path
+combinational — with a single slot, `ready` can only be a pure function of registers if the
+buffer refuses input while draining, which costs the recovery bubble.
+
+`"bypass"` exists so a design can parameterize the slice away entirely (a sweep over
+`mode`, or a slice that a particular instantiation doesn't need) without an `if` at every
+call site.
+
+`n_slots` and `latency` hang off the returned function, alongside `.stream_intrf` / `.fwd_t` /
+`.fb_t` / `.data_t` / `.mode`, so a caller sizing a surrounding pipeline never re-derives them.
+
+### On AXI-Stream
+
+Because [`make_axis_interface`](#axi-stream-axis_t) composes down to a stream interface, an
+AXIS stream needs no separate implementation — `axi/axis.py`'s `make_axis_skid_buffer` is a
+one-line face over this module that takes the interface you already built:
+
+```python
+from axi.axis import make_axis_interface, make_axis_skid_buffer
+
+axis_intrf = make_axis_interface(4)
+axis_skid, axis_skid_t = make_axis_skid_buffer(axis_intrf, mode="reverse")
+```
+
+`tdata`/`tkeep`/`tlast` are carried through opaquely: whole beats are stored and replayed, never
+inspected or re-derived, so a Xilinx-style-compliant stream in is byte-identically the same
+compliant stream out a cycle or more later.
+
+> **Known limitation (compiler, not this module).** A design that instantiates *two different
+> axis widths* of any interface-taking factory fails VHDL writing with
+> `Cant support this assignment in vhdl?` — the result struct resolves to two different
+> canonical names for the same Python class.
+> [`make_axis_broadcast_interlock`](#axi-stream-axis_t) has the same problem, so it is not
+> introduced by the skid buffer. Passing the payload *type* rather than the interface is
+> unaffected: `make_skid_buffer(axis_intrf.stream_t.typeof("data"), mode=...)` builds fine at
+> any number of widths, at the cost of the interface identity that
+> [interface functions](#interface-functions-write-feedforward-get-the-reverse-wired) match
+> ports by.
+
+### What it is not
+
+`axi/axis.py`'s `dwidth_widen`/`dwidth_narrow` are also two-register, full-throughput elastic
+buffers, but they clear their registers *before* deriving `ready`, so the downstream `ready`
+still reaches the upstream `ready` combinationally. They buffer; they do not slice. `"full"`
+here deliberately derives both outputs from registers only, before any clear or write — that
+ordering is the entire difference, and
+`src/tests/pypeline_tests/inst/skid_buffer_test.py` tests it directly by probing whether
+each output actually moves when the opposite side's input changes.
+
+**See also:** [Streams: `stream_t`](#streams-stream_t) ·
+[FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo) ·
+[AXI-Stream: `axis_t`](#axi-stream-axis_t) ·
+[Bidirectional Ports: `@interface`](#bidirectional-ports-interface)
 
 ---
 
@@ -4137,6 +4241,7 @@ built yet."
 | Simulation | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo` now does, covering `make_stream_fifo`/`make_stream_pipeline` too); this still includes `make_valid_ready_mcp` |
 | Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine |
 | Language | **`@enum` member names that are VHDL reserved words** | Fails in VHDL only | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. Native simulation cannot see this — only a `synth`/GHDL run can, which is why every enum-bearing design wants one |
+| Synthesis | **Two widths of one interface-taking factory in a single design** | Known bug | Instantiating the same factory that takes an `@interface` argument (`make_axis_skid_buffer`, `make_axis_broadcast_interlock`, `make_skid_buffer(some_intrf, ...)`, …) at two different payload widths in one design aborts VHDL writing with `Cant support this assignment in vhdl?` — one Python struct class resolves to two different canonical names, because an `@interface` class is always named `stream_intrf` whatever its payload, so both widths' generated names share every readable token and only the collapsed-name hash separates them. **Workaround:** pass the payload *type* rather than the interface (`make_skid_buffer(axis_intrf.stream_t.typeof("data"), …)`), which puts the width into the names; the cost is that the factory builds its own interface, so `@interface_func` port matching (by Python identity) will not pair it with yours. A single width is unaffected. Reproducer: `src/tests/pypeline_tests/inst/interface_factory_two_widths_known_issue.py` |
 | Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it |
 
 Coming from PipelineC? See also [docs/pipelinec_to_pypeline.md](pipelinec_to_pypeline.md)
