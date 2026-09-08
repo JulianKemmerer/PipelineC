@@ -123,9 +123,11 @@ When a pulse is validated, two things happen in hardware:
 **On ordering.** Inside the engine the record is still handed over in
 `EMIT_PDW` before `SEND_PKT` begins. On the wire that no longer means the
 record's first beat comes first: it goes through a serializer whose first beat
-costs a fill cycle the packet path does not pay, so the record's first beat is
-measured landing **one cycle after** its packet's, and the two then stream
-concurrently on separate ports. What still holds — and what `pdw_tb.py` asserts
+costs a fill cycle the packet path does not pay, and then a skid buffer's
+registered stage on top of that, so the record's first beat lands **after** its
+packet's and the two then stream concurrently on separate ports. The exact skew
+is `pdw_skid.latency` plus the serializer's fill, not a constant worth
+memorising. What still holds — and what `pdw_tb.py` asserts
 — is that record *k* begins before packet *k+1* does, so a record never slips
 into the next pulse's slot. A consumer that needs `pkt_samples` before the
 payload must therefore buffer or use `tlast`, rather than assume the metadata
@@ -248,30 +250,22 @@ a full packet FIFO takes up to its depth in cycles, ~131 µs at 125 MHz.
 `top.py` exports `RST_MIN_HOLD_CYCLES`. Any real platform reset exceeds it
 comfortably; a shorter one leaves buffers partly full.
 
-> **Known gap: the two record serializers.** `rx1_m`/`rx2_m` are fed by library
-> serializers whose `buf`/`fill` can only empty through `tready`. They *do*
-> drain during reset whenever the host leaves `tready` asserted — their internal
-> valid is not gated, only the port's `tvalid` is, so beats are consumed while
-> the host sees nothing. A host that holds `tready` **low** across its own reset
-> is not covered: that serializer keeps its partial frame and emits the tail
-> after release.
->
-> Forcing `rx1_m_axis_tready | rst` closes the gap and was measured at
-> **−8.3 MHz** (128.5 → 120.2, i.e. missing the 125 MHz target). The cause is
-> specific: it puts a LUT into the ready path that feeds the serializer's
-> `nfill`, which is the *variable index* of a 43-element buffer write already 12
-> logic levels deep — `serializer.py` notes that path is combinational on
-> `stream_out_if.ready` deliberately, and `make_type_to_axis` exposes no
-> `registered_ready` knob to break it (only the deserializer side has one).
-> Since this design resets at power-on, where the serializers are provably
-> empty, the timing was worth more than the coverage.
->
-> The proper fix is a real AXIS skid buffer on those two ports, which would
-> break the path and let the drain be unconditional. `make_stream_fifo(t, 2)`
-> would work today — its `data_in_ready` is occupancy-based rather than
-> combinational on the output ready — but it is a wrapped BRAM FIFO, the wrong
-> primitive for a two-deep pipeline break. Backlog: add `make_axis_skid_buffer`
-> to `include/pypeline/axi/axis.py`.
+**The two record serializers** are the one part the read-enable trick cannot
+reach: `rx1_m`/`rx2_m` are fed by library serializers whose `buf`/`fill` empty
+only through `tready`. Each therefore sits behind a **fully-registered AXIS skid
+buffer** (`make_axis_skid_buffer`, `mode="full"` — two slots, +1 cycle, 100%
+throughput), which derives both of its outputs from registers alone. That cuts
+the port pin out of the serializer's ready path entirely, so reset can force
+that ready unconditionally and the serializers drain like everything else.
+
+The slice is load-bearing, not decorative. Driving the serializer's ready
+straight from `pin | rst` was measured at **−8.3 MHz** (128.5 → 120.2, i.e.
+missing the 125 MHz target): it put a LUT into the path feeding the serializer's
+`nfill`, which is the *variable index* of a 43-element buffer write already 12
+logic levels deep — a path `serializer.py` documents as combinational on
+`stream_out_if.ready` by design, and one `make_type_to_axis` exposes no
+`registered_ready` knob to break (only the deserializer side has one). With the
+slice in place the OR lands on the slice's own registered output ready instead.
 
 **Clear.** Every register in this project's own code returns to its power-on
 value — the generator's LFSRs and phase accumulator (so the stimulus is

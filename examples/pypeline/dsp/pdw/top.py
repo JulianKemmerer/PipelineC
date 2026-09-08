@@ -81,7 +81,11 @@ from pypeline import (
     uint_to_array_le,
 )
 
-from axi.axis import make_axis_broadcast_interlock, make_axis_interface
+from axi.axis import (
+    make_axis_broadcast_interlock,
+    make_axis_interface,
+    make_axis_skid_buffer,
+)
 from axi.type_axis import make_type_to_axis
 
 from pdw_ctrl import CTRL_FLAG_LOOPBACK_EN, make_pdw_ctrl, pdw_ctrl_t
@@ -300,6 +304,13 @@ class candidate_rec_t(NamedTuple):
 
 pdw_tx, _pdw_tx_t = make_type_to_axis(pdw_engine.valid_pdw_t, AXIS_N)
 cand_tx, _cand_tx_t = make_type_to_axis(candidate_rec_t, AXIS_N)
+# A fully-registered register slice on each record master port. mode="full"
+# derives BOTH its outputs from registers only, so nothing outside -- the
+# rx*_m_axis_tready pin included -- reaches the serializer's own ready. That is
+# what lets reset force the drain unconditionally again; see the note in
+# pdw_main. Two slots, +1 cycle, 100% throughput.
+pdw_skid, _pdw_skid_t = make_axis_skid_buffer(pdw_tx.axis_intrf)
+cand_skid, _cand_skid_t = make_axis_skid_buffer(cand_tx.axis_intrf)
 # Two sinks for the released packet: the host capture port and the TX replay
 # port. Combinational valid/ready interlocking, no buffering -- see
 # make_axis_broadcast_interlock.
@@ -375,6 +386,11 @@ def pdw_main():
     # Feedback[T] is for (same shape as type_axis.py's ready_for_limiter).
     pkt_ready: Feedback[uint1_t]
     pdw_ready: Feedback[uint1_t]
+    # Each record serializer's ready now comes from its skid buffer, which is
+    # built from that serializer's own output -- the same genuine circular
+    # reference between two call results, and the same remedy.
+    pdw_skid_rdy: Feedback[uint1_t]
+    cand_skid_rdy: Feedback[uint1_t]
 
     # Full-width bit-slice reinterprets raw tdata bits as the declared target
     # type (int16_t here) -- the mirror image of pulse_gen_main's uint16_t
@@ -436,36 +452,28 @@ def pdw_main():
         global_rst,
     )
 
-    # DRAIN. The packet path empties itself: packet_store forces its own three
-    # FIFO read enables during reset (`data_ready |= rst` and friends) and
-    # clears its FSM, so nothing here has to help it -- pdw_reset_test.py holds
-    # pkt_out_ready LOW for the whole reset window and still gets a byte-exact
-    # drain. Path B's delay line is drained inside detect_pulses the same way.
+    # DRAIN: while reset is asserted every sink is forced ready, so the whole
+    # chain empties into the bit bucket. That is the ONLY way to clear any of
+    # it -- the three FIFOs in packet_store and Path B's delay line are
+    # make_fifo instances, black-box VHDL entities with no flush, and the two
+    # record serializers are library blocks too.
     #
-    # The two record SERIALIZERS are the exception: they are library blocks
-    # whose buf/fill can only empty through ready. They still drain during
-    # reset whenever the host leaves tready asserted -- their internal valid is
-    # not gated, only the port's tvalid is, so beats are consumed while the
-    # host sees nothing. What is NOT covered is a host that holds tready LOW
-    # across its own reset: such a serializer keeps its partial frame and emits
-    # the tail after release.
+    # The packet path forces its own read enables inside packet_store
+    # (`data_ready |= rst` and friends) and clears its FSM, so the broadcast
+    # legs need no help here: pdw_reset_test.py holds pkt_out_ready LOW for the
+    # whole reset window and still gets a byte-exact drain.
     #
-    # An `| global_rst` here would close that gap, and it was measured: it costs
-    # 8.3 MHz (128.5 -> 120.2, i.e. missing the 125 MHz target), because it puts
-    # a LUT into the ready path that feeds this serializer's `nfill` -- the
-    # variable index of a 43-element buffer write, already 12 logic levels deep.
-    # See serializer.py's own note that this path is "combinational on
-    # stream_out_if.ready ... deliberately". make_type_to_axis has no
-    # `registered_ready` knob to break it (only the deserializer side does), and
-    # library code is out of scope here.
-    #
-    # TODO: a real AXIS skid buffer on rx1_m/rx2_m would break that path and
-    # let the drain be unconditional. `make_stream_fifo(t, 2)` would work today
-    # -- its data_in_ready is occupancy-based, not combinational on the output
-    # ready -- but it is a wrapped BRAM FIFO, the wrong primitive for a
-    # two-deep pipeline break. Prefer adding make_axis_skid_buffer to
-    # include/pypeline/axi/axis.py.
-    #
+    # The two record serializers DO need it -- their buf/fill can only empty
+    # through ready -- and forcing it is only affordable because each now sits
+    # behind a fully-registered skid buffer. Driving the serializer's ready
+    # directly from `pin | rst` cost 8.3 MHz (128.5 -> 120.2): it put a LUT into
+    # the path feeding the serializer's `nfill`, the variable index of a
+    # 43-element buffer write already 12 logic levels deep, which serializer.py
+    # notes is combinational on stream_out_if.ready by design. The skid buffer's
+    # mode="full" derives both its outputs from registers only, so that path is
+    # cut at the slice and the OR now lands on the slice's own output ready.
+    pdw_rdy: uint1_t = rx1_m_axis_tready | global_rst
+    cand_rdy: uint1_t = rx2_m_axis_tready | global_rst
     # No traffic may appear outside during reset: AXI forbids tvalid then, and a
     # host must not see the previous session's records on a channel it has just
     # opened.
@@ -515,13 +523,15 @@ def pdw_main():
     vs.data.frag = e.pdw_out.data
     vs.data.eod[0] = 1  # one record per frame
     vs.valid = e.pdw_out.valid
-    vt = pdw_tx(pdw_tx.in_intrf.fwd_t(vs), pdw_tx.axis_fb_t(rx1_m_axis_tready))
+    vt = pdw_tx(pdw_tx.in_intrf.fwd_t(vs), pdw_tx.axis_fb_t(pdw_skid_rdy))
     pdw_ready = vt.stream_in_if.ready
+    vk = pdw_skid(vt.axis_out_if, pdw_tx.axis_fb_t(pdw_rdy))
+    pdw_skid_rdy = vk.stream_in_if.ready
 
-    rx1_m_axis_tdata = array_to_uint_le(vt.axis_out_if.stream.data.frag.data)
-    rx1_m_axis_tkeep = array_to_uint_le(vt.axis_out_if.stream.data.frag.keep)
-    rx1_m_valid: uint1_t = vt.axis_out_if.stream.valid & out_en
-    rx1_m_axis_tlast = vt.axis_out_if.stream.data.eod[0] & rx1_m_valid
+    rx1_m_axis_tdata = array_to_uint_le(vk.stream_out_if.stream.data.frag.data)
+    rx1_m_axis_tkeep = array_to_uint_le(vk.stream_out_if.stream.data.frag.keep)
+    rx1_m_valid: uint1_t = vk.stream_out_if.stream.valid & out_en
+    rx1_m_axis_tlast = vk.stream_out_if.stream.data.eod[0] & rx1_m_valid
     rx1_m_axis_tvalid = rx1_m_valid
 
     # -- candidate_pdw_t -> rx2_m -------------------------------------------
@@ -537,10 +547,12 @@ def pdw_main():
     cs.data.frag = cand
     cs.data.eod[0] = 1
     cs.valid = o.pdw_out_if.stream.valid
-    ct = cand_tx(cand_tx.in_intrf.fwd_t(cs), cand_tx.axis_fb_t(rx2_m_axis_tready))
+    ct = cand_tx(cand_tx.in_intrf.fwd_t(cs), cand_tx.axis_fb_t(cand_skid_rdy))
+    ck = cand_skid(ct.axis_out_if, cand_tx.axis_fb_t(cand_rdy))
+    cand_skid_rdy = ck.stream_in_if.ready
 
-    rx2_m_axis_tdata = array_to_uint_le(ct.axis_out_if.stream.data.frag.data)
-    rx2_m_axis_tkeep = array_to_uint_le(ct.axis_out_if.stream.data.frag.keep)
-    rx2_m_valid: uint1_t = ct.axis_out_if.stream.valid & out_en
-    rx2_m_axis_tlast = ct.axis_out_if.stream.data.eod[0] & rx2_m_valid
+    rx2_m_axis_tdata = array_to_uint_le(ck.stream_out_if.stream.data.frag.data)
+    rx2_m_axis_tkeep = array_to_uint_le(ck.stream_out_if.stream.data.frag.keep)
+    rx2_m_valid: uint1_t = ck.stream_out_if.stream.valid & out_en
+    rx2_m_axis_tlast = ck.stream_out_if.stream.data.eod[0] & rx2_m_valid
     rx2_m_axis_tvalid = rx2_m_valid

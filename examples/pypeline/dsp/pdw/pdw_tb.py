@@ -1626,11 +1626,14 @@ def check_done():
         # pulse's slot: its frame has to start before packet k+1 does.
         #
         # NOT "before packet k does". The engine still hands the record over in
-        # EMIT_PDW before entering SEND_PKT, but the record now goes through a
+        # EMIT_PDW before entering SEND_PKT, but the record then goes through a
         # serializer whose first beat costs a fill cycle the packet path does
-        # not pay -- measured, the record's first beat lands one cycle AFTER
-        # its packet's. The two streams then run concurrently on separate
-        # ports. See the README's note on this.
+        # not pay, and a skid buffer's registered stage after that -- so the
+        # record's first beat lands AFTER its packet's, and the two streams run
+        # concurrently on separate ports. This weaker invariant is deliberately
+        # phrased so it does not depend on that skew: adding or removing a
+        # register stage on the record path must not require editing it.
+        # See the README's note on ordering.
         for _k in range(ST["n_pkt_done"] - 1):
             assert ST["pdw_starts"][_k] < ST["pkt_starts"][_k + 1], (
                 f"pdw_tb: PDW record {_k} started at cycle "
