@@ -50,6 +50,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "sim_assert_finish_test.py",
     "type_bytes_test.py",
     "type_bytes_sw_test.py",
+    "host_types_test.py",
     "serdes_test.py",
     "type_byte_stream_test.py",
     "axis_max_len_limiter_test.py",
@@ -309,28 +310,15 @@ def get_tests() -> list:
             cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_reset_test.py"],
         )
     )
-    # PDW project: the host-side copies of the design's wire formats. Three
-    # files are meant to be copied onto a radio running AirStack, where there
-    # is no Pypeline checkout, so each carries its layout in pure `struct`.
-    # This asserts those copies still match `type_to_bytes` and the real
-    # struct definitions. Worth its own test because the failure is silent: a
-    # drifted control frame is still 40 well-formed bytes, so the deserializer
-    # accepts it and the design runs on the wrong thresholds. Also the only
-    # fast coverage gr_pdw_record.py has -- it is otherwise exercised only
-    # inside pdw_tb.py's ~18-minute run.
-    tests.append(
-        Test(
-            name="pdw_host_types_test",
-            category="native_sim",
-            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_host_types_test.py"],
-        )
-    )
     # PDW project: the independent software check of a PDW record against its
     # own pulse samples (FFT here vs the hardware's phasor/CORDIC, so the two
     # are genuinely different algorithms). Mostly negative controls: corrupt
     # one record field and assert the check for THAT field fails and the
     # others do not -- a verifier that cannot fail would launder every future
-    # hardware failure into a green run.
+    # hardware failure into a green run. Also generates this design's
+    # pypeline_host_types.py (nothing is committed) and checks that the host
+    # files compose with it -- which is what replaced the old drift guard,
+    # since a generated layout has nothing left to drift from.
     tests.append(
         Test(
             name="pdw_verify_test",

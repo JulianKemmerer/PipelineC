@@ -71,6 +71,7 @@ from pypeline import (
     Wire,
     array_to_uint_le,
     concat,
+    host_export,
     int16_t,
     make_uint_t,
     struct,
@@ -88,10 +89,17 @@ from axi.axis import (
 )
 from axi.type_axis import make_type_to_axis
 
-from pdw_ctrl import CTRL_FLAG_LOOPBACK_EN, make_pdw_ctrl, pdw_ctrl_t
+from pdw_ctrl import CTRL_DEFAULTS, CTRL_FLAG_LOOPBACK_EN, make_pdw_ctrl, pdw_ctrl_t
 from pulse_gen import make_pulse_gen
 from pulse_detect import make_detect_pulses
-from pdw_engine import make_pdw_engine
+from pdw_engine import (
+    STATUS_ADC_CLIP,
+    STATUS_DSP_OVERFLOW,
+    STATUS_FREQ_DEGENERATE,
+    STATUS_PKT_FIFO_FULL,
+    STATUS_PRI_INVALID,
+    make_pdw_engine,
+)
 
 PART("xc7a100tcsg324-1")  # Artix-7 100T, same part as board/arty/part100t.py
 
@@ -304,6 +312,42 @@ class candidate_rec_t(NamedTuple):
 
 pdw_tx, _pdw_tx_t = make_type_to_axis(pdw_engine.valid_pdw_t, AXIS_N)
 cand_tx, _cand_tx_t = make_type_to_axis(candidate_rec_t, AXIS_N)
+
+# ---------------------------------------------------------------------------
+# What a host program needs, exported into <out_dir>/host/pypeline_host_types.py
+# (see docs/pypeline_guide.md's "Host-Side Generated Types").
+#
+# The three struct LAYOUTS are already there without this call: the
+# make_type_to_axis above and make_axis_to_type inside pdw_ctrl both reach
+# make_type_to_bytes, which is where registration happens. This call is for the
+# things a host would otherwise transcribe by hand.
+#
+# The dividing line is HARDWARE FACT vs HOST POLICY. Everything below is a fact
+# about the design as built, so it belongs to the design; the host keeps what is
+# genuinely its own (gr-pdw's column order, the dBFS reference, the config
+# arithmetic in airt_pdw_test.py).
+#
+# POWER_FRAC_BITS and FREQ_BLOCK_K are the two worth being deliberate about.
+# They are not layout, so nothing registers them automatically, and the host
+# needs both: thresholds are compared against power_t, so a threshold is
+# `power << POWER_FRAC_BITS` and getting it wrong fails silently in both
+# directions; and pdw_verify.py must take its FFT over the same window
+# freq_accum accumulates over or it disagrees with the hardware for a
+# legitimate reason. They were previously hardcoded host-side as 12 and 32 and
+# pinned by a drift test -- read from the built instances here, that pin is
+# unnecessary rather than merely automated.
+host_export(
+    CTRL_DEFAULTS=CTRL_DEFAULTS,
+    CTRL_FLAG_LOOPBACK_EN=CTRL_FLAG_LOOPBACK_EN,
+    STATUS_ADC_CLIP=STATUS_ADC_CLIP,
+    STATUS_DSP_OVERFLOW=STATUS_DSP_OVERFLOW,
+    STATUS_PKT_FIFO_FULL=STATUS_PKT_FIFO_FULL,
+    STATUS_FREQ_DEGENERATE=STATUS_FREQ_DEGENERATE,
+    STATUS_PRI_INVALID=STATUS_PRI_INVALID,
+    POWER_FRAC_BITS=detect_pulses.power_t.frac_bits,
+    FREQ_BLOCK_K=detect_pulses.freq_block_k,
+)
+# ---------------------------------------------------------------------------
 # A fully-registered register slice on each record master port. mode="full"
 # derives BOTH its outputs from registers only, so nothing outside -- the
 # rx*_m_axis_tready pin included -- reaches the serializer's own ready. That is

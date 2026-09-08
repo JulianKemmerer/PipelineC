@@ -355,11 +355,38 @@ output. It is **not** part of `run_all.py` — it needs SoapySDR and hardware �
 but everything it depends on is covered in-repo without a radio (see
 **Testbenches**).
 
-**Three files copy to the radio**, with no Pypeline checkout: `pdw_ctrl_record.py`
-(builds control frames), `gr_pdw_record.py` (parses records, and gr-pdw's
-columns) and `pdw_verify.py` (checks a record against its samples). Each carries
-its layout in pure `struct`; `pdw_host_types_test.py` guards those copies
-against drift.
+**Four files copy to the radio**, with no Pypeline checkout:
+
+| File | What it is |
+|---|---|
+| `airt_pdw_test.py` | the script; the config arithmetic lives here |
+| `pypeline_host_types.py` | **generated** — every struct layout and exported constant |
+| `gr_pdw_record.py` | gr-pdw's columns, the dB/frequency scaling |
+| `pdw_verify.py` | the independent FFT check of a record against its samples |
+
+`pypeline_host_types.py` is not written by hand and must not be edited. Every
+`pypelinec` build of `top.py` drops it in `<out_dir>/host/`, and
+`python3 pdw_host_gen.py <dir>` produces the same file without a build. It comes
+from the same leaf walk the hardware serializer is built from, so the frame this
+project sends cannot disagree with the frame the hardware expects.
+
+Nothing generated is committed — there is deliberately no checked-in copy to go
+stale — so the in-repo tests build it on demand via `pdw_host_gen.ensure_host_types()`.
+
+This replaced two hand-transcribed layouts. `pdw_ctrl_record.py` and
+`gr_pdw_record.py` used to carry `"<IIiihHIIIII"` and `"<QIIIIhhhhIHH"` as
+literal `struct` format strings, with a whole test file existing to catch them
+drifting from the hardware. The generator derives both strings character for
+character (asserted in `src/tests/pypeline_tests/inst/host_types_test.py`), so
+that test file is gone and `pdw_ctrl_record.py` with it — once its layout half
+was generated, the rest was config policy and moved into the script.
+
+`top.py`'s `host_export` call carries the constants across too: `CTRL_DEFAULTS`,
+`CTRL_FLAG_LOOPBACK_EN`, the `STATUS_*` bits, and — the two worth being
+deliberate about — `POWER_FRAC_BITS` and `FREQ_BLOCK_K`, read off the built
+`detect_pulses` instance. Those two are not layout, so nothing registers them
+automatically, and both were previously hardcoded host-side with a test pinning
+them. Read from the design, the pin is unnecessary rather than merely automated.
 
 ## Channel map (2-channel bitstream mode)
 
@@ -399,8 +426,9 @@ CS16 elements.
 The easiest thing for a host program to get wrong. `threshold_high`/`threshold_low`
 are compared against `power_t`, which carries **12 fractional bits**, so the
 integer on the wire is `power × 4096` — see the threshold-scaling note in
-section 2. `pdw_ctrl_record.POWER_SCALE` holds that factor and
-`pdw_host_types_test.py` pins it against `power_t.frac_bits`.
+section 2. `airt_pdw_test.POWER_SCALE` derives that factor from
+`POWER_FRAC_BITS`, which `top.py` exports straight from `power_t.frac_bits` —
+so it is the design's number, not a host-side copy of it.
 
 It fails silently in both directions: 4096× too small is crossed by the noise
 floor and the detector declares one endless pulse; 4096× too large is never
@@ -849,8 +877,7 @@ it needs an I/Q DC blocker ahead of the conjugate product, which is not built.
 | `src/tests/pypeline_tests/inst/log2_db_test.py` | `dsp/log2_db.py` alone — accuracy vs `10·log10`, decade/octave steps, the fractional-bits subtraction, non-positive input, monotonicity, and two instances with different binary points | `sim_call` vs a bit-exact model |
 | `pdw_ctrl/pdw_ctrl_test.py` | The control register file alone — reset defaults, apply latency (measured, then checked against the advertised attribute), ready never dropping, back-to-back writes, and the two malformed cases: a padded frame whose excess must be dropped and a runt that must leave the registers untouched, neither desyncing the frame after it; plus reset — writes refused while held, normal service after release, and an abandoned frame flushed rather than joined to the next | `sim_call`, `type_to_bytes` + `AxisSimSource` |
 | `pdw_reset_test.py` | Reset semantics for the composed datapath — a reset landing **mid-pulse**: nothing emitted for the interrupted pulse, its buffered samples drained rather than prepended to the next packet, TOA and PRI restarting, and the release artifact bounded below `min_width`. Both the drain term and the `gate_armed` clear have negative controls | `sim_call` on `detect_pulses` + `pdw_engine` wired as `top.py` wires them |
-| `pdw_host_types_test.py` | The host-side copies of both wire formats (`pdw_ctrl_record.py`, `gr_pdw_record.py`) and `pdw_verify.py`'s pinned constants, against the real `pdw_ctrl_t`/`valid_pdw_t`/`power_t`/`block_k`. Test vectors set every unsigned field's top bit and make every signed field negative, so a wrong width or signedness changes the bytes — an earlier version's plausible-looking values let a deliberate `uint64→int64` corruption pass unnoticed | pure Python vs `type_to_bytes` |
-| `pdw_verify_test.py` | That `pdw_verify.py` actually catches a wrong record. Mostly negative controls: corrupt one field, assert the check for **that** field fails and the others do not — a dB-only error must not fail the linear check, and a corrupted `freq_start` must not fail `freq_stop` | numpy, synthetic pulses (tone, chirp, negative carrier) |
+| `pdw_verify_test.py` | That `pdw_verify.py` actually catches a wrong record. Mostly negative controls: corrupt one field, assert the check for **that** field fails and the others do not — a dB-only error must not fail the linear check, and a corrupted `freq_start` must not fail `freq_stop`. Also generates this design's `pypeline_host_types.py` and checks the host files compose with it — which is what replaced the old drift guard, a generated layout having nothing left to drift from | numpy, synthetic pulses (tone, chirp, negative carrier) |
 | `pdw_tb.py` | The whole `top.py` — pulse generator through the composed DSP chain (`make_detect_pulses`: magnitude → dc_block → moving_avg → hysteresis FSM), the Path B delay line, the loopback mux, the PDW engine, and all seven AXIS ports: control written as real frames, both record streams decoded, the released-packet broadcast compared leg against leg, the staged two-domain reset bring-up, and `pdw_verify.py` run over every (record, packet) pair | `@sim_input`/`@sim_output`, exact Python golden model |
 
 `pdw_engine_tb.py` exists alongside `pdw_tb.py` rather than being folded into

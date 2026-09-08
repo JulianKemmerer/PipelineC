@@ -100,8 +100,15 @@ from pypeline import (
     type_to_bytes,
 )
 
-import gr_pdw_record
-import top
+# The generated host module must exist before gr_pdw_record/pdw_verify import
+# it -- nothing is committed, so it is built on demand from top.py. This also
+# imports top, which is what registers the layouts in the first place.
+import pdw_host_gen
+
+pdw_host_gen.ensure_host_types()
+
+import gr_pdw_record  # noqa: E402
+import top  # noqa: E402
 from dsp.dsp_tb import golden_dc_block, golden_magnitude, golden_moving_avg
 from pulse_gen import golden_pulse_gen
 from pdw_measure import golden_pdw_measure
@@ -1113,11 +1120,10 @@ _cand_snk = AxisSimSink(top.cand_tx.axis_intrf, AXIS_N)  # rx2_m -- candidates
 # its layout has to agree with the hardware's, not merely with itself.
 VPDW_N_BYTES = byte_length(_VPDW_T)
 CAND_N_BYTES = byte_length(_CAND_T)
-assert _pystruct.calcsize(gr_pdw_record.RECORD_FORMAT) == VPDW_N_BYTES, (
-    f"gr_pdw_record.RECORD_FORMAT is "
-    f"{_pystruct.calcsize(gr_pdw_record.RECORD_FORMAT)} bytes but a PDW record "
-    f"frame is {VPDW_N_BYTES} -- the host-side decoder and the hardware's "
-    f"serializer have drifted apart"
+assert gr_pdw_record.RECORD_BYTES == VPDW_N_BYTES, (
+    f"gr_pdw_record.RECORD_BYTES is {gr_pdw_record.RECORD_BYTES} but a PDW "
+    f"record frame is {VPDW_N_BYTES} -- the generated host layout does not "
+    f"match this build's valid_pdw_t"
 )
 
 
@@ -1432,7 +1438,7 @@ def check_valid_pdw():
     ordering a DMA consumer needs to size the transfer that follows -- which is
     checked against pkt_starts in check_done.
 
-    The frame bytes are also handed to gr_pdw_record.unpack_records() and the
+    The frame bytes are also handed to gr_pdw_record.records_from_bytes() and the
     result compared field for field, so the host-side decoder is tested against
     real hardware bytes rather than only against a synthetic record."""
     transferred = int(top.rx1_m_axis_tvalid) and int(top.rx1_m_axis_tready)
@@ -1471,13 +1477,13 @@ def check_valid_pdw():
         int(rec.freq_stop),
     )
     # The same bytes through the host-side reader must give the same numbers.
-    host = gr_pdw_record.unpack_records(frame)
-    assert len(host) == 1, f"pdw_tb: unpack_records returned {len(host)} records"
+    host = gr_pdw_record.records_from_bytes(frame)
+    assert len(host) == 1, f"pdw_tb: records_from_bytes returned {len(host)} records"
     for _f in ("toa", "pulse_width", "peak_power", "pkt_samples", "status_flags",
                "pri", "peak_power_db", "noise_power_db", "freq_start", "freq_stop"):
         assert host[0][_f] == int(getattr(rec, _f)), (
             f"pdw_tb: gr_pdw_record decoded {_f}={host[0][_f]} but the frame "
-            f"holds {int(getattr(rec, _f))} -- RECORD_FORMAT no longer matches "
+            f"holds {int(getattr(rec, _f))} -- the generated host layout no longer matches "
             f"valid_pdw_t's field order"
         )
     assert not (got[4] & STATUS_PKT_FIFO_FULL), (

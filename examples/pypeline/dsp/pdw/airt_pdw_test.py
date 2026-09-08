@@ -2,17 +2,26 @@
 """Bring up the PDW design on a Deepwave AIR-T (AirStack) and verify its output.
 
 NOT part of `run_all.py`. This needs SoapySDR and real hardware. What *is*
-covered in-repo, with no radio, is everything it depends on: `pdw_host_types_test.py`
-proves the control frame this script builds is byte-identical to what the
-hardware's own deserializer expects, and `pdw_verify_test.py` proves the checks
-below actually catch a wrong record. Run those before trusting a red result here.
+covered in-repo, with no radio, is everything it depends on: the control frame
+this script builds comes from the same generated layout the hardware serializer
+was built from (so it cannot disagree by construction), and `pdw_verify_test.py`
+proves the checks below actually catch a wrong record. Run that before trusting
+a red result here.
 
 COPY THESE FOUR FILES TO THE RADIO -- nothing else, and no Pypeline checkout:
 
-    airt_pdw_test.py     this script
-    pdw_ctrl_record.py   builds the pdw_ctrl_t config frame
-    gr_pdw_record.py     parses valid_pdw_t records, and gr-pdw's columns
-    pdw_verify.py        independent FFT check of a record against its samples
+    airt_pdw_test.py          this script (config arithmetic lives here)
+    pypeline_host_types.py    GENERATED -- every struct layout and constant
+    gr_pdw_record.py          gr-pdw's columns and dB/frequency scaling
+    pdw_verify.py             independent FFT check of a record vs its samples
+
+`pypeline_host_types.py` is not written by hand and must not be edited. Every
+`pypelinec` build of ../top.py drops it in `<out_dir>/host/`; `pdw_host_gen.py`
+produces the same file without a build. It carries the three struct layouts and
+the design's exported constants (CTRL_DEFAULTS, the STATUS_* bits, and the
+POWER_FRAC_BITS/FREQ_BLOCK_K this script and pdw_verify.py need), all from the
+same leaf walk the hardware serializer is built from -- so the frame this script
+sends cannot disagree with the frame the hardware expects.
 
 CHANNEL MAP (2-channel bitstream mode). Deepwave names ports from ITS side, so
 every m/s letter is mirrored relative to this design's names -- they pair
@@ -62,8 +71,22 @@ import argparse
 import sys
 import time
 
+try:
+    from pypeline_host_types import (
+        CTRL_FLAG_LOOPBACK_EN,
+        POWER_FRAC_BITS,
+        pdw_ctrl_t,
+        valid_pdw_t,
+    )
+except ImportError as _e:  # pragma: no cover - the one setup mistake worth naming
+    raise SystemExit(
+        "pypeline_host_types.py not found -- it is GENERATED, not committed.\n"
+        "  in the repo:  python3 pdw_host_gen.py .\n"
+        "  from a build: copy <out_dir>/host/pypeline_host_types.py next to this\n"
+        f"({_e})"
+    )
+
 import gr_pdw_record
-import pdw_ctrl_record
 import pdw_verify
 
 # Channel assignments, per the map above.
@@ -76,8 +99,8 @@ CH_PDW_RX = 1  # readStream: valid_pdw_t records
 # exactly -- I = tdata[15:0] = the even int16, Q = tdata[31:16] = the odd one --
 # so this is a reinterpret, never a conversion.
 BYTES_PER_ELEM = 4
-CTRL_ELEMS = pdw_ctrl_record.CTRL_BYTES // BYTES_PER_ELEM
-RECORD_ELEMS = gr_pdw_record.RECORD_BYTES // BYTES_PER_ELEM
+CTRL_ELEMS = pdw_ctrl_t.BYTE_LENGTH // BYTES_PER_ELEM
+RECORD_ELEMS = valid_pdw_t.BYTE_LENGTH // BYTES_PER_ELEM
 
 
 def bytes_to_cs16(raw):
@@ -152,6 +175,142 @@ def write_frame(sdr, stream, raw, timeout_us=1_000_000):
     return ret
 
 
+# ─────────────────────────────────────────────
+# Config arithmetic -- absorbed from the former pdw_ctrl_record.py, whose other
+# half (the pdw_ctrl_t layout) is now generated. What is left is host POLICY:
+# how to turn a physically-described pulse into register values. The hardware
+# FACTS it needs come from the generated module.
+# ─────────────────────────────────────────────
+
+# pulse_gen's frequency unit: a phase increment per sample in turns x 2^32.
+TURNS_32 = 1 << 32
+
+# THRESHOLDS ARE NOT IN RAW I^2+Q^2 UNITS. They are compared against
+# `detect_pulses.power_t`, which carries POWER_FRAC_BITS fraction bits, so the
+# integer written to threshold_high/threshold_low is that many bits' worth of
+# scaling above the intended power. POWER_FRAC_BITS is exported by the design
+# rather than restated here, because getting it wrong does not fail loudly: too
+# small is crossed by the noise floor and the detector declares one endless
+# pulse, too large is never crossed and the device looks simply dead.
+POWER_SCALE = 1 << POWER_FRAC_BITS
+
+# The uint32_t port width then caps usable power at 2**32 / POWER_SCALE, i.e. a
+# rail amplitude just over 1024. Past that both threshold_high and the record's
+# peak_power wrap silently, so amplitude is range-checked rather than trusted.
+# Derived, not hardcoded -- it moves if the design's fixed-point format does.
+MAX_AMPLITUDE = int(((1 << 32) // POWER_SCALE) ** 0.5) - 1
+
+# The detector's pipeline must drain between one pulse ending and the next
+# beginning; ../pdw_tb.py asserts the same margin on every phase it drives.
+IDLE_MARGIN = 64
+
+
+def build_config(
+    fs,
+    pulses_per_sec=4.0,
+    pulse_width_s=4e-6,
+    amplitude=800,
+    freq_frac=0.125,
+    chirp_rate=0,
+    noise_amp=0,
+    loopback=True,
+    threshold_scale=0.6,
+):
+    """A physically-described pulse -> a `pdw_ctrl_t` config dict.
+
+    `fs` is the sample rate in Hz; the generator counts in samples, so every
+    time-domain argument is converted here rather than by the caller.
+
+    THRESHOLDS. `threshold_high` is set to `threshold_scale` of the pulse's
+    expected linear power and `threshold_low` to half that -- the same 0.6/0.3
+    ratio ../pdw_tb.py calibrates its own phases with. "Expected power" is
+    `amplitude**2`, since the generator's NCO emits a constant-magnitude
+    carrier at that peak I/Q amplitude, SCALED BY POWER_SCALE because that is
+    the fixed-point format the comparison actually happens in -- see the
+    constant. Note the direction of any residual error is safe: underestimating
+    the power makes the thresholds more permissive and the pulse is still
+    detected, whereas overestimating would silently detect nothing.
+
+    AMPLITUDE IS CAPPED near 1024, not by the int16 rail but by that same
+    scaling: the uint32_t threshold ports and the record's `peak_power` both
+    hold `power * 4096`, which overflows past a real power of 2^20. This is why
+    ../pdw_tb.py runs its phases at amplitudes of 400-800 rather than anything
+    near full scale.
+
+    WIDTH QUALIFICATION. `min_width`/`max_width` are placed either side of the
+    real width by a factor of four, so a correctly generated pulse is neither
+    rejected as a glitch nor force-closed as CW, while both mechanisms stay
+    live enough to reject a genuinely wrong pulse.
+    """
+    pri = int(round(fs / pulses_per_sec))
+    width = int(round(fs * pulse_width_s))
+    if width < 1:
+        raise ValueError(
+            f"pulse_width_s={pulse_width_s} is under one sample at fs={fs}"
+        )
+    if pri < width + IDLE_MARGIN:
+        raise ValueError(
+            f"pri ({pri}) must be >= width ({width}) + IDLE_MARGIN "
+            f"({IDLE_MARGIN}); raise pulse_width_s or lower pulses_per_sec"
+        )
+    if not -32768 <= amplitude <= 32767:
+        raise ValueError(f"amplitude {amplitude} does not fit int16")
+    if abs(amplitude) > MAX_AMPLITUDE:
+        raise ValueError(
+            f"amplitude {amplitude} exceeds MAX_AMPLITUDE ({MAX_AMPLITUDE}): "
+            f"threshold_high would need {abs(amplitude) ** 2 * POWER_SCALE} "
+            f"which overflows its uint32_t port, and the record's peak_power "
+            f"would wrap. See POWER_SCALE."
+        )
+
+    # The field is int32 and `freq_frac` is a signed fraction of the sample
+    # rate, so +-0.5 turns/sample (Nyquist) is the whole representable range.
+    if not -0.5 <= freq_frac < 0.5:
+        raise ValueError(f"freq_frac {freq_frac} is outside +-0.5 (Nyquist)")
+    expected_power = amplitude * amplitude
+    return {
+        "pulse_gen_pri": pri,
+        "pulse_gen_width": width,
+        "pulse_gen_freq": int(round(freq_frac * TURNS_32)),
+        "pulse_gen_chirp_rate": chirp_rate,
+        "pulse_gen_amplitude": amplitude,
+        "pulse_gen_noise_amp": noise_amp,
+        "threshold_high": int(threshold_scale * expected_power * POWER_SCALE),
+        "threshold_low": int(threshold_scale * 0.5 * expected_power * POWER_SCALE),
+        "max_width": width * 4,
+        "min_width": max(1, width // 4),
+        "flags": CTRL_FLAG_LOOPBACK_EN if loopback else 0,
+    }
+
+
+def describe(cfg, fs):
+    """A config dict -> human-readable lines, for logs and --dry-run."""
+    pri, width = cfg["pulse_gen_pri"], cfg["pulse_gen_width"]
+    freq_turns = cfg["pulse_gen_freq"]  # already signed: the field is int32
+    return [
+        f"PRI          {pri} samples ({pri / fs * 1e3:.3f} ms, "
+        f"{fs / pri:.3f} pulses/s)",
+        f"width        {width} samples ({width / fs * 1e6:.3f} us)",
+        f"carrier      {freq_turns / TURNS_32 * fs / 1e6:+.4f} MHz "
+        f"({freq_turns / TURNS_32:+.6f} turns/sample)",
+        f"chirp rate   {cfg['pulse_gen_chirp_rate']}",
+        f"amplitude    {cfg['pulse_gen_amplitude']}  "
+        f"(noise {cfg['pulse_gen_noise_amp']})",
+        # Shown in both forms, because the raw integers are 4096x the power
+        # they mean and a reviewer checking them against an amplitude would
+        # otherwise conclude they are wildly wrong.
+        f"thresholds   hi {cfg['threshold_high']}  lo {cfg['threshold_low']}  "
+        f"(= power {cfg['threshold_high'] / POWER_SCALE:.0f} / "
+        f"{cfg['threshold_low'] / POWER_SCALE:.0f}, i.e. "
+        f"{cfg['threshold_high'] / POWER_SCALE / max(1, cfg['pulse_gen_amplitude'] ** 2):.2f}"
+        f"/{cfg['threshold_low'] / POWER_SCALE / max(1, cfg['pulse_gen_amplitude'] ** 2):.2f}"
+        f" of amplitude^2)",
+        f"width limits min {cfg['min_width']}  max {cfg['max_width']}",
+        f"flags        0x{cfg['flags']:08x}"
+        + (" loopback" if cfg["flags"] & CTRL_FLAG_LOOPBACK_EN else ""),
+    ]
+
+
 WEDGE_HELP = """
 The packet path is wedged, not merely slow.
 
@@ -204,7 +363,7 @@ def run(args):
         active.append(tx_ctrl)
 
         # --- step 3: configure while the datapath is still in reset -------
-        raw = pdw_ctrl_record.pack(cfg)
+        raw = pdw_ctrl_t.to_bytes(pdw_ctrl_t(**cfg))
         print(
             f"writing {len(raw)}-byte pdw_ctrl_t frame ({CTRL_ELEMS} beats, END_BURST)"
         )
@@ -272,7 +431,10 @@ def capture(sdr, rx_pdw, rx_pkt, cfg, fs, args):
             n_failed += 1
             break
 
-        rec = gr_pdw_record.unpack_records(cs16_to_bytes(rec_buf, RECORD_ELEMS))[0]
+        raw_rec = cs16_to_bytes(rec_buf, RECORD_ELEMS)
+        # Generated layout in, plain dict out: everything downstream
+        # (decode, status_list, pdw_verify) takes a dict.
+        rec = valid_pdw_t.from_bytes(raw_rec)._asdict()
 
         try:
             pkt_buf = read_exact(
@@ -324,7 +486,7 @@ def capture(sdr, rx_pdw, rx_pkt, cfg, fs, args):
 
 
 def build_cfg(args, fs):
-    return pdw_ctrl_record.build_config(
+    return build_config(
         fs,
         pulses_per_sec=args.pulses_per_sec,
         pulse_width_s=args.pulse_us * 1e-6,
@@ -371,7 +533,7 @@ def main(argv=None):
     p.add_argument("--amplitude", type=int, default=800,
                    help="peak I/Q amplitude. Capped near 1024 (not by the int16 "
                         "rail but by the uint32 threshold/peak_power ports, which "
-                        "hold power x 4096) -- see pdw_ctrl_record.POWER_SCALE")
+                        "hold power x 4096) -- see POWER_SCALE")
     p.add_argument(
         "--freq-frac",
         type=float,
@@ -425,9 +587,9 @@ def main(argv=None):
     if args.dry_run:
         fs = args.rate or 125e6
         cfg = build_cfg(args, fs)
-        raw = pdw_ctrl_record.pack(cfg)
+        raw = pdw_ctrl_t.to_bytes(pdw_ctrl_t(**cfg))
         print(f"dry run at fs = {fs / 1e6:.3f} MSPS")
-        for line in pdw_ctrl_record.describe(cfg, fs):
+        for line in describe(cfg, fs):
             print("  " + line)
         print(f"  frame: {len(raw)} bytes / {CTRL_ELEMS} CS16 elements")
         print(f"  raw:   {raw.hex()}")

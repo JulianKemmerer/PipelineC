@@ -9,16 +9,16 @@ The FPGA does NOT emit gr-pdw's float64 rows directly, and pretending
 otherwise would be silly: it emits a compact fixed-point record and this
 module does the conversion, in the same place gr-pdw does its own scaling.
 
-    rx1_m_axis_* (40-byte frames)  ->  unpack_records()  ->  to_gr_pdw_rows()
+    rx1_m_axis_* (40-byte frames)  ->  records_from_bytes()  ->  to_gr_pdw_rows()
                                                                     |
                                           gr-pdw's pdw.py / pandas / HDF5
 
 These are literally the bytes on `rx1_m_axis_*`: one 40-byte frame per accepted
 pulse, ten 32-bit beats, tlast on the last. No host-side reassembly beyond
 concatenating a frame's beats is needed. `pdw_tb.py` feeds captured frames
-straight into `unpack_records()` and compares field by field against its golden
-model, so this module is checked against real hardware output rather than only
-against the synthetic record in `__main__` below.
+straight into `records_from_bytes()` and compares field by field against its
+golden model, so this module is checked against real hardware output rather than
+only against the synthetic record in `__main__` below.
 
 WHAT MAPS CLEANLY, AND WHAT DOES NOT
 ------------------------------------
@@ -42,36 +42,30 @@ Nothing here imports numpy or h5py; `to_gr_pdw_rows()` returns plain lists,
 and `to_numpy()` is available if numpy happens to be installed.
 """
 
-import struct
-
-# The hardware record: 320 bits / 40 bytes, little-endian, matching
-# `valid_pdw_t` in pdw_engine/pdw_engine.py field for field. Ten 32-bit AXIS
-# beats.
-RECORD_FORMAT = "<QIIIIhhhhIHH"
-RECORD_BYTES = struct.calcsize(RECORD_FORMAT)
-assert RECORD_BYTES == 40, RECORD_BYTES
-
-RECORD_FIELDS = (
-    "toa",  # uint64  samples since reset (see the note above)
-    "pulse_width",  # uint32  samples
-    "peak_power",  # uint32  linear, power_t truncated
-    "pkt_samples",  # uint32  beats in the released packet
-    "pri",  # uint32  samples since the previous accepted pulse
-    "peak_power_db",  # int16   Q8.8 dBFS
-    "noise_power_db",  # int16   Q8.8 dBFS
-    "freq_start",  # int16   turns x 2^16
-    "freq_stop",  # int16   turns x 2^16
-    "status_flags",  # uint32
-    "channel",  # uint16
-    "padding",  # uint16
+from pypeline_host_types import (
+    STATUS_ADC_CLIP,
+    STATUS_DSP_OVERFLOW,
+    STATUS_FREQ_DEGENERATE,
+    STATUS_PKT_FIFO_FULL,
+    STATUS_PRI_INVALID,
+    valid_pdw_t,
 )
 
-# status_flags bits, mirroring pdw_engine.py.
-STATUS_ADC_CLIP = 1 << 0
-STATUS_DSP_OVERFLOW = 1 << 1
-STATUS_PKT_FIFO_FULL = 1 << 2
-STATUS_FREQ_DEGENERATE = 1 << 3
-STATUS_PRI_INVALID = 1 << 4
+# THE LAYOUT LIVES IN THE GENERATED MODULE, NOT HERE. `pypeline_host_types.py`
+# is written by every `pypelinec` build of ../top.py (and by pdw_host_gen.py
+# without one), from the same leaf walk the hardware serializer is built from.
+# This file used to carry `RECORD_FORMAT = "<QIIIIhhhhIHH"` and a hand-listed
+# field tuple; the generator derives that string character for character, which
+# is asserted in src/tests/pypeline_tests/inst/host_types_test.py.
+#
+# So parse with the generated type and convert once at the boundary:
+#
+#     rec = valid_pdw_t.from_bytes(raw)._asdict()
+#
+# The `_asdict()` is deliberate. Everything below takes a plain dict, and
+# keeping it that way is what let this migration touch the layout and nothing
+# else -- `decode`, `to_gr_pdw_rows` and pdw_verify.py are all unchanged.
+RECORD_BYTES = valid_pdw_t.BYTE_LENGTH
 
 STATUS_NAMES = {
     STATUS_ADC_CLIP: "adc_clip",
@@ -98,23 +92,21 @@ Q8_8 = 256.0  # dB fixed-point scale
 TURNS = 65536.0  # frequency fixed-point scale (full int16 range = one circle)
 
 
-def unpack_records(data):
-    """Parse a byte string of back-to-back 40-byte records into dicts."""
+def records_from_bytes(data):
+    """Back-to-back record frames -> dicts, via the generated layout.
+
+    The only place this file touches bytes. Splitting a buffer into frames is
+    host convenience; the layout inside each one comes from `valid_pdw_t`.
+    """
     if len(data) % RECORD_BYTES:
         raise ValueError(
             f"gr_pdw_record: {len(data)} bytes is not a whole number of "
             f"{RECORD_BYTES}-byte records"
         )
-    out = []
-    for off in range(0, len(data), RECORD_BYTES):
-        vals = struct.unpack_from(RECORD_FORMAT, data, off)
-        out.append(dict(zip(RECORD_FIELDS, vals)))
-    return out
-
-
-def pack_record(rec):
-    """Inverse of `unpack_records` for one record -- used by tests."""
-    return struct.pack(RECORD_FORMAT, *(rec.get(f, 0) for f in RECORD_FIELDS))
+    return [
+        valid_pdw_t.from_bytes(data[off : off + RECORD_BYTES])._asdict()
+        for off in range(0, len(data), RECORD_BYTES)
+    ]
 
 
 def status_list(flags):
@@ -215,9 +207,9 @@ if __name__ == "__main__":
         "channel": 0,
         "padding": 0,
     }
-    blob = pack_record(demo)
+    blob = valid_pdw_t.to_bytes(valid_pdw_t(**demo))
     assert len(blob) == RECORD_BYTES
-    (back,) = unpack_records(blob)
+    (back,) = records_from_bytes(blob)
     assert back == demo, "record round-trip failed"
     d = decode(back, FS)
     print(f"record size: {RECORD_BYTES} bytes ({RECORD_BYTES * 8} bits)")

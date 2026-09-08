@@ -27,8 +27,16 @@ sys.path.insert(0, _HERE)
 
 import numpy as np
 
-import pdw_verify
-from pdw_verify import DB_Q8_8, POWER_FRAC_BITS, TURNS_16
+# ORDER MATTERS. pdw_verify imports its hardware constants from the generated
+# pypeline_host_types, which is deliberately not committed -- so it has to be
+# built and put on sys.path before pdw_verify is imported at all. This one call
+# is the whole cost of having no checked-in copy that could go stale.
+import pdw_host_gen
+
+HOST = pdw_host_gen.ensure_host_types()
+
+import pdw_verify  # noqa: E402
+from pdw_verify import DB_Q8_8, POWER_FRAC_BITS, TURNS_16  # noqa: E402
 
 FS = 125e6
 AMP = 12000
@@ -113,6 +121,85 @@ def _failed(rows):
 
 def _run(rec, samples, cfg=None, prev_toa=None):
     return pdw_verify.check(rec, samples, FS, cfg=cfg, prev_toa=prev_toa)
+
+
+
+# ---------------------------------------------------------------------------
+# The generated module, and its composition with this project's host logic.
+#
+# NOT a drift guard. The old pdw_host_types_test.py existed to catch hand-copied
+# layouts diverging from the hardware, and that class of bug is gone: the layout
+# is generated from the same leaf walk the serializer is built from, and nothing
+# is committed that could go stale. What is worth checking is that the pieces
+# still FIT -- that this design exports what the host files import.
+# ---------------------------------------------------------------------------
+def test_generated_module_carries_the_designs_types():
+    for name, n_bytes in (("pdw_ctrl_t", 40), ("valid_pdw_t", 40),
+                          ("candidate_rec_t", 16)):
+        t = getattr(HOST, name)
+        assert t.BYTE_LENGTH == n_bytes, f"{name}: {t.BYTE_LENGTH} != {n_bytes}"
+    # The two strings the deleted host files used to hand-write, now derived.
+    assert HOST.pdw_ctrl_t.FORMAT == "IIiihHIIIII", HOST.pdw_ctrl_t.FORMAT
+    assert HOST.valid_pdw_t.FORMAT == "QIIIIhhhhIHH", HOST.valid_pdw_t.FORMAT
+    print("test_generated_module_carries_the_designs_types passed")
+
+
+def test_exported_constants_are_present():
+    """Every constant the host files import, and the two that are not layout.
+
+    POWER_FRAC_BITS and FREQ_BLOCK_K are read off the built instances by
+    top.py's host_export. They were hardcoded host-side as 12 and 32 before this
+    migration; if a future dc_k/ma_n/block_k change moved them, the host would
+    follow silently rather than needing a test to notice."""
+    assert HOST.POWER_FRAC_BITS == pdw_verify.POWER_FRAC_BITS
+    assert HOST.FREQ_BLOCK_K == pdw_verify.FREQ_BLOCK_K
+    assert HOST.CTRL_FLAG_LOOPBACK_EN == 1
+    for bit in ("STATUS_ADC_CLIP", "STATUS_DSP_OVERFLOW", "STATUS_PKT_FIFO_FULL",
+                "STATUS_FREQ_DEGENERATE", "STATUS_PRI_INVALID"):
+        assert hasattr(HOST, bit), f"{bit} was not exported"
+    # CTRL_DEFAULTS arrives as a real pdw_ctrl_t, not a dict of numbers.
+    assert isinstance(HOST.CTRL_DEFAULTS, HOST.pdw_ctrl_t)
+    assert HOST.CTRL_DEFAULTS.threshold_high == 0xFFFFFFFF
+    print("test_exported_constants_are_present passed")
+
+
+def test_build_config_round_trips_through_generated_layout():
+    """The frame airt_pdw_test.py actually sends, decoded by the same layout."""
+    import airt_pdw_test as A
+
+    cfg = A.build_config(FS, pulses_per_sec=4.0, pulse_width_s=4e-6)
+    frame = HOST.pdw_ctrl_t.to_bytes(HOST.pdw_ctrl_t(**cfg))
+    assert len(frame) == HOST.pdw_ctrl_t.BYTE_LENGTH
+    assert HOST.pdw_ctrl_t.from_bytes(frame)._asdict() == cfg
+    # The scaling that fails silently in both directions, tied to the design's
+    # own POWER_FRAC_BITS rather than a literal 4096.
+    assert cfg["threshold_high"] == int(0.6 * 800 * 800 * (1 << HOST.POWER_FRAC_BITS))
+    assert cfg["threshold_high"] < (1 << 32)
+    print("test_build_config_round_trips_through_generated_layout passed")
+
+
+def test_record_round_trips_through_generated_layout():
+    """gr_pdw_record's boundary helper, against the generated type.
+
+    Uses a HARDWARE-REPRESENTABLE amplitude rather than this file's AMP. The
+    other tests here never serialize a record -- they hand dicts straight to
+    pdw_verify -- so AMP=12000 is harmless for them even though `peak_power`
+    at that amplitude is 12000**2 << POWER_FRAC_BITS, which overflows the
+    uint32 field and wraps. That wrap is precisely what MAX_AMPLITUDE (1023)
+    exists to prevent, and this test is the first thing in the suite that puts
+    a record on the wire, so it is the first thing that would see it.
+    """
+    import gr_pdw_record
+
+    s = make_pulse(amp=800)
+    rec = make_record(s)
+    assert rec["peak_power"] < (1 << 32), (
+        f"fixture peak_power {rec['peak_power']} does not fit the uint32 field"
+    )
+    frame = HOST.valid_pdw_t.to_bytes(HOST.valid_pdw_t(**rec))
+    (back,) = gr_pdw_record.records_from_bytes(frame)
+    assert back == rec, f"record round-trip differs: {back}"
+    print("test_record_round_trips_through_generated_layout passed")
 
 
 # ---------------------------------------------------------------------------
@@ -306,6 +393,11 @@ def test_snr_bound_is_caught():
 
 if __name__ == "__main__":
     print(f"pdw_verify_test: fs={FS / 1e6:.1f} MSPS amp={AMP} width={WIDTH}")
+    print(f"  generated host types: {HOST.__file__}")
+    test_generated_module_carries_the_designs_types()
+    test_exported_constants_are_present()
+    test_build_config_round_trips_through_generated_layout()
+    test_record_round_trips_through_generated_layout()
     test_clean_tone_passes()
     test_negative_carrier_passes()
     test_chirp_separates_start_and_stop()
