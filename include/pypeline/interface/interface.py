@@ -176,6 +176,9 @@ def _derive(iface, role):
         return None
     name = f"{iface._pypeline_iface_canonical}_{'t' if role == FWD else 'feedback_t'}"
     cls = struct(NamedTuple(name, fields))
+    import pypeline_names
+
+    cls._pypeline_name_info = pypeline_names.derived_type(iface, role, fields)
     cls._pypeline_interface = iface
     cls._pypeline_interface_role = role
     memo[role] = cls
@@ -202,6 +205,9 @@ def _derive_wire(iface):
         fields.append((fname, chosen))
     name = f"{iface._pypeline_iface_canonical}_wire_t"
     cls = struct(NamedTuple(name, fields))
+    import pypeline_names
+
+    cls._pypeline_name_info = pypeline_names.derived_type(iface, "wire", fields)
     memo["wire"] = cls
     return cls
 
@@ -230,6 +236,11 @@ def interface(cls):
     cls.__class_getitem__ = classmethod(_struct_class_getitem)
     cls._pypeline_is_interface = True
     factory_args = capture_factory_args(cls.__qualname__, _sys._getframe(1))
+    import pypeline_names
+
+    cls._pypeline_name_info = pypeline_names.describe(
+        cls, "interface", factory_args, _sys._getframe(1)
+    )
     cls._pypeline_iface_canonical = cls.__name__ + (
         "_" + "_".join(f"{k}_{encode_param_value(v)}" for k, v in factory_args.items())
         if factory_args

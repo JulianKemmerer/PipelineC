@@ -265,53 +265,39 @@ class point_t(NamedTuple):
 
 The `@struct` decorator does three things at decoration time:
 
-**1. Stamps `_pypeline_ctype_name`** — a canonical C type name derived entirely from
-the class name and field types, with no dependence on the Python variable name:
+**1. Stamps logical type identity and source metadata.** `_pypeline_ctype_name`
+is the backend's C type key, derived from the class name, field types, and captured
+factory arguments in declaration order. It does not depend on the Python alias at a
+call site. Array brackets are mangled (`[` → `_`, `]` removed). Above 96 characters,
+`collapse_overflow_name` keeps a readable prefix plus eight SHA-256 digits; the
+pre-collapse string remains in `_pypeline_ctype_canonical`.
 
-```
-<class_name>_<field1>_<type1_mangled>_<field2>_<type2_mangled>_...
-```
+`_pypeline_name_info` is a separate immutable description from `pypeline_names.py`:
+the source class, module, enclosing factory, file/line, parameter values, and field
+types. Nested types carry their descriptions, so a short logical type key does not
+hide their meaning in VHDL. For example:
 
-Array brackets are mangled: `[` → `_`, `]` removed. If the full name exceeds
-`_MAX_MANGLE_NAME_LEN` (64 chars) it is replaced with `{class_name}_{sha256[:8]}` of the
-full name. The full name is always preserved in `_pypeline_ctype_canonical` for debugging.
-Because a field whose type is itself truncated uses the shorter `_pypeline_ctype_name` as
-its field-type string, truncation propagates upward through nested structs naturally.
-
-Examples:
-
-```python
-# class point_t with fields x: uint32_t, y: uint32_t   (38 chars — kept)
-# _pypeline_ctype_name = "point_t_x_uint32_t_y_uint32_t"
-
-# class float_t with fields sign: uint1_t, exp: uint8_t, man: uint23_t, defined directly
-# inside make_float_t(exponent_width, mantissa_width) -- the field-derived part alone is
-# "float_t_sign_uint1_t_exp_uint8_t_man_uint23_t" (46 chars), but a struct defined inside a
-# factory function also gets that factory's own parameters appended (see "Factory parameter
-# disambiguation" below), pushing this one over 64 chars and into the truncated form:
-# _pypeline_ctype_canonical = "float_t_sign_uint1_t_exp_uint8_t_man_uint23_t_exponent_width_8_mantissa_width_23"
-# _pypeline_ctype_name      = "float_t_bdfae6fa"                           (used in VHDL)
-
-# Deeply nested stream_pipeline_t (field types themselves have truncated names → > 64 chars)
-# _pypeline_ctype_canonical = "stream_pipeline_t_stream_out_stream_t_..."  (full, for debug)
-# _pypeline_ctype_name      = "stream_pipeline_t_d1e1fd20"                 (used in VHDL)
+```text
+make_kept_data_bus_t(uint8_t, 4)
+logical C type: kept_data_bus_t_data_uint8_t_4_keep_uint1_t_4_data_t_uint8_t_n_4
+VHDL record:   kept_data_bus_t_from_kept_data_bus_n_4_data_t_uint8_t
 ```
 
-Two factory calls with identical class name, field types, *and* (for a struct defined inside
-a factory function) identical factory parameters produce the same canonical name and share a
-single VHDL type declaration — correct deduplication without module prefixing.
+Two calls with identical class name, fields, and factory arguments can share a
+logical type and one VHDL declaration. Source metadata preserves all contributing
+origins without changing that structural compatibility. Registration rejects
+conflicting layouts or structural identities under one logical key.
 
-**Factory parameter disambiguation:** a struct class defined directly inside a factory
-function (its `__qualname__` contains `.<locals>.`) has that factory's own declared
-parameters appended to its canonical name, sorted by parameter name — unconditionally, as a
-pure function of the call's own inputs, so the result never depends on elaboration order (no
-shared registry is consulted). This is what makes `make_fixed_t(4, 8)` and `make_fixed_t(8, 4)`
-produce different canonical names even when both calls happen to produce a field of the exact
-same width (e.g. `val: int12_t` either way) — without requiring any change at the `@struct`
-call site. A pypeline C type parameter contributes its own canonical name; `int`/`bool`
-contributes its value (a negative value uses a `neg` prefix, since a bare `-` is not legal
-inside a VHDL identifier); `None` contributes `"None"`. A bare, module-level `@struct` (no
-enclosing factory function) is unaffected.
+Factory arguments distinguish types with equal bit layouts but different settings:
+`make_fixed_t(4, 8)` and `make_fixed_t(8, 4)` remain distinct even if both contain
+`val: int12_t`. An interface argument carries its complete structural identity,
+including payload width, rather than the bare Python class name `stream_intrf`.
+
+VHDL presentation uses a 192-character base budget and a 240-character composed
+identifier budget, retaining useful scalar settings and explicit hashes where
+necessary. These limits are independent of logical C type keys. See
+[Generated VHDL names](PY_TO_LOGIC_DESIGN.md#generated-vhdl-names) for the rendering
+rules, examples, and source-index lookup.
 
 **Field names** are Python identifiers at this layer and are not mangled here — VHDL
 reserved-word mangling for individual field names (e.g. a field literally named `label` or
@@ -392,6 +378,8 @@ not compound types like structs.
    value). SHA256-truncates if the name exceeds `_MAX_MANGLE_NAME_LEN`.
 3. Stamps `_pypeline_ctype_name`, `_pypeline_ctype_canonical`, `_pypeline_is_enum = True`,
    and `_pypeline_enum_int_ctype` (e.g. `"uint2_t"`) on the class.
+4. Preserves the original source in `_pypeline_name_info` before any plain-class
+   conversion, then snapshots member names/values for readable VHDL presentation.
 
 The `_pypeline_ctype_name` attribute means enum types are handled uniformly by
 `_inner_ctype_to_str`, `_annotation_to_ctype`, and `_ctype_str` — the same machinery
@@ -878,13 +866,11 @@ built stage count and `MY_AP(x)` emulates the N-stage pipeline with a per-call-s
 delay line — see `SYN_DESIGN.md` and `pypeline_sim_DESIGN.md` §"Pipelined native sim").
 `.latency` is a read-tracked property: any read flips a module flag
 (`AUTOPIPELINE_LATENCY_WAS_READ`) the driver uses to skip the extra pass entirely for
-designs that never consume the value. `AUTOPIPELINE.__repr__` is deliberately
-address-free *and fully distinguishing* (it embeds the wrapped func's canonical key
-when the compiler is loaded): instances get captured in factory closures whose cell
-reprs feed canonical entity-name hashing, so an address-bearing repr would rename
-entities on every design re-execution, while a repr hiding the wrapped func's
-identity would collide wrappers around different factory-produced cores (e.g. several
-`make_stream_pipeline` invocations in one design).
+designs that never consume the value. `AUTOPIPELINE.__repr__` remains address-free
+and identifies its wrapped function for diagnostics. Naming uses the typed snapshot
+in `pypeline_names.stable_key`, which records the wrapped function and excludes the
+changing pinned depth. Thus wrappers around different cores remain distinct across
+pin-and-confirm passes without incorporating process addresses or mutable timing state.
 
 The class-level `_is_autopipeline_pragma` flag is the only thing the elaborator
 duck-type probes (mirroring `@sim_output`'s `_is_sim_output` flag). See
@@ -942,9 +928,8 @@ The differences worth knowing:
 - **`max_latency=`** caps the in→out latency, validated at construction (`int`,
   `>= 2` with the default registered output, `>= 1` with
   `register_output=False`) so the error names the user's own construction site.
-  The output policy and cap are part of `__repr__` — these objects get
-  captured in factory closures whose reprs feed canonical entity-name hashing,
-  so two tags differing only in their cap must not collide. It is also recorded
+  The output policy and cap are part of `__repr__` and the typed naming identity,
+  so two tags differing only in their cap do not share a specialization. It is also recorded
   in the schedule dict, and a cached schedule whose recorded cap differs from
   the tag's is treated as a miss: building hardware that violates the cap the
   source asks for is not an acceptable failure mode.
@@ -1118,8 +1103,8 @@ register_operator("PLUS", any_integer_t, any_integer_t, make_soft_add)
 ```
 
 Matchers: `any_uint_t`, `any_int_t`, `any_integer_t` (either signedness), `uint_upto(n)` /
-`int_upto(n)` (width-bounded). Each has a small, deterministic `__repr__` so it never leaks
-an object address into a canonical entity name.
+`int_upto(n)` (width-bounded). Each has a small, deterministic `__repr__` for diagnostics;
+typed naming snapshots retain matcher state without object addresses.
 
 Resolution order (all four registries -- binary, left, unary, MUX -- follow the same shape):
 1. Exact dict hit (`_operator_registry[(op, l, r)]`, etc.) -- unchanged, O(1).

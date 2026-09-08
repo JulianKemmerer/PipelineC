@@ -1224,179 +1224,57 @@ Only top-level `def` statements are scanned by `ast.walk` on `tree.body`. Nested
 inside factory closures (like `def concat` inside `make_concat`) are deliberately excluded
 — they are elaborated on-demand through `_elaborate_live_func` when first called.
 
-**Canonical function name format:**
+**Canonical function identity and readable names:**
 
-```
-<inner_func_name>_<param1>_<val1>_<param2>_<val2>_...
-```
+Factory functions have two names with different jobs. `_canonical_func_name` supplies
+an internal `FuncLogicLookupTable` key; `pypeline_names.EmissionNames` supplies the
+VHDL presentation after elaboration. Python aliases such as `bcast4` are call-site
+names, not function identities.
 
-`inner_func_name` is the **innermost function name** from `func.__qualname__` (the part
-after the last `.<locals>.`), passed through `_sanitize_vhdl_name` (see
-[VHDL Identifier Safety](#vhdl-identifier-safety--name-sanitization)) so an inner `def`
-named with a leading underscore (or a VHDL reserved word) doesn't produce an illegal
-entity name. This mirrors how `@struct` uses the inner class name rather than the outer
-factory name, and produces short, readable VHDL entity names: a user-written inner
-function named `stream_pipeline` becomes a VHDL entity `stream_pipeline_...`, not
-`make_stream_pipeline_...`.
+The logical key has this form before its 128-character collapse:
 
-Parameters are emitted in the factory's own **declaration order** (not alphabetical), so
-the most identifying parameter — typically the first one, e.g. `func`/`data_t` — leads,
-with flag-shaped parameters trailing.
-
-**Two ways a parameter's value is found, tried in order:**
-
-1. **Real captured factory arguments (preferred).** `pypeline.capture_factory_args` walks
-   the live call stack at `@hw_func`/`@wires`/`@MAIN` decoration time and captures EVERY
-   parameter the enclosing factory (or chain of factories) declares — including one fully
-   *consumed* by the factory before the closure is even returned. `make_fifo(data_t, depth,
-   mode)` reduces `depth`/`mode` into a `capacity` local that alone survives into the
-   returned closure; closure-cell introspection can never see `depth`/`mode` at all, but
-   `capture_factory_args` does, because it reads the factory's own live frame directly.
-   The result is stashed as `func._pypeline_factory_args` (on both the `@hw_func` wrapper
-   and the unwrapped original) and is what `_canonical_func_name` prefers.
-2. **Closure-cell introspection (fallback).** Used only when `func` was never
-   `@hw_func`/`@wires`/`@MAIN`-decorated — e.g. a plain nested `def` reached only through
-   `_callable_canonical_name`'s generic recursion over an arbitrary closure value. Only
-   closure variables whose names match a declared factory parameter are used; a parameter
-   consumed by the factory (absent from the closure) is represented by hashing the
-   *derived* closure vars instead and labeling the term with the param name — a strictly
-   weaker signal than case 1, since the hash isn't guaranteed to change when the missing
-   param's value does. This fallback path is why a `make_fifo`-shaped factory hashes the
-   very params a reader most wants to see instead of their real values whenever case 1
-   doesn't apply — case 1 (`capture_factory_args`) resolves it whenever the factory chain
-   is `@hw_func`/`@wires`/`@MAIN`-decorated; see the wireguard build audit note above for a
-   concrete instance.
-
-**Value encoding per parameter type (`pypeline.encode_param_value`):**
-
-- `_CTypeMeta` / `@struct` / `@enum` type → canonical C type name (brackets mangled: `[` → `_`, `]` removed)
-- `int` → stringified value (negative ints use a `neg{n}` prefix instead of a bare `-`,
-  which is not legal inside a VHDL basic identifier, e.g. `-5` → `neg5`); `bool` → `"True"`/`"False"`
-- `None` → `"None"`
-- `str` → sanitized directly (illegal-identifier characters collapsed to `_`), e.g. `"fwft"` → `fwft`
-- `float` → `.` → `p`, `-` → `neg`, e.g. `1.5` → `1p5`, `-0.25` → `neg0p25`
-- `IntEnum` member → `{EnumClassName}_{member_name}`
-- `list` / `tuple` (nesting allowed, any encodable element type) → each element encoded
-  the same way and joined with `_`; an empty list/tuple encodes as `empty`. This is what
-  lets coefficient-list-parameterized factories (`make_fir(coeffs)` and friends) get
-  readable, distinct names per instantiation.
-- `dict` → `{key}_{value}` pairs, sorted by key, each side encoded the same way
-- **callable (present as a factory arg or in closure)** → a **readable, hierarchical
-  name** reflecting which Python module/function the callable is defined in
-  (`_callable_canonical_name`), not a hash — see below.
-- **anything else** (an object with no dedicated encoding, or an unintrospectable
-  callable) → a labeled hash of its type name plus a sha256 of its address-stripped repr,
-  e.g. `Weird_a1b2c3d4` — so encoding never raises; an opaque-but-labeled term beats
-  elaboration failing outright. Two calls with structurally equal values always produce
-  the same hash (see the determinism note above `encode_param_value` in `pypeline.py`).
-
-**Callable-valued closure params (`_callable_canonical_name`):** rather than hashing the
-callable's identity into an opaque token, the name reflects which module/function it's
-defined in, so it can be traced back to source instead of just deduplicated:
-
-- **Factory-produced closure** (e.g. the callable passed in is itself an instantiated
-  `make_quarter_round(0, 4, 8, 12)`-style closure): recurse into this same
-  `_canonical_func_name` algorithm so the callable gets its **own** unique, readable name
-  (e.g. `quarter_round_a_0_b_4_c_8_d_12`) — this is what makes two differently-parameterized
-  instances of the same inner factory function distinguishable without a hash, and is the
-  mechanism that makes manual `__name__`/`__qualname__` overrides on factory-closure
-  functions unnecessary (see the note at the end of this section).
-- **Plain top-level function or builtin** (the common case — e.g. an already-`@hw_func`-
-  decorated function passed into `make_stream_pipeline`): use its own `module.qualname`
-  directly (e.g. `chacha20_round_a`, `math_sqrt`) — already unique, no hash needed.
-- **`functools.partial`**: unwrap `.func`, recurse into it, and fold in bound
-  args/keywords (plain values encoded as-is; complex ones hashed individually).
-- **Lambda or an otherwise unintrospectable object**: readable info runs out here, so a
-  short hash suffix is appended to whatever partial identity is available (the one
-  remaining case where a hash is used for a callable value) — e.g.
-  `chacha20_make_wrapper_func_stream_lambda_ee724960`.
-- Recursion is bounded (`_MAX_CALLABLE_RECURSION_DEPTH`) and cycle-guarded (mutual
-  closures) — on a cycle or depth-cap hit, that one sub-callable falls back to a hash,
-  never the whole name.
-
-**If the fully-expanded name exceeds `_MAX_MANGLE_NAME_LEN` (128 chars)**,
-`_collapse_overflow_name` (a thin wrapper around the shared `pypeline.collapse_overflow_name`
-also used by `@struct`/`@enum`) keeps a truncated-but-readable prefix (the front of the
-assembled name, trimmed to the last `_` boundary so it never ends mid-token — a bare
-character-offset cut can otherwise slice a trailing hash or type-name token in half, e.g.
-`..._out_t_8_b1dab4d2`, a real example found in a build's own output) plus `_{sha256[:8]}`
-of the **full, untruncated** name.
-
-**When a name collapses**, `_elaborate_live_func` also computes the full, uncollapsed name
-a second time and records it in `parser_state.pypeline_name_full[collapsed_name] =
-full_name` — this is what lets `SYN.WRITE_NAME_INDEX_LOG`'s `name_index.log` decode every
-collapsed hash back to what it stands for without re-deriving it (see
-[docs/SYN_DESIGN.md](SYN_DESIGN.md)).
-
-**Canonical-name collision guard.** Because real captured argument values (and the
-declaration-order/collapse changes above) remove hash entropy from most names, two
-genuinely different closures now land on the exact same canonical name more easily than
-before — and `_elaborate_live_func`'s dedup check (`FuncLogicLookupTable.get(key)`) would
-otherwise silently reuse the WRONG `Logic()` for the second one, exactly the same failure
-class as the `_hw_name_lower_to_orig` collision guard in `PARSE_FILE` Step 6. Each
-`_elaborate_live_func` call now checks `parser_state.pypeline_canonical_name_owner[key]`
-against `(module, qualname, src_file, line)` of the closure it's about to elaborate; the
-first writer wins (the ordinary dedup case — the SAME closure reached from a second call
-site, or a re-parse pass, has the identical identity), and a mismatch raises a clean
-`ElaborationError` naming both functions and both source locations.
-
-```python
-# make_fifo.<locals>.fifo  factory params (declaration order): data_t, depth, mode
-# ALL THREE are real captured arguments (capture_factory_args), even though only
-# `capacity` (a derived local, rounded up to the next power of two) appears in fifo's
-# own closure. Both calls below round to the same capacity (16) but get DISTINCT
-# names, since depth/mode are real captured arguments, not derived from capacity:
-# → "fifo_data_t_uint32_t_depth_16_mode_fwft"     (for make_fifo(uint32_t, 16))
-# → "fifo_data_t_uint32_t_depth_9_mode_fwft"      (for make_fifo(uint32_t, 9))
-
-# make_concat.<locals>.concat  factory params (declaration order): LO_SIZE, HI_SIZE
-# → "concat_LO_SIZE_3_HI_SIZE_4"      (inner name "concat"; OUT_SIZE excluded — derived local)
-
-# make_adder.<locals>.add  factory params: T  (recovered from annotations)
-# → "add_T_uint32_t"                  (inner name "add")
-
-# make_negate.<locals>.negate  factory params (declaration order): value_t, out_t
-# → "negate_value_t_uint32_t_out_t_int33_t"
-
-# make_clz.<locals>.clz  factory params: value_t
-# → "clz_value_t_uint24_t"            (inner name "clz"; definition hierarchy irrelevant)
-
-# make_double_inv.<locals>.make_inv.<locals>.inv  factory params: t (from make_inv)
-# → "inv_t_uint32_t"                  (inner name "inv")
-
-# make_double_inv.<locals>.double_inv  factory params: T (from make_double_inv)
-# → "double_inv_T_uint32_t"
-
-# _autopipeline_with_io_regs(func, has_input_reg, has_output_reg)  all three are real
-# captured arguments, in declaration order -- `func` (the wrapped function itself) leads,
-# so the name finally says WHICH function was autopipelined:
-# → "autopipelined_func_chacha20_chacha20_loop_body_has_input_reg_True_has_output_reg_True"
-# (func/has_input_reg/has_output_reg are all consumed before the closure's own body, so
-# without real argument capture each would be represented only by a hash of unrelated
-# derived closure vars, e.g. "autopipelined_func_has_input_reg_has_output_reg_d077aabe")
-
-# make_stream_pipeline.<locals>.stream_pipeline  factory params (declaration order): func, MAX_IN_FLIGHT
-# → "stream_pipeline_func_chacha20_round_a_MAX_IN_FLIGHT_4"
-
-# make_stream_pipeline.<locals>.func_stream  factory params (declaration order): func, MAX_IN_FLIGHT
-# → "func_stream_func_chacha20_round_a_MAX_IN_FLIGHT_4"
-
-# def make_singleton():  (0 params)
-# → "singleton"   (inner func name; no suffix)
-
-# make_dot.<locals>.dot  factory params: coeffs (a plain Python list)
-# → "dot_coeffs_3_neg5_7_2"           (for make_dot([3, -5, 7, 2]))
-# → "dot_coeffs_1_1_neg1_4"           (for make_dot([1, 1, -1, 4]) -- distinct instance)
+```text
+<inner_func_name>_<param1>_<value1>_..._s<12 SHA-256 digits>
 ```
 
-**No manual naming needed.** Factory-closure names are informative and guaranteed-unique
-from `_canonical_func_name`/`_callable_canonical_name` alone, so hardware design source
-code never needs to manually assign `__name__`/`__qualname__` on a factory-produced
-function to make its generated name readable or unique — doing so is unsupported and
-unnecessary. (A `quarter_round.__name__ = f"quarter_round_{a}_{b}_{c}_{d}"`-style override
-— a pattern from before this naming scheme existed — produces the exact same name
-automatically now, without the override; the wireguard-fpga ChaCha20 port's own copy of
-this override has been removed.)
+The readable prefix encodes captured arguments in factory declaration order. Integers,
+booleans, strings, types, lists/tuples, mappings and callables have readable encodings.
+The `_s` digest covers typed argument values, closure values, defining module/qualname,
+and resolved annotations. A list and a tuple, `True` and `1`, or strings `"a-b"` and
+`"a_b"` cannot alias merely because their readable encodings match. Interface types
+contribute their structural identity, including nested payload fields and dimensions.
+Callable identity uses code, defaults and closure values without process addresses;
+pinned AUTOPIPELINE depth is excluded because it changes during pin-and-confirm.
+
+`capture_factory_args` runs at decoration time and walks enclosing factory frames,
+skipping decorator plumbing and comprehension frames. It captures parameters even
+when the factory consumes them before returning its function. If the complete factory
+chain is no longer live (for example, a returned factory is called later), it falls
+back to closure introspection. Partial capture must not hide an outer specialization:
+`make_soft_cmp_prefix("LT")` and `make_soft_cmp_prefix("GTE")` have the same inner
+`l_t`/`r_t` parameters, but different `greater`/`strict` closure values. Identity always
+includes closure values as well as any captured arguments.
+
+`_callable_canonical_name` handles functions passed into other factories, recursively
+including nested specializations and partial arguments. Recursion is bounded and
+cycles use stable hashes. Overflow keeps whole readable tokens plus eight SHA-256
+digits of the complete logical name. The full logical name is retained in
+`parser_state.pypeline_name_full` for `name_index.log`.
+
+Before reuse, `_elaborate_live_func` checks both defining source ownership and the full
+specialization identity. A compact-key collision raises `ElaborationError` instead of
+silently reusing incompatible `Logic`. The two-width interface regression specifically
+covers the former failure: both widths previously had the function key
+`axis_broadcast_interlock_axis_intrf_stream_intrf_n_2`, so the second call reused the
+first width's function despite having a different return record.
+
+VHDL names are built from the separately captured source description. They show the
+function, defining module/factory and settings instead of exposing the compact logical
+key. For example, `make_fifo(uint32_t, 9)` can retain `depth_9` even when the factory
+rounds its storage capacity to 16; nested callable descriptions retain the wrapped
+function's name. See [Generated VHDL names](#generated-vhdl-names) for concrete output
+examples and limits. Hardware source does not need manual `__name__` or `__qualname__`
+assignments, and those overrides are unsupported.
 
 ### Specialised Types
 
@@ -1422,9 +1300,13 @@ decorator adds `__class_getitem__` so `point_t[10]` produces `_make_ctype("point
 
 **Factory struct canonical naming (`_pypeline_ctype_name`):**
 
+This is the logical backend key. See [Generated VHDL names](#generated-vhdl-names)
+for the separate source-based presentation; a truncated nested key does not limit
+the descriptive information available to VHDL rendering.
+
 The `@struct` decorator immediately stamps a **canonical C type name** on the class that
-is derived entirely from the class name and field types, with no dependence on the Python
-variable name used at the call site. This allows structs created inside nested factories
+is derived from the class name, field types and captured factory arguments (in
+declaration order), with no dependence on the Python variable name used at the call site. This allows structs created inside nested factories
 (where there is no module-level variable name) to have stable, unique names.
 
 **Canonical name rule:**
@@ -1451,7 +1333,7 @@ Examples:
 @struct
 class point_t(NamedTuple):
     dim: uint32_t[2]
-# _pypeline_ctype_name = "point_t_dim_uint32_t_2"  (30 chars — kept)
+# _pypeline_ctype_name = "point_t_dim_uint32_t_2"  (kept)
 
 @struct
 class float_t(NamedTuple):
@@ -1459,17 +1341,17 @@ class float_t(NamedTuple):
     exp: uint8_t
     man: uint23_t
 # As a bare, module-level struct (as shown here): _pypeline_ctype_name =
-# "float_t_sign_uint1_t_exp_uint8_t_man_uint23_t"  (46 chars — kept). But the real
+# "float_t_sign_uint1_t_exp_uint8_t_man_uint23_t"  (kept). But the real
 # float_t is defined inside make_float_t(exponent_width, mantissa_width) -- see
 # "Factory parameter disambiguation" below for what that adds.
 
 # stream_t produced by make_stream_t(data_t):
-# full canonical: "stream_t_data_uint8_t_valid_uint1_t_data_t_uint8_t"  (kept under 64)
+# full canonical: "stream_t_data_uint8_t_valid_uint1_t_data_t_uint8_t"  (kept under 96)
 # _pypeline_ctype_name = "stream_t_data_uint8_t_valid_uint1_t_data_t_uint8_t"
 
-# stream_pipeline_t (nested stream fields + factory params): full name > 64 chars → truncated
+# stream_pipeline_t (nested stream fields + factory params): full name > 96 chars → truncated
 # _pypeline_ctype_canonical = "stream_pipeline_t_stream_out_stream_t_data_uint8_t_valid_uint1_t_..."
-# _pypeline_ctype_name      = "stream_pipeline_t_d1e1fd20"
+# _pypeline_ctype_name retains a prefix plus an eight-digit digest; VHDL uses NameInfo.
 ```
 
 Two factory calls with the same field definitions *and* (for a struct defined inside a
@@ -1496,8 +1378,8 @@ ones referenced directly in the class body. Each value is formatted by the share
 `pypeline.encode_param_value` (a pypeline C type contributes its own canonical name,
 `int` contributes its value with a `neg` prefix for negatives since a bare `-` is not legal
 inside a VHDL identifier, `bool`/`None`/`str`/`float`/`dict`/`IntEnum` member each have
-their own encoding, anything else a labeled hash — see "Value encoding per parameter type"
-above). A bare, module-level `@struct` (no enclosing factory function) is unaffected.
+their own encoding, anything else a labeled hash — see `encode_param_value`
+in `pypeline.py`). A bare, module-level `@struct` (no enclosing factory function) is unaffected.
 
 **Nested factory structs:**
 
@@ -1863,7 +1745,13 @@ once, and the reverse array is assembled into a local immediately before the cal
 interface. Array ports are output-side only — an array input port raises, since there is no
 body syntax that could build an array of interface values.
 
-**Naming determinism.** The generated function and struct names fold in a factory-parameter
+**Naming determinism.** The following names are internal generated-Python/logical keys.
+The generated function and result record separately retain the original interface
+function's `NameInfo`, so their VHDL names describe that source and its parameters
+rather than generated module boilerplate. The suffix includes a typed parameter
+digest to distinguish values with the same readable encoding.
+
+The generated function and struct names fold in a factory-parameter
 suffix (`capture_factory_args` + `encode_param_value`, the same mechanism `_canonical_func_name`
 and `@struct` use — see [PY_TO_LOGIC_DESIGN.md's Canonical function name
 format](#closure-factory-pattern)), so an interface function defined inside a factory is named
@@ -5153,115 +5041,118 @@ Console Output" above.
 
 ## Predicting C/VHDL Output Names
 
-Every identifier that appears in generated VHDL — struct type names, component entity
-names, signal names, port names, submodule instance names — follows deterministic rules
-that can be predicted directly from Python source. This section documents those rules.
+Logical names identify backend objects; emitted names help a reader locate their
+Python definitions. Neither depends on the variable used to hold a factory result.
+The mapping is automatic and is also recorded in each build's `name_index.log`.
+
+### Generated VHDL names
+
+`pypeline_names.py` is shared by the runtime decorators and compiler. `NameInfo`
+snapshots a declaration's symbol, module, enclosing scopes, file/line, parameters and
+nested field/type descriptions. `@struct`, `@enum`, `@interface` and hardware-function
+decorators capture these while the original Python objects and factory arguments are
+available. Derived interface records retain their interface origin and `fwd`, `fb` or
+`wire` role. Generated interface functions, cast/bytes helpers and AUTOFSM functions
+retain the factory or user function that caused their generation, alongside the
+synthetic source available in the build index.
+
+After elaboration, `EmissionNames` freezes the base mapping. A name starts with the
+source symbol, followed by `_from_<module>` and useful enclosing scopes. A factory
+scope that repeats the symbol is omitted. Scalar settings come before primitive type
+parameters, then nested types; ties retain declaration order. Factory parameters
+replace repeated field expansion when available. Ordinary records without parameters
+show their fields. Nested descriptions omit repeated module context, while the index
+retains every nested origin.
+
+These are actual examples from the two-width regression:
+
+| Object | Previous name | Generated name |
+|---|---|---|
+| Four-byte kept-data record | `kept_data_bus_t_data_uint8_t_4_keep_uint1_t_4_data_t_uint8_t_n_4` | `kept_data_bus_t_from_kept_data_bus_n_4_data_t_uint8_t` |
+| Broadcast function, four-byte interface | `axis_broadcast_interlock_axis_intrf_stream_intrf_n_2` | `axis_broadcast_interlock_from_axi_axis_n_2_axis_intrf_stream_intrf_feedback_t_uint1_t_data_t_ndarray_fragment_t_ndims_1_frag_t_kept_data_bus_t_n_4_data_t_uint8_t` |
+| Broadcast function, eight-byte interface | Same key as the four-byte function (the bug) | `axis_broadcast_interlock_from_axi_axis_n_2_axis_intrf_stream_intrf_feedback_t_uint1_t_data_t_ndarray_fragment_t_ndims_1_frag_t_kept_data_bus_t_n_8_data_t_uint8_t` |
+
+The resulting entity adds `_<latency>CLK_<timing-hash>`. The result record begins
+`axis_broadcast_interlock_t_from_axi_axis_...`. Interface halves begin
+`stream_intrf_fwd_t_from_stream_stream_...`, `stream_intrf_fb_t_from_stream_stream_...`
+and `stream_intrf_wire_t_from_stream_stream_...`; their remaining parameters identify
+the payload even when the reverse half only contains a ready bit. Thus `n_2` describes
+the broadcast fan-out and the nested `n_4`/`n_8` describes the byte-lane count.
+
+Base names have a 192-character budget. Large nested descriptions are shortened first,
+retaining scalar settings and an explicit `_h<12 SHA-256 digits>` of omitted identity.
+Composed helper, entity and wire identifiers have a 240-character budget. Truncation
+uses whole underscore-delimited tokens and preserves terminal timing, `_top`,
+global-record direction and conversion-role suffixes where applicable. Hashes provide
+uniqueness; the readable prefix is never used as structural identity. Case-insensitive
+base collisions are resolved deterministically with a logical-key digest, independent
+of discovery order. Structurally shared types choose a deterministic source description
+and retain all origins in the index.
+
+The backend continues to operate on logical C type/function names. `VHDL.GET_ENTITY_NAME`,
+`WIRE_TO_VHDL_NAME`, output directories and constraint paths use the emission mapping.
+At VHDL file writes a lexer translates basic identifiers, including type fragments in
+array/conversion helpers and record members. Strings, comments, character literals and
+extended identifiers remain verbatim. Re-rendering is idempotent. This boundary avoids
+changing builtin dispatch or looking up rendered names in logical type dictionaries.
+Classic C builds do not install this mapping. Public main names and ports remain
+protected; pipeline-local `REG_STAGE` storage names still describe their backend role.
+
+Generated record/entity/function declarations include `-- Python:` source comments.
+The build's [name_index.log](SYN_DESIGN.md#build-output-name_indexlog) connects emitted
+names, full descriptions, logical keys, timing variants, source paths, instance
+hierarchy and wire names. Collapsed duplicate instances retain all contributing source
+locations. VHDL comments use repository-relative paths (external/synthetic files use
+basenames), so changing a temporary output directory does not change VHDL bytes; the
+index keeps full paths for navigation.
 
 ### Source Location String
 
-Many names embed the source location of the AST node that generated them:
+Many logical instance and alias-wire names embed the originating AST location:
 
-```
-<file_base>_l<line>_c<col>[_e<end_col>]
+```text
+<file_base>_l<line>_c<col>[_el<end_line>][_ec<end_col>]
 ```
 
-`file_base` is the source filename with `.` replaced by `_` (e.g. `pypeline_test_py`).
-`line` and `col` are 1-based line and 0-based column numbers. `end_col` is added when
-the node carries an `end_col_offset`.
-
-Example: a call at line 42, column 8 in `my_design.py`:
-```
-my_design_py_l42_c8
-```
+The end-column term is present when the AST supplies it; end-line is included only
+for a multiline span. `file_base` replaces
+filename punctuation with underscores; line numbers are 1-based and columns 0-based.
+A call in `my_design.py` at line 42, column 8 starts with `my_design_py_l42_c8`.
+The source index also records the complete location without requiring name parsing.
 
 ### Struct Type Names
 
-Every `@struct`-decorated class gets a canonical name stamped at decoration time:
+`@struct` stamps `_pypeline_ctype_name`, the internal C type key:
 
-```
-<class_name>_<field1>_<type1_mangled>_<field2>_<type2_mangled>_...
-```
-
-Array brackets are mangled: `[` → `_`, `]` removed. If the full name exceeds
-`_MAX_MANGLE_NAME_LEN` (64 chars) it is replaced with `{class_name}_{sha256[:8]}`.
-The full name is always preserved in `_pypeline_ctype_canonical`.
-
-```python
-@struct
-class point_t(NamedTuple):
-    x: uint32_t
-    y: uint32_t
-# C/VHDL type: point_t_x_uint32_t_y_uint32_t   (38 chars — kept)
-
-@struct
-class buf_t(NamedTuple):
-    data: uint8_t[64]
-# C/VHDL type: buf_t_data_uint8_t_64            (19 chars — kept)
-
-# Deeply nested factory struct (e.g. stream_pipeline_t with stream fields):
-# C/VHDL type: stream_pipeline_t_d1e1fd20       (truncated; full name in _pypeline_ctype_canonical)
+```text
+<class_name>_<field1>_<type1_mangled>_..._<factory_param>_<value>_...
 ```
 
-This name is independent of what Python variable the factory result is assigned to.
-Two factory calls with identical field definitions produce the same canonical name and
-share one VHDL type declaration. Because a field whose type is itself truncated uses
-the truncated `_pypeline_ctype_name` as its field-type string, truncation propagates
-upward through nested structs and avoids exponential name growth.
+Nested fields use their logical type keys and brackets become underscores. Above 96
+characters the key keeps a prefix plus eight SHA-256 digits; `_pypeline_ctype_canonical`
+retains its full pre-collapse form. Class name, fields and factory arguments determine
+structural reuse independently of call-site aliases. Registration checks full metadata
+identity and field layout before sharing a key. An array uses `<logical_type>[N]`
+in the IR; emission replaces its base with the readable record name.
 
-Array types of a struct use the canonical name as the base:
-```
-point_t_x_uint32_t_y_uint32_t[10]   (C type string)
-point_t_x_uint32_t_y_uint32_t_10    (when mangled for use inside another name)
-```
+For a module-level `point_t` in `geometry.py` with `x: uint32_t, y: uint32_t`, the
+logical key is `point_t_x_uint32_t_y_uint32_t` and the emitted record is
+`point_t_from_geometry_x_uint32_t_y_uint32_t`. The source description, rather than
+recursively truncated logical keys, supplies VHDL presentation.
 
 ### Hardware Function Names
 
-Top-level `def` functions in the design file keep their Python name verbatim:
-```python
-def adder(l: uint32_t, r: uint32_t) -> uint32_t:  ...
-# FuncLogicLookupTable key and VHDL entity: "adder"
-```
+Top-level design functions keep their sanitized Python name, and imported ordinary
+functions retain their module prefix. Factory functions use the specialization keys
+in [Closure Factory Pattern](#closure-factory-pattern), with source descriptions
+supplying the readable VHDL base above. A call-site alias such as `bcast4` remains useful
+in instance/wire names but does not determine which implementation is shared.
 
-Factory-produced functions (closures) get a **canonical name** derived from the **inner
-function name** and factory parameter values. The Python alias (`concat_3_4`) is never the
-VHDL entity name. The inner function name (not the factory name) is used as the prefix,
-mirroring how `@struct` uses the inner class name:
-
-```python
-concat_3_4 = make_concat(3, 4)   # inner func: "concat"
-# VHDL entity: "concat_HI_SIZE_4_LO_SIZE_3"
-
-add_u32 = make_adder(uint32_t)   # inner func: "add"
-# VHDL entity: "add_T_uint32_t"
-
-negate_uint32 = make_negate(uint32_t, int33_t)   # inner func: "negate"
-# VHDL entity: "negate_out_t_int33_t_value_t_uint32_t"
-
-stream_pipeline, _ = make_stream_pipeline(div_inv, MAX_IN_FLIGHT=4)   # inner func: "stream_pipeline"
-# VHDL entity: "stream_pipeline_MAX_IN_FLIGHT_4_func_8146762b"
-# (func not in closure → hash of derived closure vars; MAX_IN_FLIGHT is direct int)
-```
-
-If the full name exceeds `_MAX_MANGLE_NAME_LEN` (64 chars) it is replaced with
-`{inner_func_name}_{sha256[:8]}` of the full name.
-
-The canonical name is independent of which Python variable the result is assigned to.
-Two aliases with identical factory + args produce the same canonical name and share a
-single VHDL entity. `FuncLogicLookupTable` stores only canonical names for factory
-closures; Python aliases are resolved on-demand via `_elaborate_live_func` which returns
-the existing Logic() when the canonical name is already present.
-
-The `div_inv` argument above is itself a plain top-level function, not a factory closure —
-`stream_pipeline`'s canonical name (just shown) is for `make_stream_pipeline`'s own
-generated wrapper, not for `div_inv`. `div_inv` gets its own, separate
-`FuncLogicLookupTable` entry via `_top_level_func_key` (see [Plain top-level functions
-passed into a factory](#closure-factory-pattern)): `"div_inv"`, since it's defined in the
-top design file. Because that key comes from `div_inv`'s own module-qualified identity —
-never from `make_stream_pipeline`'s internal `func` parameter name — a second, unrelated
-function wrapped by `make_valid_ready_mcp` (or another `make_stream_pipeline`, or
-`make_autopipeline`) in the same design always gets its own distinct key, even though every
-one of those factories happens to call its wrapped argument through a same-named `func`
-closure variable internally.
+The entity name is the emitted function base plus `_<latency>CLK_<timing-hash>`.
+The timing hash distinguishes implementations with different register placements or
+child timing configurations even if total latency is equal. AUTOFSM bootstrap
+passthroughs include `comb` in their source-based name; the scheduled FSM retains the
+wrapped function's origin with an `autofsm_` prefix.
 
 ### Submodule Instance Names
 
@@ -5506,9 +5397,9 @@ explicitly checks for this: while registering stub `Logic()`s, it tracks
 function def, and raises `ElaborationError` if two distinct `(mod_prefix, name)` pairs
 sanitize to the same `hw_name` (e.g. top-level `_foo` and `__foo` would otherwise both
 mangle to `v_foo`). Factory-closure names (`_canonical_func_name`) are not covered by
-this check — closures are discovered lazily, one call at a time, with no "register all
-candidates up front" pass to hook into — so a collision between two distinct factories'
-inner closures sharing an identical name remains a narrow, pre-existing residual risk.
+this check. Instead they carry typed specialization digests and full identity/owner
+guards during elaboration. After discovery, the emission registry groups all readable
+base candidates case-insensitively and disambiguates collisions deterministically.
 
 **`const_env` is exempt:**
 
@@ -5524,8 +5415,9 @@ Loop counters and elaboration-time constants stored in `const_env` use raw Pytho
 | Array of struct | `<struct_canonical>[N]` in C type strings |
 | Top-level function | sanitized Python `def` name (`_hw_func_name`) |
 | Imported sub-file function | `<actual_module_name>_<sanitized_func_name>` (`_hw_func_name`; e.g. `file_a_main`) |
-| Factory function (params in closure) | `<sanitized_factory_prefix>_<param>_<val>_...` (canonical, from qualname + closure vars; base sanitized via `_sanitize_vhdl_name`) |
-| Factory function (params NOT in closure) | `<sanitized_factory_prefix>_<param_names>_<hash8>` (closure vars hashed; e.g. `make_vga_timing_spec_a1b2c3d4`) |
+| Factory function logical key | `<inner_func>_<param>_<value>_..._s<identity12>` (128-character collapse) |
+| Factory/type VHDL base | Source symbol, module/factory and parameter descriptions (192-character budget) |
+| Composed VHDL identifier | Emitted fragments and role/location suffixes (240-character budget) |
 | Top-file global Wire | sanitized Python name (auto-mangled if illegal; see VHDL Identifier Safety) |
 | Imported sub-file Wire | `<actual_module_name>_<safe_bare_name>` |
 | Input[T] / Output[T] (any file) | **bare Python name** — no module prefix; must be a legal VHDL identifier (error if not) |
@@ -5534,7 +5426,7 @@ Loop counters and elaboration-time constants stored in `const_env` use raw Pytho
 | Port wire | `<inst>____<port>` (four underscores) |
 | Return port | `<inst>____return_output` |
 | Alias wire | `<safe_var_name>_<loc_str>` |
-| Location string | `<file_base>_l<line>_c<col>[_e<end_col>]` |
+| Location string | `<file_base>_l<line>_c<col>[_el<end_line>][_ec<end_col>]` |
 
 ---
 

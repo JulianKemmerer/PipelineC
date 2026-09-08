@@ -60,16 +60,10 @@ def make_skid_buffer(data_t_or_intrf, mode: str = "full"):
     identity, so a caller who already built an `axis_intrf` must be able to hand
     in *that object* rather than a canonically-equal twin.
 
-    Known limitation, in the compiler rather than here: passing an *interface*
-    for two different payload widths in one design makes VHDL writing fail with
-    "Cant support this assignment in vhdl?", because the result struct resolves
-    to two different canonical names for the same Python class. It is not
-    specific to this module -- `make_axis_broadcast_interlock` at two widths in
-    one design fails identically. Passing the payload TYPE instead (the
-    `data_t` form above) is unaffected, and is the workaround if a design needs
-    several widths and does not need `@interface_func` port identity. Reproducer
-    and full write-up:
-    `src/tests/pypeline_tests/inst/interface_factory_two_widths_known_issue.py`.
+    Multiple payload widths can coexist in one design. Pass the original
+    interface object to retain the identity used by @interface_func port
+    matching. Regression coverage:
+    `src/tests/pypeline_tests/inst/interface_factory_two_widths_test.py`.
 
     `mode` is one of "full" (the default), "forward", "reverse" or "bypass" --
     see this module's docstring for what each cuts and costs. "full" is the

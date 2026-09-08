@@ -15,6 +15,13 @@ from common import INST_DIR, Test, main
 
 def get_tests() -> list:
     tests = []
+    tests.append(
+        Test(
+            name="generated_naming_test",
+            category="unit",
+            cmd=[INST_DIR / "generated_naming_test.py"],
+        )
+    )
     # AUTOFSM scheduler/code-generator unit tests: exact schedule, register
     # allocation, byte-identical generated source across re-elaborations --
     # not visible in a build log, would otherwise only be checked indirectly

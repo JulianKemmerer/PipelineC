@@ -16,6 +16,7 @@ import hashlib as _hashlib
 import typing
 import functools as _functools
 import warnings as _warnings
+import pypeline_names as _names
 from enum import IntEnum as _IntEnum, auto as _auto
 
 # If a fully-expanded struct/enum canonical name exceeds this length, it is
@@ -899,6 +900,15 @@ def encode_param_value(val) -> str:
     a design in-process and matches entities across passes by these names.
     """
     if isinstance(val, type):
+        if getattr(val, "_pypeline_is_interface", False):
+            info = val._pypeline_name_info
+            # Interfaces are classes too, but their literal __name__ does
+            # not identify the payload. This key is used for function reuse.
+            return collapse_overflow_name(
+                val._pypeline_iface_canonical + "_h" + _names.digest(info.identity),
+                val.__name__,
+                _MAX_MANGLE_NAME_LEN,
+            )
         return _mangle_type(getattr(val, "_pypeline_ctype_name", val.__name__))
     if isinstance(val, bool):
         return str(val)
@@ -1016,6 +1026,13 @@ def capture_factory_args(qualname: str, frame) -> dict:
     result = {}
     f = frame
     for expected_name in enclosing:
+        while f is not None and f.f_code.co_name in (
+            "<listcomp>",
+            "<dictcomp>",
+            "<setcomp>",
+            "<genexpr>",
+        ):
+            f = f.f_back
         if f is None or f.f_code.co_name != expected_name:
             return {}
         code = f.f_code
@@ -1106,6 +1123,9 @@ def struct(cls):
         parts.append(f"{field}_{_mangle_type(ann_str)}")
     canonical = cls.__name__ + ("_" + "_".join(parts) if parts else "")
     factory_args = capture_factory_args(cls.__qualname__, _sys._getframe(1))
+    cls._pypeline_name_info = _names.describe(
+        cls, "struct", factory_args, _sys._getframe(1)
+    )
     if factory_args:
         canonical += "_" + "_".join(
             f"{name}_{encode_param_value(val)}" for name, val in factory_args.items()
@@ -1262,6 +1282,7 @@ def enum(cls):
                 members["ERR"] = 2
             return enum(IntEnum("my_enum_t", members))
     """
+    name_info = _names.describe(cls, "enum", frame=_sys._getframe(1))
     if not isinstance(cls, type) or not issubclass(cls, _IntEnum):
         # Plain class body: extract members in definition order, supporting both
         # explicit int values and auto() (which assigns 0-based sequential values).
@@ -1297,6 +1318,13 @@ def enum(cls):
 
     n_bits = _enum_bit_width(cls)
     cls._pypeline_ctype_name = ctype_name
+    cls._pypeline_name_info = _names.replace(
+        name_info,
+        fields=tuple((m.name, _names.value_description(m.value)) for m in cls),
+        identity=_names.identity(
+            ("enum", cls.__name__, tuple((m.name, m.value) for m in cls))
+        ),
+    )
     cls._pypeline_ctype_canonical = canonical
     cls._pypeline_is_enum = True
     cls._pypeline_enum_int_ctype = f"uint{n_bits}_t"
@@ -2087,7 +2115,7 @@ def _ctype_str(t) -> str:
 
 
 def ctype_name(t) -> str:
-    """Return the canonical C/VHDL hardware type name for a pypeline type
+    """Return the logical C hardware type key for a pypeline type
     (e.g. uint32_t -> "uint32_t", an @struct NamedTuple -> its mangled name).
     Useful when writing raw vhdl(...) text that needs to reference the
     compiler's auto-generated {type}_SLV_LEN constant or {type}_to_slv /
@@ -3433,7 +3461,39 @@ def _exec_generated_func(
     code = compile(src, fake_file, "exec")
     ns = dict(extra_globals)
     exec(code, ns)
-    return ns[func_name]
+    fn = ns[func_name]
+    original = _inspect.unwrap(fn)
+    frame = _sys._getframe(1)
+    symbol = frame.f_code.co_name
+    if symbol.startswith("make_"):
+        symbol = symbol[5:]
+    if folder == "pypeline_generated_casts":
+        symbol = "cast"
+    info = _names.describe(original, "function")
+    # The signature identifies wrap/unwrap and bytes input/output directions;
+    # settings consumed during generation (e.g. endian) come from the caller.
+    n_args = frame.f_code.co_argcount + frame.f_code.co_kwonlyargcount
+    args = {
+        k: frame.f_locals[k]
+        for k in frame.f_code.co_varnames[:n_args]
+        if k in frame.f_locals
+    }
+    params = tuple((k, _names.value_description(v)) for k, v in args.items())
+    params += tuple(
+        (k, _names.value_description(v)) for k, v in original.__annotations__.items()
+    )
+    info = _names.replace(
+        info,
+        symbol=symbol,
+        module=frame.f_globals.get("__name__", ""),
+        qualname=frame.f_code.co_name,
+        source=frame.f_code.co_filename,
+        line=frame.f_lineno,
+        params=params,
+    )
+    fn._pypeline_name_info = original._pypeline_name_info = info
+    fn._pypeline_generated_origin = original._pypeline_generated_origin = True
+    return fn
 
 
 # Directory-name markers of the synthetic "/<marker>/<name>.py" absolute-path
@@ -6141,6 +6201,7 @@ def _sim_type_wrap(fn):
     # values (e.g. make_fifo's depth/mode) instead of hashing whatever
     # derived locals happen to survive into the closure.
     _factory_args = capture_factory_args(fn.__qualname__, _sys._getframe(1))
+    fn._pypeline_name_info = _names.describe(fn, "function", _factory_args)
     ann = fn.__annotations__
     try:
         params = list(_inspect.signature(fn).parameters.keys())

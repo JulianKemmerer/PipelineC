@@ -61,6 +61,23 @@ remember to update. It only fires under `python3 inst/X.py` (`__name__ ==
 (`PY_TO_LOGIC.PARSE_FILE`), so `elab`/`synth`-category registrations of a file never
 run its `test_*` functions -- those categories check elaboration/build only.
 
+## Generated-name regression coverage
+
+`interface_factory_two_widths_test.py` is a normal synthesis test: the same design
+instantiates broadcasts and skid buffers at four and eight byte lanes using their
+original interface objects. `generated_naming_test.py` checks structural identity,
+interface pairing and direction, typed parameter distinctions, returned-factory
+closure identity, readable record names, overflow, case-insensitive collisions and
+VHDL lexer/idempotence behavior.
+
+`generated_naming_build_test.py` builds that design in two fresh processes with
+separate output directories and different `PYTHONHASHSEED` values. It compares all
+VHDL paths and bytes, checks name length and source/index coverage, and imports and
+elaborates the real top with GHDL. `name_index_test.py` covers source tracing,
+same-spelling definitions that must coexist, and a deliberately forced identity
+collision that must fail clearly. Existing AUTOFSM and native-versus-VHDL tests
+exercise generated helpers and specialization reuse in real hardware builds.
+
 ## `native_vs_vhdl_sim` probe rules
 
 A design registered in `native_vs_vhdl_sim_tests.py` must:
@@ -94,7 +111,7 @@ See `docs/pypeline_sim_DESIGN.md`'s Limitations section for the full contract
 
 ```
 python3 src/tests/pypeline_tests/run_all.py                       # default categories, parallel
-python3 src/tests/pypeline_tests/run_all.py -j 4                  # cap parallelism
+python3 src/tests/pypeline_tests/run_all.py -j 4 --no_timeout     # full suite, four workers, no timeout
 python3 src/tests/pypeline_tests/run_all.py --category native_sim
 python3 src/tests/pypeline_tests/run_all.py --category known_issues   # opt-in
 python3 src/tests/pypeline_tests/run_all.py -t <name>              # one test, by name or list index

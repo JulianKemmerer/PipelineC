@@ -161,17 +161,21 @@ def test_two_list_parameterized_instances_get_distinct_logic():
         for logic in parser_state.FuncLogicLookupTable.values()
         if logic.func_name is not None and logic.func_name.startswith("dot_coeffs_")
     }
-    assert "dot_coeffs_3_neg5_7_2" in canonical_names, canonical_names
-    assert "dot_coeffs_1_1_neg1_4" in canonical_names, canonical_names
+    assert any(
+        n.startswith("dot_coeffs_3_neg5_7_2_s") for n in canonical_names
+    ), canonical_names
+    assert any(
+        n.startswith("dot_coeffs_1_1_neg1_4_s") for n in canonical_names
+    ), canonical_names
 
     instantiated = set()
     for logic in parser_state.FuncLogicLookupTable.values():
         instantiated.update(logic.submodule_instances.values())
-    assert "dot_coeffs_3_neg5_7_2" in instantiated, (
+    assert any(n.startswith("dot_coeffs_3_neg5_7_2_s") for n in instantiated), (
         "dot_a's Logic() is never instantiated -- dot_a_main's call must have "
         "resolved to a different (colliding) entity instead"
     )
-    assert "dot_coeffs_1_1_neg1_4" in instantiated, (
+    assert any(n.startswith("dot_coeffs_1_1_neg1_4_s") for n in instantiated), (
         "dot_b's Logic() is never instantiated -- dot_b_main's call must have "
         "resolved to a different (colliding) entity instead"
     )

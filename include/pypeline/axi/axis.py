@@ -116,16 +116,10 @@ def make_axis_skid_buffer(axis_intrf, mode="full"):
     and the byte source/sink) so the ports match whatever the caller already
     has; `make_axis_interface(n)` builds one in a line.
 
-    A design that needs skid buffers at two DIFFERENT axis widths cannot use
-    this face today: two interface-taking factory instantiations at different
-    widths in one design hit a compiler naming bug and fail VHDL writing with
-    "Cant support this assignment in vhdl?" (`make_axis_broadcast_interlock`
-    has the same problem, so it is not introduced here). Until that is fixed,
-    build those from the fragment type instead --
-    `make_skid_buffer(axis_intrf.stream_t.typeof("data"), mode=...)` -- which
-    is unaffected, at the cost of the interface identity `@interface_func`
-    port matching relies on. Reproducer:
-    `src/tests/pypeline_tests/inst/interface_factory_two_widths_known_issue.py`.
+    Multiple payload widths can coexist in one design. Pass the original
+    interface object to retain the identity used by @interface_func port
+    matching. Regression coverage:
+    `src/tests/pypeline_tests/inst/interface_factory_two_widths_test.py`.
 
     Returns (axis_skid_buffer, axis_skid_buffer_t):
         axis_skid_buffer(stream_in_if: axis_intrf.fwd_t, stream_out_if: axis_intrf.fb_t)

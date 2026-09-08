@@ -452,4 +452,5 @@ if not args.no_synth:
         args.sim, parser_state, args, multimain_timing_params, source_file=src_file
     )
 
+SYN.WRITE_NAME_INDEX_LOG(parser_state)
 print("Done.", flush=True)

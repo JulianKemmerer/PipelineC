@@ -1097,36 +1097,42 @@ explicitly during the sweep:
 
 ### Build output: `name_index.log`
 
-Alongside `module_instances.log` (top-N-by-delay-usage functions and their instance
-paths) and `integer_module_instances.log`, every build also writes
-`SYN_OUTPUT_DIRECTORY/name_index.log` (`SYN.WRITE_NAME_INDEX_LOG`), so a generated name
-seen anywhere else in the build's own output — a VHDL entity name, a
-`module_instances.log` hierarchy path, a `[sweep]`/stdout message — can be traced back to
-source without cross-referencing a second log or re-deriving a formatting decision. Four
-sections:
+Every successful build, including `--no_synth`, writes
+`SYN_OUTPUT_DIRECTORY/name_index.log` through `SYN.WRITE_NAME_INDEX_LOG`. Use it to
+trace an entity, record, helper, instance or wire back to Python without reverse
+engineering a truncated identifier. It contains:
 
-- **ENTITIES**: every instantiated function's true source location
-  (`Logic.ast_meta.src_file:line[:col]`), its full uncollapsed canonical name when the
-  displayed name was actually collapsed to fit the VHDL identifier length cap (see
-  [PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md)'s "Canonical function name format"), and
-  its instance count.
-- **TYPES**: the same full-name decode for every collapsed `@struct`/`@enum` canonical
-  type name.
-- **GENERATED SOURCES**: every synthetic pypeline-generated Python source (a to_bytes/
-  from_bytes cast helper, an AUTOFSM-opened FSM, an interface function's generated wiring
-  module) actually written to `SYN_OUTPUT_DIRECTORY/pypeline_generated_source/` by
-  `pypeline.dump_generated_sources` — so a `_py_lNN` location suffix pointing at generated
-  code (not user source) resolves to a real file instead of a name nobody can open.
-- **PIPELINE VARIANTS**: decodes each `hash_ext` (the trailing hash on names like
-  `decrypt_dataflow_decrypt_dataflow_0CLK_6f395802` or `top_2abf080f.vhd` — an md5 of the
-  timing-params configuration, see `TimingParams.BUILD_HASH_EXT` /
-  `MultiMainTimingParams.GET_HASH_EXT`) back to the function it belongs to and its stage
-  count. The hash itself is never renamed (it keys real cache/output files and content-hash
-  cache replay across AUTOPIPELINE passes) — only decoded.
+- **ENTITIES**: logical function key, emitted VHDL base, definition location, instance
+  count, and the full logical canonical name when that key was shortened.
+- **TYPES**: full logical struct/enum names for shortened internal type keys.
+- **SOURCE DESCRIPTIONS**: source symbol, module/qualname, full source path and line,
+  parameters and nested type/callable descriptions, and structural identity. Shared
+  types retain all contributing origins. Generated helpers identify the originating
+  factory or user function as well as their generated implementation.
+- **INSTANCES AND WIRES**: each instance's hierarchy/scope, its logical and emitted
+  names, submodule call-site locations and raw/emitted wire names with logical types.
+  Duplicate-instance collapsing retains every contributing call-site origin.
+- **GENERATED SOURCES**: synthetic Python files dumped into
+  `pypeline_generated_source/` (interface wiring, casts/bytes helpers and other
+  generated functions). These make generated `_py_lNN` coordinates navigable.
+- **PIPELINE VARIANTS**: the timing hashes and stage counts associated with functions.
+  A timing hash is distinct from a naming digest: it identifies register placement
+  and referenced child timing shapes, including alternatives with equal latency.
+- **EMITTED IDENTIFIERS**: final composed VHDL identifiers mapped to their logical
+  spelling and expanded presentation. This also indexes emitted timing variants.
 
-Best-effort throughout: every field is sourced from a `parser_state` side-table that is
-simply empty (not an error) for a plain C-frontend design, so `name_index.log` is still
-written, just with less content than a Pypeline design produces.
+For example, look up `kept_data_bus_t_from_kept_data_bus_n_4_data_t_uint8_t`
+to find the `make_kept_data_bus_t` declaration and `data_t=uint8_t, n=4` description.
+For a long `_h...` name, the full description and nested origins explain the omitted
+parameters. Instance/wire entries identify the particular call site separately from
+the shared function definition.
+
+The emission registry is shared by entity references, VHDL filenames, output
+directories and generated constraint paths. Internal logical keys still drive backend
+type lookup, function reuse and timing caches; they are not parsed from the rendered
+name. See [Generated VHDL names](PY_TO_LOGIC_DESIGN.md#generated-vhdl-names).
+Plain C builds have no Pypeline registry and retain their existing naming behavior;
+the index uses whatever source and timing information is available.
 
 ### Also produced: source locations on stdout/`[sweep]` messages
 

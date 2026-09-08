@@ -20,6 +20,37 @@ VHDL_FILE_EXT = ".vhd"
 VHDL_PKG_EXT = ".pkg" + VHDL_FILE_EXT
 
 
+def EMITTED_NAME(name, owner):
+    names = getattr(owner, "pypeline_emission_names", None)
+    return names.identifier(name) if names is not None else name
+
+
+def RENDER_TEXT(text, parser_state):
+    """Translate identifiers at the shared backend's emission boundary.
+
+    Keep logical C type/operator keys intact throughout lowering. The lexer
+    leaves string/character literals, comments and extended identifiers alone.
+    Classic C builds have no registry and take the unchanged path.
+    """
+    names = getattr(parser_state, "pypeline_emission_names", None)
+    return names.text(text) if names is not None else text
+
+
+def SOURCE_COMMENT(name, parser_state):
+    names = getattr(parser_state, "pypeline_emission_names", None)
+    if names is None:
+        return ""
+    comment = names.source_comment(name)
+    if not comment:
+        import pypeline_names
+
+        logic = parser_state.FuncLogicLookupTable.get(name)
+        meta = getattr(logic, "ast_meta", None)
+        if meta is not None:
+            comment = f"-- Source: {pypeline_names.display_source(meta.src_file)}:{meta.line}\n"
+    return comment
+
+
 def WIRE_TO_VHDL_TYPE_STR(wire_name, logic, parser_state=None):
     c_type_str = logic.wire_to_c_type[wire_name]
     return C_TYPE_STR_TO_VHDL_TYPE_STR(c_type_str, parser_state)
@@ -1769,7 +1800,7 @@ end arch;
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
     f = open(output_dir + "/" + filename, "w")
-    f.write(text)
+    f.write(RENDER_TEXT(text, parser_state))
     f.close()
 
 
@@ -2245,7 +2276,7 @@ def WRITE_LOGIC_TOP(
 
     # print "NOT WRIT TOP"
     f = open(output_directory + "/" + filename, "w")
-    f.write(rv)
+    f.write(RENDER_TEXT(rv, parser_state))
     f.close()
 
 
@@ -3632,7 +3663,7 @@ port map
     path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_entities" + VHDL_FILE_EXT
 
     f = open(path, "w")
-    f.write(text)
+    f.write(RENDER_TEXT(text, parser_state))
     f.close()
 
 
@@ -3942,7 +3973,7 @@ end global_wires_pkg;
     path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "global_wires_pkg" + VHDL_PKG_EXT
 
     f = open(path, "w")
-    f.write(text)
+    f.write(RENDER_TEXT(text, parser_state))
     f.close()
 
 
@@ -4486,6 +4517,8 @@ begin
             types_written.append(struct_name)
             done = False
 
+            text += SOURCE_COMMENT(struct_name, parser_state)
+
             text += (
                 """
   type """
@@ -4685,7 +4718,7 @@ end c_structs_pkg;
     path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "c_structs_pkg" + VHDL_PKG_EXT
 
     f = open(path, "w")
-    f.write(text)
+    f.write(RENDER_TEXT(text, parser_state))
     f.close()
 
 
@@ -4989,9 +5022,7 @@ def GET_VHDL_FUNC_DECL(inst_name, vhdl_func_logic, parser_state, timing_params):
             vhdl_type_str = "std_logic_vector"
         return vhdl_type_str
 
-    rv = ""
-
-    rv = (
+    rv = SOURCE_COMMENT(vhdl_func_logic.func_name, parser_state) + (
         """
 function """
         + vhdl_func_logic.func_name
@@ -5393,6 +5424,7 @@ def WRITE_LOGIC_ENTITY(
     )  # , TimingParamsLookupTable)
 
     rv = ""
+    rv += SOURCE_COMMENT(Logic.func_name, parser_state)
     rv += "-- Timing params:\n"
     rv += "--   Fixed?: " + str(timing_params.params_are_fixed) + "\n"
     rv += "--   Pipeline Slices: " + str(timing_params._slices) + "\n"
@@ -5664,7 +5696,7 @@ def WRITE_LOGIC_ENTITY(
 
     # print "NOT WRITE ENTITY"
     f = open(output_directory + "/" + filename, "w")
-    f.write(rv)
+    f.write(RENDER_TEXT(rv, parser_state))
     f.close()
 
 
@@ -7348,7 +7380,8 @@ def GET_WRITE_PIPE_WIRE_VHDL(wire_name, Logic, parser_state):
         return "VAR_" + WIRE_TO_VHDL_NAME(wire_name, Logic)
 
 
-def WIRE_TO_VHDL_NAME(wire_name, Logic=None):  # TODO remove Logic
+def WIRE_TO_VHDL_NAME(wire_name, Logic=None):
+    """Render a wire using the optional Logic/parser-state naming registry."""
     rv = (
         wire_name.replace(C_TO_LOGIC.SUBMODULE_MARKER, "_")
         .replace("_*", "_STAR")
@@ -7358,7 +7391,7 @@ def WIRE_TO_VHDL_NAME(wire_name, Logic=None):  # TODO remove Logic
         .replace("]", "")
         .replace("-", "_")
     )
-    return rv
+    return EMITTED_NAME(rv, Logic)
 
 
 def GET_ENTITY_CONNECTION_TEXT(
@@ -7716,12 +7749,13 @@ def GET_ENTITY_NAME(inst_name, Logic, TimingParamsLookupTable, parser_state):
     latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
     if latency < 0:
         raise Exception(f"Bad latency? {inst_name}")
-    return (
+    return EMITTED_NAME(
         Logic.func_name
         + "_"
         + str(latency)
         + "CLK"
-        + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+        + timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state),
+        parser_state,
     )
 
 

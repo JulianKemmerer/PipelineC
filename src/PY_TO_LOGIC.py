@@ -8,6 +8,7 @@ import re
 import sys
 import textwrap
 import types as _types
+import pypeline_names
 
 import C_TO_LOGIC
 import VHDL
@@ -507,35 +508,12 @@ _REPR_ADDR_RE = re.compile(r" at 0x[0-9a-fA-F]+")
 
 
 def _callable_hash(val):
-    """Return a short (8-char hex) hash representing a callable's identity.
+    """Return an address-free digest of code, defaults and closure values.
 
-    Uses qualname + module + a digest of closure cell reprs so that two
-    factory-produced functions with the same name but different captured
-    types produce different hashes. Last-resort disambiguator used only by
-    _callable_canonical_name's fallback branches (lambdas, unintrospectable
-    objects, recursion-cycle/depth-cap) -- never the common case.
-
-    A closure cell's default repr() for an object with no custom __repr__
-    ("<Foo object at 0x7f...>") embeds a per-process memory address, which
-    would otherwise leak into this hash and rename the generated entity on
-    every run (see _ref_tok_str for the same class of bug, confirmed via
-    unstable VAR_REF_* entity names). Strip it before hashing.
+    Used by callable naming fallbacks (lambdas, opaque objects and recursion
+    limits). Typed snapshots distinguish equal-looking parameter values.
     """
-    qual = getattr(val, "__qualname__", repr(val))
-    mod = getattr(val, "__module__", "")
-    closure_key = ""
-    if hasattr(val, "__closure__") and val.__closure__:
-        try:
-            closure_key = str(
-                sorted(
-                    _REPR_ADDR_RE.sub("", repr(c.cell_contents))
-                    for c in val.__closure__
-                    if c.cell_contents is not None
-                )
-            )
-        except Exception:
-            pass
-    return hashlib.sha256(f"{qual}:{mod}:{closure_key}".encode()).hexdigest()[:8]
+    return pypeline_names.digest(pypeline_names.identity(val))[:8]
 
 
 _ILLEGAL_IDENT_CHARS_RE = re.compile(r"[^A-Za-z0-9_]+")
@@ -744,13 +722,15 @@ def _callable_canonical_name(val, module_globals, _seen=None, _depth=0):
             if isinstance(a, (int, bool)) or a is None:
                 bound.append(str(a))
             else:
-                bound.append(hashlib.sha256(repr(a).encode()).hexdigest()[:8])
+                bound.append(pypeline_names.digest(pypeline_names.identity(a))[:8])
         for k in sorted(val.keywords):
             v = val.keywords[k]
             if isinstance(v, (int, bool)) or v is None:
                 bound.append(f"{k}_{v}")
             else:
-                bound.append(f"{k}_{hashlib.sha256(repr(v).encode()).hexdigest()[:8]}")
+                bound.append(
+                    f"{k}_{pypeline_names.digest(pypeline_names.identity(v))[:8]}"
+                )
         return _sanitize_vhdl_name("_".join([inner] + bound)) if bound else inner
 
     # Lambdas carry no distinguishing name of their own (many share "<lambda>"),
@@ -813,6 +793,20 @@ def _collapse_overflow_name(full: str, inner_func_name: str) -> str:
     return collapse_overflow_name(full, inner_func_name, _MAX_MANGLE_NAME_LEN)
 
 
+def _specialization_identity(func, closure_ns):
+    # Captured arguments never replace closure state: a returned inner factory
+    # can retain only derived flags from an outer factory that is no longer live.
+    return pypeline_names.identity(
+        (
+            func.__module__,
+            func.__qualname__,
+            getattr(func, "_pypeline_factory_args", None),
+            closure_ns,
+            getattr(func, "__annotations__", {}),
+        )
+    )
+
+
 def _canonical_func_name(
     func, closure_ns, module_globals=None, _seen=None, _depth=0, collapse=True
 ):
@@ -820,9 +814,12 @@ def _canonical_func_name(
 
     Factory closures have '.<locals>.' in __qualname__. The canonical name is:
 
-        <inner_func_name>_<param1>_<val1>_<param2>_<val2>_...
+        <inner_func_name>_<param1>_<val1>_<param2>_<val2>_..._s<identity12>
 
-    where <inner_func_name> is the innermost returned function name (mirrors how
+    The suffix hashes typed arguments, closure values and resolved annotations.
+    This is an internal backend key; pypeline_names renders VHDL separately.
+
+    <inner_func_name> is the innermost returned function name (mirrors how
     @struct uses the inner class name, not the factory name), and params are
     emitted in the factory's own DECLARATION order (not alphabetical) so the
     most identifying parameter -- typically the first one, e.g. `func`/
@@ -873,6 +870,11 @@ def _canonical_func_name(
     """
 
     def _finish(full, fallback_prefix):
+        # Readable parameter encodings alone are not identity: sanitization,
+        # different defining factories, or equal-looking values can alias.
+        # Use a typed snapshot, independent of presentation and call order.
+        specialization = _specialization_identity(func, closure_ns)
+        full += "_s" + pypeline_names.digest(specialization)
         return full if not collapse else _collapse_overflow_name(full, fallback_prefix)
 
     def _stable_val_repr(v):
@@ -903,7 +905,7 @@ def _canonical_func_name(
             )
         if callable(v):
             return _callable_canonical_name(v, module_globals, _seen, _depth + 1)
-        return repr(v)  # last resort for unusual cell types
+        return pypeline_names.identity(v)
 
     def _encode_one(var_name, val):
         if callable(val) and not isinstance(val, type):
@@ -1400,6 +1402,15 @@ def _add_submodule_instance(
         )
     logic.submodule_instances[inst_name] = func_name
     if ast_node is not None:
+        logic.submodule_instance_to_source_origins[inst_name] = {
+            (
+                src_file,
+                ast_node.lineno,
+                ast_node.col_offset,
+                getattr(ast_node, "end_lineno", ast_node.lineno),
+                getattr(ast_node, "end_col_offset", None),
+            )
+        }
         logic.submodule_instance_to_ast_meta[inst_name] = pypeline_ast.ASTMeta(
             src_file=src_file,
             line=ast_node.lineno,
@@ -5471,7 +5482,19 @@ class FuncElaborator:
             if canonical is not None
             else self._top_level_func_key(func_for_source)
         )
+        if canonical is None and getattr(
+            func_for_source, "_pypeline_generated_origin", False
+        ):
+            self.parser_state.pypeline_name_descriptions.setdefault(key, set()).add(
+                func_for_source._pypeline_name_info
+            )
         if canonical is not None:
+            info = getattr(func_for_source, "_pypeline_name_info", None)
+            if info is None:
+                info = pypeline_names.describe(func_for_source, "function", closure_ns)
+            self.parser_state.pypeline_name_descriptions.setdefault(key, set()).add(
+                info
+            )
             # Full, uncollapsed name for SYN's name_index.log -- computed only
             # when there's a factory-closure canonical name at all (a
             # top-level function's `key` comes from _top_level_func_key
@@ -5506,8 +5529,15 @@ class FuncElaborator:
                 f"Naming collision: '{prior_qual}' ({prior_mod}, "
                 f"{prior_file}:{prior_line}) and '{new_qual}' ({new_mod}, "
                 f"{new_file}:{new_line}) both produced the canonical entity "
-                f"name {key!r}. Give one of them a distinguishing factory "
-                f"parameter or name."
+                f"name {key!r}. This is a compiler identity collision."
+            )
+        specialization = _specialization_identity(func_for_source, closure_ns)
+        identities = self.parser_state.pypeline_specialization_identities
+        prior_identity = identities.setdefault(key, specialization)
+        if prior_identity != specialization:
+            raise ElaborationError(
+                f"Specialization collision for {key!r} at {true_src_file}:{true_start_line}: "
+                "different factory arguments or signatures must not reuse one function"
             )
 
         # Remember which live Python callable produced this entity, so AUTOFSM's
@@ -6263,6 +6293,10 @@ def _register_struct_recursive(obj, parser_state, visited=None):
     """
     if visited is None:
         visited = set()
+    elem = getattr(obj, "_elem_ctype", None)
+    if elem is not None:
+        _register_struct_recursive(elem, parser_state, visited)
+        return
     if not (
         inspect.isclass(obj)
         and issubclass(obj, tuple)
@@ -6276,6 +6310,14 @@ def _register_struct_recursive(obj, parser_state, visited=None):
     if getattr(obj, "_pypeline_is_interface", False):
         return
     c_name = getattr(obj, "_pypeline_ctype_name", obj.__name__)
+    info = getattr(obj, "_pypeline_name_info", None)
+    if info is not None:
+        parser_state.pypeline_name_descriptions.setdefault(c_name, set()).add(info)
+        prior = parser_state.pypeline_type_identities.setdefault(c_name, info.identity)
+        if prior != info.identity:
+            raise ElaborationError(
+                f"Conflicting definitions for canonical type {c_name!r}"
+            )
     if c_name in visited:
         return
     visited.add(c_name)
@@ -6292,6 +6334,11 @@ def _register_struct_recursive(obj, parser_state, visited=None):
         # Recursively register struct-typed fields (e.g. vga_pos_t inside vga_timing_signals_t)
         if isinstance(annotation, type):
             _register_struct_recursive(annotation, parser_state, visited)
+    prior_fields = parser_state.struct_to_field_type_dict.get(c_name)
+    if prior_fields is not None and prior_fields != fields:
+        raise ElaborationError(
+            f"Conflicting fields for canonical type {c_name!r}: {prior_fields} / {fields}"
+        )
     parser_state.struct_to_field_type_dict[c_name] = fields
 
 
@@ -6314,6 +6361,9 @@ def _discover_structs_from_module(module, parser_state):
 def _register_enum(ctype_obj, parser_state):
     """Register a @enum-decorated IntEnum class in parser_state.enum_info_dict."""
     ctype_name = getattr(ctype_obj, "_pypeline_ctype_name", None)
+    info = getattr(ctype_obj, "_pypeline_name_info", None)
+    if info is not None:
+        parser_state.pypeline_name_descriptions.setdefault(ctype_name, set()).add(info)
     if not ctype_name or ctype_name in parser_state.enum_info_dict:
         return
     full_ctype_name = getattr(ctype_obj, "_pypeline_ctype_canonical", None)
@@ -6989,12 +7039,15 @@ def PARSE_FILE(py_file):
     parser_state.pypeline_builtin_op_info = {}
     parser_state.pypeline_bit_manip_info = {}
     parser_state.pypeline_canonical_name_owner = {}
+    parser_state.pypeline_specialization_identities = {}
     # canonical (possibly collapsed) func name -> its full, uncollapsed form;
     # only populated when collapsing actually happened. Same idea as
     # pypeline_name_full but for @struct/@enum type names, populated by
     # _register_struct_recursive/_register_enum from _pypeline_ctype_canonical.
     parser_state.pypeline_name_full = {}
     parser_state.pypeline_type_canonical = {}
+    parser_state.pypeline_name_descriptions = {}
+    parser_state.pypeline_type_identities = {}
 
     # ── Apply pypeline pragmas (PART, MAIN_MHZ) from the live module ──
     if pypeline._part_registry is not None:
@@ -7246,6 +7299,29 @@ def PARSE_FILE(py_file):
                         f"disjoint"
                     )
 
+    # Freeze presentation after discovery/optimization. Internal type and
+    # operator names remain unchanged; shared C backend code receives this
+    # optional registry only for Python-originated builds.
+    protected = (
+        set(parser_state.main_mhz)
+        | set(parser_state.input_wires)
+        | set(parser_state.output_wires)
+    )
+    for main_name in parser_state.main_mhz:
+        main_logic = parser_state.FuncLogicLookupTable[main_name]
+        protected.update(main_logic.inputs)
+        protected.update(main_logic.outputs)
+    reserved = set(parser_state.FuncLogicLookupTable) - set(
+        parser_state.pypeline_name_descriptions
+    )
+    names = pypeline_names.EmissionNames(
+        parser_state.pypeline_name_descriptions, protected, reserved
+    )
+    parser_state.pypeline_emission_names = names
+    for logic in parser_state.FuncLogicLookupTable.values():
+        logic.pypeline_emission_names = names
+    for logic in parser_state.LogicInstLookupTable.values():
+        logic.pypeline_emission_names = names
     return parser_state
 
 

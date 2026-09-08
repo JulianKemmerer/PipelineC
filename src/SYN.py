@@ -447,7 +447,7 @@ def GET_MCP_PATH_CONSTRAINTS(
     partial_inst_path = ""
     toks = partial_inst_name.split(C_TO_LOGIC.SUBMODULE_MARKER)
     for tok in toks:
-        partial_inst_path += VHDL.WIRE_TO_VHDL_NAME(tok) + "/"
+        partial_inst_path += VHDL.WIRE_TO_VHDL_NAME(tok, parser_state) + "/"
     partial_inst_path = partial_inst_path.strip("/")
     if partial_inst_path != "":
         partial_inst_path = partial_inst_path + "/"
@@ -4377,6 +4377,10 @@ def GET_OUTPUT_DIRECTORY(Logic):
             # Func uniquely identifies logic so just use that?
             output_directory = SYN_OUTPUT_DIRECTORY + "/" + Logic.func_name
 
+    if output_directory.endswith("/" + Logic.func_name):
+        output_directory = output_directory[
+            : -len(Logic.func_name)
+        ] + VHDL.EMITTED_NAME(Logic.func_name, Logic)
     return output_directory
 
 
@@ -5772,20 +5776,16 @@ def WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE(parser_state):
 
 
 def WRITE_NAME_INDEX_LOG(parser_state):
-    """Write name_index.log next to module_instances.log: for every generated
-    entity/type name that appears anywhere else in this build's own output
-    (VHDL identifiers, module_instances.log, [sweep]/stdout messages), a
-    record giving its true source location and (when the name itself was
-    collapsed to fit the VHDL identifier length cap) the full, uncollapsed
-    name -- so a hash suffix is always decodable without cross-referencing a
-    second log file. Best-effort: sourced entirely from side-tables populated
-    during elaboration/synthesis (pypeline_name_full, pypeline_type_canonical,
-    pypeline_hash_ext_info), all absent (and therefore empty here, not an
-    error) for a plain C-frontend design.
+    """Index logical/emitted names, complete source descriptions and call sites.
+
+    Includes nested type origins, generated source files, timing variants and
+    per-scope wire/hierarchy mappings. Also called for --no_synth. Pypeline
+    side-tables are optional; classic C builds retain their source/timing index.
     """
     name_full = getattr(parser_state, "pypeline_name_full", {})
     type_canonical = getattr(parser_state, "pypeline_type_canonical", {})
     hash_ext_info = getattr(parser_state, "pypeline_hash_ext_info", {})
+    names = getattr(parser_state, "pypeline_emission_names", None)
 
     lines = ["ENTITIES"]
     for func_name in sorted(parser_state.FuncToInstances.keys()):
@@ -5802,6 +5802,8 @@ def WRITE_NAME_INDEX_LOG(parser_state):
         if loc is None and full is None:
             continue  # nothing decodable to report (e.g. a plain built-in)
         lines.append(f"  {func_name}")
+        if names is not None:
+            lines.append(f"    vhdl:   {names.identifier(func_name)}")
         if loc is not None:
             lines.append(f"    source: {loc}")
         if full is not None:
@@ -5813,6 +5815,63 @@ def WRITE_NAME_INDEX_LOG(parser_state):
     for type_name in sorted(type_canonical.keys()):
         lines.append(f"  {type_name}")
         lines.append(f"    full:   {type_canonical[type_name]}")
+
+    if names is not None:
+        lines.extend(["", "SOURCE DESCRIPTIONS"])
+        seen_descriptions = set()
+
+        def describe(info, indent="    "):
+            key = (info.identity, info.source, info.line, info.kind)
+            lines.append(f"{indent}{info.kind}: {info.render()}")
+            lines.append(
+                f"{indent}source: {info.source}:{info.line} ({info.module}.{info.qualname})"
+            )
+            if key in seen_descriptions:
+                return
+            seen_descriptions.add(key)
+            lines.append(f"{indent}identity: {info.identity}")
+            for label, child in info.params + info.fields:
+                if hasattr(child, "render"):
+                    lines.append(f"{indent}{label}:")
+                    describe(child, indent + "  ")
+
+        for raw, infos in sorted(names.descriptions.items()):
+            lines.append(f"  {names.identifier(raw)}")
+            lines.append(f"    logical: {raw}")
+            for info in sorted(infos, key=lambda n: (n.source, n.line, n.qualname)):
+                describe(info)
+
+        lines.extend(["", "INSTANCES AND WIRES"])
+        for func_name in sorted(parser_state.FuncToInstances):
+            logic = parser_state.FuncLogicLookupTable[func_name]
+            lines.append(f"  scope: {names.identifier(func_name)}")
+            for inst in sorted(parser_state.FuncToInstances[func_name]):
+                path = "/".join(
+                    VHDL.WIRE_TO_VHDL_NAME(t, parser_state)
+                    for t in inst.split(C_TO_LOGIC.SUBMODULE_MARKER)
+                )
+                lines.append(f"    hierarchy: {path}")
+            for inst, child in sorted(logic.submodule_instances.items()):
+                lines.append(
+                    f"    instance: {VHDL.WIRE_TO_VHDL_NAME(inst, parser_state)} -> {names.identifier(child)}"
+                )
+                for origin in sorted(
+                    logic.submodule_instance_to_source_origins.get(inst, ())
+                ):
+                    source, line, col, end_line, end_col = origin
+                    lines.append(
+                        f"      source: {source}:{line}:{col}-{end_line}:{end_col}"
+                    )
+            for wire in sorted(logic.wires):
+                lines.append(f"    wire: {VHDL.WIRE_TO_VHDL_NAME(wire, parser_state)}")
+                lines.append(f"      logical: {wire}")
+                lines.append(f"      type: {logic.wire_to_c_type.get(wire, '?')}")
+
+        lines.extend(["", "EMITTED IDENTIFIERS"])
+        for emitted, (raw, full) in sorted(names.full.items()):
+            lines.append(f"  {emitted}")
+            lines.append(f"    logical: {raw}")
+            lines.append(f"    full: {full}")
 
     lines.append("")
     lines.append("GENERATED SOURCES")

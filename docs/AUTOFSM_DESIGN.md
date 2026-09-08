@@ -200,8 +200,8 @@ over the raw FSM is the holding register. Crucially, **the generated hardware
 never reads `.latency`** — unlike the raw call site's manual spacing, the
 wrapper's RTL shape is identical whether `fsm.latency` is 0 (bootstrap pass /
 `--comb` / native sim) or a real scheduled value. This matters because
-`AUTOFSM.__repr__` (§3, canonical-name hashing) carries the canonical key and
-`max_latency` but *not* `.latency` itself — a wrapper whose body varied with
+AUTOFSM naming identity carries the wrapped function, `max_latency` and
+`register_output`, but excludes the changing schedule/`.latency` state — a wrapper whose body varied with
 `.latency` could hash two genuinely different circuits to the same entity name
 and reuse stale measured delays. Avoiding `.latency` in the body sidesteps it
 by construction.
@@ -649,7 +649,7 @@ Points that are easy to get wrong, and are deliberate here:
   multi-port reference operation, not a single driver. It is rendered as a typed
   local plus one assignment per field, shortest-path-first so a whole-value base
   lands before field overwrites.
-- **The entity name hashes the schedule** (`autofsm_<func>_<hash8>`), so
+- **The logical function key hashes the schedule** (`autofsm_<func>_<hash8>`), so
   rescheduling produces a *different* entity. That makes stale cross-pass reuse
   structurally impossible: nothing can seed pipelining onto, or reuse a cached
   delay for, an entity whose contents changed underneath it.
@@ -658,7 +658,13 @@ Points that are easy to get wrong, and are deliberate here:
   depends on it, and `autofsm_unit_test.py` asserts it.
 
 Generated source is written to `<out_dir>/autofsm_generated/` on every build, so
-a problem inside it can be read as source instead of inferred from VHDL.
+a problem inside it can be read as source instead of inferred from VHDL. VHDL
+presentation retains the user's wrapped function and source location with an
+`autofsm_` prefix. Bootstrap passthroughs additionally include `comb` so they remain
+distinguishable from scheduled FSMs. The registry disambiguates different logical
+schedule keys when they share a readable base. `name_index.log` links the emitted
+entity, logical schedule key, original user source and generated source; see
+[Generated VHDL names](PY_TO_LOGIC_DESIGN.md#generated-vhdl-names).
 
 ### 3.4 The driver loop
 

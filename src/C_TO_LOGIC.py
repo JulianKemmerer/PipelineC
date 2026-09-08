@@ -476,6 +476,8 @@ class Logic:
         # sites to schedule. See docs/AUTOFSM_DESIGN.md.
         self.sub_inst_to_autofsm_key = {}
         self.ast_meta = None
+        self.pypeline_emission_names = None
+        self.submodule_instance_to_source_origins = {}
         # Is this logic a c built in C function?
         self.is_c_built_in = False
         # Is this logic implemented as a VHDL function (non-pipelineable 0 clk logic, probably 0LLs)
@@ -606,6 +608,10 @@ class Logic:
         rv.sub_inst_to_autopipeline_key = dict(self.sub_inst_to_autopipeline_key)
         rv.sub_inst_to_autofsm_key = dict(self.sub_inst_to_autofsm_key)
         rv.ast_meta = self.ast_meta
+        rv.pypeline_emission_names = self.pypeline_emission_names
+        rv.submodule_instance_to_source_origins = {
+            k: set(v) for k, v in self.submodule_instance_to_source_origins.items()
+        }
         rv.is_c_built_in = self.is_c_built_in
         rv.is_vhdl_func = self.is_vhdl_func
         rv.is_vhdl_expr = self.is_vhdl_expr
@@ -928,6 +934,10 @@ class Logic:
         self.submodule_instance_to_ast_meta = C_AST_VAL_UNIQUE_KEY_DICT_MERGE(
             self.submodule_instance_to_ast_meta,
             logic_b.submodule_instance_to_ast_meta,
+        )
+        self.submodule_instance_to_source_origins = DICT_SET_VALUE_MERGE(
+            self.submodule_instance_to_source_origins,
+            logic_b.submodule_instance_to_source_origins,
         )
         # Plain strings, unlike ast_meta -- ordinary equality-based merge is fine
         self.submodule_instance_to_printf_format_string = UNIQUE_KEY_DICT_MERGE(
@@ -1427,6 +1437,7 @@ class Logic:
 
         # Remove from list of subs yo
         self.submodule_instances.pop(submodule_inst, None)
+        self.submodule_instance_to_source_origins.pop(submodule_inst, None)
 
         # Make list of wires that look like
         #   submodule_inst + SUBMODULE_MARKER
@@ -1549,12 +1560,16 @@ class Logic:
             self.wire_aliases_over_time[var_name] = []
 
     def COPY_SUBMODULE_INFO(self, new_inst, old_inst):
+        if old_inst in self.submodule_instance_to_source_origins:
+            self.submodule_instance_to_source_origins[new_inst] = set(
+                self.submodule_instance_to_source_origins[old_inst]
+            )
         if old_inst in self.submodule_instances:
             self.submodule_instances[new_inst] = self.submodule_instances[old_inst]
         if old_inst in self.submodule_instance_to_ast_meta:
-            self.submodule_instance_to_ast_meta[new_inst] = (
-                self.submodule_instance_to_ast_meta[old_inst]
-            )
+            self.submodule_instance_to_ast_meta[
+                new_inst
+            ] = self.submodule_instance_to_ast_meta[old_inst]
         if old_inst in self.submodule_instance_to_input_port_names:
             self.submodule_instance_to_input_port_names[new_inst] = (
                 self.submodule_instance_to_input_port_names[old_inst]
@@ -9917,6 +9932,14 @@ def TRIM_COLLAPSE_FUNC_DEFS_RECURSIVE(func_logic, parser_state):
 
         # Copy the submodule information from one of the identical insts to this
         func_logic.COPY_SUBMODULE_INFO(new_sub_inst_name, dup_insts[0])
+        func_logic.submodule_instance_to_source_origins[
+            new_sub_inst_name
+        ] = set().union(
+            *(
+                func_logic.submodule_instance_to_source_origins.get(i, set())
+                for i in dup_insts
+            )
+        )
 
         # Wire new inst ce+inputs with known identical drivers
         # Make ce connection

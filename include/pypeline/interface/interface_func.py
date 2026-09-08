@@ -412,10 +412,18 @@ def _factory_suffix(orig):
     if frame is None:
         return ""
     factory_args = capture_factory_args(orig.__qualname__, frame)
-    if not factory_args:
+    import pypeline_names
+
+    orig._pypeline_name_info = pypeline_names.describe(orig, "function", factory_args)
+    if not factory_args and ".<locals>." not in orig.__qualname__:
         return ""
-    suffix = "_" + "_".join(
-        f"{k}_{encode_param_value(v)}" for k, v in factory_args.items()
+    suffix = "".join(
+        f"_{k}_{encode_param_value(v)}" for k, v in factory_args.items()
+    )
+    # A returned factory can outlive its outer frame. Include the original
+    # closure and resolved ports even when no complete argument capture exists.
+    suffix += "_s" + pypeline_names.digest(
+        pypeline_names.identity((orig, factory_args, orig.__annotations__))
     )
     # The generated module's name becomes a directory name during synthesis, so
     # a factory with many parameters (dsp/fir_interp: coeffs, widths, rounding,
@@ -899,6 +907,27 @@ def make_hw_func_from_interface_func(f):
 
     inst = mod.__dict__[fname_]
     inst_t = mod.__dict__[out_struct]
+    import pypeline_names
+
+    origin = getattr(orig, "_pypeline_name_info", None) or pypeline_names.describe(
+        orig, "function"
+    )
+    inst._pypeline_name_info = inspect.unwrap(inst)._pypeline_name_info = origin
+    inst._pypeline_generated_origin = inspect.unwrap(
+        inst
+    )._pypeline_generated_origin = True
+    inst_t._pypeline_name_info = pypeline_names.replace(
+        origin,
+        kind="interface_result",
+        symbol=origin.symbol + "_t",
+        fields=tuple(
+            (k, pypeline_names.value_description(v))
+            for k, v in inst_t.__annotations__.items()
+        ),
+        identity=pypeline_names.identity(
+            ("interface_result", origin.identity, inst_t.__annotations__)
+        ),
+    )
     inst._pypeline_iface_generated = True
     inst.generated_source = source
     _MEMO[orig] = (inst, inst_t)

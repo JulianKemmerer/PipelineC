@@ -3,6 +3,7 @@ import ast
 import functools
 import inspect
 import math
+import re
 import os
 import sys
 import typing
@@ -89,6 +90,10 @@ MODULE_GLOBALS = {
 }
 
 
+def _readable_key(name):
+    return re.sub(r"_s[0-9a-f]{12}$", "", name)
+
+
 def _closure_ns(fn):
     ns = {}
     if fn.__code__.co_freevars and fn.__closure__:
@@ -106,8 +111,8 @@ def test_nested_factory_instances_get_distinct_readable_names():
     qr2 = make_quarter_round(1, 5, 9, 13)
     name1 = P._canonical_func_name(qr1, _closure_ns(qr1), MODULE_GLOBALS)
     name2 = P._canonical_func_name(qr2, _closure_ns(qr2), MODULE_GLOBALS)
-    assert name1 == "quarter_round_a_0_b_4_c_8_d_12", name1
-    assert name2 == "quarter_round_a_1_b_5_c_9_d_13", name2
+    assert _readable_key(name1) == "quarter_round_a_0_b_4_c_8_d_12", name1
+    assert _readable_key(name2) == "quarter_round_a_1_b_5_c_9_d_13", name2
     assert name1 != name2
     print("test_nested_factory_instances_get_distinct_readable_names PASS")
 
@@ -300,7 +305,7 @@ def test_negative_int_closure_param_has_no_bare_minus():
     )
     assert "-" not in name, name
     assert name.isidentifier(), name
-    assert name == "offset_adder_amount_neg5", name
+    assert _readable_key(name) == "offset_adder_amount_neg5", name
     print("test_negative_int_closure_param_has_no_bare_minus PASS")
 
 
@@ -313,8 +318,8 @@ def test_list_closure_param_is_readable_and_distinct():
     dot_b = make_dot([1, 1, -1, 4])
     name_a = P._canonical_func_name(dot_a, _closure_ns(dot_a), MODULE_GLOBALS)
     name_b = P._canonical_func_name(dot_b, _closure_ns(dot_b), MODULE_GLOBALS)
-    assert name_a == "dot_coeffs_3_neg5_7_2", name_a
-    assert name_b == "dot_coeffs_1_1_neg1_4", name_b
+    assert _readable_key(name_a) == "dot_coeffs_3_neg5_7_2", name_a
+    assert _readable_key(name_b) == "dot_coeffs_1_1_neg1_4", name_b
     assert name_a != name_b
     print("test_list_closure_param_is_readable_and_distinct PASS")
 
@@ -331,7 +336,7 @@ def test_list_closure_param_same_values_dedups():
 def test_nested_list_closure_param_is_valid_identifier():
     dot_2d = make_dot([[1, 2], [3, -4]])
     name = P._canonical_func_name(dot_2d, _closure_ns(dot_2d), MODULE_GLOBALS)
-    assert name == "dot_coeffs_1_2_3_neg4", name
+    assert _readable_key(name) == "dot_coeffs_1_2_3_neg4", name
     assert name.isidentifier(), name
     print("test_nested_list_closure_param_is_valid_identifier PASS")
 
@@ -339,7 +344,7 @@ def test_nested_list_closure_param_is_valid_identifier():
 def test_empty_list_closure_param_no_crash():
     dot_empty = make_dot([])
     name = P._canonical_func_name(dot_empty, _closure_ns(dot_empty), MODULE_GLOBALS)
-    assert name == "dot_coeffs_empty", name
+    assert _readable_key(name) == "dot_coeffs_empty", name
     print("test_empty_list_closure_param_no_crash PASS")
 
 
@@ -350,7 +355,12 @@ def test_tuple_closure_param_encoded_same_as_list():
     name_tuple = P._canonical_func_name(
         dot_tuple, _closure_ns(dot_tuple), MODULE_GLOBALS
     )
-    assert name_list == name_tuple == "dot_coeffs_3_neg5_7_2", (name_list, name_tuple)
+    assert (
+        _readable_key(name_list) == _readable_key(name_tuple) == "dot_coeffs_3_neg5_7_2"
+    )
+    assert (
+        name_list != name_tuple
+    ), "Typed specialization keys distinguish lists and tuples"
     print("test_tuple_closure_param_encoded_same_as_list PASS")
 
 
@@ -362,7 +372,7 @@ def test_list_closure_param_float_element_is_readable():
     # readable, distinct name instead of failing to elaborate at all.
     dot_float = make_dot([1, 2.5, 3])
     name = P._canonical_func_name(dot_float, _closure_ns(dot_float), MODULE_GLOBALS)
-    assert name == "dot_coeffs_1_2p5_3", name
+    assert _readable_key(name) == "dot_coeffs_1_2p5_3", name
     assert name.isidentifier(), name
     print("test_list_closure_param_float_element_is_readable PASS")
 

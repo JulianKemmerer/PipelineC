@@ -5641,6 +5641,21 @@ def BUILD_AUTOFSM_FUNC(tag, parser_state, elaborator=None):
             )
         name, src, extra_globals = GENERATE_FSM_SOURCE(tag, schedule, parser_state)
         fn = _exec_generated(name, src, extra_globals)
+    import pypeline_names
+    import inspect
+
+    original = inspect.unwrap(tag.func)
+    origin = getattr(original, "_pypeline_name_info", None) or pypeline_names.describe(
+        original, "function"
+    )
+    symbol = "autofsm_" + origin.symbol + ("_comb" if schedule is None else "")
+    info = pypeline_names.replace(
+        origin,
+        symbol=symbol,
+        params=origin.params + (("max_latency", str(tag.max_latency)),),
+    )
+    fn._pypeline_name_info = inspect.unwrap(fn)._pypeline_name_info = info
+    fn._pypeline_generated_origin = inspect.unwrap(fn)._pypeline_generated_origin = True
     tag._generated = fn
     return fn
 

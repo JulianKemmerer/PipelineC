@@ -75,6 +75,30 @@ frontend embeds a per-process memory address and would not be stable across
 processes. Regression-tested by `duplicate_collapse_naming_test.py`, which
 pins two `PYTHONHASHSEED` values confirmed to disagree without this sort.
 
+## Pypeline source-based naming
+
+`pypeline_names.EmissionNames` translates logical function/type keys into descriptive
+VHDL bases after Python elaboration. Records identify their source class and factory
+settings; interface halves retain their original interface and `fwd`/`fb`/`wire` role.
+Function entities retain their source symbol/module, important scalar settings and
+nested payload/callable descriptions. Bases have a 192-character budget and composed
+identifiers a 240-character budget, with whole-token shortening and explicit naming
+digests. Timing suffixes remain separate and retain the semantics described above.
+
+`GET_ENTITY_NAME` and `WIRE_TO_VHDL_NAME` consult the optional registry.
+`RENDER_TEXT` applies the same mapping at every VHDL file-write boundary, so record
+references, array types, conversion functions, entity ports and process-local wires
+agree. Its lexer rewrites basic identifiers only; comments, strings, character
+literals and extended identifiers remain intact. Repeated rendering is idempotent.
+Logical names remain unchanged in backend dictionaries and builtin dispatch. A
+classic C build has no registry and follows the existing naming path.
+
+Declaration comments give the Python origin, with portable source paths. Full origins,
+uncollapsed descriptions, timing variants and instance/wire mappings appear in
+`name_index.log`, also for `--no_synth`. Public main names and ports stay protected.
+See [Generated VHDL names](PY_TO_LOGIC_DESIGN.md#generated-vhdl-names) for concrete
+before/after examples and the complete tracing contract.
+
 ## Building a pipelined architecture
 
 For hierarchical logic, `GET_PIPELINE_MAP` assigns each wire and submodule

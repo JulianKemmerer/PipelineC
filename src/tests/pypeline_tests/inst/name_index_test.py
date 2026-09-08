@@ -10,8 +10,8 @@ docs/PY_TO_LOGIC_DESIGN.md / docs/SYN_DESIGN.md):
     raise, not silently dedup onto the wrong Logic().
 
 Each test writes its own small synthetic design to a temp .py file and runs
-PY_TO_LOGIC.PARSE_FILE on it directly, so the three scenarios (struct
-overflow, func-name overflow, genuine collision) never interact with each
+PY_TO_LOGIC.PARSE_FILE on it directly, so the scenarios (struct
+overflow, function overflow, same-spelling definitions and forced collision) never interact with each
 other's elaboration.
 """
 import os
@@ -159,8 +159,29 @@ _COLLISION_SRC = textwrap.dedent(
 ).format(repo=REPO_SRC)
 
 
-def test_canonical_name_collision_raises_naming_both_sources():
+def test_same_named_closures_in_different_factories_are_distinct():
     with tempfile.TemporaryDirectory() as tmp:
+        state = _parse(tmp, "d_collision", _COLLISION_SRC)
+    widgets = [k for k in state.FuncLogicLookupTable if k.startswith("widget_")]
+    assert len(widgets) == 2, widgets
+    displayed = [state.pypeline_emission_names.identifier(k) for k in widgets]
+    assert any("make_thing_a" in k for k in displayed), displayed
+    assert any("make_thing_b" in k for k in displayed), displayed
+
+
+def test_forced_canonical_collision_raises_naming_both_sources():
+    from unittest.mock import patch
+
+    original = PY_TO_LOGIC._canonical_func_name
+
+    def collide(func, *args, **kwargs):
+        if func.__name__ == "widget":
+            return "widget_forced_collision"
+        return original(func, *args, **kwargs)
+
+    with tempfile.TemporaryDirectory() as tmp, patch.object(
+        PY_TO_LOGIC, "_canonical_func_name", collide
+    ):
         try:
             _parse(tmp, "d_collision", _COLLISION_SRC)
         except PY_TO_LOGIC.ElaborationError as e:

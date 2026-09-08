@@ -1186,11 +1186,11 @@ class state_t(IntEnum):
     DONE    = 2
 ```
 
-The generated canonical entity name for `state_t` is `state_t_IDLE_RUNNING_DONE` -- when
-every member's value is a plain `0..n-1` sequence in declaration order (the common case
-above, and whatever `auto()` produces), the redundant values are dropped from the name. An
-explicit non-sequential/sparse-valued enum keeps its values in the name instead (e.g.
-`IDLE=0, ERROR=5` becomes `..._IDLE_0_ERROR_5`).
+The internal type key is `state_t_IDLE_RUNNING_DONE`: sequential `0..n-1` values
+are omitted there, while sparse enums retain explicit values. The VHDL type also
+identifies its source module and member values; in `controller.py` this example is
+`state_t_from_controller_IDLE_0_RUNNING_1_DONE_2`. The build index links it back to
+the Python declaration.
 
 Members are accessed with dot notation and compare with `==`:
 
@@ -1574,12 +1574,12 @@ correct bit widths.
 Calling the same specialisation multiple times reuses the same entity definition but
 creates separate instances.
 
-The generated entity's name spells out the factory's own parameter names and values --
-`make_adder(uint32_t)` becomes an entity named `add_T_uint32_t`, and a factory with
-several parameters (e.g. `make_fifo(data_t, depth, mode)`) gets every one of them in
-declaration order (`fifo_data_t_..._depth_16_mode_fwft`). This is why choosing clear
-factory parameter names pays off directly: they end up in build logs, synthesis
-reports, and VHDL entity names, not just in your own source.
+Generated names include the function's source symbol, defining module/factory and
+parameter values. For example, the adder in `arithmetic.py` has a base such as
+`add_from_arithmetic_make_adder_T_uint32_t`, followed by its latency and timing hash.
+Scalar settings such as FIFO depth appear before nested type descriptions so they
+remain visible in long names. See [Reading generated VHDL names](#reading-generated-vhdl-names)
+for record examples, shortening rules and source-index lookup.
 
 ### Generic structs
 
@@ -3599,16 +3599,9 @@ axis_skid, axis_skid_t = make_axis_skid_buffer(axis_intrf, mode="reverse")
 inspected or re-derived, so a Xilinx-style-compliant stream in is byte-identically the same
 compliant stream out a cycle or more later.
 
-> **Known limitation (compiler, not this module).** A design that instantiates *two different
-> axis widths* of any interface-taking factory fails VHDL writing with
-> `Cant support this assignment in vhdl?` — the result struct resolves to two different
-> canonical names for the same Python class.
-> [`make_axis_broadcast_interlock`](#axi-stream-axis_t) has the same problem, so it is not
-> introduced by the skid buffer. Passing the payload *type* rather than the interface is
-> unaffected: `make_skid_buffer(axis_intrf.stream_t.typeof("data"), mode=...)` builds fine at
-> any number of widths, at the cost of the interface identity that
-> [interface functions](#interface-functions-write-feedforward-get-the-reverse-wired) match
-> ports by.
+Several interface widths can coexist in one design. Passing each original interface
+preserves the identity used by [interface functions](#interface-functions-write-feedforward-get-the-reverse-wired)
+for port pairing, and the generated specialization names retain the payload widths.
 
 ### What it is not
 
@@ -4213,6 +4206,31 @@ next to the library source it documents. See that file for the full reference.
 
 ---
 
+## Reading generated VHDL names
+
+Generated names describe the Python definition and factory settings automatically.
+For example, `make_kept_data_bus_t(uint8_t, 4)` produces the record
+`kept_data_bus_t_from_kept_data_bus_n_4_data_t_uint8_t`, instead of repeating the
+`data` and `keep` array layouts in its name. A function name starts with its Python
+symbol and defining module; nested interface parameters retain payload type and lane
+count. The four- and eight-byte broadcast entities visibly differ at `n_4` and `n_8`,
+and their own `n_2` parameter describes the fan-out.
+
+Interface record names include `fwd_t`, `fb_t` or `wire_t` and retain the payload
+context even for a reverse record containing only `ready`. Multiple widths of an
+interface-taking factory can coexist in one design while preserving the original
+interface objects used for port pairing. No type-only workaround or manual name
+format is needed.
+
+Very long names retain readable tokens plus an `_h...` digest. Entity suffixes such
+as `_0CLK_<hash>` describe latency and timing configuration. Generated declarations
+include Python source comments, and every build (including `--no_synth`) writes
+`name_index.log` with full descriptions, original source paths, generated helper
+sources and instance/wire mappings. Search it for the identifier from VHDL or a
+timing report to recover the full origin. Top-level port names retain their existing
+spelling for constraint files. See the
+[detailed naming examples](PY_TO_LOGIC_DESIGN.md#generated-vhdl-names).
+
 ## Limitations / Not Yet Supported
 
 The table below consolidates all known limitations and unsupported features, grouped by
@@ -4241,7 +4259,6 @@ built yet."
 | Simulation | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo` now does, covering `make_stream_fifo`/`make_stream_pipeline` too); this still includes `make_valid_ready_mcp` |
 | Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine |
 | Language | **`@enum` member names that are VHDL reserved words** | Fails in VHDL only | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. Native simulation cannot see this — only a `synth`/GHDL run can, which is why every enum-bearing design wants one |
-| Synthesis | **Two widths of one interface-taking factory in a single design** | Known bug | Instantiating the same factory that takes an `@interface` argument (`make_axis_skid_buffer`, `make_axis_broadcast_interlock`, `make_skid_buffer(some_intrf, ...)`, …) at two different payload widths in one design aborts VHDL writing with `Cant support this assignment in vhdl?` — one Python struct class resolves to two different canonical names, because an `@interface` class is always named `stream_intrf` whatever its payload, so both widths' generated names share every readable token and only the collapsed-name hash separates them. **Workaround:** pass the payload *type* rather than the interface (`make_skid_buffer(axis_intrf.stream_t.typeof("data"), …)`), which puts the width into the names; the cost is that the factory builds its own interface, so `@interface_func` port matching (by Python identity) will not pair it with yours. A single width is unaffected. Reproducer: `src/tests/pypeline_tests/inst/interface_factory_two_widths_known_issue.py` |
 | Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it |
 
 Coming from PipelineC? See also [docs/pipelinec_to_pypeline.md](pipelinec_to_pypeline.md)
