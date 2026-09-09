@@ -1,8 +1,11 @@
 # pyright: reportInvalidTypeForm=none
-"""QUALIFIED AXIS STORAGE & PDW ENGINE -- the README's box 3, the gatekeeper
-between Path A/B's raw candidate stream and the outside world.
+"""pulse_extract -- qualification and store-and-forward release: the gatekeeper
+between pulse_detect's raw candidate stream and the outside world.
 
-It takes the two things the Time-Aligned Detect & Delay Module produces --
+Named for gr-pdw's `pulse_extract` block, which does the same job: obtain the
+pulse's I/Q samples and compute its characteristics.
+
+It takes the two things pulse_detect produces --
 a real-time `gated_sample_t` beat stream (time-aligned raw I/Q, framed by the
 hysteresis SM's gate) and a `candidate_pdw_t` per completed pulse -- and:
 
@@ -55,8 +58,8 @@ need the Path B delay line deepened by N_pre and the gate held open past
 gate_last, and belong to a later increment.
 """
 
-import os
-import sys
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
+
 from enum import IntEnum
 
 from pypeline import (
@@ -74,15 +77,11 @@ from pypeline import (
 )
 
 from fifo import make_fifo
-
-sys.path.insert(
-    0,
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "..", "pdw_measure"),
-)
-from pdw_measure import make_pdw_measure
+from stream.stream import make_stream_interface
+from pulse_measure import make_pulse_measure
 from dsp.fir_common import data_range
 
-# README section 4's status_flags bitfield.
+# The README's valid_pdw_t status_flags bitfield.
 STATUS_ADC_CLIP = 1 << 0
 STATUS_DSP_OVERFLOW = 1 << 1
 STATUS_PKT_FIFO_FULL = 1 << 2
@@ -93,9 +92,9 @@ STATUS_FREQ_DEGENERATE = 1 << 3
 # pulse to measure an interval against and `pri` is 0 by convention.
 STATUS_PRI_INVALID = 1 << 4
 
-# README section 4: valid_pdw_t is 192 bits / 24 bytes, so peak_power is a
-# uint32_t regardless of how wide the detector's internal power_t is. See
-# make_pdw_engine for the truncation that implies.
+# The README's Record formats: valid_pdw_t is 320 bits / 40 bytes, and
+# peak_power is a uint32_t regardless of how wide the detector's internal
+# power_t is. See make_pulse_extract for the truncation that implies.
 PEAK_POWER_BITS = 32
 
 
@@ -159,7 +158,7 @@ def make_packet_store(
     sample_t:        the buffered payload type (the detector's complex_t).
     gated_sample_t:  make_pdw_gate's {data, valid, last} beat struct.
     candidate_pdw_t: make_pulse_detect_fsm's {toa, pulse_width, peak_power}.
-    depth:           data FIFO capacity in beats. README section 3 sizes this
+    depth:           data FIFO capacity in beats. The README sizes this
                      as max_width + N_pre + N_post -> 16,384. make_fifo wraps
                      a BRAM-inferable VHDL entity, so this is block RAM, not
                      flops. A `max_width` larger than this is a configuration
@@ -171,7 +170,8 @@ def make_packet_store(
                      sim_assert fires if it ever is.
 
         packet_store(gated_in, pdw_in, pdw_in_valid, verdict, beat_status,
-                     pkt_out_ready, pdw_out_ready) -> packet_store_t
+                     meas_in, meas_in_valid, pkt_out_if, pdw_out_if, rst)
+                     -> packet_store_t
 
     `pdw_in_valid` must coincide with `gated_in.last` -- guaranteed by the
     hysteresis SM's design (gate_last and the candidate's valid land on the
@@ -187,7 +187,7 @@ def make_packet_store(
 
         IDLE     -- descriptor available: pop it, latch it, remaining =
                     pkt_samples. Accept -> EMIT_PDW, reject -> FLUSH.
-        EMIT_PDW -- hold pdw_out.valid until pdw_out_ready. Metadata is
+        EMIT_PDW -- hold pdw_out_if's valid until its ready. Metadata is
                     emitted BEFORE its payload, which is the order a DMA
                     consumer needs to size the transfer that follows.
         WAIT_MEAS-- wait for this pulse's measurement and merge it into the
@@ -204,7 +204,7 @@ def make_packet_store(
         # reserved word, and an @enum member becomes a VHDL enum literal
         # verbatim, so RELEASE elaborates fine and then fails Vivado
         # synthesis with a bare "syntax error". (Native sim never sees VHDL;
-        # pdw_engine_synth_top.py is what catches this class of thing.)
+        # pulse_extract_synth_top.py is what catches this class of thing.)
         # `reject` is reserved too, hence is_glitch/is_cw in verdict_t.
         IDLE = 0
         # Descriptor popped, waiting for that pulse's measurement to arrive on
@@ -217,7 +217,7 @@ def make_packet_store(
 
     @struct
     class valid_pdw_t(NamedTuple):
-        # README section 4's host DMA struct: 320 bits / 40 bytes, which is ten
+        # The README's host DMA struct: 320 bits / 40 bytes, which is ten
         # 32-bit AXIS beats. The measurement fields (pri, the two dB values and
         # the two frequencies) arrive later than the rest -- see the
         # measurement FIFO below -- and are merged in at release time.
@@ -244,21 +244,26 @@ def make_packet_store(
 
     @struct
     class released_sample_t(NamedTuple):
-        # Same shape as gated_sample_t, but this one has backpressure (the
-        # store-and-forward FIFO is what makes that possible).
-        data: sample_t
-        valid: uint1_t
+        """One released beat's payload. `last` is FRAMING, not handshake --
+        valid/ready live on the interface below."""
+
+        sample: sample_t
         last: uint1_t
 
-    @struct
-    class valid_pdw_stream_t(NamedTuple):
-        data: valid_pdw_t
-        valid: uint1_t
+    # THE ELASTIC BOUNDARY. Everything on this block's write side is valid-only
+    # and real-time: the gate stream cannot be stopped, and a full data FIFO
+    # drops beats rather than back-pressuring. Everything on the read side is a
+    # real valid/ready stream interface, and these two ports are where that
+    # starts -- so they are declared as interfaces rather than as a plain
+    # {data, valid} struct with a loose sibling `*_ready` argument, which is
+    # what they used to be and which made the boundary invisible in the types.
+    pkt_out_intrf = make_stream_interface(released_sample_t)
+    pdw_out_intrf = make_stream_interface(valid_pdw_t)
 
     @struct
     class packet_store_t(NamedTuple):
-        pkt_out: released_sample_t
-        pdw_out: valid_pdw_stream_t
+        pkt_out_if: pkt_out_intrf.fwd_t
+        pdw_out_if: pdw_out_intrf.fwd_t
         fifo_full: uint1_t  # sticky: some packet lost beats to a full FIFO
         # The two conditions the sim_asserts below catch in simulation and
         # nothing catches in a bitstream. Both are silent AND permanent, which
@@ -292,8 +297,8 @@ def make_packet_store(
         beat_status: uint32_t,
         meas_in: meas_t,
         meas_in_valid: uint1_t,
-        pkt_out_ready: uint1_t,
-        pdw_out_ready: uint1_t,
+        pkt_out_if: pkt_out_intrf.fb_t,
+        pdw_out_if: pdw_out_intrf.fb_t,
         rst: uint1_t,
     ) -> packet_store_t:
         o: packet_store_t
@@ -323,8 +328,12 @@ def make_packet_store(
         # was still OPEN when reset hit, whose `desc_push` never fired. Without
         # this term those samples stay in the FIFO forever and become the head
         # of the next packet.
-        data_ready: uint1_t = (releasing & pkt_out_ready) | flushing | rst
-        df = data_fifo(data_ready, gated_in.data, gated_in.valid)
+        data_ready: uint1_t = (releasing & pkt_out_if.ready) | flushing | rst
+        df = data_fifo(
+            ready_for_data_out=data_ready,
+            data_in=gated_in.data,
+            data_in_valid=gated_in.valid,
+        )
 
         # ---- write side: accumulate this packet, close it on `last` ----
         new_status: uint32_t = acc_status
@@ -380,7 +389,7 @@ def make_packet_store(
         # taken in WAIT_MEAS. Gating one pop on the other FIFO's
         # `data_out_valid` would be the obvious alternative, but the value is
         # only available from the call that also consumes it -- the same
-        # circular call-order problem detect_pulses documents for chained
+        # circular call-order problem pulse_detect documents for chained
         # elastic stages.
         # Both also pop unconditionally during reset, for the same reason
         # data_ready does. Popping an empty make_fifo is a safe no-op (its read
@@ -388,8 +397,14 @@ def make_packet_store(
         # normal IDLE case already relies on.
         awaiting: uint1_t = (state == store_state_t.WAIT_MEAS) | rst
         desc_pop: uint1_t = (state == store_state_t.IDLE) | rst
-        sf = desc_fifo(desc_pop, desc_in, desc_push)
-        mf = meas_fifo(awaiting, meas_in, meas_in_valid)
+        sf = desc_fifo(
+            ready_for_data_out=desc_pop, data_in=desc_in, data_in_valid=desc_push
+        )
+        mf = meas_fifo(
+            ready_for_data_out=awaiting,
+            data_in=meas_in,
+            data_in_valid=meas_in_valid,
+        )
         sim_assert(
             (~meas_in_valid) | mf.data_in_ready,
             f"packet_store: measurement FIFO full (n_pkts={n_pkts})",
@@ -413,11 +428,13 @@ def make_packet_store(
             meas_drop_sticky = 1
 
         # ---- read side ----
-        o.pkt_out.data = df.data_out
-        o.pkt_out.valid = releasing & df.data_out_valid
-        o.pkt_out.last = releasing & df.data_out_valid & (remaining == 1)
-        o.pdw_out.data = cur
-        o.pdw_out.valid = state == store_state_t.EMIT_PDW
+        o.pkt_out_if.stream.data.sample = df.data_out
+        o.pkt_out_if.stream.data.last = (
+            releasing & df.data_out_valid & (remaining == 1)
+        )
+        o.pkt_out_if.stream.valid = releasing & df.data_out_valid
+        o.pdw_out_if.stream.data = cur
+        o.pdw_out_if.stream.valid = state == store_state_t.EMIT_PDW
         o.fifo_full = fifo_full_sticky
         o.desc_drop = desc_drop_sticky
         o.meas_drop = meas_drop_sticky
@@ -459,10 +476,10 @@ def make_packet_store(
                 else:
                     state = store_state_t.FLUSH
         elif state == store_state_t.EMIT_PDW:
-            if pdw_out_ready:
+            if pdw_out_if.ready:
                 state = store_state_t.SEND_PKT
         elif state == store_state_t.SEND_PKT:
-            if df.data_out_valid & pkt_out_ready:
+            if df.data_out_valid & pkt_out_if.ready:
                 if remaining == 1:
                     state = store_state_t.IDLE
                 else:
@@ -501,7 +518,8 @@ def make_packet_store(
     packet_store.valid_pdw_t = valid_pdw_t
     packet_store.desc_t = desc_t
     packet_store.released_sample_t = released_sample_t
-    packet_store.valid_pdw_stream_t = valid_pdw_stream_t
+    packet_store.pkt_out_intrf = pkt_out_intrf
+    packet_store.pdw_out_intrf = pdw_out_intrf
     packet_store.store_state_t = store_state_t
     packet_store.depth = depth
     packet_store.n_pkts = n_pkts
@@ -509,13 +527,13 @@ def make_packet_store(
     return packet_store, packet_store_t
 
 
-def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
-    """The whole README box 3, wired to a `detect_pulses` instance. Returns
-    (pdw_engine, pdw_engine_t).
+def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16):
+    """The whole README box 3, wired to a `pulse_detect` instance. Returns
+    (pulse_extract, pulse_extract_t).
 
-        pdw_engine(gated_in, pdw_in_if, dsp_overflow, min_width, max_width,
-                   freq_acc, noise_est, pkt_out_ready, pdw_out_ready, rst)
-            -> pdw_engine_t
+        pulse_extract(gated_in, pdw_in_if, dsp_overflow, min_width, max_width,
+                   freq_acc, noise_est, pkt_out_if, pdw_out_if, rst)
+            -> pulse_extract_t
 
     `rst` is active high. It both DRAINS and CLEARS: the three FIFOs are
     black-box make_fifo instances with no flush, so reset forces their read
@@ -523,14 +541,16 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
     store FSM's own registers are returned to their power-on values. Hold it
     for at least as long as the data FIFO's depth for the drain to complete.
 
-        pdw_engine_t fields:
-          .pdw_in_if (detect_pulses.out_fb_t) -- the candidate stream's ready,
+        pulse_extract_t fields:
+          .pdw_in_if (pulse_detect.out_fb_t) -- the candidate stream's ready,
             paired with the pdw_in_if arg. Always 1: the engine latches the
             candidate into the descriptor FIFO on the cycle it arrives, so it
             can never stall Path A (which cannot be stalled anyway -- see
             make_pulse_detect_fsm's notes on `overflow`).
-          .pkt_out (released_sample_t) -- the qualified AXIS packet.
-          .pdw_out (valid_pdw_stream_t) -- the host-DMA metadata.
+          .pkt_out_if (pkt_out_intrf.fwd_t) -- the qualified pulse packet,
+            payload released_sample_t {data, last}; a real valid/ready port.
+          .pdw_out_if (pdw_out_intrf.fwd_t) -- the host-DMA metadata, one
+            valid_pdw_t per accepted pulse; likewise a real valid/ready port.
           .verdict (verdict_t) -- this cycle's qualification of the candidate
             on pdw_in_if, exposed for observability/testbenches.
           .fifo_full (uint1_t) -- sticky packet-FIFO-full.
@@ -544,64 +564,68 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
             dB and PRI.
 
     `peak_power` is truncated from the detector's full-precision `power_t`
-    (46 bits with the default dc_k/ma_n) to README section 4's uint32_t. Keep
+    (46 bits with the default dc_k/ma_n) to the record format's uint32_t. Keep
     a pulse's peak under 2**32 in power_t's scaled units or this field wraps
     silently -- the same caveat top.py's candidate_pdw_peak_power port already
-    carries, documented in README section 4.
+    carries, documented under Record formats.
 
     ADC clip (status_flags bit 0) is detected on the STORED sample -- the
     time-aligned raw I/Q that actually goes into the packet -- rather than on
     the live ADC input, so the flag describes the packet the host receives.
     """
-    rail_t = detect_pulses.rail_t
+    rail_t = pulse_detect.rail_t
     rail_lo, rail_hi = data_range(rail_t)
     rail_val_t = rail_t.typeof("val")
 
-    pdw_measure, pdw_measure_t = make_pdw_measure(detect_pulses)
+    pulse_measure, pulse_measure_t = make_pulse_measure(pulse_detect)
     packet_store, _packet_store_t = make_packet_store(
-        detect_pulses.complex_t,
-        detect_pulses.gated_sample_t,
-        detect_pulses.candidate_pdw_t,
-        pdw_measure_t,
-        width_t=detect_pulses.width_t,
+        pulse_detect.complex_t,
+        pulse_detect.gated_sample_t,
+        pulse_detect.candidate_pdw_t,
+        pulse_measure_t,
+        width_t=pulse_detect.width_t,
         depth=depth,
         n_pkts=n_pkts,
     )
-    pdw_qualify, verdict_t = make_pdw_qualify(detect_pulses.width_t)
-    power_val_t = detect_pulses.power_t.typeof("val")
+    pdw_qualify, verdict_t = make_pdw_qualify(pulse_detect.width_t)
+    power_val_t = pulse_detect.power_t.typeof("val")
     # freq_acc/noise_est land this many cycles after gate_last (freq_accum
     # carries a pipeline register -- see make_freq_accum). Anything latched on
     # gate_last has to be delayed by the same amount before it can be paired
     # with them, or a pulse would be measured with its own frequency and the
     # NEXT pulse's peak power.
-    FL = detect_pulses.freq_latency
+    FL = pulse_detect.freq_latency
 
     @struct
-    class pdw_engine_t(NamedTuple):
-        pdw_in_if: detect_pulses.out_fb_t
-        pkt_out: packet_store.released_sample_t
-        pdw_out: packet_store.valid_pdw_stream_t
+    class pulse_extract_t(NamedTuple):
+        pdw_in_if: pulse_detect.out_fb_t
+        pkt_out_if: packet_store.pkt_out_intrf.fwd_t
+        pdw_out_if: packet_store.pdw_out_intrf.fwd_t
         verdict: verdict_t
         fifo_full: uint1_t
         desc_drop: uint1_t  # sticky, see packet_store_t
         meas_drop: uint1_t  # sticky, see packet_store_t
-        measure: pdw_measure_t  # observability tap on the measurement stream
+        measure: pulse_measure_t  # observability tap on the measurement stream
 
     @hw_func
-    def pdw_engine(
-        gated_in: detect_pulses.gated_sample_t,
-        pdw_in_if: detect_pulses.out_fwd_t,
+    def pulse_extract(
+        gated_in: pulse_detect.gated_sample_t,
+        pdw_in_if: pulse_detect.out_fwd_t,
         dsp_overflow: uint1_t,
-        min_width: detect_pulses.width_t,
-        max_width: detect_pulses.width_t,
-        freq_acc: detect_pulses.freq_accum_t,
-        noise_est: detect_pulses.noise_t,
-        pkt_out_ready: uint1_t,
-        pdw_out_ready: uint1_t,
+        min_width: pulse_detect.width_t,
+        max_width: pulse_detect.width_t,
+        freq_acc: pulse_detect.freq_accum_t,
+        noise_est: pulse_detect.noise_t,
+        pkt_out_if: packet_store.pkt_out_intrf.fb_t,
+        pdw_out_if: packet_store.pdw_out_intrf.fb_t,
         rst: uint1_t,
-    ) -> pdw_engine_t:
+    ) -> pulse_extract_t:
         candidate = pdw_in_if.stream.data
-        v = pdw_qualify(candidate.pulse_width, min_width, max_width)
+        v = pdw_qualify(
+            pulse_width=candidate.pulse_width,
+            min_width=min_width,
+            max_width=max_width,
+        )
 
         # Per-beat status contributions (see this factory's docstring on why
         # clip is measured on the stored sample).
@@ -614,7 +638,7 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
         # constants need widening to uint16_t explicitly -- a bare
         # `STATUS_ADC_CLIP` literal infers as uint1_t and the elaborator
         # rejects the mix (native sim does not, which is what
-        # pdw_engine_synth_top.py is for).
+        # pulse_extract_synth_top.py is for).
         zero32: uint32_t = 0
         clip_set: uint32_t = STATUS_ADC_CLIP
         dsp_set: uint32_t = STATUS_DSP_OVERFLOW
@@ -650,33 +674,33 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
             for k in range(FL + 1):
                 acc_d[k] = 0
 
-        m = pdw_measure(
-            freq_acc,
-            noise_est,
-            detect_pulses.power_t(val=peak_d[FL]),
-            toa_d[FL],
-            freq_acc.valid,
-            acc_d[FL],
-            rst,
+        m = pulse_measure(
+            freq_acc=freq_acc,
+            noise_est=noise_est,
+            peak_power=pulse_detect.power_t(val=peak_d[FL]),
+            toa=toa_d[FL],
+            valid_in=freq_acc.valid,
+            count_pri=acc_d[FL],
+            rst=rst,
         )
 
         ps = packet_store(
-            gated_in,
-            candidate,
-            pdw_in_if.stream.valid,
-            v,
-            beat_status,
-            m,
-            m.valid,
-            pkt_out_ready,
-            pdw_out_ready,
-            rst,
+            gated_in=gated_in,
+            pdw_in=candidate,
+            pdw_in_valid=pdw_in_if.stream.valid,
+            verdict=v,
+            beat_status=beat_status,
+            meas_in=m,
+            meas_in_valid=m.valid,
+            pkt_out_if=pkt_out_if,
+            pdw_out_if=pdw_out_if,
+            rst=rst,
         )
 
-        o: pdw_engine_t
+        o: pulse_extract_t
         o.pdw_in_if.ready = 1  # never stalls Path A -- see the docstring
-        o.pkt_out = ps.pkt_out
-        o.pdw_out = ps.pdw_out
+        o.pkt_out_if = ps.pkt_out_if
+        o.pdw_out_if = ps.pdw_out_if
         o.verdict = v
         o.fifo_full = ps.fifo_full
         o.desc_drop = ps.desc_drop
@@ -684,17 +708,18 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
         o.measure = m
         return o
 
-    pdw_engine.detect_pulses = detect_pulses
-    pdw_engine.packet_store = packet_store
-    pdw_engine.pdw_qualify = pdw_qualify
-    pdw_engine.verdict_t = verdict_t
-    pdw_engine.valid_pdw_t = packet_store.valid_pdw_t
-    pdw_engine.released_sample_t = packet_store.released_sample_t
-    pdw_engine.valid_pdw_stream_t = packet_store.valid_pdw_stream_t
-    pdw_engine.width_t = detect_pulses.width_t
-    pdw_engine.depth = depth
-    pdw_engine.n_pkts = n_pkts
-    pdw_engine.pdw_measure = pdw_measure
-    pdw_engine.pdw_measure_t = pdw_measure_t
-    pdw_engine.measure_latency = pdw_measure.latency
-    return pdw_engine, pdw_engine_t
+    pulse_extract.pulse_detect = pulse_detect
+    pulse_extract.packet_store = packet_store
+    pulse_extract.pdw_qualify = pdw_qualify
+    pulse_extract.verdict_t = verdict_t
+    pulse_extract.valid_pdw_t = packet_store.valid_pdw_t
+    pulse_extract.released_sample_t = packet_store.released_sample_t
+    pulse_extract.pkt_out_intrf = packet_store.pkt_out_intrf
+    pulse_extract.pdw_out_intrf = packet_store.pdw_out_intrf
+    pulse_extract.width_t = pulse_detect.width_t
+    pulse_extract.depth = depth
+    pulse_extract.n_pkts = n_pkts
+    pulse_extract.pulse_measure = pulse_measure
+    pulse_extract.pulse_measure_t = pulse_measure_t
+    pulse_extract.measure_latency = pulse_measure.latency
+    return pulse_extract, pulse_extract_t

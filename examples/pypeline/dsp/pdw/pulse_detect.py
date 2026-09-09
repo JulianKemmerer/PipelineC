@@ -113,14 +113,14 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
                                (candidate stream is always valid/ready;
                                only the INPUT power stream's handshake mode
                                varies)
-               "valid_only" -> pulse_detect_fsm(stream_in_if: make_stream_t(data_t),
+               "valid_only" -> pulse_detect_fsm(in_stream: make_stream_t(data_t),
                                              pdw_out_if: out_intrf.fb_t,
                                              threshold_high, threshold_low,
                                              max_width, rst) -> pulse_detect_fsm_t
 
     `rst` is active high and returns the SM to IDLE with its counters, gate
     registers and toa_counter cleared. It must be paired with a drain of Path
-    B's delay line -- see make_detect_pulses and the reset block below.
+    B's delay line -- see make_pulse_detect and the reset block below.
 
     Besides gate_valid/gate_last, the returned struct carries `gate_advance`:
     1 on exactly those cycles where the gate output registers are presenting a
@@ -131,7 +131,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
     replaced by a constant 1 -- which is what makes it exactly co-timed with
     gate_valid by construction rather than by a matching hand-counted delay.
     Path B's delay line uses it as its drain enable (see make_delay_line and
-    make_detect_pulses), so raw I/Q advances in lockstep with the gate stream
+    make_pulse_detect), so raw I/Q advances in lockstep with the gate stream
     and no latency constant appears anywhere; extend the gate chain and Path
     B's alignment follows for free.
 
@@ -231,7 +231,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
             # because that input has already been through dc_block, which
             # subtracts the running mean -- i.e. it removes precisely the
             # quantity a noise-floor measurement is after, leaving a residual
-            # that sits at zero. make_detect_pulses runs the estimator on the
+            # that sits at zero. make_pulse_detect runs the estimator on the
             # pre-DC-block magnitude instead, gated by this flag.
             o.in_idle = (state == state_t.IDLE) & (~above_high)
 
@@ -315,7 +315,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
             # ---- reset ----------------------------------------------------
             # LAST, so it overrides every branch above. `gate_armed` is the
             # load-bearing one: Path B's delay line is drained during reset
-            # (see make_detect_pulses), and its delay is SELF-ESTABLISHING --
+            # (see make_pulse_detect), and its delay is SELF-ESTABLISHING --
             # exactly the number of pushes before the first drain, latched the
             # moment gate_armed sticks. Clearing gate_armed alongside that
             # drain is what makes the alignment re-establish on release exactly
@@ -354,7 +354,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
 
         @hw_func
         def pulse_detect_fsm(
-            stream_in_if: in_stream_t,
+            in_stream: in_stream_t,
             pdw_out_if: out_intrf.fb_t,
             threshold_high: data_t,
             threshold_low: data_t,
@@ -381,9 +381,9 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
             if pdw_reg.valid & pdw_out_if.ready:
                 pdw_reg.valid = 0
 
-            accepted: uint1_t = stream_in_if.valid  # always-consuming input
+            accepted: uint1_t = in_stream.valid  # always-consuming input
 
-            p: data_val_t = stream_in_if.data.val
+            p: data_val_t = in_stream.data.val
             above_high: uint1_t = p > threshold_high.val
             below_low: uint1_t = p < threshold_low.val
 
@@ -401,7 +401,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
             # because that input has already been through dc_block, which
             # subtracts the running mean -- i.e. it removes precisely the
             # quantity a noise-floor measurement is after, leaving a residual
-            # that sits at zero. make_detect_pulses runs the estimator on the
+            # that sits at zero. make_pulse_detect runs the estimator on the
             # pre-DC-block magnitude instead, gated by this flag.
             o.in_idle = (state == state_t.IDLE) & (~above_high)
 
@@ -500,7 +500,7 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
     pulse_detect_fsm.handshake = handshake
     # Accepted-sample stages between an input sample and the gate output beat
     # it produces (held_in_pulse -> gate_valid_r -> presented pre-update).
-    # The single source of truth for this number: make_detect_pulses' own
+    # The single source of truth for this number: make_pulse_detect' own
     # .gate_latency derives from it, and gate_advance realises it in hardware.
     pulse_detect_fsm.gate_latency = 2
     # Accepted-sample stages between the pulse-terminating sample and the
@@ -537,7 +537,7 @@ def make_delay_line(data_t, depth=64):
     rather than added to it.
 
     Callers must drive `drain_en` from a signal that is co-timed with the
-    consumer of this output. make_detect_pulses uses pulse_detect_fsm's
+    consumer of this output. make_pulse_detect uses pulse_detect_fsm's
     `gate_advance` (see there), which makes Path A's latency cancel exactly,
     with no cycle count written down anywhere.
 
@@ -559,12 +559,14 @@ def make_delay_line(data_t, depth=64):
     def delay_line(
         sample_in: data_t, push_en: uint1_t, drain_en: uint1_t
     ) -> data_t:
-        f = fifo_func(drain_en, sample_in, push_en)
+        f = fifo_func(
+            ready_for_data_out=drain_en, data_in=sample_in, data_in_valid=push_en
+        )
         sim_assert(
             (~push_en) | f.data_in_ready,
             f"pulse_detect delay_line: FIFO full (depth={depth}) -- the hold "
             "window before draining starts is longer than the delay line can "
-            "buffer; increase make_detect_pulses' delay_depth",
+            "buffer; increase make_pulse_detect' delay_depth",
         )
         return f.data_out
 
@@ -731,7 +733,7 @@ def make_freq_accum(complex_t, block_k=32):
         #
         # The cost is that everything this block emits is `.latency` cycles
         # behind the gate stream, which is why that attribute exists and why
-        # detect_pulses delays `noise_est` to match rather than leaving callers
+        # pulse_detect delays `noise_est` to match rather than leaving callers
         # to discover the skew.
         p_ii_r: Reg[pprod_t]
         p_qq_r: Reg[pprod_t]
@@ -896,13 +898,13 @@ def make_freq_accum(complex_t, block_k=32):
     # products, one between their combination and the accumulator, and one on
     # the output. All three break specific measured critical paths -- see the
     # comments at each. Consumers must read this rather than assume a value;
-    # detect_pulses and pdw_engine both delay their own gate_last-timed signals
+    # pulse_detect and pulse_extract both delay their own gate_last-timed signals
     # by it, and pdw_tb.py's whole measurement alignment follows from it.
     freq_accum.latency = 3
     return freq_accum, freq_accum_t
 
 
-def make_detect_pulses(
+def make_pulse_detect(
     rail_t=None,
     dc_k=10,
     ma_n=4,
@@ -913,10 +915,10 @@ def make_detect_pulses(
     noise_seed=1024,
     freq_block_k=32,
 ):
-    """Path A: DETECT & MEASURE -- the README's whole "TIME-ALIGNED DETECT &
-    DELAY MODULE" Path A box, magnitude -> dc_block -> moving_avg ->
-    pulse_detect_fsm, composed into one hw_func. Returns
-    (detect_pulses, detect_pulses_t).
+    """The README's Path A + Path B: magnitude -> dc_block -> moving_avg ->
+    pulse_detect_fsm, plus the Path B delay line and gate, composed into one
+    hw_func. Named for gr-pdw's `pulse_detect` block. Returns
+    (pulse_detect, pulse_detect_t).
 
     rail_t:  fixed_t I/Q rail format; default make_fixed_t(16, 0, signed=True)
              (a raw int16 rail, matching pulse_gen.py's iq_t fields).
@@ -928,12 +930,12 @@ def make_detect_pulses(
              parameters) -- both are placeholder defaults, tunable here.
     width_t: integer type for pulse_width/max_width (see make_pulse_detect_fsm).
 
-    `detect_pulses(stream_in_if, pdw_out_if, threshold_high, threshold_low,
+    `pulse_detect(in_stream, pdw_out_if, threshold_high, threshold_low,
     max_width, rst)`. `rst` is active high and does two things that must happen
     together: it clears Path A's state machine (including the sticky
     `gate_armed`) and it drains Path B's delay line. Neither alone is correct --
     see the call to make_delay_line below. Callers must also hold
-    `stream_in_if.valid` low while it is asserted; this block does not gate its
+    `in_stream.valid` low while it is asserted; this block does not gate its
     own input, because whether the ADC feed stops is the top level's decision.
 
     Input: a raw I/Q stream, `handshake="valid_only"` (a fixed-rate ADC feed
@@ -974,12 +976,12 @@ def make_detect_pulses(
 
     `dc_block.out_t`/`moving_avg.out_t` are full precision (no out_t= passed
     anywhere in the chain), so threshold_high/threshold_low/peak_power are
-    typed as `detect_pulses.power_t` (== moving_avg.out_t), NOT a fixed
+    typed as `pulse_detect.power_t` (== moving_avg.out_t), NOT a fixed
     README-shaped uint32_t/make_fixed_t(32, 0) -- unlike
     pulse_detect_synth_top.py, which hardcodes that type for the bare
     hysteresis-SM-only block.
 
-    The returned `detect_pulses` carries metadata attributes:
+    The returned `pulse_detect` carries metadata attributes:
     .rail_t .complex_t .power_t .width_t .candidate_pdw_t .gated_sample_t
     .delay_depth .in_stream_t .out_fb_t .out_fwd_t .magnitude .dc_block
     .moving_avg .pdw_latency .gate_latency .get_dsp_latency()
@@ -1008,31 +1010,36 @@ def make_detect_pulses(
     in_stream_t = make_stream_t(magnitude.complex_t)
 
     @struct
-    class detect_pulses_t(NamedTuple):
+    class pulse_detect_t(NamedTuple):
         pdw_out_if: detect_fsm.out_fwd_t
         gated_out: gated_sample_t
         overflow: uint1_t
         # Raw measurement inputs, all valid on the gate_last beat -- i.e. on
         # the same cycle as the candidate PDW, so a consumer latches one
         # coherent set. Turning these into frequencies and decibels happens
-        # downstream in pdw_measure (once per pulse), not here (every sample).
+        # downstream in pulse_measure (once per pulse), not here (every sample).
         freq_acc: freq_accum_t
         noise_est: noise_t
 
     @hw_func
-    def detect_pulses(
-        stream_in_if: in_stream_t,
+    def pulse_detect(
+        in_stream: in_stream_t,
         pdw_out_if: detect_fsm.out_fb_t,
         threshold_high: moving_avg.out_t,
         threshold_low: moving_avg.out_t,
         max_width: width_t,
         rst: uint1_t,
-    ) -> detect_pulses_t:
-        mag_o = magnitude(stream_in_if)
+    ) -> pulse_detect_t:
+        mag_o = magnitude(in_stream)
         dc_o = dc_block(mag_o)
         avg_o = moving_avg(dc_o)
         pd_o = detect_fsm(
-            avg_o, pdw_out_if, threshold_high, threshold_low, max_width, rst
+            in_stream=avg_o,
+            pdw_out_if=pdw_out_if,
+            threshold_high=threshold_high,
+            threshold_low=threshold_low,
+            max_width=max_width,
+            rst=rst,
         )
         # Path B advances one raw sample per gate-stream beat slot, so the two
         # paths stay locked together with no latency constant anywhere -- see
@@ -1046,16 +1053,25 @@ def make_detect_pulses(
         # the achieved delay is the number of pushes before the first drain, so
         # emptying the queue and re-arming the drain enable together is what
         # rebuilds the alignment exactly as at power-on.
-        push_en: uint1_t = stream_in_if.valid & (~rst)
+        push_en: uint1_t = in_stream.valid & (~rst)
         drain_en: uint1_t = pd_o.gate_advance | rst
-        delayed_sample = delay_line(stream_in_if.data, push_en, drain_en)
-        gate_o = pdw_gate(delayed_sample, pd_o.gate_valid, pd_o.gate_last)
+        delayed_sample = delay_line(
+            sample_in=in_stream.data, push_en=push_en, drain_en=drain_en
+        )
+        gate_o = pdw_gate(
+            delayed_sample=delayed_sample,
+            gate_valid=pd_o.gate_valid,
+            gate_last=pd_o.gate_last,
+        )
         # Frequency front end, on the SAME time-aligned raw I/Q the packet
         # carries -- so the measurement describes exactly the samples the host
         # receives, not an internally-conditioned version of them.
         fa_o = freq_accum(
-            delayed_sample, pd_o.gate_valid, pd_o.gate_advance, pd_o.gate_last,
-            rst,
+            sample=delayed_sample,
+            beat_valid=pd_o.gate_valid,
+            beat_advance=pd_o.gate_advance,
+            beat_last=pd_o.gate_last,
+            rst=rst,
         )
         # gate_valid without gate_advance would mean Path B never popped the
         # sample that beat is carrying -- impossible by construction (they are
@@ -1064,11 +1080,11 @@ def make_detect_pulses(
         # packet-content garbage.
         sim_assert(
             (~pd_o.gate_valid) | pd_o.gate_advance,
-            "detect_pulses: gate_valid asserted without gate_advance -- Path A "
+            "pulse_detect: gate_valid asserted without gate_advance -- Path A "
             "and Path B have desynchronized",
         )
 
-        o: detect_pulses_t
+        o: pulse_detect_t
         # ---- noise floor -------------------------------------------------
         # A leaky integrator over the magnitude stream, advanced only on
         # samples the hysteresis SM says are outside a pulse. It runs on
@@ -1138,37 +1154,37 @@ def make_detect_pulses(
         o.noise_est = noise_t(val=nse_d[FA_LAT])
         return o
 
-    detect_pulses.rail_t = rail_t_actual
-    detect_pulses.complex_t = magnitude.complex_t
-    detect_pulses.power_t = moving_avg.out_t
-    detect_pulses.width_t = width_t
-    detect_pulses.candidate_pdw_t = detect_fsm.candidate_pdw_t
-    detect_pulses.gated_sample_t = gated_sample_t
-    detect_pulses.freq_accum = freq_accum
-    detect_pulses.freq_accum_t = freq_accum_t
-    detect_pulses.freq_acc_t = freq_accum.acc_t
-    detect_pulses.freq_block_k = freq_block_k
+    pulse_detect.rail_t = rail_t_actual
+    pulse_detect.complex_t = magnitude.complex_t
+    pulse_detect.power_t = moving_avg.out_t
+    pulse_detect.width_t = width_t
+    pulse_detect.candidate_pdw_t = detect_fsm.candidate_pdw_t
+    pulse_detect.gated_sample_t = gated_sample_t
+    pulse_detect.freq_accum = freq_accum
+    pulse_detect.freq_accum_t = freq_accum_t
+    pulse_detect.freq_acc_t = freq_accum.acc_t
+    pulse_detect.freq_block_k = freq_block_k
     # Cycles from gate_last to freq_acc.valid (and to the matching
     # noise_est). Consumers must delay anything they latch on gate_last --
     # the candidate's peak/toa, the qualification verdict -- by this much
     # before pairing it with a measurement. Never hardcode it.
-    detect_pulses.freq_latency = freq_accum.latency
-    detect_pulses.noise_k = noise_k
-    detect_pulses.noise_t = noise_t
-    detect_pulses.noise_guard_shift = noise_guard_shift
-    detect_pulses.noise_seed = noise_seed
-    detect_pulses.delay_depth = delay_depth
-    detect_pulses.in_stream_t = in_stream_t
-    detect_pulses.out_fb_t = detect_fsm.out_fb_t
-    detect_pulses.out_fwd_t = detect_fsm.out_fwd_t
+    pulse_detect.freq_latency = freq_accum.latency
+    pulse_detect.noise_k = noise_k
+    pulse_detect.noise_t = noise_t
+    pulse_detect.noise_guard_shift = noise_guard_shift
+    pulse_detect.noise_seed = noise_seed
+    pulse_detect.delay_depth = delay_depth
+    pulse_detect.in_stream_t = in_stream_t
+    pulse_detect.out_fb_t = detect_fsm.out_fb_t
+    pulse_detect.out_fwd_t = detect_fsm.out_fwd_t
 
     # The three DSP sub-instances, exposed so a caller (a golden-model
     # testbench) can drive dsp_tb.golden_magnitude/golden_dc_block/
     # golden_moving_avg directly off the SAME instances this factory built,
     # rather than reconstructing a second, potentially-diverging set.
-    detect_pulses.magnitude = magnitude
-    detect_pulses.dc_block = dc_block
-    detect_pulses.moving_avg = moving_avg
+    pulse_detect.magnitude = magnitude
+    pulse_detect.dc_block = dc_block
+    pulse_detect.moving_avg = moving_avg
 
     # Latency metadata -- lazy accessors (see magnitude.py's identical
     # comment for why): reading .latency triggers pipelinec's pin-and-confirm
@@ -1177,9 +1193,9 @@ def make_detect_pulses(
     # affected by autopipelining, since the FSM itself is never autopipelined
     # -- see make_pulse_detect_fsm's docstring on why it's a genuine
     # recurrence), and are re-exported from there rather than restated.
-    detect_pulses.pdw_latency = detect_fsm.pdw_latency
-    detect_pulses.gate_latency = detect_fsm.gate_latency
-    detect_pulses.get_dsp_latency = lambda: (
+    pulse_detect.pdw_latency = detect_fsm.pdw_latency
+    pulse_detect.gate_latency = detect_fsm.gate_latency
+    pulse_detect.get_dsp_latency = lambda: (
         magnitude.get_latency() + dc_block.get_latency() + moving_avg.get_latency()
     )
     # Path B's realised delay, in input samples: the delay line drains from
@@ -1188,7 +1204,7 @@ def make_detect_pulses(
     # nothing in the hardware reads it. It is the number a golden model needs
     # to line raw samples up with gate beats, and the lower bound delay_depth
     # must exceed.
-    detect_pulses.get_path_b_delay = lambda: (
-        detect_pulses.get_dsp_latency() + detect_pulses.gate_latency
+    pulse_detect.get_path_b_delay = lambda: (
+        pulse_detect.get_dsp_latency() + pulse_detect.gate_latency
     )
-    return detect_pulses, detect_pulses_t
+    return pulse_detect, pulse_detect_t

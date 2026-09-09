@@ -13,8 +13,10 @@ pulse_detect.py), and elastic is the heavier of the two paths (adds the
 representative timing-closure check.
 
 Synthesize (requires Vivado):
-    pypelinec examples/pypeline/dsp/pdw/pulse_detect/pulse_detect_synth_top.py
+    pypelinec examples/pypeline/dsp/pdw/pulse_detect_synth_top.py
 """
+
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import MAIN, PART, Input, uint1_t, uint32_t
 
@@ -26,9 +28,9 @@ PART("xc7a100tcsg324-1")  # Artix-7 100T, same part as board/arty/part100t.py
 
 power_t = make_fixed_t(32, 0, signed=False)  # README's uint32_t power format
 
-pulse_detect, pulse_detect_t = make_pulse_detect_fsm(power_t)
+pulse_detect_fsm, pulse_detect_fsm_t = make_pulse_detect_fsm(power_t)
 
-# Runtime-configurable knobs (README section 2's host regs, as if from config
+# Runtime-configurable knobs (the README's control registers, as if from config
 # regs -- see pulse_gen_synth_top.py for the same convention).
 threshold_high: Input[uint32_t]
 threshold_low: Input[uint32_t]
@@ -39,10 +41,10 @@ rst: Input[uint1_t]
 
 
 @MAIN(125.0)
-def pulse_detect_top(
-    stream_in_if: pulse_detect.in_fwd_t, pdw_out_if: pulse_detect.out_fb_t
-) -> pulse_detect_t:
-    return pulse_detect(
+def pulse_detect_fsm_top(
+    stream_in_if: pulse_detect_fsm.in_fwd_t, pdw_out_if: pulse_detect_fsm.out_fb_t
+) -> pulse_detect_fsm_t:
+    return pulse_detect_fsm(
         stream_in_if,
         pdw_out_if,
         power_t(val=threshold_high),

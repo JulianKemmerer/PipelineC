@@ -47,16 +47,7 @@ same `trig` input directly, so the signalling path can be proved on a good day
 rather than first exercised during a fault.
 """
 
-import os
-import sys
-
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..", "..", "..", "..", "..", "include", "pypeline",
-    ),
-)
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import NamedTuple, Reg, hw_func, struct, uint1_t, uint32_t
 

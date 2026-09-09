@@ -5,3 +5,6 @@ lextab.py
 yacctab.py
 .Xil/
 .vscode/
+
+# dsp/fir_tb.py plots, written into the CWD by the fir_*_tb.py examples
+*_tb.png

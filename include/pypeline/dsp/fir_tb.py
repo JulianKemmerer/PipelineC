@@ -228,7 +228,9 @@ def make_fir_tb(
         deadline = 4 * (n_in + n_out) + 256
 
     elastic = fir.handshake == "elastic"
-    in_stream_t = fir.in_fwd_t if fir.handshake == "elastic" else fir.in_stream_t
+    # Holds the input port's feedforward HALF in elastic mode and a real
+    # standalone make_stream_t in valid_only mode -- hence the neutral name.
+    in_port_t = fir.in_fwd_t if fir.handshake == "elastic" else fir.in_stream_t
     data_t = fir.data_t
 
     rng = random.Random(seed)
@@ -249,26 +251,26 @@ def make_fir_tb(
         in_plain_t = fir.in_intrf.stream_t
 
         @sim_input
-        def drive_in() -> in_stream_t:
+        def drive_in() -> in_port_t:
             # (observe() advanced st["idx"] at the end of the previous cycle if
             # that cycle's presented sample was accepted.)
             if st["idx"] < n_in:
                 st["presented_valid"] = 1
-                return in_stream_t(
+                return in_port_t(
                     stream=in_plain_t(data=data_t(val=stimulus_q[st["idx"]]), valid=1)
                 )
             st["presented_valid"] = 0
-            return in_stream_t(stream=in_plain_t(data=data_t(val=0), valid=0))
+            return in_port_t(stream=in_plain_t(data=data_t(val=0), valid=0))
 
     else:
 
         @sim_input
-        def drive_in() -> in_stream_t:
+        def drive_in() -> in_port_t:
             if st["idx"] < n_in:
                 st["presented_valid"] = 1
-                return in_stream_t(data=data_t(val=stimulus_q[st["idx"]]), valid=1)
+                return in_port_t(data=data_t(val=stimulus_q[st["idx"]]), valid=1)
             st["presented_valid"] = 0
-            return in_stream_t(data=data_t(val=0), valid=0)
+            return in_port_t(data=data_t(val=0), valid=0)
 
     def _ready_value():
         if ready_pattern == "always":

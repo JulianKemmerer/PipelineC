@@ -37,16 +37,7 @@ ports of its own. Its arguments are conceptually "as if from ctrl regs"; a
 top-level @MAIN is responsible for supplying them.
 """
 
-import os
-import sys
-
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..", "..", "..", "..", "..", "include", "pypeline",
-    ),
-)
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import (
     NamedTuple,
@@ -144,7 +135,7 @@ def make_pulse_gen(
         # with it.
         zero_amp: amplitude_t = 0
         amp_now: amplitude_t = amplitude if pulse_active else zero_amp
-        n = nco(phase_acc, amp_now, 1)
+        n = nco(phase=phase_acc, amplitude=amp_now, valid_in=1)
 
         # ---- noise: 4 disjoint bytes of each LFSR, read as SIGNED, summed --
         # The intermediate int8_t is load bearing. Slicing a uint32_t yields an
@@ -263,7 +254,7 @@ def make_pulse_gen(
             noise_q_r = 0
             out_i_r = 0
             out_q_r = 0
-        return out_stream_t(sample, 1)  # always valid: fixed-rate DAC stream
+        return out_stream_t(data=sample, valid=1)  # always valid: fixed-rate DAC stream
 
     pulse_gen.iq_t = iq_t
     pulse_gen.out_stream_t = out_stream_t

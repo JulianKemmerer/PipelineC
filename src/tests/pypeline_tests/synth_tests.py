@@ -55,7 +55,7 @@ SYNTH_TEST_FILES = [
     # ~21 minutes under the default PyRTL timing model -- an unrolled
     # 14-iteration pipeline, twice -- and it buys nothing: both of its modes
     # are already synthesized against the real xc7a100t part in under three
-    # minutes each, vectoring mode inside pdw_engine_synth_top.py and rotation
+    # minutes each, vectoring mode inside pulse_extract_synth_top.py and rotation
     # mode inside pulse_gen_synth_top.py. Those give better coverage (real
     # part, real timing) for a twentieth of the runtime.
     ("log2_db_test.py", INST_DIR, ["--comb"]),
@@ -103,21 +103,9 @@ SYNTH_TEST_FILES = [
     ("interface_array_port_test.py", INST_DIR, ["--comb"]),
     ("interface_mixing_rules_test.py", INST_DIR, ["--comb"]),
     ("fm_radio_decim.py", EXAMPLES_PYPELINE_DIR / "dsp", ["--comb"]),
-    (
-        "pulse_detect_synth_top.py",
-        EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_detect",
-        ["--comb"],
-    ),
-    (
-        "pdw_engine_synth_top.py",
-        EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_engine",
-        ["--comb"],
-    ),
-    (
-        "pulse_gen_synth_top.py",
-        EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_gen",
-        ["--comb"],
-    ),
+    ("pulse_detect_synth_top.py", EXAMPLES_PYPELINE_DIR / "dsp" / "pdw", ["--comb"]),
+    ("pulse_extract_synth_top.py", EXAMPLES_PYPELINE_DIR / "dsp" / "pdw", ["--comb"]),
+    ("pulse_gen_synth_top.py", EXAMPLES_PYPELINE_DIR / "dsp" / "pdw", ["--comb"]),
     # (The composed PDW design, examples/pypeline/dsp/pdw/top.py, is registered
     # in get_tests() below rather than here -- this list names each test after
     # its file, and a bare "top" is too generic for a suite-wide registry.)
@@ -141,8 +129,8 @@ def get_tests() -> list:
         )
         for filename, source_dir, extra_args in SYNTH_TEST_FILES
     ]
-    # The composed PDW design (pulse_gen + detect_pulses + pdw_engine). The
-    # pulse_detect/pdw_engine entries above check their blocks in isolation;
+    # The composed PDW design (pulse_gen + pulse_detect + pulse_extract). The
+    # pulse_detect/pulse_extract entries above check their blocks in isolation;
     # only this one proves the whole thing builds together, and that the
     # README-sized 16,384-deep packet FIFO plus the Path B delay line really do
     # infer Block RAM rather than a wall of flops. Named explicitly because the

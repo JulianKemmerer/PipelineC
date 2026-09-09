@@ -7,7 +7,7 @@ check.
 
 WHY FFT, AND WHY THAT MATTERS. The hardware measures frequency by accumulating
 a phasor across the pulse and taking ONE CORDIC atan2 per endpoint (see
-`pdw_measure/pdw_measure.py`). This module measures it with a windowed FFT and
+`pulse_measure.py`). This module measures it with a windowed FFT and
 parabolic peak interpolation. That difference is the entire point: two
 independent algorithms agreeing is evidence the hardware is right, whereas a
 Python re-implementation of the phasor method would only re-check the

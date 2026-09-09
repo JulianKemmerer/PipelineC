@@ -55,7 +55,7 @@ def make_magnitude(
     handshake: "elastic"    -> magnitude(stream_in_if: in_intrf.fwd_t,
                                           stream_out_if: out_intrf.fb_t) -> magnitude_t
                                (in_intrf built over make_complex_t(data_t))
-               "valid_only" -> magnitude(stream_in_if: make_stream_t(complex_t))
+               "valid_only" -> magnitude(in_stream: make_stream_t(complex_t))
                                    -> make_stream_t(out_t)
 
     The returned `magnitude` carries metadata attributes:
@@ -129,8 +129,8 @@ def make_magnitude(
         )
 
         @hw_func
-        def magnitude(stream_in_if: in_stream_t) -> out_stream_t:
-            return magnitude_core_ap(stream_in_if)
+        def magnitude(in_stream: in_stream_t) -> out_stream_t:
+            return magnitude_core_ap(in_stream)
 
         _core_ap = _magnitude_core_ap_call
     else:

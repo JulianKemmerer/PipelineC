@@ -28,8 +28,10 @@ import os
 import sys
 import tempfile
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", "..", ".."))
+import pdw_paths
+
+_HERE = pdw_paths.HERE
+_ROOT = pdw_paths.ROOT
 
 # Scratch lives under /media/1TB/tmp/ by this repo's convention, not /tmp.
 _SCRATCH_ROOT = "/media/1TB/tmp"
@@ -38,14 +40,12 @@ _CACHED = None
 
 
 def _design_paths():
-    """The sys.path entries `top.py` needs, matching how the tests set up."""
+    """The sys.path entries `top.py` needs. Importing pdw_paths above has
+    already put all three there; this list only exists so `generate()` can
+    re-assert them after a caller has manipulated sys.path itself."""
     return [
         os.path.join(_ROOT, "src"),
         os.path.join(_ROOT, "include", "pypeline"),
-        os.path.join(_HERE, "pulse_gen"),
-        os.path.join(_HERE, "pulse_detect"),
-        os.path.join(_HERE, "pdw_engine"),
-        os.path.join(_HERE, "pdw_ctrl"),
         _HERE,
     ]
 

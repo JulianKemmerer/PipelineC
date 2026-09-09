@@ -60,7 +60,7 @@ def make_moving_avg(
     overflow:  "wrap" | "saturate"
     handshake: "elastic"    -> moving_avg(stream_in_if: in_intrf.fwd_t,
                                            stream_out_if: out_intrf.fb_t) -> moving_avg_t
-               "valid_only" -> moving_avg(stream_in_if: make_stream_t(data_t))
+               "valid_only" -> moving_avg(in_stream: make_stream_t(data_t))
                                    -> make_stream_t(out_t)
 
     The returned `moving_avg` carries metadata attributes:
@@ -171,21 +171,21 @@ def make_moving_avg(
         _core_ap = _moving_avg_core_ap_call
 
         @hw_func
-        def moving_avg(stream_in_if: in_stream_t) -> out_stream_t:
+        def moving_avg(in_stream: in_stream_t) -> out_stream_t:
             window: Reg[data_val_t[n]]
             sum_reg: Reg[sum_val_t]
-            new_sum: sum_val_t = sum_reg + stream_in_if.data.val - window[n - 1]
+            new_sum: sum_val_t = sum_reg + in_stream.data.val - window[n - 1]
             avg: avg_t = avg_t(val=new_sum)
-            if stream_in_if.valid:
+            if in_stream.valid:
                 shifted: data_val_t[n]
-                shifted[0] = stream_in_if.data.val
+                shifted[0] = in_stream.data.val
                 for i in range(1, n):
                     shifted[i] = window[i - 1]
                 window = shifted
                 sum_reg = new_sum
             avs: avg_stream_t
             avs.data = avg
-            avs.valid = stream_in_if.valid
+            avs.valid = in_stream.valid
             return moving_avg_core_ap(avs)
 
     else:

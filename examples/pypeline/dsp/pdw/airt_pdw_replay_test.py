@@ -31,11 +31,9 @@ import contextlib
 import io
 import os
 import struct
-import sys
 import tempfile
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, _HERE)
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 # ORDER MATTERS, exactly as in pdw_verify_test.py: airt_pdw_test imports the
 # generated pypeline_host_types, which is deliberately not committed, so it has

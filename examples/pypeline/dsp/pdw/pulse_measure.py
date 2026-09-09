@@ -10,7 +10,7 @@ between pulses.
 
 Inputs are the raw accumulations Path A already produced -- see
 make_freq_accum and the hysteresis SM's `noise_est` in
-../pulse_detect/pulse_detect.py. This block only converts them:
+pulse_detect.py. This block only converts them:
 
     first_re/first_im  --atan2-->  freq_start   (turns x 2^16)
     last_re /last_im   --atan2-->  freq_stop    (turns x 2^16)
@@ -24,7 +24,7 @@ overrun case, and no "measurement invalid" status to define. The hysteresis SM
 can close a pulse as often as every couple of samples and every one of them
 gets measured. The cost is a fixed `.latency`, which the storage engine
 absorbs by waiting for the measurement before releasing a packet (see
-../pdw_engine/pdw_engine.py) -- the packet's own beats are still filling the
+pulse_extract.py) -- the packet's own beats are still filling the
 data FIFO meanwhile, so the wait is free.
 
 WHY dB HAS NO SNR FIELD. SNR is `peak_power_db - noise_power_db`, and both are
@@ -34,16 +34,7 @@ gr-pdw's own file record likewise carries pulse power and noise power as
 separate columns rather than an SNR.
 """
 
-import os
-import sys
-
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..", "..", "..", "..", "..", "include", "pypeline",
-    ),
-)
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import (
     NamedTuple,
@@ -61,11 +52,11 @@ from dsp.cordic import golden_cordic_atan2, make_cordic_atan2
 from dsp.log2_db import golden_log2_db, make_log2_db
 
 
-def make_pdw_measure(detect_pulses, cordic_iters=14):
-    """Build the per-pulse measurement block. Returns (pdw_measure, pdw_measure_t).
+def make_pulse_measure(pulse_detect, cordic_iters=14):
+    """Build the per-pulse measurement block. Returns (pulse_measure, pulse_measure_t).
 
-        pdw_measure(freq_acc, noise_est, peak_power, toa, valid_in, count_pri,
-                    rst) -> pdw_measure_t
+        pulse_measure(freq_acc, noise_est, peak_power, toa, valid_in, count_pri,
+                    rst) -> pulse_measure_t
 
     `valid_in` is the gate_last / candidate cycle. `count_pri` should be the
     qualification verdict's accept bit: PRI is measured between ACCEPTED
@@ -81,9 +72,9 @@ def make_pdw_measure(detect_pulses, cordic_iters=14):
 
     All outputs are co-timed, `.latency` cycles after `valid_in`.
     """
-    power_t = detect_pulses.power_t
-    noise_t = detect_pulses.noise_t
-    acc_t = detect_pulses.freq_acc_t
+    power_t = pulse_detect.power_t
+    noise_t = pulse_detect.noise_t
+    acc_t = pulse_detect.freq_acc_t
 
     cordic, _cordic_t = make_cordic_atan2(acc_t, n_iters=cordic_iters)
     # Two separate converters: peak power is the dc-blocked, moving-averaged
@@ -98,15 +89,15 @@ def make_pdw_measure(detect_pulses, cordic_iters=14):
     # match so every field of a measurement is presented on one cycle.
     DB_DELAY = LAT - log_db.latency
     if log_db.latency != log_db_noise.latency:
-        raise ValueError("make_pdw_measure: the two log converters must match in latency")
+        raise ValueError("make_pulse_measure: the two log converters must match in latency")
     if DB_DELAY < 0:
         raise ValueError(
-            f"make_pdw_measure: log2_db latency ({log_db.latency}) exceeds "
+            f"make_pulse_measure: log2_db latency ({log_db.latency}) exceeds "
             f"cordic latency ({LAT}); the alignment below assumes otherwise"
         )
 
     @struct
-    class pdw_measure_t(NamedTuple):
+    class pulse_measure_t(NamedTuple):
         freq_start: int16_t  # turns x 2^16; multiply by fs for Hz
         freq_stop: int16_t
         peak_power_db: int16_t  # Q8.8 dBFS
@@ -117,22 +108,22 @@ def make_pdw_measure(detect_pulses, cordic_iters=14):
         pri_valid: uint1_t  # 0 on the first accepted pulse after reset
 
     @hw_func
-    def pdw_measure(
-        freq_acc: detect_pulses.freq_accum_t,
+    def pulse_measure(
+        freq_acc: pulse_detect.freq_accum_t,
         noise_est: noise_t,
         peak_power: power_t,
         toa: uint64_t,
         valid_in: uint1_t,
         count_pri: uint1_t,
         rst: uint1_t,
-    ) -> pdw_measure_t:
+    ) -> pulse_measure_t:
         # ---- frequency: one atan2 per endpoint, in parallel ---------------
-        cs = cordic(freq_acc.first_re, freq_acc.first_im, valid_in)
-        ce = cordic(freq_acc.last_re, freq_acc.last_im, valid_in)
+        cs = cordic(x_in=freq_acc.first_re, y_in=freq_acc.first_im, valid_in=valid_in)
+        ce = cordic(x_in=freq_acc.last_re, y_in=freq_acc.last_im, valid_in=valid_in)
 
         # ---- power and noise in dB ----------------------------------------
-        lp = log_db(peak_power, valid_in)
-        ln = log_db_noise(noise_est, valid_in)
+        lp = log_db(v=peak_power, valid_in=valid_in)
+        ln = log_db_noise(v=noise_est, valid_in=valid_in)
 
         # ---- PRI ----------------------------------------------------------
         prev_toa: Reg[uint64_t]
@@ -193,7 +184,7 @@ def make_pdw_measure(detect_pulses, cordic_iters=14):
             for k in range(LAT + 1):
                 priv_d[k] = 0
 
-        o: pdw_measure_t
+        o: pulse_measure_t
         o.freq_start = cs.angle
         o.freq_stop = ce.angle
         o.peak_power_db = db_p[DB_DELAY]
@@ -204,22 +195,22 @@ def make_pdw_measure(detect_pulses, cordic_iters=14):
         o.pri_valid = priv_d[LAT]
         return o
 
-    pdw_measure.out_t = pdw_measure_t
-    pdw_measure.cordic = cordic
-    pdw_measure.log_db = log_db
-    pdw_measure.log_db_noise = log_db_noise
-    pdw_measure.noise_t = noise_t
-    pdw_measure.power_t = power_t
-    pdw_measure.acc_t = acc_t
-    pdw_measure.latency = LAT
-    return pdw_measure, pdw_measure_t
+    pulse_measure.out_t = pulse_measure_t
+    pulse_measure.cordic = cordic
+    pulse_measure.log_db = log_db
+    pulse_measure.log_db_noise = log_db_noise
+    pulse_measure.noise_t = noise_t
+    pulse_measure.power_t = power_t
+    pulse_measure.acc_t = acc_t
+    pulse_measure.latency = LAT
+    return pulse_measure, pulse_measure_t
 
 
-def golden_pdw_measure(meas, first_re, first_im, last_re, last_im, noise_raw,
+def golden_pulse_measure(meas, first_re, first_im, last_re, last_im, noise_raw,
                        peak_raw, toa, prev_toa, have_prev):
     """Bit-exact Python model of one measurement.
 
-    Returns a dict with the same field names as `pdw_measure_t` (minus
+    Returns a dict with the same field names as `pulse_measure_t` (minus
     `valid`). `prev_toa`/`have_prev` are the caller's running PRI state,
     which it must advance itself for accepted pulses only.
     """

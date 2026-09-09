@@ -57,7 +57,7 @@ def make_dc_block(
     overflow:  "wrap" | "saturate"
     handshake: "elastic"    -> dc_block(stream_in_if: in_intrf.fwd_t,
                                          stream_out_if: out_intrf.fb_t) -> dc_block_t
-               "valid_only" -> dc_block(stream_in_if: make_stream_t(data_t))
+               "valid_only" -> dc_block(in_stream: make_stream_t(data_t))
                                    -> make_stream_t(out_t)
 
     The returned `dc_block` carries metadata attributes:
@@ -152,17 +152,17 @@ def make_dc_block(
         _core_ap = _dc_block_core_ap_call
 
         @hw_func
-        def dc_block(stream_in_if: in_stream_t) -> out_stream_t:
+        def dc_block(in_stream: in_stream_t) -> out_stream_t:
             mean: Reg[mean_t]
-            x_wide: mean_val_t = stream_in_if.data.val
+            x_wide: mean_val_t = in_stream.data.val
             x_ext: mean_val_t = x_wide << k
             diff_val: diff_val_t = x_ext - mean.val
             diff: diff_t = diff_t(val=diff_val)
-            if stream_in_if.valid:
+            if in_stream.valid:
                 mean = mean_t(val=mean.val + (diff_val >> k))
             ds: diff_stream_t
             ds.data = diff
-            ds.valid = stream_in_if.valid
+            ds.valid = in_stream.valid
             return dc_block_core_ap(ds)
 
     else:

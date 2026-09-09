@@ -187,18 +187,21 @@ def make_block_tb(
     }
 
     if elastic:
-        in_stream_t = block.in_fwd_t
+        # NOT `in_stream_t`: this is the input port's feedforward HALF, not a
+        # standalone valid-only stream. The valid_only branch below is the one
+        # that really gets a make_stream_t.
+        in_port_t = block.in_fwd_t
         in_plain_t = block.in_intrf.stream_t
 
         @sim_input
-        def drive_in() -> in_stream_t:
+        def drive_in() -> in_port_t:
             if st["idx"] < n_in:
                 st["presented_valid"] = 1
-                return in_stream_t(
+                return in_port_t(
                     stream=in_plain_t(data=in_value(stimulus[st["idx"]]), valid=1)
                 )
             st["presented_valid"] = 0
-            return in_stream_t(stream=in_plain_t(data=in_value(idle_raw), valid=0))
+            return in_port_t(stream=in_plain_t(data=in_value(idle_raw), valid=0))
 
     else:
         in_stream_t = block.in_stream_t

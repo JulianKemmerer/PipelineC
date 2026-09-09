@@ -23,43 +23,30 @@ path, which is why the reset term exists and why test_no_leak_across_reset
 checks the NEXT packet's contents rather than just its length.
 
 Composed with sim_call rather than a pipelinec build: the blocks under test are
-detect_pulses and pdw_engine wired exactly as top.py wires them, and driving
+pulse_detect and pulse_extract wired exactly as top.py wires them, and driving
 them directly costs seconds instead of the ~18 minutes a full top.py native sim
 takes. The reset's effect on the AXIS serializers is covered separately, by
 pdw_tb.py's check_reset (no master tvalid during reset) and by
-pdw_ctrl/pdw_ctrl_test.py's flush tests.
+pdw_ctrl_test.py's flush tests.
 
 Run: python3 pdw_reset_test.py
 """
 
-import os
-import sys
-
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", "..", ".."))
-for _d in (
-    os.path.join(_ROOT, "src"),
-    os.path.join(_ROOT, "include", "pypeline"),
-    os.path.join(_HERE, "pulse_detect"),
-    os.path.join(_HERE, "pdw_engine"),
-    os.path.join(_HERE, "pdw_measure"),
-    _HERE,
-):
-    sys.path.insert(0, _d)
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import sim_call, sim_reset
 
 from dsp.dsp_tb import golden_dc_block, golden_magnitude, golden_moving_avg
-from pdw_engine import STATUS_PRI_INVALID, make_pdw_engine
-from pulse_detect import make_detect_pulses
+from pulse_extract import STATUS_PRI_INVALID, make_pulse_extract
+from pulse_detect import make_pulse_detect
 
 # Small FIFOs: this test's packets are tens of beats, and a shallow data FIFO
 # makes a failed drain show up as a full FIFO rather than as slack space.
 TB_DEPTH = 512
 TB_N_PKTS = 8
 
-_DP, _ = make_detect_pulses()
-_ENG, _ = make_pdw_engine(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
+_DP, _ = make_pulse_detect()
+_ENG, _ = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 CPLX = _DP.complex_t
 RAIL = _DP.rail_t
@@ -124,7 +111,7 @@ def _thresholds(raw):
 
 
 class _Run:
-    """One pass of detect_pulses -> pdw_engine, wired as top.py wires them."""
+    """One pass of pulse_detect -> pulse_extract, wired as top.py wires them."""
 
     def __init__(self, raw, rst_of, thr_hi, thr_lo, min_width=MIN_WIDTH,
                  max_width=0xFFFFFFFF, pkt_ready_of=None, n_extra=400):
@@ -142,12 +129,14 @@ class _Run:
             valid = 0 if (rst or c >= len(raw)) else 1
             o = sim_call(
                 _DP,
-                _DP.in_stream_t(CPLX(i=RAIL(val=i), q=RAIL(val=q)), valid),
-                _DP.out_fb_t(1),
-                PWR(val=thr_hi),
-                PWR(val=thr_lo),
-                max_width,
-                rst,
+                in_stream=_DP.in_stream_t(
+                    data=CPLX(i=RAIL(val=i), q=RAIL(val=q)), valid=valid
+                ),
+                pdw_out_if=_DP.out_fb_t(1),
+                threshold_high=PWR(val=thr_hi),
+                threshold_low=PWR(val=thr_lo),
+                max_width=max_width,
+                rst=rst,
             )
             # The consumer is NOT ready during reset -- see the module
             # docstring. Outside reset it is always ready.
@@ -155,8 +144,17 @@ class _Run:
                 1 if pkt_ready_of is None else int(pkt_ready_of(c))
             )
             e = sim_call(
-                _ENG, o.gated_out, o.pdw_out_if, o.overflow, min_width,
-                max_width, o.freq_acc, o.noise_est, pkt_ready, 1, rst,
+                _ENG,
+                gated_in=o.gated_out,
+                pdw_in_if=o.pdw_out_if,
+                dsp_overflow=o.overflow,
+                min_width=min_width,
+                max_width=max_width,
+                freq_acc=o.freq_acc,
+                noise_est=o.noise_est,
+                pkt_out_if=_ENG.pkt_out_intrf.fb_t(pkt_ready),
+                pdw_out_if=_ENG.pdw_out_intrf.fb_t(1),
+                rst=rst,
             )
             # top.py gates every master tvalid with ~rst, so ignore the engine's
             # outputs while reset is asserted -- they are mid-drain and nothing
@@ -167,18 +165,20 @@ class _Run:
             # real ports, by pdw_tb.py's check_reset.
             if rst:
                 continue
-            if int(e.pdw_out.valid):
+            pdw = e.pdw_out_if.stream
+            pkt = e.pkt_out_if.stream
+            if int(pdw.valid):
                 self.pdws.append((c, {
-                    "toa": int(e.pdw_out.data.toa),
-                    "pulse_width": int(e.pdw_out.data.pulse_width),
-                    "pkt_samples": int(e.pdw_out.data.pkt_samples),
-                    "pri": int(e.pdw_out.data.pri),
-                    "status_flags": int(e.pdw_out.data.status_flags),
+                    "toa": int(pdw.data.toa),
+                    "pulse_width": int(pdw.data.pulse_width),
+                    "pkt_samples": int(pdw.data.pkt_samples),
+                    "pri": int(pdw.data.pri),
+                    "status_flags": int(pdw.data.status_flags),
                 }))
-            if int(e.pkt_out.valid) and pkt_ready:
-                cur.append((int(e.pkt_out.data.i.val),
-                            int(e.pkt_out.data.q.val)))
-                if int(e.pkt_out.last):
+            if int(pkt.valid) and pkt_ready:
+                cur.append((int(pkt.data.sample.i.val),
+                            int(pkt.data.sample.q.val)))
+                if int(pkt.data.last):
                     self.pkts.append(cur)
                     cur = []
         assert not cur, f"a packet was left unterminated: {len(cur)} beats"
@@ -265,7 +265,7 @@ def test_no_leak_across_reset():
 
 
 def test_toa_and_pri_restart():
-    """toa_counter is cleared by reset, so pdw_measure's prev_toa/have_prev
+    """toa_counter is cleared by reset, so pulse_measure's prev_toa/have_prev
     must be cleared with it -- otherwise the first pulse after release computes
     `toa - prev_toa` across two counter epochs and reports a wrapped, enormous
     PRI as if it were real."""

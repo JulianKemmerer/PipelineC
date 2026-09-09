@@ -1,5 +1,5 @@
 # pyright: reportInvalidTypeForm=none
-"""Top-level native-sim testbench for top.py (see README.md section 5).
+"""Top-level native-sim testbench for top.py (see README.md's Testing section).
 
 Every top-level port of top.py is a flattened 32-bit AXI-Stream, so this
 testbench speaks AXIS in both directions: it WRITES the control registers as a
@@ -74,7 +74,7 @@ what caught the delay line only ever realising the FWFT FIFO's incidental
 2-cycle latency instead of tracking the DSP chain's real one.
 
 Section 0 below derives the one index relation it rests on, and asserts it
-against `detect_pulses.get_path_b_delay()` so that a future change to Path A's
+against `pulse_detect.get_path_b_delay()` so that a future change to Path A's
 or Path B's wiring fails here with a clear message rather than as opaque
 packet-content garbage.
 
@@ -82,12 +82,10 @@ Run:
     pypelinec examples/pypeline/dsp/pdw/pdw_tb.py --sim --comb --run 9200
 """
 
-import os
 import struct as _pystruct
-import sys
 from dataclasses import dataclass, field
 
-sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import (
     MAIN,
@@ -111,9 +109,9 @@ import gr_pdw_record  # noqa: E402
 import top  # noqa: E402
 from dsp.dsp_tb import golden_dc_block, golden_magnitude, golden_moving_avg
 from pulse_gen import golden_pulse_gen
-from pdw_measure import golden_pdw_measure
+from pulse_measure import golden_pulse_measure
 from pdw_ctrl import CTRL_FLAG_LOOPBACK_EN, pdw_ctrl_t
-from pdw_engine import (
+from pulse_extract import (
     STATUS_FREQ_DEGENERATE,
     STATUS_PKT_FIFO_FULL,
     STATUS_PRI_INVALID,
@@ -122,10 +120,10 @@ from axi.axis_sim import AxisSimSink, AxisSimSource, Scoreboard
 
 # ---------------------------------------------------------------------------
 # 0. Latency metadata -- read from the instances top.py already built, never
-#    hardcoded (see pulse_detect.py's make_detect_pulses / dsp/{magnitude,
+#    hardcoded (see pulse_detect.py's make_pulse_detect / dsp/{magnitude,
 #    dc_block,moving_avg}.py's get_latency() accessors).
 # ---------------------------------------------------------------------------
-_DP = top.detect_pulses
+_DP = top.pulse_detect
 DSP_LAT = _DP.get_dsp_latency()  # magnitude + dc_block + moving_avg, io-regs incl.
 GATE_LAT = _DP.gate_latency  # fixed: gate_valid_r <- held_in_pulse
 PDW_LAT = _DP.pdw_latency  # fixed: pdw_reg presented-then-drained
@@ -136,11 +134,11 @@ PDW_LAT = _DP.pdw_latency  # fixed: pdw_reg presented-then-drained
 # IT was on entry, which was written at `_s-2` as in_pulse(power[_s-2]). Two
 # register hops. So the raw sample that beat must carry is raw[_s - GATE_LAT],
 # and the hardware's Path B delay must be DSP_LAT + GATE_LAT input samples --
-# which is exactly what detect_pulses.get_path_b_delay() reports and what the
+# which is exactly what pulse_detect.get_path_b_delay() reports and what the
 # self-timed gate_advance drain achieves. Asserted against the hardware's own
 # metadata below rather than restated as a literal.
 assert _DP.get_path_b_delay() == DSP_LAT + GATE_LAT, (
-    f"pdw_tb: detect_pulses.get_path_b_delay() = {_DP.get_path_b_delay()} does "
+    f"pdw_tb: pulse_detect.get_path_b_delay() = {_DP.get_path_b_delay()} does "
     f"not match this golden model's assumption of DSP_LAT({DSP_LAT}) + "
     f"GATE_LAT({GATE_LAT}) -- Path B's wiring changed, re-derive raw_idx below"
 )
@@ -217,20 +215,20 @@ assert CTRL_FRAME0_AT > CTRL_RST_HOLD, (
 )
 
 
-def _axis_flat(word, n=AXIS_N):
+def _axis_flat(word_if, n=AXIS_N):
     """(tdata, tkeep, tlast, tvalid) from an AxisSimSource's interface word."""
-    d = word.stream.data.frag.data
-    k = word.stream.data.frag.keep
+    d = word_if.stream.data.frag.data
+    k = word_if.stream.data.frag.keep
     tdata = 0
     tkeep = 0
     for i in range(n):
         tdata |= (int(d[i]) & 0xFF) << (8 * i)
         tkeep |= (int(k[i]) & 1) << i
-    return tdata, tkeep, int(word.stream.data.eod[0]), int(word.stream.valid)
+    return tdata, tkeep, int(word_if.stream.data.eod[0]), int(word_if.stream.valid)
 
 
-def _axis_word(intrf, tdata, tkeep, tlast, transferred, n=AXIS_N):
-    """An interface word for AxisSimSink, built from flat output ports.
+def _axis_word_if(intrf, tdata, tkeep, tlast, transferred, n=AXIS_N):
+    """An interface word (a .fwd_t half) for AxisSimSink, from flat output ports.
 
     `transferred` (tvalid AND tready), not tvalid: AxisSimSink assumes its own
     ready is always 1 and records every valid beat it is shown, so a held beat
@@ -752,7 +750,7 @@ def _fsm_step(st, p, thr_hi, thr_lo, max_width):
 
 
 class _NoiseModel:
-    """Mirror of the leaky noise-floor integrator in make_detect_pulses."""
+    """Mirror of the leaky noise-floor integrator in make_pulse_detect."""
 
     def __init__(self):
         self.acc = 0
@@ -858,7 +856,7 @@ expected_released = []  # (phase_idx, tuple_of_tdata_words)
 expected_rejects = []  # (phase_idx, "glitch" | "cw") -- for non-vacuity only
 first_gate_beat_sample_idx = None
 
-_MEAS = top.pdw_engine.pdw_measure
+_MEAS = top.pulse_extract.pulse_measure
 _mag_seq = _mag_for_power
 _fsm_st = _new_fsm_state()
 _fa = _FreqAccumModel()
@@ -920,14 +918,14 @@ for _s in range(TOTAL_SAMPLES):
             # ADC-clip and DSP-overflow flags stay 0 for every packet here (no
             # amplitude reaches the int16 rail, and the FSM's overflow cannot
             # set with the engine always ready); their positive paths are
-            # exercised in pdw_engine/pdw_engine_tb.py. The two measurement
+            # exercised in pulse_extract_tb.py. The two measurement
             # flags below CAN legitimately set, so they are modelled rather
             # than asserted away.
             # The measurement, from the accumulations this same walk built.
             # `_fa_out` is what the hardware presents one cycle after
             # gate_last; `noise_now` and the candidate's peak/toa are what it
             # delays by freq_latency to meet it there.
-            _m = golden_pdw_measure(
+            _m = golden_pulse_measure(
                 _MEAS,
                 _fa_out[0],
                 _fa_out[1],
@@ -1109,7 +1107,7 @@ def _populate_scoreboards():
 # every beat it accepts, which is what checks top.py's constant-keep sample
 # ports as well as the serializers' real fill counts.
 _CAND_T = top.candidate_rec_t
-_VPDW_T = top.pdw_engine.valid_pdw_t
+_VPDW_T = top.pulse_extract.valid_pdw_t
 _ctrl_src = AxisSimSource(_CTRL.axis_intrf, AXIS_N)
 _pkt_snk = AxisSimSink(top.axis32_intrf, AXIS_N)  # rx0_m -- released packets
 _rep_snk = AxisSimSink(top.axis32_intrf, AXIS_N)  # tx1_m -- the replay leg
@@ -1334,7 +1332,7 @@ def check_adc_ready():
     hardware the symptom of either would be a receive overflow that looks
     exactly like the host falling behind.
 
-    The alarm's own behaviour is covered by pdw_alarm/pdw_alarm_test.py, which
+    The alarm's own behaviour is covered by pdw_alarm_test.py, which
     can drive it directly in under a second. What is checked HERE is the
     integration: that composing it into top.py left the port alone."""
     n = ST["cycle"] - 1
@@ -1417,7 +1415,7 @@ def check_pdw():
     transferred = int(top.rx2_m_axis_tvalid) and int(top.rx2_m_axis_tready)
     if transferred:
         _cand_snk.step(
-            _axis_word(
+            _axis_word_if(
                 top.cand_tx.axis_intrf,
                 int(top.rx2_m_axis_tdata),
                 int(top.rx2_m_axis_tkeep),
@@ -1472,7 +1470,7 @@ def check_valid_pdw():
         ST["pdw_starts"].append(ST["cycle"] - 1)
     if transferred:  # see the note in check_pdw on why this is gated
         _vpdw_snk.step(
-            _axis_word(
+            _axis_word_if(
                 top.pdw_tx.axis_intrf,
                 int(top.rx1_m_axis_tdata),
                 int(top.rx1_m_axis_tkeep),
@@ -1513,7 +1511,7 @@ def check_valid_pdw():
         )
     assert not (got[4] & STATUS_PKT_FIFO_FULL), (
         "pdw_tb: this PDW's packet lost beats to a full store-and-forward FIFO "
-        "-- packet contents are corrupted; increase pdw_engine's depth"
+        "-- packet contents are corrupted; increase pulse_extract's depth"
     )
     result = _vpdw_sb.check(got)
     idx = result.get("idx", "?")
@@ -1571,7 +1569,7 @@ def check_packet():
         raise AssertionError("pdw_tb: rx0_m_axis_tlast asserted without tvalid -- illegal AXIS")
     if transferred:  # see the note in check_pdw on why this is gated
         _pkt_snk.step(
-            _axis_word(
+            _axis_word_if(
                 top.axis32_intrf,
                 int(top.rx0_m_axis_tdata),
                 int(top.rx0_m_axis_tkeep),
@@ -1585,7 +1583,7 @@ def check_packet():
     # everything else here would still pass.
     if int(top.tx1_m_axis_tvalid) and int(top.tx1_m_axis_tready):
         _rep_snk.step(
-            _axis_word(
+            _axis_word_if(
                 top.axis32_intrf,
                 int(top.tx1_m_axis_tdata),
                 int(top.tx1_m_axis_tkeep),

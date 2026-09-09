@@ -58,16 +58,7 @@ silently shift it. `../pdw_tb.py` reads the attribute rather than hardcoding a
 number -- see this project's `.latency` discipline generally.
 """
 
-import os
-import sys
-
-sys.path.insert(
-    0,
-    os.path.join(
-        os.path.dirname(os.path.abspath(__file__)),
-        "..", "..", "..", "..", "..", "include", "pypeline",
-    ),
-)
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import (
     NamedTuple,
@@ -84,7 +75,7 @@ from pypeline import (
 
 from axi.type_axis import make_axis_to_type
 
-# `flags` bit assignments. Same style as pdw_engine.py's STATUS_* constants:
+# `flags` bit assignments. Same style as pulse_extract.py's STATUS_* constants:
 # named module constants, so a testbench and a host program refer to the bit by
 # name rather than repeating a shift.
 CTRL_FLAG_LOOPBACK_EN = 1 << 0  # 1 = feed the detector from pulse_gen, not RX0
@@ -118,17 +109,17 @@ class pdw_ctrl_t(NamedTuple):
     whole beat. `byte_length()` is asserted below so that can never drift
     silently."""
 
-    # -- pulse generator (see pulse_gen/pulse_gen.py) --
+    # -- pulse generator (see pulse_gen.py) --
     pulse_gen_pri: uint32_t  # 32   PRI in samples
     pulse_gen_width: uint32_t  # 32   pulse width in samples
     pulse_gen_freq: int32_t  # 32   phase increment/sample, turns x 2^32
     pulse_gen_chirp_rate: int32_t  # 32   added to that increment each pulse sample
     pulse_gen_amplitude: int16_t  # 16   peak I/Q amplitude
     pulse_gen_noise_amp: uint16_t  # 16   LFSR noise scale, 0 = off
-    # -- detector Path A (see pulse_detect/pulse_detect.py) --
+    # -- detector Path A (see pulse_detect.py) --
     threshold_high: uint32_t  # 32   hysteresis SM upper threshold
     threshold_low: uint32_t  # 32   hysteresis SM lower threshold
-    # -- qualification (see pdw_engine/pdw_engine.py) --
+    # -- qualification (see pulse_extract.py) --
     max_width: uint32_t  # 32   Path A force-close cap AND CW rejection
     min_width: uint32_t  # 32   glitch rejection
     # -- misc --
@@ -235,7 +226,10 @@ def make_pdw_ctrl(n=4, registered_ready=False):
 
         # Ready tied high: a register file is never busy, and this is what makes
         # the apply moment a pure function of when the last beat lands.
-        r = rx(rx.axis_intrf.fwd_t(flush_in), rx.out_fb_t(1))
+        r = rx(
+            axis_in_if=rx.axis_intrf.fwd_t(flush_in),
+            stream_out_if=rx.out_fb_t(1),
+        )
 
         # Present the CURRENT register contents, THEN latch the new ones. That
         # ordering is the second of the two cycles in `.latency`: consumers see

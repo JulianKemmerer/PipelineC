@@ -612,6 +612,16 @@ def abs_val(x: int32_t) -> int32_t:
 out: uint8_t = a if condition else b    # equivalent to the if/else above
 ```
 
+> ⚠ **Both branches must be the same width**, and native simulation will not tell you
+> otherwise — a Python `int` literal has no width there, so a mixed-width ternary
+> simulates fine and is rejected only when the elaborator emits VHDL. Give a bare
+> constant a typed local first:
+> ```python
+> zero32: uint32_t = 0
+> flag_bit: uint32_t = STATUS_ADC_CLIP     # infers uint1_t if left bare
+> bits: uint32_t = flag_bit if clipped else zero32
+> ```
+
 #### Augmented assignment
 
 `+=`, `-=`, `*=`, `|=`, `&=`, `^=` are supported and expand to the equivalent binary operation:
@@ -1050,6 +1060,13 @@ packed: uint24_t = concat(r, g, b)         # three uint8_t values → uint24_t
 | `uint_to_array_le(x, n)` | Split integer into `n` equal elements, little-endian |
 
 All size/count arguments must be compile-time constants.
+
+**`make_clz` — count leading zeros.** `include/pypeline/bits.py`'s `make_clz(value_t)`
+builds a width-specialized leading-zero counter, used by the fixed/float libraries and by
+`dsp/cordic.py` and `dsp/log2_db.py` to normalize an operand before a shift. It is a
+`log2(n)`-level **binary search**, not an `n`-deep chain of dependent muxes — worth knowing
+because the obvious mux-chain form is quietly enormous: at 39 bits it measured as an entire
+CORDIC's critical path on its own.
 
 ---
 
@@ -3219,6 +3236,20 @@ is a plain valid-only value (`.data`/`.valid` directly, never paired) — see th
 declare their ports this way — see [Crossing between the two
 styles](#crossing-between-the-two-styles).
 
+> ⚠ **`tlast` is only meaningful under `tvalid`, and a broadcast leg can break that at a
+> top-level port.** `make_axis_broadcast_interlock` copies the source beat to every leg and
+> then zeroes `valid` on a leg whose sibling is not ready yet — so a stalled leg can present
+> `eod = 1` with `valid = 0`. That is legal *inside* the library, since AXI leaves `tlast`
+> don't-care while `tvalid` is low, but a top-level master must not emit it. Qualify it with
+> that leg's own valid at the pin:
+> ```python
+> leg0_valid: uint1_t = b.axis_out_if[0].stream.valid & out_en
+> m_axis_tlast  = b.axis_out_if[0].stream.data.eod[0] & leg0_valid   # not eod alone
+> m_axis_tvalid = leg0_valid
+> ```
+> The same defect is recorded against the old C library as `axis.h:539`. A testbench that
+> checks this on every port rather than trusting the producer is what catches it.
+
 so for an `axis32_t` value `x`:
 
 | Old AXIS field | pypeline equivalent |
@@ -3300,6 +3331,17 @@ plain Python — API-inspired by cocotb's `cocotbext-axi` (queue-backed `send()`
 `set_pause_generator()` backpressure hook) but not that library itself: Pypeline's native
 sim is a synchronous, non-async, delta-cycle-converging function-call model, incompatible
 with cocotbext-axi's `async def`/cocotb-scheduler-based classes.
+
+> **Backpressure is asymmetric, and this is a real coverage gap to be aware of.**
+> `AxisSimSource` has `set_pause_generator()`, so a *producer* can stall however you like.
+> `AxisSimSink` has no equivalent — it presents `ready = 1` to its caller and records every
+> valid beat it is shown, so **stalling a consumer is the testbench's own job**, driven by
+> hand onto the DUT's `tready`. Every testbench in this repo does that with a fixed period
+> (`0 if (n % 5) == 0 else 1` and friends, on mutually prime periods so the stalls drift
+> against each other), which exercises backpressure but is not the same as a randomized
+> ready pattern — **no design here has been tested against randomized output flow control.**
+> `dsp/fir_tb.py`/`dsp/dsp_tb.py`'s `ready_pattern="random"` is the exception, and it only
+> covers the single-stream blocks those testbench libraries drive.
 
 ```python
 from axi.axis_sim import AxisSimSource, AxisSimSink
@@ -3402,6 +3444,14 @@ accepted in the same cycle. That is worth knowing because the old deserializer w
 its `ready` was gated on the output register being empty, costing a cycle per value,
 which *halves* throughput whenever a value is one beat wide. `registered_ready=True`
 restores the old behaviour if a design needs that combinational path broken.
+
+Note that `registered_ready` is a **deserializer-only** knob. On the serializer
+(`make_type_to_axis`) the downstream `ready` is combinational on purpose and there is no
+option to break it — and that path is deeper than it looks, since it feeds the variable
+index of the buffer write. If a design needs it cut (a reset that must force `ready` to
+drain the serializer, say), put a `mode="full"`
+[skid buffer](#skid-buffers-make_skid_buffer) downstream and drive the OR onto the
+slice's registered ready instead.
 
 **See also:** [Streams: `stream_t`](#streams-stream_t) ·
 [Struct ↔ AXI-Stream](#struct--axi-stream-make_axis_to_type--make_type_to_axis) ·
@@ -3537,7 +3587,7 @@ generated file's docstring; pass `endian=` explicitly in that case.
 ### In practice
 
 `examples/pypeline/dsp/pdw` is the case this was built for. Its host files
-(`pdw_ctrl_record.py`, `gr_pdw_record.py`) currently re-express two struct layouts by hand
+used to re-express two struct layouts by hand
 as `struct` format strings, with `pdw_host_types_test.py` existing solely to catch drift
 between those copies and the hardware. That project could instead copy the generated
 `pypeline_host_types.py` off a build and keep only its genuinely host-side logic — the
@@ -3605,6 +3655,27 @@ hardware, just not cycle-accurate internally. See `pypeline_sim_DESIGN.md`'s
 "`make_fifo` Simulation Model" section for the exact contract, and
 `src/tests/pypeline_tests/inst/stream_fifo_test.py`.
 
+**There is no flush, no occupancy count and no rollback.** `make_fifo` is a black-box
+wrapper over `src/vhdl/pipelinec_fifo_fwft.vhd` that exposes push and pop and nothing
+else — no write-pointer rewind, no "how full is it", no clear input — and there is no
+RAM/ROM primitive in this library to build an alternative on. Two consequences worth
+designing around:
+
+* **A reset cannot clear a FIFO; it can only drain one.** The only way to empty an
+  instance is to clock its contents out, so a design whose reset must leave its buffers
+  empty has to force the read enable high for the duration (`data_ready |= rst`) and
+  **hold reset for at least the FIFO's depth in cycles** — at 125 MHz a 16K-deep FIFO
+  needs ~131 µs. A reset shorter than that leaves the buffer partly full, which is
+  usually worse than not resetting at all. Export the number
+  (`RST_MIN_HOLD_CYCLES = depth + slack`) rather than leaving it implicit.
+* **"Drop this packet" is built from two FIFOs plus a counter, not from a rewind.** A
+  store-and-forward design that needs to discard a partially-written packet keeps the
+  payload in one FIFO and one descriptor per completed packet in a second, then pops a
+  descriptor and moves exactly that many beats — downstream if accepted, into the bit
+  bucket if not. Observably identical to a rollback, at the cost of spending read
+  bandwidth to discard. `examples/pypeline/dsp/pdw/pulse_extract.py`'s `packet_store`
+  is a worked example.
+
 **See also:** [Streams: `stream_t`](#streams-stream_t) ·
 [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer) ·
 [Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline) ·
@@ -3668,6 +3739,15 @@ call site.
 
 `n_slots` and `latency` hang off the returned function, alongside `.stream_intrf` / `.fwd_t` /
 `.fb_t` / `.data_t` / `.mode`, so a caller sizing a surrounding pipeline never re-derives them.
+
+**`"full"` is also what makes a downstream `ready` safe to override.** A reset that has
+to drain a block whose only exit is `ready` (a serializer, a FIFO — see
+[FIFOs](#fifos-make_stream_fifo)) wants to write `ready | rst`. Doing that straight onto
+a top-level pin puts a LUT in the path feeding that block's own ready logic, which can be
+far deeper than it looks: in `examples/pypeline/dsp/pdw` the same one-gate change cost
+**8.3 MHz** (128.5 → 120.2) because the serializer's ready feeds the variable index of a
+43-element buffer write. Putting a `mode="full"` slice in between moves the OR onto the
+slice's registered output ready instead, and costs one cycle.
 
 ### On AXI-Stream
 
@@ -4286,8 +4366,9 @@ guide.
 
 ## DSP: Filters & Signal Conditioning
 
-The DSP filter library (`make_fir`, `make_fir_decim`/`make_fir_interp`, `make_magnitude`,
-`make_dc_block`, `make_moving_avg`, and their testbench helpers) has moved to
+The DSP library (`make_fir`, `make_fir_decim`/`make_fir_interp`, `make_magnitude`,
+`make_dc_block`, `make_moving_avg`, `make_cordic_atan2`/`make_cordic_rotate`,
+`make_log2_db`, and their testbench helpers) has moved to
 [`include/pypeline/dsp/pypeline_dsp_guide.md`](../include/pypeline/dsp/pypeline_dsp_guide.md),
 next to the library source it documents. See that file for the full reference.
 
@@ -4347,6 +4428,17 @@ built yet."
 | Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine |
 | Language | **`@enum` member names that are VHDL reserved words** | Fails in VHDL only | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. Native simulation cannot see this — only a `synth`/GHDL run can, which is why every enum-bearing design wants one |
 | Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it |
+
+**Several rows above share one root cause: native simulation never emits VHDL, so it
+cannot catch anything Vivado or GHDL would reject.** A design covered only by
+`pypelinec --sim` tests has no coverage at all of that class of bug — the `@enum`
+reserved-word row, the mixed-width ternary and the `sim_print` overflow row are each a
+real bug that passed every native-sim test in this repo. The cheap remedy is to give
+every design a small `*_synth_top.py` alongside its testbench: a handful of
+`Input[T]`/`Output[T]` ports and one `@MAIN` that instantiates the block, registered as a
+`synth` test with `--comb`. It costs minutes of build time and is the only thing that
+looks at the generated VHDL. Worked examples:
+`examples/pypeline/dsp/pdw/pulse_detect_synth_top.py` and its two siblings.
 
 Coming from PipelineC? See also [docs/pipelinec_to_pypeline.md](pipelinec_to_pypeline.md)
 for a pattern-by-pattern translation reference.

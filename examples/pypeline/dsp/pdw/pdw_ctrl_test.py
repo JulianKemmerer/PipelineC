@@ -19,17 +19,7 @@ invisible until a host pads one write.
 Run: python3 pdw_ctrl_test.py
 """
 
-import os
-import sys
-
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", "..", "..", ".."))
-for _d in (
-    os.path.join(_ROOT, "src"),
-    os.path.join(_ROOT, "include", "pypeline"),
-    _HERE,
-):
-    sys.path.insert(0, _d)
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import sim_call, sim_reset, type_to_bytes
 
@@ -100,16 +90,16 @@ def _run(script, n_cycles, dut=None, rst_until=0):
         # ready is checked (not consumed) below: the block promises it is always
         # 1, so driving the source with 1 unconditionally is only legitimate
         # because every cycle's real value is asserted to be 1.
-        word = src.step(1)
+        word_if = src.step(1)
         rst = 1 if c < rst_until else 0
-        r = sim_call(dut, word, rst)
+        r = sim_call(dut, axis_in_if=word_if, rst=rst)
         log.append(
             {
                 "ready": int(r.axis_in_if.ready),
                 "updated": int(r.updated),
                 "runt": int(r.runt),
-                "valid_in": int(word.stream.valid),
-                "last_in": int(word.stream.data.eod[0]),
+                "valid_in": int(word_if.stream.valid),
+                "last_in": int(word_if.stream.data.eod[0]),
                 "rst": rst,
                 "regs": _regs(r),
             }
@@ -322,11 +312,11 @@ def test_reset_flushes_an_abandoned_frame():
         if c == start:
             src.send(good)
         if c < n_stale:
-            word = _beat(ctrl, stale[c * N : (c + 1) * N], last=False)
+            word_if = _beat(ctrl, stale[c * N : (c + 1) * N], last=False)
         else:
-            word = src.step(1)
+            word_if = src.step(1)
         rst = 1 if rst_from <= c < rst_until else 0
-        r = sim_call(ctrl, word, rst)
+        r = sim_call(ctrl, axis_in_if=word_if, rst=rst)
         log.append({"updated": int(r.updated), "rst": rst, "regs": _regs(r)})
 
     ups = [c for c, s in enumerate(log) if s["updated"] and not s["rst"]]

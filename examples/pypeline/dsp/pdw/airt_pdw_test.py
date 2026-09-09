@@ -214,17 +214,16 @@ def capture_read(path):
 
 
 # ─────────────────────────────────────────────
-# Config arithmetic -- absorbed from the former pdw_ctrl_record.py, whose other
-# half (the pdw_ctrl_t layout) is now generated. What is left is host POLICY:
-# how to turn a physically-described pulse into register values. The hardware
-# FACTS it needs come from the generated module.
+# Config arithmetic: host POLICY, i.e. how to turn a physically-described pulse
+# into register values. The pdw_ctrl_t layout itself is generated, and every
+# hardware FACT this needs comes from that generated module.
 # ─────────────────────────────────────────────
 
 # pulse_gen's frequency unit: a phase increment per sample in turns x 2^32.
 TURNS_32 = 1 << 32
 
 # THRESHOLDS ARE NOT IN RAW I^2+Q^2 UNITS. They are compared against
-# `detect_pulses.power_t`, which carries POWER_FRAC_BITS fraction bits, so the
+# `pulse_detect.power_t`, which carries POWER_FRAC_BITS fraction bits, so the
 # integer written to threshold_high/threshold_low is that many bits' worth of
 # scaling above the intended power. POWER_FRAC_BITS is exported by the design
 # rather than restated here, because getting it wrong does not fail loudly: too

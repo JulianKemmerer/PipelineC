@@ -7,8 +7,10 @@ closes timing on its own, on real hardware ports, at the README's 125 MHz
 system clock. It is not used by the native-sim testbench (pulse_gen_tb.py).
 
 Synthesize (requires Vivado):
-    pypelinec examples/pypeline/dsp/pdw/pulse_gen/pulse_gen_synth_top.py
+    pypelinec examples/pypeline/dsp/pdw/pulse_gen_synth_top.py
 """
+
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import (
     MAIN,
@@ -44,4 +46,12 @@ rst: Input[uint1_t]
 
 @MAIN(125.0)
 def pulse_gen_top() -> out_stream_t:
-    return pulse_gen(pri, width, amplitude, freq, chirp_rate, noise_amp, rst)
+    return pulse_gen(
+        pri=pri,
+        width=width,
+        amplitude=amplitude,
+        freq=freq,
+        chirp_rate=chirp_rate,
+        noise_amp=noise_amp,
+        rst=rst,
+    )

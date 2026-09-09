@@ -193,13 +193,22 @@ def get_tests() -> list:
             cmd=[PYPELINE_SIM, INST_DIR / "fir_sim_tb_test.py", "--run", "1400"],
         )
     )
-    # dsp/dsp_tb.py testbench-library end-to-end examples (each file drives two
-    # @MAINs -- elastic + valid_only -- so --run must exceed both tbs' deadlines).
+    # The dsp/ library's worked examples, run as tests. They are demos first --
+    # each is cited by name in include/pypeline/dsp/pypeline_dsp_guide.md, and
+    # the library's real unit tests live in inst/ (magnitude_test.py,
+    # dc_block_test.py, fir_test.py, ...) -- but running them here is what
+    # keeps a documented example from rotting unnoticed. The dsp_tb.py three
+    # each drive two @MAINs (elastic + valid_only), and the fir_tb.py three one
+    # each, so --run must exceed every tb's own deadline; each count is the one
+    # in that file's own "Run the simulation:" line.
     DSP_DIR = EXAMPLES_PYPELINE_DIR / "dsp"
     for fname, run_n in [
         ("magnitude_tb.py", 1000),
         ("dc_block_tb.py", 4000),
         ("moving_avg_tb.py", 3000),
+        ("fir_lowpass_tb.py", 2400),
+        ("fir_decim_tb.py", 1800),
+        ("fir_interp_tb.py", 1600),
     ]:
         tests.append(
             Test(
@@ -216,7 +225,7 @@ def get_tests() -> list:
             category="native_sim",
             cmd=[
                 PYPELINEC,
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_detect" / "pulse_detect_tb.py",
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_detect_tb.py",
                 "--sim",
                 "--comb",
                 "--run",
@@ -230,11 +239,11 @@ def get_tests() -> list:
     # cases the real detector cannot produce on demand are reachable.
     tests.append(
         Test(
-            name="pdw_engine_tb",
+            name="pulse_extract_tb",
             category="native_sim",
             cmd=[
                 PYPELINEC,
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_engine" / "pdw_engine_tb.py",
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_extract_tb.py",
                 "--sim",
                 "--comb",
                 "--run",
@@ -252,7 +261,7 @@ def get_tests() -> list:
             category="native_sim",
             cmd=[
                 PYPELINEC,
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_gen" / "pulse_gen_tb.py",
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_gen_tb.py",
                 "--sim",
                 "--comb",
                 "--run",
@@ -267,14 +276,10 @@ def get_tests() -> list:
     # normalization mistake would show up.
     tests.append(
         Test(
-            name="pdw_measure_test",
+            name="pulse_measure_test",
             category="native_sim",
             cmd=[
-                EXAMPLES_PYPELINE_DIR
-                / "dsp"
-                / "pdw"
-                / "pdw_measure"
-                / "pdw_measure_test.py"
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_measure_test.py"
             ],
         )
     )
@@ -289,11 +294,7 @@ def get_tests() -> list:
             name="pdw_ctrl_test",
             category="native_sim",
             cmd=[
-                EXAMPLES_PYPELINE_DIR
-                / "dsp"
-                / "pdw"
-                / "pdw_ctrl"
-                / "pdw_ctrl_test.py"
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_ctrl_test.py"
             ],
         )
     )
@@ -323,8 +324,7 @@ def get_tests() -> list:
             name="pdw_alarm_test",
             category="native_sim",
             cmd=[
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_alarm"
-                / "pdw_alarm_test.py"
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_alarm_test.py"
             ],
         )
     )
@@ -361,7 +361,7 @@ def get_tests() -> list:
         )
     )
     # PDW project: top-level testbench (top.py) -- exact golden model of the
-    # WHOLE pipeline, pulse_gen -> detect_pulses -> pdw_measure -> pdw_engine,
+    # WHOLE pipeline, pulse_gen -> pulse_detect -> pulse_measure -> pulse_extract,
     # across eight pulse settings: released ones, two that Path A never
     # detects, two that it detects and the engine then rejects (glitch and
     # CW), and an LFM chirp. Also the acceptance test for Path B's

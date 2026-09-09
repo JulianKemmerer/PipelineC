@@ -30,8 +30,10 @@ Checks (see pulse_detect.py's module docstring for why these invariants hold):
   - Liveness: a candidate arrives within one PRI + margin.
 
 Run:
-    pypelinec examples/pypeline/dsp/pdw/pulse_detect/pulse_detect_tb.py --sim --comb --run 500
+    pypelinec examples/pypeline/dsp/pdw/pulse_detect_tb.py --sim --comb --run 500
 """
+
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import MAIN, Reg, sim_assert, uint1_t, uint3_t, uint32_t
 
@@ -74,24 +76,24 @@ def pulse_detect_elastic_tb():
     elif phase >= TEST_WIDTH:
         x = LOW_POWER
 
-    stream_in_if: pulse_detect_e.in_intrf.stream_t
-    stream_in_if.valid = 1
-    stream_in_if.data = data_t(val=x)
+    in_stream: pulse_detect_e.in_intrf.stream_t
+    in_stream.valid = 1
+    in_stream.data = data_t(val=x)
 
     stutter: Reg[uint3_t]
     pdw_ready: uint1_t = stutter[0] | stutter[1]  # ready ~3/4 of cycles
     stutter = stutter + 1
 
     o = pulse_detect_e(
-        pulse_detect_e.in_intrf.fwd_t(stream_in_if),
-        pulse_detect_e.out_intrf.fb_t(pdw_ready),
-        data_t(val=THRESHOLD_HIGH),
-        data_t(val=THRESHOLD_LOW),
-        MAX_WIDTH_NORMAL,
-        0,  # rst: this testbench never resets
+        stream_in_if=pulse_detect_e.in_intrf.fwd_t(in_stream),
+        pdw_out_if=pulse_detect_e.out_intrf.fb_t(pdw_ready),
+        threshold_high=data_t(val=THRESHOLD_HIGH),
+        threshold_low=data_t(val=THRESHOLD_LOW),
+        max_width=MAX_WIDTH_NORMAL,
+        rst=0,  # this testbench never resets
     )
 
-    accepted: uint1_t = stream_in_if.valid & o.stream_in_if.ready
+    accepted: uint1_t = in_stream.valid & o.stream_in_if.ready
     if accepted:
         sample_index = sample_index + 1
 
@@ -176,17 +178,17 @@ def pulse_detect_valid_only_tb():
     elif phase >= TEST_WIDTH:
         x = LOW_POWER
 
-    stream_in_if: pulse_detect_vo.in_stream_t
-    stream_in_if.valid = 1
-    stream_in_if.data = data_t(val=x)
+    in_stream: pulse_detect_vo.in_stream_t
+    in_stream.valid = 1
+    in_stream.data = data_t(val=x)
 
     o = pulse_detect_vo(
-        stream_in_if,
-        pulse_detect_vo.out_intrf.fb_t(1),
-        data_t(val=THRESHOLD_HIGH),
-        data_t(val=THRESHOLD_LOW),
-        MAX_WIDTH_NORMAL,
-        0,  # rst: this testbench never resets
+        in_stream=in_stream,
+        pdw_out_if=pulse_detect_vo.out_intrf.fb_t(1),
+        threshold_high=data_t(val=THRESHOLD_HIGH),
+        threshold_low=data_t(val=THRESHOLD_LOW),
+        max_width=MAX_WIDTH_NORMAL,
+        rst=0,  # this testbench never resets
     )
 
     if phase == (TEST_PRI - 1):
@@ -262,17 +264,17 @@ pulse_detect_cw, pulse_detect_cw_t = make_pulse_detect_fsm(data_t)
 
 @MAIN(125.0)
 def pulse_detect_cw_tb():
-    stream_in_if: pulse_detect_cw.in_intrf.stream_t
-    stream_in_if.valid = 1
-    stream_in_if.data = data_t(val=HIGH_POWER)  # permanently above threshold_high
+    in_stream: pulse_detect_cw.in_intrf.stream_t
+    in_stream.valid = 1
+    in_stream.data = data_t(val=HIGH_POWER)  # permanently above threshold_high
 
     o = pulse_detect_cw(
-        pulse_detect_cw.in_intrf.fwd_t(stream_in_if),
-        pulse_detect_cw.out_intrf.fb_t(1),
-        data_t(val=THRESHOLD_HIGH),
-        data_t(val=THRESHOLD_LOW),
-        CW_MAX_WIDTH,
-        0,  # rst: this testbench never resets
+        stream_in_if=pulse_detect_cw.in_intrf.fwd_t(in_stream),
+        pdw_out_if=pulse_detect_cw.out_intrf.fb_t(1),
+        threshold_high=data_t(val=THRESHOLD_HIGH),
+        threshold_low=data_t(val=THRESHOLD_LOW),
+        max_width=CW_MAX_WIDTH,
+        rst=0,  # this testbench never resets
     )
 
     sim_assert((~o.gate_last) | o.gate_valid, "gate_last without gate_valid (CW)")

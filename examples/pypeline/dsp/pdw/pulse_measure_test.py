@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Unit test for pdw_measure.py: the per-pulse measurement engine.
+"""Unit test for pulse_measure.py: the per-pulse measurement engine.
 
 ../pdw_tb.py already checks this block bit-exactly inside the whole pipeline,
 but only over the handful of phasor magnitudes and power levels that the real
@@ -7,31 +7,21 @@ detector happens to produce. This drives it directly over the full input range
 -- phasor magnitudes from 2^10 to 2^36, power and noise across their whole
 spans -- which is where a width or normalization mistake would show up.
 
-Run: python3 pdw_measure_test.py
+Run: python3 pulse_measure_test.py
 """
 
 import math
-import os
 import random
-import sys
 
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", "..", "..", ".."))
-for _d in (
-    os.path.join(_ROOT, "src"),
-    os.path.join(_ROOT, "include", "pypeline"),
-    os.path.join(_HERE, "..", "pulse_detect"),
-    _HERE,
-):
-    sys.path.insert(0, _d)
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import sim_call, sim_reset
 
-from pulse_detect import make_detect_pulses
-from pdw_measure import golden_pdw_measure, make_pdw_measure
+from pulse_detect import make_pulse_detect
+from pulse_measure import golden_pulse_measure, make_pulse_measure
 
-_DP, _ = make_detect_pulses()
-meas, meas_t = make_pdw_measure(_DP)
+_DP, _ = make_pulse_detect()
+meas, meas_t = make_pulse_measure(_DP)
 FA = _DP.freq_accum_t
 PT = _DP.power_t
 NT = _DP.noise_t
@@ -49,10 +39,27 @@ def _drive(stim):
                 first_re=s["fre"], first_im=s["fim"],
                 last_re=s["lre"], last_im=s["lim"], valid=1,
             )
-            r = sim_call(meas, fa, NT(val=s["noise"]), PT(val=s["peak"]),
-                         s["toa"], 1, s["accept"], 0)  # rst
+            r = sim_call(
+                meas,
+                freq_acc=fa,
+                noise_est=NT(val=s["noise"]),
+                peak_power=PT(val=s["peak"]),
+                toa=s["toa"],
+                valid_in=1,
+                count_pri=s["accept"],
+                rst=0,
+            )
         else:
-            r = sim_call(meas, zero, NT(val=0), PT(val=0), 0, 0, 0, 0)  # rst
+            r = sim_call(
+                meas,
+                freq_acc=zero,
+                noise_est=NT(val=0),
+                peak_power=PT(val=0),
+                toa=0,
+                valid_in=0,
+                count_pri=0,
+                rst=0,
+            )
         if int(r.valid):
             got.append({
                 "freq_start": int(r.freq_start), "freq_stop": int(r.freq_stop),
@@ -68,7 +75,7 @@ def _golden(stim):
     prev_toa, have_prev = 0, False
     exp = []
     for s in stim:
-        exp.append(golden_pdw_measure(
+        exp.append(golden_pulse_measure(
             meas, s["fre"], s["fim"], s["lre"], s["lim"],
             s["noise"], s["peak"], s["toa"], prev_toa, have_prev))
         if s["accept"]:
@@ -158,4 +165,4 @@ if __name__ == "__main__":
     test_known_angles_and_levels()
     test_pri_counts_accepted_pulses_only()
     test_degenerate_phasor_is_flagged()
-    print("All pdw_measure tests passed")
+    print("All pulse_measure tests passed")

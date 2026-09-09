@@ -1,6 +1,6 @@
 # pyright: reportInvalidTypeForm=none
 """Native-sim testbench for the Qualified AXIS Storage & PDW Engine
-(pdw_engine.py). sim_assert (in-hardware) is the pass/fail mechanism, same
+(pulse_extract.py). sim_assert (in-hardware) is the pass/fail mechanism, same
 convention as pulse_gen_tb.py and pulse_detect_tb.py -- not
 @sim_input/@sim_output.
 
@@ -13,7 +13,7 @@ cannot produce on demand:
   * ADC clip and DSP-overflow status flags (status_flags bits 0/1). Driving a
     clipping amplitude through the real chain is impossible -- the power it
     produces overflows the uint32_t threshold ports long before the int16
-    rail clips (see ../README.md section 2's threshold-scaling note).
+    rail clips (see README.md's threshold-scaling note).
   * Backpressure held for long, deliberate stretches rather than a stutter.
   * Exact beat-for-beat identity of released payload, using a counter as the
     sample value so a dropped, duplicated or reordered beat is visible
@@ -38,16 +38,10 @@ Checks:
      unchanged.
 
 Run:
-    pypelinec examples/pypeline/dsp/pdw/pdw_engine/pdw_engine_tb.py --sim --comb --run 4000
+    pypelinec examples/pypeline/dsp/pdw/pulse_extract_tb.py --sim --comb --run 4000
 """
 
-import os
-import sys
-
-sys.path.insert(
-    0,
-    os.path.join(os.path.dirname(os.path.dirname(os.path.abspath(__file__))), "pulse_detect"),
-)
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import (
     MAIN,
@@ -62,18 +56,18 @@ from pypeline import (
     uint64_t,
 )
 
-from pulse_detect import make_detect_pulses
-from pdw_engine import (
+from pulse_detect import make_pulse_detect
+from pulse_extract import (
     STATUS_ADC_CLIP,
     STATUS_DSP_OVERFLOW,
     STATUS_PRI_INVALID,
-    make_pdw_engine,
+    make_pulse_extract,
 )
 
-# The engine is built against a detect_pulses instance purely for its types
+# The engine is built against a pulse_detect instance purely for its types
 # (complex_t/gated_sample_t/candidate_pdw_t/width_t); no detector logic is
 # instantiated by these testbenches -- the gate stream is synthesized here.
-_DP, _ = make_detect_pulses()
+_DP, _ = make_pulse_detect()
 
 RAIL_MAX = 32767  # int16 rail -- what ADC clip detection compares against
 
@@ -103,7 +97,7 @@ ACC_MIN_WIDTH = 8
 ACC_MAX_WIDTH = 1000
 
 # --- synthetic measurement inputs -----------------------------------------
-# The real detector produces these in ../pulse_detect/pulse_detect.py; here
+# The real detector produces these in pulse_detect.py; here
 # they are synthesized so the engine can be exercised on its own. The ONE
 # thing that must be right is the timing: freq_acc.valid trails gate_last by
 # exactly `_DP.freq_latency` cycles, which is the contract the engine's
@@ -133,11 +127,11 @@ def synth_freq_acc(gate_last: uint1_t, re_in: ACC_T, im_in: ACC_T) -> _DP.freq_a
     return o
 
 
-engine_acc, engine_acc_t = make_pdw_engine(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
+engine_acc, engine_acc_t = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
 @MAIN(125.0)
-def pdw_engine_accept_tb():
+def pulse_extract_accept_tb():
     cyc: Reg[uint32_t]
     phase: uint32_t = cyc % ACC_PERIOD
     in_pulse: uint1_t = phase < ACC_WIDTH
@@ -154,30 +148,32 @@ def pdw_engine_accept_tb():
 
     # The candidate coincides with gate_last, exactly as the hysteresis SM
     # produces it (see make_pulse_detect_fsm) -- the engine sim_asserts this.
-    pdw_in: _DP.out_fwd_t
-    pdw_in.stream.valid = gated.last
-    pdw_in.stream.data.toa = cyc - (ACC_WIDTH - 1)  # first beat's cycle
-    pdw_in.stream.data.pulse_width = ACC_WIDTH
-    pdw_in.stream.data.peak_power = _DP.power_t(val=cyc)
+    pdw_in_if: _DP.out_fwd_t
+    pdw_in_if.stream.valid = gated.last
+    pdw_in_if.stream.data.toa = cyc - (ACC_WIDTH - 1)  # first beat's cycle
+    pdw_in_if.stream.data.pulse_width = ACC_WIDTH
+    pdw_in_if.stream.data.peak_power = _DP.power_t(val=cyc)
 
     o = engine_acc(
-        gated,
-        pdw_in,
-        0,
-        ACC_MIN_WIDTH,
-        ACC_MAX_WIDTH,
-        synth_freq_acc(gated.last, TB_PHASOR, TB_PHASOR),
-        _DP.noise_t(val=TB_NOISE),
-        1,
-        1,
-        0,  # rst: this testbench never resets
+        gated_in=gated,
+        pdw_in_if=pdw_in_if,
+        dsp_overflow=0,
+        min_width=ACC_MIN_WIDTH,
+        max_width=ACC_MAX_WIDTH,
+        freq_acc=synth_freq_acc(
+            gate_last=gated.last, re_in=TB_PHASOR, im_in=TB_PHASOR
+        ),
+        noise_est=_DP.noise_t(val=TB_NOISE),
+        pkt_out_if=engine_acc.pkt_out_intrf.fb_t(1),
+        pdw_out_if=engine_acc.pdw_out_intrf.fb_t(1),
+        rst=0,  # this testbench never resets
     )
 
     cyc = cyc + 1
 
     sim_assert(
-        (~o.pkt_out.last) | o.pkt_out.valid,
-        "accept: pkt_out.last without valid -- illegal AXIS",
+        (~o.pkt_out_if.stream.data.last) | o.pkt_out_if.stream.valid,
+        "accept: pkt_out_if last without valid -- illegal AXIS",
     )
     sim_assert(o.fifo_full == 0, "accept: packet FIFO overflowed")
     sim_assert(o.verdict.accept | (~gated.last), "accept: verdict rejected a good pulse")
@@ -188,7 +184,7 @@ def pdw_engine_accept_tb():
     expect_first: Reg[uint32_t]  # cycle index the next packet's beat 0 carries
     pdws_done: Reg[uint32_t]
 
-    if o.pdw_out.valid:
+    if o.pdw_out_if.stream.valid:
         # Ordering: the PDW for packet N must arrive after packet N-1 has
         # fully drained and before packet N's first beat.
         sim_assert(
@@ -198,30 +194,30 @@ def pdw_engine_accept_tb():
         )
         sim_assert(beats_seen == 0, "accept: valid_pdw arrived mid-packet")
         sim_assert(
-            o.pdw_out.data.pulse_width == ACC_WIDTH,
+            o.pdw_out_if.stream.data.pulse_width == ACC_WIDTH,
             f"accept: valid_pdw pulse_width != {ACC_WIDTH}",
         )
         sim_assert(
-            o.pdw_out.data.pkt_samples == ACC_WIDTH,
+            o.pdw_out_if.stream.data.pkt_samples == ACC_WIDTH,
             f"accept: valid_pdw pkt_samples != {ACC_WIDTH} (no margins today, "
             "so pkt_samples must equal pulse_width)",
         )
         sim_assert(
-            (o.pdw_out.data.status_flags & ~STATUS_PRI_INVALID) == 0,
+            (o.pdw_out_if.stream.data.status_flags & ~STATUS_PRI_INVALID) == 0,
             "accept: valid_pdw status_flags set with no clip/overflow driven",
         )
         sim_assert(
-            o.pdw_out.data.toa == expect_first,
+            o.pdw_out_if.stream.data.toa == expect_first,
             "accept: valid_pdw toa is not this packet's first sample cycle",
         )
         pdws_done = pdws_done + 1
 
-    if o.pkt_out.valid:
+    if o.pkt_out_if.stream.valid:
         sim_assert(
             pdws_done == (pkts_done + 1),
             "accept: packet beats arrived before their own valid_pdw",
         )
-        got_i: int16_t = o.pkt_out.data.i.val
+        got_i: int16_t = o.pkt_out_if.stream.data.sample.i.val
         want_i: int16_t = (expect_first + beats_seen)[15:0]
         sim_assert(
             got_i == want_i,
@@ -229,10 +225,10 @@ def pdw_engine_accept_tb():
             "dropped, duplicated or reordered",
         )
         sim_assert(
-            o.pkt_out.last == (beats_seen == (ACC_WIDTH - 1)),
+            o.pkt_out_if.stream.data.last == (beats_seen == (ACC_WIDTH - 1)),
             f"accept: `last` is not on beat {ACC_WIDTH - 1} of the packet",
         )
-        if o.pkt_out.last:
+        if o.pkt_out_if.stream.data.last:
             beats_seen = 0
             pkts_done = pkts_done + 1
             expect_first = expect_first + ACC_PERIOD
@@ -253,11 +249,11 @@ GLITCH_WIDTH = 6
 GLITCH_PERIOD = 48
 GLITCH_MIN_WIDTH = 16
 
-engine_glitch, engine_glitch_t = make_pdw_engine(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
+engine_glitch, engine_glitch_t = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
 @MAIN(125.0)
-def pdw_engine_glitch_tb():
+def pulse_extract_glitch_tb():
     cyc: Reg[uint32_t]
     phase: uint32_t = cyc % GLITCH_PERIOD
     in_pulse: uint1_t = phase < GLITCH_WIDTH
@@ -268,23 +264,25 @@ def pdw_engine_glitch_tb():
     gated.valid = in_pulse
     gated.last = in_pulse & (phase == (GLITCH_WIDTH - 1))
 
-    pdw_in: _DP.out_fwd_t
-    pdw_in.stream.valid = gated.last
-    pdw_in.stream.data.toa = cyc
-    pdw_in.stream.data.pulse_width = GLITCH_WIDTH
-    pdw_in.stream.data.peak_power = _DP.power_t(val=cyc)
+    pdw_in_if: _DP.out_fwd_t
+    pdw_in_if.stream.valid = gated.last
+    pdw_in_if.stream.data.toa = cyc
+    pdw_in_if.stream.data.pulse_width = GLITCH_WIDTH
+    pdw_in_if.stream.data.peak_power = _DP.power_t(val=cyc)
 
     o = engine_glitch(
-        gated,
-        pdw_in,
-        0,
-        GLITCH_MIN_WIDTH,
-        1000,
-        synth_freq_acc(gated.last, TB_PHASOR, TB_PHASOR),
-        _DP.noise_t(val=TB_NOISE),
-        1,
-        1,
-        0,  # rst: this testbench never resets
+        gated_in=gated,
+        pdw_in_if=pdw_in_if,
+        dsp_overflow=0,
+        min_width=GLITCH_MIN_WIDTH,
+        max_width=1000,
+        freq_acc=synth_freq_acc(
+            gate_last=gated.last, re_in=TB_PHASOR, im_in=TB_PHASOR
+        ),
+        noise_est=_DP.noise_t(val=TB_NOISE),
+        pkt_out_if=engine_glitch.pkt_out_intrf.fb_t(1),
+        pdw_out_if=engine_glitch.pdw_out_intrf.fb_t(1),
+        rst=0,  # this testbench never resets
     )
 
     cyc = cyc + 1
@@ -294,8 +292,8 @@ def pdw_engine_glitch_tb():
         sim_assert(~o.verdict.is_cw, "glitch: verdict wrongly flagged CW")
         sim_assert(~o.verdict.accept, "glitch: verdict accepted a glitch")
 
-    sim_assert(~o.pdw_out.valid, "glitch: a rejected pulse emitted a valid_pdw")
-    sim_assert(~o.pkt_out.valid, "glitch: a rejected pulse released beats")
+    sim_assert(~o.pdw_out_if.stream.valid, "glitch: a rejected pulse emitted a valid_pdw")
+    sim_assert(~o.pkt_out_if.stream.valid, "glitch: a rejected pulse released beats")
     sim_assert(o.fifo_full == 0, "glitch: packet FIFO overflowed")
 
     # Liveness: the flush path must actually keep up -- if FLUSH never
@@ -317,11 +315,11 @@ CW_WIDTH = 32
 CW_PERIOD = 96
 CW_MAX_WIDTH = 32  # == the candidate's width: the SM's force-close marker
 
-engine_cw, engine_cw_t = make_pdw_engine(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
+engine_cw, engine_cw_t = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
 @MAIN(125.0)
-def pdw_engine_cw_tb():
+def pulse_extract_cw_tb():
     cyc: Reg[uint32_t]
     phase: uint32_t = cyc % CW_PERIOD
     in_pulse: uint1_t = phase < CW_WIDTH
@@ -332,23 +330,25 @@ def pdw_engine_cw_tb():
     gated.valid = in_pulse
     gated.last = in_pulse & (phase == (CW_WIDTH - 1))
 
-    pdw_in: _DP.out_fwd_t
-    pdw_in.stream.valid = gated.last
-    pdw_in.stream.data.toa = cyc
-    pdw_in.stream.data.pulse_width = CW_WIDTH
-    pdw_in.stream.data.peak_power = _DP.power_t(val=cyc)
+    pdw_in_if: _DP.out_fwd_t
+    pdw_in_if.stream.valid = gated.last
+    pdw_in_if.stream.data.toa = cyc
+    pdw_in_if.stream.data.pulse_width = CW_WIDTH
+    pdw_in_if.stream.data.peak_power = _DP.power_t(val=cyc)
 
     o = engine_cw(
-        gated,
-        pdw_in,
-        0,
-        4,
-        CW_MAX_WIDTH,
-        synth_freq_acc(gated.last, TB_PHASOR, TB_PHASOR),
-        _DP.noise_t(val=TB_NOISE),
-        1,
-        1,
-        0,  # rst: this testbench never resets
+        gated_in=gated,
+        pdw_in_if=pdw_in_if,
+        dsp_overflow=0,
+        min_width=4,
+        max_width=CW_MAX_WIDTH,
+        freq_acc=synth_freq_acc(
+            gate_last=gated.last, re_in=TB_PHASOR, im_in=TB_PHASOR
+        ),
+        noise_est=_DP.noise_t(val=TB_NOISE),
+        pkt_out_if=engine_cw.pkt_out_intrf.fb_t(1),
+        pdw_out_if=engine_cw.pdw_out_intrf.fb_t(1),
+        rst=0,  # this testbench never resets
     )
 
     cyc = cyc + 1
@@ -358,8 +358,8 @@ def pdw_engine_cw_tb():
         sim_assert(~o.verdict.is_glitch, "CW: verdict wrongly flagged a glitch")
         sim_assert(~o.verdict.accept, "CW: verdict accepted a CW pulse")
 
-    sim_assert(~o.pdw_out.valid, "CW: a rejected pulse emitted a valid_pdw")
-    sim_assert(~o.pkt_out.valid, "CW: a rejected pulse released beats")
+    sim_assert(~o.pdw_out_if.stream.valid, "CW: a rejected pulse emitted a valid_pdw")
+    sim_assert(~o.pkt_out_if.stream.valid, "CW: a rejected pulse released beats")
     sim_assert(o.fifo_full == 0, "CW: packet FIFO overflowed")
 
     pulses_seen: Reg[uint32_t]
@@ -379,11 +379,11 @@ def pdw_engine_cw_tb():
 ST_WIDTH = 16
 ST_PERIOD = 48
 
-engine_st, engine_st_t = make_pdw_engine(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
+engine_st, engine_st_t = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
 @MAIN(125.0)
-def pdw_engine_status_tb():
+def pulse_extract_status_tb():
     cyc: Reg[uint32_t]
     phase: uint32_t = cyc % ST_PERIOD
     pkt_idx: uint32_t = cyc / ST_PERIOD
@@ -403,32 +403,34 @@ def pdw_engine_status_tb():
     gated.valid = in_pulse
     gated.last = in_pulse & (phase == (ST_WIDTH - 1))
 
-    pdw_in: _DP.out_fwd_t
-    pdw_in.stream.valid = gated.last
-    pdw_in.stream.data.toa = pkt_idx
-    pdw_in.stream.data.pulse_width = ST_WIDTH
-    pdw_in.stream.data.peak_power = _DP.power_t(val=cyc)
+    pdw_in_if: _DP.out_fwd_t
+    pdw_in_if.stream.valid = gated.last
+    pdw_in_if.stream.data.toa = pkt_idx
+    pdw_in_if.stream.data.pulse_width = ST_WIDTH
+    pdw_in_if.stream.data.peak_power = _DP.power_t(val=cyc)
 
     o = engine_st(
-        gated,
-        pdw_in,
-        ovf_now,
-        4,
-        1000,
-        synth_freq_acc(gated.last, TB_PHASOR, TB_PHASOR),
-        _DP.noise_t(val=TB_NOISE),
-        1,
-        1,
-        0,  # rst: this testbench never resets
+        gated_in=gated,
+        pdw_in_if=pdw_in_if,
+        dsp_overflow=ovf_now,
+        min_width=4,
+        max_width=1000,
+        freq_acc=synth_freq_acc(
+            gate_last=gated.last, re_in=TB_PHASOR, im_in=TB_PHASOR
+        ),
+        noise_est=_DP.noise_t(val=TB_NOISE),
+        pkt_out_if=engine_st.pkt_out_intrf.fb_t(1),
+        pdw_out_if=engine_st.pdw_out_intrf.fb_t(1),
+        rst=0,  # this testbench never resets
     )
 
     cyc = cyc + 1
 
-    if o.pdw_out.valid:
+    if o.pdw_out_if.stream.valid:
         # toa carries the packet index, so each PDW says which packet it is
         # for without any separate counter to keep in sync.
-        want_clip: uint1_t = o.pdw_out.data.toa == 1
-        want_ovf: uint1_t = o.pdw_out.data.toa == 2
+        want_clip: uint1_t = o.pdw_out_if.stream.data.toa == 1
+        want_ovf: uint1_t = o.pdw_out_if.stream.data.toa == 2
         want_flags: uint32_t = 0
         if want_clip:
             want_flags = STATUS_ADC_CLIP
@@ -437,23 +439,23 @@ def pdw_engine_status_tb():
         # The first accepted pulse has no predecessor to measure an interval
         # against, so the engine reports pri=0 and flags it rather than
         # emitting a meaningless number.
-        if o.pdw_out.data.toa == 0:
+        if o.pdw_out_if.stream.data.toa == 0:
             want_flags = want_flags | STATUS_PRI_INVALID
         sim_assert(
-            o.pdw_out.data.status_flags == want_flags,
+            o.pdw_out_if.stream.data.status_flags == want_flags,
             "status: status_flags wrong -- a flag was missed, spuriously set, "
             "or leaked from the previous packet (the per-packet accumulators "
             "must re-arm on `last`)",
         )
         sim_assert(
-            o.pdw_out.data.pkt_samples == ST_WIDTH,
+            o.pdw_out_if.stream.data.pkt_samples == ST_WIDTH,
             "status: pkt_samples wrong",
         )
 
     sim_assert(o.fifo_full == 0, "status: packet FIFO overflowed")
 
     pdws_done: Reg[uint32_t]
-    if o.pdw_out.valid:
+    if o.pdw_out_if.stream.valid:
         pdws_done = pdws_done + 1
     # Must get past packet 2 for the flag checks above to have run at all.
     sim_assert(
@@ -470,11 +472,11 @@ def pdw_engine_status_tb():
 BP_WIDTH = 20
 BP_PERIOD = 128
 
-engine_bp, engine_bp_t = make_pdw_engine(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
+engine_bp, engine_bp_t = make_pulse_extract(_DP, depth=TB_DEPTH, n_pkts=TB_N_PKTS)
 
 
 @MAIN(125.0)
-def pdw_engine_backpressure_tb():
+def pulse_extract_backpressure_tb():
     cyc: Reg[uint32_t]
     phase: uint32_t = cyc % BP_PERIOD
     in_pulse: uint1_t = phase < BP_WIDTH
@@ -485,11 +487,11 @@ def pdw_engine_backpressure_tb():
     gated.valid = in_pulse
     gated.last = in_pulse & (phase == (BP_WIDTH - 1))
 
-    pdw_in: _DP.out_fwd_t
-    pdw_in.stream.valid = gated.last
-    pdw_in.stream.data.toa = cyc - (BP_WIDTH - 1)
-    pdw_in.stream.data.pulse_width = BP_WIDTH
-    pdw_in.stream.data.peak_power = _DP.power_t(val=cyc)
+    pdw_in_if: _DP.out_fwd_t
+    pdw_in_if.stream.valid = gated.last
+    pdw_in_if.stream.data.toa = cyc - (BP_WIDTH - 1)
+    pdw_in_if.stream.data.pulse_width = BP_WIDTH
+    pdw_in_if.stream.data.peak_power = _DP.power_t(val=cyc)
 
     # Long stalls, not a 1-in-N stutter: ready is low for 12 of every 16
     # cycles on the packet side and 8 of every 16 on the PDW side, with
@@ -501,23 +503,25 @@ def pdw_engine_backpressure_tb():
     pdw_ready: uint1_t = slot < 8
 
     o = engine_bp(
-        gated,
-        pdw_in,
-        0,
-        4,
-        1000,
-        synth_freq_acc(gated.last, TB_PHASOR, TB_PHASOR),
-        _DP.noise_t(val=TB_NOISE),
-        pkt_ready,
-        pdw_ready,
-        0,  # rst: this testbench never resets
+        gated_in=gated,
+        pdw_in_if=pdw_in_if,
+        dsp_overflow=0,
+        min_width=4,
+        max_width=1000,
+        freq_acc=synth_freq_acc(
+            gate_last=gated.last, re_in=TB_PHASOR, im_in=TB_PHASOR
+        ),
+        noise_est=_DP.noise_t(val=TB_NOISE),
+        pkt_out_if=engine_bp.pkt_out_intrf.fb_t(pkt_ready),
+        pdw_out_if=engine_bp.pdw_out_intrf.fb_t(pdw_ready),
+        rst=0,  # this testbench never resets
     )
 
     cyc = cyc + 1
 
     sim_assert(
-        (~o.pkt_out.last) | o.pkt_out.valid,
-        "backpressure: pkt_out.last without valid -- illegal AXIS",
+        (~o.pkt_out_if.stream.data.last) | o.pkt_out_if.stream.valid,
+        "backpressure: pkt_out_if last without valid -- illegal AXIS",
     )
     sim_assert(o.fifo_full == 0, "backpressure: packet FIFO overflowed")
 
@@ -528,31 +532,31 @@ def pdw_engine_backpressure_tb():
     held_last: Reg[uint1_t]
     if held_valid:
         sim_assert(
-            o.pkt_out.valid,
-            "backpressure: pkt_out.valid dropped while the consumer was not "
+            o.pkt_out_if.stream.valid,
+            "backpressure: pkt_out_if valid dropped while the consumer was not "
             "ready -- a beat was withdrawn",
         )
         sim_assert(
-            (o.pkt_out.data.i.val == held_data) & (o.pkt_out.last == held_last),
+            (o.pkt_out_if.stream.data.sample.i.val == held_data) & (o.pkt_out_if.stream.data.last == held_last),
             "backpressure: a held beat's data/last changed before it was "
             "accepted",
         )
-    held_valid = o.pkt_out.valid & (~pkt_ready)
-    held_data = o.pkt_out.data.i.val
-    held_last = o.pkt_out.last
+    held_valid = o.pkt_out_if.stream.valid & (~pkt_ready)
+    held_data = o.pkt_out_if.stream.data.sample.i.val
+    held_last = o.pkt_out_if.stream.data.last
 
     beats_seen: Reg[uint32_t]
     pkts_done: Reg[uint32_t]
     expect_first: Reg[uint32_t]
-    if o.pkt_out.valid & pkt_ready:
-        got_i: int16_t = o.pkt_out.data.i.val
+    if o.pkt_out_if.stream.valid & pkt_ready:
+        got_i: int16_t = o.pkt_out_if.stream.data.sample.i.val
         want_i: int16_t = (expect_first + beats_seen)[15:0]
         sim_assert(
             got_i == want_i,
             "backpressure: released beat carries the wrong sample -- "
             "store-and-forward lost or reordered a beat under stall",
         )
-        if o.pkt_out.last:
+        if o.pkt_out_if.stream.data.last:
             sim_assert(
                 beats_seen == (BP_WIDTH - 1),
                 f"backpressure: packet ended after the wrong number of beats "

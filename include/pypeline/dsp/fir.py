@@ -82,7 +82,7 @@ def make_fir(
                                two halves of a stream @interface per port, same
                                shape as make_stream_pipeline, so filters chain
                                and drop into interface functions unchanged.
-               "valid_only" -> fir(stream_in_if: make_stream_t(data_t))
+               "valid_only" -> fir(in_stream: make_stream_t(data_t))
                                    -> make_stream_t(out_t)
                                vendor-style free-running mode: no FIFO or
                                in-flight counter; input must be consumable
@@ -168,17 +168,17 @@ def make_fir(
         )
 
         @hw_func
-        def fir(stream_in_if: in_stream_t) -> out_stream_t:
+        def fir(in_stream: in_stream_t) -> out_stream_t:
             window: Reg[win_t]
             shifted: win_t
-            shifted[0] = stream_in_if.data
+            shifted[0] = in_stream.data
             for i in range(1, n_taps):
                 shifted[i] = window[i - 1]
-            if stream_in_if.valid:
+            if in_stream.valid:
                 window = shifted
             ws: win_stream_t
             ws.data = shifted
-            ws.valid = stream_in_if.valid
+            ws.valid = in_stream.valid
             return fir_core_ap(ws)
 
     else:

@@ -19,11 +19,7 @@ Run: python3 pdw_verify_test.py
 """
 
 import math
-import os
-import sys
-
-_HERE = os.path.dirname(os.path.abspath(__file__))
-sys.path.insert(0, _HERE)
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 import numpy as np
 

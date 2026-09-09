@@ -127,17 +127,17 @@ def make_fir_decim(
         )
 
         @hw_func
-        def fir_decim(stream_in_if: in_stream_t) -> out_stream_t:
+        def fir_decim(in_stream: in_stream_t) -> out_stream_t:
             window: Reg[win_t]
             phase: Reg[phase_t]
             shifted: win_t
-            shifted[0] = stream_in_if.data
+            shifted[0] = in_stream.data
             for i in range(1, n_taps):
                 shifted[i] = window[i - 1]
             ws: win_stream_t
             ws.data = shifted
-            ws.valid = stream_in_if.valid & (phase == LAST_PHASE)
-            if stream_in_if.valid:
+            ws.valid = in_stream.valid & (phase == LAST_PHASE)
+            if in_stream.valid:
                 window = shifted
                 if phase == LAST_PHASE:
                     phase = 0

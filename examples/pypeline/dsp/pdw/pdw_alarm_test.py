@@ -17,14 +17,7 @@ Composed with sim_call, so this runs in under a second.
 Run: python3 pdw_alarm_test.py
 """
 
-import os
-import sys
-
-_HERE = os.path.dirname(os.path.abspath(__file__))
-_ROOT = os.path.abspath(os.path.join(_HERE, "..", "..", "..", "..", ".."))
-for _d in (os.path.join(_ROOT, "src"),
-           os.path.join(_ROOT, "include", "pypeline"), _HERE):
-    sys.path.insert(0, _d)
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import sim_call, sim_reset
 
@@ -46,7 +39,13 @@ def _run(cycles, trig_of, valid_of, en=1, rst_of=lambda c: 0):
     fires = []
     for c in range(cycles):
         valid = int(valid_of(c))
-        o = sim_call(ALARM, int(trig_of(c)), int(en), valid, int(rst_of(c)))
+        o = sim_call(
+            ALARM,
+            trig=int(trig_of(c)),
+            en=int(en),
+            in_valid=valid,
+            rst=int(rst_of(c)),
+        )
         if int(o.firing):
             fires.append(c)
         if not int(o.ready):

@@ -176,6 +176,89 @@ not BRAM (no RAM primitive in this codebase yet — the same limitation blocking
 library's coefficient-bank roadmap item above), so a large `n` × wide `data_t` costs
 flops accordingly.
 
+## `make_cordic_atan2` / `make_cordic_rotate` — angles without a multiplier or a ROM
+
+```python
+from pypeline import make_int_t
+from dsp.cordic import make_cordic_atan2, make_cordic_rotate
+
+atan2, atan2_t = make_cordic_atan2(make_int_t(39), n_iters=14, work_bits=26)
+nco,   nco_t   = make_cordic_rotate(int16_t, n_iters=16, work_bits=24, phase_bits=32)
+```
+
+One shift-and-add iteration per pipeline stage: no multiplier, no lookup table, and
+no RAM/ROM primitive (there isn't one in this library — see the roadmap). Both modes
+share the same iteration hardware and the same `atan(2^-i)` angle table, which is
+elaboration-time constant.
+
+* **Vectoring mode** (`make_cordic_atan2`) drives the *y* rail to zero, so the
+  accumulated angle is `atan2(y, x)`: `cordic_atan2(x_in, y_in, valid_in) -> {.angle,
+  .valid, .degenerate}`. `x`/`y` are treated as a ratio, so the block is scale
+  invariant.
+* **Rotation mode** (`make_cordic_rotate`) drives the *angle* rail to zero, rotating a
+  `(amplitude, 0)` seed: `cordic_rotate(phase, amplitude, valid_in) -> {.i, .q,
+  .valid}` — an NCO. `phase` is unsigned `phase_bits` wide and wraps naturally, so a
+  free-running accumulator is the whole frequency control.
+
+| Parameter | Default | Meaning |
+|---|---|---|
+| `n_iters` | 14 / 16 | Iterations. Angle error is ~`2^-n_iters` turns |
+| `work_bits` | 26 / 24 | Internal rail width; must leave ~2 bits for the K ≈ 1.647 gain growth |
+| `phase_bits` | 32 (rotate) | Width of the phase input, i.e. turns × 2^`phase_bits` |
+
+**Angles are carried in turns, not radians** — `int16_t` spanning ±½ turn, one LSB =
+1/65536 turn. Converting to Hz is then a pure scale by the sample rate with no π
+anywhere: `freq_hz = angle_turns * fs`.
+
+Both are fully pipelined at `n_iters + 2` cycles — one result per cycle, no
+handshake — and both publish `.latency`; read it rather than recomputing it.
+
+Two properties are worth knowing because they are easy to lose:
+
+* **The vectoring input is normalized (count-leading-zeros, then a barrel shift)
+  before the iterations.** The `y >> i` shifts discard low bits, so an operand
+  sitting low in a wide accumulator runs out of significant bits partway through.
+  Normalizing first makes accuracy independent of signal strength — measured
+  worst-case error stays flat at 3.4 × 10⁻⁵ turns from an input magnitude of 2³ to
+  2³⁷. **Normalize after accumulating, never before**: an arithmetic right shift
+  floors, so pre-scaling biases both rails by −0.5 LSB per term, which over N
+  accumulated terms rotates the phasor by a signal-independent constant.
+* **Rotation mode's gain compensation is a shift-add, not a multiply.** The seed is
+  pre-divided by K ≈ 1.64676 using `1/2 + 1/8 - 1/64`, which is 0.35% high — a
+  deterministic amplitude error a golden model reproduces exactly, not a distortion.
+
+Tests: `src/tests/pypeline_tests/inst/cordic_test.py` (all four quadrants, both axes,
+the `(0,0)` degenerate case, the ±½-turn boundary, pipeline throughput, and a second
+instance at different widths, against both a bit-exact model and `math.atan2`).
+
+## `make_log2_db` — linear power to dBFS
+
+```python
+from dsp.log2_db import make_log2_db
+
+log_db, log_db_t = make_log2_db(power_t, mant_bits=8, seg_bits=2)
+# log_db(v: power_t, valid_in: uint1_t) -> {.db (int16_t Q8.8), .valid, .floored}
+```
+
+Count-leading-zeros gives the exponent; the mantissa's `log2(1+m)` comes from chords
+over `2^seg_bits` equal segments, with the `10/log₂10` scaling folded into the stored
+constants so there is no separate dB conversion. At the defaults (8 mantissa bits, 4
+segments) worst-case end-to-end error is **0.046 dB**, measured over 300k random
+inputs against `10·log10`. Output is signed **Q8.8** dB (1 LSB = 1/256 dB), saturated
+at both ends; `.latency` reports the pipeline depth.
+
+> **The input's fractional bits are subtracted, and they must be.** `in_t` is a
+> `fixed_t`, so the integer the hardware holds is `2^frac_bits` times the value it
+> represents. The block computes `(e - in_t.frac_bits) * K + correction`, not
+> `e * K`. Taking dB of the raw integer instead both reports the wrong number and
+> overflows the output — for a 12-fraction-bit power type the raw range reaches
+> 135.5 dB, past Q8.8's +128, while the true represented range is −36.1 … +99.4 dB
+> and fits comfortably.
+
+Tests: `src/tests/pypeline_tests/inst/log2_db_test.py` (accuracy vs `10·log10`,
+decade/octave steps, the fractional-bits subtraction, non-positive input,
+monotonicity, and two instances with different binary points).
+
 ## `dsp/dsp_tb.py` — testbench library for magnitude/dc_block/moving_avg
 
 Same `@sim_input`/`@sim_output` shape as `dsp/fir_tb.py`, re-exporting its signal
@@ -212,10 +295,17 @@ checks noise variance reduction). Tests:
 `examples/pypeline/dsp/` contains synthesizable designs and testbenches exercising this
 library: `fm_radio_decim.py` (a synthesizable I/Q 5× decimator pair at 125 MHz — the
 pypeline port of `examples/sdr/fm_radio.c`'s front end) and the `*_tb.py` files listed
-above alongside each block. `examples/pypeline/dsp/pdw/` (pulse-descriptor-word
-detector) is a larger worked example with its own
-[README](../../../examples/pypeline/dsp/pdw/README.md) — see that file directly rather
-than duplicating it here.
+above alongside each block. Every one of them is registered as a test
+(`src/tests/pypeline_tests/native_sim_tests.py`, `synth_tests.py`) so a documented
+example cannot rot unnoticed; the library's own unit tests are the `inst/` files named
+under each block above.
+
+`examples/pypeline/dsp/pdw/` (pulse-descriptor-word detector) is a larger worked
+example — a whole SDR design rather than one block — with its own
+[README](../../../examples/pypeline/dsp/pdw/README.md). It is the biggest consumer of
+this library: `make_magnitude` → `make_dc_block` → `make_moving_avg` in `valid_only`
+mode form its detector's front end, and `make_cordic_atan2`, `make_cordic_rotate` and
+`make_log2_db` are all there because its measurement engine needed them.
 
 ## Roadmap (not yet implemented)
 

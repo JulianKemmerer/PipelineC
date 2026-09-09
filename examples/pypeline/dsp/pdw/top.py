@@ -2,11 +2,14 @@
 """Top-level synthesis entry point for the AIR7310 PDW project (see README.md).
 
 All of the README's architecture is wired up here: the control register file
-(pdw_ctrl/pdw_ctrl.py), the Pulse Generator (pulse_gen/pulse_gen.py), the
-Time-Aligned Detect & Delay Module (pulse_detect/pulse_detect.py), the per-pulse
-measurement engine (pdw_measure/pdw_measure.py), and the Qualified AXIS Storage
-& PDW Engine (pdw_engine/pdw_engine.py). What remains unbuilt is inside them,
-not between them -- N_pre/N_post margin capture; see README.md's own notes.
+(pdw_ctrl.py), the stimulus generator (pulse_gen.py), Path A/B detection
+(pulse_detect.py), the per-pulse measurement engine (pulse_measure.py), and
+qualification + store-and-forward release (pulse_extract.py). What remains
+unbuilt is inside them, not between them -- N_pre/N_post margin capture.
+
+Block names follow gr-pdw (github.com/gtri/gr-pdw): pulse_detect identifies
+pulse start/stop, pulse_extract obtains the pulse I/Q and computes its
+characteristics.
 
 EVERY top-level port is a flattened 32-bit AXI-Stream. Nothing here is a wide
 parallel register bus any more: control arrives as a framed struct, PDW records
@@ -34,35 +37,13 @@ This file is also the ONLY place several critical paths exist. The generator's
 output feeds the detector's magnitude multiplier, the detector's phasor
 accumulators feed the measurement CORDIC, and now the two masters' tready pins
 feed the store-and-forward FSM through the broadcast interlock -- all in the
-same clock domain, all across a module boundary. Each block met its 125 MHz
-target on its own while the composed design ran at 63 MHz; see README.md's
-synthesis table. That is why `top.py` is registered as its own synthesis test
-rather than treated as covered by the block-level ones.
+same clock domain, all across a module boundary. Blocks that each met 125 MHz
+alone have composed to well under it here; see README.md's synthesis section.
+That is why `top.py` is registered as its own synthesis test rather than
+treated as covered by the block-level ones.
 """
 
-import os
-import sys
-
-sys.path.insert(
-    0,
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "pulse_gen"),
-)
-sys.path.insert(
-    0,
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "pulse_detect"),
-)
-sys.path.insert(
-    0,
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdw_engine"),
-)
-sys.path.insert(
-    0,
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdw_ctrl"),
-)
-sys.path.insert(
-    0,
-    os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdw_alarm"),
-)
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import (
     MAIN,
@@ -103,14 +84,14 @@ from pdw_ctrl import (
     pdw_ctrl_t,
 )
 from pulse_gen import make_pulse_gen
-from pulse_detect import make_detect_pulses
-from pdw_engine import (
+from pulse_detect import make_pulse_detect
+from pulse_extract import (
     STATUS_ADC_CLIP,
     STATUS_DSP_OVERFLOW,
     STATUS_FREQ_DEGENERATE,
     STATUS_PKT_FIFO_FULL,
     STATUS_PRI_INVALID,
-    make_pdw_engine,
+    make_pulse_extract,
 )
 
 PART("xc7a100tcsg324-1")  # Artix-7 100T, same part as board/arty/part100t.py
@@ -215,7 +196,7 @@ def rst_main():
     ctrl_rst_r = tx0_s_axis_rst
 
 # ---------------------------------------------------------------------------
-# ctrl_main -- the control register file (README section 2).
+# ctrl_main -- the control register file (see the README's Control registers).
 #
 # Its own @MAIN rather than a block inside pdw_main, because both other MAINs
 # consume it: pulse_gen_main needs the stimulus settings and pdw_main needs the
@@ -249,13 +230,13 @@ def ctrl_main():
 
     # ctrl_rst, NOT global_rst -- this block comes out of reset first so it can
     # be configured while the datapath is still held. See pdw_ctrl.py.
-    c = pdw_ctrl(pdw_ctrl.axis_intrf.fwd_t(ci), ctrl_rst)
+    c = pdw_ctrl(axis_in_if=pdw_ctrl.axis_intrf.fwd_t(ci), rst=ctrl_rst)
     tx0_s_axis_tready = c.axis_in_if.ready
     ctrl_regs = c.regs
 
 
 # ---------------------------------------------------------------------------
-# pulse_gen_main -- the stimulus (README section 1).
+# pulse_gen_main -- the stimulus (see the README's Architecture).
 # ---------------------------------------------------------------------------
 
 # Flattened AXI-Stream master output for the generated stimulus, TX0. Driving a
@@ -280,13 +261,13 @@ pulse_gen_valid: Wire[uint1_t]
 @MAIN(125.0)
 def pulse_gen_main():
     o = pulse_gen(
-        ctrl_regs.pulse_gen_pri,
-        ctrl_regs.pulse_gen_width,
-        ctrl_regs.pulse_gen_amplitude,
-        ctrl_regs.pulse_gen_freq,
-        ctrl_regs.pulse_gen_chirp_rate,
-        ctrl_regs.pulse_gen_noise_amp,
-        global_rst,
+        pri=ctrl_regs.pulse_gen_pri,
+        width=ctrl_regs.pulse_gen_width,
+        amplitude=ctrl_regs.pulse_gen_amplitude,
+        freq=ctrl_regs.pulse_gen_freq,
+        chirp_rate=ctrl_regs.pulse_gen_chirp_rate,
+        noise_amp=ctrl_regs.pulse_gen_noise_amp,
+        rst=global_rst,
     )
     # BLOCK: pulse_gen's own contract is an always-valid fixed-rate stream, so
     # stopping the flow is done here, at the boundary, for both the external DAC
@@ -309,17 +290,17 @@ def pulse_gen_main():
 
 # ---------------------------------------------------------------------------
 # pdw_main -- README boxes 2 and 3 end to end:
-#   Path A/B "TIME-ALIGNED DETECT & DELAY MODULE" (detect_pulses: magnitude ->
+#   Path A/B "TIME-ALIGNED DETECT & DELAY MODULE" (pulse_detect: magnitude ->
 #   dc_block -> moving_avg -> hysteresis SM, plus the Path B delay line), feeding
-#   "QUALIFIED AXIS STORAGE & PDW ENGINE" (pdw_engine: glitch/CW qualification
+#   "QUALIFIED AXIS STORAGE & PDW ENGINE" (pulse_extract: glitch/CW qualification
 #   + store-and-forward release), feeding three AXIS masters.
 #
 # Its input sample+valid are muxed between the real RX0 ADC input and
 # pulse_gen_main's own generated sample (internal loopback) via the control
 # struct's CTRL_FLAG_LOOPBACK_EN.
 # ---------------------------------------------------------------------------
-detect_pulses, detect_pulses_t = make_detect_pulses()
-pdw_engine, pdw_engine_t = make_pdw_engine(detect_pulses)
+pulse_detect, pulse_detect_t = make_pulse_detect()
+pulse_extract, pulse_extract_t = make_pulse_extract(pulse_detect)
 
 
 @struct
@@ -336,7 +317,7 @@ class candidate_rec_t(NamedTuple):
     peak_power: uint32_t  # 32   linear, power_t truncated
 
 
-pdw_tx, _pdw_tx_t = make_type_to_axis(pdw_engine.valid_pdw_t, AXIS_N)
+pdw_tx, _pdw_tx_t = make_type_to_axis(pulse_extract.valid_pdw_t, AXIS_N)
 cand_tx, _cand_tx_t = make_type_to_axis(candidate_rec_t, AXIS_N)
 
 # ---------------------------------------------------------------------------
@@ -372,8 +353,8 @@ host_export(
     STATUS_PKT_FIFO_FULL=STATUS_PKT_FIFO_FULL,
     STATUS_FREQ_DEGENERATE=STATUS_FREQ_DEGENERATE,
     STATUS_PRI_INVALID=STATUS_PRI_INVALID,
-    POWER_FRAC_BITS=detect_pulses.power_t.frac_bits,
-    FREQ_BLOCK_K=detect_pulses.freq_block_k,
+    POWER_FRAC_BITS=pulse_detect.power_t.frac_bits,
+    FREQ_BLOCK_K=pulse_detect.freq_block_k,
     # The two FIFO depths a host has to reason about, so it can do so with the
     # design's numbers rather than a pair of magic constants that drift.
     #
@@ -383,11 +364,11 @@ host_export(
     # in-band sign. So it is not a performance number, it is the hard limit on
     # how long a host may stall, and airt_pdw_test.py sizes its configuration
     # against it rather than hoping.
-    PKT_QUEUE_DEPTH=pdw_engine.n_pkts,
+    PKT_QUEUE_DEPTH=pulse_extract.n_pkts,
     # And the data FIFO's depth, which bounds any legitimate `pkt_samples`. A
     # host that reads a larger one is reading a desynchronised stream, and the
     # first thing it would otherwise do with that number is allocate it.
-    PKT_FIFO_DEPTH=pdw_engine.depth,
+    PKT_FIFO_DEPTH=pulse_extract.depth,
 )
 # ---------------------------------------------------------------------------
 # A fully-registered register slice on each record master port. mode="full"
@@ -429,7 +410,7 @@ rx0_m_axis_tlast: Output[uint1_t]
 rx0_m_axis_tvalid: Output[uint1_t]
 rx0_m_axis_tready: Input[uint1_t]
 
-# Released pulse packet, leg 1: README section 4's TX2 target replay.
+# Released pulse packet, leg 1: the README's TX replay leg.
 # ⚠ TIE THIS READY HIGH IF THE REPLAY PORT IS UNUSED. The broadcast interlock
 # ANDs both legs' ready together, so a leg held low wedges the release path for
 # the host capture port as well.
@@ -439,7 +420,7 @@ tx1_m_axis_tlast: Output[uint1_t]
 tx1_m_axis_tvalid: Output[uint1_t]
 tx1_m_axis_tready: Input[uint1_t]
 
-# Validated PDW output -- README section 4's valid_pdw_t, one 40-byte frame per
+# Validated PDW output -- the README's valid_pdw_t, one 40-byte frame per
 # ACCEPTED pulse, emitted just ahead of that pulse's released packet. Real
 # backpressure: the engine's EMIT_PDW state holds until this drains.
 # `gr_pdw_record.py` parses these bytes directly.
@@ -472,7 +453,7 @@ rx2_m_axis_tready: Input[uint1_t]
 
 @MAIN(125.0)
 def pdw_main():
-    # Both readies are consumed by pdw_engine and produced from its own outputs
+    # Both readies are consumed by pulse_extract and produced from its own outputs
     # -- a genuine circular reference between two call results, which is what
     # Feedback[T] is for (same shape as type_axis.py's ready_for_limiter).
     pkt_ready: Feedback[uint1_t]
@@ -511,7 +492,12 @@ def pdw_main():
     alarm_trig: Feedback[uint1_t]
     alarm_en_mask: uint32_t = CTRL_FLAG_ALARM_EN
     alarm_en: uint1_t = (ctrl_regs.flags & alarm_en_mask) != 0
-    al = error_alarm(alarm_trig, alarm_en, rx0_s_axis_tvalid, global_rst)
+    al = error_alarm(
+        trig=alarm_trig,
+        en=alarm_en,
+        in_valid=rx0_s_axis_tvalid,
+        rst=global_rst,
+    )
     rx0_s_axis_tready = al.ready
 
     # Full-width bit-slice reinterprets raw tdata bits as the declared target
@@ -520,61 +506,61 @@ def pdw_main():
     rx0_tdata: uint32_t = rx0_s_axis_tdata
     i_val: int16_t = rx0_tdata[15:0]
     q_val: int16_t = rx0_tdata[31:16]
-    rx_sample: detect_pulses.complex_t = detect_pulses.complex_t(
-        i=detect_pulses.rail_t(val=i_val), q=detect_pulses.rail_t(val=q_val)
+    rx_sample: pulse_detect.complex_t = pulse_detect.complex_t(
+        i=pulse_detect.rail_t(val=i_val), q=pulse_detect.rail_t(val=q_val)
     )
     # Internal loopback: bypass the external TX0->cable->RX0 path and use
     # pulse_gen_main's own generated sample directly.
-    loopback_sample: detect_pulses.complex_t = detect_pulses.complex_t(
-        i=detect_pulses.rail_t(val=pulse_gen_sample.i),
-        q=detect_pulses.rail_t(val=pulse_gen_sample.q),
+    loopback_sample: pulse_detect.complex_t = pulse_detect.complex_t(
+        i=pulse_detect.rail_t(val=pulse_gen_sample.i),
+        q=pulse_detect.rail_t(val=pulse_gen_sample.q),
     )
     lb_mask: uint32_t = CTRL_FLAG_LOOPBACK_EN
     loopback_en: uint1_t = (ctrl_regs.flags & lb_mask) != 0
-    sample: detect_pulses.complex_t = (
+    sample: pulse_detect.complex_t = (
         loopback_sample if loopback_en else rx_sample
     )
     src_valid: uint1_t = (
         pulse_gen_valid if loopback_en else rx0_s_axis_tvalid
     )
-    # BLOCK: one gate stops the whole detector. detect_pulses drives Path A
+    # BLOCK: one gate stops the whole detector. pulse_detect drives Path A
     # (magnitude) and Path B (the delay line) from this same stream, and every
     # piece of state downstream -- the hysteresis SM, the noise estimator, the
     # phasor accumulators, toa_counter -- advances only on an accepted sample.
-    # detect_pulses deliberately does not gate its own input: whether the ADC
+    # pulse_detect deliberately does not gate its own input: whether the ADC
     # feed stops is this level's decision, not the block's.
     # `~alarm_active` as well as `~global_rst`: while the alarm holds tready
     # low the platform is discarding these samples, so the detector must
     # discard them too. Accepting a beat this design has just declared itself
     # not ready for would process a sample the host was told was lost.
     sample_valid: uint1_t = src_valid & (~global_rst) & (~al.active)
-    stream_in_if: detect_pulses.in_stream_t = detect_pulses.in_stream_t(
+    in_stream: pulse_detect.in_stream_t = pulse_detect.in_stream_t(
         sample, sample_valid
     )
 
     # The engine's candidate-stream ready is a constant 1 (see
-    # make_pdw_engine), so it can be fed in directly here rather than routed
+    # make_pulse_extract), so it can be fed in directly here rather than routed
     # back out of `e` -- there is no combinational loop to break.
-    o = detect_pulses(
-        stream_in_if,
-        detect_pulses.out_fb_t(1),
-        detect_pulses.power_t(val=ctrl_regs.threshold_high),
-        detect_pulses.power_t(val=ctrl_regs.threshold_low),
-        ctrl_regs.max_width,
-        global_rst,
+    o = pulse_detect(
+        in_stream=in_stream,
+        pdw_out_if=pulse_detect.out_fb_t(1),
+        threshold_high=pulse_detect.power_t(val=ctrl_regs.threshold_high),
+        threshold_low=pulse_detect.power_t(val=ctrl_regs.threshold_low),
+        max_width=ctrl_regs.max_width,
+        rst=global_rst,
     )
 
-    e = pdw_engine(
-        o.gated_out,
-        o.pdw_out_if,
-        o.overflow,
-        ctrl_regs.min_width,
-        ctrl_regs.max_width,
-        o.freq_acc,
-        o.noise_est,
-        pkt_ready,
-        pdw_ready,
-        global_rst,
+    e = pulse_extract(
+        gated_in=o.gated_out,
+        pdw_in_if=o.pdw_out_if,
+        dsp_overflow=o.overflow,
+        min_width=ctrl_regs.min_width,
+        max_width=ctrl_regs.max_width,
+        freq_acc=o.freq_acc,
+        noise_est=o.noise_est,
+        pkt_out_if=pulse_extract.pkt_out_intrf.fb_t(pkt_ready),
+        pdw_out_if=pulse_extract.pdw_out_intrf.fb_t(pdw_ready),
+        rst=global_rst,
     )
 
     # -- internal-error alarm, trigger --------------------------------------
@@ -616,18 +602,18 @@ def pdw_main():
     # -- released packet -> broadcast -> rx0_m (host) and tx1_m (replay) -----
     # One sample is exactly one 4-byte beat, so this is a repack, not a
     # serializer: no extra latency and no change in throughput.
-    gated_i_bits: uint16_t = e.pkt_out.data.i.val[15:0]
-    gated_q_bits: uint16_t = e.pkt_out.data.q.val[15:0]
+    gated_i_bits: uint16_t = e.pkt_out_if.stream.data.sample.i.val[15:0]
+    gated_q_bits: uint16_t = e.pkt_out_if.stream.data.sample.q.val[15:0]
     keep_all: tkeep_t = KEEP_ALL
     pkt_tdata: uint32_t = concat(gated_q_bits, gated_i_bits)
     pk: axis32_intrf.stream_t
     pk.data.frag.data = uint_to_array_le(pkt_tdata, 8)
     pk.data.frag.keep = uint_to_array_le(keep_all, 1)
-    pk.data.eod[0] = e.pkt_out.last
-    pk.valid = e.pkt_out.valid
+    pk.data.eod[0] = e.pkt_out_if.stream.data.last
+    pk.valid = e.pkt_out_if.stream.valid
     b = pkt_bcast(
-        axis32_intrf.fwd_t(pk),
-        [
+        axis_in_if=axis32_intrf.fwd_t(pk),
+        axis_out_if=[
             axis32_intrf.fb_t(rx0_m_axis_tready),
             axis32_intrf.fb_t(tx1_m_axis_tready),
         ],
@@ -654,12 +640,17 @@ def pdw_main():
 
     # -- valid_pdw_t -> rx1_m ------------------------------------------------
     vs: pdw_tx.in_intrf.stream_t
-    vs.data.frag = e.pdw_out.data
+    vs.data.frag = e.pdw_out_if.stream.data
     vs.data.eod[0] = 1  # one record per frame
-    vs.valid = e.pdw_out.valid
-    vt = pdw_tx(pdw_tx.in_intrf.fwd_t(vs), pdw_tx.axis_fb_t(pdw_skid_rdy))
+    vs.valid = e.pdw_out_if.stream.valid
+    vt = pdw_tx(
+        stream_in_if=pdw_tx.in_intrf.fwd_t(vs),
+        axis_out_if=pdw_tx.axis_fb_t(pdw_skid_rdy),
+    )
     pdw_ready = vt.stream_in_if.ready
-    vk = pdw_skid(vt.axis_out_if, pdw_tx.axis_fb_t(pdw_rdy))
+    vk = pdw_skid(
+        stream_in_if=vt.axis_out_if, stream_out_if=pdw_tx.axis_fb_t(pdw_rdy)
+    )
     pdw_skid_rdy = vk.stream_in_if.ready
 
     rx1_m_axis_tdata = array_to_uint_le(vk.stream_out_if.stream.data.frag.data)
@@ -681,8 +672,13 @@ def pdw_main():
     cs.data.frag = cand
     cs.data.eod[0] = 1
     cs.valid = o.pdw_out_if.stream.valid
-    ct = cand_tx(cand_tx.in_intrf.fwd_t(cs), cand_tx.axis_fb_t(cand_skid_rdy))
-    ck = cand_skid(ct.axis_out_if, cand_tx.axis_fb_t(cand_rdy))
+    ct = cand_tx(
+        stream_in_if=cand_tx.in_intrf.fwd_t(cs),
+        axis_out_if=cand_tx.axis_fb_t(cand_skid_rdy),
+    )
+    ck = cand_skid(
+        stream_in_if=ct.axis_out_if, stream_out_if=cand_tx.axis_fb_t(cand_rdy)
+    )
     cand_skid_rdy = ck.stream_in_if.ready
 
     rx2_m_axis_tdata = array_to_uint_le(ck.stream_out_if.stream.data.frag.data)

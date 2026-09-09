@@ -17,8 +17,10 @@ Python model available. This file's job is the properties that would still be
 wrong if the model and the hardware agreed with each other but both drifted.
 
 Run:
-    pypelinec examples/pypeline/dsp/pdw/pulse_gen/pulse_gen_tb.py --sim --comb --run 600
+    pypelinec examples/pypeline/dsp/pdw/pulse_gen_tb.py --sim --comb --run 600
 """
+
+import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 
 from pypeline import (
     MAIN,
@@ -61,7 +63,15 @@ def _expected_active_delayed(phase_reg_name_unused=None):
 
 @MAIN(125.0)
 def pulse_gen_dc_tb():
-    o = pulse_gen(TEST_PRI, TEST_WIDTH, TEST_AMPLITUDE, 0, 0, 0, 0)
+    o = pulse_gen(
+        pri=TEST_PRI,
+        width=TEST_WIDTH,
+        amplitude=TEST_AMPLITUDE,
+        freq=0,
+        chirp_rate=0,
+        noise_amp=0,
+        rst=0,
+    )
 
     # Golden reference: an independent free-running PRI counter, DELAYED by the
     # generator's own latency. The envelope is applied as the NCO's seed
@@ -142,7 +152,15 @@ def pulse_gen_tone_tb():
     that varies with phase, while the individual I and Q samples still look
     like plausible numbers.
     """
-    o = pulse_gen(TEST_PRI, TEST_WIDTH, TEST_AMPLITUDE, TONE_FREQ, 0, 0, 0)
+    o = pulse_gen(
+        pri=TEST_PRI,
+        width=TEST_WIDTH,
+        amplitude=TEST_AMPLITUDE,
+        freq=TONE_FREQ,
+        chirp_rate=0,
+        noise_amp=0,
+        rst=0,
+    )
 
     phase: Reg[uint32_t] = 0
     active_now: uint1_t = phase < TEST_WIDTH
@@ -198,7 +216,15 @@ def pulse_gen_noise_tb():
     frequency measurement downstream toward DC. That bug produces noise that
     looks perfectly reasonable on a scope.
     """
-    o = pulse_gen(TEST_PRI, TEST_WIDTH, 0, 0, 0, NOISE_AMP, 0)
+    o = pulse_gen(
+        pri=TEST_PRI,
+        width=TEST_WIDTH,
+        amplitude=0,
+        freq=0,
+        chirp_rate=0,
+        noise_amp=NOISE_AMP,
+        rst=0,
+    )
 
     # amplitude=0, so everything here is noise.
     bound: int16_t = (512 * NOISE_AMP) >> 8
