@@ -192,13 +192,14 @@ share the same iteration hardware and the same `atan(2^-i)` angle table, which i
 elaboration-time constant.
 
 * **Vectoring mode** (`make_cordic_atan2`) drives the *y* rail to zero, so the
-  accumulated angle is `atan2(y, x)`: `cordic_atan2(x_in, y_in, valid_in) -> {.angle,
-  .valid, .degenerate}`. `x`/`y` are treated as a ratio, so the block is scale
-  invariant.
+  accumulated angle is `atan2(y, x)`:
+  `cordic_atan2(x_in, y_in, valid_in) -> {.angle, .valid, .degenerate}`.
+  `x`/`y` are treated as a ratio, so the block is scale invariant.
 * **Rotation mode** (`make_cordic_rotate`) drives the *angle* rail to zero, rotating a
-  `(amplitude, 0)` seed: `cordic_rotate(phase, amplitude, valid_in) -> {.i, .q,
-  .valid}` — an NCO. `phase` is unsigned `phase_bits` wide and wraps naturally, so a
-  free-running accumulator is the whole frequency control.
+  `(amplitude, 0)` seed:
+  `cordic_rotate(phase, amplitude, valid_in) -> {.i, .q, .valid}` — an NCO.
+  `phase` is unsigned `phase_bits` wide and wraps naturally, so a free-running
+  accumulator is the whole frequency control.
 
 | Parameter | Default | Meaning |
 |---|---|---|

@@ -579,10 +579,10 @@ the radio**, with no Pypeline checkout:
 | `pdw_verify.py` | the independent FFT check of a record against its samples |
 
 `pypeline_host_types.py` is generated and must not be edited. Every `pypelinec`
-build of `top.py` drops it in `<out_dir>/host/`, and `python3 pdw_host_gen.py
-<dir>` produces the same file without a build. It comes from the same leaf walk
-the hardware serializer is built from, so the frame this project sends cannot
-disagree with the frame the hardware expects. Nothing generated is committed — no
+build of `top.py` drops it in `<out_dir>/host/`, and
+`python3 pdw_host_gen.py <dir>` produces the same file without a build. It comes
+from the same leaf walk the hardware serializer is built from, so the frame this
+project sends cannot disagree with the frame the hardware expects. Nothing generated is committed — no
 checked-in copy to go stale — so the in-repo tests build it on demand via
 `pdw_host_gen.ensure_host_types()`. See
 [Host-Side Generated Types](../../../../docs/pypeline_guide.md#host-side-generated-types).
@@ -701,8 +701,9 @@ by its `pdw.py` tooling unmodified; `--ref-level-db` matches what gr-pdw's
 
 ## Recording and replaying a session
 
-`--record <file>` writes every record and packet exactly as received; `--replay
-<file>` runs the identical capture loop over that file with no SoapySDR at all.
+`--record <file>` writes every record and packet exactly as received;
+`--replay <file>` runs the identical capture loop over that file with no
+SoapySDR at all.
 The second is the reason it exists: a bring-up session that went wrong stays
 debuggable in the repo against the same checks, and it is what gives
 `airt_pdw_test.py` a test at all (`airt_pdw_replay_test.py`). The format is
@@ -1026,12 +1027,12 @@ rather than guessed. Two generalize:
   generator→magnitude path (15.32 ns) and the phasor-accumulator→CORDIC path
   (11.65 ns) each met timing comfortably inside their own block; only the composed
   build showed them. Hence `top.py` being its own synthesis test.
-* **A path can break with nothing on it having changed.** `d_im = cur_q·prev_i −
-  cur_i·prev_q` needs two DSP48s, and with one pipeline register to place the
-  synthesizer chooses which DSP absorbs it: one choice gives BRAM → DSP(A→MREG) ≈
-  3.7 ns, the other BRAM → DSP A→P → DSP C setup = 9.69 ns, i.e. 103 MHz. Both are
-  legal and Vivado has picked each — this design met its target until adding the
-  AXIS ports grew the netlist and flipped it. Registering **all four** raw
+* **A path can break with nothing on it having changed.**
+  `d_im = cur_q·prev_i − cur_i·prev_q` needs two DSP48s, and with one pipeline
+  register to place the synthesizer chooses which DSP absorbs it: one choice
+  gives BRAM → DSP(A→MREG) ≈ 3.7 ns, the other BRAM → DSP A→P → DSP C setup =
+  9.69 ns, i.e. 103 MHz. Both are legal and Vivado has picked each — this design
+  met its target until adding the AXIS ports grew the netlist and flipped it. Registering **all four** raw
   products, not just their sums, removes the choice. A path that depends on a
   synthesizer's packing decision is not meeting timing, it is winning a coin toss.
 
