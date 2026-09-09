@@ -89,6 +89,24 @@ from axi.type_axis import make_axis_to_type
 # name rather than repeating a shift.
 CTRL_FLAG_LOOPBACK_EN = 1 << 0  # 1 = feed the detector from pulse_gen, not RX0
 
+# The internal-error alarm (top.py's alarm_main). This design has exactly one
+# way to reach a host in the 2-channel deployment -- a record on RX1 followed by
+# its packet on RX0 -- and the two failures that corrupt every subsequent packet
+# (a dropped descriptor, a dropped measurement) produce records that still look
+# perfectly well formed. There is no spare channel to report them on, so the
+# alarm borrows the one back-channel that exists: dropping ADC samples on
+# purpose, which the platform reports to software as a receive overflow.
+#
+# OFF BY DEFAULT, and deliberately so. Arming it means the design may destroy
+# real samples to send a one-bit message, which is the right trade only when a
+# host is watching for it and knows what it means.
+CTRL_FLAG_ALARM_EN = 1 << 1  # 1 = raise the alarm on an internal error
+# Fire one alarm immediately, regardless of whether anything is wrong. This
+# exists so the signalling path can be proved on a good day rather than first
+# observed during a fault -- see README.md's bring-up ladder, rung 6. Ignored
+# unless CTRL_FLAG_ALARM_EN is also set.
+CTRL_FLAG_ALARM_TEST = 1 << 2
+
 
 @struct
 class pdw_ctrl_t(NamedTuple):

@@ -43,8 +43,10 @@ Counting beats that were actually PUSHED, rather than trusting the
 candidate's `pulse_width`, is what makes the read side robust: if the data
 FIFO ever did fill and drop beats, the flush count still matches what is
 really in the FIFO, so one corrupt packet cannot desynchronize every packet
-after it. (That packet is force-rejected anyway, and reported via
-status_flags bit 2.)
+after it. (That packet is force-rejected anyway -- and so the status_flags
+bit 2 it carries goes to the bit bucket with it, never reaching a host. The
+condition is reported out of band instead, by top.py's internal-error alarm;
+`fifo_full` below is one of its triggers.)
 
 NOT IMPLEMENTED HERE -- N_pre/N_post margins. The README's
 `pkt_samples = N_pre + width + N_post`; today the gate window is the whole
@@ -258,6 +260,15 @@ def make_packet_store(
         pkt_out: released_sample_t
         pdw_out: valid_pdw_stream_t
         fifo_full: uint1_t  # sticky: some packet lost beats to a full FIFO
+        # The two conditions the sim_asserts below catch in simulation and
+        # nothing catches in a bitstream. Both are silent AND permanent, which
+        # is why they are worth a port: a dropped descriptor orphans that
+        # pulse's beats in the data FIFO, so every later packet is offset by
+        # them for the rest of the session, and a dropped measurement breaks
+        # the desc/meas lockstep so every later record carries the previous
+        # pulse's frequency, dB and PRI. Sticky, cleared only by reset.
+        desc_drop: uint1_t
+        meas_drop: uint1_t
 
     data_fifo, _data_fifo_t = make_fifo(sample_t, depth)
     desc_fifo, _desc_fifo_t = make_fifo(desc_t, n_pkts)
@@ -294,6 +305,8 @@ def make_packet_store(
         acc_bad: Reg[uint1_t]  # per-packet sticky "lost a beat"
         n_pushed: Reg[uint32_t]  # beats of this packet actually in the FIFO
         fifo_full_sticky: Reg[uint1_t]
+        desc_drop_sticky: Reg[uint1_t]
+        meas_drop_sticky: Reg[uint1_t]
 
         releasing: uint1_t = state == store_state_t.SEND_PKT
         flushing: uint1_t = state == store_state_t.FLUSH
@@ -387,6 +400,17 @@ def make_packet_store(
             "completed pulses are awaiting release than it can hold; increase "
             "n_pkts or unblock the downstream consumer",
         )
+        # The same two conditions, latched rather than asserted, so a bitstream
+        # can report what simulation halts on. A sim_assert compiles to a VHDL
+        # `assert ... severity failure`, which stops GHDL and does nothing at
+        # all in synthesised logic -- so without these the only two failures in
+        # this design that corrupt every subsequent packet are also the only
+        # two with no outward sign whatsoever. top.py turns them into a host-
+        # visible overflow; see its alarm.
+        if desc_push & (~sf.data_in_ready):
+            desc_drop_sticky = 1
+        if meas_in_valid & (~mf.data_in_ready):
+            meas_drop_sticky = 1
 
         # ---- read side ----
         o.pkt_out.data = df.data_out
@@ -395,6 +419,8 @@ def make_packet_store(
         o.pdw_out.data = cur
         o.pdw_out.valid = state == store_state_t.EMIT_PDW
         o.fifo_full = fifo_full_sticky
+        o.desc_drop = desc_drop_sticky
+        o.meas_drop = meas_drop_sticky
 
         accept_r: Reg[uint1_t]
         empty_r: Reg[uint1_t]
@@ -463,6 +489,8 @@ def make_packet_store(
             acc_bad = 0
             n_pushed = 0
             fifo_full_sticky = 0
+            desc_drop_sticky = 0
+            meas_drop_sticky = 0
             accept_r = 0
             empty_r = 0
 
@@ -506,6 +534,14 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
           .verdict (verdict_t) -- this cycle's qualification of the candidate
             on pdw_in_if, exposed for observability/testbenches.
           .fifo_full (uint1_t) -- sticky packet-FIFO-full.
+          .desc_drop (uint1_t) -- sticky: a completed pulse's descriptor was
+            dropped because the descriptor FIFO was full. Its beats are
+            orphaned in the data FIFO, so EVERY later packet is offset by them
+            until reset. Corrupting and permanent; there is no recovery short
+            of a reset, which is why it is reported rather than handled.
+          .meas_drop (uint1_t) -- sticky: same for the measurement FIFO, which
+            instead pairs every later record with the wrong pulse's frequency,
+            dB and PRI.
 
     `peak_power` is truncated from the detector's full-precision `power_t`
     (46 bits with the default dc_k/ma_n) to README section 4's uint32_t. Keep
@@ -547,6 +583,8 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
         pdw_out: packet_store.valid_pdw_stream_t
         verdict: verdict_t
         fifo_full: uint1_t
+        desc_drop: uint1_t  # sticky, see packet_store_t
+        meas_drop: uint1_t  # sticky, see packet_store_t
         measure: pdw_measure_t  # observability tap on the measurement stream
 
     @hw_func
@@ -641,6 +679,8 @@ def make_pdw_engine(detect_pulses, depth=16384, n_pkts=16):
         o.pdw_out = ps.pdw_out
         o.verdict = v
         o.fifo_full = ps.fifo_full
+        o.desc_drop = ps.desc_drop
+        o.meas_drop = ps.meas_drop
         o.measure = m
         return o
 

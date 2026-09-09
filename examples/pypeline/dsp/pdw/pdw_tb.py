@@ -1322,6 +1322,31 @@ def check_ctrl():
 
 
 @sim_output
+def check_adc_ready():
+    """rx0_s_axis_tready must stay HIGH for this entire run.
+
+    That port is normally a constant 1 -- an ADC cannot be back-pressured --
+    and the one thing that ever pulls it low is the internal-error alarm, which
+    drops samples on purpose so the platform reports an overflow software can
+    see. No phase here arms it (CTRL_FLAG_ALARM_EN is clear in every control
+    frame this file writes, and in CTRL_DEFAULTS), so a single low cycle means
+    either the alarm fired unbidden or its polarity is inverted -- and on real
+    hardware the symptom of either would be a receive overflow that looks
+    exactly like the host falling behind.
+
+    The alarm's own behaviour is covered by pdw_alarm/pdw_alarm_test.py, which
+    can drive it directly in under a second. What is checked HERE is the
+    integration: that composing it into top.py left the port alone."""
+    n = ST["cycle"] - 1
+    assert int(top.rx0_s_axis_tready), (
+        f"pdw_tb: rx0_s_axis_tready went low on cycle {n}, but no phase arms "
+        f"the alarm (flags carry no CTRL_FLAG_ALARM_EN). Either the alarm "
+        f"triggered on its own -- which means an internal FIFO drop this "
+        f"testbench should also be failing on -- or ready/active is inverted"
+    )
+
+
+@sim_output
 def check_reset():
     """Both halves of the staged bring-up, checked directly on the wire.
 

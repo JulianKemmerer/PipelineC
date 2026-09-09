@@ -59,6 +59,10 @@ sys.path.insert(
     0,
     os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdw_ctrl"),
 )
+sys.path.insert(
+    0,
+    os.path.join(os.path.dirname(os.path.abspath(__file__)), "pdw_alarm"),
+)
 
 from pypeline import (
     MAIN,
@@ -89,7 +93,15 @@ from axi.axis import (
 )
 from axi.type_axis import make_type_to_axis
 
-from pdw_ctrl import CTRL_DEFAULTS, CTRL_FLAG_LOOPBACK_EN, make_pdw_ctrl, pdw_ctrl_t
+from pdw_alarm import make_error_alarm
+from pdw_ctrl import (
+    CTRL_DEFAULTS,
+    CTRL_FLAG_ALARM_EN,
+    CTRL_FLAG_ALARM_TEST,
+    CTRL_FLAG_LOOPBACK_EN,
+    make_pdw_ctrl,
+    pdw_ctrl_t,
+)
 from pulse_gen import make_pulse_gen
 from pulse_detect import make_detect_pulses
 from pdw_engine import (
@@ -160,6 +172,20 @@ RST_LATENCY = 1
 # real platform reset comfortably exceeds -- stated so it is a number rather
 # than an assumption.
 RST_MIN_HOLD_CYCLES = 16384 + 64
+
+# ---------------------------------------------------------------------------
+# The internal-error alarm's two numbers (see pdw_main). ALARM_DROP_SAMPLES is
+# how many ADC samples one alarm destroys: enough that a platform counting
+# dropped beats cannot miss it, small enough to be 32.8 us at 125 MSPS. It is a
+# SAMPLE count, not a cycle count -- see pdw_main on why that distinction is the
+# whole mechanism.
+ALARM_DROP_SAMPLES = 4096
+# Backstop only. If the ADC stream never presents a sample, nothing is being
+# dropped and the alarm can never complete, so this bounds how long tready may
+# stay low regardless. ~8.4 ms at 125 MHz -- far more than ALARM_DROP_SAMPLES
+# needs when the input runs continuously, as the platform says it does.
+ALARM_MAX_CYCLES = 1 << 20
+error_alarm, _error_alarm_t = make_error_alarm(ALARM_DROP_SAMPLES, ALARM_MAX_CYCLES)
 
 global_rst: Wire[uint1_t]  # OR of all seven -- everything except pdw_ctrl
 ctrl_rst: Wire[uint1_t]  # tx0_s_axis_rst alone -- pdw_ctrl only
@@ -339,6 +365,8 @@ cand_tx, _cand_tx_t = make_type_to_axis(candidate_rec_t, AXIS_N)
 host_export(
     CTRL_DEFAULTS=CTRL_DEFAULTS,
     CTRL_FLAG_LOOPBACK_EN=CTRL_FLAG_LOOPBACK_EN,
+    CTRL_FLAG_ALARM_EN=CTRL_FLAG_ALARM_EN,
+    CTRL_FLAG_ALARM_TEST=CTRL_FLAG_ALARM_TEST,
     STATUS_ADC_CLIP=STATUS_ADC_CLIP,
     STATUS_DSP_OVERFLOW=STATUS_DSP_OVERFLOW,
     STATUS_PKT_FIFO_FULL=STATUS_PKT_FIFO_FULL,
@@ -346,6 +374,20 @@ host_export(
     STATUS_PRI_INVALID=STATUS_PRI_INVALID,
     POWER_FRAC_BITS=detect_pulses.power_t.frac_bits,
     FREQ_BLOCK_K=detect_pulses.freq_block_k,
+    # The two FIFO depths a host has to reason about, so it can do so with the
+    # design's numbers rather than a pair of magic constants that drift.
+    #
+    # PKT_QUEUE_DEPTH is how many completed pulses may await release at once.
+    # Exceed it and a descriptor is dropped -- which orphans that pulse's beats
+    # in the data FIFO and offsets EVERY later packet, permanently and with no
+    # in-band sign. So it is not a performance number, it is the hard limit on
+    # how long a host may stall, and airt_pdw_test.py sizes its configuration
+    # against it rather than hoping.
+    PKT_QUEUE_DEPTH=pdw_engine.n_pkts,
+    # And the data FIFO's depth, which bounds any legitimate `pkt_samples`. A
+    # host that reads a larger one is reading a desynchronised stream, and the
+    # first thing it would otherwise do with that number is allocate it.
+    PKT_FIFO_DEPTH=pdw_engine.depth,
 )
 # ---------------------------------------------------------------------------
 # A fully-registered register slice on each record master port. mode="full"
@@ -367,11 +409,16 @@ rx0_s_axis_tvalid: Input[uint1_t]
 # continuous and unframed, so neither of these carries information here.
 rx0_s_axis_tkeep: Input[tkeep_t]
 rx0_s_axis_tlast: Input[uint1_t]
-# DRIVEN CONSTANT 1: an ADC cannot be back-pressured. Ready propagates backwards
-# from the masters as far as the store-and-forward FIFO and stops there -- when
-# that FIFO fills, beats are dropped and the affected packet is flagged in-band
-# with status_flags bit 2 (STATUS_PKT_FIFO_FULL). This port exists for interface
-# uniformity; see README.md's backpressure notes.
+# NORMALLY 1: an ADC cannot be back-pressured. Ready propagates backwards from
+# the masters as far as the store-and-forward FIFO and stops there -- when that
+# FIFO fills, beats are dropped and the affected packet is force-rejected (its
+# contents are no longer what the detector saw), so nothing about it reaches a
+# host. See README.md's backpressure notes.
+#
+# The one exception is the internal-error alarm: when armed, pdw_main drives
+# this low on purpose, precisely so the platform drops samples and reports an
+# overflow to software. That is the only back-channel this design has in
+# 2-channel mode. Off unless CTRL_FLAG_ALARM_EN is set.
 rx0_s_axis_tready: Output[uint1_t]
 
 # Released pulse packet, leg 0: the qualified, store-and-forwarded capture
@@ -436,6 +483,37 @@ def pdw_main():
     pdw_skid_rdy: Feedback[uint1_t]
     cand_skid_rdy: Feedback[uint1_t]
 
+    # -- internal-error alarm, read side ------------------------------------
+    # This design has exactly one way to reach a host in 2-channel mode: a
+    # record on RX1 followed by its packet on RX0. The two failures that
+    # corrupt every subsequent packet -- a descriptor or a measurement dropped
+    # because its FIFO was full -- still produce records that look perfectly
+    # well formed, and there is no spare channel to report them on. So the
+    # alarm borrows the only back-channel that exists: it deasserts this
+    # slave's tready on purpose, the platform drops ADC samples, and software
+    # sees a receive overflow.
+    #
+    # THE COUNTER COUNTS DROPPED SAMPLES, NOT CYCLES, and that is the whole
+    # mechanism rather than a detail. A sample is lost only on a cycle where
+    # tvalid is high AND tready is low. Holding tready low while the input is
+    # idle destroys nothing and raises no overflow, so a cycle-based countdown
+    # would send a message that silently fails to arrive in exactly the case a
+    # gapped input makes likely. Counting `tvalid & ~tready` makes the number
+    # of samples destroyed a property of this design instead of a property of
+    # the input's duty cycle. ALARM_MAX_CYCLES bounds the wait so a stream that
+    # never presents a sample cannot hold tready low indefinitely.
+    #
+    # The trigger is a genuine circular reference -- the alarm gates the
+    # detector's input, the detector feeds the engine, and the engine produces
+    # the conditions the alarm reports -- so it goes through Feedback[T], the
+    # same remedy the two ready paths above use. There is no combinational
+    # loop: error_alarm derives both its outputs from registers alone.
+    alarm_trig: Feedback[uint1_t]
+    alarm_en_mask: uint32_t = CTRL_FLAG_ALARM_EN
+    alarm_en: uint1_t = (ctrl_regs.flags & alarm_en_mask) != 0
+    al = error_alarm(alarm_trig, alarm_en, rx0_s_axis_tvalid, global_rst)
+    rx0_s_axis_tready = al.ready
+
     # Full-width bit-slice reinterprets raw tdata bits as the declared target
     # type (int16_t here) -- the mirror image of pulse_gen_main's uint16_t
     # reinterpret above (I = tdata[15:0], Q = tdata[31:16]).
@@ -465,11 +543,14 @@ def pdw_main():
     # phasor accumulators, toa_counter -- advances only on an accepted sample.
     # detect_pulses deliberately does not gate its own input: whether the ADC
     # feed stops is this level's decision, not the block's.
-    sample_valid: uint1_t = src_valid & (~global_rst)
+    # `~alarm_active` as well as `~global_rst`: while the alarm holds tready
+    # low the platform is discarding these samples, so the detector must
+    # discard them too. Accepting a beat this design has just declared itself
+    # not ready for would process a sample the host was told was lost.
+    sample_valid: uint1_t = src_valid & (~global_rst) & (~al.active)
     stream_in_if: detect_pulses.in_stream_t = detect_pulses.in_stream_t(
         sample, sample_valid
     )
-    rx0_s_axis_tready = 1  # see the port declaration
 
     # The engine's candidate-stream ready is a constant 1 (see
     # make_pdw_engine), so it can be fed in directly here rather than routed
@@ -495,6 +576,15 @@ def pdw_main():
         pdw_ready,
         global_rst,
     )
+
+    # -- internal-error alarm, trigger --------------------------------------
+    # Everything worth reporting that the record format cannot carry. The two
+    # FIFO-drop conditions are sticky until reset inside packet_store, which is
+    # why error_alarm limits a standing trigger to one alarm rather than
+    # holding tready low for good -- see its docstring.
+    alarm_test_mask: uint32_t = CTRL_FLAG_ALARM_TEST
+    alarm_test: uint1_t = (ctrl_regs.flags & alarm_test_mask) != 0
+    alarm_trig = alarm_test | e.fifo_full | e.desc_drop | e.meas_drop
 
     # DRAIN: while reset is asserted every sink is forced ready, so the whole
     # chain empties into the bit bucket. That is the ONLY way to clear any of

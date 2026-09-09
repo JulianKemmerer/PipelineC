@@ -310,6 +310,40 @@ def get_tests() -> list:
             cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_reset_test.py"],
         )
     )
+    # PDW project: the internal-error alarm, on its own. The alarm's job is to
+    # destroy a known number of ADC samples so the platform raises an overflow
+    # software can see, so the property that matters is "exactly N samples were
+    # dropped", not "tready went low" -- and those two only diverge when the
+    # input is GAPPED. That test carries its own negative control: the same
+    # stimulus through a deliberately-wrong cycle-counting model, asserted to
+    # get a different answer, so the number is discriminating rather than
+    # merely correct. sim_call, under a second.
+    tests.append(
+        Test(
+            name="pdw_alarm_test",
+            category="native_sim",
+            cmd=[
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_alarm"
+                / "pdw_alarm_test.py"
+            ],
+        )
+    )
+    # PDW project: airt_pdw_test.py's capture loop, with no radio. That script
+    # is the only file here that runs on real hardware and was the only one
+    # with no test at all -- the framing, the record validation and the loop
+    # itself had never been executed against so much as a synthetic byte, and a
+    # bug there does not surface as a wrong number but as a bring-up session
+    # that cannot be interpreted. Its --record/--replay path is what makes this
+    # possible: the real loop runs, served from a file instead of a stream.
+    # Mostly negative controls, on the invariants that catch a desynchronised
+    # stream before its pkt_samples is used to allocate memory.
+    tests.append(
+        Test(
+            name="airt_pdw_replay_test",
+            category="native_sim",
+            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "airt_pdw_replay_test.py"],
+        )
+    )
     # PDW project: the independent software check of a PDW record against its
     # own pulse samples (FFT here vs the hardware's phasor/CORDIC, so the two
     # are genuinely different algorithms). Mostly negative controls: corrupt

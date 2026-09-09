@@ -154,7 +154,9 @@ commented at its declaration in `top.py`:
 
 * `rx0_s_axis_tkeep` — ignored; a sample beat is always four real bytes.
 * `rx0_s_axis_tlast` — ignored; the ADC stream is continuous and unframed.
-* `rx0_s_axis_tready` — **driven constant 1**; an ADC cannot be back-pressured.
+* `rx0_s_axis_tready` — **normally 1**; an ADC cannot be back-pressured. The
+  one exception is the internal-error alarm, which drives it low on purpose;
+  see **The internal-error alarm**.
 * `tx0_m_axis_tkeep` / `_tlast` — constant `0xF` / `0`; the stimulus is
   continuous and unframed.
 * `tx0_m_axis_tready` — **ignored**; a fixed-rate DAC cannot back-pressure a
@@ -180,10 +182,20 @@ producer.
 **Backpressure policy.** Ready propagates backwards as each block already
 intends and **stops at the store-and-forward FIFO**, which is the design's one
 overflow point: `rx1_m_axis_tready` reaches the engine's `EMIT_PDW` state and
-`rx0_m`/`tx1_m` reach `SEND_PKT`, so a stalled host backs up into that FIFO,
-and when it fills, beats are dropped and the affected packet is flagged in-band
-with `status_flags` bit 2. The datapath ahead of it is valid-only and
-real-time; nothing back-pressures the ADC.
+`rx0_m`/`tx1_m` reach `SEND_PKT`, so a stalled host backs up into that FIFO.
+The datapath ahead of it is valid-only and real-time; nothing back-pressures
+the ADC.
+
+> ⚠ **A packet that loses beats is not delivered, so `status_flags` bit 2 never
+> reaches a host.** `packet_store` sets that bit *and* force-rejects the packet
+> (`accept & ~new_bad`) — its contents are no longer what the detector saw — so
+> the record carrying the flag is flushed rather than emitted. The bit exists,
+> it is set correctly, and it is only ever set on records that are discarded;
+> `pdw_tb.py` asserts a delivered record never carries it, and
+> `airt_pdw_test.py` treats seeing one as evidence the stream has slipped. The
+> condition is reported instead by the **internal-error alarm** below. This
+> paragraph previously claimed the opposite, which is the kind of documentation
+> error that costs a bring-up session.
 
 `rx2_m_axis` (candidates) is the exception: its `tready` is fully functional —
 the serializer honours it and holds mid-frame — but it does **not** reach Path
@@ -326,7 +338,7 @@ the frames that follow.
 | `threshold_low` | `uint32_t` | Hysteresis SM lower threshold |
 | `max_width` | `uint32_t` | Path A force-close cap **and** CW rejection |
 | `min_width` | `uint32_t` | Glitch rejection |
-| `flags` | `uint32_t` | bit 0 = `CTRL_FLAG_LOOPBACK_EN` |
+| `flags` | `uint32_t` | bit 0 = `CTRL_FLAG_LOOPBACK_EN`, bit 1 = `CTRL_FLAG_ALARM_EN`, bit 2 = `CTRL_FLAG_ALARM_TEST` |
 
 Control is never back-pressured (`tx0_s_axis_tready` is always 1) and new
 values are readable `pdw_ctrl.latency` cycles after a frame's last beat is
@@ -468,6 +480,18 @@ from `n_pushed`, which counts only beats that actually entered the FIFO, so even
 a packet that lost beats to a full FIFO stays length-accurate and one damaged
 packet cannot desync the stream.
 
+Counting only works while the count is trustworthy, and nothing here
+re-synchronises: one lost or extra byte makes every later read garbage that
+still looks exactly like data. So every record goes through `validate_record`
+before it is acted on. `channel` and `padding` are **four bytes of known zero**
+in every record, which is the cheapest desync detector available; `pkt_samples`
+must equal `pulse_width` (they are equal while the margins are unbuilt — two
+independently-transmitted fields that must agree) and must fit inside
+`PKT_FIFO_DEPTH`; `toa` must advance; and `status_flags` must carry no undefined
+bit and no `pkt_fifo_full`, which a delivered record cannot have. Without this
+the first thing the script does with a slipped stream is allocate
+`2 × pkt_samples` of memory from it.
+
 ## The TX1 replay leg can wedge the packet path
 
 `packet_store`'s FSM is `IDLE → WAIT_MEAS → EMIT_PDW → SEND_PKT`. `EMIT_PDW`
@@ -513,9 +537,187 @@ What is honestly checkable is narrower than the record, and the module says so:
 by its `pdw.py` tooling unmodified; `--ref-level-db` matches what gr-pdw's
 `usrp_power_cal_table` block adds.
 
+## Recording a session, and replaying it off the radio
+
+`--record <file>` writes every record and packet exactly as received; `--replay
+<file>` runs the identical capture loop over that file with no SoapySDR at all.
+Two jobs, and the second is the reason it exists: it makes a bring-up session
+that went wrong debuggable in the repo against the same checks, and it gives
+`airt_pdw_test.py` a test. That script is the only file here that runs on real
+hardware, and before this it was the only one with no coverage at all — the
+framing, the validation and the loop had never been executed against so much as
+a synthetic byte. `airt_pdw_replay_test.py` now drives all of it.
+
+The file format is deliberately trivial and stdlib-only: an 8-byte magic and the
+sample rate, then `(record, packet)` pairs each prefixed by their lengths, raw
+bytes as they came off the wire — so a replay parses what the radio sent rather
+than something the script already interpreted.
+
+## The options that matter for bring-up
+
+| Option | Why |
+|---|---|
+| `--stage {preflight,ctrl,streams,capture}` | stop at the ladder rung being proved, so a failure is localised instead of reported from the bottom of the capture loop |
+| `--record` / `--replay` | above |
+| `--alarm`, `--alarm-test` | arm the internal-error alarm; fire one to prove the path |
+| `--resync-on-error` | reset and start over instead of stopping — for soaks. Every resync restarts `toa` |
+| `--duration` | soak for a wall-clock time instead of a pulse count |
+| `--pulses-per-sec` | **a correctness constraint, not a throughput choice.** Only `PKT_QUEUE_DEPTH` (16) completed pulses may await release; the rate is what buys the host time to verify and print. `build_config` refuses a rate leaving under a second of headroom, and the capture loop reports slowest-iteration against it |
+
 **RF note.** With loopback enabled the detector is fed internally, but TX0 still
 carries the generator's samples to the radio. Bench work wants a cable and
 terminator, not an antenna.
+
+# Bring-up and debugging
+
+## The one symptom
+
+There is no RX2 in 2-channel mode, so the candidate-record stream — the only
+thing that distinguishes *detected but rejected* from *never detected* — is
+unreachable on the target radio. Six root causes therefore share one symptom:
+
+| Root cause | What the host sees |
+|---|---|
+| wrong bitstream, or none | silence |
+| a channel reset left asserted (`global_rst` is the OR of seven) | silence |
+| the control frame never landed, or was reverted to `CTRL_DEFAULTS` | silence |
+| thresholds wrong by the ×4096 scaling | silence |
+| every candidate glitch- or CW-rejected | silence |
+| the TX1 replay leg wedging the release path | one record, then silence |
+| a dropped descriptor or measurement | plausible records, wrong contents, forever |
+
+That is why bring-up is a ladder rather than one run of `airt_pdw_test.py`.
+Each rung proves one thing and has a defined failure signature; do not climb
+past a rung that is red, because nothing above a red rung is interpretable.
+`--stage` stops the script at the rung being proved.
+
+## The internal-error alarm
+
+The last row of that table is the one the design could not report at all. A
+descriptor dropped because the descriptor FIFO was full orphans that pulse's
+beats in the data FIFO, so **every later packet is offset by them for the rest
+of the session**; a measurement dropped the same way breaks the
+descriptor/measurement lockstep so **every later record carries the previous
+pulse's frequency, dB and PRI**. Both are permanent short of a reset, and both
+keep producing records that look perfectly well formed. Until the alarm, the
+only thing that noticed either was a `sim_assert` — which halts GHDL and
+compiles to nothing whatsoever in a bitstream.
+
+With no spare channel to report on, the alarm borrows the one back-channel that
+exists. AirStack documents that on the ADC receive interface *"constant flow
+control `tready` assertion is assumed, deasserting `tready` drops `tdata`
+samples causing overflow"*, and that overflow events are reported by its API.
+So `pdw_alarm/pdw_alarm.py` deasserts `rx0_s_axis_tready` on purpose, the
+platform drops samples, and `readStream` returns `SOAPY_SDR_OVERFLOW`.
+
+**The counter counts dropped samples, not cycles**, and that is the mechanism
+rather than a detail. A sample is destroyed only on a cycle where `tvalid` is
+high *and* `tready` is low; holding `tready` low while the input is idle
+destroys nothing, raises no overflow and delivers no message. A cycle-based
+countdown would therefore fail silently in exactly the case a gapped or
+not-yet-running input makes likely — which is the case a bring-up is most
+likely to be in. `ALARM_MAX_CYCLES` is only the other side of that: an input
+that never presents a sample can never finish the count, and `tready` must not
+stay low forever on its account.
+
+| | |
+|---|---|
+| Arm | `CTRL_FLAG_ALARM_EN` (`flags` bit 1), or `--alarm` |
+| Fire one now | `CTRL_FLAG_ALARM_TEST` (bit 2), or `--alarm-test` |
+| Samples destroyed per alarm | `ALARM_DROP_SAMPLES` = 4096 (32.8 µs at 125 MSPS) |
+| Backstop | `ALARM_MAX_CYCLES` = 2²⁰ (~8.4 ms) |
+| Triggers | `packet_store`'s sticky `fifo_full`, `desc_drop`, `meas_drop` |
+
+**Off by default**, in `CTRL_DEFAULTS` and in the script. Arming it means
+consenting to destroy real samples to send a one-bit message, which is only the
+right trade when a host is watching for it. Two properties make it cheap in
+practice: **in loopback the alarm is free**, because the detector is fed from
+`pulse_gen` and those ADC samples were not being used for anything; and the
+triggers are sticky, so `error_alarm` deliberately limits a standing trigger to
+**one** alarm rather than taking the receive path down permanently.
+
+The `_TEST` bit exists so the signalling path can be proved on a good day
+(rung 6) instead of first being exercised during a fault, when nobody knows
+what the overflow means.
+
+## The ladder
+
+**Rung 0 — before the radio.** `run_all.py` green for `pdw_ctrl_test`,
+`pdw_reset_test`, `pdw_alarm_test`, `airt_pdw_replay_test`, `pdw_verify_test`,
+`pdw_measure_test`, the three block testbenches and `pdw_tb`. Then
+`python3 pdw_host_gen.py <dir>` and `--dry-run`, so the exact frame bytes are
+known before any are sent.
+
+**Rung 1 — platform identity.** `--stage preflight`. Driver and **BitStream
+version** (rung 3 depends on it), sample rate — Deepwave enforces that it equals
+the AXIS master clock — and the queue headroom the configured pulse rate buys.
+*Failure:* wrong or absent bitstream.
+
+**Rung 2 — TX0 accepts the control frame.** `--stage ctrl`. Activate TX0 alone,
+write the 40-byte frame with `END_BURST`, confirm `writeStream` returns 10.
+*Failure:* a short return or a timeout means `dwd_tx0_m_axis_tready` is not
+reaching this design's `tx0_s_axis_tready`, which is tied high unconditionally
+— so a stall is a wrapper or channel-map fault, not a design one.
+
+**Rung 3 — does the configuration survive?** Do this before anything else that
+depends on it. AirStack 2.1.0 is documented to assert `dwd_tx_axis_rst[*]` for
+64 cycles *"during the idle time between one transmission ending and the queued
+start time of the following transmission"*. `tx0_s_axis_rst` is both the
+control register file's reset — reverting it to `CTRL_DEFAULTS`, whose
+thresholds are `0xFFFFFFFF`, which is indistinguishable from dead hardware —
+and a term in `global_rst`, where 64 cycles is far short of
+`RST_MIN_HOLD_CYCLES` (16448) and so leaves buffers *partly* drained. It is
+documented for queued *timed* writes, which this script does not use, so it may
+never fire. **There is no register readback, so the discriminator has to be
+external:** put a spectrum analyser or a second receiver on the TX0 SMA and look
+for the generator's pulse train. Configuration landed ⇒ pulses at the commanded
+PRI and carrier; reverted ⇒ amplitude 0, silence.
+
+*If it fires*, the fix is small and local: drop the runtime
+`if rst: regs = pdw_ctrl_t(...)` in `pdw_ctrl.py`. The elaboration-time
+`Reg[pdw_ctrl_t] = CTRL_DEFAULTS` still makes power-on silent and safe, while a
+spurious 64-cycle reset then only flushes the deserializer — which is the part
+that actually matters for correctness — instead of silently reverting the
+thresholds.
+
+**Rung 4 — a record appears.** `--stage capture`, RX0/RX1/TX1 activated and TX1
+primed. *Failures, in likelihood order:* nothing at all → rung 3, then the
+×4096 threshold scaling, then `rx2_m_axis_rst`; one record then nothing on RX0
+→ the TX1 wedge, whose three fixes the script prints.
+
+**Rung 5 — the record is about that packet.** `pdw_verify.check` runs on every
+pulse. *Failure:* `freq_start`/`freq_stop` off by a large constant is a
+channel-map or I/Q-packing fault, not a measurement one — CS16 and this
+design's packing are byte-identical, so any offset means the streams are
+crossed.
+
+**Rung 6 — the alarm path.** `--alarm --alarm-test`, once, while everything
+else is known good. Confirm where the overflow surfaces. Skipping this means
+the first alarm ever seen will be during a real fault.
+
+**Rung 7 — soak and stress.** `--duration` with `--resync-on-error`, sweeping
+the pulse rate up toward the queue-headroom limit, adding `--chirp-rate` (the
+only real test of `freq_stop`), `--noise-amp`, and `--threshold-scale`. Use
+`--record` throughout: a session that goes wrong is then replayable in the repo
+against the same checks.
+
+**Rung 8 — real RF.** `--no-loopback`, TX0 → attenuator → RX0 by cable. Only
+now does the analog path enter the picture, with every digital question already
+answered.
+
+## Failure-mode reference
+
+| Symptom | Most likely | How to tell |
+|---|---|---|
+| no records at all | a reset still asserted, or config never landed | rung 3's TX0 measurement; then check the three wrapper tie-offs |
+| no records, config confirmed live | thresholds, or everything rejected | `--dry-run` prints thresholds in both raw and power units; widen `min_width`/`max_width` |
+| one record, then nothing on RX0 | TX1 replay leg wedged | `--prime-tx1`, or tie `tx1_m_axis_tready` high |
+| records stop after N pulses | host stalled past the queue headroom | the capture loop prints slowest-iteration vs headroom |
+| `readStream` OVERFLOW | host fell behind — or, if armed, the alarm | see the alarm above; either way, resync |
+| records arrive but fail validation | the stream has slipped | `channel`/`padding` are known-zero; framing is pure counting, so nothing after this is interpretable |
+| records pass validation, `pdw_verify` fails frequency | channels crossed, or I/Q swapped | a large *constant* offset means wiring, not measurement |
+| every record after some point has wrong measurements | a dropped measurement (permanent) | only a reset clears it; arm the alarm to be told next time |
+| `dsp_overflow` on every record | sticky, set once | says *when it started*, not that this pulse overflowed |
 
 # Parameters
 
@@ -655,11 +857,28 @@ parks the SM in RECOVER (emitting no beats at all) while its `max_width` beats
 drain. The data FIFO wraps a BRAM-inferable VHDL entity, so 16K × 32 bits is
 block RAM, not flops.
 
+> ⚠ **Exceeding `n_pkts` (16) corrupts silently and permanently.** The
+> descriptor and measurement FIFOs hold one entry per completed pulse, and the
+> guards on them are `sim_assert`s — which halt GHDL and compile to nothing in
+> a bitstream. A 17th queued pulse simply loses its descriptor push; its beats
+> stay in the data FIFO with no owner, so **every later packet is offset by
+> them** for the rest of the session. A dropped *measurement* instead breaks
+> the descriptor/measurement lockstep, so every later record carries the
+> previous pulse's frequency, dB and PRI. Both are reachable from a host that
+> stalls: `dwd_rx*_s_axis`'s `tready` is asserted only "as DMA reads occur", so
+> the design is back-pressured for exactly as long as the host spends between
+> reads. `packet_store` now latches both conditions (`desc_drop`, `meas_drop`)
+> and the **internal-error alarm** reports them; `PKT_QUEUE_DEPTH` is exported
+> to the host so `airt_pdw_test.py` sizes its pulse rate against the real
+> number rather than a copy of it.
+
 The beat count stored in the descriptor is the number of beats **actually
 pushed**, not the candidate's `pulse_width`. That is what makes the read side
 robust to a full FIFO: the flush count still matches what is really buffered,
 so one corrupt packet cannot desynchronize every packet after it. (That packet
-is force-rejected anyway and flagged in its own `status_flags` bit 2.)
+is force-rejected anyway, and the `status_flags` bit 2 it carries goes to the
+bit bucket with it — see the backpressure note in **Top-Level Ports**. The
+condition reaches a host only through the alarm.)
 
 **Adding N_pre/N_post** (not built) needs the Path B delay line deepened by
 $N_{pre}$ and the gate held open $N_{post}$ beats past `gate_last`. At that
@@ -723,6 +942,17 @@ carries pulse power and noise power as separate columns rather than an SNR.
 on each `last`. ADC clip is measured on the **stored** sample — the
 time-aligned raw I/Q that actually goes into the packet — so the flag
 describes what the host receives, not what the live ADC input was doing.
+
+Two of the five bits do not mean what their per-packet framing suggests:
+
+* **Bit 1, DSP overflow, is sticky until reset.** `make_pulse_detect_fsm`'s
+  `overflow` register has no clear input (`pulse_detect.py` says so outright),
+  and `top.py` drives the detector in valid-only mode where that path is
+  reachable. So once it sets, *every* later record carries it. "Record 47 has
+  `dsp_overflow`" means the detector overflowed at some point, not that pulse
+  47 did.
+* **Bit 2, packet FIFO full, is unreachable in a delivered record** — see the
+  backpressure note above.
 
 A `valid_pdw_t` is emitted **before** its own packet's first beat, on a real
 valid/ready handshake, which is the order a DMA consumer needs to size the
@@ -877,6 +1107,8 @@ it needs an I/Q DC blocker ahead of the conjugate product, which is not built.
 | `src/tests/pypeline_tests/inst/log2_db_test.py` | `dsp/log2_db.py` alone — accuracy vs `10·log10`, decade/octave steps, the fractional-bits subtraction, non-positive input, monotonicity, and two instances with different binary points | `sim_call` vs a bit-exact model |
 | `pdw_ctrl/pdw_ctrl_test.py` | The control register file alone — reset defaults, apply latency (measured, then checked against the advertised attribute), ready never dropping, back-to-back writes, and the two malformed cases: a padded frame whose excess must be dropped and a runt that must leave the registers untouched, neither desyncing the frame after it; plus reset — writes refused while held, normal service after release, and an abandoned frame flushed rather than joined to the next | `sim_call`, `type_to_bytes` + `AxisSimSource` |
 | `pdw_reset_test.py` | Reset semantics for the composed datapath — a reset landing **mid-pulse**: nothing emitted for the interrupted pulse, its buffered samples drained rather than prepended to the next packet, TOA and PRI restarting, and the release artifact bounded below `min_width`. Both the drain term and the `gate_armed` clear have negative controls | `sim_call` on `detect_pulses` + `pdw_engine` wired as `top.py` wires them |
+| `pdw_alarm/pdw_alarm_test.py` | The internal-error alarm alone. Its job is to destroy a known number of ADC samples, so the property tested is "exactly N samples were dropped", not "tready went low" — and those diverge only when the input is **gapped**. Carries its own negative control: the same stimulus through a deliberately-wrong cycle-counting model, asserted to get a different answer, so the number discriminates rather than merely matching | `sim_call` |
+| `airt_pdw_replay_test.py` | `airt_pdw_test.py`'s capture loop, with no radio — the framing, `validate_record`, and the loop itself, which were previously the only untested things in this project despite being the only ones that run on the hardware. The script's `--record`/`--replay` path serves the real loop from a file. Mostly negative controls on the invariants that catch a slipped stream before its `pkt_samples` is used to allocate memory | numpy, synthetic pulses via `pdw_verify_test`'s helpers |
 | `pdw_verify_test.py` | That `pdw_verify.py` actually catches a wrong record. Mostly negative controls: corrupt one field, assert the check for **that** field fails and the others do not — a dB-only error must not fail the linear check, and a corrupted `freq_start` must not fail `freq_stop`. Also generates this design's `pypeline_host_types.py` and checks the host files compose with it — which is what replaced the old drift guard, a generated layout having nothing left to drift from | numpy, synthetic pulses (tone, chirp, negative carrier) |
 | `pdw_tb.py` | The whole `top.py` — pulse generator through the composed DSP chain (`make_detect_pulses`: magnitude → dc_block → moving_avg → hysteresis FSM), the Path B delay line, the loopback mux, the PDW engine, and all seven AXIS ports: control written as real frames, both record streams decoded, the released-packet broadcast compared leg against leg, the staged two-domain reset bring-up, and `pdw_verify.py` run over every (record, packet) pair | `@sim_input`/`@sim_output`, exact Python golden model |
 
@@ -897,6 +1129,13 @@ port of this project. It configures the generator, detector and engine by
 from phase 0 onward — exercising the internal generator loopback path, not the
 external `rx0_s_axis_*` cable path, on which a garbage pattern is deliberately
 driven so a broken loopback mux fails loudly rather than silently passing.
+
+It also asserts `rx0_s_axis_tready` never goes low across the whole run. No
+phase arms the alarm, so a single low cycle means either the alarm fired
+unbidden — which implies an internal FIFO drop the rest of the file should also
+be failing on — or its polarity is inverted. The alarm's own behaviour is
+covered in a second by `pdw_alarm_test.py`; what `pdw_tb.py` adds is that
+composing it into `top.py` left the port alone.
 
 It then checks all four master streams — `rx0_m_axis_*` (released packets),
 `tx1_m_axis_*` (the replay leg), `rx1_m_axis_*` (PDW records) and
