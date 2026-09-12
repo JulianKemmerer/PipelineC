@@ -72,12 +72,6 @@ Output directory: ./pipelinec_output_blink.py_304105
 Output VHDL files: ./pipelinec_output_blink.py_304105/vhdl_files.txt
 ```
 
-Alongside the VHDL, a build of a design that moves `@struct` values over a byte stream
-also writes `host/pypeline_host_types.py` into that output directory: one standalone,
-standard-library-only Python module that packs and unpacks the design's wire formats, for
-a host program on a machine with no Pypeline checkout. See
-[Host-Side Generated Types](pypeline_guide.md#host-side-generated-types).
-
 The generated top-level VHDL entity (`top.vhd`) has one input clock (named from the
 `@MAIN(25.0)` frequency) and one output port (from `blink`'s `-> uint1_t` return value):
 ```vhdl
@@ -209,14 +203,13 @@ assign output_wire = the_wire;
 Pypeline functions are a single clock domain, rising edge assumed. Function arguments are
 input ports, the return value is the output port (both type-annotated). Function bodies are
 combinatorial logic dataflow graphs; a `Reg[T]`-annotated local variable is the only thing
-that turns a function into a stateful process like the VHDL/Verilog above.
+that turns a function into a stateful process like the VHDL/Verilog above. 
+If a function is marked with [`@MAIN`](pypeline_guide.md#top-level-entry-points)
+then its inputs and return value are used for top level input and output ports.
 
 [Is this HLS?](https://github.com/JulianKemmerer/PipelineC/wiki/Is-this-HLS%3F)
-
-Functions = combinatorial logic to be pipelined (a single Python function describes an
-N>=0 clock pipeline). Pure functions can be pipelined to 'arbitrary' N>0 clock cycle
-pipelines. If a function is marked with [`@MAIN`](pypeline_guide.md#top-level-entry-points)
-then its inputs and return value are used for top level input and output ports.
+Combinatorial logic can be automatically pipelined.
+Stateless/feedback free pure functions can be pipelined to 'arbitrary depth' N>0 clock cycle pipelines.
 
 [`Reg[T]`](pypeline_guide.md#registers-regt) local variables = registers. Use a
 register and N=0. The function now describes a "stateful function" of combinatorial
