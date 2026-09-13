@@ -15,7 +15,7 @@ hand-written entry in one of eight category modules, run together via `run_all.p
 
 | Category | What it checks | Verdict |
 |---|---|---|
-| `native_sim` | Python golden-model checks (`sim_call`) and `pypeline_sim.py` multi-MAIN runs -- no elaboration | exit code, plus in-process `assert`s |
+| `native_sim` | Python golden-model checks (`sim_call`) and `pypeline_sim.py` multi-MAIN runs; fixed user pipelines selectively prepare alignment | exit code, plus in-process `assert`s |
 | `native_vs_vhdl_sim` | Runs a design's native (Python) sim and its real cocotb+GHDL sim via `pypeline_sim_debug.py`, and diffs their `sim_print(..., debug=True)` output cycle by cycle | exit code (MATCH/MISMATCH) |
 | `elab` | `pypelinec --no_synth` -- does it elaborate | exit code only |
 | `elab_introspect` | Calls `PY_TO_LOGIC.PARSE_FILE` in-process and asserts on `parser_state` / `FuncLogicLookupTable` / a raised `ElaborationError`'s type and message | in-process `assert`s |
@@ -60,6 +60,26 @@ remember to update. It only fires under `python3 inst/X.py` (`__name__ ==
 "__main__"`); `pypelinec` imports the same file as module `"pypeline_design"`
 (`PY_TO_LOGIC.PARSE_FILE`), so `elab`/`synth`-category registrations of a file never
 run its `test_*` functions -- those categories check elaboration/build only.
+
+## Fixed user pipeline coverage
+
+`pipeline_latency_test.py` covers `@pipeline_latency` validation and stacking,
+factory specialization, fixed-latency metadata across repeated elaboration, serial
+and parallel composition, bypass alignment, conditional enables, dynamic array
+reads/writes, initialization, reset and convergence. Its subprocess gate tests
+forbid importing the pipeline model in untagged `--comb` CLI builds and also
+forbid the elaborator in direct native runs, covering arithmetic, registers,
+AUTOPIPELINE and AUTOFSM. Unrelated roots, zero-cycle declarations and
+direct calls to tagged bodies also forbid model preparation.
+Alternating live roots check that shared helper models retain separate state.
+Explicit placement tests reject cuts both at and inside a fixed boundary.
+
+`pipeline_latency_sim_test.py` runs in both native-versus-VHDL categories, with
+and without `--comb`. It checks independently calculated data, sequence order and
+constant observed latency for unequal fixed pipelines in both a naturally
+pipelined MAIN and an AUTOPIPELINE region. Valid-gated debug probes compare exact
+clock timing against GHDL, including draining the pipeline, register initialization,
+synchronous reset and clock enables within a stateful caller.
 
 ## Generated-name regression coverage
 

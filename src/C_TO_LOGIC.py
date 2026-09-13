@@ -477,6 +477,9 @@ class Logic:
         self.sub_inst_to_autofsm_key = {}
         self.ast_meta = None
         self.pypeline_emission_names = None
+        # Python clock-by-clock bodies consume these pipeline outputs in the
+        # current cycle; only surrounding sliceable callers align transactions.
+        self.submodule_latencies_are_self_timed = set()
         self.submodule_instance_to_source_origins = {}
         # Is this logic a c built in C function?
         self.is_c_built_in = False
@@ -609,6 +612,9 @@ class Logic:
         rv.sub_inst_to_autofsm_key = dict(self.sub_inst_to_autofsm_key)
         rv.ast_meta = self.ast_meta
         rv.pypeline_emission_names = self.pypeline_emission_names
+        rv.submodule_latencies_are_self_timed = set(
+            getattr(self, "submodule_latencies_are_self_timed", ())
+        )
         rv.submodule_instance_to_source_origins = {
             k: set(v) for k, v in self.submodule_instance_to_source_origins.items()
         }

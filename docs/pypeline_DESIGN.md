@@ -1027,6 +1027,21 @@ code is needed. See
 for how `PY_TO_LOGIC.FuncElaborator._elab_ann_assign`/`_tag_multi_cycle_reg` consume the
 role and populate `Logic.mcp_tuples` — shared, unmodified, with the C frontend.
 
+### Fixed User Pipelines
+
+`@pipeline_latency(cycles)` is the Python equivalent of `#pragma FUNC_LATENCY`.
+It declares an existing immutable user pipeline and implies `@hw_func`, stacking
+with `@MAIN` or `@hw_func` in either order. `_sim_type_wrap` preserves the original
+source and factory identity; the returned callable carries `_pipeline_latency`.
+
+`cycles` must be a nonnegative integer, excluding booleans. Invalid types raise
+`TypeError`; negative or conflicting repeated declarations raise `ValueError`.
+Repeating the same declaration is idempotent. The compiler trusts the declared
+latency and does not create missing registers or infer latency from register count.
+See the [user example](pypeline_guide.md#fixed-user-pipelines) and
+[simulation design](pypeline_sim_DESIGN.md#fixed-user-pipelines) for selective
+native alignment and its compatibility gate.
+
 ### `wires(func)` — Just-Wires Synthesis Hint
 
 Python equivalent of PipelineC's `#pragma FUNC_WIRES <func_name>`. Tags a function
@@ -1793,6 +1808,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `autopipeline(call_result, depth=-1)` | Wraps a single direct call; identity in sim; forces pipelining through that submodule during elaboration (equivalent to `#pragma AUTOPIPELINE`) |
 | `MULTI_CYCLE` / `_MultiCycleTag` / `_MultiCycleRole` | `MULTI_CYCLE[ncycles]` tag; `.start`/`.end` attach to `Reg[T, tag]` declarations to relax setup timing between them (equivalent to `#pragma MULTI_CYCLE`) |
 | `wires` | Marks a function as pure rewiring/bit-casting with no real delay; implies `@hw_func`; stacks with `@MAIN` in either order (equivalent to `#pragma FUNC_WIRES`) |
+| `pipeline_latency(cycles)` | Declares an existing fixed user pipeline; implies `@hw_func`; callers align around its latency (equivalent to `#pragma FUNC_LATENCY`) |
 | `Reg` / `_RegType` | Register descriptor; `Reg[T]` declares a stateful register; optional init value (`Reg[T] = val`); optional `Reg[T, tag]` multi-cycle role |
 | `Feedback` / `_FeedbackType` | Feedback wire descriptor; `Feedback[T]` declares a combinatorial feedback wire (no flip-flop) |
 | `Wire` / `_WireType` | Global wire descriptor; `Wire[T]` at module level declares a shared combinatorial wire (one writer) |

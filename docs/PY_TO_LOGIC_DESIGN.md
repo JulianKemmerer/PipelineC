@@ -80,6 +80,7 @@ Python design files into PypelineC's internal `Logic()` graph representation. Fo
 - [`AUTOFSM(func)` — Resource-Shared State Machines](#autofsmfunc--resource-shared-state-machines)
 - [`MULTI_CYCLE[ncycles]` / `Reg[T, tag]` — Multi-Cycle Path Constraint](#multi_cyclencycles--regt-tag--multi-cycle-path-constraint)
 - [`@wires` — Just-Wires Synthesis Hint](#wires--just-wires-synthesis-hint)
+- [Fixed User Pipelines](#fixed-user-pipelines)
 
 **Syntax Extensions**
 - [Compound Initializer Syntax](#compound-initializer-syntax)
@@ -4835,6 +4836,36 @@ a synthesis-only test run by hand (see `run_all.sh`), not part of the proto-simu
 suite.
 
 ---
+
+## Fixed User Pipelines
+
+`@pipeline_latency(N)` populates the shared
+`C_TO_LOGIC.ParserState.func_fixed_latency` table. `_register_pipeline_latency`
+reads the live callable's `_pipeline_latency` metadata and keys it by the final
+hardware name. Top-level registration occurs during the stub pass; closure/live
+registration occurs before completed-entity reuse, so neither declaration order
+nor deduplication can discard timing metadata. Imported aliases and factory
+specializations use the same canonical naming rules as ordinary calls.
+
+The backend reports N total cycles and zero compiler-added cycles for the tagged
+function. Its callers can acquire alignment and additional pipeline stages.
+`_validate_pipeline_latencies` rejects AUTOPIPELINE requests inside the tagged
+implementation, where they would violate the immutable boundary. Explicit
+AUTOPIPELINE depths on the tagged function itself must agree with N.
+
+Within a stateful or fixed Python body, calls into a fixed-pipeline hierarchy
+populate `Logic.submodule_latencies_are_self_timed`. Their physical outputs are
+consumed in the current clock's stage zero, as with a stateful AUTOPIPELINE caller.
+Pure callers still account for the complete child latency and align transactions.
+This Python-only annotation leaves the C frontend's scheduling behavior unchanged.
+
+`_new_parser_state` initializes the Python side tables shared by file parsing and
+`ELABORATE_LIVE_ROOTS`. The latter elaborates existing callable roots for selective
+native alignment without importing a design again or requiring MAIN decorators.
+Global discovery records `pypeline_global_wire_names`, mapping backend names to
+native module-qualified wire keys. The simulation architecture and activation
+rules are documented in
+[pypeline_sim_DESIGN.md](pypeline_sim_DESIGN.md#fixed-user-pipelines).
 
 ## `@wires` — Just-Wires Synthesis Hint
 

@@ -814,7 +814,9 @@ class TimingParams:
     ):
         # Autopipelined submodules report themselves as zero latency like regular comb logic funcs
         sub_inst = C_TO_LOGIC.LEAF_NAME(submodule_inst_name)
-        if sub_inst in self.logic.sub_inst_to_autopipeline_depth:
+        if sub_inst in self.logic.sub_inst_to_autopipeline_depth or sub_inst in getattr(
+            self.logic, "submodule_latencies_are_self_timed", ()
+        ):
             return 0
         submodule_timing_params = TimingParamsLookupTable[submodule_inst_name]
         return submodule_timing_params.GET_TOTAL_LATENCY(
@@ -2296,6 +2298,22 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     return rv
 
 
+def CHECK_FIXED_LATENCY_BOUNDARY(inst_name, parser_state):
+    """Reject added registers anywhere inside a user fixed-latency boundary."""
+    fixed = getattr(parser_state, "func_fixed_latency", {})
+    if not fixed:
+        return
+    current = inst_name
+    while current:
+        logic = parser_state.LogicInstLookupTable.get(current)
+        if logic is not None and logic.func_name in fixed:
+            raise ValueError(
+                f"Cannot add pipeline registers to {inst_name}: "
+                f"{current} has fixed latency {fixed[logic.func_name]}"
+            )
+        current, _, _ = current.rpartition(C_TO_LOGIC.SUBMODULE_MARKER)
+
+
 # Returns updated TimingParamsLookupTable
 # Index of bad slice if sliced through globals, scoo # Passing Afternoon - Iron & Wine
 # THIS MUST BE CALLED IN LOOP OF INCREASING SLICES FROM LEFT=>RIGHT
@@ -2311,6 +2329,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
 ):
     print_debug = False
 
+    CHECK_FIXED_LATENCY_BOUNDARY(inst_name, parser_state)
     # Get timing params for this logic
     timing_params = TimingParamsLookupTable[inst_name]
     if timing_params.params_are_fixed:
@@ -4405,6 +4424,15 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
     elif logic.vhdl_module_text is not None:
         return False  # No idea what user has in there
     elif logic.is_vhdl_func or logic.is_vhdl_expr:
+        return True
+    elif (
+        logic.func_name in getattr(parser_state, "func_fixed_latency", {})
+        and not logic.is_c_built_in
+        and not logic.submodule_instances
+    ):
+        # A user pipeline consisting only of wire assignments and registers
+        # has no combinational operators to time. In particular PYRTL's
+        # zero-FF-overhead timing model cannot divide by this zero path delay.
         return True
     elif logic.is_c_built_in and C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(logic.func_name):
         # printf/sim_print, sim_assert, and sim_finish submodules are all void,

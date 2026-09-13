@@ -48,14 +48,15 @@ For getting started information see the [README](README.md).
 
 **Part IV — Escape hatches**
 
-28. [Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
-29. [Just-Wires Synthesis Hint: `@wires`](#just-wires-synthesis-hint-wires)
+32. [Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
+33. [Fixed User Pipelines: `@pipeline_latency`](#fixed-user-pipelines)
+34. [Just-Wires Synthesis Hint: `@wires`](#just-wires-synthesis-hint-wires)
 
 **Part V — Reference**
 
-30. [Simulation Reference](#simulation-reference)
-31. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
-32. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
+35. [Simulation Reference](#simulation-reference)
+36. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
+37. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
 
 ---
 
@@ -3989,9 +3990,10 @@ design (also driven through real GHDL — see
 
 ### Part IV — Escape hatches
 
-When Pypeline's normal abstraction isn't enough, these two hatches let you drop to a
-lower level without leaving the language: `vhdl()` for literal VHDL text, and `@wires`
-for telling the synthesiser a function is pure bit-rewiring with no real logic delay.
+When Pypeline's normal abstraction isn't enough, these hatches let you drop to a
+lower level without leaving the language: `vhdl()` for literal VHDL text,
+`@pipeline_latency` for an existing user pipeline, and `@wires` for telling the
+synthesiser a function is pure bit-rewiring with no real logic delay.
 (`kept_data_bus_t`/`ndarray_fragment_t` from Part III are not escape hatches — they're
 ordinary structured types.)
 
@@ -4061,6 +4063,56 @@ synthesizable `@hw_func` written in pypeline, or an arbitrary Python class with
 `__init__`-held state and a `__call__` matching the function's signature.
 
 ---
+
+## Fixed User Pipelines
+
+Use `@pipeline_latency(N)` when you have already implemented a function with an
+unchangeable latency of N clocks. It is equivalent to PipelineC's
+`#pragma FUNC_LATENCY function N` and implies `@hw_func`:
+
+```python
+from pypeline import Reg, hw_func, pipeline_latency, sim_call, sim_reset, uint16_t
+
+@pipeline_latency(1)
+def delay_one(x: uint16_t) -> uint16_t:
+    saved: Reg[uint16_t]
+    result: uint16_t = saved
+    saved = x
+    return result
+
+@hw_func
+def aligned_add(x: uint16_t) -> uint16_t:
+    return delay_one(x) + x
+
+sim_reset()
+assert sim_call(aligned_add, 3) == 0
+assert sim_call(aligned_add, 8) == 6
+assert sim_call(aligned_add, 17) == 16
+```
+
+The register in `delay_one` supplies the clock of latency. The compiler treats the
+function as a fixed building block and aligns the caller's other operands with
+it. Larger callers may receive additional automatic pipeline stages; the tagged
+function's implementation stays fixed. Use the declaration for a pipeline whose
+data and valid signals obey the stated latency under the normal clock-enable
+semantics. It does not describe a variable-latency transaction or add handshaking.
+
+N must be a nonnegative integer; zero is supported. The declaration is trusted:
+it does not insert registers or check that the body implements N cycles.
+It works on factory-produced functions and stacks with `@MAIN` in either order.
+An AUTOPIPELINE request inside the tagged implementation is an error; an explicit
+AUTOPIPELINE depth on the tagged function itself must agree with N.
+
+AUTOPIPELINE asks the tool to implement pipelining. `pipeline_latency` describes
+pipelining supplied by the user. MULTI_CYCLE constrains setup timing between
+registers and does not declare a function's pipeline latency.
+
+Standalone native simulation also aligns callers around fixed user pipelines,
+using selective elaboration without synthesis. Designs without this decorator
+keep the existing `--comb` path; ordinary registers, AUTOPIPELINE and AUTOFSM alone
+do not activate the new simulation model. See the
+[simulation design](pypeline_sim_DESIGN.md#fixed-user-pipelines) for activation,
+state handling and warm-up details.
 
 ## Just-Wires Synthesis Hint: `@wires`
 

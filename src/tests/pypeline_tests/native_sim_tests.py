@@ -43,6 +43,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "dwidth_converter_test.py",
     "axis_byte_stream_test.py",
     "func_wires_test.py",
+    "pipeline_latency_test.py",
     "if_test.py",
     "enum_test.py",
     "char_array_test.py",

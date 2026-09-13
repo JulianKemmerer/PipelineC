@@ -1568,6 +1568,12 @@ class AUTOPIPELINE:
             )
         if not isinstance(depth, int):
             raise TypeError(f"AUTOPIPELINE depth must be an int, got {depth!r}")
+        fixed = getattr(func, "_pipeline_latency", None)
+        if fixed is not None and depth not in (-1, fixed):
+            raise ValueError(
+                f"AUTOPIPELINE depth {depth} conflicts with "
+                f"{func.__qualname__}'s pipeline_latency({fixed})"
+            )
         self.func = func
         self.depth = depth
         self._canonical_key = None
@@ -1597,7 +1603,13 @@ class AUTOPIPELINE:
         return self._canonical_key
 
     def __call__(self, *args, **kwargs):
-        if _sim_active and self._latency > 0:
+        pipeline_model = False
+        if _sim_active and _pipeline_latency_declared:
+            model = getattr(self.func, "_sim_model_cell", [None])[0]
+            pipeline_model = model is not None and getattr(
+                model[0], "_pipeline_dispatch", False
+            )
+        if _sim_active and (self._latency > 0 or pipeline_model):
             # Native sim with a pinned latency (pipelinec non---comb --sim
             # builds install the harvested stage counts before the sim's
             # design import): emulate the N-stage pipeline with a per-call-site
@@ -1613,6 +1625,11 @@ class AUTOPIPELINE:
                 )
             )
             try:
+                model = getattr(self.func, "_sim_model_cell", [None])[0]
+                if getattr(self.func, "_pipeline_latency", None) is not None or (
+                    model is not None and getattr(model[0], "_pipeline_dispatch", False)
+                ):
+                    return self.func(*args, **kwargs)
                 return self._sim_delay_line(args, kwargs)
             finally:
                 _sim_inst_stack.pop()
@@ -6615,6 +6632,104 @@ def wires(func):
     return wrapped
 
 
+# No compiler/model import on the ordinary simulation path. The decorator opens
+# this gate; root reachability is checked separately by the lazy preparation code.
+_pipeline_latency_declared = False
+_pipeline_latency_preparing = False
+
+
+def _pipeline_latency_reachable(func):
+    """Inspect live callable dependencies without importing the compiler.
+
+    Only names referenced by the body are followed, so an unused decorated
+    helper in the same module does not change an unrelated root's execution.
+    Closures, module attributes and callable containers cover factory dispatch.
+    """
+    seen = set()
+
+    def visit(value):
+        if id(value) in seen:
+            return False
+        seen.add(id(value))
+        if getattr(value, "_pipeline_latency", 0) > 0:
+            return True
+        if isinstance(value, (AUTOPIPELINE, AUTOFSM)):
+            return visit(value.func)
+        if isinstance(value, dict):
+            return any(visit(v) for v in value.values())
+        if isinstance(value, (tuple, list)):
+            return any(visit(v) for v in value)
+        if not _inspect.isfunction(value):
+            return False
+        source = _inspect.unwrap(value)
+        # Runtime helpers have no user hardware dependencies. Do not traverse
+        # sim_call/Reg/type constructors into the runtime's global registries.
+        if source.__module__ == __name__:
+            return False
+        names = source.__code__.co_names
+        for name in names:
+            item = source.__globals__.get(name)
+            if _inspect.ismodule(item):
+                if any(visit(vars(item).get(attr)) for attr in names):
+                    return True
+            elif visit(item):
+                return True
+        for cell in source.__closure__ or ():
+            try:
+                if visit(cell.cell_contents):
+                    return True
+            except ValueError:  # empty closure cell
+                pass
+        return False
+
+    return visit(func)
+
+
+def _prepare_pipeline_latency_sim(func):
+    if isinstance(func, AUTOPIPELINE):
+        func = func.func
+    if (
+        _pipeline_latency_preparing
+        or getattr(func, "_pipeline_latency", None) is not None
+    ):
+        return
+    if not _pipeline_latency_reachable(func):
+        return
+    import pypeline_sim_pipeline
+
+    pypeline_sim_pipeline.prepare([func])
+
+
+def pipeline_latency(cycles):
+    """Declare an existing, immutable user pipeline of ``cycles`` clocks.
+
+    Equivalent to PipelineC's FUNC_LATENCY. The body supplies the registers;
+    this decorator supplies timing metadata, not additional registers. Implies
+    @hw_func and stacks with @MAIN in either order. Callers align their other
+    paths with this pipeline, including in standalone native simulation.
+    """
+    if not isinstance(cycles, int) or isinstance(cycles, bool):
+        raise TypeError("pipeline_latency(cycles): cycles must be an int")
+    if cycles < 0:
+        raise ValueError("pipeline_latency(cycles): cycles must be nonnegative")
+
+    def decorate(func):
+        global _pipeline_latency_declared
+        previous = getattr(func, "_pipeline_latency", cycles)
+        if previous != cycles:
+            raise ValueError(
+                f"Conflicting pipeline_latency declarations for "
+                f"{func.__qualname__}: {previous} and {cycles}"
+            )
+        wrapped = _sim_type_wrap(func)
+        wrapped._pipeline_latency = cycles
+        if cycles:
+            _pipeline_latency_declared = True
+        return wrapped
+
+    return decorate
+
+
 def sim_call(func, *args, **kwargs):
     """Call a pypeline function in simulation mode with scoped operators active.
 
@@ -6651,6 +6766,8 @@ def sim_call(func, *args, **kwargs):
     global _sim_active
     prev_active = _sim_active
     if not prev_active:
+        if _pipeline_latency_declared:
+            _prepare_pipeline_latency_sim(func)
         _sim_input_cache.clear()
         _sim_reg_begin_buffer()
     _sim_active = True

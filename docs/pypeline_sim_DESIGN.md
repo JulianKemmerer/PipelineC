@@ -35,6 +35,7 @@ For the shared pypeline.py type system and `SimVal` foundations, see
 - [`Wire[T]` / `Input[T]` / `Output[T]` Global Wire Simulation](#wiret--inputt--outputt-global-wire-simulation)
 - [`pypeline_sim.py` — Multi-MAIN Clock-Cycle Simulation](#pypeline_simpy--multi-main-clock-cycle-simulation)
 - [Simulation Modes](#simulation-modes)
+- [Fixed User Pipelines](#fixed-user-pipelines)
 
 **Reference**
 - [Limitations](#limitations)
@@ -1662,8 +1663,10 @@ always runs at the default `strict` accuracy.
 
 ### Pipelined native sim (non-`--comb` `pipelinec --sim`)
 
-Plain native sim runs the design's combinational Python at zero pipeline latency (only explicit
-`Reg[T]`/FIFO state advances). A non-`--comb` `pipelinec --sim` run instead does the **full
+Without `@pipeline_latency`, plain native sim runs the design's combinational Python at zero
+pipeline latency (only explicit `Reg[T]`/FIFO state advances). Fixed user pipelines use the
+selective alignment path described under [Fixed User Pipelines](#fixed-user-pipelines).
+A non-`--comb` `pipelinec --sim` run does the **full
 build first** — path-delay measurement, the throughput sweep, and the AUTOPIPELINE
 pin-and-confirm loop (`SYN_DESIGN.md` §6.5) — and then launches native sim with the discovered
 per-instance pipeline latencies **emulated by delay lines wrapped around the unchanged
@@ -1822,9 +1825,102 @@ latency the VHDL was built with:
   `.latency`-derived constant baked into it — and desync this emulation. An extra pass (typically
   pass 3) re-elaborates with the realized numbers and converges.
 
-#### Limitations (read before trusting a pipelined cycle diff)
+## Fixed User Pipelines
 
-The emulation is a **black-box output-delay** model of a feed-forward, initiation-interval-1
+`@pipeline_latency(N)` declares that the function's implementation already supplies
+N cycles. The runtime executes that function's existing register-aware body or its
+attached `sim_model`; it does not add an N-cycle output queue. The declaration is
+trusted, including when the implementation is literal VHDL with a Python model.
+
+The difficult case is a caller such as `delay_one(x) + x`. Hardware aligns the
+bypass with the one-cycle result, so native simulation must add the same alignment:
+after warm-up the result is twice the previous cycle's input. Delaying the entire
+Python result would instead combine samples from different cycles.
+
+### Activation and compatibility
+
+| Design or region | Native execution |
+|---|---|
+| No `@pipeline_latency` declarations | Existing path; no pipeline model import or preparation |
+| Only zero-cycle declarations | Existing path |
+| Unused imported declaration or unrelated root | Existing path |
+| Direct call to a tagged function | Existing register-aware body |
+| Caller needing alignment around a user pipeline | Selective stage model |
+| Compiler-added stages interacting with a user pipeline | Selective model using final placements |
+
+`pypeline.py` keeps a cheap declaration gate. When it is open,
+`_pipeline_latency_reachable` follows referenced live callables, closures, module
+attributes and callable containers; it does not elaborate unrelated roots.
+`_prepare_pipeline_latency_sim` imports `pypeline_sim_pipeline` only for a reachable
+nonzero pipeline in an untagged caller. AUTOPIPELINE and AUTOFSM alone do not enable
+this path. The existing native `--comb` shortcut in `SIM.NATIVE_SIM_SKIPS_BUILD`
+remains intact.
+
+### Preparation and timing sources
+
+`PY_TO_LOGIC.ELABORATE_LIVE_ROOTS` supplies types, globals, canonical function names
+and reachable Logic instances from callables already imported by the simulator.
+It neither reexecutes the source module nor requires a root to be `@MAIN`.
+Standalone `sim_call()` and CLI simulations construct zero-added-clock timing
+parameters: those still include user latency and the caller's alignment registers.
+No synthesis executable is needed for this preparation.
+
+Build-backed native simulation receives a snapshot of the final per-instance
+slices, exact bit boundaries, I/O register flags and delays through `SIM` and
+`run_sim(pipeline_timing=...)`. Preparation binds these placements to fresh native
+callables after the normal design reimport. A function's instances can have
+different surrounding placements, so models use hardware instance paths rather
+than only function names. Prepared models are cached for the current group of
+live roots. Switching standalone roots rebuilds dispatch for the new hierarchy,
+including shared helpers; each root's state remains in the ordinary simulation
+register store and is cleared by `sim_reset()`.
+
+### Stage execution
+
+The selective evaluator consumes `SYN.GET_PIPELINE_MAP` and
+`VHDL.PiplineHDLParams.wire_to_reg_stage_start_end`, the execution order and
+register lifetimes used by VHDL emission. It evaluates constant/global networks,
+wire assignments and submodule calls at their assigned stages, reading earlier
+stages from committed register values. VHDL expression/function input aliases are
+resolved through their drivers at the consuming operation's stage; treating those
+aliases as ordinary early assignments would lose compound-field alignment.
+
+Typed casts apply at graph wire assignments. Operation decoding and type
+reconstruction reuse AUTOFSM helpers; dynamic reference operations execute their
+existing elaborated mux/assembly graphs. Pure arithmetic leaves use output queues
+for their compiler-added latency. Tagged bodies execute their own state instead.
+The evaluator accounts for caller I/O registers and translates hardware global
+wire names back to the simulator's module-qualified wire keys.
+
+All state changes use `_sim_reg_write` and the existing per-cycle buffer. Repeated
+convergence evaluations read the same cycle-start state; only the final pending
+writes commit. A disabled submodule still computes combinational outputs but its
+register writes are discarded. Values crossing register boundaries are copied to
+prevent aliasing with mutable compound inputs or outputs.
+
+Only affected sliceable regions receive dispatch through the existing simulation
+model cell. Other regions retain their existing execution. MAIN write-delay and
+AUTOPIPELINE output-delay emulation are bypassed where this evaluator already
+supplies the timing. Inside a tagged boundary, the original implementation remains
+self-timed, including when one of its helpers also has a model installed elsewhere.
+Stateful and fixed Python bodies consume a child pipeline's physical output in
+the current clock, matching their stage-zero VHDL implementation. Alignment is
+added within their sliceable helper regions.
+
+Explicit register initializers remain observable. Compiler-added registers use
+native typed zeros during warm-up, whereas GHDL may expose undefined values;
+valid-gate comparisons until the pipeline contains real samples.
+
+`pipeline_latency_test.py` covers the import/preparation gate, standalone alignment,
+factories, alternating roots, conditional enables, dynamic references, reset and
+convergence.
+`pipeline_latency_sim_test.py` checks independent data and sequence expectations
+and compares native/GHDL cycle traces with and without added pipeline stages,
+including register initialization, synchronous reset and conditional clock enables.
+
+### Limitations of the existing output-delay model
+
+The existing MAIN/AUTOPIPELINE emulation uses a **black-box output-delay** model of a feed-forward, initiation-interval-1
 pipeline. It is exact within that model, but the following are genuine boundaries. Two of them
 are **detected and turned into hard errors** (loud `sys.exit`/`RuntimeError` — the design is
 refused rather than silently mis-simulated); the rest are constraints on how you write probes:

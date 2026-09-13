@@ -74,6 +74,7 @@ def run_sim(
     main_latencies=None,
     autopipeline_latencies=None,
     autofsm_schedules=None,
+    pipeline_timing=None,
 ) -> None:
     """Run the native simulation.
 
@@ -86,8 +87,10 @@ def run_sim(
     per-call-site delay lines (AUTOPIPELINE._sim_delay_line), AUTOFSM call
     sites via a register-level model of the generated FSM (AUTOFSM._sim_fsm),
     and naturally-pipelined pure MAINs via write-side delay
-    (pypeline._sim_pipelined_main_info). Plain native runs leave them all None:
-    zero latency everywhere, as always.
+    (pypeline._sim_pipelined_main_info). pipeline_timing carries final placements
+    for selective execution around @pipeline_latency boundaries. Plain native
+    runs leave these parameters None: explicit user registers still advance,
+    and only callers needing fixed-pipeline alignment prepare a stage model.
     """
     # Apply sim mode before importing the design: @hw_func decorators read these
     # flags at decoration time, so they must be set before _import_design runs.
@@ -130,6 +133,19 @@ def run_sim(
         print("No @MAIN functions found in design — nothing to simulate.")
         return
 
+    pipeline_models = set()
+    if pypeline._pipeline_latency_declared:
+        candidates = [
+            fn
+            for fn in mains
+            if getattr(fn, "_pipeline_latency", None) is None
+            and pypeline._pipeline_latency_reachable(fn)
+        ]
+        if candidates:
+            import pypeline_sim_pipeline
+
+            pipeline_models = pypeline_sim_pipeline.prepare(candidates, pipeline_timing)
+
     # Wire up write-side latency emulation for naturally-pipelined pure MAINs.
     pypeline._sim_pipelined_main_info.clear()
     if main_latencies:
@@ -157,6 +173,10 @@ def run_sim(
                     f"(known: {sorted(hw_name_to_fn)}) -- cannot emulate its "
                     f"latency."
                 )
+            if fn in pipeline_models or getattr(fn, "_pipeline_latency", None) is not None:
+                # The stage model (or the tagged body's explicit registers)
+                # already supplies its complete timing.
+                continue
             if getattr(fn, "_pypeline_has_state", False):
                 # A stateful (Reg/Feedback) MAIN is never sliced by the sweep;
                 # its explicit registers already provide all of its timing in

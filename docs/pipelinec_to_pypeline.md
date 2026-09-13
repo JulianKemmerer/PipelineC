@@ -734,9 +734,19 @@ Most PipelineC `#pragma` annotations have a direct pypeline equivalent.
 | `DECL_INPUT(uint1_t, clk)` + `CLK_MHZ(clk, 100.0)` | `clk: Input[uint1_t] = make_clock(100.0)` | [§5](pypeline_guide.md#top-level-entry-points) |
 | `#pragma FEEDBACK x` | `x: Feedback[T]` annotation | [§9](pypeline_guide.md#feedback-wires-feedbackt) |
 | `#pragma FUNC_WIRES func` | `@wires` decorator on the function | [§18](pypeline_guide.md#just-wires-synthesis-hint-wires) |
+| `#pragma FUNC_LATENCY func N` | `@pipeline_latency(N)` on the function definition | [Fixed user pipelines](pypeline_guide.md#fixed-user-pipelines) |
 | `#pragma AUTOPIPELINE` on a call | `result = autopipeline(func(args))` | [§15](pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm) |
 | `#pragma INST_ARRAY` | factory function + Python list/loop | [§12](pypeline_guide.md#parametric-hardware-with-factory-functions) |
 | `#pragma MULTI_CYCLE N` | `MC = MULTI_CYCLE[N]` | [§16](pypeline_guide.md#multi-cycle-paths-multi_cycle) |
+
+### FUNC_LATENCY
+
+Port `#pragma FUNC_LATENCY func N` to `@pipeline_latency(N)` on `func`.
+Port the function's explicit registers as `Reg[T]`; the decorator supplies timing
+metadata and does not implement the pipeline. Callers align other paths with the
+declared N cycles, including in standalone native simulation. See the
+[complete example](pypeline_guide.md#fixed-user-pipelines) and
+[selective simulation behavior](pypeline_sim_DESIGN.md#fixed-user-pipelines).
 
 ### FUNC_WIRES
 

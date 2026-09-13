@@ -1462,6 +1462,10 @@ def _build_binary_mux_tree(
     # ── bit extraction: uint<N>_<bit>_<bit>(x) -> uint1_t ──
     sel_prefix = select_type.replace("_t", "")
     bit_func = f"{sel_prefix}_{bit_pos}_{bit_pos}"
+    if elaborator is not None:
+        _record_bit_manip_render(
+            elaborator.parser_state, bit_func, "__slice__", (bit_pos, bit_pos)
+        )
     bit_inst = f"{bit_func}[var_ref_internal_{counter[0]}]"
     counter[0] += 1
     bit_wire = _port_wire(bit_inst, C_TO_LOGIC.RETURN_WIRE_NAME)
@@ -5554,6 +5558,7 @@ class FuncElaborator:
         )
 
         existing = self.parser_state.FuncLogicLookupTable.get(key)
+        _register_pipeline_latency(self.parser_state, key, func)
         # Only reuse a genuinely completed elaboration, not a stub left by
         # PARSE_FILE Step 6 (or by this same method, a few lines below) for a
         # forward reference that hasn't been elaborated yet. Logic.ast_meta is
@@ -5634,7 +5639,15 @@ class FuncElaborator:
         saved = _pypeline._push_scoped_registrations(func)
         try:
             elab = FuncElaborator(
-                func_def, self.parser_state, true_src_file, merged_globals
+                func_def,
+                self.parser_state,
+                true_src_file,
+                merged_globals,
+                module_prefix=(
+                    self.parser_state.file_to_module_prefix.get(true_src_file)
+                    if getattr(self.parser_state, "pypeline_live_sim", False)
+                    else None
+                ),
             )
             logic = elab.elaborate()
         finally:
@@ -6495,6 +6508,9 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
         var_info.name = reg_name
         var_info.type_name = _inner_ctype_to_str(ann_val.inner_ctype, parser_state)
         parser_state.global_vars[reg_name] = var_info
+        parser_state.pypeline_global_wire_names[reg_name] = (
+            f"{module_globals['__name__']}.{node.target.id}"
+        )
         if kind == "Input":
             parser_state.input_wires.add(reg_name)
         elif kind == "Output":
@@ -6621,6 +6637,18 @@ def _is_hardware_func(func_def, eval_ns=None):
     return not saw_eval_success
 
 
+def _register_pipeline_latency(parser_state, name, func):
+    cycles = getattr(func, "_pipeline_latency", None)
+    if cycles is None:
+        return
+    previous = parser_state.func_fixed_latency.setdefault(name, cycles)
+    if previous != cycles:
+        raise ElaborationError(
+            f"Conflicting pipeline_latency declarations for {name}: "
+            f"{previous} and {cycles}"
+        )
+
+
 def _build_inst_lookup(parser_state):
     for main_name in parser_state.main_mhz:
         main_logic = parser_state.FuncLogicLookupTable[main_name]
@@ -6629,6 +6657,71 @@ def _build_inst_lookup(parser_state):
             main_name
         )
         _walk_instances(main_name, main_logic, parser_state)
+
+
+def _validate_pipeline_latencies(parser_state):
+    if not parser_state.func_fixed_latency:
+        return
+    for logic in parser_state.FuncLogicLookupTable.values():
+        for inst, depth in logic.sub_inst_to_autopipeline_depth.items():
+            target = logic.submodule_instances[inst]
+            fixed = parser_state.func_fixed_latency.get(target)
+            if fixed is not None and depth not in (-1, fixed):
+                raise ElaborationError(
+                    f"AUTOPIPELINE depth {depth} conflicts with "
+                    f"{target}'s pipeline_latency({fixed})"
+                )
+    for name in parser_state.func_fixed_latency:
+        visited = set()
+
+        def visit(entity):
+            if entity in visited:
+                return
+            visited.add(entity)
+            logic = parser_state.FuncLogicLookupTable.get(entity)
+            if logic is None:
+                # Builtins under unused functions are materialized only when
+                # an instance hierarchy actually reaches them.
+                return
+            if logic.sub_inst_to_autopipeline_depth:
+                raise ElaborationError(
+                    f"pipeline_latency on '{name}' fixes its entire implementation; "
+                    f"AUTOPIPELINE inside '{entity}' would change that implementation"
+                )
+            for child in logic.submodule_instances.values():
+                visit(child)
+
+        visit(name)
+
+    # Stateful/fixed Python bodies describe the current clock, just like a
+    # stateful caller of AUTOPIPELINE. Consuming a child's physical output must
+    # stay in stage zero of that body; putting consumers in later stages would
+    # omit them from VHDL's zero-added-stage implementation entirely. Pure
+    # callers still account for the child's full latency and align their paths.
+    contains_fixed = {}
+
+    def has_fixed(entity):
+        if entity not in contains_fixed:
+            contains_fixed[entity] = parser_state.func_fixed_latency.get(entity, 0) > 0
+            if entity not in parser_state.func_fixed_latency:
+                logic = parser_state.FuncLogicLookupTable.get(entity)
+                contains_fixed[entity] = (
+                    any(
+                        has_fixed(child) for child in logic.submodule_instances.values()
+                    )
+                    if logic is not None
+                    else False
+                )
+        return contains_fixed[entity]
+
+    if any(parser_state.func_fixed_latency.values()):
+        for logic in parser_state.FuncLogicLookupTable.values():
+            if not logic.CAN_HAVE_ADDED_LATENCY(parser_state):
+                logic.submodule_latencies_are_self_timed = {
+                    sub
+                    for sub, entity in logic.submodule_instances.items()
+                    if has_fixed(entity)
+                }
 
 
 def _build_func_call_graph(parser_state):
@@ -6926,6 +7019,113 @@ def _process_imports(
 _modules_before_first_parse = None
 
 
+def _new_parser_state(module_globals):
+    parser_state = C_TO_LOGIC.ParserState()
+    parser_state.module_alias_to_actual = {}  # local alias -> actual module name
+    # The true, unpolluted top-level design-file globals -- distinct from any
+    # FuncElaborator's own (possibly closure/annotation-recovery-augmented)
+    # module_globals. See _elaborate_live_func for why the distinction matters.
+    parser_state.top_level_module_globals = module_globals
+    # AUTOFSM side tables, populated as a side effect of ordinary elaboration and
+    # consumed only by src/AUTOFSM.py's scheduler/code generator (see
+    # docs/AUTOFSM_DESIGN.md). Pypeline-only, set dynamically here the same way
+    # module_alias_to_actual / file_to_module_prefix are.
+    #   pypeline_entity_callables: entity func_name -> live Python callable that
+    #     produced it, so a shared functional unit can be emitted as a direct call.
+    #   pypeline_const_wire_values: func_name -> {const wire name -> Python value},
+    #     so a constant operand can be re-emitted as a literal.
+    #   pypeline_builtin_op_info: built-in operator entity -> (op name, [operand
+    #     C types]). A built-in operator has no Python source, so AUTOFSM cannot
+    #     take it apart -- but the soft-operator library CAN supply an equivalent
+    #     that it can, which is what lets the area search descend past the
+    #     operator level. Recorded rather than parsed back out of the entity
+    #     name: the name is a formatting decision, this is the actual semantics.
+    #   pypeline_bit_manip_info: bit-manip entity -> (builtin name, trailing
+    #     constant args), so AUTOFSM can re-emit e.g. bit_assign(base, x, 5).
+    #     Without it a soft adder's body -- which is mostly bit_assign -- could
+    #     not be regenerated, and descending into one would silently fail.
+    #   pypeline_canonical_name_owner: canonical entity name -> (module,
+    #     qualname, src_file, line) of the closure that first produced it.
+    #     Removing hashes from canonical names removes entropy, so
+    #     _elaborate_live_func checks every new name against this table --
+    #     two genuinely different closures landing on the same name is a
+    #     silent-miscompile-shaped bug (a false dedup), not just a cosmetic
+    #     collision, and must raise rather than silently reuse the wrong
+    #     Logic().
+    parser_state.pypeline_entity_callables = {}
+    parser_state.pypeline_const_wire_values = {}
+    parser_state.pypeline_builtin_op_info = {}
+    parser_state.pypeline_bit_manip_info = {}
+    parser_state.pypeline_canonical_name_owner = {}
+    parser_state.pypeline_specialization_identities = {}
+    # canonical (possibly collapsed) func name -> its full, uncollapsed form;
+    # only populated when collapsing actually happened. Same idea as
+    # pypeline_name_full but for @struct/@enum type names, populated by
+    # _register_struct_recursive/_register_enum from _pypeline_ctype_canonical.
+    parser_state.pypeline_name_full = {}
+    parser_state.pypeline_type_canonical = {}
+    parser_state.pypeline_name_descriptions = {}
+    parser_state.pypeline_type_identities = {}
+    parser_state.pypeline_global_wire_names = {}
+
+    return parser_state
+
+
+def ELABORATE_LIVE_ROOTS(roots):
+    """Elaborate existing callables for native pipeline alignment, without import
+    side effects, MAIN registration, synthesis, or emitted files.
+
+    Roots may be closures and need not be MAINs. Only reachable functions are
+    elaborated; module discovery supplies types/global declarations and naming.
+    """
+    import types
+
+    roots = list(roots)
+    first = inspect.unwrap(roots[0])
+    parser_state = _new_parser_state(first.__globals__)
+    parser_state.pypeline_live_sim = True
+    files = []
+    seen_files = set()
+    for root in roots:
+        source = inspect.unwrap(root)
+        filename = os.path.abspath(inspect.getsourcefile(source))
+        if filename in seen_files:
+            continue
+        seen_files.add(filename)
+        namespace = source.__globals__
+        module = types.SimpleNamespace(**namespace)
+        with open(filename) as source_file:
+            tree = ast.parse(source_file.read(), filename)
+        _discover_structs_from_module(module, parser_state)
+        _discover_enums_from_module(module, parser_state)
+        _discover_global_wires(tree, namespace, parser_state)
+        _process_imports(tree, namespace, parser_state, files, top_file=filename)
+        files.append((filename, tree, namespace, None))
+    parser_state.file_to_module_prefix = {
+        os.path.abspath(fp): prefix for fp, _, _, prefix in files
+    }
+    # Constants, instance lookups and zero-clock timing caches belong to this
+    # graph, not an earlier compilation in the same Python process.
+    import SYN
+
+    C_TO_LOGIC.DEL_ALL_CACHES()
+    SYN.DEL_ALL_CACHES()
+    SYN._GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache.clear()
+    dummy = ast.parse("def sim_root(): pass").body[0]
+    for root in roots:
+        source = inspect.unwrap(root)
+        filename = os.path.abspath(inspect.getsourcefile(source))
+        elab = FuncElaborator(dummy, parser_state, filename, source.__globals__)
+        logic = elab._elaborate_live_func(root.__name__, root)
+        parser_state.main_mhz[logic.func_name] = None
+        parser_state.main_syn_mhz[logic.func_name] = None
+        parser_state.main_clk_group[logic.func_name] = None
+    _build_inst_lookup(parser_state)
+    _build_func_call_graph(parser_state)
+    _validate_pipeline_latencies(parser_state)
+    return parser_state
+
+
 def PARSE_FILE(py_file):
     print("PY_TO_LOGIC parsing:", py_file)
 
@@ -7002,52 +7202,7 @@ def PARSE_FILE(py_file):
     spec.loader.exec_module(module)
 
     module_globals = vars(module)
-    parser_state = C_TO_LOGIC.ParserState()
-    parser_state.module_alias_to_actual = {}  # local alias -> actual module name
-    # The true, unpolluted top-level design-file globals -- distinct from any
-    # FuncElaborator's own (possibly closure/annotation-recovery-augmented)
-    # module_globals. See _elaborate_live_func for why the distinction matters.
-    parser_state.top_level_module_globals = module_globals
-    # AUTOFSM side tables, populated as a side effect of ordinary elaboration and
-    # consumed only by src/AUTOFSM.py's scheduler/code generator (see
-    # docs/AUTOFSM_DESIGN.md). Pypeline-only, set dynamically here the same way
-    # module_alias_to_actual / file_to_module_prefix are.
-    #   pypeline_entity_callables: entity func_name -> live Python callable that
-    #     produced it, so a shared functional unit can be emitted as a direct call.
-    #   pypeline_const_wire_values: func_name -> {const wire name -> Python value},
-    #     so a constant operand can be re-emitted as a literal.
-    #   pypeline_builtin_op_info: built-in operator entity -> (op name, [operand
-    #     C types]). A built-in operator has no Python source, so AUTOFSM cannot
-    #     take it apart -- but the soft-operator library CAN supply an equivalent
-    #     that it can, which is what lets the area search descend past the
-    #     operator level. Recorded rather than parsed back out of the entity
-    #     name: the name is a formatting decision, this is the actual semantics.
-    #   pypeline_bit_manip_info: bit-manip entity -> (builtin name, trailing
-    #     constant args), so AUTOFSM can re-emit e.g. bit_assign(base, x, 5).
-    #     Without it a soft adder's body -- which is mostly bit_assign -- could
-    #     not be regenerated, and descending into one would silently fail.
-    #   pypeline_canonical_name_owner: canonical entity name -> (module,
-    #     qualname, src_file, line) of the closure that first produced it.
-    #     Removing hashes from canonical names removes entropy, so
-    #     _elaborate_live_func checks every new name against this table --
-    #     two genuinely different closures landing on the same name is a
-    #     silent-miscompile-shaped bug (a false dedup), not just a cosmetic
-    #     collision, and must raise rather than silently reuse the wrong
-    #     Logic().
-    parser_state.pypeline_entity_callables = {}
-    parser_state.pypeline_const_wire_values = {}
-    parser_state.pypeline_builtin_op_info = {}
-    parser_state.pypeline_bit_manip_info = {}
-    parser_state.pypeline_canonical_name_owner = {}
-    parser_state.pypeline_specialization_identities = {}
-    # canonical (possibly collapsed) func name -> its full, uncollapsed form;
-    # only populated when collapsing actually happened. Same idea as
-    # pypeline_name_full but for @struct/@enum type names, populated by
-    # _register_struct_recursive/_register_enum from _pypeline_ctype_canonical.
-    parser_state.pypeline_name_full = {}
-    parser_state.pypeline_type_canonical = {}
-    parser_state.pypeline_name_descriptions = {}
-    parser_state.pypeline_type_identities = {}
+    parser_state = _new_parser_state(module_globals)
 
     # ── Apply pypeline pragmas (PART, MAIN_MHZ) from the live module ──
     if pypeline._part_registry is not None:
@@ -7174,6 +7329,7 @@ def PARSE_FILE(py_file):
         _live = _fg.get(node.name)
         if callable(_live):
             parser_state.pypeline_entity_callables.setdefault(hw_name, _live)
+            _register_pipeline_latency(parser_state, hw_name, _live)
 
     # ── Step 7: elaborate all functions ──
     for node, file_path, fglobals, mod_prefix in all_func_defs:
@@ -7195,6 +7351,7 @@ def PARSE_FILE(py_file):
     _build_inst_lookup(parser_state)
 
     # Sanity check have at least 1 MAIN func
+    _validate_pipeline_latencies(parser_state)
     if len(parser_state.main_mhz) == 0:
         raise ElaborationError(f"No functions were decorated as @MAIN?")
 

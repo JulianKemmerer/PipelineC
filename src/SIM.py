@@ -85,6 +85,7 @@ def DO_OPTIONAL_SIM(
             main_latencies = None
             ap_latencies = None
             autofsm_schedules = None
+            pipeline_timing = None
             if parser_state is not None:
                 main_latencies = GET_MAIN_FUNC_LATENCIES(
                     parser_state, multimain_timing_params
@@ -93,6 +94,22 @@ def DO_OPTIONAL_SIM(
                 # uses a pipelined-native-sim construct the emulation can't
                 # represent accurately -- see CHECK_PIPELINED_NATIVE_SIM_SUPPORTED.
                 CHECK_PIPELINED_NATIVE_SIM_SUPPORTED(parser_state, main_latencies)
+                if multimain_timing_params is not None and any(
+                    parser_state.func_fixed_latency.get(logic.func_name, 0)
+                    for logic in parser_state.LogicInstLookupTable.values()
+                ):
+                    # Plain placement data crosses the normal design reimport.
+                    # Only run_sim's reachability gate may import the evaluator.
+                    pipeline_timing = {
+                        name: (
+                            list(tp._slices),
+                            tp._has_input_regs,
+                            tp._has_output_regs,
+                            tp._exact_bit_boundaries,
+                            tp.logic.delay,
+                        )
+                        for name, tp in multimain_timing_params.TimingParamsLookupTable.items()
+                    }
                 if multimain_timing_params is not None:
                     ap_latencies, _divergences = SYN.HARVEST_AUTOPIPELINE_LATENCIES(
                         parser_state, multimain_timing_params.TimingParamsLookupTable
@@ -110,6 +127,7 @@ def DO_OPTIONAL_SIM(
                 main_latencies=main_latencies,
                 autopipeline_latencies=ap_latencies,
                 autofsm_schedules=autofsm_schedules,
+                pipeline_timing=pipeline_timing,
             )
     else:
         print("WARNING: Unknown simulation tool:", SIM_TOOL.__name__)

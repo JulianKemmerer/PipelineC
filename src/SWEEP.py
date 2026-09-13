@@ -2933,6 +2933,7 @@ def APPLY_PIPELINE_PLACEMENTS(
             )
         timing_params = TimingParamsLookupTable[placement.inst_path]
         logic = parser_state.LogicInstLookupTable[placement.inst_path]
+        SYN.CHECK_FIXED_LATENCY_BOUNDARY(placement.inst_path, parser_state)
         if timing_params.params_are_fixed:
             raise ValueError(
                 f"Cannot add pipeline placement to locked instance "

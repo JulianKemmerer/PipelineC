@@ -209,6 +209,31 @@ distributed across decoupled regions account for all 20 stages.
 Entity naming is also unchanged: each distinct (IO regs + leaf slices)
 combination hashes to its own VHDL entity `funcname_<latency>CLK_<hash>`.
 
+### Fixed user pipelines
+
+Pypeline's `@pipeline_latency(N)` and C's `FUNC_LATENCY` populate the same
+`parser_state.func_fixed_latency` table. `TimingParams.CALC_TOTAL_LATENCY` reports
+N for the tagged function; `GET_PIPELINE_LOGIC_ADDED_LATENCY` subtracts that user
+latency when emitting its body, so the user registers are not duplicated.
+`CAN_HAVE_ADDED_LATENCY` rejects further stages on the tagged implementation,
+and the planner treats it as an atomic fixed-latency building block. Caller
+pipeline maps consume its N-cycle output timing and add alignment on other paths.
+
+A tagged leaf consisting only of wire assignments and registers has zero
+combinational delay. `LOGIC_IS_ZERO_DELAY` recognizes that case directly, avoiding
+a meaningless zero-delay frequency calculation in the PYRTL timing model.
+Pypeline elaboration rejects internal AUTOPIPELINE requests that would alter the
+fixed implementation.
+Both typed placements and legacy fractional slicing call
+`CHECK_FIXED_LATENCY_BOUNDARY`, rejecting registers at the tagged instance or any
+of its descendants. Python stateful/fixed bodies mark pipeline calls as
+`submodule_latencies_are_self_timed`; `GET_SUBMODULE_LATENCY` exposes their physical
+outputs to that body's stage-zero logic. Sliceable callers continue to see N.
+
+The native simulator uses these same placements only for affected user-pipeline
+regions. Its architecture and compatibility gate are documented in
+[pypeline_sim_DESIGN.md](pypeline_sim_DESIGN.md#fixed-user-pipelines).
+
 ## 2. Delay model: leaf-only synthesis with estimates
 
 `ADD_PATH_DELAY_TO_LOOKUP` can synthesize **every** function individually —

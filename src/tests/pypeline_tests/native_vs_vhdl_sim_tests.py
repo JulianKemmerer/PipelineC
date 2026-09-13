@@ -37,6 +37,7 @@ from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINE_SIM_DEBUG, Test, ma
 # selects the full-build pipelined compare (pypeline_sim_debug.py builds once
 # then runs native + VHDL concurrently against the same warm out_dir).
 COMB_TEST_FILES = [
+    ("pipeline_latency_sim_test.py", INST_DIR, []),
     ("self_check_counter_test.py", INST_DIR, []),
     ("self_check_fifo_test.py", INST_DIR, []),
     # self_check_bit_math_test.py is deliberately NOT here: its whole body is
@@ -98,6 +99,7 @@ COMB_TEST_FILES = [
 # Non---comb (pipelined/scheduled) compares: full build, then native sim runs
 # with the discovered latencies emulated, diffed against real pipelined VHDL.
 NON_COMB_TEST_FILES = [
+    ("pipeline_latency_sim_test.py", INST_DIR, ["--pipeline_min_effort", "0"]),
     # Same self-checking design as the --comb entry above, but now through
     # the REAL scheduled FSM (replaces synth_tests.py's former
     # autofsm_native_sim_test + autofsm_vhdl_sim_test pair with one cycle diff).
