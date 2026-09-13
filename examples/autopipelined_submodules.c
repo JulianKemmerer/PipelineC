@@ -59,7 +59,7 @@ valid_ready_pipeline_test_t valid_ready_pipeline_test(
   pipeline_no_handshake_in.data = pipeline_in.data;
   // The new autopipelined submodule
   stream(data_t) pipeline_no_handshake_out;
-  #pragma AUTOPIPELINE //<optional int depth>
+  #pragma AUTOPIPELINE //<optional int latency: fixed number of inserted registers>
   pipeline_no_handshake_out = test_pipeline(pipeline_no_handshake_in);
   /* Free flow of data out of pipeline into fifo*/
   uint1_t fifo_wr_en = pipeline_no_handshake_out.valid;

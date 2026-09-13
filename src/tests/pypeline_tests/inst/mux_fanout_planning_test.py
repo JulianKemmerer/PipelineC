@@ -208,9 +208,9 @@ def test_placement_inside_an_autopipeline_region_is_not_dropped():
     region_inst = next(
         inst_name + marker + local_sub
         for inst_name, logic in parser_state.LogicInstLookupTable.items()
-        if logic.sub_inst_to_autopipeline_depth
+        if logic.sub_inst_to_autopipeline_latency
         and (inst_name == main_inst or inst_name.startswith(main_inst + marker))
-        for local_sub in logic.sub_inst_to_autopipeline_depth
+        for local_sub in logic.sub_inst_to_autopipeline_latency
     )
     leaf = next(
         inst_name

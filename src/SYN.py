@@ -814,7 +814,7 @@ class TimingParams:
     ):
         # Autopipelined submodules report themselves as zero latency like regular comb logic funcs
         sub_inst = C_TO_LOGIC.LEAF_NAME(submodule_inst_name)
-        if sub_inst in self.logic.sub_inst_to_autopipeline_depth or sub_inst in getattr(
+        if sub_inst in self.logic.sub_inst_to_autopipeline_latency or sub_inst in getattr(
             self.logic, "submodule_latencies_are_self_timed", ()
         ):
             return 0
@@ -3549,6 +3549,11 @@ def DO_THROUGHPUT_SWEEP(
 
     # If comb. logic only
     if comb_only:
+        # Fixed AUTOPIPELINE latency= call sites keep their registers even here
+        fixed_timing_params = BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS(parser_state)
+        if fixed_timing_params is not None:
+            multimain_timing_params = fixed_timing_params
+            VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
         print("Running synthesis on top level without added pipelining...", flush=True)
         for main_func in parser_state.main_mhz:
             main_func_timing_params = multimain_timing_params.TimingParamsLookupTable[
@@ -3615,6 +3620,17 @@ def DO_THROUGHPUT_SWEEP(
     # if coarse only
     if coarse_only:
         print("Doing coarse sweep only...", flush=True)
+        import SWEEP
+
+        for region in SWEEP.COLLECT_AUTOPIPELINE_REGIONS(parser_state):
+            if region.constraint.start_latency is not None:
+                print(
+                    f"NOTE: AUTOPIPELINE {region.label()} "
+                    f"start_latency={region.constraint.start_latency} only sets "
+                    "its bootstrap .latency under a coarse sweep; coarse slicing "
+                    "starts from the main's own latency guess.",
+                    flush=True,
+                )
         if len(parser_state.main_mhz) > 1:
             # Try to guess at main func, find funcs with delay and can be sliced
             possible_mains = []
@@ -3688,6 +3704,9 @@ def DO_THROUGHPUT_SWEEP(
         # Do update of top vhdl (not final though)
         is_final_top = False
         VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
+        CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(
+            parser_state, multimain_timing_params.TimingParamsLookupTable
+        )
 
         # Record unmet timing so the build fails with non zero exit (a coarse
         # sweep with no user target uses INF_MHZ = characterization, no gate).
@@ -3724,8 +3743,62 @@ def AUTOPIPELINE_DIVERGENCE_EXIT(divergences):
         "instantiated multiple times with different discovered stage "
         "counts, which a single .latency int cannot represent. Give "
         "each call site its own factory-produced closure, or pin an "
-        "explicit depth=N."
+        "explicit latency=N."
     )
+
+
+def CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(parser_state, TimingParamsLookupTable):
+    """Safety net: every constrained AUTOPIPELINE call site (latency=N /
+    max_latency=M, or C #pragma AUTOPIPELINE N) must have been built within
+    its constraint -- the sweep's region enforcement (SWEEP.
+    ENFORCE_AUTOPIPELINE_REGIONS) guarantees it, and this exits loudly if any
+    path to final files ever did not. Walks Logic.sub_inst_to_autopipeline_
+    latency, so it covers C designs (no latency-cache key) too."""
+    if not TimingParamsLookupTable:
+        return
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    checks = []
+    for inst_name, logic in parser_state.LogicInstLookupTable.items():
+        for local_sub, constraint in logic.sub_inst_to_autopipeline_latency.items():
+            if constraint is None or constraint.upper_bound() is None:
+                continue
+            sub_inst = inst_name + marker + local_sub
+            if sub_inst in TimingParamsLookupTable:
+                checks.append((sub_inst, constraint))
+    if not checks:
+        return
+    for timing_params in TimingParamsLookupTable.values():
+        timing_params.INVALIDATE_CACHE()
+    problems = []
+    for sub_inst, constraint in checks:
+        built = TimingParamsLookupTable[sub_inst].GET_TOTAL_LATENCY(
+            parser_state, TimingParamsLookupTable
+        )
+        cap = constraint.upper_bound()
+        if built > cap or (constraint.is_fixed() and built != cap):
+            problems.append(
+                f"  {sub_inst}: {constraint.describe()} but {built} clks built"
+            )
+    if problems:
+        print("\n".join(problems), flush=True)
+        sys.exit(
+            "AUTOPIPELINE: built latency violates the call site latency "
+            "constraint(s) above (internal error)."
+        )
+
+
+def AUTOPIPELINE_SERVED_VALUES_MATCH(served, latencies):
+    """True when every .latency value the design's Python consumed (served:
+    canonical_key -> set of values returned) already equals the stage count
+    harvested for that key -- the design as elaborated is consistent with the
+    hardware built, so no re-elaboration pass is needed. A read key with no
+    harvested instance would be served the same value again next pass."""
+    for key, values in served.items():
+        if len(values) != 1:
+            return False
+        if key in latencies and latencies[key] not in values:
+            return False
+    return True
 
 
 def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_file):
@@ -3743,7 +3816,25 @@ def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_fi
     )
     if divergences:
         AUTOPIPELINE_DIVERGENCE_EXIT(divergences)
+    CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(
+        parser_state, multimain_timing_params.TimingParamsLookupTable
+    )
     if not (latencies and pypeline.AUTOPIPELINE_LATENCY_WAS_READ()):
+        return parser_state, multimain_timing_params
+    if pypeline.AUTOPIPELINE_BUILD_MODE() is not None and (
+        AUTOPIPELINE_SERVED_VALUES_MATCH(
+            pypeline.AUTOPIPELINE_SERVED_LATENCIES(), latencies
+        )
+    ):
+        # Fixed latency=N call sites, a correct start_latency=S guess, or a
+        # discovered 0: what the Python read is what was built.
+        print(
+            "AUTOPIPELINE: every .latency read matched the built stage count; "
+            "skipping pin-and-confirm pass 2",
+            flush=True,
+        )
+        for key, lat in sorted(latencies.items()):
+            print(f"AUTOPIPELINE {key}: {lat} clks", flush=True)
         return parser_state, multimain_timing_params
 
     import PY_TO_LOGIC
@@ -3760,7 +3851,7 @@ def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_fi
                 f"(last change: {last_change_desc}). A "
                 f".latency-derived design change is perturbing timing "
                 f"enough to change the discovered stage count itself. "
-                f"Pin an explicit depth=N at the unstable call site "
+                f"Pin an explicit latency=N at the unstable call site "
                 f"to break the loop."
             )
         print(
@@ -3792,6 +3883,9 @@ def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_fi
                 "AUTOPIPELINE'd functions may. New instance(s) with "
                 "no previous-pass counterpart: " + ", ".join(unseeded_ap_insts)
             )
+        import SWEEP
+
+        seeded_tpl = SWEEP.REENFORCE_AUTOPIPELINE_REGIONS(parser_state, seeded_tpl)
         multimain_timing_params = MultiMainTimingParams()
         multimain_timing_params.TimingParamsLookupTable = seeded_tpl
         multimain_timing_params, met = DO_SEEDED_CONFIRM_OR_SWEEP(
@@ -3802,6 +3896,9 @@ def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_fi
         )
         if divergences:
             AUTOPIPELINE_DIVERGENCE_EXIT(divergences)
+        CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(
+            parser_state, multimain_timing_params.TimingParamsLookupTable
+        )
         if new_latencies == latencies:
             # The .latency values this pass's Python consumed equal
             # the stage counts actually built -- converged. (Meeting
@@ -4042,6 +4139,23 @@ def BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS(
         )
         sys.exit(-1)
 
+    # Constrained AUTOPIPELINE regions under this instance: fixed latency=N
+    # regions get exactly N registers and are locked BEFORE the even
+    # fractions below are sliced down (slicing skips locked children)
+    import SWEEP
+
+    coarse_regions = SWEEP.COLLECT_AUTOPIPELINE_REGIONS(
+        parser_state, scope_inst=inst_name
+    )
+    fixed_regions = [r for r in coarse_regions if r.constraint.is_fixed()]
+    if fixed_regions:
+        try:
+            TimingParamsLookupTable = SWEEP.ENFORCE_AUTOPIPELINE_REGIONS(
+                fixed_regions, parser_state, TimingParamsLookupTable
+            )
+        except SWEEP.AutopipelineLatencyInfeasible as err:
+            sys.exit(str(err))
+
     # Apply slices to main funcs
     TimingParamsLookupTable = (
         ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
@@ -4061,9 +4175,22 @@ def BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS(
         # print("Can't syn when slicing through globals!")
         # return None, None, None, None
 
+    region_ancestor_insts = None
+    if coarse_regions:
+        # ...and max_latency=M regions the even fractions over-sliced are
+        # re-planned down to M; every constrained region ends up locked
+        TimingParamsLookupTable = SWEEP.REENFORCE_AUTOPIPELINE_REGIONS(
+            parser_state, TimingParamsLookupTable, scope_inst=inst_name
+        )
+        region_ancestor_insts = INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
+            TimingParamsLookupTable, parser_state
+        )
+
     # Fast one time loop writing only files that have non default,>0 latency
     print("Updating output files...", flush=True)
-    WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(TimingParamsLookupTable, parser_state)
+    WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(
+        TimingParamsLookupTable, parser_state, region_ancestor_insts
+    )
     # Write estimate of FF usage
     WRITE_REGISTERS_ESTIMATE_FILE(parser_state, TimingParamsLookupTable, inst_name)
     WRITE_AREA_ESTIMATE_FILE(parser_state, TimingParamsLookupTable, inst_name)
@@ -5024,7 +5151,7 @@ def FUNC_SUBTREE_HAS_AUTOPIPELINE(func_name, parser_state):
     if func_name in _FUNC_SUBTREE_HAS_AUTOPIPELINE_cache:
         return _FUNC_SUBTREE_HAS_AUTOPIPELINE_cache[func_name]
     logic = parser_state.FuncLogicLookupTable[func_name]
-    rv = len(logic.sub_inst_to_autopipeline_depth) > 0
+    rv = len(logic.sub_inst_to_autopipeline_latency) > 0
     if not rv:
         for sub_func_name in logic.submodule_instances.values():
             if sub_func_name in parser_state.FuncLogicLookupTable:
@@ -5378,7 +5505,11 @@ def MEASURE_DELAYS(func_names, parser_state):
     ESTIMATE_HIER_PATH_DELAYS(still_estimated, parser_state, quiet=True)
 
 
-def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
+def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
+    # root_func_names: measure only the subtrees of these funcs instead of the
+    # whole design's mains (+ AUTOFSM muxes) -- used by builds that never sweep
+    # but must still place fixed AUTOPIPELINE latency= registers
+    # (BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS).
     # Make sure synthesis tool is set
     PART_SET_TOOL(parser_state.part)
 
@@ -5392,13 +5523,22 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
     WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, False)
 
     # Get the functions that need to be synthed for path delay
-    funcs_to_synth = RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(
-        parser_state.main_mhz.keys(), parser_state
-    )
-    # ...plus AUTOFSM's operand multiplexers, which the walk above cannot reach
-    # (see _AUTOFSM_MUX_ENTITIES). Their own subtrees first, so the list stays
-    # bottom-up ordered.
-    _autofsm_muxes = sorted(_AUTOFSM_MUX_ENTITIES(parser_state))
+    if root_func_names is not None:
+        funcs_to_synth = []
+        for func_name in RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(
+            root_func_names, parser_state
+        ) + list(root_func_names):
+            if func_name not in funcs_to_synth:
+                funcs_to_synth.append(func_name)
+        _autofsm_muxes = []
+    else:
+        funcs_to_synth = RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(
+            parser_state.main_mhz.keys(), parser_state
+        )
+        # ...plus AUTOFSM's operand multiplexers, which the walk above cannot
+        # reach (see _AUTOFSM_MUX_ENTITIES). Their own subtrees first, so the
+        # list stays bottom-up ordered.
+        _autofsm_muxes = sorted(_AUTOFSM_MUX_ENTITIES(parser_state))
     if _autofsm_muxes:
         for extra in RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(
             _autofsm_muxes, parser_state
@@ -5633,7 +5773,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
             zero_added_clks_pipeline_map.write_png(out_dir, parser_state)
 
     # Report worst timing modules
-    for main_inst in main_to_min_mhz:
+    for main_inst in main_to_min_mhz if root_func_names is None else ():
         min_mhz = main_to_min_mhz[main_inst]
         mhz = parser_state.main_mhz[main_inst]
         if mhz is not None and mhz > min_mhz:
@@ -5645,6 +5785,85 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state):
     WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE(parser_state)
 
     return parser_state
+
+
+def BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS(parser_state):
+    """Timing params for builds that run no throughput sweep (--comb,
+    --no_synth, --yosys_json): zero added pipelining everywhere EXCEPT fixed
+    AUTOPIPELINE(func, latency=N) call sites (and C `#pragma AUTOPIPELINE N`),
+    which get exactly N registers -- a fixed latency is a functional contract
+    (.latency reads N, native sim delays by N), not a timing hint, so every
+    build honors it.
+
+    Placing N registers well still needs delays, so only those call sites'
+    subtrees are measured (ADD_PATH_DELAY_TO_LOOKUP rooted at their funcs) and
+    planned with the sweep's own count-targeted region enforcement. Without a
+    timing-capable tool (no tool installed for the PART, or --yosys_json) the
+    PyRTL delay model is borrowed for that measurement: the latency is exact,
+    the stage balance an estimate.
+
+    Returns None -- today's zero-added-pipelining path, untouched -- when the
+    design has no fixed latency > 0. Memoized on parser_state (a --comb build
+    asks twice: final files, then the comb characterization synthesis)."""
+    cached = getattr(parser_state, "_fixed_autopipeline_timing_params", None)
+    if cached is not None:
+        return cached
+    import SWEEP
+
+    regions = SWEEP.COLLECT_AUTOPIPELINE_REGIONS(parser_state, fixed_only=True)
+    if not any(region.constraint.latency > 0 for region in regions):
+        return None
+    global SYN_TOOL
+    previous_tool = SYN_TOOL
+    PART_SET_TOOL(parser_state.part, allow_fail=True)
+    borrowed_tool = SYN_TOOL is None or OPEN_TOOLS.YOSYS_JSON_ONLY
+    if borrowed_tool:
+        print(
+            "WARNING: no timing-capable synthesis tool for this build; placing "
+            "fixed AUTOPIPELINE latency= registers using PyRTL delay estimates "
+            "(the latency is exact, the stage balance is estimated).",
+            flush=True,
+        )
+        SYN_TOOL = PYRTL
+    try:
+        print(
+            "================== Measuring Delays for Fixed AUTOPIPELINE "
+            "Latencies ================================",
+            flush=True,
+        )
+        ADD_PATH_DELAY_TO_LOOKUP(
+            parser_state,
+            root_func_names=sorted(
+                {r.func_name for r in regions if r.constraint.latency > 0}
+            ),
+        )
+        TimingParamsLookupTable = GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+        try:
+            TimingParamsLookupTable = SWEEP.ENFORCE_AUTOPIPELINE_REGIONS(
+                regions, parser_state, TimingParamsLookupTable
+            )
+        except SWEEP.AutopipelineLatencyInfeasible as err:
+            sys.exit(str(err))
+        ancestor_insts = INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
+            TimingParamsLookupTable, parser_state
+        )
+        WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(
+            TimingParamsLookupTable, parser_state, ancestor_insts
+        )
+    finally:
+        if borrowed_tool:
+            SYN_TOOL = previous_tool
+    CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(parser_state, TimingParamsLookupTable)
+    for region in regions:
+        print(
+            f"AUTOPIPELINE {region.label()} ({region.constraint.describe()}): "
+            f"{region.realized} clk(s) built at {region.inst}",
+            flush=True,
+        )
+    multimain_timing_params = MultiMainTimingParams()
+    multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
+    parser_state._fixed_autopipeline_timing_params = multimain_timing_params
+    return multimain_timing_params
 
 
 def UPDATE_PIPELINE_MIN_PERIOD_CACHE(

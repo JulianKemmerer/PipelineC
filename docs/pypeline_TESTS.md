@@ -81,6 +81,33 @@ pipelined MAIN and an AUTOPIPELINE region. Valid-gated debug probes compare exac
 clock timing against GHDL, including draining the pipeline, register initialization,
 synchronous reset and clock enables within a stateful caller.
 
+## AUTOPIPELINE latency constraint coverage
+
+Each test below covers `AUTOPIPELINE(func, latency= / start_latency= / max_latency=)`
+from a different angle:
+- `autopipeline_harvest_test.py` (unit):
+  - constructor validation;
+  - identity suffixes (an unconstrained tag's key and `pypeline_names` identity are
+    unchanged);
+  - `.latency` per build mode and cache;
+  - the served-value predicate behind the pin-and-confirm pass-2 skip;
+  - `SYN.CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED`.
+- `autopipeline_region_planning_test.py` (unit): `SWEEP.COUNT_TARGETED_PLACEMENTS`,
+  plan trimming, cap bookkeeping, and hotspot-to-region attribution on synthetic
+  landscapes.
+- `autopipeline_fixed_latency_sim_test.py` (native_sim): plain native sim emulates a
+  fixed latency and ignores start/max. `pipeline_latency_test.py`'s gate test also runs
+  it, both directly and through `pypelinec --sim --comb`, with the compiler import
+  forbidden.
+- `autopipeline_constraints_test.py` (build_report): fixed and start regions are built
+  exactly and pass 2 is skipped, and a `max_latency` cap stops an unreachable goal
+  promptly.
+- `autopipeline_c_pragma_test.py` (build_report): C `#pragma AUTOPIPELINE N` under
+  `--comb`.
+- `self_check_fixed_autopipeline_test.py` (both native_vs_vhdl categories): compares
+  the native delay line against the `--comb` VHDL's fixed registers, and against the
+  planned sweep's enforced region.
+
 ## Generated-name regression coverage
 
 `interface_factory_two_widths_test.py` is a normal synthesis test: the same design

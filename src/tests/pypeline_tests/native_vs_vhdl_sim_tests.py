@@ -95,6 +95,9 @@ COMB_TEST_FILES = [
     # 7-byte struct over a 4-byte bus so the partial-beat path is what gets
     # diffed rather than the aligned happy path.
     ("self_check_type_axis_test.py", INST_DIR, []),
+    # AUTOPIPELINE(func, latency=2): plain native sim's 2-cycle delay line vs
+    # the --comb VHDL build's 2 fixed registers.
+    ("self_check_fixed_autopipeline_test.py", INST_DIR, []),
 ]
 # Non---comb (pipelined/scheduled) compares: full build, then native sim runs
 # with the discovered latencies emulated, diffed against real pipelined VHDL.
@@ -117,6 +120,9 @@ NON_COMB_TEST_FILES = [
     # It keeps its original native-only registration in build_report_tests.py
     # (native_pipelined_sim_test) pending investigation.
     ("native_vs_vhdl_ap_test.py", INST_DIR, []),
+    # Same fixed latency=2 design as the --comb entry, through the planned
+    # sweep's constrained-region enforcement and the harvested emulation.
+    ("self_check_fixed_autopipeline_test.py", INST_DIR, ["--pipeline_min_effort", "0"]),
     (
         "native_vs_vhdl_pipelined_main_test.py",
         INST_DIR,

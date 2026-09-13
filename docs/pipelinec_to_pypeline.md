@@ -735,7 +735,7 @@ Most PipelineC `#pragma` annotations have a direct pypeline equivalent.
 | `#pragma FEEDBACK x` | `x: Feedback[T]` annotation | [§9](pypeline_guide.md#feedback-wires-feedbackt) |
 | `#pragma FUNC_WIRES func` | `@wires` decorator on the function | [§18](pypeline_guide.md#just-wires-synthesis-hint-wires) |
 | `#pragma FUNC_LATENCY func N` | `@pipeline_latency(N)` on the function definition | [Fixed user pipelines](pypeline_guide.md#fixed-user-pipelines) |
-| `#pragma AUTOPIPELINE` on a call | `result = autopipeline(func(args))` | [§15](pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm) |
+| `#pragma AUTOPIPELINE [N]` on a call | `MY_AP = AUTOPIPELINE(func)` (`latency=N` for a fixed N) once, then `result = MY_AP(args)` | [§15](pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm) |
 | `#pragma INST_ARRAY` | factory function + Python list/loop | [§12](pypeline_guide.md#parametric-hardware-with-factory-functions) |
 | `#pragma MULTI_CYCLE N` | `MC = MULTI_CYCLE[N]` | [§16](pypeline_guide.md#multi-cycle-paths-multi_cycle) |
 
@@ -766,15 +766,20 @@ def my_func(x: my_in_t) -> my_out_t:
 
 ```c
 // PipelineC — inside a MAIN or function
-#pragma AUTOPIPELINE
+#pragma AUTOPIPELINE      // or: #pragma AUTOPIPELINE 4  (fixed latency of 4 registers)
 result = my_expensive_func(input);
 ```
 ```python
-# pypeline
-result = autopipeline(my_expensive_func(input))
-# or with explicit stage count:
-result = autopipeline(my_expensive_func(input), 4)
+# pypeline: construct the tag once (module or factory level), call through it
+MY_AP = AUTOPIPELINE(my_expensive_func)
+result = MY_AP(input)
+# `#pragma AUTOPIPELINE 4`: a fixed latency of 4 registers
+MY_AP4 = AUTOPIPELINE(my_expensive_func, latency=4)
+# Pypeline-only: a starting guess and/or limit for the throughput sweep
+MY_AP_BOUNDED = AUTOPIPELINE(my_expensive_func, start_latency=2, max_latency=6)
 ```
+Pypeline's tag also reads back the built register count as `MY_AP.latency`. See
+[`AUTOPIPELINE`](pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm).
 
 ---
 

@@ -388,6 +388,15 @@ print(
     "================== Parsing C Code to Logical Hierarchy ================================",
     flush=True,
 )
+# AUTOPIPELINE .latency semantics depend on the kind of build executing the
+# design (see pypeline.SET_AUTOPIPELINE_BUILD_MODE): a fixed latency= gets
+# registers in every build, start_latency= only means something to a sweep.
+import pypeline
+
+pypeline.SET_AUTOPIPELINE_BUILD_MODE(
+    "fixed_only" if (args.comb or args.no_synth or args.yosys_json) else "sweep"
+)
+
 # Do parsing
 if src_file.endswith(".c"):
     parser_state = C_TO_LOGIC.PARSE_FILE(src_file)
@@ -433,9 +442,27 @@ if SYN.SYN_TOOL is None:
         print(
             "WARNING: No synthesis tool install detected based on PART. Skipping synthesis and autopipelining."
         )
+    # The design was elaborated for a sweep; without one, start_latency=
+    # values its Python already read no longer describe the hardware.
+    pypeline.SET_AUTOPIPELINE_BUILD_MODE("fixed_only")
+    if src_file.endswith(".py") and any(
+        ap.fixed_latency is None and value
+        for ap, value in pypeline._autopipeline_served
+    ):
+        print(
+            "Re-elaborating: AUTOPIPELINE start_latency= values read during "
+            "parsing do not apply without a synthesis tool...",
+            flush=True,
+        )
+        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
+        C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
 
+if args.comb or args.no_synth:
+    # Zero added pipelining, except fixed AUTOPIPELINE latency= call sites
+    # (None when there are none: exactly the historical zero-clock files)
+    comb_timing_params = SYN.BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS(parser_state)
 if args.comb:
-    SYN.WRITE_FINAL_FILES(None, parser_state)
+    SYN.WRITE_FINAL_FILES(comb_timing_params, parser_state)
     # Here is a good point to check basic single cycle/comb logic functionality before pipelining with synth tools
     # (A native non---comb --sim run degraded to comb by the no-synth-tool
     # fallback above still sims here -- zero latency, warning already printed.)
@@ -443,8 +470,13 @@ if args.comb:
         SIM.SIM_AT_COMB_STAGE(args),
         parser_state,
         args,
+        multimain_timing_params=(
+            None if SIM.SIM_TOOL is pypeline_sim else comb_timing_params
+        ),
         source_file=src_file,
     )
+elif args.no_synth and comb_timing_params is not None:
+    SYN.WRITE_FINAL_FILES(comb_timing_params, parser_state)
 
 if not args.no_synth:
     parser_state, multimain_timing_params = SYN.DO_PIPELINED_BUILD(

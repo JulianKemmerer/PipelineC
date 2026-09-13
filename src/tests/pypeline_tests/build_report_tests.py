@@ -62,6 +62,28 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # AUTOPIPELINE latency constraints end to end: latency=2 / start_latency=1
+    # call sites built with exactly those counts and the pin-and-confirm pass
+    # skipped (every .latency read already matched), plus a max_latency=1 cap
+    # that stops an unreachable goal promptly with a warning naming it.
+    tests.append(
+        Test(
+            name="autopipeline_constraints_test",
+            category="build_report",
+            cmd=[INST_DIR / "autopipeline_constraints_test.py"],
+            needs_out_dir=True,
+        )
+    )
+    # C frontend `#pragma AUTOPIPELINE N`: a fixed latency, built with exactly
+    # N clocks even by a --comb build.
+    tests.append(
+        Test(
+            name="autopipeline_c_pragma_test",
+            category="build_report",
+            cmd=[INST_DIR / "autopipeline_c_pragma_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # ── AUTOFSM: pure function -> resource-shared FSM ──
     # Full build of autofsm_test.py plus assertions on the schedule: several
     # same-kind operations folded onto fewer shared units, latency matching the

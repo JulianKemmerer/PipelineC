@@ -1178,7 +1178,8 @@ wraps the parse+sweep sequence in an outer loop — a **pin-and-confirm** loop, 
 repeat-the-sweep one:
 
 1. **Pass 1 (bootstrap, identical to a normal build):** `PARSE_FILE` with an empty
-   latency cache (`.latency` reads 0 everywhere) → path delays → full throughput
+   latency cache (`.latency` reads 0, or a call site's fixed `latency=N` /
+   `start_latency=S`) → path delays → full throughput
    sweep → `SYN.HARVEST_AUTOPIPELINE_LATENCIES` walks the finished
    TimingParamsLookupTable and groups each AUTOPIPELINE-tagged instance's
    `GET_TOTAL_LATENCY` by the tag's canonical key (a pure in-memory walk; no
@@ -1189,8 +1190,12 @@ repeat-the-sweep one:
    delay lines) a number contradicting the entities actually written.
 2. **Early exits (the zero-added-cost invariant):** if there are no AUTOPIPELINE call
    sites, or the design's Python never *read* any `.latency`
-   (`pypeline.AUTOPIPELINE_LATENCY_WAS_READ()`, a read-tracked property flag), the
-   loop ends here — the cache couldn't have influenced the elaborated design, so
+   (`pypeline.AUTOPIPELINE_LATENCY_WAS_READ()`, a read-tracked property flag), or every
+   value it read already equals the stage count harvested for that key, the
+   loop ends here. The second check compares `pypeline.AUTOPIPELINE_SERVED_LATENCIES()`
+   with the harvest using `SYN.AUTOPIPELINE_SERVED_VALUES_MATCH`, and holds for fixed
+   `latency=` call sites, a correct `start_latency=` guess, or a discovered 0. It
+   prints "skipping pin-and-confirm pass 2". Either way the loop ends here — the cache couldn't have influenced the elaborated design, so
    pass 1's result is final. Cost is exactly the classic single parse + single
    sweep. `.c` designs never enter the loop at all (`AUTOPIPELINE` is
    Pypeline-only syntax).
@@ -1243,14 +1248,14 @@ repeat-the-sweep one:
    planned sweep (which replans from a fresh zero-clk table each iteration, so the
    seeds can't corrupt it), harvests again, and loops back to step 3 with the new
    numbers. Bounded by `SYN.AUTOPIPELINE_MAX_LATENCY_PASSES` (3 total passes); at
-   the cap the build fails loudly, advising an explicit `depth=N` pin at the
+   the cap the build fails loudly, advising an explicit `latency=N` pin at the
    unstable call site.
 
 Hard errors (instead of silently-wrong hardware):
 - **Divergent `.latency`:** the same AUTOPIPELINE-tagged function instantiated at
   multiple sites with *different* discovered stage counts — legal per-instance in
   the framework, unrepresentable as the single `.latency` int the design's Python
-  read. Fix: give each call site its own factory-produced closure, or pin `depth=N`.
+  read. Fix: give each call site its own factory-produced closure, or pin `latency=N`.
 - **Call-site set changed between passes:** an AUTOPIPELINE-tagged instance on pass
   2 whose func didn't exist in pass 1 (detected as unseedable) — i.e. Python control
   flow, or closure-captured values encoded in a tagged function's identity, depended
@@ -1267,6 +1272,108 @@ The converged harvest has one more consumer: a non-`--comb` `--sim` run hands it
 (plus the final per-MAIN latencies) to the native simulator at the end of the build,
 which re-imports the design with the cache installed and emulates every latency —
 see `pypeline_sim_DESIGN.md` §"Pipelined native sim".
+
+### Constrained AUTOPIPELINE regions (`latency=` / `start_latency=` / `max_latency=`)
+
+`AUTOPIPELINE(func, latency=N)`, `start_latency=S` and `max_latency=M` record a
+`C_TO_LOGIC.AutopipelineLatency` for each tagged instance, in
+`Logic.sub_inst_to_autopipeline_latency`. C's `#pragma AUTOPIPELINE N` records a fixed
+N the same way. Unconstrained tags, the default, take none of the paths below, so
+designs without constraints plan, name and build exactly as before.
+
+**Planned sweep (`SWEEP.ENFORCE_AUTOPIPELINE_REGIONS`).** A tagged instance is
+latency-decoupled from its container (`GET_SUBMODULE_LATENCY` reports it as 0), so each
+constrained instance is treated as its own *region*. Every iteration, right after
+`APPLY_LOCKS` and before any cut-subtree landscape is built, each region goes through:
+1. its own `BUILD_SLICE_LANDSCAPE`;
+2. choosing a register count K;
+3. count-targeted placements;
+4. real lowering (`APPLY_PIPELINE_PLACEMENTS` → `CHECK_PIPELINE_PLACEMENTS_REALIZED` →
+   `DROP_NON_DEEPENING_PLACEMENTS`);
+5. verification against its real `GET_TOTAL_LATENCY`;
+6. `params_are_fixed`.
+
+Containing landscapes then see an ordinary `Segment.LOCKED`, the mini-sweep lock path. A
+region that is itself a cut-subtree root takes the existing locked-root branch. Clamping
+cuts inside a shared landscape instead would not work: parallel branches share one
+delay axis, and the container can't count the region's latency.
+
+- **Register count K.**
+  - Fixed: K = N.
+  - `start_latency` on its first iteration: K = S. The region's private budget divisor
+    `region.scale` is calibrated so that unchanged knobs keep reproducing S.
+  - Otherwise: the planner's own count for the plan's clock period, with the budget
+    divided by `global_scale * region.scale` and in-region weights including
+    `func_delay_scale`, capped at M.
+
+  Instances that share a canonical key form one group and are planned to one K, so the
+  harvested `.latency` can't diverge between them.
+- **Count-targeted placement (`COUNT_TARGETED_PLACEMENTS`).** Bisect the budget given to
+  `PLAN_PIPELINE_PLACEMENTS` until it yields K; cut count never increases as the budget
+  grows. The result is the planner's own tightest-stage placement for exactly K
+  registers. When the count jumps past K, the nearest larger plan is trimmed down
+  (`_TRIM_PLACEMENT_PLAN_TO_COUNT`). Asking a fixed region for more registers than it
+  has legal positions is an error.
+- **Verify and retry.** The realized latency can differ from the cut count, because of
+  built-in operator stage granularity or non-deepening drops. A fixed region that
+  realizes anything but N, or a capped region that realizes more than M, is reset to
+  zero clocks and re-planned with a corrected count (`AUTOPIPELINE_REGION_RETRIES`). If
+  that still fails, the build exits and names the call site, the constraint and the
+  realized value.
+- **Growth and shrinking.**
+  - Region landscapes feed `RANK_PATH_FUNC_CANDIDATES`, and a region root counts as a
+    valid attribution. When `REGION_FOR_HOTSPOT` places a critical path inside a region,
+    that group's `region.scale` is multiplied (the `grow_autopipeline` action).
+  - Global replans grow regions too.
+  - If nothing else in the plan can change and no region count moved, the region with
+    the worst predicted stage gets one more register.
+  - Trimming after timing is met counts non-fixed region cuts and can shrink them,
+    including below `start_latency`.
+- **At the cap.** A hotspot in a region at its limit (fixed, or realized = M) first gets
+  one same-count rebalance, with the hotspot's weight raised. If that doesn't help, the
+  plan stops with `stopped_reason = "autopipeline_latency_limit"` and prints
+  `[sweep] WARNING: ... limited by AUTOPIPELINE latency constraint(s) ...`, followed by
+  the usual TIMING NOT MET exit. Two cases stop the same way without an attributed
+  hotspot:
+  - no attribution is available (PyRTL) and every register the plan can place is
+    inside capped regions;
+  - an iteration's physical schedule fingerprint (region placements included) repeats
+    one already tried while a region is at its cap. This stops before re-synthesizing.
+- **Mini-sweeps** never lock a hotspot that lies inside a region or contains one.
+- **Everything else includes regions:**
+  - snapshots;
+  - `sweep_history.json` and placement traces (`autopipeline_regions`);
+  - the final summary (`[sweep] AUTOPIPELINE <key> (<constraint>): N clk(s) built at <inst>`);
+  - `SYN.CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED`, a safety net run on every final
+    table and after every harvest.
+
+**Coarse sweep.** `BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS` enforces fixed regions
+before slicing the main's even fractions; slicing skips locked children. Afterwards it
+re-plans any region that those fractions pushed over `max_latency` back down to its cap
+(`SWEEP.REENFORCE_AUTOPIPELINE_REGIONS`). Under a coarse sweep, `start_latency` only
+sets the bootstrap `.latency`, and a NOTE says so.
+
+**Builds without a sweep.** `--comb`, `--no_synth` and `--yosys_json` still build every
+fixed latency. `SYN.BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS`:
+1. measures delays for just those regions' subtrees
+   (`ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=...)`);
+2. enforces the regions on a zero-clock table;
+3. hands that table to `WRITE_FINAL_FILES`, the `--comb` characterization synthesis,
+   and a cocotb/GHDL comb-stage sim.
+
+Without a timing-capable tool, the PyRTL delay model is borrowed for the measurement.
+The latency is still exact; only the stage balance is estimated. The path-delay cache
+is keyed per tool, so the borrowed numbers don't pollute another tool's cache. Designs
+with no fixed latency above 0 keep the historical zero-clock path.
+`pypeline.SET_AUTOPIPELINE_BUILD_MODE` (`"sweep"` / `"fixed_only"`, set by `pypelinec`
+before parsing) decides whether `start_latency` feeds the bootstrap `.latency`. If the
+no-tool fallback downgrades a sweep build after start values were already read, the
+design is re-elaborated.
+
+**Pin-and-confirm.** Seeding by function name can copy another call site's slices onto a
+constrained region, so the seeded table goes through `SWEEP.REENFORCE_AUTOPIPELINE_REGIONS`
+before the confirmation synthesis. The served-value skip in step 2 means fixed latencies
+and correct `start_latency` guesses cost no second elaboration.
 
 ## 7. AUTOFSM schedule-and-confirm loop (Pypeline designs only)
 
@@ -1386,6 +1493,8 @@ run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
 | `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that autopipelining cannot help (planning time + standalone as-written check FAIL + failing report), one full syn run, `TIMING NOT MET` + non-zero exit |
 | `sweep_planless_test.py` | stateful MAIN with a met goal but nothing cuttable: one standalone as-written check synthesis prints PASS, its critical path is NOT stored as the func delay, one full syn run, exit 0 |
 | `autopipeline_latency_test.py` | end-to-end factory design (`make_stream_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, seeded confirmation syn passes with no fallback sweep, loop settles within the pass cap (extra realization passes allowed) |
+| `autopipeline_constraints_test.py` | §6 constrained regions end-to-end: `latency=2` / `start_latency=1` call sites built with exactly 2 / 1 registers and pin-and-confirm pass 2 skipped; a `max_latency=1` cap stops an unreachable goal promptly, naming the cap, then `TIMING NOT MET` |
+| `autopipeline_c_pragma_test.py` | C `#pragma AUTOPIPELINE 2` is a fixed latency, built with exactly 2 clocks even by a `--comb` build |
 | `autofsm_latency_test.py` | §7 end-to-end: schedule pass runs, several same-kind operations fold onto fewer shared units, latency == states + 1, and exactly ONE instance of each shared unit appears in the generated VHDL |
 | `autofsm_resources_compare_test.py` | §7 area: same design built `--comb` (no sharing) and scheduled, compared by yosys cell count — guards the reason the feature exists |
 | `autofsm_timing_iter_test.py` | §7 iteration: a deliberately over-packed first schedule misses the clock, the FSM is blamed, its budget is tightened, and a later build passes — with no source change |
@@ -1552,11 +1661,9 @@ section, below.
    delay from every future estimate. Preferring fewer, coarser-grained
    entities (one `@hw_func` per structural level rather than per bit-slice/
    concat node) reduces how many entities are even candidates for this.
-7. **`AUTOPIPELINE(func, depth=N)` is documented but silently a no-op.** The
-   value is stored on `AutopipelineCall` elaboration and never read by
-   anything downstream. `--coarse --start N --stop N+1` against a design
-   with no `@MAIN` MHz goal is the actual "best fmax at a fixed latency"
-   mechanism today.
+7. *(Resolved.)* `AUTOPIPELINE(func, depth=N)` used to be stored and never
+   read. It is now `latency=N` (with `start_latency=` / `max_latency=`), and every
+   build enforces it. See §6 "Constrained AUTOPIPELINE regions".
 8. **Caching for AUTOFSM's operand-mux measurement entities doesn't fire**
    (§7). `_IS_PYPELINE_OPERATOR_LIBRARY_CODE` is meant to classify
    `include/pypeline/operators/` entities as non-user code so their delays

@@ -1668,7 +1668,7 @@ pipeline latency (only explicit `Reg[T]`/FIFO state advances). Fixed user pipeli
 selective alignment path described under [Fixed User Pipelines](#fixed-user-pipelines).
 A non-`--comb` `pipelinec --sim` run does the **full
 build first** — path-delay measurement, the throughput sweep, and the AUTOPIPELINE
-pin-and-confirm loop (`SYN_DESIGN.md` §6.5) — and then launches native sim with the discovered
+pin-and-confirm loop (`SYN_DESIGN.md` §6) — and then launches native sim with the discovered
 per-instance pipeline latencies **emulated by delay lines wrapped around the unchanged
 combinational Python**. Because the sliced/autopipelined logic is purely combinational, delaying
 its outputs by N cycles is an exact model of the N register stages the sweep inserted — so the
@@ -1719,6 +1719,9 @@ Before importing the design, `run_sim`:
 
 #### Mechanism A — AUTOPIPELINE call sites (`AUTOPIPELINE._sim_delay_line`, `pypeline.py`)
 
+`self._latency` is nonzero after a build installs a harvested stage count, and in *any*
+context for a fixed `AUTOPIPELINE(func, latency=N)`, plain `pypeline_sim.py` runs included
+(the fixed latency is a functional contract, and every build places exactly N registers).
 When `_sim_active and self._latency > 0`, `AUTOPIPELINE.__call__` stops being an identity
 passthrough and routes through a per-call-site output **delay line** modelling
 `out(t) = func(in(t − N))`, N = `self._latency`:
@@ -1734,12 +1737,16 @@ return deepcopy(committed[0])               # value pushed N cycles ago
 ```
 
 Key implementation points:
-- **Instance identity.** `__call__` pushes `("AUTOPIPELINE:" + self.canonical_key, call_loc)`
-  onto `_sim_inst_stack` (the same stack `Reg[T]` and `@sim_model` use), so each call site gets
-  its own delay line keyed by `_sim_current_inst_path()`. `canonical_key` distinguishes two
-  *different* AUTOPIPELINE objects invoked from the same source line (e.g. a loop over
-  factory-produced pipelines whose inner funcs share a `__qualname__`); it is already computed
-  because a non-empty cache forced it in `__init__`.
+- **Instance identity.** `__call__` pushes `("AUTOPIPELINE:" + self._sim_key(), call_loc)`
+  onto `_sim_inst_stack`, the same stack `Reg[T]` and `@sim_model` use. Each call site
+  therefore gets its own delay line, keyed by `_sim_current_inst_path()`. Two
+  *different* AUTOPIPELINE objects called from the same source line must still get
+  separate delay lines (for example a loop over factory-produced pipelines whose inner
+  funcs share a `__qualname__`). `_sim_key()` covers that case two ways:
+  - When the compiler is loaded, or a harvested cache is installed, it is the
+    `canonical_key`.
+  - In plain native sim of a fixed latency, where importing the compiler is
+    forbidden, it is `module.qualname#serial`, with a per-construction serial.
 - **Convergence safety.** The read (`_sim_reg_read`) always returns the state committed at the
   last clock edge, never the write buffer; the write (`_sim_reg_write`) goes into the buffer
   while the per-cycle buffer is open. So during a cycle's delta-convergence the output
@@ -1853,7 +1860,11 @@ Python result would instead combine samples from different cycles.
 attributes and callable containers; it does not elaborate unrelated roots.
 `_prepare_pipeline_latency_sim` imports `pypeline_sim_pipeline` only for a reachable
 nonzero pipeline in an untagged caller. AUTOPIPELINE and AUTOFSM alone do not enable
-this path. The existing native `--comb` shortcut in `SIM.NATIVE_SIM_SKIPS_BUILD`
+this path. A fixed `AUTOPIPELINE(func, latency=N)` whose `func` reaches a
+`@pipeline_latency` function cannot be emulated by plain native sim, because where the
+tool places its N registers relative to the fixed pipeline is only known after a build.
+It raises a `RuntimeError` pointing to `pypelinec <design> --sim`. A `func` that is
+itself `pipeline_latency(N)` needs no delay line. The existing native `--comb` shortcut in `SIM.NATIVE_SIM_SKIPS_BUILD`
 remains intact.
 
 ### Preparation and timing sources

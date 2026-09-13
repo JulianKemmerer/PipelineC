@@ -402,6 +402,98 @@ def DICT_SET_VALUE_MERGE(d1, d2):
     return rv
 
 
+class AutopipelineLatency:
+    """Latency constraint on one AUTOPIPELINE call site, recorded per local
+    submodule instance in Logic.sub_inst_to_autopipeline_latency.
+
+    Built from pypeline.AUTOPIPELINE(func, latency=/start_latency=/max_latency=)
+    via from_tag, or from C `#pragma AUTOPIPELINE N` (fixed N). All three None
+    means unconstrained: the sweep treats that region exactly as it always has.
+      latency=N        fixed: exactly N inserted registers, in every build
+      start_latency=S  the planned sweep's first iteration builds S registers
+      max_latency=M    the sweep never builds more than M registers
+    key_suffix() must stay identical to pypeline._autopipeline_latency_suffix
+    (AUTOPIPELINE canonical key / entity-name identity); a unit test checks it.
+    """
+
+    __slots__ = ("latency", "start_latency", "max_latency")
+
+    def __init__(self, latency=None, start_latency=None, max_latency=None):
+        self.latency = latency
+        self.start_latency = start_latency
+        self.max_latency = max_latency
+
+    @staticmethod
+    def from_tag(tag):
+        return AutopipelineLatency(
+            getattr(tag, "fixed_latency", None),
+            getattr(tag, "start_latency", None),
+            getattr(tag, "max_latency", None),
+        )
+
+    def __getstate__(self):
+        return (self.latency, self.start_latency, self.max_latency)
+
+    def __setstate__(self, state):
+        self.latency, self.start_latency, self.max_latency = state
+
+    def is_unconstrained(self):
+        return (
+            self.latency is None
+            and self.start_latency is None
+            and self.max_latency is None
+        )
+
+    def is_fixed(self):
+        return self.latency is not None
+
+    def upper_bound(self):
+        """Most registers the region may hold (None = no cap)."""
+        return self.latency if self.latency is not None else self.max_latency
+
+    def key_suffix(self):
+        if self.latency is not None:
+            return f"_latency_{self.latency}"
+        suffix = ""
+        if self.start_latency is not None:
+            suffix += f"_start_latency_{self.start_latency}"
+        if self.max_latency is not None:
+            suffix += f"_max_latency_{self.max_latency}"
+        return suffix
+
+    def describe(self):
+        if self.latency is not None:
+            return f"latency={self.latency}"
+        parts = []
+        if self.start_latency is not None:
+            parts.append(f"start_latency={self.start_latency}")
+        if self.max_latency is not None:
+            parts.append(f"max_latency={self.max_latency}")
+        return ", ".join(parts) if parts else "unconstrained"
+
+    def conflict_with_fixed(self, fixed):
+        """The offending setting if this constraint can't hold on a function
+        whose pipeline_latency is `fixed`, else None."""
+        if self.latency is not None and self.latency != fixed:
+            return f"latency={self.latency}"
+        if self.start_latency is not None and self.start_latency != fixed:
+            return f"start_latency={self.start_latency}"
+        if self.max_latency is not None and self.max_latency < fixed:
+            return f"max_latency={self.max_latency}"
+        return None
+
+    def __eq__(self, other):
+        return isinstance(other, AutopipelineLatency) and (
+            self.__getstate__() == other.__getstate__()
+        )
+
+    def __hash__(self):
+        return hash(self.__getstate__())
+
+    def __repr__(self):
+        return f"AutopipelineLatency({self.describe()})"
+
+
 class Logic:
     def __init__(self):
         ####### MODIFY DEEP COPY + MERGES TOO
@@ -457,10 +549,12 @@ class Logic:
         self.next_user_inst_name = None  # User name for func
         self.debug_names = set()  # Names MARK_DEBUG
         self.mcp_tuples = set()  # Tuples of MCP params
-        self.next_func_call_autopipeline_depth = (
-            None  # Auto pipeline flag for next func call
+        self.next_func_call_autopipeline_latency = (
+            None  # Pending #pragma AUTOPIPELINE constraint for next func call
         )
-        self.sub_inst_to_autopipeline_depth = {}  # Which instances tagged autopipeline?
+        # Which instances are tagged autopipeline: local inst name ->
+        # AutopipelineLatency (unconstrained unless latency/start/max given)
+        self.sub_inst_to_autopipeline_latency = {}
         # Pypeline frontend only: local inst name -> AUTOPIPELINE canonical
         # latency-cache key (pypeline.AUTOPIPELINE.canonical_key). Empty for
         # .c-originated logic (#pragma AUTOPIPELINE has no Python object to
@@ -606,8 +700,8 @@ class Logic:
         rv.next_user_inst_name = self.next_user_inst_name
         rv.debug_names = set(self.debug_names)
         rv.mcp_tuples = set(self.mcp_tuples)
-        rv.next_func_call_autopipeline_depth = self.next_func_call_autopipeline_depth
-        rv.sub_inst_to_autopipeline_depth = dict(self.sub_inst_to_autopipeline_depth)
+        rv.next_func_call_autopipeline_latency = self.next_func_call_autopipeline_latency
+        rv.sub_inst_to_autopipeline_latency = dict(self.sub_inst_to_autopipeline_latency)
         rv.sub_inst_to_autopipeline_key = dict(self.sub_inst_to_autopipeline_key)
         rv.sub_inst_to_autofsm_key = dict(self.sub_inst_to_autofsm_key)
         rv.ast_meta = self.ast_meta
@@ -1622,11 +1716,11 @@ class Logic:
         return True
 
     def SUB_HAS_AUTOPIPELINE_IN_HIER(self, sub_inst, parser_state):
-        if sub_inst in self.sub_inst_to_autopipeline_depth:
+        if sub_inst in self.sub_inst_to_autopipeline_latency:
             return True
         sub_func_name = self.submodule_instances[sub_inst]
         sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
-        if len(sub_logic.sub_inst_to_autopipeline_depth) > 0:
+        if len(sub_logic.sub_inst_to_autopipeline_latency) > 0:
             return True
         for sub_sub_inst in sub_logic.submodule_instances:
             if sub_logic.SUB_HAS_AUTOPIPELINE_IN_HIER(sub_sub_inst, parser_state):
@@ -2293,10 +2387,25 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_st
 
     # Autopipelined submodule instances
     if toks[0] == "AUTOPIPELINE":
-        depth = -1  # auto
-        if len(toks) > 1:
-            depth = int(toks[1])
-        parser_state.existing_logic.next_func_call_autopipeline_depth = depth
+        # Bare pragma: unconstrained (the sweep picks the latency).
+        # `#pragma AUTOPIPELINE N`: fixed latency N (N inserted registers).
+        # -1 is kept as the legacy spelling of unconstrained.
+        constraint = AutopipelineLatency()
+        if len(toks) > 1 and not toks[1].startswith("/"):
+            try:
+                latency = int(toks[1])
+            except ValueError:
+                raise Exception(
+                    f"#pragma AUTOPIPELINE {toks[1]}: expected an integer "
+                    "latency (number of inserted registers)"
+                )
+            if latency >= 0:
+                constraint = AutopipelineLatency(latency=latency)
+            elif latency != -1:
+                raise Exception(
+                    f"#pragma AUTOPIPELINE {latency}: latency must be >= 0"
+                )
+        parser_state.existing_logic.next_func_call_autopipeline_latency = constraint
 
     return parser_state.existing_logic
 
@@ -7432,12 +7541,12 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, func_c_ast_node)
 
     # Record if user specified call to be autopipeline
-    if parser_state.existing_logic.next_func_call_autopipeline_depth is not None:
-        depth = parser_state.existing_logic.next_func_call_autopipeline_depth
-        parser_state.existing_logic.sub_inst_to_autopipeline_depth[func_inst_name] = (
-            depth
+    if parser_state.existing_logic.next_func_call_autopipeline_latency is not None:
+        constraint = parser_state.existing_logic.next_func_call_autopipeline_latency
+        parser_state.existing_logic.sub_inst_to_autopipeline_latency[func_inst_name] = (
+            constraint
         )
-        parser_state.existing_logic.next_func_call_autopipeline_depth = None
+        parser_state.existing_logic.next_func_call_autopipeline_latency = None
 
     # Should not be evaluating c ast node if driver is already known
     for input_i in range(0, len(input_port_names)):

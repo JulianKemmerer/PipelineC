@@ -2750,11 +2750,11 @@ def SUMMARIZE_SUBTREE_PIPELINE(
 
     regions = {}
     for inst_name, logic in parser_state.LogicInstLookupTable.items():
-        if not logic.sub_inst_to_autopipeline_depth:
+        if not logic.sub_inst_to_autopipeline_latency:
             continue
         if not in_subtree(inst_name):
             continue
-        for local_sub in logic.sub_inst_to_autopipeline_depth:
+        for local_sub in logic.sub_inst_to_autopipeline_latency:
             sub_inst = inst_name + marker + local_sub
             sub_timing_params = TimingParamsLookupTable.get(sub_inst)
             if sub_timing_params is None:
@@ -3248,9 +3248,9 @@ def DROP_NON_DEEPENING_PLACEMENTS(
     region_insts = [
         inst_name + marker + local_sub
         for inst_name, logic in parser_state.LogicInstLookupTable.items()
-        if logic.sub_inst_to_autopipeline_depth
+        if logic.sub_inst_to_autopipeline_latency
         and (inst_name == subtree_root or inst_name.startswith(in_subtree_prefix))
-        for local_sub in logic.sub_inst_to_autopipeline_depth
+        for local_sub in logic.sub_inst_to_autopipeline_latency
     ]
 
     def _realized_total():
@@ -3696,6 +3696,10 @@ class MainSweepPlan:
         # func autopipelining cannot subdivide
         self.unpipelinable_blame = None
         self.history = []  # dicts for sweep_history.json
+        # Constrained AUTOPIPELINE regions under this main (see
+        # ENFORCE_AUTOPIPELINE_REGIONS); empty for unconstrained designs
+        self.regions = []
+        self.autopipeline_limit_blame = None
 
     def predicted_floor(self):
         # (floor_mhz, blame Segment) worst over subtrees, None if all sliceable
@@ -3777,7 +3781,17 @@ def RANK_PATH_FUNC_CANDIDATES(path_report, plan, parser_state):
             continue
         for seg in landscape.segments:
             candidates |= seg.ancestor_funcs
-    candidates -= excluded
+    # Constrained AUTOPIPELINE regions are locked, so their interiors appear
+    # in no subtree landscape: their own landscapes supply the candidates,
+    # and a region root is a meaningful attribution (the path is inside it).
+    region_root_funcs = set()
+    for region in getattr(plan, "regions", ()):
+        region_root_funcs.add(region.func_name)
+        candidates.add(region.func_name)
+        if region.landscape is not None:
+            for seg in region.landscape.segments:
+                candidates |= seg.ancestor_funcs
+    candidates -= excluded - region_root_funcs
 
     def _ranked(keyed):
         # keyed: func_name -> ascending-better sort key tuple. Name itself
@@ -4262,6 +4276,12 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     root_funcs.add(parser_state.LogicInstLookupTable[plan.main_inst].func_name)
     if hotspot_func in root_funcs:
         return False
+    # Never lock inside, or around, a constrained AUTOPIPELINE region: its
+    # register count is owned by ENFORCE_AUTOPIPELINE_REGIONS
+    for func_inst in parser_state.FuncToInstances.get(hotspot_func, ()):
+        for region in getattr(plan, "regions", ()):
+            if _INSTS_CONFLICT(func_inst, region.inst):
+                return False
     func_logic = parser_state.FuncLogicLookupTable[hotspot_func]
     if not func_logic.CAN_HAVE_ADDED_LATENCY(parser_state):
         return False
@@ -4556,6 +4576,611 @@ def RUN_AS_WRITTEN_CHECKS(goal_mains, parser_state):
         )
 
 
+# ─────────────────────────────────────────────
+# Constrained AUTOPIPELINE regions (latency= / start_latency= / max_latency=)
+# ─────────────────────────────────────────────
+
+AUTOPIPELINE_REGION_RETRIES = 4
+COUNT_TARGET_BISECT_STEPS = 32
+
+
+class AutopipelineLatencyInfeasible(Exception):
+    """A constrained AUTOPIPELINE call site's latency cannot be built."""
+
+
+class AutopipelineRegion:
+    """One instance of a constrained AUTOPIPELINE call site.
+
+    The region is latency-decoupled from its container (GET_SUBMODULE_LATENCY
+    reports tagged instances as 0), so it is planned on its own landscape,
+    lowered, verified against its real GET_TOTAL_LATENCY and then locked
+    (params_are_fixed) before any containing landscape is built -- the
+    container sees an ordinary Segment.LOCKED, the same path mini-sweep locks
+    use. Instances sharing a canonical key form one group and are planned to
+    one register count, so the harvested .latency cannot diverge."""
+
+    def __init__(self, inst, constraint, key, func_name):
+        self.inst = inst
+        self.constraint = constraint
+        self.key = key  # canonical .latency key (None for C designs)
+        self.func_name = func_name
+        self.group = key if key is not None else ("inst", inst)
+        # Budget divisor private to this region, multiplied on top of the
+        # plan's global_scale; calibrated so start_latency / nudges persist
+        self.scale = 1.0
+        self.start_pending = constraint.start_latency is not None
+        self.landscape = None
+        self.cuts = []
+        self.placements = []
+        self.realized = 0
+        self.count = None  # register count planned last iteration
+        self.predicted_ns = 0.0
+        self.rebalance_attempted = False
+
+    def label(self):
+        return self.key if self.key is not None else self.func_name
+
+    def at_cap(self):
+        cap = self.constraint.upper_bound()
+        return cap is not None and self.realized >= cap
+
+    def to_dict(self):
+        return {
+            "inst": self.inst,
+            "key": self.key,
+            "constraint": self.constraint.describe(),
+            "realized_latency": self.realized,
+            "cuts": len(self.cuts),
+            "scale": round(self.scale, 4),
+        }
+
+
+def COLLECT_AUTOPIPELINE_REGIONS(parser_state, scope_inst=None, fixed_only=False):
+    """Every instance of a constrained AUTOPIPELINE call site (optionally only
+    those at/under scope_inst, or only fixed latency=N ones), sorted. Empty
+    for designs without constraints, which keeps every region code path off."""
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    regions = []
+    for inst_name in sorted(parser_state.LogicInstLookupTable):
+        logic = parser_state.LogicInstLookupTable[inst_name]
+        for local_sub in sorted(logic.sub_inst_to_autopipeline_latency):
+            constraint = logic.sub_inst_to_autopipeline_latency[local_sub]
+            if constraint is None or constraint.is_unconstrained():
+                continue
+            if fixed_only and not constraint.is_fixed():
+                continue
+            sub_inst = inst_name + marker + local_sub
+            sub_logic = parser_state.LogicInstLookupTable.get(sub_inst)
+            if sub_logic is None:
+                continue
+            if scope_inst is not None and not (
+                sub_inst == scope_inst or sub_inst.startswith(scope_inst + marker)
+            ):
+                continue
+            regions.append(
+                AutopipelineRegion(
+                    sub_inst,
+                    constraint,
+                    logic.sub_inst_to_autopipeline_key.get(local_sub),
+                    sub_logic.func_name,
+                )
+            )
+    return regions
+
+
+def _TRIM_PLACEMENT_PLAN_TO_COUNT(landscape, plan, count):
+    """Reduce a planned (cuts, placements, budget) with too many cuts to
+    exactly `count` by repeatedly dropping the cut whose removal merges the
+    two lightest adjacent stages, then re-lowering the kept placements as
+    required boundaries. None if the plan's placements aren't reusable as
+    fixed placements (e.g. relocated bit-internal splits) or lowering moved
+    the count."""
+    cuts, placements, budget = plan
+    by_unit = {}
+    for placement in placements:
+        by_unit.setdefault(placement.axis_unit, []).append(placement)
+    for unit, unit_placements in by_unit.items():
+        legal_ids = {
+            c.candidate_id for c in landscape.candidates_by_unit.get(unit, ())
+        }
+        if any(p.candidate_id not in legal_ids for p in unit_placements):
+            return None
+    units = sorted(by_unit)
+    weight = landscape.weight
+    while len(units) > count:
+        bounds = [-1] + units + [landscape.total_units - 1]
+        stage_w = [
+            sum(weight[bounds[i] + 1 : bounds[i + 1] + 1])
+            for i in range(len(bounds) - 1)
+        ]
+        drop = min(
+            range(len(units)), key=lambda j: (stage_w[j] + stage_w[j + 1], j)
+        )
+        del units[drop]
+    fixed = [p for unit in units for p in by_unit[unit]]
+    try:
+        new_cuts, new_placements = PLAN_PIPELINE_PLACEMENTS(
+            landscape, float(sum(weight)) + 1.0, fixed_placements=fixed
+        )
+    except (ValueError, RuntimeError):
+        return None
+    if len(new_cuts) != count:
+        return None
+    return new_cuts, new_placements, budget
+
+
+def COUNT_TARGETED_PLACEMENTS(landscape, count, strict=True, prefer_fewer=False):
+    """Plan exactly `count` cuts on a landscape: bisect the stage budget
+    PLAN_PIPELINE_PLACEMENTS is given (cut count is monotone non-increasing in
+    the budget) until it yields `count`, so the positions are the planner's own
+    tightest-stage placement for that many registers. When the count jumps
+    over `count`, trim the nearest larger plan down to it; failing that return
+    the nearest plan (fewer cuts when prefer_fewer, else more) -- the caller
+    verifies the realized latency and retries.
+
+    Returns (cuts, placements, budget_units). strict: more cuts than legal
+    register positions raises AutopipelineLatencyInfeasible instead of
+    clamping."""
+    total_w = float(sum(landscape.weight))
+    if count <= 0:
+        return [], [], total_w + 1.0
+    n_legal = sum(1 for legal in landscape.legal if legal)
+    if count > n_legal:
+        if strict:
+            raise AutopipelineLatencyInfeasible(
+                f"only {n_legal} legal register position(s) exist in "
+                f"{landscape.subtree_root_inst}, {count} requested"
+            )
+        count = n_legal
+        if count == 0:
+            return [], [], total_w + 1.0
+    lo, hi = 0.0, total_w + 1.0
+    over = None
+    under = None
+    for _ in range(COUNT_TARGET_BISECT_STEPS):
+        mid = 0.5 * (lo + hi)
+        cuts, placements = PLAN_PIPELINE_PLACEMENTS(landscape, mid)
+        if len(cuts) == count:
+            return cuts, placements, mid
+        if len(cuts) > count:
+            lo = mid
+            over = (cuts, placements, mid)
+        else:
+            hi = mid
+            under = (cuts, placements, mid)
+        if hi - lo <= 1e-6 * max(1.0, hi):
+            break
+    if over is not None:
+        trimmed = _TRIM_PLACEMENT_PLAN_TO_COUNT(landscape, over, count)
+        if trimmed is not None:
+            return trimmed
+    if prefer_fewer and under is not None:
+        return under
+    if over is not None:
+        return over
+    if under is not None:
+        return under
+    return [], [], hi
+
+
+def _INVALIDATE_REGION_CACHES(inst, TimingParamsLookupTable):
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    for name, timing_params in TimingParamsLookupTable.items():
+        if (
+            name == inst
+            or name.startswith(inst + marker)
+            or inst.startswith(name + marker)
+        ):
+            timing_params.INVALIDATE_CACHE()
+
+
+def AUTOPIPELINE_LATENCY_INFEASIBLE_MESSAGE(region, realized, tried, parser_state, why=""):
+    return (
+        f"AUTOPIPELINE {region.label()} ({region.constraint.describe()}) at "
+        f"{region.inst}{SYN.FUNC_SRC_LOC_STR(parser_state, region.func_name)}: "
+        f"cannot build the requested latency"
+        + (f" ({why})" if why else "")
+        + f" -- realized {realized} clock(s) after planning "
+        f"{', '.join(str(k) for k in tried)} register position(s). Relax or "
+        "remove the constraint, or give the function more register positions."
+    )
+
+
+def _AUTOPIPELINE_REGION_COUNT(region, period_ns, global_scale):
+    """(register count to plan, calibrate region.scale to it?) before nudges."""
+    constraint = region.constraint
+    if constraint.is_fixed():
+        return constraint.latency, False
+    if region.landscape is None:
+        return 0, False
+    cap = constraint.max_latency
+    if period_ns is None:
+        count = constraint.start_latency or 0
+        calibrate = False
+    elif region.start_pending:
+        region.start_pending = False
+        count = constraint.start_latency
+        calibrate = True
+    else:
+        budget = region.landscape.budget_units_for_period(period_ns) / (
+            global_scale * region.scale
+        )
+        count = len(PLAN_PIPELINE_PLACEMENTS(region.landscape, budget)[0])
+        calibrate = False
+    if cap is not None and count > cap:
+        count = cap
+    count = min(count, sum(1 for legal in region.landscape.legal if legal))
+    return count, calibrate
+
+
+def _ENFORCE_ONE_AUTOPIPELINE_REGION(
+    region,
+    count,
+    parser_state,
+    tpl,
+    func_delay_scale,
+    period_ns=None,
+    global_scale=1.0,
+    calibrate=False,
+):
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    constraint = region.constraint
+    goal = constraint.latency if constraint.is_fixed() else None
+    cap = constraint.max_latency
+    k = count
+    tried = []
+    zero_tpl = None
+    for attempt in range(AUTOPIPELINE_REGION_RETRIES + 1):
+        tried.append(k)
+        if attempt > 0:
+            # Undo the previous attempt's registers inside the region only
+            if zero_tpl is None:
+                zero_tpl = SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+            for inst in list(tpl.keys()):
+                if inst == region.inst or inst.startswith(region.inst + marker):
+                    tpl[inst] = copy.deepcopy(zero_tpl[inst])
+            region.landscape = BUILD_SLICE_LANDSCAPE(
+                region.inst, parser_state, tpl, func_delay_scale
+            )
+        budget = None
+        cuts, placements = [], []
+        if k > 0:
+            if region.landscape is None:
+                if goal is not None:
+                    raise AutopipelineLatencyInfeasible(
+                        AUTOPIPELINE_LATENCY_INFEASIBLE_MESSAGE(
+                            region, 0, tried, parser_state,
+                            "no measurable pipelinable delay inside it",
+                        )
+                    )
+            else:
+                try:
+                    cuts, placements, budget = COUNT_TARGETED_PLACEMENTS(
+                        region.landscape,
+                        k,
+                        strict=goal is not None,
+                        prefer_fewer=goal is None and cap is not None,
+                    )
+                except AutopipelineLatencyInfeasible as err:
+                    raise AutopipelineLatencyInfeasible(
+                        AUTOPIPELINE_LATENCY_INFEASIBLE_MESSAGE(
+                            region, 0, tried, parser_state, str(err)
+                        )
+                    )
+        elif region.landscape is not None:
+            budget = float(sum(region.landscape.weight)) + 1.0
+        if placements:
+            tpl = APPLY_PIPELINE_PLACEMENTS(placements, parser_state, tpl)
+            CHECK_PIPELINE_PLACEMENTS_REALIZED(placements, parser_state, tpl)
+            _INVALIDATE_REGION_CACHES(region.inst, tpl)
+            cuts, placements = DROP_NON_DEEPENING_PLACEMENTS(
+                region.inst, cuts, placements, parser_state, tpl
+            )
+        _INVALIDATE_REGION_CACHES(region.inst, tpl)
+        realized = tpl[region.inst].GET_TOTAL_LATENCY(parser_state, tpl)
+        if goal is not None:
+            target = goal
+        elif cap is not None and realized > cap:
+            target = cap
+        else:
+            target = None
+        if target is None or realized == target:
+            break
+        next_k = max(0, k + (target - realized))
+        if next_k in tried:
+            next_k = k + (1 if target > realized else -1)
+        if next_k < 0 or next_k in tried or attempt == AUTOPIPELINE_REGION_RETRIES:
+            raise AutopipelineLatencyInfeasible(
+                AUTOPIPELINE_LATENCY_INFEASIBLE_MESSAGE(
+                    region, realized, tried, parser_state
+                )
+            )
+        k = next_k
+    if calibrate and budget is not None and budget > 0.0 and period_ns is not None:
+        # Make the unchanged knobs reproduce this count next iteration
+        base = region.landscape.budget_units_for_period(period_ns) / global_scale
+        region.scale = max(base / budget, 1e-9)
+    region.cuts = list(cuts)
+    region.placements = list(placements)
+    region.realized = realized
+    region.predicted_ns = (
+        PREDICTED_STAGE_NS(cuts, region.landscape)
+        if region.landscape is not None
+        else 0.0
+    )
+    tpl[region.inst].params_are_fixed = True
+    return tpl
+
+
+def ENFORCE_AUTOPIPELINE_REGIONS(
+    regions,
+    parser_state,
+    tpl,
+    func_delay_scale=None,
+    period_ns=None,
+    global_scale=1.0,
+    unresolved=False,
+    trim_pending=False,
+):
+    """Plan, lower, verify and lock every constrained AUTOPIPELINE region.
+
+    Register count per region group:
+      - latency=N: N, always;
+      - start_latency=S on its first iteration (or with no period to plan
+        against): S, with region.scale calibrated so unchanged knobs keep
+        reproducing S;
+      - otherwise the count the planner picks for the plan's period, budget
+        divided by global_scale * region.scale, capped at max_latency.
+    With `unresolved` (timing still failing, the plan has no landscape of its
+    own that could change) and no region count changed since last iteration,
+    the group with the worst predicted stage grows by one register;
+    `trim_pending` shrinks the group with the best predicted stage by one.
+
+    Realized latency is verified after lowering (built-in operator stage
+    granularity and non-deepening drops can make it differ from the cut
+    count); fixed and capped regions retry with a corrected count and raise
+    AutopipelineLatencyInfeasible when the constraint cannot be met.
+    Returns the updated table."""
+    func_delay_scale = func_delay_scale or {}
+    groups = {}
+    order = []
+    for region in regions:
+        if region.group not in groups:
+            groups[region.group] = []
+            order.append(region.group)
+        groups[region.group].append(region)
+    decisions = []
+    for group_key in order:
+        members = groups[group_key]
+        for region in members:
+            region.landscape = BUILD_SLICE_LANDSCAPE(
+                region.inst, parser_state, tpl, func_delay_scale
+            )
+        count, calibrate = _AUTOPIPELINE_REGION_COUNT(
+            members[0], period_ns, global_scale
+        )
+        decisions.append([members, count, calibrate])
+    unchanged = all(d[0][0].count is not None and d[0][0].count == d[1] for d in decisions)
+    if unchanged and (unresolved or trim_pending):
+        if trim_pending:
+            movable = [
+                d
+                for d in decisions
+                if not d[0][0].constraint.is_fixed() and d[1] > 0
+            ]
+            if movable:
+                d = min(movable, key=lambda d: d[0][0].predicted_ns)
+                d[1] -= 1
+                d[2] = True
+        else:
+            movable = [
+                d
+                for d in decisions
+                if not d[0][0].constraint.is_fixed()
+                and d[0][0].landscape is not None
+                and (
+                    d[0][0].constraint.max_latency is None
+                    or d[1] < d[0][0].constraint.max_latency
+                )
+            ]
+            if movable:
+                d = max(movable, key=lambda d: d[0][0].predicted_ns)
+                d[1] += 1
+                d[2] = True
+    for members, count, calibrate in decisions:
+        for region in members:
+            tpl = _ENFORCE_ONE_AUTOPIPELINE_REGION(
+                region,
+                count,
+                parser_state,
+                tpl,
+                func_delay_scale,
+                period_ns=period_ns,
+                global_scale=global_scale,
+                calibrate=calibrate and period_ns is not None,
+            )
+            region.count = count
+    return tpl
+
+
+def REENFORCE_AUTOPIPELINE_REGIONS(parser_state, tpl, scope_inst=None):
+    """Pin-and-confirm seeding (SYN.SEED_TIMING_PARAMS_FROM_PREVIOUS) copies
+    slices by instance path or function name, which can hand a constrained
+    region another call site's pipelining. Keep every region that still
+    satisfies its constraint, re-plan any that doesn't (fixed regions to N,
+    over-cap regions to their cap), and lock them all. Also used by the
+    coarse sweep after its even-fraction slicing (scope_inst = the swept
+    instance)."""
+    regions = COLLECT_AUTOPIPELINE_REGIONS(parser_state, scope_inst=scope_inst)
+    if not regions:
+        return tpl
+    for timing_params in tpl.values():
+        timing_params.INVALIDATE_CACHE()
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    zero_tpl = None
+    for region in regions:
+        realized = tpl[region.inst].GET_TOTAL_LATENCY(parser_state, tpl)
+        cap = region.constraint.upper_bound()
+        violates = cap is not None and (
+            realized > cap or (region.constraint.is_fixed() and realized != cap)
+        )
+        if not violates:
+            tpl[region.inst].params_are_fixed = True
+            continue
+        if zero_tpl is None:
+            zero_tpl = SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+        for inst in list(tpl.keys()):
+            if inst == region.inst or inst.startswith(region.inst + marker):
+                tpl[inst] = copy.deepcopy(zero_tpl[inst])
+        region.landscape = BUILD_SLICE_LANDSCAPE(region.inst, parser_state, tpl, {})
+        try:
+            tpl = _ENFORCE_ONE_AUTOPIPELINE_REGION(
+                region, cap, parser_state, tpl, {}
+            )
+        except AutopipelineLatencyInfeasible as err:
+            sys.exit(str(err))
+    for timing_params in tpl.values():
+        timing_params.INVALIDATE_CACHE()
+    return tpl
+
+
+def PLAN_REGION_CUTS(plan):
+    return sum(len(region.cuts) for region in plan.regions)
+
+
+def PLAN_TOTAL_CUTS(plan):
+    return sum(len(cuts) for cuts in plan.cuts.values()) + PLAN_REGION_CUTS(plan)
+
+
+def PLAN_TRIMMABLE_CUTS(plan):
+    return sum(len(cuts) for cuts in plan.cuts.values()) + sum(
+        len(region.cuts) for region in plan.regions if not region.constraint.is_fixed()
+    )
+
+
+def PLAN_FINGERPRINT_PLACEMENTS(plan):
+    if not plan.regions:
+        return plan.placements
+    merged = dict(plan.placements)
+    for region in plan.regions:
+        merged["autopipeline_region:" + region.inst] = region.placements
+    return merged
+
+
+def REGION_FOR_HOTSPOT(hotspot_func, plan, parser_state):
+    """The constrained region group every in-plan instance of hotspot_func
+    lies inside, else None."""
+    if not plan.regions:
+        return None
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    insts = sorted(
+        inst
+        for inst in parser_state.FuncToInstances.get(hotspot_func, ())
+        if inst == plan.main_inst or inst.startswith(plan.main_inst + marker)
+    )
+    found = None
+    for inst in insts:
+        owner = next(
+            (
+                r
+                for r in plan.regions
+                if inst == r.inst or inst.startswith(r.inst + marker)
+            ),
+            None,
+        )
+        if owner is None or (found is not None and owner.group != found.group):
+            return None
+        if found is None:
+            found = owner
+    return found
+
+
+def STOP_AT_AUTOPIPELINE_LATENCY_LIMIT(plan, parser_state, capped_regions, hotspot_func=None):
+    main_func_name = parser_state.LogicInstLookupTable[plan.main_inst].func_name
+    seen = set()
+    names = []
+    for region in capped_regions:
+        if region.group in seen:
+            continue
+        seen.add(region.group)
+        names.append(
+            f"{region.label()} ({region.constraint.describe()}, "
+            f"{region.realized} clks built)"
+        )
+    names_str = ", ".join(names) if names else "?"
+    where = (
+        f" (critical path in {hotspot_func}"
+        f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)})"
+        if hotspot_func is not None
+        else ""
+    )
+    print(
+        f"[sweep] WARNING: {main_func_name} limited by AUTOPIPELINE latency "
+        f"constraint(s) {names_str}{where}: the constrained call site(s) cannot "
+        "take more registers. Raise or remove latency= / max_latency=, or lower "
+        "the clock goal. Keeping best result.",
+        flush=True,
+    )
+    plan.stopped_reason = "autopipeline_latency_limit"
+    plan.autopipeline_limit_blame = names_str
+
+
+def AUTOPIPELINE_REGION_FEEDBACK(plan, region, hotspot_func, target_mhz, curr_mhz, parser_state):
+    """Failing-timing feedback for a critical path inside a constrained region.
+    Returns (action string, made_change)."""
+    step = min(
+        max((target_mhz / curr_mhz) * 1.05, FUNC_SCALE_MIN_STEP),
+        FUNC_SCALE_MAX_STEP,
+    )
+    group = [r for r in plan.regions if r.group == region.group]
+    if not region.at_cap():
+        for r in group:
+            r.scale *= step
+        plan.func_delay_scale[hotspot_func] = (
+            plan.func_delay_scale.get(hotspot_func, 1.0) * step
+        )
+        return f"grow_autopipeline({region.label()} x{region.scale:.2f})", True
+    if not region.rebalance_attempted:
+        # Same register count, re-placed with the hotspot weighted heavier
+        for r in group:
+            r.rebalance_attempted = True
+        plan.func_delay_scale[hotspot_func] = (
+            plan.func_delay_scale.get(hotspot_func, 1.0) * step
+        )
+        return (
+            f"rebalance_autopipeline({region.label()} at "
+            f"{region.constraint.describe()})",
+            True,
+        )
+    STOP_AT_AUTOPIPELINE_LATENCY_LIMIT(plan, parser_state, [region], hotspot_func)
+    return f"stop(autopipeline latency limit {region.label()})", False
+
+
+def SNAPSHOT_AUTOPIPELINE_REGIONS(plans):
+    return {
+        mi: [
+            (list(r.cuts), list(r.placements), r.realized, r.scale, r.count)
+            for r in p.regions
+        ]
+        for mi, p in plans.items()
+        if p.regions
+    }
+
+
+def RESTORE_AUTOPIPELINE_REGIONS(plans, snapshot):
+    if not snapshot:
+        return
+    for mi, states in snapshot.items():
+        for region, (cuts, placements, realized, scale, count) in zip(
+            plans[mi].regions, states
+        ):
+            region.cuts = list(cuts)
+            region.placements = list(placements)
+            region.realized = realized
+            region.scale = scale
+            region.count = count
+
+
 def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     """Replaces the old middle-out sweep. One full-design synthesis per
     iteration; landscape planning decides where registers go, timing report
@@ -4605,6 +5230,23 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     # input-to-output through delay) are built from measured totals. No
     # subtree-root synthesis happens here.
 
+    # Constrained AUTOPIPELINE call sites belong to the plan of the main they
+    # sit under; those under goal-less mains are still enforced (no period).
+    planless_regions = []
+    for region in COLLECT_AUTOPIPELINE_REGIONS(parser_state):
+        owner = next(
+            (
+                plan
+                for main_inst, plan in plans.items()
+                if region.inst.startswith(main_inst + C_TO_LOGIC.SUBMODULE_MARKER)
+            ),
+            None,
+        )
+        if owner is None:
+            planless_regions.append(region)
+        else:
+            owner.regions.append(region)
+
     best_tpl = None
     best_score = None
     measured_fallback_done = False
@@ -4624,6 +5266,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     best_plan_placements = None
     best_plan_locks = None
     best_plan_boundary_diagnostics = None
+    best_plan_regions = None
+    met_snapshot_plan_regions = None
     internal_placement_config = LOAD_INTERNAL_PLACEMENT_CONFIG()
     if internal_placement_config is not None:
         print(
@@ -4639,6 +5283,36 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         tpl = SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
         for plan in plans.values():
             tpl = APPLY_LOCKS(plan, parser_state, tpl)
+        # Constrained AUTOPIPELINE regions (latency= / start_latency= /
+        # max_latency=) are planned, lowered, verified and locked on their
+        # own before any containing landscape is built.
+        try:
+            for plan in plans.values():
+                if plan.regions:
+                    tpl = ENFORCE_AUTOPIPELINE_REGIONS(
+                        plan.regions,
+                        parser_state,
+                        tpl,
+                        func_delay_scale=plan.func_delay_scale,
+                        period_ns=plan.target_period_ns,
+                        global_scale=plan.global_scale,
+                        unresolved=(
+                            not plan.met_timing
+                            and plan.stopped_reason is None
+                            and plan.prev_total_cuts is not None
+                            and all(
+                                landscape is None
+                                for landscape in plan.landscapes.values()
+                            )
+                        ),
+                        trim_pending=plan.trim_pending,
+                    )
+            if planless_regions:
+                tpl = ENFORCE_AUTOPIPELINE_REGIONS(
+                    planless_regions, parser_state, tpl
+                )
+        except AutopipelineLatencyInfeasible as err:
+            sys.exit(str(err))
         for plan in plans.values():
             # Build landscapes (locked subtree roots already carry their
             # pipeline from the lock - planning/slicing them again is illegal)
@@ -4666,7 +5340,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 and plan.stopped_reason is None
                 and plan.prev_total_cuts is not None
             )
-            total_cuts = 0
+            total_cuts = PLAN_REGION_CUTS(plan)
             pending_refinement = plan.pending_placement_refinement
             plan.pending_placement_refinement = None
             plan.active_placement_refinement = None
@@ -4687,7 +5361,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 range(8) if pending_refinement is None else ()
             )
             for attempt in planning_attempts:
-                total_cuts = 0
+                total_cuts = PLAN_REGION_CUTS(plan)
                 for subtree_root in plan.subtrees:
                     landscape = plan.landscapes.get(subtree_root)
                     if landscape is None:
@@ -4757,8 +5431,23 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     plan.cuts[subtree_root] = cuts
                     plan.placements[subtree_root] = placements
             plan.current_placement_fingerprint = PIPELINE_PLACEMENT_FINGERPRINT(
-                plan.placements, plan.locked
+                PLAN_FINGERPRINT_PLACEMENTS(plan), plan.locked
             )
+            if (
+                plan.regions
+                and plan.current_placement_fingerprint
+                in plan.attempted_placement_fingerprints
+                and not plan.met_timing
+                and plan.stopped_reason is None
+                and not plan.trim_pending
+                and pending_refinement is None
+                and any(r.at_cap() for r in plan.regions)
+            ):
+                # Identical hardware to an already-synthesized iteration, and
+                # a latency constraint is what keeps it from changing
+                STOP_AT_AUTOPIPELINE_LATENCY_LIMIT(
+                    plan, parser_state, [r for r in plan.regions if r.at_cap()]
+                )
             plan.attempted_placement_fingerprints.add(
                 plan.current_placement_fingerprint
             )
@@ -4768,6 +5457,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     "mode": plan.placement_mode,
                     "refinement": plan.active_placement_refinement,
                     "placement_fingerprint": plan.current_placement_fingerprint,
+                    **(
+                        {
+                            "autopipeline_regions": [
+                                r.to_dict() for r in plan.regions
+                            ]
+                        }
+                        if plan.regions
+                        else {}
+                    ),
                     "mini_sweep_locks": {
                         inst: lock.to_dict() for inst, lock in sorted(plan.locked.items())
                     },
@@ -4783,6 +5481,19 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     },
                 }
             )
+        if (
+            plans
+            and all(
+                p.met_timing or p.stopped_reason is not None for p in plans.values()
+            )
+            and any(
+                p.stopped_reason == "autopipeline_latency_limit"
+                for p in plans.values()
+            )
+            and best_tpl is not None
+        ):
+            # Nothing left to try: don't re-synthesize an identical schedule
+            break
         if iteration == 1:
             for plan in plans.values():
                 PRINT_FLOOR_REPORT(plan, parser_state)
@@ -4849,7 +5560,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     f"[sweep] {main_func_name}: --no_sweep guess, "
                     f"{total_stages} slice(s) built "
                     f"({total_stages + 1} pipeline stages), "
-                    f"cuts={sum(len(c) for c in plan.cuts.values())}"
+                    f"cuts={PLAN_TOTAL_CUTS(plan)}"
                     f"{predicted_str} (UNVERIFIED)",
                     flush=True,
                 )
@@ -4885,7 +5596,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             )
             print(
                 f"[sweep] {main_func_name}: about to synthesize, "
-                f"cuts={sum(len(c) for c in plan.cuts.values())}, "
+                f"cuts={PLAN_TOTAL_CUTS(plan)}, "
                 f"{total_stages} slice(s) "
                 f"({total_stages + 1} pipeline stages)",
                 flush=True,
@@ -4956,7 +5667,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 plan = plans[main_inst]
                 plan.last_achieved_mhz = curr_mhz
                 plan.trim_pending = False
-                total_cuts = sum(len(c) for c in plan.cuts.values())
+                total_cuts = PLAN_TOTAL_CUTS(plan)
                 latency = tpl[main_inst].GET_TOTAL_LATENCY(parser_state, tpl)
                 deepest = GET_SUBTREE_PIPELINE_STAGES(plan, tpl, parser_state)
                 predicted_ns = 0.0
@@ -5090,6 +5801,21 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 plan.global_scale *= step
                                 action = f"replan(global x{plan.global_scale:.2f}, {hotspot_func} unpipelinable)"
                                 made_change = True
+                        elif (
+                            hotspot_func is not None
+                            and REGION_FOR_HOTSPOT(hotspot_func, plan, parser_state)
+                            is not None
+                        ):
+                            action, region_changed = AUTOPIPELINE_REGION_FEEDBACK(
+                                plan,
+                                REGION_FOR_HOTSPOT(hotspot_func, plan, parser_state),
+                                hotspot_func,
+                                target_mhz,
+                                curr_mhz,
+                                parser_state,
+                            )
+                            if region_changed:
+                                made_change = True
                         elif hotspot_func is not None and HOTSPOT_IS_LOCKED(
                             hotspot_func, plan, parser_state
                         ):
@@ -5197,6 +5923,20 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 )
                                 action = f"densify({hotspot_func} x{plan.func_delay_scale[hotspot_func]:.2f})"
                                 made_change = True
+                        elif (
+                            plan.regions
+                            and all(r.at_cap() for r in plan.regions)
+                            and all(
+                                landscape is None
+                                for landscape in plan.landscapes.values()
+                            )
+                        ):
+                            # Every register this main can take is inside a
+                            # constrained region already at its limit
+                            STOP_AT_AUTOPIPELINE_LATENCY_LIMIT(
+                                plan, parser_state, plan.regions
+                            )
+                            action = "stop(autopipeline latency limit)"
                         else:
                             # No attribution (PYRTL etc.): scale global budget
                             step = min(
@@ -5322,6 +6062,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         "bottleneck": hotspot_func,
                         "max_cap_violations": max_cap_violations,
                         "action": action,
+                        **(
+                            {
+                                "autopipeline_regions": [
+                                    r.to_dict() for r in plan.regions
+                                ]
+                            }
+                            if plan.regions
+                            else {}
+                        ),
                     }
                 )
 
@@ -5331,6 +6080,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         ):
             best_score = overall_score
             best_tpl = copy.deepcopy(tpl)
+            best_plan_regions = SNAPSHOT_AUTOPIPELINE_REGIONS(plans)
             best_plan_cuts = {mi: copy.deepcopy(p.cuts) for mi, p in plans.items()}
             best_plan_placements = {
                 mi: copy.deepcopy(p.placements) for mi, p in plans.items()
@@ -5381,11 +6131,12 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 # and the met count, or probe below a met count whose
                 # minimality was never proven by a failing data point.
                 total_cuts_now = sum(
-                    sum(len(c) for c in p.cuts.values()) for p in plans.values()
+                    PLAN_TOTAL_CUTS(p) for p in plans.values()
                 )
                 if met_snapshot_cuts is None or total_cuts_now < met_snapshot_cuts:
                     met_snapshot_cuts = total_cuts_now
                     met_snapshot_tpl = copy.deepcopy(tpl)
+                    met_snapshot_plan_regions = SNAPSHOT_AUTOPIPELINE_REGIONS(plans)
                     met_snapshot_plan_cuts = {
                         mi: copy.deepcopy(p.cuts) for mi, p in plans.items()
                     }
@@ -5406,7 +6157,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         or p.placement_mode == "replace"
                     ):
                         continue
-                    met_cuts = sum(len(c) for c in p.cuts.values())
+                    met_cuts = PLAN_TRIMMABLE_CUTS(p)
                     if met_cuts <= 1:
                         continue
                     if p.last_failing_total_cuts is None:
@@ -5448,6 +6199,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             )
             tpl = met_snapshot_tpl
             multimain_timing_params.TimingParamsLookupTable = tpl
+            RESTORE_AUTOPIPELINE_REGIONS(plans, met_snapshot_plan_regions)
             for mi, p in plans.items():
                 if mi in met_snapshot_plan_cuts:
                     p.cuts = met_snapshot_plan_cuts[mi]
@@ -5528,6 +6280,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     # Use the best seen params if the last iteration wasn't the best
     if best_tpl is not None and not all(p.met_timing for p in plans.values()):
         multimain_timing_params.TimingParamsLookupTable = best_tpl
+        RESTORE_AUTOPIPELINE_REGIONS(plans, best_plan_regions)
         if best_plan_cuts is not None:
             for mi, p in plans.items():
                 if mi in best_plan_cuts:
@@ -5564,10 +6317,20 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         print(
             f"[sweep] {main_func_name}: {outcome}, {total_stages} slice(s) built "
             f"({total_stages + 1} pipeline stages), "
-            f"cuts={sum(len(c) for c in plan.cuts.values())}, "
+            f"cuts={PLAN_TOTAL_CUTS(plan)}, "
             f"locked={len(plan.locked)} inst(s), iterations={iteration}",
             flush=True,
         )
+        for region in plan.regions:
+            print(
+                f"[sweep] AUTOPIPELINE {region.label()} "
+                f"({region.constraint.describe()}): {region.realized} clk(s) "
+                f"built at {region.inst}",
+                flush=True,
+            )
+    SYN.CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(
+        parser_state, multimain_timing_params.TimingParamsLookupTable
+    )
     WRITE_PIPELINE_PLACEMENT_TRACE(
         plans,
         parser_state,
@@ -5606,6 +6369,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 if achieved is None or h["achieved_mhz"] > achieved:
                     achieved = h["achieved_mhz"]
         why = plan.stopped_reason or "unknown"
+        if plan.autopipeline_limit_blame is not None:
+            why += f": {plan.autopipeline_limit_blame}"
         if plan.unpipelinable_blame is not None:
             blamed_func, blame_reason = plan.unpipelinable_blame
             why += f": {blamed_func}, {blame_reason}"

@@ -45,6 +45,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "autopipeline_harvest_test.py"],
         )
     )
+    # Constrained AUTOPIPELINE regions (latency= / start_latency= /
+    # max_latency=): count-targeted cut planning, plan trimming, cap
+    # bookkeeping and hotspot-to-region attribution on synthetic landscapes.
+    tests.append(
+        Test(
+            name="autopipeline_region_planning_test",
+            category="unit",
+            cmd=[INST_DIR / "autopipeline_region_planning_test.py"],
+        )
+    )
     # Pure-unit tests for readable, hierarchical canonical names of
     # factory-closure functions (_canonical_func_name/_callable_canonical_name)
     # against hand-built fixtures, plus a PARSE_FILE regression test for the

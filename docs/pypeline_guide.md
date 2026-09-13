@@ -2193,38 +2193,77 @@ structure and a placement tie-break, not a prerequisite for autopipelining. See
 [`RAW_VHDL_DESIGN.md`](RAW_VHDL_DESIGN.md) for the lowering rules.
 
 ```python
-MY_AP = AUTOPIPELINE(some_func)           # tool picks how many stages
-MY_AP = AUTOPIPELINE(some_func, depth=2)  # force 2 clocks / register slices
+MY_AP = AUTOPIPELINE(some_func)           # tool picks how many registers
 
 @hw_func
 def my_pipeline(i: my_struct_t) -> my_struct_t:
     return MY_AP(i)                       # some_func(i), autopipelined
 
-MY_AP.latency    # int: the pipeline depth the tool chose; 0 until known
+MY_AP.latency    # int: the number of registers (clocks of latency) built
 ```
 
 Build reports distinguish inserted register **slices** from combinational pipeline
 **stages**: zero slices is one stage, and `N` serial slices separate `N + 1` stages.
-The explicit `depth` and discovered `.latency` are the core's clock delay in inserted
-register slices, not the number of combinational regions. Thus `depth=2` separates
+The `latency` arguments below and `.latency` are the core's clock delay in inserted
+register slices, not the number of combinational regions. So `latency=2` separates
 three combinational regions and reports two clocks of core latency. Any explicit
 input/output registers around the call add their own cycles.
 
-`func` must already be `@hw_func`-decorated. In simulation, `MY_AP(x)` is an identity
-passthrough (it just runs `func(x)`), so `sim_call` behaves identically with or without
-it.
+`func` must already be `@hw_func`-decorated. In simulation, `MY_AP(x)` runs `func(x)`.
+It is delayed by `.latency` cycles when that is nonzero (see below), so while
+`.latency` is 0, `sim_call` behaves exactly as it would without the tag.
+
+### Controlling the latency: `latency=`, `start_latency=`, `max_latency=`
+
+By default the throughput sweep decides how many registers a call site gets,
+starting from none. Three optional keyword arguments change that:
+
+```python
+AUTOPIPELINE(some_func, latency=3)                       # fixed: exactly 3 registers, always
+AUTOPIPELINE(some_func, start_latency=2)                 # a starting guess for the sweep
+AUTOPIPELINE(some_func, max_latency=5)                   # a hard limit
+AUTOPIPELINE(some_func, start_latency=2, max_latency=5)  # guess and limit together
+```
+
+- **`latency=N` sets a fixed latency.** The call site always gets exactly `N`
+  registers, in every build. That includes `--comb`, `--no_synth` and `--yosys_json`
+  builds, which measure delays for just those call sites so the registers are still
+  placed sensibly. `.latency` reads `N` from the moment the object is constructed, and
+  native simulation, even a plain `pypeline_sim.py` run, delays the call by `N` cycles.
+  Use it when surrounding logic depends on an exact latency. If `N` registers can't
+  meet the clock goal, the build fails timing with a warning that names the
+  constraint. `latency=` can't be combined with the other two arguments. The C
+  frontend's `#pragma AUTOPIPELINE N` means the same thing.
+- **`start_latency=S` is a starting guess.** On its first iteration, a synthesizing
+  build's sweep builds `S` registers at the call site. It adds more if timing fails,
+  and the trimming pass after timing is met (`--pipeline_min_effort`) may still remove
+  some. `.latency` reads `S` instead of 0 during that build's first elaboration, so when
+  the guess is right the build skips the pin-and-confirm re-elaboration entirely.
+  Plain native sim and `--comb`-style builds ignore it, and `.latency` reads 0 there.
+- **`max_latency=M` is a limit.** The sweep never builds more than `M` registers at
+  the call site. If that limit is what keeps the design from meeting its clock goal,
+  the sweep stops, names the constraint in a warning, and the build fails timing.
+
+The rules for these arguments:
+- Values are ints of at least 0, and `start_latency` can't exceed `max_latency`.
+- On a function declared `@pipeline_latency(k)`, the values must agree with `k`.
+- A constrained call site's function can't itself contain another AUTOPIPELINE call
+  site.
+- The old `depth=` argument is now `latency=`.
 
 ### `.latency`: reading back the discovered pipeline depth
 
-`.latency` is an ordinary Python `int` you can use for elaboration-time sizing — most
-usefully to size FIFOs/counters that sit next to the free-running pipeline (this is
-exactly how `make_stream_pipeline` sizes its output FIFO automatically, see
-[Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline)). It reads **0**:
+`.latency` is an ordinary Python `int` you can use for elaboration-time sizing. It is
+most useful for sizing FIFOs and counters that sit next to the free-running pipeline;
+this is exactly how `make_stream_pipeline` sizes its output FIFO automatically (see
+[Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline)).
+A fixed `latency=N` always reads `N`. Otherwise `.latency` reads **0**:
 
 - always in plain native Pypeline sim (`pypeline_sim.py` run directly, or
   `pypelinec --sim --comb` — no synthesis ever runs),
 - always in `--comb` / `--no_synth` / `--yosys_json` builds (no throughput sweep runs),
-- during the bootstrap elaboration pass of a real synthesizing build.
+- during the bootstrap elaboration pass of a real synthesizing build, unless
+  `start_latency=S` is given, in which case it reads `S`.
 
 On a real build, the `pypelinec` driver's **pin-and-confirm** loop makes the value real:
 the design is first elaborated with `.latency` reading 0 and swept as usual; the
@@ -2236,7 +2275,9 @@ pass is normal when realizing the seeded slices hierarchically (e.g. into pipeli
 built-in div entities with their own stage granularity) changes the total — so on exit
 the `.latency` your Python consumed is guaranteed equal to the stage count of the
 hardware actually built. Designs that never read `.latency` pay nothing: the loop exits
-after the ordinary single sweep. (See `docs/SYN_DESIGN.md` for the loop's details and
+after the ordinary single sweep. The same goes for designs whose reads already match
+what was built, such as fixed `latency=` call sites or a correct `start_latency=`
+guess. (See `docs/SYN_DESIGN.md` for the loop's details and
 failure modes.) A non-`--comb` `pypelinec --sim` run then launches native simulation
 with those same latencies installed **and emulated** — `.latency` reads the real value
 during the sim's design import too, and every AUTOPIPELINE call site behaves as an
@@ -4100,8 +4141,9 @@ semantics. It does not describe a variable-latency transaction or add handshakin
 N must be a nonnegative integer; zero is supported. The declaration is trusted:
 it does not insert registers or check that the body implements N cycles.
 It works on factory-produced functions and stacks with `@MAIN` in either order.
-An AUTOPIPELINE request inside the tagged implementation is an error; an explicit
-AUTOPIPELINE depth on the tagged function itself must agree with N.
+An AUTOPIPELINE request inside the tagged implementation is an error. AUTOPIPELINE
+latency arguments on the tagged function itself must agree with N (`latency=N`,
+`start_latency=N`, `max_latency` of at least N).
 
 AUTOPIPELINE asks the tool to implement pipelining. `pipeline_latency` describes
 pipelining supplied by the user. MULTI_CYCLE constrains setup timing between
@@ -4475,7 +4517,7 @@ built yet."
 | Synthesis | **Async clock-crossing FIFOs** | Not supported | `GLOBAL_STREAM_FIFO` across clock boundaries cannot yet be expressed |
 | Synthesis | **Dual-port stream RAM** | Not built-in | `DECL_STREAM_RAM_DP_W_R_1` — use `vhdl()` passthrough |
 | Synthesis | **`MULTI_CYCLE[...]`** | Synthesis only | No effect without `PART()` / Vivado; ignored in simulation |
-| Synthesis | **`AUTOPIPELINE(...).latency` before synthesis** | Reads `0` | Real value only exists after a synthesizing build's pin-and-confirm pass; plain native sim and `--comb`/`--no_synth`/`--yosys_json` builds always read 0 (a non-`--comb` `pypelinec --sim` run's native sim reads the built value) |
+| Synthesis | **`AUTOPIPELINE(...).latency` before synthesis** | Reads `0` unless constrained | A fixed `latency=N` reads `N` everywhere. Otherwise the real value only exists after a synthesizing build's pin-and-confirm pass: that build's bootstrap pass reads `start_latency` (or 0), and plain native sim and `--comb`/`--no_synth`/`--yosys_json` builds read 0. A non-`--comb` `pypelinec --sim` run's native sim reads the built value |
 | Simulation | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo` now does, covering `make_stream_fifo`/`make_stream_pipeline` too); this still includes `make_valid_ready_mcp` |
 | Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine |
 | Language | **`@enum` member names that are VHDL reserved words** | Fails in VHDL only | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. Native simulation cannot see this — only a `synth`/GHDL run can, which is why every enum-bearing design wants one |

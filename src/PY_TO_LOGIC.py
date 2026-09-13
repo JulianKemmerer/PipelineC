@@ -695,13 +695,17 @@ def _callable_canonical_name(val, module_globals, _seen=None, _depth=0):
     _seen = _seen | {val_id}
 
     # AUTOPIPELINE tag objects: their identity is the wrapped function's
-    # identity (plus any pinned depth) -- the instance itself has no
-    # distinguishing qualname/closure of its own (every instance would
-    # otherwise collapse to "pypeline_AUTOPIPELINE" via the class attrs).
+    # identity plus any constructor latency constraint (latency= /
+    # start_latency= / max_latency=; empty for an unconstrained tag, so those
+    # names never moved) -- the instance itself has no distinguishing
+    # qualname/closure of its own (every instance would otherwise collapse to
+    # "pypeline_AUTOPIPELINE" via the class attrs).
     if getattr(val, "_is_autopipeline_pragma", False):
         inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
-        depth_suffix = f"_depth_{val.depth}" if getattr(val, "depth", -1) != -1 else ""
-        return _sanitize_vhdl_name(f"AUTOPIPELINE_{inner}{depth_suffix}")
+        latency_suffix = (
+            val.latency_suffix() if hasattr(val, "latency_suffix") else ""
+        )
+        return _sanitize_vhdl_name(f"AUTOPIPELINE_{inner}{latency_suffix}")
 
     # AUTOFSM tag objects: same reasoning as AUTOPIPELINE above -- identity is
     # the wrapped pure function's identity, since the tag itself has no
@@ -4815,8 +4819,9 @@ class FuncElaborator:
     def _elab_call(self, expr):
         # AUTOPIPELINE(func) instance call: MY_AP(x) — elaborate func as the
         # real submodule instance and tag it for autopipelining with the
-        # instance's depth and canonical latency-cache key. MY_AP resolves as
-        # an ordinary Python value (closure cell or global); depth/func/key
+        # instance's latency constraint and canonical latency-cache key. MY_AP
+        # resolves as an ordinary Python value (closure cell or global);
+        # constraint/func/key
         # are real attributes on the live object, so the callee needn't be
         # written as a literal direct-call expression and the tag can't leak
         # onto a nested call inside the arguments.
@@ -5043,7 +5048,9 @@ class FuncElaborator:
             self.src_file,
         )
         if autopipeline_call is not None:
-            self.logic.sub_inst_to_autopipeline_depth[inst] = autopipeline_call.depth
+            self.logic.sub_inst_to_autopipeline_latency[inst] = (
+                C_TO_LOGIC.AutopipelineLatency.from_tag(autopipeline_call)
+            )
             self.logic.sub_inst_to_autopipeline_key[inst] = (
                 autopipeline_call.canonical_key
             )
@@ -6659,16 +6666,77 @@ def _build_inst_lookup(parser_state):
         _walk_instances(main_name, main_logic, parser_state)
 
 
+def _validate_autopipeline_constraints(parser_state):
+    """Reject AUTOPIPELINE latency constraints (latency= / start_latency= /
+    max_latency=, or C `#pragma AUTOPIPELINE N`) that can't mean anything
+    well-defined, before any synthesis runs:
+      - a constrained call site whose function contains another AUTOPIPELINE
+        call site: a nested region reports zero latency to its container, so
+        the outer constraint would silently not count it;
+      - a fixed latency N > 0 on a function that can't take added registers
+        (state, raw HDL, ...) -- unless it is itself pipeline_latency(N), which
+        _validate_pipeline_latencies checks for agreement.
+    Deeper infeasibility (not enough legal register positions) is reported by
+    the sweep's region enforcement, which knows the real landscape."""
+    fixed_latency = getattr(parser_state, "func_fixed_latency", {})
+    for logic in parser_state.FuncLogicLookupTable.values():
+        for inst, constraint in logic.sub_inst_to_autopipeline_latency.items():
+            if constraint is None or constraint.is_unconstrained():
+                continue
+            target = logic.submodule_instances.get(inst)
+            target_logic = parser_state.FuncLogicLookupTable.get(target)
+            if target_logic is None:
+                continue
+            where = (
+                f"AUTOPIPELINE({target}, {constraint.describe()}) "
+                f"called in '{logic.func_name}'"
+            )
+            visited = set()
+            stack = [target]
+            while stack:
+                entity = stack.pop()
+                if entity in visited:
+                    continue
+                visited.add(entity)
+                entity_logic = parser_state.FuncLogicLookupTable.get(entity)
+                if entity_logic is None:
+                    continue
+                if entity_logic.sub_inst_to_autopipeline_latency:
+                    raise ElaborationError(
+                        f"{where}: '{entity}' contains another AUTOPIPELINE call "
+                        "site. A nested AUTOPIPELINE region reports zero latency "
+                        "to its container, so the outer latency constraint "
+                        "could not count it -- constrain the inner call site "
+                        "instead, or remove the outer constraint."
+                    )
+                stack.extend(entity_logic.submodule_instances.values())
+            if (
+                constraint.latency
+                and target not in fixed_latency
+                and not target_logic.CAN_HAVE_ADDED_LATENCY(parser_state)
+            ):
+                raise ElaborationError(
+                    f"{where}: '{target}' cannot have pipeline registers added "
+                    "(it holds state, feedback, or raw HDL), so a fixed latency "
+                    f"of {constraint.latency} cannot be built."
+                )
+
+
 def _validate_pipeline_latencies(parser_state):
     if not parser_state.func_fixed_latency:
         return
     for logic in parser_state.FuncLogicLookupTable.values():
-        for inst, depth in logic.sub_inst_to_autopipeline_depth.items():
+        for inst, constraint in logic.sub_inst_to_autopipeline_latency.items():
             target = logic.submodule_instances[inst]
             fixed = parser_state.func_fixed_latency.get(target)
-            if fixed is not None and depth not in (-1, fixed):
+            problem = (
+                constraint.conflict_with_fixed(fixed)
+                if fixed is not None and constraint is not None
+                else None
+            )
+            if problem is not None:
                 raise ElaborationError(
-                    f"AUTOPIPELINE depth {depth} conflicts with "
+                    f"AUTOPIPELINE {problem} conflicts with "
                     f"{target}'s pipeline_latency({fixed})"
                 )
     for name in parser_state.func_fixed_latency:
@@ -6683,7 +6751,7 @@ def _validate_pipeline_latencies(parser_state):
                 # Builtins under unused functions are materialized only when
                 # an instance hierarchy actually reaches them.
                 return
-            if logic.sub_inst_to_autopipeline_depth:
+            if logic.sub_inst_to_autopipeline_latency:
                 raise ElaborationError(
                     f"pipeline_latency on '{name}' fixes its entire implementation; "
                     f"AUTOPIPELINE inside '{entity}' would change that implementation"
@@ -7122,6 +7190,7 @@ def ELABORATE_LIVE_ROOTS(roots):
         parser_state.main_clk_group[logic.func_name] = None
     _build_inst_lookup(parser_state)
     _build_func_call_graph(parser_state)
+    _validate_autopipeline_constraints(parser_state)
     _validate_pipeline_latencies(parser_state)
     return parser_state
 
@@ -7351,6 +7420,7 @@ def PARSE_FILE(py_file):
     _build_inst_lookup(parser_state)
 
     # Sanity check have at least 1 MAIN func
+    _validate_autopipeline_constraints(parser_state)
     _validate_pipeline_latencies(parser_state)
     if len(parser_state.main_mhz) == 0:
         raise ElaborationError(f"No functions were decorated as @MAIN?")

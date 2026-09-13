@@ -254,6 +254,9 @@ else:
         "self_check_counter_test.py",
         "native_vs_vhdl_ap_test.py",
         "self_check_autofsm_test.py",
+        # A fixed AUTOPIPELINE latency is emulated in plain sim without the
+        # compiler (compiler-free delay-line key)
+        "autopipeline_fixed_latency_sim_test.py",
     ):
         for mode in ("direct", "cli"):
             result = subprocess.run(
@@ -409,12 +412,22 @@ def test_conflicting_autopipeline():
     from pypeline import AUTOPIPELINE
     import PY_TO_LOGIC as py
 
-    try:
-        AUTOPIPELINE(delay_one, depth=2)
-    except ValueError:
-        pass
-    else:
-        raise AssertionError("fixed function accepted a different depth")
+    for kwargs in (
+        {"latency": 2},
+        {"start_latency": 0},
+        {"max_latency": 0},
+    ):
+        try:
+            AUTOPIPELINE(delay_one, **kwargs)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError(
+                f"fixed function accepted a conflicting constraint {kwargs}"
+            )
+    # Constraints consistent with pipeline_latency(1) are fine
+    AUTOPIPELINE(delay_one, latency=1)
+    AUTOPIPELINE(delay_one, start_latency=1, max_latency=3)
     ap = AUTOPIPELINE(unaffected)
 
     @pipeline_latency(1)

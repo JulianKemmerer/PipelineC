@@ -948,7 +948,9 @@ def encode_param_value(val) -> str:
         import inspect
 
         if getattr(val, "_is_autopipeline_pragma", False):
-            return "AUTOPIPELINE_" + encode_param_value(val.func)
+            return (
+                "AUTOPIPELINE_" + encode_param_value(val.func) + val.latency_suffix()
+            )
         unwrapped = inspect.unwrap(val)
         qual = getattr(unwrapped, "__qualname__", None)
         if qual:
@@ -1484,13 +1486,30 @@ def sim_input(fn):
 # .latency reads and the AUTOPIPELINE delay-line emulation see the built
 # stage counts. Always empty in plain native Pypeline sim (pypeline_sim.py
 # run directly) and in --comb/--no_synth/--yosys_json builds, so .latency
-# reads 0 there.
+# reads its constructor value there (fixed latency=N, else 0).
 _autopipeline_latency_cache: dict = {}
 # True once any AUTOPIPELINE .latency was read during the current design-file
 # execution. The pipelinec driver uses this to skip the pin-and-confirm pass
 # entirely: if no Python code consumed a latency value, the cache cannot have
 # influenced the elaborated design, so the bootstrap pass's result is final.
 _autopipeline_latency_was_read: bool = False
+# Which kind of pypelinec build (if any) is executing the design, set by the
+# pipelinec driver before its first PARSE_FILE (SET_AUTOPIPELINE_BUILD_MODE):
+#   None          plain native sim, or any import outside the driver (default)
+#   "sweep"       a synthesizing build: its throughput sweep honors
+#                 start_latency=, so bootstrap .latency reads start_latency
+#   "fixed_only"  --comb / --no_synth / --yosys_json: no sweep runs; only
+#                 fixed latency= call sites get registers
+_AUTOPIPELINE_BUILD_MODES = (None, "sweep", "fixed_only")
+_autopipeline_build_mode = None
+# (AUTOPIPELINE object, value served) for every .latency read during the
+# current design execution -- recorded only inside a pypelinec build. The
+# driver compares them against the harvested stage counts: when every read
+# already equals what was built, the pin-and-confirm re-elaboration is skipped.
+_autopipeline_served: list = []
+# Per-construction serial: disambiguates plain-native-sim delay-line keys
+# without importing the compiler (see AUTOPIPELINE._sim_key).
+_autopipeline_serial: int = 0
 
 
 def SET_AUTOPIPELINE_LATENCY_CACHE(cache: dict) -> None:
@@ -1502,51 +1521,120 @@ def SET_AUTOPIPELINE_LATENCY_CACHE(cache: dict) -> None:
     _autopipeline_latency_cache = dict(cache)
 
 
+def SET_AUTOPIPELINE_BUILD_MODE(mode) -> None:
+    """pipelinec-driver hook: declare what kind of build executes the design
+    (None / "sweep" / "fixed_only", see _autopipeline_build_mode)."""
+    global _autopipeline_build_mode
+    if mode not in _AUTOPIPELINE_BUILD_MODES:
+        raise ValueError(
+            f"AUTOPIPELINE build mode must be one of {_AUTOPIPELINE_BUILD_MODES}, "
+            f"got {mode!r}"
+        )
+    _autopipeline_build_mode = mode
+
+
+def AUTOPIPELINE_BUILD_MODE():
+    return _autopipeline_build_mode
+
+
 def CLEAR_AUTOPIPELINE_LATENCY_READ_FLAG() -> None:
     global _autopipeline_latency_was_read
     _autopipeline_latency_was_read = False
+    _autopipeline_served.clear()
 
 
 def AUTOPIPELINE_LATENCY_WAS_READ() -> bool:
     return _autopipeline_latency_was_read
 
 
-class AUTOPIPELINE:
-    """AUTOPIPELINE(func, depth=-1): let the synthesis tool insert pipeline
-    registers inside calls to `func` (equivalent to PipelineC's
-    `#pragma AUTOPIPELINE`), and expose the discovered stage count as
-    `.latency`::
+def AUTOPIPELINE_SERVED_LATENCIES() -> dict:
+    """canonical_key -> set of values .latency returned during the current
+    design execution (pypelinec builds only; empty otherwise)."""
+    served = {}
+    for ap, value in _autopipeline_served:
+        served.setdefault(ap.canonical_key, set()).add(value)
+    return served
 
-        MY_AP = AUTOPIPELINE(some_func)           # tool picks the depth
-        MY_AP = AUTOPIPELINE(some_func, depth=2)  # force exactly 2 stages
+
+def _autopipeline_latency_suffix(latency, start_latency, max_latency) -> str:
+    """Canonical-key / entity-name suffix for an AUTOPIPELINE latency
+    constraint; "" when unconstrained. Must match
+    C_TO_LOGIC.AutopipelineLatency.key_suffix (a unit test checks)."""
+    if latency is not None:
+        return f"_latency_{latency}"
+    suffix = ""
+    if start_latency is not None:
+        suffix += f"_start_latency_{start_latency}"
+    if max_latency is not None:
+        suffix += f"_max_latency_{max_latency}"
+    return suffix
+
+
+def _check_autopipeline_latency_arg(name, value):
+    if value is None:
+        return
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(
+            f"AUTOPIPELINE(func, {name}=...): must be an int, got "
+            f"{type(value).__name__}"
+        )
+    if value < 0:
+        raise ValueError(f"AUTOPIPELINE(func, {name}={value}): must be >= 0")
+
+
+class AUTOPIPELINE:
+    """AUTOPIPELINE(func, latency=None, start_latency=None, max_latency=None):
+    let the synthesis tool insert pipeline registers inside calls to `func`
+    (equivalent to PipelineC's `#pragma AUTOPIPELINE`), and expose the
+    resulting register count as `.latency`::
+
+        MY_AP = AUTOPIPELINE(some_func)                   # tool picks, from 0
+        MY_AP = AUTOPIPELINE(some_func, latency=2)        # fixed: exactly 2
+        MY_AP = AUTOPIPELINE(some_func, start_latency=3)  # sweep starts at 3
+        MY_AP = AUTOPIPELINE(some_func, max_latency=6)    # sweep never > 6
+        MY_AP = AUTOPIPELINE(some_func, start_latency=3, max_latency=6)
 
         @hw_func
         def my_pipeline(i: my_struct_t) -> my_struct_t:
             return MY_AP(i)        # some_func(i), autopipelined
 
-        MY_AP.latency              # int: pipeline depth; 0 until known
+        MY_AP.latency              # int: inserted register slices (clocks)
 
-    `func` must already be @hw_func-decorated. Calls through the instance are
-    an identity passthrough in proto-simulation (`MY_AP(x)` just runs
-    `func(x)`); in elaboration the call becomes a submodule instance of
-    `func` tagged for autopipelining, and AUTOPIPELINE itself produces no
-    hardware. Under a pipelinec non---comb `--sim` build's native simulation
-    the call site instead emulates the built pipeline: an N-deep output delay
-    line (N = .latency, installed from the final harvest) makes
-    out(t) = func(in(t-N)), cycle-accurate against the generated VHDL (see
-    _sim_delay_line below).
+    Latency counts inserted register slices (clock cycles of delay), not
+    combinational stages: latency=2 separates three stages.
 
-    .latency reads 0:
-      - always in plain native Pypeline sim (pypeline_sim.py run directly --
-        no synthesis ever runs),
-      - always in --comb / --no_synth / --yosys_json builds (no throughput
-        sweep ever runs),
-      - during the bootstrap elaboration pass of a real synthesizing build.
+    latency=N (fixed) is honored everywhere: .latency always reads N, every
+    build -- including --comb / --no_synth / --yosys_json -- builds exactly N
+    registers inside the call, and native simulation (plain, or after a
+    build) delays the call's output by N cycles. It can't be combined with
+    start_latency / max_latency.
+
+    start_latency=S / max_latency=M (S <= M) steer a synthesizing build's
+    throughput sweep: its first iteration builds S registers at this call
+    site and grows from there if timing fails (the post-met trim may still go
+    below S), and it never builds more than M -- a cap that keeps timing from
+    being met fails the build with a warning naming it. During that build's
+    bootstrap elaboration .latency reads S; if the sweep lands exactly there,
+    the pin-and-confirm re-elaboration pass is skipped.
+
+    Without a fixed latency, .latency reads 0:
+      - in plain native Pypeline sim (pypeline_sim.py run directly -- no
+        synthesis ever runs),
+      - in --comb / --no_synth / --yosys_json builds (no sweep runs),
+      - during the bootstrap elaboration pass of a synthesizing build, unless
+        start_latency is given.
     On a real build the pipelinec driver re-executes the design after the
-    throughput sweep with the discovered stage counts installed, so .latency
-    then resolves to the real value (see the pin-and-confirm loop in
+    throughput sweep with the built stage counts installed, so .latency then
+    resolves to the real value (see the pin-and-confirm loop in
     docs/SYN_DESIGN.md) -- including in the native simulation a non---comb
     `--sim` build launches at the end.
+
+    `func` must already be @hw_func-decorated. In elaboration the call becomes
+    a submodule instance of `func` tagged for autopipelining, and AUTOPIPELINE
+    itself produces no hardware. In native simulation the call site behaves as
+    a .latency-deep pipeline: an N-deep output delay line makes
+    out(t) = func(in(t-N)), cycle-accurate against the generated VHDL (see
+    _sim_delay_line below); at .latency 0 it is a plain passthrough.
 
     CONSTRUCTION TIMING MATTERS: construct AUTOPIPELINE(...) once, eagerly,
     as plain Python (typically at a factory function's own top level) and
@@ -1559,36 +1647,104 @@ class AUTOPIPELINE:
     # Duck-type marker probed by the elaborator (PY_TO_LOGIC._elab_call).
     _is_autopipeline_pragma = True
 
-    def __init__(self, func, depth: int = -1):
+    def __init__(
+        self,
+        func,
+        *,
+        latency=None,
+        start_latency=None,
+        max_latency=None,
+        **removed,
+    ):
+        global _autopipeline_serial
+        if "depth" in removed:
+            raise TypeError(
+                "AUTOPIPELINE(func, depth=...) was renamed: use latency=N for a "
+                "fixed latency, or start_latency=S / max_latency=M to steer the "
+                "throughput sweep"
+            )
+        if removed:
+            raise TypeError(
+                f"AUTOPIPELINE(func, ...): unexpected keyword argument(s) "
+                f"{sorted(removed)}"
+            )
         if not is_hw_func(func):
             raise TypeError(
                 f"AUTOPIPELINE(func, ...): "
                 f"{getattr(func, '__qualname__', func)!r} must be "
                 f"@hw_func-decorated before being passed in"
             )
-        if not isinstance(depth, int):
-            raise TypeError(f"AUTOPIPELINE depth must be an int, got {depth!r}")
-        fixed = getattr(func, "_pipeline_latency", None)
-        if fixed is not None and depth not in (-1, fixed):
+        _check_autopipeline_latency_arg("latency", latency)
+        _check_autopipeline_latency_arg("start_latency", start_latency)
+        _check_autopipeline_latency_arg("max_latency", max_latency)
+        if latency is not None and (
+            start_latency is not None or max_latency is not None
+        ):
             raise ValueError(
-                f"AUTOPIPELINE depth {depth} conflicts with "
-                f"{func.__qualname__}'s pipeline_latency({fixed})"
+                "AUTOPIPELINE(func, latency=...) is a fixed latency and can't be "
+                "combined with start_latency= / max_latency="
             )
+        if (
+            start_latency is not None
+            and max_latency is not None
+            and start_latency > max_latency
+        ):
+            raise ValueError(
+                f"AUTOPIPELINE(func, start_latency={start_latency}, "
+                f"max_latency={max_latency}): start_latency exceeds max_latency"
+            )
+        fixed = getattr(func, "_pipeline_latency", None)
+        if fixed is not None:
+            problem = None
+            if latency is not None and latency != fixed:
+                problem = f"latency={latency}"
+            elif start_latency is not None and start_latency != fixed:
+                problem = f"start_latency={start_latency}"
+            elif max_latency is not None and max_latency < fixed:
+                problem = f"max_latency={max_latency}"
+            if problem is not None:
+                raise ValueError(
+                    f"AUTOPIPELINE {problem} conflicts with "
+                    f"{func.__qualname__}'s pipeline_latency({fixed})"
+                )
         self.func = func
-        self.depth = depth
+        self.fixed_latency = latency
+        self.start_latency = start_latency
+        self.max_latency = max_latency
         self._canonical_key = None
+        self._sim_key_str = None
+        _autopipeline_serial += 1
+        self._serial = _autopipeline_serial
+        if latency is not None:
+            self._latency = latency
+        elif start_latency is not None and _autopipeline_build_mode == "sweep":
+            self._latency = start_latency
+        else:
+            self._latency = 0
         # Skip key computation entirely when the cache is empty (native sim,
         # comb builds, bootstrap pass): keeps pure-sim runs from importing
         # the compiler (see canonical_key).
         if _autopipeline_latency_cache:
-            self._latency = _autopipeline_latency_cache.get(self.canonical_key, 0)
-        else:
-            self._latency = 0
+            cached = _autopipeline_latency_cache.get(self.canonical_key)
+            if cached is not None:
+                if latency is not None and cached != latency:
+                    raise ValueError(
+                        f"AUTOPIPELINE {self.canonical_key}: latency={latency} is "
+                        f"fixed, but the build harvested {cached} clocks for it"
+                    )
+                self._latency = cached
+
+    def latency_suffix(self) -> str:
+        return _autopipeline_latency_suffix(
+            self.fixed_latency, self.start_latency, self.max_latency
+        )
 
     @property
     def latency(self) -> int:
         global _autopipeline_latency_was_read
         _autopipeline_latency_was_read = True
+        if _autopipeline_build_mode is not None:
+            _autopipeline_served.append((self, self._latency))
         return self._latency
 
     @property
@@ -1599,8 +1755,30 @@ class AUTOPIPELINE:
             # PY_TO_LOGIC loaded already.
             import PY_TO_LOGIC
 
-            self._canonical_key = PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func)
+            # Unconstrained tags keep exactly the wrapped function's key.
+            self._canonical_key = (
+                PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func) + self.latency_suffix()
+            )
         return self._canonical_key
+
+    def _sim_key(self) -> str:
+        """Instance-stack key for this call site's native-sim delay line.
+        The canonical key whenever the compiler is already loaded (builds, and
+        the --sim run after one); otherwise -- plain native sim of a fixed
+        latency=N -- a compiler-free module.qualname#serial that still tells
+        apart two AUTOPIPELINE objects called from the same source line."""
+        if self._sim_key_str is None:
+            if _autopipeline_latency_cache or "PY_TO_LOGIC" in _sys.modules:
+                self._sim_key_str = self.canonical_key
+            else:
+                import inspect
+
+                inner = inspect.unwrap(self.func)
+                self._sim_key_str = (
+                    f"{getattr(inner, '__module__', '?')}."
+                    f"{getattr(inner, '__qualname__', '?')}#{self._serial}"
+                )
+        return self._sim_key_str
 
     def __call__(self, *args, **kwargs):
         pipeline_model = False
@@ -1610,17 +1788,17 @@ class AUTOPIPELINE:
                 model[0], "_pipeline_dispatch", False
             )
         if _sim_active and (self._latency > 0 or pipeline_model):
-            # Native sim with a pinned latency (pipelinec non---comb --sim
-            # builds install the harvested stage counts before the sim's
-            # design import): emulate the N-stage pipeline with a per-call-site
-            # output delay line instead of the zero-latency identity.
-            # canonical_key is already computed (cache was non-empty at
-            # __init__) and distinguishes two different AUTOPIPELINE objects
-            # called from the same source line (e.g. a loop over
-            # factory-produced APs whose funcs share a __qualname__).
+            # Native sim with a nonzero latency (a fixed latency=N, or a
+            # pipelinec non---comb --sim build having installed the harvested
+            # stage counts before the sim's design import): emulate the
+            # N-stage pipeline with a per-call-site output delay line instead
+            # of the zero-latency identity. The key distinguishes two
+            # different AUTOPIPELINE objects called from the same source line
+            # (e.g. a loop over factory-produced APs whose funcs share a
+            # __qualname__).
             _sim_inst_stack.append(
                 (
-                    "AUTOPIPELINE:" + self.canonical_key,
+                    "AUTOPIPELINE:" + self._sim_key(),
                     _sim_capture_call_loc(_sys._getframe(1)),
                 )
             )
@@ -1629,6 +1807,19 @@ class AUTOPIPELINE:
                 if getattr(self.func, "_pipeline_latency", None) is not None or (
                     model is not None and getattr(model[0], "_pipeline_dispatch", False)
                 ):
+                    if (
+                        self.fixed_latency
+                        and getattr(self.func, "_pipeline_latency", None) is None
+                        and not _autopipeline_latency_cache
+                    ):
+                        raise RuntimeError(
+                            f"AUTOPIPELINE({self.func.__qualname__}, "
+                            f"latency={self.fixed_latency}) wraps code that "
+                            "reaches a @pipeline_latency function; plain native "
+                            "sim can't emulate where the tool places the fixed "
+                            "latency's registers around it. Simulate through "
+                            "a build instead: pypelinec <design> --sim"
+                        )
                     return self.func(*args, **kwargs)
                 return self._sim_delay_line(args, kwargs)
             finally:
@@ -1665,7 +1856,7 @@ class AUTOPIPELINE:
 
     def __repr__(self):
         # AUTOPIPELINE objects get captured in factory closures (e.g.
-        # _autopipeline_with_io_regs), and closure cell reprs feed the
+        # _autopipeline_with_io_regs), and closure cell reprs can feed the
         # canonical entity-name hashing in PY_TO_LOGIC. That makes two
         # properties load-bearing here:
         #   - deterministic (no memory address): an address-bearing default
@@ -1678,15 +1869,13 @@ class AUTOPIPELINE:
         #     a 'func_stream' closure, each over a different user core), or
         #     their wrapper entities collide into one FuncLogicLookupTable
         #     entry and mis-wire.
-        # canonical_key (PY_TO_LOGIC.CANONICAL_CALLABLE_KEY) provides both;
-        # in pure native-sim runs the compiler isn't loaded (and nothing
-        # hashes reprs there), so fall back to a readable module.qualname.
+        # CANONICAL_CALLABLE_KEY of the wrapped func provides both; in pure
+        # native-sim runs the compiler isn't loaded (and nothing hashes reprs
+        # there), so fall back to a readable module.qualname. The latency
+        # constraint (if any) is appended the way it was written.
         import sys
 
         if "PY_TO_LOGIC" in sys.modules:
-            # Start from the wrapped function only; canonical_key already
-            # includes the policy suffixes appended below, and using it here
-            # would encode max_latency/register_output twice in a closure repr.
             import PY_TO_LOGIC
 
             inner = PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func)
@@ -1697,7 +1886,15 @@ class AUTOPIPELINE:
             qual = getattr(func, "__qualname__", "?")
             mod = getattr(func, "__module__", "?")
             inner = f"{mod}.{qual}"
-        return f"AUTOPIPELINE({inner}, depth={self.depth})"
+        config = ""
+        if self.fixed_latency is not None:
+            config = f", latency={self.fixed_latency}"
+        else:
+            if self.start_latency is not None:
+                config += f", start_latency={self.start_latency}"
+            if self.max_latency is not None:
+                config += f", max_latency={self.max_latency}"
+        return f"AUTOPIPELINE({inner}{config})"
 
 
 def _autopipeline_with_io_regs(func, has_input_reg: bool, has_output_reg: bool):

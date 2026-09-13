@@ -16,6 +16,7 @@ from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINEC, PYPELINE_SIM, Tes
 PLAIN_PYTHON_TEST_FILES = [
     "stream_pipeline_test.py",
     "autopipeline_test.py",
+    "autopipeline_fixed_latency_sim_test.py",
     "autofsm_test.py",
     "stream_autofsm_test.py",
     "valid_ready_mcp_test.py",

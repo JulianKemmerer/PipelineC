@@ -5,6 +5,9 @@
 #     unseeded-autopipeline-instance (call-site-set-changed) detection
 #   - PY_TO_LOGIC.CANONICAL_CALLABLE_KEY determinism
 #   - pypeline.AUTOPIPELINE latency cache + read-flag behavior
+#   - AUTOPIPELINE(func, latency= / start_latency= / max_latency=): constructor
+#     validation, identity suffixes (unconstrained names unchanged), build-mode
+#     dependent .latency, served-value pass-2 skip, realized-constraint check
 import os
 import sys
 
@@ -12,10 +15,13 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
 )
 
+import pickle
+
 import C_TO_LOGIC
 import PY_TO_LOGIC
 import SYN
 import pypeline
+import pypeline_names
 from pypeline import AUTOPIPELINE, hw_func, uint8_t
 
 M = C_TO_LOGIC.SUBMODULE_MARKER
@@ -63,7 +69,9 @@ def make_logic(func_name, autopipeline_subs=None):
     logic.func_name = func_name
     for local_sub, key in (autopipeline_subs or {}).items():
         logic.sub_inst_to_autopipeline_key[local_sub] = key
-        logic.sub_inst_to_autopipeline_depth[local_sub] = -1
+        logic.sub_inst_to_autopipeline_latency[local_sub] = (
+            C_TO_LOGIC.AutopipelineLatency()
+        )
     return logic
 
 
@@ -219,6 +227,165 @@ def test_autopipeline_latency_cache_and_read_flag():
     pypeline.CLEAR_AUTOPIPELINE_LATENCY_READ_FLAG()
 
 
+@hw_func
+def constrained_core(x: uint8_t) -> uint8_t:
+    return x + 1
+
+
+def _restore_autopipeline_state():
+    pypeline.SET_AUTOPIPELINE_BUILD_MODE(None)
+    pypeline.SET_AUTOPIPELINE_LATENCY_CACHE({})
+    pypeline.CLEAR_AUTOPIPELINE_LATENCY_READ_FLAG()
+
+
+def test_autopipeline_constructor_validation():
+    bad = [
+        ({"latency": -1}, ValueError),
+        ({"latency": True}, TypeError),
+        ({"latency": 1.5}, TypeError),
+        ({"start_latency": -2}, ValueError),
+        ({"max_latency": "3"}, TypeError),
+        ({"latency": 2, "max_latency": 3}, ValueError),
+        ({"latency": 2, "start_latency": 2}, ValueError),
+        ({"start_latency": 4, "max_latency": 3}, ValueError),
+        ({"depth": 2}, TypeError),  # renamed to latency=
+        ({"bogus": 1}, TypeError),
+    ]
+    for kwargs, exc in bad:
+        try:
+            AUTOPIPELINE(constrained_core, **kwargs)
+        except exc as err:
+            if "depth" in kwargs:
+                assert "latency=" in str(err), str(err)
+        else:
+            raise AssertionError(f"AUTOPIPELINE accepted {kwargs}")
+    try:
+        AUTOPIPELINE(constrained_core, 2)  # the old positional depth
+    except TypeError:
+        pass
+    else:
+        raise AssertionError("AUTOPIPELINE accepted a positional latency")
+    AUTOPIPELINE(constrained_core, start_latency=3, max_latency=3)
+
+
+def test_autopipeline_latency_suffixes_and_identity():
+    cases = [
+        ({}, ""),
+        ({"latency": 0}, "_latency_0"),
+        ({"latency": 3}, "_latency_3"),
+        ({"start_latency": 2}, "_start_latency_2"),
+        ({"max_latency": 5}, "_max_latency_5"),
+        ({"start_latency": 2, "max_latency": 5}, "_start_latency_2_max_latency_5"),
+    ]
+    base_key = PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(constrained_core)
+    identities = set()
+    for kwargs, suffix in cases:
+        ap = AUTOPIPELINE(constrained_core, **kwargs)
+        assert ap.latency_suffix() == suffix, (kwargs, ap.latency_suffix())
+        constraint = C_TO_LOGIC.AutopipelineLatency.from_tag(ap)
+        # C_TO_LOGIC's copy of the suffix rule must agree with pypeline's
+        assert constraint.key_suffix() == suffix, (kwargs, constraint)
+        assert constraint.is_unconstrained() == (not kwargs)
+        assert pickle.loads(pickle.dumps(constraint)) == constraint
+        # Unconstrained keys are exactly the wrapped function's key (so no
+        # existing entity name moved); constraints append their suffix
+        assert ap.canonical_key == base_key + suffix, (kwargs, ap.canonical_key)
+        name = PY_TO_LOGIC._callable_canonical_name(ap, {})
+        assert name.endswith(suffix) and name.startswith("AUTOPIPELINE_"), name
+        assert pypeline.encode_param_value(ap).endswith(suffix)
+        if suffix:
+            assert suffix.replace("_", "=", 0) and "latency=" in repr(ap), repr(ap)
+        else:
+            assert "latency" not in repr(ap) and "depth" not in repr(ap), repr(ap)
+            assert pypeline_names.stable_key(ap)[2] == ()
+        identities.add(pypeline_names.identity(ap))
+    assert len(identities) == len(cases), "constraints must be identity"
+    assert C_TO_LOGIC.AutopipelineLatency(latency=2).conflict_with_fixed(2) is None
+    assert C_TO_LOGIC.AutopipelineLatency(max_latency=1).conflict_with_fixed(2)
+
+
+def test_autopipeline_build_modes_and_served_values():
+    try:
+        pypeline.SET_AUTOPIPELINE_LATENCY_CACHE({})
+        for mode, expected in (
+            (None, (3, 0, 0)),
+            ("fixed_only", (3, 0, 0)),
+            ("sweep", (3, 2, 0)),
+        ):
+            pypeline.SET_AUTOPIPELINE_BUILD_MODE(mode)
+            pypeline.CLEAR_AUTOPIPELINE_LATENCY_READ_FLAG()
+            fixed = AUTOPIPELINE(constrained_core, latency=3)
+            started = AUTOPIPELINE(constrained_core, start_latency=2, max_latency=4)
+            capped = AUTOPIPELINE(constrained_core, max_latency=4)
+            got = (fixed.latency, started.latency, capped.latency)
+            assert got == expected, (mode, got)
+            # Served values are recorded only inside a pypelinec build
+            assert (len(pypeline._autopipeline_served) == 3) == (mode is not None)
+
+        pypeline.SET_AUTOPIPELINE_BUILD_MODE("sweep")
+        pypeline.CLEAR_AUTOPIPELINE_LATENCY_READ_FLAG()
+        started = AUTOPIPELINE(constrained_core, start_latency=2)
+        assert started.latency == 2
+        served = pypeline.AUTOPIPELINE_SERVED_LATENCIES()
+        key = started.canonical_key
+        assert served == {key: {2}}, served
+        assert SYN.AUTOPIPELINE_SERVED_VALUES_MATCH(served, {key: 2})
+        assert not SYN.AUTOPIPELINE_SERVED_VALUES_MATCH(served, {key: 3})
+        assert SYN.AUTOPIPELINE_SERVED_VALUES_MATCH(served, {})  # not elaborated
+        assert not SYN.AUTOPIPELINE_SERVED_VALUES_MATCH({key: {0, 2}}, {key: 2})
+
+        # A harvested cache overrides start/max values; a fixed latency must
+        # agree with it
+        fixed_key = AUTOPIPELINE(constrained_core, latency=3).canonical_key
+        pypeline.SET_AUTOPIPELINE_LATENCY_CACHE({fixed_key: 3, key: 5})
+        assert AUTOPIPELINE(constrained_core, latency=3).latency == 3
+        assert AUTOPIPELINE(constrained_core, start_latency=2).latency == 5
+        pypeline.SET_AUTOPIPELINE_LATENCY_CACHE({fixed_key: 4})
+        try:
+            AUTOPIPELINE(constrained_core, latency=3)
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("fixed latency accepted a different harvest")
+        try:
+            pypeline.SET_AUTOPIPELINE_BUILD_MODE("bogus")
+        except ValueError:
+            pass
+        else:
+            raise AssertionError("unknown build mode accepted")
+    finally:
+        _restore_autopipeline_state()
+
+
+def test_check_autopipeline_constraints_realized():
+    AL = C_TO_LOGIC.AutopipelineLatency
+    ps = FakeParserState()
+    parent = make_logic("parent_func")
+    parent.sub_inst_to_autopipeline_latency = {
+        "fixed0": AL(latency=2),
+        "cap0": AL(max_latency=3),
+        "free0": AL(),
+        "start0": AL(start_latency=1),
+    }
+    ps.LogicInstLookupTable["main"] = parent
+    tpl = {
+        "main" + M + "fixed0": FakeTimingParams(2),
+        "main" + M + "cap0": FakeTimingParams(3),
+        "main" + M + "free0": FakeTimingParams(9),
+        "main" + M + "start0": FakeTimingParams(7),
+    }
+    SYN.CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(ps, tpl)
+    for local_sub, built in (("fixed0", 1), ("fixed0", 3), ("cap0", 4)):
+        bad = dict(tpl)
+        bad["main" + M + local_sub] = FakeTimingParams(built)
+        try:
+            SYN.CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(ps, bad)
+        except SystemExit:
+            pass
+        else:
+            raise AssertionError(f"{local_sub} built {built} clks passed the check")
+
+
 if __name__ == "__main__":
     test_harvest_agreeing_instances()
     test_harvest_divergent_instances()
@@ -227,4 +394,8 @@ if __name__ == "__main__":
     test_hash_ext_is_content_aware()
     test_canonical_callable_key_deterministic()
     test_autopipeline_latency_cache_and_read_flag()
+    test_autopipeline_constructor_validation()
+    test_autopipeline_latency_suffixes_and_identity()
+    test_autopipeline_build_modes_and_served_values()
+    test_check_autopipeline_constraints_realized()
     print("All AUTOPIPELINE harvest/seed unit tests passed.")

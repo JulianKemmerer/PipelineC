@@ -880,47 +880,95 @@ for the elaboration-side detail). `_ClockMarker` carries no meaning at Python ru
 sim never reads a global wire's bound value, only its `Wire`/`Input`/`Output` annotation type,
 so binding the module global to a marker object is otherwise inert.
 
-### `AUTOPIPELINE(func, depth=-1)` — Forced Submodule Pipelining with `.latency`
+### `AUTOPIPELINE(func, latency=None, start_latency=None, max_latency=None)` — Forced Submodule Pipelining with `.latency`
 
-Python equivalent of PipelineC's `#pragma AUTOPIPELINE <depth>`, plus a feedback
+Python equivalent of PipelineC's `#pragma AUTOPIPELINE [N]`, plus a feedback
 channel the C pragma doesn't have. `AUTOPIPELINE(func)` is a class (all-caps factory
-style, like `MULTI_CYCLE`) whose instances are callable tags: calls made through one
+style, like `MULTI_CYCLE`) whose instances are callable tags. Calls made through one
 force the synthesizer to slice (insert pipeline registers) through that call's
 submodule, even inside a register/feedback context that would otherwise forbid added
-latency — and the instance's `.latency` attribute reads back the stage count the
-synthesis sweep actually chose:
+latency. The instance's `.latency` attribute reads back how many registers (clocks
+of latency) were built there:
 
 ```python
-MY_AP = AUTOPIPELINE(some_func)           # auto depth
-MY_AP = AUTOPIPELINE(some_func, depth=2)  # explicit depth
-rv = MY_AP(x)                             # some_func(x), autopipelined
-MY_AP.latency                             # int, 0 until known
+MY_AP = AUTOPIPELINE(some_func)                                  # tool picks, from 0
+MY_AP = AUTOPIPELINE(some_func, latency=2)                       # fixed: exactly 2, every build
+MY_AP = AUTOPIPELINE(some_func, start_latency=3)                 # sweep starts at 3
+MY_AP = AUTOPIPELINE(some_func, max_latency=6)                   # sweep never exceeds 6
+MY_AP = AUTOPIPELINE(some_func, start_latency=3, max_latency=6)
+rv = MY_AP(x)                                                    # some_func(x), autopipelined
+MY_AP.latency                                                    # int
 ```
 
-At plain simulation time `MY_AP(x)` is a plain identity passthrough (`func(x)`), and
-`.latency` stays 0 (the module-level latency cache it reads,
-`pypeline._autopipeline_latency_cache`, is only populated by `SYN.DO_AUTOPIPELINE_LATENCY_PASSES` —
-between the pin-and-confirm loop's real synthesizing passes, and again before a
-non-`--comb` `--sim` run's native-sim design import, where `.latency` then reads the
-built stage count and `MY_AP(x)` emulates the N-stage pipeline with a per-call-site
-delay line — see `SYN_DESIGN.md` and `pypeline_sim_DESIGN.md` §"Pipelined native sim").
-`.latency` is a read-tracked property: any read flips a module flag
-(`AUTOPIPELINE_LATENCY_WAS_READ`) the driver uses to skip the extra pass entirely for
-designs that never consume the value. `AUTOPIPELINE.__repr__` remains address-free
-and identifies its wrapped function for diagnostics. Naming uses the typed snapshot
-in `pypeline_names.stable_key`, which records the wrapped function and excludes the
-changing pinned depth. Thus wrappers around different cores remain distinct across
-pin-and-confirm passes without incorporating process addresses or mutable timing state.
+| Arguments | `.latency` during a sweep build's bootstrap pass | Throughput sweep | Plain native sim, `--comb` / `--no_synth` / `--yosys_json` builds |
+|---|---|---|---|
+| none | 0 | free, as always | 0; passthrough, no registers |
+| `latency=N` | N (in every context) | exactly N registers | N-cycle delay line; exactly N registers built |
+| `start_latency=S` | S | first iteration builds S, grows if timing fails; the post-met trim may go below S | 0; passthrough, no registers |
+| `max_latency=M` | 0 | free but never more than M; a cap that blocks the clock goal stops the sweep with a warning naming it and fails the build | 0; passthrough, no registers |
+
+Latencies count inserted register slices, not combinational stages: `latency=2`
+separates three stages. Arguments are validated at construction, in the style of
+AUTOFSM's `max_latency=`:
+- each value is an `int` (not `bool`) and at least 0;
+- `latency` can't be combined with the other two;
+- `start_latency <= max_latency`;
+- a function declared `@pipeline_latency(k)` needs `latency == k`, `start_latency == k`
+  and `max_latency >= k`.
+
+The removed `depth=` keyword raises a `TypeError` that names its replacements.
+
+`.latency` is decided when the tag is constructed, in this order:
+1. A fixed `latency=N` is always N.
+2. Otherwise, the harvested stage count once the module-level cache
+   (`pypeline._autopipeline_latency_cache`) holds the tag's key. `SYN.DO_AUTOPIPELINE_LATENCY_PASSES`
+   installs the cache between pin-and-confirm passes, and again before a non-`--comb`
+   `--sim` run imports the design for native sim.
+3. Otherwise, `start_latency` in a synthesizing build.
+4. Otherwise, 0.
+
+The build kind comes from `pypeline.SET_AUTOPIPELINE_BUILD_MODE`, which the `pypelinec`
+driver calls before its first `PARSE_FILE`. There are three modes:
+- `None`: plain native sim.
+- `"sweep"`: a synthesizing build.
+- `"fixed_only"`: `--comb`, `--no_synth` and `--yosys_json` builds.
+
+The no-tool fallback also switches to `"fixed_only"`, and re-elaborates the design if
+it had already read a `start_latency`.
+
+In native simulation, a call site with a nonzero `.latency` behaves as an N-stage
+pipeline, implemented as a per-call-site delay line. At 0 it is a plain passthrough
+(`func(x)`). A fixed latency's delay line also works in plain sim without importing
+the compiler: its instance key falls back to `module.qualname#serial`. See
+`pypeline_sim_DESIGN.md` §"Pipelined native sim".
+
+`.latency` is a read-tracked property. Any read flips a module flag
+(`AUTOPIPELINE_LATENCY_WAS_READ`). Inside a build, each read also records the value it
+returned (`AUTOPIPELINE_SERVED_LATENCIES`). The driver skips the pin-and-confirm
+re-elaboration in two cases:
+- nothing was read;
+- every returned value already equals the stage count harvested for its key. That
+  covers fixed latencies, a correct `start_latency` guess, and a discovered 0.
+
+Naming: an unconstrained tag's identity is exactly its wrapped function's identity. This
+holds for `canonical_key`, for `encode_param_value`, and for the `pypeline_names.stable_key`
+config `()`, so no existing entity name moved. A constraint appends its constructor
+settings (`_latency_N`, `_start_latency_S`, `_max_latency_M`). These are fixed at
+construction and never include the discovered `.latency`, so wrappers stay distinct
+and stable across pin-and-confirm passes. `AUTOPIPELINE.__repr__` stays address-free
+and shows the constraint as written.
 
 The class-level `_is_autopipeline_pragma` flag is the only thing the elaborator
 duck-type probes (mirroring `@sim_output`'s `_is_sim_output` flag). See
-[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#autopipelinefunc-depth--forced-submodule-pipelining)
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#autopipelinefunc-latency-start_latency-max_latency--forced-submodule-pipelining)
 for how `PY_TO_LOGIC.FuncElaborator._elab_call` elaborates the wrapped func and tags
-the resulting submodule instance. The `Logic()` depth field
-(`sub_inst_to_autopipeline_depth`) and the synthesis-side forced-slicing mechanism are
-shared, unmodified, with the C frontend; the Pypeline frontend additionally records
-`sub_inst_to_autopipeline_key` (instance -> `AUTOPIPELINE.canonical_key`) so the sweep's
-discovered latencies can be harvested per call site and fed back into `.latency`.
+the resulting submodule instance with a `C_TO_LOGIC.AutopipelineLatency` constraint in
+`sub_inst_to_autopipeline_latency`. The C frontend's `#pragma AUTOPIPELINE [N]` fills
+the same field. The Pypeline frontend also records `sub_inst_to_autopipeline_key`
+(instance -> `AUTOPIPELINE.canonical_key`), so the stage counts the sweep builds can be
+harvested per call site and fed back into `.latency`. How the sweep, the coarse sweep
+and no-sweep builds enforce constraints is in `SYN_DESIGN.md` §"Constrained
+AUTOPIPELINE regions".
 
 The internal helper `_autopipeline_with_io_regs(func, has_input_reg, has_output_reg)`
 (used by `make_stream_pipeline` and the FIR library) wraps `AUTOPIPELINE(func)` with
@@ -1805,7 +1853,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `sim_print(fstring_or_str)` | printf-style console output — same once-per-cycle firing as `@sim_output`, but *also* elaborates to a real VHDL `write(output, ...)` statement (see `PY_TO_LOGIC_DESIGN.md`) |
 | `sim_assert(cond, msg=None)` | simulation-only condition check — raises `AssertionError` in native sim, elaborates to VHDL `assert ... report ... severity failure;` (see `PY_TO_LOGIC_DESIGN.md`) |
 | `sim_finish()` | simulation-only stop signal — raises `SimFinish` in native sim (caught by `pypeline_sim.py`'s CLI run loop), elaborates to VHDL `std.env.finish;` (see `PY_TO_LOGIC_DESIGN.md`) |
-| `autopipeline(call_result, depth=-1)` | Wraps a single direct call; identity in sim; forces pipelining through that submodule during elaboration (equivalent to `#pragma AUTOPIPELINE`) |
+| `AUTOPIPELINE(func, latency=, start_latency=, max_latency=)` | Callable tag: calls through it may be autopipelined inside register/feedback contexts; `.latency` reads the built register count; optional fixed / starting / maximum latency (equivalent to `#pragma AUTOPIPELINE [N]`) |
 | `MULTI_CYCLE` / `_MultiCycleTag` / `_MultiCycleRole` | `MULTI_CYCLE[ncycles]` tag; `.start`/`.end` attach to `Reg[T, tag]` declarations to relax setup timing between them (equivalent to `#pragma MULTI_CYCLE`) |
 | `wires` | Marks a function as pure rewiring/bit-casting with no real delay; implies `@hw_func`; stacks with `@MAIN` in either order (equivalent to `#pragma FUNC_WIRES`) |
 | `pipeline_latency(cycles)` | Declares an existing fixed user pipeline; implies `@hw_func`; callers align around its latency (equivalent to `#pragma FUNC_LATENCY`) |

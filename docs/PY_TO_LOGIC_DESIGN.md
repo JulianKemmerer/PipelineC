@@ -76,7 +76,7 @@ Python design files into PypelineC's internal `Logic()` graph representation. Fo
   - [`@MAIN(mhz)` — Clock Frequency Constraint](#mainmhz--clock-frequency-constraint)
   - [Clock Domain Inference (`INFER_CLOCK_DOMAINS`)](#clock-domain-inference-infer_clock_domains)
   - [`make_clock(mhz)` — Python Equivalent of `CLK_MHZ`](#make_clockmhz--python-equivalent-of-clk_mhz)
-- [`AUTOPIPELINE(func, depth)` — Forced Submodule Pipelining](#autopipelinefunc-depth--forced-submodule-pipelining)
+- [`AUTOPIPELINE(func, latency, start_latency, max_latency)` — Forced Submodule Pipelining](#autopipelinefunc-latency-start_latency-max_latency--forced-submodule-pipelining)
 - [`AUTOFSM(func)` — Resource-Shared State Machines](#autofsmfunc--resource-shared-state-machines)
 - [`MULTI_CYCLE[ncycles]` / `Reg[T, tag]` — Multi-Cycle Path Constraint](#multi_cyclencycles--regt-tag--multi-cycle-path-constraint)
 - [`@wires` — Just-Wires Synthesis Hint](#wires--just-wires-synthesis-hint)
@@ -1245,7 +1245,8 @@ and resolved annotations. A list and a tuple, `True` and `1`, or strings `"a-b"`
 `"a_b"` cannot alias merely because their readable encodings match. Interface types
 contribute their structural identity, including nested payload fields and dimensions.
 Callable identity uses code, defaults and closure values without process addresses;
-pinned AUTOPIPELINE depth is excluded because it changes during pin-and-confirm.
+an AUTOPIPELINE tag contributes its constructor latency constraint (nothing when
+unconstrained) but never its discovered `.latency`, which changes during pin-and-confirm.
 
 `capture_factory_args` runs at decoration time and walks enclosing factory frames,
 skipping decorator plumbing and comprehension frames. It captures parameters even
@@ -4430,75 +4431,138 @@ Python-frontend `@MAIN` (see the `@MAIN(mhz)` section above).
 
 ---
 
-## `AUTOPIPELINE(func, depth)` — Forced Submodule Pipelining
+## `AUTOPIPELINE(func, latency, start_latency, max_latency)` — Forced Submodule Pipelining
 
-Python equivalent of PipelineC's `#pragma AUTOPIPELINE <depth>` (see
+Python equivalent of PipelineC's `#pragma AUTOPIPELINE [N]` (see
 `examples/autopipelined_submodules.c`), plus a `.latency` feedback channel the C pragma
 doesn't have. It forces the synthesizer to slice (insert pipeline registers) through
 calls made through the tag object, even when the call sits inside a register/feedback
 context that would otherwise forbid added latency (`CAN_HAVE_ADDED_LATENCY` false
-there). The depth-tagging mechanism is in `C_TO_LOGIC.Logic()` and `SYN.py`, shared
-with the C frontend; the Pypeline frontend adds one field of its own:
+there). An optional constraint fixes, seeds or caps how many registers that call gets.
+The tagging mechanism lives in `C_TO_LOGIC.Logic()`, `SYN.py` and `SWEEP.py` and is shared
+with the C frontend. The Pypeline frontend adds one field of its own:
 
 ```python
 # C_TO_LOGIC.py — present on every Logic(), C and Python frontends alike
-self.sub_inst_to_autopipeline_depth = {}  # inst_name -> depth, persists per Logic()
+# inst_name -> C_TO_LOGIC.AutopipelineLatency(latency, start_latency,
+# max_latency); all None = unconstrained. Persists per Logic().
+self.sub_inst_to_autopipeline_latency = {}
 # Pypeline frontend only: inst_name -> AUTOPIPELINE.canonical_key, so the
-# sweep's discovered latencies can be harvested per call site and fed back
+# sweep's built latencies can be harvested per call site and fed back
 # into .latency (see SYN.HARVEST_AUTOPIPELINE_LATENCIES / SYN_DESIGN.md)
 self.sub_inst_to_autopipeline_key = {}
 ```
 
-`SYN.py`'s `GET_SUBMODULE_LATENCY` (reports zero latency for tagged instances) and
-`SUB_HAS_AUTOPIPELINE_IN_HIER` (the forced-slicing gate, checked even when
-`CAN_HAVE_ADDED_LATENCY` is false) consume `sub_inst_to_autopipeline_depth` generically
-by submodule-instance name — they have no dependency on which frontend produced the
-`Logic()`.
+`AutopipelineLatency` is a small, picklable value class. Its methods are `from_tag`,
+`is_unconstrained`, `is_fixed`, `upper_bound`, `key_suffix`, `describe` and
+`conflict_with_fixed`. The C frontend stores an unconstrained one for a bare
+`#pragma AUTOPIPELINE`, and `AutopipelineLatency(latency=N)` for `#pragma AUTOPIPELINE N`
+(`-1` remains a legacy spelling of unconstrained).
+
+Some consumers only test whether an instance is in the dict:
+- `SYN.py`'s `GET_SUBMODULE_LATENCY`, which reports zero latency for tagged instances;
+- `SUB_HAS_AUTOPIPELINE_IN_HIER`, the forced-slicing gate, checked even when
+  `CAN_HAVE_ADDED_LATENCY` is false.
+
+The constraint values themselves are read by:
+- the sweep's region enforcement (`SWEEP.COLLECT_AUTOPIPELINE_REGIONS` /
+  `ENFORCE_AUTOPIPELINE_REGIONS`, see `SYN_DESIGN.md` §"Constrained AUTOPIPELINE regions");
+- the fixed-latency table built for sweep-less builds (`SYN.BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS`);
+- the realized-constraint safety check (`SYN.CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED`).
+
+None of these depend on which frontend produced the `Logic()`.
 
 ### Syntax — a callable tag object, not a wrapper around a call expression
 
 ```python
-MY_AP = AUTOPIPELINE(some_func)           # auto depth (-1)
-MY_AP = AUTOPIPELINE(some_func, depth=2)  # explicit depth
-rv = MY_AP(x)                             # some_func(x), autopipelined
-MY_AP.latency                             # int; see below
+MY_AP = AUTOPIPELINE(some_func)                                  # unconstrained
+MY_AP = AUTOPIPELINE(some_func, latency=2)                       # fixed latency
+MY_AP = AUTOPIPELINE(some_func, start_latency=1, max_latency=4)  # sweep start / cap
+rv = MY_AP(x)                                                    # some_func(x), autopipelined
+MY_AP.latency                                                    # int; see below
 ```
 
-`AUTOPIPELINE` is a class in `pypeline.py` whose instances carry the wrapped `func`,
-the `depth`, a lazily-computed `canonical_key` (via `PY_TO_LOGIC.CANONICAL_CALLABLE_KEY`,
-built on `_callable_canonical_name` — deterministic per source, never `id()`/call
-order), and a `latency` read from the module-level cross-pass cache
-(`pypeline._autopipeline_latency_cache`, installed by
-`SYN.DO_AUTOPIPELINE_LATENCY_PASSES`'s pin-and-confirm loop; empty in native sim and
-`--comb` builds, so `.latency` reads 0
-there). The class-level `_is_autopipeline_pragma` flag is the elaborator's duck-type
-probe, exactly like `@sim_output`'s `_is_sim_output`. `__call__` is an identity
-passthrough (`func(x)`), so proto-simulation needs no special-casing. `.latency` is a
-read-tracked property (any read flips `pypeline._autopipeline_latency_was_read`, which
-lets `SYN.DO_AUTOPIPELINE_LATENCY_PASSES` skip the extra pass for designs that never
-consume the value), and
-`__repr__` is deliberately address-free *and fully distinguishing* (it embeds the
-wrapped func's canonical key when the compiler is loaded) because instances get
-captured in factory closures whose cell reprs feed canonical-name hashing.
+`AUTOPIPELINE` is a class in `pypeline.py`. Each instance carries:
+- the wrapped `func`;
+- the constructor constraint (`fixed_latency`, `start_latency`, `max_latency`);
+- a lazily computed `canonical_key`: `PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(func)` plus
+  `latency_suffix()`, which is empty when unconstrained. Both are deterministic per source,
+  never based on `id()` or call order.
+- a `latency` resolved at construction.
 
-Canonical-name determinism across re-executions is load-bearing for the whole
-feature and required three hardening fixes in the naming machinery itself, all
-regression-tested by `double_parse_file_test.py`'s strict key-set equality:
-`_canonical_func_name`'s two closure-hash branches (all-params-missing and
-missing-params/derived-vars) encode cell values via `_stable_val_repr` — recursing
-into `_callable_canonical_name` for callables — instead of raw `repr(v)`, whose
-address content changed every execution; `_callable_canonical_name` special-cases
-`_is_autopipeline_pragma` objects to recurse into the wrapped `.func` (every
-instance would otherwise collapse to the same `pypeline_AUTOPIPELINE` token,
-colliding wrappers around different cores); and `pypeline.@struct`'s
-`_format_struct_param_value` encodes callable factory params by module+qualname
-instead of `sha256(repr(func))`.
+The `latency` is resolved in this order:
+1. The fixed latency, if one was given.
+2. Otherwise the value in the module-level cross-pass cache
+   (`pypeline._autopipeline_latency_cache`, installed by `SYN.DO_AUTOPIPELINE_LATENCY_PASSES`'s
+   pin-and-confirm loop). A fixed latency that disagrees with the cache raises.
+3. Otherwise `start_latency`, if this is a sweep build
+   (`pypeline.AUTOPIPELINE_BUILD_MODE() == "sweep"`).
+4. Otherwise 0.
 
-Unlike the older `autopipeline(some_func(x))` wrapper-call syntax this replaced,
-`depth`/`func` are genuine Python attributes resolved by genuine Python execution —
-nothing is re-parsed out of AST argument nodes, the callee doesn't have to be written
-as a literal direct-call expression, and the tag can't leak onto a nested call inside
-the arguments (the old "next instantiation" quirk).
+The class-level `_is_autopipeline_pragma` flag is the elaborator's duck-type probe,
+exactly like `@sim_output`'s `_is_sim_output`. `__call__` is `func(x)` while `.latency`
+is 0 and an N-deep native-sim delay line otherwise, so proto-simulation needs no
+special-casing.
+
+`.latency` is a read-tracked property. Any read flips
+`pypeline._autopipeline_latency_was_read`, and inside a build it also records the served
+value in `pypeline._autopipeline_served`. `SYN.DO_AUTOPIPELINE_LATENCY_PASSES` skips the extra
+pass when nothing was read, or when every served value already equals what was built.
+
+`__repr__` is deliberately address-free *and fully distinguishing*: it embeds the
+wrapped func's canonical key when the compiler is loaded, plus the constraint as
+written. This matters because instances get captured in factory closures whose cell
+reprs feed canonical-name hashing.
+
+Canonical-name determinism across re-executions is load-bearing for the whole feature.
+It needed three hardening fixes in the naming machinery itself, all regression-tested by
+`double_parse_file_test.py`'s strict key-set equality:
+1. `_canonical_func_name`'s two closure-hash branches (all-params-missing and
+   missing-params/derived-vars) encode cell values via `_stable_val_repr` instead of raw
+   `repr(v)`, whose address content changed every execution. For callables,
+   `_stable_val_repr` recurses into `_callable_canonical_name`.
+2. `_callable_canonical_name` special-cases `_is_autopipeline_pragma` objects: it recurses
+   into the wrapped `.func` and appends the constraint's key suffix. Without this, every
+   instance would collapse to the same `pypeline_AUTOPIPELINE` token, and wrappers around
+   different cores would collide.
+3. `pypeline.@struct`'s `_format_struct_param_value` encodes callable factory params by
+   module+qualname instead of `sha256(repr(func))`.
+
+Unlike the older `autopipeline(some_func(x))` wrapper-call syntax this replaced, the
+constraint and `func` are genuine Python attributes resolved by genuine Python
+execution. That has three consequences:
+- nothing is re-parsed out of AST argument nodes;
+- the callee doesn't have to be written as a literal direct-call expression;
+- the tag can't leak onto a nested call inside the arguments (the old "next
+  instantiation" quirk).
+
+### Validation
+
+There are two layers.
+
+**At construction.** `AUTOPIPELINE.__init__` checks:
+- types and non-negative values;
+- that `latency` isn't combined with the other two keywords;
+- `start_latency <= max_latency`;
+- consistency with a `@pipeline_latency(k)` wrapped function;
+- the removed `depth=` keyword.
+
+The errors name the user's own construction site.
+
+**At elaboration.** `_validate_autopipeline_constraints` runs next to
+`_validate_pipeline_latencies`, but outside that function's early return for designs
+without fixed-latency functions. It rejects:
+- a constrained call site whose function hierarchy contains another AUTOPIPELINE call
+  site. A nested region reports zero latency to its container, so the outer constraint
+  could not count it.
+- a fixed `latency=N > 0` on a function that can't take added registers (state,
+  feedback, raw HDL).
+
+`_validate_pipeline_latencies` rejects constraints that conflict with a
+`@pipeline_latency(k)` callee (`AutopipelineLatency.conflict_with_fixed`).
+
+Some infeasibility can only be judged against the real delay landscape, for example
+more registers than legal positions. The sweep's region enforcement reports those.
 
 ### Elaboration (`FuncElaborator._elab_call`)
 
@@ -4530,18 +4594,21 @@ exactly the instance this call created:
 ```python
         _add_submodule_instance(...)
         if autopipeline_call is not None:
-            self.logic.sub_inst_to_autopipeline_depth[inst] = autopipeline_call.depth
+            self.logic.sub_inst_to_autopipeline_latency[inst] = (
+                C_TO_LOGIC.AutopipelineLatency.from_tag(autopipeline_call)
+            )
             self.logic.sub_inst_to_autopipeline_key[inst] = (
                 autopipeline_call.canonical_key
             )
         return port_return, ret_typ
 ```
 
-Both dicts live on `self.logic` — the `FuncElaborator`'s own per-function `Logic()`
-object — so a tag used inside one function body only affects calls elaborated within
-that same function, matching the C implementation's per-`Logic()` scoping. (The C
-frontend's forward-looking `next_func_call_autopipeline_depth` field still exists for
-`#pragma AUTOPIPELINE`, but the Pypeline path no longer uses it.)
+Both dicts live on `self.logic`, the `FuncElaborator`'s own per-function `Logic()`
+object. A tag used inside one function body therefore only affects calls elaborated
+within that same function, matching the C implementation's per-`Logic()` scoping.
+The C frontend's forward-looking `next_func_call_autopipeline_latency` field carries a
+pending `#pragma AUTOPIPELINE [N]` constraint to the next call; the Pypeline path
+doesn't use it.
 
 ## `AUTOFSM(func)` — Resource-Shared State Machines
 
@@ -4851,7 +4918,8 @@ The backend reports N total cycles and zero compiler-added cycles for the tagged
 function. Its callers can acquire alignment and additional pipeline stages.
 `_validate_pipeline_latencies` rejects AUTOPIPELINE requests inside the tagged
 implementation, where they would violate the immutable boundary. Explicit
-AUTOPIPELINE depths on the tagged function itself must agree with N.
+AUTOPIPELINE latency constraints on the tagged function itself must agree with N
+(`latency=N`, `start_latency=N`, `max_latency>=N`).
 
 Within a stateful or fixed Python body, calls into a fixed-pipeline hierarchy
 populate `Logic.submodule_latencies_are_self_timed`. Their physical outputs are
@@ -5519,7 +5587,7 @@ top.py  (single-file or multi-file entry point)
   │               ├─ _elab_bit_select   BIT_SELECT submodule (scalar x[N])
   │               ├─ _elab_bit_slice    BIT_SLICE submodule (scalar x[hi:lo] or s.field[hi:lo])
   │               ├─ _elab_tuple_concat TUPLE_CONCAT submodule ((a, b, c))
-  │               └─ _elab_call         autopipeline(call, depth) → unwrap, tag inst, recurse
+  │               └─ _elab_call         AUTOPIPELINE tag call → elaborate func, tag inst + constraint
   │                                   ast.Name: try prefixed name (sub-file), FuncLogicLookupTable, _elaborate_live_func
   │                                   ast.Attribute: module-qualified call (mod.func(args)) →
   │                                     getattr lookup + FuncLogicLookupTable (sub-files pre-elaborated)

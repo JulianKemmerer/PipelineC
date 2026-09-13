@@ -97,10 +97,22 @@ def stable_key(value, seen=frozenset()):
     if callable(value):
         for attr in ("_is_autopipeline_pragma", "_is_autofsm_pragma"):
             if getattr(value, attr, False):
-                # Pinned AP depth is deliberately not identity: it changes
-                # during the compiler's pin-and-confirm elaboration loop.
+                # An AUTOPIPELINE's constructor latency constraint is
+                # identity (two tags over one func with different latency=
+                # must name differently); its discovered/served .latency is
+                # not -- that changes during the compiler's pin-and-confirm
+                # elaboration loop. Unconstrained tags keep config () so
+                # their names never moved.
                 config = (
-                    ()
+                    tuple(
+                        (name, getattr(value, attr_name, None))
+                        for name, attr_name in (
+                            ("latency", "fixed_latency"),
+                            ("start_latency", "start_latency"),
+                            ("max_latency", "max_latency"),
+                        )
+                        if getattr(value, attr_name, None) is not None
+                    )
                     if attr == "_is_autopipeline_pragma"
                     else (
                         getattr(value, "max_latency", None),
