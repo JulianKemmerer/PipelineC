@@ -105,7 +105,7 @@ UPDATE.latency                           # fixed in->out cycle count; 0 until kn
 - `func` must be `@hw_func`-decorated, **pure** (no `Reg`/`Feedback`/global wires
   anywhere in its call subtree), take exactly **one** annotated argument, and
   have an annotated return type. Bundle multiple inputs into an `@struct` — the
-  same single-argument rule `make_stream_pipeline` and `make_valid_ready_mcp`
+  same single-argument rule `make_stream_pipeline` and `make_stream_interface_mcp`
   follow.
 - The argument is a `{data, valid}` struct. Use `MY_FSM.in_stream_t`, or any
   structurally identical type — `make_stream_t(in_t)` from
@@ -161,7 +161,7 @@ when its own backpressure holding register is already the output boundary.
 
 `include/pypeline/stream/stream_autofsm.py`'s `make_stream_autofsm(func,
 max_latency=None)` is pure library code (no compiler changes) built the same
-way `make_stream_pipeline`/`make_valid_ready_mcp` are: it constructs an
+way `make_stream_pipeline`/`make_stream_interface_mcp` are: it constructs an
 `AUTOFSM(func, max_latency=max_latency, register_output=False)` internally and
 wraps its final-state result in
 a real valid/ready `@interface` stream port, so callers no longer hand-roll
@@ -181,7 +181,7 @@ then immediately copying it into the wrapper's holding register would spend
 two full-width banks on a boundary that needs one.
 `stream_in_if.ready` is asserted only when both are free, and the output side
 is computed *first* in the body (the same same-cycle out→in trick
-`make_valid_ready_mcp` uses), so the slot a result just vacated is visible to
+`make_stream_interface_mcp` uses), so the slot a result just vacated is visible to
 the accept decision in the same cycle — back-to-back requests with an always-
 ready consumer still pack tightly, one every `latency` cycles, no bubble.
 
@@ -190,7 +190,7 @@ Two alternative shapes were considered and rejected:
   registering only on a downstream stall) matches the raw AUTOFSM latency
   exactly, but adds a combinational path from the FSM's own output registers
   to the wrapper's port — the registered-output shape has none.
-- **Cycle-counter** (mirroring `make_valid_ready_mcp`'s `cycles_since_launch`)
+- **Cycle-counter** (mirroring `make_stream_interface_mcp`'s `cycles_since_launch`)
   hits `latency` cycles of II with zero bubble, but its body would have to read
   `.latency` directly — see the next paragraph for why that's a real hazard
   here, not just a style preference.
@@ -636,7 +636,7 @@ Points that are easy to get wrong, and are deliberate here:
   later write to `st_r` would otherwise be visible to an earlier-written read.
   Reading everything into locals up front makes the body a clean "read committed
   state → compute → write next state". (This is the ordering hazard
-  `make_valid_ready_mcp` handles by hand; here it is solved once, structurally.)
+  `make_stream_interface_mcp` handles by hand; here it is solved once, structurally.)
 - **A shared unit's output local is only valid in the state that unit is
   running.** Any value read in a *later* state must come from a register — which
   is exactly what `_cross_state_nodes` allocates, and what an assertion in
