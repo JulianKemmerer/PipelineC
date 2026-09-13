@@ -430,12 +430,39 @@ def WRITE_CLK_CONSTRAINTS_FILE(multimain_timing_params, parser_state, inst_name=
     return out_filepath
 
 
-def GET_MCP_PATH_CONSTRAINTS(
-    inst_name, top_inst, top_path, multimain_timing_params, parser_state
-):
-    # Hard coded to Vivado for now...
-    if SYN_TOOL is not VIVADO:
-        raise Exception("Multi cycle paths have only been tested with Vivado!")
+def ELABORATED_AUTOMCP_NCYCLES(parser_state):
+    """AUTOMCP canonical key -> cycle count the design was elaborated with
+    (the matching Logic.mcp_tuples entry's count)."""
+    rv = {}
+    for logic in parser_state.FuncLogicLookupTable.values():
+        automcp_tuples = getattr(logic, "automcp_tuples", None)
+        if not automcp_tuples:
+            continue
+        for mcp_tup in logic.mcp_tuples:
+            constraint = automcp_tuples.get((mcp_tup[1], mcp_tup[2]))
+            if constraint is not None:
+                rv[constraint.key] = int(mcp_tup[0])
+    return rv
+
+
+def MCP_EFFECTIVE_NCYCLES(mcp_tup, automcp_constraint, multimain_timing_params):
+    """Cycle count to constrain an mcp_tuples entry with: the throughput
+    sweep's current choice for an AUTOMCP path (MultiMainTimingParams.
+    automcp_ncycles -- the sweep changes it without re-elaborating), else the
+    elaborated count."""
+    if automcp_constraint is not None:
+        overrides = getattr(multimain_timing_params, "automcp_ncycles", None) or {}
+        if automcp_constraint.key in overrides:
+            return str(overrides[automcp_constraint.key])
+    return mcp_tup[0]
+
+
+def GET_MCP_CELL_PATHS(inst_name, top_inst, top_path, parser_state):
+    """Vivado cell-path globs of every multi-cycle path in instance inst_name,
+    relative to the synthesized top (top_inst, named top_path in the netlist).
+    Returns [(mcp_tup, start_reg_cell_glob, end_reg_cell_glob,
+    AutomcpConstraint or None)], sorted for deterministic output. Shared by
+    the XDC writer and the sweep's timing-report-to-AUTOMCP matching."""
     rv = []
     # Determine partial hierarchy path being synthesized
     top_inst_tok = top_inst + C_TO_LOGIC.SUBMODULE_MARKER
@@ -453,17 +480,34 @@ def GET_MCP_PATH_CONSTRAINTS(
         partial_inst_path = partial_inst_path + "/"
     # Loop over all MCP constraints in this func
     func_logic = parser_state.LogicInstLookupTable[inst_name]
-    for mcp_tup in func_logic.mcp_tuples:
-        ncycles = mcp_tup[0]
-        start_reg_name = mcp_tup[1]
-        start_reg_cell_path = (
-            top_path + "/" + partial_inst_path + start_reg_name + "_reg[*]"
+    automcp_tuples = getattr(func_logic, "automcp_tuples", None) or {}
+    top_prefix = top_path + "/" if top_path else ""
+    for mcp_tup in sorted(func_logic.mcp_tuples):
+        start_reg_cell_path = top_prefix + partial_inst_path + mcp_tup[1] + "_reg[*]"
+        end_reg_cell_path = top_prefix + partial_inst_path + mcp_tup[2] + "_reg[*]"
+        rv.append(
+            (
+                mcp_tup,
+                start_reg_cell_path,
+                end_reg_cell_path,
+                automcp_tuples.get((mcp_tup[1], mcp_tup[2])),
+            )
         )
+    return rv
+
+
+def GET_MCP_PATH_CONSTRAINTS(
+    inst_name, top_inst, top_path, multimain_timing_params, parser_state
+):
+    # Hard coded to Vivado for now...
+    if SYN_TOOL is not VIVADO:
+        raise Exception("Multi cycle paths have only been tested with Vivado!")
+    rv = []
+    for mcp_tup, start_reg_cell_path, end_reg_cell_path, automcp in GET_MCP_CELL_PATHS(
+        inst_name, top_inst, top_path, parser_state
+    ):
+        ncycles = MCP_EFFECTIVE_NCYCLES(mcp_tup, automcp, multimain_timing_params)
         start_reg_path = start_reg_cell_path + "/C"
-        end_reg_name = mcp_tup[2]
-        end_reg_cell_path = (
-            top_path + "/" + partial_inst_path + end_reg_name + "_reg[*]"
-        )
         end_reg_path = end_reg_cell_path + "/D"
         rv.append(
             f"set_multicycle_path {ncycles} -setup -from [get_pins {start_reg_path}] -to [get_pins {end_reg_path}]"
@@ -479,6 +523,10 @@ class MultiMainTimingParams:
     def __init__(self):
         # Pipeline params
         self.TimingParamsLookupTable = {}
+        # AUTOMCP canonical key -> multi-cycle count the throughput sweep is
+        # currently constraining that path with (see MCP_EFFECTIVE_NCYCLES);
+        # keys absent use the elaborated count
+        self.automcp_ncycles = {}
         # TODO some kind of params for clock crossing
 
     def GET_HASH_EXT(self, parser_state):
@@ -496,6 +544,18 @@ class MultiMainTimingParams:
                 self.TimingParamsLookupTable, parser_state
             )
             top_level_str += hash_ext_i
+        # A sweep-chosen AUTOMCP count changes only the XDC, not any entity,
+        # so it must enter the hash or a same-named log from another count
+        # would be replayed. Counts equal to the elaborated ones add nothing:
+        # every design without a sweep-raised AUTOMCP hashes as before.
+        overrides = getattr(self, "automcp_ncycles", None)
+        if overrides:
+            elaborated = ELABORATED_AUTOMCP_NCYCLES(parser_state)
+            changed = sorted(
+                (key, n) for key, n in overrides.items() if elaborated.get(key) != n
+            )
+            if changed:
+                top_level_str += "_automcp" + repr(changed)
         s = top_level_str
         hash_ext = "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:8])
         # Side-record for name_index.log's PIPELINE VARIANTS section -- see
@@ -3787,6 +3847,56 @@ def CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(parser_state, TimingParamsLookupTabl
         )
 
 
+def HARVEST_AUTOMCP_NCYCLES(parser_state, multimain_timing_params):
+    """AUTOMCP canonical key -> multi-cycle count the build constrained it
+    with: the throughput sweep's final choice where it made one, else the
+    elaborated count. Every AUTOMCP elaborated into the design is present."""
+    ncycles = ELABORATED_AUTOMCP_NCYCLES(parser_state)
+    overrides = getattr(multimain_timing_params, "automcp_ncycles", None) or {}
+    for key in ncycles:
+        if key in overrides:
+            ncycles[key] = overrides[key]
+    return ncycles
+
+
+def CHECK_AUTOMCP_TAGS_READ(parser_state):
+    """A start_latency=/max_latency= AUTOMCP whose .latency no design code
+    read can't have its handshake follow the sweep's cycle count: fail the
+    build before any synthesis is spent on it."""
+    import pypeline
+
+    elaborated = ELABORATED_AUTOMCP_NCYCLES(parser_state)
+    unread = [key for key in pypeline.AUTOMCP_UNREAD_KEYS() if key in elaborated]
+    if unread:
+        sys.exit(
+            "AUTOMCP: .latency was never read by the design for "
+            + ", ".join(unread)
+            + ". The throughput sweep may change a multi-cycle path's cycle "
+            "count, so the logic timing it (e.g. a launch/capture handshake "
+            "counter) must be written in terms of MC.latency. Use "
+            "MULTI_CYCLE[N] (or AUTOMCP(latency=N)) for a hand-timed path."
+        )
+
+
+def AUTOMCP_BUILT_MATCHES_ELABORATED(parser_state, automcp_ncycles):
+    """True when every AUTOMCP count the build settled on equals the count the
+    design was elaborated with and every .latency value design code read --
+    no re-elaboration needed for AUTOMCP's sake."""
+    import pypeline
+
+    if ELABORATED_AUTOMCP_NCYCLES(parser_state) != automcp_ncycles:
+        return False
+    for key, values in pypeline.AUTOMCP_SERVED_LATENCIES().items():
+        if key in automcp_ncycles and values != {automcp_ncycles[key]}:
+            return False
+    return True
+
+
+def PRINT_AUTOMCP_NCYCLES(automcp_ncycles):
+    for key, ncycles in sorted(automcp_ncycles.items()):
+        print(f"AUTOMCP {key}: {ncycles} cycles", flush=True)
+
+
 def AUTOPIPELINE_SERVED_VALUES_MATCH(served, latencies):
     """True when every .latency value the design's Python consumed (served:
     canonical_key -> set of values returned) already equals the stage count
@@ -3819,11 +3929,25 @@ def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_fi
     CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(
         parser_state, multimain_timing_params.TimingParamsLookupTable
     )
-    if not (latencies and pypeline.AUTOPIPELINE_LATENCY_WAS_READ()):
+    # AUTOMCP counts ride the same passes: the sweep may have constrained a
+    # multi-cycle path with a count the design's handshake wasn't built for
+    automcp = HARVEST_AUTOMCP_NCYCLES(parser_state, multimain_timing_params)
+    automcp_match = AUTOMCP_BUILT_MATCHES_ELABORATED(parser_state, automcp)
+    if automcp and automcp_match:
+        print(
+            "AUTOMCP: every .latency read matched the built multi-cycle count",
+            flush=True,
+        )
+        PRINT_AUTOMCP_NCYCLES(automcp)
+    if automcp_match and not (latencies and pypeline.AUTOPIPELINE_LATENCY_WAS_READ()):
         return parser_state, multimain_timing_params
-    if pypeline.AUTOPIPELINE_BUILD_MODE() is not None and (
-        AUTOPIPELINE_SERVED_VALUES_MATCH(
-            pypeline.AUTOPIPELINE_SERVED_LATENCIES(), latencies
+    if (
+        automcp_match
+        and pypeline.AUTOPIPELINE_BUILD_MODE() is not None
+        and (
+            AUTOPIPELINE_SERVED_VALUES_MATCH(
+                pypeline.AUTOPIPELINE_SERVED_LATENCIES(), latencies
+            )
         )
     ):
         # Fixed latency=N call sites, a correct start_latency=S guess, or a
@@ -3861,9 +3985,11 @@ def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_fi
         )
         for key, lat in sorted(latencies.items()):
             print(f"AUTOPIPELINE {key}: {lat} clks", flush=True)
+        PRINT_AUTOMCP_NCYCLES(automcp)
         prev_parser_state = parser_state
         prev_tpl = multimain_timing_params.TimingParamsLookupTable
         pypeline.SET_AUTOPIPELINE_LATENCY_CACHE(latencies)
+        pypeline.SET_AUTOMCP_LATENCY_CACHE(automcp)
         parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
         C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
         parser_state = ADD_PATH_DELAY_TO_LOOKUP(parser_state)
@@ -3899,7 +4025,8 @@ def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_fi
         CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(
             parser_state, multimain_timing_params.TimingParamsLookupTable
         )
-        if new_latencies == latencies:
+        new_automcp = HARVEST_AUTOMCP_NCYCLES(parser_state, multimain_timing_params)
+        if new_latencies == latencies and new_automcp == automcp:
             # The .latency values this pass's Python consumed equal
             # the stage counts actually built -- converged. (Meeting
             # timing alone is NOT sufficient to stop: realizing the
@@ -3916,6 +4043,14 @@ def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_fi
             for key in sorted(set(latencies) | set(new_latencies))
             if latencies.get(key) != new_latencies.get(key)
         )
+        automcp_change_desc = ", ".join(
+            f"AUTOMCP {key}: {automcp.get(key)} -> {new_automcp.get(key)} cycles"
+            for key in sorted(set(automcp) | set(new_automcp))
+            if automcp.get(key) != new_automcp.get(key)
+        )
+        last_change_desc = ", ".join(
+            d for d in (last_change_desc, automcp_change_desc) if d
+        )
         print(
             "AUTOPIPELINE: "
             + ("slice realization" if met else "fallback sweep")
@@ -3924,6 +4059,7 @@ def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_fi
             flush=True,
         )
         latencies = new_latencies
+        automcp = new_automcp
 
     return parser_state, multimain_timing_params
 
@@ -3941,6 +4077,9 @@ def DO_SWEEP_AND_AUTOPIPELINE(parser_state, args, src_file):
     handed in is not necessarily the one that comes back out.
     """
     if not args.comb and not args.yosys_json:
+        if src_file.endswith(".py"):
+            # Before any synthesis time is spent on a design that can't work
+            CHECK_AUTOMCP_TAGS_READ(parser_state)
         print(
             "================== Adding Timing Information from Synthesis Tool ================================",
             flush=True,

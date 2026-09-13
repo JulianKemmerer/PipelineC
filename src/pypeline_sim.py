@@ -75,6 +75,7 @@ def run_sim(
     autopipeline_latencies=None,
     autofsm_schedules=None,
     pipeline_timing=None,
+    automcp_latencies=None,
 ) -> None:
     """Run the native simulation.
 
@@ -117,6 +118,13 @@ def run_sim(
     # construction, and .latency-derived Python sizing must match the build's.
     if autofsm_schedules:
         pypeline.SET_AUTOFSM_SCHEDULE_CACHE(autofsm_schedules)
+    # And for AUTOMCP: the tag resolves .latency at construction, and the
+    # handshake it drives must count the cycles the build constrained.
+    if automcp_latencies:
+        pypeline.SET_AUTOMCP_LATENCY_CACHE(automcp_latencies)
+    # Construction ordinals (part of each AUTOMCP's cache key) restart with
+    # the design's re-import, exactly as they did for each build pass.
+    pypeline.RESET_AUTOMCP_TRACKING()
     _evict_design_modules()
     module = _import_design(design_file)
 

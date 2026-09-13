@@ -40,7 +40,8 @@ SYNTH_TEST_FILES = [
     # registers, independent of the native-vs-VHDL cycle diff registered in
     # native_vs_vhdl_sim_tests.py.
     ("self_check_stream_autofsm_test.py", INST_DIR, []),
-    ("valid_ready_mcp_test.py", INST_DIR, ["--comb"]),
+    ("stream_interface_mcp_test.py", INST_DIR, ["--comb"]),
+    ("stream_interface_automcp_test.py", INST_DIR, ["--comb"]),
     ("vga_donut.py", EXAMPLES_PYPELINE_DIR, ["--comb"]),
     ("vga_test_pattern.py", EXAMPLES_PYPELINE_DIR, ["--comb"]),
     ("float32_add_test.py", INST_DIR, ["--comb"]),

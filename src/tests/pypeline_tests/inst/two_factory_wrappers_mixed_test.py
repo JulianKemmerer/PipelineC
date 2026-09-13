@@ -21,10 +21,10 @@ from pypeline import MAIN, PART, hw_func, struct, uint1_t, uint32_t
 
 from stream.stream import make_stream_interface
 from stream.stream_pipeline import make_stream_pipeline
-from multi_cycle_path import make_valid_ready_mcp
+from multi_cycle_path import make_stream_interface_mcp
 
-# make_valid_ready_mcp's MULTI_CYCLE constraints are only supported by Vivado
-# synthesis (see multi_cycle_path.py / valid_ready_mcp_test.py), so this design
+# make_stream_interface_mcp's MULTI_CYCLE constraints are only supported by Vivado
+# synthesis (see multi_cycle_path.py / stream_interface_mcp_test.py), so this design
 # needs a real Xilinx PART to be synth-testable at all.
 PART("xc7a35ticsg324-1l")
 
@@ -32,7 +32,7 @@ PART("xc7a35ticsg324-1l")
 # (see two_factory_wrappers_test.py for the same-factory silent-miscompile
 # variant). This is the loud-failure variant, matching the shape that actually
 # blocked the wireguard-fpga ChaCha20/Poly1305 port: two *different* factories
-# (make_valid_ready_mcp + make_stream_pipeline) each wrapping a different
+# (make_stream_interface_mcp + make_stream_pipeline) each wrapping a different
 # top-level function, with assignment-incompatible return types. Pre-fix, the
 # second wrapper's inner `func` call resolves to the first wrapper's already-
 # elaborated function and fails to drive its differently-typed output wires.
@@ -66,7 +66,7 @@ def wide_round(x: wide_t) -> wide_t:
 
 uint32_stream_intrf = make_stream_interface(uint32_t)
 wide_stream_intrf = make_stream_interface(wide_t)
-scalar_mcp, scalar_mcp_t = make_valid_ready_mcp(scalar_round, 2)
+scalar_mcp, scalar_mcp_t = make_stream_interface_mcp(scalar_round, 2)
 wide_pipeline, wide_pipeline_t = make_stream_pipeline(wide_round)
 
 

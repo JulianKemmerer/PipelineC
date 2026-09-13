@@ -55,6 +55,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "autopipeline_region_planning_test.py"],
         )
     )
+    # AUTOMCP: constructor/.latency/keys/read tracking, identity following
+    # the cycle count, SYN constraint overrides + hash, SWEEP report matching
+    # and grow-only feedback, elaboration + cache re-parse renaming, and the
+    # unread-tag refusal -- no synthesis tool involved.
+    tests.append(
+        Test(
+            name="automcp_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "automcp_unit_test.py"],
+        )
+    )
     # Pure-unit tests for readable, hierarchical canonical names of
     # factory-closure functions (_canonical_func_name/_callable_canonical_name)
     # against hand-built fixtures, plus a PARSE_FILE regression test for the

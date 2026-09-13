@@ -586,7 +586,7 @@ hardware functions (including `make_*` factory-produced ones) must carry `@hw_fu
 
 **`is_hw_func(func)` — validating caller-supplied functions at factory entry.** Factories
 that accept a caller-supplied `func` and then *call* it from inside their own `@hw_func`
-body — `make_autopipeline`, `make_valid_ready_mcp`, `make_stream_pipeline` — must have
+body — `make_autopipeline`, `make_stream_interface_mcp`, `make_stream_pipeline` — must have
 `func` itself already `@hw_func`-decorated, or `func`'s own `Reg[T]`/`Feedback[T]`/bare
 struct-array locals silently fall through the gap above and raise `UnboundLocalError`
 deep inside `sim_call` (a confusing failure far from its cause). `_sim_type_wrap`/`hw_func`
@@ -1696,6 +1696,9 @@ This section documents **how it is implemented**. Everything below lives in `src
      `pypeline._autopipeline_latency_cache`) so it is populated even for designs whose Python
      never read `.latency`, where the pin-and-confirm loop never ran. Divergences are already a
      fatal driver error for any non-`--comb` `.py` build, so they are ignored here.
+   - `automcp_latencies = SYN.HARVEST_AUTOMCP_NCYCLES(parser_state, multimain_timing_params)` —
+     `{AUTOMCP canonical_key → multi-cycle count constrained}`, so an `AUTOMCP`'s `.latency`
+     (e.g. `make_stream_interface_automcp`'s handshake) counts the same cycles as the VHDL.
 4. `run_sim(source_file, args.run, main_latencies=…, autopipeline_latencies=…)` installs the
    AUTOPIPELINE cache, re-imports the design fresh in sim mode, wires up the two emulation
    mechanisms, and runs the ordinary multi-MAIN cycle loop.
@@ -2169,6 +2172,12 @@ Two traps when writing a design that will be diffed against real VHDL:
 - **Registers (`Reg[T]`)** — supported; functions must carry `@hw_func` (or `@MAIN`).
   `Reg[T, MULTI_CYCLE[...].start/.end]` tags are resolved even when the `MULTI_CYCLE[...]`
   call is assigned to a local (`MC = MULTI_CYCLE[32]`) earlier in the same body (`_local_const_ns`).
+- **Multi-cycle paths (`MULTI_CYCLE[...]` / `AUTOMCP(...)`)** — never modeled as settling
+  time: the launch->capture logic is ready the same cycle, so only handshake timing is
+  simulated. An `AUTOMCP`'s `.latency` resolves at construction (cache, else `latency=`,
+  else `start_latency=`, else 1). After a non-`--comb` build, `run_sim(automcp_latencies=)`
+  installs the built counts before the design import (and restarts construction ordinals,
+  `pypeline.RESET_AUTOMCP_TRACKING`), so the handshake counts the constrained cycles.
 - **Feedback wires (`Feedback[T]`)** — supported via convergence loop; functions must carry `@hw_func`.
 - **Bare struct/array locals** (`rv: my_struct_t` / `rv: uint1_t[n]`, no initializer, followed
   by `rv.field = ...` / `rv[i] = ...`) — supported (`_TypedAnnAssignRewriter` Rules 3-4,
@@ -2183,7 +2192,7 @@ Two traps when writing a design that will be diffed against real VHDL:
 - **Closures from factory functions** — add `@hw_func` to the inner closure definition.
   `_build_reg_sim_func` resolves `Reg[T]` annotations using closure-captured variables.
   Factories that accept and then call a caller-supplied function
-  (`make_autopipeline`/`make_valid_ready_mcp`/`make_stream_pipeline`) require that
+  (`make_autopipeline`/`make_stream_interface_mcp`/`make_stream_pipeline`) require that
   function to already be `@hw_func`-decorated and raise `TypeError` at the factory call
   site otherwise — see `is_hw_func(func)` above.
 - **Global variables** — only `Wire[T]`/`Input[T]`/`Output[T]` annotations are valid as

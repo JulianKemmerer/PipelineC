@@ -16,7 +16,7 @@ def make_stream_autofsm(func, max_latency=None):
     """Wraps a pure combinational hardware function in an AUTOFSM instance plus a
     registered-output valid/ready handshake, exposing it as a stream interface --
     the AUTOFSM equivalent of make_stream_pipeline (AUTOPIPELINE) and
-    make_valid_ready_mcp (MULTI_CYCLE[...]).
+    make_stream_interface_mcp (MULTI_CYCLE[...]).
 
     AUTOFSM's own call-site contract has no backpressure: a `valid` pulse
     asserted while the FSM is busy is IGNORED, and the result itself is only a
@@ -82,7 +82,7 @@ def make_stream_autofsm(func, max_latency=None):
         busy: Reg[uint1_t]
 
         # Output side first, for the same-cycle output/input handshake (the
-        # make_valid_ready_mcp trick): clearing result_valid here is visible
+        # make_stream_interface_mcp trick): clearing result_valid here is visible
         # to the accept decision below in the same cycle.
         o.stream_out_if.stream.data = result
         o.stream_out_if.stream.valid = result_valid

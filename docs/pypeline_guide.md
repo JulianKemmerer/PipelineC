@@ -43,7 +43,7 @@ For getting started information see the [README](README.md).
 27. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
 28. [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer)
 29. [Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline)
-30. [Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp)
+30. [Multi-Cycle Stream Wrapper: `make_stream_interface_mcp`](#multi-cycle-stream-wrapper-make_stream_interface_mcp)
 31. [Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm)
 
 **Part IV — Escape hatches**
@@ -1642,7 +1642,7 @@ itself, and needs that function's parameter/return types to build the rest of it
 hardware (a stream type around the payload type, a result struct sized to match, etc.):
 
 ```python
-def make_valid_ready_mcp(func, ncycles):
+def make_stream_interface_mcp(func, latency):
     """func must already be @hw_func-decorated, with one annotated parameter and an
     annotated return type, e.g.:
         @hw_func
@@ -1663,7 +1663,7 @@ out_type = hw_return_type(func)   # the declared return type
 Both work whether `func` is undecorated or already `@hw_func`-decorated — but for
 factories that go on to *call* `func` from inside their own hardware function body
 (rather than just introspecting its annotations), `func` itself must already be
-`@hw_func`-decorated: `AUTOPIPELINE`, `make_valid_ready_mcp`, and
+`@hw_func`-decorated: `AUTOPIPELINE`, `make_stream_interface_mcp`, and
 `make_stream_pipeline` all enforce this and raise `TypeError`
 otherwise (see [Tool-Chosen Implementation: `AUTOPIPELINE(...)` and `AUTOFSM(...)`](#tool-chosen-implementation-autopipeline-and-autofsm) /
 [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle)). `@hw_func`
@@ -1677,7 +1677,7 @@ having a factory stash a type as a custom attribute on the function it returns (
 `my_func.out_t = out_t`) — the type is already recoverable generically from the
 function's own annotations, so there's no need for either function authors or callers
 to manage it by hand. See `include/pypeline/multi_cycle_path.py` for the full
-`make_valid_ready_mcp` example.
+`make_stream_interface_mcp` example.
 
 ---
 
@@ -2144,7 +2144,7 @@ accepting a new input every cycle. `AUTOFSM` is multi-cycle and **folded onto sh
 hardware** — area-oriented: one copy of each distinct operation, reused across states.
 `MULTI_CYCLE` is multi-cycle and **low-throughput**: a single slow combinational path
 given more than one cycle to settle, with no new input accepted until it's done. And a
-**stream wrapper** (`make_stream_pipeline`, `make_valid_ready_mcp`, covered later
+**stream wrapper** (`make_stream_pipeline`, `make_stream_interface_mcp`, covered later
 alongside the other stream material in Part III since they're built on `stream_t` and
 `@interface`) layers a valid/ready handshake protocol around any of the above so
 neighboring hardware doesn't need to know which one it's talking to.
@@ -2395,7 +2395,7 @@ all of the time.
 - `func` must be `@hw_func`, **pure** (no `Reg`/`Feedback`/global wires anywhere
   in its call subtree), and take exactly **one** annotated argument with an
   annotated return type. Bundle several inputs into an `@struct` — the same rule
-  `make_stream_pipeline` and `make_valid_ready_mcp` follow.
+  `make_stream_pipeline` and `make_stream_interface_mcp` follow.
 - The argument is a `{data, valid}` struct: use `MY_FSM.in_stream_t`, or any
   structurally identical type (`make_stream_t(in_t)` works).
 - An input is accepted **only while the FSM is idle**. A `valid` pulse asserted
@@ -2577,15 +2577,64 @@ without a `PART()` target it has no effect. See
 `examples/mcp/mcp_test.c`) for the full example, including the `PART(...)` call needed to
 target a real device.
 
+### Letting the tool pick the cycle count: `AUTOMCP(...)`
+
+Picking `N` by hand means guessing how slow the logic really is. Too small, and the build
+fails timing; too large, and throughput is wasted. `AUTOMCP(...)` is the tool-tuned
+version of `MULTI_CYCLE[N]`, in the same spirit as `AUTOPIPELINE(...)`: the pypelinec
+throughput sweep chooses the cycle count.
+
+```python
+from pypeline import Reg, AUTOMCP, uint8_t
+
+MC = AUTOMCP(start_latency=3)                # sweep starts at 3 cycles
+# MC = AUTOMCP(start_latency=3, max_latency=8)   ...and never goes past 8
+# MC = AUTOMCP(latency=4)                         fixed: exactly 4 cycles
+
+@hw_func
+def my_fsm(i: my_struct_t) -> my_struct_t:
+    o: my_struct_t
+    data0: Reg[my_struct_t, MC.start]
+    data1: Reg[my_struct_t, MC.end]
+    count: Reg[uint8_t]
+    if count == MC.latency + 1:              # the handshake follows the chosen count
+        ...
+    data1 = big_comb_multi_cycle_func(data0)
+    ...
+```
+
+- **`.latency` is the cycle count.** Before any synthesis it reads `latency=`, else
+  `start_latency=`, else 1. The same value applies in native simulation and in `--comb`
+  builds.
+- **The sweep only raises it.** In a synthesizing build, each timing report is checked.
+  When the failing path runs from this tag's `.start` register to its `.end` register,
+  the count jumps to what the reported slack needs. It never drops below where it started
+  and never exceeds `max_latency=`. A cap that blocks the clock goal fails the build with
+  `limited by AUTOMCP ...` and `TIMING NOT MET`.
+- **The design is rebuilt with the final count.** Like AUTOPIPELINE's `.latency`, the
+  build re-elaborates the design so every `.latency`-derived constant matches the
+  constraint, and a following `--sim` counts the same cycles. If the count never moved,
+  that extra pass is skipped.
+- **Your logic must read `.latency`.** An `AUTOMCP` whose `.latency` nothing reads can't
+  follow the sweep, so a synthesizing build refuses it. For a hand-timed path, use
+  `MULTI_CYCLE[N]` or `AUTOMCP(latency=N)`.
+- **Construct it once, outside any `@hw_func` body**, and capture it by closure, e.g. at
+  a factory's top level. Constructing it inside a body is an error.
+- **Vivado only**, like `MULTI_CYCLE[...]`.
+
+For the common case of one slow function behind a valid/ready handshake, use
+[`make_stream_interface_automcp`](#multi-cycle-stream-wrapper-make_stream_interface_mcp),
+which does all of this for you.
+
 ### Wrapping a whole slow function
 
 The launch/capture pattern above is the right tool when a multi-cycle path sits between
 two registers you are already managing yourself inside a larger function. When the slow
-logic is instead a whole standalone function, `make_valid_ready_mcp` wraps it in exactly
+logic is instead a whole standalone function, `make_stream_interface_mcp` wraps it in exactly
 this FSM for you and presents the result as a valid/ready stream. Its ports are stream
 [interfaces](#bidirectional-ports-interface), so it is covered later alongside the
 other function-to-stream wrapper — see
-[`make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp).
+[`make_stream_interface_mcp`](#multi-cycle-stream-wrapper-make_stream_interface_mcp).
 
 ---
 
@@ -3721,7 +3770,7 @@ designing around:
 **See also:** [Streams: `stream_t`](#streams-stream_t) ·
 [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer) ·
 [Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline) ·
-[Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp)
+[Multi-Cycle Stream Wrapper: `make_stream_interface_mcp`](#multi-cycle-stream-wrapper-make_stream_interface_mcp)
 
 ---
 
@@ -3889,7 +3938,7 @@ sized identically and the AUTOPIPELINE call site is emulated at the same depth.
 
 `in_type`/`out_type` are inferred from `func`'s own annotations via `hw_arg_types`/
 `hw_return_type`, the same way
-[`make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp) does (see
+[`make_stream_interface_mcp`](#multi-cycle-stream-wrapper-make_stream_interface_mcp) does (see
 [Parametric Hardware with Factory Functions](#parametric-hardware-with-factory-functions)). **`func` must already be
 `@hw_func`-decorated** — `make_stream_pipeline` calls `is_hw_func(func)` and raises
 `TypeError` immediately if it isn't, since `func` is called from inside an internal
@@ -3904,38 +3953,38 @@ pipeline — AUTOPIPELINE retiming plus the output FIFO — simulates via `sim_c
 
 **See also:** [Tool-Chosen Implementation: `AUTOPIPELINE(...)` and `AUTOFSM(...)`](#tool-chosen-implementation-autopipeline-and-autofsm) ·
 [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo) ·
-[Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`](#multi-cycle-stream-wrapper-make_valid_ready_mcp) ·
+[Multi-Cycle Stream Wrapper: `make_stream_interface_mcp`](#multi-cycle-stream-wrapper-make_stream_interface_mcp) ·
 [Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm)
 
 ---
 
-## Multi-Cycle Stream Wrapper: `make_valid_ready_mcp`
+## Multi-Cycle Stream Wrapper: `make_stream_interface_mcp`
 
 [`make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline) above trades
 area for throughput: a free-running pipeline that accepts a new word every cycle.
-`make_valid_ready_mcp`, from `include/pypeline/multi_cycle_path.py`, is the other
+`make_stream_interface_mcp`, from `include/pypeline/multi_cycle_path.py`, is the other
 function-to-stream wrapper. It takes a single slow combinational function and gives it a
 [`MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle) launch/capture FSM, presenting the
 result as a valid/ready [stream interface](#the-stream-interface-validready-handshaking) — one
-result every `ncycles + 1` cycles rather than one per cycle. It is the pypeline equivalent of
+result every `latency + 1` cycles rather than one per cycle. It is the pypeline equivalent of
 PipelineC's `DECL_VALID_READY_MCP_FUNC` macro:
 
 ```python
 from pypeline import hw_func, MAIN
-from multi_cycle_path import make_valid_ready_mcp
+from multi_cycle_path import make_stream_interface_mcp
 
 @hw_func
 def divider(i: my_struct_t) -> uint32_t:
     return i.x / i.y
 
-divider_mcp, divider_mcp_t = make_valid_ready_mcp(divider, 16)   # 16-cycle MCP
+divider_mcp, divider_mcp_t = make_stream_interface_mcp(divider, 16)   # 16-cycle MCP
 
 @MAIN(100.0)
 def top(stream_in: divider_mcp.in_stream_t, stream_out: divider_mcp.out_fb_t) -> divider_mcp_t:
     return divider_mcp(stream_in, stream_out)
 ```
 
-`make_valid_ready_mcp(func, ncycles)` infers `in_type`/`out_type` from `func`'s own
+`make_stream_interface_mcp(func, latency)` infers `in_type`/`out_type` from `func`'s own
 parameter/return type annotations (unlike the C macro, which takes them as separate
 arguments) and returns `(func_mcp, func_mcp_t)`. Its ports are the two halves of a stream
 `@interface`, exactly like `make_stream_pipeline`'s:
@@ -3943,16 +3992,40 @@ arguments) and returns `(func_mcp, func_mcp_t)`. Its ports are the two halves of
 | | Type | Meaning |
 |---|---|---|
 | `func_mcp(stream_in, stream_out)` | `(in_stream_t, out_fb_t) -> func_mcp_t` | one MCP-wrapped instance of `func` |
-| `func_mcp_t.stream_out` | `stream_t(out_type)` | `func`'s result, valid `ncycles + 1` cycles after launch |
+| `func_mcp_t.stream_out` | `stream_t(out_type)` | `func`'s result, valid `latency + 1` cycles after launch |
 | `func_mcp_t.stream_in.ready` | `uint1_t` | high while the FSM is idle and ready to accept a new `stream_in` |
 
-Internally it is the same `MULTI_CYCLE[ncycles]` / `Reg[T, MC.start]` / `Reg[T, MC.end]`
+Internally it is the same `MULTI_CYCLE[latency]` / `Reg[T, MC.start]` / `Reg[T, MC.end]`
 pattern from [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle), with `launch`/`capture` registers and a
 `cycles_since_launch` counter driving the handshake. Like `MULTI_CYCLE[...]` itself, the
 relaxed timing only matters during real FPGA synthesis (requires `PART()` + Vivado);
 simulation always sees `func`'s result settle the same cycle it is computed. See
-`src/tests/pypeline_tests/inst/valid_ready_mcp_test.py` (translated from
+`src/tests/pypeline_tests/inst/stream_interface_mcp_test.py` (translated from
 `examples/mcp/mcp_divider.c`) for the full example.
+
+### Tool-chosen cycle count: `make_stream_interface_automcp`
+
+`make_stream_interface_automcp` is the same wrapper with an
+[`AUTOMCP(...)`](#letting-the-tool-pick-the-cycle-count-automcp) tag in place of the fixed
+`MULTI_CYCLE[latency]`, so the pypelinec throughput sweep picks the cycle count:
+
+```python
+from multi_cycle_path import make_stream_interface_automcp
+
+divider_mcp, divider_mcp_t = make_stream_interface_automcp(divider)                   # sweep starts at 1
+divider_mcp, divider_mcp_t = make_stream_interface_automcp(divider, start_latency=5)  # known-good start
+divider_mcp, divider_mcp_t = make_stream_interface_automcp(divider, start_latency=5, max_latency=8)
+divider_mcp, divider_mcp_t = make_stream_interface_automcp(divider, latency=5)        # fixed
+
+divider_mcp.mcp.latency    # the cycle count (results are valid latency + 1 cycles after launch)
+```
+
+The ports and `func_mcp_t` are identical to `make_stream_interface_mcp`'s. The handshake
+is written in terms of `func_mcp.mcp.latency`, so after a build it always waits exactly as
+many cycles as the path is constrained for. Giving `start_latency=` a known-good count
+costs nothing when it holds: the sweep starts there, keeps it, and skips the
+re-elaboration pass. See `src/tests/pypeline_tests/inst/stream_interface_automcp_test.py`
+(native sim) and `automcp_sweep_test.py` (a real Vivado sweep).
 
 ---
 
@@ -3966,7 +4039,7 @@ register and manually spaces requests at least `.latency` cycles apart.
 `make_stream_autofsm`, from `include/pypeline/stream/stream_autofsm.py`, does that bookkeeping
 once and presents a real valid/ready [stream interface](#the-stream-interface-validready-handshaking)
 instead — the AUTOFSM sibling of `make_stream_pipeline` (AUTOPIPELINE) and
-`make_valid_ready_mcp` (`MULTI_CYCLE[...]`) above:
+`make_stream_interface_mcp` (`MULTI_CYCLE[...]`) above:
 
 ```python
 from pypeline import hw_func, MAIN
@@ -3990,7 +4063,7 @@ internally, and returns `(func_autofsm, func_autofsm_t)`. Disabling the raw
 result bank avoids duplicating the wrapper's own backpressure holding register.
 Its ports are the two
 halves of a stream `@interface`, exactly like `make_stream_pipeline`'s and
-`make_valid_ready_mcp`'s:
+`make_stream_interface_mcp`'s:
 
 | | Type | Meaning |
 |---|---|---|
@@ -4517,8 +4590,9 @@ built yet."
 | Synthesis | **Async clock-crossing FIFOs** | Not supported | `GLOBAL_STREAM_FIFO` across clock boundaries cannot yet be expressed |
 | Synthesis | **Dual-port stream RAM** | Not built-in | `DECL_STREAM_RAM_DP_W_R_1` — use `vhdl()` passthrough |
 | Synthesis | **`MULTI_CYCLE[...]`** | Synthesis only | No effect without `PART()` / Vivado; ignored in simulation |
+| Synthesis | **`AUTOMCP(...)`** | Synthesis + `.latency` in simulation | Cycle count chosen by the Vivado sweep; sim sees `.latency` (the handshake), never settling time |
 | Synthesis | **`AUTOPIPELINE(...).latency` before synthesis** | Reads `0` unless constrained | A fixed `latency=N` reads `N` everywhere. Otherwise the real value only exists after a synthesizing build's pin-and-confirm pass: that build's bootstrap pass reads `start_latency` (or 0), and plain native sim and `--comb`/`--no_synth`/`--yosys_json` builds read 0. A non-`--comb` `pypelinec --sim` run's native sim reads the built value |
-| Simulation | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo` now does, covering `make_stream_fifo`/`make_stream_pipeline` too); this still includes `make_valid_ready_mcp` |
+| Simulation | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo` now does, covering `make_stream_fifo`/`make_stream_pipeline` too); this still includes `make_stream_interface_mcp` |
 | Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine |
 | Language | **`@enum` member names that are VHDL reserved words** | Fails in VHDL only | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. Native simulation cannot see this — only a `synth`/GHDL run can, which is why every enum-bearing design wants one |
 | Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it |

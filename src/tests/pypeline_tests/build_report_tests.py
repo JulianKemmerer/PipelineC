@@ -84,6 +84,19 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # AUTOMCP under a real Vivado sweep (Xilinx part): from the default start
+    # the sweep raises the multi-cycle count until timing is met, pass 2
+    # re-elaborates the handshake and the pipelined native sim asserts it
+    # waits latency + 1 cycles; restarting at that count settles immediately
+    # with pass 2 skipped; a max_latency=1 cap fails the build naming it.
+    tests.append(
+        Test(
+            name="automcp_sweep_test",
+            category="build_report",
+            cmd=[INST_DIR / "automcp_sweep_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # ── AUTOFSM: pure function -> resource-shared FSM ──
     # Full build of autofsm_test.py plus assertions on the schedule: several
     # same-kind operations folded onto fewer shared units, latency matching the

@@ -775,6 +775,14 @@ def _callable_canonical_name(val, module_globals, _seen=None, _depth=0):
     return _callable_hash_fallback(val)
 
 
+def _multi_cycle_tag_str(tag) -> str:
+    """How a MULTI_CYCLE[...] / AUTOMCP(...) tag is named in error messages
+    (without counting as a design read of an AUTOMCP's .latency)."""
+    if getattr(tag, "_is_automcp_tag", False) is True:
+        return f"AUTOMCP({tag.describe()})"
+    return f"MULTI_CYCLE[{tag.ncycles}]"
+
+
 def CANONICAL_CALLABLE_KEY(func) -> str:
     """Deterministic, per-source identity string for a live callable, stable
     across repeated PARSE_FILE invocations of the same design (derived from
@@ -2390,7 +2398,7 @@ class FuncElaborator:
             if start_name is None or end_name is None:
                 missing = "start" if start_name is None else "end"
                 raise ElaborationError(
-                    f"MULTI_CYCLE[{tag.ncycles}] tag is missing its .{missing} — "
+                    f"{_multi_cycle_tag_str(tag)} tag is missing its .{missing} — "
                     f"must be applied to exactly two Reg[T] declarations",
                     self.func_def,
                 )
@@ -5429,7 +5437,7 @@ class FuncElaborator:
         closures) or the function's own module-qualified identity (plain
         top-level functions, via _top_level_func_key) -- never under
         module_level_name, which is just the call-site alias text (e.g. "func"
-        for every make_valid_ready_mcp / make_stream_pipeline / _autopipeline_with_io_regs
+        for every make_stream_interface_mcp / make_stream_pipeline / _autopipeline_with_io_regs
         wrapper) and must not be used as a table key: two different top-level
         functions reached through two differently-wrapped factories would
         otherwise collide on that shared alias.
@@ -6155,12 +6163,22 @@ class FuncElaborator:
         if pending[idx] is not None:
             side = "start" if role.is_start else "end"
             raise ElaborationError(
-                f"MULTI_CYCLE[{role.tag.ncycles}] tag's .{side} is already used by "
+                f"{_multi_cycle_tag_str(role.tag)} tag's .{side} is already used by "
                 f"'{pending[idx]}'; cannot also tag '{var_name}'"
             )
         pending[idx] = var_name
         if pending[0] is not None and pending[1] is not None:
-            self.logic.mcp_tuples.add((str(role.tag.ncycles), pending[0], pending[1]))
+            if getattr(role.tag, "_is_automcp_tag", False) is True:
+                # AUTOMCP: the compiler's read of the count is not a design
+                # read (see pypeline.AUTOMCP_UNREAD_KEYS); the sweep may raise
+                # it later, keyed by the tag's constraint record.
+                ncycles = role.tag._ncycles_for_compiler()
+                self.logic.automcp_tuples[(pending[0], pending[1])] = (
+                    C_TO_LOGIC.AutomcpConstraint.from_tag(role.tag)
+                )
+            else:
+                ncycles = role.tag.ncycles
+            self.logic.mcp_tuples.add((str(ncycles), pending[0], pending[1]))
 
     def _declare_feedback_var(self, var_name, c_type, node):
         """Declare a combinatorial feedback wire (Feedback[T] annotation).
@@ -7312,7 +7330,7 @@ def PARSE_FILE(py_file):
 
     # Absolute source file -> module_prefix, so _elaborate_live_func can compute
     # the same FuncLogicLookupTable key for a top-level function reached via a
-    # closure alias (e.g. the `func` parameter inside make_valid_ready_mcp /
+    # closure alias (e.g. the `func` parameter inside make_stream_interface_mcp /
     # make_stream_pipeline / _autopipeline_with_io_regs) as Step 6/7 below use for that
     # same function reached directly. Pypeline-only, set dynamically here the
     # same way parser_state.module_alias_to_actual is (never declared in

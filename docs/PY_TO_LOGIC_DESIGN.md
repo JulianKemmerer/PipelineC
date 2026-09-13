@@ -1159,12 +1159,12 @@ name) — not the Python alias — to `_add_submodule_instance`, so all referenc
 **Plain top-level functions passed *into* a factory.** Step 4 above only synthesizes a
 canonical name when the callable itself is a factory-produced closure (`.<locals>.` in its
 `__qualname__`). Several factories instead take an *ordinary top-level function* as an
-argument and call it internally through their own closure variable — `make_valid_ready_mcp`,
+argument and call it internally through their own closure variable — `make_stream_interface_mcp`,
 `make_stream_pipeline`, and `_autopipeline_with_io_regs` all name that variable `func`:
 
 ```python
-divider_mcp, divider_mcp_t = make_valid_ready_mcp(divider, 16)   # divider: a plain top-level func
-# make_valid_ready_mcp's internal func_mcp wrapper calls it as `func(launch)`
+divider_mcp, divider_mcp_t = make_stream_interface_mcp(divider, 16)   # divider: a plain top-level func
+# make_stream_interface_mcp's internal func_mcp wrapper calls it as `func(launch)`
 ```
 
 For `divider` itself, `_canonical_func_name` returns `None` (it has no `.<locals>.` — it's
@@ -4879,8 +4879,40 @@ def _tag_multi_cycle_reg(self, var_name, role):
         raise ElaborationError(...)   # same .start/.end tagged twice
     pending[idx] = var_name
     if pending[0] is not None and pending[1] is not None:
-        self.logic.mcp_tuples.add((str(role.tag.ncycles), pending[0], pending[1]))
+        if getattr(role.tag, "_is_automcp_tag", False) is True:
+            ncycles = role.tag._ncycles_for_compiler()   # not a design read
+            self.logic.automcp_tuples[(pending[0], pending[1])] = (
+                C_TO_LOGIC.AutomcpConstraint.from_tag(role.tag)
+            )
+        else:
+            ncycles = role.tag.ncycles
+        self.logic.mcp_tuples.add((str(ncycles), pending[0], pending[1]))
 ```
+
+**AUTOMCP tags.** A `pypeline.AUTOMCP(...)` tag has the same `.start` / `.end`
+`_MultiCycleRole`s, so it goes through exactly this path.
+- It still emits a normal `mcp_tuples` entry, holding the elaborated count; C designs and
+  `SYN.py` consumers see nothing new.
+- It additionally records `Logic.automcp_tuples[(start_reg, end_reg)]`, holding the tag's
+  canonical key and its `latency=` / `start_latency=` / `max_latency=` constraint. The
+  sweep uses that record to raise the count and match timing reports; see
+  [`SYN_DESIGN.md`](SYN_DESIGN.md#automcp-multi-cycle-counts).
+- The count is read through `_ncycles_for_compiler()`, which is **not** tracked as a design
+  read. That is what lets `SYN.CHECK_AUTOMCP_TAGS_READ` refuse an AUTOMCP whose `.latency`
+  no design code consumed.
+- Error messages name the tag as `AUTOMCP(<constraint>)` (`_multi_cycle_tag_str`).
+
+Handshake expressions like `cycles_since_launch == MC.latency + 1` are ordinary
+`_try_eval_const` constant folding of a closure object's attribute. That evaluation is
+the tracked design read.
+
+On a pin-and-confirm pass 2, `PARSE_FILE` re-executes the design with
+`pypeline.SET_AUTOMCP_LATENCY_CACHE` installed, and the tag resolves to the built count.
+The resolved count is part of the tag's `pypeline_names` identity, so the function holding
+the registers gets a new canonical name. Its content (the handshake constant) changed, so
+a skip-if-exists entity file from pass 1 is never reused.
+`automcp_unit_test.py::test_elaboration_and_cache_reparse` checks both the count and the
+rename.
 
 `elaborate()` validates, after the statement-elaboration loop and before
 `_connect_final_state_wires()`, that every tag created during the function ended up fully
@@ -4901,6 +4933,10 @@ data1`. Like `autopipeline_test.py`, it includes a `PART(...)` call (Arty A7-35T
 multi-cycle path constraints are Vivado-only and require real synthesis to exercise; it's
 a synthesis-only test run by hand (see `run_all.sh`), not part of the proto-simulation
 suite.
+
+AUTOMCP elaboration is covered by `automcp_unit_test.py` (unit), and the library wrapper
+`make_stream_interface_automcp` by `stream_interface_automcp_test.py`, which runs in
+native sim and in synth `--comb`.
 
 ---
 
@@ -5265,7 +5301,7 @@ Every call site in a hardware function body becomes a submodule instance:
 factory-returned closure) passed through `_sanitize_vhdl_name` inside
 `_inst_name` before the `[<loc_str>]` suffix is appended — see
 [VHDL Identifier Safety](#vhdl-identifier-safety--name-sanitization). This
-covers a Python-private-style alias such as `_compute_mcp = make_valid_ready_mcp(...)`:
+covers a Python-private-style alias such as `_compute_mcp = make_stream_interface_mcp(...)`:
 the instance name becomes `v_compute_mcp[<loc_str>]`, not the illegal
 `_compute_mcp[<loc_str>]`.
 

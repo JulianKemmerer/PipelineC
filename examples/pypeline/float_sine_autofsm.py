@@ -68,7 +68,7 @@ class sincos_t(NamedTuple):
 class poly_in_t(NamedTuple):
     """All of sinf_poly's inputs in one struct: AUTOFSM wraps single-argument
     functions, so multiple inputs get bundled (the same rule
-    make_stream_pipeline and make_valid_ready_mcp follow)."""
+    make_stream_pipeline and make_stream_interface_mcp follow)."""
 
     x: float64_t
     s_sign: float64_t

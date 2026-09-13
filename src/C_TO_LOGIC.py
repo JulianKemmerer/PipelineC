@@ -402,6 +402,63 @@ def DICT_SET_VALUE_MERGE(d1, d2):
     return rv
 
 
+class AutomcpConstraint:
+    """Cycle-count constraint of one AUTOMCP multi-cycle path, recorded in
+    Logic.automcp_tuples[(start_reg, end_reg)] by the Pypeline elaborator.
+      key            pypeline.AUTOMCP.canonical_key (cross-pass cache key)
+      latency=N      fixed: the sweep never changes the count
+      start_latency  the count the first sweep iteration uses (else 1)
+      max_latency    the sweep never raises the count above this
+    The elaborated count itself lives in the matching Logic.mcp_tuples entry.
+    """
+
+    __slots__ = ("key", "latency", "start_latency", "max_latency")
+
+    def __init__(self, key, latency=None, start_latency=None, max_latency=None):
+        self.key = key
+        self.latency = latency
+        self.start_latency = start_latency
+        self.max_latency = max_latency
+
+    @staticmethod
+    def from_tag(tag):
+        return AutomcpConstraint(
+            tag.canonical_key, tag.fixed_latency, tag.start_latency, tag.max_latency
+        )
+
+    def __getstate__(self):
+        return (self.key, self.latency, self.start_latency, self.max_latency)
+
+    def __setstate__(self, state):
+        self.key, self.latency, self.start_latency, self.max_latency = state
+
+    def __eq__(self, other):
+        return (
+            isinstance(other, AutomcpConstraint)
+            and self.__getstate__() == other.__getstate__()
+        )
+
+    def __hash__(self):
+        return hash(self.__getstate__())
+
+    def is_fixed(self):
+        return self.latency is not None
+
+    def upper_bound(self):
+        """Most cycles the path may be given (None = no cap)."""
+        return self.latency if self.latency is not None else self.max_latency
+
+    def describe(self):
+        if self.latency is not None:
+            return f"latency={self.latency}"
+        parts = []
+        if self.start_latency is not None:
+            parts.append(f"start_latency={self.start_latency}")
+        if self.max_latency is not None:
+            parts.append(f"max_latency={self.max_latency}")
+        return ", ".join(parts) if parts else "unconstrained"
+
+
 class AutopipelineLatency:
     """Latency constraint on one AUTOPIPELINE call site, recorded per local
     submodule instance in Logic.sub_inst_to_autopipeline_latency.
@@ -549,6 +606,10 @@ class Logic:
         self.next_user_inst_name = None  # User name for func
         self.debug_names = set()  # Names MARK_DEBUG
         self.mcp_tuples = set()  # Tuples of MCP params
+        # Pypeline frontend only: (start_reg, end_reg) of an mcp_tuples entry
+        # -> AutomcpConstraint when that multi-cycle path came from an AUTOMCP
+        # tag (the sweep may raise its cycle count). Empty for C designs.
+        self.automcp_tuples = {}
         self.next_func_call_autopipeline_latency = (
             None  # Pending #pragma AUTOPIPELINE constraint for next func call
         )
@@ -700,6 +761,7 @@ class Logic:
         rv.next_user_inst_name = self.next_user_inst_name
         rv.debug_names = set(self.debug_names)
         rv.mcp_tuples = set(self.mcp_tuples)
+        rv.automcp_tuples = dict(self.automcp_tuples)
         rv.next_func_call_autopipeline_latency = self.next_func_call_autopipeline_latency
         rv.sub_inst_to_autopipeline_latency = dict(self.sub_inst_to_autopipeline_latency)
         rv.sub_inst_to_autopipeline_key = dict(self.sub_inst_to_autopipeline_key)

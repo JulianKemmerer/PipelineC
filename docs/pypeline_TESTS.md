@@ -108,6 +108,31 @@ from a different angle:
   the native delay line against the `--comb` VHDL's fixed registers, and against the
   planned sweep's enforced region.
 
+## AUTOMCP coverage
+
+`AUTOMCP(latency= / start_latency= / max_latency=)` and the multi-cycle stream wrappers:
+- `automcp_unit_test.py` (unit):
+  - constructor validation and `.latency` resolution;
+  - construction-site keys and the inline-construction guard;
+  - design-read vs. compiler-read tracking;
+  - identity that follows the resolved count;
+  - `SYN` constraint overrides and the timing-params hash;
+  - `SWEEP` report matching and grow-only feedback on a synthetic Vivado report;
+  - elaboration into `Logic.automcp_tuples`, where a cache re-parse changes the count and
+    renames the holding entity;
+  - an unread tag refused by `SYN.CHECK_AUTOMCP_TAGS_READ`.
+- `stream_interface_automcp_test.py` (native_sim and synth `--comb`): the handshake waits
+  `.latency + 1` cycles for `start_latency=` and fixed `latency=`, and the Xilinx-part
+  `--comb` build emits both `set_multicycle_path` constraints.
+- `stream_interface_mcp_test.py` (native_sim and synth `--comb`): the fixed
+  `make_stream_interface_mcp`.
+- `automcp_sweep_test.py` (build_report, **real Vivado**, `automcp_sweep_design.py`):
+  - from the default start, the sweep raises the count until the path meets timing;
+    pass 2 re-elaborates, the final XDC carries the count, and the pipelined native
+    `--sim`'s `sim_assert` checks the handshake;
+  - restarting at that count settles immediately, with pass 2 skipped;
+  - `max_latency=1` fails the build naming the cap.
+
 ## Generated-name regression coverage
 
 `interface_factory_two_widths_test.py` is a normal synthesis test: the same design

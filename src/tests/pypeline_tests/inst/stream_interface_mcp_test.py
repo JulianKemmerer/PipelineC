@@ -31,7 +31,7 @@ from pypeline import (
 )
 
 from stream.stream import make_stream_interface
-from multi_cycle_path import make_valid_ready_mcp
+from multi_cycle_path import make_stream_interface_mcp
 
 # Translated from examples/mcp/mcp_divider.c — Arty A7-35T, MULTI_CYCLE
 # constraints require Vivado synthesis for now.
@@ -59,7 +59,7 @@ def divider(i: my_struct_t) -> uint32_t:
 
 my_struct_intrf = make_stream_interface(my_struct_t)
 
-divider_mcp, divider_mcp_t = make_valid_ready_mcp(divider, 16)
+divider_mcp, divider_mcp_t = make_stream_interface_mcp(divider, 16)
 
 
 # ── examples/mcp/mcp_divider.c's main() FSM, driving divider_mcp directly ──
@@ -130,4 +130,4 @@ def test_divider_mcp_handshake():
 
 if __name__ == "__main__":
     test_divider_mcp_handshake()
-    print("All valid_ready_mcp tests passed.")
+    print("All stream_interface_mcp tests passed.")

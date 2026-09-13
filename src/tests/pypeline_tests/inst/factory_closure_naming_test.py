@@ -408,7 +408,7 @@ def test_ast_meta_src_file_and_line_point_to_true_definition():
     import tempfile
 
     import SYN
-    from multi_cycle_path import make_valid_ready_mcp  # noqa: F401
+    from multi_cycle_path import make_stream_interface_mcp  # noqa: F401
 
     SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(prefix="factory_closure_naming_test_")
     test_file = os.path.abspath(
@@ -419,11 +419,11 @@ def test_ast_meta_src_file_and_line_point_to_true_definition():
     import multi_cycle_path
 
     expected_file = os.path.abspath(inspect.getsourcefile(multi_cycle_path))
-    _, expected_line = inspect.getsourcelines(multi_cycle_path.make_valid_ready_mcp)
-    # func_mcp is defined a few lines into make_valid_ready_mcp's body; just
+    _, expected_line = inspect.getsourcelines(multi_cycle_path.make_stream_interface_mcp)
+    # func_mcp is defined a few lines into make_stream_interface_mcp's body; just
     # assert the file matches and the line falls within that function's body
     # (not, e.g., line 1 of a re-parsed/dedented snippet, and not the test
-    # file that called make_valid_ready_mcp).
+    # file that called make_stream_interface_mcp).
     found = False
     for logic in parser_state.FuncLogicLookupTable.values():
         if logic.ast_meta is not None and "func_mcp" in (logic.func_name or ""):
@@ -630,11 +630,11 @@ def test_overflow_collapse_never_lands_mid_token():
 
 
 def test_generic_call_site_alias_labels_instance_with_callee_name():
-    # multi_cycle_path.make_valid_ready_mcp's generated wrapper calls the
+    # multi_cycle_path.make_stream_interface_mcp's generated wrapper calls the
     # caller-supplied function through a closure variable literally named
     # `func` -- real production code exercising exactly the generic-alias
     # shape _elab_submodule_instance now substitutes. Reuses
-    # two_factory_wrappers_test.py (round_a/round_b via make_valid_ready_mcp)
+    # two_factory_wrappers_test.py (round_a/round_b via make_stream_interface_mcp)
     # rather than building a new design, since it already elaborates this
     # exact shape.
     import tempfile

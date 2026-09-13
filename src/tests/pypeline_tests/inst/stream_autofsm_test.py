@@ -154,7 +154,7 @@ def test_ready_deasserts_while_busy():
     """stream_in_if.ready must be low on every cycle the wrapper is busy with
     no result ready yet (single item in flight). Ready may legitimately be
     high again on the very same cycle a result first goes valid -- the slot
-    frees combinationally within that cycle (the make_valid_ready_mcp-style
+    frees combinationally within that cycle (the make_stream_interface_mcp-style
     same-cycle out->in trick), so that cycle is exempt from the check."""
     sim_reset()
     inputs = [(3, 4), (5, 6)]

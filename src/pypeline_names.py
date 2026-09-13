@@ -94,6 +94,20 @@ def stable_key(value, seen=frozenset()):
             stable_key(value.args, seen),
             stable_key(value.keywords, seen),
         )
+    if getattr(value, "_is_automcp_tag", False) is True:
+        # Unlike an AUTOPIPELINE's, an AUTOMCP's resolved cycle count IS
+        # identity: the function holding its registers bakes .latency-derived
+        # constants (the handshake counter) into its logic, so a pin-and-
+        # confirm pass that changes the count must rename that entity rather
+        # than reuse the previous pass's same-named file.
+        return (
+            "_is_automcp_tag",
+            value.canonical_key,
+            value.fixed_latency,
+            value.start_latency,
+            value.max_latency,
+            value._ncycles,
+        )
     if callable(value):
         for attr in ("_is_autopipeline_pragma", "_is_autofsm_pragma"):
             if getattr(value, attr, False):

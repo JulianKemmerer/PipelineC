@@ -1075,6 +1075,49 @@ code is needed. See
 for how `PY_TO_LOGIC.FuncElaborator._elab_ann_assign`/`_tag_multi_cycle_reg` consume the
 role and populate `Logic.mcp_tuples` — shared, unmodified, with the C frontend.
 
+### `AUTOMCP(...)` — Tool-Tuned Multi-Cycle Path Tag
+
+`AUTOMCP(*, latency=None, start_latency=None, max_latency=None)` is a `MULTI_CYCLE`-shaped
+tag whose cycle count the throughput sweep picks. It has `.start` / `.end`
+`_MultiCycleRole`s, so `Reg[T, MC.start]` needs no `_RegMeta` change. It mirrors
+AUTOPIPELINE's `.latency` feedback, with a few deliberate differences:
+
+- **Resolution.** The count resolves once, at construction, to the driver-installed cache
+  (`SET_AUTOMCP_LATENCY_CACHE`), else `latency=`, else `start_latency=`, else 1.
+  - There is no build-mode dependency: a multi-cycle count never changes how many
+    registers exist, so native sim, `--comb` and a sweep's bootstrap all read the same
+    value.
+  - A cached value that conflicts with `latency=` or exceeds `max_latency=` is a
+    `ValueError`.
+- **Canonical key.** `module.co_name_line<lineno>_<ordinal>` plus the
+  `_latency_N` / `_start_latency_S` / `_max_latency_M` suffix.
+  - The key is the construction site plus a per-site ordinal, because there is no wrapped
+    function to key on. The ordinal disambiguates one factory line building several tags.
+  - Ordinals restart with every design execution: `RESET_AUTOMCP_TRACKING`, called from
+    `CLEAR_AUTOPIPELINE_LATENCY_READ_FLAG` (i.e. `PARSE_FILE`) and before
+    `pypeline_sim.run_sim`'s design import.
+  - Keys are therefore deterministic across the pin-and-confirm re-executions.
+- **Construction inside a `@hw_func` body is a `TypeError`.** Detected by the calling
+  frame's pseudo file name (`<local_const>`, `<const_eval>`, ...) or `_sim_active`. A tag
+  re-created on every evaluation would break key identity.
+- **Read tracking.**
+  - `.latency` (alias `.ncycles`) records the value in `_automcp_served`.
+  - The compiler reads through `_ncycles_for_compiler()`, which records nothing.
+  - `AUTOMCP_UNREAD_KEYS()` lists non-fixed tags no design code read; the driver refuses
+    those (`SYN.CHECK_AUTOMCP_TAGS_READ`).
+- **Name identity.** `pypeline_names.stable_key` encodes the key, the constraint **and the
+  resolved count**. An AUTOPIPELINE's identity deliberately omits its served latency.
+  Here the function holding the tagged registers bakes `.latency`-derived constants into
+  its logic, so a count change between passes must rename that entity, not reuse a
+  skip-if-exists file.
+
+The library factories `make_stream_interface_mcp(func, latency)` (fixed `MULTI_CYCLE`) and
+`make_stream_interface_automcp(func, *, latency=, start_latency=, max_latency=)` live in
+`include/pypeline/multi_cycle_path.py`; the auto one exposes its tag as `func_mcp.mcp`.
+Sweep and pin-and-confirm handling are in
+[`SYN_DESIGN.md`](SYN_DESIGN.md#automcp-multi-cycle-counts); elaboration is in
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#multi_cyclencycles--regt-tag--multi-cycle-path-constraint).
+
 ### Fixed User Pipelines
 
 `@pipeline_latency(cycles)` is the Python equivalent of `#pragma FUNC_LATENCY`.
@@ -1854,6 +1897,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `sim_assert(cond, msg=None)` | simulation-only condition check — raises `AssertionError` in native sim, elaborates to VHDL `assert ... report ... severity failure;` (see `PY_TO_LOGIC_DESIGN.md`) |
 | `sim_finish()` | simulation-only stop signal — raises `SimFinish` in native sim (caught by `pypeline_sim.py`'s CLI run loop), elaborates to VHDL `std.env.finish;` (see `PY_TO_LOGIC_DESIGN.md`) |
 | `AUTOPIPELINE(func, latency=, start_latency=, max_latency=)` | Callable tag: calls through it may be autopipelined inside register/feedback contexts; `.latency` reads the built register count; optional fixed / starting / maximum latency (equivalent to `#pragma AUTOPIPELINE [N]`) |
+| `AUTOMCP` | `AUTOMCP(latency= / start_latency= / max_latency=)` multi-cycle tag whose count the throughput sweep raises; `.start`/`.end` like `MULTI_CYCLE`, `.latency` read-tracked (see [`AUTOMCP(...)`](#automcp--tool-tuned-multi-cycle-path-tag)) |
 | `MULTI_CYCLE` / `_MultiCycleTag` / `_MultiCycleRole` | `MULTI_CYCLE[ncycles]` tag; `.start`/`.end` attach to `Reg[T, tag]` declarations to relax setup timing between them (equivalent to `#pragma MULTI_CYCLE`) |
 | `wires` | Marks a function as pure rewiring/bit-casting with no real delay; implies `@hw_func`; stacks with `@MAIN` in either order (equivalent to `#pragma FUNC_WIRES`) |
 | `pipeline_latency(cycles)` | Declares an existing fixed user pipeline; implies `@hw_func`; callers align around its latency (equivalent to `#pragma FUNC_LATENCY`) |
@@ -1889,7 +1933,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `hw_func` | Decorator for inner hardware functions; adds sim-mode type casting and register state management |
 | `hw_arg_types(func)` | Returns a hardware function's parameter types, in declaration order, as a tuple — reads through `__wrapped__`/`__annotations__` so it works on `@hw_func`-wrapped or plain functions alike |
 | `hw_return_type(func)` | Returns a hardware function's declared return type — same unwrapping as `hw_arg_types` |
-| `is_hw_func(func)` | Returns True if `func` is already `@hw_func`/`@MAIN`-decorated (checks the `_is_hw_func` marker `_sim_type_wrap` sets on its wrapper); used by factories (`make_autopipeline`, `make_valid_ready_mcp`, `make_stream_pipeline`, `make_stream_autofsm`) to validate a caller-supplied `func` before calling it from their own hardware function body |
+| `is_hw_func(func)` | Returns True if `func` is already `@hw_func`/`@MAIN`-decorated (checks the `_is_hw_func` marker `_sim_type_wrap` sets on its wrapper); used by factories (`make_autopipeline`, `make_stream_interface_mcp`, `make_stream_pipeline`, `make_stream_autofsm`) to validate a caller-supplied `func` before calling it from their own hardware function body |
 | `sim_call(func, *args)` | Call a pypeline function in simulation mode with scoped operators active |
 | `sim_reset()` | Clear all simulated register state and global wire state; restores declared init values |
 | `sim_wire_reset()` | Clear only `_sim_wire_state`; leaves register state intact |

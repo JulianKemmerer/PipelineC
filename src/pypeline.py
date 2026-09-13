@@ -1541,6 +1541,8 @@ def CLEAR_AUTOPIPELINE_LATENCY_READ_FLAG() -> None:
     global _autopipeline_latency_was_read
     _autopipeline_latency_was_read = False
     _autopipeline_served.clear()
+    # AUTOMCP construction ordinals and reads are per design execution too
+    RESET_AUTOMCP_TRACKING()
 
 
 def AUTOPIPELINE_LATENCY_WAS_READ() -> bool:
@@ -3044,6 +3046,234 @@ class MULTI_CYCLE(metaclass=_MultiCycleMeta):
     """
 
     pass
+
+
+# ─────────────────────────────────────────────
+# AUTOMCP: tool-tuned multi-cycle paths with .latency feedback
+# ─────────────────────────────────────────────
+
+# canonical_key -> multi-cycle count chosen by the previous build pass's
+# throughput sweep. Installed only by the pipelinec driver between
+# pin-and-confirm passes, and again before a non---comb `--sim` run's
+# native-sim design import (SET_AUTOMCP_LATENCY_CACHE). Empty otherwise, so
+# .latency reads its constructor value (latency=, else start_latency=, else 1).
+_automcp_latency_cache: dict = {}
+# canonical_key -> set of values design code read through .latency/.ncycles
+# during the current design execution. The compiler's own read (the
+# set_multicycle_path value, AUTOMCP._ncycles_for_compiler) is NOT recorded:
+# an AUTOMCP nothing in the design reads can't have its handshake follow the
+# sweep, and the driver fails the build on it (AUTOMCP_UNREAD_KEYS).
+_automcp_served: dict = {}
+# canonical_key -> AUTOMCP constructed during the current design execution
+_automcp_constructed: dict = {}
+# (module, code name, line) -> constructions seen at that source site during
+# the current design execution; the ordinal disambiguates one factory line
+# building several AUTOMCPs (see AUTOMCP.canonical_key)
+_automcp_site_counts: dict = {}
+# Pseudo file names the decorator / elaborator compile compile-time
+# expressions under. An AUTOMCP constructed under one of these is being built
+# inside a @hw_func body, which re-creates it on every evaluation.
+_AUTOMCP_BODY_EVAL_FILES = frozenset(
+    (
+        "<local_const>",
+        "<const_eval>",
+        "<annotation>",
+        "<ann>",
+        "<reg_init>",
+        "<wire_ann>",
+    )
+)
+
+
+def SET_AUTOMCP_LATENCY_CACHE(cache: dict) -> None:
+    """pipelinec-driver hook: install the multi-cycle counts the previous
+    build pass settled on (canonical_key -> cycles) so the next design-file
+    execution's AUTOMCP(...) constructions resolve .latency to them."""
+    global _automcp_latency_cache
+    _automcp_latency_cache = dict(cache)
+
+
+def AUTOMCP_LATENCY_CACHE() -> dict:
+    return dict(_automcp_latency_cache)
+
+
+def RESET_AUTOMCP_TRACKING() -> None:
+    """Forget constructions/reads from a previous design execution (called
+    before every design (re-)execution: PARSE_FILE, native-sim import)."""
+    _automcp_served.clear()
+    _automcp_constructed.clear()
+    _automcp_site_counts.clear()
+
+
+def AUTOMCP_SERVED_LATENCIES() -> dict:
+    """canonical_key -> set of .latency values design code read."""
+    return {key: set(values) for key, values in _automcp_served.items()}
+
+
+def AUTOMCP_CONSTRUCTED() -> dict:
+    """canonical_key -> AUTOMCP object, for the current design execution."""
+    return dict(_automcp_constructed)
+
+
+def AUTOMCP_UNREAD_KEYS() -> list:
+    """Keys of sweep-adjustable (not fixed latency=) AUTOMCPs whose .latency
+    design code never read."""
+    return sorted(
+        key
+        for key, tag in _automcp_constructed.items()
+        if tag.fixed_latency is None and key not in _automcp_served
+    )
+
+
+def _automcp_latency_suffix(latency, start_latency, max_latency) -> str:
+    """Canonical-key suffix for an AUTOMCP constraint ("" when unconstrained).
+    Must match C_TO_LOGIC.AutomcpConstraint.key_suffix."""
+    return _autopipeline_latency_suffix(latency, start_latency, max_latency)
+
+
+def _check_automcp_latency_arg(name, value):
+    if value is None:
+        return
+    if not isinstance(value, int) or isinstance(value, bool):
+        raise TypeError(
+            f"AUTOMCP({name}=...): must be an int, got {type(value).__name__}"
+        )
+    if value < 1:
+        raise ValueError(
+            f"AUTOMCP({name}={value}): must be >= 1 (a multi-cycle path spans "
+            "at least one clock cycle)"
+        )
+
+
+class AUTOMCP:
+    """AUTOMCP(latency=None, start_latency=None, max_latency=None): a
+    multi-cycle path whose cycle count the pypelinec throughput sweep picks
+    (the auto-tuned counterpart of MULTI_CYCLE[N]). Tag exactly two Reg[T]
+    declarations with .start / .end, and drive the handshake from .latency::
+
+        MC = AUTOMCP(start_latency=3)            # sweep starts at 3 cycles
+        MC = AUTOMCP(start_latency=3, max_latency=8)
+        MC = AUTOMCP(latency=4)                  # fixed: exactly 4 cycles
+
+        @hw_func
+        def slow(i: in_t) -> out_t:
+            launch: Reg[in_t, MC.start]
+            capture: Reg[out_t, MC.end]
+            ...
+            if count == MC.latency + 1: ...      # the handshake follows it
+
+    .latency is the multi-cycle count N (the setup-check multiplier of the
+    launch->capture path). It reads the value the build settled on (installed
+    by the pipelinec driver's pin-and-confirm pass), else latency=, else
+    start_latency=, else 1 -- in every build and in native simulation (which
+    never models settling: the data path is ready instantly, only the
+    handshake timing depends on N).
+
+    In a synthesizing build (Vivado only, like MULTI_CYCLE) the sweep checks
+    each timing report: when the failing path runs from this tag's .start
+    register to its .end register, it raises N to what the reported slack
+    needs (never below start_latency, never above max_latency -- a cap that
+    blocks the goal fails the build), then re-elaborates the design with the
+    final N so every .latency-derived constant matches the constraint.
+    Because of that, design code MUST read .latency (a start/max AUTOMCP
+    nothing reads fails the build); use MULTI_CYCLE[N] for a hand-timed MCP.
+
+    Construct it once, eagerly, outside any @hw_func body (e.g. at a factory's
+    top level) and capture it by closure.
+    """
+
+    # Duck-type marker (pypeline_names.stable_key, PY_TO_LOGIC)
+    _is_automcp_tag = True
+
+    def __init__(self, *, latency=None, start_latency=None, max_latency=None):
+        _check_automcp_latency_arg("latency", latency)
+        _check_automcp_latency_arg("start_latency", start_latency)
+        _check_automcp_latency_arg("max_latency", max_latency)
+        if latency is not None and (
+            start_latency is not None or max_latency is not None
+        ):
+            raise ValueError(
+                "AUTOMCP(latency=...) is a fixed cycle count and can't be "
+                "combined with start_latency= / max_latency="
+            )
+        if (
+            start_latency is not None
+            and max_latency is not None
+            and start_latency > max_latency
+        ):
+            raise ValueError(
+                f"AUTOMCP(start_latency={start_latency}, "
+                f"max_latency={max_latency}): start_latency exceeds max_latency"
+            )
+        frame = _sys._getframe(1)
+        code = frame.f_code
+        if code.co_filename in _AUTOMCP_BODY_EVAL_FILES or _sim_active:
+            raise TypeError(
+                "AUTOMCP(...) must be constructed outside @hw_func bodies (e.g. "
+                "at a factory's top level) and captured by closure: a tag built "
+                "inside a body is re-created on every evaluation, so the build "
+                "can't track its cycle count"
+            )
+        self.fixed_latency = latency
+        self.start_latency = start_latency
+        self.max_latency = max_latency
+        self.start = _MultiCycleRole(self, is_start=True)
+        self.end = _MultiCycleRole(self, is_start=False)
+        site = (frame.f_globals.get("__name__", "?"), code.co_name, frame.f_lineno)
+        ordinal = _automcp_site_counts.get(site, 0)
+        _automcp_site_counts[site] = ordinal + 1
+        self.canonical_key = (
+            f"{site[0]}.{site[1]}_line{site[2]}_{ordinal}"
+            + _automcp_latency_suffix(latency, start_latency, max_latency)
+        )
+        if latency is not None:
+            ncycles = latency
+        elif start_latency is not None:
+            ncycles = start_latency
+        else:
+            ncycles = 1
+        cached = _automcp_latency_cache.get(self.canonical_key)
+        if cached is not None:
+            if latency is not None and cached != latency:
+                raise ValueError(
+                    f"AUTOMCP {self.canonical_key}: latency={latency} is fixed, "
+                    f"but the build settled on {cached} cycles for it"
+                )
+            if max_latency is not None and cached > max_latency:
+                raise ValueError(
+                    f"AUTOMCP {self.canonical_key}: the build settled on "
+                    f"{cached} cycles, above max_latency={max_latency}"
+                )
+            ncycles = cached
+        self._ncycles = ncycles
+        _automcp_constructed[self.canonical_key] = self
+
+    def _ncycles_for_compiler(self) -> int:
+        """The cycle count without counting as a design read."""
+        return self._ncycles
+
+    @property
+    def latency(self) -> int:
+        _automcp_served.setdefault(self.canonical_key, set()).add(self._ncycles)
+        return self._ncycles
+
+    @property
+    def ncycles(self) -> int:
+        """Alias of .latency (MULTI_CYCLE[...] tags spell it ncycles)."""
+        return self.latency
+
+    def describe(self) -> str:
+        if self.fixed_latency is not None:
+            return f"latency={self.fixed_latency}"
+        parts = []
+        if self.start_latency is not None:
+            parts.append(f"start_latency={self.start_latency}")
+        if self.max_latency is not None:
+            parts.append(f"max_latency={self.max_latency}")
+        return ", ".join(parts) if parts else "unconstrained"
+
+    def __repr__(self):
+        return f"AUTOMCP({self.canonical_key}, {self.describe()}, {self._ncycles} cycles)"
 
 
 class _RegType:

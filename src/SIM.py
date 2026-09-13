@@ -84,6 +84,7 @@ def DO_OPTIONAL_SIM(
             # (SYN.AUTOPIPELINE_DIVERGENCE_EXIT), so ignore them here.
             main_latencies = None
             ap_latencies = None
+            automcp_latencies = None
             autofsm_schedules = None
             pipeline_timing = None
             if parser_state is not None:
@@ -114,6 +115,11 @@ def DO_OPTIONAL_SIM(
                     ap_latencies, _divergences = SYN.HARVEST_AUTOPIPELINE_LATENCIES(
                         parser_state, multimain_timing_params.TimingParamsLookupTable
                     )
+                    # The multi-cycle counts actually constrained, so AUTOMCP
+                    # handshakes count the same cycles as the built VHDL
+                    automcp_latencies = SYN.HARVEST_AUTOMCP_NCYCLES(
+                        parser_state, multimain_timing_params
+                    )
                 # The AUTOFSM schedules the build actually used. Taken from
                 # pypeline's installed cache rather than re-derived: the schedule
                 # in force is by definition the one the final elaboration read,
@@ -128,6 +134,7 @@ def DO_OPTIONAL_SIM(
                 autopipeline_latencies=ap_latencies,
                 autofsm_schedules=autofsm_schedules,
                 pipeline_timing=pipeline_timing,
+                automcp_latencies=automcp_latencies,
             )
     else:
         print("WARNING: Unknown simulation tool:", SIM_TOOL.__name__)

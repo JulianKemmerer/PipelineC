@@ -1375,6 +1375,74 @@ constrained region, so the seeded table goes through `SWEEP.REENFORCE_AUTOPIPELI
 before the confirmation synthesis. The served-value skip in step 2 means fixed latencies
 and correct `start_latency` guesses cost no second elaboration.
 
+### AUTOMCP multi-cycle counts
+
+`pypeline.AUTOMCP(latency= / start_latency= / max_latency=)` tags a multi-cycle path
+exactly like `MULTI_CYCLE[N]`, but lets the sweep choose N. The elaborator records the
+elaborated N in `Logic.mcp_tuples`, as for any MCP, and additionally records
+`Logic.automcp_tuples[(start_reg, end_reg)] = C_TO_LOGIC.AutomcpConstraint(key, ...)`.
+
+**Constraint value.** `MultiMainTimingParams.automcp_ncycles` holds the sweep's current
+count per AUTOMCP key. `SYN.GET_MCP_PATH_CONSTRAINTS` writes
+`MCP_EFFECTIVE_NCYCLES`: that override, else the elaborated count. The sweep changes a
+count without re-elaborating, and only the XDC changes, so
+`MultiMainTimingParams.GET_HASH_EXT` appends the overrides that **differ** from the
+elaborated counts. Otherwise a same-named log from another count would be replayed.
+Designs without a raised AUTOMCP hash exactly as before.
+`SYN.GET_MCP_CELL_PATHS` is the one source of the register cell globs, used both by the
+XDC writer and by report matching.
+
+**Planned sweep (`SWEEP.DO_PLANNED_THROUGHPUT_SWEEP`).**
+1. **Setup.** `COLLECT_AUTOMCP_GROUPS` gathers every instance's AUTOMCP paths by key; a key
+   is one group with one count, since the design reads one `.latency` int. The counts are
+   seeded from the elaborated values.
+2. **Matching.** For each report, `AUTOMCP_GROUP_FOR_PATH_REPORT` matches the report's
+   start/end register cells against the XDC globs (`[*]` → `\[\d+\]`) and requires
+   `requirement / period` to equal the group's current count.
+3. **Feedback.** When the matched path fails, `AUTOMCP_FEEDBACK` runs **before** any
+   pipelining feedback for that main:
+   - Needed count: `AUTOMCP_NEEDED_NCYCLES` = `max(N + 1, ceil(N · path_delay_ns / period))`.
+     `VIVADO.PathReport` already reports a multi-cycle path's delay per cycle.
+   - Needed ≤ the cap (`latency=` or `max_latency=`): the count is raised and the
+     iteration's action is `automcp(key N->N')`. The plan's cut bookkeeping is untouched,
+     because a failing MCP says nothing about cut count, and its stagnation counters are
+     reset.
+   - Needed > the cap: the plan stops with `stopped_reason = "automcp_latency_limit"` and
+     `[sweep] WARNING: limited by AUTOMCP ...`, then TIMING NOT MET. Planless mains record
+     the same reason.
+4. **Growth only.** The count never drops below its start: post-met trimming counts only
+   cuts.
+5. **Termination.** A changed count always earns another synthesis run, including for
+   planless designs, which otherwise stop after one run.
+6. **Bookkeeping.** Best and met snapshots, their restores, and `sweep_history.json`
+   (`automcp_ncycles`) record the counts each run was *synthesized* with. The final
+   summary prints `[sweep] AUTOMCP <key> (<constraint>): N cycle(s) constrained on K
+   multi-cycle path(s)`.
+
+**Pin-and-confirm.** `SYN.HARVEST_AUTOMCP_NCYCLES` is the elaborated counts overlaid with
+the sweep's final overrides.
+- **Skip.** Pass 2 is skipped for AUTOMCP's sake when the harvest equals both the
+  elaborated counts and every `.latency` value design code read
+  (`AUTOMCP_BUILT_MATCHES_ELABORATED`). The build prints `AUTOMCP: every .latency read
+  matched the built multi-cycle count`, and a correct `start_latency=` costs nothing.
+- **Pass 2.** Otherwise the loop runs even for designs with no AUTOPIPELINE reads: it
+  installs `pypeline.SET_AUTOMCP_LATENCY_CACHE` next to the AUTOPIPELINE cache before
+  `PARSE_FILE`. Convergence requires both harvests to be unchanged, and every pass prints
+  `AUTOMCP <key>: N cycles`.
+- **Renaming.** Re-elaborating renames the function holding the tagged registers (the
+  resolved count is part of its identity). The fresh `MultiMainTimingParams` carries no
+  overrides, so the confirmation constrains the elaborated counts.
+- **Unread tags.** `SYN.CHECK_AUTOMCP_TAGS_READ` runs at the start of
+  `DO_SWEEP_AND_AUTOPIPELINE`: a non-fixed AUTOMCP nothing read would let the XDC and the
+  handshake disagree, so the build exits before any synthesis.
+- **Native sim.** A non-`--comb` `--sim` passes the harvest to `pypeline_sim.run_sim`
+  (`automcp_latencies=`).
+
+**Not supported.** The coarse sweep and `--no_sweep` build the elaborated counts
+unchanged, and so does `--comb`. Only Vivado emits multi-cycle constraints. Only the worst
+path per clock group is visible, so a failing AUTOMCP hidden behind a worse path is
+raised in a later iteration.
+
 ## 7. AUTOFSM schedule-and-confirm loop (Pypeline designs only)
 
 `AUTOFSM(func)` is the resource-minimizing dual of AUTOPIPELINE: instead of
@@ -1495,6 +1563,7 @@ run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
 | `autopipeline_latency_test.py` | end-to-end factory design (`make_stream_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, seeded confirmation syn passes with no fallback sweep, loop settles within the pass cap (extra realization passes allowed) |
 | `autopipeline_constraints_test.py` | §6 constrained regions end-to-end: `latency=2` / `start_latency=1` call sites built with exactly 2 / 1 registers and pin-and-confirm pass 2 skipped; a `max_latency=1` cap stops an unreachable goal promptly, naming the cap, then `TIMING NOT MET` |
 | `autopipeline_c_pragma_test.py` | C `#pragma AUTOPIPELINE 2` is a fixed latency, built with exactly 2 clocks even by a `--comb` build |
+| `automcp_sweep_test.py` (**Vivado**, build_report) | §6 AUTOMCP end-to-end, in three builds: (1) from the default start of 1, the sweep raises the multi-cycle count (`action=automcp(...)`) until the path meets timing; pass 2 re-elaborates, the final XDC carries the count, and the pipelined native `--sim` asserts the handshake waits count + 1 cycles; (2) restarting at that count settles with no change and pass 2 skipped; (3) a `max_latency=1` cap fails the build naming it |
 | `autofsm_latency_test.py` | §7 end-to-end: schedule pass runs, several same-kind operations fold onto fewer shared units, latency == states + 1, and exactly ONE instance of each shared unit appears in the generated VHDL |
 | `autofsm_resources_compare_test.py` | §7 area: same design built `--comb` (no sharing) and scheduled, compared by yosys cell count — guards the reason the feature exists |
 | `autofsm_timing_iter_test.py` | §7 iteration: a deliberately over-packed first schedule misses the clock, the FSM is blamed, its budget is tightened, and a later build passes — with no source change |
@@ -1630,6 +1699,19 @@ section, below.
    weights instead of mixing incompatible costs. This preserves correctness
    and reproducibility, but newly measured or non-sky130 designs can retain
    depth-proportional over-prediction until their sidecars are complete.
+4. **AUTOMCP is Vivado-only and grow-only.** Multi-cycle constraints are emitted only for
+   Vivado (`GET_MCP_PATH_CONSTRAINTS`).
+   - The count never goes below where it started: a post-met probe downward would cost a
+     full synthesis per step on large designs.
+   - Only the worst path per clock group is reported, so an AUTOMCP path hidden behind a
+     worse path is raised in a later iteration.
+   - The coarse sweep and `--no_sweep` keep the elaborated counts.
+   - The tagged `.start` / `.end` registers must survive synthesis. A capture register
+     whose value nothing uses is optimized away, along with the launch register feeding
+     it, and Vivado then rejects the `set_multicycle_path` because it names no cells. That
+     is true of `MULTI_CYCLE[...]` as well.
+   - Report matching accepts struct registers, whose cells are named per field
+     (`launch_reg[field][bit]`, matched by `[*]` → `\[[^/]*\]`).
 4. **Parallel-frontier grouping is deliberately conservative.** Output and
    bit frontiers require strict interval overlap (an antichain), and grouped
    bit requests must materialize their equal-width boundaries — predicted

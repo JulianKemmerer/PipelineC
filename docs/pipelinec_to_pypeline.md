@@ -588,9 +588,11 @@ GLOBAL_VALID_READY_MCP_INST(name, out_t, func, in_t, ncycles)
 ```
 ```python
 # pypeline
-from pypeline import make_valid_ready_mcp
+from multi_cycle_path import make_stream_interface_mcp, make_stream_interface_automcp
 
-name_mcp_func, name_mcp_t = make_valid_ready_mcp(func, ncycles)
+name_mcp_func, name_mcp_t = make_stream_interface_mcp(func, ncycles)
+# ...or let the Vivado sweep pick the cycle count (start at a known-good one):
+# name_mcp_func, name_mcp_t = make_stream_interface_automcp(func, start_latency=ncycles)
 
 # Wire and @MAIN pattern identical to 8c above,
 # substituting name_mcp_func for name_pipeline_func.
@@ -737,7 +739,7 @@ Most PipelineC `#pragma` annotations have a direct pypeline equivalent.
 | `#pragma FUNC_LATENCY func N` | `@pipeline_latency(N)` on the function definition | [Fixed user pipelines](pypeline_guide.md#fixed-user-pipelines) |
 | `#pragma AUTOPIPELINE [N]` on a call | `MY_AP = AUTOPIPELINE(func)` (`latency=N` for a fixed N) once, then `result = MY_AP(args)` | [§15](pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm) |
 | `#pragma INST_ARRAY` | factory function + Python list/loop | [§12](pypeline_guide.md#parametric-hardware-with-factory-functions) |
-| `#pragma MULTI_CYCLE N` | `MC = MULTI_CYCLE[N]` | [§16](pypeline_guide.md#multi-cycle-paths-multi_cycle) |
+| `#pragma MULTI_CYCLE N` | `MC = MULTI_CYCLE[N]` (or `MC = AUTOMCP(start_latency=N)` to let the sweep raise N; read `MC.latency`) | [§16](pypeline_guide.md#multi-cycle-paths-multi_cycle) |
 
 ### FUNC_LATENCY
 

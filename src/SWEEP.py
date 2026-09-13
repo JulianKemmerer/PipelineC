@@ -3700,6 +3700,9 @@ class MainSweepPlan:
         # ENFORCE_AUTOPIPELINE_REGIONS); empty for unconstrained designs
         self.regions = []
         self.autopipeline_limit_blame = None
+        # Set when an AUTOMCP multi-cycle path that can't take more cycles
+        # (latency= / max_latency=) is the critical path
+        self.automcp_limit_blame = None
 
     def predicted_floor(self):
         # (floor_mhz, blame Segment) worst over subtrees, None if all sliceable
@@ -5181,6 +5184,145 @@ def RESTORE_AUTOPIPELINE_REGIONS(plans, snapshot):
             region.count = count
 
 
+class AutomcpGroup:
+    """All multi-cycle paths elaborated from one pypeline.AUTOMCP tag. They
+    share a single cycle count (the design's Python reads one .latency int),
+    kept in MultiMainTimingParams.automcp_ncycles[key] during the sweep."""
+
+    def __init__(self, key, constraint):
+        self.key = key
+        self.constraint = constraint  # C_TO_LOGIC.AutomcpConstraint
+        self.paths = []  # (inst, start_reg, end_reg)
+
+    def label(self):
+        return self.key
+
+
+def COLLECT_AUTOMCP_GROUPS(parser_state):
+    """AUTOMCP canonical key -> AutomcpGroup, over every instance whose
+    Logic carries AUTOMCP multi-cycle paths."""
+    groups = {}
+    for inst in sorted(parser_state.LogicInstLookupTable):
+        logic = parser_state.LogicInstLookupTable[inst]
+        automcp_tuples = getattr(logic, "automcp_tuples", None)
+        if not automcp_tuples:
+            continue
+        for (start_reg, end_reg), constraint in sorted(
+            automcp_tuples.items(), key=lambda item: item[0]
+        ):
+            group = groups.setdefault(
+                constraint.key, AutomcpGroup(constraint.key, constraint)
+            )
+            group.paths.append((inst, start_reg, end_reg))
+    return groups
+
+
+def _MCP_CELL_GLOB_REGEX(cell_glob):
+    """Regex for a report's register cell name (e.g. top/sub/launch_reg[12], or
+    top/sub/launch_reg[field][12] for a struct register) matching a Vivado XDC
+    cell glob (top/sub/launch_reg[*]; Vivado's * spans anything but a
+    hierarchy separator)."""
+    import re
+
+    pattern = re.escape(cell_glob).replace(re.escape("[*]"), r"\[[^/]*\]")
+    return re.compile(r"(^|/)" + pattern + r"$")
+
+
+def AUTOMCP_GROUP_FOR_PATH_REPORT(
+    path_report, groups, parser_state, multimain_timing_params
+):
+    """The AutomcpGroup whose multi-cycle path this timing report's critical
+    path is -- start register = a tagged .start reg, end register = the same
+    path's .end reg, and a requirement of (current count) clock periods -- or
+    None. Cell names come from SYN.GET_MCP_CELL_PATHS, the same globs the
+    set_multicycle_path constraints are written with."""
+    import VHDL
+
+    if (
+        not groups
+        or path_report.start_reg_name is None
+        or path_report.end_reg_name is None
+    ):
+        return None
+    tpl = multimain_timing_params.TimingParamsLookupTable
+    period_ns = path_report.source_ns_per_clock
+    requirement_ns = getattr(path_report, "requirement_ns", None)
+    for key in sorted(groups):
+        group = groups[key]
+        ncycles = multimain_timing_params.automcp_ncycles.get(key)
+        if (
+            ncycles is not None
+            and requirement_ns is not None
+            and period_ns
+            and round(requirement_ns / period_ns) != ncycles
+        ):
+            continue
+        for inst in sorted({path[0] for path in group.paths}):
+            main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
+                inst, parser_state
+            )
+            main_logic = parser_state.LogicInstLookupTable[main_func]
+            top_path = VHDL.GET_ENTITY_NAME(main_func, main_logic, tpl, parser_state)
+            for _tup, start_glob, end_glob, constraint in SYN.GET_MCP_CELL_PATHS(
+                inst, main_func, top_path, parser_state
+            ):
+                if constraint is None or constraint.key != key:
+                    continue
+                if _MCP_CELL_GLOB_REGEX(start_glob).search(
+                    path_report.start_reg_name
+                ) and _MCP_CELL_GLOB_REGEX(end_glob).search(path_report.end_reg_name):
+                    return group
+    return None
+
+
+def AUTOMCP_NEEDED_NCYCLES(path_delay_ns, ncycles, target_period_ns):
+    """Cycle count a failing multi-cycle path needs. path_delay_ns is the
+    per-cycle figure VIVADO.PathReport reports for a multi-cycle path
+    ((requirement - slack) / ncycles), so the real launch->capture delay is
+    ncycles * path_delay_ns. Always at least one more than the current count
+    (the path failed at it)."""
+    import math
+
+    total_ns = path_delay_ns * ncycles
+    needed = int(math.ceil(total_ns / target_period_ns - 1e-9))
+    return max(ncycles + 1, needed)
+
+
+def AUTOMCP_FEEDBACK(group, path_report, target_mhz, multimain_timing_params):
+    """Failing-timing feedback for a critical path that IS an AUTOMCP
+    multi-cycle path: raise the group's count to what the slack says it needs,
+    unless that exceeds its latency= / max_latency= cap. Grow-only -- the count
+    never drops below where it started. Returns (action, changed, limit blame
+    or None)."""
+    ncycles = multimain_timing_params.automcp_ncycles[group.key]
+    needed = AUTOMCP_NEEDED_NCYCLES(
+        path_report.path_delay_ns, ncycles, 1000.0 / target_mhz
+    )
+    cap = group.constraint.upper_bound()
+    label = group.label()
+    total_ns = path_report.path_delay_ns * ncycles
+    if cap is not None and needed > cap:
+        blame = (
+            f"AUTOMCP {label} ({group.constraint.describe()}, {ncycles} cycles "
+            f"built, ~{needed} needed)"
+        )
+        print(
+            f"[sweep] WARNING: limited by {blame}: its multi-cycle path "
+            f"(~{total_ns:.2f} ns) is the critical path and cannot take more "
+            "cycles. Raise or remove latency= / max_latency=, or lower the clock "
+            "goal. Keeping best result.",
+            flush=True,
+        )
+        return f"stop(automcp latency limit {label})", False, blame
+    multimain_timing_params.automcp_ncycles[group.key] = needed
+    print(
+        f"[sweep] AUTOMCP {label}: critical path is its multi-cycle path "
+        f"(~{total_ns:.2f} ns at {ncycles} cycles); raising to {needed} cycles",
+        flush=True,
+    )
+    return f"automcp({label} {ncycles}->{needed})", True, None
+
+
 def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     """Replaces the old middle-out sweep. One full-design synthesis per
     iteration; landscape planning decides where registers go, timing report
@@ -5247,6 +5389,20 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         else:
             owner.regions.append(region)
 
+    # AUTOMCP multi-cycle paths start at their elaborated counts; a failing
+    # report whose critical path is one of them raises that count instead of
+    # adding pipelining (AUTOMCP_FEEDBACK)
+    automcp_groups = COLLECT_AUTOMCP_GROUPS(parser_state)
+    multimain_timing_params.automcp_ncycles = {
+        key: n
+        for key, n in SYN.ELABORATED_AUTOMCP_NCYCLES(parser_state).items()
+        if key in automcp_groups
+    }
+    best_automcp = None
+    met_snapshot_automcp = None
+    # main inst -> AUTOMCP limit blame, for planless mains stopped by a cap
+    planless_automcp_blame = {}
+
     best_tpl = None
     best_score = None
     measured_fallback_done = False
@@ -5279,6 +5435,12 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
 
     while True:
         iteration += 1
+        # Did an AUTOMCP count change this iteration (needs another syn run)
+        automcp_changed = False
+        # Planless-main verdicts are per synthesis run: a later run (after an
+        # AUTOMCP change) supersedes earlier ones
+        planless_results = {}
+        planless_automcp_blame = {}
         # Fresh zero-clock table, then locks, then planned cuts
         tpl = SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
         for plan in plans.values():
@@ -5619,6 +5781,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             SYN.ESTIMATE_DESIGN_AREA(parser_state, multimain_timing_params)["total_area"],
         )
 
+        # The AUTOMCP counts this run was synthesized with (feedback below
+        # may raise them for the next run; snapshots must record these)
+        synthesized_automcp = dict(multimain_timing_params.automcp_ncycles)
+
         # Evaluate each reported clock group
         made_change = False
         overall_score = None
@@ -5637,6 +5803,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     "is likely only limited by built in FIFO implementations...",
                 )
                 continue
+            automcp_group = AUTOMCP_GROUP_FOR_PATH_REPORT(
+                path_report, automcp_groups, parser_state, multimain_timing_params
+            )
+            automcp_feedback = None  # computed once per report, if failing
             for main_inst in main_insts:
                 main_logic = parser_state.LogicInstLookupTable[main_inst]
                 target_mhz = SYN.GET_TARGET_MHZ(main_inst, parser_state)
@@ -5650,6 +5820,64 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     overall_score = score
                 if main_inst in plans:
                     evaluated_plans.add(main_inst)
+                if automcp_group is not None and not met:
+                    # The critical path is an AUTOMCP multi-cycle path: more
+                    # cycles (not more pipelining) is the remedy, and this is
+                    # no evidence about the plan's cut count either way
+                    if automcp_feedback is None:
+                        automcp_feedback = AUTOMCP_FEEDBACK(
+                            automcp_group,
+                            path_report,
+                            target_mhz,
+                            multimain_timing_params,
+                        )
+                        if automcp_feedback[1]:
+                            made_change = True
+                            automcp_changed = True
+                    action, changed, blame = automcp_feedback
+                    if main_inst not in plans:
+                        planless_results[main_inst] = (curr_mhz, met, target_mhz)
+                        if blame is not None:
+                            planless_automcp_blame[main_inst] = blame
+                        print(
+                            f"[sweep] iter={iteration} main={main_logic.func_name} "
+                            f"goal={target_mhz:.2f}MHz got={curr_mhz:.2f}MHz "
+                            f"({path_report.path_delay_ns:.2f}ns) action={action}",
+                            flush=True,
+                        )
+                        continue
+                    plan = plans[main_inst]
+                    plan.last_achieved_mhz = curr_mhz
+                    plan.trim_pending = False
+                    plan.met_timing = False
+                    if changed:
+                        plan.stopped_reason = None
+                        plan.same_mhz_count = 0
+                        plan.last_mhz = None
+                    else:
+                        plan.stopped_reason = "automcp_latency_limit"
+                        plan.automcp_limit_blame = blame
+                        plan.last_mhz = curr_mhz
+                    print(
+                        f"[sweep] iter={iteration} main={main_logic.func_name} "
+                        f"goal={target_mhz:.2f}MHz got={curr_mhz:.2f}MHz "
+                        f"({path_report.path_delay_ns:.2f}ns) "
+                        f"cuts={PLAN_TOTAL_CUTS(plan)} action={action}",
+                        flush=True,
+                    )
+                    plan.history.append(
+                        {
+                            "iter": iteration,
+                            "main": main_logic.func_name,
+                            "goal_mhz": target_mhz,
+                            "achieved_mhz": round(curr_mhz, 3),
+                            "cuts": PLAN_TOTAL_CUTS(plan),
+                            "bottleneck": automcp_group.label(),
+                            "action": action,
+                            "automcp_ncycles": synthesized_automcp,
+                        }
+                    )
+                    continue
                 if main_inst not in plans:
                     # Nothing cuttable for this main
                     planless_results[main_inst] = (curr_mhz, met, target_mhz)
@@ -6071,6 +6299,11 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             if plan.regions
                             else {}
                         ),
+                        **(
+                            {"automcp_ncycles": synthesized_automcp}
+                            if synthesized_automcp
+                            else {}
+                        ),
                     }
                 )
 
@@ -6080,6 +6313,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         ):
             best_score = overall_score
             best_tpl = copy.deepcopy(tpl)
+            best_automcp = dict(synthesized_automcp)
             best_plan_regions = SNAPSHOT_AUTOPIPELINE_REGIONS(plans)
             best_plan_cuts = {mi: copy.deepcopy(p.cuts) for mi, p in plans.items()}
             best_plan_placements = {
@@ -6116,10 +6350,11 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             all(p.met_timing or p.stopped_reason is not None for p in plans.values())
             and len(plans) > 0
         )
-        if len(plans) == 0:
+        if len(plans) == 0 and not automcp_changed:
             # Nothing was cuttable: one syn run characterized the design
+            # (plus one per AUTOMCP count change)
             break
-        if all_done:
+        if all_done and not automcp_changed:
             all_met = all(p.met_timing for p in plans.values())
             if all_met:
                 # Timing met - but with how many registers? Meeting timing by
@@ -6136,6 +6371,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 if met_snapshot_cuts is None or total_cuts_now < met_snapshot_cuts:
                     met_snapshot_cuts = total_cuts_now
                     met_snapshot_tpl = copy.deepcopy(tpl)
+                    met_snapshot_automcp = dict(synthesized_automcp)
                     met_snapshot_plan_regions = SNAPSHOT_AUTOPIPELINE_REGIONS(plans)
                     met_snapshot_plan_cuts = {
                         mi: copy.deepcopy(p.cuts) for mi, p in plans.items()
@@ -6192,13 +6428,18 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             break
         # A trim attempt overshot (previously-met plan now failing): restore
         # the fewest-stage met result and finish
-        if met_snapshot_tpl is not None and trim_iters_used > 0:
+        if (
+            met_snapshot_tpl is not None
+            and trim_iters_used > 0
+            and not automcp_changed
+        ):
             print(
                 f"[sweep] Trim attempt failed timing; restoring met result with {met_snapshot_cuts} cuts...",
                 flush=True,
             )
             tpl = met_snapshot_tpl
             multimain_timing_params.TimingParamsLookupTable = tpl
+            multimain_timing_params.automcp_ncycles = dict(met_snapshot_automcp)
             RESTORE_AUTOPIPELINE_REGIONS(plans, met_snapshot_plan_regions)
             for mi, p in plans.items():
                 if mi in met_snapshot_plan_cuts:
@@ -6280,6 +6521,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     # Use the best seen params if the last iteration wasn't the best
     if best_tpl is not None and not all(p.met_timing for p in plans.values()):
         multimain_timing_params.TimingParamsLookupTable = best_tpl
+        multimain_timing_params.automcp_ncycles = dict(best_automcp)
         RESTORE_AUTOPIPELINE_REGIONS(plans, best_plan_regions)
         if best_plan_cuts is not None:
             for mi, p in plans.items():
@@ -6328,6 +6570,13 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 f"built at {region.inst}",
                 flush=True,
             )
+    for key, group in sorted(automcp_groups.items()):
+        print(
+            f"[sweep] AUTOMCP {group.label()} ({group.constraint.describe()}): "
+            f"{multimain_timing_params.automcp_ncycles.get(key)} cycle(s) "
+            f"constrained on {len(group.paths)} multi-cycle path(s)",
+            flush=True,
+        )
     SYN.CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(
         parser_state, multimain_timing_params.TimingParamsLookupTable
     )
@@ -6371,6 +6620,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         why = plan.stopped_reason or "unknown"
         if plan.autopipeline_limit_blame is not None:
             why += f": {plan.autopipeline_limit_blame}"
+        if plan.automcp_limit_blame is not None and plan.stopped_reason == (
+            "automcp_latency_limit"
+        ):
+            why += f": {plan.automcp_limit_blame}"
         if plan.unpipelinable_blame is not None:
             blamed_func, blame_reason = plan.unpipelinable_blame
             why += f": {blamed_func}, {blame_reason}"
@@ -6384,7 +6637,11 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     parser_state.LogicInstLookupTable[main_inst].func_name,
                     pl_target,
                     pl_curr,
-                    "nothing_autopipelinable",
+                    (
+                        f"automcp_latency_limit: {planless_automcp_blame[main_inst]}"
+                        if main_inst in planless_automcp_blame
+                        else "nothing_autopipelinable"
+                    ),
                 )
             )
     multimain_timing_params.sweep_timing_failures = timing_failures
