@@ -9,7 +9,9 @@
 #  - without burning full-design synthesis runs on a hopeless sweep
 #  - and FAILS with a non zero exit + TIMING NOT MET error block
 #    (results still written for debugging first)
+#  - with sweep_history.json's final record agreeing: not met, same MHz
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -66,6 +68,28 @@ def main():
         print(
             f"FAIL: {full_syn_runs} full design synthesis runs (max {MAX_FULL_SYN_RUNS}) - nothing to sweep, should characterize once and stop"
         )
+        sys.exit(1)
+    # sweep_history.json's final verdict must agree with the exit gate
+    error_mhz = re.search(
+        r"ERROR: TIMING NOT MET: sweep_unpipelinable_main achieved ([\d.]+) MHz",
+        out,
+    )
+    history_paths = re.findall(r"^\[sweep\] History: (.+)$", out, re.M)
+    if not error_mhz or not history_paths:
+        print("FAIL: no TIMING NOT MET MHz or no sweep_history.json written")
+        sys.exit(1)
+    with open(history_paths[-1]) as f:
+        history = json.load(f)
+    final = history["mains"].get("sweep_unpipelinable_main", {}).get("final") or {}
+    if not (
+        history.get("build_complete") is True
+        and final.get("met") is False
+        and final.get("achieved_mhz") is not None
+        and abs(final["achieved_mhz"] - float(error_mhz.group(1))) < 0.01
+        and final.get("mhz_is_lower_bound") is False
+        and final.get("failure_reason")
+    ):
+        print(f"FAIL: wrong sweep_history.json final record for the main: {final}")
         sys.exit(1)
     print(f"All sweep unpipelinable tests passed ({full_syn_runs} full syn runs).")
 

@@ -2809,7 +2809,9 @@ def PRINT_PIPELINE_DEPTH_SUMMARY(parser_state, TimingParamsLookupTable):
         # buried under dozens of pmod-wire "connect" mains.
         if SYN.LOGIC_IS_ZERO_DELAY(main_logic, parser_state, allow_none_delay=True):
             continue
-        subtrees = COLLECT_CUT_SUBTREES(main_inst, parser_state)
+        subtrees, monolithic, regions, total_stages = MAIN_PIPELINE_DEPTH(
+            main_inst, parser_state, TimingParamsLookupTable
+        )
         if not printed_header:
             print("[sweep] Pipeline depth summary:", flush=True)
             printed_header = True
@@ -2820,9 +2822,6 @@ def PRINT_PIPELINE_DEPTH_SUMMARY(parser_state, TimingParamsLookupTable):
                 flush=True,
             )
             continue
-        monolithic, regions, total_stages = SUMMARIZE_SUBTREE_PIPELINE(
-            main_inst, subtrees, TimingParamsLookupTable, parser_state
-        )
         print(
             f"[sweep]   {main_func}: {total_stages} slice(s) total "
             f"({total_stages + 1} pipeline stages: comb regions separated by "
@@ -2879,6 +2878,280 @@ def PRINT_TIMING_FAILURES(multimain_timing_params) -> bool:
         flush=True,
     )
     return True
+
+
+def MAIN_PIPELINE_DEPTH(main_inst, parser_state, TimingParamsLookupTable):
+    """(subtrees, monolithic, regions, total_slices) for one main as built by
+    TimingParamsLookupTable. Shared by the printed depth summary and the
+    sweep_history.json final record so the two can never disagree. A main
+    with nothing cuttable returns no subtrees and zero slices."""
+    subtrees = COLLECT_CUT_SUBTREES(main_inst, parser_state)
+    if len(subtrees) == 0:
+        return subtrees, 0, {}, 0
+    monolithic, regions, total_stages = SUMMARIZE_SUBTREE_PIPELINE(
+        main_inst, subtrees, TimingParamsLookupTable, parser_state
+    )
+    return subtrees, monolithic, regions, total_stages
+
+
+# ─────────────────────────────────────────────
+# sweep_history.json
+# ─────────────────────────────────────────────
+# Per-main iteration records plus a "final" record describing the design
+# actually built. The iteration log alone cannot say what a build achieved:
+# an assumed-met final iteration (no path report named the main), a restored
+# best/met snapshot and a pin-and-confirm confirmation run are all not "the
+# last iteration".
+
+SWEEP_HISTORY_SCHEMA_VERSION = 2
+# Module level, not on a plan or MultiMainTimingParams: the AUTOPIPELINE
+# pin-and-confirm loop re-parses the design and builds fresh timing params
+# between passes, and a fallback sweep's iterations must not erase an earlier
+# pass's.
+# main func name -> {"goal_mhz": float | None, "iterations": [record, ...]}
+SWEEP_HISTORY = {}
+# main func name -> outcome of whichever run last decided that main
+SWEEP_OUTCOMES = {}
+# Numbers each deciding run (planned sweep, confirmation run, coarse sweep)
+SWEEP_HISTORY_RUN = 0
+
+
+def NEXT_SWEEP_HISTORY_RUN():
+    global SWEEP_HISTORY_RUN
+    SWEEP_HISTORY_RUN += 1
+    return SWEEP_HISTORY_RUN
+
+
+def RECORD_SWEEP_ITERATION(main_func_name, goal_mhz, record):
+    """Append one iteration record and return it with its "run" and "index"
+    (position in the main's iterations list -- unique even where the measured
+    fallback re-uses iteration numbers)."""
+    entry = SWEEP_HISTORY.setdefault(
+        main_func_name, {"goal_mhz": goal_mhz, "iterations": []}
+    )
+    entry["goal_mhz"] = goal_mhz
+    record = dict(record)
+    record.setdefault("run", SWEEP_HISTORY_RUN)
+    record["index"] = len(entry["iterations"])
+    entry["iterations"].append(record)
+    return record
+
+
+def RECORD_SWEEP_OUTCOME(main_func_name, goal_mhz, source, record=None, **fields):
+    """Set one main's outcome. source: planned_sweep / confirmation_run /
+    as_written / coarse_sweep / no_sweep. record: the iteration record the
+    built result came from (None when there is none), supplying run/iter/
+    iteration_index and the achieved MHz. Later runs overwrite earlier ones."""
+    outcome = {"source": source, "goal_mhz": goal_mhz, "run": SWEEP_HISTORY_RUN}
+    if record is not None:
+        outcome.update(
+            run=record.get("run"),
+            iter=record.get("iter"),
+            iteration_index=record.get("index"),
+            achieved_mhz=record.get("achieved_mhz"),
+        )
+    outcome.update(fields)
+    SWEEP_OUTCOMES[main_func_name] = outcome
+    return outcome
+
+
+def BUILD_FINAL_MAIN_RECORD(goal_mhz, outcome, failure, depth):
+    """One main's sweep_history.json "final" record (pure).
+
+    outcome  its SWEEP_OUTCOMES entry, or None if no run recorded one
+    failure  its (name, goal_mhz, achieved_mhz, why) sweep_timing_failures
+             tuple, or None. That list gates the build's exit code, so it --
+             not the outcome -- decides a failed verdict.
+    depth    {"autopipelined", "slices_built", "pipeline_stages"} read off
+             the final table, or None
+
+    A main that met its goal without any path report naming it never had an
+    MHz measured: achieved_mhz stays None and the goal is only a lower bound
+    (mhz_is_lower_bound / lower_bound_mhz), never the fmax."""
+    rest = dict(outcome or {})
+    source = rest.pop("source", None)
+    rest.pop("goal_mhz", None)
+    achieved_mhz = rest.pop("achieved_mhz", None)
+    failure_reason = None
+    if failure is not None:
+        met = False
+        met_basis = "timing_failure"
+        failure_reason = failure[3]
+        if failure[2] is not None:
+            achieved_mhz = round(failure[2], 3)
+    elif goal_mhz is None:
+        met = None
+        met_basis = "no_goal"
+    elif source is None or source == "no_sweep":
+        met = None
+        met_basis = "unverified"
+    elif achieved_mhz is not None:
+        met = True
+        met_basis = "measured"
+    else:
+        met = True
+        met_basis = "no_failing_path_reported"
+    lower_bound = met is True and achieved_mhz is None
+    final = {
+        "met": met,
+        "achieved_mhz": achieved_mhz,
+        "mhz_is_lower_bound": lower_bound,
+        "lower_bound_mhz": goal_mhz if lower_bound else None,
+        "met_basis": met_basis,
+        "source": source,
+        "run": rest.pop("run", None),
+        "iter": rest.pop("iter", None),
+        "iteration_index": rest.pop("iteration_index", None),
+        "failure_reason": failure_reason,
+    }
+    final.update(depth or {})
+    final.update(rest)
+    return final
+
+
+def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
+    """Write <out_dir>/<top>/sweep_history.json (SWEEP_HISTORY_SCHEMA_VERSION).
+
+    Runs that decide mains write it provisionally (build_complete=False) so a
+    build that dies later still leaves its data; the driver rewrites it at
+    'Writing Results' (build_complete=True) against the final table and the
+    final sweep_timing_failures. Writes nothing when no run recorded anything
+    (--comb characterization builds). Returns the written document."""
+    if not SWEEP_HISTORY and not SWEEP_OUTCOMES:
+        return None
+    failures = {
+        failure[0]: failure
+        for failure in (
+            getattr(multimain_timing_params, "sweep_timing_failures", None) or []
+        )
+    }
+    tpl = multimain_timing_params.TimingParamsLookupTable
+    mains = {}
+    for main_inst in parser_state.main_mhz:
+        main_logic = parser_state.LogicInstLookupTable[main_inst]
+        main_func_name = main_logic.func_name
+        goal_mhz = SYN.GET_TARGET_MHZ(main_inst, parser_state)
+        recorded = (
+            main_func_name in SWEEP_HISTORY
+            or main_func_name in SWEEP_OUTCOMES
+            or main_func_name in failures
+        )
+        zero_delay = SYN.LOGIC_IS_ZERO_DELAY(
+            main_logic, parser_state, allow_none_delay=True
+        )
+        if not recorded and (goal_mhz is None or zero_delay):
+            continue
+        depth = None
+        if not zero_delay and main_inst in tpl:
+            subtrees, _mono, _regions, total_stages = MAIN_PIPELINE_DEPTH(
+                main_inst, parser_state, tpl
+            )
+            if subtrees:
+                depth = {
+                    "autopipelined": True,
+                    "slices_built": total_stages,
+                    "pipeline_stages": total_stages + 1,
+                }
+            else:
+                depth = {
+                    "autopipelined": False,
+                    "slices_built": None,
+                    "pipeline_stages": None,
+                }
+        mains[main_func_name] = {
+            "goal_mhz": goal_mhz,
+            "iterations": SWEEP_HISTORY.get(main_func_name, {}).get("iterations", []),
+            "final": BUILD_FINAL_MAIN_RECORD(
+                goal_mhz,
+                SWEEP_OUTCOMES.get(main_func_name),
+                failures.get(main_func_name),
+                depth,
+            ),
+        }
+    doc = {
+        "schema_version": SWEEP_HISTORY_SCHEMA_VERSION,
+        "build_complete": build_complete,
+        "mains": mains,
+    }
+    automcp = getattr(multimain_timing_params, "automcp_ncycles", None)
+    if automcp:
+        doc["automcp_ncycles"] = dict(automcp)
+    try:
+        out_dir = os.path.join(SYN.SYN_OUTPUT_DIRECTORY, SYN.TOP_LEVEL_MODULE)
+        os.makedirs(out_dir, exist_ok=True)
+        history_path = os.path.join(out_dir, "sweep_history.json")
+        with open(history_path, "w") as f:
+            json.dump(doc, f, indent=1)
+    except Exception as e:
+        print("[sweep] Could not write sweep history:", e)
+        return None
+    print(f"[sweep] History: {history_path}", flush=True)
+    return doc
+
+
+def RECORD_CONFIRMATION_RESULTS(
+    parser_state, multimain_timing_params, measured_mhz, met
+):
+    """Pin-and-confirm confirmation run (SYN.DO_SEEDED_CONFIRM_OR_SWEEP): one
+    iteration record per goal main, and on a pass its outcome. measured_mhz:
+    main inst -> MHz for mains a path report named; when every report passed,
+    unnamed goal mains are met with no MHz measured. A failed confirmation
+    records only its measurements -- the fallback sweep decides outcomes.
+    Call after sweep_timing_failures is set (the provisional write reads it)."""
+    NEXT_SWEEP_HISTORY_RUN()
+    tpl = multimain_timing_params.TimingParamsLookupTable
+    for main_inst in parser_state.main_mhz:
+        main_logic = parser_state.LogicInstLookupTable[main_inst]
+        main_func_name = main_logic.func_name
+        goal_mhz = SYN.GET_TARGET_MHZ(main_inst, parser_state)
+        if goal_mhz is None or SYN.LOGIC_IS_ZERO_DELAY(
+            main_logic, parser_state, allow_none_delay=True
+        ):
+            continue
+        curr_mhz = measured_mhz.get(main_inst)
+        if curr_mhz is None and not met:
+            continue
+        subtrees, _mono, _regions, total_stages = MAIN_PIPELINE_DEPTH(
+            main_inst, parser_state, tpl
+        )
+        record = RECORD_SWEEP_ITERATION(
+            main_func_name,
+            goal_mhz,
+            {
+                "iter": 1,
+                "main": main_func_name,
+                "goal_mhz": goal_mhz,
+                "achieved_mhz": None if curr_mhz is None else round(curr_mhz, 3),
+                "met": True if curr_mhz is None else curr_mhz >= goal_mhz,
+                "cuts": sum(len(tpl[d]._slices) for d in subtrees),
+                "pipeline_stages": total_stages + 1 if subtrees else None,
+                "action": (
+                    "confirm"
+                    if curr_mhz is not None
+                    else "confirm(no failing path reported)"
+                ),
+            },
+        )
+        if met:
+            prev = SWEEP_OUTCOMES.get(main_func_name) or {}
+            carried = {k: prev[k] for k in ("standalone_mhz",) if k in prev}
+            RECORD_SWEEP_OUTCOME(
+                main_func_name,
+                goal_mhz,
+                "confirmation_run",
+                record=record,
+                seeded_from=(
+                    {
+                        "source": prev.get("source"),
+                        "run": prev.get("run"),
+                        "iter": prev.get("iter"),
+                    }
+                    if prev
+                    else None
+                ),
+                **carried,
+            )
+    WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete=False)
 
 
 def PREDICTED_STAGE_NS(cuts, landscape):
@@ -4537,8 +4810,9 @@ def RUN_AS_WRITTEN_CHECKS(goal_mains, parser_state):
     not the input-to-output through-delay that estimates must use (see the
     measurement frontier rule). Informational only - the in-context
     full-design timing reports decide pass/fail for the build."""
+    results = {}  # main inst -> standalone MHz
     if len(goal_mains) == 0:
-        return
+        return results
     zero_clk_tpl = SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
     num_processes = int(
         open(C_TO_LOGIC.EXE_ABS_DIR() + "/../config/num_processes.cfg", "r").readline()
@@ -4567,6 +4841,7 @@ def RUN_AS_WRITTEN_CHECKS(goal_mains, parser_state):
             )
             continue
         mhz = 1000.0 / path_reports[0].path_delay_ns
+        results[main_inst] = mhz
         if mhz >= target_mhz:
             verdict = "PASS"
         else:
@@ -4577,6 +4852,7 @@ def RUN_AS_WRITTEN_CHECKS(goal_mains, parser_state):
             f"- {verdict}",
             flush=True,
         )
+    return results
 
 
 # ─────────────────────────────────────────────
@@ -5327,6 +5603,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     """Replaces the old middle-out sweep. One full-design synthesis per
     iteration; landscape planning decides where registers go, timing report
     attribution decides what to change when timing fails."""
+    NEXT_SWEEP_HISTORY_RUN()
     # Build a plan per main that has a target and something cuttable
     plans = {}
     planless_goal_mains = []
@@ -5360,8 +5637,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     # holds - result is informational and never stored as the func's delay.
     # --no_sweep skips this too: it is purely informational, not needed to
     # produce the first planned guess.
+    as_written_mhz = {}
     if not SYN.NO_SWEEP:
-        RUN_AS_WRITTEN_CHECKS(planless_goal_mains, parser_state)
+        as_written_mhz = RUN_AS_WRITTEN_CHECKS(planless_goal_mains, parser_state)
 
     # NOTE on budget calibration: cut counts are anchored to reality by the
     # "measurement frontier" in the presynth wave (SYN.FUNC_IS_TOPMOST_COMB):
@@ -5405,6 +5683,13 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
 
     best_tpl = None
     best_score = None
+    # sweep_history.json provenance: main inst -> the record each synthesized
+    # iteration appended; snapshots keep a reference to their iteration's
+    # dict so a restored table reports the iteration it came from
+    iter_records = {}
+    best_iter_records = None
+    met_snapshot_iter_records = None
+    final_iter_records = None
     measured_fallback_done = False
     iteration = 0
     # main_inst -> (curr_mhz, met, target_mhz) for goal-having mains with no
@@ -5726,6 +6011,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     f"{predicted_str} (UNVERIFIED)",
                     flush=True,
                 )
+                RECORD_SWEEP_OUTCOME(
+                    main_func_name,
+                    plan.target_mhz,
+                    "no_sweep",
+                    cuts=PLAN_TOTAL_CUTS(plan),
+                    predicted_mhz=(
+                        round(1000.0 / predicted_ns, 3) if predicted_ns > 0.0 else None
+                    ),
+                )
                 if predicted_ns > 0.0 and 1000.0 / predicted_ns < plan.target_mhz:
                     print(
                         f"[sweep] WARNING: {main_func_name}'s --no_sweep plan "
@@ -5742,6 +6036,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 internal_config=internal_placement_config,
             )
             multimain_timing_params.sweep_timing_failures = []
+            for main_inst, target_mhz in planless_goal_mains:
+                RECORD_SWEEP_OUTCOME(
+                    parser_state.LogicInstLookupTable[main_inst].func_name,
+                    target_mhz,
+                    "no_sweep",
+                )
+            WRITE_SWEEP_HISTORY(
+                parser_state, multimain_timing_params, build_complete=False
+            )
             return multimain_timing_params
 
         # What's about to be synthesized, printed BEFORE the long wait below
@@ -5786,6 +6089,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         synthesized_automcp = dict(multimain_timing_params.automcp_ncycles)
 
         # Evaluate each reported clock group
+        iter_records = {}
         made_change = False
         overall_score = None
         evaluated_plans = set()  # main insts implicated in some path report
@@ -5845,6 +6149,20 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             f"({path_report.path_delay_ns:.2f}ns) action={action}",
                             flush=True,
                         )
+                        iter_records[main_inst] = RECORD_SWEEP_ITERATION(
+                            main_logic.func_name,
+                            target_mhz,
+                            {
+                                "iter": iteration,
+                                "main": main_logic.func_name,
+                                "goal_mhz": target_mhz,
+                                "achieved_mhz": round(curr_mhz, 3),
+                                "met": met,
+                                "bottleneck": automcp_group.label(),
+                                "action": action,
+                                "automcp_ncycles": synthesized_automcp,
+                            },
+                        )
                         continue
                     plan = plans[main_inst]
                     plan.last_achieved_mhz = curr_mhz
@@ -5865,22 +6183,39 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         f"cuts={PLAN_TOTAL_CUTS(plan)} action={action}",
                         flush=True,
                     )
-                    plan.history.append(
+                    record = RECORD_SWEEP_ITERATION(
+                        main_logic.func_name,
+                        target_mhz,
                         {
                             "iter": iteration,
                             "main": main_logic.func_name,
                             "goal_mhz": target_mhz,
                             "achieved_mhz": round(curr_mhz, 3),
+                            "met": False,
                             "cuts": PLAN_TOTAL_CUTS(plan),
                             "bottleneck": automcp_group.label(),
                             "action": action,
                             "automcp_ncycles": synthesized_automcp,
-                        }
+                        },
                     )
+                    plan.history.append(record)
+                    iter_records[main_inst] = record
                     continue
                 if main_inst not in plans:
                     # Nothing cuttable for this main
                     planless_results[main_inst] = (curr_mhz, met, target_mhz)
+                    iter_records[main_inst] = RECORD_SWEEP_ITERATION(
+                        main_logic.func_name,
+                        target_mhz,
+                        {
+                            "iter": iteration,
+                            "main": main_logic.func_name,
+                            "goal_mhz": target_mhz,
+                            "achieved_mhz": round(curr_mhz, 3),
+                            "met": met,
+                            "action": "as_written",
+                        },
+                    )
                     if not met:
                         print(
                             f"[sweep] WARNING: {main_logic.func_name} fails timing "
@@ -6277,12 +6612,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     f"{bottleneck_str}{max_cap_str} action={action}",
                     flush=True,
                 )
-                plan.history.append(
+                record = RECORD_SWEEP_ITERATION(
+                    main_logic.func_name,
+                    target_mhz,
                     {
                         "iter": iteration,
                         "main": main_logic.func_name,
                         "goal_mhz": target_mhz,
                         "achieved_mhz": round(curr_mhz, 3),
+                        "met": met,
                         "cuts": total_cuts,
                         "main_latency": latency,
                         "pipeline_stages": pipeline_stages,
@@ -6304,8 +6642,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             if synthesized_automcp
                             else {}
                         ),
-                    }
+                    },
                 )
+                plan.history.append(record)
+                iter_records[main_inst] = record
 
         # Track best result so far (largest worst-case achieved/target ratio)
         if overall_score is not None and (
@@ -6314,6 +6654,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             best_score = overall_score
             best_tpl = copy.deepcopy(tpl)
             best_automcp = dict(synthesized_automcp)
+            best_iter_records = iter_records
             best_plan_regions = SNAPSHOT_AUTOPIPELINE_REGIONS(plans)
             best_plan_cuts = {mi: copy.deepcopy(p.cuts) for mi, p in plans.items()}
             best_plan_placements = {
@@ -6331,19 +6672,73 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         # signal to react to - when every reported path meets its goal they
         # are done too (the per clock group report only shows the worst path,
         # which can live in a different main of the same clock group)
+        # Their history record carries no MHz (none was measured): without
+        # it the history of a sweep ending this way stopped one iteration
+        # early, its last entry a superseded mid-sweep result.
         if not any_report_failed:
             for main_inst, plan in plans.items():
-                if (
-                    main_inst not in evaluated_plans
-                    and not plan.met_timing
-                    and plan.stopped_reason is None
-                ):
+                if main_inst in evaluated_plans or plan.stopped_reason is not None:
+                    continue
+                main_func_name = parser_state.LogicInstLookupTable[main_inst].func_name
+                if not plan.met_timing:
                     print(
-                        f"[sweep] {parser_state.LogicInstLookupTable[main_inst].func_name}: "
+                        f"[sweep] {main_func_name}: "
                         "no failing timing path reported for this main; assuming met.",
                         flush=True,
                     )
                     plan.met_timing = True
+                record = RECORD_SWEEP_ITERATION(
+                    main_func_name,
+                    plan.target_mhz,
+                    {
+                        "iter": iteration,
+                        "main": main_func_name,
+                        "goal_mhz": plan.target_mhz,
+                        "achieved_mhz": None,
+                        "met": True,
+                        "cuts": PLAN_TOTAL_CUTS(plan),
+                        "main_latency": tpl[main_inst].GET_TOTAL_LATENCY(
+                            parser_state, tpl
+                        ),
+                        "pipeline_stages": GET_SUBTREE_PIPELINE_STAGES(
+                            plan, tpl, parser_state
+                        )
+                        + 1,
+                        "action": "met(no failing path reported)",
+                        **(
+                            {
+                                "autopipeline_regions": [
+                                    r.to_dict() for r in plan.regions
+                                ]
+                            }
+                            if plan.regions
+                            else {}
+                        ),
+                        **(
+                            {"automcp_ncycles": synthesized_automcp}
+                            if synthesized_automcp
+                            else {}
+                        ),
+                    },
+                )
+                plan.history.append(record)
+                iter_records[main_inst] = record
+            for main_inst, target_mhz in planless_goal_mains:
+                if main_inst in planless_results:
+                    continue
+                main_func_name = parser_state.LogicInstLookupTable[main_inst].func_name
+                iter_records[main_inst] = RECORD_SWEEP_ITERATION(
+                    main_func_name,
+                    target_mhz,
+                    {
+                        "iter": iteration,
+                        "main": main_func_name,
+                        "goal_mhz": target_mhz,
+                        "achieved_mhz": None,
+                        "met": True,
+                        "action": "as_written(no failing path reported)",
+                    },
+                )
 
         # Termination
         all_done = (
@@ -6372,6 +6767,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     met_snapshot_cuts = total_cuts_now
                     met_snapshot_tpl = copy.deepcopy(tpl)
                     met_snapshot_automcp = dict(synthesized_automcp)
+                    met_snapshot_iter_records = iter_records
                     met_snapshot_plan_regions = SNAPSHOT_AUTOPIPELINE_REGIONS(plans)
                     met_snapshot_plan_cuts = {
                         mi: copy.deepcopy(p.cuts) for mi, p in plans.items()
@@ -6438,6 +6834,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 flush=True,
             )
             tpl = met_snapshot_tpl
+            final_iter_records = met_snapshot_iter_records
             multimain_timing_params.TimingParamsLookupTable = tpl
             multimain_timing_params.automcp_ncycles = dict(met_snapshot_automcp)
             RESTORE_AUTOPIPELINE_REGIONS(plans, met_snapshot_plan_regions)
@@ -6522,6 +6919,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     if best_tpl is not None and not all(p.met_timing for p in plans.values()):
         multimain_timing_params.TimingParamsLookupTable = best_tpl
         multimain_timing_params.automcp_ncycles = dict(best_automcp)
+        final_iter_records = best_iter_records
         RESTORE_AUTOPIPELINE_REGIONS(plans, best_plan_regions)
         if best_plan_cuts is not None:
             for mi, p in plans.items():
@@ -6586,23 +6984,6 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         multimain_timing_params.TimingParamsLookupTable,
         internal_config=internal_placement_config,
     )
-    try:
-        out_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
-        if not os.path.exists(out_dir):
-            os.makedirs(out_dir)
-        history_path = out_dir + "/sweep_history.json"
-        with open(history_path, "w") as f:
-            json.dump(
-                {
-                    parser_state.LogicInstLookupTable[p.main_inst].func_name: p.history
-                    for p in plans.values()
-                },
-                f,
-                indent=1,
-            )
-        print(f"[sweep] History: {history_path}", flush=True)
-    except Exception as e:
-        print("[sweep] Could not write sweep history:", e)
 
     # Record unmet timing goals so the build can FAIL (non zero exit) instead
     # of silently writing results and running simulation on a design that
@@ -6645,5 +7026,38 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 )
             )
     multimain_timing_params.sweep_timing_failures = timing_failures
+
+    # Outcomes come from the iteration whose table was actually kept: a
+    # restored best/met snapshot is not the last iteration
+    if final_iter_records is None:
+        final_iter_records = iter_records
+    for plan in plans.values():
+        RECORD_SWEEP_OUTCOME(
+            parser_state.LogicInstLookupTable[plan.main_inst].func_name,
+            plan.target_mhz,
+            "planned_sweep",
+            record=final_iter_records.get(plan.main_inst),
+            stopped_reason=plan.stopped_reason,
+            cuts=PLAN_TOTAL_CUTS(plan),
+            locked_instances=len(plan.locked),
+            **(
+                {"autopipeline_regions": [r.to_dict() for r in plan.regions]}
+                if plan.regions
+                else {}
+            ),
+        )
+    # Planless verdicts are per synthesis run, like planless_results
+    for main_inst, target_mhz in planless_goal_mains:
+        standalone_mhz = as_written_mhz.get(main_inst)
+        RECORD_SWEEP_OUTCOME(
+            parser_state.LogicInstLookupTable[main_inst].func_name,
+            target_mhz,
+            "as_written",
+            record=iter_records.get(main_inst),
+            standalone_mhz=(
+                None if standalone_mhz is None else round(standalone_mhz, 3)
+            ),
+        )
+    WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete=False)
 
     return multimain_timing_params

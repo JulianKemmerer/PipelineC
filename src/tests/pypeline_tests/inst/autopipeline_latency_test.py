@@ -14,7 +14,10 @@
 #    actually built -- exiting early on "met" alone would bake contradictory
 #    .latency-derived constants into the final VHDL
 #  - the loop settles within the pass cap and the build exits successfully
+#  - sweep_history.json's final records come from the confirmation run, not
+#    from pass 1's sweep (a passing confirmation runs no sweep of its own)
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -111,6 +114,31 @@ def main():
     # cut counts recorded in sweep_history.json. Consumed == built is instead
     # guaranteed by the loop's convergence condition (exit 0 implies it) and
     # cycle-verified end-to-end by the native_vs_vhdl_* diff tests.)
+
+    history_paths = re.findall(r"^\[sweep\] History: (.+)$", out, re.M)
+    if not history_paths:
+        print("FAIL: no sweep_history.json written")
+        sys.exit(1)
+    with open(history_paths[-1]) as f:
+        history = json.load(f)
+    finals = {
+        name: entry.get("final") or {}
+        for name, entry in history.get("mains", {}).items()
+    }
+    if (
+        history.get("build_complete") is not True
+        or not finals
+        or not all(
+            final.get("source") == "confirmation_run" and final.get("met") is True
+            for final in finals.values()
+        )
+        or not any(final.get("achieved_mhz") is not None for final in finals.values())
+    ):
+        print(
+            "FAIL: sweep_history.json final records do not describe the passing "
+            f"confirmation run: {finals}"
+        )
+        sys.exit(1)
 
     print(f"All AUTOPIPELINE .latency end-to-end tests passed ({latencies}).")
 

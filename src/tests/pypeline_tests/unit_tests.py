@@ -135,6 +135,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "floor_and_bits_cap_unit_test.py"],
         )
     )
+    # sweep_history.json "final" record semantics: an assumed-met main is a
+    # goal lower bound (never a measured fmax), a timing failure overrides the
+    # outcome, confirmation runs and restored snapshots keep their own
+    # provenance, unverified builds carry no verdict.
+    tests.append(
+        Test(
+            name="sweep_history_record_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "sweep_history_record_unit_test.py"],
+        )
+    )
     # Typed operation-boundary/bit-internal placement and direct lowering.
     tests.append(
         Test(

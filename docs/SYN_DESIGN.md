@@ -859,15 +859,62 @@ MainSweepPlan(
 )
 ```
 
-The history dumps to `<out_dir>/<top>/sweep_history.json`, one record per
-(iteration, main):
+The history dumps to `<out_dir>/<top>/sweep_history.json` (`schema_version`
+2). Each goal main has its iteration records **and a `final` record for the
+design as built**. Read `final` for "what did this build achieve". The
+iteration log alone can't answer that: an assumed-met final iteration, a
+restored best/met snapshot and a §6 confirmation run are all not "the last
+iteration".
 
 ```json
-{"iter": 1, "main": "my_main", "goal_mhz": 100.0, "achieved_mhz": 87.0,
- "cuts": 2, "main_latency": 2, "pipeline_stages": 3,
- "predicted_stage_ns": 10.0, "bottleneck": "mul_add",
- "action": "densify(mul_add x1.75)"}
+{"schema_version": 2, "build_complete": true,
+ "mains": {"my_main": {
+   "goal_mhz": 100.0,
+   "iterations": [
+     {"iter": 1, "main": "my_main", "goal_mhz": 100.0, "achieved_mhz": 87.0,
+      "met": false, "cuts": 2, "main_latency": 2, "pipeline_stages": 3,
+      "predicted_stage_ns": 10.0, "bottleneck": "mul_add",
+      "action": "densify(mul_add x1.75)", "run": 1, "index": 0},
+     {"iter": 2, "main": "my_main", "goal_mhz": 100.0, "achieved_mhz": null,
+      "met": true, "cuts": 4, "pipeline_stages": 5,
+      "action": "met(no failing path reported)", "run": 1, "index": 1}],
+   "final": {"met": true, "achieved_mhz": null, "mhz_is_lower_bound": true,
+     "lower_bound_mhz": 100.0, "met_basis": "no_failing_path_reported",
+     "source": "planned_sweep", "run": 1, "iter": 2, "iteration_index": 1,
+     "failure_reason": null, "autopipelined": true, "slices_built": 4,
+     "pipeline_stages": 5, "stopped_reason": null, "cuts": 4,
+     "locked_instances": 0}}}}
 ```
+
+- **Iterations.** Records accumulate across every deciding run in the build:
+  - planned sweeps, including a §6 fallback sweep
+  - confirmation runs (`action: "confirm"`)
+
+  Each record is tagged with its `run` number and its `index` in the list.
+  Planless goal mains get `action: "as_written"` records.
+- **A main no path report named.** When every report passed but none named
+  this main (the report for its clock group showed another main's worst
+  path), its record has `achieved_mhz: null`. Before schema 2 no record was
+  written at all, so such a sweep's history ended one iteration early.
+- **`final.source`** is `planned_sweep`, `confirmation_run`, `as_written`,
+  `coarse_sweep` or `no_sweep`. `run`, `iter` and `iteration_index` name the
+  record whose table was kept: a restored snapshot names its own iteration.
+  `standalone_mhz` is the planless as-written check's number.
+- **`final.met`** agrees with the build's exit code by construction: a main in
+  `sweep_timing_failures` is `met: false`, and that tuple supplies
+  `achieved_mhz` and `failure_reason`. `met: null` means unverified
+  (`--no_sweep`, or no goal).
+- **`mhz_is_lower_bound`.** A met main with no measured MHz has
+  `achieved_mhz: null` and `mhz_is_lower_bound: true`: the goal is a lower
+  bound on its fmax, never the fmax itself.
+- **Depth fields** (`autopipelined`, `slices_built`, `pipeline_stages`) are
+  read off the final table through the same `MAIN_PIPELINE_DEPTH` as the
+  printed `Pipeline depth summary`.
+- **When it's written.** Each deciding run writes the file provisionally
+  (`build_complete: false`), so a build that dies later still leaves data.
+  The driver rewrites it at *Writing Results* (`build_complete: true`) before
+  the TIMING NOT MET exit, so failing builds get it too. A `--comb`
+  characterization build records nothing and writes no file.
 
 ## 4. The refinement loop
 
@@ -1238,7 +1285,11 @@ repeat-the-sweep one:
    are unaffected. The confirmation's verdict feeds the driver's
    TIMING-NOT-MET exit gate via `sweep_timing_failures` (empty on met; a
    failed confirmation falls back to the full sweep, whose own result then
-   governs). `SYN.WRITE_FINAL_FILES` additionally invalidates the entire
+   governs). The confirmation also records its measurements in
+   `sweep_history.json` (`SWEEP.RECORD_CONFIRMATION_RESULTS`). A pass makes
+   each goal main's `final.source` `confirmation_run`: a passing confirmation
+   runs no sweep, so otherwise the file would still describe the previous
+   pass's sweep (§3 *Plan*). `SYN.WRITE_FINAL_FILES` additionally invalidates the entire
    final table before writing (final files computed 100% against current
    state) and runs `CHECK_VHDL_FILES_CONSISTENCY`: every `entity work.X`
    referenced inside a listed file must be defined by a listed file, turning
@@ -1558,9 +1609,9 @@ run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
 | `sweep_fsm_autopipeline_test.py` | Reg-FSM main + AUTOPIPELINE region (via `_autopipeline_with_io_regs`): cut subtree is the tagged child, FSM latency stays 0 |
 | `sweep_stateful_boundary_test.py` | comb→stateful→comb: cuts stop at the stateful boundary |
 | `sweep_floor_detect_test.py` | unreachable goal: floor predicted & blamed up front, sweep stops after a few syn runs, results written, then `TIMING NOT MET` + non-zero exit |
-| `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that autopipelining cannot help (planning time + standalone as-written check FAIL + failing report), one full syn run, `TIMING NOT MET` + non-zero exit |
-| `sweep_planless_test.py` | stateful MAIN with a met goal but nothing cuttable: one standalone as-written check synthesis prints PASS, its critical path is NOT stored as the func delay, one full syn run, exit 0 |
-| `autopipeline_latency_test.py` | end-to-end factory design (`make_stream_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, seeded confirmation syn passes with no fallback sweep, loop settles within the pass cap (extra realization passes allowed) |
+| `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that autopipelining cannot help (planning time + standalone as-written check FAIL + failing report), one full syn run, `TIMING NOT MET` + non-zero exit, and `sweep_history.json` `final` agrees (not met, same MHz, a failure reason) |
+| `sweep_planless_test.py` | stateful MAIN with a met goal but nothing cuttable: one standalone as-written check synthesis prints PASS, its critical path is NOT stored as the func delay, one full syn run, exit 0, `sweep_history.json` `final` is a met `as_written` record with `standalone_mhz` |
+| `autopipeline_latency_test.py` | end-to-end factory design (`make_stream_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, seeded confirmation syn passes with no fallback sweep, loop settles within the pass cap (extra realization passes allowed), `sweep_history.json` `final` records come from the confirmation run |
 | `autopipeline_constraints_test.py` | §6 constrained regions end-to-end: `latency=2` / `start_latency=1` call sites built with exactly 2 / 1 registers and pin-and-confirm pass 2 skipped; a `max_latency=1` cap stops an unreachable goal promptly, naming the cap, then `TIMING NOT MET` |
 | `autopipeline_c_pragma_test.py` | C `#pragma AUTOPIPELINE 2` is a fixed latency, built with exactly 2 clocks even by a `--comb` build |
 | `automcp_sweep_test.py` (**Vivado**, build_report) | §6 AUTOMCP end-to-end, in three builds: (1) from the default start of 1, the sweep raises the multi-cycle count (`action=automcp(...)`) until the path meets timing; pass 2 re-elaborates, the final XDC carries the count, and the pipelined native `--sim` asserts the handshake waits count + 1 cycles; (2) restarting at that count settles with no change and pass 2 skipped; (3) a `max_latency=1` cap fails the build naming it |
@@ -1574,7 +1625,11 @@ Unit/in-process coverage (registered in `elab_tests.py`):
 cache/read-flag), `autofsm_unit_test.py` (scheduler binding/dependency/register
 invariants, budget→states, floors, byte-identical generated source across
 re-elaborations) and `double_parse_file_test.py` (repeated `PARSE_FILE`
-equivalence, including an AUTOFSM design).
+equivalence, including an AUTOFSM design). `sweep_history_record_unit_test.py`
+(registered in `unit_tests.py`) pins the `sweep_history.json` `final`
+semantics: an assumed-met main is a goal lower bound, a timing failure
+overrides the outcome, a confirmation run supersedes the sweep, a restored
+snapshot keeps its iteration, and unverified builds get `met: null`.
 
 ## 9. Operator QoR benchmark
 

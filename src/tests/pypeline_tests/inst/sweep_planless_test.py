@@ -8,7 +8,9 @@
 #  - the reported critical path is NOT stored as the func's delay
 #    (no measured-delay print for the main func)
 #  - timing is met in context: exit 0, one full-design characterization syn
+#  - sweep_history.json carries the main's final as-written verdict
 import argparse
+import json
 import os
 import re
 import subprocess
@@ -70,6 +72,26 @@ def main():
         print(
             f"FAIL: {full_syn_runs} full design synthesis runs (max {MAX_FULL_SYN_RUNS}) - nothing to sweep, should characterize once and stop"
         )
+        sys.exit(1)
+    # sweep_history.json must carry the planless main's final verdict (it
+    # used to be keyed by sweep plans only, so planless mains were absent)
+    history_paths = re.findall(r"^\[sweep\] History: (.+)$", out, re.M)
+    if not history_paths:
+        print("FAIL: no sweep_history.json written")
+        sys.exit(1)
+    with open(history_paths[-1]) as f:
+        history = json.load(f)
+    if history.get("schema_version") != 2 or history.get("build_complete") is not True:
+        print(f"FAIL: sweep_history.json not a complete schema 2 file: {history}")
+        sys.exit(1)
+    final = history["mains"].get("sweep_planless_main", {}).get("final") or {}
+    if not (
+        final.get("met") is True
+        and final.get("source") == "as_written"
+        and final.get("standalone_mhz")
+        and final.get("autopipelined") is False
+    ):
+        print(f"FAIL: wrong sweep_history.json final record for the main: {final}")
         sys.exit(1)
     print(f"All sweep planless tests passed ({full_syn_runs} full syn runs).")
 

@@ -490,6 +490,11 @@ if not args.no_synth:
     SWEEP.PRINT_PIPELINE_DEPTH_SUMMARY(
         parser_state, multimain_timing_params.TimingParamsLookupTable
     )
+    # The machine-readable verdict for the design as built, written before the
+    # TIMING NOT MET exit below so failing builds get it too
+    SWEEP.WRITE_SWEEP_HISTORY(
+        parser_state, multimain_timing_params, build_complete=True
+    )
     SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
 
     # The build must FAIL if any timing goal was not met - results above are

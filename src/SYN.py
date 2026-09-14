@@ -3522,6 +3522,7 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
 
     met = True
     confirmation_failures = []
+    measured_mhz = {}  # main inst -> worst reported MHz (sweep_history.json)
     for reported_clock_group, path_report in timing_report.path_reports.items():
         curr_mhz = 1000.0 / path_report.path_delay_ns
         main_insts = SWEEP.GET_MAIN_INSTS_FOR_PATH_REPORT(
@@ -3532,6 +3533,9 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
             if target_mhz is None:
                 continue
             passfail = "PASS" if curr_mhz >= target_mhz else "FAIL"
+            measured_mhz[main_inst] = min(
+                curr_mhz, measured_mhz.get(main_inst, curr_mhz)
+            )
             print(
                 f"{passfail} {parser_state.LogicInstLookupTable[main_inst].func_name}: "
                 f"{curr_mhz:.2f} MHz vs {target_mhz:.2f} MHz goal (confirmation run)",
@@ -3551,6 +3555,11 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
     # is the pass-2 result when it holds; when it fails, the fallback sweep
     # below sets its own sweep_timing_failures, which governs instead.
     multimain_timing_params.sweep_timing_failures = confirmation_failures
+    # A passing confirmation runs no sweep, so without this the history would
+    # still describe the previous pass's sweep
+    SWEEP.RECORD_CONFIRMATION_RESULTS(
+        parser_state, multimain_timing_params, measured_mhz, met
+    )
     if met:
         return multimain_timing_params, True
     print(
@@ -3782,6 +3791,19 @@ def DO_THROUGHPUT_SWEEP(
             multimain_timing_params.sweep_timing_failures = [
                 (main_func, target_mhz, achieved, "coarse_sweep_not_met")
             ]
+
+        SWEEP.NEXT_SWEEP_HISTORY_RUN()
+        coarse_mhz = None
+        if not NO_SWEEP:
+            coarse_mhz = inst_sweep_state.last_mhz
+            if not inst_sweep_state.met_timing and inst_sweep_state.mhz_to_latency:
+                coarse_mhz = max(inst_sweep_state.mhz_to_latency.keys())
+        SWEEP.RECORD_SWEEP_OUTCOME(
+            parser_state.LogicInstLookupTable[main_func].func_name,
+            None if target_mhz == INF_MHZ else target_mhz,
+            "no_sweep" if NO_SWEEP else "coarse_sweep",
+            achieved_mhz=None if coarse_mhz is None else round(coarse_mhz, 3),
+        )
 
         return multimain_timing_params
 

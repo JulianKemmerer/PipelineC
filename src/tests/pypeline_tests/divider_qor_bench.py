@@ -245,7 +245,16 @@ def _load_sweep_record(run_dir, slices):
         return None, None
     path = paths[-1]
     data = json.loads(path.read_text())
-    records = [record for values in data.values() for record in values]
+    if "schema_version" in data:
+        # Schema 2+: each main's "final" record describes the design as built
+        mains = data.get("mains", {}).values()
+        finals = [main["final"] for main in mains if main.get("final")]
+        if finals:
+            return path, finals[-1]
+        records = [record for main in mains for record in main.get("iterations", [])]
+    else:
+        # Schema 1 (imported older run dirs): {main: [iteration records]}
+        records = [record for values in data.values() for record in values]
     if not records:
         return path, None
     if slices is not None:
