@@ -540,7 +540,7 @@ peak regardless of the actual noise, a plausible-looking number that means
 nothing. So a sample must also *look* like noise: no more than 4× the running
 estimate, plus a seed so the estimator can start from zero. This is the standard
 sample-excision guard a CFAR noise estimator uses, and it needs no knowledge of
-pipeline latency — which matters, because those latencies are AUTOPIPELINE
+pipeline latency — which matters, because those latencies are AUTO_PIPELINE
 results deliberately not available at elaboration time.
 
 With the guard in place, a phase driven with `noise_amp=8` measures a **16.22

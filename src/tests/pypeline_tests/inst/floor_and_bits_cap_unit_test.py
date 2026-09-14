@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # In-process unit tests for three bugs found (but not originally fixed)
-# during this session's audit of the autopipelining slice-placement work:
+# during this session's audit of the auto-pipelining slice-placement work:
 #
 #   - SWEEP.AT_PREDICTED_FLOOR (3a): the floor-stop check used to have no
 #     upper bound - curr_mhz >= tolerance*floor was satisfied by ANY fmax

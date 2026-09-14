@@ -2,7 +2,7 @@
 """Integer-factor decimating FIR filter factory.
 
 Same construction as dsp/fir.py's make_fir plus a phase counter in front of
-the autopipelined blob: every accepted input advances the sample window, but
+the auto-pipelined blob: every accepted input advances the sample window, but
 only every `decim`-th sample launches a computation into the pipeline, so
 dropped phases never enter the core (improving on the old include/dsp/
 fir_decim.h, which computed every phase and dropped outputs) and the output
@@ -12,7 +12,7 @@ stream runs at 1/decim of the accepted-input rate.
 from pypeline import (
     NamedTuple,
     Reg,
-    _autopipeline_with_io_regs,
+    _auto_pipeline_with_io_regs,
     hw_func,
     make_uint_t,
     struct,
@@ -20,7 +20,7 @@ from pypeline import (
 )
 
 from stream.stream import make_stream_interface, make_stream_t
-from stream.stream_pipeline import make_stream_pipeline
+from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 from dsp.fir import _quantize_arg_coeffs
 from dsp.fir_common import make_fir_core
@@ -45,8 +45,8 @@ def make_fir_decim(
     types, same metadata attributes on the returned function); `decim` >= 1
     sets the integer rate reduction. Outputs fire on accepted samples
     decim-1, 2*decim-1, ... (matching dsp/fir_tb.golden_fir). Elastic mode's
-    output FIFO is sized automatically from the AUTOPIPELINE'd core's
-    tool-discovered .latency (see make_stream_pipeline).
+    output FIFO is sized automatically from the AUTO_PIPELINE'd core's
+    tool-discovered .latency (see make_stream_auto_pipeline).
     """
     if not (isinstance(decim, int) and decim >= 1):
         raise ValueError(f"make_fir_decim: decim must be an int >= 1, got {decim!r}")
@@ -70,7 +70,7 @@ def make_fir_decim(
     LAST_PHASE = decim - 1
 
     if handshake == "elastic":
-        sp_func, sp_t = make_stream_pipeline(fir_core)
+        sp_func, sp_t = make_stream_auto_pipeline(fir_core)
 
         @struct
         class fir_decim_t(NamedTuple):
@@ -122,7 +122,7 @@ def make_fir_decim(
             rv.valid = x.valid
             return rv
 
-        fir_core_ap, _fir_core_ap_call = _autopipeline_with_io_regs(
+        fir_core_ap, _fir_core_ap_call = _auto_pipeline_with_io_regs(
             fir_core_stream, has_input_reg=True, has_output_reg=True
         )
 

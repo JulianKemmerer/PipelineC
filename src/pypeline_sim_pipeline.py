@@ -11,7 +11,7 @@ import inspect
 import os
 import weakref
 
-import AUTOFSM
+import AUTO_FSM
 import C_TO_LOGIC as C
 import PY_TO_LOGIC as PY
 import SYN
@@ -86,7 +86,7 @@ class _Graph:
             ):
                 self.children[sub] = _Graph(child_inst, state, timing, types, contains)
             elif entity not in self.callables:
-                self.ops[sub] = AUTOFSM.DECODE_OP(self.logic, sub, entity, state)
+                self.ops[sub] = AUTO_FSM.DECODE_OP(self.logic, sub, entity, state)
         self.constants = {}
         for wire in self.logic.wires:
             if C.WIRE_IS_CONSTANT(wire):
@@ -332,7 +332,7 @@ def prepare(roots, build_timing=None):
                     )
                     tp._exact_bit_boundaries = copy.copy(bits)
                     tp.logic.delay = delay
-        types = AUTOFSM._TypeResolver()
+        types = AUTO_FSM._TypeResolver()
         for fn in state.pypeline_entity_callables.values():
             types.seed_callable(fn)
             for value in inspect.unwrap(fn).__globals__.values():

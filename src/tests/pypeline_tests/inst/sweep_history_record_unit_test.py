@@ -13,7 +13,7 @@
 #
 # The build-level wiring (sweep, confirmation run, driver) is covered end to
 # end by sweep_planless_test.py, sweep_unpipelinable_test.py and
-# autopipeline_latency_test.py; these cases pin the verdict semantics.
+# auto_pipeline_latency_test.py; these cases pin the verdict semantics.
 import json
 import os
 import sys
@@ -34,7 +34,7 @@ def reset_records():
     SWEEP.SWEEP_HISTORY_RUN = 0
 
 
-DEPTH_20 = {"autopipelined": True, "slices_built": 19, "pipeline_stages": 20}
+DEPTH_20 = {"auto_pipelined": True, "slices_built": 19, "pipeline_stages": 20}
 
 
 def test_assumed_met_is_lower_bound_not_fmax():
@@ -162,7 +162,7 @@ def test_writer_schema_and_planless_entry():
         LogicInstLookupTable={"planless_main": main_logic},
     )
     params = SimpleNamespace(
-        TimingParamsLookupTable={}, sweep_timing_failures=[], automcp_ncycles={}
+        TimingParamsLookupTable={}, sweep_timing_failures=[], auto_multi_cycle_ncycles={}
     )
     saved = (
         SYN.SYN_OUTPUT_DIRECTORY,

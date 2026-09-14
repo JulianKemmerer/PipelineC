@@ -1,5 +1,5 @@
 # pyright: reportInvalidTypeForm=none
-"""Full autopipelining throughput-sweep coverage for one dsp/fir.py filter:
+"""Full auto-pipelining throughput-sweep coverage for one dsp/fir.py filter:
 proves the FIR comb blob (pre-adders + const multiplies + adder tree + resize)
 actually retimes to meet a @MAIN frequency goal, rather than only elaborating
 under --comb. Kept to a single small filter so the sweep stays fast; broad

@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""Pure unit coverage for typed autopipeline placement and lowering."""
+"""Pure unit coverage for typed auto-pipeline placement and lowering."""
 
 import json
 import os

@@ -14,13 +14,13 @@ from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINEC, PYPELINE_SIM, Tes
 
 # fmt: off
 PLAIN_PYTHON_TEST_FILES = [
-    "stream_pipeline_test.py",
-    "autopipeline_test.py",
-    "autopipeline_fixed_latency_sim_test.py",
-    "autofsm_test.py",
-    "stream_autofsm_test.py",
-    "stream_interface_mcp_test.py",
-    "stream_interface_automcp_test.py",
+    "stream_auto_pipeline_test.py",
+    "auto_pipeline_test.py",
+    "auto_pipeline_fixed_latency_sim_test.py",
+    "auto_fsm_test.py",
+    "stream_auto_fsm_test.py",
+    "stream_multi_cycle_test.py",
+    "stream_auto_multi_cycle_test.py",
     "float32_add_test.py",
     "float_ops_test.py",
     "fixed_point_test.py",
@@ -432,18 +432,18 @@ def get_tests() -> list:
             ],
         )
     )
-    # AUTOFSM in --comb mode: the call site is still the combinational
+    # AUTO_FSM in --comb mode: the call site is still the combinational
     # passthrough (latency 0), so this also proves the self-checking testbench
     # is latency-agnostic -- the same source is correct whether the FSM is
     # scheduled or not, which is what lets it be reused unchanged in both of
     # native_vs_vhdl_sim_tests.py's entries (--comb and full-build).
     tests.append(
         Test(
-            name="self_check_autofsm_comb_test",
+            name="self_check_auto_fsm_comb_test",
             category="native_sim",
             cmd=[
                 PYPELINEC,
-                INST_DIR / "self_check_autofsm_test.py",
+                INST_DIR / "self_check_auto_fsm_test.py",
                 "--sim",
                 "--comb",
                 "--run",
@@ -451,18 +451,18 @@ def get_tests() -> list:
             ],
         )
     )
-    # Same reasoning as self_check_autofsm_comb_test above, one layer up: the
-    # make_stream_autofsm wrapper's handshake never reads .latency, so the
+    # Same reasoning as self_check_auto_fsm_comb_test above, one layer up: the
+    # make_stream_auto_fsm wrapper's handshake never reads .latency, so the
     # same source is correct whether the FSM underneath it is scheduled or
     # still the --comb passthrough -- reused unchanged in both of
     # native_vs_vhdl_sim_tests.py's entries below.
     tests.append(
         Test(
-            name="self_check_stream_autofsm_comb_test",
+            name="self_check_stream_auto_fsm_comb_test",
             category="native_sim",
             cmd=[
                 PYPELINEC,
-                INST_DIR / "self_check_stream_autofsm_test.py",
+                INST_DIR / "self_check_stream_auto_fsm_test.py",
                 "--sim",
                 "--comb",
                 "--run",

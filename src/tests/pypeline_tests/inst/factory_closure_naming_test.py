@@ -133,7 +133,7 @@ def test_top_level_callable_closure_param_is_readable():
 
 def test_nested_callable_closure_param_recurses_and_stays_unique():
     # func_stream(func=<quarter_round instance>)-shaped case (the actual
-    # wireguard-fpga stream_pipeline shape): the closed-over callable is
+    # wireguard-fpga stream_auto_pipeline shape): the closed-over callable is
     # ITSELF a differently-parameterized factory closure -- two different
     # instances must still be distinguishable through the outer name.
     qr1 = make_quarter_round(0, 4, 8, 12)
@@ -408,7 +408,7 @@ def test_ast_meta_src_file_and_line_point_to_true_definition():
     import tempfile
 
     import SYN
-    from multi_cycle_path import make_stream_interface_mcp  # noqa: F401
+    from stream.stream_multi_cycle import make_stream_multi_cycle  # noqa: F401
 
     SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(prefix="factory_closure_naming_test_")
     test_file = os.path.abspath(
@@ -416,14 +416,13 @@ def test_ast_meta_src_file_and_line_point_to_true_definition():
     )
     parser_state = P.PARSE_FILE(test_file)
 
-    import multi_cycle_path
-
-    expected_file = os.path.abspath(inspect.getsourcefile(multi_cycle_path))
-    _, expected_line = inspect.getsourcelines(multi_cycle_path.make_stream_interface_mcp)
-    # func_mcp is defined a few lines into make_stream_interface_mcp's body; just
+    import stream.stream_multi_cycle as stream_multi_cycle
+    expected_file = os.path.abspath(inspect.getsourcefile(stream_multi_cycle))
+    _, expected_line = inspect.getsourcelines(stream_multi_cycle.make_stream_multi_cycle)
+    # func_mcp is defined a few lines into make_stream_multi_cycle's body; just
     # assert the file matches and the line falls within that function's body
     # (not, e.g., line 1 of a re-parsed/dedented snippet, and not the test
-    # file that called make_stream_interface_mcp).
+    # file that called make_stream_multi_cycle).
     found = False
     for logic in parser_state.FuncLogicLookupTable.values():
         if logic.ast_meta is not None and "func_mcp" in (logic.func_name or ""):
@@ -630,11 +629,11 @@ def test_overflow_collapse_never_lands_mid_token():
 
 
 def test_generic_call_site_alias_labels_instance_with_callee_name():
-    # multi_cycle_path.make_stream_interface_mcp's generated wrapper calls the
+    # stream_multi_cycle.make_stream_multi_cycle's generated wrapper calls the
     # caller-supplied function through a closure variable literally named
     # `func` -- real production code exercising exactly the generic-alias
     # shape _elab_submodule_instance now substitutes. Reuses
-    # two_factory_wrappers_test.py (round_a/round_b via make_stream_interface_mcp)
+    # two_factory_wrappers_test.py (round_a/round_b via make_stream_multi_cycle)
     # rather than building a new design, since it already elaborates this
     # exact shape.
     import tempfile
@@ -725,8 +724,8 @@ def test_bin_func_name_scalar_types_unaffected():
 
 def test_bin_func_name_builtin_op_info_keeps_unsanitized_types():
     # parser_state.pypeline_builtin_op_info's value tuple must keep the TRUE
-    # (unsanitized) operand C type strings -- AUTOFSM._soft_equivalent_callable
-    # (AUTOFSM.py:1061) reads this back out to ask the soft-operator library
+    # (unsanitized) operand C type strings -- AUTO_FSM._soft_equivalent_callable
+    # (AUTO_FSM.py:1061) reads this back out to ask the soft-operator library
     # for a decomposable equivalent; a bracket-stripped string is not a valid
     # C type to look up.
     class _FakeParserState:

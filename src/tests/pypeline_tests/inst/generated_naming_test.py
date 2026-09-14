@@ -79,14 +79,14 @@ def test_overflow_preserves_roles_and_is_fully_decodable():
     for i in range(6):
         child = N.NameInfo(
             "function",
-            "stream_pipeline",
+            "stream_auto_pipeline",
             "stream.pipeline",
             params=(("MAX_IN_FLIGHT", str(i + 4)), ("func", child)),
             identity="layer" + str(i) + child.identity,
         )
     short = child.render(N.BASE_LIMIT)
     assert len(short) <= N.BASE_LIMIT and "MAX_IN_FLIGHT_9" in short, short
-    assert "_h" in short and "stream_pipeline" in short, short
+    assert "_h" in short and "stream_auto_pipeline" in short, short
     assert "_n_8" in child.render() and "uint8_t" in child.render()
     names = N.EmissionNames({"logical_core": {child}})
     variant = names.identifier("logical_core_0CLK_1234abcd")

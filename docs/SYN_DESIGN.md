@@ -1,4 +1,4 @@
-# Autopipelining and the Throughput Sweep
+# Auto-pipelining and the Throughput Sweep
 
 How PypelineC turns combinational logic into pipelines to meet an fmax goal.
 
@@ -23,7 +23,7 @@ Vocabulary used throughout (each defined in detail later):
 |---|---|
 | **slice** | one serial register boundary inserted by pipelining; it is represented either by a raw-leaf-local fraction in `TimingParams._slices` or by an operation instance's input/output-register flag |
 | **cut** | a requested stage boundary on a whole *cut subtree*'s delay axis; typed planning resolves it to one or more concrete physical placements |
-| **cut subtree** | the largest subtree registers may be added to (a comb MAIN, or each AUTOPIPELINE-tagged region) |
+| **cut subtree** | the largest subtree registers may be added to (a comb MAIN, or each AUTO_PIPELINE-tagged region) |
 | **landscape** | the flattened delay axis of one cut subtree: where every nanosecond of logic lives and whether a cut may land there |
 | **segment** | one leaf-most piece of that axis (sliceable / atomic / locked) |
 | **placement** | one typed physical register location: an operation-instance input/output boundary or a genuine bit-internal leaf cut; `fixed` placements are retained by controlled internal experiments |
@@ -102,7 +102,7 @@ Registers physically exist in two forms:
    real post-lowering `GET_TOTAL_LATENCY` exactly where it started — ground
    truth after real lowering, not a landscape estimate, since only the real
    synchronous schedule can see this. The comparison also folds in each
-   AUTOPIPELINE-tagged descendant region's own latency: such a region
+   AUTO_PIPELINE-tagged descendant region's own latency: such a region
    reports 0 latency to its immediate container by convention (so
    balanced-latency reporting doesn't double-count an already-decoupled
    region), so a monolithic-only comparison would misread every one of that
@@ -153,13 +153,13 @@ sweep and compatibility paths:
 
 **Cuts != latency.** The two are related but distinct numbers, always
 reported separately. Latency can exceed the cut count (children of one cut
-sliced at misaligned positions, IO regs, `make_stream_pipeline`-style
-factories with internal `autopipeline()` calls). A mini-swept WireGuard
+sliced at misaligned positions, IO regs, `make_stream_auto_pipeline`-style
+factories with internal `AUTO_PIPELINE` call sites). A mini-swept WireGuard
 `block_step` accepts one internal half-way slice, with its external banks
 then chosen over direct parent-dataflow edges: a ten-instance serial chain
 needs the ten internal slices plus nine shared boundaries, not both banks on
 every instance — three clocks per instance is only the final fallback when
-compact boundary policies miss timing. An **autopipeline-tagged call site
+compact boundary policies miss timing. An **auto-pipeline-tagged call site
 reports latency 0 to its container** (so FSMs keep their cycle accounting) —
 a stateful MAIN prints `main_latency=0` while a deep pipeline runs inside
 it. That is expected, not a bug.
@@ -174,12 +174,12 @@ depth) — which is exactly the region `CHECK_CUTS_VS_LATENCY` marks `strict`.
 **Reporting how deep the design got pipelined.** Because a stream MAIN reads
 `main_latency=0` and the deepest single instance (one block_step) is far
 shallower than the whole pipeline, neither alone answers "how many stages did
-autopipelining build?". So `GET_SUBTREE_PIPELINE_STAGES`/`SUMMARIZE_SUBTREE_
+auto-pipelining build?". So `GET_SUBTREE_PIPELINE_STAGES`/`SUMMARIZE_SUBTREE_
 PIPELINE` compute the **total slices in a main's cut subtrees**:
 
 ```
 total = (slices inserted directly into the cut-subtree roots)
-      + (latency of every decoupled autopipeline region instance in them)
+      + (latency of every decoupled auto-pipeline region instance in them)
 ```
 
 The two parts never overlap: a subtree root's own latency already zeroes its
@@ -191,7 +191,7 @@ design's `block_step` repeated ten times reports its true shared-boundary
 total, not a naive per-instance sum). The `Pipeline depth summary` at
 *Writing Results* prints this figure as "N slice(s) total (N+1 pipeline
 stages)" (computed at *Writing Results* on the final, actually-emitted
-table, so it reflects any extra depth the AUTOPIPELINE pin-and-confirm
+table, so it reflects any extra depth the AUTO_PIPELINE pin-and-confirm
 re-elaboration (§6) added).
 
 **Slices vs. pipeline stages — `stages = slices + 1`.** A slice
@@ -222,7 +222,7 @@ pipeline maps consume its N-cycle output timing and add alignment on other paths
 A tagged leaf consisting only of wire assignments and registers has zero
 combinational delay. `LOGIC_IS_ZERO_DELAY` recognizes that case directly, avoiding
 a meaningless zero-delay frequency calculation in the PYRTL timing model.
-Pypeline elaboration rejects internal AUTOPIPELINE requests that would alter the
+Pypeline elaboration rejects internal AUTO_PIPELINE requests that would alter the
 fixed implementation.
 Both typed placements and legacy fractional slicing call
 `CHECK_FIXED_LATENCY_BOUNDARY`, rejecting registers at the tagged instance or any
@@ -299,9 +299,9 @@ deep inside a nested FSM) — a different quantity than the *input-to-output
 through-delay* that dataflow slicing geometry needs. Only a fully
 combinational subtree guarantees measured == through-delay. So stateful
 modules split by whether slicing descends through them
-(`FUNC_SUBTREE_HAS_AUTOPIPELINE`):
+(`FUNC_SUBTREE_HAS_AUTO_PIPELINE`):
 
-- **on the estimate chain** (an AUTOPIPELINE tag somewhere below — e.g. a
+- **on the estimate chain** (an AUTO_PIPELINE tag somewhere below — e.g. a
   dataflow core containing tagged stream pipelines): **estimated** from
   submodule delays, never synthesized per-module — tagging `logic.delay`
   with an inner critical path would poison the parent landscape.
@@ -418,7 +418,7 @@ but measures ~150 ns).
 
 *Where is adding registers even allowed to start?* A **cut subtree** is a
 maximal subtree that can accept added latency: the MAIN itself if it is pure
-comb, otherwise each region reached through AUTOPIPELINE-tagged call sites
+comb, otherwise each region reached through AUTO_PIPELINE-tagged call sites
 underneath stateful containers. One plan per MAIN, one or more cut subtrees
 per plan.
 
@@ -435,7 +435,7 @@ so registers may only be added inside explicitly tagged regions:
                                        |
                                        +-- wrapper (stateful)
                                              |
-                                             +-- autopipeline(chacha_loop(...))   <- TAG
+                                             +-- AUTO_PIPELINE(chacha_loop)(...)   <- TAG
                                                    |
                                                    chacha_loop = cut subtree root
 ```
@@ -447,7 +447,7 @@ The descend rule (used both by the recursive slicer and the landscape):
 descend into a child iff
 
 ```
-call site is AUTOPIPELINE tagged (or contains a tag deeper)     # override
+call site is AUTO_PIPELINE tagged (or contains a tag deeper)     # override
 OR (parent is sliceable AND child is sliceable)                 # plain comb
 ```
 
@@ -881,7 +881,7 @@ iteration".
    "final": {"met": true, "achieved_mhz": null, "mhz_is_lower_bound": true,
      "lower_bound_mhz": 100.0, "met_basis": "no_failing_path_reported",
      "source": "planned_sweep", "run": 1, "iter": 2, "iteration_index": 1,
-     "failure_reason": null, "autopipelined": true, "slices_built": 4,
+     "failure_reason": null, "auto_pipelined": true, "slices_built": 4,
      "pipeline_stages": 5, "stopped_reason": null, "cuts": 4,
      "locked_instances": 0}}}}
 ```
@@ -907,7 +907,7 @@ iteration".
 - **`mhz_is_lower_bound`.** A met main with no measured MHz has
   `achieved_mhz: null` and `mhz_is_lower_bound: true`: the goal is a lower
   bound on its fmax, never the fmax itself.
-- **Depth fields** (`autopipelined`, `slices_built`, `pipeline_stages`) are
+- **Depth fields** (`auto_pipelined`, `slices_built`, `pipeline_stages`) are
   read off the final table through the same `MAIN_PIPELINE_DEPTH` as the
   printed `Pipeline depth summary`.
 - **When it's written.** Each deciding run writes the file provisionally
@@ -961,11 +961,11 @@ iteration".
                     (the isolated probe measures that helper itself)
    hotspot locked:  try the opposite compact boundary side, then bounded
                     one-sided/both-sided fallback policies before rescaling
-   hotspot cannot be autopipelined (state regs, vhdl text, ...):
+   hotspot cannot be auto-pipelined (state regs, vhdl text, ...):
                     rescale once (boundary registers may cut its IO paths),
                     then if fmax stagnates stop and tell the user PLAINLY:
                     "critical path is in function F, which cannot be
-                    autopipelined (reason) - restructure F or lower the goal"
+                    auto-pipelined (reason) - restructure F or lower the goal"
    no attribution:  global_scale *= target/achieved               -> replan
           |
    fmax stagnant (within 1% of target, twice) or out of ideas,
@@ -1056,7 +1056,7 @@ attempted. Instead:
    level, e.g. a `feedback_vars` submodule threaded through an
    interface-func wrapper) while wrapping other, unrelated sliceable logic
    — before declaring the path unpipelinable it scans the remaining ranked
-   candidates for the deepest one that autopipelining *can* help, so one
+   candidates for the deepest one that auto-pipelining *can* help, so one
    stuck ancestor never masks a densifiable one on the same path;
 3. entity-local `REG_STAGEn` stage numbers are logged only — stage indices
    are local to the entity the FF lives in, never global;
@@ -1123,16 +1123,16 @@ table so it includes any depth the §6 re-elaboration added:
 [sweep]       boundaries = 19 slices
 [sweep]     (decoupled regions above sum to the end-to-end pipeline depth
              when in series, as in a stream pipeline)
-[sweep]   some_planless_main: not autopipelined (nothing sliceable; meets its
+[sweep]   some_planless_main: not auto-pipelined (nothing sliceable; meets its
              goal as written if at all)
 ```
 
-**When autopipelining cannot help at all**, the tool also says so
+**When auto-pipelining cannot help at all**, the tool also says so
 explicitly during the sweep:
 
 - a MAIN with a timing goal but nothing cuttable (no sliceable logic, no
-  AUTOPIPELINE regions) is noted at planning time (a plain message, not a
-  warning — this is a normal design shape): *"contains nothing autopipelining
+  AUTO_PIPELINE regions) is noted at planning time (a plain message, not a
+  warning — this is a normal design shape): *"contains nothing auto-pipelining
   can help - the goal is met only if the design meets timing as written
   (checked below)"* — and then gets ONE standalone whole-module synthesis so
   the user immediately sees whether "as written" holds:
@@ -1216,38 +1216,38 @@ line in `SWEEP.py` that names a hotspot or a MAIN. Reading a failing build's own
 output no longer requires separately grepping `module_instances.log`/`pipeline_map.log`
 just to find which line of which file a printed name refers to.
 
-## 6. AUTOPIPELINE `.latency` pin-and-confirm loop (Pypeline designs only)
+## 6. AUTO_PIPELINE `.latency` pin-and-confirm loop (Pypeline designs only)
 
-Pypeline's `AUTOPIPELINE(func)` tag exposes the sweep's discovered stage count back to
-the design's Python as `.latency` (e.g. `make_stream_pipeline` sizes its output FIFO
-from it). The stage count only exists *after* the sweep, so `SYN.DO_SWEEP_AND_AUTOPIPELINE`
+Pypeline's `AUTO_PIPELINE(func)` tag exposes the sweep's discovered stage count back to
+the design's Python as `.latency` (e.g. `make_stream_auto_pipeline` sizes its output FIFO
+from it). The stage count only exists *after* the sweep, so `SYN.DO_SWEEP_AND_AUTO_PIPELINE`
 wraps the parse+sweep sequence in an outer loop — a **pin-and-confirm** loop, not a
 repeat-the-sweep one:
 
 1. **Pass 1 (bootstrap, identical to a normal build):** `PARSE_FILE` with an empty
    latency cache (`.latency` reads 0, or a call site's fixed `latency=N` /
    `start_latency=S`) → path delays → full throughput
-   sweep → `SYN.HARVEST_AUTOPIPELINE_LATENCIES` walks the finished
-   TimingParamsLookupTable and groups each AUTOPIPELINE-tagged instance's
+   sweep → `SYN.HARVEST_AUTO_PIPELINE_LATENCIES` walks the finished
+   TimingParamsLookupTable and groups each AUTO_PIPELINE-tagged instance's
    `GET_TOTAL_LATENCY` by the tag's canonical key (a pure in-memory walk; no
    synthesis, no file I/O). The harvest invalidates every entry's memoized
    latency/hash first (same rationale as `WRITE_FINAL_FILES`): the planner
    mutates submodule `_slices` after container totals were first memoized,
    and a stale memo here would feed `.latency` (and the native simulator's
    delay lines) a number contradicting the entities actually written.
-2. **Early exits (the zero-added-cost invariant):** if there are no AUTOPIPELINE call
+2. **Early exits (the zero-added-cost invariant):** if there are no AUTO_PIPELINE call
    sites, or the design's Python never *read* any `.latency`
-   (`pypeline.AUTOPIPELINE_LATENCY_WAS_READ()`, a read-tracked property flag), or every
+   (`pypeline.AUTO_PIPELINE_LATENCY_WAS_READ()`, a read-tracked property flag), or every
    value it read already equals the stage count harvested for that key, the
-   loop ends here. The second check compares `pypeline.AUTOPIPELINE_SERVED_LATENCIES()`
-   with the harvest using `SYN.AUTOPIPELINE_SERVED_VALUES_MATCH`, and holds for fixed
+   loop ends here. The second check compares `pypeline.AUTO_PIPELINE_SERVED_LATENCIES()`
+   with the harvest using `SYN.AUTO_PIPELINE_SERVED_VALUES_MATCH`, and holds for fixed
    `latency=` call sites, a correct `start_latency=` guess, or a discovered 0. It
    prints "skipping pin-and-confirm pass 2". Either way the loop ends here — the cache couldn't have influenced the elaborated design, so
    pass 1's result is final. Cost is exactly the classic single parse + single
-   sweep. `.c` designs never enter the loop at all (`AUTOPIPELINE` is
+   sweep. `.c` designs never enter the loop at all (`AUTO_PIPELINE` is
    Pypeline-only syntax).
 3. **Pass 2 (pin + confirm):** install the harvested latencies
-   (`pypeline.SET_AUTOPIPELINE_LATENCY_CACHE`), re-run `PARSE_FILE` (re-executes the
+   (`pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE`), re-run `PARSE_FILE` (re-executes the
    whole design import graph; `.latency` reads now resolve), rewrite the zero-clk
    VHDL, re-run path delays (mostly disk-cached), then
    `SYN.SEED_TIMING_PARAMS_FROM_PREVIOUS` carries pass 1's sweep solution (slices +
@@ -1255,7 +1255,7 @@ repeat-the-sweep one:
    instance path first, else func (entity) name — the func-name tier is load-bearing
    because entity names encode closure values, so a `.latency`-derived parameter
    change (e.g. FIFO depth) renames its factory entity and every instance path
-   underneath, exactly where the AUTOPIPELINE'd core lives (the core's own name is
+   underneath, exactly where the AUTO_PIPELINE'd core lives (the core's own name is
    stable — its closure captures only the user's func). Seeding ends by
    invalidating EVERY entry's cached hash/latency strings — cached hash
    chains embed child func names, and any cache carried across the
@@ -1298,41 +1298,41 @@ repeat-the-sweep one:
 4. **Fallback (rare):** if the confirmation fails timing, it falls back to a full
    planned sweep (which replans from a fresh zero-clk table each iteration, so the
    seeds can't corrupt it), harvests again, and loops back to step 3 with the new
-   numbers. Bounded by `SYN.AUTOPIPELINE_MAX_LATENCY_PASSES` (3 total passes); at
+   numbers. Bounded by `SYN.AUTO_PIPELINE_MAX_LATENCY_PASSES` (3 total passes); at
    the cap the build fails loudly, advising an explicit `latency=N` pin at the
    unstable call site.
 
 Hard errors (instead of silently-wrong hardware):
-- **Divergent `.latency`:** the same AUTOPIPELINE-tagged function instantiated at
+- **Divergent `.latency`:** the same AUTO_PIPELINE-tagged function instantiated at
   multiple sites with *different* discovered stage counts — legal per-instance in
   the framework, unrepresentable as the single `.latency` int the design's Python
   read. Fix: give each call site its own factory-produced closure, or pin `latency=N`.
-- **Call-site set changed between passes:** an AUTOPIPELINE-tagged instance on pass
+- **Call-site set changed between passes:** an AUTO_PIPELINE-tagged instance on pass
   2 whose func didn't exist in pass 1 (detected as unseedable) — i.e. Python control
   flow, or closure-captured values encoded in a tagged function's identity, depended
-  on `.latency`'s own value. Only sizing *outside* AUTOPIPELINE'd functions may
+  on `.latency`'s own value. Only sizing *outside* AUTO_PIPELINE'd functions may
   depend on it.
 - **No settling within the pass cap:** a `.latency`-derived change keeps perturbing
   timing enough to change the discovered stage counts themselves.
 
 Repeated-`PARSE_FILE` support (sys.modules eviction of the design import graph,
 per-parse compiler-cache cleanup via `DEL_ALL_CACHES`) lives in `PY_TO_LOGIC.py` —
-see `PY_TO_LOGIC_DESIGN.md`'s AUTOPIPELINE section.
+see `PY_TO_LOGIC_DESIGN.md`'s AUTO_PIPELINE section.
 
 The converged harvest has one more consumer: a non-`--comb` `--sim` run hands it
 (plus the final per-MAIN latencies) to the native simulator at the end of the build,
 which re-imports the design with the cache installed and emulates every latency —
 see `pypeline_sim_DESIGN.md` §"Pipelined native sim".
 
-### Constrained AUTOPIPELINE regions (`latency=` / `start_latency=` / `max_latency=`)
+### Constrained AUTO_PIPELINE regions (`latency=` / `start_latency=` / `max_latency=`)
 
-`AUTOPIPELINE(func, latency=N)`, `start_latency=S` and `max_latency=M` record a
-`C_TO_LOGIC.AutopipelineLatency` for each tagged instance, in
-`Logic.sub_inst_to_autopipeline_latency`. C's `#pragma AUTOPIPELINE N` records a fixed
+`AUTO_PIPELINE(func, latency=N)`, `start_latency=S` and `max_latency=M` record a
+`C_TO_LOGIC.AutoPipelineLatency` for each tagged instance, in
+`Logic.sub_inst_to_auto_pipeline_latency`. C's `#pragma AUTOPIPELINE N` records a fixed
 N the same way. Unconstrained tags, the default, take none of the paths below, so
 designs without constraints plan, name and build exactly as before.
 
-**Planned sweep (`SWEEP.ENFORCE_AUTOPIPELINE_REGIONS`).** A tagged instance is
+**Planned sweep (`SWEEP.ENFORCE_AUTO_PIPELINE_REGIONS`).** A tagged instance is
 latency-decoupled from its container (`GET_SUBMODULE_LATENCY` reports it as 0), so each
 constrained instance is treated as its own *region*. Every iteration, right after
 `APPLY_LOCKS` and before any cut-subtree landscape is built, each region goes through:
@@ -1368,13 +1368,13 @@ delay axis, and the container can't count the region's latency.
 - **Verify and retry.** The realized latency can differ from the cut count, because of
   built-in operator stage granularity or non-deepening drops. A fixed region that
   realizes anything but N, or a capped region that realizes more than M, is reset to
-  zero clocks and re-planned with a corrected count (`AUTOPIPELINE_REGION_RETRIES`). If
+  zero clocks and re-planned with a corrected count (`AUTO_PIPELINE_REGION_RETRIES`). If
   that still fails, the build exits and names the call site, the constraint and the
   realized value.
 - **Growth and shrinking.**
   - Region landscapes feed `RANK_PATH_FUNC_CANDIDATES`, and a region root counts as a
     valid attribution. When `REGION_FOR_HOTSPOT` places a critical path inside a region,
-    that group's `region.scale` is multiplied (the `grow_autopipeline` action).
+    that group's `region.scale` is multiplied (the `grow_auto_pipeline` action).
   - Global replans grow regions too.
   - If nothing else in the plan can change and no region count moved, the region with
     the worst predicted stage gets one more register.
@@ -1382,8 +1382,8 @@ delay axis, and the container can't count the region's latency.
     including below `start_latency`.
 - **At the cap.** A hotspot in a region at its limit (fixed, or realized = M) first gets
   one same-count rebalance, with the hotspot's weight raised. If that doesn't help, the
-  plan stops with `stopped_reason = "autopipeline_latency_limit"` and prints
-  `[sweep] WARNING: ... limited by AUTOPIPELINE latency constraint(s) ...`, followed by
+  plan stops with `stopped_reason = "auto_pipeline_latency_limit"` and prints
+  `[sweep] WARNING: ... limited by AUTO_PIPELINE latency constraint(s) ...`, followed by
   the usual TIMING NOT MET exit. Two cases stop the same way without an attributed
   hotspot:
   - no attribution is available (PyRTL) and every register the plan can place is
@@ -1393,19 +1393,19 @@ delay axis, and the container can't count the region's latency.
 - **Mini-sweeps** never lock a hotspot that lies inside a region or contains one.
 - **Everything else includes regions:**
   - snapshots;
-  - `sweep_history.json` and placement traces (`autopipeline_regions`);
-  - the final summary (`[sweep] AUTOPIPELINE <key> (<constraint>): N clk(s) built at <inst>`);
-  - `SYN.CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED`, a safety net run on every final
+  - `sweep_history.json` and placement traces (`auto_pipeline_regions`);
+  - the final summary (`[sweep] AUTO_PIPELINE <key> (<constraint>): N clk(s) built at <inst>`);
+  - `SYN.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED`, a safety net run on every final
     table and after every harvest.
 
 **Coarse sweep.** `BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS` enforces fixed regions
 before slicing the main's even fractions; slicing skips locked children. Afterwards it
 re-plans any region that those fractions pushed over `max_latency` back down to its cap
-(`SWEEP.REENFORCE_AUTOPIPELINE_REGIONS`). Under a coarse sweep, `start_latency` only
+(`SWEEP.REENFORCE_AUTO_PIPELINE_REGIONS`). Under a coarse sweep, `start_latency` only
 sets the bootstrap `.latency`, and a NOTE says so.
 
 **Builds without a sweep.** `--comb`, `--no_synth` and `--yosys_json` still build every
-fixed latency. `SYN.BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS`:
+fixed latency. `SYN.BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS`:
 1. measures delays for just those regions' subtrees
    (`ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=...)`);
 2. enforces the regions on a zero-clock table;
@@ -1416,104 +1416,104 @@ Without a timing-capable tool, the PyRTL delay model is borrowed for the measure
 The latency is still exact; only the stage balance is estimated. The path-delay cache
 is keyed per tool, so the borrowed numbers don't pollute another tool's cache. Designs
 with no fixed latency above 0 keep the historical zero-clock path.
-`pypeline.SET_AUTOPIPELINE_BUILD_MODE` (`"sweep"` / `"fixed_only"`, set by `pypelinec`
+`pypeline.SET_AUTO_PIPELINE_BUILD_MODE` (`"sweep"` / `"fixed_only"`, set by `pypelinec`
 before parsing) decides whether `start_latency` feeds the bootstrap `.latency`. If the
 no-tool fallback downgrades a sweep build after start values were already read, the
 design is re-elaborated.
 
 **Pin-and-confirm.** Seeding by function name can copy another call site's slices onto a
-constrained region, so the seeded table goes through `SWEEP.REENFORCE_AUTOPIPELINE_REGIONS`
+constrained region, so the seeded table goes through `SWEEP.REENFORCE_AUTO_PIPELINE_REGIONS`
 before the confirmation synthesis. The served-value skip in step 2 means fixed latencies
 and correct `start_latency` guesses cost no second elaboration.
 
-### AUTOMCP multi-cycle counts
+### AUTO_MULTI_CYCLE multi-cycle counts
 
-`pypeline.AUTOMCP(latency= / start_latency= / max_latency=)` tags a multi-cycle path
+`pypeline.AUTO_MULTI_CYCLE(latency= / start_latency= / max_latency=)` tags a multi-cycle path
 exactly like `MULTI_CYCLE[N]`, but lets the sweep choose N. The elaborator records the
 elaborated N in `Logic.mcp_tuples`, as for any MCP, and additionally records
-`Logic.automcp_tuples[(start_reg, end_reg)] = C_TO_LOGIC.AutomcpConstraint(key, ...)`.
+`Logic.auto_multi_cycle_tuples[(start_reg, end_reg)] = C_TO_LOGIC.AutoMultiCycleConstraint(key, ...)`.
 
-**Constraint value.** `MultiMainTimingParams.automcp_ncycles` holds the sweep's current
-count per AUTOMCP key. `SYN.GET_MCP_PATH_CONSTRAINTS` writes
+**Constraint value.** `MultiMainTimingParams.auto_multi_cycle_ncycles` holds the sweep's current
+count per AUTO_MULTI_CYCLE key. `SYN.GET_MCP_PATH_CONSTRAINTS` writes
 `MCP_EFFECTIVE_NCYCLES`: that override, else the elaborated count. The sweep changes a
 count without re-elaborating, and only the XDC changes, so
 `MultiMainTimingParams.GET_HASH_EXT` appends the overrides that **differ** from the
 elaborated counts. Otherwise a same-named log from another count would be replayed.
-Designs without a raised AUTOMCP hash exactly as before.
+Designs without a raised AUTO_MULTI_CYCLE hash exactly as before.
 `SYN.GET_MCP_CELL_PATHS` is the one source of the register cell globs, used both by the
 XDC writer and by report matching.
 
 **Planned sweep (`SWEEP.DO_PLANNED_THROUGHPUT_SWEEP`).**
-1. **Setup.** `COLLECT_AUTOMCP_GROUPS` gathers every instance's AUTOMCP paths by key; a key
+1. **Setup.** `COLLECT_AUTO_MULTI_CYCLE_GROUPS` gathers every instance's AUTO_MULTI_CYCLE paths by key; a key
    is one group with one count, since the design reads one `.latency` int. The counts are
    seeded from the elaborated values.
-2. **Matching.** For each report, `AUTOMCP_GROUP_FOR_PATH_REPORT` matches the report's
+2. **Matching.** For each report, `AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT` matches the report's
    start/end register cells against the XDC globs (`[*]` → `\[\d+\]`) and requires
    `requirement / period` to equal the group's current count.
-3. **Feedback.** When the matched path fails, `AUTOMCP_FEEDBACK` runs **before** any
+3. **Feedback.** When the matched path fails, `AUTO_MULTI_CYCLE_FEEDBACK` runs **before** any
    pipelining feedback for that main:
-   - Needed count: `AUTOMCP_NEEDED_NCYCLES` = `max(N + 1, ceil(N · path_delay_ns / period))`.
+   - Needed count: `AUTO_MULTI_CYCLE_NEEDED_NCYCLES` = `max(N + 1, ceil(N · path_delay_ns / period))`.
      `VIVADO.PathReport` already reports a multi-cycle path's delay per cycle.
    - Needed ≤ the cap (`latency=` or `max_latency=`): the count is raised and the
-     iteration's action is `automcp(key N->N')`. The plan's cut bookkeeping is untouched,
+     iteration's action is `auto_multi_cycle(key N->N')`. The plan's cut bookkeeping is untouched,
      because a failing MCP says nothing about cut count, and its stagnation counters are
      reset.
-   - Needed > the cap: the plan stops with `stopped_reason = "automcp_latency_limit"` and
-     `[sweep] WARNING: limited by AUTOMCP ...`, then TIMING NOT MET. Planless mains record
+   - Needed > the cap: the plan stops with `stopped_reason = "auto_multi_cycle_latency_limit"` and
+     `[sweep] WARNING: limited by AUTO_MULTI_CYCLE ...`, then TIMING NOT MET. Planless mains record
      the same reason.
 4. **Growth only.** The count never drops below its start: post-met trimming counts only
    cuts.
 5. **Termination.** A changed count always earns another synthesis run, including for
    planless designs, which otherwise stop after one run.
 6. **Bookkeeping.** Best and met snapshots, their restores, and `sweep_history.json`
-   (`automcp_ncycles`) record the counts each run was *synthesized* with. The final
-   summary prints `[sweep] AUTOMCP <key> (<constraint>): N cycle(s) constrained on K
+   (`auto_multi_cycle_ncycles`) record the counts each run was *synthesized* with. The final
+   summary prints `[sweep] AUTO_MULTI_CYCLE <key> (<constraint>): N cycle(s) constrained on K
    multi-cycle path(s)`.
 
-**Pin-and-confirm.** `SYN.HARVEST_AUTOMCP_NCYCLES` is the elaborated counts overlaid with
+**Pin-and-confirm.** `SYN.HARVEST_AUTO_MULTI_CYCLE_NCYCLES` is the elaborated counts overlaid with
 the sweep's final overrides.
-- **Skip.** Pass 2 is skipped for AUTOMCP's sake when the harvest equals both the
+- **Skip.** Pass 2 is skipped for AUTO_MULTI_CYCLE's sake when the harvest equals both the
   elaborated counts and every `.latency` value design code read
-  (`AUTOMCP_BUILT_MATCHES_ELABORATED`). The build prints `AUTOMCP: every .latency read
+  (`AUTO_MULTI_CYCLE_BUILT_MATCHES_ELABORATED`). The build prints `AUTO_MULTI_CYCLE: every .latency read
   matched the built multi-cycle count`, and a correct `start_latency=` costs nothing.
-- **Pass 2.** Otherwise the loop runs even for designs with no AUTOPIPELINE reads: it
-  installs `pypeline.SET_AUTOMCP_LATENCY_CACHE` next to the AUTOPIPELINE cache before
+- **Pass 2.** Otherwise the loop runs even for designs with no AUTO_PIPELINE reads: it
+  installs `pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE` next to the AUTO_PIPELINE cache before
   `PARSE_FILE`. Convergence requires both harvests to be unchanged, and every pass prints
-  `AUTOMCP <key>: N cycles`.
+  `AUTO_MULTI_CYCLE <key>: N cycles`.
 - **Renaming.** Re-elaborating renames the function holding the tagged registers (the
   resolved count is part of its identity). The fresh `MultiMainTimingParams` carries no
   overrides, so the confirmation constrains the elaborated counts.
-- **Unread tags.** `SYN.CHECK_AUTOMCP_TAGS_READ` runs at the start of
-  `DO_SWEEP_AND_AUTOPIPELINE`: a non-fixed AUTOMCP nothing read would let the XDC and the
+- **Unread tags.** `SYN.CHECK_AUTO_MULTI_CYCLE_TAGS_READ` runs at the start of
+  `DO_SWEEP_AND_AUTO_PIPELINE`: a non-fixed AUTO_MULTI_CYCLE nothing read would let the XDC and the
   handshake disagree, so the build exits before any synthesis.
 - **Native sim.** A non-`--comb` `--sim` passes the harvest to `pypeline_sim.run_sim`
-  (`automcp_latencies=`).
+  (`auto_multi_cycle_latencies=`).
 
 **Not supported.** The coarse sweep and `--no_sweep` build the elaborated counts
 unchanged, and so does `--comb`. Only Vivado emits multi-cycle constraints. Only the worst
-path per clock group is visible, so a failing AUTOMCP hidden behind a worse path is
+path per clock group is visible, so a failing AUTO_MULTI_CYCLE hidden behind a worse path is
 raised in a later iteration.
 
-## 7. AUTOFSM schedule-and-confirm loop (Pypeline designs only)
+## 7. AUTO_FSM schedule-and-confirm loop (Pypeline designs only)
 
-`AUTOFSM(func)` is the resource-minimizing dual of AUTOPIPELINE: instead of
+`AUTO_FSM(func)` is the resource-minimizing dual of AUTO_PIPELINE: instead of
 cutting one copy of a function's hardware into pipeline stages, it keeps ONE
 copy of each distinct operation and runs the function over several cycles. Full
-design in [`AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md); what matters here is how it
+design in [`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md); what matters here is how it
 sits around everything above.
 
-**Loop nesting.** `SYN.DO_SWEEP_AND_AUTOPIPELINE` is the whole of §4 + §6 factored
+**Loop nesting.** `SYN.DO_SWEEP_AND_AUTO_PIPELINE` is the whole of §4 + §6 factored
 into one function; `src/pipelinec` calls it via `SYN.DO_PIPELINED_BUILD`, which is
-the dispatch point. When a design contains AUTOFSM call sites,
-`AUTOFSM.DO_SCHEDULE_PASSES` wraps it instead:
+the dispatch point. When a design contains AUTO_FSM call sites,
+`AUTO_FSM.DO_SCHEDULE_PASSES` wraps it instead:
 
 ```
-bootstrap parse (AUTOFSM call sites are combinational passthroughs)
+bootstrap parse (AUTO_FSM call sites are combinational passthroughs)
 for each schedule pass:
     ADD_PATH_DELAY_TO_LOOKUP          <- measure the operations, do NOT sweep
-    schedule + bind each AUTOFSM
+    schedule + bind each AUTO_FSM
     install schedules, re-PARSE_FILE  <- call sites become the generated FSMs
-    SYN.DO_SWEEP_AND_AUTOPIPELINE     <- §4 sweep + §6 AUTOPIPELINE loop
+    SYN.DO_SWEEP_AND_AUTO_PIPELINE     <- §4 sweep + §6 AUTO_PIPELINE loop
     timing met, or nothing/only-floors blamed?  -> done
     otherwise shrink the blamed FSMs' per-state budget and go again
 ```
@@ -1538,10 +1538,10 @@ container. Everything it needs was already there.
 
 **Two delay-model changes** (`SYN.py`), both about *which* functions get delays:
 
-- **`FUNC_SUBTREE_HAS_AUTOFSM`**, consulted alongside
-  `FUNC_SUBTREE_HAS_AUTOPIPELINE` in `FUNC_PATH_DELAY_IS_ESTIMABLE`. A stateful
-  MAIN with no AUTOPIPELINE anywhere is an atomic span, so *nothing inside it*
-  is measured — which would leave the AUTOFSM scheduler seeing zero delays and
+- **`FUNC_SUBTREE_HAS_AUTO_FSM`**, consulted alongside
+  `FUNC_SUBTREE_HAS_AUTO_PIPELINE` in `FUNC_PATH_DELAY_IS_ESTIMABLE`. A stateful
+  MAIN with no AUTO_PIPELINE anywhere is an atomic span, so *nothing inside it*
+  is measured — which would leave the AUTO_FSM scheduler seeing zero delays and
   putting the entire function in one state. Only ever true on the bootstrap
   pass; once scheduled, the tag sits on the calling function and the FSM entity
   below it is correctly an atomic span (its one whole-module synthesis measures
@@ -1554,12 +1554,12 @@ container. Everything it needs was already there.
   a float64 polynomial, that does not finish in reasonable time. Nothing
   consumes that number: the scheduler works from the individual operations
   underneath, measured and disk-cached as usual.
-- **`_AUTOFSM_MUX_ENTITIES`**, folded into `ADD_PATH_DELAY_TO_LOOKUP`'s
+- **`_AUTO_FSM_MUX_ENTITIES`**, folded into `ADD_PATH_DELAY_TO_LOOKUP`'s
   `funcs_to_synth` list. A generated FSM holds state, so it is an atomic span:
   one whole-module synthesis for its register-to-register path, and nothing
   inside it measured. That is right for its fmax number and wrong for its
   operand multiplexers, whose real delay is the single most load-bearing input
-  to AUTOFSM's decision about how finely to share — the thing it otherwise has
+  to AUTO_FSM's decision about how finely to share — the thing it otherwise has
   to guess at with a flat constant. Those few entities are therefore named
   explicitly and collected for measurement in their own right. They are small —
   one 3-to-8-way multiplexer per shared unit input port — so this is a handful
@@ -1569,12 +1569,12 @@ container. Everything it needs was already there.
   `path_delay_cache` (a caching gap here is tracked in Limitations and future
   work, below).
 
-**Scheduling inside the pass loop.** Each pass now runs AUTOFSM's minimum-area
+**Scheduling inside the pass loop.** Each pass now runs AUTO_FSM's minimum-area
 search rather than a single greedy schedule
-([`AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md) §3.7). It is pure computation over
+([`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md) §3.7). It is pure computation over
 already-measured delays — no synthesis, no tool output — and it is bounded by
 move and DAG-size caps rather than a wall clock, because the schedule has to
-stay a pure function of the source. `--autofsm_no_area_sweep` restores the
+stay a pure function of the source. `--auto_fsm_no_area_sweep` restores the
 greedy schedule. The search is forbidden from returning a schedule whose worst
 state is longer than the greedy one's, so it can never spend the timing margin
 this loop exists to defend; when a `max_latency=` cap cannot be met the driver
@@ -1582,11 +1582,11 @@ exits nonzero rather than building something slower than the source asked for.
 `MAX_SCHEDULE_PASSES` is 6 rather than 4, since a pass may now also be spent
 absorbing a freshly measured multiplexer delay.
 
-**Timing attribution.** `AUTOFSM.BLAMED_AUTOFSM_KEYS` reads
+**Timing attribution.** `AUTO_FSM.BLAMED_AUTO_FSM_KEYS` reads
 `sweep_timing_failures`. When the sweep attributed a blamed function, a
 generated FSM entity is exactly the unsliceable atomic block it names. With no
 attribution (PYRTL reports no path detail) it falls back to blaming every
-AUTOFSM under the failing MAIN — over-blaming costs one extra pass,
+AUTO_FSM under the failing MAIN — over-blaming costs one extra pass,
 under-blaming would silently give up.
 
 **Convergence** is easier than §6's. A schedule is a pure function of (the
@@ -1606,26 +1606,26 @@ run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
 |---|---|
 | `sweep_comb_test.py` | pure comb MAIN: planner places cuts, meets timing |
 | `sweep_two_mains_test.py` | two MAINs: per-main plans, no-attribution fallback |
-| `sweep_fsm_autopipeline_test.py` | Reg-FSM main + AUTOPIPELINE region (via `_autopipeline_with_io_regs`): cut subtree is the tagged child, FSM latency stays 0 |
+| `sweep_fsm_auto_pipeline_test.py` | Reg-FSM main + AUTO_PIPELINE region (via `_auto_pipeline_with_io_regs`): cut subtree is the tagged child, FSM latency stays 0 |
 | `sweep_stateful_boundary_test.py` | comb→stateful→comb: cuts stop at the stateful boundary |
 | `sweep_floor_detect_test.py` | unreachable goal: floor predicted & blamed up front, sweep stops after a few syn runs, results written, then `TIMING NOT MET` + non-zero exit |
-| `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that autopipelining cannot help (planning time + standalone as-written check FAIL + failing report), one full syn run, `TIMING NOT MET` + non-zero exit, and `sweep_history.json` `final` agrees (not met, same MHz, a failure reason) |
+| `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that auto-pipelining cannot help (planning time + standalone as-written check FAIL + failing report), one full syn run, `TIMING NOT MET` + non-zero exit, and `sweep_history.json` `final` agrees (not met, same MHz, a failure reason) |
 | `sweep_planless_test.py` | stateful MAIN with a met goal but nothing cuttable: one standalone as-written check synthesis prints PASS, its critical path is NOT stored as the func delay, one full syn run, exit 0, `sweep_history.json` `final` is a met `as_written` record with `standalone_mhz` |
-| `autopipeline_latency_test.py` | end-to-end factory design (`make_stream_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, seeded confirmation syn passes with no fallback sweep, loop settles within the pass cap (extra realization passes allowed), `sweep_history.json` `final` records come from the confirmation run |
-| `autopipeline_constraints_test.py` | §6 constrained regions end-to-end: `latency=2` / `start_latency=1` call sites built with exactly 2 / 1 registers and pin-and-confirm pass 2 skipped; a `max_latency=1` cap stops an unreachable goal promptly, naming the cap, then `TIMING NOT MET` |
-| `autopipeline_c_pragma_test.py` | C `#pragma AUTOPIPELINE 2` is a fixed latency, built with exactly 2 clocks even by a `--comb` build |
-| `automcp_sweep_test.py` (**Vivado**, build_report) | §6 AUTOMCP end-to-end, in three builds: (1) from the default start of 1, the sweep raises the multi-cycle count (`action=automcp(...)`) until the path meets timing; pass 2 re-elaborates, the final XDC carries the count, and the pipelined native `--sim` asserts the handshake waits count + 1 cycles; (2) restarting at that count settles with no change and pass 2 skipped; (3) a `max_latency=1` cap fails the build naming it |
-| `autofsm_latency_test.py` | §7 end-to-end: schedule pass runs, several same-kind operations fold onto fewer shared units, latency == states + 1, and exactly ONE instance of each shared unit appears in the generated VHDL |
-| `autofsm_resources_compare_test.py` | §7 area: same design built `--comb` (no sharing) and scheduled, compared by yosys cell count — guards the reason the feature exists |
-| `autofsm_timing_iter_test.py` | §7 iteration: a deliberately over-packed first schedule misses the clock, the FSM is blamed, its budget is tightened, and a later build passes — with no source change |
+| `auto_pipeline_latency_test.py` | end-to-end factory design (`make_stream_auto_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, seeded confirmation syn passes with no fallback sweep, loop settles within the pass cap (extra realization passes allowed), `sweep_history.json` `final` records come from the confirmation run |
+| `auto_pipeline_constraints_test.py` | §6 constrained regions end-to-end: `latency=2` / `start_latency=1` call sites built with exactly 2 / 1 registers and pin-and-confirm pass 2 skipped; a `max_latency=1` cap stops an unreachable goal promptly, naming the cap, then `TIMING NOT MET` |
+| `auto_pipeline_c_pragma_test.py` | C `#pragma AUTOPIPELINE 2` is a fixed latency, built with exactly 2 clocks even by a `--comb` build |
+| `auto_multi_cycle_sweep_test.py` (**Vivado**, build_report) | §6 AUTO_MULTI_CYCLE end-to-end, in three builds: (1) from the default start of 1, the sweep raises the multi-cycle count (`action=auto_multi_cycle(...)`) until the path meets timing; pass 2 re-elaborates, the final XDC carries the count, and the pipelined native `--sim` asserts the handshake waits count + 1 cycles; (2) restarting at that count settles with no change and pass 2 skipped; (3) a `max_latency=1` cap fails the build naming it |
+| `auto_fsm_latency_test.py` | §7 end-to-end: schedule pass runs, several same-kind operations fold onto fewer shared units, latency == states + 1, and exactly ONE instance of each shared unit appears in the generated VHDL |
+| `auto_fsm_resources_compare_test.py` | §7 area: same design built `--comb` (no sharing) and scheduled, compared by yosys cell count — guards the reason the feature exists |
+| `auto_fsm_timing_iter_test.py` | §7 iteration: a deliberately over-packed first schedule misses the clock, the FSM is blamed, its budget is tightened, and a later build passes — with no source change |
 
 Unit/in-process coverage (registered in `elab_tests.py`):
-`autopipeline_harvest_test.py` (harvest grouping + divergence, seed two-tier matching
+`auto_pipeline_harvest_test.py` (harvest grouping + divergence, seed two-tier matching
 + call-site-change detection, `CANONICAL_CALLABLE_KEY` determinism, latency
-cache/read-flag), `autofsm_unit_test.py` (scheduler binding/dependency/register
+cache/read-flag), `auto_fsm_unit_test.py` (scheduler binding/dependency/register
 invariants, budget→states, floors, byte-identical generated source across
 re-elaborations) and `double_parse_file_test.py` (repeated `PARSE_FILE`
-equivalence, including an AUTOFSM design). `sweep_history_record_unit_test.py`
+equivalence, including an AUTO_FSM design). `sweep_history_record_unit_test.py`
 (registered in `unit_tests.py`) pins the `sweep_history.json` `final`
 semantics: an assumed-met main is a goal lower bound, a timing failure
 overrides the outcome, a confirmation run supersedes the sweep, a restored
@@ -1754,11 +1754,11 @@ section, below.
    weights instead of mixing incompatible costs. This preserves correctness
    and reproducibility, but newly measured or non-sky130 designs can retain
    depth-proportional over-prediction until their sidecars are complete.
-4. **AUTOMCP is Vivado-only and grow-only.** Multi-cycle constraints are emitted only for
+4. **AUTO_MULTI_CYCLE is Vivado-only and grow-only.** Multi-cycle constraints are emitted only for
    Vivado (`GET_MCP_PATH_CONSTRAINTS`).
    - The count never goes below where it started: a post-met probe downward would cost a
      full synthesis per step on large designs.
-   - Only the worst path per clock group is reported, so an AUTOMCP path hidden behind a
+   - Only the worst path per clock group is reported, so an AUTO_MULTI_CYCLE path hidden behind a
      worse path is raised in a later iteration.
    - The coarse sweep and `--no_sweep` keep the elaborated counts.
    - The tagged `.start` / `.end` registers must survive synthesis. A capture register
@@ -1798,10 +1798,10 @@ section, below.
    delay from every future estimate. Preferring fewer, coarser-grained
    entities (one `@hw_func` per structural level rather than per bit-slice/
    concat node) reduces how many entities are even candidates for this.
-7. *(Resolved.)* `AUTOPIPELINE(func, depth=N)` used to be stored and never
+7. *(Resolved.)* `AUTO_PIPELINE(func, depth=N)` used to be stored and never
    read. It is now `latency=N` (with `start_latency=` / `max_latency=`), and every
-   build enforces it. See §6 "Constrained AUTOPIPELINE regions".
-8. **Caching for AUTOFSM's operand-mux measurement entities doesn't fire**
+   build enforces it. See §6 "Constrained AUTO_PIPELINE regions".
+8. **Caching for AUTO_FSM's operand-mux measurement entities doesn't fire**
    (§7). `_IS_PYPELINE_OPERATOR_LIBRARY_CODE` is meant to classify
    `include/pypeline/operators/` entities as non-user code so their delays
    are cacheable in `path_delay_cache`, but it calls `inspect.getsourcefile`
@@ -1845,7 +1845,7 @@ were taken.
 
 ### Why the planned sweep replaced the middle-out sweep
 
-The original autopipelining sweep grew pipeline depth via four interacting
+The original auto-pipelining sweep grew pipeline depth via four interacting
 multiplier knobs (`best_guess_sweep_mult`, `hier_sweep_mult`, and two more)
 against evenly-spaced "best guess" register placements, synthesizing every
 hierarchy level up front (a full wireguard build cost roughly 16 full
@@ -1950,7 +1950,7 @@ comparator is wide enough to be the actual bottleneck — PyRTL's own sweep
 missed all four losses entirely, the sharpest concrete instance of its
 serial-vs-tree blind spot anywhere in this doc. `register_soft_cmp_sub_swapped`
 therefore stays the right pick, via `scope=`, for a design known to be
-narrow-width-`GTE`/`LTE`-heavy; `AUTOFSM._SOFT_FACTORY_FOR_OP` also stays
+narrow-width-`GTE`/`LTE`-heavy; `AUTO_FSM._SOFT_FACTORY_FOR_OP` also stays
 pinned to it deliberately (unrelated to this speed tradeoff — the pin
 selects for even decomposition as a sharing candidate, not fmax, and
 prefix's decomposition properties there haven't been evaluated).
@@ -2023,7 +2023,7 @@ add is capped at a fixed small width, and its carry-out is folded into the
 next stage's input rather than resolved in place — cheap on an ASIC with no
 dedicated carry chain, where `make_soft_mult_shift_add`'s balanced tree of a
 few full-width carry-propagate adds is the wrong (FPGA-carry-chain-shaped)
-tradeoff. Autopipelined via the *planned* sweep (not `--coarse`, which has
+tradeoff. Auto-pipelined via the *planned* sweep (not `--coarse`, which has
 an unrelated pre-existing crash on this design's many narrow leaves —
 Limitations item 1) with a real `@MAIN(700)` target and the latchup-style
 `--no_sweep --no_hier_syn` flags, the first emitted candidate reaches

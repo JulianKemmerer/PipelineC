@@ -64,7 +64,7 @@ But generally, in kinda easier first order:
   * is the most hacky of recent hacking - another layer of dumb code gen
 * Template types+functions for [~C++ like syntax](https://github.com/JulianKemmerer/PipelineC/discussions/32)
   * Open to other syntaxs+languages Rust, Python, Zig, Go...
-* Improvements to autopipelining, maybe with modes to also track area/resources (not just timing as is)
+* Improvements to auto-pipelining, maybe with modes to also track area/resources (not just timing as is)
 * 'Just compile all the user code with a C compiler for fast simulation' built in
 * Integration with modern hardware compiler framework/intermediates+tools like [CIRCT](https://circt.llvm.org/)
   * Would enable/eliminate alot of above features/issues.

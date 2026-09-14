@@ -1,10 +1,10 @@
 # pyright: reportInvalidTypeForm=none
 """Cycle-accuracy design for pypeline_sim_debug.py WITHOUT --comb: a stateful
-@MAIN feeding an AUTOPIPELINE'd (with IO regs) comb stream every cycle.
+@MAIN feeding an AUTO_PIPELINE'd (with IO regs) comb stream every cycle.
 
 Run (synth_tests.py registers exactly this):
     pypeline_sim_debug.py <this file> --sim --run all
-The tool builds+runs the native sim (AUTOPIPELINE call-site delay-line
+The tool builds+runs the native sim (AUTO_PIPELINE call-site delay-line
 emulation) and the cocotb+GHDL sim of the same pipelined build, then diffs
 the sim_print(..., debug=True) lines per cycle -- MATCH (exit 0) proves the
 native latency emulation is cycle-accurate against the real pipelined VHDL.
@@ -32,7 +32,7 @@ from pypeline import (
     MAIN,
     NamedTuple,
     Reg,
-    _autopipeline_with_io_regs,
+    _auto_pipeline_with_io_regs,
     hw_func,
     sim_assert,
     sim_finish,
@@ -55,7 +55,7 @@ class ap_stream_t(NamedTuple):
 def heavy_stream(x: ap_stream_t) -> ap_stream_t:
     rv: ap_stream_t
     # Two chained divisions: a large sliceable comb cone (same shape as
-    # sweep_fsm_autopipeline_test.py, proven to pipeline at 40 MHz under the
+    # sweep_fsm_auto_pipeline_test.py, proven to pipeline at 40 MHz under the
     # PYRTL software timing model). XOR the input back in so the output data
     # varies per sample (the division cone alone is almost always 0 for this
     # input range) -- gives the cross-sim data diff real values to compare.
@@ -66,14 +66,14 @@ def heavy_stream(x: ap_stream_t) -> ap_stream_t:
     return rv
 
 
-AP_FUNC, AP_CALL = _autopipeline_with_io_regs(
+AP_FUNC, AP_CALL = _auto_pipeline_with_io_regs(
     heavy_stream, has_input_reg=True, has_output_reg=True
 )
 # .latency consumer: 0 on the bootstrap pass / plain native sim; the real
 # discovered core depth on the driver's confirm pass AND in the pipelined
 # native sim (same installed cache).
 LAT = AP_CALL.latency
-TOTAL_LAT = 1 + LAT + 1  # input reg + AUTOPIPELINE core + output reg
+TOTAL_LAT = 1 + LAT + 1  # input reg + AUTO_PIPELINE core + output reg
 START_CHECK = TOTAL_LAT + 2  # count-gate past warm-up ('U' regs in VHDL)
 NUM_CYCLES_RUN = TOTAL_LAT + 40
 

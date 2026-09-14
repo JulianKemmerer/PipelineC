@@ -2,7 +2,7 @@
 # -*- coding: utf-8 -*-
 """Wrapper-script tests: each runs pypelinec itself (as a subprocess) and
 asserts on its build LOG output or generated artifacts -- yosys/PYRTL cell
-counts, "TIMING NOT MET" error text, sweep_history.json, AUTOFSM schedule
+counts, "TIMING NOT MET" error text, sweep_history.json, AUTO_FSM schedule
 reports. This is a real full build in every case, just with the assertion
 living one process layer below the runner instead of being "exit code only"
 (that's synth_tests.py).
@@ -50,27 +50,27 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
-    # Full-sweep build of stream_pipeline_test.py plus assertions on the
-    # AUTOPIPELINE .latency pin-and-confirm loop (pass 2 runs, discovers a
+    # Full-sweep build of stream_auto_pipeline_test.py plus assertions on the
+    # AUTO_PIPELINE .latency pin-and-confirm loop (pass 2 runs, discovers a
     # real >0 latency, one seeded confirmation syn passes with no fallback
     # sweep and no pass 3, harvested latency appears in sweep_history.json).
     tests.append(
         Test(
-            name="autopipeline_latency_test",
+            name="auto_pipeline_latency_test",
             category="build_report",
-            cmd=[INST_DIR / "autopipeline_latency_test.py"],
+            cmd=[INST_DIR / "auto_pipeline_latency_test.py"],
             needs_out_dir=True,
         )
     )
-    # AUTOPIPELINE latency constraints end to end: latency=2 / start_latency=1
+    # AUTO_PIPELINE latency constraints end to end: latency=2 / start_latency=1
     # call sites built with exactly those counts and the pin-and-confirm pass
     # skipped (every .latency read already matched), plus a max_latency=1 cap
     # that stops an unreachable goal promptly with a warning naming it.
     tests.append(
         Test(
-            name="autopipeline_constraints_test",
+            name="auto_pipeline_constraints_test",
             category="build_report",
-            cmd=[INST_DIR / "autopipeline_constraints_test.py"],
+            cmd=[INST_DIR / "auto_pipeline_constraints_test.py"],
             needs_out_dir=True,
         )
     )
@@ -78,48 +78,48 @@ def get_tests() -> list:
     # N clocks even by a --comb build.
     tests.append(
         Test(
-            name="autopipeline_c_pragma_test",
+            name="auto_pipeline_c_pragma_test",
             category="build_report",
-            cmd=[INST_DIR / "autopipeline_c_pragma_test.py"],
+            cmd=[INST_DIR / "auto_pipeline_c_pragma_test.py"],
             needs_out_dir=True,
         )
     )
-    # AUTOMCP under a real Vivado sweep (Xilinx part): from the default start
+    # AUTO_MULTI_CYCLE under a real Vivado sweep (Xilinx part): from the default start
     # the sweep raises the multi-cycle count until timing is met, pass 2
     # re-elaborates the handshake and the pipelined native sim asserts it
     # waits latency + 1 cycles; restarting at that count settles immediately
     # with pass 2 skipped; a max_latency=1 cap fails the build naming it.
     tests.append(
         Test(
-            name="automcp_sweep_test",
+            name="auto_multi_cycle_sweep_test",
             category="build_report",
-            cmd=[INST_DIR / "automcp_sweep_test.py"],
+            cmd=[INST_DIR / "auto_multi_cycle_sweep_test.py"],
             needs_out_dir=True,
         )
     )
-    # ── AUTOFSM: pure function -> resource-shared FSM ──
-    # Full build of autofsm_test.py plus assertions on the schedule: several
+    # ── AUTO_FSM: pure function -> resource-shared FSM ──
+    # Full build of auto_fsm_test.py plus assertions on the schedule: several
     # same-kind operations folded onto fewer shared units, latency matching the
     # state count, and exactly ONE instance of each shared unit in the
     # generated VHDL (the sharing claim, checked in the output rather than
     # trusted from the scheduler's own report).
     tests.append(
         Test(
-            name="autofsm_latency_test",
+            name="auto_fsm_latency_test",
             category="build_report",
-            cmd=[INST_DIR / "autofsm_latency_test.py"],
+            cmd=[INST_DIR / "auto_fsm_latency_test.py"],
             needs_out_dir=True,
         )
     )
-    # The reason AUTOFSM exists: builds the same design as parallel
+    # The reason AUTO_FSM exists: builds the same design as parallel
     # combinational logic and as a scheduled FSM, and compares yosys cell
     # counts. Guards against a regression that keeps working and meeting timing
     # while quietly no longer sharing anything.
     tests.append(
         Test(
-            name="autofsm_resources_compare_test",
+            name="auto_fsm_resources_compare_test",
             category="build_report",
-            cmd=[INST_DIR / "autofsm_resources_compare_test.py"],
+            cmd=[INST_DIR / "auto_fsm_resources_compare_test.py"],
             needs_out_dir=True,
         )
     )
@@ -130,9 +130,9 @@ def get_tests() -> list:
     # So this test is where that model is held to account.
     tests.append(
         Test(
-            name="autofsm_area_sweep_compare_test",
+            name="auto_fsm_area_sweep_compare_test",
             category="build_report",
-            cmd=[INST_DIR / "autofsm_area_sweep_compare_test.py"],
+            cmd=[INST_DIR / "auto_fsm_area_sweep_compare_test.py"],
             needs_out_dir=True,
         )
     )
@@ -142,37 +142,37 @@ def get_tests() -> list:
     # design built to reward moving (three divides sharing one divider) and
     # asserts the search actually opens it up, that the move is smaller in real
     # cells, and that no alternative point of the search space -- built
-    # explicitly with --autofsm_open/--autofsm_unshare -- is smaller still.
+    # explicitly with --auto_fsm_open/--auto_fsm_unshare -- is smaller still.
     # Four sequential full builds (default, share-everything, and two forced
     # points), each verifying a distinct point of the search space -- this is
-    # the slowest AUTOFSM test in the suite (measured 840-1800s across three
+    # the slowest AUTO_FSM test in the suite (measured 840-1800s across three
     # runs). timeout=2700 documents that cost as known rather than letting it
     # run against the 7200s category default unremarked.
     tests.append(
         Test(
-            name="autofsm_min_area_verify_test",
+            name="auto_fsm_min_area_verify_test",
             category="build_report",
-            cmd=[INST_DIR / "autofsm_min_area_verify_test.py"],
+            cmd=[INST_DIR / "auto_fsm_min_area_verify_test.py"],
             needs_out_dir=True,
             timeout=2700,
         )
     )
     # Same question as the two tests above -- does ranking candidates with a
     # model actually pick the smaller real design? -- but under real sky130
-    # synthesis (docs/AUTOFSM_DESIGN.md section 3.8): real cached leaf/
+    # synthesis (docs/AUTO_FSM_DESIGN.md section 3.8): real cached leaf/
     # register/multiplexer um2 vs the abstract per-bit model, judged by real
     # measured area rather than yosys cell counts. Three real sky130 builds
-    # of qor/divider/autofsm.py, so this is the slowest AUTOFSM build_report
+    # of qor/divider/auto_fsm.py, so this is the slowest AUTO_FSM build_report
     # test in the file.
     tests.append(
         Test(
-            name="autofsm_real_area_compare_test",
+            name="auto_fsm_real_area_compare_test",
             category="build_report",
-            cmd=[INST_DIR / "autofsm_real_area_compare_test.py"],
+            cmd=[INST_DIR / "auto_fsm_real_area_compare_test.py"],
             needs_out_dir=True,
         )
     )
-    # The FSM's CONTROL path, built under both --autofsm_ctl modes and compared
+    # The FSM's CONTROL path, built under both --auto_fsm_ctl modes and compared
     # on yosys cell counts, plus the timing consequence on a design that sits at
     # its clock goal. Guards the constant-table decode that replaced v2's
     # per-state comparator chains -- a regression there is invisible to every
@@ -180,9 +180,9 @@ def get_tests() -> list:
     # thing.
     tests.append(
         Test(
-            name="autofsm_ctl_compare_test",
+            name="auto_fsm_ctl_compare_test",
             category="build_report",
-            cmd=[INST_DIR / "autofsm_ctl_compare_test.py"],
+            cmd=[INST_DIR / "auto_fsm_ctl_compare_test.py"],
             needs_out_dir=True,
         )
     )
@@ -192,22 +192,22 @@ def get_tests() -> list:
     # needed -- rather than quietly returning a slower FSM.
     tests.append(
         Test(
-            name="autofsm_max_latency_test",
+            name="auto_fsm_max_latency_test",
             category="build_report",
-            cmd=[INST_DIR / "autofsm_max_latency_test.py"],
+            cmd=[INST_DIR / "auto_fsm_max_latency_test.py"],
             needs_out_dir=True,
         )
     )
-    # Synthesis iterations that find a critical path inside an AUTOFSM and fix
+    # Synthesis iterations that find a critical path inside an AUTO_FSM and fix
     # it: a deliberately loose starting budget over-packs the states, the first
     # build misses the clock, and the driver must tighten the budget and
-    # reschedule until it passes -- the AUTOFSM analogue of the sweep adding
+    # reschedule until it passes -- the AUTO_FSM analogue of the sweep adding
     # pipeline stages.
     tests.append(
         Test(
-            name="autofsm_timing_iter_test",
+            name="auto_fsm_timing_iter_test",
             category="build_report",
-            cmd=[INST_DIR / "autofsm_timing_iter_test.py"],
+            cmd=[INST_DIR / "auto_fsm_timing_iter_test.py"],
             needs_out_dir=True,
         )
     )

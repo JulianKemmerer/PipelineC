@@ -27,8 +27,11 @@ For getting started information see the [README](README.md).
 
 **Part II — Temporal behavior**
 
-17. [Tool-Chosen Implementation: `AUTOPIPELINE(...)` and `AUTOFSM(...)`](#tool-chosen-implementation-autopipeline-and-autofsm)
-18. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle)
+17. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle)
+18. [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation)
+    - [`AUTO_PIPELINE(...)`](#auto_pipeline)
+    - [`AUTO_MULTI_CYCLE(...)` (New)](#auto_multi_cycle-new)
+    - [`AUTO_FSM(...)` (New, Experimental)](#auto_fsm-new-experimental)
 
 **Part III — Ports and streams**
 
@@ -42,9 +45,9 @@ For getting started information see the [README](README.md).
 26. [Host-Side Generated Types](#host-side-generated-types)
 27. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
 28. [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer)
-29. [Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline)
-30. [Multi-Cycle Stream Wrapper: `make_stream_interface_mcp`](#multi-cycle-stream-wrapper-make_stream_interface_mcp)
-31. [Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm)
+29. [Pipelined Stream Wrappers: `make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline)
+30. [Multi-Cycle Stream Wrapper: `make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle)
+31. [Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental)
 
 **Part IV — Escape hatches**
 
@@ -194,7 +197,7 @@ For readers coming from a traditional HDL (or the PipelineC C front end):
 | Module | `@hw_func` (or any type-annotated function) |
 | Input / output port | `Input[T]` / `Output[T]`, or a function argument / return value |
 | Combinational logic | A plain function (no `Reg`/`Feedback`) |
-| State machine | `AUTOFSM(...)`, or a hand-written `Reg[state_t]`-based FSM |
+| State machine | `AUTO_FSM(...)`, or a hand-written `Reg[state_t]`-based FSM |
 
 ### Reference: Python construct → hardware meaning
 
@@ -443,9 +446,9 @@ global wires before committing register values. `pypelinec` detects the `.py` de
 defaults to the native simulator (implemented in `src/pypeline_sim.py`), skipping VHDL
 elaboration/synthesis entirely, whenever no other simulator is explicitly selected (no
 `--cocotb`, `--edaplay`, `--modelsim`, `--cxxrtl`, or `--verilator` flag). `--sim --comb` is
-comb-only, no autopipelining pass first. Dropping `--comb` (just `--sim`)
-instead builds the final (maybe autopipelined) version first and then native-sims that with
-its discovered pipeline latencies emulated — see [Tool-Chosen Implementation: `AUTOPIPELINE(...)` and `AUTOFSM(...)`](#tool-chosen-implementation-autopipeline-and-autofsm).
+comb-only, no auto-pipelining pass first. Dropping `--comb` (just `--sim`)
+instead builds the final (maybe auto-pipelined) version first and then native-sims that with
+its discovered pipeline latencies emulated — see [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation).
 Explicitly passing `--cocotb --ghdl` (etc.) still elaborates the design to VHDL and simulates
 that instead.
 
@@ -1415,7 +1418,7 @@ def swap(arr: uint32_t[4], i: uint2_t, j: uint2_t) -> uint32_t[4]:
 Variable indexing (where `i` or `j` is a hardware signal) infers a multiplexer tree in
 hardware. This works the same way for reads and writes, including writes nested inside
 other control flow (`if arr[i] == 0: arr[j] = val`).
-Like any combinational logic, those mux trees can be autopipelined by PypelineC when a
+Like any combinational logic, those mux trees can be auto-pipelined by PypelineC when a
 frequency constraint is set.
 
 Keep dynamic indices within the array's declared bounds. An out-of-range *constant* index is
@@ -1642,7 +1645,7 @@ itself, and needs that function's parameter/return types to build the rest of it
 hardware (a stream type around the payload type, a result struct sized to match, etc.):
 
 ```python
-def make_stream_interface_mcp(func, latency):
+def make_stream_multi_cycle(func, latency):
     """func must already be @hw_func-decorated, with one annotated parameter and an
     annotated return type, e.g.:
         @hw_func
@@ -1663,9 +1666,9 @@ out_type = hw_return_type(func)   # the declared return type
 Both work whether `func` is undecorated or already `@hw_func`-decorated — but for
 factories that go on to *call* `func` from inside their own hardware function body
 (rather than just introspecting its annotations), `func` itself must already be
-`@hw_func`-decorated: `AUTOPIPELINE`, `make_stream_interface_mcp`, and
-`make_stream_pipeline` all enforce this and raise `TypeError`
-otherwise (see [Tool-Chosen Implementation: `AUTOPIPELINE(...)` and `AUTOFSM(...)`](#tool-chosen-implementation-autopipeline-and-autofsm) /
+`@hw_func`-decorated: `AUTO_PIPELINE`, `make_stream_multi_cycle`, and
+`make_stream_auto_pipeline` all enforce this and raise `TypeError`
+otherwise (see [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation) /
 [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle)). `@hw_func`
 decoration does not propagate into plain functions called from inside that body — a
 factory that calls an undecorated `func` won't simulate `Reg[T]`/`Feedback[T]` or bare
@@ -1676,8 +1679,8 @@ Prefer `hw_arg_types`/`hw_return_type` over reading `func.__annotations__` direc
 having a factory stash a type as a custom attribute on the function it returns (e.g.
 `my_func.out_t = out_t`) — the type is already recoverable generically from the
 function's own annotations, so there's no need for either function authors or callers
-to manage it by hand. See `include/pypeline/multi_cycle_path.py` for the full
-`make_stream_interface_mcp` example.
+to manage it by hand. See `include/pypeline/stream/stream_multi_cycle.py` for the full
+`make_stream_multi_cycle` example.
 
 ---
 
@@ -2136,405 +2139,16 @@ my_wire: Wire[uint32_t] = 0  # error — initialisers are not allowed on Wire/In
 
 ### Part II — Temporal behavior
 
-The four mechanisms below all let a hardware function's result take more than one clock
-cycle to appear, but each trades area/throughput/complexity differently: an **ordinary
-call** is same-cycle combinational (Part I). `AUTOPIPELINE` is multi-cycle and
-**pipelined** — throughput-oriented: one full copy of your logic, sliced into stages,
-accepting a new input every cycle. `AUTOFSM` is multi-cycle and **folded onto shared
-hardware** — area-oriented: one copy of each distinct operation, reused across states.
-`MULTI_CYCLE` is multi-cycle and **low-throughput**: a single slow combinational path
-given more than one cycle to settle, with no new input accepted until it's done. And a
-**stream wrapper** (`make_stream_pipeline`, `make_stream_interface_mcp`, covered later
-alongside the other stream material in Part III since they're built on `stream_t` and
-`@interface`) layers a valid/ready handshake protocol around any of the above so
-neighboring hardware doesn't need to know which one it's talking to.
-
-## Tool-Chosen Implementation: `AUTOPIPELINE(...)` and `AUTOFSM(...)`
-
-```text
-AUTOPIPELINE -- spread across SPACE (throughput):
-
-  in -->[stage 1]--|Reg|-->[stage 2]--|Reg|-->[stage 3]--> out
-         (one full copy of the logic, sliced into pipeline stages;
-          a new input can be accepted every cycle)
-
-AUTOFSM -- spread across TIME (area):
-
-           +-----------------+
-  in ----->|  ONE shared op  |<-----+
-           +--------+--------+      |
-                    |         state/cycle
-                    v          counter
-              (result used a few    |
-               cycles later) -------+
-         (one copy of each distinct operation, reused across states)
-```
-
-By default, a function called from inside a register or feedback context must complete
-**combinationally, in the same cycle** as its caller — the synthesiser is not free to
-split its logic across multiple clock cycles. That's normally what you want for a small
-state machine. But sometimes you want to call a large, otherwise-combinational pipeline
-stage (a multiplier, a divider, a deep arithmetic chain) from inside such a context, and
-you're fine with it taking several cycles internally — its result simply appears a fixed
-number of cycles later.
-
-`AUTOPIPELINE(func)` produces a callable tag object (the same all-caps factory style as
-`MULTI_CYCLE[...]`) that tells the synthesiser it's allowed to insert pipeline registers
-inside calls made through it, overriding the normal "must stay combinational here" rule —
-and, unlike a plain pragma, it exposes the **discovered stage count** back to your
-Python as `.latency`:
-
-The function does not need to be pre-divided into helpers that each happen to fit one
-clock. Elaboration exposes the primitive operations and their dependency wiring even
-when the body is one flat sequence, and the planner may register legal operation outputs
-or genuinely split supported wide arithmetic leaves. Helper boundaries are optional
-structure and a placement tie-break, not a prerequisite for autopipelining. See
-[`SYN_DESIGN.md`](SYN_DESIGN.md) and
-[`RAW_VHDL_DESIGN.md`](RAW_VHDL_DESIGN.md) for the lowering rules.
-
-```python
-MY_AP = AUTOPIPELINE(some_func)           # tool picks how many registers
-
-@hw_func
-def my_pipeline(i: my_struct_t) -> my_struct_t:
-    return MY_AP(i)                       # some_func(i), autopipelined
-
-MY_AP.latency    # int: the number of registers (clocks of latency) built
-```
-
-Build reports distinguish inserted register **slices** from combinational pipeline
-**stages**: zero slices is one stage, and `N` serial slices separate `N + 1` stages.
-The `latency` arguments below and `.latency` are the core's clock delay in inserted
-register slices, not the number of combinational regions. So `latency=2` separates
-three combinational regions and reports two clocks of core latency. Any explicit
-input/output registers around the call add their own cycles.
-
-`func` must already be `@hw_func`-decorated. In simulation, `MY_AP(x)` runs `func(x)`.
-It is delayed by `.latency` cycles when that is nonzero (see below), so while
-`.latency` is 0, `sim_call` behaves exactly as it would without the tag.
-
-### Controlling the latency: `latency=`, `start_latency=`, `max_latency=`
-
-By default the throughput sweep decides how many registers a call site gets,
-starting from none. Three optional keyword arguments change that:
-
-```python
-AUTOPIPELINE(some_func, latency=3)                       # fixed: exactly 3 registers, always
-AUTOPIPELINE(some_func, start_latency=2)                 # a starting guess for the sweep
-AUTOPIPELINE(some_func, max_latency=5)                   # a hard limit
-AUTOPIPELINE(some_func, start_latency=2, max_latency=5)  # guess and limit together
-```
-
-- **`latency=N` sets a fixed latency.** The call site always gets exactly `N`
-  registers, in every build. That includes `--comb`, `--no_synth` and `--yosys_json`
-  builds, which measure delays for just those call sites so the registers are still
-  placed sensibly. `.latency` reads `N` from the moment the object is constructed, and
-  native simulation, even a plain `pypeline_sim.py` run, delays the call by `N` cycles.
-  Use it when surrounding logic depends on an exact latency. If `N` registers can't
-  meet the clock goal, the build fails timing with a warning that names the
-  constraint. `latency=` can't be combined with the other two arguments. The C
-  frontend's `#pragma AUTOPIPELINE N` means the same thing.
-- **`start_latency=S` is a starting guess.** On its first iteration, a synthesizing
-  build's sweep builds `S` registers at the call site. It adds more if timing fails,
-  and the trimming pass after timing is met (`--pipeline_min_effort`) may still remove
-  some. `.latency` reads `S` instead of 0 during that build's first elaboration, so when
-  the guess is right the build skips the pin-and-confirm re-elaboration entirely.
-  Plain native sim and `--comb`-style builds ignore it, and `.latency` reads 0 there.
-- **`max_latency=M` is a limit.** The sweep never builds more than `M` registers at
-  the call site. If that limit is what keeps the design from meeting its clock goal,
-  the sweep stops, names the constraint in a warning, and the build fails timing.
-
-The rules for these arguments:
-- Values are ints of at least 0, and `start_latency` can't exceed `max_latency`.
-- On a function declared `@pipeline_latency(k)`, the values must agree with `k`.
-- A constrained call site's function can't itself contain another AUTOPIPELINE call
-  site.
-- The old `depth=` argument is now `latency=`.
-
-### `.latency`: reading back the discovered pipeline depth
-
-`.latency` is an ordinary Python `int` you can use for elaboration-time sizing. It is
-most useful for sizing FIFOs and counters that sit next to the free-running pipeline;
-this is exactly how `make_stream_pipeline` sizes its output FIFO automatically (see
-[Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline)).
-A fixed `latency=N` always reads `N`. Otherwise `.latency` reads **0**:
-
-- always in plain native Pypeline sim (`pypeline_sim.py` run directly, or
-  `pypelinec --sim --comb` — no synthesis ever runs),
-- always in `--comb` / `--no_synth` / `--yosys_json` builds (no throughput sweep runs),
-- during the bootstrap elaboration pass of a real synthesizing build, unless
-  `start_latency=S` is given, in which case it reads `S`.
-
-On a real build, the `pypelinec` driver's **pin-and-confirm** loop makes the value real:
-the design is first elaborated with `.latency` reading 0 and swept as usual; the
-discovered stage counts are then installed and the design re-elaborated, with the
-previous sweep's pipelining carried over as pinned seeds so only a **seeded confirmation
-synthesis** runs per pass (not a fresh sweep). The loop repeats until the stage counts
-harvested from the built result equal the values the design's Python consumed — an extra
-pass is normal when realizing the seeded slices hierarchically (e.g. into pipelined
-built-in div entities with their own stage granularity) changes the total — so on exit
-the `.latency` your Python consumed is guaranteed equal to the stage count of the
-hardware actually built. Designs that never read `.latency` pay nothing: the loop exits
-after the ordinary single sweep. The same goes for designs whose reads already match
-what was built, such as fixed `latency=` call sites or a correct `start_latency=`
-guess. (See `docs/SYN_DESIGN.md` for the loop's details and
-failure modes.) A non-`--comb` `pypelinec --sim` run then launches native simulation
-with those same latencies installed **and emulated** — `.latency` reads the real value
-during the sim's design import too, and every AUTOPIPELINE call site behaves as an
-N-stage pipeline (see the "Pipelined native sim" section in `docs/pypeline_sim_DESIGN.md`).
-
-**Construction timing matters**: construct `AUTOPIPELINE(...)` once, eagerly, as plain
-Python — typically at a factory function's own top level — and capture the object by
-closure into whatever `@hw_func` body calls it. That's what makes `.latency` readable
-by the surrounding Python. Constructing it inline inside a `@hw_func` body still
-pipelines correctly, but nothing outside that body can read its `.latency`.
-
-### Example
-
-This mirrors the shape of `examples/autopipelined_submodules.c`: a free-running
-combinational pipeline stage, instantiated from inside a function that also has a
-register (so without `AUTOPIPELINE`, the call would have to be a single-cycle
-combinational instance):
-
-```python
-@hw_func
-def pipeline_stage(x: uint32_t) -> uint32_t:
-    return x / ~x   # some deep/slow, multi-cycle-worthy combinational logic
-
-PIPELINE_STAGE_AP = AUTOPIPELINE(pipeline_stage)
-
-@hw_func
-def wrapper(pipeline_in: uint32_t) -> uint32_t:
-    # `phase` is just some placeholder state — a stand-in for any small FSM
-    # running alongside the pipeline. It is what makes this a register/feedback
-    # context, so that without AUTOPIPELINE the `pipeline_stage` call would be
-    # forced to complete combinationally within this same cycle.
-    phase: Reg[uint2_t]
-    phase = phase + 1
-
-    # AUTOPIPELINE overrides that: the synthesiser may slice pipeline_stage's
-    # logic across multiple cycles.
-    return PIPELINE_STAGE_AP(pipeline_in)
-```
-
-`Reg[T]` and bare struct/array locals (like `rv` above) only simulate correctly under
-`sim_call` when their own function carries `@hw_func` (or `@MAIN`) — see
-[Registers: `Reg[T]`](#registers-regt) / [Parametric Hardware with Factory Functions](#parametric-hardware-with-factory-functions).
-
-See `src/tests/pypeline_tests/inst/autopipeline_test.py` for the full example.
-
-### Boundary registers around an AUTOPIPELINE'd call
-
-To register the pipeline's inputs/outputs at its boundary rather than leaving them
-combinational, wrap the call with plain unconditional `Reg[T]`s (the same pattern
-`make_stream_pipeline` uses internally):
-
-```python
-@hw_func
-def pipeline_stage_registered(x: uint32_t) -> uint32_t:
-    in_reg: Reg[uint32_t]
-    out_reg: Reg[uint32_t]
-    rv: uint32_t = out_reg
-    out_reg = PIPELINE_STAGE_AP(in_reg)
-    in_reg = x
-    return rv
-```
-
-Note `.latency` reports the AUTOPIPELINE'd core's own depth only — boundary registers
-you add around the call are yours to count (e.g. total latency here is
-`1 + PIPELINE_STAGE_AP.latency + 1`).
-
-### `AUTOFSM(...)`: the opposite trade-off
-
-`AUTOPIPELINE` spends area to get throughput: one full copy of your function's
-hardware, sliced into stages, accepting a new input every cycle. `AUTOFSM` spends
-time to get area: **one copy of each distinct operation**, reused across several
-cycles.
-
-```python
-@hw_func
-def next_state(s: state_t) -> state_t:    # pure: no Reg, no Feedback, no globals
-    ...
-
-UPDATE = AUTOFSM(next_state)              # tool picks how many states
-
-@MAIN(40.0)
-def top() -> state_t:
-    state: Reg[state_t]
-    req: UPDATE.in_stream_t               # auto-generated {data, valid} struct
-    req.data = state
-    req.valid = start_pulse
-    resp = UPDATE(req)                    # resp: {data, valid}
-    if resp.valid:
-        state = resp.data
-    return state
-
-UPDATE.latency                            # fixed in→out cycle count; 0 until known
-```
-
-Twelve identical adds in `next_state` — whether written as a Python loop that
-elaborates unrolled, or as twelve separate lines — become **one** adder used in
-twelve different states. Nothing in your source says how many states to use or
-what shares what: the build measures your operations' delays, schedules them
-against the clock goal, and prints what it did:
-
-```
-AUTOFSM pypeline_design_next_state: 28 ops -> 9 shared unit(s), 8 states,
-        latency 9 clks, budget 22.50 ns/state (scale 0.900), worst state 13.10 ns
-  BIN_OP_PLUS_int16_t_int16_t x12 -> 1 unit
-  ...
-```
-
-This is the right tool when a computation has a lot of *slack* — something that
-runs once per video frame, or once per packet, while a million cycles go by.
-Parallel combinational logic for such a thing is hardware sitting idle almost
-all of the time.
-
-**The contract**
-
-- `func` must be `@hw_func`, **pure** (no `Reg`/`Feedback`/global wires anywhere
-  in its call subtree), and take exactly **one** annotated argument with an
-  annotated return type. Bundle several inputs into an `@struct` — the same rule
-  `make_stream_pipeline` and `make_stream_interface_mcp` follow.
-- The argument is a `{data, valid}` struct: use `MY_FSM.in_stream_t`, or any
-  structurally identical type (`make_stream_t(in_t)` works).
-- An input is accepted **only while the FSM is idle**. A `valid` pulse asserted
-  while it is busy is IGNORED — there is no `ready` signal in this version.
-  Space requests at least `.latency` cycles apart; that is what `.latency` is
-  for. For a real valid/ready stream port that does this bookkeeping for you
-  — including holding a result across a stalled consumer instead of dropping
-  it — see [Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm).
-- The result arrives with a one-cycle `valid` pulse exactly `.latency` cycles
-  after the accepted input. `.data` holds the last result in between. Initiation
-  interval == `.latency`.
-- Construct `AUTOFSM(...)` once, eagerly, at module or factory level and capture
-  it by closure — same rule and same reason as `AUTOPIPELINE`.
-
-**Write the caller to react to `valid`, not to count cycles.** `.latency` is 0
-in plain native sim and in `--comb`/`--no_synth` builds (where the call site is
-a zero-latency passthrough) and a real number in a full build. Code that waits
-for `resp.valid` is correct in both, and stays correct when the tool changes its
-mind about the state count:
-
-```python
-busy: Reg[uint1_t]
-req.valid = 0
-if busy == 0:
-    req.valid = 1
-    busy = 1
-resp = MY_FSM(req)
-if resp.valid:
-    result = resp.data
-    busy = 0
-```
-
-**If the FSM misses timing**, the build says so, shrinks its per-state budget,
-reschedules into smaller states and tries again — the same iteration you get
-from the sweep adding pipeline stages. `--autofsm_budget_scale` sets the
-starting point (default `0.9` of the clock period) if you want to begin tighter
-or looser. One thing it cannot fix: a single indivisible operation slower than
-your clock (a float64 multiply, say). That is reported as `AT FLOOR`, because no
-number of extra states makes one multiplier faster.
-
-**Capping the latency.** `AUTOFSM(func, max_latency=N)` says the result must
-arrive within N cycles. Sharing everything onto one unit of each kind is the
-smallest design and the slowest, so a cap is met the only way it can be — by
-building a second copy of whatever is forcing the states:
-
-```python
-UPDATE = AUTOFSM(next_state, max_latency=8)
-```
-
-It is a hard constraint. If no schedule meeting your clock goal fits in N
-cycles, the build fails and tells you the latency it actually needs, rather than
-handing back something slower than you asked for.
-
-**The build also looks for the smallest FSM it can find**, and prints what it
-decided:
-
-```
-AUTOFSM pypeline_design_next_state: 28 ops -> 9 shared unit(s), 8 states, ...
-  area search: -7.8% area vs sharing everything (estimated 260 against 282),
-               3 kind(s) opened up, 1 kind(s) given extra unit(s),
-               110 candidate schedule(s) tried
-```
-
-Sharing is not free: every shared unit needs a multiplexer picking its operands
-per state, and more states means more registers holding values in between. For
-an expensive unit — a multiplier, a wide adder — sharing wins easily. For a
-cheap one, the multiplexer can cost more than a second copy of the unit would,
-and the search will decline to share it. It also goes the other way, breaking an
-operation down into smaller pieces when several different operations turn out to
-be built from the same ones and can then share those instead. If soft-operator
-implementations are available (`include/pypeline/operators/`) it can follow that
-all the way down to logic gates — and will normally decide, correctly, that
-gates are far too small a thing to share.
-
-The search never returns something its model calls bigger than plain
-share-everything. It may spend unused timing margin, but never beyond the
-scaled clock budget; the real synthesis/tighten loop remains the final timing
-authority. `--autofsm_no_area_sweep` turns the search *off*, which is useful
-mainly for comparing the two.
-
-**How much the search can do depends on your clock goal**, and not in the
-direction people expect. A high goal FORCES decomposition — an operation that
-cannot fit one state is split whether or not that saves area — but leaves the
-pieces shared. A LOW goal is what gives the search room to decompose *by
-choice*: with a budget big enough for the whole operation, keeping it atomic is
-the starting point and opening it up is a decision made on area grounds. So if
-you want the smallest design and do not care about speed, ask for a low clock
-and let the search work; asking for a high one takes the choice away from it.
-See [`docs/AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md) for what is and is not
-openable (signed multiplies and floating point are not).
-
-`--autofsm_sweep_debug` prints one line per candidate the search considers —
-the move, its estimated area, and why it was accepted or rejected. Without it
-the build log reports only the final choice, which makes "the search declined
-to move" indistinguishable from "the search never looked".
-
-`--autofsm_open SUBSTR` and `--autofsm_unshare SUBSTR=N` skip the search and
-build one explicitly chosen point instead: open up the unit whose entity name
-contains `SUBSTR`, or give it `N` copies. These exist for measurement — the
-tool cannot read area back from a synthesis tool, so the only way to check that
-the search's answer really is the smallest is to build the alternatives it
-passed over and count cells, which is what
-`src/tests/pypeline_tests/inst/autofsm_min_area_verify_test.py` does. An
-ambiguous or unmatched `SUBSTR` is an error rather than a silent no-op.
-
-The mux cost is based on **distinct values per port**, not simply the number of
-operations using the unit. If twenty states all feed the same coefficient or
-the same allocated register into one port, that port is a wire; if they use two
-values, it is a 2-row mux. State-to-row selectors are shared between ports with
-the same mapping. Under sky130, non-overlapping same-type values from different
-units may also share a register when the real FF saving exceeds the writeback
-mux cost and the mux still fits the clock budget.
-
-### Control path — `--autofsm_ctl`
-
-Something has to decode the state into "which operand does this unit take",
-"which registers are written now" and "what is the next state". `--autofsm_ctl`
-picks how, and the default is normally right:
-
-| value | how state is decoded | comparators per FSM |
-|---|---|---|
-| `auto` (default) | area-rank v3 and onehot independently; keep the smaller feasible schedule | selected encoding's count |
-| `v3` | constant lookup tables indexed by the state | one (the accept) |
-| `v2` | an equality comparator per state per unit, in priority chains | O(states × units) |
-| `onehot` | one bit per state; every control signal is a bit read | zero |
-
-`v2` exists for A/B comparison against `v3` — it is measurably both bigger and
-slower. `onehot` can eliminate more decode but spends
-a flip-flop per state where v3 spends `log2(states)`. `auto` evaluates that
-trade with the active area model and prints both scores; the resolved choice is
-part of the schedule's identity, so switching it re-measures rather than
-reusing timing from the other one.
-
-Working examples: `examples/pypeline/autofsm_donut_update.py` (per-frame
-rotation math) and `examples/pypeline/float_sine_autofsm.py` (a float64
-polynomial onto one multiplier). Full design notes in
-[`docs/AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md).
-
----
+An ordinary call is same-cycle combinational (Part I). The sections below cover results
+that take more than one clock cycle. First comes `MULTI_CYCLE[...]`, a hand-written timing
+constraint that gives one slow register-to-register path `N` cycles to settle. Then come the
+three **automatic** (HLS-like) constructs, where the tool picks the implementation from your
+clock goal. `AUTO_PIPELINE` pipelines logic for throughput. `AUTO_MULTI_CYCLE` tunes a
+multi-cycle path's cycle count. `AUTO_FSM` folds logic onto shared hardware for area.
+
+Each one has a valid/ready stream wrapper in Part III, so neighboring hardware doesn't need
+to know which one it's talking to: `make_stream_auto_pipeline`, `make_stream_multi_cycle` /
+`make_stream_auto_multi_cycle`, and `make_stream_auto_fsm`.
 
 ## Multi-Cycle Paths: `MULTI_CYCLE[...]`
 
@@ -2577,19 +2191,262 @@ without a `PART()` target it has no effect. See
 `examples/mcp/mcp_test.c`) for the full example, including the `PART(...)` call needed to
 target a real device.
 
-### Letting the tool pick the cycle count: `AUTOMCP(...)`
+**Letting the tool choose `N`.** [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle-new) is the
+tool-tuned version of this tag. The throughput sweep picks the cycle count, and your logic
+reads it back as `.latency`.
+
+### Wrapping a whole slow function
+
+The launch/capture pattern above is the right tool when a multi-cycle path sits between
+two registers you are already managing yourself inside a larger function. When the slow
+logic is instead a whole standalone function, `make_stream_multi_cycle` wraps it in exactly
+this FSM for you and presents the result as a valid/ready stream. Its ports are stream
+[interfaces](#bidirectional-ports-interface), so it is covered later alongside the
+other function-to-stream wrapper — see
+[`make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle).
+
+---
+
+## Automatic (HLS-like) Implementation
+
+In these three constructs you describe *what* to compute as an ordinary pure `@hw_func`.
+The tool then decides *how* to spend clock cycles on it, measuring delays against the
+`@MAIN` clock goal the same way the throughput sweep does for everything else.
+
+| | [`AUTO_PIPELINE(func)`](#auto_pipeline) | [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle-new) | [`AUTO_FSM(func)`](#auto_fsm-new-experimental) |
+|---|---|---|---|
+| Status | Stable | New | New, experimental |
+| The tool chooses | how many pipeline registers go inside calls made through it | how many cycles a `.start` → `.end` register path gets | how many FSM states there are and which operations share hardware |
+| Trade-off | area for throughput: a new input every cycle | throughput for timing: one result every `latency + 1` cycles, no added logic | throughput for area: one copy of each distinct operation, reused across states |
+| `.latency` | inserted register slices | cycles the path is given | cycles from accepted input to result (also the initiation interval) |
+| Constraint arguments | `latency=`, `start_latency=`, `max_latency=` | `latency=`, `start_latency=`, `max_latency=` | `max_latency=` |
+| Stream wrapper | [`make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline) | [`make_stream_auto_multi_cycle`](#tool-chosen-cycle-count-make_stream_auto_multi_cycle-new) | [`make_stream_auto_fsm`](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental) |
+
+```text
+AUTO_PIPELINE -- spread across SPACE (throughput):
+
+  in -->[stage 1]--|Reg|-->[stage 2]--|Reg|-->[stage 3]--> out
+         (one full copy of the logic, sliced into pipeline stages;
+          a new input can be accepted every cycle)
+
+AUTO_FSM -- spread across TIME (area):
+
+           +-----------------+
+  in ----->|  ONE shared op  |<-----+
+           +--------+--------+      |
+                    |         state/cycle
+                    v          counter
+              (result used a few    |
+               cycles later) -------+
+         (one copy of each distinct operation, reused across states)
+```
+
+Rules shared by all three:
+
+- **Construct the tag once, eagerly, as plain Python** (at module level or at a factory
+  function's top level) and capture it by closure in the `@hw_func` that uses it. That is
+  what lets the surrounding Python read `.latency`.
+- **`.latency` is an ordinary Python `int` at elaboration time**, so you can use it to size
+  FIFOs, counters and handshakes. Before any synthesis it reads the fixed or starting value
+  (see each section for the default). A synthesizing build then re-elaborates the design with
+  the values it actually built (pin-and-confirm), so the `.latency` your Python consumed always
+  matches the hardware. A following non-`--comb` `pypelinec --sim` sees the same values.
+- **Write handshakes that react to the chosen value**, not to a number you guessed. The tool is
+  free to change its mind when the clock goal or the design changes.
+
+These were previously spelled `AUTOPIPELINE`, `AUTOMCP` and `AUTOFSM`. Their stream wrappers
+were `make_stream_pipeline`, `make_stream_interface_mcp`, `make_stream_interface_automcp` and
+`make_stream_autofsm`.
+
+### `AUTO_PIPELINE(...)`
+
+By default, a function called from inside a register or feedback context must complete
+**combinationally, in the same cycle** as its caller — the synthesiser is not free to
+split its logic across multiple clock cycles. That's normally what you want for a small
+state machine. But sometimes you want to call a large, otherwise-combinational pipeline
+stage (a multiplier, a divider, a deep arithmetic chain) from inside such a context, and
+you're fine with it taking several cycles internally — its result simply appears a fixed
+number of cycles later.
+
+`AUTO_PIPELINE(func)` produces a callable tag object (the same all-caps factory style as
+`MULTI_CYCLE[...]`) that tells the synthesiser it's allowed to insert pipeline registers
+inside calls made through it, overriding the normal "must stay combinational here" rule —
+and, unlike a plain pragma, it exposes the **discovered stage count** back to your
+Python as `.latency`:
+
+The function does not need to be pre-divided into helpers that each happen to fit one
+clock. Elaboration exposes the primitive operations and their dependency wiring even
+when the body is one flat sequence, and the planner may register legal operation outputs
+or genuinely split supported wide arithmetic leaves. Helper boundaries are optional
+structure and a placement tie-break, not a prerequisite for auto-pipelining. See
+[`SYN_DESIGN.md`](SYN_DESIGN.md) and
+[`RAW_VHDL_DESIGN.md`](RAW_VHDL_DESIGN.md) for the lowering rules.
+
+```python
+MY_AP = AUTO_PIPELINE(some_func)           # tool picks how many registers
+
+@hw_func
+def my_pipeline(i: my_struct_t) -> my_struct_t:
+    return MY_AP(i)                       # some_func(i), auto-pipelined
+
+MY_AP.latency    # int: the number of registers (clocks of latency) built
+```
+
+Build reports distinguish inserted register **slices** from combinational pipeline
+**stages**: zero slices is one stage, and `N` serial slices separate `N + 1` stages.
+The `latency` arguments below and `.latency` are the core's clock delay in inserted
+register slices, not the number of combinational regions. So `latency=2` separates
+three combinational regions and reports two clocks of core latency. Any explicit
+input/output registers around the call add their own cycles.
+
+`func` must already be `@hw_func`-decorated. In simulation, `MY_AP(x)` runs `func(x)`.
+It is delayed by `.latency` cycles when that is nonzero (see below), so while
+`.latency` is 0, `sim_call` behaves exactly as it would without the tag.
+
+#### Controlling the latency: `latency=`, `start_latency=`, `max_latency=`
+
+By default the throughput sweep decides how many registers a call site gets,
+starting from none. Three optional keyword arguments change that:
+
+```python
+AUTO_PIPELINE(some_func, latency=3)                       # fixed: exactly 3 registers, always
+AUTO_PIPELINE(some_func, start_latency=2)                 # a starting guess for the sweep
+AUTO_PIPELINE(some_func, max_latency=5)                   # a hard limit
+AUTO_PIPELINE(some_func, start_latency=2, max_latency=5)  # guess and limit together
+```
+
+- **`latency=N` sets a fixed latency.** The call site always gets exactly `N`
+  registers, in every build. That includes `--comb`, `--no_synth` and `--yosys_json`
+  builds, which measure delays for just those call sites so the registers are still
+  placed sensibly. `.latency` reads `N` from the moment the object is constructed, and
+  native simulation, even a plain `pypeline_sim.py` run, delays the call by `N` cycles.
+  Use it when surrounding logic depends on an exact latency. If `N` registers can't
+  meet the clock goal, the build fails timing with a warning that names the
+  constraint. `latency=` can't be combined with the other two arguments. The C
+  frontend's `#pragma AUTOPIPELINE N` means the same thing.
+- **`start_latency=S` is a starting guess.** On its first iteration, a synthesizing
+  build's sweep builds `S` registers at the call site. It adds more if timing fails,
+  and the trimming pass after timing is met (`--pipeline_min_effort`) may still remove
+  some. `.latency` reads `S` instead of 0 during that build's first elaboration, so when
+  the guess is right the build skips the pin-and-confirm re-elaboration entirely.
+  Plain native sim and `--comb`-style builds ignore it, and `.latency` reads 0 there.
+- **`max_latency=M` is a limit.** The sweep never builds more than `M` registers at
+  the call site. If that limit is what keeps the design from meeting its clock goal,
+  the sweep stops, names the constraint in a warning, and the build fails timing.
+
+The rules for these arguments:
+- Values are ints of at least 0, and `start_latency` can't exceed `max_latency`.
+- On a function declared `@pipeline_latency(k)`, the values must agree with `k`.
+- A constrained call site's function can't itself contain another AUTO_PIPELINE call
+  site.
+- The old `depth=` argument is now `latency=`.
+
+#### `.latency`: reading back the discovered pipeline depth
+
+`.latency` is an ordinary Python `int` you can use for elaboration-time sizing. It is
+most useful for sizing FIFOs and counters that sit next to the free-running pipeline;
+this is exactly how `make_stream_auto_pipeline` sizes its output FIFO automatically (see
+[Pipelined Stream Wrappers: `make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline)).
+A fixed `latency=N` always reads `N`. Otherwise `.latency` reads **0**:
+
+- always in plain native Pypeline sim (`pypeline_sim.py` run directly, or
+  `pypelinec --sim --comb` — no synthesis ever runs),
+- always in `--comb` / `--no_synth` / `--yosys_json` builds (no throughput sweep runs),
+- during the bootstrap elaboration pass of a real synthesizing build, unless
+  `start_latency=S` is given, in which case it reads `S`.
+
+On a real build, the `pypelinec` driver's **pin-and-confirm** loop makes the value real:
+the design is first elaborated with `.latency` reading 0 and swept as usual; the
+discovered stage counts are then installed and the design re-elaborated, with the
+previous sweep's pipelining carried over as pinned seeds so only a **seeded confirmation
+synthesis** runs per pass (not a fresh sweep). The loop repeats until the stage counts
+harvested from the built result equal the values the design's Python consumed — an extra
+pass is normal when realizing the seeded slices hierarchically (e.g. into pipelined
+built-in div entities with their own stage granularity) changes the total — so on exit
+the `.latency` your Python consumed is guaranteed equal to the stage count of the
+hardware actually built. Designs that never read `.latency` pay nothing: the loop exits
+after the ordinary single sweep. The same goes for designs whose reads already match
+what was built, such as fixed `latency=` call sites or a correct `start_latency=`
+guess. (See `docs/SYN_DESIGN.md` for the loop's details and
+failure modes.) A non-`--comb` `pypelinec --sim` run then launches native simulation
+with those same latencies installed **and emulated** — `.latency` reads the real value
+during the sim's design import too, and every AUTO_PIPELINE call site behaves as an
+N-stage pipeline (see the "Pipelined native sim" section in `docs/pypeline_sim_DESIGN.md`).
+
+**Construction timing matters**: construct `AUTO_PIPELINE(...)` once, eagerly, as plain
+Python — typically at a factory function's own top level — and capture the object by
+closure into whatever `@hw_func` body calls it. That's what makes `.latency` readable
+by the surrounding Python. Constructing it inline inside a `@hw_func` body still
+pipelines correctly, but nothing outside that body can read its `.latency`.
+
+#### Example
+
+This mirrors the shape of `examples/autopipelined_submodules.c`: a free-running
+combinational pipeline stage, instantiated from inside a function that also has a
+register (so without `AUTO_PIPELINE`, the call would have to be a single-cycle
+combinational instance):
+
+```python
+@hw_func
+def pipeline_stage(x: uint32_t) -> uint32_t:
+    return x / ~x   # some deep/slow, multi-cycle-worthy combinational logic
+
+PIPELINE_STAGE_AP = AUTO_PIPELINE(pipeline_stage)
+
+@hw_func
+def wrapper(pipeline_in: uint32_t) -> uint32_t:
+    # `phase` is just some placeholder state — a stand-in for any small FSM
+    # running alongside the pipeline. It is what makes this a register/feedback
+    # context, so that without AUTO_PIPELINE the `pipeline_stage` call would be
+    # forced to complete combinationally within this same cycle.
+    phase: Reg[uint2_t]
+    phase = phase + 1
+
+    # AUTO_PIPELINE overrides that: the synthesiser may slice pipeline_stage's
+    # logic across multiple cycles.
+    return PIPELINE_STAGE_AP(pipeline_in)
+```
+
+`Reg[T]` and bare struct/array locals (like `rv` above) only simulate correctly under
+`sim_call` when their own function carries `@hw_func` (or `@MAIN`) — see
+[Registers: `Reg[T]`](#registers-regt) / [Parametric Hardware with Factory Functions](#parametric-hardware-with-factory-functions).
+
+See `src/tests/pypeline_tests/inst/auto_pipeline_test.py` for the full example.
+
+#### Boundary registers around an AUTO_PIPELINE'd call
+
+To register the pipeline's inputs/outputs at its boundary rather than leaving them
+combinational, wrap the call with plain unconditional `Reg[T]`s (the same pattern
+`make_stream_auto_pipeline` uses internally):
+
+```python
+@hw_func
+def pipeline_stage_registered(x: uint32_t) -> uint32_t:
+    in_reg: Reg[uint32_t]
+    out_reg: Reg[uint32_t]
+    rv: uint32_t = out_reg
+    out_reg = PIPELINE_STAGE_AP(in_reg)
+    in_reg = x
+    return rv
+```
+
+Note `.latency` reports the AUTO_PIPELINE'd core's own depth only — boundary registers
+you add around the call are yours to count (e.g. total latency here is
+`1 + PIPELINE_STAGE_AP.latency + 1`).
+
+### `AUTO_MULTI_CYCLE(...)` (New)
 
 Picking `N` by hand means guessing how slow the logic really is. Too small, and the build
-fails timing; too large, and throughput is wasted. `AUTOMCP(...)` is the tool-tuned
-version of `MULTI_CYCLE[N]`, in the same spirit as `AUTOPIPELINE(...)`: the pypelinec
+fails timing; too large, and throughput is wasted. `AUTO_MULTI_CYCLE(...)` is the tool-tuned
+version of `MULTI_CYCLE[N]`, in the same spirit as `AUTO_PIPELINE(...)`: the pypelinec
 throughput sweep chooses the cycle count.
 
 ```python
-from pypeline import Reg, AUTOMCP, uint8_t
+from pypeline import Reg, AUTO_MULTI_CYCLE, uint8_t
 
-MC = AUTOMCP(start_latency=3)                # sweep starts at 3 cycles
-# MC = AUTOMCP(start_latency=3, max_latency=8)   ...and never goes past 8
-# MC = AUTOMCP(latency=4)                         fixed: exactly 4 cycles
+MC = AUTO_MULTI_CYCLE(start_latency=3)                # sweep starts at 3 cycles
+# MC = AUTO_MULTI_CYCLE(start_latency=3, max_latency=8)   ...and never goes past 8
+# MC = AUTO_MULTI_CYCLE(latency=4)                         fixed: exactly 4 cycles
 
 @hw_func
 def my_fsm(i: my_struct_t) -> my_struct_t:
@@ -2610,31 +2467,216 @@ def my_fsm(i: my_struct_t) -> my_struct_t:
   When the failing path runs from this tag's `.start` register to its `.end` register,
   the count jumps to what the reported slack needs. It never drops below where it started
   and never exceeds `max_latency=`. A cap that blocks the clock goal fails the build with
-  `limited by AUTOMCP ...` and `TIMING NOT MET`.
-- **The design is rebuilt with the final count.** Like AUTOPIPELINE's `.latency`, the
+  `limited by AUTO_MULTI_CYCLE ...` and `TIMING NOT MET`.
+- **The design is rebuilt with the final count.** Like AUTO_PIPELINE's `.latency`, the
   build re-elaborates the design so every `.latency`-derived constant matches the
   constraint, and a following `--sim` counts the same cycles. If the count never moved,
   that extra pass is skipped.
-- **Your logic must read `.latency`.** An `AUTOMCP` whose `.latency` nothing reads can't
+- **Your logic must read `.latency`.** An `AUTO_MULTI_CYCLE` whose `.latency` nothing reads can't
   follow the sweep, so a synthesizing build refuses it. For a hand-timed path, use
-  `MULTI_CYCLE[N]` or `AUTOMCP(latency=N)`.
+  `MULTI_CYCLE[N]` or `AUTO_MULTI_CYCLE(latency=N)`.
 - **Construct it once, outside any `@hw_func` body**, and capture it by closure, e.g. at
   a factory's top level. Constructing it inside a body is an error.
 - **Vivado only**, like `MULTI_CYCLE[...]`.
 
 For the common case of one slow function behind a valid/ready handshake, use
-[`make_stream_interface_automcp`](#multi-cycle-stream-wrapper-make_stream_interface_mcp),
+[`make_stream_auto_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle),
 which does all of this for you.
 
-### Wrapping a whole slow function
+### `AUTO_FSM(...)` (New, Experimental)
 
-The launch/capture pattern above is the right tool when a multi-cycle path sits between
-two registers you are already managing yourself inside a larger function. When the slow
-logic is instead a whole standalone function, `make_stream_interface_mcp` wraps it in exactly
-this FSM for you and presents the result as a valid/ready stream. Its ports are stream
-[interfaces](#bidirectional-ports-interface), so it is covered later alongside the
-other function-to-stream wrapper — see
-[`make_stream_interface_mcp`](#multi-cycle-stream-wrapper-make_stream_interface_mcp).
+> **Experimental.** `AUTO_FSM` is new. Its scheduler, minimum-area search and `--auto_fsm_*`
+> command-line options may still change. It has no `ready` backpressure of its own; for a
+> real valid/ready port use
+> [`make_stream_auto_fsm`](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental).
+
+`AUTO_PIPELINE` spends area to get throughput: one full copy of your function's
+hardware, sliced into stages, accepting a new input every cycle. `AUTO_FSM` spends
+time to get area: **one copy of each distinct operation**, reused across several
+cycles.
+
+```python
+@hw_func
+def next_state(s: state_t) -> state_t:    # pure: no Reg, no Feedback, no globals
+    ...
+
+UPDATE = AUTO_FSM(next_state)              # tool picks how many states
+
+@MAIN(40.0)
+def top() -> state_t:
+    state: Reg[state_t]
+    req: UPDATE.in_stream_t               # auto-generated {data, valid} struct
+    req.data = state
+    req.valid = start_pulse
+    resp = UPDATE(req)                    # resp: {data, valid}
+    if resp.valid:
+        state = resp.data
+    return state
+
+UPDATE.latency                            # fixed in→out cycle count; 0 until known
+```
+
+Twelve identical adds in `next_state` — whether written as a Python loop that
+elaborates unrolled, or as twelve separate lines — become **one** adder used in
+twelve different states. Nothing in your source says how many states to use or
+what shares what: the build measures your operations' delays, schedules them
+against the clock goal, and prints what it did:
+
+```
+AUTO_FSM pypeline_design_next_state: 28 ops -> 9 shared unit(s), 8 states,
+        latency 9 clks, budget 22.50 ns/state (scale 0.900), worst state 13.10 ns
+  BIN_OP_PLUS_int16_t_int16_t x12 -> 1 unit
+  ...
+```
+
+This is the right tool when a computation has a lot of *slack* — something that
+runs once per video frame, or once per packet, while a million cycles go by.
+Parallel combinational logic for such a thing is hardware sitting idle almost
+all of the time.
+
+**The contract**
+
+- `func` must be `@hw_func`, **pure** (no `Reg`/`Feedback`/global wires anywhere
+  in its call subtree), and take exactly **one** annotated argument with an
+  annotated return type. Bundle several inputs into an `@struct` — the same rule
+  `make_stream_auto_pipeline` and `make_stream_multi_cycle` follow.
+- The argument is a `{data, valid}` struct: use `MY_FSM.in_stream_t`, or any
+  structurally identical type (`make_stream_t(in_t)` works).
+- An input is accepted **only while the FSM is idle**. A `valid` pulse asserted
+  while it is busy is IGNORED — there is no `ready` signal in this version.
+  Space requests at least `.latency` cycles apart; that is what `.latency` is
+  for. For a real valid/ready stream port that does this bookkeeping for you
+  — including holding a result across a stalled consumer instead of dropping
+  it — see [Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental).
+- The result arrives with a one-cycle `valid` pulse exactly `.latency` cycles
+  after the accepted input. `.data` holds the last result in between. Initiation
+  interval == `.latency`.
+- Construct `AUTO_FSM(...)` once, eagerly, at module or factory level and capture
+  it by closure — same rule and same reason as `AUTO_PIPELINE`.
+
+**Write the caller to react to `valid`, not to count cycles.** `.latency` is 0
+in plain native sim and in `--comb`/`--no_synth` builds (where the call site is
+a zero-latency passthrough) and a real number in a full build. Code that waits
+for `resp.valid` is correct in both, and stays correct when the tool changes its
+mind about the state count:
+
+```python
+busy: Reg[uint1_t]
+req.valid = 0
+if busy == 0:
+    req.valid = 1
+    busy = 1
+resp = MY_FSM(req)
+if resp.valid:
+    result = resp.data
+    busy = 0
+```
+
+**If the FSM misses timing**, the build says so, shrinks its per-state budget,
+reschedules into smaller states and tries again — the same iteration you get
+from the sweep adding pipeline stages. `--auto_fsm_budget_scale` sets the
+starting point (default `0.9` of the clock period) if you want to begin tighter
+or looser. One thing it cannot fix: a single indivisible operation slower than
+your clock (a float64 multiply, say). That is reported as `AT FLOOR`, because no
+number of extra states makes one multiplier faster.
+
+**Capping the latency.** `AUTO_FSM(func, max_latency=N)` says the result must
+arrive within N cycles. Sharing everything onto one unit of each kind is the
+smallest design and the slowest, so a cap is met the only way it can be — by
+building a second copy of whatever is forcing the states:
+
+```python
+UPDATE = AUTO_FSM(next_state, max_latency=8)
+```
+
+It is a hard constraint. If no schedule meeting your clock goal fits in N
+cycles, the build fails and tells you the latency it actually needs, rather than
+handing back something slower than you asked for.
+
+**The build also looks for the smallest FSM it can find**, and prints what it
+decided:
+
+```
+AUTO_FSM pypeline_design_next_state: 28 ops -> 9 shared unit(s), 8 states, ...
+  area search: -7.8% area vs sharing everything (estimated 260 against 282),
+               3 kind(s) opened up, 1 kind(s) given extra unit(s),
+               110 candidate schedule(s) tried
+```
+
+Sharing is not free: every shared unit needs a multiplexer picking its operands
+per state, and more states means more registers holding values in between. For
+an expensive unit — a multiplier, a wide adder — sharing wins easily. For a
+cheap one, the multiplexer can cost more than a second copy of the unit would,
+and the search will decline to share it. It also goes the other way, breaking an
+operation down into smaller pieces when several different operations turn out to
+be built from the same ones and can then share those instead. If soft-operator
+implementations are available (`include/pypeline/operators/`) it can follow that
+all the way down to logic gates — and will normally decide, correctly, that
+gates are far too small a thing to share.
+
+The search never returns something its model calls bigger than plain
+share-everything. It may spend unused timing margin, but never beyond the
+scaled clock budget; the real synthesis/tighten loop remains the final timing
+authority. `--auto_fsm_no_area_sweep` turns the search *off*, which is useful
+mainly for comparing the two.
+
+**How much the search can do depends on your clock goal**, and not in the
+direction people expect. A high goal FORCES decomposition — an operation that
+cannot fit one state is split whether or not that saves area — but leaves the
+pieces shared. A LOW goal is what gives the search room to decompose *by
+choice*: with a budget big enough for the whole operation, keeping it atomic is
+the starting point and opening it up is a decision made on area grounds. So if
+you want the smallest design and do not care about speed, ask for a low clock
+and let the search work; asking for a high one takes the choice away from it.
+See [`docs/AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md) for what is and is not
+openable (signed multiplies and floating point are not).
+
+`--auto_fsm_sweep_debug` prints one line per candidate the search considers —
+the move, its estimated area, and why it was accepted or rejected. Without it
+the build log reports only the final choice, which makes "the search declined
+to move" indistinguishable from "the search never looked".
+
+`--auto_fsm_open SUBSTR` and `--auto_fsm_unshare SUBSTR=N` skip the search and
+build one explicitly chosen point instead: open up the unit whose entity name
+contains `SUBSTR`, or give it `N` copies. These exist for measurement — the
+tool cannot read area back from a synthesis tool, so the only way to check that
+the search's answer really is the smallest is to build the alternatives it
+passed over and count cells, which is what
+`src/tests/pypeline_tests/inst/auto_fsm_min_area_verify_test.py` does. An
+ambiguous or unmatched `SUBSTR` is an error rather than a silent no-op.
+
+The mux cost is based on **distinct values per port**, not simply the number of
+operations using the unit. If twenty states all feed the same coefficient or
+the same allocated register into one port, that port is a wire; if they use two
+values, it is a 2-row mux. State-to-row selectors are shared between ports with
+the same mapping. Under sky130, non-overlapping same-type values from different
+units may also share a register when the real FF saving exceeds the writeback
+mux cost and the mux still fits the clock budget.
+
+#### Control path — `--auto_fsm_ctl`
+
+Something has to decode the state into "which operand does this unit take",
+"which registers are written now" and "what is the next state". `--auto_fsm_ctl`
+picks how, and the default is normally right:
+
+| value | how state is decoded | comparators per FSM |
+|---|---|---|
+| `auto` (default) | area-rank v3 and onehot independently; keep the smaller feasible schedule | selected encoding's count |
+| `v3` | constant lookup tables indexed by the state | one (the accept) |
+| `v2` | an equality comparator per state per unit, in priority chains | O(states × units) |
+| `onehot` | one bit per state; every control signal is a bit read | zero |
+
+`v2` exists for A/B comparison against `v3` — it is measurably both bigger and
+slower. `onehot` can eliminate more decode but spends
+a flip-flop per state where v3 spends `log2(states)`. `auto` evaluates that
+trade with the active area model and prints both scores; the resolved choice is
+part of the schedule's identity, so switching it re-measures rather than
+reusing timing from the other one.
+
+Working examples: `examples/pypeline/auto_fsm_donut_update.py` (per-frame
+rotation math) and `examples/pypeline/float_sine_auto_fsm.py` (a float64
+polynomial onto one multiplier). Full design notes in
+[`docs/AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md).
 
 ---
 
@@ -2989,7 +3031,7 @@ The reverse channel is not limited to a one-bit `ready`: `make_stream_interface(
 feedback_t=...)` widens it to a credit count or a struct of flags, just as `bus_intrf` above
 carries `credit`/`halt`. Every streaming building block that follows —
 [AXI-Stream](#axi-stream-axis_t), [FIFOs](#fifos-make_stream_fifo),
-[pipelined wrappers](#pipelined-stream-wrappers-make_stream_pipeline), and the
+[pipelined wrappers](#pipelined-stream-wrappers-make_stream_auto_pipeline), and the
 [DSP blocks](#dsp-filters--signal-conditioning) — declares its ports as these two interface halves.
 
 ### Interface functions: write feedforward, get the reverse wired
@@ -3769,8 +3811,8 @@ designing around:
 
 **See also:** [Streams: `stream_t`](#streams-stream_t) ·
 [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer) ·
-[Pipelined Stream Wrappers: `make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline) ·
-[Multi-Cycle Stream Wrapper: `make_stream_interface_mcp`](#multi-cycle-stream-wrapper-make_stream_interface_mcp)
+[Pipelined Stream Wrappers: `make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline) ·
+[Multi-Cycle Stream Wrapper: `make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle)
 
 ---
 
@@ -3878,20 +3920,20 @@ each output actually moves when the opposite side's input changes.
 
 ---
 
-## Pipelined Stream Wrappers: `make_stream_pipeline`
+## Pipelined Stream Wrappers: `make_stream_auto_pipeline`
 
 ```text
-in_if -->|Reg|--> [ AUTOPIPELINE'd func ] -->|Reg|--> [ output FIFO ] --> out_if
+in_if -->|Reg|--> [ AUTO_PIPELINE'd func ] -->|Reg|--> [ output FIFO ] --> out_if
         (input reg)   (free-running,             (output reg)   (sized from
                         N-stage pipeline)                        .latency)
 ```
 
-`include/pypeline/stream/stream_pipeline.py`'s `make_stream_pipeline` wraps a single
+`include/pypeline/stream/stream_auto_pipeline.py`'s `make_stream_auto_pipeline` wraps a single
 combinational hardware function in a free-running, fully-pipelined
 [stream interface](#the-stream-interface-validready-handshaking): an
-[AUTOPIPELINE'd](#tool-chosen-implementation-autopipeline-and-autofsm) instance (with registered
+[AUTO_PIPELINE'd](#auto_pipeline) instance (with registered
 input/output) feeding a [`make_fifo`](#fifos-make_stream_fifo)-backed output FIFO.
-The FIFO and in-flight counter are **sized automatically** from the AUTOPIPELINE
+The FIFO and in-flight counter are **sized automatically** from the AUTO_PIPELINE
 instance's `.latency` — the tool-discovered pipeline depth — so there is no
 `MAX_IN_FLIGHT` parameter to guess and hand-tune against synthesis results. It's the
 pypeline equivalent of PipelineC's `GLOBAL_VALID_READY_PIPELINE_INST` macro — minus the
@@ -3901,68 +3943,68 @@ joined by `Wire[T]`s.
 ```python
 from pypeline import hw_func, uint8_t, MAIN, uint1_t
 from stream.stream import make_stream_t
-from stream.stream_pipeline import make_stream_pipeline
+from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 @hw_func
 def div_inv(x: uint8_t) -> uint8_t:
     return x / ~x
 
 uint8_stream_t = make_stream_t(uint8_t)
-stream_pipeline, stream_pipeline_t = make_stream_pipeline(div_inv)
+stream_auto_pipeline, stream_auto_pipeline_t = make_stream_auto_pipeline(div_inv)
 
 @MAIN(50.0)
 def buffered_div_inv(
-    stream_in: stream_pipeline.in_stream_t, stream_out: stream_pipeline.out_fb_t
-) -> stream_pipeline_t:
-    return stream_pipeline(stream_in, stream_out)
+    stream_in: stream_auto_pipeline.in_stream_t, stream_out: stream_auto_pipeline.out_fb_t
+) -> stream_auto_pipeline_t:
+    return stream_auto_pipeline(stream_in, stream_out)
 ```
 
-`make_stream_pipeline(func)` returns `(stream_pipeline_func, stream_pipeline_t)`:
+`make_stream_auto_pipeline(func)` returns `(stream_auto_pipeline_func, stream_auto_pipeline_t)`:
 
 | | Type | Meaning |
 |---|---|---|
-| `stream_pipeline_func(stream_in, stream_out)` | `(in_stream_t, out_fb_t) -> stream_pipeline_t` | one pipelined instance of `func`; ports are the two halves of a stream `@interface` |
-| `stream_pipeline_t.stream_out` | `stream_t(out_type)` | `func`'s result, after AUTOPIPELINE retiming and the output FIFO |
-| `stream_pipeline_t.stream_in.ready` | `uint1_t` | high while the pipeline can accept a new `stream_in` (tracks in-flight count against the FIFO depth) |
+| `stream_auto_pipeline_func(stream_in, stream_out)` | `(in_stream_t, out_fb_t) -> stream_auto_pipeline_t` | one pipelined instance of `func`; ports are the two halves of a stream `@interface` |
+| `stream_auto_pipeline_t.stream_out` | `stream_t(out_type)` | `func`'s result, after AUTO_PIPELINE retiming and the output FIFO |
+| `stream_auto_pipeline_t.stream_in.ready` | `uint1_t` | high while the pipeline can accept a new `stream_in` (tracks in-flight count against the FIFO depth) |
 
-The FIFO depth is `max(2, 1 + AUTOPIPELINE latency + 1)` — input reg + discovered core
+The FIFO depth is `max(2, 1 + AUTO_PIPELINE latency + 1)` — input reg + discovered core
 stages + output reg, i.e. every word that can be in flight at once, so downstream
 stalls can never overflow the FIFO and full 1-word/cycle throughput is sustained. On
 the bootstrap pass (and in plain native sim / `--comb` builds, where `.latency` stays
 0) the depth floors at 2 — which in those contexts is exact, since the effective
 pipeline latency really is just the two boundary registers; on a real build the
 pin-and-confirm loop re-elaborates with the discovered latency (see
-[Tool-Chosen Implementation: `AUTOPIPELINE(...)` and `AUTOFSM(...)`](#tool-chosen-implementation-autopipeline-and-autofsm)), and a non-`--comb` `pypelinec --sim` run's
+[Automatic (HLS-like) Implementation](#automatic-hls-like-implementation)), and a non-`--comb` `pypelinec --sim` run's
 native simulation imports the design with the same latency installed — so the FIFO is
-sized identically and the AUTOPIPELINE call site is emulated at the same depth.
+sized identically and the AUTO_PIPELINE call site is emulated at the same depth.
 
 `in_type`/`out_type` are inferred from `func`'s own annotations via `hw_arg_types`/
 `hw_return_type`, the same way
-[`make_stream_interface_mcp`](#multi-cycle-stream-wrapper-make_stream_interface_mcp) does (see
+[`make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle) does (see
 [Parametric Hardware with Factory Functions](#parametric-hardware-with-factory-functions)). **`func` must already be
-`@hw_func`-decorated** — `make_stream_pipeline` calls `is_hw_func(func)` and raises
+`@hw_func`-decorated** — `make_stream_auto_pipeline` calls `is_hw_func(func)` and raises
 `TypeError` immediately if it isn't, since `func` is called from inside an internal
-AUTOPIPELINE'd wrapper and needs its own decoration for any `Reg[T]`/bare struct-array
-locals in its body to simulate correctly (see [Tool-Chosen Implementation: `AUTOPIPELINE(...)` and `AUTOFSM(...)`](#tool-chosen-implementation-autopipeline-and-autofsm)).
+AUTO_PIPELINE'd wrapper and needs its own decoration for any `Reg[T]`/bare struct-array
+locals in its body to simulate correctly (see [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation)).
 
 **Simulates end-to-end.** Since `make_fifo`'s internal FIFO now carries a
 [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions), the whole
-pipeline — AUTOPIPELINE retiming plus the output FIFO — simulates via `sim_call()` or
+pipeline — AUTO_PIPELINE retiming plus the output FIFO — simulates via `sim_call()` or
 `pypeline_sim.py`, including realistic backpressure when the consumer stalls. See
-`src/tests/pypeline_tests/inst/stream_pipeline_test.py`.
+`src/tests/pypeline_tests/inst/stream_auto_pipeline_test.py`.
 
-**See also:** [Tool-Chosen Implementation: `AUTOPIPELINE(...)` and `AUTOFSM(...)`](#tool-chosen-implementation-autopipeline-and-autofsm) ·
+**See also:** [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation) ·
 [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo) ·
-[Multi-Cycle Stream Wrapper: `make_stream_interface_mcp`](#multi-cycle-stream-wrapper-make_stream_interface_mcp) ·
-[Stream Wrapper for AUTOFSM: `make_stream_autofsm`](#stream-wrapper-for-autofsm-make_stream_autofsm)
+[Multi-Cycle Stream Wrapper: `make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle) ·
+[Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental)
 
 ---
 
-## Multi-Cycle Stream Wrapper: `make_stream_interface_mcp`
+## Multi-Cycle Stream Wrapper: `make_stream_multi_cycle`
 
-[`make_stream_pipeline`](#pipelined-stream-wrappers-make_stream_pipeline) above trades
+[`make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline) above trades
 area for throughput: a free-running pipeline that accepts a new word every cycle.
-`make_stream_interface_mcp`, from `include/pypeline/multi_cycle_path.py`, is the other
+`make_stream_multi_cycle`, from `include/pypeline/stream/stream_multi_cycle.py`, is the other
 function-to-stream wrapper. It takes a single slow combinational function and gives it a
 [`MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle) launch/capture FSM, presenting the
 result as a valid/ready [stream interface](#the-stream-interface-validready-handshaking) — one
@@ -3971,23 +4013,23 @@ PipelineC's `DECL_VALID_READY_MCP_FUNC` macro:
 
 ```python
 from pypeline import hw_func, MAIN
-from multi_cycle_path import make_stream_interface_mcp
+from stream.stream_multi_cycle import make_stream_multi_cycle
 
 @hw_func
 def divider(i: my_struct_t) -> uint32_t:
     return i.x / i.y
 
-divider_mcp, divider_mcp_t = make_stream_interface_mcp(divider, 16)   # 16-cycle MCP
+divider_mcp, divider_mcp_t = make_stream_multi_cycle(divider, 16)   # 16-cycle MCP
 
 @MAIN(100.0)
 def top(stream_in: divider_mcp.in_stream_t, stream_out: divider_mcp.out_fb_t) -> divider_mcp_t:
     return divider_mcp(stream_in, stream_out)
 ```
 
-`make_stream_interface_mcp(func, latency)` infers `in_type`/`out_type` from `func`'s own
+`make_stream_multi_cycle(func, latency)` infers `in_type`/`out_type` from `func`'s own
 parameter/return type annotations (unlike the C macro, which takes them as separate
 arguments) and returns `(func_mcp, func_mcp_t)`. Its ports are the two halves of a stream
-`@interface`, exactly like `make_stream_pipeline`'s:
+`@interface`, exactly like `make_stream_auto_pipeline`'s:
 
 | | Type | Meaning |
 |---|---|---|
@@ -4000,105 +4042,105 @@ pattern from [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cy
 `cycles_since_launch` counter driving the handshake. Like `MULTI_CYCLE[...]` itself, the
 relaxed timing only matters during real FPGA synthesis (requires `PART()` + Vivado);
 simulation always sees `func`'s result settle the same cycle it is computed. See
-`src/tests/pypeline_tests/inst/stream_interface_mcp_test.py` (translated from
+`src/tests/pypeline_tests/inst/stream_multi_cycle_test.py` (translated from
 `examples/mcp/mcp_divider.c`) for the full example.
 
-### Tool-chosen cycle count: `make_stream_interface_automcp`
+### Tool-chosen cycle count: `make_stream_auto_multi_cycle` (New)
 
-`make_stream_interface_automcp` is the same wrapper with an
-[`AUTOMCP(...)`](#letting-the-tool-pick-the-cycle-count-automcp) tag in place of the fixed
+`make_stream_auto_multi_cycle` is the same wrapper with an
+[`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle-new) tag in place of the fixed
 `MULTI_CYCLE[latency]`, so the pypelinec throughput sweep picks the cycle count:
 
 ```python
-from multi_cycle_path import make_stream_interface_automcp
+from stream.stream_multi_cycle import make_stream_auto_multi_cycle
 
-divider_mcp, divider_mcp_t = make_stream_interface_automcp(divider)                   # sweep starts at 1
-divider_mcp, divider_mcp_t = make_stream_interface_automcp(divider, start_latency=5)  # known-good start
-divider_mcp, divider_mcp_t = make_stream_interface_automcp(divider, start_latency=5, max_latency=8)
-divider_mcp, divider_mcp_t = make_stream_interface_automcp(divider, latency=5)        # fixed
+divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider)                   # sweep starts at 1
+divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider, start_latency=5)  # known-good start
+divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider, start_latency=5, max_latency=8)
+divider_mcp, divider_mcp_t = make_stream_auto_multi_cycle(divider, latency=5)        # fixed
 
 divider_mcp.mcp.latency    # the cycle count (results are valid latency + 1 cycles after launch)
 ```
 
-The ports and `func_mcp_t` are identical to `make_stream_interface_mcp`'s. The handshake
+The ports and `func_mcp_t` are identical to `make_stream_multi_cycle`'s. The handshake
 is written in terms of `func_mcp.mcp.latency`, so after a build it always waits exactly as
 many cycles as the path is constrained for. Giving `start_latency=` a known-good count
 costs nothing when it holds: the sweep starts there, keeps it, and skips the
-re-elaboration pass. See `src/tests/pypeline_tests/inst/stream_interface_automcp_test.py`
-(native sim) and `automcp_sweep_test.py` (a real Vivado sweep).
+re-elaboration pass. See `src/tests/pypeline_tests/inst/stream_auto_multi_cycle_test.py`
+(native sim) and `auto_multi_cycle_sweep_test.py` (a real Vivado sweep).
 
 ---
 
-## Stream Wrapper for AUTOFSM: `make_stream_autofsm`
+## Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)
 
-[`AUTOFSM(func)`](#tool-chosen-implementation-autopipeline-and-autofsm) has no backpressure of
+[`AUTO_FSM(func)`](#auto_fsm-new-experimental) has no backpressure of
 its own: an input is accepted only while the FSM is idle, a `valid` pulse asserted while it's
 busy is ignored, and the result itself is only a **one-cycle `valid` pulse** — every raw
-AUTOFSM call site (`self_check_autofsm_test.py`, the donut/sine examples) hand-rolls a `busy`
+AUTO_FSM call site (`self_check_auto_fsm_test.py`, the donut/sine examples) hand-rolls a `busy`
 register and manually spaces requests at least `.latency` cycles apart.
-`make_stream_autofsm`, from `include/pypeline/stream/stream_autofsm.py`, does that bookkeeping
+`make_stream_auto_fsm`, from `include/pypeline/stream/stream_auto_fsm.py`, does that bookkeeping
 once and presents a real valid/ready [stream interface](#the-stream-interface-validready-handshaking)
-instead — the AUTOFSM sibling of `make_stream_pipeline` (AUTOPIPELINE) and
-`make_stream_interface_mcp` (`MULTI_CYCLE[...]`) above:
+instead — the AUTO_FSM sibling of `make_stream_auto_pipeline` (AUTO_PIPELINE) and
+`make_stream_multi_cycle` (`MULTI_CYCLE[...]`) above:
 
 ```python
 from pypeline import hw_func, MAIN
-from stream.stream_autofsm import make_stream_autofsm
+from stream.stream_auto_fsm import make_stream_auto_fsm
 
 @hw_func
 def blob(x: blob_in_t) -> int16_t:
     ...
 
-blob_fsm, blob_fsm_t = make_stream_autofsm(blob)   # tool picks the state count
+blob_fsm, blob_fsm_t = make_stream_auto_fsm(blob)   # tool picks the state count
 
 @MAIN(25.0)
 def top(stream_in: blob_fsm.in_stream_t, stream_out: blob_fsm.out_fb_t) -> blob_fsm_t:
     return blob_fsm(stream_in, stream_out)
 ```
 
-`make_stream_autofsm(func, max_latency=None)` infers `in_type`/`out_type` from `func`'s own
+`make_stream_auto_fsm(func, max_latency=None)` infers `in_type`/`out_type` from `func`'s own
 parameter/return type annotations, constructs an
-`AUTOFSM(func, max_latency=max_latency, register_output=False)` instance
-internally, and returns `(func_autofsm, func_autofsm_t)`. Disabling the raw
+`AUTO_FSM(func, max_latency=max_latency, register_output=False)` instance
+internally, and returns `(func_auto_fsm, func_auto_fsm_t)`. Disabling the raw
 result bank avoids duplicating the wrapper's own backpressure holding register.
 Its ports are the two
-halves of a stream `@interface`, exactly like `make_stream_pipeline`'s and
-`make_stream_interface_mcp`'s:
+halves of a stream `@interface`, exactly like `make_stream_auto_pipeline`'s and
+`make_stream_multi_cycle`'s:
 
 | | Type | Meaning |
 |---|---|---|
-| `func_autofsm(stream_in_if, stream_out_if)` | `(in_intrf.fwd_t, out_intrf.fb_t) -> func_autofsm_t` | one AUTOFSM-backed instance of `func` |
-| `func_autofsm_t.stream_out_if` | `out_intrf.fwd_t` | `func`'s result, held valid until the consumer takes it |
-| `func_autofsm_t.stream_in_if` | `in_intrf.fb_t` | `.ready` high while the FSM is idle **and** the output slot is free |
-| `func_autofsm.fsm` | `AUTOFSM` | the underlying tag object — `func_autofsm.fsm.latency` reads the raw FSM's cycle count |
-| `func_autofsm.latency` | `int` | the wrapper's own latency, `fsm.latency + 1` |
+| `func_auto_fsm(stream_in_if, stream_out_if)` | `(in_intrf.fwd_t, out_intrf.fb_t) -> func_auto_fsm_t` | one AUTO_FSM-backed instance of `func` |
+| `func_auto_fsm_t.stream_out_if` | `out_intrf.fwd_t` | `func`'s result, held valid until the consumer takes it |
+| `func_auto_fsm_t.stream_in_if` | `in_intrf.fb_t` | `.ready` high while the FSM is idle **and** the output slot is free |
+| `func_auto_fsm.fsm` | `AUTO_FSM` | the underlying tag object — `func_auto_fsm.fsm.latency` reads the raw FSM's cycle count |
+| `func_auto_fsm.latency` | `int` | the wrapper's own latency, `fsm.latency + 1` |
 
 **Internally, exactly one registered output.** A holding register latches the
 FSM's combinational final-state pulse and a `busy` register tracks whether the
-FSM itself is occupied; raw AUTOFSM's own optional result bank is disabled, so
+FSM itself is occupied; raw AUTO_FSM's own optional result bank is disabled, so
 the same payload is not registered twice. `stream_in_if.ready` is asserted only
 when both are free. This means the wrapper's latency and initiation interval are both
-`FSM.latency + 1` — one cycle more than the raw AUTOFSM contract, spent latching the pulse — but
+`FSM.latency + 1` — one cycle more than the raw AUTO_FSM contract, spent latching the pulse — but
 in exchange a stalled consumer (`stream_out_if.ready` low) never loses a result: it stays valid,
 with stable data, until taken. Back-to-back requests still pack tightly: when the consumer is
 always ready, the slot frees combinationally within the same cycle the result appears, so a new
 input can be accepted that same cycle.
 
-**The handshake body never reads `.latency`.** Unlike the raw AUTOFSM call site's manual
-spacing (which reads `.latency` to know how far apart to place requests), `make_stream_autofsm`'s
+**The handshake body never reads `.latency`.** Unlike the raw AUTO_FSM call site's manual
+spacing (which reads `.latency` to know how far apart to place requests), `make_stream_auto_fsm`'s
 generated hardware is identical whether `fsm.latency` is 0 (bootstrap pass / `--comb` / plain
 native sim) or a real scheduled value — only the register-transfer *timing* differs, not the
 RTL shape. That is what keeps its generated entity name stable across a build's passes; see
-[`docs/AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md) for why a schedule-dependent body would risk a
+[`docs/AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md) for why a schedule-dependent body would risk a
 stale delay-cache hit.
 
-**Simulates end-to-end**, in the same sense `make_stream_pipeline` does: plain native sim never
+**Simulates end-to-end**, in the same sense `make_stream_auto_pipeline` does: plain native sim never
 installs a schedule, so `fsm.latency` stays 0 and the wrapper degrades to a correct
 1-cycle-latency, 1-cycle-II stream; a pipelined `--sim` build's native sim runs against the real
-discovered latency instead. See `src/tests/pypeline_tests/inst/stream_autofsm_test.py` for the
-handshake/backpressure tests and `self_check_stream_autofsm_test.py` for the full self-checking
+discovered latency instead. See `src/tests/pypeline_tests/inst/stream_auto_fsm_test.py` for the
+handshake/backpressure tests and `self_check_stream_auto_fsm_test.py` for the full self-checking
 design (also driven through real GHDL — see
-[docs/AUTOFSM_DESIGN.md](AUTOFSM_DESIGN.md)'s test table).
+[docs/AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md)'s test table).
 
 ---
 
@@ -4214,17 +4256,17 @@ semantics. It does not describe a variable-latency transaction or add handshakin
 N must be a nonnegative integer; zero is supported. The declaration is trusted:
 it does not insert registers or check that the body implements N cycles.
 It works on factory-produced functions and stacks with `@MAIN` in either order.
-An AUTOPIPELINE request inside the tagged implementation is an error. AUTOPIPELINE
+An AUTO_PIPELINE request inside the tagged implementation is an error. AUTO_PIPELINE
 latency arguments on the tagged function itself must agree with N (`latency=N`,
 `start_latency=N`, `max_latency` of at least N).
 
-AUTOPIPELINE asks the tool to implement pipelining. `pipeline_latency` describes
+AUTO_PIPELINE asks the tool to implement pipelining. `pipeline_latency` describes
 pipelining supplied by the user. MULTI_CYCLE constrains setup timing between
 registers and does not declare a function's pipeline latency.
 
 Standalone native simulation also aligns callers around fixed user pipelines,
 using selective elaboration without synthesis. Designs without this decorator
-keep the existing `--comb` path; ordinary registers, AUTOPIPELINE and AUTOFSM alone
+keep the existing `--comb` path; ordinary registers, AUTO_PIPELINE and AUTO_FSM alone
 do not activate the new simulation model. See the
 [simulation design](pypeline_sim_DESIGN.md#fixed-user-pipelines) for activation,
 state handling and warm-up details.
@@ -4590,9 +4632,9 @@ built yet."
 | Synthesis | **Async clock-crossing FIFOs** | Not supported | `GLOBAL_STREAM_FIFO` across clock boundaries cannot yet be expressed |
 | Synthesis | **Dual-port stream RAM** | Not built-in | `DECL_STREAM_RAM_DP_W_R_1` — use `vhdl()` passthrough |
 | Synthesis | **`MULTI_CYCLE[...]`** | Synthesis only | No effect without `PART()` / Vivado; ignored in simulation |
-| Synthesis | **`AUTOMCP(...)`** | Synthesis + `.latency` in simulation | Cycle count chosen by the Vivado sweep; sim sees `.latency` (the handshake), never settling time |
-| Synthesis | **`AUTOPIPELINE(...).latency` before synthesis** | Reads `0` unless constrained | A fixed `latency=N` reads `N` everywhere. Otherwise the real value only exists after a synthesizing build's pin-and-confirm pass: that build's bootstrap pass reads `start_latency` (or 0), and plain native sim and `--comb`/`--no_synth`/`--yosys_json` builds read 0. A non-`--comb` `pypelinec --sim` run's native sim reads the built value |
-| Simulation | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo` now does, covering `make_stream_fifo`/`make_stream_pipeline` too); this still includes `make_stream_interface_mcp` |
+| Synthesis | **`AUTO_MULTI_CYCLE(...)`** | Synthesis + `.latency` in simulation | Cycle count chosen by the Vivado sweep; sim sees `.latency` (the handshake), never settling time |
+| Synthesis | **`AUTO_PIPELINE(...).latency` before synthesis** | Reads `0` unless constrained | A fixed `latency=N` reads `N` everywhere. Otherwise the real value only exists after a synthesizing build's pin-and-confirm pass: that build's bootstrap pass reads `start_latency` (or 0), and plain native sim and `--comb`/`--no_synth`/`--yosys_json` builds read 0. A non-`--comb` `pypelinec --sim` run's native sim reads the built value |
+| Simulation | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo` now does, covering `make_stream_fifo`/`make_stream_auto_pipeline` too); this still includes `make_stream_multi_cycle` |
 | Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine |
 | Language | **`@enum` member names that are VHDL reserved words** | Fails in VHDL only | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. Native simulation cannot see this — only a `synth`/GHDL run can, which is why every enum-bearing design wants one |
 | Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it |

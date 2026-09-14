@@ -1,7 +1,7 @@
 # pyright: reportInvalidTypeForm=none
 """Single-rate streaming FIR filter factory -- the pypeline equivalent of the
 vendor FIR compiler IPs' basic mode (AMD FIR Compiler / Intel FIR II), built
-from one autopipelined comb blob (see dsp/fir_common.py) wrapped in a
+from one auto-pipelined comb blob (see dsp/fir_common.py) wrapped in a
 valid/ready stream. Pipeline depth is chosen by the tool per target FPGA/fmax,
 never hard-coded.
 
@@ -24,7 +24,7 @@ Usage:
 from pypeline import (
     NamedTuple,
     Reg,
-    _autopipeline_with_io_regs,
+    _auto_pipeline_with_io_regs,
     hw_func,
     struct,
     uint1_t,
@@ -32,7 +32,7 @@ from pypeline import (
 
 from fixed_point import quantize_coeffs
 from stream.stream import make_stream_interface, make_stream_t
-from stream.stream_pipeline import make_stream_pipeline
+from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 from dsp.fir_common import make_fir_core
 
@@ -80,15 +80,15 @@ def make_fir(
                                    stream_out_if: out_intrf.fb_t) -> fir_t
                                with fir_t{stream_in_if, stream_out_if} -- the
                                two halves of a stream @interface per port, same
-                               shape as make_stream_pipeline, so filters chain
+                               shape as make_stream_auto_pipeline, so filters chain
                                and drop into interface functions unchanged.
                "valid_only" -> fir(in_stream: make_stream_t(data_t))
                                    -> make_stream_t(out_t)
                                vendor-style free-running mode: no FIFO or
                                in-flight counter; input must be consumable
                                downstream every cycle.
-    Elastic mode's output FIFO is sized automatically from the AUTOPIPELINE'd
-    core's tool-discovered .latency (see make_stream_pipeline).
+    Elastic mode's output FIFO is sized automatically from the AUTO_PIPELINE'd
+    core's tool-discovered .latency (see make_stream_auto_pipeline).
 
     The returned `fir` carries metadata attributes for dsp/fir_tb.py:
     .coeffs_q .data_t .coeff_t .out_t .accum_t .full_precision .rounding
@@ -113,7 +113,7 @@ def make_fir(
     in_intrf = make_stream_interface(data_t)
 
     if handshake == "elastic":
-        sp_func, sp_t = make_stream_pipeline(fir_core)
+        sp_func, sp_t = make_stream_auto_pipeline(fir_core)
 
         @struct
         class fir_t(NamedTuple):
@@ -154,8 +154,8 @@ def make_fir(
         out_stream_t = make_stream_t(out_t_actual)
         fir_t = out_stream_t
 
-        # Thread valid through the autopipeline alongside the data (the
-        # stream_pipeline func_stream pattern) so retiming keeps them aligned.
+        # Thread valid through the auto-pipeline alongside the data (the
+        # stream_auto_pipeline func_stream pattern) so retiming keeps them aligned.
         @hw_func
         def fir_core_stream(x: win_stream_t) -> out_stream_t:
             rv: out_stream_t
@@ -163,7 +163,7 @@ def make_fir(
             rv.valid = x.valid
             return rv
 
-        fir_core_ap, _fir_core_ap_call = _autopipeline_with_io_regs(
+        fir_core_ap, _fir_core_ap_call = _auto_pipeline_with_io_regs(
             fir_core_stream, has_input_reg=True, has_output_reg=True
         )
 

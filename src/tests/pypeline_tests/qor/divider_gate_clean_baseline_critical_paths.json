@@ -1,6 +1,6 @@
 {
   "schema_version": 1,
-  "experiment": "clean_c81ca31f_gate_divider_autopipeline_critical_path_matrix",
+  "experiment": "clean_c81ca31f_gate_divider_auto_pipeline_critical_path_matrix",
   "recorded_utc_date": "2026-08-14",
   "purpose": "Preserve the clean current-recipe baseline's stage-specific critical-path evidence and classify logic outside the 32 radix steps.",
   "provenance": {

@@ -6,7 +6,7 @@ in this library wraps.
 The blob is deliberately one flat feedforward function -- pre-adders (when the
 quantized coefficients are symmetric/anti-symmetric), constant multiplies, a
 balanced binary adder tree, and the fixed-point output resize stage all live in
-one `@hw_func` so PipelineC's AUTOPIPELINE retimes the whole thing together to
+one `@hw_func` so PipelineC's AUTO_PIPELINE retimes the whole thing together to
 whatever depth the target FPGA/fmax needs. Pipeline depth is never hard-coded
 anywhere in this library.
 

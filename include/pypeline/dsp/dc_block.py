@@ -15,7 +15,7 @@ R*y_prev` pole/zero blocker), at the cost of one Reg of state instead of two.
 `.mean` is also a directly useful noise-floor estimate on its own.
 
 The recursive mean update is inherently stateful (an IIR loop), so it cannot
-itself be autopipelined into an II=1 pipeline -- only the feedforward output
+itself be auto-pipelined into an II=1 pipeline -- only the feedforward output
 resize stage is. `k` sets the pole at 1 - 2^-k, i.e. a settling time constant
 of roughly 2^k samples.
 """
@@ -23,7 +23,7 @@ of roughly 2^k samples.
 from pypeline import (
     NamedTuple,
     Reg,
-    _autopipeline_with_io_regs,
+    _auto_pipeline_with_io_regs,
     hw_func,
     struct,
     uint1_t,
@@ -31,7 +31,7 @@ from pypeline import (
 
 from fixed_point import make_fixed_t, make_fixed_resize
 from stream.stream import make_stream_interface, make_stream_t
-from stream.stream_pipeline import make_stream_pipeline
+from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 from dsp.fir_common import data_range, signed_bits_for
 
@@ -98,7 +98,7 @@ def make_dc_block(
             return resize_fn(d)
 
     if handshake == "elastic":
-        sp_func, _sp_t = make_stream_pipeline(dc_block_core)
+        sp_func, _sp_t = make_stream_auto_pipeline(dc_block_core)
         in_intrf = make_stream_interface(data_t)
         out_intrf = sp_func.out_intrf
 
@@ -131,7 +131,7 @@ def make_dc_block(
             o.stream_in_if.ready = sp_o.stream_in_if.ready
             return o
 
-        _core_ap = None  # no AUTOPIPELINE core in elastic mode (make_stream_pipeline)
+        _core_ap = None  # no AUTO_PIPELINE core in elastic mode (make_stream_auto_pipeline)
 
     elif handshake == "valid_only":
         in_stream_t = make_stream_t(data_t)
@@ -146,7 +146,7 @@ def make_dc_block(
             rv.valid = x.valid
             return rv
 
-        dc_block_core_ap, _dc_block_core_ap_call = _autopipeline_with_io_regs(
+        dc_block_core_ap, _dc_block_core_ap_call = _auto_pipeline_with_io_regs(
             dc_block_core_stream, has_input_reg=True, has_output_reg=True
         )
         _core_ap = _dc_block_core_ap_call
@@ -193,7 +193,7 @@ def make_dc_block(
     # comment for why this is a lazy accessor rather than an eager attribute).
     # Note: the IIR mean update itself is purely combinational-in (reads the
     # committed Reg, no pipeline stages of its own), so it adds no latency
-    # beyond the io-reg-wrapped output resize's AUTOPIPELINE core.
+    # beyond the io-reg-wrapped output resize's AUTO_PIPELINE core.
     dc_block.core_ap = _core_ap
     dc_block.io_reg_latency = 2 if handshake == "valid_only" else None  # in + out reg
     dc_block.get_latency = (

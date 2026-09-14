@@ -2,13 +2,13 @@
 """Complex-sample power (I^2+Q^2) -- the "instantaneous power" stage of an
 RF pulse detector (see examples/pypeline/dsp/pdw/README.md, Path A: Detect &
 Measure). One pure feedforward `@hw_func` blob (two squares, an add, and a
-fused output resize), autopipelined the same way as dsp/fir.py's core, wrapped
+fused output resize), auto-pipelined the same way as dsp/fir.py's core, wrapped
 in a valid/ready stream.
 """
 
 from pypeline import (
     NamedTuple,
-    _autopipeline_with_io_regs,
+    _auto_pipeline_with_io_regs,
     hw_func,
     struct,
     uint1_t,
@@ -16,7 +16,7 @@ from pypeline import (
 
 from fixed_point import make_fixed_t, make_fixed_resize
 from stream.stream import make_stream_t
-from stream.stream_pipeline import make_stream_pipeline
+from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 from dsp.fir_common import data_range, signed_bits_for, unsigned_bits_for
 
@@ -91,7 +91,7 @@ def make_magnitude(
         return resize_fn(acc)
 
     if handshake == "elastic":
-        sp_func, _sp_t = make_stream_pipeline(magnitude_core)
+        sp_func, _sp_t = make_stream_auto_pipeline(magnitude_core)
         in_intrf = sp_func.in_intrf
         out_intrf = sp_func.out_intrf
 
@@ -110,7 +110,7 @@ def make_magnitude(
             o.stream_in_if.ready = sp_o.stream_in_if.ready
             return o
 
-        _core_ap = None  # no AUTOPIPELINE core in elastic mode (make_stream_pipeline)
+        _core_ap = None  # no AUTO_PIPELINE core in elastic mode (make_stream_auto_pipeline)
 
     elif handshake == "valid_only":
         in_stream_t = make_stream_t(complex_t)
@@ -124,7 +124,7 @@ def make_magnitude(
             rv.valid = x.valid
             return rv
 
-        magnitude_core_ap, _magnitude_core_ap_call = _autopipeline_with_io_regs(
+        magnitude_core_ap, _magnitude_core_ap_call = _auto_pipeline_with_io_regs(
             magnitude_core_stream, has_input_reg=True, has_output_reg=True
         )
 
@@ -157,9 +157,9 @@ def make_magnitude(
     magnitude.in_intrf = in_intrf if handshake == "elastic" else None
     magnitude.out_intrf = out_intrf if handshake == "elastic" else None
 
-    # Latency metadata (valid_only mode only -- elastic's make_stream_pipeline
+    # Latency metadata (valid_only mode only -- elastic's make_stream_auto_pipeline
     # has its own elastic-FIFO-based depth, not a fixed cycle latency). Lazy
-    # accessor, not an eager attribute: reading .latency off an AUTOPIPELINE
+    # accessor, not an eager attribute: reading .latency off an AUTO_PIPELINE
     # object is what engages pipelinec's pin-and-confirm loop, so evaluating
     # it here at factory-call time would affect every existing build that
     # merely constructs a magnitude instance. Only a testbench that actually

@@ -20,11 +20,11 @@ from typing import NamedTuple
 from pypeline import MAIN, PART, hw_func, struct, uint1_t, uint32_t
 
 from stream.stream import make_stream_interface
-from stream.stream_pipeline import make_stream_pipeline
-from multi_cycle_path import make_stream_interface_mcp
+from stream.stream_auto_pipeline import make_stream_auto_pipeline
+from stream.stream_multi_cycle import make_stream_multi_cycle
 
-# make_stream_interface_mcp's MULTI_CYCLE constraints are only supported by Vivado
-# synthesis (see multi_cycle_path.py / stream_interface_mcp_test.py), so this design
+# make_stream_multi_cycle's MULTI_CYCLE constraints are only supported by Vivado
+# synthesis (see stream_multi_cycle.py / stream_multi_cycle_test.py), so this design
 # needs a real Xilinx PART to be synth-testable at all.
 PART("xc7a35ticsg324-1l")
 
@@ -32,13 +32,13 @@ PART("xc7a35ticsg324-1l")
 # (see two_factory_wrappers_test.py for the same-factory silent-miscompile
 # variant). This is the loud-failure variant, matching the shape that actually
 # blocked the wireguard-fpga ChaCha20/Poly1305 port: two *different* factories
-# (make_stream_interface_mcp + make_stream_pipeline) each wrapping a different
+# (make_stream_multi_cycle + make_stream_auto_pipeline) each wrapping a different
 # top-level function, with assignment-incompatible return types. Pre-fix, the
 # second wrapper's inner `func` call resolves to the first wrapper's already-
 # elaborated function and fails to drive its differently-typed output wires.
 # Elaboration succeeding cleanly is the pass condition -- checked via
 # `pypelinec ... --no_synth` exit code by elab_tests.py, no sim_call needed
-# since make_stream_pipeline doesn't support it.
+# since make_stream_auto_pipeline doesn't support it.
 
 
 @struct
@@ -66,8 +66,8 @@ def wide_round(x: wide_t) -> wide_t:
 
 uint32_stream_intrf = make_stream_interface(uint32_t)
 wide_stream_intrf = make_stream_interface(wide_t)
-scalar_mcp, scalar_mcp_t = make_stream_interface_mcp(scalar_round, 2)
-wide_pipeline, wide_pipeline_t = make_stream_pipeline(wide_round)
+scalar_mcp, scalar_mcp_t = make_stream_multi_cycle(scalar_round, 2)
+wide_pipeline, wide_pipeline_t = make_stream_auto_pipeline(wide_round)
 
 
 @MAIN(50.0)

@@ -586,7 +586,7 @@ hardware functions (including `make_*` factory-produced ones) must carry `@hw_fu
 
 **`is_hw_func(func)` — validating caller-supplied functions at factory entry.** Factories
 that accept a caller-supplied `func` and then *call* it from inside their own `@hw_func`
-body — `make_autopipeline`, `make_stream_interface_mcp`, `make_stream_pipeline` — must have
+body — `make_auto_pipeline`, `make_stream_multi_cycle`, `make_stream_auto_pipeline` — must have
 `func` itself already `@hw_func`-decorated, or `func`'s own `Reg[T]`/`Feedback[T]`/bare
 struct-array locals silently fall through the gap above and raise `UnboundLocalError`
 deep inside `sim_call` (a confusing failure far from its cause). `_sim_type_wrap`/`hw_func`
@@ -1153,7 +1153,7 @@ would return the *first* pass's freshly-written value instead of the true previo
 value — one cycle's output ending up a mix of two convergence passes. This is the composition
 `inst/feedback_reeval_test.py` (`native_sim_tests.py`) regression-tests, transcribed from a
 real corruption in `include/pypeline/dsp/fir_interp.py`'s window state
-(`fir_ready: Feedback[uint1_t]` driven from `make_stream_pipeline`'s `Reg`-backed ready
+(`fir_ready: Feedback[uint1_t]` driven from `make_stream_auto_pipeline`'s `Reg`-backed ready
 signal): the wrong composition produces `[15, 75, 45, 0, 0]` instead of the correct impulse
 response `[15, 30, 45, 30, 15]`.
 
@@ -1281,7 +1281,7 @@ each cycle.
 `include/pypeline/fifo.py`'s `make_fifo` attaches a `collections.deque`-based FWFT model
 to its inner `vhdl(...)`-bodied `fifo` function via `@sim_model(fifo)` — a `class`-form
 model, `copy_state=True` (the default), so it gets the same Reg-like deepcopy/
-buffered-commit timing described above. `make_stream_fifo` and `make_stream_pipeline`
+buffered-commit timing described above. `make_stream_fifo` and `make_stream_auto_pipeline`
 need no changes of their own: both call `make_fifo` from inside their own `@hw_func`
 bodies, so the attached model is picked up automatically.
 
@@ -1308,7 +1308,7 @@ transiently hold one item beyond `2**DEPTH_LOG2`, and a 2-cycle (not 1-cycle)
 push→visible latency when starting from empty. The model reproduces neither — it
 backpressures at or before real hardware's true capacity limit, never after, which is
 the safe direction for verifying overflow-avoidance and dataflow correctness (e.g.
-`make_stream_pipeline`'s `MAX_IN_FLIGHT`-sized never-overflow invariant) without
+`make_stream_auto_pipeline`'s `MAX_IN_FLIGHT`-sized never-overflow invariant) without
 attempting cycle-exact co-simulation against GHDL.
 
 **Empty-queue placeholder.** `data_out` when `self.q` is empty is `sim_zero(data_t)` — a
@@ -1642,15 +1642,15 @@ first when `--comb` is absent** (see the next section). Simulator selection is i
   behavior is unchanged there.
 - `DO_OPTIONAL_SIM(...)` calls `pypeline_sim.run_sim(...)` in-process (no subprocess) when
   `SIM_TOOL is pypeline_sim`, passing the final per-MAIN latencies
-  (`SIM.GET_MAIN_FUNC_LATENCIES`) and the converged AUTOPIPELINE harvest
-  (`SYN.HARVEST_AUTOPIPELINE_LATENCIES`) whenever a build's `parser_state`/timing params are
+  (`SIM.GET_MAIN_FUNC_LATENCIES`) and the converged AUTO_PIPELINE harvest
+  (`SYN.HARVEST_AUTO_PIPELINE_LATENCIES`) whenever a build's `parser_state`/timing params are
   available — all zeros/None on the comb path.
 - `src/pipelinec` checks `SIM.NATIVE_SIM_SKIPS_BUILD(args)` right after tool selection — true
   when `SIM_TOOL is pypeline_sim` and **comb** simulation was requested (`--sim --comb`/
   `--sim_comb`, or `--no_synth`) — and if so calls `DO_OPTIONAL_SIM` and exits immediately —
   **no VHDL elaboration or synthesis happens on this path**, mirroring how `pypeline_sim.py`
   works standalone. A non-`--comb` `--sim` run instead
-  falls through to the full build (path-delay measurement → throughput sweep → AUTOPIPELINE
+  falls through to the full build (path-delay measurement → throughput sweep → AUTO_PIPELINE
   pin-and-confirm), and the native sim launches at the end with the discovered latencies
   emulated — the same "no `--comb` means pipelined" rule the VHDL simulators follow. (If no
   synthesis tool is installed, the run degrades to the comb zero-latency sim with a warning.)
@@ -1667,10 +1667,10 @@ Without `@pipeline_latency`, plain native sim runs the design's combinational Py
 pipeline latency (only explicit `Reg[T]`/FIFO state advances). Fixed user pipelines use the
 selective alignment path described under [Fixed User Pipelines](#fixed-user-pipelines).
 A non-`--comb` `pipelinec --sim` run does the **full
-build first** — path-delay measurement, the throughput sweep, and the AUTOPIPELINE
+build first** — path-delay measurement, the throughput sweep, and the AUTO_PIPELINE
 pin-and-confirm loop (`SYN_DESIGN.md` §6) — and then launches native sim with the discovered
 per-instance pipeline latencies **emulated by delay lines wrapped around the unchanged
-combinational Python**. Because the sliced/autopipelined logic is purely combinational, delaying
+combinational Python**. Because the sliced/auto-pipelined logic is purely combinational, delaying
 its outputs by N cycles is an exact model of the N register stages the sweep inserted — so the
 native run stays cycle-accurate against the generated VHDL. This is verified end-to-end by
 `src/pypeline_sim_debug.py` (which no longer needs `--comb`); the wireguard-fpga
@@ -1691,25 +1691,25 @@ This section documents **how it is implemented**. Everything below lives in `src
    to the `pypeline_sim` branch, which builds two latency maps and hands them to `run_sim`:
    - `main_latencies = SIM.GET_MAIN_FUNC_LATENCIES(parser_state, multimain_timing_params)` —
      `{main hw name → GET_TOTAL_LATENCY}` for every `@MAIN`.
-   - `autopipeline_latencies, _ = SYN.HARVEST_AUTOPIPELINE_LATENCIES(parser_state, tpl)` —
-     `{AUTOPIPELINE canonical_key → stage count}`. Harvested here (not read from
-     `pypeline._autopipeline_latency_cache`) so it is populated even for designs whose Python
+   - `auto_pipeline_latencies, _ = SYN.HARVEST_AUTO_PIPELINE_LATENCIES(parser_state, tpl)` —
+     `{AUTO_PIPELINE canonical_key → stage count}`. Harvested here (not read from
+     `pypeline._auto_pipeline_latency_cache`) so it is populated even for designs whose Python
      never read `.latency`, where the pin-and-confirm loop never ran. Divergences are already a
      fatal driver error for any non-`--comb` `.py` build, so they are ignored here.
-   - `automcp_latencies = SYN.HARVEST_AUTOMCP_NCYCLES(parser_state, multimain_timing_params)` —
-     `{AUTOMCP canonical_key → multi-cycle count constrained}`, so an `AUTOMCP`'s `.latency`
-     (e.g. `make_stream_interface_automcp`'s handshake) counts the same cycles as the VHDL.
-4. `run_sim(source_file, args.run, main_latencies=…, autopipeline_latencies=…)` installs the
-   AUTOPIPELINE cache, re-imports the design fresh in sim mode, wires up the two emulation
+   - `auto_multi_cycle_latencies = SYN.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(parser_state, multimain_timing_params)` —
+     `{AUTO_MULTI_CYCLE canonical_key → multi-cycle count constrained}`, so an `AUTO_MULTI_CYCLE`'s `.latency`
+     (e.g. `make_stream_auto_multi_cycle`'s handshake) counts the same cycles as the VHDL.
+4. `run_sim(source_file, args.run, main_latencies=…, auto_pipeline_latencies=…)` installs the
+   AUTO_PIPELINE cache, re-imports the design fresh in sim mode, wires up the two emulation
    mechanisms, and runs the ordinary multi-MAIN cycle loop.
 
 #### Cache install + module eviction (`run_sim`, `pypeline_sim.py`)
 
 Before importing the design, `run_sim`:
-- calls `pypeline.SET_AUTOPIPELINE_LATENCY_CACHE(autopipeline_latencies)` — so every
-  `AUTOPIPELINE(func)` object *constructed during the import* captures its real `._latency` (set
+- calls `pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE(auto_pipeline_latencies)` — so every
+  `AUTO_PIPELINE(func)` object *constructed during the import* captures its real `._latency` (set
   in `__init__` from the cache). This is what makes `.latency`-derived structure — most
-  importantly `make_stream_pipeline`'s `fifo_depth = max(2, 1 + latency + 1)` — elaborate to the
+  importantly `make_stream_auto_pipeline`'s `fifo_depth = max(2, 1 + latency + 1)` — elaborate to the
   *same* shape the VHDL build's pin-and-confirm final pass produced. Get this wrong and the
   native FIFO would be a different depth than the hardware and diverge immediately.
 - calls `_evict_design_modules()`, which deletes from `sys.modules` every module imported since
@@ -1720,12 +1720,12 @@ Before importing the design, `run_sim`:
   helper is a self-guarding no-op in every other context (pure native runs never import
   `PY_TO_LOGIC`; the comb short-circuit runs before any parse, leaving the snapshot `None`).
 
-#### Mechanism A — AUTOPIPELINE call sites (`AUTOPIPELINE._sim_delay_line`, `pypeline.py`)
+#### Mechanism A — AUTO_PIPELINE call sites (`AUTO_PIPELINE._sim_delay_line`, `pypeline.py`)
 
 `self._latency` is nonzero after a build installs a harvested stage count, and in *any*
-context for a fixed `AUTOPIPELINE(func, latency=N)`, plain `pypeline_sim.py` runs included
+context for a fixed `AUTO_PIPELINE(func, latency=N)`, plain `pypeline_sim.py` runs included
 (the fixed latency is a functional contract, and every build places exactly N registers).
-When `_sim_active and self._latency > 0`, `AUTOPIPELINE.__call__` stops being an identity
+When `_sim_active and self._latency > 0`, `AUTO_PIPELINE.__call__` stops being an identity
 passthrough and routes through a per-call-site output **delay line** modelling
 `out(t) = func(in(t − N))`, N = `self._latency`:
 
@@ -1740,10 +1740,10 @@ return deepcopy(committed[0])               # value pushed N cycles ago
 ```
 
 Key implementation points:
-- **Instance identity.** `__call__` pushes `("AUTOPIPELINE:" + self._sim_key(), call_loc)`
+- **Instance identity.** `__call__` pushes `("AUTO_PIPELINE:" + self._sim_key(), call_loc)`
   onto `_sim_inst_stack`, the same stack `Reg[T]` and `@sim_model` use. Each call site
   therefore gets its own delay line, keyed by `_sim_current_inst_path()`. Two
-  *different* AUTOPIPELINE objects called from the same source line must still get
+  *different* AUTO_PIPELINE objects called from the same source line must still get
   separate delay lines (for example a loop over factory-produced pipelines whose inner
   funcs share a `__qualname__`). `_sim_key()` covers that case two ways:
   - When the compiler is loaded, or a harvested cache is installed, it is the
@@ -1761,9 +1761,9 @@ Key implementation points:
 - **Aliasing.** Both the pushed `now` and the returned `committed[0]` are `deepcopy`d: `func` may
   return an object aliasing its input, and `committed[0]` is handed to every re-evaluation in the
   cycle, so caller mutation must not corrupt the committed line.
-- The surrounding elastic handshake of `make_stream_pipeline` (its `ready`/in-flight `Reg[T]` and
+- The surrounding elastic handshake of `make_stream_auto_pipeline` (its `ready`/in-flight `Reg[T]` and
   output FIFO) is **not** emulated here — those are ordinary stateful sim constructs that native
-  sim already models exactly. Only the feed-forward AUTOPIPELINE core inside gets the delay line.
+  sim already models exactly. Only the feed-forward AUTO_PIPELINE core inside gets the delay line.
 
 #### Mechanism B — naturally-pipelined pure MAINs (write-side delay)
 
@@ -1823,7 +1823,7 @@ per-wire-uniformity assumption in Limitations below.
 Two invariants in the build make the latency the native sim emulates provably equal the
 latency the VHDL was built with:
 
-- **`HARVEST_AUTOPIPELINE_LATENCIES` invalidates every `TimingParams` memo first.** The sweep
+- **`HARVEST_AUTO_PIPELINE_LATENCIES` invalidates every `TimingParams` memo first.** The sweep
   planner mutates submodule `_slices` *after* container totals were first memoized, so a stale
   memoized `GET_TOTAL_LATENCY` could otherwise report e.g. 10 while the entity actually written
   (and confirmed by synthesis) is 26 clocks. The harvest clears all caches before walking.
@@ -1862,8 +1862,8 @@ Python result would instead combine samples from different cycles.
 `_pipeline_latency_reachable` follows referenced live callables, closures, module
 attributes and callable containers; it does not elaborate unrelated roots.
 `_prepare_pipeline_latency_sim` imports `pypeline_sim_pipeline` only for a reachable
-nonzero pipeline in an untagged caller. AUTOPIPELINE and AUTOFSM alone do not enable
-this path. A fixed `AUTOPIPELINE(func, latency=N)` whose `func` reaches a
+nonzero pipeline in an untagged caller. AUTO_PIPELINE and AUTO_FSM alone do not enable
+this path. A fixed `AUTO_PIPELINE(func, latency=N)` whose `func` reaches a
 `@pipeline_latency` function cannot be emulated by plain native sim, because where the
 tool places its N registers relative to the fixed pipeline is only known after a build.
 It raises a `RuntimeError` pointing to `pypelinec <design> --sim`. A `func` that is
@@ -1900,7 +1900,7 @@ resolved through their drivers at the consuming operation's stage; treating thos
 aliases as ordinary early assignments would lose compound-field alignment.
 
 Typed casts apply at graph wire assignments. Operation decoding and type
-reconstruction reuse AUTOFSM helpers; dynamic reference operations execute their
+reconstruction reuse AUTO_FSM helpers; dynamic reference operations execute their
 existing elaborated mux/assembly graphs. Pure arithmetic leaves use output queues
 for their compiler-added latency. Tagged bodies execute their own state instead.
 The evaluator accounts for caller I/O registers and translates hardware global
@@ -1914,7 +1914,7 @@ prevent aliasing with mutable compound inputs or outputs.
 
 Only affected sliceable regions receive dispatch through the existing simulation
 model cell. Other regions retain their existing execution. MAIN write-delay and
-AUTOPIPELINE output-delay emulation are bypassed where this evaluator already
+AUTO_PIPELINE output-delay emulation are bypassed where this evaluator already
 supplies the timing. Inside a tagged boundary, the original implementation remains
 self-timed, including when one of its helpers also has a model installed elsewhere.
 Stateful and fixed Python bodies consume a child pipeline's physical output in
@@ -1934,16 +1934,16 @@ including register initialization, synchronous reset and conditional clock enabl
 
 ### Limitations of the existing output-delay model
 
-The existing MAIN/AUTOPIPELINE emulation uses a **black-box output-delay** model of a feed-forward, initiation-interval-1
+The existing MAIN/AUTO_PIPELINE emulation uses a **black-box output-delay** model of a feed-forward, initiation-interval-1
 pipeline. It is exact within that model, but the following are genuine boundaries. Two of them
 are **detected and turned into hard errors** (loud `sys.exit`/`RuntimeError` — the design is
 refused rather than silently mis-simulated); the rest are constraints on how you write probes:
 
-- **Feed-forward II=1 only.** The model assumes the sliced/autopipelined logic accepts one input
-  per cycle with no internal stall. This is exactly what AUTOPIPELINE and the sweep produce
+- **Feed-forward II=1 only.** The model assumes the sliced/auto-pipelined logic accepts one input
+  per cycle with no internal stall. This is exactly what AUTO_PIPELINE and the sweep produce
   (combinational logic cut into register stages), so it always holds for their output — but the
   delay line is not a general model of a hand-built multi-cycle or back-pressured pipeline.
-  (An `AUTOFSM` call site has initiation interval N, not 1, and is deliberately *not* modelled
+  (An `AUTO_FSM` call site has initiation interval N, not 1, and is deliberately *not* modelled
   by this delay line — it gets its own register-level model instead; see below.)
 - **Warm-up data is not comparable.** VHDL's added pipeline registers are declared with no
   initializer and read `'U'` in GHDL during the first N cycles; native delay lines start at typed
@@ -1970,12 +1970,12 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   cleanly). Bundle a pipelined MAIN's co-timed outputs into one struct wire (which also aligns
   them in hardware), or build with `--comb`. A precise (non-conservative) version would export
   each wire's end-stage from the pipeline map and give it its own delay line — left as future
-  work. Mechanism A does not have this issue: an AUTOPIPELINE core is a single function whose
+  work. Mechanism A does not have this issue: an AUTO_PIPELINE core is a single function whose
   whole return value, struct included, is delayed together.
 - **[HARD ERROR] `sim_print(debug=True)` inside a pipelined comb region.** A `debug=True` print
   fires in native sim at the cycle its inputs arrive (stage 0), but in VHDL at whatever pipeline
   stage the retiming placed that logic — so it cannot be cycle-compared. If such a print executes
-  inside a naturally-pipelined pure MAIN or an AUTOPIPELINE core, native sim raises a
+  inside a naturally-pipelined pure MAIN or an AUTO_PIPELINE core, native sim raises a
   `RuntimeError` (`_sim_check_debug_probe_not_in_pipeline`) naming the call site, rather than
   emit a line that would silently mis-compare. **Cycle-accurate probes must live in stateful
   (0-latency) MAINs** reading the pipeline's output wires. (`sim_assert` inside pipelined comb is
@@ -1986,7 +1986,7 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   one, `run_sim` ignores it with a warning rather than stacking a write delay on top of the
   MAIN's explicit registers. `@sim_input`/`@sim_output` stimulus should likewise be driven from
   stateful MAINs — inside a pipelined MAIN it would be delayed with everything else.
-- **Same source line, multiple AUTOPIPELINE instances.** Two calls of the *same* AUTOPIPELINE
+- **Same source line, multiple AUTO_PIPELINE instances.** Two calls of the *same* AUTO_PIPELINE
   object on one physical source line share one delay line (identical `_sim_inst_stack` key)
   unless `SIM_TRACE_LOCATIONS=True` restores column-level call identity — the same pre-existing
   limitation multi-instance `Reg[T]` designs already carry.
@@ -2028,12 +2028,12 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   and passes `-s <path>` instead of `-p '<commands>'` — a script file's contents are never one
   exec argv, regardless of length. See `src/tests/pypeline_tests/inst/long_file_list_arg_len_test.py`.
 
-#### AUTOFSM call sites (non-`--comb` `--sim`)
+#### AUTO_FSM call sites (non-`--comb` `--sim`)
 
-`AUTOFSM(func)` produces a resource-shared state machine with initiation interval
-N and a fixed N-cycle latency (see [`AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md)),
+`AUTO_FSM(func)` produces a resource-shared state machine with initiation interval
+N and a fixed N-cycle latency (see [`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md)),
 which the output-delay model above cannot represent. It is emulated separately by
-`AUTOFSM._sim_fsm` in `pypeline.py`.
+`AUTO_FSM._sim_fsm` in `pypeline.py`.
 
 Rather than modelling the FSM's *behaviour* abstractly, the emulation models the
 generated hardware's **registers** — the same state register, input latch and
@@ -2066,14 +2066,14 @@ The whole function is evaluated in one go in the last state rather than
 per-state: the FSM's decomposition into states is a hardware implementation
 detail, invisible at the call-site boundary this model has to match.
 
-Schedules reach the simulator exactly the way AUTOPIPELINE latencies do —
-`SIM.DO_OPTIONAL_SIM` → `run_sim(autofsm_schedules=...)` →
-`SET_AUTOFSM_SCHEDULE_CACHE` **before** `_import_design`, because the tag
+Schedules reach the simulator exactly the way AUTO_PIPELINE latencies do —
+`SIM.DO_OPTIONAL_SIM` → `run_sim(auto_fsm_schedules=...)` →
+`SET_AUTO_FSM_SCHEDULE_CACHE` **before** `_import_design`, because the tag
 captures its schedule at construction and any `.latency`-derived Python sizing
 must elaborate the same way it did for the build. With no schedule installed
 (plain native sim, `--comb`) the call site is a zero-latency passthrough.
 
-Nothing in this model changed when AUTOFSM gained its area search, latency cap
+Nothing in this model changed when AUTO_FSM gained its area search, latency cap
 and finer decomposition, and that is by design: every one of those decides *what
 hardware implements the function*, and this model deliberately does not describe
 the hardware — it describes the boundary. The call site accepts while idle,
@@ -2083,14 +2083,14 @@ hierarchy the scheduler went are all invisible from here. The only thing the
 simulator reads out of a schedule is `latency`, and a `max_latency=` cap changes
 nothing except which number that is.
 
-`self_check_autofsm_test.py` is run in both native and GHDL simulation, at
+`self_check_auto_fsm_test.py` is run in both native and GHDL simulation, at
 latency 0 and at real latency, which is what checks this model against the
 hardware in practice.
 
 #### `pypeline_sim_debug.py` under non-`--comb`
 
 For non-`--comb` args the tool first does a single build-only pass (no `--sim`) into a
-shared `out_dir` -- the full throughput sweep + AUTOPIPELINE pin-and-confirm, paid once
+shared `out_dir` -- the full throughput sweep + AUTO_PIPELINE pin-and-confirm, paid once
 -- then points **both** the native and VHDL `--sim` invocations at that same now-warm
 `out_dir` and runs them **concurrently**. Each re-runs `pypelinec`'s build path
 internally, but with the sweep already warm (existing VHDL/log/timing-params results in
@@ -2172,12 +2172,12 @@ Two traps when writing a design that will be diffed against real VHDL:
 - **Registers (`Reg[T]`)** — supported; functions must carry `@hw_func` (or `@MAIN`).
   `Reg[T, MULTI_CYCLE[...].start/.end]` tags are resolved even when the `MULTI_CYCLE[...]`
   call is assigned to a local (`MC = MULTI_CYCLE[32]`) earlier in the same body (`_local_const_ns`).
-- **Multi-cycle paths (`MULTI_CYCLE[...]` / `AUTOMCP(...)`)** — never modeled as settling
+- **Multi-cycle paths (`MULTI_CYCLE[...]` / `AUTO_MULTI_CYCLE(...)`)** — never modeled as settling
   time: the launch->capture logic is ready the same cycle, so only handshake timing is
-  simulated. An `AUTOMCP`'s `.latency` resolves at construction (cache, else `latency=`,
-  else `start_latency=`, else 1). After a non-`--comb` build, `run_sim(automcp_latencies=)`
+  simulated. An `AUTO_MULTI_CYCLE`'s `.latency` resolves at construction (cache, else `latency=`,
+  else `start_latency=`, else 1). After a non-`--comb` build, `run_sim(auto_multi_cycle_latencies=)`
   installs the built counts before the design import (and restarts construction ordinals,
-  `pypeline.RESET_AUTOMCP_TRACKING`), so the handshake counts the constrained cycles.
+  `pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING`), so the handshake counts the constrained cycles.
 - **Feedback wires (`Feedback[T]`)** — supported via convergence loop; functions must carry `@hw_func`.
 - **Bare struct/array locals** (`rv: my_struct_t` / `rv: uint1_t[n]`, no initializer, followed
   by `rv.field = ...` / `rv[i] = ...`) — supported (`_TypedAnnAssignRewriter` Rules 3-4,
@@ -2192,7 +2192,7 @@ Two traps when writing a design that will be diffed against real VHDL:
 - **Closures from factory functions** — add `@hw_func` to the inner closure definition.
   `_build_reg_sim_func` resolves `Reg[T]` annotations using closure-captured variables.
   Factories that accept and then call a caller-supplied function
-  (`make_autopipeline`/`make_stream_interface_mcp`/`make_stream_pipeline`) require that
+  (`make_auto_pipeline`/`make_stream_multi_cycle`/`make_stream_auto_pipeline`) require that
   function to already be `@hw_func`-decorated and raise `TypeError` at the factory call
   site otherwise — see `is_hw_func(func)` above.
 - **Global variables** — only `Wire[T]`/`Input[T]`/`Output[T]` annotations are valid as
@@ -2207,7 +2207,7 @@ Two traps when writing a design that will be diffed against real VHDL:
   (see `sim_model` section above); without one, calling the function in simulation raises
   `NotImplementedError`. `make_fifo` attaches a `collections.deque`-based FWFT model (see
   `make_fifo` Simulation Model below), so it and, transitively, `make_stream_fifo`/
-  `make_stream_pipeline` are now simulable.
+  `make_stream_auto_pipeline` are now simulable.
 - **`sim_model` class models and nested `Reg[T]` hw_funcs inside Layer-1 `Feedback[T]`
   loops** — commit once per outermost `sim_call`, not once per convergence iteration, since
   the outermost `sim_call` opens a register-write buffer for its whole duration, the same
@@ -2218,7 +2218,7 @@ Two traps when writing a design that will be diffed against real VHDL:
   `_SimLoopInstanceRewriter` gives every executed iteration a source-span-plus-ordinal frame
   before the body runs, matching `PY_TO_LOGIC.loop_instance_prefix`'s independent hardware
   hierarchy. This also applies through a stateless helper, to nested loops, and to class
-  `sim_model`/AUTOPIPELINE state keyed by `_sim_inst_stack`. The ordinal is structural rather
+  `sim_model`/AUTO_PIPELINE state keyed by `_sim_inst_stack`. The ordinal is structural rather
   than value- or execution-count-based: duplicate values and runtime-gated iterations cannot
   swap state. `sim_loop_reg_state_test.py` verifies the chained two-call trajectory (0, 0, 10,
   30) with direct `sim_call`, all native arithmetic modes, and a native-vs-GHDL cycle diff.
@@ -2391,7 +2391,7 @@ re-evaluated with mid-cycle-changing wire inputs from a later-queued driver MAIN
 behavior, FWFT push/pop order, backpressure and overflow-drop at the rounded-up capacity,
 same-cycle push+pop ordering, and a multi-cycle reference-model soak against an
 independent plain-Python `deque`), `inst/stream_fifo_test.py` and
-`inst/stream_pipeline_test.py` (integration through the `stream_t` wrappers — the latter
+`inst/stream_auto_pipeline_test.py` (integration through the `stream_t` wrappers — the latter
 including a steady-drain and a stall-and-resume backpressure scenario, both checked
 against `sim_call(div_inv, x)` as ground truth), and `fifo_sim_model_convergence_test`
 (`inst/fifo_sim_model_test.py` under `--run 16`), which mirrors
@@ -2405,14 +2405,14 @@ The `pipelinec --sim --run N` § above is covered by `pipelinec_native_sim_test`
 `global_wires_sim_test` entry already covers. (Every native_sim-category `pipelinec` invocation
 passes `--comb` — without it, `--sim` now triggers a full build first.) The pipelined native
 sim § is covered by `native_pipelined_sim_test` (in `synth_tests.py`: non-`--comb` build +
-latency-emulated native self-checks of `self_check_stream_pipeline_test.py`) and, in the
+latency-emulated native self-checks of `self_check_stream_auto_pipeline_test.py`) and, in the
 `native_vs_vhdl_sim` category, `pypeline_sim_debug.py` cycle-diff tests including
 `native_vs_vhdl_ap_test` and `native_vs_vhdl_pipelined_main_test`, which MATCH-compare emulated
-native sim against real pipelined GHDL for an AUTOPIPELINE call site and a naturally-pipelined
+native sim against real pipelined GHDL for an AUTO_PIPELINE call site and a naturally-pipelined
 pure MAIN respectively.
 
 The opt-in Divider QoR harness adds a different end-to-end check: it compiles the exact final
-`vhdl_files.txt` after autopipelining and verifies stream ordering, bubbles, divide-by-zero,
+`vhdl_files.txt` after auto-pipelining and verifies stream ordering, bubbles, divide-by-zero,
 valid latency, input readiness, and pipeline flush under continuous traffic. It deliberately
 does not claim output-backpressure coverage because that fixture has no output-ready port.
 See [pypeline_TESTS.md](pypeline_TESTS.md) for its commands and acceptance limits. This is a

@@ -4,7 +4,7 @@
 convention as pulse_gen_tb.py -- not @sim_input/@sim_output.
 
 Stimulus is a hardware sample-index counter that only advances on `accepted`
-(the self_check_stream_pipeline_test.py idiom), so a stalled consumer holds
+(the self_check_stream_auto_pipeline_test.py idiom), so a stalled consumer holds
 the presented sample instead of silently dropping it -- required for a
 correct elastic-mode backpressure test.
 

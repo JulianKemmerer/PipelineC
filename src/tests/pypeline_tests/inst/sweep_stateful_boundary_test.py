@@ -1,6 +1,6 @@
 # pyright: reportInvalidTypeForm=none
 # Planned throughput sweep test (d): comb logic A -> stateful submodule S
-# (no autopipeline tag) -> comb logic B, with a timing goal that forces cuts
+# (no auto-pipeline tag) -> comb logic B, with a timing goal that forces cuts
 # near S's span. Cuts must stop at S's boundary instead of descending into it
 # and silently vanishing (regression test for the old "Finding #1" descend
 # predicate bug - the CHECK_CUTS_VS_LATENCY invariant raises if cuts are lost).
@@ -23,7 +23,7 @@ from pypeline import (
 
 @hw_func
 def acc_step(x: uint8_t) -> uint8_t:
-    # Stateful (non-volatile Reg) - not sliceable, no autopipeline tag
+    # Stateful (non-volatile Reg) - not sliceable, no auto-pipeline tag
     acc: Reg[uint8_t]
     acc = acc + x
     return acc

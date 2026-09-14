@@ -22,7 +22,7 @@ very wide accumulators.
 from pypeline import (
     NamedTuple,
     Reg,
-    _autopipeline_with_io_regs,
+    _auto_pipeline_with_io_regs,
     hw_func,
     struct,
     uint1_t,
@@ -30,7 +30,7 @@ from pypeline import (
 
 from fixed_point import make_fixed_t, make_fixed_resize
 from stream.stream import make_stream_interface, make_stream_t
-from stream.stream_pipeline import make_stream_pipeline
+from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 from dsp.fir_common import data_range, signed_bits_for, unsigned_bits_for
 
@@ -113,7 +113,7 @@ def make_moving_avg(
             return resize_fn(s)
 
     if handshake == "elastic":
-        sp_func, _sp_t = make_stream_pipeline(moving_avg_core)
+        sp_func, _sp_t = make_stream_auto_pipeline(moving_avg_core)
         in_intrf = make_stream_interface(data_t)
         out_intrf = sp_func.out_intrf
 
@@ -150,7 +150,7 @@ def make_moving_avg(
             o.stream_in_if.ready = sp_o.stream_in_if.ready
             return o
 
-        _core_ap = None  # no AUTOPIPELINE core in elastic mode (make_stream_pipeline)
+        _core_ap = None  # no AUTO_PIPELINE core in elastic mode (make_stream_auto_pipeline)
 
     elif handshake == "valid_only":
         in_stream_t = make_stream_t(data_t)
@@ -165,7 +165,7 @@ def make_moving_avg(
             rv.valid = x.valid
             return rv
 
-        moving_avg_core_ap, _moving_avg_core_ap_call = _autopipeline_with_io_regs(
+        moving_avg_core_ap, _moving_avg_core_ap_call = _auto_pipeline_with_io_regs(
             moving_avg_core_stream, has_input_reg=True, has_output_reg=True
         )
         _core_ap = _moving_avg_core_ap_call
@@ -217,7 +217,7 @@ def make_moving_avg(
     # comment for why this is a lazy accessor rather than an eager attribute).
     # The window shift-register update is combinational-in (reads committed
     # Reg state, no pipeline stages of its own), so it adds no latency beyond
-    # the io-reg-wrapped output resize's AUTOPIPELINE core.
+    # the io-reg-wrapped output resize's AUTO_PIPELINE core.
     moving_avg.core_ap = _core_ap
     moving_avg.io_reg_latency = 2 if handshake == "valid_only" else None  # in + out reg
     moving_avg.get_latency = (

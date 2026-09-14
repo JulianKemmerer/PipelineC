@@ -1,8 +1,8 @@
 #!/usr/bin/env python3
 # Planned throughput sweep test (f): unpipelinable design messaging.
 # Runs pypelinec on sweep_unpipelinable_design.py (a stateful MAIN with no
-# AUTOPIPELINE regions and an unreachable 100 MHz goal) and asserts the tool
-# tells the user PLAINLY that autopipelining cannot help:
+# AUTO_PIPELINE regions and an unreachable 100 MHz goal) and asserts the tool
+# tells the user PLAINLY that auto-pipelining cannot help:
 #  - at planning time (main has a goal but nothing cuttable)
 #  - via the standalone as-written synthesis check (FAIL vs the goal)
 #  - when the timing report fails (named main + guidance)
@@ -50,8 +50,8 @@ def main():
     if "Writing Results of Throughput Sweep" not in out:
         print("FAIL: results were not written before failing")
         sys.exit(1)
-    if "contains nothing autopipelining can help" not in out:
-        print("FAIL: no planning-time warning that autopipelining cannot help")
+    if "contains nothing auto-pipelining can help" not in out:
+        print("FAIL: no planning-time warning that auto-pipelining cannot help")
         sys.exit(1)
     if not re.search(
         r"\[sweep\] sweep_unpipelinable_main synthesized as written "
@@ -60,7 +60,7 @@ def main():
     ):
         print("FAIL: no as-written standalone check FAIL line for the main")
         sys.exit(1)
-    if "autopipelining cannot help it" not in out:
+    if "auto-pipelining cannot help it" not in out:
         print("FAIL: no failing-timing warning naming the main + guidance")
         sys.exit(1)
     full_syn_runs = len(re.findall(r"Running syn w timing params", out))

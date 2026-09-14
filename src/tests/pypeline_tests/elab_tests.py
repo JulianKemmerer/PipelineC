@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""pypelinec --no_synth (elaboration only, no autopipelining/synthesis) tests.
+"""pypelinec --no_synth (elaboration only, no auto-pipelining/synthesis) tests.
 
 "Does it elaborate" only -- exit code is the entire verdict. See
 elab_introspect_tests.py for tests that call PY_TO_LOGIC.PARSE_FILE
@@ -22,7 +22,7 @@ NO_SYNTH_TEST_FILES = [
     # here -- e.g. designs that don't synthesize well/fast, or aren't in
     # synth_tests.py's SYNTH_TEST_FILES for some other reason. Anything also
     # listed there should NOT be duplicated here.
-    "autopipeline_test.py",
+    "auto_pipeline_test.py",
     "global_wires_test.py",
     "clock_domain_inference_test.py",
     "user_clock_test.py",

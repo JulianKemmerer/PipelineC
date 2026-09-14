@@ -32,7 +32,7 @@
 # correctly attributed, that LCA can legitimately be unsliceable itself
 # (state/feedback at its own level) while wrapping other, unrelated
 # sliceable logic - the sweep must not treat that as "nothing here can be
-# autopipelined" without checking whether a different candidate on the
+# auto-pipelined" without checking whether a different candidate on the
 # same path can still be densified. RESOLVE_PIPELINABLE_HOTSPOT covers
 # that scan.
 import os
@@ -141,9 +141,9 @@ _WG_START_REG = (
     "decrypt_dataflow_core_decrypt_dataflow_py_l27_c8_el36_ec5/"
     "chacha_func_pypeline_interface_func_gen_if8040c842_decrypt_dataflow_core_077e07da383ed36e_inst18_py_l20_c13_el20_ec148/"
     "pipeline_func_pypeline_interface_func_gen_ifbf63ab38_chacha20_instance_wiring_inst10_py_l12_c11_el12_ec74/"
-    "autopipelined_func_stream_pipeline_py_l112_c36_el112_ec71/"
+    "auto_pipelined_func_stream_auto_pipeline_py_l112_c36_el112_ec71/"
     "func_stream_pypeline_py_l1559_c14_el1559_ec24/"
-    "func_stream_pipeline_py_l72_c14_el72_ec26/"
+    "func_stream_auto_pipeline_py_l72_c14_el72_ec26/"
     "chacha20_chacha20_block_chacha20_py_l205_c12_el205_ec33/"
     "chacha20_chacha20_block_step_chacha20_py_l128_c12_el128_ec38/"
     "quarter_round_2_6_10_14_chacha20_py_l108_c13_el108_ec44/"
@@ -154,9 +154,9 @@ _WG_END_REG = (
     "decrypt_dataflow_core_decrypt_dataflow_py_l27_c8_el36_ec5/"
     "chacha_func_pypeline_interface_func_gen_if8040c842_decrypt_dataflow_core_077e07da383ed36e_inst18_py_l20_c13_el20_ec148/"
     "pipeline_func_pypeline_interface_func_gen_ifbf63ab38_chacha20_instance_wiring_inst10_py_l12_c11_el12_ec74/"
-    "autopipelined_func_stream_pipeline_py_l112_c36_el112_ec71/"
+    "auto_pipelined_func_stream_auto_pipeline_py_l112_c36_el112_ec71/"
     "func_stream_pypeline_py_l1559_c14_el1559_ec24/"
-    "func_stream_pipeline_py_l72_c14_el72_ec26/"
+    "func_stream_auto_pipeline_py_l72_c14_el72_ec26/"
     "chacha20_chacha20_block_chacha20_py_l205_c12_el205_ec33/"
     "chacha20_chacha20_block_step_chacha20_py_l129_c12_el129_ec38/"
     "quarter_round_3_4_9_14_chacha20_py_l113_c13_el113_ec43/"
@@ -170,7 +170,7 @@ _WG_ANCESTOR_FUNCS = {
     "BIN_OP_XOR_uint32_t_uint32_t",
     "BIN_OP_XOR_uint8_t_uint8_t",
     "MUX_uint8_t",
-    "autopipelined_func_has_input_reg_has_output_reg_d077aabe",
+    "auto_pipelined_func_has_input_reg_has_output_reg_d077aabe",
     "chacha20_chacha20_block",
     "chacha20_chacha20_block_step",
     "chacha20_chacha20_loop_body",
@@ -185,7 +185,7 @@ _WG_ANCESTOR_FUNCS = {
     "quarter_round_a_2_b_7_c_8_d_13",
     "quarter_round_a_3_b_4_c_9_d_14",
     "quarter_round_a_3_b_7_c_11_d_15",
-    "stream_pipeline_func_8e3e72e6",
+    "stream_auto_pipeline_func_8e3e72e6",
 }
 _WG_WRAPPER = "if8040c842_decrypt_dataflow_core_077e07da383ed36e_inst18"
 _WG_HOTSPOT = "chacha20_chacha20_block_step"
@@ -216,7 +216,7 @@ _PR_START_REG = (
     "decrypt_dataflow_core_decrypt_dataflow_py_l27_c8_ec5/"
     "chacha_func_decrypt_dataflow_core_if8040c842_py_l20_c13_ec148/"
     "pipeline_func_chacha20_instance_wiring_ifbf63ab38_py_l12_c11_ec74/"
-    "autopipelined_func_chacha20_chacha20_loop_body_has_input_reg_True_"
+    "auto_pipelined_func_chacha20_chacha20_loop_body_has_input_reg_True_"
     "has_output_reg_True_chacha20_py_l112_c36_ec71/"
     "chacha20_block_chacha20_py_l205_c12_ec33/"
     "chacha20_block_step_chacha20_py_l128_c12_ec38/"
@@ -228,7 +228,7 @@ _PR_END_REG = (
     "decrypt_dataflow_core_decrypt_dataflow_py_l27_c8_ec5/"
     "chacha_func_decrypt_dataflow_core_if8040c842_py_l20_c13_ec148/"
     "pipeline_func_chacha20_instance_wiring_ifbf63ab38_py_l12_c11_ec74/"
-    "autopipelined_func_chacha20_chacha20_loop_body_has_input_reg_True_"
+    "auto_pipelined_func_chacha20_chacha20_loop_body_has_input_reg_True_"
     "has_output_reg_True_chacha20_py_l112_c36_ec71/"
     "chacha20_block_chacha20_py_l205_c12_ec33/"
     "chacha20_block_step_chacha20_py_l129_c12_ec38/"
@@ -240,7 +240,7 @@ _PR_ANCESTOR_FUNCS = {
     "BIN_OP_XOR_uint32_t_uint32_t",
     "BIN_OP_XOR_uint8_t_uint8_t",
     "MUX_uint8_t",
-    "autopipelined_func_chacha20_chacha20_loop_body_has_input_reg_True_"
+    "auto_pipelined_func_chacha20_chacha20_loop_body_has_input_reg_True_"
     "has_output_reg_True",
     "chacha20_block",
     "chacha20_block_step",

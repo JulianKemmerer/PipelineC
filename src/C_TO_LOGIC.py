@@ -402,10 +402,10 @@ def DICT_SET_VALUE_MERGE(d1, d2):
     return rv
 
 
-class AutomcpConstraint:
-    """Cycle-count constraint of one AUTOMCP multi-cycle path, recorded in
-    Logic.automcp_tuples[(start_reg, end_reg)] by the Pypeline elaborator.
-      key            pypeline.AUTOMCP.canonical_key (cross-pass cache key)
+class AutoMultiCycleConstraint:
+    """Cycle-count constraint of one AUTO_MULTI_CYCLE multi-cycle path, recorded in
+    Logic.auto_multi_cycle_tuples[(start_reg, end_reg)] by the Pypeline elaborator.
+      key            pypeline.AUTO_MULTI_CYCLE.canonical_key (cross-pass cache key)
       latency=N      fixed: the sweep never changes the count
       start_latency  the count the first sweep iteration uses (else 1)
       max_latency    the sweep never raises the count above this
@@ -422,7 +422,7 @@ class AutomcpConstraint:
 
     @staticmethod
     def from_tag(tag):
-        return AutomcpConstraint(
+        return AutoMultiCycleConstraint(
             tag.canonical_key, tag.fixed_latency, tag.start_latency, tag.max_latency
         )
 
@@ -434,7 +434,7 @@ class AutomcpConstraint:
 
     def __eq__(self, other):
         return (
-            isinstance(other, AutomcpConstraint)
+            isinstance(other, AutoMultiCycleConstraint)
             and self.__getstate__() == other.__getstate__()
         )
 
@@ -459,18 +459,18 @@ class AutomcpConstraint:
         return ", ".join(parts) if parts else "unconstrained"
 
 
-class AutopipelineLatency:
-    """Latency constraint on one AUTOPIPELINE call site, recorded per local
-    submodule instance in Logic.sub_inst_to_autopipeline_latency.
+class AutoPipelineLatency:
+    """Latency constraint on one AUTO_PIPELINE call site, recorded per local
+    submodule instance in Logic.sub_inst_to_auto_pipeline_latency.
 
-    Built from pypeline.AUTOPIPELINE(func, latency=/start_latency=/max_latency=)
+    Built from pypeline.AUTO_PIPELINE(func, latency=/start_latency=/max_latency=)
     via from_tag, or from C `#pragma AUTOPIPELINE N` (fixed N). All three None
     means unconstrained: the sweep treats that region exactly as it always has.
       latency=N        fixed: exactly N inserted registers, in every build
       start_latency=S  the planned sweep's first iteration builds S registers
       max_latency=M    the sweep never builds more than M registers
-    key_suffix() must stay identical to pypeline._autopipeline_latency_suffix
-    (AUTOPIPELINE canonical key / entity-name identity); a unit test checks it.
+    key_suffix() must stay identical to pypeline._auto_pipeline_latency_suffix
+    (AUTO_PIPELINE canonical key / entity-name identity); a unit test checks it.
     """
 
     __slots__ = ("latency", "start_latency", "max_latency")
@@ -482,7 +482,7 @@ class AutopipelineLatency:
 
     @staticmethod
     def from_tag(tag):
-        return AutopipelineLatency(
+        return AutoPipelineLatency(
             getattr(tag, "fixed_latency", None),
             getattr(tag, "start_latency", None),
             getattr(tag, "max_latency", None),
@@ -540,7 +540,7 @@ class AutopipelineLatency:
         return None
 
     def __eq__(self, other):
-        return isinstance(other, AutopipelineLatency) and (
+        return isinstance(other, AutoPipelineLatency) and (
             self.__getstate__() == other.__getstate__()
         )
 
@@ -548,7 +548,7 @@ class AutopipelineLatency:
         return hash(self.__getstate__())
 
     def __repr__(self):
-        return f"AutopipelineLatency({self.describe()})"
+        return f"AutoPipelineLatency({self.describe()})"
 
 
 class Logic:
@@ -607,29 +607,29 @@ class Logic:
         self.debug_names = set()  # Names MARK_DEBUG
         self.mcp_tuples = set()  # Tuples of MCP params
         # Pypeline frontend only: (start_reg, end_reg) of an mcp_tuples entry
-        # -> AutomcpConstraint when that multi-cycle path came from an AUTOMCP
+        # -> AutoMultiCycleConstraint when that multi-cycle path came from an AUTO_MULTI_CYCLE
         # tag (the sweep may raise its cycle count). Empty for C designs.
-        self.automcp_tuples = {}
-        self.next_func_call_autopipeline_latency = (
+        self.auto_multi_cycle_tuples = {}
+        self.next_func_call_auto_pipeline_latency = (
             None  # Pending #pragma AUTOPIPELINE constraint for next func call
         )
-        # Which instances are tagged autopipeline: local inst name ->
-        # AutopipelineLatency (unconstrained unless latency/start/max given)
-        self.sub_inst_to_autopipeline_latency = {}
-        # Pypeline frontend only: local inst name -> AUTOPIPELINE canonical
-        # latency-cache key (pypeline.AUTOPIPELINE.canonical_key). Empty for
+        # Which instances are tagged auto-pipeline: local inst name ->
+        # AutoPipelineLatency (unconstrained unless latency/start/max given)
+        self.sub_inst_to_auto_pipeline_latency = {}
+        # Pypeline frontend only: local inst name -> AUTO_PIPELINE canonical
+        # latency-cache key (pypeline.AUTO_PIPELINE.canonical_key). Empty for
         # .c-originated logic (#pragma AUTOPIPELINE has no Python object to
         # round-trip a discovered latency into).
-        self.sub_inst_to_autopipeline_key = {}
-        # Pypeline frontend only: local inst name -> AUTOFSM canonical schedule-cache
-        # key (pypeline.AUTOFSM.canonical_key). Marks the call site whose submodule
+        self.sub_inst_to_auto_pipeline_key = {}
+        # Pypeline frontend only: local inst name -> AUTO_FSM canonical schedule-cache
+        # key (pypeline.AUTO_FSM.canonical_key). Marks the call site whose submodule
         # is the generated resource-shared FSM entity (or, before a schedule exists,
         # the combinational passthrough placeholder). Empty for .c-originated logic.
-        # Unlike sub_inst_to_autopipeline_key this never changes how SYN/SWEEP treat
+        # Unlike sub_inst_to_auto_pipeline_key this never changes how SYN/SWEEP treat
         # the instance -- the generated FSM entity is stateful, hence already atomic
-        # and zero-added-latency -- it exists so the driver can find AUTOFSM call
-        # sites to schedule. See docs/AUTOFSM_DESIGN.md.
-        self.sub_inst_to_autofsm_key = {}
+        # and zero-added-latency -- it exists so the driver can find AUTO_FSM call
+        # sites to schedule. See docs/AUTO_FSM_DESIGN.md.
+        self.sub_inst_to_auto_fsm_key = {}
         self.ast_meta = None
         self.pypeline_emission_names = None
         # Python clock-by-clock bodies consume these pipeline outputs in the
@@ -761,11 +761,11 @@ class Logic:
         rv.next_user_inst_name = self.next_user_inst_name
         rv.debug_names = set(self.debug_names)
         rv.mcp_tuples = set(self.mcp_tuples)
-        rv.automcp_tuples = dict(self.automcp_tuples)
-        rv.next_func_call_autopipeline_latency = self.next_func_call_autopipeline_latency
-        rv.sub_inst_to_autopipeline_latency = dict(self.sub_inst_to_autopipeline_latency)
-        rv.sub_inst_to_autopipeline_key = dict(self.sub_inst_to_autopipeline_key)
-        rv.sub_inst_to_autofsm_key = dict(self.sub_inst_to_autofsm_key)
+        rv.auto_multi_cycle_tuples = dict(self.auto_multi_cycle_tuples)
+        rv.next_func_call_auto_pipeline_latency = self.next_func_call_auto_pipeline_latency
+        rv.sub_inst_to_auto_pipeline_latency = dict(self.sub_inst_to_auto_pipeline_latency)
+        rv.sub_inst_to_auto_pipeline_key = dict(self.sub_inst_to_auto_pipeline_key)
+        rv.sub_inst_to_auto_fsm_key = dict(self.sub_inst_to_auto_fsm_key)
         rv.ast_meta = self.ast_meta
         rv.pypeline_emission_names = self.pypeline_emission_names
         rv.submodule_latencies_are_self_timed = set(
@@ -1777,28 +1777,28 @@ class Logic:
             return False
         return True
 
-    def SUB_HAS_AUTOPIPELINE_IN_HIER(self, sub_inst, parser_state):
-        if sub_inst in self.sub_inst_to_autopipeline_latency:
+    def SUB_HAS_AUTO_PIPELINE_IN_HIER(self, sub_inst, parser_state):
+        if sub_inst in self.sub_inst_to_auto_pipeline_latency:
             return True
         sub_func_name = self.submodule_instances[sub_inst]
         sub_logic = parser_state.FuncLogicLookupTable[sub_func_name]
-        if len(sub_logic.sub_inst_to_autopipeline_latency) > 0:
+        if len(sub_logic.sub_inst_to_auto_pipeline_latency) > 0:
             return True
         for sub_sub_inst in sub_logic.submodule_instances:
-            if sub_logic.SUB_HAS_AUTOPIPELINE_IN_HIER(sub_sub_inst, parser_state):
+            if sub_logic.SUB_HAS_AUTO_PIPELINE_IN_HIER(sub_sub_inst, parser_state):
                 return True
         return False
 
-    def HAS_AUTOPIPELINE_IN_HIER(self, parser_state):
+    def HAS_AUTO_PIPELINE_IN_HIER(self, parser_state):
         for sub_inst in self.submodule_instances:
-            if self.SUB_HAS_AUTOPIPELINE_IN_HIER(sub_inst, parser_state):
+            if self.SUB_HAS_AUTO_PIPELINE_IN_HIER(sub_inst, parser_state):
                 return True
         return False
 
     def CAN_USE_AUTOPIPELINING(self, parser_state):
         return self.CAN_HAVE_ADDED_LATENCY(
             parser_state
-        ) or self.HAS_AUTOPIPELINE_IN_HIER(parser_state)
+        ) or self.HAS_AUTO_PIPELINE_IN_HIER(parser_state)
 
 
 def RECURSIVE_RENAME_GLOBAL_INST(inst_to_rename, renamed_inst_name, parser_state):
@@ -2447,12 +2447,12 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_st
         mcp_tup = (toks[1], toks[2], toks[3])
         parser_state.existing_logic.mcp_tuples.add(mcp_tup)
 
-    # Autopipelined submodule instances
+    # Auto-pipelined submodule instances
     if toks[0] == "AUTOPIPELINE":
         # Bare pragma: unconstrained (the sweep picks the latency).
         # `#pragma AUTOPIPELINE N`: fixed latency N (N inserted registers).
         # -1 is kept as the legacy spelling of unconstrained.
-        constraint = AutopipelineLatency()
+        constraint = AutoPipelineLatency()
         if len(toks) > 1 and not toks[1].startswith("/"):
             try:
                 latency = int(toks[1])
@@ -2462,12 +2462,12 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_st
                     "latency (number of inserted registers)"
                 )
             if latency >= 0:
-                constraint = AutopipelineLatency(latency=latency)
+                constraint = AutoPipelineLatency(latency=latency)
             elif latency != -1:
                 raise Exception(
                     f"#pragma AUTOPIPELINE {latency}: latency must be >= 0"
                 )
-        parser_state.existing_logic.next_func_call_autopipeline_latency = constraint
+        parser_state.existing_logic.next_func_call_auto_pipeline_latency = constraint
 
     return parser_state.existing_logic
 
@@ -7602,13 +7602,13 @@ def C_AST_N_ARG_FUNC_INST_TO_LOGIC(
         # Build instance name
         func_inst_name = BUILD_INST_NAME(prepend_text, func_base_name, func_c_ast_node)
 
-    # Record if user specified call to be autopipeline
-    if parser_state.existing_logic.next_func_call_autopipeline_latency is not None:
-        constraint = parser_state.existing_logic.next_func_call_autopipeline_latency
-        parser_state.existing_logic.sub_inst_to_autopipeline_latency[func_inst_name] = (
+    # Record if user specified call to be auto-pipeline
+    if parser_state.existing_logic.next_func_call_auto_pipeline_latency is not None:
+        constraint = parser_state.existing_logic.next_func_call_auto_pipeline_latency
+        parser_state.existing_logic.sub_inst_to_auto_pipeline_latency[func_inst_name] = (
             constraint
         )
-        parser_state.existing_logic.next_func_call_autopipeline_latency = None
+        parser_state.existing_logic.next_func_call_auto_pipeline_latency = None
 
     # Should not be evaluating c ast node if driver is already known
     for input_i in range(0, len(input_port_names)):
@@ -12385,7 +12385,7 @@ def APPEND_PRAGMA_INFO(parser_state):
             # Not handled here, done in func def parsing
             pass
 
-        # AUTOPIPELINE
+        # AUTO_PIPELINE
         elif name == "AUTOPIPELINE":
             # Not handled here, done in func def parsing
             pass

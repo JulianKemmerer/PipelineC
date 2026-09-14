@@ -3,7 +3,7 @@
 
 A 31-tap windowed-sinc lowpass (designed in plain Python at elaboration time)
 filters a two-tone signal: the in-band tone passes, the stopband tone is
-removed. The filter is one autopipelined combinational blob wrapped in a
+removed. The filter is one auto-pipelined combinational blob wrapped in a
 valid/ready stream -- pipeline depth is chosen by the tool for the target
 FPGA/fmax, never hard-coded (see docs/pypeline_guide.md "DSP: FIR filters").
 

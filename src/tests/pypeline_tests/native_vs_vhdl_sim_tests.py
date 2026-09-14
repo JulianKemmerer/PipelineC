@@ -54,11 +54,11 @@ COMB_TEST_FILES = [
     # See docs: Casting's "Make integer conversion match C" section --
     # signed narrowing used to disagree with native sim in real GHDL.
     ("nested_truncate_test.py", INST_DIR, []),
-    # AUTOFSM through real GHDL in --comb mode (passthrough, latency 0). The
+    # AUTO_FSM through real GHDL in --comb mode (passthrough, latency 0). The
     # scheduled FSM hardware is exercised by the non---comb entry below.
-    ("self_check_autofsm_test.py", INST_DIR, []),
-    # make_stream_autofsm's handshake wrapper, same --comb/non---comb split.
-    ("self_check_stream_autofsm_test.py", INST_DIR, []),
+    ("self_check_auto_fsm_test.py", INST_DIR, []),
+    # make_stream_auto_fsm's handshake wrapper, same --comb/non---comb split.
+    ("self_check_stream_auto_fsm_test.py", INST_DIR, []),
     # Stateful calls from one physical source line in an unrolled loop must
     # retain one native register bank per iteration ordinal, matching the
     # hardware elaborator's loop_instance_prefix hierarchy.
@@ -95,9 +95,9 @@ COMB_TEST_FILES = [
     # 7-byte struct over a 4-byte bus so the partial-beat path is what gets
     # diffed rather than the aligned happy path.
     ("self_check_type_axis_test.py", INST_DIR, []),
-    # AUTOPIPELINE(func, latency=2): plain native sim's 2-cycle delay line vs
+    # AUTO_PIPELINE(func, latency=2): plain native sim's 2-cycle delay line vs
     # the --comb VHDL build's 2 fixed registers.
-    ("self_check_fixed_autopipeline_test.py", INST_DIR, []),
+    ("self_check_fixed_auto_pipeline_test.py", INST_DIR, []),
 ]
 # Non---comb (pipelined/scheduled) compares: full build, then native sim runs
 # with the discovered latencies emulated, diffed against real pipelined VHDL.
@@ -105,13 +105,13 @@ NON_COMB_TEST_FILES = [
     ("pipeline_latency_sim_test.py", INST_DIR, ["--pipeline_min_effort", "0"]),
     # Same self-checking design as the --comb entry above, but now through
     # the REAL scheduled FSM (replaces synth_tests.py's former
-    # autofsm_native_sim_test + autofsm_vhdl_sim_test pair with one cycle diff).
-    ("self_check_autofsm_test.py", INST_DIR, []),
+    # auto_fsm_native_sim_test + auto_fsm_vhdl_sim_test pair with one cycle diff).
+    ("self_check_auto_fsm_test.py", INST_DIR, []),
     # Same, one layer up: the real scheduled FSM underneath
-    # make_stream_autofsm's handshake registers, with real backpressure
+    # make_stream_auto_fsm's handshake registers, with real backpressure
     # toggled from the testbench (see the design file's own docstring).
-    ("self_check_stream_autofsm_test.py", INST_DIR, []),
-    # self_check_stream_pipeline_test.py is deliberately NOT here: its VHDL
+    ("self_check_stream_auto_fsm_test.py", INST_DIR, []),
+    # self_check_stream_auto_pipeline_test.py is deliberately NOT here: its VHDL
     # sim produced zero debug output cycle over cycle (pypeline_sim_debug.py
     # reported a MISMATCH against native's real output) despite the build
     # itself succeeding cleanly (met timing, 4 pipeline stages). Root cause
@@ -122,7 +122,7 @@ NON_COMB_TEST_FILES = [
     ("native_vs_vhdl_ap_test.py", INST_DIR, []),
     # Same fixed latency=2 design as the --comb entry, through the planned
     # sweep's constrained-region enforcement and the harvested emulation.
-    ("self_check_fixed_autopipeline_test.py", INST_DIR, ["--pipeline_min_effort", "0"]),
+    ("self_check_fixed_auto_pipeline_test.py", INST_DIR, ["--pipeline_min_effort", "0"]),
     (
         "native_vs_vhdl_pipelined_main_test.py",
         INST_DIR,

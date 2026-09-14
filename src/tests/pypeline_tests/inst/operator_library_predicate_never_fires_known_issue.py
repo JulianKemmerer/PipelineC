@@ -1,12 +1,12 @@
 # pyright: reportInvalidTypeForm=none
 """KNOWN ISSUE (reproducer, not a fix): SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE
 never returns True for any real operator-library callable, so operator-
-library entities (AUTOFSM's operand muxes, the soft-operator library under
+library entities (AUTO_FSM's operand muxes, the soft-operator library under
 include/pypeline/operators/) never get cached in path_delay_cache the way
 the predicate exists to enable -- delays for them are re-measured on every
 build instead of read from cache. Effect is BUILD TIME ONLY; delay numbers
 themselves are correct either way (see src/SYN.py's own comment right above
-_autofsm_mux_entities_cache, ~line 4064).
+_auto_fsm_mux_entities_cache, ~line 4064).
 
 Root cause (documented in src/SYN.py, not fixed here): the predicate calls
 inspect.getsourcefile() on the callable recorded in
@@ -87,7 +87,7 @@ if __name__ == "__main__":
 
 # Below: a minimal design that reaches the soft-operator library so PARSE_FILE
 # (invoked above, on this same file) has a real soft_add Logic to inspect --
-# make_soft_add_ripple() is the exact factory _autofsm_mux_entities_cache's
+# make_soft_add_ripple() is the exact factory _auto_fsm_mux_entities_cache's
 # comment (src/SYN.py) names as one of the callables this predicate should
 # classify as library code.
 from pypeline import MAIN, uint17_t

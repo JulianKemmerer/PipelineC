@@ -1,12 +1,12 @@
 #!/usr/bin/env python3
 # -*- coding: utf-8 -*-
-"""pypelinec elaboration + autopipelining + synthesis tests (no --no_synth).
+"""pypelinec elaboration + auto-pipelining + synthesis tests (no --no_synth).
 
 "Does it build" -- exit code is the entire verdict. See build_report_tests.py
 for wrapper scripts that run pypelinec themselves and assert on its log
-output/artifacts, and native_vs_vhdl_sim_tests.py for the AUTOFSM/AUTOPIPELINE
-cycle-accuracy compares that used to live here (autofsm_native_sim_test +
-autofsm_vhdl_sim_test, native_vs_vhdl_pipelined_ap_test,
+output/artifacts, and native_vs_vhdl_sim_tests.py for the AUTO_FSM/AUTO_PIPELINE
+cycle-accuracy compares that used to live here (auto_fsm_native_sim_test +
+auto_fsm_vhdl_sim_test, native_vs_vhdl_pipelined_ap_test,
 native_vs_vhdl_pipelined_main_test).
 
 Run standalone: python3 synth_tests.py [-j N]
@@ -25,23 +25,23 @@ SYNTH_TEST_FILES = [
     # building at t=0, concurrent with the rest of the suite, instead of
     # gating on whatever alphabetically/positionally precedes it.
     ("float_ops_div_test.py", INST_DIR, ["--comb"]),
-    # stream_pipeline_test.py's full-sweep build runs inside the
-    # autopipeline_latency_test wrapper (added in get_tests below), which also
-    # asserts on the AUTOPIPELINE .latency pin-and-confirm output -- not
+    # stream_auto_pipeline_test.py's full-sweep build runs inside the
+    # auto_pipeline_latency_test wrapper (added in get_tests below), which also
+    # asserts on the AUTO_PIPELINE .latency pin-and-confirm output -- not
     # listed here so the same sweep isn't paid for twice.
     # Planned throughput sweep tests (full sweep, no --comb)
     ("sweep_comb_test.py", INST_DIR, []),
     ("sweep_two_mains_test.py", INST_DIR, []),
-    ("sweep_fsm_autopipeline_test.py", INST_DIR, []),
+    ("sweep_fsm_auto_pipeline_test.py", INST_DIR, []),
     ("sweep_stateful_boundary_test.py", INST_DIR, []),
     ("fir_sweep_test.py", INST_DIR, []),  # FIR blob retimes to a @MAIN goal
-    # Non---comb build: proves make_stream_autofsm elaborates and synthesises
-    # with a real AUTOFSM schedule installed underneath its handshake
+    # Non---comb build: proves make_stream_auto_fsm elaborates and synthesises
+    # with a real AUTO_FSM schedule installed underneath its handshake
     # registers, independent of the native-vs-VHDL cycle diff registered in
     # native_vs_vhdl_sim_tests.py.
-    ("self_check_stream_autofsm_test.py", INST_DIR, []),
-    ("stream_interface_mcp_test.py", INST_DIR, ["--comb"]),
-    ("stream_interface_automcp_test.py", INST_DIR, ["--comb"]),
+    ("self_check_stream_auto_fsm_test.py", INST_DIR, []),
+    ("stream_multi_cycle_test.py", INST_DIR, ["--comb"]),
+    ("stream_auto_multi_cycle_test.py", INST_DIR, ["--comb"]),
     ("vga_donut.py", EXAMPLES_PYPELINE_DIR, ["--comb"]),
     ("vga_test_pattern.py", EXAMPLES_PYPELINE_DIR, ["--comb"]),
     ("float32_add_test.py", INST_DIR, ["--comb"]),
@@ -157,7 +157,7 @@ def get_tests() -> list:
             category="synth",
             cmd=[
                 PYPELINEC,
-                INST_DIR / "self_check_stream_pipeline_test.py",
+                INST_DIR / "self_check_stream_auto_pipeline_test.py",
                 "--sim",
                 "--run",
                 "all",
@@ -165,24 +165,24 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
-    # AUTOPIPELINE -> make_stream_autofsm conversions of the qor/ QoR designs
+    # AUTO_PIPELINE -> make_stream_auto_fsm conversions of the qor/ QoR designs
     # (real valid/ready handshake, ready genuinely wired -- not a constant 1).
-    # Each lives at qor/<domain>/autofsm.py -- named explicitly here rather
+    # Each lives at qor/<domain>/auto_fsm.py -- named explicitly here rather
     # than through the SYNTH_TEST_FILES comprehension above, since that
     # derives a Test's name from the bare filename and all three share the
-    # name "autofsm". Clock goals are lowered from each design's AUTOPIPELINE
-    # original: AUTOFSM shares hardware across states instead of spreading it
+    # name "auto_fsm". Clock goals are lowered from each design's AUTO_PIPELINE
+    # original: AUTO_FSM shares hardware across states instead of spreading it
     # across pipeline stages, so the goal that mattered for a free-running
     # pipeline does not carry over -- what matters here is a clean
     # synthesizing build, not matching the pipelined design's fmax (each
     # file's own comment records its measured floor). The multiplier is also
     # what exposed and pins the _TypeResolver array-reconstruction fix in
-    # AUTOFSM.py (an AUTOFSM over a descended soft multiplier's local
+    # AUTO_FSM.py (an AUTO_FSM over a descended soft multiplier's local
     # partial-products array used to crash codegen with "cannot reconstruct a
     # live Python type for C type 'uint8_t[8]'").
     #
-    # timeout=1800: these are the only registered tests that run AUTOFSM's
-    # min-area search (see AUTOFSM.py's Area sweep constants), whose cost is
+    # timeout=1800: these are the only registered tests that run AUTO_FSM's
+    # min-area search (see AUTO_FSM.py's Area sweep constants), whose cost is
     # superlinear in folds-per-shared-unit -- when register_soft_mult()'s
     # default switched to a 30-level carry-save multiplier, this design (then
     # uint16 x uint16) folded 247 adds onto one unit and hung for hours with
@@ -194,9 +194,9 @@ def get_tests() -> list:
     for qor_name in ("multiplier", "divider", "sqrt"):
         tests.append(
             Test(
-                name=f"qor_{qor_name}_autofsm_test",
+                name=f"qor_{qor_name}_auto_fsm_test",
                 category="synth",
-                cmd=[PYPELINEC, QOR_DIR / qor_name / "autofsm.py"],
+                cmd=[PYPELINEC, QOR_DIR / qor_name / "auto_fsm.py"],
                 needs_out_dir=True,
                 timeout=1800,
             )

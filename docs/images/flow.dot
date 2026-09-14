@@ -11,7 +11,7 @@ digraph PypelineC {
   //   green note     = input file        blue note = output file
   //   white note     = intermediate file
   //   solid arrow    = default flow, dashed arrow = optional (flag/pragma gated)
-  //   blue arrow     = the autopipelining measurement loop
+  //   blue arrow     = the auto-pipelining measurement loop
 
   rankdir = TB
   splines = spline
@@ -42,7 +42,7 @@ digraph PypelineC {
     leg_def_dst [label="" shape=point style=invis width=0.01]
     leg_opt_src [label="Optional (flag/pragma)" shape=plaintext style="" fillcolor="none"]
     leg_opt_dst [label="" shape=point style=invis width=0.01]
-    leg_it_src  [label="Autopipelining loop" shape=plaintext style="" fillcolor="none" fontcolor="#1f5fbf"]
+    leg_it_src  [label="Auto-pipelining loop" shape=plaintext style="" fillcolor="none" fontcolor="#1f5fbf"]
     leg_it_dst  [label="" shape=point style=invis width=0.01]
 
     leg_def_src -> leg_def_dst
@@ -67,13 +67,13 @@ digraph PypelineC {
 
   LogicGraph [label="Logic graph IR\npure functions + stateful logic,\ninstance hierarchy, global wires" shape=ellipse]
 
-  // ======================= Autopipelining loop =======================
-  Autopipeline [label="Autopipelining\ncut the logic graph into N pipeline stages,\nsynthesize, read fmax, re-cut -- iterate until\nthe @MAIN target frequency is met"
+  // ======================= Auto-pipelining loop =======================
+  AutoPipeline [label="Auto-pipelining\ncut the logic graph into N pipeline stages,\nsynthesize, read fmax, re-cut -- iterate until\nthe @MAIN target frequency is met"
                 fillcolor="#fdc086" color="#1f5fbf" penwidth=2]
 
   DelayCache [label="path_delay_cache/  area_cache/\nper part + tool + operator delays and areas,\ncommitted in the repo" shape=note fillcolor="#7fc97f"]
 
-  AUTOFSM [label="AUTOFSM(f)   experimental (Pypeline only)\none pure function -> resource-shared FSM\n(schedule + bind): area over throughput"
+  AUTO_FSM [label="AUTO_FSM(f)   experimental (Pypeline only)\none pure function -> resource-shared FSM\n(schedule + bind): area over throughput"
            fillcolor="#fdc086" color="#b35806" penwidth=2 style="filled,dashed"]
 
   NativeSim [label="Native Python simulation\npypelinec --sim   (Pypeline only)" fillcolor="#fdc086"]
@@ -156,18 +156,18 @@ digraph PypelineC {
 
   // Combinational, un-pipelined output: no synthesis iterations at all
   LogicGraph -> VHDLFiles [style=dashed color="#1a7f1a" fontcolor="#1a7f1a" weight=20
-                           label="  --comb / --no_synth\l  0-clock comb. logic: no autopipelining,\l  no synth/P&R iterations (also the automatic\l  fallback when no synth tool is found)\l"]
+                           label="  --comb / --no_synth\l  0-clock comb. logic: no auto-pipelining,\l  no synth/P&R iterations (also the automatic\l  fallback when no synth tool is found)\l"]
 
-  // The autopipelining loop
-  LogicGraph -> Autopipeline
-  LogicGraph -> AUTOFSM [style=dashed color="#b35806" fontcolor="#b35806" label="  experimental\l"]
-  AUTOFSM -> Autopipeline [style=dashed color="#b35806" fontcolor="#b35806" label="  scheduled FSM\l"]
-  DelayCache -> Autopipeline [color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
+  // The auto-pipelining loop
+  LogicGraph -> AutoPipeline
+  LogicGraph -> AUTO_FSM [style=dashed color="#b35806" fontcolor="#b35806" label="  experimental\l"]
+  AUTO_FSM -> AutoPipeline [style=dashed color="#b35806" fontcolor="#b35806" label="  scheduled FSM\l"]
+  DelayCache -> AutoPipeline [color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
                               label="  cache hit: reuse a\l  measured delay/area,\l  run no tool at all\l"]
-  Autopipeline -> DelayCache [color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
+  AutoPipeline -> DelayCache [color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
                               label="  cache miss:\l  store measurement\l"]
-  Autopipeline -> Report
-  Autopipeline -> VHDLFiles [color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
+  AutoPipeline -> Report
+  AutoPipeline -> VHDLFiles [color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
                              label="  candidate pipelining ->\l  synthesize it for real\l"]
 
   // Every backend consumes the generated VHDL...
@@ -175,9 +175,9 @@ digraph PypelineC {
   VHDLFiles -> Vivado [lhead=cluster_vendor]
   VHDLFiles -> XOFile [style=dashed]
 
-  // ...and the timing they report is what closes the autopipelining loop
+  // ...and the timing they report is what closes the auto-pipelining loop
   Vivado -> SynReport [ltail=cluster_syn color="#1f5fbf" penwidth=2]
-  SynReport -> Autopipeline [constraint=false color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
+  SynReport -> AutoPipeline [constraint=false color="#1f5fbf" fontcolor="#1f5fbf" penwidth=2
                              label="  measured timing and area -> re-cut and try again\l"]
 
   // GHDL/Yosys chain and the netlists it produces

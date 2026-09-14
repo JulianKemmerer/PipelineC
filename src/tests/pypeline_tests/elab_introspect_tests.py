@@ -82,7 +82,7 @@ def get_tests() -> list:
         )
     )
     # Calls PY_TO_LOGIC.PARSE_FILE twice in one process (what the
-    # AUTOPIPELINE pin-and-confirm driver loop does) and compares the
+    # AUTO_PIPELINE pin-and-confirm driver loop does) and compares the
     # resulting parser_states -- guards the sys.modules eviction and
     # trim-memo clearing that only repeated in-process parses exercise.
     tests.append(

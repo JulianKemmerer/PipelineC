@@ -298,7 +298,7 @@ def CHECK_COCOTB_RESULTS(makefile_dir, log_text):
     cocotb has no way to distinguish that from a real crash, so its
     regression manager used to always score it a SimFailure ("Simulator
     shutdown prematurely") -- confirmed empirically against a design that
-    unambiguously passed (self_check_autofsm_test, native vs. VHDL cycle
+    unambiguously passed (self_check_auto_fsm_test, native vs. VHDL cycle
     diff matched): its own log ended "TESTS=1 PASS=0 FAIL=1".
 
     The generated testbench (see the `expect_error=SimFailure` decorator

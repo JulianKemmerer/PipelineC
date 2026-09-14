@@ -1154,7 +1154,7 @@ def _manifest(
     liberty = REPO_ROOT / "src" / "liberty_data" / "sky130_fd_sc_hvl__tt_025C_3v30.lib"
     manifest = {
         "schema_version": 1,
-        "mode": "autopipeline_build",
+        "mode": "auto_pipeline_build",
         "run_id": run_dir.name,
         "created_utc": _datetime.datetime.now(_datetime.timezone.utc).isoformat(),
         "variant": variant,

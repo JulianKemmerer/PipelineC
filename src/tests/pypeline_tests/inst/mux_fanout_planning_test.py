@@ -182,21 +182,21 @@ def test_locked_region_slices_are_not_counted_as_unplanned():
 
 
 _STREAM_PIPELINE_DESIGN_PATH = os.path.join(
-    os.path.dirname(os.path.abspath(__file__)), "stream_pipeline_test.py"
+    os.path.dirname(os.path.abspath(__file__)), "stream_auto_pipeline_test.py"
 )
 
 
-def test_placement_inside_an_autopipeline_region_is_not_dropped():
-    # Regression: found by the real-build suite (autopipeline_latency_test)
-    # while verifying this fix, not by inspection. stream_pipeline_test_top
-    # (div_inv's AUTOPIPELINE'd soft_div_radix core) failed with cuts=0 for
+def test_placement_inside_an_auto_pipeline_region_is_not_dropped():
+    # Regression: found by the real-build suite (auto_pipeline_latency_test)
+    # while verifying this fix, not by inspection. stream_auto_pipeline_test_top
+    # (div_inv's AUTO_PIPELINE'd soft_div_radix core) failed with cuts=0 for
     # all 12 sweep iterations -- every real register this function was ever
     # given got deleted. Cause: SYN.GET_SUBMODULE_LATENCY deliberately
-    # reports an AUTOPIPELINE-tagged region's own depth as 0 to ITS
+    # reports an AUTO_PIPELINE-tagged region's own depth as 0 to ITS
     # container (SUMMARIZE_SUBTREE_PIPELINE's own docstring documents this
     # convention), so subtree_root's own monolithic GET_TOTAL_LATENCY alone
     # is always 0 regardless of what is registered inside such a region --
-    # and BUILD_SLICE_LANDSCAPE's own SUB_HAS_AUTOPIPELINE_IN_HIER check
+    # and BUILD_SLICE_LANDSCAPE's own SUB_HAS_AUTO_PIPELINE_IN_HIER check
     # already permits candidates to live inside exactly this kind of
     # region. Every real placement therefore looked "non-deepening" under a
     # monolithic-only comparison. Must fail (drop the placement down to 0)
@@ -208,9 +208,9 @@ def test_placement_inside_an_autopipeline_region_is_not_dropped():
     region_inst = next(
         inst_name + marker + local_sub
         for inst_name, logic in parser_state.LogicInstLookupTable.items()
-        if logic.sub_inst_to_autopipeline_latency
+        if logic.sub_inst_to_auto_pipeline_latency
         and (inst_name == main_inst or inst_name.startswith(main_inst + marker))
-        for local_sub in logic.sub_inst_to_autopipeline_latency
+        for local_sub in logic.sub_inst_to_auto_pipeline_latency
     )
     leaf = next(
         inst_name
@@ -230,7 +230,7 @@ def test_placement_inside_an_autopipeline_region_is_not_dropped():
     new_cuts, new_placements = SWEEP.DROP_NON_DEEPENING_PLACEMENTS(
         main_inst, [0], placements, parser_state, tpl
     )
-    assert new_placements == placements, "a real register inside an AUTOPIPELINE region must survive"
+    assert new_placements == placements, "a real register inside an AUTO_PIPELINE region must survive"
     assert new_cuts == [0]
 
 

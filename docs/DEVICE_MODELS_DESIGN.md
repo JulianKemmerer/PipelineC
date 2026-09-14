@@ -14,7 +14,7 @@ has not changed). Real sky130 synthesis shows a hard, load-dependent cliff:
 driving past a cell's characterized `max_capacitance` costs several times the
 in-range delay, and that cliff is exactly the shape a per-gate flat model can
 never reproduce. See [`SYN_DESIGN.md`](SYN_DESIGN.md) for the pipelining
-sweep this feeds into, and [`AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md) for the
+sweep this feeds into, and [`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md) for the
 sibling feature whose delay budget comes from the same `SYN_TOOL` interface.
 
 > **Reference, not a logbook.** Describe the system as it is now, in the present
@@ -491,11 +491,11 @@ same four operators (`BIN_OP_MINUS_uint34_t`, `MUX_uint32_t`, `BIN_OP_NEQ`,
 `UNARY_OP_NOT`) once per bit — and should be read as a same-design,
 same-direction relative signal only. This is
 `SYN.GET_REGISTERS_ESTIMATE_TEXT_AND_FFS`'s whole-design estimate
-specifically, not AUTOFSM's own register allocator (`ALLOCATE_REGISTERS`,
-`docs/AUTOFSM_DESIGN.md` §3.2c) — a different and narrower count, tracking
+specifically, not AUTO_FSM's own register allocator (`ALLOCATE_REGISTERS`,
+`docs/AUTO_FSM_DESIGN.md` §3.2c) — a different and narrower count, tracking
 genuinely live cross-state values rather than every declared bit. Whether
-AUTOFSM's allocator has a comparable gap is checked directly (not assumed
-either way) in `inst/autofsm_real_area_compare_test.py`, now that AUTOFSM
+AUTO_FSM's allocator has a comparable gap is checked directly (not assumed
+either way) in `inst/auto_fsm_real_area_compare_test.py`, now that AUTO_FSM
 consumes this model (see the note at the end of this section). See History
 for why the model landed on these v2 numbers rather than the much larger
 ones an early version reported.
@@ -554,12 +554,12 @@ deliberately curated set; see `git log` for the generating builds), and
 `.pypelinec_area_cache/` + exports `PYPELINEC_AREA_CACHE_DIR`, mirroring
 `path_delay_cache`'s existing treatment exactly.
 
-**Consumed by AUTOFSM's minimum-area search.** Under `--syn_tool sky130`,
-`AUTOFSM.py`'s ranking (`docs/AUTOFSM_DESIGN.md` §3.8) uses real cached
+**Consumed by AUTO_FSM's minimum-area search.** Under `--syn_tool sky130`,
+`AUTO_FSM.py`'s ranking (`docs/AUTO_FSM_DESIGN.md` §3.8) uses real cached
 leaf/register/multiplexer µm² from this cache wherever a measurement exists,
 falling back to its own abstract per-bit model (scaled into µm² by a
-constant refit from this cache, `AUTOFSM.UM2_PER_ABSTRACT_AREA_UNIT`) only
-where one does not — `--autofsm_abstract_area` forces the old abstract-only
+constant refit from this cache, `AUTO_FSM.UM2_PER_ABSTRACT_AREA_UNIT`) only
+where one does not — `--auto_fsm_abstract_area` forces the old abstract-only
 ranking for comparison. Every non-sky130 tool is unaffected: the abstract
 model is still the only signal there, unchanged. Real measurement confirmed
 most of the abstract model's combinational ratios to within ~30% (AND/XOR/
@@ -567,8 +567,8 @@ mux bits) and found one large, genuine error (the flip-flop term, 2.5x too
 cheap, calibrated for an FPGA where a flip-flop pairs with its LUT) — but it
 does not fix the two limitations two paragraphs above (cross-instance
 sharing, the FF-count estimator's own overshoot), since neither is a per-leaf
-measurement problem. See `docs/AUTOFSM_DESIGN.md` §3.8 for the full account
-and `inst/autofsm_real_area_compare_test.py` for the real-synthesis check.
+measurement problem. See `docs/AUTO_FSM_DESIGN.md` §3.8 for the full account
+and `inst/auto_fsm_real_area_compare_test.py` for the real-synthesis check.
 
 ## History
 
@@ -638,7 +638,7 @@ FF term on top). V2 caches `combinational_cell_area` instead — the same
 `MEASURE_NETLIST_AREA` call, already split by each cell's own
 `is_sequential` flag, so no new measurement was needed — and fixes the
 double-count at the same time. Found while wiring the leaf-area cache into
-AUTOFSM's area-search ranking. The two designs originally measured at
+AUTO_FSM's area-search ranking. The two designs originally measured at
 270-410% overshoot under V1 were never rebuilt under V2 (their source is
 latchup's own `solution.py`, not committed to this repo), so no corrected
 number exists for those specific points; current V2 accuracy is

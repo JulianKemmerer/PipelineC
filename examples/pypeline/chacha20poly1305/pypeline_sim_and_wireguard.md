@@ -46,7 +46,7 @@ cocotb+GHDL. That flow works, but falls short in several ways:
 
 - **No native simulation.** PipelineC has no built in C-based (or Python-based) simulator, so
   simulations required generating VHDL and using a wrapper cocotb+GHDL testbench.
-- **No cycle-accurate latency modeling without slow full autopipelined VHDL generation.** There's no
+- **No cycle-accurate latency modeling without slow full auto-pipelined VHDL generation.** There's no
   way to reason about auto-pipelined timing without going through synthesis and using an HDL simulator.
 - **String search pass/fail.** Correctness came down to scanning console output
   for `ERROR` lines, rather than a more programmatic pass/fail signal.
@@ -171,7 +171,7 @@ Running any of the builds is one line, via the port's [`build.py`](https://githu
 ```
 
 Both of those are `--comb` runs without added pipelining.
-Dropping `--comb` gets an autopipelined cycle accurate simulation instead:
+Dropping `--comb` gets an auto-pipelined cycle accurate simulation instead:
 
 ```bash
 ./build.py --enc --sim --native            # pipelined native sim (slow!)
@@ -191,12 +191,12 @@ design's automatically pipelined functions actually elaborated to after synthesi
 That latency information only existed after a real VHDL build invisible to any C-level user code being written.
 
 Pypeline improves on that in two ways:
-First,  [`AUTOPIPELINE(...)`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm) lets
+First,  [`AUTO_PIPELINE(...)`](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#auto_pipeline) lets
 design code (and testbenches) read back the real, synthesis-discovered
-pipeline depth of an autopipelined function — see
+pipeline depth of an auto-pipelined function — see
 ["`.latency`: reading back the discovered pipeline depth"](https://github.com/JulianKemmerer/PipelineC/blob/master/docs/pypeline_guide.md#latency-reading-back-the-discovered-pipeline-depth).
 Second, a non-`--comb` `pypelinec --sim` build uses that same discovered
-latency to drive the native simulator: it builds the full autopipelined
+latency to drive the native simulator: it builds the full auto-pipelined
 design first (through the real synthesis tool, to find each submodule's
 true latency), then native-simulates that design with those latencies
 emulated, cycle by cycle.

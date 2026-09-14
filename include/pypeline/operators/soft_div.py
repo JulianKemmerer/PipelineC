@@ -147,7 +147,7 @@ def _make_radix_restoring(bits_per_step, want_remainder):
     divisor instead of 1).
 
     bits_per_step=2 (the make_soft_div_radix4/mod default below) measured
-    best of an autopipelined-fmax sweep across bits_per_step in {1..6} and
+    best of an auto-pipelined-fmax sweep across bits_per_step in {1..6} and
     seven algorithmic variants including non-restoring and a signed-digit/
     carry-save-shaped design (docs: div_fmax_sweep exploration) -- 34.1 MHz
     at 16 pipeline stages under PyRTL estimates on latchup.app's 32-bit

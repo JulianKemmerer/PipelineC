@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # Planned throughput sweep test (g): planless mains get an "as written" check.
 # Runs pypelinec on sweep_planless_design.py (a stateful MAIN with no
-# AUTOPIPELINE regions and an easily met 1 MHz goal) and asserts:
+# AUTO_PIPELINE regions and an easily met 1 MHz goal) and asserts:
 #  - the planning-time warning still tells the user nothing is cuttable
 #  - the main gets ONE standalone whole-module synthesis and the new
 #    "synthesized as written (standalone check) ... PASS" line
@@ -41,8 +41,8 @@ def main():
     if result.returncode != 0:
         print("FAIL: pypelinec exited non zero despite met timing goal")
         sys.exit(1)
-    if "contains nothing autopipelining can help" not in out:
-        print("FAIL: no planning-time warning that autopipelining cannot help")
+    if "contains nothing auto-pipelining can help" not in out:
+        print("FAIL: no planning-time warning that auto-pipelining cannot help")
         sys.exit(1)
     as_written_syns = len(
         re.findall(r"Synthesizing function: \S+ \(as-written timing check\)", out)
@@ -89,7 +89,7 @@ def main():
         final.get("met") is True
         and final.get("source") == "as_written"
         and final.get("standalone_mhz")
-        and final.get("autopipelined") is False
+        and final.get("auto_pipelined") is False
     ):
         print(f"FAIL: wrong sweep_history.json final record for the main: {final}")
         sys.exit(1)

@@ -1,6 +1,6 @@
 #!/usr/bin/env python3
 # In-process regression test: PY_TO_LOGIC.PARSE_FILE called twice in one
-# process (the pypelinec driver's AUTOPIPELINE pin-and-confirm loop does
+# process (the pypelinec driver's AUTO_PIPELINE pin-and-confirm loop does
 # exactly this) must behave like two fresh parses.
 #
 # Guards two once-latent bugs:
@@ -79,9 +79,9 @@ def test_multi_file_design_reparses():
     parse_twice_and_compare(os.path.join(INST_DIR, "import_test.py"))
 
 
-def test_stream_pipeline_design_reparses():
-    # Exercises AUTOPIPELINE tagging + built-in C ops (the trim-memo repro)
-    parse_twice_and_compare(os.path.join(INST_DIR, "stream_pipeline_test.py"))
+def test_stream_auto_pipeline_design_reparses():
+    # Exercises AUTO_PIPELINE tagging + built-in C ops (the trim-memo repro)
+    parse_twice_and_compare(os.path.join(INST_DIR, "stream_auto_pipeline_test.py"))
 
 
 def test_fir_design_reparses():
@@ -91,13 +91,13 @@ def test_fir_design_reparses():
     parse_twice_and_compare(os.path.join(INST_DIR, "fir_sweep_test.py"))
 
 
-def test_autofsm_design_reparses():
-    # AUTOFSM tagging: the driver's schedule-and-confirm loop re-parses the
-    # design between passes, and AUTOFSM leans hard on that being reproducible
+def test_auto_fsm_design_reparses():
+    # AUTO_FSM tagging: the driver's schedule-and-confirm loop re-parses the
+    # design between passes, and AUTO_FSM leans hard on that being reproducible
     # -- the generated FSM's entity name is a hash of the schedule, whose node
     # ids come from source coordinates. Any re-parse instability here would
     # rename the entity every pass and break cross-pass matching.
-    parse_twice_and_compare(os.path.join(INST_DIR, "autofsm_test.py"))
+    parse_twice_and_compare(os.path.join(INST_DIR, "auto_fsm_test.py"))
 
 
 def test_var_ref_naming_design_reparses():
@@ -116,8 +116,8 @@ def test_var_ref_naming_design_reparses():
 
 if __name__ == "__main__":
     test_multi_file_design_reparses()
-    test_stream_pipeline_design_reparses()
+    test_stream_auto_pipeline_design_reparses()
     test_fir_design_reparses()
-    test_autofsm_design_reparses()
+    test_auto_fsm_design_reparses()
     test_var_ref_naming_design_reparses()
     print("All double PARSE_FILE tests passed.")

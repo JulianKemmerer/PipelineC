@@ -5118,7 +5118,7 @@ use ieee_proposed.float_pkg.all;\n"""
     return text
 
 
-# Post processed version of pipeline map with info specific to how autopipelined HDL is rendered
+# Post processed version of pipeline map with info specific to how auto-pipelined HDL is rendered
 class PiplineHDLParams:
     def __init__(
         self, inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_map

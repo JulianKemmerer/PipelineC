@@ -39,7 +39,7 @@ def NATIVE_SIM_SKIPS_BUILD(args) -> bool:
     If SET_SIM_TOOL selected the native simulator (explicit --native or no other
     simulator requested) and comb simulation was requested, the caller should run the
     sim now and skip straight to done. A non---comb native --sim run instead falls
-    through to the full build (sweep + AUTOPIPELINE pin-and-confirm), and the sim
+    through to the full build (sweep + AUTO_PIPELINE pin-and-confirm), and the sim
     launches at the end with the discovered latencies emulated -- the same
     no---comb-means-pipelined rule the VHDL simulators follow."""
     return (
@@ -75,17 +75,17 @@ def DO_OPTIONAL_SIM(
     elif SIM_TOOL is pypeline_sim:
         if do_sim:
             # After a real (non---comb) build, hand the native sim the final
-            # per-MAIN latencies and the converged AUTOPIPELINE harvest so it
+            # per-MAIN latencies and the converged AUTO_PIPELINE harvest so it
             # emulates the built pipeline latencies. Harvesting here (not
             # reusing pypeline's cache) also covers designs whose AP .latency
             # was never read -- the pin-and-confirm loop never ran for those,
             # so the cache is still empty. Harvest divergences are already a
             # fatal driver error for every non---comb .py build
-            # (SYN.AUTOPIPELINE_DIVERGENCE_EXIT), so ignore them here.
+            # (SYN.AUTO_PIPELINE_DIVERGENCE_EXIT), so ignore them here.
             main_latencies = None
             ap_latencies = None
-            automcp_latencies = None
-            autofsm_schedules = None
+            auto_multi_cycle_latencies = None
+            auto_fsm_schedules = None
             pipeline_timing = None
             if parser_state is not None:
                 main_latencies = GET_MAIN_FUNC_LATENCIES(
@@ -112,29 +112,29 @@ def DO_OPTIONAL_SIM(
                         for name, tp in multimain_timing_params.TimingParamsLookupTable.items()
                     }
                 if multimain_timing_params is not None:
-                    ap_latencies, _divergences = SYN.HARVEST_AUTOPIPELINE_LATENCIES(
+                    ap_latencies, _divergences = SYN.HARVEST_AUTO_PIPELINE_LATENCIES(
                         parser_state, multimain_timing_params.TimingParamsLookupTable
                     )
-                    # The multi-cycle counts actually constrained, so AUTOMCP
+                    # The multi-cycle counts actually constrained, so AUTO_MULTI_CYCLE
                     # handshakes count the same cycles as the built VHDL
-                    automcp_latencies = SYN.HARVEST_AUTOMCP_NCYCLES(
+                    auto_multi_cycle_latencies = SYN.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(
                         parser_state, multimain_timing_params
                     )
-                # The AUTOFSM schedules the build actually used. Taken from
+                # The AUTO_FSM schedules the build actually used. Taken from
                 # pypeline's installed cache rather than re-derived: the schedule
                 # in force is by definition the one the final elaboration read,
                 # and re-scheduling here could disagree with what was built.
                 import pypeline
 
-                autofsm_schedules = pypeline.AUTOFSM_SCHEDULE_CACHE() or None
+                auto_fsm_schedules = pypeline.AUTO_FSM_SCHEDULE_CACHE() or None
             pypeline_sim.run_sim(
                 source_file,
                 args.run,
                 main_latencies=main_latencies,
-                autopipeline_latencies=ap_latencies,
-                autofsm_schedules=autofsm_schedules,
+                auto_pipeline_latencies=ap_latencies,
+                auto_fsm_schedules=auto_fsm_schedules,
                 pipeline_timing=pipeline_timing,
-                automcp_latencies=automcp_latencies,
+                auto_multi_cycle_latencies=auto_multi_cycle_latencies,
             )
     else:
         print("WARNING: Unknown simulation tool:", SIM_TOOL.__name__)
@@ -232,7 +232,7 @@ def CHECK_PIPELINED_NATIVE_SIM_SUPPORTED(parser_state, main_latencies):
     native sim" Limitations subsection).
 
     Currently enforced: a naturally-pipelined *pure* @MAIN (total latency > 0,
-    i.e. the sweep sliced the MAIN itself -- distinct from an AUTOPIPELINE
+    i.e. the sweep sliced the MAIN itself -- distinct from an AUTO_PIPELINE
     child inside a stateful MAIN, which reports 0 to its container) must write
     at most ONE global wire. The native sim delays every wire such a MAIN
     writes by that MAIN's single total latency N, but the generated VHDL

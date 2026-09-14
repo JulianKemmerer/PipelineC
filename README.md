@@ -13,7 +13,7 @@
 
 A hardware description language (HDL) adding high level synthesis(HLS)-like automatic pipelining as a language construct/compiler feature. 
 
-If a computation can be written as a [pure function](https://en.wikipedia.org/wiki/Combinational_logic) without side effects (i.e. no registers/static variables) then it can be autopipelined. Conceptually similar to technologies like [Intel's variable latency Hyper-Pipelining](https://www.intel.com/content/www/us/en/programmable/documentation/jbr1444752564689.html#esc1445881961208) and [Xilinx's retiming options](https://www.xilinx.com/support/answers/65410.html). Sharing some of the compiler driven pipelining design goals of [Google's XLS Project](https://google.github.io/xls/), the [DFiantHDL language](https://dfianthdl.github.io/), and certain [CIRCT](https://circt.llvm.org/) dialects as well.
+If a computation can be written as a [pure function](https://en.wikipedia.org/wiki/Combinational_logic) without side effects (i.e. no registers/static variables) then it can be auto-pipelined. Conceptually similar to technologies like [Intel's variable latency Hyper-Pipelining](https://www.intel.com/content/www/us/en/programmable/documentation/jbr1444752564689.html#esc1445881961208) and [Xilinx's retiming options](https://www.xilinx.com/support/answers/65410.html). Sharing some of the compiler driven pipelining design goals of [Google's XLS Project](https://google.github.io/xls/), the [DFiantHDL language](https://dfianthdl.github.io/), and certain [CIRCT](https://circt.llvm.org/) dialects as well.
 
 PypelineC consists of [**Pypeline**](docs/README.md) (new, Python based) and [**PipelineC**](https://github.com/JulianKemmerer/PipelineC/wiki) (legacy, C based). Pypeline is a work in progress in becoming feature complete with PipelineC, but already has many new features that PipelineC lacks.
 
@@ -86,7 +86,7 @@ uint1_t blink()
 | **Getting started** | [/docs directory](docs/README.md) | [GitHub wiki](https://github.com/JulianKemmerer/PipelineC/wiki) |
 | Easy to understand software-like syntax | [Yes](docs/pypeline_guide.md#what-is-pypeline) | Yes |
 | Timing feedback from synthesis+pnr tools | [Yes](docs/pypeline_guide.md#top-level-entry-points) | Yes |
-| Automatic pipelining of comb. logic | [Yes](docs/pypeline_guide.md#what-is-pypeline) | Yes |
+| Automatic pipelining of comb. logic | [Yes](docs/pypeline_guide.md#automatic-hls-like-implementation) | Yes |
 | Dev board specific support packages | [Yes](docs/pypeline_guide.md#worked-example-vga-test-pattern) | Yes |
 | VHDL Output | Yes (human readable) | Yes (human readable) |
 | VHDL based existing module import | [Yes](docs/pypeline_guide.md#raw-vhdl-passthrough-vhdl) | Yes |
@@ -99,8 +99,10 @@ uint1_t blink()
 | Multiple clock domains / Clock domain crossings | No | Yes |
 | Parameterized/Template Functions+Types | [Yes](docs/pypeline_guide.md#parametric-hardware-with-factory-functions) | No |
 | Operator overloading | [Yes](docs/pypeline_guide.md#custom-operators) | Yes (hacky) |
-| User visible automatic pipeline depths | [Yes](docs/pypeline_guide.md#tool-chosen-implementation-autopipeline-and-autofsm) | No |
-| Automatic resource sharing (pure func → shared-resource FSM) | [Yes](docs/pypeline_guide.md#autofsm-the-opposite-trade-off) | No |
+| User visible automatic pipeline depths | [Yes](docs/pypeline_guide.md#latency-reading-back-the-discovered-pipeline-depth) | No |
+| Multi-cycle path constraints | [Yes](docs/pypeline_guide.md#multi-cycle-paths-multi_cycle) | Yes |
+| Automatic multi-cycle path tuning (New) | [Yes](docs/pypeline_guide.md#auto_multi_cycle-new) | No |
+| Automatic resource sharing (pure func → shared-resource FSM) (New, experimental) | [Yes](docs/pypeline_guide.md#auto_fsm-new-experimental) | No |
 | SoC system bus helpers | No | Yes |
 | Generates software Helper Code | [Yes](docs/pypeline_guide.md#host-side-generated-types) | Yes |
 | Derived FSM style code | No | Yes |
@@ -130,7 +132,7 @@ Simulation:
 
 ![PypelineC Tool Flow](./docs/images/flow.svg)
 
-_An easy to understand hardware description language with a powerful autopipelining compiler and growing set of real life hardware design inspired features._
+_An easy to understand hardware description language with a powerful auto-pipelining compiler and growing set of real life hardware design inspired features._
 
 * Familiar software-like syntax that eliminates many HDL quirks that beginners (and experts) can fall victim to (ex. blocking/nonblocking assignments, reasoning about the sequential ordering of combinatorial logic).
 * Compatible with all HDL simulators. Ex. Can start Modelsim in seconds and imports human readable+debuggable VHDL w/ working print's. Pypeline allows native Python simulations to launch instantly. PipelineC can also craft custom ultra-fast compiled C based 'simulations'. Conversion to Verilog is also included as needed, i.e. for Verilator.
@@ -142,7 +144,7 @@ _An easy to understand hardware description language with a powerful autopipelin
 
 Fundamental design elements are state machines/stateful elements(registers, rams, etc), auto-pipelined stateless pure functions, and interconnects (wires,cdc,async fifos,etc). Designs can be structured to look like 'communicating sequential processes/threads' as needed.
 
-By isolating complex logic into autopipelineable functions, and only writing literal clock by clock hardware description when absolutely necessary, PypelineC designs do not need to be rewritten for each new target device / operating frequency.
+By isolating complex logic into auto-pipelineable functions, and only writing literal clock by clock hardware description when absolutely necessary, PypelineC designs do not need to be rewritten for each new target device / operating frequency.
 The hope is to build shared, high performance, device agnostic, hardware designs described in a familiar and powerfully composable software-like look.
 
 For software folks writing PypelineC should feel like solving a programming puzzle - the rules of the puzzle hide/imply hardware concepts. For hardware folks PypelineC is a better hardware description language trying to find middle ground between traditional RTL and HLS. It is my language of choice as an FPGA engineer :).

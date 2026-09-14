@@ -208,7 +208,7 @@ If a function is marked with [`@MAIN`](pypeline_guide.md#top-level-entry-points)
 then its inputs and return value are used for top level input and output ports.
 
 [Is this HLS?](https://github.com/JulianKemmerer/PipelineC/wiki/Is-this-HLS%3F)
-Combinatorial logic can be automatically pipelined.
+Combinatorial logic can be [automatically pipelined](pypeline_guide.md#auto_pipeline), alongside the guide's other [automatic (HLS-like) constructs](pypeline_guide.md#automatic-hls-like-implementation).
 Stateless/feedback free pure functions can be pipelined to 'arbitrary depth' N>0 clock cycle pipelines.
 
 [`Reg[T]`](pypeline_guide.md#registers-regt) local variables = registers. Use a
@@ -286,9 +286,9 @@ pypelinec ./examples/pypeline/pipeline.py --comb
   * Ex. `@MAIN(F)` says the `my_pipeline` function is a single top level `@MAIN` function intended to run at `F`MHz — see [Top-Level Entry Points](pypeline_guide.md#top-level-entry-points).
   * Ex. `PART("LFE5UM5G-85F-8BG756C")` for `ghdl+yosys+nextpnr` `ECP5U` flow.
 
-* Since `my_pipeline` is a pure function the Pypeline tool will autopipeline the function to meet the target operating frequency.
+* Since `my_pipeline` is a pure function the Pypeline tool will auto-pipeline the function to meet the target operating frequency.
 ```
-pypelinec ./examples/pypeline/pipeline.py # Default no-arguments autopipelines when possible.
+pypelinec ./examples/pypeline/pipeline.py # Default no-arguments auto-pipelines when possible.
 ```
 
 **To produce a pipeline of user selected `N` clock cycles** (N+1 total stages) run this command:

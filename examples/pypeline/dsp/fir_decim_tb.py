@@ -5,7 +5,7 @@ Uses the exact 49-tap Q1.15 coefficient set of the SDR FM radio's `decim_5x`
 front-end filter (examples/sdr/fm_radio.h) -- passed as pre-quantized raw
 integers -- decimating by 5 with the same truncating output scaling as the
 old macro library. Only every 5th sample launches a computation into the
-autopipelined blob; the output stream runs at 1/5 the input rate, and
+auto-pipelined blob; the output stream runs at 1/5 the input rate, and
 backpressure freezes the sample window exactly.
 
 Run the simulation (writes fir_decim5_tb.png; PYPELINE_TB_SHOW=1 for a window):

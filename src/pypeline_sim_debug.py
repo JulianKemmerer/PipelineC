@@ -153,7 +153,7 @@ def main():
     )
     if needs_shared_build:
         # Non---comb: build once (no --sim) into the shared out_dir, doing
-        # the full throughput sweep + AUTOPIPELINE pin-and-confirm just a
+        # the full throughput sweep + AUTO_PIPELINE pin-and-confirm just a
         # single time. Then point BOTH the native and VHDL sim invocations
         # at that same now-populated out_dir and run them concurrently --
         # each re-runs pypelinec's build path internally, but with the sweep

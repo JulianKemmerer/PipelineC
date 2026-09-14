@@ -24,7 +24,7 @@ from pypeline import (
 @hw_func
 def slow_acc(x: uint8_t) -> uint8_t:
     # Stateful and slow: the divider is trapped inside a Reg func with no
-    # autopipeline tag, so no added registers can ever cut this path
+    # auto-pipeline tag, so no added registers can ever cut this path
     acc: Reg[uint8_t]
     acc = acc / (x + 1)
     return acc

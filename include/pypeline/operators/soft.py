@@ -163,7 +163,7 @@ def register_soft_mod(scope=None):
 def register_soft_div_radix4(scope=None):
     """Alternate DIV flavor: radix-4 restoring division (2 quotient bits per
     step instead of 1, half the steps of register_soft_div's plain restoring
-    divider). Autopipelined-fmax-sweep-confirmed (docs: div_fmax_sweep
+    divider). Auto-pipelined-fmax-sweep-confirmed (docs: div_fmax_sweep
     exploration; see make_soft_div_radix's docstring in soft_div.py) at 34.1
     MHz vs. 22.4-22.9 MHz for the plain restoring divider at 16 pipeline
     stages under PyRTL estimates -- the best of bits_per_step in {1,2,3} and
@@ -313,7 +313,7 @@ def register_sw_lib_replacements(scope=None):
 
     DIV/MOD default to the radix-4 flavor (register_soft_div_radix4/
     register_soft_mod_radix4), not the plain one-bit-per-step restoring
-    divider -- autopipelined-fmax-sweep-confirmed at 34.1 MHz vs. 22.4-22.9
+    divider -- auto-pipelined-fmax-sweep-confirmed at 34.1 MHz vs. 22.4-22.9
     MHz for plain restoring division at 16 pipeline stages under PyRTL
     estimates (docs: div_fmax_sweep exploration; see make_soft_div_radix's
     docstring in soft_div.py). This is the only automatic, zero-registration

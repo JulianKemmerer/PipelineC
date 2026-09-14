@@ -22,48 +22,48 @@ def get_tests() -> list:
             cmd=[INST_DIR / "generated_naming_test.py"],
         )
     )
-    # AUTOFSM scheduler/code-generator unit tests: exact schedule, register
+    # AUTO_FSM scheduler/code-generator unit tests: exact schedule, register
     # allocation, byte-identical generated source across re-elaborations --
     # not visible in a build log, would otherwise only be checked indirectly
     # by full synthesis runs. Calls PY_TO_LOGIC.PARSE_FILE incidentally.
     tests.append(
         Test(
-            name="autofsm_unit_test",
+            name="auto_fsm_unit_test",
             category="unit",
-            cmd=[INST_DIR / "autofsm_unit_test.py"],
+            cmd=[INST_DIR / "auto_fsm_unit_test.py"],
         )
     )
-    # Pure-unit tests for the AUTOPIPELINE .latency machinery
-    # (SYN.HARVEST_AUTOPIPELINE_LATENCIES grouping + divergence detection,
+    # Pure-unit tests for the AUTO_PIPELINE .latency machinery
+    # (SYN.HARVEST_AUTO_PIPELINE_LATENCIES grouping + divergence detection,
     # SYN.SEED_TIMING_PARAMS_FROM_PREVIOUS two-tier matching + call-site-change
     # detection, CANONICAL_CALLABLE_KEY determinism, latency cache/read-flag
     # behavior) against hand-built fixtures -- no design build involved.
     tests.append(
         Test(
-            name="autopipeline_harvest_test",
+            name="auto_pipeline_harvest_test",
             category="unit",
-            cmd=[INST_DIR / "autopipeline_harvest_test.py"],
+            cmd=[INST_DIR / "auto_pipeline_harvest_test.py"],
         )
     )
-    # Constrained AUTOPIPELINE regions (latency= / start_latency= /
+    # Constrained AUTO_PIPELINE regions (latency= / start_latency= /
     # max_latency=): count-targeted cut planning, plan trimming, cap
     # bookkeeping and hotspot-to-region attribution on synthetic landscapes.
     tests.append(
         Test(
-            name="autopipeline_region_planning_test",
+            name="auto_pipeline_region_planning_test",
             category="unit",
-            cmd=[INST_DIR / "autopipeline_region_planning_test.py"],
+            cmd=[INST_DIR / "auto_pipeline_region_planning_test.py"],
         )
     )
-    # AUTOMCP: constructor/.latency/keys/read tracking, identity following
+    # AUTO_MULTI_CYCLE: constructor/.latency/keys/read tracking, identity following
     # the cycle count, SYN constraint overrides + hash, SWEEP report matching
     # and grow-only feedback, elaboration + cache re-parse renaming, and the
     # unread-tag refusal -- no synthesis tool involved.
     tests.append(
         Test(
-            name="automcp_unit_test",
+            name="auto_multi_cycle_unit_test",
             category="unit",
-            cmd=[INST_DIR / "automcp_unit_test.py"],
+            cmd=[INST_DIR / "auto_multi_cycle_unit_test.py"],
         )
     )
     # Pure-unit tests for readable, hierarchical canonical names of

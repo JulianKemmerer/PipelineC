@@ -19,7 +19,7 @@ sys.path.insert(
 from pypeline import MAIN, hw_func, int16_t, int32_t, sim_call, sim_reset, uint1_t, uint32_t
 
 from stream.stream import make_stream_interface
-from multi_cycle_path import make_stream_interface_mcp
+from stream.stream_multi_cycle import make_stream_multi_cycle
 
 # Regression tests for two variants of the same closure-callable naming
 # collision in FuncLogicLookupTable, both undetectable by a plain
@@ -27,7 +27,7 @@ from multi_cycle_path import make_stream_interface_mcp
 # FuncLogicLookupTable at all) -- only visible by inspecting
 # submodule_instances/canonical names directly after PARSE_FILE:
 #
-# 1. make_stream_interface_mcp's wrapper calls the caller-supplied function
+# 1. make_stream_multi_cycle's wrapper calls the caller-supplied function
 #    through a closure variable literally named `func`. Two different
 #    top-level functions wrapped this way used to collide on that shared
 #    alias, so the second wrapper's inner func(...) call silently resolved
@@ -65,8 +65,8 @@ def round_b(x: uint32_t) -> uint32_t:
 
 
 uint32_stream_intrf = make_stream_interface(uint32_t)
-a_mcp, a_mcp_t = make_stream_interface_mcp(round_a, 2)
-b_mcp, b_mcp_t = make_stream_interface_mcp(round_b, 2)
+a_mcp, a_mcp_t = make_stream_multi_cycle(round_a, 2)
+b_mcp, b_mcp_t = make_stream_multi_cycle(round_b, 2)
 
 
 @MAIN(50.0)
@@ -90,7 +90,7 @@ def test_two_factory_wrappers_distinct_logic():
     import SYN
 
     # PARSE_FILE walks C-built-in submodule instances (Reg[T]/MUX/etc, used
-    # internally by make_stream_interface_mcp) via _build_inst_lookup, which needs
+    # internally by make_stream_multi_cycle) via _build_inst_lookup, which needs
     # SYN.SYN_OUTPUT_DIRECTORY set -- normally done by the pypelinec CLI
     # wrapper (src/pypelinec) before it calls PARSE_FILE; replicate that here
     # since this test calls PARSE_FILE directly.

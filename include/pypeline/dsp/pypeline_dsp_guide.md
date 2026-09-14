@@ -6,10 +6,10 @@ Example designs that exercise it live in `examples/pypeline/dsp/`.
 `include/pypeline/dsp/` is a vendor-neutral FIR filter library in the spirit of the
 AMD/Xilinx FIR Compiler and Intel/Altera FIR II IP wizards, built on the
 [fixed-point types](../../../docs/pypeline_guide.md#fixed-point-types) and
-[`make_stream_pipeline`](../../../docs/pypeline_guide.md#pipelined-stream-wrappers-make_stream_pipeline).
+[`make_stream_auto_pipeline`](../../../docs/pypeline_guide.md#pipelined-stream-wrappers-make_stream_auto_pipeline).
 Every filter is a **single feedforward combinational blob** — symmetric pre-adders,
 constant multiplies, a balanced adder tree, and the output rounding stage — that
-PypelineC AUTOPIPELINEs to whatever depth the target FPGA/fmax needs, wrapped in a
+PypelineC auto-pipelines to whatever depth the target FPGA/fmax needs, wrapped in a
 valid/ready stream. **Pipeline depth is never hard-coded**, so the same source retargets
 any part instead of needing a per-vendor IP core.
 
@@ -36,7 +36,7 @@ def top(stream_in: fir.in_stream_t, stream_out: fir.out_fb_t) -> fir_t:
 ```
 
 `fir_t` has the same `.stream_out` / `.stream_in` port fields as
-`make_stream_pipeline`, so filters chain like any stream pipeline instance. Remaining
+`make_stream_auto_pipeline`, so filters chain like any stream pipeline instance. Remaining
 parameters:
 
 | Parameter | Default | Meaning |
@@ -44,7 +44,7 @@ parameters:
 | `gain` | `1` | Scales the float taps **before** quantization — zero hardware cost (needs `coeff_t` headroom) |
 | `symmetry` | `"auto"` | Detects symmetric/anti-symmetric **quantized** taps and folds them into pre-adders, halving the multipliers (like the vendor cores); `"none"` disables |
 | `skip_zero_taps` | `True` | Zero-coefficient taps are dropped at elaboration time — a half-band filter costs ~half the multipliers automatically |
-| `handshake` | `"elastic"` | `"elastic"` = valid/ready with an output FIFO and in-flight counter (FIFO sized automatically from the AUTOPIPELINE'd core's tool-discovered `.latency`, see [Pipelined Stream Wrappers](../../../docs/pypeline_guide.md#pipelined-stream-wrappers-make_stream_pipeline)); `"valid_only"` = vendor-style free-running stream (no FIFO — downstream must always accept) |
+| `handshake` | `"elastic"` | `"elastic"` = valid/ready with an output FIFO and in-flight counter (FIFO sized automatically from the AUTO_PIPELINE'd core's tool-discovered `.latency`, see [Pipelined Stream Wrappers](../../../docs/pypeline_guide.md#pipelined-stream-wrappers-make_stream_auto_pipeline)); `"valid_only"` = vendor-style free-running stream (no FIFO — downstream must always accept) |
 
 Accumulator sizing is **exact**: interval arithmetic over the actual quantized
 coefficient values and `data_t`'s range, so no intermediate can overflow and no bit is
@@ -122,7 +122,7 @@ def top(stream_in_if: magnitude.in_fwd_t, stream_out_if: magnitude.out_fb_t) -> 
     return magnitude(stream_in_if, stream_out_if)
 ```
 
-One pure feedforward blob (two squares, an add, a fused output resize) autopipelined
+One pure feedforward blob (two squares, an add, a fused output resize) auto-pipelined
 and wrapped in a stream, the same shape as `make_fir`'s core. `make_complex_t(data_t)`
 (a plain `{i, q}` struct) is `magnitude`'s input type, exposed as `.complex_t`/
 `.in_data_t`. `out_t=None` gives the exact, lossless power type — for
@@ -153,7 +153,7 @@ Nyquist). `k` sets the pole at `1 - 2^-k`, i.e. a settling time constant of roug
 `2^k` samples. `.mean_t`/`.diff_t`/`.k` are exposed as metadata; the running mean is
 itself a useful noise-floor estimate. The mean-update recursion is an inherent IIR
 loop, so — unlike `make_fir`/`make_magnitude`/`make_moving_avg` — only the feedforward
-output resize is autopipelined, not the whole block.
+output resize is auto-pipelined, not the whole block.
 
 ## `make_moving_avg` — boxcar smoother
 

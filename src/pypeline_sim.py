@@ -72,21 +72,21 @@ def run_sim(
     num_cycles,
     sim_mode: str = "strict",
     main_latencies=None,
-    autopipeline_latencies=None,
-    autofsm_schedules=None,
+    auto_pipeline_latencies=None,
+    auto_fsm_schedules=None,
     pipeline_timing=None,
-    automcp_latencies=None,
+    auto_multi_cycle_latencies=None,
 ) -> None:
     """Run the native simulation.
 
-    main_latencies / autopipeline_latencies / autofsm_schedules are passed only
+    main_latencies / auto_pipeline_latencies / auto_fsm_schedules are passed only
     by the pipelinec driver after a non---comb build (SIM.DO_OPTIONAL_SIM):
-    {main hw name -> total latency} from the final TimingParams, {AUTOPIPELINE
-    canonical_key -> stage count} from the converged harvest, and {AUTOFSM
+    {main hw name -> total latency} from the final TimingParams, {AUTO_PIPELINE
+    canonical_key -> stage count} from the converged harvest, and {AUTO_FSM
     canonical_key -> schedule} from the installed cache. They make the native
-    sim emulate what was actually built -- AUTOPIPELINE call sites via
-    per-call-site delay lines (AUTOPIPELINE._sim_delay_line), AUTOFSM call
-    sites via a register-level model of the generated FSM (AUTOFSM._sim_fsm),
+    sim emulate what was actually built -- AUTO_PIPELINE call sites via
+    per-call-site delay lines (AUTO_PIPELINE._sim_delay_line), AUTO_FSM call
+    sites via a register-level model of the generated FSM (AUTO_FSM._sim_fsm),
     and naturally-pipelined pure MAINs via write-side delay
     (pypeline._sim_pipelined_main_info). pipeline_timing carries final placements
     for selective execution around @pipeline_latency boundaries. Plain native
@@ -108,23 +108,23 @@ def run_sim(
         raise ValueError(
             f"Unknown sim_mode {sim_mode!r}; expected strict, loose, or raw"
         )
-    # Install harvested AUTOPIPELINE latencies BEFORE importing the design:
-    # AUTOPIPELINE objects capture ._latency at construction (import time),
-    # and .latency-derived structure (e.g. make_stream_pipeline FIFO depths)
+    # Install harvested AUTO_PIPELINE latencies BEFORE importing the design:
+    # AUTO_PIPELINE objects capture ._latency at construction (import time),
+    # and .latency-derived structure (e.g. make_stream_auto_pipeline FIFO depths)
     # must elaborate identically to the VHDL build's pin-and-confirm pass.
-    if autopipeline_latencies:
-        pypeline.SET_AUTOPIPELINE_LATENCY_CACHE(autopipeline_latencies)
-    # Same reasoning for AUTOFSM: the tag captures ._schedule/._latency at
+    if auto_pipeline_latencies:
+        pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE(auto_pipeline_latencies)
+    # Same reasoning for AUTO_FSM: the tag captures ._schedule/._latency at
     # construction, and .latency-derived Python sizing must match the build's.
-    if autofsm_schedules:
-        pypeline.SET_AUTOFSM_SCHEDULE_CACHE(autofsm_schedules)
-    # And for AUTOMCP: the tag resolves .latency at construction, and the
+    if auto_fsm_schedules:
+        pypeline.SET_AUTO_FSM_SCHEDULE_CACHE(auto_fsm_schedules)
+    # And for AUTO_MULTI_CYCLE: the tag resolves .latency at construction, and the
     # handshake it drives must count the cycles the build constrained.
-    if automcp_latencies:
-        pypeline.SET_AUTOMCP_LATENCY_CACHE(automcp_latencies)
-    # Construction ordinals (part of each AUTOMCP's cache key) restart with
+    if auto_multi_cycle_latencies:
+        pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE(auto_multi_cycle_latencies)
+    # Construction ordinals (part of each AUTO_MULTI_CYCLE's cache key) restart with
     # the design's re-import, exactly as they did for each build pass.
-    pypeline.RESET_AUTOMCP_TRACKING()
+    pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
     _evict_design_modules()
     module = _import_design(design_file)
 
@@ -188,7 +188,7 @@ def run_sim(
             if getattr(fn, "_pypeline_has_state", False):
                 # A stateful (Reg/Feedback) MAIN is never sliced by the sweep;
                 # its explicit registers already provide all of its timing in
-                # native sim (any AUTOPIPELINE children inside it are delayed
+                # native sim (any AUTO_PIPELINE children inside it are delayed
                 # at their own call sites). A nonzero reported latency here is
                 # a build-side accounting artifact -- applying a write delay
                 # on top would double-count.
@@ -368,7 +368,7 @@ def _evict_design_modules():
     sys.modules, so _import_design re-imports the design graph fresh in sim
     mode. Needed in the pipelinec non---comb --sim flow: elaboration imported
     the design's sub-modules with sim flags unset (decoration-time flags) and
-    with an empty/older AUTOPIPELINE latency cache. Self-guarding no-op in
+    with an empty/older AUTO_PIPELINE latency cache. Self-guarding no-op in
     every other context: pure native runs never import PY_TO_LOGIC, and the
     comb short-circuit runs before any parse (snapshot still None)."""
     ptl = sys.modules.get("PY_TO_LOGIC")

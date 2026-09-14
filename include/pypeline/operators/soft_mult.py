@@ -8,7 +8,7 @@ the final partial product would have to be subtracted rather than added.
 register_soft_mult/register_soft_mult_karatsuba therefore register these for
 any_uint_t x any_uint_t only, so a signed multiply falls through to the built-in
 inferred HDL `*` (correct for signed) instead of to wrong soft logic. Callers
-that bypass the registry and use these factories directly -- AUTOFSM.py's
+that bypass the registry and use these factories directly -- AUTO_FSM.py's
 resource-sharing map does -- are responsible for that restriction themselves.
 A signed soft multiplier has not been written yet."""
 from pypeline import (
@@ -47,7 +47,7 @@ def make_soft_add_tree_shifted(n_leaves, leaf_t, out_t, level=0, max_width=None)
 
     Each level is its own @hw_func, so per-level operand widths are visible to
     the timing model as genuinely different leaf ops -- see the note on
-    make_soft_mult_shift_add for why that matters for autopipelining.
+    make_soft_mult_shift_add for why that matters for auto-pipelining.
 
     NOTE: a constant << returns its LEFT operand's width unchanged
     (PY_TO_LOGIC.py:4293-4311), so each operand is widened to shifted_t BEFORE

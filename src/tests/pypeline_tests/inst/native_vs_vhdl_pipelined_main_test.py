@@ -1,6 +1,6 @@
 # pyright: reportInvalidTypeForm=none
 """Cycle-accuracy design for pypeline_sim_debug.py WITHOUT --comb: a PURE comb
-@MAIN (no AUTOPIPELINE anywhere) that the throughput sweep slices naturally,
+@MAIN (no AUTO_PIPELINE anywhere) that the throughput sweep slices naturally,
 plus a stateful checker @MAIN wired to it through global Wire[T]s.
 
 Run (synth_tests.py registers exactly this):

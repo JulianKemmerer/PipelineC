@@ -896,7 +896,7 @@ def encode_param_value(val) -> str:
     the compiler and must stay that way, so this stays self-contained).
 
     Must be a pure function of `val` -- no memory addresses, no id()s, no call
-    order -- since the AUTOPIPELINE .latency pin-and-confirm loop re-executes
+    order -- since the AUTO_PIPELINE .latency pin-and-confirm loop re-executes
     a design in-process and matches entities across passes by these names.
     """
     if isinstance(val, type):
@@ -937,7 +937,7 @@ def encode_param_value(val) -> str:
     if callable(val):
         # Deterministic (no memory address): a function's default repr embeds
         # its address, which would rename the struct on every design
-        # re-execution -- and the AUTOPIPELINE .latency pin-and-confirm loop
+        # re-execution -- and the AUTO_PIPELINE .latency pin-and-confirm loop
         # re-executes designs in-process, matching entities across passes by
         # name. module+qualname is enough identity for this suffix; the
         # struct's structural distinctness is already carried by its field
@@ -947,9 +947,9 @@ def encode_param_value(val) -> str:
         # fallback used here and anywhere a live compiler isn't available.)
         import inspect
 
-        if getattr(val, "_is_autopipeline_pragma", False):
+        if getattr(val, "_is_auto_pipeline_pragma", False):
             return (
-                "AUTOPIPELINE_" + encode_param_value(val.func) + val.latency_suffix()
+                "AUTO_PIPELINE_" + encode_param_value(val.func) + val.latency_suffix()
             )
         unwrapped = inspect.unwrap(val)
         qual = getattr(unwrapped, "__qualname__", None)
@@ -1476,92 +1476,92 @@ def sim_input(fn):
 
 
 # ─────────────────────────────────────────────
-# AUTOPIPELINE: tool-pipelined regions with .latency feedback
+# AUTO_PIPELINE: tool-pipelined regions with .latency feedback
 # ─────────────────────────────────────────────
 
 # canonical_key -> discovered pipeline stage count, harvested from the
 # previous elaborate+sweep pass. Installed only by the pipelinec driver:
-# between pin-and-confirm passes (SET_AUTOPIPELINE_LATENCY_CACHE), and again
+# between pin-and-confirm passes (SET_AUTO_PIPELINE_LATENCY_CACHE), and again
 # before a non---comb `--sim` run's native-sim design import so both
-# .latency reads and the AUTOPIPELINE delay-line emulation see the built
+# .latency reads and the AUTO_PIPELINE delay-line emulation see the built
 # stage counts. Always empty in plain native Pypeline sim (pypeline_sim.py
 # run directly) and in --comb/--no_synth/--yosys_json builds, so .latency
 # reads its constructor value there (fixed latency=N, else 0).
-_autopipeline_latency_cache: dict = {}
-# True once any AUTOPIPELINE .latency was read during the current design-file
+_auto_pipeline_latency_cache: dict = {}
+# True once any AUTO_PIPELINE .latency was read during the current design-file
 # execution. The pipelinec driver uses this to skip the pin-and-confirm pass
 # entirely: if no Python code consumed a latency value, the cache cannot have
 # influenced the elaborated design, so the bootstrap pass's result is final.
-_autopipeline_latency_was_read: bool = False
+_auto_pipeline_latency_was_read: bool = False
 # Which kind of pypelinec build (if any) is executing the design, set by the
-# pipelinec driver before its first PARSE_FILE (SET_AUTOPIPELINE_BUILD_MODE):
+# pipelinec driver before its first PARSE_FILE (SET_AUTO_PIPELINE_BUILD_MODE):
 #   None          plain native sim, or any import outside the driver (default)
 #   "sweep"       a synthesizing build: its throughput sweep honors
 #                 start_latency=, so bootstrap .latency reads start_latency
 #   "fixed_only"  --comb / --no_synth / --yosys_json: no sweep runs; only
 #                 fixed latency= call sites get registers
-_AUTOPIPELINE_BUILD_MODES = (None, "sweep", "fixed_only")
-_autopipeline_build_mode = None
-# (AUTOPIPELINE object, value served) for every .latency read during the
+_AUTO_PIPELINE_BUILD_MODES = (None, "sweep", "fixed_only")
+_auto_pipeline_build_mode = None
+# (AUTO_PIPELINE object, value served) for every .latency read during the
 # current design execution -- recorded only inside a pypelinec build. The
 # driver compares them against the harvested stage counts: when every read
 # already equals what was built, the pin-and-confirm re-elaboration is skipped.
-_autopipeline_served: list = []
+_auto_pipeline_served: list = []
 # Per-construction serial: disambiguates plain-native-sim delay-line keys
-# without importing the compiler (see AUTOPIPELINE._sim_key).
-_autopipeline_serial: int = 0
+# without importing the compiler (see AUTO_PIPELINE._sim_key).
+_auto_pipeline_serial: int = 0
 
 
-def SET_AUTOPIPELINE_LATENCY_CACHE(cache: dict) -> None:
+def SET_AUTO_PIPELINE_LATENCY_CACHE(cache: dict) -> None:
     """pipelinec-driver hook: install the previous pass's harvested
-    AUTOPIPELINE latencies (canonical_key -> stage count) so the next
-    design-file execution's AUTOPIPELINE(...) constructions resolve
+    AUTO_PIPELINE latencies (canonical_key -> stage count) so the next
+    design-file execution's AUTO_PIPELINE(...) constructions resolve
     .latency to real values."""
-    global _autopipeline_latency_cache
-    _autopipeline_latency_cache = dict(cache)
+    global _auto_pipeline_latency_cache
+    _auto_pipeline_latency_cache = dict(cache)
 
 
-def SET_AUTOPIPELINE_BUILD_MODE(mode) -> None:
+def SET_AUTO_PIPELINE_BUILD_MODE(mode) -> None:
     """pipelinec-driver hook: declare what kind of build executes the design
-    (None / "sweep" / "fixed_only", see _autopipeline_build_mode)."""
-    global _autopipeline_build_mode
-    if mode not in _AUTOPIPELINE_BUILD_MODES:
+    (None / "sweep" / "fixed_only", see _auto_pipeline_build_mode)."""
+    global _auto_pipeline_build_mode
+    if mode not in _AUTO_PIPELINE_BUILD_MODES:
         raise ValueError(
-            f"AUTOPIPELINE build mode must be one of {_AUTOPIPELINE_BUILD_MODES}, "
+            f"AUTO_PIPELINE build mode must be one of {_AUTO_PIPELINE_BUILD_MODES}, "
             f"got {mode!r}"
         )
-    _autopipeline_build_mode = mode
+    _auto_pipeline_build_mode = mode
 
 
-def AUTOPIPELINE_BUILD_MODE():
-    return _autopipeline_build_mode
+def AUTO_PIPELINE_BUILD_MODE():
+    return _auto_pipeline_build_mode
 
 
-def CLEAR_AUTOPIPELINE_LATENCY_READ_FLAG() -> None:
-    global _autopipeline_latency_was_read
-    _autopipeline_latency_was_read = False
-    _autopipeline_served.clear()
-    # AUTOMCP construction ordinals and reads are per design execution too
-    RESET_AUTOMCP_TRACKING()
+def CLEAR_AUTO_PIPELINE_LATENCY_READ_FLAG() -> None:
+    global _auto_pipeline_latency_was_read
+    _auto_pipeline_latency_was_read = False
+    _auto_pipeline_served.clear()
+    # AUTO_MULTI_CYCLE construction ordinals and reads are per design execution too
+    RESET_AUTO_MULTI_CYCLE_TRACKING()
 
 
-def AUTOPIPELINE_LATENCY_WAS_READ() -> bool:
-    return _autopipeline_latency_was_read
+def AUTO_PIPELINE_LATENCY_WAS_READ() -> bool:
+    return _auto_pipeline_latency_was_read
 
 
-def AUTOPIPELINE_SERVED_LATENCIES() -> dict:
+def AUTO_PIPELINE_SERVED_LATENCIES() -> dict:
     """canonical_key -> set of values .latency returned during the current
     design execution (pypelinec builds only; empty otherwise)."""
     served = {}
-    for ap, value in _autopipeline_served:
+    for ap, value in _auto_pipeline_served:
         served.setdefault(ap.canonical_key, set()).add(value)
     return served
 
 
-def _autopipeline_latency_suffix(latency, start_latency, max_latency) -> str:
-    """Canonical-key / entity-name suffix for an AUTOPIPELINE latency
+def _auto_pipeline_latency_suffix(latency, start_latency, max_latency) -> str:
+    """Canonical-key / entity-name suffix for an AUTO_PIPELINE latency
     constraint; "" when unconstrained. Must match
-    C_TO_LOGIC.AutopipelineLatency.key_suffix (a unit test checks)."""
+    C_TO_LOGIC.AutoPipelineLatency.key_suffix (a unit test checks)."""
     if latency is not None:
         return f"_latency_{latency}"
     suffix = ""
@@ -1572,33 +1572,33 @@ def _autopipeline_latency_suffix(latency, start_latency, max_latency) -> str:
     return suffix
 
 
-def _check_autopipeline_latency_arg(name, value):
+def _check_auto_pipeline_latency_arg(name, value):
     if value is None:
         return
     if not isinstance(value, int) or isinstance(value, bool):
         raise TypeError(
-            f"AUTOPIPELINE(func, {name}=...): must be an int, got "
+            f"AUTO_PIPELINE(func, {name}=...): must be an int, got "
             f"{type(value).__name__}"
         )
     if value < 0:
-        raise ValueError(f"AUTOPIPELINE(func, {name}={value}): must be >= 0")
+        raise ValueError(f"AUTO_PIPELINE(func, {name}={value}): must be >= 0")
 
 
-class AUTOPIPELINE:
-    """AUTOPIPELINE(func, latency=None, start_latency=None, max_latency=None):
+class AUTO_PIPELINE:
+    """AUTO_PIPELINE(func, latency=None, start_latency=None, max_latency=None):
     let the synthesis tool insert pipeline registers inside calls to `func`
     (equivalent to PipelineC's `#pragma AUTOPIPELINE`), and expose the
     resulting register count as `.latency`::
 
-        MY_AP = AUTOPIPELINE(some_func)                   # tool picks, from 0
-        MY_AP = AUTOPIPELINE(some_func, latency=2)        # fixed: exactly 2
-        MY_AP = AUTOPIPELINE(some_func, start_latency=3)  # sweep starts at 3
-        MY_AP = AUTOPIPELINE(some_func, max_latency=6)    # sweep never > 6
-        MY_AP = AUTOPIPELINE(some_func, start_latency=3, max_latency=6)
+        MY_AP = AUTO_PIPELINE(some_func)                   # tool picks, from 0
+        MY_AP = AUTO_PIPELINE(some_func, latency=2)        # fixed: exactly 2
+        MY_AP = AUTO_PIPELINE(some_func, start_latency=3)  # sweep starts at 3
+        MY_AP = AUTO_PIPELINE(some_func, max_latency=6)    # sweep never > 6
+        MY_AP = AUTO_PIPELINE(some_func, start_latency=3, max_latency=6)
 
         @hw_func
         def my_pipeline(i: my_struct_t) -> my_struct_t:
-            return MY_AP(i)        # some_func(i), autopipelined
+            return MY_AP(i)        # some_func(i), auto-pipelined
 
         MY_AP.latency              # int: inserted register slices (clocks)
 
@@ -1632,13 +1632,13 @@ class AUTOPIPELINE:
     `--sim` build launches at the end.
 
     `func` must already be @hw_func-decorated. In elaboration the call becomes
-    a submodule instance of `func` tagged for autopipelining, and AUTOPIPELINE
+    a submodule instance of `func` tagged for auto-pipelining, and AUTO_PIPELINE
     itself produces no hardware. In native simulation the call site behaves as
     a .latency-deep pipeline: an N-deep output delay line makes
     out(t) = func(in(t-N)), cycle-accurate against the generated VHDL (see
     _sim_delay_line below); at .latency 0 it is a plain passthrough.
 
-    CONSTRUCTION TIMING MATTERS: construct AUTOPIPELINE(...) once, eagerly,
+    CONSTRUCTION TIMING MATTERS: construct AUTO_PIPELINE(...) once, eagerly,
     as plain Python (typically at a factory function's own top level) and
     capture the object by closure into whatever @hw_func body calls it —
     that is what makes `.latency` visible to surrounding Python code (e.g.
@@ -1647,7 +1647,7 @@ class AUTOPIPELINE:
     """
 
     # Duck-type marker probed by the elaborator (PY_TO_LOGIC._elab_call).
-    _is_autopipeline_pragma = True
+    _is_auto_pipeline_pragma = True
 
     def __init__(
         self,
@@ -1658,32 +1658,32 @@ class AUTOPIPELINE:
         max_latency=None,
         **removed,
     ):
-        global _autopipeline_serial
+        global _auto_pipeline_serial
         if "depth" in removed:
             raise TypeError(
-                "AUTOPIPELINE(func, depth=...) was renamed: use latency=N for a "
+                "AUTO_PIPELINE(func, depth=...) was renamed: use latency=N for a "
                 "fixed latency, or start_latency=S / max_latency=M to steer the "
                 "throughput sweep"
             )
         if removed:
             raise TypeError(
-                f"AUTOPIPELINE(func, ...): unexpected keyword argument(s) "
+                f"AUTO_PIPELINE(func, ...): unexpected keyword argument(s) "
                 f"{sorted(removed)}"
             )
         if not is_hw_func(func):
             raise TypeError(
-                f"AUTOPIPELINE(func, ...): "
+                f"AUTO_PIPELINE(func, ...): "
                 f"{getattr(func, '__qualname__', func)!r} must be "
                 f"@hw_func-decorated before being passed in"
             )
-        _check_autopipeline_latency_arg("latency", latency)
-        _check_autopipeline_latency_arg("start_latency", start_latency)
-        _check_autopipeline_latency_arg("max_latency", max_latency)
+        _check_auto_pipeline_latency_arg("latency", latency)
+        _check_auto_pipeline_latency_arg("start_latency", start_latency)
+        _check_auto_pipeline_latency_arg("max_latency", max_latency)
         if latency is not None and (
             start_latency is not None or max_latency is not None
         ):
             raise ValueError(
-                "AUTOPIPELINE(func, latency=...) is a fixed latency and can't be "
+                "AUTO_PIPELINE(func, latency=...) is a fixed latency and can't be "
                 "combined with start_latency= / max_latency="
             )
         if (
@@ -1692,7 +1692,7 @@ class AUTOPIPELINE:
             and start_latency > max_latency
         ):
             raise ValueError(
-                f"AUTOPIPELINE(func, start_latency={start_latency}, "
+                f"AUTO_PIPELINE(func, start_latency={start_latency}, "
                 f"max_latency={max_latency}): start_latency exceeds max_latency"
             )
         fixed = getattr(func, "_pipeline_latency", None)
@@ -1706,7 +1706,7 @@ class AUTOPIPELINE:
                 problem = f"max_latency={max_latency}"
             if problem is not None:
                 raise ValueError(
-                    f"AUTOPIPELINE {problem} conflicts with "
+                    f"AUTO_PIPELINE {problem} conflicts with "
                     f"{func.__qualname__}'s pipeline_latency({fixed})"
                 )
         self.func = func
@@ -1715,38 +1715,38 @@ class AUTOPIPELINE:
         self.max_latency = max_latency
         self._canonical_key = None
         self._sim_key_str = None
-        _autopipeline_serial += 1
-        self._serial = _autopipeline_serial
+        _auto_pipeline_serial += 1
+        self._serial = _auto_pipeline_serial
         if latency is not None:
             self._latency = latency
-        elif start_latency is not None and _autopipeline_build_mode == "sweep":
+        elif start_latency is not None and _auto_pipeline_build_mode == "sweep":
             self._latency = start_latency
         else:
             self._latency = 0
         # Skip key computation entirely when the cache is empty (native sim,
         # comb builds, bootstrap pass): keeps pure-sim runs from importing
         # the compiler (see canonical_key).
-        if _autopipeline_latency_cache:
-            cached = _autopipeline_latency_cache.get(self.canonical_key)
+        if _auto_pipeline_latency_cache:
+            cached = _auto_pipeline_latency_cache.get(self.canonical_key)
             if cached is not None:
                 if latency is not None and cached != latency:
                     raise ValueError(
-                        f"AUTOPIPELINE {self.canonical_key}: latency={latency} is "
+                        f"AUTO_PIPELINE {self.canonical_key}: latency={latency} is "
                         f"fixed, but the build harvested {cached} clocks for it"
                     )
                 self._latency = cached
 
     def latency_suffix(self) -> str:
-        return _autopipeline_latency_suffix(
+        return _auto_pipeline_latency_suffix(
             self.fixed_latency, self.start_latency, self.max_latency
         )
 
     @property
     def latency(self) -> int:
-        global _autopipeline_latency_was_read
-        _autopipeline_latency_was_read = True
-        if _autopipeline_build_mode is not None:
-            _autopipeline_served.append((self, self._latency))
+        global _auto_pipeline_latency_was_read
+        _auto_pipeline_latency_was_read = True
+        if _auto_pipeline_build_mode is not None:
+            _auto_pipeline_served.append((self, self._latency))
         return self._latency
 
     @property
@@ -1768,9 +1768,9 @@ class AUTOPIPELINE:
         The canonical key whenever the compiler is already loaded (builds, and
         the --sim run after one); otherwise -- plain native sim of a fixed
         latency=N -- a compiler-free module.qualname#serial that still tells
-        apart two AUTOPIPELINE objects called from the same source line."""
+        apart two AUTO_PIPELINE objects called from the same source line."""
         if self._sim_key_str is None:
-            if _autopipeline_latency_cache or "PY_TO_LOGIC" in _sys.modules:
+            if _auto_pipeline_latency_cache or "PY_TO_LOGIC" in _sys.modules:
                 self._sim_key_str = self.canonical_key
             else:
                 import inspect
@@ -1795,12 +1795,12 @@ class AUTOPIPELINE:
             # stage counts before the sim's design import): emulate the
             # N-stage pipeline with a per-call-site output delay line instead
             # of the zero-latency identity. The key distinguishes two
-            # different AUTOPIPELINE objects called from the same source line
+            # different AUTO_PIPELINE objects called from the same source line
             # (e.g. a loop over factory-produced APs whose funcs share a
             # __qualname__).
             _sim_inst_stack.append(
                 (
-                    "AUTOPIPELINE:" + self._sim_key(),
+                    "AUTO_PIPELINE:" + self._sim_key(),
                     _sim_capture_call_loc(_sys._getframe(1)),
                 )
             )
@@ -1812,10 +1812,10 @@ class AUTOPIPELINE:
                     if (
                         self.fixed_latency
                         and getattr(self.func, "_pipeline_latency", None) is None
-                        and not _autopipeline_latency_cache
+                        and not _auto_pipeline_latency_cache
                     ):
                         raise RuntimeError(
-                            f"AUTOPIPELINE({self.func.__qualname__}, "
+                            f"AUTO_PIPELINE({self.func.__qualname__}, "
                             f"latency={self.fixed_latency}) wraps code that "
                             "reaches a @pipeline_latency function; plain native "
                             "sim can't emulate where the tool places the fixed "
@@ -1857,17 +1857,17 @@ class AUTOPIPELINE:
         return _copy.deepcopy(committed[0])
 
     def __repr__(self):
-        # AUTOPIPELINE objects get captured in factory closures (e.g.
-        # _autopipeline_with_io_regs), and closure cell reprs can feed the
+        # AUTO_PIPELINE objects get captured in factory closures (e.g.
+        # _auto_pipeline_with_io_regs), and closure cell reprs can feed the
         # canonical entity-name hashing in PY_TO_LOGIC. That makes two
         # properties load-bearing here:
         #   - deterministic (no memory address): an address-bearing default
         #     repr would rename entities on every design re-execution,
         #     breaking the pin-and-confirm pass's cross-pass matching;
-        #   - fully distinguishing: two AUTOPIPELINE objects wrapping
+        #   - fully distinguishing: two AUTO_PIPELINE objects wrapping
         #     different factory-produced funcs must repr differently even
         #     when the funcs share a qualname (the funcs' own closure values
-        #     included -- e.g. five make_stream_pipeline invocations all wrap
+        #     included -- e.g. five make_stream_auto_pipeline invocations all wrap
         #     a 'func_stream' closure, each over a different user core), or
         #     their wrapper entities collide into one FuncLogicLookupTable
         #     entry and mis-wire.
@@ -1896,29 +1896,29 @@ class AUTOPIPELINE:
                 config += f", start_latency={self.start_latency}"
             if self.max_latency is not None:
                 config += f", max_latency={self.max_latency}"
-        return f"AUTOPIPELINE({inner}{config})"
+        return f"AUTO_PIPELINE({inner}{config})"
 
 
-def _autopipeline_with_io_regs(func, has_input_reg: bool, has_output_reg: bool):
-    """Internal helper: AUTOPIPELINE(func) plus optional unconditional
+def _auto_pipeline_with_io_regs(func, has_input_reg: bool, has_output_reg: bool):
+    """Internal helper: AUTO_PIPELINE(func) plus optional unconditional
     every-cycle Reg[T] input/output boundary registers around the call
     (the registered-input/registered-output idiom).
 
-    Returns (wrapped_func, autopipeline_call): wrapped_func has func's own
-    (in_type) -> out_type signature; autopipeline_call is the AUTOPIPELINE
+    Returns (wrapped_func, auto_pipeline_call): wrapped_func has func's own
+    (in_type) -> out_type signature; auto_pipeline_call is the AUTO_PIPELINE
     instance so callers can read .latency. Note .latency is func's own core
     pipeline depth only — the boundary registers added here are NOT included
     (callers account for them, e.g. total = has_input_reg + .latency +
     has_output_reg).
     """
-    ap = AUTOPIPELINE(func)
+    ap = AUTO_PIPELINE(func)
     (in_type,) = hw_arg_types(func)
     out_type = hw_return_type(func)
 
     if has_input_reg and has_output_reg:
 
         @hw_func
-        def autopipelined(x: in_type) -> out_type:
+        def auto_pipelined(x: in_type) -> out_type:
             in_reg: Reg[in_type]
             out_reg: Reg[out_type]
             rv: out_type = out_reg
@@ -1929,7 +1929,7 @@ def _autopipeline_with_io_regs(func, has_input_reg: bool, has_output_reg: bool):
     elif has_input_reg:
 
         @hw_func
-        def autopipelined(x: in_type) -> out_type:
+        def auto_pipelined(x: in_type) -> out_type:
             in_reg: Reg[in_type]
             rv: out_type = ap(in_reg)
             in_reg = x
@@ -1938,7 +1938,7 @@ def _autopipeline_with_io_regs(func, has_input_reg: bool, has_output_reg: bool):
     elif has_output_reg:
 
         @hw_func
-        def autopipelined(x: in_type) -> out_type:
+        def auto_pipelined(x: in_type) -> out_type:
             out_reg: Reg[out_type]
             rv: out_type = out_reg
             out_reg = ap(x)
@@ -1947,81 +1947,81 @@ def _autopipeline_with_io_regs(func, has_input_reg: bool, has_output_reg: bool):
     else:
 
         @hw_func
-        def autopipelined(x: in_type) -> out_type:
+        def auto_pipelined(x: in_type) -> out_type:
             return ap(x)
 
-    return autopipelined, ap
+    return auto_pipelined, ap
 
 
 # ─────────────────────────────────────────────
-# AUTOFSM: tool-scheduled resource-shared FSM regions
+# AUTO_FSM: tool-scheduled resource-shared FSM regions
 # ─────────────────────────────────────────────
 
 # canonical_key -> schedule dict, harvested from the previous elaborate pass by
-# AUTOFSM.HARVEST_AUTOFSM_SCHEDULES and installed by the pipelinec driver
-# (SET_AUTOFSM_SCHEDULE_CACHE) before the design file is re-executed, and again
+# AUTO_FSM.HARVEST_AUTO_FSM_SCHEDULES and installed by the pipelinec driver
+# (SET_AUTO_FSM_SCHEDULE_CACHE) before the design file is re-executed, and again
 # before a non---comb `--sim` run's native-sim design import so both .latency
 # reads and the FSM's native-sim emulation see the built state count. Always
 # empty in plain native Pypeline sim (pypeline_sim.py run directly) and in
 # --comb/--no_synth/--yosys_json builds, so .latency reads 0 and the call site
 # stays a zero-latency combinational passthrough there.
 #
-# Schedule dict shape (plain picklable data; see docs/AUTOFSM_DESIGN.md):
+# Schedule dict shape (plain picklable data; see docs/AUTO_FSM_DESIGN.md):
 #   {"version", "key", "entity", "n_states", "latency", "budget_scale",
 #    "at_floor", "floor_ns", "node_to_state", "fu_of_node", "fus",
 #    "fu_order", "descended", "entity_delays_snapshot", ...}
-_autofsm_schedule_cache: dict = {}
+_auto_fsm_schedule_cache: dict = {}
 
 
-def SET_AUTOFSM_SCHEDULE_CACHE(cache: dict) -> None:
-    """pipelinec-driver hook: install the previous pass's harvested AUTOFSM
+def SET_AUTO_FSM_SCHEDULE_CACHE(cache: dict) -> None:
+    """pipelinec-driver hook: install the previous pass's harvested AUTO_FSM
     schedules (canonical_key -> schedule dict) so the next design-file
-    execution's AUTOFSM(...) constructions resolve .latency to real values and
+    execution's AUTO_FSM(...) constructions resolve .latency to real values and
     their call sites elaborate to the generated FSM instead of a passthrough."""
-    global _autofsm_schedule_cache
-    _autofsm_schedule_cache = dict(cache)
+    global _auto_fsm_schedule_cache
+    _auto_fsm_schedule_cache = dict(cache)
 
 
-def AUTOFSM_SCHEDULE_CACHE() -> dict:
-    return _autofsm_schedule_cache
+def AUTO_FSM_SCHEDULE_CACHE() -> dict:
+    return _auto_fsm_schedule_cache
 
 
-# Native-sim state key for an AUTOFSM call site's emulated FSM registers,
-# mirroring _SIM_AP_DELAY_KEY's role for AUTOPIPELINE delay lines.
-_SIM_AUTOFSM_STATE_KEY = "__sim_autofsm_state__"
+# Native-sim state key for an AUTO_FSM call site's emulated FSM registers,
+# mirroring _SIM_AP_DELAY_KEY's role for AUTO_PIPELINE delay lines.
+_SIM_AUTO_FSM_STATE_KEY = "__sim_auto_fsm_state__"
 
 
-def _make_autofsm_stream_t(data_t):
-    """Build the plain `{data, valid}` struct AUTOFSM uses at its call-site
+def _make_auto_fsm_stream_t(data_t):
+    """Build the plain `{data, valid}` struct AUTO_FSM uses at its call-site
     boundary. Deliberately a pypeline.py-local twin of
     include/pypeline/stream/stream.py's make_stream_t rather than an import of
     it: pypeline.py is the base module every design imports and must keep zero
     dependency on the include/pypeline library (which designs put on sys.path
     themselves). The two produce structurally identical, duck-type-compatible
-    types -- a make_stream_t(T) value can be passed straight into an AUTOFSM
+    types -- a make_stream_t(T) value can be passed straight into an AUTO_FSM
     call site and vice versa -- they just carry different canonical type names.
     """
 
     @struct
-    class autofsm_stream_t(NamedTuple):
+    class auto_fsm_stream_t(NamedTuple):
         data: data_t
         valid: uint1_t
 
-    return autofsm_stream_t
+    return auto_fsm_stream_t
 
 
-class AUTOFSM:
-    """AUTOFSM(func): implement a pure combinational function as a
+class AUTO_FSM:
+    """AUTO_FSM(func): implement a pure combinational function as a
     resource-shared finite state machine -- the resource-minimizing dual of
-    AUTOPIPELINE.
+    AUTO_PIPELINE.
 
-    Where AUTOPIPELINE(func) builds an initiation-interval-1 pipeline (one full
-    copy of func's hardware, cut into N register stages), AUTOFSM(func) builds
+    Where AUTO_PIPELINE(func) builds an initiation-interval-1 pipeline (one full
+    copy of func's hardware, cut into N register stages), AUTO_FSM(func) builds
     an ~N-state FSM holding ONE shared copy of each distinct operation, executed
     over N clock cycles::
 
-        MY_FSM = AUTOFSM(some_pure_func)      # tool picks the state count
-        MY_FSM = AUTOFSM(some_pure_func, max_latency=8)   # ...but never past 8
+        MY_FSM = AUTO_FSM(some_pure_func)      # tool picks the state count
+        MY_FSM = AUTO_FSM(some_pure_func, max_latency=8)   # ...but never past 8
 
         @MAIN(100.0)
         def top():
@@ -2041,7 +2041,7 @@ class AUTOFSM:
     executed in any single state fits the design's clock period -- if a timing
     report blames the FSM, the driver shrinks the per-state delay budget and
     reschedules into more states, the same way the throughput sweep adds
-    pipeline stages for AUTOPIPELINE.
+    pipeline stages for AUTO_PIPELINE.
 
     `max_latency=N` caps that: the tool may spend at most N cycles in->out
     (execution states plus the registered-output cycle). Use it when the surrounding
@@ -2052,14 +2052,14 @@ class AUTOFSM:
     the latency it actually needs, rather than quietly returning a slower or
     a timing-missing design. Omit it to let the tool minimize resources
     without a deadline. Note that the tool also searches for the SMALLEST
-    design it can (see the area sweep in docs/AUTOFSM_DESIGN.md), so a
+    design it can (see the area sweep in docs/AUTO_FSM_DESIGN.md), so a
     generous cap is not the same thing as no cap: sharing more finely costs
     latency, and the cap bounds how much of it the search may spend.
 
     `register_output=False` exposes the result combinationally in the final
     execution state and removes the result data/valid register bank. The
     default is True so a raw call site's data holds between valid pulses.
-    `make_stream_autofsm` uses False because its backpressure holding register
+    `make_stream_auto_fsm` uses False because its backpressure holding register
     is already the output boundary; registering the payload twice only costs
     area. In this mode latency is the number of execution states, with no
     additional output cycle.
@@ -2074,8 +2074,8 @@ class AUTOFSM:
         while it is busy are IGNORED (no backpressure signal in this version --
         space inputs at least .latency cycles apart, which .latency itself lets
         surrounding Python compute). For a real valid/ready stream port around
-        an AUTOFSM instance instead of this manual spacing, see
-        make_stream_autofsm (include/pypeline/stream/stream_autofsm.py).
+        an AUTO_FSM instance instead of this manual spacing, see
+        make_stream_auto_fsm (include/pypeline/stream/stream_auto_fsm.py).
       - The result appears with a one-cycle `valid` pulse exactly .latency
         cycles after the accepted input cycle. With the default registered
         output, `.data` holds the last result between pulses; with
@@ -2093,27 +2093,27 @@ class AUTOFSM:
     native simulation a non---comb `--sim` build launches at the end, where the
     call site emulates the built FSM cycle-accurately.
 
-    CONSTRUCTION TIMING MATTERS, exactly as for AUTOPIPELINE: construct
-    AUTOFSM(...) once, eagerly, as plain Python (typically at module or factory
+    CONSTRUCTION TIMING MATTERS, exactly as for AUTO_PIPELINE: construct
+    AUTO_FSM(...) once, eagerly, as plain Python (typically at module or factory
     top level) and capture it by closure into the @hw_func body that calls it --
     that is what makes .latency visible to the surrounding Python.
 
-    See docs/AUTOFSM_DESIGN.md for the scheduler, the generated FSM's shape,
+    See docs/AUTO_FSM_DESIGN.md for the scheduler, the generated FSM's shape,
     and the driver's schedule-and-confirm loop.
     """
 
     # Duck-type marker probed by the elaborator (PY_TO_LOGIC._elab_call).
-    _is_autofsm_pragma = True
+    _is_auto_fsm_pragma = True
 
     def __init__(self, func, max_latency=None, register_output=True):
         if not is_hw_func(func):
             raise TypeError(
-                f"AUTOFSM(func): {getattr(func, '__qualname__', func)!r} must be "
+                f"AUTO_FSM(func): {getattr(func, '__qualname__', func)!r} must be "
                 f"@hw_func-decorated before being passed in"
             )
         if not isinstance(register_output, bool):
             raise TypeError(
-                "AUTOFSM(func, register_output=...): must be a bool, got "
+                "AUTO_FSM(func, register_output=...): must be a bool, got "
                 f"{type(register_output).__name__}"
             )
         self.register_output = register_output
@@ -2124,13 +2124,13 @@ class AUTOFSM:
             # has at least one execution state.
             if not isinstance(max_latency, int) or isinstance(max_latency, bool):
                 raise TypeError(
-                    f"AUTOFSM(func, max_latency=...): must be an int, got "
+                    f"AUTO_FSM(func, max_latency=...): must be an int, got "
                     f"{type(max_latency).__name__}"
                 )
             minimum_latency = 2 if register_output else 1
             if max_latency < minimum_latency:
                 raise ValueError(
-                    f"AUTOFSM(func, max_latency={max_latency}): the smallest "
+                    f"AUTO_FSM(func, max_latency={max_latency}): the smallest "
                     f"possible FSM latency is {minimum_latency} with "
                     f"register_output={register_output}"
                 )
@@ -2138,7 +2138,7 @@ class AUTOFSM:
         arg_types = hw_arg_types(func)
         if len(arg_types) != 1:
             raise TypeError(
-                f"AUTOFSM(func): {getattr(func, '__qualname__', func)!r} must take "
+                f"AUTO_FSM(func): {getattr(func, '__qualname__', func)!r} must take "
                 f"exactly one annotated argument (got {len(arg_types)}); bundle "
                 f"multiple inputs into a single @struct type"
             )
@@ -2147,21 +2147,21 @@ class AUTOFSM:
         self.out_type = hw_return_type(func)
         if self.out_type is None:
             raise TypeError(
-                f"AUTOFSM(func): {getattr(func, '__qualname__', func)!r} must have "
+                f"AUTO_FSM(func): {getattr(func, '__qualname__', func)!r} must have "
                 f"an annotated return type"
             )
-        self.in_stream_t = _make_autofsm_stream_t(self.in_type)
-        self.out_stream_t = _make_autofsm_stream_t(self.out_type)
+        self.in_stream_t = _make_auto_fsm_stream_t(self.in_type)
+        self.out_stream_t = _make_auto_fsm_stream_t(self.out_type)
         self._canonical_key = None
         self._generated = None  # memoized generated hw_func for this pass
         # Snapshot the installed schedule at construction time, mirroring
-        # AUTOPIPELINE's latency snapshot: the driver installs the cache before
+        # AUTO_PIPELINE's latency snapshot: the driver installs the cache before
         # re-executing the design, so every construction in one pass sees one
         # consistent view. Skip key computation entirely when the cache is empty
         # (native sim, comb builds, bootstrap pass) so pure-sim runs never import
         # the compiler.
-        if _autofsm_schedule_cache:
-            self._schedule = _autofsm_schedule_cache.get(self.canonical_key)
+        if _auto_fsm_schedule_cache:
+            self._schedule = _auto_fsm_schedule_cache.get(self.canonical_key)
             # A schedule built under a different latency cap is not this tag's
             # schedule. The cap is a constructor constant, so this can only
             # happen if the design changed between passes -- treat it as a miss
@@ -2209,7 +2209,7 @@ class AUTOFSM:
         valid = getattr(s, "valid", None)
         if data is None or valid is None:
             raise TypeError(
-                f"AUTOFSM call argument must be a {{data, valid}} struct (e.g. "
+                f"AUTO_FSM call argument must be a {{data, valid}} struct (e.g. "
                 f"MY_FSM.in_stream_t), got {type(s).__name__}"
             )
         if _sim_active and self._schedule is not None:
@@ -2217,11 +2217,11 @@ class AUTOFSM:
             # install the harvested schedules before the sim's design import):
             # emulate the built FSM's registers instead of the zero-latency
             # passthrough. canonical_key is already computed (cache was non-empty
-            # at __init__) and distinguishes two different AUTOFSM objects called
+            # at __init__) and distinguishes two different AUTO_FSM objects called
             # from the same source line.
             _sim_inst_stack.append(
                 (
-                    "AUTOFSM:" + self.canonical_key,
+                    "AUTO_FSM:" + self.canonical_key,
                     _sim_capture_call_loc(_sys._getframe(1)),
                 )
             )
@@ -2234,7 +2234,7 @@ class AUTOFSM:
     def _sim_fsm(self, data, valid):
         """Native-sim emulation of this call site as the generated FSM: a
         register-level model of exactly the state and optional output registers
-        the generated hardware declares (see AUTOFSM.GENERATE_FSM_SOURCE), so the two are
+        the generated hardware declares (see AUTO_FSM.GENERATE_FSM_SOURCE), so the two are
         cycle-accurate against each other by construction rather than by a
         separate timing argument.
 
@@ -2247,7 +2247,7 @@ class AUTOFSM:
         """
         n_states = self._schedule["n_states"]
         inst_path = _sim_current_inst_path()
-        st = _sim_reg_read(inst_path, _SIM_AUTOFSM_STATE_KEY, None)
+        st = _sim_reg_read(inst_path, _SIM_AUTO_FSM_STATE_KEY, None)
         if st is None:
             # Warm-up matches hardware reset: idle, no result yet, typed zeros.
             st = {
@@ -2257,7 +2257,7 @@ class AUTOFSM:
                 "out_valid": 0,
             }
         # Registered mode exposes committed output registers. Unregistered
-        # mode is used by make_stream_autofsm, whose own holding register is
+        # mode is used by make_stream_auto_fsm, whose own holding register is
         # the output boundary: the raw result is combinational only in the last
         # execution state and therefore avoids a redundant full-width bank.
         if self.register_output:
@@ -2289,11 +2289,11 @@ class AUTOFSM:
             nxt["st"] = 0
         else:
             nxt["st"] = st["st"] + 1
-        _sim_reg_write(inst_path, _SIM_AUTOFSM_STATE_KEY, nxt)
+        _sim_reg_write(inst_path, _SIM_AUTO_FSM_STATE_KEY, nxt)
         return out
 
     def __repr__(self):
-        # Same determinism requirement as AUTOPIPELINE.__repr__ (see the long
+        # Same determinism requirement as AUTO_PIPELINE.__repr__ (see the long
         # comment there): these objects get captured in factory closures whose
         # cell reprs feed canonical entity-name hashing, so the repr must be
         # address-free and fully distinguishing.
@@ -2312,7 +2312,7 @@ class AUTOFSM:
             inner += f",max_latency={self.max_latency}"
         if not self.register_output:
             inner += ",register_output=False"
-        return f"AUTOFSM({inner})"
+        return f"AUTO_FSM({inner})"
 
 
 # ─────────────────────────────────────────────
@@ -3049,31 +3049,31 @@ class MULTI_CYCLE(metaclass=_MultiCycleMeta):
 
 
 # ─────────────────────────────────────────────
-# AUTOMCP: tool-tuned multi-cycle paths with .latency feedback
+# AUTO_MULTI_CYCLE: tool-tuned multi-cycle paths with .latency feedback
 # ─────────────────────────────────────────────
 
 # canonical_key -> multi-cycle count chosen by the previous build pass's
 # throughput sweep. Installed only by the pipelinec driver between
 # pin-and-confirm passes, and again before a non---comb `--sim` run's
-# native-sim design import (SET_AUTOMCP_LATENCY_CACHE). Empty otherwise, so
+# native-sim design import (SET_AUTO_MULTI_CYCLE_LATENCY_CACHE). Empty otherwise, so
 # .latency reads its constructor value (latency=, else start_latency=, else 1).
-_automcp_latency_cache: dict = {}
+_auto_multi_cycle_latency_cache: dict = {}
 # canonical_key -> set of values design code read through .latency/.ncycles
 # during the current design execution. The compiler's own read (the
-# set_multicycle_path value, AUTOMCP._ncycles_for_compiler) is NOT recorded:
-# an AUTOMCP nothing in the design reads can't have its handshake follow the
-# sweep, and the driver fails the build on it (AUTOMCP_UNREAD_KEYS).
-_automcp_served: dict = {}
-# canonical_key -> AUTOMCP constructed during the current design execution
-_automcp_constructed: dict = {}
+# set_multicycle_path value, AUTO_MULTI_CYCLE._ncycles_for_compiler) is NOT recorded:
+# an AUTO_MULTI_CYCLE nothing in the design reads can't have its handshake follow the
+# sweep, and the driver fails the build on it (AUTO_MULTI_CYCLE_UNREAD_KEYS).
+_auto_multi_cycle_served: dict = {}
+# canonical_key -> AUTO_MULTI_CYCLE constructed during the current design execution
+_auto_multi_cycle_constructed: dict = {}
 # (module, code name, line) -> constructions seen at that source site during
 # the current design execution; the ordinal disambiguates one factory line
-# building several AUTOMCPs (see AUTOMCP.canonical_key)
-_automcp_site_counts: dict = {}
+# building several AUTO_MULTI_CYCLE tags (see AUTO_MULTI_CYCLE.canonical_key)
+_auto_multi_cycle_site_counts: dict = {}
 # Pseudo file names the decorator / elaborator compile compile-time
-# expressions under. An AUTOMCP constructed under one of these is being built
+# expressions under. An AUTO_MULTI_CYCLE constructed under one of these is being built
 # inside a @hw_func body, which re-creates it on every evaluation.
-_AUTOMCP_BODY_EVAL_FILES = frozenset(
+_AUTO_MULTI_CYCLE_BODY_EVAL_FILES = frozenset(
     (
         "<local_const>",
         "<const_eval>",
@@ -3085,75 +3085,75 @@ _AUTOMCP_BODY_EVAL_FILES = frozenset(
 )
 
 
-def SET_AUTOMCP_LATENCY_CACHE(cache: dict) -> None:
+def SET_AUTO_MULTI_CYCLE_LATENCY_CACHE(cache: dict) -> None:
     """pipelinec-driver hook: install the multi-cycle counts the previous
     build pass settled on (canonical_key -> cycles) so the next design-file
-    execution's AUTOMCP(...) constructions resolve .latency to them."""
-    global _automcp_latency_cache
-    _automcp_latency_cache = dict(cache)
+    execution's AUTO_MULTI_CYCLE(...) constructions resolve .latency to them."""
+    global _auto_multi_cycle_latency_cache
+    _auto_multi_cycle_latency_cache = dict(cache)
 
 
-def AUTOMCP_LATENCY_CACHE() -> dict:
-    return dict(_automcp_latency_cache)
+def AUTO_MULTI_CYCLE_LATENCY_CACHE() -> dict:
+    return dict(_auto_multi_cycle_latency_cache)
 
 
-def RESET_AUTOMCP_TRACKING() -> None:
+def RESET_AUTO_MULTI_CYCLE_TRACKING() -> None:
     """Forget constructions/reads from a previous design execution (called
     before every design (re-)execution: PARSE_FILE, native-sim import)."""
-    _automcp_served.clear()
-    _automcp_constructed.clear()
-    _automcp_site_counts.clear()
+    _auto_multi_cycle_served.clear()
+    _auto_multi_cycle_constructed.clear()
+    _auto_multi_cycle_site_counts.clear()
 
 
-def AUTOMCP_SERVED_LATENCIES() -> dict:
+def AUTO_MULTI_CYCLE_SERVED_LATENCIES() -> dict:
     """canonical_key -> set of .latency values design code read."""
-    return {key: set(values) for key, values in _automcp_served.items()}
+    return {key: set(values) for key, values in _auto_multi_cycle_served.items()}
 
 
-def AUTOMCP_CONSTRUCTED() -> dict:
-    """canonical_key -> AUTOMCP object, for the current design execution."""
-    return dict(_automcp_constructed)
+def AUTO_MULTI_CYCLE_CONSTRUCTED() -> dict:
+    """canonical_key -> AUTO_MULTI_CYCLE object, for the current design execution."""
+    return dict(_auto_multi_cycle_constructed)
 
 
-def AUTOMCP_UNREAD_KEYS() -> list:
-    """Keys of sweep-adjustable (not fixed latency=) AUTOMCPs whose .latency
+def AUTO_MULTI_CYCLE_UNREAD_KEYS() -> list:
+    """Keys of sweep-adjustable (not fixed latency=) AUTO_MULTI_CYCLE tags whose .latency
     design code never read."""
     return sorted(
         key
-        for key, tag in _automcp_constructed.items()
-        if tag.fixed_latency is None and key not in _automcp_served
+        for key, tag in _auto_multi_cycle_constructed.items()
+        if tag.fixed_latency is None and key not in _auto_multi_cycle_served
     )
 
 
-def _automcp_latency_suffix(latency, start_latency, max_latency) -> str:
-    """Canonical-key suffix for an AUTOMCP constraint ("" when unconstrained).
-    Must match C_TO_LOGIC.AutomcpConstraint.key_suffix."""
-    return _autopipeline_latency_suffix(latency, start_latency, max_latency)
+def _auto_multi_cycle_latency_suffix(latency, start_latency, max_latency) -> str:
+    """Canonical-key suffix for an AUTO_MULTI_CYCLE constraint ("" when unconstrained).
+    Must match C_TO_LOGIC.AutoMultiCycleConstraint.key_suffix."""
+    return _auto_pipeline_latency_suffix(latency, start_latency, max_latency)
 
 
-def _check_automcp_latency_arg(name, value):
+def _check_auto_multi_cycle_latency_arg(name, value):
     if value is None:
         return
     if not isinstance(value, int) or isinstance(value, bool):
         raise TypeError(
-            f"AUTOMCP({name}=...): must be an int, got {type(value).__name__}"
+            f"AUTO_MULTI_CYCLE({name}=...): must be an int, got {type(value).__name__}"
         )
     if value < 1:
         raise ValueError(
-            f"AUTOMCP({name}={value}): must be >= 1 (a multi-cycle path spans "
+            f"AUTO_MULTI_CYCLE({name}={value}): must be >= 1 (a multi-cycle path spans "
             "at least one clock cycle)"
         )
 
 
-class AUTOMCP:
-    """AUTOMCP(latency=None, start_latency=None, max_latency=None): a
+class AUTO_MULTI_CYCLE:
+    """AUTO_MULTI_CYCLE(latency=None, start_latency=None, max_latency=None): a
     multi-cycle path whose cycle count the pypelinec throughput sweep picks
     (the auto-tuned counterpart of MULTI_CYCLE[N]). Tag exactly two Reg[T]
     declarations with .start / .end, and drive the handshake from .latency::
 
-        MC = AUTOMCP(start_latency=3)            # sweep starts at 3 cycles
-        MC = AUTOMCP(start_latency=3, max_latency=8)
-        MC = AUTOMCP(latency=4)                  # fixed: exactly 4 cycles
+        MC = AUTO_MULTI_CYCLE(start_latency=3)            # sweep starts at 3 cycles
+        MC = AUTO_MULTI_CYCLE(start_latency=3, max_latency=8)
+        MC = AUTO_MULTI_CYCLE(latency=4)                  # fixed: exactly 4 cycles
 
         @hw_func
         def slow(i: in_t) -> out_t:
@@ -3175,7 +3175,7 @@ class AUTOMCP:
     needs (never below start_latency, never above max_latency -- a cap that
     blocks the goal fails the build), then re-elaborates the design with the
     final N so every .latency-derived constant matches the constraint.
-    Because of that, design code MUST read .latency (a start/max AUTOMCP
+    Because of that, design code MUST read .latency (a start/max AUTO_MULTI_CYCLE
     nothing reads fails the build); use MULTI_CYCLE[N] for a hand-timed MCP.
 
     Construct it once, eagerly, outside any @hw_func body (e.g. at a factory's
@@ -3183,17 +3183,17 @@ class AUTOMCP:
     """
 
     # Duck-type marker (pypeline_names.stable_key, PY_TO_LOGIC)
-    _is_automcp_tag = True
+    _is_auto_multi_cycle_tag = True
 
     def __init__(self, *, latency=None, start_latency=None, max_latency=None):
-        _check_automcp_latency_arg("latency", latency)
-        _check_automcp_latency_arg("start_latency", start_latency)
-        _check_automcp_latency_arg("max_latency", max_latency)
+        _check_auto_multi_cycle_latency_arg("latency", latency)
+        _check_auto_multi_cycle_latency_arg("start_latency", start_latency)
+        _check_auto_multi_cycle_latency_arg("max_latency", max_latency)
         if latency is not None and (
             start_latency is not None or max_latency is not None
         ):
             raise ValueError(
-                "AUTOMCP(latency=...) is a fixed cycle count and can't be "
+                "AUTO_MULTI_CYCLE(latency=...) is a fixed cycle count and can't be "
                 "combined with start_latency= / max_latency="
             )
         if (
@@ -3202,14 +3202,14 @@ class AUTOMCP:
             and start_latency > max_latency
         ):
             raise ValueError(
-                f"AUTOMCP(start_latency={start_latency}, "
+                f"AUTO_MULTI_CYCLE(start_latency={start_latency}, "
                 f"max_latency={max_latency}): start_latency exceeds max_latency"
             )
         frame = _sys._getframe(1)
         code = frame.f_code
-        if code.co_filename in _AUTOMCP_BODY_EVAL_FILES or _sim_active:
+        if code.co_filename in _AUTO_MULTI_CYCLE_BODY_EVAL_FILES or _sim_active:
             raise TypeError(
-                "AUTOMCP(...) must be constructed outside @hw_func bodies (e.g. "
+                "AUTO_MULTI_CYCLE(...) must be constructed outside @hw_func bodies (e.g. "
                 "at a factory's top level) and captured by closure: a tag built "
                 "inside a body is re-created on every evaluation, so the build "
                 "can't track its cycle count"
@@ -3220,11 +3220,11 @@ class AUTOMCP:
         self.start = _MultiCycleRole(self, is_start=True)
         self.end = _MultiCycleRole(self, is_start=False)
         site = (frame.f_globals.get("__name__", "?"), code.co_name, frame.f_lineno)
-        ordinal = _automcp_site_counts.get(site, 0)
-        _automcp_site_counts[site] = ordinal + 1
+        ordinal = _auto_multi_cycle_site_counts.get(site, 0)
+        _auto_multi_cycle_site_counts[site] = ordinal + 1
         self.canonical_key = (
             f"{site[0]}.{site[1]}_line{site[2]}_{ordinal}"
-            + _automcp_latency_suffix(latency, start_latency, max_latency)
+            + _auto_multi_cycle_latency_suffix(latency, start_latency, max_latency)
         )
         if latency is not None:
             ncycles = latency
@@ -3232,21 +3232,21 @@ class AUTOMCP:
             ncycles = start_latency
         else:
             ncycles = 1
-        cached = _automcp_latency_cache.get(self.canonical_key)
+        cached = _auto_multi_cycle_latency_cache.get(self.canonical_key)
         if cached is not None:
             if latency is not None and cached != latency:
                 raise ValueError(
-                    f"AUTOMCP {self.canonical_key}: latency={latency} is fixed, "
+                    f"AUTO_MULTI_CYCLE {self.canonical_key}: latency={latency} is fixed, "
                     f"but the build settled on {cached} cycles for it"
                 )
             if max_latency is not None and cached > max_latency:
                 raise ValueError(
-                    f"AUTOMCP {self.canonical_key}: the build settled on "
+                    f"AUTO_MULTI_CYCLE {self.canonical_key}: the build settled on "
                     f"{cached} cycles, above max_latency={max_latency}"
                 )
             ncycles = cached
         self._ncycles = ncycles
-        _automcp_constructed[self.canonical_key] = self
+        _auto_multi_cycle_constructed[self.canonical_key] = self
 
     def _ncycles_for_compiler(self) -> int:
         """The cycle count without counting as a design read."""
@@ -3254,7 +3254,7 @@ class AUTOMCP:
 
     @property
     def latency(self) -> int:
-        _automcp_served.setdefault(self.canonical_key, set()).add(self._ncycles)
+        _auto_multi_cycle_served.setdefault(self.canonical_key, set()).add(self._ncycles)
         return self._ncycles
 
     @property
@@ -3273,7 +3273,7 @@ class AUTOMCP:
         return ", ".join(parts) if parts else "unconstrained"
 
     def __repr__(self):
-        return f"AUTOMCP({self.canonical_key}, {self.describe()}, {self._ncycles} cycles)"
+        return f"AUTO_MULTI_CYCLE({self.canonical_key}, {self.describe()}, {self._ncycles} cycles)"
 
 
 class _RegType:
@@ -3944,12 +3944,12 @@ def _exec_generated_func(
 # convention used by _exec_generated_func (default folder
 # "pypeline_generated_bytes", or "pypeline_generated_casts" -- the
 # lazily-built @cast functions in include/pypeline/stream/stream.py -- via
-# its folder= override) and AUTOFSM._exec_generated ("pypeline_autofsm_gen");
+# its folder= override) and AUTO_FSM._exec_generated ("pypeline_auto_fsm_gen");
 # see dump_generated_sources.
 _GENERATED_SOURCE_DIR_MARKERS = (
     "pypeline_generated_bytes",
     "pypeline_generated_casts",
-    "pypeline_autofsm_gen",
+    "pypeline_auto_fsm_gen",
 )
 
 
@@ -3957,12 +3957,12 @@ def dump_generated_sources(out_dir):
     """Write every synthetic pypeline-generated Python source currently
     registered in linecache to `out_dir`, so a `_py_lNN` location suffix
     pointing at generated code (a to_bytes/from_bytes cast helper, an
-    AUTOFSM-opened FSM, an interface function's generated wiring module)
+    AUTO_FSM-opened FSM, an interface function's generated wiring module)
     resolves to a real file on disk instead of a name nobody can open.
 
     Covers every synthetic-filename convention in this codebase: the
     "/<marker>/<name>.py" absolute-path convention (_exec_generated_func,
-    AUTOFSM._exec_generated) and interface_func.py's "ifgen_<...>.py" bare
+    AUTO_FSM._exec_generated) and interface_func.py's "ifgen_<...>.py" bare
     relative filename. Best-effort and read-only against linecache: only
     entries actually present in linecache.cache at call time are written, so
     calling this before any design has been elaborated writes nothing.
@@ -4634,7 +4634,7 @@ def sim_print(s, debug=False):
         tag = f"[SIM DEBUG PRINT: {_os.path.abspath(frame.f_code.co_filename)}:{frame.f_lineno}]"
         # A debug=True print exists only to be cycle-compared against VHDL by
         # pypeline_sim_debug.py. If it fires from inside pipelined combinational
-        # logic -- a naturally-pipelined pure MAIN, or an AUTOPIPELINE core --
+        # logic -- a naturally-pipelined pure MAIN, or an AUTO_PIPELINE core --
         # its cycle CANNOT match: native sim runs that comb at stage-0 timing
         # while the VHDL fires it at whatever pipeline stage retiming placed it.
         # Fail loudly rather than emit a print that will silently mis-compare
@@ -4650,16 +4650,16 @@ def sim_print(s, debug=False):
 
 def _sim_check_debug_probe_not_in_pipeline(loc: str) -> None:
     """Raise if a sim_print(debug=True) is executing inside pipelined comb
-    (a pipelined pure MAIN, or an AUTOPIPELINE core's func evaluation)."""
+    (a pipelined pure MAIN, or an AUTO_PIPELINE core's func evaluation)."""
     in_pipelined_main = (
         _sim_current_main is not None and _sim_current_main in _sim_pipelined_main_info
     )
-    in_autopipeline_core = any(
-        isinstance(entry[0], str) and entry[0].startswith("AUTOPIPELINE:")
+    in_auto_pipeline_core = any(
+        isinstance(entry[0], str) and entry[0].startswith("AUTO_PIPELINE:")
         for entry in _sim_inst_stack
     )
-    if in_pipelined_main or in_autopipeline_core:
-        where = "a pipelined pure MAIN" if in_pipelined_main else "an AUTOPIPELINE core"
+    if in_pipelined_main or in_auto_pipeline_core:
+        where = "a pipelined pure MAIN" if in_pipelined_main else "an AUTO_PIPELINE core"
         raise RuntimeError(
             f"sim_print(debug=True) at {loc} executed inside {where}. Its cycle "
             f"cannot be compared against VHDL: native sim runs pipelined comb at "
@@ -4815,7 +4815,7 @@ def _sim_set_converging(value: bool) -> bool:
 
 _sim_reg_write_buffer = None  # None = direct commit; dict = buffered mode
 _sim_current_main = None  # MAIN fn currently executing (for reader tracking)
-# Naturally-pipelined pure MAINs (sliced by the sweep without AUTOPIPELINE)
+# Naturally-pipelined pure MAINs (sliced by the sweep without AUTO_PIPELINE)
 # under pipelinec non---comb --sim: main_fn -> {"latency": int, "queue":
 # deque of per-cycle write-set lists, "collector": this cycle's list of
 # (wire_name, lens_path_tuple, value) entries}. Populated only by
@@ -6578,10 +6578,10 @@ def _sim_cast_call_arg(pt, v):
 # class/callable model instance (a name no real register can have).
 _SIM_MODEL_REG_KEY = "__sim_model__"
 
-# Reserved _sim_reg_state key holding an AUTOPIPELINE call site's committed
+# Reserved _sim_reg_state key holding an AUTO_PIPELINE call site's committed
 # output delay line: a list of the last N results, oldest first (see
-# AUTOPIPELINE._sim_delay_line).
-_SIM_AP_DELAY_KEY = "__sim_autopipeline_delay__"
+# AUTO_PIPELINE._sim_delay_line).
+_SIM_AP_DELAY_KEY = "__sim_auto_pipeline_delay__"
 
 
 def _sim_capture_call_loc(caller_f):
@@ -7080,7 +7080,7 @@ def _pipeline_latency_reachable(func):
         seen.add(id(value))
         if getattr(value, "_pipeline_latency", 0) > 0:
             return True
-        if isinstance(value, (AUTOPIPELINE, AUTOFSM)):
+        if isinstance(value, (AUTO_PIPELINE, AUTO_FSM)):
             return visit(value.func)
         if isinstance(value, dict):
             return any(visit(v) for v in value.values())
@@ -7113,7 +7113,7 @@ def _pipeline_latency_reachable(func):
 
 
 def _prepare_pipeline_latency_sim(func):
-    if isinstance(func, AUTOPIPELINE):
+    if isinstance(func, AUTO_PIPELINE):
         func = func.func
     if (
         _pipeline_latency_preparing

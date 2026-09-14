@@ -10,8 +10,8 @@ Naming convention this enforces: `*_test.py` is a registered test file;
 A `*_test.py` file that is actually a fixture for another test -- imported or
 subprocess-invoked, never registered itself -- should either be renamed to
 `*_design.py`, or moved up out of `inst/` into `src/tests/pypeline_tests/`
-keeping its name (what autofsm_resources_test.py / autofsm_div_share_test.py /
-autofsm_tighten_test.py do) -- rather than being added to some category's list
+keeping its name (what auto_fsm_resources_test.py / auto_fsm_div_share_test.py /
+auto_fsm_tighten_test.py do) -- rather than being added to some category's list
 just to satisfy this check. Only `inst/` is scanned, so either placement works.
 
 Exemptions (checked explicitly below, not registered as Tests themselves):
@@ -88,7 +88,7 @@ def test_every_test_file_is_registered_somewhere():
 def test_registered_filenames_actually_exist():
     # Most registrations live in inst/, but some (dsp/examples designs)
     # reference EXAMPLES_PYPELINE_DIR and its subdirectories instead, and some
-    # (qor/ AUTOFSM/AUTOPIPELINE comparison fixtures) reference QOR_DIR and
+    # (qor/ AUTO_FSM/AUTO_PIPELINE comparison fixtures) reference QOR_DIR and
     # its per-design subdirectories -- a filename is fine as long as it exists
     # SOMEWHERE plausible, since this check only exists to catch stale
     # references, not to enforce a directory layout the category modules

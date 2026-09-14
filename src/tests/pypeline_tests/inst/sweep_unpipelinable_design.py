@@ -1,7 +1,7 @@
 # pyright: reportInvalidTypeForm=none
 # Design for sweep_unpipelinable_test.py (not registered as a test itself):
-# the MAIN is itself a stateful (Reg) function with no AUTOPIPELINE regions
-# and a slow divider inside - there is nothing autopipelining can help. The
+# the MAIN is itself a stateful (Reg) function with no AUTO_PIPELINE regions
+# and a slow divider inside - there is nothing auto-pipelining can help. The
 # sweep must say so plainly (at planning time and when the timing report
 # fails) instead of silently failing or blindly iterating.
 import sys, os
@@ -22,7 +22,7 @@ from pypeline import (
 
 @MAIN(100.0)
 def sweep_unpipelinable_main(x: uint8_t) -> uint8_t:
-    # Stateful main, no autopipeline tags anywhere: the divider path can
+    # Stateful main, no auto-pipeline tags anywhere: the divider path can
     # never be cut by added registers
     acc: Reg[uint8_t]
     acc = acc / (x + 1)

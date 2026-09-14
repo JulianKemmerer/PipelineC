@@ -103,14 +103,14 @@ NO_SWEEP = False
 # fewest-registers solution). 0 = accept the first met result (fastest).
 # --pipeline_min_effort cmd line flag.
 PIPELINE_MIN_EFFORT = 2
-# Max total elaborate+synthesize passes of the AUTOPIPELINE .latency
+# Max total elaborate+synthesize passes of the AUTO_PIPELINE .latency
 # pin-and-confirm loop in the pipelinec driver (Pypeline designs only):
 # pass 1 discovers latencies with a full sweep; pass 2 re-elaborates with the
 # real values and, with the previous pipelining pinned as seeds, needs only
 # one confirmation synthesis. Passes beyond 2 happen only when a
 # .latency-derived design change breaks timing under the pinned pipelining
 # and the fallback sweep then lands on different latencies.
-AUTOPIPELINE_MAX_LATENCY_PASSES = 3
+AUTO_PIPELINE_MAX_LATENCY_PASSES = 3
 
 
 def PART_SET_TOOL(part_str, allow_fail=False):
@@ -430,30 +430,30 @@ def WRITE_CLK_CONSTRAINTS_FILE(multimain_timing_params, parser_state, inst_name=
     return out_filepath
 
 
-def ELABORATED_AUTOMCP_NCYCLES(parser_state):
-    """AUTOMCP canonical key -> cycle count the design was elaborated with
+def ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state):
+    """AUTO_MULTI_CYCLE canonical key -> cycle count the design was elaborated with
     (the matching Logic.mcp_tuples entry's count)."""
     rv = {}
     for logic in parser_state.FuncLogicLookupTable.values():
-        automcp_tuples = getattr(logic, "automcp_tuples", None)
-        if not automcp_tuples:
+        auto_multi_cycle_tuples = getattr(logic, "auto_multi_cycle_tuples", None)
+        if not auto_multi_cycle_tuples:
             continue
         for mcp_tup in logic.mcp_tuples:
-            constraint = automcp_tuples.get((mcp_tup[1], mcp_tup[2]))
+            constraint = auto_multi_cycle_tuples.get((mcp_tup[1], mcp_tup[2]))
             if constraint is not None:
                 rv[constraint.key] = int(mcp_tup[0])
     return rv
 
 
-def MCP_EFFECTIVE_NCYCLES(mcp_tup, automcp_constraint, multimain_timing_params):
+def MCP_EFFECTIVE_NCYCLES(mcp_tup, auto_multi_cycle_constraint, multimain_timing_params):
     """Cycle count to constrain an mcp_tuples entry with: the throughput
-    sweep's current choice for an AUTOMCP path (MultiMainTimingParams.
-    automcp_ncycles -- the sweep changes it without re-elaborating), else the
+    sweep's current choice for an AUTO_MULTI_CYCLE path (MultiMainTimingParams.
+    auto_multi_cycle_ncycles -- the sweep changes it without re-elaborating), else the
     elaborated count."""
-    if automcp_constraint is not None:
-        overrides = getattr(multimain_timing_params, "automcp_ncycles", None) or {}
-        if automcp_constraint.key in overrides:
-            return str(overrides[automcp_constraint.key])
+    if auto_multi_cycle_constraint is not None:
+        overrides = getattr(multimain_timing_params, "auto_multi_cycle_ncycles", None) or {}
+        if auto_multi_cycle_constraint.key in overrides:
+            return str(overrides[auto_multi_cycle_constraint.key])
     return mcp_tup[0]
 
 
@@ -461,8 +461,8 @@ def GET_MCP_CELL_PATHS(inst_name, top_inst, top_path, parser_state):
     """Vivado cell-path globs of every multi-cycle path in instance inst_name,
     relative to the synthesized top (top_inst, named top_path in the netlist).
     Returns [(mcp_tup, start_reg_cell_glob, end_reg_cell_glob,
-    AutomcpConstraint or None)], sorted for deterministic output. Shared by
-    the XDC writer and the sweep's timing-report-to-AUTOMCP matching."""
+    AutoMultiCycleConstraint or None)], sorted for deterministic output. Shared by
+    the XDC writer and the sweep's timing-report-to-AUTO_MULTI_CYCLE matching."""
     rv = []
     # Determine partial hierarchy path being synthesized
     top_inst_tok = top_inst + C_TO_LOGIC.SUBMODULE_MARKER
@@ -480,7 +480,7 @@ def GET_MCP_CELL_PATHS(inst_name, top_inst, top_path, parser_state):
         partial_inst_path = partial_inst_path + "/"
     # Loop over all MCP constraints in this func
     func_logic = parser_state.LogicInstLookupTable[inst_name]
-    automcp_tuples = getattr(func_logic, "automcp_tuples", None) or {}
+    auto_multi_cycle_tuples = getattr(func_logic, "auto_multi_cycle_tuples", None) or {}
     top_prefix = top_path + "/" if top_path else ""
     for mcp_tup in sorted(func_logic.mcp_tuples):
         start_reg_cell_path = top_prefix + partial_inst_path + mcp_tup[1] + "_reg[*]"
@@ -490,7 +490,7 @@ def GET_MCP_CELL_PATHS(inst_name, top_inst, top_path, parser_state):
                 mcp_tup,
                 start_reg_cell_path,
                 end_reg_cell_path,
-                automcp_tuples.get((mcp_tup[1], mcp_tup[2])),
+                auto_multi_cycle_tuples.get((mcp_tup[1], mcp_tup[2])),
             )
         )
     return rv
@@ -503,10 +503,10 @@ def GET_MCP_PATH_CONSTRAINTS(
     if SYN_TOOL is not VIVADO:
         raise Exception("Multi cycle paths have only been tested with Vivado!")
     rv = []
-    for mcp_tup, start_reg_cell_path, end_reg_cell_path, automcp in GET_MCP_CELL_PATHS(
+    for mcp_tup, start_reg_cell_path, end_reg_cell_path, auto_multi_cycle in GET_MCP_CELL_PATHS(
         inst_name, top_inst, top_path, parser_state
     ):
-        ncycles = MCP_EFFECTIVE_NCYCLES(mcp_tup, automcp, multimain_timing_params)
+        ncycles = MCP_EFFECTIVE_NCYCLES(mcp_tup, auto_multi_cycle, multimain_timing_params)
         start_reg_path = start_reg_cell_path + "/C"
         end_reg_path = end_reg_cell_path + "/D"
         rv.append(
@@ -523,10 +523,10 @@ class MultiMainTimingParams:
     def __init__(self):
         # Pipeline params
         self.TimingParamsLookupTable = {}
-        # AUTOMCP canonical key -> multi-cycle count the throughput sweep is
+        # AUTO_MULTI_CYCLE canonical key -> multi-cycle count the throughput sweep is
         # currently constraining that path with (see MCP_EFFECTIVE_NCYCLES);
         # keys absent use the elaborated count
-        self.automcp_ncycles = {}
+        self.auto_multi_cycle_ncycles = {}
         # TODO some kind of params for clock crossing
 
     def GET_HASH_EXT(self, parser_state):
@@ -535,7 +535,7 @@ class MultiMainTimingParams:
         # design content: descendant func names + io regs + slices. Content
         # awareness matters here: this hash names the multimain top synthesis
         # log, and an existing log is replayed instead of re-synthesizing --
-        # a slices-only hash let the AUTOPIPELINE pass-2 confirmation run
+        # a slices-only hash let the AUTO_PIPELINE pass-2 confirmation run
         # replay pass 1's log despite a resized (renamed) FIFO in the design.
         top_level_str = ""
         for main_func in sorted(parser_state.main_mhz.keys()):
@@ -544,18 +544,18 @@ class MultiMainTimingParams:
                 self.TimingParamsLookupTable, parser_state
             )
             top_level_str += hash_ext_i
-        # A sweep-chosen AUTOMCP count changes only the XDC, not any entity,
+        # A sweep-chosen AUTO_MULTI_CYCLE count changes only the XDC, not any entity,
         # so it must enter the hash or a same-named log from another count
         # would be replayed. Counts equal to the elaborated ones add nothing:
-        # every design without a sweep-raised AUTOMCP hashes as before.
-        overrides = getattr(self, "automcp_ncycles", None)
+        # every design without a sweep-raised AUTO_MULTI_CYCLE hashes as before.
+        overrides = getattr(self, "auto_multi_cycle_ncycles", None)
         if overrides:
-            elaborated = ELABORATED_AUTOMCP_NCYCLES(parser_state)
+            elaborated = ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state)
             changed = sorted(
                 (key, n) for key, n in overrides.items() if elaborated.get(key) != n
             )
             if changed:
-                top_level_str += "_automcp" + repr(changed)
+                top_level_str += "_auto_multi_cycle" + repr(changed)
         s = top_level_str
         hash_ext = "_" + ((hashlib.md5(s.encode("utf-8")).hexdigest())[0:8])
         # Side-record for name_index.log's PIPELINE VARIANTS section -- see
@@ -734,10 +734,10 @@ class TimingParams:
                 # (per-func and multimain top), and existing files short-cut
                 # rewriting/re-synthesis. A rendered entity's CONTENT embeds
                 # its children's entity names, and canonical func names encode
-                # elaboration-time values (e.g. an AUTOPIPELINE
+                # elaboration-time values (e.g. an AUTO_PIPELINE
                 # .latency-derived FIFO depth) -- so identical slices with a
                 # renamed descendant must hash differently, or stale pass-1
-                # artifacts get served (the AUTOPIPELINE pass-2 confirmation
+                # artifacts get served (the AUTO_PIPELINE pass-2 confirmation
                 # replay + the shared wireguard GHDL "unit not found"
                 # mixed-name failure). The module's OWN name is deliberately
                 # NOT included: it already appears in every filename the hash
@@ -872,9 +872,9 @@ class TimingParams:
     def GET_SUBMODULE_LATENCY(
         self, submodule_inst_name, parser_state, TimingParamsLookupTable
     ):
-        # Autopipelined submodules report themselves as zero latency like regular comb logic funcs
+        # Auto-pipelined submodules report themselves as zero latency like regular comb logic funcs
         sub_inst = C_TO_LOGIC.LEAF_NAME(submodule_inst_name)
-        if sub_inst in self.logic.sub_inst_to_autopipeline_latency or sub_inst in getattr(
+        if sub_inst in self.logic.sub_inst_to_auto_pipeline_latency or sub_inst in getattr(
             self.logic, "submodule_latencies_are_self_timed", ()
         ):
             return 0
@@ -888,19 +888,19 @@ def DEL_ALL_CACHES():
     # Clear all caches after parsing is done
     global _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache
     global _FUNC_SUBTREE_HAS_STATE_cache
-    global _FUNC_SUBTREE_HAS_AUTOPIPELINE_cache
-    global _FUNC_SUBTREE_HAS_AUTOFSM_cache
+    global _FUNC_SUBTREE_HAS_AUTO_PIPELINE_cache
+    global _FUNC_SUBTREE_HAS_AUTO_FSM_cache
     global _FUNC_TO_INSTANTIATING_FUNCS_cache
     global _FUNC_IS_TOPMOST_COMB_cache
     # global _GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache
 
     _GET_ZERO_CLK_HASH_EXT_LOOKUP_cache = {}
     _FUNC_SUBTREE_HAS_STATE_cache = {}
-    _FUNC_SUBTREE_HAS_AUTOPIPELINE_cache = {}
-    _FUNC_SUBTREE_HAS_AUTOFSM_cache = {}
+    _FUNC_SUBTREE_HAS_AUTO_PIPELINE_cache = {}
+    _FUNC_SUBTREE_HAS_AUTO_FSM_cache = {}
     _FUNC_TO_INSTANTIATING_FUNCS_cache = None
     _FUNC_IS_TOPMOST_COMB_cache = {}
-    # Func-name keyed maps referencing Logic objects: a re-parse (AUTOPIPELINE
+    # Func-name keyed maps referencing Logic objects: a re-parse (AUTO_PIPELINE
     # pass 2) rebuilds same-named funcs as fresh objects, so entries would be
     # stale (see GET_ZERO_ADDED_CLKS_PIPELINE_MAP's identity check).
     _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache.clear()
@@ -983,7 +983,7 @@ def GET_ZERO_ADDED_CLKS_PIPELINE_MAP(inst_name, Logic, parser_state, write_files
     key = Logic.func_name
 
     # Try cache. A same-named entry built against a DIFFERENT Logic object is
-    # simply stale (an AUTOPIPELINE pass-2 re-parse rebuilds same-named funcs
+    # simply stale (an AUTO_PIPELINE pass-2 re-parse rebuilds same-named funcs
     # as fresh objects): invalidate and rebuild below. (This used to print
     # "Zero clock cache no mactho" and call sys.exit(-1) -- which a
     # surrounding bare except accidentally swallowed, making it noisy
@@ -2472,7 +2472,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
                 print("   @", slice_pos)
 
             # Slice into submodule only if the cut can actually land there:
-            #  - the call site is AUTOPIPELINE tagged (or contains a tag deeper),
+            #  - the call site is AUTO_PIPELINE tagged (or contains a tag deeper),
             #    which overrides stateful boundaries on both sides, OR
             #  - both this func and the submodule are plain sliceable comb logic.
             # Checking the submodule side too keeps cuts from descending into
@@ -2482,7 +2482,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
             # Checking the parent side keeps untagged comb children of stateful
             # funcs (e.g. FSMs) from gaining latency their container can't absorb.
             if not (
-                logic.SUB_HAS_AUTOPIPELINE_IN_HIER(submodule_inst, parser_state)
+                logic.SUB_HAS_AUTO_PIPELINE_IN_HIER(submodule_inst, parser_state)
                 or (
                     logic.CAN_HAVE_ADDED_LATENCY(parser_state)
                     and submodule_logic.CAN_HAVE_ADDED_LATENCY(parser_state)
@@ -2694,7 +2694,7 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
     # parser_state: invalidate every cached hash/latency string in the final
     # table first (subsumes the previous ancestors-only invalidation --
     # ancestor treatment alone still folded children's stale cached strings,
-    # and any cache carried across an AUTOPIPELINE pass-2 re-elaboration may
+    # and any cache carried across an AUTO_PIPELINE pass-2 re-elaboration may
     # embed since-renamed child func names). One full lazy recompute at end
     # of build.
     for final_timing_params in multimain_timing_params.TimingParamsLookupTable.values():
@@ -3027,7 +3027,7 @@ def GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(
                 )
                 pipeline_text += stage_text
                 pipeline_ffs += stage_ffs
-            text += f"  {pipeline_ffs} FFs for {latency+1} autopipeline stages:\n"
+            text += f"  {pipeline_ffs} FFs for {latency+1} auto-pipeline stages:\n"
             text += pipeline_text
             total_ffs += pipeline_ffs
 
@@ -3295,11 +3295,11 @@ def PRINT_MEASURED_AREA_IF_AVAILABLE(timing_report, estimated_total_area=None):
 
 # Todo just coarse for now until someone other than me care to squeeze performance?
 # Course then fine - knowhaimsayin
-def HARVEST_AUTOPIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
-    """Collect the discovered pipeline latency of every AUTOPIPELINE-tagged
+def HARVEST_AUTO_PIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
+    """Collect the discovered pipeline latency of every AUTO_PIPELINE-tagged
     submodule instance, grouped by the tag's canonical latency-cache key
-    (pypeline.AUTOPIPELINE.canonical_key, recorded per local submodule in
-    Logic.sub_inst_to_autopipeline_key by the Pypeline elaborator).
+    (pypeline.AUTO_PIPELINE.canonical_key, recorded per local submodule in
+    Logic.sub_inst_to_auto_pipeline_key by the Pypeline elaborator).
 
     Returns (latencies, divergences):
       latencies:   canonical_key -> latency (int) for keys whose instances
@@ -3310,7 +3310,7 @@ def HARVEST_AUTOPIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
                    unrepresentable as the single .latency int the design's
                    Python reads, so the driver errors on these.
     Pure in-memory walk over already-computed sweep results: no synthesis, no
-    file I/O -- a no-AUTOPIPELINE design pays only this walk (returns ({},{})).
+    file I/O -- a no-AUTO_PIPELINE design pays only this walk (returns ({},{})).
 
     Every cached latency/hash in the table is invalidated first (same
     rationale as WRITE_FINAL_FILES): the sweep planner mutates submodule
@@ -3327,9 +3327,9 @@ def HARVEST_AUTOPIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
             timing_params.INVALIDATE_CACHE()
     key_to_inst_latencies = {}
     for inst_name, logic in parser_state.LogicInstLookupTable.items():
-        if not logic.sub_inst_to_autopipeline_key:
+        if not logic.sub_inst_to_auto_pipeline_key:
             continue
-        for local_sub, canonical_key in logic.sub_inst_to_autopipeline_key.items():
+        for local_sub, canonical_key in logic.sub_inst_to_auto_pipeline_key.items():
             if canonical_key is None:
                 continue
             sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + local_sub
@@ -3367,17 +3367,17 @@ def SEED_TIMING_PARAMS_FROM_PREVIOUS(
       b) func name (entity name). Load-bearing, not a nicety: entity names
          encode closure values, so a .latency-derived parameter change (e.g.
          FIFO depth) renames its factory-closure entity and every instance
-         path underneath it -- exactly where the AUTOPIPELINE'd core lives.
+         path underneath it -- exactly where the AUTO_PIPELINE'd core lives.
          The core func's own name is stable (its closure captures only the
          user's func), so the func-name tier recovers its pipelining.
     Instances with no match in either tier keep zero slices -- correct for
     genuinely-new entities (the resized FIFO / widened counter: stateful,
     never sliced).
 
-    Returns (TimingParamsLookupTable, unseeded_autopipeline_insts):
-    unseeded_autopipeline_insts lists AUTOPIPELINE-tagged instances whose
+    Returns (TimingParamsLookupTable, unseeded_auto_pipeline_insts):
+    unseeded_auto_pipeline_insts lists AUTO_PIPELINE-tagged instances whose
     func didn't exist at all in the previous pass -- i.e. the set of
-    AUTOPIPELINE call sites changed between passes (Python control flow
+    AUTO_PIPELINE call sites changed between passes (Python control flow
     branching on .latency's own value), which the driver makes a hard error.
     """
     # All func names that existed last pass (for the call-site-change check:
@@ -3426,9 +3426,9 @@ def SEED_TIMING_PARAMS_FROM_PREVIOUS(
 
     unseeded = set()
     for inst_name, logic in parser_state.LogicInstLookupTable.items():
-        if not logic.sub_inst_to_autopipeline_key:
+        if not logic.sub_inst_to_auto_pipeline_key:
             continue
-        for local_sub, canonical_key in logic.sub_inst_to_autopipeline_key.items():
+        for local_sub, canonical_key in logic.sub_inst_to_auto_pipeline_key.items():
             if canonical_key is None:
                 continue
             sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + local_sub
@@ -3468,10 +3468,10 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
     if NO_SWEEP:
         # --no_sweep: skip the confirmation synthesis. The convergence loop's
         # real job (making the .latency ints the Python consumed equal the
-        # stage counts actually built) is decided by HARVEST_AUTOPIPELINE_LATENCIES,
+        # stage counts actually built) is decided by HARVEST_AUTO_PIPELINE_LATENCIES,
         # not by this timing verdict, so it still works.
         print(
-            "--no_sweep: skipping AUTOPIPELINE confirmation synthesis. "
+            "--no_sweep: skipping AUTO_PIPELINE confirmation synthesis. "
             "Timing is NOT confirmed.",
             flush=True,
         )
@@ -3563,7 +3563,7 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
     if met:
         return multimain_timing_params, True
     print(
-        "AUTOPIPELINE confirmation run failed timing; falling back to a full throughput sweep...",
+        "AUTO_PIPELINE confirmation run failed timing; falling back to a full throughput sweep...",
         flush=True,
     )
     return SWEEP.DO_PLANNED_THROUGHPUT_SWEEP(
@@ -3618,8 +3618,8 @@ def DO_THROUGHPUT_SWEEP(
 
     # If comb. logic only
     if comb_only:
-        # Fixed AUTOPIPELINE latency= call sites keep their registers even here
-        fixed_timing_params = BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS(parser_state)
+        # Fixed AUTO_PIPELINE latency= call sites keep their registers even here
+        fixed_timing_params = BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS(parser_state)
         if fixed_timing_params is not None:
             multimain_timing_params = fixed_timing_params
             VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
@@ -3691,10 +3691,10 @@ def DO_THROUGHPUT_SWEEP(
         print("Doing coarse sweep only...", flush=True)
         import SWEEP
 
-        for region in SWEEP.COLLECT_AUTOPIPELINE_REGIONS(parser_state):
+        for region in SWEEP.COLLECT_AUTO_PIPELINE_REGIONS(parser_state):
             if region.constraint.start_latency is not None:
                 print(
-                    f"NOTE: AUTOPIPELINE {region.label()} "
+                    f"NOTE: AUTO_PIPELINE {region.label()} "
                     f"start_latency={region.constraint.start_latency} only sets "
                     "its bootstrap .latency under a coarse sweep; coarse slicing "
                     "starts from the main's own latency guess.",
@@ -3773,7 +3773,7 @@ def DO_THROUGHPUT_SWEEP(
         # Do update of top vhdl (not final though)
         is_final_top = False
         VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
-        CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(
+        CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(
             parser_state, multimain_timing_params.TimingParamsLookupTable
         )
 
@@ -3815,13 +3815,13 @@ def DO_THROUGHPUT_SWEEP(
     return SWEEP.DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params)
 
 
-def AUTOPIPELINE_DIVERGENCE_EXIT(divergences):
+def AUTO_PIPELINE_DIVERGENCE_EXIT(divergences):
     for key, inst_latencies in sorted(divergences.items()):
-        print(f"AUTOPIPELINE: {key}:")
+        print(f"AUTO_PIPELINE: {key}:")
         for sub_inst, lat in sorted(inst_latencies.items()):
             print(f"  {lat} clks : {sub_inst}")
     sys.exit(
-        "AUTOPIPELINE: ambiguous .latency: the above call site(s) are "
+        "AUTO_PIPELINE: ambiguous .latency: the above call site(s) are "
         "instantiated multiple times with different discovered stage "
         "counts, which a single .latency int cannot represent. Give "
         "each call site its own factory-produced closure, or pin an "
@@ -3829,19 +3829,19 @@ def AUTOPIPELINE_DIVERGENCE_EXIT(divergences):
     )
 
 
-def CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(parser_state, TimingParamsLookupTable):
-    """Safety net: every constrained AUTOPIPELINE call site (latency=N /
+def CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(parser_state, TimingParamsLookupTable):
+    """Safety net: every constrained AUTO_PIPELINE call site (latency=N /
     max_latency=M, or C #pragma AUTOPIPELINE N) must have been built within
     its constraint -- the sweep's region enforcement (SWEEP.
-    ENFORCE_AUTOPIPELINE_REGIONS) guarantees it, and this exits loudly if any
-    path to final files ever did not. Walks Logic.sub_inst_to_autopipeline_
+    ENFORCE_AUTO_PIPELINE_REGIONS) guarantees it, and this exits loudly if any
+    path to final files ever did not. Walks Logic.sub_inst_to_auto_pipeline_
     latency, so it covers C designs (no latency-cache key) too."""
     if not TimingParamsLookupTable:
         return
     marker = C_TO_LOGIC.SUBMODULE_MARKER
     checks = []
     for inst_name, logic in parser_state.LogicInstLookupTable.items():
-        for local_sub, constraint in logic.sub_inst_to_autopipeline_latency.items():
+        for local_sub, constraint in logic.sub_inst_to_auto_pipeline_latency.items():
             if constraint is None or constraint.upper_bound() is None:
                 continue
             sub_inst = inst_name + marker + local_sub
@@ -3864,62 +3864,62 @@ def CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(parser_state, TimingParamsLookupTabl
     if problems:
         print("\n".join(problems), flush=True)
         sys.exit(
-            "AUTOPIPELINE: built latency violates the call site latency "
+            "AUTO_PIPELINE: built latency violates the call site latency "
             "constraint(s) above (internal error)."
         )
 
 
-def HARVEST_AUTOMCP_NCYCLES(parser_state, multimain_timing_params):
-    """AUTOMCP canonical key -> multi-cycle count the build constrained it
+def HARVEST_AUTO_MULTI_CYCLE_NCYCLES(parser_state, multimain_timing_params):
+    """AUTO_MULTI_CYCLE canonical key -> multi-cycle count the build constrained it
     with: the throughput sweep's final choice where it made one, else the
-    elaborated count. Every AUTOMCP elaborated into the design is present."""
-    ncycles = ELABORATED_AUTOMCP_NCYCLES(parser_state)
-    overrides = getattr(multimain_timing_params, "automcp_ncycles", None) or {}
+    elaborated count. Every AUTO_MULTI_CYCLE elaborated into the design is present."""
+    ncycles = ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state)
+    overrides = getattr(multimain_timing_params, "auto_multi_cycle_ncycles", None) or {}
     for key in ncycles:
         if key in overrides:
             ncycles[key] = overrides[key]
     return ncycles
 
 
-def CHECK_AUTOMCP_TAGS_READ(parser_state):
-    """A start_latency=/max_latency= AUTOMCP whose .latency no design code
+def CHECK_AUTO_MULTI_CYCLE_TAGS_READ(parser_state):
+    """A start_latency=/max_latency= AUTO_MULTI_CYCLE whose .latency no design code
     read can't have its handshake follow the sweep's cycle count: fail the
     build before any synthesis is spent on it."""
     import pypeline
 
-    elaborated = ELABORATED_AUTOMCP_NCYCLES(parser_state)
-    unread = [key for key in pypeline.AUTOMCP_UNREAD_KEYS() if key in elaborated]
+    elaborated = ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state)
+    unread = [key for key in pypeline.AUTO_MULTI_CYCLE_UNREAD_KEYS() if key in elaborated]
     if unread:
         sys.exit(
-            "AUTOMCP: .latency was never read by the design for "
+            "AUTO_MULTI_CYCLE: .latency was never read by the design for "
             + ", ".join(unread)
             + ". The throughput sweep may change a multi-cycle path's cycle "
             "count, so the logic timing it (e.g. a launch/capture handshake "
             "counter) must be written in terms of MC.latency. Use "
-            "MULTI_CYCLE[N] (or AUTOMCP(latency=N)) for a hand-timed path."
+            "MULTI_CYCLE[N] (or AUTO_MULTI_CYCLE(latency=N)) for a hand-timed path."
         )
 
 
-def AUTOMCP_BUILT_MATCHES_ELABORATED(parser_state, automcp_ncycles):
-    """True when every AUTOMCP count the build settled on equals the count the
+def AUTO_MULTI_CYCLE_BUILT_MATCHES_ELABORATED(parser_state, auto_multi_cycle_ncycles):
+    """True when every AUTO_MULTI_CYCLE count the build settled on equals the count the
     design was elaborated with and every .latency value design code read --
-    no re-elaboration needed for AUTOMCP's sake."""
+    no re-elaboration needed for AUTO_MULTI_CYCLE's sake."""
     import pypeline
 
-    if ELABORATED_AUTOMCP_NCYCLES(parser_state) != automcp_ncycles:
+    if ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state) != auto_multi_cycle_ncycles:
         return False
-    for key, values in pypeline.AUTOMCP_SERVED_LATENCIES().items():
-        if key in automcp_ncycles and values != {automcp_ncycles[key]}:
+    for key, values in pypeline.AUTO_MULTI_CYCLE_SERVED_LATENCIES().items():
+        if key in auto_multi_cycle_ncycles and values != {auto_multi_cycle_ncycles[key]}:
             return False
     return True
 
 
-def PRINT_AUTOMCP_NCYCLES(automcp_ncycles):
-    for key, ncycles in sorted(automcp_ncycles.items()):
-        print(f"AUTOMCP {key}: {ncycles} cycles", flush=True)
+def PRINT_AUTO_MULTI_CYCLE_NCYCLES(auto_multi_cycle_ncycles):
+    for key, ncycles in sorted(auto_multi_cycle_ncycles.items()):
+        print(f"AUTO_MULTI_CYCLE {key}: {ncycles} cycles", flush=True)
 
 
-def AUTOPIPELINE_SERVED_VALUES_MATCH(served, latencies):
+def AUTO_PIPELINE_SERVED_VALUES_MATCH(served, latencies):
     """True when every .latency value the design's Python consumed (served:
     canonical_key -> set of values returned) already equals the stage count
     harvested for that key -- the design as elaborated is consistent with the
@@ -3933,67 +3933,67 @@ def AUTOPIPELINE_SERVED_VALUES_MATCH(served, latencies):
     return True
 
 
-def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_file):
-    """AUTOPIPELINE .latency pin-and-confirm passes (Pypeline designs only, see
-    docs/SYN_DESIGN.md): if the design's Python read any AUTOPIPELINE(...).latency,
+def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_file):
+    """AUTO_PIPELINE .latency pin-and-confirm passes (Pypeline designs only, see
+    docs/SYN_DESIGN.md): if the design's Python read any AUTO_PIPELINE(...).latency,
     re-execute it with the discovered stage counts installed so those reads resolve to
     real values (e.g. for FIFO sizing), carrying the sweep's pipelining over as pinned
     seeds so only one confirmation synthesis is needed instead of a fresh sweep. A
-    design with no AUTOPIPELINE call sites, or one that never reads .latency, pays
+    design with no AUTO_PIPELINE call sites, or one that never reads .latency, pays
     nothing beyond the in-memory harvest walk below."""
     import pypeline
 
-    latencies, divergences = HARVEST_AUTOPIPELINE_LATENCIES(
+    latencies, divergences = HARVEST_AUTO_PIPELINE_LATENCIES(
         parser_state, multimain_timing_params.TimingParamsLookupTable
     )
     if divergences:
-        AUTOPIPELINE_DIVERGENCE_EXIT(divergences)
-    CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(
+        AUTO_PIPELINE_DIVERGENCE_EXIT(divergences)
+    CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(
         parser_state, multimain_timing_params.TimingParamsLookupTable
     )
-    # AUTOMCP counts ride the same passes: the sweep may have constrained a
+    # AUTO_MULTI_CYCLE counts ride the same passes: the sweep may have constrained a
     # multi-cycle path with a count the design's handshake wasn't built for
-    automcp = HARVEST_AUTOMCP_NCYCLES(parser_state, multimain_timing_params)
-    automcp_match = AUTOMCP_BUILT_MATCHES_ELABORATED(parser_state, automcp)
-    if automcp and automcp_match:
+    auto_multi_cycle = HARVEST_AUTO_MULTI_CYCLE_NCYCLES(parser_state, multimain_timing_params)
+    auto_multi_cycle_match = AUTO_MULTI_CYCLE_BUILT_MATCHES_ELABORATED(parser_state, auto_multi_cycle)
+    if auto_multi_cycle and auto_multi_cycle_match:
         print(
-            "AUTOMCP: every .latency read matched the built multi-cycle count",
+            "AUTO_MULTI_CYCLE: every .latency read matched the built multi-cycle count",
             flush=True,
         )
-        PRINT_AUTOMCP_NCYCLES(automcp)
-    if automcp_match and not (latencies and pypeline.AUTOPIPELINE_LATENCY_WAS_READ()):
+        PRINT_AUTO_MULTI_CYCLE_NCYCLES(auto_multi_cycle)
+    if auto_multi_cycle_match and not (latencies and pypeline.AUTO_PIPELINE_LATENCY_WAS_READ()):
         return parser_state, multimain_timing_params
     if (
-        automcp_match
-        and pypeline.AUTOPIPELINE_BUILD_MODE() is not None
+        auto_multi_cycle_match
+        and pypeline.AUTO_PIPELINE_BUILD_MODE() is not None
         and (
-            AUTOPIPELINE_SERVED_VALUES_MATCH(
-                pypeline.AUTOPIPELINE_SERVED_LATENCIES(), latencies
+            AUTO_PIPELINE_SERVED_VALUES_MATCH(
+                pypeline.AUTO_PIPELINE_SERVED_LATENCIES(), latencies
             )
         )
     ):
         # Fixed latency=N call sites, a correct start_latency=S guess, or a
         # discovered 0: what the Python read is what was built.
         print(
-            "AUTOPIPELINE: every .latency read matched the built stage count; "
+            "AUTO_PIPELINE: every .latency read matched the built stage count; "
             "skipping pin-and-confirm pass 2",
             flush=True,
         )
         for key, lat in sorted(latencies.items()):
-            print(f"AUTOPIPELINE {key}: {lat} clks", flush=True)
+            print(f"AUTO_PIPELINE {key}: {lat} clks", flush=True)
         return parser_state, multimain_timing_params
 
     import PY_TO_LOGIC
     import C_TO_LOGIC
 
-    autopipeline_pass = 1
+    auto_pipeline_pass = 1
     last_change_desc = None
     while True:
-        autopipeline_pass += 1
-        if autopipeline_pass > AUTOPIPELINE_MAX_LATENCY_PASSES:
+        auto_pipeline_pass += 1
+        if auto_pipeline_pass > AUTO_PIPELINE_MAX_LATENCY_PASSES:
             sys.exit(
-                f"AUTOPIPELINE: .latency did not settle within "
-                f"{AUTOPIPELINE_MAX_LATENCY_PASSES} passes "
+                f"AUTO_PIPELINE: .latency did not settle within "
+                f"{AUTO_PIPELINE_MAX_LATENCY_PASSES} passes "
                 f"(last change: {last_change_desc}). A "
                 f".latency-derived design change is perturbing timing "
                 f"enough to change the discovered stage count itself. "
@@ -4001,17 +4001,17 @@ def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_fi
                 f"to break the loop."
             )
         print(
-            f"================== AUTOPIPELINE Pass {autopipeline_pass}: "
+            f"================== AUTO_PIPELINE Pass {auto_pipeline_pass}: "
             f"Re-elaborating with Discovered Latencies ================================",
             flush=True,
         )
         for key, lat in sorted(latencies.items()):
-            print(f"AUTOPIPELINE {key}: {lat} clks", flush=True)
-        PRINT_AUTOMCP_NCYCLES(automcp)
+            print(f"AUTO_PIPELINE {key}: {lat} clks", flush=True)
+        PRINT_AUTO_MULTI_CYCLE_NCYCLES(auto_multi_cycle)
         prev_parser_state = parser_state
         prev_tpl = multimain_timing_params.TimingParamsLookupTable
-        pypeline.SET_AUTOPIPELINE_LATENCY_CACHE(latencies)
-        pypeline.SET_AUTOMCP_LATENCY_CACHE(automcp)
+        pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE(latencies)
+        pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE(auto_multi_cycle)
         parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
         C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
         parser_state = ADD_PATH_DELAY_TO_LOOKUP(parser_state)
@@ -4023,32 +4023,32 @@ def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_fi
         )
         if unseeded_ap_insts:
             sys.exit(
-                "AUTOPIPELINE: the set of AUTOPIPELINE call sites "
+                "AUTO_PIPELINE: the set of AUTO_PIPELINE call sites "
                 "changed between passes -- Python control flow (or an "
-                "AUTOPIPELINE'd function's closure-captured values, "
+                "AUTO_PIPELINE'd function's closure-captured values, "
                 "which are encoded in its identity) must not depend "
                 "on .latency's own value; only sizing outside "
-                "AUTOPIPELINE'd functions may. New instance(s) with "
+                "AUTO_PIPELINE'd functions may. New instance(s) with "
                 "no previous-pass counterpart: " + ", ".join(unseeded_ap_insts)
             )
         import SWEEP
 
-        seeded_tpl = SWEEP.REENFORCE_AUTOPIPELINE_REGIONS(parser_state, seeded_tpl)
+        seeded_tpl = SWEEP.REENFORCE_AUTO_PIPELINE_REGIONS(parser_state, seeded_tpl)
         multimain_timing_params = MultiMainTimingParams()
         multimain_timing_params.TimingParamsLookupTable = seeded_tpl
         multimain_timing_params, met = DO_SEEDED_CONFIRM_OR_SWEEP(
             parser_state, multimain_timing_params
         )
-        new_latencies, divergences = HARVEST_AUTOPIPELINE_LATENCIES(
+        new_latencies, divergences = HARVEST_AUTO_PIPELINE_LATENCIES(
             parser_state, multimain_timing_params.TimingParamsLookupTable
         )
         if divergences:
-            AUTOPIPELINE_DIVERGENCE_EXIT(divergences)
-        CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(
+            AUTO_PIPELINE_DIVERGENCE_EXIT(divergences)
+        CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(
             parser_state, multimain_timing_params.TimingParamsLookupTable
         )
-        new_automcp = HARVEST_AUTOMCP_NCYCLES(parser_state, multimain_timing_params)
-        if new_latencies == latencies and new_automcp == automcp:
+        new_auto_multi_cycle = HARVEST_AUTO_MULTI_CYCLE_NCYCLES(parser_state, multimain_timing_params)
+        if new_latencies == latencies and new_auto_multi_cycle == auto_multi_cycle:
             # The .latency values this pass's Python consumed equal
             # the stage counts actually built -- converged. (Meeting
             # timing alone is NOT sufficient to stop: realizing the
@@ -4065,43 +4065,43 @@ def DO_AUTOPIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_fi
             for key in sorted(set(latencies) | set(new_latencies))
             if latencies.get(key) != new_latencies.get(key)
         )
-        automcp_change_desc = ", ".join(
-            f"AUTOMCP {key}: {automcp.get(key)} -> {new_automcp.get(key)} cycles"
-            for key in sorted(set(automcp) | set(new_automcp))
-            if automcp.get(key) != new_automcp.get(key)
+        auto_multi_cycle_change_desc = ", ".join(
+            f"AUTO_MULTI_CYCLE {key}: {auto_multi_cycle.get(key)} -> {new_auto_multi_cycle.get(key)} cycles"
+            for key in sorted(set(auto_multi_cycle) | set(new_auto_multi_cycle))
+            if auto_multi_cycle.get(key) != new_auto_multi_cycle.get(key)
         )
         last_change_desc = ", ".join(
-            d for d in (last_change_desc, automcp_change_desc) if d
+            d for d in (last_change_desc, auto_multi_cycle_change_desc) if d
         )
         print(
-            "AUTOPIPELINE: "
+            "AUTO_PIPELINE: "
             + ("slice realization" if met else "fallback sweep")
             + f" changed discovered latencies ({last_change_desc}); "
             "re-elaborating...",
             flush=True,
         )
         latencies = new_latencies
-        automcp = new_automcp
+        auto_multi_cycle = new_auto_multi_cycle
 
     return parser_state, multimain_timing_params
 
 
-def DO_SWEEP_AND_AUTOPIPELINE(parser_state, args, src_file):
-    """Measure delays, run the throughput sweep, then converge AUTOPIPELINE
+def DO_SWEEP_AND_AUTO_PIPELINE(parser_state, args, src_file):
+    """Measure delays, run the throughput sweep, then converge AUTO_PIPELINE
     .latency feedback -- i.e. everything between "here is an elaborated design"
     and "here is a pipelined design whose Python agrees with what was built".
 
-    Factored out of DO_PIPELINED_BUILD because AUTOFSM.DO_SCHEDULE_PASSES wraps this
+    Factored out of DO_PIPELINED_BUILD because AUTO_FSM.DO_SCHEDULE_PASSES wraps this
     whole thing in an outer loop of its own (schedule the FSMs -> re-elaborate ->
     build; if an FSM is blamed for missing timing, reschedule it into more states and
     go again). Returns the final (parser_state, multimain_timing_params): the
-    AUTOPIPELINE loop below re-parses the design internally, so the parser_state
+    AUTO_PIPELINE loop below re-parses the design internally, so the parser_state
     handed in is not necessarily the one that comes back out.
     """
     if not args.comb and not args.yosys_json:
         if src_file.endswith(".py"):
             # Before any synthesis time is spent on a design that can't work
-            CHECK_AUTOMCP_TAGS_READ(parser_state)
+            CHECK_AUTO_MULTI_CYCLE_TAGS_READ(parser_state)
         print(
             "================== Adding Timing Information from Synthesis Tool ================================",
             flush=True,
@@ -4122,7 +4122,7 @@ def DO_SWEEP_AND_AUTOPIPELINE(parser_state, args, src_file):
     )
 
     if src_file.endswith(".py") and not args.comb and not args.yosys_json:
-        parser_state, multimain_timing_params = DO_AUTOPIPELINE_LATENCY_PASSES(
+        parser_state, multimain_timing_params = DO_AUTO_PIPELINE_LATENCY_PASSES(
             parser_state, multimain_timing_params, src_file
         )
 
@@ -4130,21 +4130,21 @@ def DO_SWEEP_AND_AUTOPIPELINE(parser_state, args, src_file):
 
 
 def DO_PIPELINED_BUILD(parser_state, args, src_file):
-    """Dispatch to the AUTOFSM schedule-and-confirm loop when the design contains
-    AUTOFSM call sites, otherwise straight to the sweep + AUTOPIPELINE convergence
+    """Dispatch to the AUTO_FSM schedule-and-confirm loop when the design contains
+    AUTO_FSM call sites, otherwise straight to the sweep + AUTO_PIPELINE convergence
     flow. Both paths return (parser_state, multimain_timing_params)."""
-    autofsm_possible = (
+    auto_fsm_possible = (
         src_file.endswith(".py") and not args.comb and not args.yosys_json
     )
-    if autofsm_possible:
-        import AUTOFSM
+    if auto_fsm_possible:
+        import AUTO_FSM
 
-        autofsm_possible = AUTOFSM.DESIGN_HAS_AUTOFSM(parser_state)
-    if autofsm_possible:
-        import AUTOFSM
+        auto_fsm_possible = AUTO_FSM.DESIGN_HAS_AUTO_FSM(parser_state)
+    if auto_fsm_possible:
+        import AUTO_FSM
 
-        return AUTOFSM.DO_SCHEDULE_PASSES(parser_state, args, src_file)
-    return DO_SWEEP_AND_AUTOPIPELINE(parser_state, args, src_file)
+        return AUTO_FSM.DO_SCHEDULE_PASSES(parser_state, args, src_file)
+    return DO_SWEEP_AND_AUTO_PIPELINE(parser_state, args, src_file)
 
 
 def GENERATE_FINAL_BITSTREAM(parser_state, multimain_timing_params):
@@ -4300,21 +4300,21 @@ def BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS(
         )
         sys.exit(-1)
 
-    # Constrained AUTOPIPELINE regions under this instance: fixed latency=N
+    # Constrained AUTO_PIPELINE regions under this instance: fixed latency=N
     # regions get exactly N registers and are locked BEFORE the even
     # fractions below are sliced down (slicing skips locked children)
     import SWEEP
 
-    coarse_regions = SWEEP.COLLECT_AUTOPIPELINE_REGIONS(
+    coarse_regions = SWEEP.COLLECT_AUTO_PIPELINE_REGIONS(
         parser_state, scope_inst=inst_name
     )
     fixed_regions = [r for r in coarse_regions if r.constraint.is_fixed()]
     if fixed_regions:
         try:
-            TimingParamsLookupTable = SWEEP.ENFORCE_AUTOPIPELINE_REGIONS(
+            TimingParamsLookupTable = SWEEP.ENFORCE_AUTO_PIPELINE_REGIONS(
                 fixed_regions, parser_state, TimingParamsLookupTable
             )
-        except SWEEP.AutopipelineLatencyInfeasible as err:
+        except SWEEP.AutoPipelineLatencyInfeasible as err:
             sys.exit(str(err))
 
     # Apply slices to main funcs
@@ -4340,7 +4340,7 @@ def BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS(
     if coarse_regions:
         # ...and max_latency=M regions the even fractions over-sliced are
         # re-planned down to M; every constrained region ends up locked
-        TimingParamsLookupTable = SWEEP.REENFORCE_AUTOPIPELINE_REGIONS(
+        TimingParamsLookupTable = SWEEP.REENFORCE_AUTO_PIPELINE_REGIONS(
             parser_state, TimingParamsLookupTable, scope_inst=inst_name
         )
         region_ancestor_insts = INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
@@ -4780,7 +4780,7 @@ def LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state):
 # cache (see docs/operator_qor_report.md finding C): its delay is instead
 # *estimated* bottom-up from submodule delays every build, which is measurably
 # less accurate than a real measured/cached number and can mis-plan the
-# autopipeline slice budget.
+# auto-pipeline slice budget.
 _operators_library_dir_cache = None
 
 
@@ -4966,7 +4966,7 @@ def GET_MUX_CACHE_KEY(width):
     """The cache key one width's 2:1 mux bank is stored under -- the same
     string GET_CACHED_LOGIC_FILE_KEY resolves a MUX Logic object to, from
     just the width, for a caller pricing a mux bank with no Logic object in
-    hand. AUTOFSM's operand multiplexers are that caller: ESTIMATE_SCHEDULE_
+    hand. AUTO_FSM's operand multiplexers are that caller: ESTIMATE_SCHEDULE_
     AREA prices one from (ctype, fold count) during scheduling, before any
     MUX entity is ever built. Reconstructing this convention independently
     (rather than calling through to it) is exactly how a caller would go
@@ -5138,7 +5138,7 @@ def GET_CACHED_LEAF_AREA_FILE_PATH(logic, parser_state):
 def GET_CACHED_LEAF_AREA_FILE_PATH_BY_KEY(key, parser_state):
     """Same cache path GET_CACHED_LEAF_AREA_FILE_PATH builds from a Logic
     object, from an already-known cache key directly -- for a shape priced
-    with no Logic in hand. AUTOFSM's operand multiplexers are the case this
+    with no Logic in hand. AUTO_FSM's operand multiplexers are the case this
     exists for: ESTIMATE_SCHEDULE_AREA prices one from (ctype, fold count)
     alone during scheduling, before any MUX entity is ever built, but its
     cache key (GET_MUX_CACHE_KEY(width), the same canonicalization
@@ -5229,14 +5229,14 @@ def _FUNC_NEEDS_SUBMODULE_DELAYS(func_name, parser_state):
     )
 
 
-def _AUTOFSM_MUX_ENTITIES(parser_state):
-    # Operand multiplexers inside generated AUTOFSM state machines.
+def _AUTO_FSM_MUX_ENTITIES(parser_state):
+    # Operand multiplexers inside generated AUTO_FSM state machines.
     #
     # A generated FSM holds state, so it is an ATOMIC SPAN here: one
     # whole-module synthesis for its register-to-register path, and nothing
     # inside it is measured (see FUNC_PATH_DELAY_IS_ESTIMABLE). That is right
     # for its fmax number and wrong for its multiplexers, whose real delay is
-    # the single most load-bearing input to AUTOFSM's decision about HOW FINELY
+    # the single most load-bearing input to AUTO_FSM's decision about HOW FINELY
     # to share -- the thing v1 had to guess at with a flat constant. So these
     # few entities are collected for measurement in their own right. They are
     # small (one 3-to-8-way mux per shared unit input port), so this is a
@@ -5251,18 +5251,18 @@ def _AUTOFSM_MUX_ENTITIES(parser_state):
     # _elaborate_live_func), and a wrapper's source file is pypeline.py. An
     # inspect.unwrap at that lookup would fix it. Delays are correct meanwhile;
     # they are just measured every build instead of once.
-    cached = getattr(parser_state, "_autofsm_mux_entities_cache", None)
+    cached = getattr(parser_state, "_auto_fsm_mux_entities_cache", None)
     if cached is not None:
         return cached
     rv = set()
-    if getattr(parser_state, "pypeline_autofsm_mux_callables", None):
+    if getattr(parser_state, "pypeline_auto_fsm_mux_callables", None):
         try:
-            import AUTOFSM
+            import AUTO_FSM
 
-            rv = AUTOFSM.AUTOFSM_MEASURE_ENTITIES(parser_state)
+            rv = AUTO_FSM.AUTO_FSM_MEASURE_ENTITIES(parser_state)
         except Exception:
             rv = set()
-    parser_state._autofsm_mux_entities_cache = rv
+    parser_state._auto_fsm_mux_entities_cache = rv
     return rv
 
 
@@ -5301,38 +5301,38 @@ def RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(func_names, parser_state):
     return funcs_to_synth
 
 
-_FUNC_SUBTREE_HAS_AUTOPIPELINE_cache = {}
+_FUNC_SUBTREE_HAS_AUTO_PIPELINE_cache = {}
 
 
-def FUNC_SUBTREE_HAS_AUTOPIPELINE(func_name, parser_state):
-    # Does this func (or anything below it) contain an AUTOPIPELINE-tagged
+def FUNC_SUBTREE_HAS_AUTO_PIPELINE(func_name, parser_state):
+    # Does this func (or anything below it) contain an AUTO_PIPELINE-tagged
     # call site? Such funcs are on the pipelining "estimate chain": slicing
     # descends through them, so their geometry (and thus submodule delays
     # along the way) is needed.
-    if func_name in _FUNC_SUBTREE_HAS_AUTOPIPELINE_cache:
-        return _FUNC_SUBTREE_HAS_AUTOPIPELINE_cache[func_name]
+    if func_name in _FUNC_SUBTREE_HAS_AUTO_PIPELINE_cache:
+        return _FUNC_SUBTREE_HAS_AUTO_PIPELINE_cache[func_name]
     logic = parser_state.FuncLogicLookupTable[func_name]
-    rv = len(logic.sub_inst_to_autopipeline_latency) > 0
+    rv = len(logic.sub_inst_to_auto_pipeline_latency) > 0
     if not rv:
         for sub_func_name in logic.submodule_instances.values():
             if sub_func_name in parser_state.FuncLogicLookupTable:
-                if FUNC_SUBTREE_HAS_AUTOPIPELINE(sub_func_name, parser_state):
+                if FUNC_SUBTREE_HAS_AUTO_PIPELINE(sub_func_name, parser_state):
                     rv = True
                     break
-    _FUNC_SUBTREE_HAS_AUTOPIPELINE_cache[func_name] = rv
+    _FUNC_SUBTREE_HAS_AUTO_PIPELINE_cache[func_name] = rv
     return rv
 
 
-_FUNC_SUBTREE_HAS_AUTOFSM_cache = {}
+_FUNC_SUBTREE_HAS_AUTO_FSM_cache = {}
 
 
-def FUNC_SUBTREE_HAS_AUTOFSM(func_name, parser_state):
-    # Does this func (or anything below it) contain an AUTOFSM-tagged call site?
+def FUNC_SUBTREE_HAS_AUTO_FSM(func_name, parser_state):
+    # Does this func (or anything below it) contain an AUTO_FSM-tagged call site?
     # Such funcs need their subtree delays resolved for the same reason
-    # AUTOPIPELINE ones do, though for a different consumer: not the slicer, but
-    # AUTOFSM's scheduler, which decides how many operations fit in one state
+    # AUTO_PIPELINE ones do, though for a different consumer: not the slicer, but
+    # AUTO_FSM's scheduler, which decides how many operations fit in one state
     # from the per-operation delays measured/estimated here. Without this, a
-    # stateful MAIN containing an AUTOFSM would be an atomic span and NOTHING
+    # stateful MAIN containing an AUTO_FSM would be an atomic span and NOTHING
     # inside it would ever be measured (see FUNC_PATH_DELAY_IS_ESTIMABLE).
     #
     # Note this is only ever true on the bootstrap pass, where the call site is
@@ -5340,17 +5340,17 @@ def FUNC_SUBTREE_HAS_AUTOFSM(func_name, parser_state):
     # calling func while the generated FSM entity below it holds state and is
     # correctly treated as an atomic span -- one whole-module synthesis whose
     # measured register-to-register path IS its worst state's delay.
-    if func_name in _FUNC_SUBTREE_HAS_AUTOFSM_cache:
-        return _FUNC_SUBTREE_HAS_AUTOFSM_cache[func_name]
+    if func_name in _FUNC_SUBTREE_HAS_AUTO_FSM_cache:
+        return _FUNC_SUBTREE_HAS_AUTO_FSM_cache[func_name]
     logic = parser_state.FuncLogicLookupTable[func_name]
-    rv = len(logic.sub_inst_to_autofsm_key) > 0
+    rv = len(logic.sub_inst_to_auto_fsm_key) > 0
     if not rv:
         for sub_func_name in logic.submodule_instances.values():
             if sub_func_name in parser_state.FuncLogicLookupTable:
-                if FUNC_SUBTREE_HAS_AUTOFSM(sub_func_name, parser_state):
+                if FUNC_SUBTREE_HAS_AUTO_FSM(sub_func_name, parser_state):
                     rv = True
                     break
-    _FUNC_SUBTREE_HAS_AUTOFSM_cache[func_name] = rv
+    _FUNC_SUBTREE_HAS_AUTO_FSM_cache[func_name] = rv
     return rv
 
 
@@ -5436,7 +5436,7 @@ def FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state):
     if logic.func_name in parser_state.func_marked_blackbox:
         return False
     # Explicitly forced to be estimated rather than synthesized. Used by
-    # AUTOFSM for the combinational passthrough it wraps a tagged function in
+    # AUTO_FSM for the combinational passthrough it wraps a tagged function in
     # on the bootstrap pass: that wrapper looks exactly like a measurement
     # frontier (fully combinational, inside a stateful caller) and would
     # therefore get one whole-blob synthesis run -- of precisely the giant
@@ -5452,7 +5452,7 @@ def FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state):
     # different quantity than the input to output through-delay that
     # dataflow slicing geometry needs. Only a fully combinational subtree
     # guarantees measured == through delay. So:
-    # - stateful modules ON the estimate chain (an AUTOPIPELINE tag
+    # - stateful modules ON the estimate chain (an AUTO_PIPELINE tag
     #   somewhere below - slicing descends through them, ex. a dataflow
     #   core containing tagged stream pipelines) are ESTIMATED from their
     #   submodule delays, never synthesized;
@@ -5466,9 +5466,9 @@ def FUNC_PATH_DELAY_IS_ESTIMABLE(logic, parser_state):
         # or not -- estimate everything above true primitive leaves.
         if HIER_SYN_MODE == "prim":
             return True
-        return FUNC_SUBTREE_HAS_AUTOPIPELINE(
+        return FUNC_SUBTREE_HAS_AUTO_PIPELINE(
             logic.func_name, parser_state
-        ) or FUNC_SUBTREE_HAS_AUTOFSM(logic.func_name, parser_state)
+        ) or FUNC_SUBTREE_HAS_AUTO_FSM(logic.func_name, parser_state)
     # Fully combinational subtree from here down
     if FUNC_IS_TOPMOST_COMB(logic.func_name, parser_state):
         # The measurement frontier: this func gets ONE real synthesis run -
@@ -5668,9 +5668,9 @@ def MEASURE_DELAYS(func_names, parser_state):
 
 def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
     # root_func_names: measure only the subtrees of these funcs instead of the
-    # whole design's mains (+ AUTOFSM muxes) -- used by builds that never sweep
-    # but must still place fixed AUTOPIPELINE latency= registers
-    # (BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS).
+    # whole design's mains (+ AUTO_FSM muxes) -- used by builds that never sweep
+    # but must still place fixed AUTO_PIPELINE latency= registers
+    # (BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS).
     # Make sure synthesis tool is set
     PART_SET_TOOL(parser_state.part)
 
@@ -5691,19 +5691,19 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
         ) + list(root_func_names):
             if func_name not in funcs_to_synth:
                 funcs_to_synth.append(func_name)
-        _autofsm_muxes = []
+        _auto_fsm_muxes = []
     else:
         funcs_to_synth = RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(
             parser_state.main_mhz.keys(), parser_state
         )
-        # ...plus AUTOFSM's operand multiplexers, which the walk above cannot
-        # reach (see _AUTOFSM_MUX_ENTITIES). Their own subtrees first, so the
+        # ...plus AUTO_FSM's operand multiplexers, which the walk above cannot
+        # reach (see _AUTO_FSM_MUX_ENTITIES). Their own subtrees first, so the
         # list stays bottom-up ordered.
-        _autofsm_muxes = sorted(_AUTOFSM_MUX_ENTITIES(parser_state))
-    if _autofsm_muxes:
+        _auto_fsm_muxes = sorted(_AUTO_FSM_MUX_ENTITIES(parser_state))
+    if _auto_fsm_muxes:
         for extra in RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS(
-            _autofsm_muxes, parser_state
-        ) + _autofsm_muxes:
+            _auto_fsm_muxes, parser_state
+        ) + _auto_fsm_muxes:
             if extra not in funcs_to_synth:
                 funcs_to_synth.append(extra)
 
@@ -5861,7 +5861,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
             SET_MEASURED_DELAY_FROM_REPORT(logic, parsed_timing_report, parser_state)
 
         # Syn results are delay and clock
-        # Try to communicate if is a problem path that cant be autopipelined
+        # Try to communicate if is a problem path that cant be auto-pipelined
         # (delay is None here for funcs deferred to estimation below - they are
         #  all on the pipelining path so would not be reported here anyway)
         if (
@@ -5948,10 +5948,10 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
     return parser_state
 
 
-def BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS(parser_state):
+def BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS(parser_state):
     """Timing params for builds that run no throughput sweep (--comb,
     --no_synth, --yosys_json): zero added pipelining everywhere EXCEPT fixed
-    AUTOPIPELINE(func, latency=N) call sites (and C `#pragma AUTOPIPELINE N`),
+    AUTO_PIPELINE(func, latency=N) call sites (and C `#pragma AUTOPIPELINE N`),
     which get exactly N registers -- a fixed latency is a functional contract
     (.latency reads N, native sim delays by N), not a timing hint, so every
     build honors it.
@@ -5966,12 +5966,12 @@ def BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS(parser_state):
     Returns None -- today's zero-added-pipelining path, untouched -- when the
     design has no fixed latency > 0. Memoized on parser_state (a --comb build
     asks twice: final files, then the comb characterization synthesis)."""
-    cached = getattr(parser_state, "_fixed_autopipeline_timing_params", None)
+    cached = getattr(parser_state, "_fixed_auto_pipeline_timing_params", None)
     if cached is not None:
         return cached
     import SWEEP
 
-    regions = SWEEP.COLLECT_AUTOPIPELINE_REGIONS(parser_state, fixed_only=True)
+    regions = SWEEP.COLLECT_AUTO_PIPELINE_REGIONS(parser_state, fixed_only=True)
     if not any(region.constraint.latency > 0 for region in regions):
         return None
     global SYN_TOOL
@@ -5981,14 +5981,14 @@ def BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS(parser_state):
     if borrowed_tool:
         print(
             "WARNING: no timing-capable synthesis tool for this build; placing "
-            "fixed AUTOPIPELINE latency= registers using PyRTL delay estimates "
+            "fixed AUTO_PIPELINE latency= registers using PyRTL delay estimates "
             "(the latency is exact, the stage balance is estimated).",
             flush=True,
         )
         SYN_TOOL = PYRTL
     try:
         print(
-            "================== Measuring Delays for Fixed AUTOPIPELINE "
+            "================== Measuring Delays for Fixed AUTO_PIPELINE "
             "Latencies ================================",
             flush=True,
         )
@@ -6000,10 +6000,10 @@ def BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS(parser_state):
         )
         TimingParamsLookupTable = GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
         try:
-            TimingParamsLookupTable = SWEEP.ENFORCE_AUTOPIPELINE_REGIONS(
+            TimingParamsLookupTable = SWEEP.ENFORCE_AUTO_PIPELINE_REGIONS(
                 regions, parser_state, TimingParamsLookupTable
             )
-        except SWEEP.AutopipelineLatencyInfeasible as err:
+        except SWEEP.AutoPipelineLatencyInfeasible as err:
             sys.exit(str(err))
         ancestor_insts = INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
             TimingParamsLookupTable, parser_state
@@ -6014,16 +6014,16 @@ def BUILD_FIXED_AUTOPIPELINE_TIMING_PARAMS(parser_state):
     finally:
         if borrowed_tool:
             SYN_TOOL = previous_tool
-    CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED(parser_state, TimingParamsLookupTable)
+    CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(parser_state, TimingParamsLookupTable)
     for region in regions:
         print(
-            f"AUTOPIPELINE {region.label()} ({region.constraint.describe()}): "
+            f"AUTO_PIPELINE {region.label()} ({region.constraint.describe()}): "
             f"{region.realized} clk(s) built at {region.inst}",
             flush=True,
         )
     multimain_timing_params = MultiMainTimingParams()
     multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
-    parser_state._fixed_autopipeline_timing_params = multimain_timing_params
+    parser_state._fixed_auto_pipeline_timing_params = multimain_timing_params
     return multimain_timing_params
 
 

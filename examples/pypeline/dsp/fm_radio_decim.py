@@ -4,7 +4,7 @@ examples/sdr/fm_radio.c, rebuilt with the pypeline DSP library.
 
 Two make_fir_decim instances (one per I/Q rail) with the exact 49-tap Q1.15
 coefficient set of the old macro library's `decim_5x`. Each filter is one
-autopipelined combinational blob wrapped in a valid/ready stream: at the
+auto-pipelined combinational blob wrapped in a valid/ready stream: at the
 125 MHz constraint below the tool picks the pipeline depth for the target
 part -- nothing here hard-codes latency, so the same source retargets any
 FPGA (the vendor-portable alternative to a Xilinx FIR Compiler / Intel FIR II
@@ -12,7 +12,7 @@ IP instance).
 
 Elaborate + estimate combinational timing:
     python3 src/pypelinec examples/pypeline/dsp/fm_radio_decim.py --comb
-Full autopipelining throughput sweep to the 125 MHz goal:
+Full auto-pipelining throughput sweep to the 125 MHz goal:
     python3 src/pypelinec examples/pypeline/dsp/fm_radio_decim.py
 
 For a simulation testbench with plots, see fir_decim_tb.py next to this file

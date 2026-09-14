@@ -158,10 +158,10 @@ def test_standalone_alignment():
     sim_reset()
     outputs = [int(sim_call(optional_join, x=x)) for x in (3, 8, 17)]
     assert outputs == [0, 8, 13], outputs
-    from pypeline import AUTOPIPELINE
+    from pypeline import AUTO_PIPELINE
 
     sim_reset()
-    ap = AUTOPIPELINE(aligned_add)
+    ap = AUTO_PIPELINE(aligned_add)
     outputs = [int(sim_call(ap, x)) for x in (3, 8, 17, 2)]
     assert outputs == [0, 6, 16, 34], outputs
 
@@ -253,10 +253,10 @@ else:
         "self_check_bit_math_test.py",
         "self_check_counter_test.py",
         "native_vs_vhdl_ap_test.py",
-        "self_check_autofsm_test.py",
-        # A fixed AUTOPIPELINE latency is emulated in plain sim without the
+        "self_check_auto_fsm_test.py",
+        # A fixed AUTO_PIPELINE latency is emulated in plain sim without the
         # compiler (compiler-free delay-line key)
-        "autopipeline_fixed_latency_sim_test.py",
+        "auto_pipeline_fixed_latency_sim_test.py",
     ):
         for mode in ("direct", "cli"):
             result = subprocess.run(
@@ -408,8 +408,8 @@ def test_convergence_and_reset():
     assert int(sim_call(aligned_add, 12)) == 0
 
 
-def test_conflicting_autopipeline():
-    from pypeline import AUTOPIPELINE
+def test_conflicting_auto_pipeline():
+    from pypeline import AUTO_PIPELINE
     import PY_TO_LOGIC as py
 
     for kwargs in (
@@ -418,7 +418,7 @@ def test_conflicting_autopipeline():
         {"max_latency": 0},
     ):
         try:
-            AUTOPIPELINE(delay_one, **kwargs)
+            AUTO_PIPELINE(delay_one, **kwargs)
         except ValueError:
             pass
         else:
@@ -426,9 +426,9 @@ def test_conflicting_autopipeline():
                 f"fixed function accepted a conflicting constraint {kwargs}"
             )
     # Constraints consistent with pipeline_latency(1) are fine
-    AUTOPIPELINE(delay_one, latency=1)
-    AUTOPIPELINE(delay_one, start_latency=1, max_latency=3)
-    ap = AUTOPIPELINE(unaffected)
+    AUTO_PIPELINE(delay_one, latency=1)
+    AUTO_PIPELINE(delay_one, start_latency=1, max_latency=3)
+    ap = AUTO_PIPELINE(unaffected)
 
     @pipeline_latency(1)
     def invalid(x: uint16_t) -> uint16_t:
@@ -437,9 +437,9 @@ def test_conflicting_autopipeline():
     try:
         py.ELABORATE_LIVE_ROOTS([invalid])
     except py.ElaborationError as error:
-        assert "AUTOPIPELINE inside" in str(error), str(error)
+        assert "AUTO_PIPELINE inside" in str(error), str(error)
     else:
-        raise AssertionError("fixed implementation accepted internal AUTOPIPELINE")
+        raise AssertionError("fixed implementation accepted internal AUTO_PIPELINE")
 
 
 def test_elaboration_metadata():

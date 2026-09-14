@@ -880,10 +880,10 @@ for the elaboration-side detail). `_ClockMarker` carries no meaning at Python ru
 sim never reads a global wire's bound value, only its `Wire`/`Input`/`Output` annotation type,
 so binding the module global to a marker object is otherwise inert.
 
-### `AUTOPIPELINE(func, latency=None, start_latency=None, max_latency=None)` — Forced Submodule Pipelining with `.latency`
+### `AUTO_PIPELINE(func, latency=None, start_latency=None, max_latency=None)` — Forced Submodule Pipelining with `.latency`
 
 Python equivalent of PipelineC's `#pragma AUTOPIPELINE [N]`, plus a feedback
-channel the C pragma doesn't have. `AUTOPIPELINE(func)` is a class (all-caps factory
+channel the C pragma doesn't have. `AUTO_PIPELINE(func)` is a class (all-caps factory
 style, like `MULTI_CYCLE`) whose instances are callable tags. Calls made through one
 force the synthesizer to slice (insert pipeline registers) through that call's
 submodule, even inside a register/feedback context that would otherwise forbid added
@@ -891,12 +891,12 @@ latency. The instance's `.latency` attribute reads back how many registers (cloc
 of latency) were built there:
 
 ```python
-MY_AP = AUTOPIPELINE(some_func)                                  # tool picks, from 0
-MY_AP = AUTOPIPELINE(some_func, latency=2)                       # fixed: exactly 2, every build
-MY_AP = AUTOPIPELINE(some_func, start_latency=3)                 # sweep starts at 3
-MY_AP = AUTOPIPELINE(some_func, max_latency=6)                   # sweep never exceeds 6
-MY_AP = AUTOPIPELINE(some_func, start_latency=3, max_latency=6)
-rv = MY_AP(x)                                                    # some_func(x), autopipelined
+MY_AP = AUTO_PIPELINE(some_func)                                  # tool picks, from 0
+MY_AP = AUTO_PIPELINE(some_func, latency=2)                       # fixed: exactly 2, every build
+MY_AP = AUTO_PIPELINE(some_func, start_latency=3)                 # sweep starts at 3
+MY_AP = AUTO_PIPELINE(some_func, max_latency=6)                   # sweep never exceeds 6
+MY_AP = AUTO_PIPELINE(some_func, start_latency=3, max_latency=6)
+rv = MY_AP(x)                                                    # some_func(x), auto-pipelined
 MY_AP.latency                                                    # int
 ```
 
@@ -909,7 +909,7 @@ MY_AP.latency                                                    # int
 
 Latencies count inserted register slices, not combinational stages: `latency=2`
 separates three stages. Arguments are validated at construction, in the style of
-AUTOFSM's `max_latency=`:
+AUTO_FSM's `max_latency=`:
 - each value is an `int` (not `bool`) and at least 0;
 - `latency` can't be combined with the other two;
 - `start_latency <= max_latency`;
@@ -921,13 +921,13 @@ The removed `depth=` keyword raises a `TypeError` that names its replacements.
 `.latency` is decided when the tag is constructed, in this order:
 1. A fixed `latency=N` is always N.
 2. Otherwise, the harvested stage count once the module-level cache
-   (`pypeline._autopipeline_latency_cache`) holds the tag's key. `SYN.DO_AUTOPIPELINE_LATENCY_PASSES`
+   (`pypeline._auto_pipeline_latency_cache`) holds the tag's key. `SYN.DO_AUTO_PIPELINE_LATENCY_PASSES`
    installs the cache between pin-and-confirm passes, and again before a non-`--comb`
    `--sim` run imports the design for native sim.
 3. Otherwise, `start_latency` in a synthesizing build.
 4. Otherwise, 0.
 
-The build kind comes from `pypeline.SET_AUTOPIPELINE_BUILD_MODE`, which the `pypelinec`
+The build kind comes from `pypeline.SET_AUTO_PIPELINE_BUILD_MODE`, which the `pypelinec`
 driver calls before its first `PARSE_FILE`. There are three modes:
 - `None`: plain native sim.
 - `"sweep"`: a synthesizing build.
@@ -943,8 +943,8 @@ the compiler: its instance key falls back to `module.qualname#serial`. See
 `pypeline_sim_DESIGN.md` §"Pipelined native sim".
 
 `.latency` is a read-tracked property. Any read flips a module flag
-(`AUTOPIPELINE_LATENCY_WAS_READ`). Inside a build, each read also records the value it
-returned (`AUTOPIPELINE_SERVED_LATENCIES`). The driver skips the pin-and-confirm
+(`AUTO_PIPELINE_LATENCY_WAS_READ`). Inside a build, each read also records the value it
+returned (`AUTO_PIPELINE_SERVED_LATENCIES`). The driver skips the pin-and-confirm
 re-elaboration in two cases:
 - nothing was read;
 - every returned value already equals the stage count harvested for its key. That
@@ -955,44 +955,44 @@ holds for `canonical_key`, for `encode_param_value`, and for the `pypeline_names
 config `()`, so no existing entity name moved. A constraint appends its constructor
 settings (`_latency_N`, `_start_latency_S`, `_max_latency_M`). These are fixed at
 construction and never include the discovered `.latency`, so wrappers stay distinct
-and stable across pin-and-confirm passes. `AUTOPIPELINE.__repr__` stays address-free
+and stable across pin-and-confirm passes. `AUTO_PIPELINE.__repr__` stays address-free
 and shows the constraint as written.
 
-The class-level `_is_autopipeline_pragma` flag is the only thing the elaborator
+The class-level `_is_auto_pipeline_pragma` flag is the only thing the elaborator
 duck-type probes (mirroring `@sim_output`'s `_is_sim_output` flag). See
-[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#autopipelinefunc-latency-start_latency-max_latency--forced-submodule-pipelining)
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#auto_pipelinefunc-latency-start_latency-max_latency--forced-submodule-pipelining)
 for how `PY_TO_LOGIC.FuncElaborator._elab_call` elaborates the wrapped func and tags
-the resulting submodule instance with a `C_TO_LOGIC.AutopipelineLatency` constraint in
-`sub_inst_to_autopipeline_latency`. The C frontend's `#pragma AUTOPIPELINE [N]` fills
-the same field. The Pypeline frontend also records `sub_inst_to_autopipeline_key`
-(instance -> `AUTOPIPELINE.canonical_key`), so the stage counts the sweep builds can be
+the resulting submodule instance with a `C_TO_LOGIC.AutoPipelineLatency` constraint in
+`sub_inst_to_auto_pipeline_latency`. The C frontend's `#pragma AUTOPIPELINE [N]` fills
+the same field. The Pypeline frontend also records `sub_inst_to_auto_pipeline_key`
+(instance -> `AUTO_PIPELINE.canonical_key`), so the stage counts the sweep builds can be
 harvested per call site and fed back into `.latency`. How the sweep, the coarse sweep
 and no-sweep builds enforce constraints is in `SYN_DESIGN.md` §"Constrained
-AUTOPIPELINE regions".
+AUTO_PIPELINE regions".
 
-The internal helper `_autopipeline_with_io_regs(func, has_input_reg, has_output_reg)`
-(used by `make_stream_pipeline` and the FIR library) wraps `AUTOPIPELINE(func)` with
+The internal helper `_auto_pipeline_with_io_regs(func, has_input_reg, has_output_reg)`
+(used by `make_stream_auto_pipeline` and the FIR library) wraps `AUTO_PIPELINE(func)` with
 optional unconditional `Reg[T]` boundary registers and returns
-`(wrapped_func, autopipeline_call)` so library code can read `.latency`.
+`(wrapped_func, auto_pipeline_call)` so library code can read `.latency`.
 
-### `AUTOFSM(func)` — Resource-Shared State Machines with `.latency`
+### `AUTO_FSM(func)` — Resource-Shared State Machines with `.latency`
 
-The resource-minimizing dual of `AUTOPIPELINE`. Where `AUTOPIPELINE(func)` builds
+The resource-minimizing dual of `AUTO_PIPELINE`. Where `AUTO_PIPELINE(func)` builds
 one full copy of `func`'s hardware cut by serial register slices (N slices give
 N clocks of latency and N+1 combinational regions; initiation interval 1,
-maximum area), `AUTOFSM(func)` builds a state machine holding ONE copy of each
+maximum area), `AUTO_FSM(func)` builds a state machine holding ONE copy of each
 distinct operation and runs `func` over several cycles (initiation interval N,
 minimum area). Twelve identical adds become one adder used in twelve states.
 
 ```python
-UPDATE = AUTOFSM(next_state)     # pure single-argument @hw_func
+UPDATE = AUTO_FSM(next_state)     # pure single-argument @hw_func
 o = UPDATE(req)                  # req/o are {data, valid}: UPDATE.in_stream_t / .out_stream_t
 UPDATE.latency                   # fixed in->out cycle count; 0 until a real build
 ```
 
-Structurally a sibling of `AUTOPIPELINE`, and deliberately so: a duck-type marker
-the elaborator probes for (`_is_autofsm_pragma`), a module-global cache
-`AUTOFSM.DO_SCHEDULE_PASSES` installs between passes (`SET_AUTOFSM_SCHEDULE_CACHE`,
+Structurally a sibling of `AUTO_PIPELINE`, and deliberately so: a duck-type marker
+the elaborator probes for (`_is_auto_fsm_pragma`), a module-global cache
+`AUTO_FSM.DO_SCHEDULE_PASSES` installs between passes (`SET_AUTO_FSM_SCHEDULE_CACHE`,
 carrying `canonical_key -> schedule dict` instead of `-> stage count`), a
 snapshot taken at construction so one design execution sees one consistent view,
 a `canonical_key` computed lazily via `PY_TO_LOGIC.CANONICAL_CALLABLE_KEY`, and
@@ -1002,13 +1002,13 @@ The differences worth knowing:
 
 - **The call site's submodule is not `func`.** It is a generated wrapper: a
   combinational passthrough when no schedule is installed, and the generated FSM
-  when one is. Both are built by `src/AUTOFSM.py` and elaborated as ordinary
+  when one is. Both are built by `src/AUTO_FSM.py` and elaborated as ordinary
   Pypeline source.
-- **`.latency` is not read-tracked.** AUTOPIPELINE can skip its second pass when
-  no Python consumed the value; an AUTOFSM schedule always changes the hardware,
+- **`.latency` is not read-tracked.** AUTO_PIPELINE can skip its second pass when
+  no Python consumed the value; an AUTO_FSM schedule always changes the hardware,
   so the second pass is unconditional.
 - **`in_stream_t` / `out_stream_t`** are auto-generated `{data, valid}` structs
-  built by the pypeline.py-local `_make_autofsm_stream_t`. It is a deliberate
+  built by the pypeline.py-local `_make_auto_fsm_stream_t`. It is a deliberate
   twin of `include/pypeline/stream/stream.py`'s `make_stream_t` rather than an
   import of it: `pypeline.py` is the base module every design imports and keeps
   zero dependency on the `include/pypeline` library. The two are structurally
@@ -1022,18 +1022,18 @@ The differences worth knowing:
   the tag's is treated as a miss: building hardware that violates the cap the
   source asks for is not an acceptable failure mode.
 - **`register_output=False`** exposes data/valid in the final execution state
-  and removes that register bank. `make_stream_autofsm` uses it because its own
+  and removes that register bank. `make_stream_auto_fsm` uses it because its own
   holding register already provides the registered/backpressured boundary.
 - **Native simulation** models the generated FSM's registers directly
-  (`_sim_fsm`, keyed on `_SIM_AUTOFSM_STATE_KEY`), following the same
+  (`_sim_fsm`, keyed on `_SIM_AUTO_FSM_STATE_KEY`), following the same
   committed-read / buffered-write discipline as `_sim_delay_line`.
 
-Full design in [`AUTOFSM_DESIGN.md`](AUTOFSM_DESIGN.md).
+Full design in [`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md).
 
 ### `MULTI_CYCLE[ncycles]` — Multi-Cycle Path Tag
 
 Python equivalent of PipelineC's `#pragma MULTI_CYCLE <ncycles> <start_reg> <end_reg>`.
-Unlike `PART(...)`, this is not a call at all — `MULTI_CYCLE` (like `AUTOPIPELINE`) is a
+Unlike `PART(...)`, this is not a call at all — `MULTI_CYCLE` (like `AUTO_PIPELINE`) is a
 subscriptable class (same idiom as `Reg`/`Feedback`/`Wire`), and the cycle count and two
 register endpoints are attached directly to the `Reg[T]` declarations they constrain:
 
@@ -1075,15 +1075,15 @@ code is needed. See
 for how `PY_TO_LOGIC.FuncElaborator._elab_ann_assign`/`_tag_multi_cycle_reg` consume the
 role and populate `Logic.mcp_tuples` — shared, unmodified, with the C frontend.
 
-### `AUTOMCP(...)` — Tool-Tuned Multi-Cycle Path Tag
+### `AUTO_MULTI_CYCLE(...)` — Tool-Tuned Multi-Cycle Path Tag
 
-`AUTOMCP(*, latency=None, start_latency=None, max_latency=None)` is a `MULTI_CYCLE`-shaped
+`AUTO_MULTI_CYCLE(*, latency=None, start_latency=None, max_latency=None)` is a `MULTI_CYCLE`-shaped
 tag whose cycle count the throughput sweep picks. It has `.start` / `.end`
 `_MultiCycleRole`s, so `Reg[T, MC.start]` needs no `_RegMeta` change. It mirrors
-AUTOPIPELINE's `.latency` feedback, with a few deliberate differences:
+AUTO_PIPELINE's `.latency` feedback, with a few deliberate differences:
 
 - **Resolution.** The count resolves once, at construction, to the driver-installed cache
-  (`SET_AUTOMCP_LATENCY_CACHE`), else `latency=`, else `start_latency=`, else 1.
+  (`SET_AUTO_MULTI_CYCLE_LATENCY_CACHE`), else `latency=`, else `start_latency=`, else 1.
   - There is no build-mode dependency: a multi-cycle count never changes how many
     registers exist, so native sim, `--comb` and a sweep's bootstrap all read the same
     value.
@@ -1093,29 +1093,29 @@ AUTOPIPELINE's `.latency` feedback, with a few deliberate differences:
   `_latency_N` / `_start_latency_S` / `_max_latency_M` suffix.
   - The key is the construction site plus a per-site ordinal, because there is no wrapped
     function to key on. The ordinal disambiguates one factory line building several tags.
-  - Ordinals restart with every design execution: `RESET_AUTOMCP_TRACKING`, called from
-    `CLEAR_AUTOPIPELINE_LATENCY_READ_FLAG` (i.e. `PARSE_FILE`) and before
+  - Ordinals restart with every design execution: `RESET_AUTO_MULTI_CYCLE_TRACKING`, called from
+    `CLEAR_AUTO_PIPELINE_LATENCY_READ_FLAG` (i.e. `PARSE_FILE`) and before
     `pypeline_sim.run_sim`'s design import.
   - Keys are therefore deterministic across the pin-and-confirm re-executions.
 - **Construction inside a `@hw_func` body is a `TypeError`.** Detected by the calling
   frame's pseudo file name (`<local_const>`, `<const_eval>`, ...) or `_sim_active`. A tag
   re-created on every evaluation would break key identity.
 - **Read tracking.**
-  - `.latency` (alias `.ncycles`) records the value in `_automcp_served`.
+  - `.latency` (alias `.ncycles`) records the value in `_auto_multi_cycle_served`.
   - The compiler reads through `_ncycles_for_compiler()`, which records nothing.
-  - `AUTOMCP_UNREAD_KEYS()` lists non-fixed tags no design code read; the driver refuses
-    those (`SYN.CHECK_AUTOMCP_TAGS_READ`).
+  - `AUTO_MULTI_CYCLE_UNREAD_KEYS()` lists non-fixed tags no design code read; the driver refuses
+    those (`SYN.CHECK_AUTO_MULTI_CYCLE_TAGS_READ`).
 - **Name identity.** `pypeline_names.stable_key` encodes the key, the constraint **and the
-  resolved count**. An AUTOPIPELINE's identity deliberately omits its served latency.
+  resolved count**. An AUTO_PIPELINE's identity deliberately omits its served latency.
   Here the function holding the tagged registers bakes `.latency`-derived constants into
   its logic, so a count change between passes must rename that entity, not reuse a
   skip-if-exists file.
 
-The library factories `make_stream_interface_mcp(func, latency)` (fixed `MULTI_CYCLE`) and
-`make_stream_interface_automcp(func, *, latency=, start_latency=, max_latency=)` live in
-`include/pypeline/multi_cycle_path.py`; the auto one exposes its tag as `func_mcp.mcp`.
+The library factories `make_stream_multi_cycle(func, latency)` (fixed `MULTI_CYCLE`) and
+`make_stream_auto_multi_cycle(func, *, latency=, start_latency=, max_latency=)` live in
+`include/pypeline/stream/stream_multi_cycle.py`; the auto one exposes its tag as `func_mcp.mcp`.
 Sweep and pin-and-confirm handling are in
-[`SYN_DESIGN.md`](SYN_DESIGN.md#automcp-multi-cycle-counts); elaboration is in
+[`SYN_DESIGN.md`](SYN_DESIGN.md#auto_multi_cycle-multi-cycle-counts); elaboration is in
 [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#multi_cyclencycles--regt-tag--multi-cycle-path-constraint).
 
 ### Fixed User Pipelines
@@ -1149,7 +1149,7 @@ def my_struct_to_bytes(x: my_struct_t) -> uint8_t[4]:
     ...
 ```
 
-Unlike `AUTOPIPELINE(...)` (a callable tag for calls) or `MULTI_CYCLE[...]` (tags a `Reg[T]`
+Unlike `AUTO_PIPELINE(...)` (a callable tag for calls) or `MULTI_CYCLE[...]` (tags a `Reg[T]`
 declaration), `FUNC_WIRES` tags a *function definition* — the same shape as `@MAIN` and
 `@sim_output`. Implementation mirrors `_register_main`'s "implies `@hw_func`" pattern
 (see [`@MAIN` / `@MAIN(mhz)` — Three-Form Decorator](#main--mainmhz--three-form-decorator)
@@ -1173,7 +1173,7 @@ the module-level name, and the `_is_func_wires_pragma` flag survives either orde
 `_sim_type_wrap`'s `functools.wraps` merges `__dict__` from the wrapped object.
 
 The `_is_func_wires_pragma` flag is the only thing the elaborator inspects (mirroring
-`@sim_output`'s `_is_sim_output` flag and `AUTOPIPELINE`'s `_is_autopipeline_pragma`
+`@sim_output`'s `_is_sim_output` flag and `AUTO_PIPELINE`'s `_is_auto_pipeline_pragma`
 flag). See
 [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#wires--just-wires-synthesis-hint) for how
 `PY_TO_LOGIC.PARSE_FILE` / `FuncElaborator._elaborate_live_func` consume it and populate
@@ -1515,7 +1515,7 @@ undriven (the same class of bug `struct_ctor_positional_test.py` guards against 
 *0-positional-args-missing* case).
 
 At elaboration, casts are recognized in `PY_TO_LOGIC._elab_call` (`_is_cast_call`/
-`_is_pypeline_type`, checked immediately after the `AUTOPIPELINE`/`AUTOFSM` special
+`_is_pypeline_type`, checked immediately after the `AUTO_PIPELINE`/`AUTO_FSM` special
 forms and before ordinary callee resolution, so both `uint8_t(x)` and `intrf.fb_t(x)`
 are caught) and de-classified out of every pre-existing struct-constructor interception
 site (`_elab_assign`, `_elab_ann_assign`, `_elab_compound_init`'s own recursive branch,
@@ -1676,7 +1676,7 @@ and `pypeline_sim.py`'s `_import_design` both call
 design file itself is imported — so a later, more specific registration in the design
 (an exact pin, a different flavor, or `INFERRED`) still wins, since generic resolution
 always scans most-recently-registered-first. This function is idempotent (guarded by a
-module-level flag) so `PY_TO_LOGIC.PARSE_FILE`'s repeated-parse callers (AUTOPIPELINE's
+module-level flag) so `PY_TO_LOGIC.PARSE_FILE`'s repeated-parse callers (AUTO_PIPELINE's
 pin-and-confirm loop, `double_parse_file_test`) don't grow the generic registry lists
 unboundedly.
 
@@ -1896,8 +1896,8 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `sim_print(fstring_or_str)` | printf-style console output — same once-per-cycle firing as `@sim_output`, but *also* elaborates to a real VHDL `write(output, ...)` statement (see `PY_TO_LOGIC_DESIGN.md`) |
 | `sim_assert(cond, msg=None)` | simulation-only condition check — raises `AssertionError` in native sim, elaborates to VHDL `assert ... report ... severity failure;` (see `PY_TO_LOGIC_DESIGN.md`) |
 | `sim_finish()` | simulation-only stop signal — raises `SimFinish` in native sim (caught by `pypeline_sim.py`'s CLI run loop), elaborates to VHDL `std.env.finish;` (see `PY_TO_LOGIC_DESIGN.md`) |
-| `AUTOPIPELINE(func, latency=, start_latency=, max_latency=)` | Callable tag: calls through it may be autopipelined inside register/feedback contexts; `.latency` reads the built register count; optional fixed / starting / maximum latency (equivalent to `#pragma AUTOPIPELINE [N]`) |
-| `AUTOMCP` | `AUTOMCP(latency= / start_latency= / max_latency=)` multi-cycle tag whose count the throughput sweep raises; `.start`/`.end` like `MULTI_CYCLE`, `.latency` read-tracked (see [`AUTOMCP(...)`](#automcp--tool-tuned-multi-cycle-path-tag)) |
+| `AUTO_PIPELINE(func, latency=, start_latency=, max_latency=)` | Callable tag: calls through it may be auto-pipelined inside register/feedback contexts; `.latency` reads the built register count; optional fixed / starting / maximum latency (equivalent to `#pragma AUTOPIPELINE [N]`) |
+| `AUTO_MULTI_CYCLE` | `AUTO_MULTI_CYCLE(latency= / start_latency= / max_latency=)` multi-cycle tag whose count the throughput sweep raises; `.start`/`.end` like `MULTI_CYCLE`, `.latency` read-tracked (see [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle--tool-tuned-multi-cycle-path-tag)) |
 | `MULTI_CYCLE` / `_MultiCycleTag` / `_MultiCycleRole` | `MULTI_CYCLE[ncycles]` tag; `.start`/`.end` attach to `Reg[T, tag]` declarations to relax setup timing between them (equivalent to `#pragma MULTI_CYCLE`) |
 | `wires` | Marks a function as pure rewiring/bit-casting with no real delay; implies `@hw_func`; stacks with `@MAIN` in either order (equivalent to `#pragma FUNC_WIRES`) |
 | `pipeline_latency(cycles)` | Declares an existing fixed user pipeline; implies `@hw_func`; callers align around its latency (equivalent to `#pragma FUNC_LATENCY`) |
@@ -1929,11 +1929,11 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `_sim_cast(val, ctype)` | Mask/sign-extend a Python int/SimVal to a pypeline scalar ctype's bit width — assignment's own truncation logic, and (via `_CTypeMeta.__call__`) `T(x)` scalar casting's, since the two are defined to be identical (see Casting) |
 | `_sim_val_make(v, ctype)` | Fast `SimVal` allocation bypassing Python `__new__`; checks flyweight cache first |
 | `_SIM_CONST_CACHE` | Flyweight cache: `(int_value, ctype)` → `SimVal` for values 0–15 per ctype |
-| `AUTOFSM(func)` | Tag object: implements a pure single-argument function as a resource-shared FSM; `.latency`, `.in_stream_t`, `.out_stream_t`; see AUTOFSM_DESIGN.md |
+| `AUTO_FSM(func)` | Tag object: implements a pure single-argument function as a resource-shared FSM; `.latency`, `.in_stream_t`, `.out_stream_t`; see AUTO_FSM_DESIGN.md |
 | `hw_func` | Decorator for inner hardware functions; adds sim-mode type casting and register state management |
 | `hw_arg_types(func)` | Returns a hardware function's parameter types, in declaration order, as a tuple — reads through `__wrapped__`/`__annotations__` so it works on `@hw_func`-wrapped or plain functions alike |
 | `hw_return_type(func)` | Returns a hardware function's declared return type — same unwrapping as `hw_arg_types` |
-| `is_hw_func(func)` | Returns True if `func` is already `@hw_func`/`@MAIN`-decorated (checks the `_is_hw_func` marker `_sim_type_wrap` sets on its wrapper); used by factories (`make_autopipeline`, `make_stream_interface_mcp`, `make_stream_pipeline`, `make_stream_autofsm`) to validate a caller-supplied `func` before calling it from their own hardware function body |
+| `is_hw_func(func)` | Returns True if `func` is already `@hw_func`/`@MAIN`-decorated (checks the `_is_hw_func` marker `_sim_type_wrap` sets on its wrapper); used by factories (`make_auto_pipeline`, `make_stream_multi_cycle`, `make_stream_auto_pipeline`, `make_stream_auto_fsm`) to validate a caller-supplied `func` before calling it from their own hardware function body |
 | `sim_call(func, *args)` | Call a pypeline function in simulation mode with scoped operators active |
 | `sim_reset()` | Clear all simulated register state and global wire state; restores declared init values |
 | `sim_wire_reset()` | Clear only `_sim_wire_state`; leaves register state intact |
@@ -1985,8 +1985,8 @@ into its two one-directional structs, and `_enclosing_factory_param_suffix` to n
 modules deterministically. It exposes no new pypeline.py API — the generated function is an
 ordinary `@hw_func` + `@struct` pair, and `make_stream_t(data_t, feedback_t=uint1_t)` is now just
 the feedforward half of `make_stream_interface(...)`. Library modules that carry backpressure
-declare interface ports: `stream/stream_pipeline.py`, `stream/stream_fifo.py`,
-`stream/stream_autofsm.py`, `multi_cycle_path.py`, `dsp/`, and all of `axi/axis.py` (whose
+declare interface ports: `stream/stream_auto_pipeline.py`, `stream/stream_fifo.py`,
+`stream/stream_auto_fsm.py`, `stream_multi_cycle.py`, `dsp/`, and all of `axi/axis.py` (whose
 `make_axis_broadcast_interlock` uses an *array* interface port for fan-out). `fifo.py`'s raw
 `make_fifo` deliberately does not —
 its three loose signals are literally the wrapped VHDL entity's ports. See

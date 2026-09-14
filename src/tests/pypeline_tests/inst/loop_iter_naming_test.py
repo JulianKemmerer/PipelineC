@@ -253,7 +253,7 @@ def m1(x: uint32_t) -> uint32_t:
 
 
 def test_determinism_across_two_parses():
-    # AUTOPIPELINE's pin-and-confirm loop re-parses in-process and matches
+    # AUTO_PIPELINE's pin-and-confirm loop re-parses in-process and matches
     # entities by name across passes -- names must be a pure function of
     # the design source (double_parse_file_test.py's own contract).
     src = """

@@ -20,7 +20,7 @@ hand-written entry in one of eight category modules, run together via `run_all.p
 | `elab` | `pypelinec --no_synth` -- does it elaborate | exit code only |
 | `elab_introspect` | Calls `PY_TO_LOGIC.PARSE_FILE` in-process and asserts on `parser_state` / `FuncLogicLookupTable` / a raised `ElaborationError`'s type and message | in-process `assert`s |
 | `unit` | Pure compiler-helper tests against hand-built fixtures -- no design build | in-process `assert`s |
-| `synth` | Full elaboration + autopipelining + synthesis (no `--no_synth`) | exit code only |
+| `synth` | Full elaboration + auto-pipelining + synthesis (no `--no_synth`) | exit code only |
 | `build_report` | Wrapper scripts that run `pypelinec` themselves and assert on its build log or generated artifacts (yosys/PYRTL cell counts, `TIMING NOT MET` text, `sweep_history.json`) | in-process `assert`s over subprocess output |
 | `known_issues` | Reproducers for known, unfixed compiler bugs. **Excluded from `run_all.py`'s default set** -- run explicitly with `--category known_issues`. Every entry has `expect_fail=True`: a passing run means the bug is still present (XFAIL); a clean run means it got fixed without the test being updated (XPASS, reported as a *failure* -- promote the test out of this category) | inverted exit code (or, where exit code doesn't capture the issue, an explicit log-content assertion -- see that entry's own docstring) |
 
@@ -38,7 +38,7 @@ inspecting the resulting `parser_state` is `elab_introspect`.
 
 A fixture that another test builds as a subprocess may instead live one level up, in
 `src/tests/pypeline_tests/` itself, keeping its original `*_test.py` name -- e.g.
-`autofsm_resources_test.py`, `autofsm_div_share_test.py`, `autofsm_tighten_test.py`,
+`auto_fsm_resources_test.py`, `auto_fsm_div_share_test.py`, `auto_fsm_tighten_test.py`,
 each built by a corresponding wrapper in `inst/`. Being outside `inst/` is what keeps
 them out of the registration audit; they are not part of the `run_all.py` suite.
 
@@ -69,7 +69,7 @@ and parallel composition, bypass alignment, conditional enables, dynamic array
 reads/writes, initialization, reset and convergence. Its subprocess gate tests
 forbid importing the pipeline model in untagged `--comb` CLI builds and also
 forbid the elaborator in direct native runs, covering arithmetic, registers,
-AUTOPIPELINE and AUTOFSM. Unrelated roots, zero-cycle declarations and
+AUTO_PIPELINE and AUTO_FSM. Unrelated roots, zero-cycle declarations and
 direct calls to tagged bodies also forbid model preparation.
 Alternating live roots check that shared helper models retain separate state.
 Explicit placement tests reject cuts both at and inside a fixed boundary.
@@ -77,56 +77,56 @@ Explicit placement tests reject cuts both at and inside a fixed boundary.
 `pipeline_latency_sim_test.py` runs in both native-versus-VHDL categories, with
 and without `--comb`. It checks independently calculated data, sequence order and
 constant observed latency for unequal fixed pipelines in both a naturally
-pipelined MAIN and an AUTOPIPELINE region. Valid-gated debug probes compare exact
+pipelined MAIN and an AUTO_PIPELINE region. Valid-gated debug probes compare exact
 clock timing against GHDL, including draining the pipeline, register initialization,
 synchronous reset and clock enables within a stateful caller.
 
-## AUTOPIPELINE latency constraint coverage
+## AUTO_PIPELINE latency constraint coverage
 
-Each test below covers `AUTOPIPELINE(func, latency= / start_latency= / max_latency=)`
+Each test below covers `AUTO_PIPELINE(func, latency= / start_latency= / max_latency=)`
 from a different angle:
-- `autopipeline_harvest_test.py` (unit):
+- `auto_pipeline_harvest_test.py` (unit):
   - constructor validation;
   - identity suffixes (an unconstrained tag's key and `pypeline_names` identity are
     unchanged);
   - `.latency` per build mode and cache;
   - the served-value predicate behind the pin-and-confirm pass-2 skip;
-  - `SYN.CHECK_AUTOPIPELINE_CONSTRAINTS_REALIZED`.
-- `autopipeline_region_planning_test.py` (unit): `SWEEP.COUNT_TARGETED_PLACEMENTS`,
+  - `SYN.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED`.
+- `auto_pipeline_region_planning_test.py` (unit): `SWEEP.COUNT_TARGETED_PLACEMENTS`,
   plan trimming, cap bookkeeping, and hotspot-to-region attribution on synthetic
   landscapes.
-- `autopipeline_fixed_latency_sim_test.py` (native_sim): plain native sim emulates a
+- `auto_pipeline_fixed_latency_sim_test.py` (native_sim): plain native sim emulates a
   fixed latency and ignores start/max. `pipeline_latency_test.py`'s gate test also runs
   it, both directly and through `pypelinec --sim --comb`, with the compiler import
   forbidden.
-- `autopipeline_constraints_test.py` (build_report): fixed and start regions are built
+- `auto_pipeline_constraints_test.py` (build_report): fixed and start regions are built
   exactly and pass 2 is skipped, and a `max_latency` cap stops an unreachable goal
   promptly.
-- `autopipeline_c_pragma_test.py` (build_report): C `#pragma AUTOPIPELINE N` under
+- `auto_pipeline_c_pragma_test.py` (build_report): C `#pragma AUTOPIPELINE N` under
   `--comb`.
-- `self_check_fixed_autopipeline_test.py` (both native_vs_vhdl categories): compares
+- `self_check_fixed_auto_pipeline_test.py` (both native_vs_vhdl categories): compares
   the native delay line against the `--comb` VHDL's fixed registers, and against the
   planned sweep's enforced region.
 
-## AUTOMCP coverage
+## AUTO_MULTI_CYCLE coverage
 
-`AUTOMCP(latency= / start_latency= / max_latency=)` and the multi-cycle stream wrappers:
-- `automcp_unit_test.py` (unit):
+`AUTO_MULTI_CYCLE(latency= / start_latency= / max_latency=)` and the multi-cycle stream wrappers:
+- `auto_multi_cycle_unit_test.py` (unit):
   - constructor validation and `.latency` resolution;
   - construction-site keys and the inline-construction guard;
   - design-read vs. compiler-read tracking;
   - identity that follows the resolved count;
   - `SYN` constraint overrides and the timing-params hash;
   - `SWEEP` report matching and grow-only feedback on a synthetic Vivado report;
-  - elaboration into `Logic.automcp_tuples`, where a cache re-parse changes the count and
+  - elaboration into `Logic.auto_multi_cycle_tuples`, where a cache re-parse changes the count and
     renames the holding entity;
-  - an unread tag refused by `SYN.CHECK_AUTOMCP_TAGS_READ`.
-- `stream_interface_automcp_test.py` (native_sim and synth `--comb`): the handshake waits
+  - an unread tag refused by `SYN.CHECK_AUTO_MULTI_CYCLE_TAGS_READ`.
+- `stream_auto_multi_cycle_test.py` (native_sim and synth `--comb`): the handshake waits
   `.latency + 1` cycles for `start_latency=` and fixed `latency=`, and the Xilinx-part
   `--comb` build emits both `set_multicycle_path` constraints.
-- `stream_interface_mcp_test.py` (native_sim and synth `--comb`): the fixed
-  `make_stream_interface_mcp`.
-- `automcp_sweep_test.py` (build_report, **real Vivado**, `automcp_sweep_design.py`):
+- `stream_multi_cycle_test.py` (native_sim and synth `--comb`): the fixed
+  `make_stream_multi_cycle`.
+- `auto_multi_cycle_sweep_test.py` (build_report, **real Vivado**, `auto_multi_cycle_sweep_design.py`):
   - from the default start, the sweep raises the count until the path meets timing;
     pass 2 re-elaborates, the final XDC carries the count, and the pipelined native
     `--sim`'s `sim_assert` checks the handshake;
@@ -147,7 +147,7 @@ separate output directories and different `PYTHONHASHSEED` values. It compares a
 VHDL paths and bytes, checks name length and source/index coverage, and imports and
 elaborates the real top with GHDL. `name_index_test.py` covers source tracing,
 same-spelling definitions that must coexist, and a deliberately forced identity
-collision that must fail clearly. Existing AUTOFSM and native-versus-VHDL tests
+collision that must fail clearly. Existing AUTO_FSM and native-versus-VHDL tests
 exercise generated helpers and specialization reuse in real hardware builds.
 
 ## `native_vs_vhdl_sim` probe rules
@@ -257,7 +257,7 @@ Each category module can also run standalone, e.g.
   cells. The exact 720 MHz final VHDL passes 51 products with continuous data,
   bubbles, ordering, and exact 60-clock latency.
 
-- `src/tests/pypeline_tests/divider_qor_bench.py` -- opt-in sky130 autopipelining
+- `src/tests/pypeline_tests/divider_qor_bench.py` -- opt-in sky130 auto-pipelining
   benchmark and correctness gate, also excluded from `run_all.py` because a full gate
   Divider sweep can take about an hour. It has unchanged-logic arithmetic and gate-level
   143 MHz fixtures under `qor/divider/`. A normal run records a machine-readable

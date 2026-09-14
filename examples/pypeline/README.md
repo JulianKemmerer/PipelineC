@@ -4,7 +4,7 @@ See the [Pypeline language guide](../../docs/pypeline_guide.md) and
 [getting started](../../docs/README.md) for background.
 
 * [blink.py](blink.py) — blink an LED, the classic first hardware design (`@MAIN`, `Reg[T]`).
-* [pipeline.py](pipeline.py) — a minimal pure-function pipeline (float adder) showing autopipelining.
+* [pipeline.py](pipeline.py) — a minimal pure-function pipeline (float adder) showing auto-pipelining.
 * [vga_test_pattern.py](vga_test_pattern.py) — full worked example from the language guide: a VGA
   colour test pattern, driven to real board pins and viewable live in native simulation.
 * [vga_donut.py](vga_donut.py) — a spinning 3D donut rendered to VGA.

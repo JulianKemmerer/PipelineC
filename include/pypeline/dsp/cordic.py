@@ -33,16 +33,16 @@ The output is a signed 16-bit fraction of a circle: the full int16 range
 (1907 Hz at 125 MSPS). Internally the angle rail carries 24 fractional bits.
 
 STRUCTURE: a hand-built pipeline with one register stage per iteration, NOT an
-unrolled combinational blob and NOT an AUTOFSM.
+unrolled combinational blob and NOT an AUTO_FSM.
 
   * Combinational would put `n_iters` dependent add/subtracts in one path. Every
     testbench and synthesis top in the PDW project builds with `--comb` (no
-    autopipelining), where that becomes the design's critical path outright.
-  * AUTOFSM shares by entity, so 14 iterations x 3 rails = 42 same-width adds
+    auto-pipelining), where that becomes the design's critical path outright.
+  * AUTO_FSM shares by entity, so 14 iterations x 3 rails = 42 same-width adds
     folded onto one unit -- 42 states, and src/tests/pypeline_tests/synth_tests.py
     documents the min-area search as superlinear in folds (it once hung for
     hours; SWEEP_LARGE_SCHEDULE_FOLDS is 64). Spending that on sharing a 26-bit
-    adder is a bad trade. AUTOFSM earns its keep sharing multipliers and
+    adder is a bad trade. AUTO_FSM earns its keep sharing multipliers and
     dividers, which is what the qor/ benchmarks share.
 
 One register stage per iteration keeps the critical path at a single add/sub

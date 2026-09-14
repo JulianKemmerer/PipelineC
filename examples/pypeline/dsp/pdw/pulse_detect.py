@@ -48,11 +48,11 @@ the single source of truth for both numbers (the README's L_sm placeholder of
 line drains off it (see make_delay_line).
 
 This is a genuine recurrence (state/width/peak each depend on their own
-previous value), so it is NOT run through AUTOPIPELINE/make_stream_pipeline
+previous value), so it is NOT run through AUTO_PIPELINE/make_stream_auto_pipeline
 like the pure feedforward dsp/ blocks -- the same inherent limit dc_block.py
 documents for its IIR loop. The critical path is one compare feeding a mux, so
 this isn't expected to need it; if it ever misses timing, above_high/below_low
-are pure feedforward and can be moved into an autopipelined comparator stage
+are pure feedforward and can be moved into an auto-pipelined comparator stage
 ahead of the FSM.
 
 `toa` is implemented: a free-running counter of this block's own accepted
@@ -970,7 +970,7 @@ def make_pulse_detect(
     behaviour, where the FIFO was pushed and drained every cycle and so only
     ever showed its own incidental 2-cycle latency regardless of depth). It
     must exceed get_path_b_delay(); the default 64 leaves ample room for a
-    real build's AUTOPIPELINE latencies, and make_delay_line sim_asserts if it
+    real build's AUTO_PIPELINE latencies, and make_delay_line sim_asserts if it
     is ever too small. N_pre/N_post margins are still unbuilt and belong to
     the storage engine -- N_pre will deepen this hold window further.
 
@@ -1117,7 +1117,7 @@ def make_pulse_detect(
         # the running estimate, plus a seed so the estimator can start from
         # zero. This is the standard sample-excision guard a CFAR noise
         # estimator uses, and it needs no knowledge of the pipeline latency --
-        # which matters, because those latencies are AUTOPIPELINE results that
+        # which matters, because those latencies are AUTO_PIPELINE results that
         # deliberately are not available at elaboration time.
         guard_val: noise_acc_t = (est_now << noise_guard_shift) + noise_seed
         looks_like_noise: uint1_t = mag_now <= guard_val
@@ -1190,7 +1190,7 @@ def make_pulse_detect(
     # comment for why): reading .latency triggers pipelinec's pin-and-confirm
     # loop, so a caller that merely CONSTRUCTS this block must not pay for it.
     # pdw_latency/gate_latency are fixed Reg stages inside the FSM (not
-    # affected by autopipelining, since the FSM itself is never autopipelined
+    # affected by auto-pipelining, since the FSM itself is never auto-pipelined
     # -- see make_pulse_detect_fsm's docstring on why it's a genuine
     # recurrence), and are re-exported from there rather than restated.
     pulse_detect.pdw_latency = detect_fsm.pdw_latency

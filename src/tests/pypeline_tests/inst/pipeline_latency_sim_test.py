@@ -5,7 +5,7 @@ import sys
 
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), "../../.."))
 from pypeline import (
-    AUTOPIPELINE,
+    AUTO_PIPELINE,
     MAIN,
     NamedTuple,
     Reg,
@@ -79,7 +79,7 @@ def mixed(value: sample_t) -> sample_t:
 input_sample: Wire[sample_t]
 output_sample: Wire[sample_t]
 ap_output_sample: Wire[sample_t]
-ap = AUTOPIPELINE(mixed)
+ap = AUTO_PIPELINE(mixed)
 
 
 @MAIN(100.0)

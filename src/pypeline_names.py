@@ -94,14 +94,14 @@ def stable_key(value, seen=frozenset()):
             stable_key(value.args, seen),
             stable_key(value.keywords, seen),
         )
-    if getattr(value, "_is_automcp_tag", False) is True:
-        # Unlike an AUTOPIPELINE's, an AUTOMCP's resolved cycle count IS
+    if getattr(value, "_is_auto_multi_cycle_tag", False) is True:
+        # Unlike an AUTO_PIPELINE's, an AUTO_MULTI_CYCLE's resolved cycle count IS
         # identity: the function holding its registers bakes .latency-derived
         # constants (the handshake counter) into its logic, so a pin-and-
         # confirm pass that changes the count must rename that entity rather
         # than reuse the previous pass's same-named file.
         return (
-            "_is_automcp_tag",
+            "_is_auto_multi_cycle_tag",
             value.canonical_key,
             value.fixed_latency,
             value.start_latency,
@@ -109,9 +109,9 @@ def stable_key(value, seen=frozenset()):
             value._ncycles,
         )
     if callable(value):
-        for attr in ("_is_autopipeline_pragma", "_is_autofsm_pragma"):
+        for attr in ("_is_auto_pipeline_pragma", "_is_auto_fsm_pragma"):
             if getattr(value, attr, False):
-                # An AUTOPIPELINE's constructor latency constraint is
+                # An AUTO_PIPELINE's constructor latency constraint is
                 # identity (two tags over one func with different latency=
                 # must name differently); its discovered/served .latency is
                 # not -- that changes during the compiler's pin-and-confirm
@@ -127,7 +127,7 @@ def stable_key(value, seen=frozenset()):
                         )
                         if getattr(value, attr_name, None) is not None
                     )
-                    if attr == "_is_autopipeline_pragma"
+                    if attr == "_is_auto_pipeline_pragma"
                     else (
                         getattr(value, "max_latency", None),
                         getattr(value, "register_output", True),
@@ -281,8 +281,8 @@ def value_description(value, seen=frozenset()):
             identity=identity(value),
         )
     if callable(value):
-        if getattr(value, "_is_autopipeline_pragma", False) or getattr(
-            value, "_is_autofsm_pragma", False
+        if getattr(value, "_is_auto_pipeline_pragma", False) or getattr(
+            value, "_is_auto_fsm_pragma", False
         ):
             return NameInfo(
                 "wrapper",
