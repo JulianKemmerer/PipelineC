@@ -102,7 +102,7 @@ uint1_t blink()
 | `AUTO_PIPELINE`: user-visible automatic pipeline depths | [Yes](docs/pypeline_guide.md#latency-reading-back-the-discovered-pipeline-depth) | No |
 | Multi-cycle path constraints | [Yes](docs/pypeline_guide.md#multi-cycle-paths-multi_cycle) | Yes |
 | `AUTO_MULTI_CYCLE`: automatic multi-cycle path tuning (New) | [Yes](docs/pypeline_guide.md#auto_multi_cycle-new) | No |
-| `AUTO_COMB_SHARE`: automatic combinational resource sharing (New, experimental) | [Yes](docs/pypeline_guide.md#auto_comb_share-new-experimental) | No |
+| `AUTO_COMB_SHARE` / `AUTO_COMB_UNSHARE`: combinational area / delay optimization (New, experimental) | [Yes](docs/pypeline_guide.md#auto_comb_share-new-experimental) | No |
 | `AUTO_FSM`: automatic resource-shared state machines (New, experimental) | [Yes](docs/pypeline_guide.md#auto_fsm-new-experimental) | No |
 | SoC system bus helpers | No | Yes |
 | Generates software Helper Code | [Yes](docs/pypeline_guide.md#host-side-generated-types) | Yes |

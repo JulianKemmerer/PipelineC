@@ -993,6 +993,15 @@ function, which permits composition with `AUTO_PIPELINE` and stream factories.
 Purity and exact typed rewrites live in `AUTO_COMB_SHARE`/`HLS`; see
 [`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md).
 
+`AUTO_COMB_UNSHARE` reuses the lightweight signature/forwarding contract with
+`_is_auto_comb_unshare_pragma`, a distinct canonical identity, and a delay-first
+objective. Both tags stay visible to elaboration; mixed nesting applies in
+written order, while repeating the same tag is idempotent. The selected pure
+function is still zero-cycle. Timing uses read-only caches/estimates, without
+new finalist synthesis jobs. The two stream factories share one elastic shell
+(latency 2, II=1); UNSHARE exposes `.acu`. See
+[`AUTO_COMB_UNSHARE_DESIGN.md`](AUTO_COMB_UNSHARE_DESIGN.md).
+
 ### `AUTO_FSM(func)` — Resource-Shared State Machines with `.latency`
 
 Where `AUTO_PIPELINE(func)` builds
@@ -1000,7 +1009,8 @@ one full copy of `func`'s hardware cut by serial register slices (N slices give
 N clocks of latency and N+1 combinational regions; initiation interval 1,
 extra register area), `AUTO_FSM(func)` builds a resource-shared state machine
 and runs `func` over several cycles. Its default area search includes the same
-combinational candidates as `AUTO_COMB_SHARE`, scored by complete FSM area.
+combinational candidates as `AUTO_COMB_SHARE`, plus bounded delay-ranked
+`AUTO_COMB_UNSHARE` finalists, scored by complete FSM area.
 Twelve identical adds can become one adder used in twelve states; unsharing is
 also considered when mux/register overhead or a latency cap warrants it.
 
@@ -1924,6 +1934,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `sim_finish()` | simulation-only stop signal — raises `SimFinish` in native sim (caught by `pypeline_sim.py`'s CLI run loop), elaborates to VHDL `std.env.finish;` (see `PY_TO_LOGIC_DESIGN.md`) |
 | `AUTO_PIPELINE(func, latency=, start_latency=, max_latency=)` | Callable tag: calls through it may be auto-pipelined inside register/feedback contexts; `.latency` reads the built register count; optional fixed / starting / maximum latency (equivalent to `#pragma AUTOPIPELINE [N]`) |
 | `AUTO_COMB_SHARE(func)` | Experimental area-first combinational callable; same types/bits, zero added cycles, `.func`, `.latency == 0`; composes with pipeline/MCP/FSM wrappers |
+| `AUTO_COMB_UNSHARE(func)` | Experimental delay-first combinational callable; same zero-cycle contract, allowing area growth; cached timing/estimates, no extra selection synthesis |
 | `AUTO_MULTI_CYCLE` | `AUTO_MULTI_CYCLE(latency= / start_latency= / max_latency=)` multi-cycle tag whose count the throughput sweep raises; `.start`/`.end` like `MULTI_CYCLE`, `.latency` read-tracked (see [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle--tool-tuned-multi-cycle-path-tag)) |
 | `MULTI_CYCLE` / `_MultiCycleTag` / `_MultiCycleRole` | `MULTI_CYCLE[ncycles]` tag; `.start`/`.end` attach to `Reg[T, tag]` declarations to relax setup timing between them (equivalent to `#pragma MULTI_CYCLE`) |
 | `wires` | Marks a function as pure rewiring/bit-casting with no real delay; implies `@hw_func`; stacks with `@MAIN` in either order (equivalent to `#pragma FUNC_WIRES`) |

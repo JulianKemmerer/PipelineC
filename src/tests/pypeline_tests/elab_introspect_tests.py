@@ -18,6 +18,8 @@ from common import INST_DIR, Test, main
 
 def get_tests() -> list:
     tests = []
+    tests.append(Test(name="auto_comb_unshare_test", category="elab_introspect",
+                      cmd=[INST_DIR / "auto_comb_unshare_test.py"]))
     tests.append(Test(name="auto_comb_share_test", category="elab_introspect",
                       cmd=[INST_DIR / "auto_comb_share_test.py"]))
     # Regression-tests a FuncLogicLookupTable closure-callable naming

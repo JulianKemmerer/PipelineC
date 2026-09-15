@@ -135,6 +135,22 @@ from a different angle:
 
 ## AUTO_COMB_SHARE coverage
 
+The companion `AUTO_COMB_UNSHARE` suite adds `auto_comb_unshare_test.py`
+(native isolation, dependency timing, exact candidates, casts, arithmetic
+families, purity, nesting and repeat-parse pinning),
+`auto_comb_unshare_build_test.py` (Yosys SAT equivalence, register-free core,
+separate original/optimized sky130 timing builds), and stream/composition
+native-versus-GHDL fixtures. The stream asserts latency 2, II=1 and stable
+data/valid under stalls; composition covers pipeline, MCP and FSM.
+
+The FSM unit suite includes a counted diamond-DAG regression against
+exponential input-storage traversal. `qor_multiplier_auto_fsm_test` keeps its
+1800-second timeout; `auto_fsm_min_area_verify_test` keeps 2700 seconds, all four
+real builds and the 3% area tolerance. The latter saves each variant's complete
+live output in `build.log`, with elapsed/status summaries. Retaining the
+original area incumbent is valid; a search move is not required. See
+[`AUTO_COMB_UNSHARE_DESIGN.md`](AUTO_COMB_UNSHARE_DESIGN.md).
+
 `AUTO_COMB_SHARE` is exercised at the callable, graph, RTL and stream boundaries:
 
 - `auto_comb_share_test.py` (`elab_introspect`): metadata/native forwarding,

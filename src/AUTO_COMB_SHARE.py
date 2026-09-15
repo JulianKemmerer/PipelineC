@@ -313,19 +313,21 @@ def _implementation_seeds(func, entity, dag, parser_state, elaborator):
     return seeds
 
 
-def prepare(func, parser_state, elaborator, strict=True):
+def prepare(func, parser_state, elaborator, strict=True, objective="area"):
     """Materialize graph alternatives once per parser state for ACS and FSM."""
     import SYN
 
-    if getattr(func, "_is_auto_comb_share_pragma", False):
+    if (getattr(func, "_is_auto_comb_share_pragma", False)
+            or getattr(func, "_is_auto_comb_unshare_pragma", False)):
         chosen = BUILD_FUNC(func, parser_state, elaborator)
-        return prepare(chosen, parser_state, elaborator, strict)
+        return prepare(chosen, parser_state, elaborator, strict, objective)
     logic = elaborator._elaborate_live_func(getattr(func, "__name__", "comb"), func)
     entity = logic.func_name
-    table = getattr(parser_state, "pypeline_comb_share_candidates", None)
+    table_attr = "pypeline_comb_unshare_candidates" if objective == "delay" else "pypeline_comb_share_candidates"
+    table = getattr(parser_state, table_attr, None)
     if table is None:
         table = {}
-        parser_state.pypeline_comb_share_candidates = table
+        setattr(parser_state, table_attr, table)
     if entity in table:
         return table[entity]
     AUTO_FSM._RESOLVE_BUILTIN_SUBMODULES(parser_state, entity)
@@ -342,6 +344,7 @@ def prepare(func, parser_state, elaborator, strict=True):
 
     callables = AUTO_FSM._entity_callables(parser_state)
     if any(id(callables.get(e)) in pypeline._scoped_funcs
+           and not getattr(callables.get(e), "_hls_primitive_scope", False)
            for e in AUTO_FSM._subtree_entities(parser_state, entity)):
         table[entity] = [(func, {"moves": [], "unsupported": "scoped operator implementations retained"})]
         return table[entity]
@@ -359,7 +362,17 @@ def prepare(func, parser_state, elaborator, strict=True):
     if len(dag["nodes"]) > HLS.MAX_NODES:
         table[entity] = [(func, {"moves": [], "limits": ["graph node limit"]})]
         return table[entity]
-    seeds = _implementation_seeds(func, entity, dag, parser_state, elaborator)
+    seed_cache = getattr(parser_state, "pypeline_hls_seeds", None)
+    if seed_cache is None:
+        seed_cache = {}
+        parser_state.pypeline_hls_seeds = seed_cache
+    if entity not in seed_cache:
+        seed_cache[entity] = _implementation_seeds(func, entity, dag, parser_state, elaborator)
+    seeds = list(seed_cache[entity])
+    if objective == "delay":
+        import HLS_SPEED
+
+        seeds.extend(HLS_SPEED.implementation_seeds(func, dag, parser_state, elaborator))
     dependencies = set(AUTO_FSM._subtree_entities(parser_state, entity))
     for seed, _moves in seeds:
         for node in seed["nodes"].values():
@@ -370,12 +383,17 @@ def prepare(func, parser_state, elaborator, strict=True):
         if child is not None:
             dependency_shapes.append((name, child.submodule_instances,
                                       child.wire_driven_by, child.wire_to_c_type))
-    key = (HLS.VERSION, entity, HLS.fingerprint(_semantic_graph(dag)),
+    import HLS_TIMING
+
+    key = (HLS.VERSION, HLS_TIMING.VERSION, objective, entity, HLS.fingerprint(_semantic_graph(dag)),
            HLS.fingerprint(dependency_shapes),
            getattr(SYN.SYN_TOOL, "__name__", None), parser_state.part,
            getattr(SYN.DEVICE_MODELS, "SELECTED_LIBRARY", None), AUTO_FSM.FORCE_ABSTRACT_AREA)
     if key not in _PLANS:
-        ranked, report = HLS.search(dag, parser_state, seeds)
+        from HLS_TIMING import TimingModel
+
+        timing = TimingModel(parser_state) if objective == "delay" else None
+        ranked, report = HLS.search(dag, parser_state, seeds, timing=timing)
         # Keep the written graph as candidate zero, plus distinct alternatives.
         original_key = HLS.fingerprint(dag)
         alternatives = [(g, moves) for g, moves in ranked if HLS.fingerprint(g) != original_key]
@@ -396,6 +414,11 @@ def prepare(func, parser_state, elaborator, strict=True):
         original_cost = HLS.area(dag, parser_state)
         scored = [(g, moves, HLS.area(g, parser_state)) for g, moves in selected]
         report["area_units"] = "um2" if AUTO_FSM._area_unit_scale(parser_state) != 1.0 else "abstract"
+        report["objective"] = objective
+        if timing:
+            report.update(timing.report(dag))
+            report["delay_before"] = report["delay"]
+            report["timing_snapshot"] = copy.deepcopy(timing.snapshot)
         _PLANS[key] = (copy.deepcopy(scored), report, original_cost)
     alternatives, report, (original_area, tally) = _PLANS[key]
     results = [(func, dict(report, moves=[], area=original_area, area_before=original_area, coverage=tally))]
@@ -404,29 +427,56 @@ def prepare(func, parser_state, elaborator, strict=True):
     for graph, moves, (cost, coverage) in alternatives:
         ports = [(p, logic.wire_to_c_type[p]) for p in logic.inputs]
         graph_key = HLS.fingerprint((entity, ports, _semantic_graph(graph)))
-        name = "auto_comb_share_" + graph_key[:20]
+        name = ("auto_comb_unshare_" if objective == "delay" else "auto_comb_share_") + graph_key[:20]
         generated = CombEmitter(func, entity, graph, parser_state).generate(name)
+        from operators.comb_share import _primitive_math
+
+        generated = _primitive_math(generated)
         generated._hls_candidate = True
         new_logic = elaborator._elaborate_live_func(name, generated)
         AUTO_FSM._RESOLVE_BUILTIN_SUBMODULES(parser_state, new_logic.func_name)
-        results.append((generated, dict(report, moves=moves, area=cost,
-                                       area_before=original_area, coverage=coverage)))
+        info = dict(report, moves=moves, area=cost, area_before=original_area, coverage=coverage)
+        if objective == "delay":
+            # Score emitted hardware, including actual cast/cleanup/helper
+            # structure. Snapshot and final choice stay pinned across reparses.
+            from HLS_TIMING import TimingModel
+
+            actual = HLS.prune(AUTO_FSM._resolve_inlined(AUTO_FSM.BUILD_DAG(
+                parser_state, new_logic.func_name, {}, float("inf"))))
+            model = TimingModel(parser_state, report["timing_snapshot"])
+            info.update(model.report(actual))
+            info["area"], info["coverage"] = HLS.area(actual, parser_state)
+            report["timing_snapshot"].update(model.snapshot)
+        results.append((generated, info))
+    if objective == "delay":
+        results[1:] = sorted(results[1:], key=lambda item: (item[1]["delay"], item[1]["area"]))
     return results
 
 
 def BUILD_FUNC(tag, parser_state, elaborator):
-    candidates = prepare(tag.func, parser_state, elaborator)
+    unshare = getattr(tag, "_is_auto_comb_unshare_pragma", False)
+    objective = "delay" if unshare else "area"
+    label = "AUTO_COMB_UNSHARE" if unshare else "AUTO_COMB_SHARE"
+    candidates = prepare(tag.func, parser_state, elaborator, objective=objective)
     # Strictly lower area wins; preserve the original when costs tie.
-    chosen, report = min(candidates, key=lambda item: item[1].get("area", float("inf")))
-    reports = getattr(parser_state, "pypeline_comb_share_reports", None)
+    if unshare:
+        original_delay = candidates[0][1].get("delay", float("inf"))
+        improving = [item for item in candidates[1:] if item[1].get("delay", float("inf")) < original_delay]
+        chosen, report = min(improving, key=lambda item: (item[1]["delay"], item[1]["area"])) if improving else candidates[0]
+    else:
+        chosen, report = min(candidates, key=lambda item: item[1].get("area", float("inf")))
+    attr = "pypeline_comb_unshare_reports" if unshare else "pypeline_comb_share_reports"
+    reports = getattr(parser_state, attr, None)
     if reports is None:
         reports = {}
-        parser_state.pypeline_comb_share_reports = reports
+        setattr(parser_state, attr, reports)
     if tag.canonical_key not in reports:
         reports[tag.canonical_key] = report
         score = (f"estimated area {report['area_before']:.2f} -> {report['area']:.2f} "
                  f"{report['area_units']}" if "area" in report else "area unavailable")
-        print(f"AUTO_COMB_SHARE {tag.canonical_key}: {score}; "
+        if unshare and "delay" in report:
+            score = f"estimated delay {report['delay_before']:.2f} -> {report['delay']:.2f} {report['delay_units']}; " + score
+        print(f"{label} {tag.canonical_key}: {score}; "
               f"{report.get('candidates', 1)} candidate(s); "
               + (", ".join(report["moves"]) or "original retained")
               + ("; " + report["unsupported"] if report.get("unsupported") else "")
@@ -437,7 +487,8 @@ def BUILD_FUNC(tag, parser_state, elaborator):
 def DUMP_GENERATED_SOURCE(parser_state, out_dir):
     if not out_dir:
         return
-    entries = getattr(parser_state, "pypeline_comb_share_candidates", {})
+    entries = dict(getattr(parser_state, "pypeline_comb_share_candidates", {}))
+    entries.update({"delay:" + k: v for k, v in getattr(parser_state, "pypeline_comb_unshare_candidates", {}).items()})
     sources = {fn.__name__: fn._auto_comb_share_generated_src
                for values in entries.values() for fn, _ in values
                if hasattr(fn, "_auto_comb_share_generated_src")}
@@ -452,4 +503,10 @@ def DUMP_GENERATED_SOURCE(parser_state, out_dir):
         import json
 
         with open(os.path.join(out_dir, "auto_comb_share_report.json"), "w") as output:
+            json.dump(reports, output, indent=2, sort_keys=True)
+    reports = getattr(parser_state, "pypeline_comb_unshare_reports", {})
+    if reports:
+        import json
+
+        with open(os.path.join(out_dir, "auto_comb_unshare_report.json"), "w") as output:
             json.dump(reports, output, indent=2, sort_keys=True)

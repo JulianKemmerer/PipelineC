@@ -13,7 +13,12 @@ def make_stream_auto_comb_share(func):
     occupancy logic, and never through the computation. Each boundary holds
     its data and valid bit until the following stage can accept it.
     """
-    acs = func if isinstance(func, AUTO_COMB_SHARE) else AUTO_COMB_SHARE(func)
+    acs = func if type(func) is AUTO_COMB_SHARE else AUTO_COMB_SHARE(func)
+    return _make_stream_auto_comb(acs)
+
+
+def _make_stream_auto_comb(acs):
+    """Shared elastic shell; the passed tag determines the optimization."""
     (in_type,) = hw_arg_types(acs)
     out_type = hw_return_type(acs)
     in_intrf = make_stream_interface(in_type)

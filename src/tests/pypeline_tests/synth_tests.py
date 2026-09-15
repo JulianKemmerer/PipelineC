@@ -20,6 +20,7 @@ from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINEC, QOR_DIR, Test, ma
 # (filename, source_dir, extra_args)
 SYNTH_TEST_FILES = [
     ("self_check_stream_auto_comb_share_test.py", INST_DIR, []),
+    ("self_check_stream_auto_comb_unshare_test.py", INST_DIR, []),
     # By far the slowest test in the suite (a ~48-stage unrolled float32
     # divider under real sky130 synth+STA, see float_ops_div_test.py's own
     # comment) -- listed FIRST so run_all.py's FIFO dispatch starts it

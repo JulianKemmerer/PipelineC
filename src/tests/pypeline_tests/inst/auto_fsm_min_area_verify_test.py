@@ -1,6 +1,5 @@
 #!/usr/bin/env python3
-"""AUTO_FSM minimum-area verification: does the area search MOVE, and is where it
-lands actually the smallest design?
+"""AUTO_FSM minimum-area verification against independently built alternatives.
 
 auto_fsm_area_sweep_compare_test.py already asks the weaker question -- "did the
 search make things worse than sharing everything?" -- and every in-repo design
@@ -38,6 +37,7 @@ import os
 import re
 import subprocess
 import sys
+import time
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
@@ -64,13 +64,19 @@ def fail(msg):
 def run_build(out_dir, extra):
     cmd = [sys.executable, PYPELINEC, DIV_DESIGN, "--out_dir", out_dir] + extra
     print("Running:", " ".join(cmd), flush=True)
-    result = subprocess.run(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
-    )
+    os.makedirs(out_dir, exist_ok=True)
+    log_path = os.path.join(out_dir, "build.log")
+    started = time.monotonic()
+    print("Live build log:", log_path, flush=True)
+    with open(log_path, "w") as log:
+        result = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT)
+    with open(log_path) as log:
+        output = log.read()
+    print(f"Build finished: status={result.returncode}, elapsed={time.monotonic() - started:.1f}s, log={log_path}", flush=True)
     if result.returncode != 0:
-        print(result.stdout[-4000:])
-        fail(f"build {extra} exited nonzero ({result.returncode})")
-    return result.stdout
+        print(output[-4000:])
+        fail(f"build {extra} exited nonzero ({result.returncode}); full log: {log_path}")
+    return output
 
 
 def top_cell_count(out_dir):

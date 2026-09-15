@@ -14,7 +14,7 @@ BEAM_WIDTH = 4
 MAX_EMITTED_CANDIDATES = 8
 MAX_ROUNDS = 8
 MAX_BDD_NODES = 8192
-VERSION = 4
+VERSION = 6
 
 
 def frozen(value):
@@ -118,6 +118,10 @@ def mux(dag, cond, yes, no, ctype, yes_casts=(), no_casts=()):
 
 
 def cast(dag, ref, chain, ctype):
+    source_type = (dag["nodes"][ref[1]]["out_type"] if ref[0] == "node"
+                   else ref[2] if ref[0] == "lit" else None)
+    if source_type == ctype and all(t == ctype for t in chain):
+        return list(ref)
     return add_node(dag, {
         "kind": "copy", "op": {"kind": "copy"}, "entity": "hls_cast_" + ctype,
         "delay_du": 0, "out_type": ctype, "port_types": [ctype],
@@ -378,8 +382,17 @@ def algebra_candidates(dag):
                 yield "integer factoring", common_expressions(trial)
 
 
-def search(dag, parser_state, seeds=()):
-    """Return area-ranked alternatives, including uphill shapes for FSM scoring."""
+def search(dag, parser_state, seeds=(), timing=None):
+    """Bounded objective-ranked search; timing=None retains area-first behavior."""
+    costs = {}
+
+    def rank(item):
+        graph = item[0]
+        key = fingerprint(graph)
+        if key not in costs:
+            a = area(graph, parser_state)[0]
+            costs[key] = ((timing.report(graph)["delay"], a) if timing else (a,)) + (len(graph["nodes"]), key)
+        return costs[key]
     original = prune(copy.deepcopy(dag))
     cleaned = common_expressions(original)
     graphs = {fingerprint(original): (original, [])}
@@ -399,6 +412,11 @@ def search(dag, parser_state, seeds=()):
                 break
             try:
                 generators = (factor_candidates(current), share_candidates(current), algebra_candidates(current))
+                if timing is not None:
+                    import HLS_SPEED
+
+                    generators = (HLS_SPEED.speculate(current), HLS_SPEED.balanced(current),
+                                  HLS_SPEED.expand(current), factor_candidates(current))
                 for generator in generators:
                     for label, trial in generator:
                         if len(trial["nodes"]) > MAX_NODES:
@@ -416,8 +434,8 @@ def search(dag, parser_state, seeds=()):
                 reasons.add(str(e) or "predicate recursion limit")
         if not trials or len(graphs) >= MAX_CANDIDATES:
             break
-        beam = sorted(trials, key=lambda p: (area(p[0], parser_state)[0], len(p[0]["nodes"]), fingerprint(p[0])))[:BEAM_WIDTH]
+        beam = sorted(trials, key=rank)[:BEAM_WIDTH]
     else:
         reasons.add("round limit")
-    ranked = sorted(graphs.values(), key=lambda p: (area(p[0], parser_state)[0], len(p[0]["nodes"]), fingerprint(p[0])))
+    ranked = sorted(graphs.values(), key=rank)
     return ranked, {"candidates": len(graphs), "limits": sorted(reasons)}

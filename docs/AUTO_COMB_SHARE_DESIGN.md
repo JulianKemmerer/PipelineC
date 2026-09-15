@@ -25,7 +25,7 @@ MCP timing constraints retain their Vivado requirement.
 
 | Resource allocation | 0 added cycles | N cycles |
 |---|---|---|
-| No sharing transformation | Original combinational function | `AUTO_PIPELINE`, `AUTO_MULTI_CYCLE` |
+| Parallel / unsharing | Original; `AUTO_COMB_UNSHARE` | `AUTO_PIPELINE`, `AUTO_MULTI_CYCLE`; optionally after UNSHARE |
 | Sharing transformation | `AUTO_COMB_SHARE` | `AUTO_FSM`; ACS followed by pipeline/MCP |
 
 Both pipeline insertion and MCP divide computation temporally: one inserts
@@ -33,6 +33,14 @@ registers, the other changes the permitted settling interval. Neither inherently
 shares the combinational hardware. ACS addresses spatial resource use; FSMs
 combine resource sharing with temporal scheduling. Throughput, buffering and
 timing targets are additional choices, not implied by these two axes.
+
+The inverse objective is [`AUTO_COMB_UNSHARE`](AUTO_COMB_UNSHARE_DESIGN.md):
+shorter estimated critical-path delay, permitting area growth. It shares the
+typed graph, purity, emission and estimation infrastructure, adds no core
+cycles and performs no extra selection synthesis. The guide groups both in
+one AUTO section. Mixed nesting applies inside out; identical rewrapping is
+idempotent. Default FSMs also consider bounded delay-ranked finalists, judged
+by total scheduled area rather than committing to the combinational winner.
 
 Purity is checked recursively before optimization: registers, feedback, global
 wires and temporal AUTO calls are rejected. Raw VHDL is rejected because its
@@ -48,6 +56,7 @@ This conservative fallback is distinct from accepting stateful input.
 | `src/pypeline.py` | Lightweight callable tag, annotations, identity and native forwarding |
 | `src/PY_TO_LOGIC.py` | Recognize ACS during live-call elaboration and substitute its selected callable |
 | `src/HLS.py` | Typed combinational DAG candidates, predicate proofs, rewrites, bounded area search |
+| `src/HLS_SPEED.py`, `src/HLS_TIMING.py` | Delay-oriented rewrite families and read-only critical-path timing snapshots |
 | `src/AUTO_COMB_SHARE.py` | Purity, candidate preparation, emission, per-build pinning and reports |
 | `include/pypeline/operators/comb_share.py` | Exact unsigned integer implementation alternatives |
 | `src/AUTO_FSM.py` | Shared DAG decoding, casts, type resolution, soft equivalents, area model and FSM scoring |
@@ -69,6 +78,10 @@ FSM operand-equivalence keys preserve shared subexpressions as a DAG, with
 memoized traversal, cached hashing and iterative structural equality. Hash
 collisions still require an exact comparison. This keeps heavily shared glue
 from expanding into exponentially repeated work during candidate scoring.
+Input-storage and output-pack reachability use shared visited sets as well;
+per-state input visitation prevents reconvergent carry-save glue from expanding
+as paths. Primitive-only generated helpers can be safely opened across nested
+objectives; arbitrary user operator scopes still use the conservative fallback.
 
 The original function is always candidate zero. `prepare` materializes candidates
 once per parser state. A process-local plan cache stores only plain graphs,
@@ -181,8 +194,10 @@ bit-exact contract makes native forwarding valid.
 
 Build output contains `auto_comb_share_report.json` for explicit ACS tags and
 `auto_comb_share_generated/*.py` for prepared alternatives (including those
-prepared for FSMs). Generated source uses injected callable/type names for
-inspection; it is not a standalone importable replacement module. Reports
+prepared for FSMs). UNSHARE alternatives share this source directory under distinct
+`auto_comb_unshare_*` names and write `auto_comb_unshare_report.json`. Generated
+source uses injected callable/type names for inspection; it is not a standalone
+importable replacement module. Reports
 include area before/after, units, measured/estimated coverage, moves, candidate
 count and limits. FSM schedule summaries report considered combinational
 candidates and the winning moves.

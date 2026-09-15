@@ -947,6 +947,8 @@ def encode_param_value(val) -> str:
         # fallback used here and anywhere a live compiler isn't available.)
         import inspect
 
+        if getattr(val, "_is_auto_comb_unshare_pragma", False):
+            return "AUTO_COMB_UNSHARE_" + encode_param_value(val.func)
         if getattr(val, "_is_auto_comb_share_pragma", False):
             return "AUTO_COMB_SHARE_" + encode_param_value(val.func)
         if getattr(val, "_is_auto_pipeline_pragma", False):
@@ -1599,10 +1601,10 @@ class AUTO_COMB_SHARE:
     latency = 0
 
     def __init__(self, func):
-        if isinstance(func, AUTO_COMB_SHARE):
+        if type(func) is type(self):
             func = func.func
         if not is_hw_func(func):
-            raise TypeError("AUTO_COMB_SHARE(func): func must be @hw_func-decorated")
+            raise TypeError(f"{type(self).__name__}(func): func must be @hw_func-decorated")
         self.func = func
         original = _inspect.unwrap(func)
         self.__name__ = getattr(original, "__name__", "auto_comb_share")
@@ -1610,7 +1612,7 @@ class AUTO_COMB_SHARE:
         self.__annotations__ = dict(getattr(original, "__annotations__", {}))
         self.__signature__ = _inspect.signature(original)
         if "return" not in self.__annotations__:
-            raise TypeError("AUTO_COMB_SHARE(func): an annotated return type is required")
+            raise TypeError(f"{type(self).__name__}(func): an annotated return type is required")
 
     @property
     def canonical_key(self):
@@ -1625,6 +1627,29 @@ class AUTO_COMB_SHARE:
         if "PY_TO_LOGIC" in _sys.modules:
             return self.canonical_key
         return f"AUTO_COMB_SHARE({self.func.__module__}.{self.__qualname__})"
+
+
+class AUTO_COMB_UNSHARE(AUTO_COMB_SHARE):
+    """Delay-first, bit-exact, zero-cycle implementation of a pure @hw_func.
+
+    Allows area growth, but adds no registers. Selection uses cached timing
+    and estimates, not extra synthesis runs. Native calls retain the original
+    semantics; explicit nesting with SHARE preserves the written order.
+    """
+
+    _is_auto_comb_share_pragma = False
+    _is_auto_comb_unshare_pragma = True
+
+    @property
+    def canonical_key(self):
+        import PY_TO_LOGIC
+
+        return "AUTO_COMB_UNSHARE_" + PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func)
+
+    def __repr__(self):
+        if "PY_TO_LOGIC" in _sys.modules:
+            return self.canonical_key
+        return f"AUTO_COMB_UNSHARE({self.func.__module__}.{self.__qualname__})"
 
 
 class AUTO_PIPELINE:

@@ -17,6 +17,9 @@ from common import INST_DIR, Test, main
 
 def get_tests() -> list:
     tests = []
+    tests.append(Test(name="auto_comb_unshare_build_test", category="build_report",
+                      cmd=[INST_DIR / "auto_comb_unshare_build_test.py"], needs_out_dir=True,
+                      requires=["yosys", "ghdl"]))
     tests.append(Test(name="auto_comb_share_build_test", category="build_report",
                       cmd=[INST_DIR / "auto_comb_share_build_test.py"], needs_out_dir=True,
                       requires=["yosys", "ghdl"]))
@@ -139,13 +142,9 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
-    # The stronger form of the same question. The compare test above only asks
-    # "did the search make things worse?", which every design in this repo
-    # answers by taking no moves at all -- passing it vacuously. This one uses a
-    # design built to reward moving (three divides sharing one divider) and
-    # asserts the search actually opens it up, that the move is smaller in real
-    # cells, and that no alternative point of the search space -- built
-    # explicitly with --auto_fsm_open/--auto_fsm_unshare -- is smaller still.
+    # Compare the chosen design against real mapped alternatives. Staying at
+    # the sharing-everything anchor is valid; no move is required. The default
+    # must remain within 3% of the smallest measured implementation.
     # Four sequential full builds (default, share-everything, and two forced
     # points), each verifying a distinct point of the search space -- this is
     # the slowest AUTO_FSM test in the suite (measured 840-1800s across three

@@ -694,6 +694,9 @@ def _callable_canonical_name(val, module_globals, _seen=None, _depth=0):
         return _callable_hash_fallback(val)
     _seen = _seen | {val_id}
 
+    if getattr(val, "_is_auto_comb_unshare_pragma", False):
+        inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
+        return _sanitize_vhdl_name(f"AUTO_COMB_UNSHARE_{inner}")
     if getattr(val, "_is_auto_comb_share_pragma", False):
         inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
         return _sanitize_vhdl_name(f"AUTO_COMB_SHARE_{inner}")
@@ -5464,7 +5467,8 @@ class FuncElaborator:
         functions reached through two differently-wrapped factories would
         otherwise collide on that shared alias.
         """
-        if getattr(func, "_is_auto_comb_share_pragma", False):
+        if (getattr(func, "_is_auto_comb_share_pragma", False)
+                or getattr(func, "_is_auto_comb_unshare_pragma", False)):
             import AUTO_COMB_SHARE
 
             generated = AUTO_COMB_SHARE.BUILD_FUNC(func, self.parser_state, self)

@@ -23,6 +23,7 @@ def _primitive_math(func):
     for op, left in tuple(pypeline._left_operator_registry):
         if pypeline._ctype_is_int(left):
             register_left_operator(op, pypeline._reconstruct_int_ctype(left), INFERRED, scope=func)
+    func._hls_primitive_scope = True
     return func
 
 
@@ -119,3 +120,20 @@ def make_distributed(common_t, left_t, right_t, out_t, bits):
         return result
 
     return _primitive_math(distributed)
+
+
+def make_carry_save_sum3(a_t, b_t, c_t, out_t, bits):
+    """Three modular operands, one carry-propagating addition instead of two."""
+    word_t = make_uint_t(bits)
+
+    @hw_func
+    def carry_save_sum3(a: a_t, b: b_t, c: c_t) -> out_t:
+        x: word_t = a
+        y: word_t = b
+        z: word_t = c
+        low: word_t = x ^ y ^ z
+        carry: word_t = ((x & y) | (x & z) | (y & z)) << 1
+        result: word_t = low + carry
+        return result
+
+    return _primitive_math(carry_save_sum3)

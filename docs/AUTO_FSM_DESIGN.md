@@ -809,6 +809,11 @@ and the `[type resolver: array reconstruction]` section of
 calls `AUTO_COMB_SHARE.prepare` to create exact alternatives through the shared
 `HLS` engine: CSE, exclusive sharing, factoring, constant arithmetic, bit-width
 reduction and decomposition. No explicit `AUTO_COMB_SHARE` tag is required.
+The delay objective of the same preparation path also exposes UNSHARE's
+speculation, balancing, carry-save and operator alternatives by default.
+Up to two delay-ranked finalists join the existing area-oriented candidates;
+they are still judged by complete FSM area and must satisfy timing/latency.
+No extra synthesis jobs are launched to select these combinational candidates.
 `SWEEP_MIN_AREA_SCHEDULE` runs the existing graph-local search
 (`_SWEEP_MIN_AREA_SCHEDULE`) on the original and eligible alternatives. Each
 choice is scheduled and bound independently, then priced with the same full
@@ -824,6 +829,17 @@ scheduling; see [the shared search limits](AUTO_COMB_SHARE_DESIGN.md#objective-l
 Explicit forced schedules and `--auto_fsm_no_area_sweep` bypass these choices.
 `AUTO_FSM(acs)` is valid too, but starts from ACS's explicitly selected graph;
 passing the original function gives the broader joint search.
+
+`AUTO_FSM(acu)` likewise starts from the explicitly selected zero-cycle graph.
+The shared timing snapshot and implementation limits are described in
+[`AUTO_COMB_UNSHARE_DESIGN.md`](AUTO_COMB_UNSHARE_DESIGN.md).
+
+Input-storage and output-pack reachability analyses treat reconvergent glue
+as a DAG. Shared visited sets avoid exponential path expansion, with per-state
+visitation where state affects field use. Operand-equivalence keys share a memo
+within one immutable FU-plan computation, never across mutable schedules.
+The diamond-graph unit regression bounds accesses deterministically. Large-fold
+messages are latency/search-size advisories, not correctness/timing failures.
 
 ```
 anchor = the plain share-everything schedule      # candidate zero and incumbent

@@ -2102,6 +2102,15 @@ Native/GHDL tests cover this wrapper and ACS composition with fixed/discovered
 pipelines, MCP and scheduled FSMs; see
 [`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md#stream-wrapper-and-simulation).
 
+`AUTO_COMB_UNSHARE` has exactly the same native forwarding and zero-latency
+semantics. It needs no new evaluator or simulation state; native runs do not
+import `HLS_SPEED`/`HLS_TIMING`. `make_stream_auto_comb_unshare` reuses the same
+elastic register shell, exposes `.acu`, and retains latency 2, II=1 and stall
+stability. Mixed SHARE/UNSHARE nesting changes compiled implementation order,
+not the native mathematical result. Its native/GHDL composition tests cover
+pipeline, FSM and MCP wrappers as well. See
+[`AUTO_COMB_UNSHARE_DESIGN.md`](AUTO_COMB_UNSHARE_DESIGN.md).
+
 #### AUTO_FSM call sites (non-`--comb` `--sim`)
 
 `AUTO_FSM(func)` produces a resource-shared state machine with initiation interval

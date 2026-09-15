@@ -389,7 +389,8 @@ def _entity_key_for_callable(parser_state, func):
     re-derivation: the elaborator's canonical-naming rules are intricate, and a
     second implementation of them here would be one more thing to keep in sync.
     """
-    if getattr(func, "_is_auto_comb_share_pragma", False):
+    if (getattr(func, "_is_auto_comb_share_pragma", False)
+            or getattr(func, "_is_auto_comb_unshare_pragma", False)):
         return getattr(parser_state, "pypeline_comb_share_tag_entities", {}).get(func.canonical_key)
     for key, recorded in _entity_callables(parser_state).items():
         if recorded is func:
@@ -1719,6 +1720,7 @@ def _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states):
     # progressively updated register would then change what an intermediate
     # state observes.  Final-output glue is the only allowed consumer.
     consumed_by_schedule = set()
+    consumed_walk_seen = set()
     for node in nodes.values():
         if node["delay_du"] <= 0:
             continue
@@ -1726,17 +1728,24 @@ def _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states):
             glue_walk(
                 operand,
                 lambda nid, _node: consumed_by_schedule.add(nid),
+                consumed_walk_seen,
             )
+
+    seed_memo = {}
 
     def is_seed(ref):
         if ref[0] == "const":
             return True
         if ref[0] != "node":
             return False  # in/inlined/unknown: transaction-dependent seed
-        node = nodes.get(ref[1])
+        nid = ref[1]
+        if nid in seed_memo:
+            return seed_memo[nid]
+        node = nodes.get(nid)
         if node is None or node["delay_du"] > 0:
             return False
-        return all(is_seed(operand) for operand in node.get("operands", ()))
+        seed_memo[nid] = all(is_seed(operand) for operand in node.get("operands", ()))
+        return seed_memo[nid]
 
     def match_chain(root_ref):
         if root_ref[0] != "node":
@@ -1897,7 +1906,7 @@ def _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states):
             return True
         if node["delay_du"] > 0:
             return True
-        seen = set() if seen is None else set(seen)
+        seen = set() if seen is None else seen
         if nid in seen:
             return True
         seen.add(nid)
@@ -2053,22 +2062,27 @@ def _INPUT_STORAGE_PLAN(nodes, output_ref, n_states):
             return None
         entry["refs"].add(nid)
 
-    def mark_glue(ref, state, seen=None):
-        if ref[0] != "node":
-            return
-        nid = ref[1]
-        node = nodes.get(nid)
-        if node is None or node["delay_du"] > 0:
-            return
-        seen = set() if seen is None else set(seen)
-        if nid in seen:
-            return
-        seen.add(nid)
-        hit = qualified.get(nid)
-        if hit is not None:
-            fields[hit[0]]["states"].add(state)
-        for operand in node.get("operands", ()):
-            mark_glue(operand, state, seen)
+    visited_by_state = {}
+
+    def mark_glue(ref, state):
+        # This is a DAG walk, not a path walk. Copying a path-local seen set
+        # revisits reconvergent carry-save glue exponentially. A node's field
+        # uses are identical for every consumer in the same schedule state.
+        seen = visited_by_state.setdefault(state, set())
+        pending = [ref]
+        while pending:
+            ref = pending.pop()
+            if ref[0] != "node" or ref[1] in seen:
+                continue
+            nid = ref[1]
+            seen.add(nid)
+            node = nodes.get(nid)
+            if node is None or node["delay_du"] > 0:
+                continue
+            hit = qualified.get(nid)
+            if hit is not None:
+                fields[hit[0]]["states"].add(state)
+            pending.extend(node.get("operands", ()))
 
     for consumer in nodes.values():
         if consumer["delay_du"] <= 0:
@@ -2078,7 +2092,10 @@ def _INPUT_STORAGE_PLAN(nodes, output_ref, n_states):
     mark_glue(output_ref, n_states)
 
     def contains_any(refs, wanted, seen=None):
-        for ref in refs:
+        seen = set() if seen is None else seen
+        pending = list(refs)
+        while pending:
+            ref = pending.pop()
             if ref[0] != "node":
                 continue
             nid = ref[1]
@@ -2087,12 +2104,10 @@ def _INPUT_STORAGE_PLAN(nodes, output_ref, n_states):
             node = nodes.get(nid)
             if node is None or node["delay_du"] > 0:
                 continue
-            seen = set() if seen is None else set(seen)
             if nid in seen:
                 continue
             seen.add(nid)
-            if contains_any(node.get("operands", ()), wanted, seen):
-                return True
+            pending.extend(node.get("operands", ()))
         return False
 
     packs = _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states)
@@ -2430,7 +2445,7 @@ def _value_equiv_key(nodes, ref, cur_state, reg_of, replacements=None, _seen=Non
     return result
 
 
-def _operand_equiv_key(nodes, node, port_i, reg_of, replacements=None):
+def _operand_equiv_key(nodes, node, port_i, reg_of, replacements=None, memo=None):
     return (
         _value_equiv_key(
             nodes,
@@ -2438,6 +2453,7 @@ def _operand_equiv_key(nodes, node, port_i, reg_of, replacements=None):
             node["state"],
             reg_of,
             replacements,
+            _memo=memo,
         ),
         tuple(node["casts"][port_i]),
         node["port_types"][port_i],
@@ -2445,7 +2461,7 @@ def _operand_equiv_key(nodes, node, port_i, reg_of, replacements=None):
 
 
 def _operand_factor_plan(
-    nodes, alternatives, reg_of, n_users, target_type, replacements=None
+    nodes, alternatives, reg_of, n_users, target_type, replacements=None, _memo=None
 ):
     """Factor a state-selected value through common zero-delay structure.
 
@@ -2471,13 +2487,14 @@ def _operand_factor_plan(
     repeated body.
     """
     alternatives = tuple(alternatives)
+    _memo = {} if _memo is None else _memo
     if not alternatives:
         raise AutoFsmError("AUTO_FSM: cannot factor an empty operand choice set")
 
     def exact_key(alt):
         _user_i, ref, casts, state = alt
         return (
-            _value_equiv_key(nodes, ref, state, reg_of, replacements),
+            _value_equiv_key(nodes, ref, state, reg_of, replacements, _memo=_memo),
             tuple(casts),
             target_type,
         )
@@ -2535,6 +2552,7 @@ def _operand_factor_plan(
                     n_users,
                     target_type,
                     replacements,
+                    _memo,
                 )
             )
             for user_i, _ref, _casts, _state in group:
@@ -2571,6 +2589,7 @@ def _operand_factor_plan(
                 n_users,
                 child_type,
                 replacements,
+                _memo,
             )
         )
     return {
@@ -2621,6 +2640,10 @@ def _operand_mux_plan(schedule, fu, reg_of):
     if not fu_nodes:
         return fu_nodes, []
     replacements = _rolling_replacements(schedule)
+    # Shared only within this immutable plan computation; never carried across
+    # schedule mutations or rebindings. All ports/users see the same register
+    # map and rolling replacements.
+    value_memo = {}
     n_ports = len(fu_nodes[0][1]["operands"])
     ports = []
     for port_i in range(n_ports):
@@ -2629,7 +2652,7 @@ def _operand_mux_plan(schedule, fu, reg_of):
         mapping = []
         for nid, node in fu_nodes:
             key = _operand_equiv_key(
-                schedule["nodes"], node, port_i, reg_of, replacements
+                schedule["nodes"], node, port_i, reg_of, replacements, value_memo
             )
             idx = class_of.get(key)
             if idx is None:
@@ -2654,6 +2677,7 @@ def _operand_mux_plan(schedule, fu, reg_of):
             len(fu_nodes),
             target_type,
             replacements,
+            value_memo,
         )
         ports.append(
             {
@@ -2974,10 +2998,9 @@ def _warn_large_schedule(parser_state, key, busiest_entity, predicted_folds):
     print(
         f"AUTO_FSM {key}: {busiest_entity!r} folds {predicted_folds} "
         f"operations onto one shared unit (> {SWEEP_LARGE_SCHEDULE_FOLDS}) -- "
-        f"scheduling this needs at least {predicted_folds} states, and "
-        f"AUTO_FSM's own scheduling cost grows faster than linearly with that, "
-        f"so this may take a while (no synthesis is involved; it is pure "
-        f"Python). To shrink it before this build even starts scheduling: a "
+        f"this binding needs at least {predicted_folds} states. This is a "
+        f"latency/search-size advisory, not a timing failure. To constrain "
+        f"the state count before scheduling, use a "
         f"max_latency= cap on the AUTO_FSM/make_stream_auto_fsm call (forces "
         f"replication up front), a lower @MAIN clock goal (widens the "
         f"per-state budget, so fewer -- or no -- operations need descending "
@@ -4052,7 +4075,8 @@ def SWEEP_MIN_AREA_SCHEDULE(
         parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl, debug=debug,
     )
     entity = _entity_key_for_callable(parser_state, tag.func)
-    choices = getattr(parser_state, "pypeline_comb_share_candidates", {}).get(entity, [])
+    choices = list(getattr(parser_state, "pypeline_comb_share_candidates", {}).get(entity, []))
+    choices += getattr(parser_state, "pypeline_comb_unshare_candidates", {}).get(entity, [])[:3]
     considered = 0
     for func, report in choices:
         candidate_entity = _entity_key_for_callable(parser_state, func)
@@ -5731,6 +5755,7 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
             import AUTO_COMB_SHARE
 
             AUTO_COMB_SHARE.prepare(tag.func, parser_state, elaborator, strict=False)
+            AUTO_COMB_SHARE.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
         fn = BUILD_PASSTHROUGH_FUNC(tag)
         # Never synthesize the passthrough itself -- see the matching note in
         # SYN.FUNC_PATH_DELAY_IS_ESTIMABLE. It exists to make the tagged
@@ -5753,6 +5778,7 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
             import AUTO_COMB_SHARE
 
             AUTO_COMB_SHARE.prepare(tag.func, parser_state, elaborator, strict=False)
+            AUTO_COMB_SHARE.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
         name, src, extra_globals = GENERATE_FSM_SOURCE(tag, schedule, parser_state)
         fn = _exec_generated(name, src, extra_globals)
     import pypeline_names

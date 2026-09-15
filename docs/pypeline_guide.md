@@ -31,7 +31,7 @@ For getting started information see the [README](README.md).
 18. [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation)
     - [`AUTO_PIPELINE(...)`](#auto_pipeline)
     - [`AUTO_MULTI_CYCLE(...)` (New)](#auto_multi_cycle-new)
-    - [`AUTO_COMB_SHARE(...)` (New, Experimental)](#auto_comb_share-new-experimental)
+    - [`AUTO_COMB_SHARE(...)` / `AUTO_COMB_UNSHARE(...)` (New, Experimental)](#auto_comb_share-new-experimental)
     - [`AUTO_FSM(...)` (New, Experimental)](#auto_fsm-new-experimental)
 
 **Part III — Ports and streams**
@@ -2145,14 +2145,16 @@ my_wire: Wire[uint32_t] = 0  # error — initialisers are not allowed on Wire/In
 An ordinary call is same-cycle combinational (Part I). The sections below cover choices
 about time and resource use. First comes `MULTI_CYCLE[...]`, a hand-written timing
 constraint that gives one slow register-to-register path `N` cycles to settle. Then come the
-four **automatic** (HLS-like) constructs. `AUTO_PIPELINE` pipelines logic for throughput.
+**automatic** (HLS-like) constructs. `AUTO_PIPELINE` pipelines logic for throughput.
 `AUTO_MULTI_CYCLE` tunes a multi-cycle path's cycle count. `AUTO_COMB_SHARE` reduces
-combinational resources without adding cycles. `AUTO_FSM` combines resource sharing
+combinational resources without adding cycles; `AUTO_COMB_UNSHARE` trades area for
+shorter combinational delay. `AUTO_FSM` combines resource sharing
 with scheduling over multiple cycles.
 
 Each one has a valid/ready stream wrapper in Part III, so neighboring hardware doesn't need
 to know which one it's talking to: `make_stream_auto_pipeline`, `make_stream_multi_cycle` /
-`make_stream_auto_multi_cycle`, `make_stream_auto_comb_share`, and `make_stream_auto_fsm`.
+`make_stream_auto_multi_cycle`, `make_stream_auto_comb_share`,
+`make_stream_auto_comb_unshare`, and `make_stream_auto_fsm`.
 
 ## Multi-Cycle Paths: `MULTI_CYCLE[...]`
 
@@ -2218,7 +2220,7 @@ implementation along two independent axes:
 
 | | 0 added cycles | N cycles |
 |---|---|---|
-| No sharing transformation | Original combinational function | [`AUTO_PIPELINE`](#auto_pipeline), [`AUTO_MULTI_CYCLE`](#auto_multi_cycle-new) |
+| Parallel / unsharing | Original; [`AUTO_COMB_UNSHARE`](#auto_comb_unshare-new-experimental) | [`AUTO_PIPELINE`](#auto_pipeline), [`AUTO_MULTI_CYCLE`](#auto_multi_cycle-new); optionally after UNSHARE |
 | Sharing transformation | [`AUTO_COMB_SHARE`](#auto_comb_share-new-experimental) | [`AUTO_FSM`](#auto_fsm-new-experimental); ACS followed by pipeline/MCP |
 
 Both pipelining and MCP divide computation **along the time axis**: pipelining
@@ -2232,12 +2234,13 @@ The table describes the requested transformation, not ordinary synthesis CSE.
 | `AUTO_PIPELINE` | Extra registers for timing, II=1 | Inserted register slices | `make_stream_auto_pipeline` |
 | `AUTO_MULTI_CYCLE` (New) | Longer settling interval, lower throughput | Allowed path cycles | `make_stream_auto_multi_cycle` (II=`latency + 1`) |
 | `AUTO_COMB_SHARE` (New, Experimental) | Smaller estimated area, potentially longer combinational delay | Always 0 | `make_stream_auto_comb_share` (two boundary cycles, II=1) |
+| `AUTO_COMB_UNSHARE` (New, Experimental) | Shorter estimated delay, potentially larger area | Always 0 | `make_stream_auto_comb_unshare` (two boundary cycles, II=1) |
 | `AUTO_FSM` (New, Experimental) | Share resources across states while meeting timing | Accepted input to result | `make_stream_auto_fsm` |
 
-ACS ignores delay when choosing an implementation. The temporal tools use the
+ACS ignores delay; ACU ignores area except to break delay ties. The temporal tools use the
 `@MAIN` clock goal; pipeline/MCP accept `latency=`, `start_latency=` and
 `max_latency=`, while FSM accepts `max_latency=`. Default FSM area search also
-considers ACS's combinational rewrite choices, comparing complete FSM area.
+considers SHARE's choices and delay-ranked UNSHARE finalists, comparing complete FSM area.
 
 Rules shared by the AUTO tags:
 
@@ -2482,7 +2485,10 @@ For the common case of one slow function behind a valid/ready handshake, use
 [`make_stream_auto_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle),
 which does all of this for you.
 
-### `AUTO_COMB_SHARE(...)` (New, Experimental)
+<a id="auto_comb_share-new-experimental"></a>
+<a id="auto_comb_unshare-new-experimental"></a>
+
+### `AUTO_COMB_SHARE(...)` / `AUTO_COMB_UNSHARE(...)` (New, Experimental)
 
 `AUTO_COMB_SHARE(func)` returns a combinational callable with the same input and
 output types and bit-exact behavior. It searches for lower resource use without
@@ -2531,6 +2537,42 @@ Default `AUTO_FSM(original_func)` already considers the shared optimization
 choices; explicitly wrapping it in ACS is not required.
 
 Implementation details: [`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md).
+
+`AUTO_COMB_UNSHARE(func)` chooses the opposite trade-off: reduce estimated
+combinational critical-path delay, allowing area growth without an area budget.
+It has the same signature and zero-cycle contract. The original stays unless
+an emitted candidate has strictly lower estimated delay; area breaks ties
+between improving candidates. It does not stop at the clock goal.
+
+```python
+from pypeline import AUTO_COMB_UNSHARE
+
+ACU = AUTO_COMB_UNSHARE(my_comb_func)
+AP = AUTO_PIPELINE(ACU)  # pipeline the selected combinational implementation
+```
+
+Choices include correlated mux speculation (compute both results before selecting),
+unsigned/Boolean distributive expansion, balanced reductions, carry-save sums,
+carry-select adders, prefix comparators and alternative multipliers. Shared
+constant/width optimizations and helper decomposition are available too.
+Unsafe speculation of division, variable shifts or arbitrary calls, signed/float
+reassociation and pure fanout-only cloning are excluded.
+
+Selection uses dependency-path estimates and cached timing, with **no extra
+candidate synthesis jobs**. Reports identify heuristics and legacy total-delay
+proxies separately from combinational timing components. Search work is bounded;
+there is no global-optimum or post-route-speed guarantee. Native calls still
+forward to the original. `AUTO_COMB_UNSHARE(AUTO_COMB_SHARE(f))` applies inside
+out; the wrappers do not cancel. Repeating either same wrapper is idempotent.
+
+For registered valid/ready ports use
+`from stream.stream_auto_comb_unshare import make_stream_auto_comb_unshare`.
+Its contract matches the sharing wrapper below (latency 2, II=1), with `.acu`
+exposing the underlying tag. Pipeline, MCP and FSM factories also accept ACU.
+Default AUTO_FSM compares new candidates by total scheduled area, not by delay
+alone. AUTO_PIPELINE does not implicitly invoke UNSHARE.
+
+Implementation details: [`AUTO_COMB_UNSHARE_DESIGN.md`](AUTO_COMB_UNSHARE_DESIGN.md).
 
 ### `AUTO_FSM(...)` (New, Experimental)
 
@@ -4335,6 +4377,12 @@ combinational port path. No FIFO or user-managed counter is required.
 This wrapper does not pipeline the shared computation internally. If it cannot
 meet the target clock, pass `AUTO_COMB_SHARE(my_comb_func)` to
 `make_stream_auto_pipeline` or `make_stream_auto_multi_cycle` instead.
+
+The delay-oriented sibling is `make_stream_auto_comb_unshare` from
+`stream.stream_auto_comb_unshare`. It uses the same two-bank elastic shell,
+accepts a pure function or ACU tag, and exposes `.acu`. All interface, latency,
+II and stall behavior above is identical; only the combinational optimization
+objective differs.
 
 ---
 

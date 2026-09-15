@@ -272,6 +272,28 @@ def schedule_with(parser_state, key, tag, budget_scale):
 
 
 def main():
+    # A diamond chain contains O(N) nodes but exponentially many paths. Input
+    # storage analysis must visit each node once per state, not once per path.
+    class CountedNodes(dict):
+        reads = 0
+
+        def get(self, key, default=None):
+            self.reads += 1
+            assert self.reads < 5000, "input-storage analysis expanded DAG paths"
+            return super().get(key, default)
+
+    diamond = CountedNodes({"field": {"delay_du": 0, "out_type": "uint8_t",
+        "op": {"kind": "ref", "toks": ["a"]}, "operands": [["in", "x"]]}})
+    last = "field"
+    for i in range(40):
+        nid = "diamond" + str(i)
+        diamond[nid] = {"delay_du": 0, "out_type": "uint8_t", "op": {"kind": "copy"},
+                        "operands": [["node", last], ["node", last]]}
+        last = nid
+    diamond["op"] = {"delay_du": 1, "state": 1, "out_type": "uint8_t",
+                     "op": {"kind": "call"}, "operands": [["node", last]]}
+    plan = AUTO_FSM._INPUT_STORAGE_PLAN(diamond, ["node", "op"], 1)
+    check(plan["stored_fields"][0]["field"] == "a", "linear input-storage walk preserves field storage")
     with tempfile.TemporaryDirectory() as tmp:
         print("[binding and scheduling]")
         ps, key, tag = parse_design(tmp, mhz=25.0, name="d1")

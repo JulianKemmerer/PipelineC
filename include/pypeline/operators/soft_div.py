@@ -26,19 +26,19 @@ def _make_restoring(want_remainder):
         def soft_div_restoring(a: l_t, b: r_t) -> out_t:
             ae: eff_l_t = a
             be: eff_r_t = b
-            rem: eff_l_t = 0
+            remainder: eff_l_t = 0
             quot: eff_l_t = 0
             for bit_idx in range(n_bits):
                 i = n_bits - 1 - bit_idx
-                rem = (rem << 1) | ae[i]
+                remainder = (remainder << 1) | ae[i]
                 quot_bit: uint1_t = 0
-                if rem >= be:
-                    rem = rem - be
+                if remainder >= be:
+                    remainder = remainder - be
                     quot_bit = 1
                 quot = bit_assign(quot, quot_bit, i)
             result: out_t = 0
             if want_remainder:
-                result = rem
+                result = remainder
             else:
                 result = quot
             return result
@@ -182,8 +182,8 @@ def _make_radix_restoring(bits_per_step, want_remainder):
     def factory(l_t, r_t):
         eff_l_t, eff_r_t, out_t = arith_result_type("DIV", l_t, r_t)
         n_bits = len(eff_l_t)
-        # n_bits+k guard bits are provably sufficient: rem < 2**n_bits after
-        # every step's subtract, so rem<<k | bits < 2**(n_bits+k), and
+        # n_bits+k guard bits are provably sufficient: remainder < 2**n_bits after
+        # every step's subtract, so remainder<<k | bits < 2**(n_bits+k), and
         # (2**k-1)*divisor < 2**(n_bits+k) too (divisor < 2**n_bits).
         wide_t = make_uint_t(n_bits + k)
         kbits_t = make_uint_t(k) if k > 1 else uint1_t
@@ -220,26 +220,26 @@ def _make_radix_restoring(bits_per_step, want_remainder):
                 elif op == _OP_SUB:
                     d[m] = d[pa] - d[pb]
 
-            rem: eff_l_t = 0
+            remainder: eff_l_t = 0
             quot: eff_l_t = 0
             for step_bits in steps:
                 sw = len(step_bits)
                 if sw == 1:
                     i = step_bits[0]
-                    rem_ext: wide_t = concat(rem[n_bits - 2:0], ae[i])
+                    rem_ext: wide_t = concat(remainder[n_bits - 2:0], ae[i])
                     rem_new: wide_t = rem_ext
                     qbit: uint1_t = 0
                     if rem_ext >= d[1]:
                         rem_new = rem_ext - d[1]
                         qbit = 1
-                    rem = rem_new[n_bits - 1:0]
+                    remainder = rem_new[n_bits - 1:0]
                     quot = bit_assign(quot, qbit, i)
                 else:
                     bits_k: kbits_t = 0
                     for j in range(sw):
                         bit_i = step_bits[j]
                         bits_k = bit_assign(bits_k, ae[bit_i], sw - 1 - j)
-                    rem_ext: wide_t = concat(rem[n_bits - 1 - sw:0], bits_k)
+                    rem_ext: wide_t = concat(remainder[n_bits - 1 - sw:0], bits_k)
                     rem_new: wide_t = rem_ext
                     qk: kbits_t = 0
                     # `break` isn't supported by the elaborator; a `decided`
@@ -256,14 +256,14 @@ def _make_radix_restoring(bits_per_step, want_remainder):
                             rem_new = rem_ext - d[m]
                             qk = m
                             decided = 1
-                    rem = rem_new[n_bits - 1:0]
+                    remainder = rem_new[n_bits - 1:0]
                     for j in range(sw):
                         bit_i = step_bits[j]
                         quot = bit_assign(quot, qk[sw - 1 - j], bit_i)
 
             result: out_t = 0
             if want_remainder:
-                result = rem
+                result = remainder
             else:
                 result = quot
             return result

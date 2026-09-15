@@ -4651,6 +4651,18 @@ emitting a saved schedule, comparing complete scheduled area. There is no
 ACS-specific backend operator. See
 [`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md).
 
+The same elaboration seam handles `_is_auto_comb_unshare_pragma`, dispatching to
+the delay objective of `AUTO_COMB_SHARE.BUILD_FUNC`. Its separate tables are
+`pypeline_comb_unshare_candidates` and `pypeline_comb_unshare_reports`; both tags
+use `pypeline_comb_share_tag_entities`. Canonical identities preserve objective
+and nesting order. Generated candidates are re-elaborated before final timing
+scoring. Primitive-only generated scopes retain exact operator semantics;
+arbitrary inherited user scopes still use the conservative fallback.
+`HLS_TIMING` pins a read-only dependency-path timing snapshot across reparses;
+`HLS_SPEED` supplies the delay rewrites. No backend primitive or additional
+candidate synthesis is introduced. See
+[`AUTO_COMB_UNSHARE_DESIGN.md`](AUTO_COMB_UNSHARE_DESIGN.md).
+
 ## `AUTO_FSM(func)` — Resource-Shared State Machines
 
 `AUTO_FSM(func)` implements a pure combinational function as a state machine

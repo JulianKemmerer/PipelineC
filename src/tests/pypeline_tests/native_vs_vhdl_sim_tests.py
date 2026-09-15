@@ -38,6 +38,8 @@ from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINE_SIM_DEBUG, Test, ma
 # then runs native + VHDL concurrently against the same warm out_dir).
 COMB_TEST_FILES = [
     ("self_check_auto_comb_share_composition_test.py", INST_DIR, []),
+    ("self_check_auto_comb_unshare_composition_test.py", INST_DIR, []),
+    ("self_check_stream_auto_comb_unshare_test.py", INST_DIR, []),
     ("self_check_stream_auto_comb_share_test.py", INST_DIR, []),
     ("pipeline_latency_sim_test.py", INST_DIR, []),
     ("self_check_counter_test.py", INST_DIR, []),
@@ -117,6 +119,7 @@ COMB_TEST_FILES = [
 # with the discovered latencies emulated, diffed against real pipelined VHDL.
 NON_COMB_TEST_FILES = [
     ("self_check_auto_comb_share_composition_test.py", INST_DIR, []),
+    ("self_check_auto_comb_unshare_composition_test.py", INST_DIR, []),
     ("pipeline_latency_sim_test.py", INST_DIR, ["--pipeline_min_effort", "0"]),
     # Same RAM design as the --comb entry, through a real pipelined build: the
     # pure lookup MAIN gets compiler alignment registers around the
