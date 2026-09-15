@@ -511,5 +511,8 @@ if not args.no_synth:
         args.sim, parser_state, args, multimain_timing_params, source_file=src_file
     )
 
+import AUTO_COMB_SHARE
+
+AUTO_COMB_SHARE.DUMP_GENERATED_SOURCE(parser_state, SYN.SYN_OUTPUT_DIRECTORY)
 SYN.WRITE_NAME_INDEX_LOG(parser_state)
 print("Done.", flush=True)

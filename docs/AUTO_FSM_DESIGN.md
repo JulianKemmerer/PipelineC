@@ -445,6 +445,12 @@ u0_a0: int16_t = _af_mux0(u0_sel, u0_c0)
 A port with a single user gets no multiplexer at all. A port type that cannot be
 arrayed falls back to the inline if/elif form.
 
+Operand equivalence preserves shared glue as a DAG: `_value_equiv_key` memoizes
+each node/state traversal, and `_GlueValueKey` caches hashes and compares
+structure iteratively. Repeated children are not expanded again while hashing
+or comparing keys. Hash collisions still trigger exact structural comparison;
+the optimization changes analysis cost, not which values may share a mux row.
+
 ### 3.2c Register allocation
 
 With everything folded onto a few units, **registers are routinely a larger part

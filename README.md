@@ -99,10 +99,11 @@ uint1_t blink()
 | Multiple clock domains / Clock domain crossings | No | Yes |
 | Parameterized/Template Functions+Types | [Yes](docs/pypeline_guide.md#parametric-hardware-with-factory-functions) | No |
 | Operator overloading | [Yes](docs/pypeline_guide.md#custom-operators) | Yes (hacky) |
-| User visible automatic pipeline depths | [Yes](docs/pypeline_guide.md#latency-reading-back-the-discovered-pipeline-depth) | No |
+| `AUTO_PIPELINE`: user-visible automatic pipeline depths | [Yes](docs/pypeline_guide.md#latency-reading-back-the-discovered-pipeline-depth) | No |
 | Multi-cycle path constraints | [Yes](docs/pypeline_guide.md#multi-cycle-paths-multi_cycle) | Yes |
-| Automatic multi-cycle path tuning (New) | [Yes](docs/pypeline_guide.md#auto_multi_cycle-new) | No |
-| Automatic resource sharing (pure func → shared-resource FSM) (New, experimental) | [Yes](docs/pypeline_guide.md#auto_fsm-new-experimental) | No |
+| `AUTO_MULTI_CYCLE`: automatic multi-cycle path tuning (New) | [Yes](docs/pypeline_guide.md#auto_multi_cycle-new) | No |
+| `AUTO_COMB_SHARE`: automatic combinational resource sharing (New, experimental) | [Yes](docs/pypeline_guide.md#auto_comb_share-new-experimental) | No |
+| `AUTO_FSM`: automatic resource-shared state machines (New, experimental) | [Yes](docs/pypeline_guide.md#auto_fsm-new-experimental) | No |
 | SoC system bus helpers | No | Yes |
 | Generates software Helper Code | [Yes](docs/pypeline_guide.md#host-side-generated-types) | Yes |
 | Derived FSM style code | No | Yes |
@@ -148,4 +149,3 @@ By isolating complex logic into auto-pipelineable functions, and only writing li
 The hope is to build shared, high performance, device agnostic, hardware designs described in a familiar and powerfully composable software-like look.
 
 For software folks writing PypelineC should feel like solving a programming puzzle - the rules of the puzzle hide/imply hardware concepts. For hardware folks PypelineC is a better hardware description language trying to find middle ground between traditional RTL and HLS. It is my language of choice as an FPGA engineer :).
-

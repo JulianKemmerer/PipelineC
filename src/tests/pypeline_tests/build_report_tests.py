@@ -17,6 +17,9 @@ from common import INST_DIR, Test, main
 
 def get_tests() -> list:
     tests = []
+    tests.append(Test(name="auto_comb_share_build_test", category="build_report",
+                      cmd=[INST_DIR / "auto_comb_share_build_test.py"], needs_out_dir=True,
+                      requires=["yosys", "ghdl"]))
     tests.append(
         Test(
             name="generated_naming_build_test",

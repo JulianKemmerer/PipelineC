@@ -2681,6 +2681,9 @@ def CHECK_VHDL_FILES_CONSISTENCY(vhdl_files_texts):
 
 
 def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
+    import AUTO_COMB_SHARE
+
+    AUTO_COMB_SHARE.DUMP_GENERATED_SOURCE(parser_state, SYN_OUTPUT_DIRECTORY)
     if multimain_timing_params is None:
         ZeroAddedClocksTimingParamsLookupTable = (
             GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)

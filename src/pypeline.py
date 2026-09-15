@@ -947,6 +947,8 @@ def encode_param_value(val) -> str:
         # fallback used here and anywhere a live compiler isn't available.)
         import inspect
 
+        if getattr(val, "_is_auto_comb_share_pragma", False):
+            return "AUTO_COMB_SHARE_" + encode_param_value(val.func)
         if getattr(val, "_is_auto_pipeline_pragma", False):
             return (
                 "AUTO_PIPELINE_" + encode_param_value(val.func) + val.latency_suffix()
@@ -1582,6 +1584,47 @@ def _check_auto_pipeline_latency_arg(name, value):
         )
     if value < 0:
         raise ValueError(f"AUTO_PIPELINE(func, {name}={value}): must be >= 0")
+
+
+class AUTO_COMB_SHARE:
+    """Area-first, bit-exact combinational implementation of a pure @hw_func.
+
+    The compiler may add operand selection and increase propagation delay, but
+    never adds storage or clock cycles. Native simulation calls the original
+    function. Compose with AUTO_PIPELINE or a multi-cycle stream for timing.
+    """
+
+    _is_auto_comb_share_pragma = True
+    _is_hw_func = True
+    latency = 0
+
+    def __init__(self, func):
+        if isinstance(func, AUTO_COMB_SHARE):
+            func = func.func
+        if not is_hw_func(func):
+            raise TypeError("AUTO_COMB_SHARE(func): func must be @hw_func-decorated")
+        self.func = func
+        original = _inspect.unwrap(func)
+        self.__name__ = getattr(original, "__name__", "auto_comb_share")
+        self.__qualname__ = getattr(original, "__qualname__", self.__name__)
+        self.__annotations__ = dict(getattr(original, "__annotations__", {}))
+        self.__signature__ = _inspect.signature(original)
+        if "return" not in self.__annotations__:
+            raise TypeError("AUTO_COMB_SHARE(func): an annotated return type is required")
+
+    @property
+    def canonical_key(self):
+        import PY_TO_LOGIC
+
+        return "AUTO_COMB_SHARE_" + PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func)
+
+    def __call__(self, *args, **kwargs):
+        return self.func(*args, **kwargs)
+
+    def __repr__(self):
+        if "PY_TO_LOGIC" in _sys.modules:
+            return self.canonical_key
+        return f"AUTO_COMB_SHARE({self.func.__module__}.{self.__qualname__})"
 
 
 class AUTO_PIPELINE:
@@ -7080,7 +7123,7 @@ def _pipeline_latency_reachable(func):
         seen.add(id(value))
         if getattr(value, "_pipeline_latency", 0) > 0:
             return True
-        if isinstance(value, (AUTO_PIPELINE, AUTO_FSM)):
+        if isinstance(value, (AUTO_PIPELINE, AUTO_FSM, AUTO_COMB_SHARE)):
             return visit(value.func)
         if isinstance(value, dict):
             return any(visit(v) for v in value.values())

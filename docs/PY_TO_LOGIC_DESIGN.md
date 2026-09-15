@@ -77,6 +77,7 @@ Python design files into PypelineC's internal `Logic()` graph representation. Fo
   - [Clock Domain Inference (`INFER_CLOCK_DOMAINS`)](#clock-domain-inference-infer_clock_domains)
   - [`make_clock(mhz)` — Python Equivalent of `CLK_MHZ`](#make_clockmhz--python-equivalent-of-clk_mhz)
 - [`AUTO_PIPELINE(func, latency, start_latency, max_latency)` — Forced Submodule Pipelining](#auto_pipelinefunc-latency-start_latency-max_latency--forced-submodule-pipelining)
+- [`AUTO_COMB_SHARE(func)` — Combinational Area Optimization](#auto_comb_sharefunc--combinational-area-optimization)
 - [`AUTO_FSM(func)` — Resource-Shared State Machines](#auto_fsmfunc--resource-shared-state-machines)
 - [`MULTI_CYCLE[ncycles]` / `Reg[T, tag]` — Multi-Cycle Path Constraint](#multi_cyclencycles--regt-tag--multi-cycle-path-constraint)
 - [`@wires` — Just-Wires Synthesis Hint](#wires--just-wires-synthesis-hint)
@@ -4609,6 +4610,29 @@ within that same function, matching the C implementation's per-`Logic()` scoping
 The C frontend's forward-looking `next_func_call_auto_pipeline_latency` field carries a
 pending `#pragma AUTOPIPELINE [N]` constraint to the next call; the Pypeline path
 doesn't use it.
+
+## `AUTO_COMB_SHARE(func)` — Combinational Area Optimization
+
+`_callable_canonical_name` recognizes the `_is_auto_comb_share_pragma` tag and
+includes its wrapped callable in identity. `_elaborate_live_func` handles it
+before ordinary source unwrapping: `AUTO_COMB_SHARE.BUILD_FUNC` elaborates and
+validates the pure source, prepares shared HLS candidates and returns the
+selected callable. The result is elaborated through the ordinary path.
+`pypeline_comb_share_tag_entities` maps the tag key to that result's entity.
+
+The transformation runs in `--comb` builds too. Generated typed locals preserve
+edge cast chains, including narrowing followed by sign extension. Generated
+helpers are registered in the current parser state before a saved graph is
+emitted; repeat parsing must never reuse live callables from a previous import.
+`pypeline_comb_share_candidates` holds the original and materialized alternatives,
+and `pypeline_comb_share_reports` holds choices for explicit tags.
+
+The generated body contains no registers or temporal metadata, so an enclosing
+`AUTO_PIPELINE` sees ordinary sliceable combinational logic. Default `AUTO_FSM`
+prepares the same alternatives during bootstrap and rematerializes them before
+emitting a saved schedule, comparing complete scheduled area. There is no
+ACS-specific backend operator. See
+[`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md).
 
 ## `AUTO_FSM(func)` — Resource-Shared State Machines
 

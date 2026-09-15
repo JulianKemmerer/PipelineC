@@ -1494,11 +1494,30 @@ unchanged, and so does `--comb`. Only Vivado emits multi-cycle constraints. Only
 path per clock group is visible, so a failing AUTO_MULTI_CYCLE hidden behind a worse path is
 raised in a later iteration.
 
+## Combinational HLS before temporal implementation
+
+`AUTO_COMB_SHARE(func)` is resolved during Pypeline elaboration, including
+`--comb` builds. It selects a lower-estimated-area ordinary combinational
+function without a timing constraint or inserted registers. An enclosing
+`AUTO_PIPELINE` can slice the selected graph normally; MCP constraints apply
+normally when it sits between the launch/capture registers. Neither the C
+frontend nor the VHDL backend needs an ACS primitive.
+
+`HLS` and `AUTO_COMB_SHARE` reuse the FSM's entity/mux area model and exact
+operator implementations. Graph choices and scores are pinned during repeated
+parses so timing-cache warming cannot silently change the circuit being placed.
+`WRITE_FINAL_FILES` writes `auto_comb_share_report.json` and generated candidate
+source under `auto_comb_share_generated/`; explicit ACS reports distinguish
+estimated area, model units/coverage and search limits. Details are in
+[`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md).
+
 ## 7. AUTO_FSM schedule-and-confirm loop (Pypeline designs only)
 
-`AUTO_FSM(func)` is the resource-minimizing dual of AUTO_PIPELINE: instead of
-cutting one copy of a function's hardware into pipeline stages, it keeps ONE
-copy of each distinct operation and runs the function over several cycles. Full
+`AUTO_FSM(func)` shares functional units across multiple clock cycles. Its
+default search also considers the shared combinational HLS candidates, scoring
+their complete scheduled area, including register, mux and control overhead.
+The original graph stays an incumbent; a smaller combinational graph is not
+automatically a smaller FSM. Full
 design in [`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md); what matters here is how it
 sits around everything above.
 

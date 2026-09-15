@@ -109,7 +109,9 @@ def stable_key(value, seen=frozenset()):
             value._ncycles,
         )
     if callable(value):
-        for attr in ("_is_auto_pipeline_pragma", "_is_auto_fsm_pragma"):
+        for attr in (
+            "_is_auto_pipeline_pragma", "_is_auto_fsm_pragma", "_is_auto_comb_share_pragma"
+        ):
             if getattr(value, attr, False):
                 # An AUTO_PIPELINE's constructor latency constraint is
                 # identity (two tags over one func with different latency=
@@ -129,8 +131,10 @@ def stable_key(value, seen=frozenset()):
                     )
                     if attr == "_is_auto_pipeline_pragma"
                     else (
-                        getattr(value, "max_latency", None),
-                        getattr(value, "register_output", True),
+                        () if attr == "_is_auto_comb_share_pragma" else (
+                            getattr(value, "max_latency", None),
+                            getattr(value, "register_output", True),
+                        )
                     )
                 )
                 return (attr, stable_key(value.func, seen), config)
@@ -281,9 +285,9 @@ def value_description(value, seen=frozenset()):
             identity=identity(value),
         )
     if callable(value):
-        if getattr(value, "_is_auto_pipeline_pragma", False) or getattr(
-            value, "_is_auto_fsm_pragma", False
-        ):
+        if any(getattr(value, attr, False) for attr in (
+            "_is_auto_comb_share_pragma", "_is_auto_pipeline_pragma", "_is_auto_fsm_pragma"
+        )):
             return NameInfo(
                 "wrapper",
                 type(value).__name__,

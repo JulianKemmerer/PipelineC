@@ -1,11 +1,10 @@
 """AUTO_FSM: implement a pure combinational function as a resource-shared FSM.
 
-This is the resource-minimizing dual of AUTO_PIPELINE. Where AUTO_PIPELINE cuts
-one full copy of a function's hardware into N pipeline stages (initiation
-interval 1, maximum throughput, maximum area), AUTO_FSM keeps ONE copy of each
-distinct operation and executes the function over N clock cycles (initiation
-interval N, minimum area). Twelve identical adders become one adder used in
-twelve different states.
+Where AUTO_PIPELINE cuts a function into stages for throughput, AUTO_FSM shares
+units across clock cycles for area. The default search also considers the
+combinational rewrites shared with AUTO_COMB_SHARE, comparing complete scheduled
+hardware including muxes, registers and control. Twelve identical adders can
+become one adder used in twelve states; unsharing remains an area/timing choice.
 
 If you have not done this kind of thing before, the two classic HLS steps are:
 
@@ -81,7 +80,9 @@ import C_TO_LOGIC
 # 7: structural mux factoring, rolling consume/produce storage, and compact
 #    field-granular transaction input registers change generated hardware even
 #    though the underlying operation schedule is unchanged.
-SCHEDULE_VERSION = 7
+# 8: schedules carry the input type for whole-transaction storage accounting,
+#    including alternate combinational source graphs.
+SCHEDULE_VERSION = 8
 
 # How the generated FSM's CONTROL path is rendered. This selects codegen shape
 # AND the matching area model -- the two must agree, so it is part of the
@@ -388,6 +389,8 @@ def _entity_key_for_callable(parser_state, func):
     re-derivation: the elaborator's canonical-naming rules are intricate, and a
     second implementation of them here would be one more thing to keep in sync.
     """
+    if getattr(func, "_is_auto_comb_share_pragma", False):
+        return getattr(parser_state, "pypeline_comb_share_tag_entities", {}).get(func.canonical_key)
     for key, recorded in _entity_callables(parser_state).items():
         if recorded is func:
             return key
@@ -2309,7 +2312,52 @@ def _rolling_replacements(schedule):
     return out
 
 
-def _value_equiv_key(nodes, ref, cur_state, reg_of, replacements=None, _seen=None):
+class _GlueValueKey:
+    """Exact structural DAG key with cached hashing and iterative equality.
+
+    A nested tuple expands a shared child again on every hash/comparison, even
+    when the traversal that constructed it was memoized. Keep child keys as
+    objects so hashing is constant-time per edge; equality visits each pair
+    only once and still checks actual structure when hashes collide.
+    """
+    __slots__ = ("parts", "_hash")
+
+    def __init__(self, parts):
+        self.parts = parts
+        self._hash = hash(parts)
+
+    def __hash__(self):
+        return self._hash
+
+    def __eq__(self, other):
+        if not isinstance(other, _GlueValueKey):
+            return NotImplemented
+        pending = [(self, other)]
+        seen = set()
+        while pending:
+            left, right = pending.pop()
+            if left is right:
+                continue
+            pair = (id(left), id(right))
+            if pair in seen:
+                continue
+            seen.add(pair)
+            if isinstance(left, _GlueValueKey) and isinstance(right, _GlueValueKey):
+                if left._hash != right._hash:
+                    return False
+                pending.append((left.parts, right.parts))
+            elif isinstance(left, tuple) and isinstance(right, tuple):
+                if len(left) != len(right):
+                    return False
+                pending.extend(zip(left, right))
+            elif isinstance(left, _GlueValueKey) or isinstance(right, _GlueValueKey):
+                return False
+            elif left != right:
+                return False
+        return True
+
+
+def _value_equiv_key(nodes, ref, cur_state, reg_of, replacements=None, _seen=None, _memo=None):
     """Structural identity of the expression `_Codegen._render_ref` emits.
 
     Node ids alone are deliberately not an identity here.  Thirty-two
@@ -2339,7 +2387,11 @@ def _value_equiv_key(nodes, ref, cur_state, reg_of, replacements=None, _seen=Non
             return ("fu_output", node.get("fu"), node.get("out_type"))
         return ("register", reg_of.get(nid), node.get("out_type"))
 
-    _seen = set() if _seen is None else set(_seen)
+    _memo = {} if _memo is None else _memo
+    memo_key = (nid, cur_state)
+    if memo_key in _memo:
+        return _memo[memo_key]
+    _seen = set() if _seen is None else _seen
     if nid in _seen:
         return ("glue_cycle", nid)
     _seen.add(nid)
@@ -2361,17 +2413,21 @@ def _value_equiv_key(nodes, ref, cur_state, reg_of, replacements=None, _seen=Non
                     reg_of,
                     replacements,
                     _seen,
+                    _memo,
                 ),
                 casts,
                 port_type,
             )
         )
-    return (
+    _seen.remove(nid)
+    result = _GlueValueKey((
         "glue",
         _stable_op_key(node["op"]),
         node.get("out_type"),
         tuple(operands),
-    )
+    ))
+    _memo[memo_key] = result
+    return result
 
 
 def _operand_equiv_key(nodes, node, port_i, reg_of, replacements=None):
@@ -2944,6 +3000,7 @@ def BUILD_SCHEDULE(
     max_nodes=None,
     unshared=(),
     ctl=DEFAULT_CTL,
+    func_entity_override=None,
 ):
     """Schedule + bind one AUTO_FSM'd function into a plain (picklable,
     comparable) schedule dict.
@@ -2967,13 +3024,15 @@ def BUILD_SCHEDULE(
     two-bit multiplexer selecting its operands) sharing is a straight loss, and
     v1 had no way to decline it.
     """
+    import pypeline
+
     # `auto` is a driver-level request because each encoding needs its own full
     # area sweep. Keep the low-level builder useful to direct callers/tests by
     # giving it the historical binary-table rendering when asked in isolation;
     # HARVEST_AUTO_FSM_SCHEDULES expands auto into both candidates below.
     if ctl == "auto":
         ctl = "v3"
-    func_entity = _entity_key_for_callable(parser_state, tag.func)
+    func_entity = func_entity_override or _entity_key_for_callable(parser_state, tag.func)
     if func_entity is None:
         raise AutoFsmError(
             f"AUTO_FSM: the function tagged by {key!r} was never elaborated, so "
@@ -3158,6 +3217,7 @@ def BUILD_SCHEDULE(
         "fu_order": plan["fu_order"],
         "output": dag["output"],
         "output_casts": dag["output_casts"],
+        "in_type": pypeline._ctype_str(tag.in_type),
         "out_type": dag["out_type"],
         "entity_delays_snapshot": delays,
         "mux_delays_snapshot": mux_snapshot,
@@ -3766,7 +3826,7 @@ def _sweep_required_improvement(anchor, candidate):
     )
 
 
-def SWEEP_MIN_AREA_SCHEDULE(
+def _SWEEP_MIN_AREA_SCHEDULE(
     parser_state,
     key,
     tag,
@@ -3774,6 +3834,7 @@ def SWEEP_MIN_AREA_SCHEDULE(
     prev_schedule=None,
     ctl=DEFAULT_CTL,
     debug=False,
+    func_entity_override=None,
 ):
     """Search for the SMALLEST schedule that still meets the clock goal and the
     latency cap, by opening operations up one entity at a time.
@@ -3814,7 +3875,8 @@ def SWEEP_MIN_AREA_SCHEDULE(
     """
     memo = {}
     anchor = BUILD_SCHEDULE(
-        parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl
+        parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl,
+        func_entity_override=func_entity_override,
     )
     anchor_cost = ESTIMATE_SCHEDULE_AREA(parser_state, anchor, memo)
     best, best_cost = anchor, anchor_cost
@@ -3865,6 +3927,7 @@ def SWEEP_MIN_AREA_SCHEDULE(
                 MAX_SWEEP_DAG_NODES,
                 tuple(sorted(trial_unshared.items())),
                 ctl=ctl,
+                func_entity_override=func_entity_override,
             )
         except AutoFsmError:
             return None, "rejected: too many operations to score (DAG cap)", None
@@ -3974,6 +4037,48 @@ def SWEEP_MIN_AREA_SCHEDULE(
     best["est_area"] = round(best_cost, 3)
     best["est_area_anchor"] = round(anchor_cost, 3)
     best["sweep_candidates"] = n_considered
+    return best
+
+
+def SWEEP_MIN_AREA_SCHEDULE(
+    parser_state, key, tag, budget_scale, prev_schedule=None, ctl=DEFAULT_CTL, debug=False,
+):
+    """Search original and combinationally rewritten graphs by total FSM area.
+
+    Rewrites are choices, not a preprocessing commitment: a larger combinational
+    graph can require fewer registers, muxes or states after scheduling.
+    """
+    best = _SWEEP_MIN_AREA_SCHEDULE(
+        parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl, debug=debug,
+    )
+    entity = _entity_key_for_callable(parser_state, tag.func)
+    choices = getattr(parser_state, "pypeline_comb_share_candidates", {}).get(entity, [])
+    considered = 0
+    for func, report in choices:
+        candidate_entity = _entity_key_for_callable(parser_state, func)
+        if candidate_entity is None or candidate_entity == entity:
+            continue
+        candidate_logic = parser_state.FuncLogicLookupTable[candidate_entity]
+        # Bound this additional search by graph work, not a wall-clock timer.
+        # The existing OPEN search remains available for deeper decomposition.
+        if len(candidate_logic.submodule_instances) > max(128, 4 * len(best["nodes"])):
+            continue
+        considered += 1
+        try:
+            candidate = _SWEEP_MIN_AREA_SCHEDULE(
+                parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl, debug=debug,
+                func_entity_override=candidate_entity,
+            )
+        except AutoFsmError:
+            continue
+        if (candidate["latency_infeasible"] or candidate["worst_state_du"] > candidate["budget_du"]
+                or (candidate["at_floor"] and not best["at_floor"])):
+            continue
+        if candidate["est_area"] < best["est_area"]:
+            candidate["comb_share_moves"] = report["moves"]
+            best = candidate
+    if considered:
+        best["comb_share_candidates"] = considered
     return best
 
 
@@ -4263,6 +4368,9 @@ def DESCRIBE_SCHEDULE(parser_state, key, schedule) -> str:
             f"{', '.join(entities[:3])}{more}"
         )
     line += f"\n  register bits: {_register_bit_count(schedule)}"
+    if schedule.get("comb_share_candidates"):
+        line += f"\n  combinational candidates: {schedule['comb_share_candidates']}; "
+        line += ", ".join(schedule.get("comb_share_moves", [])) or "original graph retained"
     ctl_candidates = schedule.get("ctl_auto_candidates")
     if ctl_candidates:
         scores = ", ".join(
@@ -5620,6 +5728,9 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
         # search will consider (see PREPARE_SOFT_EQUIVALENTS).
         if elaborator is not None:
             PREPARE_SOFT_EQUIVALENTS(tag, parser_state, elaborator)
+            import AUTO_COMB_SHARE
+
+            AUTO_COMB_SHARE.prepare(tag.func, parser_state, elaborator, strict=False)
         fn = BUILD_PASSTHROUGH_FUNC(tag)
         # Never synthesize the passthrough itself -- see the matching note in
         # SYN.FUNC_PATH_DELAY_IS_ESTIMABLE. It exists to make the tagged
@@ -5639,6 +5750,9 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
             elaborator._elaborate_live_func(
                 getattr(tag.func, "__name__", "auto_fsm_func"), tag.func
             )
+            import AUTO_COMB_SHARE
+
+            AUTO_COMB_SHARE.prepare(tag.func, parser_state, elaborator, strict=False)
         name, src, extra_globals = GENERATE_FSM_SOURCE(tag, schedule, parser_state)
         fn = _exec_generated(name, src, extra_globals)
     import pypeline_names

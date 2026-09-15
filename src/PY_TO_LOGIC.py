@@ -694,6 +694,10 @@ def _callable_canonical_name(val, module_globals, _seen=None, _depth=0):
         return _callable_hash_fallback(val)
     _seen = _seen | {val_id}
 
+    if getattr(val, "_is_auto_comb_share_pragma", False):
+        inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
+        return _sanitize_vhdl_name(f"AUTO_COMB_SHARE_{inner}")
+
     # AUTO_PIPELINE tag objects: their identity is the wrapped function's
     # identity plus any constructor latency constraint (latency= /
     # start_latency= / max_latency=; empty for an unconstrained tag, so those
@@ -5442,6 +5446,18 @@ class FuncElaborator:
         functions reached through two differently-wrapped factories would
         otherwise collide on that shared alias.
         """
+        if getattr(func, "_is_auto_comb_share_pragma", False):
+            import AUTO_COMB_SHARE
+
+            generated = AUTO_COMB_SHARE.BUILD_FUNC(func, self.parser_state, self)
+            logic = self._elaborate_live_func(generated.__name__, generated)
+            entities = getattr(self.parser_state, "pypeline_comb_share_tag_entities", None)
+            if entities is None:
+                entities = {}
+                self.parser_state.pypeline_comb_share_tag_entities = entities
+            entities[func.canonical_key] = logic.func_name
+            return logic
+
         # Strip any @hw_func / _sim_type_wrap wrapper so we analyse the original source.
         func_for_source = inspect.unwrap(func)
 
