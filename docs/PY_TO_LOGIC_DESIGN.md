@@ -3115,6 +3115,23 @@ by elaborating AST arg nodes; `_elab_cast_call`'s registered-cast branch builds 
 single-entry list directly from the wire it already elaborated, so the two paths share
 everything after "how do I get input_ports" without a second elaboration of the argument.
 
+### Call arguments convert at the call boundary
+
+A scalar int/char argument whose type differs from the parameter's converts exactly like a
+scalar `dst_t(x)` cast or an assignment to a declared local. `_elab_call`'s ordinary
+argument branch declares the call's port wire at the **parameter** type
+(`callee_def.wire_to_c_type[port_name]`) and connects the argument wire to it, so
+`VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS` inserts the resize, sign extension, or truncation.
+Native sim does the same through `_sim_type_wrap`'s `_sim_cast` of every annotated
+argument.
+
+Before this, the port wire took the argument's type: `f(c + 100)` with `f(x: uint16_t)`
+declared `f_..._x : unsigned(8 downto 0)`, and the instance port map joined it to an
+`unsigned(15 downto 0)` port. GHDL rejects that in simulation and synthesis alike
+(`actual constraints don't match formal ones`). Passing an already-typed local hid it.
+Compound, array, and enum arguments are unchanged; they must already match. Coverage:
+`call_arg_width_test.py`.
+
 ### `_elab_cast_call(expr, dst_t)`
 
 1. `_register_struct_recursive(dst_t, self.parser_state)` — unconditionally, before

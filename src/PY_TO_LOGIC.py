@@ -4998,6 +4998,24 @@ class FuncElaborator:
                     arg_wire, arg_typ = self._read_ref((synth_name,), port_typ, arg_expr)
             else:
                 arg_wire, arg_typ = self._elab_expr(arg_expr)
+                # A scalar int/char argument whose type differs from the
+                # parameter's (ex. the uint9 of `c + 100` into a uint16_t
+                # parameter) converts at the call boundary, exactly like
+                # native sim's _sim_type_wrap argument cast: declare the port
+                # wire at the PARAMETER type and let the connection convert
+                # (VHDL.TYPE_RESOLVE_ASSIGNMENT_RHS), the same mechanism a
+                # scalar dst_t(x) cast (_elab_cast_call) and an assignment
+                # to a declared local use. Declared at the argument's type,
+                # the instance port map joined e.g. unsigned(8 downto 0) to
+                # an unsigned(15 downto 0) port, which GHDL rejects.
+                port_typ = callee_def.wire_to_c_type.get(port_name)
+                if (
+                    port_typ is not None
+                    and port_typ != arg_typ
+                    and (_ctype_is_int(arg_typ) or arg_typ == "char")
+                    and (_ctype_is_int(port_typ) or port_typ == "char")
+                ):
+                    arg_typ = port_typ
             input_ports.append((port_name, arg_wire, arg_typ))
         return self._elab_submodule_instance(
             callee_name, callee_def, input_ports, expr, auto_pipeline_call, auto_fsm_call

@@ -280,6 +280,19 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # A design that synthesizes away to nothing (no top-level outputs) must
+    # fail its pipelined build with the clear PYRTL "no timing paths" error --
+    # not the old divide-by-zero / float-parse failure, and not by getting
+    # stuck in the single-stateful-main coarse sweep first.
+    tests.append(
+        Test(
+            name="pyrtl_no_timing_paths_build_report_test",
+            category="build_report",
+            cmd=[INST_DIR / "pyrtl_no_timing_paths_build_report_test.py"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+        )
+    )
     # Regression guard for the D2 fix (RAW_VHDL._EQUAL_WIDTH_BITS_PER_STAGE_
     # DICT) and the §6a/§6b reporting fixes, against a real multi-cut sky130
     # build in both the planned sweep and --coarse paths.

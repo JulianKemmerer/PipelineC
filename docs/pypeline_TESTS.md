@@ -187,8 +187,26 @@ VHDL generator and one simulation model. Coverage:
   - a stream RAM under backpressure.
 
   The checker MAIN returns a value on purpose. A design with no top-level outputs synthesizes
-  to nothing, and the pipelined build's PyRTL timing step then fails. The pure MAIN is also
-  what keeps a pipelined build of this file off the single-stateful-MAIN coarse-sweep path.
+  to nothing, and a pipelined build then fails with a clear "no timing paths" error (see
+  `pyrtl_no_timing_paths_build_report_test.py` below). The pure MAIN is no longer needed to
+  keep the build off the coarse sweep: a single stateful MAIN with no target MHz is now
+  characterized as written (see `single_stateful_main_fixed_latency_test.py`).
+- **`single_stateful_main_fixed_latency_test.py`** (both `native_vs_vhdl_sim` modes): the only
+  `@MAIN` is stateful, has no target MHz, and calls `@pipeline_latency(3)` with a narrower
+  argument expression (`delay3(c + 100)`). A pipelined build used to force it into the coarse
+  sweep, which crashed with `Trying to slice into ... for no reason`, for ANY single stateful
+  goal-less MAIN, fixed-latency child or not. It now takes the planned sweep's one-synthesis
+  characterization with zero added latency.
+- **`call_arg_width_test.py`** (`native_vs_vhdl_sim --comb`): scalar int call arguments whose
+  type differs from the parameter's: a uint9 expression into `uint16_t`, sign extension, a
+  truncation into a narrower parameter, uint into int, and keyword-bound arguments. The call's
+  port wire used to take the argument's type, and GHDL rejected the port map
+  (`actual constraints don't match formal ones`).
+- **`pyrtl_no_timing_paths_build_report_test.py`** (`build_report`): the no-output
+  `no_outputs_design.py` must FAIL its pipelined build, and fail with the PYRTL no-timing-paths
+  error text (naming `@wires` as the intentional-wiring escape). The old
+  `ZeroDivisionError` / `could not convert string to float` text and the coarse-sweep crash
+  must not appear. A circuit with no paths has no Fmax; that is never a passing measurement.
 
 ## Generated-name regression coverage
 

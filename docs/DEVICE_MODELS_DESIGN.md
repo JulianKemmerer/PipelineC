@@ -325,6 +325,15 @@ decisions this results section motivated are in
 
 ## 5. Limitations and future work
 
+- **A zero worst period is a hard error, not a measurement.** A mapped netlist
+  with nothing left to time (logic synthesized away, ex. no top-level outputs)
+  used to report `Worst period (ns): 0` and `Total cell area: 0`. The build then
+  died on a division by that zero, in `SYN.PRINT_MEASURED_AREA_IF_AVAILABLE` for
+  whole designs, while a per-leaf measurement silently recorded delay 0.
+  `SYN_AND_REPORT_TIMING_NEW` now raises a readable "no timing paths" error, on
+  fresh and reused logs alike, matching PYRTL's `NO_TIMING_PATHS_MARKER` rule
+  (see `SYN_DESIGN.md`). Intentionally path-free logic belongs under `@wires`.
+
 - **Component-aware register overhead is gated on complete evidence.** Full
   registered paths report measured clk-to-Q, combinational, and setup fields
   in both text and JSON. When every active landscape segment has those fields,

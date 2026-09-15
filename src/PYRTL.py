@@ -9,6 +9,23 @@ import VHDL
 TECH_IN_NM = 20  # Why does decreasing nm get lower fmax?
 FF_OVERHEAD = 0  # Set to zero since not using pyrtl max_length()
 
+# Printed by the generated PyRTL script when the synthesized netlist has a zero
+# length critical path: nothing is left to time. That is always an error (never
+# a skipped/passing measurement) - an Fmax of a circuit with no paths means the
+# logic synthesized away, typically because it drives no top-level output. With
+# FF_OVERHEAD = 0 pyrtl's own max_freq would divide by zero instead.
+NO_TIMING_PATHS_MARKER = "PYRTL_NO_TIMING_PATHS"
+
+
+def NO_TIMING_PATHS_ERROR_TEXT(log_path):
+    return (
+        "PyRTL: the synthesized netlist has no timing paths (zero delay critical "
+        "path) - there is nothing left to measure an Fmax for. Does the design "
+        "drive any top-level output? Logic with no effect on outputs is "
+        "optimized away by synthesis. If this logic is intentionally pure "
+        f"wiring, mark it @wires. Log: {log_path}"
+    )
+
 
 def IS_INSTALLED():
     try:
@@ -42,8 +59,10 @@ class PathReport:
 
         for line in path_report_text.split("\n"):
             # Path delay ns
+            # (Anchored: a python traceback quoting the generated script's
+            # print("Fmax (MHz):", ...) source line must not parse as a value)
             tok1 = "Fmax (MHz):"
-            if tok1 in line:
+            if line.startswith(tok1):
                 toks = line.split(tok1)
                 pyrtl_fmax = float(toks[1].strip())
                 self.path_delay_ns = 1000.0 / pyrtl_fmax
@@ -213,6 +232,10 @@ print("Computing timing analysis...", flush=True)
 timing = pyrtl.TimingAnalysis()
 #print("Max length:")
 #timing.print_max_length()
+if max(timing.timing_map.values(), default=0) <= 0:
+    # Nothing left to time (see PYRTL.NO_TIMING_PATHS_MARKER)
+    print("{NO_TIMING_PATHS_MARKER}", flush=True)
+    sys.exit(1)
 print("Critical path:")
 critical_path_info = timing.critical_path(cp_limit=1)
 #print(critical_path_info)
@@ -263,9 +286,25 @@ python3 {py_file} &>> {log_file_name}
         # Execute the command
         syn_imp_bash_cmd = "bash " + sh_file
         print("Running:", log_path, flush=True)
-        C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
+        try:
+            C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd, cwd=output_directory)
+        except Exception:
+            _RAISE_IF_NO_TIMING_PATHS(log_path)
+            raise
         f = open(log_path, "r")
         log_text = f.read()
         f.close()
 
+    # Also a reused log from an earlier failed run
+    _RAISE_IF_NO_TIMING_PATHS(log_path, log_text)
     return ParsedTimingReport(log_text)
+
+
+def _RAISE_IF_NO_TIMING_PATHS(log_path, log_text=None):
+    if log_text is None:
+        if not os.path.exists(log_path):
+            return
+        with open(log_path, "r") as f:
+            log_text = f.read()
+    if any(line == NO_TIMING_PATHS_MARKER for line in log_text.split("\n")):
+        raise Exception(NO_TIMING_PATHS_ERROR_TEXT(log_path))

@@ -692,6 +692,29 @@ cuts worse than the blind fractions it was meant to improve on (~16% lower
 fmax at an equal, fixed cut count, holding every other change constant, with
 no counter-example found) — not shipped.
 
+`DO_THROUGHPUT_SWEEP` auto-selects `--coarse` for a single MAIN with no target
+MHz only if `FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL` holds for it,
+the same predicate `ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES`
+sanity-checks. A stateful main (Reg/Feedback, no AUTO_PIPELINE below) cannot take
+added latency. It used to be forced into coarse slicing anyway and crash with
+`Trying to slice into <main> for no reason`. That hit every single stateful goal-less
+MAIN, whether or not it held a `@pipeline_latency` child. Such a design now falls through to
+the planned sweep, which skips goal-less mains, has no plan, and characterizes the
+design as written with one synthesis run and zero added latency. Explicit `--coarse`
+on such a main raises the same "No main functions are elligible for pipelining"
+error the multi-main selection already did.
+
+**A synthesized netlist with no timing paths is always an error.** A design that
+synthesizes away to nothing, typically because it drives no top-level output, has no
+Fmax. PYRTL's generated script checks for a zero-length critical path before
+`max_freq` (which would divide by zero with `FF_OVERHEAD = 0`). It prints
+`PYRTL.NO_TIMING_PATHS_MARKER`, and `SYN_AND_REPORT_TIMING_NEW` raises a readable
+error on both fresh and reused logs. DEVICE_MODELS raises the same error for a
+zero worst period. Logic that truly has no timing path should be marked `@wires`,
+which `LOGIC_IS_ZERO_DELAY` never times. `PYRTL.PathReport` matches only lines
+*starting* with `Fmax (MHz):`, so a traceback quoting the script's `print` line can
+no longer parse as a number.
+
 Compatibility/coarse paths still use `CHECK_CUTS_VS_LATENCY` to compare a
 fractional cut count against the leaf slices that actually materialized in
 the subtree. Its strictness follows the landscape:
@@ -1160,7 +1183,7 @@ explicitly during the sweep:
 |---|---|
 | (default) | planned sweep per MAIN with a target MHz |
 | `--comb` | no pipelining; one syn run reporting comb fmax per clock |
-| `--coarse` | single-instance coarse sweep only (evenly-spaced global fractions, `GET_BEST_GUESS_IDEAL_SLICES`; latency grown from timing reports); auto-selected for a single main with no target MHz |
+| `--coarse` | single-instance coarse sweep only (evenly-spaced global fractions, `GET_BEST_GUESS_IDEAL_SLICES`; latency grown from timing reports); auto-selected for a single main with no target MHz **that can take added latency** (`FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL`). A single stateful/unsliceable goal-less main is not coarse swept: the planned sweep characterizes it as written with one synthesis run and zero added latency. Explicit `--coarse` on such a main is a clear "No main functions are elligible for pipelining" error |
 | `--start N` / `--stop N` / `--sweep` | coarse sweep controls (start latency, stop latency, +1 stepping) |
 | `--full_hier_syn` | synthesize every hierarchy level for path delays (no estimates) |
 | `--no_hier_syn` | opposite of `--full_hier_syn`: never synthesize any hierarchical module (incl. MAINs, stateful atomic spans) -- only true primitive leaves are synthesized, everything else estimated. Gives up the automatic estimate-was-inaccurate fallback to real synthesis. |

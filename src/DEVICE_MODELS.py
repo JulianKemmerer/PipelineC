@@ -1836,4 +1836,20 @@ def SYN_AND_REPORT_TIMING_NEW(
             synthesis_inputs=synthesis_inputs,
         )
 
-    return ParsedTimingReport(log_text)
+    parsed = ParsedTimingReport(log_text)
+    # A mapped netlist with a zero worst period has no timing paths left to
+    # measure (logic synthesized away, ex. no top-level outputs). Always an
+    # error, never a zero-delay measurement -- same rule as PYRTL's
+    # NO_TIMING_PATHS_MARKER, which would otherwise surface further on as a
+    # division by zero (1000/period, measured/estimated area).
+    for path_report in parsed.path_reports.values():
+        if path_report.path_delay_ns is not None and path_report.path_delay_ns <= 0:
+            raise Exception(
+                "DEVICE_MODELS (sky130): the synthesized netlist has no timing "
+                "paths (zero worst period) - there is nothing left to measure "
+                "an Fmax for. Does the design drive any top-level output? "
+                "Logic with no effect on outputs is optimized away by "
+                "synthesis. If this logic is intentionally pure wiring, mark "
+                f"it @wires. Log: {log_path}"
+            )
+    return parsed

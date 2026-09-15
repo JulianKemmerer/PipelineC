@@ -1421,6 +1421,12 @@ reuse the first one's resize width; and (before the fix described below) its VHD
 resized a signed source *before* converting to unsigned, which disagreed with assignment
 for a narrowing signed source.
 
+Passing a scalar int/char argument to a parameter of a different scalar type converts the
+same way. `f(c + 100)` into `f(x: uint16_t)` behaves as `x: uint16_t = c + 100` would, in
+native sim (`_sim_type_wrap` casts annotated arguments) and in VHDL (the call's port wire
+is declared at the parameter type). See `PY_TO_LOGIC_DESIGN.md`, "Call arguments convert
+at the call boundary".
+
 On native sim, `_CTypeMeta.__call__` (the metaclass every `uintN_t`/`intN_t` shares)
 implements the same contract: registry first (for a genuinely registered cast — see
 below), then `_sim_cast(val, cls)` for a scalar destination. It rejects 0 or >1 arguments

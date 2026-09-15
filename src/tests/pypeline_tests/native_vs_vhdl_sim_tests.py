@@ -47,6 +47,13 @@ COMB_TEST_FILES = [
     # multi-port traffic, byte enables, a pure caller aligned around
     # @pipeline_latency, and a stream RAM under backpressure.
     ("self_check_ram_test.py", INST_DIR, []),
+    # The only MAIN is stateful and goal-less, calling @pipeline_latency(3)
+    # with a narrower argument expression (see the non---comb entry below).
+    ("single_stateful_main_fixed_latency_test.py", INST_DIR, []),
+    # Scalar int call arguments whose type differs from the parameter
+    # (widen, sign-extend, truncate, uint->int, keyword-bound): the port wire
+    # must take the parameter type, or GHDL rejects the instance port map.
+    ("call_arg_width_test.py", INST_DIR, []),
     # self_check_bit_math_test.py is deliberately NOT here: its whole body is
     # one combinational block that calls sim_finish() the very same cycle it
     # computes everything, with nothing before that cycle to safely print --
@@ -115,6 +122,15 @@ NON_COMB_TEST_FILES = [
     # pure lookup MAIN gets compiler alignment registers around the
     # @pipeline_latency RAM, emulated natively by the fixed-pipeline evaluator.
     ("self_check_ram_test.py", INST_DIR, ["--pipeline_min_effort", "0"]),
+    # A single stateful @MAIN with no target MHz: nothing to pipeline. Used to
+    # be forced into the coarse sweep ("Trying to slice into ... for no
+    # reason"); now characterized as written by the planned sweep, with no
+    # pure companion MAIN needed.
+    (
+        "single_stateful_main_fixed_latency_test.py",
+        INST_DIR,
+        ["--pipeline_min_effort", "0"],
+    ),
     # Same self-checking design as the --comb entry above, but now through
     # the REAL scheduled FSM (replaces synth_tests.py's former
     # auto_fsm_native_sim_test + auto_fsm_vhdl_sim_test pair with one cycle diff).

@@ -3680,14 +3680,30 @@ def DO_THROUGHPUT_SWEEP(
         return multimain_timing_params
 
     # Switch to coase if single main with no target mhz
+    # -- but only if the coarse sweep could add latency somewhere under it. A
+    # stateful main (Reg/Feedback, no AUTO_PIPELINE below) cannot take added
+    # latency: coarse slicing into it is the "for no reason" sanity failure.
+    # Such a design has nothing to pipeline; the planned sweep skips goal-less
+    # mains and characterizes the design as written with one synthesis run.
     if len(parser_state.main_mhz) == 1:
         main_func = list(parser_state.main_mhz.keys())[0]
         target_mhz = GET_TARGET_MHZ(main_func, parser_state)
         if target_mhz is None:
-            print(
-                "Switching to coarse sweep since only main function has no specified frequency..."
-            )
-            coarse_only = True
+            if FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                parser_state.FuncLogicLookupTable[main_func].func_name, parser_state
+            ):
+                print(
+                    "Switching to coarse sweep since only main function has no specified frequency..."
+                )
+                coarse_only = True
+            elif not coarse_only:
+                print(
+                    f"Main function {main_func} has no specified frequency and "
+                    "nothing auto-pipelining can add latency to (ex. stateful, "
+                    "no AUTO_PIPELINE regions) - no coarse sweep, characterizing "
+                    "the design as written...",
+                    flush=True,
+                )
 
     # if coarse only
     if coarse_only:
@@ -3703,7 +3719,21 @@ def DO_THROUGHPUT_SWEEP(
                     "starts from the main's own latency guess.",
                     flush=True,
                 )
-        if len(parser_state.main_mhz) > 1:
+        if len(parser_state.main_mhz) == 1:
+            main_func = list(parser_state.main_mhz.keys())[0]
+            if not FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                parser_state.FuncLogicLookupTable[main_func].func_name, parser_state
+            ):
+                # Explicit --coarse (the automatic switch above never picks
+                # an ineligible main): say why instead of failing deep in
+                # slicing with "Trying to slice into ... for no reason"
+                raise Exception(
+                    f"No main functions are elligible for pipelining: --coarse "
+                    f"main function {main_func} has nothing auto-pipelining can "
+                    "add latency to (ex. stateful, no AUTO_PIPELINE regions). "
+                    "Drop --coarse to characterize the design as written."
+                )
+        elif len(parser_state.main_mhz) > 1:
             # Try to guess at main func, find funcs with delay and can be sliced
             possible_mains = []
             for main_func in parser_state.main_mhz:
@@ -3725,8 +3755,6 @@ def DO_THROUGHPUT_SWEEP(
                     f"Cannot do use a single coarse sweep with multiple pipelined main functions. Possible main functions: {possible_mains}"
                 )
                 sys.exit(-1)
-        else:
-            main_func = list(parser_state.main_mhz.keys())[0]
         target_mhz = GET_TARGET_MHZ(main_func, parser_state)
         if target_mhz is None:
             print("Main function:", main_func, "does not have a set target frequency.")
