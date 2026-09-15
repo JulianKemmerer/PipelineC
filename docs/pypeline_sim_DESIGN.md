@@ -1318,6 +1318,63 @@ correctly-typed but otherwise arbitrary value. Real hardware gives no guarantee 
 
 ---
 
+## `make_ram` / `make_stream_ram` Simulation Model
+
+`include/pypeline/ram.py`'s `ram_model_class(cfg, handshake, ...)` builds one class-form
+`@sim_model` per RAM configuration. It is attached to `make_ram`'s generated function and to
+`make_stream_ram`'s raw handshake core. Unlike `make_fifo`'s model, it is **cycle-exact**. It
+walks the same per-port stage structure as the generated VHDL (`ram_vhdl_text(cfg, handshake)`),
+and one `RamConfig` drives both. `inst/self_check_ram_test.py` diffs the two against GHDL.
+
+**Evaluation.** For each port, in index order:
+
+- **Outputs** come from the committed stage registers.
+  - At latency 0 they come combinationally from the inputs.
+  - When the last stage is the RAM stage (combinational read, no output registers), `rd_data`
+    is a live read of the committed memory.
+- **When the stage enable is set**, the stages shift. The enable is always set for `make_ram`;
+  for the stream core it is `resp_ready | ~last_valid`.
+  - The RAM stage's read is taken from the committed memory.
+  - Its write is appended to `pending` as `(index, value, byte_mask)`.
+
+Reads never see `pending`. That is what makes every read read-first. It is also why the
+highest-numbered port wins a same-address collision: pending writes are applied in order.
+
+**Shared memory, lazy writes.** `_call_sim_model` deep-copies the committed instance before
+every evaluation, which for a list-backed memory would copy the whole RAM every cycle.
+`RamModel.__deepcopy__` instead:
+
+1. applies the committed instance's `pending` writes to the memory list, in order, merging
+   bytes for byte write enables, then clears `pending`;
+2. returns a new instance that shares that list, with an empty `pending` and a copy of the
+   small stage state.
+
+So the shared list changes exactly once per clock edge: when the first evaluation of the next
+cycle copies the state committed at that edge. Two kinds of evaluation only ever append to
+their own `pending` and never touch it:
+
+- evaluations re-run during wire convergence;
+- evaluations whose writes are discarded, such as a disabled instance in the fixed-pipeline
+  stage evaluator.
+
+`sim_reset()` discards instances, and `__init__` copies the normalized `init` template. The
+scheme relies on nothing copying `_sim_reg_state` wholesale; `pypeline_sim_pipeline` copies
+only values. `ram_sim_model_convergence_test` checks it, and is mutation-checked: a model
+that writes from re-run evaluations never converges.
+
+**Fixed latency.** `make_ram`'s function is `@pipeline_latency(latency)`. The model supplies
+the register delay itself, because the runtime never adds an output queue for a tagged
+function (see [Fixed User Pipelines](#fixed-user-pipelines)). The stream core is untagged.
+
+**Addresses and values.**
+
+- An address `>= size`, possible when `size` is not a power of two, is taken modulo `size`.
+  This matches the `mod RAM_SIZE` the VHDL applies under `translate_off`.
+- Written compound values are deep-copied in, and returned ones deep-copied out, so a caller
+  mutating a list cannot reach into the memory.
+
+---
+
 ## `Wire[T]` / `Input[T]` / `Output[T]` Global Wire Simulation
 
 `Wire[T]` declarations at module level create `__annotations__` entries but no Python variable.
@@ -2028,6 +2085,23 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   and passes `-s <path>` instead of `-p '<commands>'` — a script file's contents are never one
   exec argv, regardless of length. See `src/tests/pypeline_tests/inst/long_file_list_arg_len_test.py`.
 
+#### AUTO_COMB_SHARE call sites
+
+`AUTO_COMB_SHARE(func)` forwards native calls to the original `@hw_func`, with
+the original argument/return types and zero added latency. A direct native run
+does not import `AUTO_COMB_SHARE.py` or `HLS.py`; no optimizer-specific state,
+latency cache or simulator evaluator is necessary. The compiled replacement
+must be bit-exact, so pipeline delay lines and FSM transaction models can keep
+evaluating the original computation.
+
+`make_stream_auto_comb_share` is ordinary simulated hardware with input and
+output elastic registers: two unstalled cycles, II=1, stable output under
+backpressure. Its occupancy ready path is combinational. The wrapper's two
+cycles must not be confused with its underlying ACS tag's `.latency == 0`.
+Native/GHDL tests cover this wrapper and ACS composition with fixed/discovered
+pipelines, MCP and scheduled FSMs; see
+[`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md#stream-wrapper-and-simulation).
+
 #### AUTO_FSM call sites (non-`--comb` `--sim`)
 
 `AUTO_FSM(func)` produces a resource-shared state machine with initiation interval
@@ -2207,7 +2281,8 @@ Two traps when writing a design that will be diffed against real VHDL:
   (see `sim_model` section above); without one, calling the function in simulation raises
   `NotImplementedError`. `make_fifo` attaches a `collections.deque`-based FWFT model (see
   `make_fifo` Simulation Model below), so it and, transitively, `make_stream_fifo`/
-  `make_stream_auto_pipeline` are now simulable.
+  `make_stream_auto_pipeline` are now simulable. `make_ram` and `make_stream_ram` attach a
+  cycle-exact model (see `make_ram` / `make_stream_ram` Simulation Model below).
 - **`sim_model` class models and nested `Reg[T]` hw_funcs inside Layer-1 `Feedback[T]`
   loops** — commit once per outermost `sim_call`, not once per convergence iteration, since
   the outermost `sim_call` opens a register-write buffer for its whole duration, the same
@@ -2397,6 +2472,17 @@ against `sim_call(div_inv, x)` as ground truth), and `fifo_sim_model_convergence
 (`inst/fifo_sim_model_test.py` under `--run 16`), which mirrors
 `sim_model_convergence_test`'s pattern to prove the FIFO's deque state doesn't double-push
 per cycle under wire convergence.
+
+The RAM model (`ram.ram_model_class`) has four kinds of coverage:
+
+- `inst/ram_test.py`: targeted `sim_call` checks, plus seeded soaks against a reference with
+  no stage bookkeeping. The reference encodes only that a request's read sees exactly the
+  writes of earlier requests.
+- `inst/stream_ram_test.py`: the handshake core's stall hold, bubble fill, one write per
+  accepted request, and a random-backpressure replay.
+- `ram_sim_model_convergence_test` (`inst/ram_sim_model_test.py` under `--run 30`): RAM
+  accumulators closed through wires, so every cycle re-evaluates them with stale inputs.
+- `inst/self_check_ram_test.py`: the cycle diff against the generated VHDL.
 
 The `pipelinec --sim --run N` § above is covered by `pipelinec_native_sim_test`, which reruns
 `global_wires_sim_test.py` through `pipelinec`'s CLI (`pipelinec inst/global_wires_sim_test.py

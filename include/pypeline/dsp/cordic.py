@@ -357,10 +357,10 @@ def make_cordic_rotate(amp_t, n_iters=16, work_bits=24, phase_bits=32):
     rotates a seed vector by the requested angle. Seeded with `(amplitude, 0)`
     it produces `(amplitude*cos(phase), amplitude*sin(phase))`.
 
-    This is what lets a test stimulus have a CARRIER. There is no RAM or ROM
-    primitive in the Pypeline library, so a quarter-wave sine table would have
-    to be an unrolled constant mux, and a table coarse enough to be affordable
-    would quantize the phase badly enough to bias a frequency measurement.
+    This is what lets a test stimulus have a CARRIER. A quarter-wave sine
+    table would need a ROM (make_ram), and a table coarse enough to be
+    affordable would quantize the phase badly enough to bias a frequency
+    measurement.
     The CORDIC has no table at all.
 
         cordic_rotate(phase, amplitude, valid_in) -> cordic_rotate_t

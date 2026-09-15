@@ -512,8 +512,8 @@ by the sample rate with no π anywhere.
 
 **This is a deliberate divergence from gr-pdw's algorithm**, and the first thing
 its authors would ask about. gr-pdw zero-pads the pulse, takes an FFT and picks
-the peak bin, because in numpy that is free. In an FPGA it is not: there is no
-RAM/ROM primitive in the Pypeline library for the twiddle table, and a 256-point
+the peak bin, because in numpy that is free. In an FPGA it is not: the twiddle
+table alone needs a ROM, and a 256-point
 FFT would dwarf the entire rest of this design. The phasor-sum estimator costs 4
 DSP48s and gives a continuous-valued frequency rather than one quantized to a
 bin.

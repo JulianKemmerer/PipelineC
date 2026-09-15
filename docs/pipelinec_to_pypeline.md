@@ -624,6 +624,60 @@ gives a real valid/ready port with a held, never-dropped result across a
 stalled consumer. See
 [pypeline_guide.md: Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)](pypeline_guide.md#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental).
 
+### 8h. RAMs — `include/ram.h` macros and built-in `_RAM_SP_RF_N` functions
+
+```c
+// PipelineC
+#include "ram.h"
+DECL_RAM_DP_RW_R_1(uint32_t, my_ram, 1024, RAM_INIT_INT_ZEROS)
+...
+my_ram_outputs_t o = my_ram(wr_addr, wr_data, wr_en, 1, 1, rd_addr, 1, 1);
+```
+```python
+# pypeline
+from ram import make_ram
+
+my_ram, my_ram_out_t = make_ram(uint32_t, 1024, ports=("rw", "r"), read_latency=1)
+o = my_ram(my_ram.p0_in_t(addr=wr_addr, wr_data=wr_data, wr_en=wr_en, valid=1),
+           my_ram.p1_in_t(addr=rd_addr, valid=1))
+# o.p0 / o.p1: addr, wr_data, wr_en, valid piped through, plus rd_data
+```
+
+Every old shape is one `make_ram` configuration:
+
+| PipelineC | pypeline |
+|---|---|
+| `DECL_RAM_DP_RW_R_0` | `make_ram(T, N, ports=("rw", "r"), read_latency=0)` |
+| `DECL_RAM_TP_RW_R_R_0` / `_1` | `ports=("rw", "r", "r")`, `read_latency=0` / `1` |
+| `DECL_RAM_DP_RW_R_1` | `ports=("rw", "r")`, `read_latency=1` |
+| `DECL_RAM_DP_R_RW_1` | `ports=("r", "rw")`, `read_latency=1` |
+| `DECL_RAM_DP_W_R_1` | `ports=("w", "r")`, `read_latency=1` |
+| `DECL_RAM_DP_RW_RW_1` | `ports=("rw", "rw")`, `read_latency=1` |
+| `DECL_RAM_DP_RW_R_2` (input + output registers) | `ports=("rw", "r")`, `read_latency=1, in_regs=1` |
+| `DECL_RAM_DP_RW_R_2_O` (two output registers) | `ports=("rw", "r")`, `read_latency=1, out_regs=1` |
+| `DECL_RAM_TP_R_R_W_0` / `_1` | `ports=("r", "r", "w")`, `read_latency=0` / `1` |
+| `DECL_4BYTE_RAM_SP_RF_1` | `make_ram(uint32_t, N, ports=("rw",), read_latency=1, byte_write_enables=True)` |
+| `DECL_STREAM_RAM_DP_W_R_1` + `RAM_DP_W_R_1_STREAM` | `make_stream_ram(T, N, ports=("w", "r"), read_latency=1)` |
+| `static T mem[N]` + `mem_RAM_SP_RF_0/1/2(addr, wd, we)` | `make_ram(T, N, ports=("rw",), read_latency=0` / `1` / `1, in_regs=1)` |
+| `mem_RAM_DP_RF_0/1/2(addr_r, addr_w, wd, we)` | `ports=("r", "w")`, same latencies |
+| `BUILT_IN_RAM_FUNC_LATENCY(caller, mem, N)` | not needed: `make_ram` is always `@pipeline_latency(latency)` |
+
+Differences to know when porting:
+
+- **Initial contents are Python values, not VHDL text.** Replace a `VHDL_INIT` string
+  (`RAM_INIT_INT_ZEROS`, a generated `(others => ...)` aggregate, or a
+  `#pragma VAR_VHDL_INIT` file) with `init=[...]` or `init={index: value}`.
+- **No `rd_en` inputs.** The old `_1` macros' per-port read enables are gone. Hold the whole
+  RAM with a clock enable (`if en:` around the call), or use `make_stream_ram`, whose
+  per-port ready is that enable.
+- **The address is sized to the RAM.** `addr` is `uintN_t`, N = ceil(log2(size)), instead of
+  `uint32_t`.
+- **Latency is declared for you.** In a pure caller, the compiler aligns the other paths
+  around the RAM. In a stateful caller, use the piped-through `addr`/`valid` exactly as
+  before.
+
+See [pypeline_guide.md: RAMs: `make_ram` / `make_stream_ram`](pypeline_guide.md#rams-make_ram--make_stream_ram).
+
 ---
 
 ## 9. Bit Manipulation
@@ -745,7 +799,10 @@ Most PipelineC `#pragma` annotations have a direct pypeline equivalent.
 
 Port `#pragma FUNC_LATENCY func N` to `@pipeline_latency(N)` on `func`.
 Port the function's explicit registers as `Reg[T]`; the decorator supplies timing
-metadata and does not implement the pipeline. Callers align other paths with the
+metadata and does not implement the pipeline. A `__vhdl__` body with FUNC_LATENCY becomes
+a `vhdl()` body with `@pipeline_latency(N)` and a `@sim_model` that produces the same
+delay. For the RAM macros that did this (`BUILT_IN_RAM_FUNC_LATENCY`,
+`include/risc-v/mem_decl.h`), use `make_ram` instead (8h). Callers align other paths with the
 declared N cycles, including in standalone native simulation. See the
 [complete example](pypeline_guide.md#fixed-user-pipelines) and
 [selective simulation behavior](pypeline_sim_DESIGN.md#fixed-user-pipelines).
@@ -827,7 +884,6 @@ The following PipelineC features do not yet have a pypeline equivalent.
 |---|---|
 | Multiple clock domains (`MAIN_MHZ_GROUP`, `#pragma ASYNC_WIRE`) | Not supported — `make_clock(mhz)` (§11 above) covers a single named/generated clock, but a tagged clock must match some `@MAIN`'s rate exactly; clock groups (distinct domains at the same rate) and async wires are not supported |
 | Async clock-crossing FIFOs (`GLOBAL_STREAM_FIFO` across clock domains) | Not supported |
-| Dual-port stream RAM (`DECL_STREAM_RAM_DP_W_R_1`) | Use `vhdl()` passthrough |
 | Multiple / early `return` statements (returning from inside an `if` branch) | Not supported — a pypeline function has exactly one `return`, which must be the final top-level statement; restructure to assign a result variable in each branch and return it once at the end (see [pypeline_guide.md: Your First Hardware Function](pypeline_guide.md#your-first-hardware-function)) |
 | `Reg[char_t[N]] = <initializer>` (register power-on value for a char array, e.g. equivalent of C's `static char name[16] = "boot";`) | Not supported for hardware elaboration — raises `ElaborationError`. `Reg[char_t[N]]` with no initializer (zero-init) works normally. See [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) |
 | C-style casts to `char_t`, an `@enum` type, or an array type | Not supported (scalar int↔int and struct/`@interface`-half casts are — see [§3d Casting](#3d-casting)) |

@@ -1,13 +1,13 @@
 # AUTO_FSM: pure functions as resource-shared state machines
 
 `AUTO_FSM(func)` implements a pure combinational function as a finite state
-machine that holds **one copy of each distinct operation** and runs the function
-over several clock cycles. It is the resource-minimizing dual of
-[`AUTO_PIPELINE`](SYN_DESIGN.md): where AUTO_PIPELINE cuts one full copy of the
-hardware with N serial register slices (N clocks of latency and N+1
-combinational pipeline regions, initiation interval 1, maximum throughput,
-maximum area), AUTO_FSM keeps one adder and uses it twelve times (initiation
-interval N, minimum area).
+machine that shares operations across several clock cycles. Where
+[`AUTO_PIPELINE`](SYN_DESIGN.md) cuts one full copy of the hardware with N serial
+register slices (N clocks of latency and N+1 combinational regions, II=1),
+AUTO_FSM can keep one adder and use it twelve times. Its default area search
+also considers [`AUTO_COMB_SHARE`](AUTO_COMB_SHARE_DESIGN.md)'s combinational
+rewrites, comparing whole scheduled designs rather than assuming maximum
+sharing always minimizes area.
 
 Both are tool-driven: you write the function, state a clock goal, and the build
 figures out the rest — how many stages, or how many states.
@@ -614,9 +614,10 @@ Two shapes were considered and **rejected**: using the state bits *directly* as
 a mux select (with data inputs padded out to one row per state) grows the
 operand mux from `folds` rows to `states + 1` rows, which on any real data
 width costs far more than the decode it saves — sine's 7-fold float64 unit would
-buy 8 extra 64-bit mux rows to avoid about 3 gates. And a real ROM primitive
-does not exist in the compiler; a constant array at a variable index is the
-closest thing, which is exactly what is used here.
+buy 8 extra 64-bit mux rows to avoid about 3 gates. And the compiler has no
+ROM primitive of its own. The library's `make_ram` ROM is an opaque raw-VHDL
+block that generated schedules cannot fold constants into, so a constant array
+at a variable index is the closest thing, and it is exactly what is used here.
 
 `onehot` goes further: the state register becomes one bit per state (plus idle),
 so every control signal is a constant-index bit read. Write enables become
@@ -734,7 +735,7 @@ must match what was built.
 
 #### What it searches over
 
-Two axes:
+Within each combinational graph, two scheduling/binding moves:
 
 | move | what it changes | what it buys | what it costs |
 |---|---|---|---|
@@ -797,6 +798,26 @@ and the `[type resolver: array reconstruction]` section of
 `auto_fsm_unit_test.py`.
 
 #### The search itself
+
+**Combinational graph choices are included by default.** Bootstrap elaboration
+calls `AUTO_COMB_SHARE.prepare` to create exact alternatives through the shared
+`HLS` engine: CSE, exclusive sharing, factoring, constant arithmetic, bit-width
+reduction and decomposition. No explicit `AUTO_COMB_SHARE` tag is required.
+`SWEEP_MIN_AREA_SCHEDULE` runs the existing graph-local search
+(`_SWEEP_MIN_AREA_SCHEDULE`) on the original and eligible alternatives. Each
+choice is scheduled and bound independently, then priced with the same full
+register/mux/control area model. Timing and latency caps remain hard constraints;
+the original graph's result remains an incumbent. A lower-combinational-area
+graph may lose because it needs more state or wider selection logic.
+
+Candidate graphs and their scores are pinned during a build's repeated parses,
+but generated callables are rematerialized in each parser state. A selected
+schedule records its actual source entity and rewrite moves. The additional
+candidate count is bounded and very large expanded graphs are skipped before
+scheduling; see [the shared search limits](AUTO_COMB_SHARE_DESIGN.md#objective-limits-and-fsm-integration).
+Explicit forced schedules and `--auto_fsm_no_area_sweep` bypass these choices.
+`AUTO_FSM(acs)` is valid too, but starts from ACS's explicitly selected graph;
+passing the original function gives the broader joint search.
 
 ```
 anchor = the plain share-everything schedule      # candidate zero and incumbent
@@ -1375,7 +1396,9 @@ and at `fsm.latency + 1` (scheduled).
   tree — a 5-entry table estimates at 4.8 ns where the module it sits in
   measures 1.9 ns. Harmless inside an AUTO_FSM, whose delay is one measured
   whole-module number, but a real ROM/table primitive with its own cost model
-  would make the idiom usable in ordinary designs. Likewise, a sufficiently
+  would make the idiom usable in ordinary designs. (A design can instantiate an
+  explicit ROM today with the library's `make_ram`; this item is about the
+  compiler's own treatment of constant arrays.) Likewise, a sufficiently
   large register file or lookup table could eventually map to SRAM, but no
   latchup-compatible inferred SRAM primitive exists in this flow yet; treating
   an ordinary array as one today only produces combinational logic.

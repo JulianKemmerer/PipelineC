@@ -37,9 +37,16 @@ from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINE_SIM_DEBUG, Test, ma
 # selects the full-build pipelined compare (pypeline_sim_debug.py builds once
 # then runs native + VHDL concurrently against the same warm out_dir).
 COMB_TEST_FILES = [
+    ("self_check_auto_comb_share_composition_test.py", INST_DIR, []),
+    ("self_check_stream_auto_comb_share_test.py", INST_DIR, []),
     ("pipeline_latency_sim_test.py", INST_DIR, []),
     ("self_check_counter_test.py", INST_DIR, []),
     ("self_check_fifo_test.py", INST_DIR, []),
+    # make_ram/make_stream_ram: the hand-written simulation model against the
+    # generated raw VHDL -- init from Python values across element types,
+    # multi-port traffic, byte enables, a pure caller aligned around
+    # @pipeline_latency, and a stream RAM under backpressure.
+    ("self_check_ram_test.py", INST_DIR, []),
     # self_check_bit_math_test.py is deliberately NOT here: its whole body is
     # one combinational block that calls sim_finish() the very same cycle it
     # computes everything, with nothing before that cycle to safely print --
@@ -102,7 +109,12 @@ COMB_TEST_FILES = [
 # Non---comb (pipelined/scheduled) compares: full build, then native sim runs
 # with the discovered latencies emulated, diffed against real pipelined VHDL.
 NON_COMB_TEST_FILES = [
+    ("self_check_auto_comb_share_composition_test.py", INST_DIR, []),
     ("pipeline_latency_sim_test.py", INST_DIR, ["--pipeline_min_effort", "0"]),
+    # Same RAM design as the --comb entry, through a real pipelined build: the
+    # pure lookup MAIN gets compiler alignment registers around the
+    # @pipeline_latency RAM, emulated natively by the fixed-pipeline evaluator.
+    ("self_check_ram_test.py", INST_DIR, ["--pipeline_min_effort", "0"]),
     # Same self-checking design as the --comb entry above, but now through
     # the REAL scheduled FSM (replaces synth_tests.py's former
     # auto_fsm_native_sim_test + auto_fsm_vhdl_sim_test pair with one cycle diff).

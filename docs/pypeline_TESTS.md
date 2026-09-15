@@ -133,6 +133,63 @@ from a different angle:
   - restarting at that count settles immediately, with pass 2 skipped;
   - `max_latency=1` fails the build naming the cap.
 
+## AUTO_COMB_SHARE coverage
+
+`AUTO_COMB_SHARE` is exercised at the callable, graph, RTL and stream boundaries:
+
+- `auto_comb_share_test.py` (`elab_introspect`): metadata/native forwarding,
+  generated candidate equivalence, exclusive predicates, multiple consumers,
+  signed casts, modular factoring, constant arithmetic, demanded/known bits,
+  custom narrow-width operators, scoped fallback, purity and repeat parsing.
+- `auto_comb_share_build_test.py` (`build_report`, Yosys + GHDL): SAT proves
+  bit-exact equivalence for all inputs of the two-multiplier/output-mux example;
+  independent mapped-cell builds require a strict area reduction and no
+  flip-flops/latches in the combinational replacement.
+- `self_check_stream_auto_comb_share_test.py` (`synth`, native-vs-VHDL `--comb`):
+  two-cycle registered boundaries, unstalled II=1, bubbles, backpressure and
+  stable output while stalled.
+- `self_check_auto_comb_share_composition_test.py` (both native-vs-VHDL modes):
+  fixed/discovered pipelines, default raw-function FSM, explicit-ACS FSM, and
+  MCP stream composition. The design selects an Artix-7 part because real MCP
+  constraints require Vivado.
+
+Run the full suite with `python3 src/tests/pypeline_tests/run_all.py -j 4 --no_timeout`.
+Use `-k auto_comb_share` to select the feature tests. See
+[`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md) for the contract and limits.
+
+## RAM coverage
+
+`make_ram` (`include/pypeline/ram.py`) and `make_stream_ram` (`stream/stream_ram.py`) share one
+VHDL generator and one simulation model. Coverage:
+
+- **`ram_test.py`** (`native_sim` and `synth --comb`).
+  - Six `@MAIN` shapes, each with its own generated raw VHDL: single port, struct elements
+    with a non-power-of-two size, two ports with input/output registers, an array register
+    file, byte write enables, and a string ROM.
+  - `sim_call` tests: latency and pass-through fields, read-first reads, write collisions,
+    init forms and validation, instance independence and `sim_reset`, same-cycle
+    re-evaluation, stateful versus pure (aligned) callers.
+  - Seeded soaks against a reference with no stage bookkeeping: a request's read sees
+    exactly the writes of earlier requests.
+  - A `PARSE_FILE` check that every generated RAM carries its `func_fixed_latency`.
+- **`stream_ram_test.py`** (`native_sim` and `synth --comb`): ready-as-clock-enable stall
+  hold, bubble fill, exactly one write per accepted request, independent ports, latency 0,
+  and a random-backpressure replay.
+- **`ram_sim_model_test.py`** (`native_sim` via `pypeline_sim.py --run 30`): convergence
+  safety of the shared-memory model. RAM accumulators are closed through wires, so every
+  cycle re-evaluates them with stale inputs. Mutation-checked: a model that writes from
+  re-run evaluations never converges.
+- **`self_check_ram_test.py`** (both `native_vs_vhdl_sim` modes, plus `native_sim`):
+  - init readback across element types (`uint1_t`, `int1_t`, 64-bit signed, enum, struct,
+    2-D array, `char_t[8]`, fixed, float);
+  - latency-3 traffic and byte write enables;
+  - a pure `@MAIN(100.0)` aligned around the RAM;
+  - a stream RAM under backpressure.
+
+  The checker MAIN returns a value on purpose. A design with no top-level outputs synthesizes
+  to nothing, and the pipelined build's PyRTL timing step then fails. The pure MAIN is also
+  what keeps a pipelined build of this file off the single-stateful-MAIN coarse-sweep path.
+
 ## Generated-name regression coverage
 
 `interface_factory_two_widths_test.py` is a normal synthesis test: the same design

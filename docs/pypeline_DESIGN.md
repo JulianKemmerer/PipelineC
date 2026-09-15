@@ -975,14 +975,34 @@ The internal helper `_auto_pipeline_with_io_regs(func, has_input_reg, has_output
 optional unconditional `Reg[T]` boundary registers and returns
 `(wrapped_func, auto_pipeline_call)` so library code can read `.latency`.
 
+### `AUTO_COMB_SHARE(func)` — Zero-Cycle Resource Sharing
+
+`AUTO_COMB_SHARE` is a lightweight callable tag with
+`_is_auto_comb_share_pragma` and `_is_hw_func` markers. It retains `.func`, copies
+the original annotated signature, and reports `.latency == 0`. It deliberately
+does not expose `__wrapped__`: generic hardware type introspection should work,
+but the elaborator must still see the tag and perform the transformation.
+Ordinary Python/native simulation calls forward to `.func` without importing
+the optimizer. No simulation state or latency feedback cache is needed.
+
+Canonical identity includes the wrapped function, not the chosen implementation.
+`encode_param_value` and `pypeline_names` preserve the tag in factory identities;
+fixed-pipeline reachability follows through to its underlying callable.
+`PY_TO_LOGIC._elaborate_live_func` substitutes the chosen ordinary hardware
+function, which permits composition with `AUTO_PIPELINE` and stream factories.
+Purity and exact typed rewrites live in `AUTO_COMB_SHARE`/`HLS`; see
+[`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md).
+
 ### `AUTO_FSM(func)` — Resource-Shared State Machines with `.latency`
 
-The resource-minimizing dual of `AUTO_PIPELINE`. Where `AUTO_PIPELINE(func)` builds
+Where `AUTO_PIPELINE(func)` builds
 one full copy of `func`'s hardware cut by serial register slices (N slices give
 N clocks of latency and N+1 combinational regions; initiation interval 1,
-maximum area), `AUTO_FSM(func)` builds a state machine holding ONE copy of each
-distinct operation and runs `func` over several cycles (initiation interval N,
-minimum area). Twelve identical adds become one adder used in twelve states.
+extra register area), `AUTO_FSM(func)` builds a resource-shared state machine
+and runs `func` over several cycles. Its default area search includes the same
+combinational candidates as `AUTO_COMB_SHARE`, scored by complete FSM area.
+Twelve identical adds can become one adder used in twelve states; unsharing is
+also considered when mux/register overhead or a latency cap warrants it.
 
 ```python
 UPDATE = AUTO_FSM(next_state)     # pure single-argument @hw_func
@@ -1897,6 +1917,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `sim_assert(cond, msg=None)` | simulation-only condition check — raises `AssertionError` in native sim, elaborates to VHDL `assert ... report ... severity failure;` (see `PY_TO_LOGIC_DESIGN.md`) |
 | `sim_finish()` | simulation-only stop signal — raises `SimFinish` in native sim (caught by `pypeline_sim.py`'s CLI run loop), elaborates to VHDL `std.env.finish;` (see `PY_TO_LOGIC_DESIGN.md`) |
 | `AUTO_PIPELINE(func, latency=, start_latency=, max_latency=)` | Callable tag: calls through it may be auto-pipelined inside register/feedback contexts; `.latency` reads the built register count; optional fixed / starting / maximum latency (equivalent to `#pragma AUTOPIPELINE [N]`) |
+| `AUTO_COMB_SHARE(func)` | Experimental area-first combinational callable; same types/bits, zero added cycles, `.func`, `.latency == 0`; composes with pipeline/MCP/FSM wrappers |
 | `AUTO_MULTI_CYCLE` | `AUTO_MULTI_CYCLE(latency= / start_latency= / max_latency=)` multi-cycle tag whose count the throughput sweep raises; `.start`/`.end` like `MULTI_CYCLE`, `.latency` read-tracked (see [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle--tool-tuned-multi-cycle-path-tag)) |
 | `MULTI_CYCLE` / `_MultiCycleTag` / `_MultiCycleRole` | `MULTI_CYCLE[ncycles]` tag; `.start`/`.end` attach to `Reg[T, tag]` declarations to relax setup timing between them (equivalent to `#pragma MULTI_CYCLE`) |
 | `wires` | Marks a function as pure rewiring/bit-casting with no real delay; implies `@hw_func`; stacks with `@MAIN` in either order (equivalent to `#pragma FUNC_WIRES`) |
@@ -1985,10 +2006,10 @@ into its two one-directional structs, and `_enclosing_factory_param_suffix` to n
 modules deterministically. It exposes no new pypeline.py API — the generated function is an
 ordinary `@hw_func` + `@struct` pair, and `make_stream_t(data_t, feedback_t=uint1_t)` is now just
 the feedforward half of `make_stream_interface(...)`. Library modules that carry backpressure
-declare interface ports: `stream/stream_auto_pipeline.py`, `stream/stream_fifo.py`,
+declare interface ports: `stream/stream_auto_pipeline.py`, `stream/stream_fifo.py`, `stream/stream_ram.py`,
 `stream/stream_auto_fsm.py`, `stream_multi_cycle.py`, `dsp/`, and all of `axi/axis.py` (whose
 `make_axis_broadcast_interlock` uses an *array* interface port for fan-out). `fifo.py`'s raw
-`make_fifo` deliberately does not —
+`make_fifo` deliberately does not, nor do `ram.py`'s `make_ram` and the raw handshake core under `make_stream_ram` —
 its three loose signals are literally the wrapped VHDL entity's ports. See
 [PY_TO_LOGIC_DESIGN.md § `@interface`](PY_TO_LOGIC_DESIGN.md#interface--generated-reverse-wiring)
 and tests `inst/interface_test.py`, `inst/interface_func*_test.py`,

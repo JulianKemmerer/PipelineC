@@ -12,9 +12,9 @@ fractional bits), fused into the same output resize stage every other dsp/
 block uses. Non-power-of-two `n` needs a real reciprocal multiply and isn't
 implemented (pass `normalize=False` for the raw running sum instead).
 
-The delay line is registers, not BRAM -- there's no RAM primitive in this
-codebase yet (the same limitation blocking the FIR library's coefficient-bank
-roadmap item) -- so a large `n` x wide `data_t` costs flops accordingly, and
+The delay line is registers, not BRAM -- a make_ram-backed delay line is a
+roadmap item (see include/pypeline/dsp/pypeline_dsp_guide.md) -- so a large
+`n` x wide `data_t` costs flops accordingly, and
 the running sum's single-cycle add/subtract is this block's fmax limiter for
 very wide accumulators.
 """

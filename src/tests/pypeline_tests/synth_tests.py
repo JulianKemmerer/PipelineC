@@ -19,6 +19,7 @@ from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINEC, QOR_DIR, Test, ma
 # fmt: off
 # (filename, source_dir, extra_args)
 SYNTH_TEST_FILES = [
+    ("self_check_stream_auto_comb_share_test.py", INST_DIR, []),
     # By far the slowest test in the suite (a ~48-stage unrolled float32
     # divider under real sky130 synth+STA, see float_ops_div_test.py's own
     # comment) -- listed FIRST so run_all.py's FIFO dispatch starts it
@@ -69,6 +70,11 @@ SYNTH_TEST_FILES = [
     ("vhdl_text_test.py", INST_DIR, ["--comb"]),
     ("fifo_test.py", INST_DIR, ["--comb"]),
     ("stream_fifo_test.py", INST_DIR, ["--comb"]),
+    # Every make_ram / make_stream_ram shape in these files is its own @MAIN:
+    # the generated raw VHDL (memory inference, init aggregates, struct and
+    # array element conversions) only meets a synthesis tool here.
+    ("ram_test.py", INST_DIR, ["--comb"]),
+    ("stream_ram_test.py", INST_DIR, ["--comb"]),
     # All four skid-buffer modes plus the AXIS face are separate @MAIN tops in
     # this one file, so this entry elaborates every generated body.
     ("skid_buffer_test.py", INST_DIR, ["--comb"]),

@@ -31,6 +31,7 @@ For getting started information see the [README](README.md).
 18. [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation)
     - [`AUTO_PIPELINE(...)`](#auto_pipeline)
     - [`AUTO_MULTI_CYCLE(...)` (New)](#auto_multi_cycle-new)
+    - [`AUTO_COMB_SHARE(...)` (New, Experimental)](#auto_comb_share-new-experimental)
     - [`AUTO_FSM(...)` (New, Experimental)](#auto_fsm-new-experimental)
 
 **Part III — Ports and streams**
@@ -44,22 +45,24 @@ For getting started information see the [README](README.md).
 25. [Struct ↔ AXI-Stream: `make_axis_to_type` / `make_type_to_axis`](#struct--axi-stream-make_axis_to_type--make_type_to_axis)
 26. [Host-Side Generated Types](#host-side-generated-types)
 27. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
-28. [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer)
-29. [Pipelined Stream Wrappers: `make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline)
-30. [Multi-Cycle Stream Wrapper: `make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle)
-31. [Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental)
+28. [RAMs: `make_ram` / `make_stream_ram`](#rams-make_ram--make_stream_ram)
+29. [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer)
+30. [Pipelined Stream Wrappers: `make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline)
+31. [Multi-Cycle Stream Wrapper: `make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle)
+32. [Combinational Sharing Stream Wrapper: `make_stream_auto_comb_share` (Experimental)](#combinational-sharing-stream-wrapper-make_stream_auto_comb_share-experimental)
+33. [Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental)
 
 **Part IV — Escape hatches**
 
-32. [Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
-33. [Fixed User Pipelines: `@pipeline_latency`](#fixed-user-pipelines)
-34. [Just-Wires Synthesis Hint: `@wires`](#just-wires-synthesis-hint-wires)
+34. [Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
+35. [Fixed User Pipelines: `@pipeline_latency`](#fixed-user-pipelines)
+36. [Just-Wires Synthesis Hint: `@wires`](#just-wires-synthesis-hint-wires)
 
 **Part V — Reference**
 
-35. [Simulation Reference](#simulation-reference)
-36. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
-37. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
+37. [Simulation Reference](#simulation-reference)
+38. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
+39. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
 
 ---
 
@@ -2139,16 +2142,17 @@ my_wire: Wire[uint32_t] = 0  # error — initialisers are not allowed on Wire/In
 
 ### Part II — Temporal behavior
 
-An ordinary call is same-cycle combinational (Part I). The sections below cover results
-that take more than one clock cycle. First comes `MULTI_CYCLE[...]`, a hand-written timing
+An ordinary call is same-cycle combinational (Part I). The sections below cover choices
+about time and resource use. First comes `MULTI_CYCLE[...]`, a hand-written timing
 constraint that gives one slow register-to-register path `N` cycles to settle. Then come the
-three **automatic** (HLS-like) constructs, where the tool picks the implementation from your
-clock goal. `AUTO_PIPELINE` pipelines logic for throughput. `AUTO_MULTI_CYCLE` tunes a
-multi-cycle path's cycle count. `AUTO_FSM` folds logic onto shared hardware for area.
+four **automatic** (HLS-like) constructs. `AUTO_PIPELINE` pipelines logic for throughput.
+`AUTO_MULTI_CYCLE` tunes a multi-cycle path's cycle count. `AUTO_COMB_SHARE` reduces
+combinational resources without adding cycles. `AUTO_FSM` combines resource sharing
+with scheduling over multiple cycles.
 
 Each one has a valid/ready stream wrapper in Part III, so neighboring hardware doesn't need
 to know which one it's talking to: `make_stream_auto_pipeline`, `make_stream_multi_cycle` /
-`make_stream_auto_multi_cycle`, and `make_stream_auto_fsm`.
+`make_stream_auto_multi_cycle`, `make_stream_auto_comb_share`, and `make_stream_auto_fsm`.
 
 ## Multi-Cycle Paths: `MULTI_CYCLE[...]`
 
@@ -2209,39 +2213,33 @@ other function-to-stream wrapper — see
 
 ## Automatic (HLS-like) Implementation
 
-In these three constructs you describe *what* to compute as an ordinary pure `@hw_func`.
-The tool then decides *how* to spend clock cycles on it, measuring delays against the
-`@MAIN` clock goal the same way the throughput sweep does for everything else.
+Describe *what* to compute as an ordinary pure `@hw_func`; choose the
+implementation along two independent axes:
 
-| | [`AUTO_PIPELINE(func)`](#auto_pipeline) | [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle-new) | [`AUTO_FSM(func)`](#auto_fsm-new-experimental) |
+| | 0 added cycles | N cycles |
+|---|---|---|
+| No sharing transformation | Original combinational function | [`AUTO_PIPELINE`](#auto_pipeline), [`AUTO_MULTI_CYCLE`](#auto_multi_cycle-new) |
+| Sharing transformation | [`AUTO_COMB_SHARE`](#auto_comb_share-new-experimental) | [`AUTO_FSM`](#auto_fsm-new-experimental); ACS followed by pipeline/MCP |
+
+Both pipelining and MCP divide computation **along the time axis**: pipelining
+inserts registers; MCP permits longer settling through timing constraints.
+Neither inherently shares the combinational resources. ACS reduces resource
+use without adding cycles; FSMs divide computation in both time and space.
+The table describes the requested transformation, not ordinary synthesis CSE.
+
+| Feature | Trade-off | Core `.latency` | Stream wrapper |
 |---|---|---|---|
-| Status | Stable | New | New, experimental |
-| The tool chooses | how many pipeline registers go inside calls made through it | how many cycles a `.start` → `.end` register path gets | how many FSM states there are and which operations share hardware |
-| Trade-off | area for throughput: a new input every cycle | throughput for timing: one result every `latency + 1` cycles, no added logic | throughput for area: one copy of each distinct operation, reused across states |
-| `.latency` | inserted register slices | cycles the path is given | cycles from accepted input to result (also the initiation interval) |
-| Constraint arguments | `latency=`, `start_latency=`, `max_latency=` | `latency=`, `start_latency=`, `max_latency=` | `max_latency=` |
-| Stream wrapper | [`make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline) | [`make_stream_auto_multi_cycle`](#tool-chosen-cycle-count-make_stream_auto_multi_cycle-new) | [`make_stream_auto_fsm`](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental) |
+| `AUTO_PIPELINE` | Extra registers for timing, II=1 | Inserted register slices | `make_stream_auto_pipeline` |
+| `AUTO_MULTI_CYCLE` (New) | Longer settling interval, lower throughput | Allowed path cycles | `make_stream_auto_multi_cycle` (II=`latency + 1`) |
+| `AUTO_COMB_SHARE` (New, Experimental) | Smaller estimated area, potentially longer combinational delay | Always 0 | `make_stream_auto_comb_share` (two boundary cycles, II=1) |
+| `AUTO_FSM` (New, Experimental) | Share resources across states while meeting timing | Accepted input to result | `make_stream_auto_fsm` |
 
-```text
-AUTO_PIPELINE -- spread across SPACE (throughput):
+ACS ignores delay when choosing an implementation. The temporal tools use the
+`@MAIN` clock goal; pipeline/MCP accept `latency=`, `start_latency=` and
+`max_latency=`, while FSM accepts `max_latency=`. Default FSM area search also
+considers ACS's combinational rewrite choices, comparing complete FSM area.
 
-  in -->[stage 1]--|Reg|-->[stage 2]--|Reg|-->[stage 3]--> out
-         (one full copy of the logic, sliced into pipeline stages;
-          a new input can be accepted every cycle)
-
-AUTO_FSM -- spread across TIME (area):
-
-           +-----------------+
-  in ----->|  ONE shared op  |<-----+
-           +--------+--------+      |
-                    |         state/cycle
-                    v          counter
-              (result used a few    |
-               cycles later) -------+
-         (one copy of each distinct operation, reused across states)
-```
-
-Rules shared by all three:
+Rules shared by the AUTO tags:
 
 - **Construct the tag once, eagerly, as plain Python** (at module level or at a factory
   function's top level) and capture it by closure in the `@hw_func` that uses it. That is
@@ -2251,6 +2249,7 @@ Rules shared by all three:
   (see each section for the default). A synthesizing build then re-elaborates the design with
   the values it actually built (pin-and-confirm), so the `.latency` your Python consumed always
   matches the hardware. A following non-`--comb` `pypelinec --sim` sees the same values.
+  ACS's latency is always zero and needs no latency feedback pass.
 - **Write handshakes that react to the chosen value**, not to a number you guessed. The tool is
   free to change its mind when the clock goal or the design changes.
 
@@ -2483,6 +2482,56 @@ For the common case of one slow function behind a valid/ready handshake, use
 [`make_stream_auto_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle),
 which does all of this for you.
 
+### `AUTO_COMB_SHARE(...)` (New, Experimental)
+
+`AUTO_COMB_SHARE(func)` returns a combinational callable with the same input and
+output types and bit-exact behavior. It searches for lower resource use without
+a delay constraint: operand selection and longer logic chains are allowed, but
+registers and extra cycles are not.
+
+```python
+from pypeline import AUTO_COMB_SHARE, AUTO_PIPELINE, hw_func, uint1_t, uint8_t, uint16_t
+
+@hw_func
+def selected_product(a: uint8_t, b: uint8_t, c: uint8_t, d: uint8_t,
+                     select: uint1_t) -> uint16_t:
+    x: uint16_t = a * b
+    y: uint16_t = c * d
+    return x if select else y
+
+ACS = AUTO_COMB_SHARE(selected_product)  # may mux operands into one multiplier
+AP = AUTO_PIPELINE(ACS)                 # pipeline the reduced combinational graph
+```
+
+Construct the tag once at module/factory level. `.func` is the original function
+and `.latency` is always zero. Multiple arguments are supported; stream wrappers
+require a single argument, so bundle their inputs into a struct.
+
+Beyond output-mux-to-input-mux sharing, the search considers typed common
+expressions across helpers, mux/Boolean factoring, unsigned modular arithmetic
+factoring, constant multiply/divide/remainder implementations, demanded/known-bit
+narrowing, and soft-operator decomposition. Every consumer and intermediate cast
+must retain its meaning. Sharing cannot turn two simultaneously needed results
+into one serial use of a unit without storage.
+
+**Experimental and bounded.** The original is retained unless a candidate has
+strictly lower estimated area. This is not a global-minimum or mapped-area
+guarantee. Reports state moves, area-model coverage and search limits. Stateful
+functions, temporal calls and raw VHDL fail the purity check; unsupported decoded
+operations and scoped operator implementations conservatively retain the original.
+Floating-point reassociation and unsafe signed arithmetic transformations are
+not performed.
+
+Plain native simulation calls the original function without running the optimizer.
+To meet timing after sharing, use `AUTO_PIPELINE(ACS)`, put ACS between MCP
+registers, or pass it to the existing pipeline/MCP stream factory. For an
+area-reduced core with registered valid/ready ports and II=1, see
+[`make_stream_auto_comb_share`](#combinational-sharing-stream-wrapper-make_stream_auto_comb_share-experimental).
+Default `AUTO_FSM(original_func)` already considers the shared optimization
+choices; explicitly wrapping it in ACS is not required.
+
+Implementation details: [`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md).
+
 ### `AUTO_FSM(...)` (New, Experimental)
 
 > **Experimental.** `AUTO_FSM` is new. Its scheduler, minimum-area search and `--auto_fsm_*`
@@ -2492,8 +2541,10 @@ which does all of this for you.
 
 `AUTO_PIPELINE` spends area to get throughput: one full copy of your function's
 hardware, sliced into stages, accepting a new input every cycle. `AUTO_FSM` spends
-time to get area: **one copy of each distinct operation**, reused across several
-cycles.
+time to get area: shared units reused across several cycles. Its default search
+also considers the combinational rewrites available to `AUTO_COMB_SHARE`, choosing
+by full scheduled area (including muxes, registers and control), not simply by
+the smallest combinational graph.
 
 ```python
 @hw_func
@@ -2581,9 +2632,9 @@ your clock (a float64 multiply, say). That is reported as `AT FLOOR`, because no
 number of extra states makes one multiplier faster.
 
 **Capping the latency.** `AUTO_FSM(func, max_latency=N)` says the result must
-arrive within N cycles. Sharing everything onto one unit of each kind is the
-smallest design and the slowest, so a cap is met the only way it can be — by
-building a second copy of whatever is forcing the states:
+arrive within N cycles. Sharing everything onto one unit of each kind can force
+too many states, so meeting a cap may require additional copies of the units
+causing the delay:
 
 ```python
 UPDATE = AUTO_FSM(next_state, max_latency=8)
@@ -3790,9 +3841,9 @@ hardware, just not cycle-accurate internally. See `pypeline_sim_DESIGN.md`'s
 
 **There is no flush, no occupancy count and no rollback.** `make_fifo` is a black-box
 wrapper over `src/vhdl/pipelinec_fifo_fwft.vhd` that exposes push and pop and nothing
-else — no write-pointer rewind, no "how full is it", no clear input — and there is no
-RAM/ROM primitive in this library to build an alternative on. Two consequences worth
-designing around:
+else — no write-pointer rewind, no "how full is it", no clear input. A buffer that needs
+any of those is built on [`make_ram`](#rams-make_ram--make_stream_ram) instead. With
+`make_fifo` itself, two consequences are worth designing around:
 
 * **A reset cannot clear a FIFO; it can only drain one.** The only way to empty an
   instance is to clock its contents out, so a design whose reset must leave its buffers
@@ -3813,6 +3864,190 @@ designing around:
 [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer) ·
 [Pipelined Stream Wrappers: `make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline) ·
 [Multi-Cycle Stream Wrapper: `make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle)
+
+---
+
+## RAMs: `make_ram` / `make_stream_ram`
+
+`include/pypeline/ram.py`'s `make_ram` builds a RAM or ROM of any element type. It can have
+any mix of read+write, read-only and write-only ports, a combinational or block-RAM read,
+and extra input and output register stages. `include/pypeline/stream/stream_ram.py`'s
+`make_stream_ram` puts the same memory behind valid/ready streams. Together they replace
+old PipelineC's `include/ram.h` macros and its built-in `_RAM_SP_RF_N`/`_RAM_DP_RF_N`
+functions.
+
+```python
+from pypeline import uint32_t, MAIN
+from ram import make_ram
+
+ram, ram_out_t = make_ram(uint32_t, 1024, ports=("w", "r"), read_latency=1)
+ram_wr_t = ram.p0_in_t
+ram_rd_t = ram.p1_in_t
+
+@MAIN
+def memory(wr: ram_wr_t, rd: ram_rd_t) -> ram_out_t:
+    return ram(wr, rd)
+```
+
+Inside a design, pass one struct per port and read the output struct per port:
+
+```python
+o = ram(ram.p0_in_t(addr=wa, wr_data=wd, wr_en=we, valid=1),
+        ram.p1_in_t(addr=ra, valid=1))
+x = o.p1.rd_data      # answers the request made ram.latency clocks earlier
+```
+
+### Ports
+
+`make_ram(elem_t, size, ports=("rw",), read_latency=1, in_regs=0, out_regs=0, init=None,
+byte_write_enables=False)` returns `(ram, ram_out_t)`. `ram` takes one struct argument per
+entry of `ports` (`p0`, `p1`, ...) and returns `ram_out_t`, which has one field per port.
+
+| Port kind | Input: `ram.p{i}_in_t` | Output: `ram_out_t.p{i}` (`ram.p{i}_out_t`) |
+|---|---|---|
+| `"rw"` | `addr`, `wr_data`, `wr_en`, `valid` | `addr`, `wr_data`, `wr_en`, `valid`, `rd_data` |
+| `"w"` | `addr`, `wr_data`, `wr_en`, `valid` | `addr`, `wr_data`, `wr_en`, `valid` |
+| `"r"` | `addr`, `valid` | `addr`, `valid`, `rd_data` |
+
+Every `ram.h` shape is a port list: `("rw",)` is a single-port RAM, `("w", "r")` a simple
+dual-port RAM, `("rw", "rw")` a true dual-port RAM, `("r", "r", "w")` a register file.
+
+- `addr` is `ram.addr_t`, a `uintN_t` just wide enough for `size`.
+- A write happens when `wr_en & valid`.
+- Every output field except `rd_data` is the request's input, **piped through the RAM**, so
+  it arrives on the same clock as that request's `rd_data`. Use these instead of delaying
+  your own copies. Fields you don't use cost nothing after synthesis.
+- Constructing a port struct needs every field, as for any `@struct`. If you build one field
+  by field instead (`req: ram.p0_in_t`, then `req.addr = ...`), set `valid`: an unassigned
+  field is zero, so that port would neither write nor mark its output valid.
+
+### Latency: `read_latency`, `in_regs`, `out_regs`
+
+| Argument | Clocks added | Hardware |
+|---|---|---|
+| `read_latency=0` | 0 | combinational read (distributed / LUT RAM) |
+| `read_latency=1` | 1 | registered read (block RAM) |
+| `in_regs=N` | N | input registers before the memory; writes are delayed too |
+| `out_regs=N` | N | output registers after the read, e.g. a block RAM's optional output register |
+
+`ram.latency = in_regs + read_latency + out_regs`. It is the same for every port, and the
+function is declared [`@pipeline_latency(ram.latency)`](#fixed-user-pipelines). What that
+means for your code:
+
+- **Pure caller** (no `Reg`/`Feedback`): the compiler delays your other signals to meet the
+  RAM's outputs. `ram(...).p0.rd_data + x` adds the `x` from `ram.latency` clocks ago.
+- **Stateful caller**: you get the RAM's physical outputs in the current clock. `rd_data`
+  answers the request made `ram.latency` clocks earlier, and the piped-through `addr`/`valid`
+  fields tell you which request that was.
+
+The caller's clock enable gates the whole RAM, writes included: `if en:` around the call
+holds it. There is no per-port read enable. For a port that must stall on its own, use
+`make_stream_ram`.
+
+### Memory semantics
+
+- **Read-first.** A read sees the memory as it was at the start of the cycle. A write and a
+  read of the same address on the same edge, from one port or two, read the old value.
+- **Write collisions.** When several ports write the same address in one cycle, the
+  highest-numbered port wins (bit by bit, with byte write enables). Vendor block RAM leaves
+  this undefined, so don't rely on it in hardware.
+- **Out-of-range addresses.** If `size` is not a power of two, an `addr` value can exceed
+  `size - 1`. Simulation wraps it modulo `size`. Hardware behaviour is undefined.
+- **Byte write enables.** `byte_write_enables=True` makes `wr_en` a `uint1_t[N // 8]` for a
+  `uintN_t`/`intN_t` `elem_t` whose N is a multiple of 8. Bit `j` writes byte `j`, like
+  `DECL_4BYTE_RAM_SP_RF_1`.
+
+### Initial contents: `init=`
+
+Pass plain Python values; `make_ram` generates the VHDL initializer.
+
+```python
+@struct
+class limit_t(NamedTuple):
+    mode: mode_t      # an @enum
+    level: uint4_t
+
+squares, squares_t = make_ram(uint16_t, 256, ports=("r",), init=[i * i for i in range(256)])
+limits, limits_t = make_ram(limit_t, 4, init={0: limit_t(mode=mode_t.RUN, level=9), 3: {"level": 2}})
+names, names_t = make_ram(char_t[8], 3, ports=("r",), init=["boot", "run", "halt"])
+```
+
+- `init` is `None` (all zeros), a sequence of up to `size` values (the rest are zero), or a
+  dict `{index: value}`.
+- Each value is anything native simulation accepts for `elem_t`:
+  - ints, including numpy integers, and enum members;
+  - for an `@struct`, an instance, a dict of fields (missing fields are zero), or a
+    positional tuple;
+  - for an array, a nested list, or a string for `char_t[N]`.
+- Integers wider than `elem_t` are masked like any typed assignment. A value of the wrong
+  shape raises at the `make_ram` call.
+- A RAM with only `"r"` ports and an `init` is a ROM.
+
+RAMs with different contents become different hardware entities automatically. Calling
+`make_ram` again with identical arguments returns the same function.
+
+### Stream RAM: `make_stream_ram`
+
+```python
+from stream.stream_ram import make_stream_ram
+
+sram, sram_t = make_stream_ram(uint32_t, 1024, ports=("w", "r"), read_latency=1)
+
+@MAIN
+def memory(p0_req_if: sram.p0_req_intrf.fwd_t, p0_resp_if: sram.p0_resp_intrf.fb_t,
+           p1_req_if: sram.p1_req_intrf.fwd_t, p1_resp_if: sram.p1_resp_intrf.fb_t) -> sram_t:
+    return sram(p0_req_if, p0_resp_if, p1_req_if, p1_resp_if)
+```
+
+`make_stream_ram` takes the same arguments and has the same memory semantics as `make_ram`.
+Each port `i` gets a request stream `p{i}_req_if` and a response stream `p{i}_resp_if`:
+
+| Stream | Payload type | Fields |
+|---|---|---|
+| request | `sram.p{i}_req_t` | `addr`, plus `wr_data` and `wr_en` for writable ports |
+| response | `sram.p{i}_resp_t` | the request's fields, plus `rd_data` for readable ports |
+
+Backpressure uses **ready as a clock enable**, the scheme of the old
+`DECL_STREAM_RAM_DP_W_R_1`, not a skid FIFO:
+
+- A port's whole pipeline advances when its response is taken or its last stage is empty:
+  `req_ready = resp_ready | ~last_valid`.
+- While a response waits, every stage of that port holds, including the block RAM's own read
+  register, so the response's `rd_data` stays stable.
+- With `ready` held high, a port answers one request per cycle, `sram.latency` clocks after
+  it. A bubble in the last stage is filled on the next edge.
+- A write happens exactly once, when its request advances through the RAM stage. A stalled
+  request doesn't write until it moves, and a refused request never writes.
+- Ports stall independently.
+- With `read_latency=0` and `out_regs=0`, `rd_data` is a live combinational read: another
+  port's write to that address during a stall shows through. Any registered configuration
+  holds it.
+
+`make_stream_ram` is **not** `@pipeline_latency`: its latency depends on backpressure, so like
+a FIFO it is a stateful block. `sram.latency` is its latency when nothing stalls, and
+`sram.core` is the raw handshake function underneath.
+
+### Simulation
+
+`make_ram` and `make_stream_ram` share one cycle-exact Python simulation model, so they work
+under `sim_call()`, `pypeline_sim.py` and `pypelinec --sim`. `self_check_ram_test.py` compares
+that model against the generated VHDL in GHDL, cycle by cycle. The model shares its memory
+across evaluations, so a large RAM does not copy its contents every simulated cycle.
+
+Because `make_ram` is a fixed pipeline, two things follow for simulation:
+
+- A design that reaches a RAM with `latency > 0` from an untagged function loads the compiler
+  at simulation start, to align its callers (see [Fixed User Pipelines](#fixed-user-pipelines)).
+- `AUTO_PIPELINE(f, latency=N)` over code that reaches such a RAM needs
+  `pypelinec <design> --sim`.
+
+Tests: `src/tests/pypeline_tests/inst/ram_test.py`, `stream_ram_test.py`,
+`self_check_ram_test.py`, `ram_sim_model_test.py`.
+
+**See also:** [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo) ·
+[Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer) ·
+[Fixed User Pipelines](#fixed-user-pipelines) ·
+[Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
 
 ---
 
@@ -4071,6 +4306,38 @@ re-elaboration pass. See `src/tests/pypeline_tests/inst/stream_auto_multi_cycle_
 
 ---
 
+## Combinational Sharing Stream Wrapper: `make_stream_auto_comb_share` (Experimental)
+
+For a reduced combinational core between registered valid/ready ports:
+
+```python
+from stream.stream_auto_comb_share import make_stream_auto_comb_share
+
+shared, shared_t = make_stream_auto_comb_share(my_comb_func)  # or an ACS tag
+
+@MAIN(20.0)
+def top(stream_in: shared.in_fwd_t, stream_out: shared.out_fb_t) -> shared_t:
+    return shared(stream_in, stream_out)
+```
+
+`my_comb_func` must be a pure `@hw_func` with one annotated input and an annotated
+return type. The factory returns `(stream_function, result_type)`. Results have
+`stream_in_if.ready` and `stream_out_if.stream.{data,valid}` fields. The function
+exposes `.in_intrf`, `.out_intrf`, their `.in_fwd_t`/`.in_fb_t`/`.out_fwd_t`/
+`.out_fb_t` halves, and the underlying `.acs` tag.
+
+Both the input and output data/valid are elastic registers. Unstalled latency
+is **two cycles**, reported by `shared.latency`; initiation interval is **one**.
+Backpressure holds output data/valid stable and propagates through small
+combinational occupancy logic. The large core is absent from the input-to-output
+combinational port path. No FIFO or user-managed counter is required.
+
+This wrapper does not pipeline the shared computation internally. If it cannot
+meet the target clock, pass `AUTO_COMB_SHARE(my_comb_func)` to
+`make_stream_auto_pipeline` or `make_stream_auto_multi_cycle` instead.
+
+---
+
 ## Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)
 
 [`AUTO_FSM(func)`](#auto_fsm-new-experimental) has no backpressure of
@@ -4208,7 +4475,9 @@ def sized_add(x: uint32_t, y: uint32_t) -> uint32_t:
 
 **No timing information.** The compiler has no idea what's inside a `vhdl(...)` block,
 so it's always treated as an opaque, zero-cycle-delay black box — same as C's
-`__vhdl__`. If your raw VHDL needs registers, manage them yourself within the text.
+`__vhdl__`. If your raw VHDL needs registers, manage them yourself within the text. If
+those registers form a fixed pipeline, declare it with
+[`@pipeline_latency(N)`](#fixed-user-pipelines) so callers align around it.
 
 **Simulating raw VHDL requires a model.** There is no general way to simulate arbitrary
 user-supplied VHDL text in Python, so calling a `vhdl(...)`-bodied function in simulation
@@ -4259,6 +4528,11 @@ It works on factory-produced functions and stacks with `@MAIN` in either order.
 An AUTO_PIPELINE request inside the tagged implementation is an error. AUTO_PIPELINE
 latency arguments on the tagged function itself must agree with N (`latency=N`,
 `start_latency=N`, `max_latency` of at least N).
+
+The body may also be a [`vhdl()`](#raw-vhdl-passthrough-vhdl) passthrough. The text then
+supplies the registers, and an attached `@sim_model` must produce the same N-cycle delay,
+because native simulation never adds one.
+[`make_ram`](#rams-make_ram--make_stream_ram) is built this way.
 
 AUTO_PIPELINE asks the tool to implement pipelining. `pipeline_latency` describes
 pipelining supplied by the user. MULTI_CYCLE constrains setup timing between
@@ -4630,11 +4904,11 @@ built yet."
 | Synthesis | **Named/generated clocks (single domain)** | Supported | `make_clock(mhz)` on a global `Input[uint1_t]`/`Wire[uint1_t]` — pypeline equivalent of `CLK_MHZ`, see [Top-Level Entry Points](#top-level-entry-points) |
 | Synthesis | **Multiple clock domains** | Not supported | `MAIN_MHZ_GROUP` (clock groups) and `#pragma ASYNC_WIRE` have no pypeline equivalent; `make_clock`'s rate must match some single `@MAIN`'s rate exactly |
 | Synthesis | **Async clock-crossing FIFOs** | Not supported | `GLOBAL_STREAM_FIFO` across clock boundaries cannot yet be expressed |
-| Synthesis | **Dual-port stream RAM** | Not built-in | `DECL_STREAM_RAM_DP_W_R_1` — use `vhdl()` passthrough |
+| Synthesis | **RAMs, ROMs and stream RAMs** | Supported | [`make_ram` / `make_stream_ram`](#rams-make_ram--make_stream_ram) cover the `include/ram.h` shapes, including `DECL_STREAM_RAM_DP_W_R_1`; vendor RAM IP still needs `vhdl()` |
 | Synthesis | **`MULTI_CYCLE[...]`** | Synthesis only | No effect without `PART()` / Vivado; ignored in simulation |
 | Synthesis | **`AUTO_MULTI_CYCLE(...)`** | Synthesis + `.latency` in simulation | Cycle count chosen by the Vivado sweep; sim sees `.latency` (the handshake), never settling time |
 | Synthesis | **`AUTO_PIPELINE(...).latency` before synthesis** | Reads `0` unless constrained | A fixed `latency=N` reads `N` everywhere. Otherwise the real value only exists after a synthesizing build's pin-and-confirm pass: that build's bootstrap pass reads `start_latency` (or 0), and plain native sim and `--comb`/`--no_synth`/`--yosys_json` builds read 0. A non-`--comb` `pypelinec --sim` run's native sim reads the built value |
-| Simulation | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo` now does, covering `make_stream_fifo`/`make_stream_auto_pipeline` too); this still includes `make_stream_multi_cycle` |
+| Simulation | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo`, `make_ram` and `make_stream_ram` do, covering `make_stream_fifo`/`make_stream_auto_pipeline` too); this still includes `make_stream_multi_cycle` |
 | Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine |
 | Language | **`@enum` member names that are VHDL reserved words** | Fails in VHDL only | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. Native simulation cannot see this — only a `synth`/GHDL run can, which is why every enum-bearing design wants one |
 | Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it |

@@ -172,9 +172,9 @@ fractional bits) fused into the same output resize stage every other `dsp/` bloc
 uses — non-power-of-two `n` needs a real reciprocal multiply and isn't implemented
 (pass `normalize=False` for the raw running-sum boxcar instead, any `n`). `.n`/
 `.normalize`/`.sum_t`/`.avg_t` are exposed as metadata. The delay line is registers,
-not BRAM (no RAM primitive in this codebase yet — the same limitation blocking the FIR
-library's coefficient-bank roadmap item above), so a large `n` × wide `data_t` costs
-flops accordingly.
+not BRAM, so a large `n` × wide `data_t` costs flops accordingly. A block-RAM delay line
+built on [`make_ram`](../../../docs/pypeline_guide.md#rams-make_ram--make_stream_ram) is a
+roadmap item below.
 
 ## `make_cordic_atan2` / `make_cordic_rotate` — angles without a multiplier or a ROM
 
@@ -187,7 +187,8 @@ nco,   nco_t   = make_cordic_rotate(int16_t, n_iters=16, work_bits=24, phase_bit
 ```
 
 One shift-and-add iteration per pipeline stage: no multiplier, no lookup table, and
-no RAM/ROM primitive (there isn't one in this library — see the roadmap). Both modes
+no ROM: an angle or sine table in a [`make_ram`](../../../docs/pypeline_guide.md#rams-make_ram--make_stream_ram)
+ROM is exactly what this avoids. Both modes
 share the same iteration hardware and the same `atan(2^-i)` angle table, which is
 elaboration-time constant.
 
@@ -314,6 +315,6 @@ mode form its detector's front end, and `make_cordic_atan2`, `make_cordic_rotate
 - Resource-folded II>1 "slow" filters (time-shared MACs for fclk >> fs, port of
   `include/dsp/slow_fir.h`).
 - Multichannel TDM.
-- Runtime-reloadable coefficient banks (blocked on a RAM/ROM primitive).
+- Runtime-reloadable coefficient banks (buildable on `make_ram`).
 - A reciprocal-multiply path for non-power-of-two `make_moving_avg` window lengths.
-- A BRAM-backed delay line for large `make_moving_avg` windows.
+- A BRAM-backed delay line for large `make_moving_avg` windows, on `make_ram`.

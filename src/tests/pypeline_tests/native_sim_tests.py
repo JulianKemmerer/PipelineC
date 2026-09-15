@@ -41,6 +41,8 @@ PLAIN_PYTHON_TEST_FILES = [
     "fifo_test.py",
     "stream_fifo_test.py",
     "skid_buffer_test.py",
+    "ram_test.py",
+    "stream_ram_test.py",
     "axis_test.py",
     "dwidth_converter_test.py",
     "axis_byte_stream_test.py",
@@ -126,6 +128,16 @@ def get_tests() -> list:
             name="fifo_sim_model_convergence_test",
             category="native_sim",
             cmd=[PYPELINE_SIM, INST_DIR / "fifo_sim_model_test.py", "--run", "16"],
+        )
+    )
+    # make_ram's model shares one memory list between evaluations; this runs a
+    # RAM accumulator closed through wires so every cycle re-evaluates it with
+    # stale inputs, and checks each write still lands exactly once.
+    tests.append(
+        Test(
+            name="ram_sim_model_convergence_test",
+            category="native_sim",
+            cmd=[PYPELINE_SIM, INST_DIR / "ram_sim_model_test.py", "--run", "30"],
         )
     )
     tests.append(
@@ -411,6 +423,20 @@ def get_tests() -> list:
             cmd=[
                 PYPELINEC,
                 INST_DIR / "self_check_fifo_test.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "all",
+            ],
+        )
+    )
+    tests.append(
+        Test(
+            name="self_check_ram_test",
+            category="native_sim",
+            cmd=[
+                PYPELINEC,
+                INST_DIR / "self_check_ram_test.py",
                 "--sim",
                 "--comb",
                 "--run",
