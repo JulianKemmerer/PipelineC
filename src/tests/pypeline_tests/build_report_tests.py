@@ -7,26 +7,38 @@ reports. This is a real full build in every case, just with the assertion
 living one process layer below the runner instead of being "exit code only"
 (that's synth_tests.py).
 
+Each Test's category names the synthesis tool its wrapper's builds use
+(build_report_device_models / build_report_vivado / build_report_pyrtl, see
+common.SYN_TOOLS). The wrapper itself passes the matching --syn_tool (or its
+design sets the PART), and run_all's tool check fails the test if the log
+shows any other tool. DEVICE_MODELS (sky130) is the default; the few wrappers
+that build no synthesis at all (--no_synth, or sim-only) also live under
+build_report_device_models.
+
 Run standalone: python3 build_report_tests.py [-j N]
 """
 
 import sys
 
-from common import INST_DIR, Test, main
+from common import INST_DIR, Test, main, syn_tool_category
+
+DM = syn_tool_category("build_report", "device_models")
+VIVADO = syn_tool_category("build_report", "vivado")
+PYRTL = syn_tool_category("build_report", "pyrtl")
 
 
 def get_tests() -> list:
     tests = []
-    tests.append(Test(name="auto_comb_unshare_build_test", category="build_report",
+    tests.append(Test(name="auto_comb_unshare_build_test", category=DM,
                       cmd=[INST_DIR / "auto_comb_unshare_build_test.py"], needs_out_dir=True,
                       requires=["yosys", "ghdl"]))
-    tests.append(Test(name="auto_comb_share_build_test", category="build_report",
+    tests.append(Test(name="auto_comb_share_build_test", category=DM,
                       cmd=[INST_DIR / "auto_comb_share_build_test.py"], needs_out_dir=True,
                       requires=["yosys", "ghdl"]))
     tests.append(
         Test(
             name="generated_naming_build_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "generated_naming_build_test.py"],
             needs_out_dir=True,
             requires=["ghdl"],
@@ -35,7 +47,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="sweep_floor_detect_test",
-            category="build_report",
+            category=PYRTL,
             cmd=[INST_DIR / "sweep_floor_detect_test.py"],
             needs_out_dir=True,
         )
@@ -43,7 +55,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="sweep_unpipelinable_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "sweep_unpipelinable_test.py"],
             needs_out_dir=True,
         )
@@ -51,7 +63,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="sweep_planless_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "sweep_planless_test.py"],
             needs_out_dir=True,
         )
@@ -63,7 +75,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="auto_pipeline_latency_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "auto_pipeline_latency_test.py"],
             needs_out_dir=True,
         )
@@ -75,7 +87,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="auto_pipeline_constraints_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "auto_pipeline_constraints_test.py"],
             needs_out_dir=True,
         )
@@ -85,7 +97,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="auto_pipeline_c_pragma_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "auto_pipeline_c_pragma_test.py"],
             needs_out_dir=True,
         )
@@ -98,7 +110,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="auto_multi_cycle_sweep_test",
-            category="build_report",
+            category=VIVADO,
             cmd=[INST_DIR / "auto_multi_cycle_sweep_test.py"],
             needs_out_dir=True,
         )
@@ -112,7 +124,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="auto_fsm_latency_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "auto_fsm_latency_test.py"],
             needs_out_dir=True,
         )
@@ -124,7 +136,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="auto_fsm_resources_compare_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "auto_fsm_resources_compare_test.py"],
             needs_out_dir=True,
         )
@@ -137,7 +149,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="auto_fsm_area_sweep_compare_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "auto_fsm_area_sweep_compare_test.py"],
             needs_out_dir=True,
         )
@@ -153,7 +165,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="auto_fsm_min_area_verify_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "auto_fsm_min_area_verify_test.py"],
             needs_out_dir=True,
             timeout=2700,
@@ -169,7 +181,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="auto_fsm_real_area_compare_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "auto_fsm_real_area_compare_test.py"],
             needs_out_dir=True,
         )
@@ -183,7 +195,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="auto_fsm_ctl_compare_test",
-            category="build_report",
+            category=PYRTL,
             cmd=[INST_DIR / "auto_fsm_ctl_compare_test.py"],
             needs_out_dir=True,
         )
@@ -195,7 +207,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="auto_fsm_max_latency_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "auto_fsm_max_latency_test.py"],
             needs_out_dir=True,
         )
@@ -208,7 +220,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="auto_fsm_timing_iter_test",
-            category="build_report",
+            category=PYRTL,
             cmd=[INST_DIR / "auto_fsm_timing_iter_test.py"],
             needs_out_dir=True,
         )
@@ -221,7 +233,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="cocotb_verdict_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "cocotb_verdict_test.py"],
             needs_out_dir=True,
             requires=["ghdl"],
@@ -237,7 +249,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="leaf_1ll_cap_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "leaf_1ll_cap_test.py"],
             needs_out_dir=True,
             requires=["yosys", "ghdl"],
@@ -255,7 +267,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="var_ref_naming_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "var_ref_naming_test.py"],
             needs_out_dir=True,
             requires=["yosys", "ghdl"],
@@ -274,7 +286,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="duplicate_collapse_naming_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "duplicate_collapse_naming_test.py"],
             needs_out_dir=True,
         )
@@ -286,7 +298,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="pyrtl_no_timing_paths_build_report_test",
-            category="build_report",
+            category=PYRTL,
             cmd=[INST_DIR / "pyrtl_no_timing_paths_build_report_test.py"],
             needs_out_dir=True,
             requires=["yosys", "ghdl"],
@@ -298,7 +310,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="split_model_build_report_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "split_model_build_report_test.py"],
             needs_out_dir=True,
             requires=["yosys", "ghdl"],
@@ -311,7 +323,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="area_estimate_build_report_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "area_estimate_build_report_test.py"],
             needs_out_dir=True,
             requires=["yosys", "ghdl"],
@@ -322,7 +334,7 @@ def get_tests() -> list:
     tests.append(
         Test(
             name="host_types_build_test",
-            category="build_report",
+            category=DM,
             cmd=[INST_DIR / "host_types_build_test.py"],
             needs_out_dir=True,
         )

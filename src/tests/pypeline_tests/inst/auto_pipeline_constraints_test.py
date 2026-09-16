@@ -19,7 +19,7 @@ PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
 
 
 def run(design, out_dir, extra=()):
-    cmd = [sys.executable, PYPELINEC, os.path.join(THIS_DIR, design)]
+    cmd = [sys.executable, PYPELINEC, os.path.join(THIS_DIR, design), "--syn_tool", "sky130"]
     if out_dir:
         cmd += ["--out_dir", out_dir]
     cmd += list(extra)

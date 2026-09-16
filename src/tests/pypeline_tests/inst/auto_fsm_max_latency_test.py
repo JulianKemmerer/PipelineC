@@ -36,7 +36,7 @@ def run_build(out_dir, impossible=False):
         env["PYPELINE_AUTO_FSM_IMPOSSIBLE_LATENCY"] = "1"
     else:
         env.pop("PYPELINE_AUTO_FSM_IMPOSSIBLE_LATENCY", None)
-    cmd = [sys.executable, PYPELINEC, DESIGN, "--out_dir", out_dir]
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "sky130", "--out_dir", out_dir]
     print("Running:", " ".join(cmd), f"(impossible={impossible})", flush=True)
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env
@@ -103,7 +103,7 @@ def main():
     print(out2[-4000:])
     if rc2 == 0:
         fail(
-            "a max_latency=2 cap on a 5-deep dependency chain at 100 MHz was "
+            "a max_latency=2 cap on a 5-deep dependency chain at 90 MHz was "
             "reported as met; an impossible cap must fail the build"
         )
     if "cannot be met" not in out2:

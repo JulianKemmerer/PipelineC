@@ -36,7 +36,10 @@ def build(path, source):
     path.mkdir(parents=True, exist_ok=True)
     design = path / "design.py"
     design.write_text(source)
-    run([sys.executable, SRC / "pypelinec", design, "--comb", "--out_dir", path], path)
+    # sky130 (DEVICE_MODELS) is the suite's fast synthesis tool; the RTL
+    # checks below run their own yosys and don't depend on it.
+    run([sys.executable, SRC / "pypelinec", design, "--comb", "--syn_tool", "sky130",
+         "--out_dir", path], path)
     return (path / "vhdl_files.txt").read_text()
 
 

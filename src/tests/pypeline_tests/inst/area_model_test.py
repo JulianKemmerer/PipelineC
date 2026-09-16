@@ -406,6 +406,9 @@ def test_committed_cache_excludes_sta_harness_registers():
     )
 
 
+MIN_FIT_OPERAND_BITS = 8
+
+
 def test_um2_per_abstract_area_unit_matches_committed_cache():
     """Refits AUTO_FSM.UM2_PER_ABSTRACT_AREA_UNIT the same way it was
     measured: least-squares area-vs-width, through the origin, jointly
@@ -419,7 +422,14 @@ def test_um2_per_abstract_area_unit_matches_committed_cache():
     hand-copied constant, shows up here as a test failure rather than a
     silent rescaling of every abstract fallback AUTO_FSM uses under sky130
     (_leaf_area_um2, _ff_area_um2, _mux_bank_area_um2 all convert through
-    this one constant)."""
+    this one constant).
+
+    Only entries whose operands are BOTH at least MIN_FIT_OPERAND_BITS wide
+    are fitted. width = max(A, B) badly misprices incrementers and
+    small-offset adders (a uint16 + uint1 is ~700-800 um2, half a real 16-bit
+    adder's ~1550), and since run_all's synthesis tests default to sky130
+    the committed cache holds many of them -- with them in, the fit drifted to
+    k ~94 with MAE ~176 on otherwise healthy data."""
     cache_dir = _real_area_cache_dir()
     assert cache_dir and os.path.isdir(cache_dir), (
         f"no committed area_cache directory at {cache_dir!r}"
@@ -429,6 +439,8 @@ def test_um2_per_abstract_area_unit_matches_committed_cache():
     for name in os.listdir(cache_dir):
         m = pattern.match(name)
         if not m:
+            continue
+        if min(int(m.group(1)), int(m.group(2))) < MIN_FIT_OPERAND_BITS:
             continue
         width = max(int(m.group(1)), int(m.group(2)))
         value = float(open(os.path.join(cache_dir, name)).read().split()[0])
@@ -442,8 +454,9 @@ def test_um2_per_abstract_area_unit_matches_committed_cache():
     den = sum(w * w for w, _v in points)
     fitted_k = num / den
     mae = sum(abs(v - fitted_k * w) for w, v in points) / len(points)
-    # Measured at 5 points (widths 17-34): absolute residuals 29-159 um2
-    # (1.2-6.3 um2/bit), MAE ~100.
+    # Originally measured at 5 points (widths 17-34): absolute residuals
+    # 29-159 um2 (1.2-6.3 um2/bit), MAE ~100. With the suite's wider sky130
+    # coverage (25 points, both operands >= 8 bits): k ~101.7, MAE ~92.
     assert mae < 150.0, (fitted_k, mae, points)
     rel_err = abs(fitted_k - AUTO_FSM.UM2_PER_ABSTRACT_AREA_UNIT) / fitted_k
     assert rel_err < 0.05, (

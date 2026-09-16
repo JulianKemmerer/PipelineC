@@ -153,7 +153,9 @@ sources use injected globals and are not standalone importable modules.
 `auto_comb_unshare_test.py` checks native isolation, timing dependencies,
 candidate equivalence, casts, arithmetic families, nesting, purity and repeated
 parses. Stream/composition fixtures compare native and GHDL behavior, including
-stall stability, exact latency/II, fixed/discovered pipelines, MCP and FSM.
+stall stability, exact latency/II, fixed/discovered pipelines and FSM (no MCP
+member: MULTI_CYCLE constraints need Vivado, and the composition build runs
+under `--syn_tool pyrtl`).
 `auto_comb_unshare_build_test.py` proves a mux-speculation example with Yosys SAT,
 checks that the core has no registers/latches, and separately builds both
 variants for sky130 timing. These validation builds are not part of selection.

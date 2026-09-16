@@ -3,7 +3,12 @@
 # a stateful submodule with a big internal comb path (division inside a Reg
 # func) makes the 50 MHz goal unreachable - the sweep must predict the fmax
 # floor up front, blame this submodule, and stop quickly instead of blindly
-# adding more and more cuts.
+# adding more and more cuts. The test builds under --syn_tool pyrtl, where the
+# predicted soft floor (~16 MHz) matches the measured plateau. Under sky130 the
+# goal is met at 50 MHz, and at an unreachable 100 MHz the measured plateau
+# (51.4 MHz) sits far above the pessimistic soft-floor prediction (~37 MHz),
+# outside SWEEP.AT_PREDICTED_FLOOR's band, so the sweep runs to its iteration
+# limit instead of stopping.
 import sys, os
 
 # Path for pypeline import

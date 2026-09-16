@@ -214,11 +214,12 @@ Tests in `src/tests/pypeline_tests/inst/`:
   absence of flip-flops/latches in the transformed core.
 - `self_check_stream_auto_comb_share_test.py`: exact two-cycle latency, II=1,
   bubbles, backpressure and data stability, with native/GHDL comparison.
-- `self_check_auto_comb_share_composition_test.py`: fixed/discovered pipelines,
-  raw-function/default and explicit-ACS FSMs, and MCP streams, compared against
-  independent expected results in native and GHDL simulation. Payloads are
-  also exported as hardware outputs so synthesis retains the tested datapaths
-  and MCP capture registers.
+- `self_check_auto_comb_share_composition_test.py`: fixed/discovered pipelines
+  and raw-function/default and explicit-ACS FSMs, compared against independent
+  expected results in native and GHDL simulation. Payloads are also exported as
+  hardware outputs so synthesis retains the tested datapaths. The pipelined
+  build runs under `--syn_tool pyrtl`. It has no MCP stream: MULTI_CYCLE
+  constraints need Vivado, which made the whole design a slow Vivado sweep.
 
 Run the entire registered suite with no timeout:
 

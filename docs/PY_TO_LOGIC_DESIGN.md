@@ -5825,15 +5825,17 @@ category breakdown: [pypeline_TESTS.md](pypeline_TESTS.md). The two most relevan
   `ElaborationError`'s type and message.
 - **`synth_tests.py`** — runs `pipelinec` (with or without `--comb`, but without
   `--no_synth`) on the remaining design files, exercising the full pipeline: elaboration →
-  `SYN.DO_THROUGHPUT_SWEEP` auto-pipelining → synthesis. Requires a synthesis tool to be
-  installed and discoverable via `SYN.PART_SET_TOOL` (falls back to `--comb --no_synth`
-  with a warning if none is found). Exit code is the entire verdict here too; see
+  `SYN.DO_THROUGHPUT_SWEEP` auto-pipelining → synthesis. Each entry names its synthesis
+  tool, which picks its `run_all.py` category: `synth_device_models` (`--syn_tool sky130`,
+  the default), `synth_vivado` (Vivado-specific features only) or `synth_pyrtl` (see
+  [pypeline_TESTS.md](pypeline_TESTS.md#choosing-a-synthesis-tool)). Exit code is the
+  entire verdict here too, plus the runner's tool check; see
   `build_report_tests.py` for wrapper scripts that instead assert on the build log/artifacts.
 
 ```
 python3 src/tests/pypeline_tests/elab_tests.py            # elaboration only, fast
 python3 src/tests/pypeline_tests/synth_tests.py            # full elaboration + synthesis
-python3 src/tests/pypeline_tests/run_all.py --category elab --category synth
+python3 src/tests/pypeline_tests/run_all.py --category elab --category synth_device_models
 ```
 
 Each test gets an isolated `--out_dir` under a tmp directory (`common.run_test()` in

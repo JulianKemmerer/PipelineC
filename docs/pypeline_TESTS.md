@@ -3,6 +3,8 @@
 `src/tests/pypeline_tests/` exercises the Pypeline compiler end to end against real
 `.py` design files in `inst/`. There is no test-discovery mechanism -- every test is a
 hand-written entry in one of eight category modules, run together via `run_all.py`.
+Two of those modules, `synth_tests.py` and `build_report_tests.py`, each feed one
+category per synthesis tool (see [Choosing a synthesis tool](#choosing-a-synthesis-tool)).
 
 > **Reference, not a logbook.** Describe the system as it is now, in the present
 > tense. No dated entries, no session write-ups — `git log` is the change record.
@@ -20,8 +22,8 @@ hand-written entry in one of eight category modules, run together via `run_all.p
 | `elab` | `pypelinec --no_synth` -- does it elaborate | exit code only |
 | `elab_introspect` | Calls `PY_TO_LOGIC.PARSE_FILE` in-process and asserts on `parser_state` / `FuncLogicLookupTable` / a raised `ElaborationError`'s type and message | in-process `assert`s |
 | `unit` | Pure compiler-helper tests against hand-built fixtures -- no design build | in-process `assert`s |
-| `synth` | Full elaboration + auto-pipelining + synthesis (no `--no_synth`) | exit code only |
-| `build_report` | Wrapper scripts that run `pypelinec` themselves and assert on its build log or generated artifacts (yosys/PYRTL cell counts, `TIMING NOT MET` text, `sweep_history.json`) | in-process `assert`s over subprocess output |
+| `synth_device_models`, `synth_vivado`, `synth_pyrtl` | Full elaboration + auto-pipelining + synthesis (no `--no_synth`), with the tool the category names (`synth_tests.py`) | exit code, plus the tool check |
+| `build_report_device_models`, `build_report_vivado`, `build_report_pyrtl` | Wrapper scripts that run `pypelinec` themselves and assert on its build log or generated artifacts (mapped cell counts, `TIMING NOT MET` text, `sweep_history.json`), with the tool the category names (`build_report_tests.py`). Wrappers that run no synthesis at all live in `build_report_device_models` | in-process `assert`s over subprocess output, plus the tool check |
 | `known_issues` | Reproducers for known, unfixed compiler bugs. **Excluded from `run_all.py`'s default set** -- run explicitly with `--category known_issues`. Every entry has `expect_fail=True`: a passing run means the bug is still present (XFAIL); a clean run means it got fixed without the test being updated (XPASS, reported as a *failure* -- promote the test out of this category) | inverted exit code (or, where exit code doesn't capture the issue, an explicit log-content assertion -- see that entry's own docstring) |
 
 `elab_introspect` vs `unit` is decided by the file's *purpose*, not by whether
@@ -58,8 +60,95 @@ if __name__ == "__main__":
 and runs it, so adding a function is enough -- no separate `__main__` call list to
 remember to update. It only fires under `python3 inst/X.py` (`__name__ ==
 "__main__"`); `pypelinec` imports the same file as module `"pypeline_design"`
-(`PY_TO_LOGIC.PARSE_FILE`), so `elab`/`synth`-category registrations of a file never
+(`PY_TO_LOGIC.PARSE_FILE`), so `elab`/`synth_*`-category registrations of a file never
 run its `test_*` functions -- those categories check elaboration/build only.
+
+## Choosing a synthesis tool
+
+Synthesis is nearly all of the suite's runtime, so every synthesizing test uses the
+fastest tool that can check what it tests:
+
+- **`device_models` (sky130, the default).** Real sky130 liberty STA
+  ([`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md)), selected with
+  `--syn_tool sky130` or `PART("sky130...")`. Both spellings, and any board or
+  Xilinx `PART` the flag overrides, share the one committed
+  `path_delay_cache/device_models_sky130_fd_sc_hvl_tt_025C_3v30_v4` cache: the
+  library and corner are fixed, and the part string is not part of the cache key.
+- **`vivado`, only for Vivado-specific features.** Today that means MULTI_CYCLE
+  path constraints (`SYN.GET_MCP_PATH_CONSTRAINTS` supports only Vivado) and
+  the PDW synth tops' real-part Block RAM and 125 MHz checks. Use a part with
+  a committed cache (`xc7a35ticsg324-1l`, `xc7a100tcsg324-1`); a part without
+  one re-characterizes every leaf on every run.
+- **`pyrtl`, only for PyRTL-specific behavior.** Four tests use it:
+  - `pyrtl_no_timing_paths_build_report_test.py` checks PyRTL's error text.
+  - `auto_fsm_ctl_compare_test.py` claims ctl v3 is no bigger than v2 in
+    generic yosys cells. Under sky130 mapping, the same schedule's v3 tables
+    come out about 2% larger. Its donut timing half is also calibrated to
+    PyRTL's delay model.
+  - `auto_fsm_timing_iter_test.py` needs a first AUTO_FSM schedule that misses
+    timing and a tightened one that meets it. Under sky130 the design measures
+    102.25 MHz at every schedule tried (2, 3 and 6 states): its critical path
+    lies outside the FSM states, so rescheduling can't change it.
+  - `sweep_floor_detect_test.py` checks the sweep's floor stop, which ends
+    that design's sweep only under PyRTL. There the predicted soft floor
+    (~16 MHz) matches the measured plateau. Under sky130 the plateau
+    (51.4 MHz) sits far above the pessimistic prediction (~37 MHz), outside
+    `SWEEP.AT_PREDICTED_FLOOR`'s ±5% band, and nothing else stops a flat
+    plateau, so the sweep runs to its iteration limit.
+
+How a test picks its tool:
+
+- **`synth_tests.py`** entries carry the tool as their last field. The
+  registration appends `common.SYN_TOOL_ARGS[tool]` (`--syn_tool sky130`,
+  `--syn_tool pyrtl`, or nothing for Vivado, whose design sets its own
+  `PART("xc...")`), so design files stay tool-neutral. Board examples keep
+  their board `PART`.
+- **`native_vs_vhdl_sim_tests.py`** builds its non-`--comb` entries under
+  PyRTL (`NON_COMB_SYN_TOOL`, passed as `--syn_tool pyrtl`). `--comb` entries
+  never reach synthesis.
+  - **Why not sky130:** `pypeline_sim_debug.py` runs its native and VHDL
+    invocations concurrently in one out_dir, and both re-characterize some
+    leaves (AUTO_FSM/AUTO_COMB schedules, raw-VHDL RAM leaves).
+  - **What goes wrong:** DEVICE_MODELS' per-leaf artifacts aren't safe against
+    two processes synthesizing the same leaf in the same directory, so the
+    composition, AUTO_FSM and RAM tests all failed at random under sky130.
+    Switch `NON_COMB_SYN_TOOL` back once DEVICE_MODELS is race-free.
+- **`build_report` wrappers** pass `--syn_tool sky130` (or their design sets the
+  `PART`) in the `pypelinec` command they build.
+  - The sky130 AUTO_FSM cell-count comparisons (resources, area search,
+    minimum area) read the mapped sky130 cell count (`N cells:`) from the
+    DEVICE_MODELS STA report under `<out_dir>/top/`.
+  - The two that check AUTO_FSM's abstract area model
+    (`auto_fsm_area_sweep_compare_test.py`, `auto_fsm_min_area_verify_test.py`)
+    also pass `--auto_fsm_abstract_area`. Under DEVICE_MODELS the search would
+    otherwise rank by real sky130 area, which
+    `auto_fsm_real_area_compare_test.py` covers.
+
+**The tool check.** After a `synth_*` or `build_report_*` test runs,
+`common.run_test` reads which tools actually synthesized, from the log's
+`Running: .../<tool>_....log` lines. The test fails if any other tool ran.
+`synth_*` tests must also show at least one run of their own tool. SYN's
+`Using <TOOL> synthesizing` line is ignored: it reports only tool selection,
+which `--no_synth` builds print too.
+`build_report_*` wrappers may not echo their child builds, so only the
+wrong-tool half applies to them.
+
+**Whole-design synthesis cost.** sky130 is not faster for every design.
+`vga_donut.py` stays on its board's Vivado part: sky130's whole-design yosys
+run sat in `opt -full` for over an hour on its flattened wide multipliers,
+while Vivado takes about 30 minutes.
+
+**Clock goals.** Keep a sweep test's MHz goal low enough that it settles in a
+few synthesis iterations, unless pushing the sweep is the point of the test
+(`sweep_floor_detect_test.py`, `auto_fsm_timing_iter_test.py`, the unreachable
+half of `auto_pipeline_constraints_test.py`). Keep it above the design's
+unpipelined fmax wherever the test needs a real pipeline cut.
+
+**Graph rendering is off.** `run_test` sets
+`PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG=1` for every test, and wrapper
+subprocesses inherit it. Graphviz `pipeline_map` renders cost more than many
+whole tests and nothing reads them; the text `pipeline_map.log` is still
+written.
 
 ## Fixed user pipeline coverage
 
@@ -99,10 +188,10 @@ from a different angle:
   fixed latency and ignores start/max. `pipeline_latency_test.py`'s gate test also runs
   it, both directly and through `pypelinec --sim --comb`, with the compiler import
   forbidden.
-- `auto_pipeline_constraints_test.py` (build_report): fixed and start regions are built
+- `auto_pipeline_constraints_test.py` (build_report_device_models): fixed and start regions are built
   exactly and pass 2 is skipped, and a `max_latency` cap stops an unreachable goal
   promptly.
-- `auto_pipeline_c_pragma_test.py` (build_report): C `#pragma AUTOPIPELINE N` under
+- `auto_pipeline_c_pragma_test.py` (build_report_device_models): C `#pragma AUTOPIPELINE N` under
   `--comb`.
 - `self_check_fixed_auto_pipeline_test.py` (both native_vs_vhdl categories): compares
   the native delay line against the `--comb` VHDL's fixed registers, and against the
@@ -121,12 +210,12 @@ from a different angle:
   - elaboration into `Logic.auto_multi_cycle_tuples`, where a cache re-parse changes the count and
     renames the holding entity;
   - an unread tag refused by `SYN.CHECK_AUTO_MULTI_CYCLE_TAGS_READ`.
-- `stream_auto_multi_cycle_test.py` (native_sim and synth `--comb`): the handshake waits
+- `stream_auto_multi_cycle_test.py` (native_sim and synth_vivado `--comb`): the handshake waits
   `.latency + 1` cycles for `start_latency=` and fixed `latency=`, and the Xilinx-part
   `--comb` build emits both `set_multicycle_path` constraints.
-- `stream_multi_cycle_test.py` (native_sim and synth `--comb`): the fixed
+- `stream_multi_cycle_test.py` (native_sim and synth_vivado `--comb`): the fixed
   `make_stream_multi_cycle`.
-- `auto_multi_cycle_sweep_test.py` (build_report, **real Vivado**, `auto_multi_cycle_sweep_design.py`):
+- `auto_multi_cycle_sweep_test.py` (build_report_vivado, **real Vivado**, `auto_multi_cycle_sweep_design.py`):
   - from the default start, the sweep raises the count until the path meets timing;
     pass 2 re-elaborates, the final XDC carries the count, and the pipelined native
     `--sim`'s `sim_assert` checks the handshake;
@@ -141,7 +230,7 @@ families, purity, nesting and repeat-parse pinning),
 `auto_comb_unshare_build_test.py` (Yosys SAT equivalence, register-free core,
 separate original/optimized sky130 timing builds), and stream/composition
 native-versus-GHDL fixtures. The stream asserts latency 2, II=1 and stable
-data/valid under stalls; composition covers pipeline, MCP and FSM.
+data/valid under stalls; composition covers pipeline and FSM.
 
 The FSM unit suite includes a counted diamond-DAG regression against
 exponential input-storage traversal. `qor_multiplier_auto_fsm_test` keeps its
@@ -157,19 +246,22 @@ original area incumbent is valid; a search move is not required. See
   generated candidate equivalence, exclusive predicates, multiple consumers,
   signed casts, modular factoring, constant arithmetic, demanded/known bits,
   custom narrow-width operators, scoped fallback, purity and repeat parsing.
-- `auto_comb_share_build_test.py` (`build_report`, Yosys + GHDL): SAT proves
+- `auto_comb_share_build_test.py` (`build_report_device_models`, Yosys + GHDL): SAT proves
   bit-exact equivalence for all inputs of the two-multiplier/output-mux example;
   independent mapped-cell builds require a strict area reduction and no
   flip-flops/latches in the combinational replacement.
-- `self_check_stream_auto_comb_share_test.py` (`synth`, native-vs-VHDL `--comb`):
+- `self_check_stream_auto_comb_share_test.py` (`synth_device_models`, native-vs-VHDL `--comb`):
   two-cycle registered boundaries, unstalled II=1, bubbles, backpressure and
   stable output while stalled.
 - `self_check_auto_comb_share_composition_test.py` (both native-vs-VHDL modes):
-  fixed/discovered pipelines, default raw-function FSM, explicit-ACS FSM, and
-  MCP stream composition. The design selects an Artix-7 part because real MCP
-  constraints require Vivado.
+  fixed/discovered pipelines, default raw-function FSM and explicit-ACS FSM. It
+  sets no `PART`; the pipelined build runs under `--syn_tool pyrtl` (see
+  `NON_COMB_SYN_TOOL`). There is
+  no multi-cycle member: MULTI_CYCLE constraints are Vivado-only, and one used to
+  force the whole design onto a slow Vivado sweep. Multi-cycle streams are
+  covered by the `synth_vivado`/`build_report_vivado` tests above.
 
-Run the full suite with `python3 src/tests/pypeline_tests/run_all.py -j 4 --no_timeout`.
+Run the full suite with `python3 src/tests/pypeline_tests/run_all.py -j 5 --no_timeout`.
 Use `-k auto_comb_share` to select the feature tests. See
 [`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md) for the contract and limits.
 
@@ -203,7 +295,7 @@ All cases except the positive control fail on the tree before the fix.
 `make_ram` (`include/pypeline/ram.py`) and `make_stream_ram` (`stream/stream_ram.py`) share one
 VHDL generator and one simulation model. Coverage:
 
-- **`ram_test.py`** (`native_sim` and `synth --comb`).
+- **`ram_test.py`** (`native_sim` and `synth_device_models --comb`).
   - Six `@MAIN` shapes, each with its own generated raw VHDL: single port, struct elements
     with a non-power-of-two size, two ports with input/output registers, an array register
     file, byte write enables, and a string ROM.
@@ -213,7 +305,7 @@ VHDL generator and one simulation model. Coverage:
   - Seeded soaks against a reference with no stage bookkeeping: a request's read sees
     exactly the writes of earlier requests.
   - A `PARSE_FILE` check that every generated RAM carries its `func_fixed_latency`.
-- **`stream_ram_test.py`** (`native_sim` and `synth --comb`): ready-as-clock-enable stall
+- **`stream_ram_test.py`** (`native_sim` and `synth_device_models --comb`): ready-as-clock-enable stall
   hold, bubble fill, exactly one write per accepted request, independent ports, latency 0,
   and a random-backpressure replay.
 - **`ram_sim_model_test.py`** (`native_sim` via `pypeline_sim.py --run 30`): convergence
@@ -243,7 +335,7 @@ VHDL generator and one simulation model. Coverage:
   truncation into a narrower parameter, uint into int, and keyword-bound arguments. The call's
   port wire used to take the argument's type, and GHDL rejected the port map
   (`actual constraints don't match formal ones`).
-- **`pyrtl_no_timing_paths_build_report_test.py`** (`build_report`): the no-output
+- **`pyrtl_no_timing_paths_build_report_test.py`** (`build_report_pyrtl`): the no-output
   `no_outputs_design.py` must FAIL its pipelined build, and fail with the PYRTL no-timing-paths
   error text (naming `@wires` as the intentional-wiring escape). The old
   `ZeroDivisionError` / `could not convert string to float` text and the coarse-sweep crash
@@ -273,9 +365,11 @@ that a synthesis backend builds from them. Two tests cover this:
   checks that every DEVICE_MODELS synthesis artifact name stays within 255
   bytes, including its temporary-netlist tail. It checks every recipe, and uses
   both real soft_cmp leaf names and oversized names.
-- **`self_check_stream_auto_fsm_sky130_test` (synth):** builds the AUTO_FSM
-  design under `--syn_tool sky130`, whose soft_cmp leaves first exposed the
-  overflow. See `DEVICE_MODELS_DESIGN.md` §2.
+- **`self_check_stream_auto_fsm_test` (synth_device_models):** builds the
+  AUTO_FSM design under `--syn_tool sky130`, whose soft_cmp leaves first exposed
+  the overflow. Every `synth_device_models` build with long factory names
+  (stream AUTO_PIPELINE, soft_div) exercises the same path. See
+  `DEVICE_MODELS_DESIGN.md` §2.
 
 ## `native_vs_vhdl_sim` probe rules
 
@@ -317,7 +411,7 @@ way worth copying whenever "this artifact must work somewhere else" is the claim
   `import pypeline` fails before doing anything else — then compares what that process
   decodes and encodes against `pypeline.type_to_bytes`/`type_from_bytes`, over random
   frames in both endians.
-- `inst/host_types_build_test.py` (`build_report`) checks the BUILD: it runs `pypelinec`
+- `inst/host_types_build_test.py` (`build_report_device_models`) checks the BUILD: it runs `pypelinec`
   for real, lifts the file out of the output directory, and repeats that comparison on it.
 
 Two rules make those tests mean something, both learned by mutation-testing them:
@@ -335,8 +429,10 @@ Two rules make those tests mean something, both learned by mutation-testing them
 
 ```
 python3 src/tests/pypeline_tests/run_all.py                       # default categories, parallel
-python3 src/tests/pypeline_tests/run_all.py -j 4 --no_timeout     # full suite, four workers, no timeout
+python3 src/tests/pypeline_tests/run_all.py -j 5 --no_timeout     # full suite, five workers, no timeout
 python3 src/tests/pypeline_tests/run_all.py --category native_sim
+python3 src/tests/pypeline_tests/run_all.py --category synth_device_models --category build_report_device_models
+python3 src/tests/pypeline_tests/run_all.py --category synth_vivado --category build_report_vivado  # needs Vivado
 python3 src/tests/pypeline_tests/run_all.py --category known_issues   # opt-in
 python3 src/tests/pypeline_tests/run_all.py -t <name>              # one test, by name or list index
 python3 src/tests/pypeline_tests/run_all.py -k <substring>          # tests whose name contains SUBSTRING
@@ -349,10 +445,15 @@ Each test gets an isolated `--out_dir` under a fresh tmp root (`common.py`'s
 default timeout (`common.DEFAULT_CATEGORY_TIMEOUT_S`, overridable per `Test` or via
 `--timeout`/`--no_timeout`) kills a hung subprocess instead of blocking the whole
 suite. A summary table reports PASS/FAIL/XFAIL/XPASS/SKIP/TIMEOUT per test, with
-output directories of any failed test printed for inspection.
+output directories of any failed test printed for inspection (and, for a tool-check
+failure, which tool the log named). `run_test` also sets
+`PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG=1`; see
+[Choosing a synthesis tool](#choosing-a-synthesis-tool).
 
 Each category module can also run standalone, e.g.
-`python3 src/tests/pypeline_tests/native_sim_tests.py [-j N]`.
+`python3 src/tests/pypeline_tests/native_sim_tests.py [-j N]`. Run standalone,
+`synth_tests.py` and `build_report_tests.py` run all three of their tool
+categories.
 
 ## Related
 
@@ -551,6 +652,38 @@ something changes, revise the entry that owns that topic rather than adding a ne
 one. Keep a fact here only if it still changes a decision today: an alternative
 someone would otherwise retry, or a measurement that is still a live regression
 reference.
+
+### Why synthesis tests default to sky130, not PyRTL
+
+PyRTL used to be the default for any design without a `PART`, and several
+designs without a Vivado-specific feature ran on Vivado. Together that made
+synthesis nearly all of a multi-hour suite. One PyRTL whole-design timing run of
+`float_ops_div_test.py` took 6,392 s on its own.
+
+Each design below was built with `--syn_tool pyrtl` and `--syn_tool sky130` at
+the same time on an idle 4-core machine, each run with its own warm copy of the
+committed caches:
+
+| design | kind | PyRTL | sky130 |
+|---|---|---|---|
+| `pypeline_test.py` | `--comb`, 1 synth run | 140 s | 39 s |
+| `serdes_test.py` | `--comb`, 1 run | 601 s | 108 s |
+| `float_ops_div_test.py` | `--comb`, 1 run | unfinished at 1,604 s | 476 s |
+| `sweep_comb_test.py` | sweep, 50 MHz | 473 s / 5 runs | 43 s / 6 runs |
+| `sweep_two_mains_test.py` | sweep, 2×30 MHz | stopped at 270 s / 3 runs | 86 s / 7 runs |
+
+sky130 was faster on every design, per synthesis run and in total. The sweeps
+met the same goals in a similar number of iterations. Don't move tests back to
+PyRTL for speed.
+
+Suite totals, summed per-test time:
+
+- **Before:** about 59,900 test-seconds. Every earlier full run used `-j 4`.
+- **After:** 17,960 test-seconds for 294 tests. This was the first `-j 5` run,
+  and it took 76 minutes of wall time.
+  - Most sky130 builds finish in seconds to a few minutes.
+  - The remaining long poles are the Vivado tests, `pdw_tb`'s native sim, and
+  the four PyRTL-pinned `build_report_pyrtl` tests.
 
 ### Why there is no `vhdl_sim` category
 

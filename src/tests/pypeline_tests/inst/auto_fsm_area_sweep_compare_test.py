@@ -8,15 +8,21 @@ is the only quantity every backend (Vivado, Quartus, PYRTL, ...) reports in a
 form the driver can parse, and an area-minimizing search that depended on
 utilization output would only work on some of them.
 
-That makes this test the place where the estimate meets reality. yosys cell
+That makes this test the place where the estimate meets reality. Mapped cell
 counts are used HERE, in the test suite, and nowhere in the search itself.
+
+Both builds run under --syn_tool sky130 (fast, and its STA report records the
+mapped cell count) with --auto_fsm_abstract_area: under DEVICE_MODELS the
+search would otherwise rank candidates by real cached sky130 area, and it is
+the abstract per-bit model this test exists to check
+(auto_fsm_real_area_compare_test.py covers the real-area mode).
 
 Method: build the same design twice.
   --auto_fsm_no_area_sweep   the plain greedy schedule (v1 behaviour): share
                             every operation, open nothing up.
   (default)                 the area search.
-Then compare yosys cell counts, and check that the estimator ranked the two
-schedules the same way yosys did -- which is the property that makes the search
+Then compare mapped cell counts, and check that the estimator ranked the two
+schedules the same way synthesis did -- which is the property that makes the search
 trustworthy at all.
 """
 import argparse
@@ -48,7 +54,11 @@ def fail(msg):
 
 
 def run_build(out_dir, extra):
-    cmd = [sys.executable, PYPELINEC, DESIGN, "--out_dir", out_dir] + extra
+    cmd = [
+        sys.executable, PYPELINEC, DESIGN,
+        "--syn_tool", "sky130", "--auto_fsm_abstract_area",
+        "--out_dir", out_dir,
+    ] + extra
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -60,20 +70,25 @@ def run_build(out_dir, extra):
 
 
 def top_cell_count(out_dir):
+    """Mapped sky130 standard-cell count of the whole-design top entity, from
+    the "N cells:" line of the DEVICE_MODELS STA report the build already
+    wrote (this wrapper builds with --syn_tool sky130). The mapped netlist is
+    flattened, so it has no $scopeinfo hierarchy-bookkeeping cells to
+    subtract."""
     top_dir = os.path.join(out_dir, "top")
     logs = [
         os.path.join(top_dir, f)
         for f in os.listdir(top_dir)
-        if f.startswith("pyrtl_") and f.endswith(".log")
+        if f.startswith("device_models_") and f.endswith(".log")
     ]
     if not logs:
-        fail(f"no PYRTL/yosys log found under {top_dir}")
+        fail(f"no DEVICE_MODELS STA report found under {top_dir}")
     logs.sort(key=os.path.getmtime)
     with open(logs[-1]) as f:
         text = f.read()
-    m = re.findall(r"^\s*Number of cells:\s+(\d+)", text, re.M)
+    m = re.findall(r"^N cells:\s+(\d+)", text, re.M)
     if not m:
-        fail(f"no yosys cell count in {logs[-1]}")
+        fail(f"no 'N cells:' line in {logs[-1]}")
     return int(m[-1])
 
 
@@ -122,7 +137,7 @@ def main():
     est_sweep, est_greedy = estimated_area(sweep_out)
 
     print()
-    print("=== AUTO_FSM area search (yosys cell counts, whole design top) ===")
+    print("=== AUTO_FSM area search (sky130 mapped cells, whole design top) ===")
     print(
         f"  share everything (--auto_fsm_no_area_sweep): {greedy_cells:>8} cells  "
         f"({g_ops} ops -> {g_fus} units, {g_states} states, latency {g_lat})"

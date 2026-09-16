@@ -361,7 +361,7 @@ decisions this results section motivated are in
 | Whole-design STA, our own synthesis, all 7 stage counts | the end-to-end shape bar: monotone, saturating, real 32→64 knee reproduced |
 | Real `pipelinec --syn_tool sky130` build, normal throughput sweep (not `--no_sweep`) | the full integration: per-leaf isolated synthesis, multimain confirmation, sweep convergence, all through the real CLI |
 | Carry-save multiplier, latchup-style first candidate at 31 and 60/61 stages | planner/RAW-VHDL structure raises fmax 700.640825→909.794952 MHz while model V4, recipe, liberty, and coefficients remain unchanged |
-| `device_models_sta_test`'s `test_artifact_paths_fit_filename_limit`, plus the `self_check_stream_auto_fsm_sky130_test` synth build | Every artifact basename, including the worst-case `.tmp` tail, stays within 255 bytes for every recipe and for real soft_cmp leaf names. Long names are deterministic and never collide. Short names keep their historical file names. |
+| `device_models_sta_test`'s `test_artifact_paths_fit_filename_limit`, plus the `synth_device_models` builds with long generated names (`self_check_stream_auto_fsm_test`, `fir_sweep_test`, `sweep_stateful_boundary_test`) | Every artifact basename, including the worst-case `.tmp` tail, stays within 255 bytes for every recipe and for real soft_cmp leaf names. Long names are deterministic and never collide. Short names keep their historical file names. |
 | `run_all` regression suite | PyRTL/default behavior is unaffected — every shared `SYN.py` function this feature touches (`PART_SET_TOOL`, `TOOL_DOES_PNR`, cache-dir keying, mux cache-key logic) still does exactly what it did before for every other tool |
 
 ## 5. Limitations and future work
@@ -596,10 +596,14 @@ Estimated area: 83788.0 um2 (comb 53311.8 + regs 30476.2, 624 FFs) [estimate, pr
 Measured area: 6812.2 um2 (estimate +61.40%)
 ```
 
-The `area_cache/` tree ships pre-populated (18 leaf keys at the current
-`AREA_MODEL_VERSION` — every leaf a sky130 `build_report`/`synth` test in
-this repo's own registered suite happens to touch while running, not a
-deliberately curated set; see `git log` for the generating builds), and
+The `area_cache/` tree ships pre-populated (every leaf the repo's own
+`synth_device_models` / `build_report_device_models` / `native_vs_vhdl_sim`
+tests happen to touch while running, not a deliberately curated set; see
+`git log` for the generating builds). `PART("sky130")`,
+`PART("sky130_fd_sc_hvl")` and `--syn_tool sky130` all read and write this
+same tree and the same `path_delay_cache/device_models_*` tree. The library
+and corner are fixed (`SELECTED_LIBRARY`/`SELECTED_CORNER`), and the part
+string is not part of the key.
 `nix/package.nix` copies it out of the read-only store into
 `.pypelinec_area_cache/` + exports `PYPELINEC_AREA_CACHE_DIR`, mirroring
 `path_delay_cache`'s existing treatment exactly.

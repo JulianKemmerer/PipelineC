@@ -12,7 +12,14 @@ number of comparators per FSM went from O(states x units) to exactly one.
 That is the claim, and it is entirely a claim about generated hardware, so it
 is measured rather than argued: build the same design under --auto_fsm_ctl v2
 and explicit --auto_fsm_ctl v3 and compare yosys cell counts. The PYRTL timing flow
-already runs yosys in both builds, so no extra tool invocation is needed. (Cell
+already runs yosys in both builds, so no extra tool invocation is needed.
+
+Every build here runs under --syn_tool pyrtl on purpose (run_all category
+build_report_pyrtl). Both halves are PyRTL-specific: the area claim is about
+generic yosys cells (under sky130 mapping, v3's tables come out ~2% LARGER than
+v2's comparator chains on the same schedule), and the donut's 40 MHz goal is
+calibrated to PyRTL's delay model (the donut's multipliers also stall sky130's
+whole-design yosys run for over an hour). (Cell
 counts are read here, inside the test suite, never inside the area search --
 the search must work from its own model plus real timing measurements, since no
 area number is available uniformly across synthesis tools.)
@@ -59,7 +66,7 @@ def fail(msg):
 
 
 def run_build(design, out_dir, extra, allow_fail=False):
-    cmd = [sys.executable, PYPELINEC, design, "--out_dir", out_dir] + extra
+    cmd = [sys.executable, PYPELINEC, design, "--syn_tool", "pyrtl", "--out_dir", out_dir] + extra
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True

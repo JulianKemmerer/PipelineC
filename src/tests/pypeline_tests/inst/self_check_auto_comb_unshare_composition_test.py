@@ -1,16 +1,20 @@
-"""ACU composed with fixed/discovered pipelines, MCP and default AUTO_FSM."""
+"""ACU composed with fixed/discovered pipelines and default AUTO_FSM.
+
+No PART: native_vs_vhdl_sim_tests.py picks the tool (--syn_tool pyrtl for the
+pipelined build, see NON_COMB_SYN_TOOL there). A make_stream_auto_multi_cycle member used to
+live here too, but MULTI_CYCLE constraints are Vivado-only, which forced this
+whole design onto a slow Vivado sweep. Multi-cycle composition is covered by
+the Vivado-registered stream_*multi_cycle and auto_multi_cycle_sweep tests.
+"""
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../include/pypeline")))
-from pypeline import (AUTO_COMB_UNSHARE, AUTO_PIPELINE, MAIN, PART, NamedTuple, Reg, hw_func,
+from pypeline import (AUTO_COMB_UNSHARE, AUTO_PIPELINE, MAIN, NamedTuple, Reg, hw_func,
     struct, sim_assert, sim_finish, sim_print, uint1_t, uint8_t, uint16_t)
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 from stream.stream_auto_fsm import make_stream_auto_fsm
-from stream.stream_multi_cycle import make_stream_auto_multi_cycle
-
-PART("xc7a35tcpg236-1")  # MCP timing constraints require Vivado.
 
 
 @struct
@@ -41,7 +45,6 @@ class composition_t(NamedTuple):
     pipeline: output_t
     fsm: output_t
     explicit_fsm: output_t
-    mcp: output_t
 
 
 @hw_func
@@ -59,7 +62,6 @@ FIXED = AUTO_PIPELINE(ACU, latency=1)
 PIPE, PIPE_T = make_stream_auto_pipeline(ACU)
 FSM, FSM_T = make_stream_auto_fsm(core)
 EXPLICIT, EXPLICIT_T = make_stream_auto_fsm(ACU)
-MCP, MCP_T = make_stream_auto_multi_cycle(ACU, latency=3)
 
 
 def make_checker(stream, t, name):
@@ -93,7 +95,7 @@ def make_checker(stream, t, name):
         sim_assert(cycle < 1000, "ACU composition failed to drain")
         cycle += 1
         # sim_assert/print are synthesis-off. Export the payload so synthesis
-        # retains the datapath (including the MCP capture registers).
+        # retains the datapath.
         result: checker_t
         result.done = received == 8
         result.data = o.stream_out_if.stream.data
@@ -104,7 +106,6 @@ def make_checker(stream, t, name):
 CHECK_PIPE = make_checker(PIPE, PIPE_T, 0)
 CHECK_FSM = make_checker(FSM, FSM_T, 1)
 CHECK_EXPLICIT = make_checker(EXPLICIT, EXPLICIT_T, 2)
-CHECK_MCP = make_checker(MCP, MCP_T, 3)
 
 
 @MAIN(5.0)
@@ -128,13 +129,11 @@ def composition() -> composition_t:
     p: checker_t = CHECK_PIPE()
     f: checker_t = CHECK_FSM()
     e: checker_t = CHECK_EXPLICIT()
-    m: checker_t = CHECK_MCP()
-    finished = p.done & f.done & e.done & m.done
+    finished = p.done & f.done & e.done
     cycle += 1
     result: composition_t
     result.fixed = y
     result.pipeline = p.data
     result.fsm = f.data
     result.explicit_fsm = e.data
-    result.mcp = m.data
     return result

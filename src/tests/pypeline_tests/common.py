@@ -3,11 +3,16 @@
 """Shared infra for every category module (native_sim_tests.py,
 native_vs_vhdl_sim_tests.py, elab_tests.py, elab_introspect_tests.py,
 unit_tests.py, synth_tests.py, build_report_tests.py, known_issues_tests.py)
-and run_all.py. See docs/pypeline_TESTS.md for what belongs in each."""
+and run_all.py. See docs/pypeline_TESTS.md for what belongs in each.
+
+synth_tests.py and build_report_tests.py each feed three categories, one per
+synthesis tool (synth_vivado / synth_pyrtl / synth_device_models, and the same
+for build_report_*). See SYN_TOOLS below."""
 
 import argparse
 import dataclasses
 import os
+import re
 import shutil
 import subprocess
 import sys
@@ -71,17 +76,72 @@ QOR_DIR = REPO_ROOT / "src" / "tests" / "pypeline_tests" / "qor"
 # own. None of these are precise -- they only exist so a hung GHDL/synthesis
 # subprocess can't block the whole suite forever. Override per-Test via
 # timeout= for anything known to legitimately run longer/shorter.
-DEFAULT_CATEGORY_TIMEOUT_S = {
-    "native_sim": 7200,
-    "native_vs_vhdl_sim": 7200,
-    "vhdl_sim": 7200,
-    "elab": 7200,
-    "elab_introspect": 7200,
-    "unit": 7200,
-    "synth": 7200,
-    "build_report": 7200,
-    "known_issues": 7200,
+# Synthesis tools a synth_*/build_report_* category can be pinned to. The
+# default is device_models (real sky130 liberty STA, src/DEVICE_MODELS.py):
+# measured several times faster than PyRTL on both single --comb builds and
+# full sweeps (docs/pypeline_TESTS.md "Choosing a synthesis tool"). vivado is
+# only for Vivado-specific features (multi-cycle path constraints, real-part
+# BRAM/timing checks); pyrtl only for PyRTL-specific behavior.
+SYN_TOOLS = ("vivado", "pyrtl", "device_models")
+SYN_TOOL_CATEGORY_PREFIXES = ("synth", "build_report")
+SYN_TOOL_CATEGORIES = tuple(
+    f"{prefix}_{tool}" for prefix in SYN_TOOL_CATEGORY_PREFIXES for tool in SYN_TOOLS
+)
+
+# pypelinec args that force each tool. vivado has none: the design's own
+# PART("xc...") selects it. device_models is also safe on a design that
+# declares a Xilinx/board PART -- --syn_tool overrides part-based inference,
+# and the DEVICE_MODELS delay cache ignores the part string.
+SYN_TOOL_ARGS = {
+    "vivado": [],
+    "pyrtl": ["--syn_tool", "pyrtl"],
+    "device_models": ["--syn_tool", "sky130"],
 }
+
+# How a build log names the tool it actually synthesized with: every synthesis
+# run prints "Running: <dir>/<tool module, lowercase>_<hash>....log", and those
+# module names are exactly the SYN_TOOLS spellings. (SYN's "Using <TOOL>
+# synthesizing for part" line is not used: it only reports tool SELECTION --
+# printed even by --no_synth builds that never run it, and not printed at all
+# when --syn_tool preset the tool.)
+_RUNNING_TOOL_RE = re.compile(
+    r"^Running: \S*/(vivado|pyrtl|device_models|quartus|open_tools|diamond|"
+    r"efinity|gowin|cc_tools)_[^/\s]*\.log\s*$",
+    re.MULTILINE,
+)
+
+
+def syn_tool_category(prefix: str, tool: str) -> str:
+    assert prefix in SYN_TOOL_CATEGORY_PREFIXES, prefix
+    assert tool in SYN_TOOLS, tool
+    return f"{prefix}_{tool}"
+
+
+def category_syn_tool(category: str):
+    """The tool a synth_*/build_report_* category is pinned to, else None."""
+    for prefix in SYN_TOOL_CATEGORY_PREFIXES:
+        for tool in SYN_TOOLS:
+            if category == f"{prefix}_{tool}":
+                return tool
+    return None
+
+
+# Per-category fallback timeout (seconds), used when a Test doesn't set its
+# own. None of these are precise -- they only exist so a hung GHDL/synthesis
+# subprocess can't block the whole suite forever. Override per-Test via
+# timeout= for anything known to legitimately run longer/shorter.
+DEFAULT_CATEGORY_TIMEOUT_S = dict(
+    {
+        "native_sim": 7200,
+        "native_vs_vhdl_sim": 7200,
+        "vhdl_sim": 7200,
+        "elab": 7200,
+        "elab_introspect": 7200,
+        "unit": 7200,
+        "known_issues": 7200,
+    },
+    **{category: 7200 for category in SYN_TOOL_CATEGORIES},
+)
 FALLBACK_TIMEOUT_S = 7200
 
 _TOOL_WHICH_CACHE = {}
@@ -96,7 +156,7 @@ def _tool_available(tool: str) -> bool:
 @dataclasses.dataclass
 class Test:
     name: str
-    category: str  # "native_sim" | "native_vs_vhdl_sim" | "elab" | "synth" | ...
+    category: str  # "native_sim" | "elab" | "synth_device_models" | ... (see SYN_TOOL_CATEGORIES)
     cmd: list  # argv, without python interpreter or --out_dir
     needs_out_dir: bool = False
     expect_fail: bool = False  # this test documents a known, unfixed bug
@@ -114,6 +174,7 @@ class TestResult:
     test_dir: Path
     timed_out: bool = False
     skip_reason: str = None
+    tool_error: str = None  # set by _check_syn_tool: ran the wrong synthesis tool
 
     @property
     def skipped(self) -> bool:
@@ -123,7 +184,7 @@ class TestResult:
     def passed(self) -> bool:
         if self.skipped:
             return True  # SKIP does not fail the suite
-        if self.timed_out:
+        if self.timed_out or self.tool_error:
             return False
         ran_ok = self.returncode == 0
         return ran_ok != self.test.expect_fail  # XOR: expect_fail flips the verdict
@@ -134,6 +195,8 @@ class TestResult:
             return "SKIP"
         if self.timed_out:
             return "TIMEOUT"
+        if self.tool_error:
+            return "FAIL"
         ran_ok = self.returncode == 0
         if self.test.expect_fail:
             return "XFAIL" if not ran_ok else "XPASS"
@@ -169,7 +232,7 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
     missing = [t for t in test.requires if not _tool_available(t)]
     if missing:
         reason = f"missing tool(s): {', '.join(missing)}"
-        _log(f"[SKIP] {test.category:10s} {test.name}  ({reason})")
+        _log(f"[SKIP] {test.category:26s} {test.name}  ({reason})")
         return TestResult(test, None, 0.0, test_dir, skip_reason=reason)
 
     cmd = [sys.executable] + [str(c) for c in test.cmd]
@@ -180,7 +243,7 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
     if timeout is None:
         timeout = DEFAULT_CATEGORY_TIMEOUT_S.get(test.category, FALLBACK_TIMEOUT_S)
 
-    _log(f"[RUN ] {test.category:10s} {test.name}  log: {out_log}")
+    _log(f"[RUN ] {test.category:26s} {test.name}  log: {out_log}")
 
     # Force TMPDIR to this test's own directory so any tempfile.mkdtemp()/
     # TemporaryDirectory() call made INSIDE the test process (not just the
@@ -192,7 +255,17 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
     # the platform tempdir (/tmp, or /media/1TB/tmp when TMPDIR happened to
     # be set that way in the invoking shell), uncontained and never cleaned
     # up alongside the rest of that test's output.
-    env = {**os.environ, "TMPDIR": str(test_dir)}
+    #
+    # PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG: nothing in the suite reads the
+    # graphviz pipeline_map.gv/.png renders (the text pipeline_map.log is still
+    # written), and `dot` often costs more than a small test's whole build.
+    # Wrapper scripts copy os.environ into their own pypelinec subprocesses,
+    # so nested builds inherit it too.
+    env = {
+        **os.environ,
+        "TMPDIR": str(test_dir),
+        "PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG": "1",
+    }
 
     start = time.monotonic()
     timed_out = False
@@ -218,10 +291,48 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
     duration = time.monotonic() - start
 
     result = TestResult(test, returncode, duration, test_dir, timed_out=timed_out)
+    if not timed_out:
+        result.tool_error = _check_syn_tool(test, out_log)
+        if result.tool_error:
+            with open(out_log, "a") as out_f:
+                out_f.write(f"\n[run_all] TOOL CHECK FAILED: {result.tool_error}\n")
     _log(
-        f"[{result.status}] {test.category:10s} {test.name}  ({duration:.1f}s)  log: {out_log}"
+        f"[{result.status}] {test.category:26s} {test.name}  ({duration:.1f}s)  log: {out_log}"
+        + (f"  ({result.tool_error})" if result.tool_error else "")
     )
     return result
+
+
+def _check_syn_tool(test: Test, out_log: Path):
+    """Keep a synth_*/build_report_* test on its category's synthesis tool.
+
+    Any synthesis run ("Running: .../<tool>_....log") of a different tool fails the
+    test (a design silently drifting back onto slow Vivado/PyRTL). synth_*
+    tests run pypelinec directly, so they must also show at least one run of
+    the expected tool; build_report_* wrappers may not echo their child
+    builds' output, so only the wrong-tool half applies to them. Returns an
+    error string, or None."""
+    tool = category_syn_tool(test.category)
+    if tool is None:
+        return None
+    try:
+        text = out_log.read_text(errors="replace")
+    except OSError:
+        return None
+    expected = tool
+    used = set(_RUNNING_TOOL_RE.findall(text))
+    wrong = sorted(used - {expected})
+    if wrong:
+        return (
+            f"category {test.category} must synthesize with {expected}, "
+            f"but the log shows {', '.join(wrong)}"
+        )
+    if test.category.startswith("synth_") and expected not in used:
+        return (
+            f"category {test.category} expected a {expected} synthesis run in "
+            "the log and found none"
+        )
+    return None
 
 
 def run_tests(tests: list, jobs: int, tmp_root: Path) -> list:
@@ -259,7 +370,7 @@ def print_summary(results: list) -> int:
     skipped = []
     for r in results:
         print(
-            f"[{r.status}] {r.test.category:10s} {r.test.name:{name_width}s} ({r.duration:.1f}s)"
+            f"[{r.status}] {r.test.category:26s} {r.test.name:{name_width}s} ({r.duration:.1f}s)"
         )
         if r.skipped:
             skipped.append(r)
@@ -276,6 +387,8 @@ def print_summary(results: list) -> int:
         print("\nFailed test output directories:")
         for r in failed:
             tag = " [XPASS: bug appears fixed -- promote out of known_issues]" if r.status == "XPASS" else ""
+            if r.tool_error:
+                tag += f" [{r.tool_error}]"
             print(f"  {r.test.name}: {r.test_dir}{tag}")
 
     return 0 if not failed else 1

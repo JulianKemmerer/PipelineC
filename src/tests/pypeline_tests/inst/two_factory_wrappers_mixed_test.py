@@ -36,9 +36,10 @@ PART("xc7a35ticsg324-1l")
 # top-level function, with assignment-incompatible return types. Pre-fix, the
 # second wrapper's inner `func` call resolves to the first wrapper's already-
 # elaborated function and fails to drive its differently-typed output wires.
-# Elaboration succeeding cleanly is the pass condition -- checked via
-# `pypelinec ... --no_synth` exit code by elab_tests.py, no sim_call needed
-# since make_stream_auto_pipeline doesn't support it.
+# Elaboration succeeding cleanly is the pass condition -- checked via the
+# `pypelinec ... --comb` exit code in synth_tests.py (synth_vivado, since the
+# design needs its Xilinx PART), no sim_call needed since
+# make_stream_auto_pipeline doesn't support it.
 
 
 @struct

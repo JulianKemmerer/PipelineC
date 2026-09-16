@@ -35,7 +35,7 @@ def main():
     args = parser.parse_args()
 
     out_dir = args.out_dir or os.path.join(THIS_DIR, "auto_fsm_latency_test_out")
-    cmd = [sys.executable, PYPELINEC, DESIGN, "--out_dir", out_dir]
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "sky130", "--out_dir", out_dir]
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True

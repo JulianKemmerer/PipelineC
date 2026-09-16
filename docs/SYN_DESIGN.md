@@ -777,9 +777,10 @@ pragma applied. The trace, generated VHDL, mapped JSON, and STA report
 together are the evidence for a placement claim; requested cut counts alone
 are not.
 
-`PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG=1` is an internal benchmark switch
-that suppresses only diagnostic pipeline-map PNG rendering for very large
-fine-grained probes. The text map, placement trace, HDL, and default behavior
+`PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG=1` is an internal switch that
+suppresses only diagnostic pipeline-map PNG rendering. Large fine-grained QoR
+probes use it, and the pypeline test runner sets it for every test (see
+[pypeline_TESTS.md](pypeline_TESTS.md#choosing-a-synthesis-tool)). The text map, placement trace, HDL, and default behavior
 
 The preserved
 [`divider_gate_clean_baseline_critical_paths.json`](../src/tests/pypeline_tests/qor/divider_gate_clean_baseline_critical_paths.json)
@@ -1641,8 +1642,11 @@ of extra states can fix.
 
 ## 8. Test matrix
 
-Fast tests (no `PART()` → PYRTL software timing model, seconds per synth
-run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
+Fast tests in `src/tests/pypeline_tests/inst/`. They run under
+`--syn_tool sky130` (DEVICE_MODELS, seconds per synth run; see
+[pypeline_TESTS.md](pypeline_TESTS.md#choosing-a-synthesis-tool)) unless marked.
+The plain design files are registered in `synth_tests.py`, and the `*_test.py`
+wrappers that assert on build output in `build_report_tests.py`:
 
 | test | proves |
 |---|---|
@@ -1650,16 +1654,16 @@ run) in `src/tests/pypeline_tests/inst/`, registered in `synth_tests.py`:
 | `sweep_two_mains_test.py` | two MAINs: per-main plans, no-attribution fallback |
 | `sweep_fsm_auto_pipeline_test.py` | Reg-FSM main + AUTO_PIPELINE region (via `_auto_pipeline_with_io_regs`): cut subtree is the tagged child, FSM latency stays 0 |
 | `sweep_stateful_boundary_test.py` | comb→stateful→comb: cuts stop at the stateful boundary |
-| `sweep_floor_detect_test.py` | unreachable goal: floor predicted & blamed up front, sweep stops after a few syn runs, results written, then `TIMING NOT MET` + non-zero exit |
+| `sweep_floor_detect_test.py` (**PyRTL**, build_report_pyrtl) | unreachable goal: floor predicted & blamed up front, sweep stops after a few syn runs, results written, then `TIMING NOT MET` + non-zero exit |
 | `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that auto-pipelining cannot help (planning time + standalone as-written check FAIL + failing report), one full syn run, `TIMING NOT MET` + non-zero exit, and `sweep_history.json` `final` agrees (not met, same MHz, a failure reason) |
 | `sweep_planless_test.py` | stateful MAIN with a met goal but nothing cuttable: one standalone as-written check synthesis prints PASS, its critical path is NOT stored as the func delay, one full syn run, exit 0, `sweep_history.json` `final` is a met `as_written` record with `standalone_mhz` |
 | `auto_pipeline_latency_test.py` | end-to-end factory design (`make_stream_auto_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, seeded confirmation syn passes with no fallback sweep, loop settles within the pass cap (extra realization passes allowed), `sweep_history.json` `final` records come from the confirmation run |
 | `auto_pipeline_constraints_test.py` | §6 constrained regions end-to-end: `latency=2` / `start_latency=1` call sites built with exactly 2 / 1 registers and pin-and-confirm pass 2 skipped; a `max_latency=1` cap stops an unreachable goal promptly, naming the cap, then `TIMING NOT MET` |
 | `auto_pipeline_c_pragma_test.py` | C `#pragma AUTOPIPELINE 2` is a fixed latency, built with exactly 2 clocks even by a `--comb` build |
-| `auto_multi_cycle_sweep_test.py` (**Vivado**, build_report) | §6 AUTO_MULTI_CYCLE end-to-end, in three builds: (1) from the default start of 1, the sweep raises the multi-cycle count (`action=auto_multi_cycle(...)`) until the path meets timing; pass 2 re-elaborates, the final XDC carries the count, and the pipelined native `--sim` asserts the handshake waits count + 1 cycles; (2) restarting at that count settles with no change and pass 2 skipped; (3) a `max_latency=1` cap fails the build naming it |
+| `auto_multi_cycle_sweep_test.py` (**Vivado**, build_report_vivado) | §6 AUTO_MULTI_CYCLE end-to-end, in three builds: (1) from the default start of 1, the sweep raises the multi-cycle count (`action=auto_multi_cycle(...)`) until the path meets timing; pass 2 re-elaborates, the final XDC carries the count, and the pipelined native `--sim` asserts the handshake waits count + 1 cycles; (2) restarting at that count settles with no change and pass 2 skipped; (3) a `max_latency=1` cap fails the build naming it |
 | `auto_fsm_latency_test.py` | §7 end-to-end: schedule pass runs, several same-kind operations fold onto fewer shared units, latency == states + 1, and exactly ONE instance of each shared unit appears in the generated VHDL |
-| `auto_fsm_resources_compare_test.py` | §7 area: same design built `--comb` (no sharing) and scheduled, compared by yosys cell count — guards the reason the feature exists |
-| `auto_fsm_timing_iter_test.py` | §7 iteration: a deliberately over-packed first schedule misses the clock, the FSM is blamed, its budget is tightened, and a later build passes — with no source change |
+| `auto_fsm_resources_compare_test.py` | §7 area: same design built `--comb` (no sharing) and scheduled, compared by mapped sky130 cell count — guards the reason the feature exists |
+| `auto_fsm_timing_iter_test.py` (**PyRTL**, build_report_pyrtl) | §7 iteration: a deliberately over-packed first schedule misses the clock, the FSM is blamed, its budget is tightened, and a later build passes — with no source change |
 
 Unit/in-process coverage (registered in `elab_tests.py`):
 `auto_pipeline_harvest_test.py` (harvest grouping + divergence, seed two-tier matching

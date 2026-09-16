@@ -29,7 +29,14 @@ Run standalone: python3 native_vs_vhdl_sim_tests.py [-j N]
 
 import sys
 
-from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINE_SIM_DEBUG, Test, main
+from common import (
+    EXAMPLES_PYPELINE_DIR,
+    INST_DIR,
+    PYPELINE_SIM_DEBUG,
+    SYN_TOOL_ARGS,
+    Test,
+    main,
+)
 
 # fmt: off
 # (filename, source_dir, extra_args) -- extra_args always includes --sim and
@@ -117,6 +124,10 @@ COMB_TEST_FILES = [
 ]
 # Non---comb (pipelined/scheduled) compares: full build, then native sim runs
 # with the discovered latencies emulated, diffed against real pipelined VHDL.
+# Those builds synthesize. They run under PyRTL (--syn_tool pyrtl, see
+# NON_COMB_SYN_TOOL) rather than the suite's default sky130 -- see the comment
+# there. --comb entries above never reach synthesis (cocotb exits first), so
+# they need no tool.
 NON_COMB_TEST_FILES = [
     ("self_check_auto_comb_share_composition_test.py", INST_DIR, []),
     ("self_check_auto_comb_unshare_composition_test.py", INST_DIR, []),
@@ -169,6 +180,18 @@ NON_COMB_TEST_FILES = [
 ]
 # fmt: on
 
+# Non---comb entries build under PyRTL, not the suite's default sky130.
+# pypeline_sim_debug.py runs its native and VHDL pypelinec invocations
+# concurrently in ONE out_dir, and both re-characterize some leaves (AUTO_FSM /
+# AUTO_COMB schedule passes, raw-VHDL RAM leaves, ...). DEVICE_MODELS'
+# per-leaf synthesis artifacts are not safe against two processes
+# synthesizing the same leaf in the same directory (the shared _syn.ys names a
+# per-process temp netlist), so under sky130 these tests fail at random --
+# seen on the composition, AUTO_FSM and RAM designs. PyRTL's identical-content
+# artifacts tolerate the overlap. Switch this to "device_models" once
+# DEVICE_MODELS is race-free.
+NON_COMB_SYN_TOOL = "pyrtl"
+
 
 def get_tests() -> list:
     tests = [
@@ -186,7 +209,8 @@ def get_tests() -> list:
             name=filename[: -len(".py")],
             category="native_vs_vhdl_sim",
             cmd=[PYPELINE_SIM_DEBUG, source_dir / filename, "--sim", "--run", "all"]
-            + extra_args,
+            + extra_args
+            + SYN_TOOL_ARGS[NON_COMB_SYN_TOOL],
             needs_out_dir=True,
         )
         for filename, source_dir, extra_args in NON_COMB_TEST_FILES

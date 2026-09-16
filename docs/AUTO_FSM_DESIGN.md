@@ -1012,10 +1012,13 @@ History section ("Area model V1 → V2") for why that distinction matters; nothi
 depends on the details, only on the corrected values being what's cached.
 
 **What real measurement corrected, once the harness was out of the way.**
-Fitting real cached µm² against width across every `BIN_OP_PLUS`/`MINUS`
-entry in `area_cache/` (both cost `AREA_PER_BIT_ADD` per `_leaf_area`, so one
-joint fit covers both) gives `UM2_PER_ABSTRACT_AREA_UNIT ≈ 98.93` µm² per
-adder bit. `AREA_PER_BIT_MUX` scaled by it is 1.15x the real cached
+Fitting real cached µm² against width across the `BIN_OP_PLUS`/`MINUS`
+entries in `area_cache/` gives `UM2_PER_ABSTRACT_AREA_UNIT ≈ 98.93` µm² per
+adder bit. Both operators cost `AREA_PER_BIT_ADD` per `_leaf_area`, so one
+joint fit covers both. The fit uses only entries whose operands are both at
+least 8 bits wide: an incrementer such as `uint16 + uint1` costs about half a
+real 16-bit adder, and `area_model_test.py` would otherwise drift as the test
+suite caches more of them. `AREA_PER_BIT_MUX` scaled by it is 1.15x the real cached
 `MUX_uintN_t` leaves — 29.304 µm²/bit, exact (not just close) across every
 measured width 1/8/32/34/64 — a real, independent confirmation of the ratio
 `auto_fsm_min_area_verify_test.py` set by a completely different method

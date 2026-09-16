@@ -28,9 +28,16 @@ That inversion is also what set AREA_PER_BIT_MUX: the model priced a 2:1 mux
 bit at ~1 cell where yosys charges ~2.1, which is exactly the term that decides
 whether decomposition pays.
 
-Cell counts exclude $scopeinfo, which is yosys hierarchy bookkeeping rather than
-hardware -- counting it inverts verdicts on designs that instantiate many small
-modules (an AUTO_FSM under ctl=v3 instantiates one per lookup table).
+Every build runs under --syn_tool sky130 (fast, and its STA report records the
+mapped cell count) with --auto_fsm_abstract_area: under DEVICE_MODELS the search
+would otherwise rank candidates by real cached sky130 area, and it is the
+abstract per-bit model this test holds to account
+(auto_fsm_real_area_compare_test.py covers the real-area mode).
+
+Counts are real mapped cells. (The earlier PyRTL flow's yosys statistics
+included $scopeinfo hierarchy bookkeeping, which had to be excluded -- counting
+it inverted verdicts on designs that instantiate many small modules. The
+flattened sky130 netlist has none.)
 """
 import argparse
 import os
@@ -62,7 +69,11 @@ def fail(msg):
 
 
 def run_build(out_dir, extra):
-    cmd = [sys.executable, PYPELINEC, DIV_DESIGN, "--out_dir", out_dir] + extra
+    cmd = [
+        sys.executable, PYPELINEC, DIV_DESIGN,
+        "--syn_tool", "sky130", "--auto_fsm_abstract_area",
+        "--out_dir", out_dir,
+    ] + extra
     print("Running:", " ".join(cmd), flush=True)
     os.makedirs(out_dir, exist_ok=True)
     log_path = os.path.join(out_dir, "build.log")
@@ -80,38 +91,26 @@ def run_build(out_dir, extra):
 
 
 def top_cell_count(out_dir):
-    """Real cells in the last yosys report under out_dir/top, minus $scopeinfo.
-
-    $scopeinfo is hierarchy bookkeeping, not hardware. Leaving it in makes a
-    design that instantiates more small modules look bigger when it is not --
-    it inverted the v2-vs-v3 control-path verdict on the donut example.
-    """
+    """Mapped sky130 standard-cell count of the whole-design top entity, from
+    the "N cells:" line of the DEVICE_MODELS STA report the build already
+    wrote (this wrapper builds with --syn_tool sky130). The mapped netlist is
+    flattened, so it has no $scopeinfo hierarchy-bookkeeping cells to
+    subtract."""
     top_dir = os.path.join(out_dir, "top")
     logs = [
         os.path.join(top_dir, f)
         for f in os.listdir(top_dir)
-        if f.startswith("pyrtl_") and f.endswith(".log")
+        if f.startswith("device_models_") and f.endswith(".log")
     ]
     if not logs:
-        fail(f"no PYRTL/yosys log found under {top_dir}")
+        fail(f"no DEVICE_MODELS STA report found under {top_dir}")
     logs.sort(key=os.path.getmtime)
     with open(logs[-1]) as f:
         text = f.read()
-    blocks = list(
-        re.finditer(r"Number of cells:\s+(\d+)\n((?:\s+\$\S+\s+\d+\n)+)", text)
-    )
-    if not blocks:
-        m = re.findall(r"^\s*Number of cells:\s+(\d+)", text, re.M)
-        if not m:
-            fail(f"no yosys cell count in {logs[-1]}")
-        return int(m[-1])
-    block = blocks[-1]
-    scopeinfo = 0
-    for line in block.group(2).strip().splitlines():
-        kind, count = line.split()
-        if kind == "$scopeinfo":
-            scopeinfo = int(count)
-    return int(block.group(1)) - scopeinfo
+    m = re.findall(r"^N cells:\s+(\d+)", text, re.M)
+    if not m:
+        fail(f"no 'N cells:' line in {logs[-1]}")
+    return int(m[-1])
 
 
 def schedule_line(out):
@@ -180,7 +179,7 @@ def main():
         results.append((label, sub, out, top_cell_count(out_dir)))
 
     print()
-    print("=== AUTO_FSM minimum-area verification (yosys cells, whole design) ===")
+    print("=== AUTO_FSM minimum-area verification (sky130 mapped cells, whole design) ===")
     for label, _sub, out, cells in results:
         ops, fus, states, lat = schedule_line(out)
         est, anchor_est = estimated_area(out)

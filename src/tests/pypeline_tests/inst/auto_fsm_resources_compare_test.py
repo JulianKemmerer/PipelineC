@@ -12,9 +12,10 @@ Method: build auto_fsm_resources_test.py twice.
   --comb   the AUTO_FSM call site stays a combinational passthrough, so the
            design is the full parallel blob: six multipliers, five adders.
   (full)   the scheduled FSM: one multiplier and one adder, time-multiplexed.
-Then compare yosys cell counts for the same top-level entity in each build.
-The PYRTL timing flow runs yosys first, so those counts are already produced
-by both builds -- no extra tool invocation is needed. (On a real FPGA part the
+Then compare mapped cell counts for the same top-level entity in each build.
+Both builds run under --syn_tool sky130, whose DEVICE_MODELS STA report
+already records the mapped sky130 standard-cell count -- no extra tool
+invocation is needed. (On a real FPGA part the
 equivalent numbers are in Vivado's report_utilization output.)
 
 Also asserted: the two builds are genuinely comparable, i.e. the combinational
@@ -44,7 +45,7 @@ def fail(msg):
 
 
 def run_build(out_dir, extra):
-    cmd = [sys.executable, PYPELINEC, DESIGN, "--out_dir", out_dir] + extra
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "sky130", "--out_dir", out_dir] + extra
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -56,22 +57,25 @@ def run_build(out_dir, extra):
 
 
 def top_cell_count(out_dir):
-    """Cell count of the whole-design top entity, from the yosys statistics
-    the PYRTL timing flow already emitted into its log."""
+    """Mapped sky130 standard-cell count of the whole-design top entity, from
+    the "N cells:" line of the DEVICE_MODELS STA report the build already
+    wrote (this wrapper builds with --syn_tool sky130). The mapped netlist is
+    flattened, so it has no $scopeinfo hierarchy-bookkeeping cells to
+    subtract."""
     top_dir = os.path.join(out_dir, "top")
     logs = [
         os.path.join(top_dir, f)
         for f in os.listdir(top_dir)
-        if f.startswith("pyrtl_") and f.endswith(".log")
+        if f.startswith("device_models_") and f.endswith(".log")
     ]
     if not logs:
-        fail(f"no PYRTL/yosys log found under {top_dir}")
+        fail(f"no DEVICE_MODELS STA report found under {top_dir}")
     logs.sort(key=os.path.getmtime)
     with open(logs[-1]) as f:
         text = f.read()
-    m = re.findall(r"^\s*Number of cells:\s+(\d+)", text, re.M)
+    m = re.findall(r"^N cells:\s+(\d+)", text, re.M)
     if not m:
-        fail(f"no yosys cell count in {logs[-1]}")
+        fail(f"no 'N cells:' line in {logs[-1]}")
     return int(m[-1]), logs[-1]
 
 
@@ -103,7 +107,7 @@ def main():
     ratio = comb_cells / float(fsm_cells) if fsm_cells else 0.0
 
     print()
-    print("=== AUTO_FSM area comparison (yosys cell counts, whole design top) ===")
+    print("=== AUTO_FSM area comparison (sky130 mapped cells, whole design top) ===")
     print(f"  combinational (--comb, no sharing): {comb_cells:>8} cells  [{comb_log}]")
     print(f"  resource-shared FSM              : {fsm_cells:>8} cells  [{fsm_log}]")
     print(f"  shrink                           : {ratio:.2f}x")

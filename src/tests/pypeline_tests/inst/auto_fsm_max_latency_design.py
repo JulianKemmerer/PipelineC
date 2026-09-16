@@ -65,10 +65,16 @@ _IMPOSSIBLE = os.environ.get("PYPELINE_AUTO_FSM_IMPOSSIBLE_LATENCY") == "1"
 # the whole point of the test. The clock goal is loose enough that two adds DO
 # fit one state, so the second adder can actually be used; at a tighter goal the
 # delay budget, not the unit count, would be what forces the states.
+#
+# The goal is sized for sky130 (the test builds with --syn_tool sky130, where an
+# int16 add is ~3 ns): 90 MHz leaves a ~10 ns state budget, which two adds plus
+# their operand muxes (~8 ns) fit, but the impossible cap's single state of
+# five adds (~17 ns) does not. At a loose goal such as 25 MHz all five adds fit
+# one sky130 state, and the "impossible" cap would quietly be met.
 CHAIN_FSM = AUTO_FSM(add_chain, max_latency=2 if _IMPOSSIBLE else 4)
 
 
-@MAIN(25.0)
+@MAIN(90.0)
 def auto_fsm_max_latency_top(start: uint1_t, x: chain_in_t) -> int16_t:
     s: CHAIN_FSM.in_stream_t
     s.data = x

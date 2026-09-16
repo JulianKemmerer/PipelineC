@@ -2525,7 +2525,7 @@ The `pipelinec --sim --run N` § above is covered by `pipelinec_native_sim_test`
 `SIM.SET_SIM_TOOL`/`DO_OPTIONAL_SIM` dispatch wiring from the simulator itself, which the other
 `global_wires_sim_test` entry already covers. (Every native_sim-category `pipelinec` invocation
 passes `--comb` — without it, `--sim` now triggers a full build first.) The pipelined native
-sim § is covered by `native_pipelined_sim_test` (in `synth_tests.py`: non-`--comb` build +
+sim § is covered by `native_pipelined_sim_test` (`synth_device_models` in `synth_tests.py`: non-`--comb` build +
 latency-emulated native self-checks of `self_check_stream_auto_pipeline_test.py`) and, in the
 `native_vs_vhdl_sim` category, `pypeline_sim_debug.py` cycle-diff tests including
 `native_vs_vhdl_ap_test` and `native_vs_vhdl_pipelined_main_test`, which MATCH-compare emulated
@@ -2550,7 +2550,7 @@ python3 src/tests/pypeline_tests/run_all.py --category native_sim
 Aside from `pipelinec_native_sim_test` above (which exits before elaboration even though it
 invokes `pipelinec`), no `pipelinec` elaboration/synthesis happens in this script. See
 [pypeline_TESTS.md](pypeline_TESTS.md) for the full category breakdown (`elab`,
-`elab_introspect`, `unit`, `synth`, `build_report`, `native_vs_vhdl_sim`, `known_issues`), the
+`elab_introspect`, `unit`, `synth_*`, `build_report_*`, `native_vs_vhdl_sim`, `known_issues`), the
 `run_all.py` CLI, and the `native_vs_vhdl_sim` probe-placement rules.
 
 ## History
