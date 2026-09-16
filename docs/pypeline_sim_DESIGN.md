@@ -209,7 +209,9 @@ The hardware elaborator never calls `sim_call` and never sets this flag.
 **Why it's needed:** `_elab_assign` calls `_try_eval_const(stmt.value)` on every assignment
 RHS to test whether it is a plain Python constant. `_try_eval_const` evaluates the
 expression in `{**module_globals, **const_env}` — which includes live callables like
-`vga_timing`. Without the guard, the elaborator would probe `vga_timing()`, the wrapper
+`vga_timing`. (That namespace also omits hardware locals entirely, which is a separate
+hazard handled by `_refs_hw_local` — see
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#hardware-locals-shadow-python-names).) Without the guard, the elaborator would probe `vga_timing()`, the wrapper
 would run the simulation body, return a concrete `vga_timing_signals_t`, and `_try_eval_const`
 would cache it as a constant — causing an elaboration error later when hardware wires derived
 from it are not in `self.env`.

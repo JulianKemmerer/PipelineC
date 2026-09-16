@@ -28,6 +28,7 @@ Python design files into PypelineC's internal `Logic()` graph representation. Fo
 - [`FuncElaborator` — per-Function Elaboration State](#funcelaborator--per-function-elaboration-state)
   - [`env` vs `const_env` Routing](#env-vs-const_env-routing)
   - [`_try_eval_const` — the Elaboration/Hardware Boundary](#_try_eval_const--the-elaborationhardware-boundary)
+  - [Hardware Locals Shadow Python Names](#hardware-locals-shadow-python-names)
   - [Annotation Evaluation](#annotation-evaluation)
   - [Return Type and Void Functions](#return-type-and-void-functions)
 
@@ -275,6 +276,11 @@ target is a simple Name AND not already in env?
             └─ emit hardware: create wire, connect, update env
 ```
 
+The `env` check comes first at every step, and stays first inside `_try_eval_const` itself
+(see [Hardware Locals Shadow Python Names](#hardware-locals-shadow-python-names)) — note a
+name can be in **both**, since nothing removes a `const_env` entry when that name later
+becomes hardware.
+
 This is why `b = 0` and `i = i + 1` inside a loop body update `const_env` rather than
 creating hardware wires: `0` and `i + 1` (where `i` is already in `const_env`) both
 evaluate successfully as plain Python. The moment the RHS touches a wire — reading a
@@ -285,7 +291,9 @@ proceeds instead.
 ### `_try_eval_const` — the Elaboration/Hardware Boundary
 
 ```python
-def _try_eval_const(self, node):
+def _try_eval_const(self, node, allow_hw_shadow=False):
+    if not allow_hw_shadow and self._refs_hw_local(node):
+        return None            # a hardware local shadows the Python name
     expr = ast.Expression(body=node)
     ast.fix_missing_locations(expr)
     return eval(compile(expr, "<const_eval>", "eval"), self._make_eval_ns())
@@ -321,6 +329,42 @@ expression (`arr[IDX[j]]`, handled separately by `_parse_ref_toks`'s own
 `_try_eval_const` call on the subscript slice). If the fallback also fails — the name
 is genuinely undefined anywhere — `_elab_ref_read` raises a clean `ElaborationError`
 naming the base, rather than an unguarded `self.env[base_var]` `KeyError`.
+
+### Hardware Locals Shadow Python Names
+
+`_make_eval_ns()` holds module globals and `const_env`, never `self.env`. So a name that
+*is* a hardware local still resolves — to whatever unrelated module-global or
+factory-closure value happens to share its name. That is the opposite of Python's own
+scoping, of `_elab_name`'s env-first lookup, and of native sim, which just runs the body as
+Python. `_refs_hw_local(node)` restores the correct order for every caller at once: if any
+name read by the expression is a declared hardware local, the expression is simply not a
+Python constant.
+
+The failure modes it prevents are worth knowing, because only the first one is loud:
+
+| Source | Without the guard |
+| --- | --- |
+| `o: wrap_t = ...; return o.p0.a`, module global `o` whose `.p0.a` is a NamedTuple | `_elab_return`'s compound branch is taken on the global's value → `KeyError: 'uint8_t'` in `_ref_toks_to_ctype` |
+| same, but the global's `.p0.a` is a `str` | emitted as a string-literal CONST wire |
+| `arr[IDX]` with a hardware `IDX` and a module global `IDX = 2` | **silently** folds to a fixed index — `arr[2]` for every input |
+| `b = 0; b = x; b + 1` | **silently** folds to `1` — nothing ever removes `b`'s `const_env` entry when the name becomes hardware |
+
+Two exemptions, both of which mirror what Python itself does with the expression:
+
+- **Names bound inside the expression** — `_names_bound_inside` collects comprehension
+  targets and lambda args, so `[i * 3 for i in range(4)]` still folds when a hardware local
+  `i` exists. That `i` is the comprehension's own.
+- **`allow_hw_shadow=True`** — passed by `_elab_ann_assign` for `stmt.annotation`. Python
+  never evaluates a local variable's annotation, so a hardware local can't be what
+  `Reg[T]` or `uint8_t[N]` means there.
+
+Two sibling paths that read `const_env`/module globals *without* going through
+`_try_eval_const` enforce the same rule directly, by checking `self.env` first:
+`_try_resolve_int_constant`'s bare-`ast.Name` fast path (used for bit-slice bounds, shift
+amounts and array indices) and `_elab_aug_assign`'s const_env branch (so `b += 1` updates
+the hardware `b`, not a stale `const_env` value).
+
+Regression coverage: `src/tests/pypeline_tests/inst/local_shadows_global_const_test.py`.
 
 ### Annotation Evaluation
 

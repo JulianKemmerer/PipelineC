@@ -2211,11 +2211,66 @@ class FuncElaborator:
                 return (global_key,) + ref_toks[1:]
         return ref_toks
 
-    def _try_eval_const(self, node):
+    def _names_bound_inside(self, node):
+        """Names BOUND by the expression itself: comprehension targets and lambda
+        args. `[i * 3 for i in range(4)]` binds its own `i`, so a hardware local
+        named `i` does not shadow it -- Python's own scoping rule, and the one
+        native sim follows when it runs the same expression."""
+        bound = set()
+        for sub in ast.walk(node):
+            if isinstance(sub, ast.comprehension):
+                bound |= {
+                    t.id for t in ast.walk(sub.target) if isinstance(t, ast.Name)
+                }
+            elif isinstance(sub, ast.Lambda):
+                a = sub.args
+                bound |= {
+                    arg.arg
+                    for arg in (
+                        list(getattr(a, "posonlyargs", []))
+                        + list(a.args)
+                        + list(a.kwonlyargs)
+                        + [x for x in (a.vararg, a.kwarg) if x is not None]
+                    )
+                }
+        return bound
+
+    def _refs_hw_local(self, node):
+        """True if the expression reads a name that is a declared hardware local.
+
+        Such a name must never be resolved out of module_globals/const_env: the
+        hardware local shadows them, exactly as in _elab_name's env-first lookup
+        and in native sim (which just runs the body as Python).
+        """
+        bound = self._names_bound_inside(node)
+        return any(
+            isinstance(sub, ast.Name)
+            and isinstance(sub.ctx, ast.Load)
+            and sub.id not in bound
+            and _sanitize_vhdl_name(sub.id) in self.env
+            for sub in ast.walk(node)
+        )
+
+    def _try_eval_const(self, node, allow_hw_shadow=False):
         """Try to evaluate an AST expression as a plain Python elaboration-time value.
         Returns the Python value if successful, None if it involves hardware wires
         or fails for any reason.
+
+        A hardware local shadows any same-named module global or closure variable:
+        eval() runs against {**module_globals, **const_env} (_make_eval_ns), which
+        never holds hardware locals, so without the _refs_hw_local guard the GLOBAL
+        would win and the expression would fold to a value the local never had --
+        crashing (`return o.p0.a` where the global's `.p0.a` is a NamedTuple) or,
+        worse, silently building the wrong hardware (a constant-folded array index).
+        Note const_env entries are never removed when a name later becomes hardware
+        (`b = 0; b = x`), so this guard is what keeps the stale value out too.
+
+        allow_hw_shadow=True is for contexts Python itself never evaluates as
+        ordinary code -- a variable ANNOTATION -- where the surrounding Python
+        constant is the only possible meaning.
         """
+        if not allow_hw_shadow and self._refs_hw_local(node):
+            return None
         try:
             expr = ast.Expression(body=node)
             ast.fix_missing_locations(expr)
@@ -3217,8 +3272,11 @@ class FuncElaborator:
 
     def _elab_ann_assign(self, stmt):
         var_name = self._hw_name(stmt.target.id)
-        # Detect Reg[T] annotation — hardware state register
-        ann_val = self._try_eval_const(stmt.annotation)
+        # Detect Reg[T] annotation — hardware state register.
+        # allow_hw_shadow: an annotation is never evaluated as ordinary Python
+        # (a local variable's annotation isn't evaluated at all), so a same-named
+        # hardware local cannot be what `Reg[T]`/`uint8_t[N]` refers to.
+        ann_val = self._try_eval_const(stmt.annotation, allow_hw_shadow=True)
         if isinstance(ann_val, _RegType):
             elem = _array_elem_ctype(ann_val.inner_ctype) or ann_val.inner_ctype
             # _pypeline_interface_role (set only on .fwd_t/.fb_t, by @interface's
@@ -3546,7 +3604,13 @@ class FuncElaborator:
         write -- or its implicit zero-init if none yet -- as the read side).
         """
         name = stmt.target.id if isinstance(stmt.target, ast.Name) else None
-        if name is not None and name in self.const_env:
+        # A name that has since become hardware (b = 0; b = x; b += 1) keeps its
+        # now-stale const_env entry -- nothing removes it -- so check env first.
+        if (
+            name is not None
+            and name in self.const_env
+            and _sanitize_vhdl_name(name) not in self.env
+        ):
             rhs_val = self._try_eval_const(stmt.value)
             if rhs_val is None:
                 raise ElaborationError(
@@ -4592,6 +4656,11 @@ class FuncElaborator:
             return expr.value
         if isinstance(expr, ast.Name):
             name = expr.id
+            # A declared hardware local shadows both, same rule as _elab_name --
+            # otherwise arr[IDX] with a hardware IDX would fold to the module
+            # global's value and silently read a fixed element.
+            if _sanitize_vhdl_name(name) in self.env:
+                return None
             if name in self.const_env and isinstance(self.const_env[name], (int, bool)):
                 return int(self.const_env[name])
             if name in self.module_globals and isinstance(

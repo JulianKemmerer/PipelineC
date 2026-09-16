@@ -22,6 +22,17 @@ def get_tests() -> list:
                       cmd=[INST_DIR / "auto_comb_unshare_test.py"]))
     tests.append(Test(name="auto_comb_share_test", category="elab_introspect",
                       cmd=[INST_DIR / "auto_comb_share_test.py"]))
+    # A hardware local must shadow a same-named module global/closure name in
+    # every constant-folding path (_try_eval_const and friends). Failure modes
+    # range from a raw KeyError to silent miscompiles (const-folded array index,
+    # stale const_env value), so it is checked against the Logic() graph.
+    tests.append(
+        Test(
+            name="local_shadows_global_const_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "local_shadows_global_const_test.py"],
+        )
+    )
     # Regression-tests a FuncLogicLookupTable closure-callable naming
     # collision: same signature on both sides means no type error either
     # way, so it's undetectable except by inspecting FuncLogicLookupTable

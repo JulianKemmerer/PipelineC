@@ -31,7 +31,7 @@ For getting started information see the [README](README.md).
 18. [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation)
     - [`AUTO_PIPELINE(...)`](#auto_pipeline)
     - [`AUTO_MULTI_CYCLE(...)` (New)](#auto_multi_cycle-new)
-    - [`AUTO_COMB_SHARE(...)` / `AUTO_COMB_UNSHARE(...)` (New, Experimental)](#auto_comb_share-new-experimental)
+    - [`AUTO_COMB_SHARE(...)` / `AUTO_COMB_UNSHARE(...)` (New, Experimental)](#auto_comb_share--auto_comb_unshare-new-experimental)
     - [`AUTO_FSM(...)` (New, Experimental)](#auto_fsm-new-experimental)
 
 **Part III — Ports and streams**
@@ -2220,8 +2220,8 @@ implementation along two independent axes:
 
 | | 0 added cycles | N cycles |
 |---|---|---|
-| Parallel / unsharing | Original; [`AUTO_COMB_UNSHARE`](#auto_comb_unshare-new-experimental) | [`AUTO_PIPELINE`](#auto_pipeline), [`AUTO_MULTI_CYCLE`](#auto_multi_cycle-new); optionally after UNSHARE |
-| Sharing transformation | [`AUTO_COMB_SHARE`](#auto_comb_share-new-experimental) | [`AUTO_FSM`](#auto_fsm-new-experimental); ACS followed by pipeline/MCP |
+| Parallel / unsharing | Original; [`AUTO_COMB_UNSHARE`](#auto_comb_share--auto_comb_unshare-new-experimental) | [`AUTO_PIPELINE`](#auto_pipeline), [`AUTO_MULTI_CYCLE`](#auto_multi_cycle-new); optionally after UNSHARE |
+| Sharing transformation | [`AUTO_COMB_SHARE`](#auto_comb_share--auto_comb_unshare-new-experimental) | [`AUTO_FSM`](#auto_fsm-new-experimental); ACS followed by pipeline/MCP |
 
 Both pipelining and MCP divide computation **along the time axis**: pipelining
 inserts registers; MCP permits longer settling through timing constraints.
