@@ -266,6 +266,17 @@ same-spelling definitions that must coexist, and a deliberately forced identity
 collision that must fail clearly. Existing AUTO_FSM and native-versus-VHDL tests
 exercise generated helpers and specialization reuse in real hardware builds.
 
+**Tool-side file names.** Generated entity names can also overflow file names
+that a synthesis backend builds from them. Two tests cover this:
+
+- **`device_models_sta_test.py` (unit):** `test_artifact_paths_fit_filename_limit`
+  checks that every DEVICE_MODELS synthesis artifact name stays within 255
+  bytes, including its temporary-netlist tail. It checks every recipe, and uses
+  both real soft_cmp leaf names and oversized names.
+- **`self_check_stream_auto_fsm_sky130_test` (synth):** builds the AUTO_FSM
+  design under `--syn_tool sky130`, whose soft_cmp leaves first exposed the
+  overflow. See `DEVICE_MODELS_DESIGN.md` §2.
+
 ## `native_vs_vhdl_sim` probe rules
 
 A design registered in `native_vs_vhdl_sim_tests.py` must:

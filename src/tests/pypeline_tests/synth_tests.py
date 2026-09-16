@@ -151,6 +151,25 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # Same AUTO_FSM design under --syn_tool sky130 (DEVICE_MODELS). Its
+    # soft_cmp prefix-tree leaves have ~190-byte generated entity names, which
+    # used to overflow the 255-byte filename limit in DEVICE_MODELS' synthesis
+    # artifact names ("File name too long"). Named explicitly: the
+    # SYNTH_TEST_FILES name-from-filename rule would collide with the PyRTL
+    # entry above.
+    tests.append(
+        Test(
+            name="self_check_stream_auto_fsm_sky130_test",
+            category="synth",
+            cmd=[
+                PYPELINEC,
+                INST_DIR / "self_check_stream_auto_fsm_test.py",
+                "--syn_tool",
+                "sky130",
+            ],
+            needs_out_dir=True,
+        )
+    )
     # Pipelined (non---comb) NATIVE simulation: full build first, then the
     # native sim runs with the discovered latencies emulated. Self-checking
     # elastic stream design -- proves build -> harvest -> latency-emulated

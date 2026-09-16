@@ -221,6 +221,55 @@ def test_fixed_recipe_commands_and_cache_identity():
         raise AssertionError("empty explicit recipe did not fail closed")
 
 
+def test_artifact_paths_fit_filename_limit():
+    # Regression: generated factory entity names (~190 bytes) plus the model
+    # suffix, an extension and _run_synth_and_sta's ".tmp.<pid>.<ns>" tail
+    # exceeded the 255-byte filename limit ("File name too long").
+    real_leaf = (
+        "soft_cmp_prefix_from_operators_soft_cmp_factory_greater_True_"
+        "is_signed_True_n_bits_16_strict_True_common_t_int16_t_u2_t_uint2_t_"
+        "tree_soft_cmp_prefix_n_leaves_16_level_0_0CLK_2bd97a5c_top"
+    )
+    worst_tmp_tail = ".tmp.4194304." + "9" * 20
+    shared = "a" * 200
+    work_dir = "/some/work/dir"
+    for recipe in DEVICE_MODELS._SYNTHESIS_RECIPE_CACHE_TAGS:
+        for name in (real_leaf, "x" * 250, "y_" * 500, shared + "_one", shared + "_two"):
+            paths = DEVICE_MODELS._get_synthesis_recipe_artifact_paths(
+                name, work_dir, recipe
+            )
+            assert paths == DEVICE_MODELS._get_synthesis_recipe_artifact_paths(
+                name, work_dir, recipe
+            ), "artifact names must be deterministic"
+            basenames = [os.path.basename(p) for p in paths.values()]
+            basenames.append(os.path.basename(paths["mapped_json"]) + worst_tmp_tail)
+            for basename in basenames:
+                assert len(basename.encode()) <= 255, (recipe, len(basename), basename)
+        stems = {
+            os.path.basename(
+                DEVICE_MODELS._get_synthesis_recipe_artifact_paths(
+                    shared + tail, work_dir, recipe
+                )["mapped_json"]
+            )
+            for tail in ("_one", "_two")
+        }
+        assert len(stems) == 2, "long names sharing a prefix must not collide"
+
+        # Names that already fit keep their exact historical filenames, so
+        # existing output directories stay reusable.
+        short = "frozen_top_0CLK_12345678_top"
+        suffix = DEVICE_MODELS.GET_MODEL_ARTIFACT_SUFFIX(recipe)
+        paths = DEVICE_MODELS._get_synthesis_recipe_artifact_paths(
+            short, work_dir, recipe
+        )
+        assert paths == {
+            "mapped_json": f"{work_dir}/{short}{suffix}_liberty.json",
+            "synthesis_log": f"{work_dir}/{short}{suffix}_synth.log",
+            "synthesis_script": f"{work_dir}/{short}{suffix}_syn.sh",
+            "synthesis_yosys_script": f"{work_dir}/{short}{suffix}_syn.ys",
+        }, paths
+
+
 def test_syn_disk_caches_are_recipe_scoped():
     class ParserState:
         part = DEVICE_MODELS.SELECTED_LIBRARY

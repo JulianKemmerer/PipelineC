@@ -132,6 +132,46 @@ Cache/artifact identity is unaffected: `recipe_commands_sha256` hashes
 or `.ys` file text, and `_vhdl_input_record` hashes the VHDL files' own
 bytes, not how their paths reach yosys.
 
+**`<stem>` is capped so every artifact name fits in 255 bytes.**
+`_get_synthesis_recipe_artifact_paths()` names all four artifacts
+(`_liberty.json`, `_synth.log`, `_syn.sh`, `_syn.ys`) from one stem, built by
+`_artifact_file_stem()`:
+
+```
+<entity part> + GET_MODEL_ARTIFACT_SUFFIX()
+```
+
+`_run_synth_and_sta()` then appends a `.tmp.<pid>.<time_ns>` tail to the
+mapped JSON while yosys writes it.
+
+- **The problem.** Generated factory entity names are long. soft_cmp
+  prefix-tree leaves, `make_stream_auto_pipeline` FIRs and soft_div leaves are
+  about 190–200 bytes including `_<N>CLK_<hash>_top`. The model suffix alone is
+  54 bytes, or up to 85 with a non-production recipe tag. Together these ran
+  past the 255-byte per-component filesystem limit. The failure was either an
+  `OSError: [Errno 36] File name too long` opening the `.ys` file, or a yosys
+  `write_json` "Can't open output file".
+- **The budget.** The entity part may use 255 bytes, minus the suffix, minus
+  the longest extension, minus `_TMP_TAIL_RESERVE` (the widest possible temp
+  tail). With the production recipe that leaves 156 bytes.
+- **Over-budget names are collapsed.** A longer entity name goes through
+  `pypeline.collapse_overflow_name`, which keeps a readable prefix cut back to a
+  `_` boundary and appends `sha256(full name)[:8]`. This is the same helper that
+  caps `SYN.GET_CACHED_LOGIC_FILE_KEY`. The stem stays a pure function of the
+  entity name and the model identity.
+- **Names that fit are unchanged.** They keep their exact historical file
+  names.
+- **Only file names change.** `ghdl -e`, `synth -top`, the mapped-module
+  check and the `top_entity` field of the synthesis input identity all still
+  use the real entity name.
+- **No cache is affected.**
+  - Leaf delay and area caches are keyed by `GET_CACHED_LOGIC_FILE_KEY`, not by
+    these file names.
+  - Timing-log reuse finds its netlist through the absolute
+    `mapped_json_path` stored in the log-named `*_timing.json`.
+  - Leaf timing logs (`device_models_<N>CLK<hash><suffix>.log`) never contained
+    the entity name in the first place.
+
 Every run writes both the traditional text log and a sibling
 `*_timing.json`. The structured report records `worst_period_ns`, `fmax_mhz`,
 launch clock-to-Q, combinational and setup components, launch/capture
@@ -321,6 +361,7 @@ decisions this results section motivated are in
 | Whole-design STA, our own synthesis, all 7 stage counts | the end-to-end shape bar: monotone, saturating, real 32→64 knee reproduced |
 | Real `pipelinec --syn_tool sky130` build, normal throughput sweep (not `--no_sweep`) | the full integration: per-leaf isolated synthesis, multimain confirmation, sweep convergence, all through the real CLI |
 | Carry-save multiplier, latchup-style first candidate at 31 and 60/61 stages | planner/RAW-VHDL structure raises fmax 700.640825→909.794952 MHz while model V4, recipe, liberty, and coefficients remain unchanged |
+| `device_models_sta_test`'s `test_artifact_paths_fit_filename_limit`, plus the `self_check_stream_auto_fsm_sky130_test` synth build | Every artifact basename, including the worst-case `.tmp` tail, stays within 255 bytes for every recipe and for real soft_cmp leaf names. Long names are deterministic and never collide. Short names keep their historical file names. |
 | `run_all` regression suite | PyRTL/default behavior is unaffected — every shared `SYN.py` function this feature touches (`PART_SET_TOOL`, `TOOL_DOES_PNR`, cache-dir keying, mux cache-key logic) still does exactly what it did before for every other tool |
 
 ## 5. Limitations and future work

@@ -1099,14 +1099,50 @@ def _get_synthesis_recipe_commands(top_entity_name, lib_path, recipe_name=None):
     raise AssertionError(name)  # guarded by _get_synthesis_recipe_name
 
 
+# Per-path-component limit (ext4 and most Linux filesystems).
+_MAX_FILENAME_BYTES = 255
+_ARTIFACT_EXTS = ("_liberty.json", "_synth.log", "_syn.sh", "_syn.ys")
+# _run_synth_and_sta's temp netlist tail: ".tmp.<pid>.<time_ns>" (pid_max is
+# at most 4194304, time_ns is 19 digits until 2286; one spare digit).
+_TMP_TAIL_RESERVE = len(".tmp.") + 7 + 1 + 20
+
+
+def _artifact_file_stem(top_entity_name, recipe_name=None):
+    """Filename stem (no directory) shared by every synthesis artifact.
+
+    Generated factory entity names (soft_cmp prefix-tree leaves,
+    make_stream_auto_pipeline FIRs, soft_div, ...) are ~200 bytes on their
+    own; with the model suffix, an extension and the temp tail they exceeded
+    the 255-byte filename limit ("File name too long"). An over-budget name is
+    collapsed to a readable prefix plus a hash of the FULL name, so the stem
+    stays a pure function of the entity name and model identity. Names that
+    fit keep their exact historical filenames. Only the filename changes:
+    yosys/GHDL and the synthesis input identity still use the real
+    top_entity_name.
+    """
+    import pypeline
+
+    suffix = GET_MODEL_ARTIFACT_SUFFIX(recipe_name)
+    budget = (
+        _MAX_FILENAME_BYTES
+        - len(suffix)
+        - max(len(ext) for ext in _ARTIFACT_EXTS)
+        - _TMP_TAIL_RESERVE
+    )
+    return pypeline.collapse_overflow_name(top_entity_name, "top", budget) + suffix
+
+
 def _get_synthesis_recipe_artifact_paths(
     top_entity_name, work_dir, recipe_name=None
 ):
-    """Return stable paths used by the frozen-VHDL benchmark runner."""
+    """Return stable paths used by the frozen-VHDL benchmark runner.
 
-    suffix = GET_MODEL_ARTIFACT_SUFFIX(recipe_name)
+    Basenames are bounded by _artifact_file_stem so even the longest one plus
+    the temp-netlist tail fits in _MAX_FILENAME_BYTES.
+    """
+
     work_dir = os.path.abspath(work_dir)
-    stem = os.path.join(work_dir, top_entity_name + suffix)
+    stem = os.path.join(work_dir, _artifact_file_stem(top_entity_name, recipe_name))
     return {
         "mapped_json": stem + "_liberty.json",
         "synthesis_log": stem + "_synth.log",
