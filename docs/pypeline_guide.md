@@ -2003,6 +2003,18 @@ Rules:
   in the design hierarchy).
 - Any number of functions may read it.
 - `Wire[T]` is **not** a register — it carries no value across clock cycles.
+- No `global` statement is needed. Inside the module that declares it, a wire's name
+  always *is* the wire: `w = ...` writes it and `w` reads it.
+- The name is therefore reserved in that module. You cannot also use it for a local:
+  a parameter, an annotated local (`w: uint8_t = ...`), a loop or comprehension
+  variable, and so on. The same goes for the name of an imported module that declares
+  wires. This is an error in both native sim (`GlobalWireNameError` at import) and
+  elaboration (`ElaborationError`). Rename the local.
+- Outside its declaring module, the bare name means nothing special. A helper function
+  in another file can have a local `w` without touching the wire; reach another
+  module's wire as `module.w`.
+- Unpacking assignment writes wires like any other assignment:
+  `w, count = x, count + 1`.
 
 ### Reading and writing the same wire in its writer function
 

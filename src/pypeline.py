@@ -5314,15 +5314,106 @@ def sim_wire_reset():
     _sim_wire_claims.clear()
 
 
+class GlobalWireNameError(Exception):
+    """A function inside the module that declares a global Wire/Input/Output binds
+    that wire's name (or the alias of an imported module that declares wires) as a
+    local: a parameter, an annotated declaration, a loop/comprehension variable, ...
+
+    Pypeline has no `global` statement: inside its declaring module a wire's name
+    always IS the wire, so `acc = x` writes it and `acc` reads it. A local binding
+    of the same name is ambiguous -- native sim and elaboration used to resolve
+    it differently, silently -- so it is rejected outright, by both layers.
+    """
+
+
+def _local_name_bindings(func_def):
+    """(name, node, kind) for every name func_def's body binds as a LOCAL (never
+    a plain/augmented/unpacking assignment -- those are wire writes when the name
+    is a wire). Shared by native sim (_check_no_local_binds_wire_name) and
+    PY_TO_LOGIC's FuncElaborator so both layers reject exactly the same set."""
+
+    def target_names(target):
+        return [n for n in _ast.walk(target) if isinstance(n, _ast.Name)]
+
+    out = []
+    for node in _ast.walk(func_def):
+        if isinstance(node, _ast.arg):
+            out.append((node.arg, node, "parameter"))
+        elif isinstance(node, _ast.AnnAssign) and isinstance(node.target, _ast.Name):
+            if node is not func_def:
+                out.append((node.target.id, node, "annotated local"))
+        elif isinstance(node, (_ast.For, _ast.AsyncFor)):
+            out += [(n.id, n, "for-loop variable") for n in target_names(node.target)]
+        elif isinstance(node, _ast.comprehension):
+            out += [
+                (n.id, n, "comprehension variable") for n in target_names(node.target)
+            ]
+        elif isinstance(node, _ast.NamedExpr):
+            out.append((node.target.id, node, "':=' target"))
+        elif isinstance(node, _ast.withitem) and node.optional_vars is not None:
+            out += [
+                (n.id, n, "'with ... as' name")
+                for n in target_names(node.optional_vars)
+            ]
+        elif isinstance(node, _ast.ExceptHandler) and node.name:
+            out.append((node.name, node, "'except ... as' name"))
+        elif (
+            isinstance(node, (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.ClassDef))
+            and node is not func_def
+        ):
+            out.append((node.name, node, "nested definition"))
+        elif isinstance(node, (_ast.Import, _ast.ImportFrom)):
+            for alias in node.names:
+                bound = alias.asname or alias.name.split(".")[0]
+                if bound != "*":
+                    out.append((bound, node, "import"))
+    return out
+
+
+def _wire_name_bind_message(func_name, name, kind, what):
+    """Shared error text; `what` is e.g. "global Wire 'acc'"."""
+    return (
+        f"{kind} '{name}' in '{func_name}' reuses the name of {what} declared in "
+        f"this module. Inside its declaring module a wire's name always refers to "
+        f"the wire (Pypeline has no 'global' statement), so a local of the same "
+        f"name is ambiguous -- rename the local, or write the wire with a plain "
+        f"'{name} = ...' assignment."
+    )
+
+
+def _check_no_local_binds_wire_name(
+    fn, func_def, src_file, wire_names, wire_module_aliases
+):
+    """Native-sim side of the rule (see GlobalWireNameError). wire_names: bare wire
+    names declared in fn's module; wire_module_aliases: names in fn's module that
+    are imported modules declaring wires. func_def's line numbers must already be
+    the real ones in src_file."""
+    for name, node, kind in _local_name_bindings(func_def):
+        if name in wire_names:
+            what = f"global wire '{name}'"
+        elif name in wire_module_aliases:
+            what = f"imported module '{name}' (which declares global wires)"
+        else:
+            continue
+        raise GlobalWireNameError(
+            _wire_name_bind_message(fn.__qualname__, name, kind, what)
+            + f" (at {src_file}:{getattr(node, 'lineno', func_def.lineno)})"
+        )
+
+
 class _GlobalWireRewriter(_ast.NodeTransformer):
     """AST transformer that rewrites global wire reads/writes in hw_func bodies.
 
     Replaces:
       - Name(id='wire', ctx=Load)      →  _sim_wire_read('<mod>.wire')
       - wire = expr                    →  _sim_wire_write('<mod>.wire', expr)   (Expr stmt)
-      - wire: T = expr                 →  _sim_wire_write('<mod>.wire', expr)   (AnnAssign with value)
+      - wire, x = a, b                 →  tmp = (a, b); wire = tmp[0]; x = tmp[1]  (each leaf
+                                          then rewritten as above; see _lower_unpack)
       - module.wire  (Load)            →  _sim_wire_read('<mod>.wire')          (cross-module read)
       - module.wire = expr             →  _sim_wire_write('<mod>.wire', expr)   (cross-module write)
+
+    `wire: T = expr` (and any other local binding of a wire's name) never reaches
+    this class: _check_no_local_binds_wire_name rejects it first.
 
     Sim keys are module-qualified ('<declaring module name>.<wire name>'), not bare
     attribute names -- two different modules declaring a same-named Wire[T] (e.g. both
@@ -5525,9 +5616,67 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
             keywords=[],
         )
 
+    def _has_wire_leaf(self, target):
+        if isinstance(target, (_ast.Tuple, _ast.List)):
+            return any(
+                self._has_wire_leaf(e.value if isinstance(e, _ast.Starred) else e)
+                for e in target.elts
+            )
+        if self._wire_root(target) is not None:
+            return True
+        if isinstance(target, (_ast.Attribute, _ast.Subscript)):
+            return self._wire_chain_to_path(target)[0] is not None
+        return False
+
+    def _lower_unpack(self, node, target):
+        """`a, wire = rhs` -> `tmp = rhs; a = tmp[0]; wire = tmp[1]`, each per-leaf
+        Assign then visited normally (so a wire leaf becomes a claimed
+        _sim_wire_write / lens write, a plain leaf stays an Assign that
+        _TypedAnnAssignRewriter can still cast). The RHS is evaluated once, before
+        any target -- Python's own order, and elaboration's (_elab_unpack_assign).
+        Nested targets recurse through visit_Assign."""
+        if any(isinstance(e, _ast.Starred) for e in target.elts):
+            raise NotImplementedError(
+                f"starred unpacking into a global wire is not supported "
+                f"(line {node.lineno})"
+            )
+        tmp = f"__wire_unpack_{node.lineno}_{node.col_offset}_{id(target)}__"
+        stmts = [
+            _ast.copy_location(
+                _ast.Assign(
+                    targets=[_ast.Name(id=tmp, ctx=_ast.Store())],
+                    value=self.visit(node.value),
+                ),
+                node,
+            )
+        ]
+        for i, elt in enumerate(target.elts):
+            leaf = _ast.copy_location(
+                _ast.Assign(
+                    targets=[elt],
+                    value=_ast.Subscript(
+                        value=_ast.Name(id=tmp, ctx=_ast.Load()),
+                        slice=_ast.Index(value=_ast.Constant(value=i))
+                        if _sys.version_info < (3, 9)
+                        else _ast.Constant(value=i),
+                        ctx=_ast.Load(),
+                    ),
+                ),
+                node,
+            )
+            _ast.fix_missing_locations(leaf)
+            visited = self.visit_Assign(leaf)
+            stmts += visited if isinstance(visited, list) else [visited]
+        return stmts
+
     def visit_Assign(self, node):
         if len(node.targets) == 1:
             target = node.targets[0]
+            if isinstance(target, (_ast.Tuple, _ast.List)) and self._has_wire_leaf(
+                target
+            ):
+                self.modified = True
+                return self._lower_unpack(node, target)
             root = self._wire_root(target)
             if root is not None:
                 # Whole-wire write: wire = expr  /  module.wire = expr
@@ -5634,34 +5783,6 @@ class _GlobalWireRewriter(_ast.NodeTransformer):
                 )
                 return _ast.copy_location(new_node, node)
         return self.generic_visit(node)
-
-    def visit_AnnAssign(self, node):
-        # Annotated assignment with a value inside a function body, e.g. x: T = expr.
-        # Module-level wire declarations (no value) are untouched.
-        node = self.generic_visit(node)
-        if (
-            isinstance(node.target, _ast.Name)
-            and node.target.id in self._wire_names
-            and node.value is not None
-        ):
-            self.modified = True
-            wire_name = self._wire_names[node.target.id]
-            self._record_whole_write(wire_name, self._wire_ctypes.get(node.target.id))
-            return _ast.copy_location(
-                _ast.Expr(
-                    value=_ast.Call(
-                        func=_ast.Name(id="_sim_wire_write", ctx=_ast.Load()),
-                        args=[
-                            _ast.Constant(value=wire_name),
-                            node.value,
-                            self._claim_key_const(),
-                        ],
-                        keywords=[],
-                    )
-                ),
-                node,
-            )
-        return node
 
 
 class _TypedAnnAssignRewriter(_ast.NodeTransformer):
@@ -6217,6 +6338,13 @@ def _build_reg_sim_func(fn):
         _sim_wire_ctype[_qual_key] = global_wire_ctypes[_bare_name]
     for _mod_key, _qual_key in module_wire_attrs.items():
         _sim_wire_ctype[_qual_key] = module_wire_ctypes[_mod_key]
+    _check_no_local_binds_wire_name(
+        fn,
+        func_def,
+        _sim_src_file,
+        global_wire_names,
+        {alias for alias, _ in module_wire_attrs},
+    )
     wire_leaf_ctypes_out: dict = {}
     _wire_rewriter_modified = False
     if global_wire_names or module_wire_attrs:

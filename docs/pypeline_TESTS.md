@@ -173,6 +173,31 @@ Run the full suite with `python3 src/tests/pypeline_tests/run_all.py -j 4 --no_t
 Use `-k auto_comb_share` to select the feature tests. See
 [`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md) for the contract and limits.
 
+## Global wire name coverage
+
+`local_binds_global_wire_test.py` (`elab_introspect`) covers which names mean a global
+wire. Each case writes a small design module to a temp dir and imports it, because
+native sim's check fires at decoration time. Elaboration's own check is reached by
+stubbing out `pypeline._check_no_local_binds_wire_name`.
+
+- **Local bindings of a wire's name are rejected by both layers.** The forms are an
+  annotated local, a `Reg` declaration, a parameter, a for-loop variable and a
+  comprehension variable. Sim raises `GlobalWireNameError` with the file and line, and
+  `ELABORATE_LIVE_ROOTS` and `PARSE_FILE` raise `ElaborationError`.
+- **The same holds for the alias of a wire-declaring module** (`def g(file_a: ...)`),
+  and for a sub-file's bare wire name, which is registered as `<module>_arr`.
+- **A local in a module that does not declare the wire stays a local.** This covers a
+  helper module local `valid` next to a top-file `valid: Wire`, and a local spelled
+  like a sub-file wire key (`file_a_o`). The test asserts the helpers have no global
+  wires or readback inputs and that the only writer is the real one. Both elaboration
+  paths are checked.
+- **Positive control:** an ordinary same-module `acc = x` still writes the wire.
+- **Unpacking into wires** (`acc, b = ...`, `b, acc2 = acc, b`) writes the wires in sim.
+  The RHS is evaluated first, a typed local leaf is still truncated, and the claim reset
+  zeroes the wires on the next invocation. Elaboration registers both wires as written.
+
+All cases except the positive control fail on the tree before the fix.
+
 ## RAM coverage
 
 `make_ram` (`include/pypeline/ram.py`) and `make_stream_ram` (`stream/stream_ram.py`) share one

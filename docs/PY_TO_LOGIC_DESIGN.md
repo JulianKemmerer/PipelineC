@@ -340,6 +340,10 @@ Python. `_refs_hw_local(node)` restores the correct order for every caller at on
 name read by the expression is a declared hardware local, the expression is simply not a
 Python constant.
 
+Global wire names are the one exception: inside their declaring module they cannot be
+shadowed at all. A local binding of such a name is an error (see "Which names mean a
+wire" under Global Wires).
+
 The failure modes it prevents are worth knowing, because only the first one is loud:
 
 | Source | Without the guard |
@@ -2250,6 +2254,57 @@ For the top-level design file, `name_prefix=None` (names used verbatim). For imp
 sub-files, `name_prefix=actual_module_name` so all wires are registered under the
 module-prefixed hardware name. See **Multi-File Import Support** for details.
 
+Each declaration is also recorded in `parser_state.pypeline_module_wire_keys`, keyed
+`(declaring module __name__, name) -> registered key`. It holds both the Python name
+and its VHDL-safe spelling, because `_parse_ref_toks` hands the resolvers the sanitized
+one. This registry, not `global_vars`, is what name resolution consults (next section).
+
+### Which names mean a wire
+
+A bare name refers to a global wire **only inside the module that declares it**. This is
+the same rule native sim follows: `_GlobalWireRewriter` only rewrites the names in the
+function's own module `__annotations__`.
+
+- `_resolve_global_wire(bare_name)` looks up `(self.module_name, bare_name)` in the
+  registry. `self.module_name` comes from `FuncElaborator.scope_globals`, which holds
+  only the names Python itself lets the function see: its module's globals plus its
+  closure. `module_globals` can be wider: `_elaborate_live_func` merges the top design
+  file's globals over a library function's own, so its `__name__` is the top module's.
+  `_elaborate_live_func` therefore passes
+  `scope_globals={**func_own_globals, **closure_ns}` explicitly.
+- `_resolve_module_wire_name(alias, attr)` requires `alias` to be a module in
+  `scope_globals` that declares wires (`_wire_module`), then looks up
+  `(module.__name__, attr)`.
+- `_fold_module_wire_ref_toks` returns `(ref_toks, wire_key)`. Callers test `wire_key`,
+  never `ref_toks[0] in parser_state.global_vars`.
+
+Membership in the process-wide `global_vars` used to be the test. That silently made a
+local `valid` in an unrelated helper module a **writer of the top design file's
+`valid: Wire[T]`**, and native sim, which treats it as a local, never noticed. The same
+went for a local spelled like a sub-file wire's registered key (`file_a_o`).
+
+**Wire names are reserved in their module.** Pypeline has no `global` statement, so
+inside the declaring module `acc = e` writes the wire and `acc` reads it. A *local
+binding* of the same name is therefore ambiguous, and `_check_no_local_binds_wire_name`
+(the first step of `elaborate()`) rejects it with an `ElaborationError`. A binding is any
+of: a parameter, an annotated declaration (`acc: T = e`, `acc: Reg[T]`, `acc: T`), a
+`for`/comprehension variable, a lambda parameter, a `:=` target, a `with`/`except ... as`
+name, a nested `def`/`class`, or an import. The same applies to a name that is a
+wire-declaring imported module (`def f(file_a: uint8_t)`).
+
+The list comes from `pypeline._local_name_bindings`. Native sim raises
+`pypeline.GlobalWireNameError` for the same set at decoration time, so in practice the
+elaboration check fires only for bodies sim could not read. Plain, augmented and
+unpacking assignments are **not** bindings: they are wire writes.
+
+Before this check, the layers disagreed without any error:
+
+| form | native sim | elaboration |
+|---|---|---|
+| `acc: uint8_t = x + 1` | wire write | `_declare_var` re-declared the wire itself (annotation's type, extra zeros driver) |
+| parameter `acc` | reads the wire | reads the parameter |
+| `for acc in range(3)` | reads the wire | constant loop variable |
+
 ### Read side — behaves like a module input
 
 When a function **reads** a global wire (`main_a_in` on the RHS), the elaborator lazily
@@ -2346,7 +2401,9 @@ being silently cached as an elaboration constant instead of driving the hardware
 
 ### Pre-scan: `_prescan_written_globals`
 
-Run once at the very top of `elaborate()`, before any statement is really elaborated;
+Run at the top of `elaborate()`, right after `_check_no_local_binds_wire_name` and before
+any statement is really elaborated. Because of that check, a name the pre-scan
+classifies as a wire can never also be a local binding;
 returns `(written, read)` sets of resolved global-wire keys, stored as
 `self._written_globals` / `self._read_globals`. A side-effect-free `ast.walk` over the
 function body (via the same `_resolve_global_wire` / `_resolve_module_wire_name`
@@ -2388,6 +2445,8 @@ unmodified for `Attribute`/`Subscript` targets, including global-wire fields
 - `Wire[T]` inside a function body — `ElaborationError`.
 - `Wire[T]` with an initializer at declaration — `ElaborationError`.
 - Writing an `Input[T]` — `ElaborationError`.
+- A local binding of a wire's name, or of a wire-declaring module alias, inside the
+  declaring module — `ElaborationError` (see "Which names mean a wire").
 - After all functions are elaborated, each global wire must appear in **at least one**
   function's `write_only_global_wires`; zero writers → `ElaborationError`. Multiple
   writer functions are legal iff their recorded driven paths
@@ -2689,13 +2748,13 @@ ast.Attribute(value=ast.Name(id='file_a'), attr='o')
 In `_elab_expr`, before reaching `_elab_ref_read`, the elaborator calls
 `_resolve_module_wire_name(base, attr)`:
 
-1. Checks that `base` (`'file_a'`) is a `types.ModuleType` in `module_globals`.
-2. Looks up `base` in `parser_state.module_alias_to_actual` to get the actual module
-   name (handles aliases: `fa → file_a`).
-3. Constructs `mangled = f"{actual}_{attr}"` and checks it is in `parser_state.global_vars`.
-4. If not found, checks the **bare `attr` name** as a fallback — I/O ports are registered
-   without module prefix, so `board_vga.ja_0` resolves to bare `"ja_0"`.
-5. If found: proceeds exactly like a single-file global wire read/write under the
+1. Checks that `base` (`'file_a'`, or an alias like `fa`) names a `types.ModuleType` in
+   the function's own `scope_globals`, and that this module declares wires.
+2. Looks up `(module.__name__, attr)` in `parser_state.pypeline_module_wire_keys`. That
+   yields `'file_a_o'` for a Wire, and the bare `"ja_0"` for an I/O port, which is
+   registered without a module prefix. Keying by the declaring module means an I/O
+   port is only reachable through its own module, never as `other_module.ja_0`.
+3. If found: proceeds exactly like a single-file global wire read/write under the
    resolved name. All lazy-init, alias-chain, and validation logic is unchanged.
 
 In `_elab_assign`, the same check runs before `_parse_ref_toks` on the LHS target,
@@ -2724,13 +2783,16 @@ elaborates identically to a same-file `out_pair.bits[0] = cfg.a` — the remaini
 
 **Bare-name access inside sub-file functions** (`o = ~i` in `file_a.py`):
 
-Functions elaborated from a sub-file carry `module_prefix='file_a'` on the
-`FuncElaborator`. The helper `_resolve_global_wire(bare_name)` first checks
-`parser_state.global_vars[bare_name]` directly (for top-file names); if not found and
-`module_prefix` is set, it tries `f"{module_prefix}_{bare_name}"`. This means:
+`_resolve_global_wire(bare_name)` looks up `(declaring module, bare_name)` in
+`parser_state.pypeline_module_wire_keys`, which records whichever key the declaration
+was registered under. For a sub-file that is the module-prefixed key. `module_prefix`
+is not involved; it is `None` for a sub-file function reached through
+`_elaborate_live_func` on a normal build. This means:
 
 - `i` in `file_a.main` → `_resolve_global_wire('i')` → `'file_a_i'` (found)
 - `o = ~i` is elaborated as a write to `'file_a_o'` and a read from `'file_a_i'`
+- `i` in a function from a module that does not declare `i` never resolves to any wire,
+  even when some other module's wire key is literally spelled `i`.
 
 `_elab_name` (step 4 global wire path), `_elab_assign` (const-bypass check and
 ref_toks normalization), and `_elab_ref_read` (base-var normalization) all call

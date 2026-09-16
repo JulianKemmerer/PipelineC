@@ -31,6 +31,8 @@ from pypeline import (
     encode_param_value,
     capture_factory_args,
     collapse_overflow_name,
+    _local_name_bindings,
+    _wire_name_bind_message,
 )
 
 # Recognized by name in FuncElaborator._elab_stmt as a raw-VHDL-passthrough statement.
@@ -2072,7 +2074,13 @@ def _const_target_names(target):
 
 class FuncElaborator:
     def __init__(
-        self, func_def, parser_state, src_file, module_globals=None, module_prefix=None
+        self,
+        func_def,
+        parser_state,
+        src_file,
+        module_globals=None,
+        module_prefix=None,
+        scope_globals=None,
     ):
         self.func_def = func_def
         # Hardware function name: mangled with module prefix for sub-file functions
@@ -2083,6 +2091,15 @@ class FuncElaborator:
         # module_globals: live Python namespace from executing the design file.
         # Provides N, M, sum_widths etc. for elaboration-time evaluation.
         self.module_globals = module_globals or {}
+        # scope_globals: only the names Python itself lets this function see (its
+        # own module's globals + its closure). module_globals can be wider: a
+        # function reached through _elaborate_live_func also gets the top design
+        # file's globals merged in. Global wire and module-alias resolution must
+        # use this narrower scope (see _resolve_global_wire).
+        self.scope_globals = (
+            scope_globals if scope_globals is not None else self.module_globals
+        )
+        self.module_name = self.scope_globals.get("__name__")
         # module_prefix: set to the import name (e.g. 'file_a') for functions defined in
         # an imported sub-file. Bare wire names and func names are mangled with this prefix.
         self.module_prefix = module_prefix
@@ -2150,36 +2167,43 @@ class FuncElaborator:
         return safe
 
     def _resolve_global_wire(self, bare_name):
-        """Return the global_vars key for bare_name.
-        Returns bare_name if found directly; returns module-prefixed variant if
-        this elaborator has a module_prefix (sub-file context); returns None if not found.
+        """Return the global_vars key of the Wire/Input/Output that bare_name names
+        in this function, else None.
+
+        A bare name is a global wire only inside the module that declares it --
+        the same rule native sim follows (it rewrites the names in the function's
+        own module __annotations__). global_vars itself is process-wide: checking
+        membership there would let a local `valid` in some unrelated helper module
+        silently drive the top design file's `valid: Wire[T]`. Covers both the top
+        file (bare key) and sub-files (module-prefixed key, e.g. 'arr' ->
+        'file_a_arr'), since the registry records whichever key was registered.
         """
-        if bare_name in self.parser_state.global_vars:
-            return bare_name
-        if self.module_prefix:
-            mangled = f"{self.module_prefix}_{bare_name}"
-            if mangled in self.parser_state.global_vars:
-                return mangled
-        return None
+        keys = getattr(self.parser_state, "pypeline_module_wire_keys", {})
+        return keys.get((self.module_name, bare_name))
+
+    def _wire_module(self, base_name):
+        """The module object base_name names in this function's own scope, if that
+        module declares any global wires; else None."""
+        mod = self.scope_globals.get(base_name)
+        if not isinstance(mod, _types.ModuleType):
+            return None
+        keys = getattr(self.parser_state, "pypeline_module_wire_keys", {})
+        if not any(mod_name == mod.__name__ for mod_name, _ in keys):
+            return None
+        return mod
 
     def _resolve_module_wire_name(self, base_name, attr_name):
         """If base_name is a module alias in module_globals and attr_name is a known
         wire on that module, return the mangled hardware wire name. Else return None.
         Used to handle 'file_a.main_a_out' style attribute access on imported modules.
         """
-        if base_name not in self.module_globals:
+        mod = self._wire_module(base_name)
+        if mod is None:
             return None
-        if not isinstance(self.module_globals[base_name], _types.ModuleType):
-            return None
-        aliases = getattr(self.parser_state, "module_alias_to_actual", {})
-        actual = aliases.get(base_name, base_name)
-        mangled = f"{actual}_{attr_name}"
-        if mangled in self.parser_state.global_vars:
-            return mangled
-        # I/O wires have no module prefix — also check the bare attr name
-        if attr_name in self.parser_state.global_vars:
-            return attr_name
-        return None
+        # Keyed by the module that declares the wire, so I/O wires (registered
+        # without a module prefix) resolve too -- but only through their own module.
+        keys = self.parser_state.pypeline_module_wire_keys
+        return keys.get((mod.__name__, attr_name))
 
     def _fold_module_wire_ref_toks(self, ref_toks):
         """Collapse ref_toks[0] into a single resolved base wire name, before any
@@ -2194,8 +2218,12 @@ class FuncElaborator:
           2. ref_toks[0] is a bare name local to a sub-file's own module_prefix
              namespace (e.g. 'arr' -> 'file_a_arr') -- delegates to _resolve_global_wire.
 
-        Returns ref_toks unchanged if neither resolves (ordinary local variable, or
-        an unresolvable name that will raise its normal error further down, same as today).
+        Returns (ref_toks, wire_key): wire_key is the base's global_vars key, or
+        None when the base is not a global wire (ordinary local variable, or an
+        unresolvable name that will raise its normal error further down). Callers
+        must test wire_key, never `ref_toks[0] in global_vars`: a local that merely
+        shares a wire key's spelling (in a module that doesn't declare that wire)
+        is not the wire.
         """
         if (
             len(ref_toks) >= 2
@@ -2204,12 +2232,12 @@ class FuncElaborator:
         ):
             mangled = self._resolve_module_wire_name(ref_toks[0], ref_toks[1])
             if mangled is not None:
-                return (mangled,) + ref_toks[2:]
+                return (mangled,) + ref_toks[2:], mangled
         if isinstance(ref_toks[0], str):
             global_key = self._resolve_global_wire(ref_toks[0])
-            if global_key and global_key != ref_toks[0]:
-                return (global_key,) + ref_toks[1:]
-        return ref_toks
+            if global_key is not None:
+                return (global_key,) + ref_toks[1:], global_key
+        return ref_toks, None
 
     def _names_bound_inside(self, node):
         """Names BOUND by the expression itself: comprehension targets and lambda
@@ -2338,6 +2366,32 @@ class FuncElaborator:
             return f"{FuncElaborator._describe_callee_expr(func_node.value)}.{func_node.attr}"
         return "this function"
 
+    def _check_no_local_binds_wire_name(self):
+        """Reject any local binding (parameter, annotated declaration, loop or
+        comprehension variable, ...) of a name that is a global wire -- or a
+        wire-declaring module alias -- in this function's own module.
+
+        Such a name always means the wire here (there is no `global` statement),
+        and the pre-scan below classifies it purely by name: left alone, an
+        annotated `acc: T = e` re-declared the wire itself as a local (new type,
+        extra zeros driver), and a parameter or loop variable of that name read
+        differently in native sim (the wire) than here (the local). Native sim
+        raises pypeline.GlobalWireNameError for the same set at decoration time;
+        this is the elaboration-side twin for bodies sim could not see.
+        """
+        for name, node, kind in _local_name_bindings(self.func_def):
+            if self._resolve_global_wire(name) is not None:
+                what = f"global wire '{name}'"
+            elif self._wire_module(name) is not None:
+                what = f"imported module '{name}' (which declares global wires)"
+            else:
+                continue
+            raise ElaborationError(
+                _wire_name_bind_message(self.func_name, name, kind, what)
+                + f" (at {self.src_file}:{getattr(node, 'lineno', '?')})",
+                node,
+            )
+
     def _prescan_written_globals(self):
         """Side-effect-free pre-pass over the function body: which global wires
         (by their parser_state.global_vars key) does this function ever appear
@@ -2441,6 +2495,7 @@ class FuncElaborator:
             end_col=getattr(self.func_def, "end_col_offset", None),
             raw=self.func_def,
         )
+        self._check_no_local_binds_wire_name()
         self._written_globals, self._read_globals = self._prescan_written_globals()
         self._setup_inputs()
         self._setup_outputs()
@@ -3135,12 +3190,9 @@ class FuncElaborator:
         ):
             ref_toks = self._parse_ref_toks(target)
             if not _has_variable_index(ref_toks):
-                ref_toks = self._fold_module_wire_ref_toks(ref_toks)
+                ref_toks, wire_key = self._fold_module_wire_ref_toks(ref_toks)
                 base_var = ref_toks[0]
-                if (
-                    base_var not in self.env
-                    and base_var in self.parser_state.global_vars
-                ):
+                if wire_key is not None and base_var not in self.env:
                     self._declare_global_write_wire(base_var, target)
                 if base_var in self.env:
                     if compound_pyval is not None:
@@ -3162,7 +3214,7 @@ class FuncElaborator:
             # the literal is sized/zero-padded against it, mirroring _elab_ann_assign.
             target_ctype = None
             probe_toks = self._parse_ref_toks(target)
-            probe_toks = self._fold_module_wire_ref_toks(probe_toks)
+            probe_toks, _ = self._fold_module_wire_ref_toks(probe_toks)
             probe_base = probe_toks[0]
             if probe_base in self.env:
                 _, probe_base_type = self.env[probe_base]
@@ -3187,15 +3239,15 @@ class FuncElaborator:
                 self._write_ref((mangled,), rhs_wire, rhs_type, stmt.value)
                 return
         ref_toks = self._parse_ref_toks(target)
-        ref_toks = self._fold_module_wire_ref_toks(ref_toks)
+        ref_toks, wire_key = self._fold_module_wire_ref_toks(ref_toks)
         base_var = ref_toks[0]
         # Variable indices on LHS → VAR_REF_ASSIGN
         if _has_variable_index(ref_toks):
-            if base_var not in self.env and base_var in self.parser_state.global_vars:
+            if wire_key is not None and base_var not in self.env:
                 self._declare_global_write_wire(base_var, target)
             self._emit_var_ref_assign(ref_toks, rhs_wire, rhs_type, stmt.value)
             return
-        if base_var not in self.env and base_var in self.parser_state.global_vars:
+        if wire_key is not None and base_var not in self.env:
             self._declare_global_write_wire(base_var, target)
         elif len(ref_toks) == 1 and base_var not in self.env:
             base_var = self._hw_name(
@@ -4263,9 +4315,9 @@ class FuncElaborator:
     def _elab_ref_read(self, expr):
         """Elaborate a subscript or attribute RHS. Routes to VAR or CONST path."""
         ref_toks = self._parse_ref_toks(expr)
-        ref_toks = self._fold_module_wire_ref_toks(ref_toks)
+        ref_toks, wire_key = self._fold_module_wire_ref_toks(ref_toks)
         base_var = ref_toks[0]
-        if base_var not in self.env and base_var in self.parser_state.global_vars:
+        if wire_key is not None and base_var not in self.env:
             self._declare_global_read_wire(base_var)
         if base_var not in self.env:
             # Not a declared hardware variable/wire -- e.g. a plain module-level or
@@ -5770,6 +5822,7 @@ class FuncElaborator:
                     if getattr(self.parser_state, "pypeline_live_sim", False)
                     else None
                 ),
+                scope_globals={**func_own_globals, **closure_ns},
             )
             logic = elab.elaborate()
         finally:
@@ -6643,6 +6696,12 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
         parser_state.pypeline_global_wire_names[reg_name] = (
             f"{module_globals['__name__']}.{node.target.id}"
         )
+        # (declaring module, name) -> key: a bare name only means this wire inside
+        # the module that declares it (see FuncElaborator._resolve_global_wire).
+        # Both spellings, since _parse_ref_toks hands resolvers the VHDL-safe one.
+        wire_keys = parser_state.pypeline_module_wire_keys
+        wire_keys[(module_globals["__name__"], node.target.id)] = reg_name
+        wire_keys[(module_globals["__name__"], bare_name)] = reg_name
         if kind == "Input":
             parser_state.input_wires.add(reg_name)
         elif kind == "Output":
@@ -7260,6 +7319,7 @@ def _new_parser_state(module_globals):
     parser_state.pypeline_name_descriptions = {}
     parser_state.pypeline_type_identities = {}
     parser_state.pypeline_global_wire_names = {}
+    parser_state.pypeline_module_wire_keys = {}
 
     return parser_state
 

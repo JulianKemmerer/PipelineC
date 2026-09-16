@@ -33,6 +33,18 @@ def get_tests() -> list:
             cmd=[INST_DIR / "local_shadows_global_const_test.py"],
         )
     )
+    # Global wire names vs. function locals: a local binding of a wire's name is
+    # rejected by native sim AND elaboration (they used to disagree silently),
+    # a local in a module that doesn't declare the wire stays a local (it used to
+    # drive the top file's same-named wire), and unpacking into a wire writes it
+    # in sim too. Checked against the Logic() graph and the raised errors.
+    tests.append(
+        Test(
+            name="local_binds_global_wire_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "local_binds_global_wire_test.py"],
+        )
+    )
     # Regression-tests a FuncLogicLookupTable closure-callable naming
     # collision: same signature on both sides means no type error either
     # way, so it's undetectable except by inspecting FuncLogicLookupTable

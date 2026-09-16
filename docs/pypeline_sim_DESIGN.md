@@ -842,7 +842,7 @@ to module-level `Wire[T]`/`Input[T]`/`Output[T]` names to call the sim wire stat
 |---|---|
 | `Name(id='wire', ctx=Load)` | `_sim_wire_read('wire')` |
 | `wire = expr` (Assign, whole-wire) | `_sim_wire_write('wire', expr)` (Expr stmt, no local binding) |
-| `wire: T = expr` (AnnAssign with value) | `_sim_wire_write('wire', expr)` |
+| `wire, x = a, b` (Tuple/List target with any wire-rooted leaf, any nesting) | `__wire_unpack_…__ = (a, b)` then `wire = __wire_unpack_…__[0]`, `x = __wire_unpack_…__[1]`, each leaf Assign rewritten by the rows above/below (`_lower_unpack`) |
 | `module_alias.wire` (Attribute, Load) | `_sim_wire_read('wire')` |
 | `module_alias.wire = expr` (Attribute, Store, whole-wire) | `_sim_wire_write('wire', expr)` |
 | `wire.field = expr` / `wire[i] = expr` (any nesting, incl. `module_alias.wire.field = expr`) | `_sim_wire_lens_write('wire', [path...], expr)` |
@@ -851,6 +851,30 @@ to module-level `Wire[T]`/`Input[T]`/`Output[T]` names to call the sim wire stat
 
 Module-level wire declarations (`wire: Wire[T]` with no value) are `AnnAssign` nodes with
 `value=None` and are left untouched.
+
+**Unpacking** (`_lower_unpack`) evaluates the RHS once into a temporary, before any
+target, as Python and `_elab_unpack_assign` both do. It then emits one `Assign` per
+leaf and visits each one. A wire leaf becomes a *claimed* `_sim_wire_write` or lens
+write, so the per-invocation claim reset below covers it too. A plain local leaf stays
+an `Assign`, so `_TypedAnnAssignRewriter` still casts it to its declared type. Before
+this, only a single non-tuple target was recognised: `acc, b = x, y` was an ordinary
+Python local store of `acc` that elaboration built as a wire write. A starred target
+containing a wire raises `NotImplementedError`. Elaboration itself only accepts a flat
+all-`Name` target when the RHS is hardware.
+
+**Local bindings of wire names are rejected before the rewrite.** Just before the rewriter
+runs, `_check_no_local_binds_wire_name(fn, func_def, src_file, wire_names,
+wire_module_aliases)` raises `GlobalWireNameError` (defined in `pypeline.py`) if the
+body binds a wire name, or the alias of a wire-declaring module, as a local. A binding
+is a parameter, an annotated declaration, a `for`/comprehension variable, a lambda
+parameter, a `:=`, `with`/`except ... as` target, a nested `def`/`class`, or an import;
+the list comes from `_local_name_bindings`. The rewriter resolves names without any
+scope tracking, so such a local would silently be the wire here. PY_TO_LOGIC read a
+parameter or loop variable as the local, and re-declared the wire for
+`wire: T = expr`. The error fires at decoration (import) time, names the file and line,
+and uses the same wording as PY_TO_LOGIC's `ElaborationError` for the same set.
+There used to be an `AnnAssign` → `_sim_wire_write` rewrite here; it is gone, because
+that form can no longer reach the rewriter.
 
 For cross-module wire access (`board_vga.vga_pmod = ...`), `_build_reg_sim_func` also scans
 all module objects in `fn.__globals__` for `Wire[T]`/`Input[T]`/`Output[T]` annotations and

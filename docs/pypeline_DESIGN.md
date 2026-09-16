@@ -683,6 +683,11 @@ Declares a **shared combinatorial wire** at module level, visible across `@MAIN`
   below. A writer may live anywhere in the hierarchy (a helper called from a `@MAIN`),
   not only in a `@MAIN` body.
 - No initializer allowed at declaration
+- The bare name means the wire only inside the declaring module, and there it is
+  reserved. A local binding of it (a parameter, an annotated local, a loop variable,
+  ...) raises `GlobalWireNameError` when sim builds the function, and
+  `ElaborationError` during elaboration. Both use the shared list from
+  `_local_name_bindings`; see [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#which-names-mean-a-wire).
 - In single-function simulation (`sim_call`): limited support; multi-MAIN simulation via `pypeline_sim.py` is the intended path
 
 **The flattened-leaf model.** A compound global wire behaves exactly as if flattened
@@ -1942,6 +1947,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `Reg` / `_RegType` | Register descriptor; `Reg[T]` declares a stateful register; optional init value (`Reg[T] = val`); optional `Reg[T, tag]` multi-cycle role |
 | `Feedback` / `_FeedbackType` | Feedback wire descriptor; `Feedback[T]` declares a combinatorial feedback wire (no flip-flop) |
 | `Wire` / `_WireType` | Global wire descriptor; `Wire[T]` at module level declares a shared combinatorial wire (one writer) |
+| `GlobalWireNameError` / `_local_name_bindings` / `_check_no_local_binds_wire_name` | Rejects, at decoration time, a local binding of a same-module wire name or wire-module alias; `_local_name_bindings` is the binding list shared with `PY_TO_LOGIC` |
 | `Input` / `_InputType` | Top-level input port; `Input[T]` at module level; any function may read, none may write |
 | `Output` / `_OutputType` | Top-level output port; `Output[T]` at module level; exactly one function/instance may write |
 | `register_operator(op, lhs, rhs, impl, scope=None)` | Binds a binary operator on an exact `(lhs, rhs)` type pair |
