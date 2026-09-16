@@ -1,0 +1,8 @@
+{
+  "combinational_delay_ns": 2.348633,
+  "launch_clock_to_q_ns": 1.534806,
+  "path_delay_ns": 4.023949,
+  "planner_weight": "combinational_delay_ns",
+  "schema_version": 1,
+  "setup_ns": 0.14051
+}
