@@ -79,30 +79,23 @@ fastest tool that can check what it tests:
   the PDW synth tops' real-part Block RAM and 125 MHz checks. Use a part with
   a committed cache (`xc7a35ticsg324-1l`, `xc7a100tcsg324-1`); a part without
   one re-characterizes every leaf on every run.
-- **`pyrtl`, only for PyRTL-specific behavior.** Four tests use it:
-  - `pyrtl_no_timing_paths_build_report_test.py` checks PyRTL's error text.
-  - `auto_fsm_ctl_compare_test.py` claims ctl v3 is no bigger than v2 in
-    generic yosys cells. Under sky130 mapping, the same schedule's v3 tables
-    come out about 2% larger. Its donut timing half is also calibrated to
-    PyRTL's delay model.
-  - `auto_fsm_timing_iter_test.py` needs a first AUTO_FSM schedule that misses
-    timing and a tightened one that meets it. Under sky130 the design measures
-    102.25 MHz at every schedule tried (2, 3 and 6 states). Its critical path is
-    the FSM's input-capture enable: one gate drives all 142 input-register bits,
-    and no state count changes that. That sky130 behavior is what
-    `auto_fsm_tighten_stall_test.py` (sky130) checks: the driver stops after the
-    first tightened build with no fmax gain.
-  - `sweep_floor_detect_pyrtl_test` runs `sweep_floor_detect_test.py
-    --syn_tool pyrtl` (50 MHz goal) to check the sweep's `empirical_floor`
-    stop. Only under PyRTL does the predicted soft floor (~16 MHz) match the
-    measured plateau. The same wrapper also runs under sky130 as
-    `sweep_floor_detect_test` (100 MHz goal, build_report_device_models).
-    There the plateau (51.4 MHz) sits far above the pessimistic prediction
-    (~37 MHz), outside `SWEEP.AT_PREDICTED_FLOOR`'s ±5% band, so it checks
-    the prediction-independent `plateau` stop (`SWEEP.AT_PLATEAU`) instead.
-    Both variants assert the stop reason from `sweep_history.json` and at
-    most 6 full syn runs. The design reads its goal from
-    `SWEEP_FLOOR_DETECT_MHZ`, which the wrapper sets.
+- **`pyrtl`, only for PyRTL-specific behavior.** Two tests use it:
+  - `pyrtl_no_timing_paths_build_report_test.py` guards a fix inside
+    `PYRTL.py`: a netlist with no timing paths used to divide by zero there.
+    sky130 has its own equivalent error, which passes the same assertions,
+    but running the test under sky130 would leave the PyRTL fix untested.
+  - `auto_fsm_ctl_compare_test.py` makes two claims, both calibrated to
+    PyRTL, and both fail as stated under sky130:
+    - ctl v3 is no bigger than v2 in generic yosys cells. Under sky130
+      mapping, the same schedule's v3 comes out 1.9% larger in both cells and
+      µm².
+    - The donut's v3 FSM meets 40 MHz on its first schedule. Under sky130 it
+      reaches 39.26 MHz and passes only after one tightening.
+
+  Each test runs under exactly one tool. `sweep_floor_detect_test.py` runs
+  under sky130 (100 MHz goal) and checks the prediction-independent `plateau`
+  stop (`SWEEP.AT_PLATEAU`). Its `--syn_tool pyrtl` mode (50 MHz,
+  `empirical_floor` stop) is kept for manual runs but not registered.
 
 How a test picks its tool:
 

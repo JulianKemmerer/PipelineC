@@ -7,9 +7,11 @@ met", and it is the property that makes the feature usable in practice: a user
 who sees a timing report blaming an AUTO_FSM must be able to get more states out
 of the tool without hand-editing anything.
 
-Method: build auto_fsm_tighten_test.py with a deliberately LOOSE per-state
-budget (--auto_fsm_budget_scale 1.5, i.e. the scheduler is told a state's
-operation chain may fill 1.5x the clock period). The first schedule therefore
+Method: build auto_fsm_timing_iter_design.py under --syn_tool sky130 with a
+deliberately LOOSE per-state budget (--auto_fsm_budget_scale 2.5, i.e. the
+scheduler is told a state's operation chain may fill 2.5x the clock period --
+sky130's cached add delays are pessimistic enough that 1.5x still fits real
+timing). The first schedule therefore
 over-packs its states and the synthesized FSM misses the clock. The driver must:
   1. detect the timing failure and attribute it to the AUTO_FSM region,
   2. shrink that region's per-state budget and reschedule with less work per
@@ -31,8 +33,8 @@ import sys
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
-DESIGN = os.path.join(THIS_DIR, "..", "auto_fsm_tighten_test.py")
-START_BUDGET_SCALE = "1.5"
+DESIGN = os.path.join(THIS_DIR, "auto_fsm_timing_iter_design.py")
+START_BUDGET_SCALE = "2.5"
 
 
 def fail(msg):
@@ -50,14 +52,8 @@ def main():
         sys.executable,
         PYPELINEC,
         DESIGN,
-        # PyRTL on purpose (run_all category build_report_pyrtl): under sky130
-        # the design's critical path (~9.8 ns, ~102 MHz) is the FSM's
-        # input-capture enable fanning out to all 142 input-register bits, not
-        # any state's operations, so no reschedule changes it -- a goal below
-        # it is met by the first schedule, and one above it can never be met
-        # (auto_fsm_tighten_stall_test.py covers that case under sky130).
         "--syn_tool",
-        "pyrtl",
+        "sky130",
         "--out_dir",
         out_dir,
         "--auto_fsm_budget_scale",

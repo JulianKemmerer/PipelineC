@@ -1,12 +1,13 @@
 # pyright: reportInvalidTypeForm=none
-"""Design for the AUTO_FSM timing-iteration test (auto_fsm_timing_iter_test.py).
+"""Design for the AUTO_FSM tighten-stall test (auto_fsm_tighten_stall_test.py).
 
-A long chain of same-type adds at a clock goal where the number of adds packed
-into one state decides whether the design meets timing. Built with a
-deliberately LOOSE --auto_fsm_budget_scale, the first schedule over-packs its
-states and misses the clock; the driver must then blame the FSM, shrink its
-per-state budget, reschedule into more states, and converge -- the AUTO_FSM
-analogue of the throughput sweep adding pipeline stages.
+A long chain of same-type adds, each taking a new wide input. Under sky130 the
+FSM's input-capture enable (fanning out to all 142 captured input bits) is the
+critical path at every schedule, so tightening the per-state budget can never
+help -- which is exactly what the stall test needs: the driver must stop after
+the first tightened build that gains no fmax. (The timing-iteration test,
+which needs tightening to WORK, uses inst/auto_fsm_timing_iter_design.py,
+whose inputs are narrow.)
 
 Kept separate from auto_fsm_test.py so that test's schedule stays the
 straightforward one (its assertions are about folding, not about iteration).
