@@ -846,6 +846,35 @@ floor" — checking only the lower bound would let a sweep stop and report
 `TIMING NOT MET` while sitting 73% above its own predicted floor and
 comfortably beating its actual goal.
 
+**A plateau stops the sweep even when the prediction is wrong.** The band
+protects results that beat a wrong prediction, but on its own it lets a
+sweep that is simply *stuck* above a pessimistic soft floor run to the
+iteration cap. Under sky130, `sweep_floor_detect_design.py` at 100 MHz
+predicts a ~37 MHz soft floor, then sits at exactly 51.42 MHz while cuts grow
+25 → 64 and `global_scale` inflates: 12 iterations, `iteration_limit`.
+`SWEEP.AT_PLATEAU` never consults the prediction. It stops with
+`stopped_reason = "plateau"` when all of these hold:
+
+- the last `PLATEAU_STREAK` (3) unmet results are flat within noise (max−min
+  under 1% of the target, the same rule as `same_mhz_count`);
+- the cut count grew from the first of those results to the current one;
+- the current plan used measured delays (the soft-floor gate: fallback done,
+  no estimates in play, or `prim` mode) and is a fresh plan, not a
+  placement refinement. A refinement is a same-depth probe carried over
+  from the previous plan. Under PyRTL, stopping on the post-fallback
+  refinement's 15.11 MHz would have missed the next denser plan's
+  15.82 MHz.
+
+The window may span the measured-delay fallback, because a synthesized fmax
+is real whichever model planned it. Structural experiments restart it
+(`plan.plateau_window_start`): an AUTO_MULTI_CYCLE count change or a
+locked-hotspot boundary strategy. Floor stops are checked first, and the
+unpipelinable/locked-hotspot stops fire sooner (one repeat), so the plateau
+catches only what nothing more specific explains. When a soft floor below the
+goal exists, the warning and the `TIMING NOT MET` reason name it as the
+likely limit. In the example, iterations 4–6 (50.60 / 51.42 / 51.42 MHz,
+cuts 11 → 43) stop the sweep after 6 syn runs.
+
 **Restoring the best-seen result must re-check whether it actually met
 its goal.** When the sweep stops without the final iteration meeting
 timing, it restores whichever earlier iteration had the best worst-case
@@ -978,6 +1007,9 @@ iteration".
           |
    at hard floor? / soft floor + stagnant? --> stop, warn, keep best (exit 0)
           |
+   fmax flat 3x (1% of target) while cuts grew, delays measured?
+          |-- yes --> stop(plateau), warn (blame soft floor if any), keep best
+          |
    attribute critical path to a function (approximate)
           |
    hotspot found:   func_delay_scale[hotspot] *= target/achieved  -> replan
@@ -991,6 +1023,8 @@ iteration".
                     "critical path is in function F, which cannot be
                     auto-pipelined (reason) - restructure F or lower the goal"
    no attribution:  global_scale *= target/achieved               -> replan
+                    (a replan whose x1.1 nudges cannot change the cut count
+                    -- saturated landscape -- drops those nudges again)
           |
    fmax stagnant (within 1% of target, twice) or out of ideas,
    estimates in play -> MEASURE_DELAYS all of them (once), keep going
@@ -1171,6 +1205,9 @@ explicitly during the sweep:
   and feeds the `TIMING NOT MET` failure exit above;
 - a failing path attributed to an unpipelinable func stops the sweep with
   the culprit named and the reason (`unpipelinable_hotspot`);
+- a flat fmax while cuts keep growing stops with `plateau`, naming the soft
+  floor (if any) as the likely limit, even when that floor's prediction is
+  far off;
 - generic stops (`iteration_limit`, `no_legal_adjustment`) repeat the last
   unpipelinable culprit if one was seen;
 - the presynth wave still prints `Design likely limited to ~X MHz due to
@@ -1655,7 +1692,7 @@ wrappers that assert on build output in `build_report_tests.py`:
 | `sweep_two_mains_test.py` | two MAINs: per-main plans, no-attribution fallback |
 | `sweep_fsm_auto_pipeline_test.py` | Reg-FSM main + AUTO_PIPELINE region (via `_auto_pipeline_with_io_regs`): cut subtree is the tagged child, FSM latency stays 0 |
 | `sweep_stateful_boundary_test.py` | comb→stateful→comb: cuts stop at the stateful boundary |
-| `sweep_floor_detect_test.py` (**PyRTL**, build_report_pyrtl) | unreachable goal: floor predicted & blamed up front, sweep stops after a few syn runs, results written, then `TIMING NOT MET` + non-zero exit |
+| `sweep_floor_detect_test.py` (build_report_device_models, sky130, 100 MHz; and as `sweep_floor_detect_pyrtl_test`, build_report_pyrtl, 50 MHz) | unreachable goal: floor predicted & blamed up front, sweep stops within 6 syn runs with `plateau` (sky130, prediction off) / `empirical_floor` (PyRTL, prediction matches) in `sweep_history.json`, results written, then `TIMING NOT MET` + non-zero exit |
 | `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that auto-pipelining cannot help (planning time + standalone as-written check FAIL + failing report), one full syn run, `TIMING NOT MET` + non-zero exit, and `sweep_history.json` `final` agrees (not met, same MHz, a failure reason) |
 | `sweep_planless_test.py` | stateful MAIN with a met goal but nothing cuttable: one standalone as-written check synthesis prints PASS, its critical path is NOT stored as the func delay, one full syn run, exit 0, `sweep_history.json` `final` is a met `as_written` record with `standalone_mhz` |
 | `auto_pipeline_latency_test.py` | end-to-end factory design (`make_stream_auto_pipeline`, no MAX_IN_FLIGHT) through the full sweep **plus** the §6 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, seeded confirmation syn passes with no fallback sweep, loop settles within the pass cap (extra realization passes allowed), `sweep_history.json` `final` records come from the confirmation run |
@@ -1677,6 +1714,9 @@ equivalence, including an AUTO_FSM design). `sweep_history_record_unit_test.py`
 semantics: an assumed-met main is a goal lower bound, a timing failure
 overrides the outcome, a confirmation run supersedes the sweep, a restored
 snapshot keeps its iteration, and unverified builds get `met: null`.
+`sweep_plateau_unit_test.py` (also `unit_tests.py`) pins `AT_PLATEAU`: the
+sky130 trace stops at iteration 6 and not 5; still-improving,
+no-cut-growth, short, met, or incomplete windows never stop.
 
 ## 9. Operator QoR benchmark
 

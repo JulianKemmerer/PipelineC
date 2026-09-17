@@ -146,6 +146,15 @@ def get_tests() -> list:
             cmd=[INST_DIR / "sweep_history_record_unit_test.py"],
         )
     )
+    # SWEEP.AT_PLATEAU: flat measured fmax while cuts grow stops the sweep
+    # even when the soft-floor prediction is wrong.
+    tests.append(
+        Test(
+            name="sweep_plateau_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "sweep_plateau_unit_test.py"],
+        )
+    )
     # Typed operation-boundary/bit-internal placement and direct lowering.
     tests.append(
         Test(

@@ -92,12 +92,17 @@ fastest tool that can check what it tests:
     and no state count changes that. That sky130 behavior is what
     `auto_fsm_tighten_stall_test.py` (sky130) checks: the driver stops after the
     first tightened build with no fmax gain.
-  - `sweep_floor_detect_test.py` checks the sweep's floor stop, which ends
-    that design's sweep only under PyRTL. There the predicted soft floor
-    (~16 MHz) matches the measured plateau. Under sky130 the plateau
-    (51.4 MHz) sits far above the pessimistic prediction (~37 MHz), outside
-    `SWEEP.AT_PREDICTED_FLOOR`'s ±5% band, and nothing else stops a flat
-    plateau, so the sweep runs to its iteration limit.
+  - `sweep_floor_detect_pyrtl_test` runs `sweep_floor_detect_test.py
+    --syn_tool pyrtl` (50 MHz goal) to check the sweep's `empirical_floor`
+    stop. Only under PyRTL does the predicted soft floor (~16 MHz) match the
+    measured plateau. The same wrapper also runs under sky130 as
+    `sweep_floor_detect_test` (100 MHz goal, build_report_device_models).
+    There the plateau (51.4 MHz) sits far above the pessimistic prediction
+    (~37 MHz), outside `SWEEP.AT_PREDICTED_FLOOR`'s ±5% band, so it checks
+    the prediction-independent `plateau` stop (`SWEEP.AT_PLATEAU`) instead.
+    Both variants assert the stop reason from `sweep_history.json` and at
+    most 6 full syn runs. The design reads its goal from
+    `SWEEP_FLOOR_DETECT_MHZ`, which the wrapper sets.
 
 How a test picks its tool:
 

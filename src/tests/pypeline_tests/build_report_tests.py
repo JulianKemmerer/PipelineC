@@ -44,11 +44,21 @@ def get_tests() -> list:
             requires=["ghdl"],
         )
     )
+    # Unreachable goal: sky130 stops on the prediction-independent plateau,
+    # PyRTL (whose soft-floor prediction matches) on the empirical floor.
     tests.append(
         Test(
             name="sweep_floor_detect_test",
+            category=DM,
+            cmd=[INST_DIR / "sweep_floor_detect_test.py", "--syn_tool", "sky130"],
+            needs_out_dir=True,
+        )
+    )
+    tests.append(
+        Test(
+            name="sweep_floor_detect_pyrtl_test",
             category=PYRTL,
-            cmd=[INST_DIR / "sweep_floor_detect_test.py"],
+            cmd=[INST_DIR / "sweep_floor_detect_test.py", "--syn_tool", "pyrtl"],
             needs_out_dir=True,
         )
     )

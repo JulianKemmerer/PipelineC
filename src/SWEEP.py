@@ -73,6 +73,9 @@ MINISWEEP_TRIM_PROBES = 3
 # Achieved fmax within this fraction of the predicted floor counts as
 # "at the floor" (can't do better by adding registers)
 FLOOR_TOLERANCE = 0.95
+# Consecutive unmet measured results, flat within noise while the cut count
+# grew, that stop the sweep as a plateau (see AT_PLATEAU)
+PLATEAU_STREAK = 3
 
 
 def AT_PREDICTED_FLOOR(curr_mhz, floor, target_mhz, tolerance=FLOOR_TOLERANCE):
@@ -91,6 +94,34 @@ def AT_PREDICTED_FLOOR(curr_mhz, floor, target_mhz, tolerance=FLOOR_TOLERANCE):
         and curr_mhz >= tolerance * floor
         and curr_mhz <= floor / tolerance
     )
+
+
+def AT_PLATEAU(prev_history, curr_mhz, curr_cuts, target_mhz, streak=PLATEAU_STREAK):
+    """True if the last `streak` unmet results (the tail of prev_history
+    plus the current one) are flat within noise - max-min under 1% of the
+    target, the same rule same_mhz_count uses - while the cut count grew
+    from the first of them to the current one: more registers bought
+    nothing. Unlike the floor stops this never consults a prediction, so it
+    still ends a sweep whose soft-floor estimate is simply wrong (seen for
+    real under sky130: a flat 51.42 MHz plateau against a ~37 MHz predicted
+    soft floor, outside AT_PREDICTED_FLOOR's band, swept to the iteration
+    limit with 64 cuts). A result still improving past noise never matches,
+    which keeps the band's protection for under-predicted floors.
+    prev_history holds sweep_history iteration records ("achieved_mhz",
+    "cuts", "met"); the caller passes only records since the last structural
+    reset of the window."""
+    if streak < 2:
+        return False
+    window = list(prev_history[-(streak - 1) :])
+    if len(window) < streak - 1:
+        return False
+    for h in window:
+        if h.get("met") or h.get("achieved_mhz") is None or h.get("cuts") is None:
+            return False
+    mhz = [h["achieved_mhz"] for h in window] + [curr_mhz]
+    if max(mhz) - min(mhz) >= 0.01 * target_mhz:
+        return False
+    return curr_cuts > window[0]["cuts"]
 
 
 def BEST_SNAPSHOT_MET_ALL_GOALS(best_score):
@@ -3976,6 +4007,12 @@ class MainSweepPlan:
         # Set when an AUTO_MULTI_CYCLE multi-cycle path that can't take more cycles
         # (latency= / max_latency=) is the critical path
         self.auto_multi_cycle_limit_blame = None
+        # history index where AT_PLATEAU's window starts: moved past records
+        # measured before a structural experiment (not the measured-delay
+        # fallback - a synthesized fmax is real either way)
+        self.plateau_window_start = 0
+        # soft-floor blame text for a "plateau" stop, None if there is none
+        self.plateau_blame = None
 
     def predicted_floor(self):
         # (floor_mhz, blame Segment) worst over subtrees, None if all sliceable
@@ -5807,6 +5844,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             planning_attempts = (
                 range(8) if pending_refinement is None else ()
             )
+            scale_before_attempts = plan.global_scale
             for attempt in planning_attempts:
                 total_cuts = PLAN_REGION_CUTS(plan)
                 for subtree_root in plan.subtrees:
@@ -5836,6 +5874,11 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     plan.global_scale /= 1.1  # probing down - even fewer
                 else:
                     plan.global_scale *= 1.1  # failing - force more cuts
+            else:
+                # Every attempt left the cut count unchanged: the landscape
+                # is saturated, so the x1.1^8 nudge bought nothing. Keeping
+                # it compounded to x44,379 on a 64-cut ceiling; drop it.
+                plan.global_scale = scale_before_attempts
             plan.prev_total_cuts = total_cuts
             plan.default_chunked_banks = False
             # Apply the cuts
@@ -6172,6 +6215,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         plan.stopped_reason = None
                         plan.same_mhz_count = 0
                         plan.last_mhz = None
+                        plan.plateau_window_start = len(plan.history) + 1
                     else:
                         plan.stopped_reason = "auto_multi_cycle_latency_limit"
                         plan.auto_multi_cycle_limit_blame = blame
@@ -6283,18 +6327,36 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         l.delay_is_estimated
                         for l in parser_state.FuncLogicLookupTable.values()
                     )
+                    delays_measured = (
+                        measured_fallback_done
+                        or not any_estimates_in_play
+                        # "prim" mode: estimates are always in play and
+                        # never measured for real -- treat as if the
+                        # fallback already ran so the sweep can still
+                        # reach its floor stop instead of densifying
+                        # forever.
+                        or SYN.HIER_SYN_MODE == "prim"
+                    )
                     at_soft_floor = (
                         AT_PREDICTED_FLOOR(curr_mhz, soft_floor, target_mhz)
                         and plan.same_mhz_count >= 1
-                        and (
-                            measured_fallback_done
-                            or not any_estimates_in_play
-                            # "prim" mode: estimates are always in play and
-                            # never measured for real -- treat as if the
-                            # fallback already ran so the sweep can still
-                            # reach its floor stop instead of densifying
-                            # forever.
-                            or SYN.HIER_SYN_MODE == "prim"
+                        and delays_measured
+                    )
+                    # Flat measured results while cuts grew, whatever the
+                    # prediction says (see AT_PLATEAU). The window may
+                    # span the measured fallback, but the current plan must
+                    # itself be a fresh one planned with measured delays: a
+                    # placement refinement is a same-depth probe carried
+                    # over from the previous plan, not a test of more
+                    # registers (seen for real under PyRTL: stopping on the
+                    # post-fallback refinement's 15.11 MHz missed the next
+                    # denser plan's 15.82 MHz).
+                    plateau_window = plan.history[plan.plateau_window_start :]
+                    at_plateau = (
+                        delays_measured
+                        and plan.active_placement_refinement is None
+                        and AT_PLATEAU(
+                            plateau_window, curr_mhz, total_cuts, target_mhz
                         )
                     )
                     if at_hard_floor or at_soft_floor:
@@ -6313,6 +6375,35 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             "predicted_floor" if at_hard_floor else "empirical_floor"
                         )
                         action = "stop_at_floor"
+                    elif at_plateau:
+                        first = plateau_window[-(PLATEAU_STREAK - 1)]
+                        plan.plateau_blame = None
+                        if (
+                            soft_floor is not None
+                            and soft_floor < target_mhz
+                            and soft_blame is not None
+                        ):
+                            blamed = soft_blame.inst_path.split(
+                                C_TO_LOGIC.SUBMODULE_MARKER
+                            )[-1]
+                            plan.plateau_blame = (
+                                f"likely limited by {blamed} ({soft_blame.reason}, "
+                                f"predicted soft floor ~{soft_floor:.1f} MHz)"
+                            )
+                        blame_str = (
+                            f" {plan.plateau_blame[0].upper()}{plan.plateau_blame[1:]}."
+                            if plan.plateau_blame
+                            else ""
+                        )
+                        print(
+                            f"[sweep] WARNING: {main_logic.func_name} fmax plateaued at "
+                            f"~{curr_mhz:.2f} MHz over {PLATEAU_STREAK} iterations while "
+                            f"cuts grew {first['cuts']}->{total_cuts}; adding registers "
+                            f"is not helping.{blame_str} Keeping best result.",
+                            flush=True,
+                        )
+                        plan.stopped_reason = "plateau"
+                        action = "stop(plateau)"
                     else:
                         (
                             hotspot_func,
@@ -6403,6 +6494,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 )
                                 plan.same_mhz_count = 0
                                 plan.last_mhz = None
+                                plan.plateau_window_start = (
+                                    len(plan.history) + 1
+                                )
                                 action = (
                                     f"refine(minisweep boundary "
                                     f"{next_boundary_strategy})"
@@ -6884,7 +6978,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     SYN.MEASURE_DELAYS(estimated_funcs, parser_state)
                     measured_fallback_done = True
                     # Fresh signal: the delay model changed, stagnation
-                    # bookkeeping no longer applies
+                    # bookkeeping no longer applies. plateau_window_start is
+                    # deliberately kept: already-synthesized fmax results
+                    # are real regardless of the model that planned them.
                     for p in plans.values():
                         p.same_mhz_count = 0
                         p.last_mhz = None
@@ -6999,6 +7095,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 if achieved is None or h["achieved_mhz"] > achieved:
                     achieved = h["achieved_mhz"]
         why = plan.stopped_reason or "unknown"
+        if plan.plateau_blame is not None and plan.stopped_reason == "plateau":
+            why += f": {plan.plateau_blame}"
         if plan.auto_pipeline_limit_blame is not None:
             why += f": {plan.auto_pipeline_limit_blame}"
         if plan.auto_multi_cycle_limit_blame is not None and plan.stopped_reason == (
