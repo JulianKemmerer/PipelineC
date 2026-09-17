@@ -2198,18 +2198,31 @@ hardware in practice.
 
 #### `pypeline_sim_debug.py` under non-`--comb`
 
-For non-`--comb` args the tool first does a single build-only pass (no `--sim`) into a
-shared `out_dir` -- the full throughput sweep + AUTO_PIPELINE pin-and-confirm, paid once
--- then points **both** the native and VHDL `--sim` invocations at that same now-warm
-`out_dir` and runs them **concurrently**. Each re-runs `pypelinec`'s build path
-internally, but with the sweep already warm (existing VHDL/log/timing-params results in
-`out_dir`, plus the repo-level path-delay / pipeline-min-period caches) it converges
-fast, and both are guaranteed to reach the same discovered latencies as the build phase
--- a prerequisite for a meaningful cycle diff -- with no concurrent cache-write race,
-since the expensive discovery work already happened in the single build-only pass. It
-detects non-`--comb` mode by scanning the forwarded args for
-`--comb`/`--sim_comb`/`--no_synth`; comb runs skip the build-only pass and run both
-sims concurrently in separate `--out_dir`s from the start.
+For non-`--comb` args, the tool first does a single build-only pass (no `--sim`) into
+`<out_dir>/build`. That pass pays once for the full throughput sweep and the
+AUTO_PIPELINE pin-and-confirm.
+
+It then copies that warm directory to `<out_dir>/native` and `<out_dir>/vhdl`, and runs
+the native and VHDL `--sim` invocations **concurrently**, each in its own copy.
+
+- **Why this converges fast.** Each run re-runs `pypelinec`'s build path internally,
+  but the sweep is already warm: the copied VHDL/log/timing-params results plus the
+  repo-level path-delay and pipeline-min-period caches.
+- **Why the latencies agree.** Both runs are guaranteed to reach the same discovered
+  latencies as the build phase, which a meaningful cycle diff requires.
+- **Why copies and not one shared directory.** Two `pypelinec` processes must never
+  write one `out_dir`. Each pass rewrites shared files such as `c_structs_pkg.pkg.vhd`
+  and `top/top.vhd`, and both processes synthesize the same leaves into the same
+  artifact paths.
+- **What keeps the copies warm.**
+  - DEVICE_MODELS records its synthesis identity relative to the output directory
+    (`DEVICE_MODELS_DESIGN.md` §2).
+  - Generated VHDL is the same in every parse pass of a run (`VHDL_DESIGN.md`), so a
+    run's early passes don't invalidate the leaves the build characterized.
+
+The tool detects non-`--comb` mode by scanning the forwarded args for
+`--comb`/`--sim_comb`/`--no_synth`. Comb runs skip the build-only pass and run both
+sims concurrently in `<out_dir>/native` and `<out_dir>/vhdl` from the start.
 
 ---
 

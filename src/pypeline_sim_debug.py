@@ -30,6 +30,7 @@ import argparse
 import concurrent.futures
 import os
 import re
+import shutil
 import subprocess
 import sys
 
@@ -111,10 +112,11 @@ def main():
         "--out_dir",
         type=str,
         default=None,
-        help="Base output directory. For non---comb designs, pypelinec builds "
-        "once directly into <out_dir> and both sims reuse it; for --comb "
-        "designs, pypelinec build outputs go in '<out_dir>/native' and "
-        "'<out_dir>/vhdl'. Full raw sim stdout is always saved to "
+        help="Base output directory. The native and VHDL pypelinec runs use "
+        "'<out_dir>/native' and '<out_dir>/vhdl'. For non---comb designs, "
+        "pypelinec first builds once into '<out_dir>/build', and each sim "
+        "run starts from its own copy of that warm directory. Full raw sim "
+        "stdout is always saved to "
         "'<out_dir>/native.log' and '<out_dir>/vhdl.log'. Default: a new "
         "'./pypeline_sim_debug_out_<design>_<pid>' directory.",
     )
@@ -148,32 +150,41 @@ def main():
     # Both branches below run the two sims CONCURRENTLY; what differs is
     # whether an expensive build-only pass has to happen first (non---comb) or
     # not (--comb). Named for that, not for the old sequential behavior.
-    needs_shared_build = not any(
+    needs_warm_build = not any(
         a in ("--comb", "--sim_comb", "--no_synth") for a in pypelinec_args
     )
-    if needs_shared_build:
-        # Non---comb: build once (no --sim) into the shared out_dir, doing
-        # the full throughput sweep + AUTO_PIPELINE pin-and-confirm just a
-        # single time. Then point BOTH the native and VHDL sim invocations
-        # at that same now-populated out_dir and run them concurrently --
-        # each re-runs pypelinec's build path internally, but with the sweep
-        # already warm (existing VHDL/log/timing-params results in out_dir,
-        # plus the repo-level path-delay / pipeline-min-period caches) it
-        # converges fast, and both are guaranteed to converge to the same
-        # discovered latencies as the build phase (same inputs, same warm
-        # out_dir/caches) -- a prerequisite for a meaningful cycle diff.
+    native_out_dir = os.path.join(out_dir, "native")
+    vhdl_out_dir = os.path.join(out_dir, "vhdl")
+    if needs_warm_build:
+        # Non---comb: build once (no --sim) into <out_dir>/build, doing the
+        # full throughput sweep + AUTO_PIPELINE pin-and-confirm just a single
+        # time. Then give the native and VHDL sim invocations each their OWN
+        # copy of that warm build directory and run them concurrently. Each
+        # re-runs pypelinec's build path internally, but with the sweep
+        # already warm (existing VHDL/log/timing-params results, plus the
+        # repo-level path-delay / pipeline-min-period caches) it converges
+        # fast, and both converge to the same discovered latencies as the
+        # build phase (same inputs, same warm results) -- a prerequisite for
+        # a meaningful cycle diff. Separate copies, never one shared
+        # directory: two pypelinec processes must not write one out_dir.
         # --sim/--sim_comb (if the user passed one, per this script's own
         # usage) must be stripped for the build-only phase.
+        build_out_dir = os.path.join(out_dir, "build")
         no_sim_args = [a for a in pypelinec_args if a not in ("--sim", "--sim_comb")]
-        build_args = no_sim_args + ["--out_dir", out_dir]
+        build_args = no_sim_args + ["--out_dir", build_out_dir]
         _, build_returncode = _run_pypelinec(build_args, "build")
-        native_args = no_sim_args + ["--sim", "--out_dir", out_dir]
+        for sim_out_dir in (native_out_dir, vhdl_out_dir):
+            if os.path.lexists(sim_out_dir):
+                shutil.rmtree(sim_out_dir)
+            if os.path.isdir(build_out_dir):
+                shutil.copytree(build_out_dir, sim_out_dir, symlinks=True)
+        native_args = no_sim_args + ["--sim", "--out_dir", native_out_dir]
         vhdl_args = no_sim_args + [
             "--cocotb",
             "--ghdl",
             "--sim",
             "--out_dir",
-            out_dir,
+            vhdl_out_dir,
         ]
         with concurrent.futures.ThreadPoolExecutor(max_workers=2) as pool:
             native_future = pool.submit(_run_pypelinec, native_args, "native")
@@ -184,8 +195,6 @@ def main():
             native_returncode = native_returncode or build_returncode
             vhdl_returncode = vhdl_returncode or build_returncode
     else:
-        native_out_dir = os.path.join(out_dir, "native")
-        vhdl_out_dir = os.path.join(out_dir, "vhdl")
         native_args = list(pypelinec_args) + ["--out_dir", native_out_dir]
         vhdl_args = list(pypelinec_args) + [
             "--cocotb",

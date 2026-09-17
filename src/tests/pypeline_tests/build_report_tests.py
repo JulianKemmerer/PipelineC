@@ -139,6 +139,19 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # A copy of a warm output directory (what pypeline_sim_debug.py gives each
+    # sim run) re-synthesizes no DEVICE_MODELS leaf: no generated file may
+    # change between parse passes, and cache identity must not depend on the
+    # directory's location.
+    tests.append(
+        Test(
+            name="warm_copy_no_resynth_test",
+            category=DM,
+            cmd=[INST_DIR / "warm_copy_no_resynth_test.py"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+        )
+    )
     # The reason AUTO_FSM exists: builds the same design as parallel
     # combinational logic and as a scheduled FSM, and compares yosys cell
     # counts. Guards against a regression that keeps working and meeting timing

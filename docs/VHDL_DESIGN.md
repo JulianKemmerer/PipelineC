@@ -44,6 +44,57 @@ which is how every large design's file list avoids Linux's `MAX_ARG_STRLEN`
 (131072 bytes per single argv/envp string) once it stops fitting on one
 command line.
 
+### Generated VHDL is the same in every pass of a run
+
+One run parses the design several times. For example, each AUTO_FSM schedule pass
+elaborates a new FSM. Every synthesized leaf lists its VHDL files as inputs, and
+DEVICE_MODELS hashes all of them. So a file that differs between passes invalidates
+cached leaf results, even on a warm rerun or in a copied warm directory. Two such
+files are handled:
+
+**`c_structs_pkg` only grows within an output directory.**
+
+- **Why it can change.** A later pass's FSM operand muxes can use a type the earlier
+  pass didn't have (`uint8_t[2]`), and each pass regenerates the package from its own
+  types.
+- **How it stays stable.** `_WRITE_GROW_ONLY_C_STRUCTS_PACKAGE` splits the declarations
+  into one chunk per type, in the dependency order of
+  `WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE`'s resolve loop (`type_chunk_marks`). It merges
+  them with the chunks already recorded in `<out_dir>/c_structs_pkg.chunks.json`:
+  - **Nothing redefined.** If every current type is either new or identical to its
+    recorded chunk, the recorded chunks keep their order and the new ones are appended.
+    A new type depends only on earlier chunks. Types a pass no longer uses stay, since
+    they are still valid VHDL.
+  - **A type was redefined** (or the fixed preamble changed): the package starts over
+    from this pass's chunks.
+  - **Unchanged text.** The file is only rewritten when its text changes.
+- **Rendering.** Chunks are rendered (`RENDER_TEXT`) one at a time. Identifier
+  translation is token-local, so this is byte-identical to rendering the whole package.
+
+**Shared C built-in entities name no call site.** `SOURCE_COMMENT`'s `-- Source:`
+fallback skips `is_c_built_in` logic. Its `ast_meta` is whichever call site the pass
+elaborated first (see
+[PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#generated-vhdl-names)).
+
+**Identical re-renders don't rewrite the file.** Every VHDL writer goes through
+`WRITE_TEXT_IF_CHANGED`, which skips the write when the file already holds the same
+text.
+
+- **Why.** SYN's thread pool synthesizes leaves in parallel, and a leaf's inputs include
+  entity files that other threads re-render. `open(path, "w")` truncates first, so a
+  byte-identical re-render could be read mid-write. DEVICE_MODELS once recorded the
+  empty-file hash as an input and re-synthesized; GHDL could equally read a truncated
+  file.
+- **Why skipping is enough.** An entity file's name carries its timing hash, so every
+  re-render of an existing name produces the same text. Skipping those writes leaves one
+  version of each file per run.
+
+**Coverage.**
+- `generated_vhdl_stability_test.py` (unit) covers all three pieces.
+- `warm_copy_no_resynth_test.py` (build_report) rebuilds an AUTO_FSM design in a copy
+  of its warm output directory and requires zero re-synthesized leaves. It fails when
+  either fix, or DEVICE_MODELS' directory-relative cache identity, is reverted.
+
 ## Entity identity and reuse
 
 `WRITE_LOGIC_ENTITY` renders one implementation and

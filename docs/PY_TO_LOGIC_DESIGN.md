@@ -5400,6 +5400,13 @@ locations. VHDL comments use repository-relative paths (external/synthetic files
 basenames), so changing a temporary output directory does not change VHDL bytes; the
 index keeps full paths for navigation.
 
+A C built-in operator entity (`BIN_OP_AND_uint1_t_uint1_t`, `MUX_int16_t`, ...) gets no
+`-- Source:` fallback comment. One entity serves every call site, and its `ast_meta` is just
+whichever call site a parse pass elaborated first. Naming that call site made the entity
+file, and every parent that embeds the operator as a VHDL function, differ between passes
+of one run. That in turn invalidated cached DEVICE_MODELS leaf results (see
+[VHDL_DESIGN.md](VHDL_DESIGN.md#generated-vhdl-is-the-same-in-every-pass-of-a-run)).
+
 ### Source Location String
 
 Many logical instance and alias-wire names embed the originating AST location:

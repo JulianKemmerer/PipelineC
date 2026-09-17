@@ -112,15 +112,19 @@ How a test picks its tool:
   `PART("xc...")`), so design files stay tool-neutral. Board examples keep
   their board `PART`.
 - **`native_vs_vhdl_sim_tests.py`** builds its non-`--comb` entries under
-  PyRTL (`NON_COMB_SYN_TOOL`, passed as `--syn_tool pyrtl`). `--comb` entries
-  never reach synthesis.
-  - **Why not sky130:** `pypeline_sim_debug.py` runs its native and VHDL
-    invocations concurrently in one out_dir, and both re-characterize some
-    leaves (AUTO_FSM/AUTO_COMB schedules, raw-VHDL RAM leaves).
-  - **What goes wrong:** DEVICE_MODELS' per-leaf artifacts aren't safe against
-    two processes synthesizing the same leaf in the same directory, so the
-    composition, AUTO_FSM and RAM tests all failed at random under sky130.
-    Switch `NON_COMB_SYN_TOOL` back once DEVICE_MODELS is race-free.
+  sky130 (`NON_COMB_SYN_TOOL`, passed as `--syn_tool sky130`). `--comb`
+  entries never reach synthesis.
+  - **Warm copies:** `pypeline_sim_debug.py` builds once into
+    `<out_dir>/build`, then runs its native and VHDL invocations concurrently,
+    each in its own copy of that directory (`<out_dir>/native`,
+    `<out_dir>/vhdl`).
+  - **Why they stay warm:** DEVICE_MODELS records VHDL inputs relative to the
+    output directory, and generated VHDL is the same in every parse pass of a
+    run (`c_structs_pkg` only grows; shared built-in entities name no call
+    site). Before these fixes, each copy re-synthesized most leaves.
+  - **History:** these entries once ran under PyRTL. The two sims shared one
+    out_dir, and sky130 synthesis of the same leaf from both processes
+    collided at random (composition, AUTO_FSM and RAM tests).
 - **`build_report` wrappers** pass `--syn_tool sky130` (or their design sets the
   `PART`) in the `pypelinec` command they build.
   - The sky130 AUTO_FSM cell-count comparisons (resources, area search,
@@ -264,7 +268,7 @@ original area incumbent is valid; a search move is not required. See
   stable output while stalled.
 - `self_check_auto_comb_share_composition_test.py` (both native-vs-VHDL modes):
   fixed/discovered pipelines, default raw-function FSM and explicit-ACS FSM. It
-  sets no `PART`; the pipelined build runs under `--syn_tool pyrtl` (see
+  sets no `PART`; the pipelined build runs under `--syn_tool sky130` (see
   `NON_COMB_SYN_TOOL`). There is
   no multi-cycle member: MULTI_CYCLE constraints are Vivado-only, and one used to
   force the whole design onto a slow Vivado sweep. Multi-cycle streams are
@@ -379,6 +383,35 @@ that a synthesis backend builds from them. Two tests cover this:
   the overflow. Every `synth_device_models` build with long factory names
   (stream AUTO_PIPELINE, soft_div) exercises the same path. See
   `DEVICE_MODELS_DESIGN.md` §2.
+
+**Warm output directories.** A copy of a warm output directory, or a warm
+rerun, must reuse its cached leaf results. `pypeline_sim_debug.py` depends on
+this, and the non-`--comb` `native_vs_vhdl_sim` entries exercise it end to
+end. Three tests cover it:
+
+- **`warm_copy_no_resynth_test.py` (build_report_device_models):** builds
+  `self_check_auto_fsm_test.py` under sky130, copies the output directory,
+  and rebuilds in the copy. The rebuild must re-synthesize no DEVICE_MODELS leaf and print
+  no cache-mismatch line. It fails if any of the three fixes below is
+  reverted.
+  - The design matters: its AUTO_FSM passes differ in `c_structs_pkg` types
+    and in which call site first elaborates a shared built-in.
+  - `auto_fsm_test.py` has neither flip. It only catches the absolute-path
+    regression.
+- **`device_models_sta_test.py` (unit):**
+  `test_synthesis_identity_survives_copying_the_output_directory` checks that
+  a copied output directory keeps the same synthesis identity. VHDL inputs are
+  recorded relative to the output root, and the mapped netlist relative to its
+  log.
+- **`generated_vhdl_stability_test.py` (unit):** checks that generated VHDL
+  doesn't change between parse passes:
+  - `c_structs_pkg` only grows: a pass with no new types leaves the file
+    untouched, new types are appended after the existing ones, and a
+    redefined type or a changed preamble starts the package over;
+  - a shared C built-in operator entity gets no call-site `-- Source:`
+    comment;
+  - an identical re-render doesn't rewrite the file (`WRITE_TEXT_IF_CHANGED`),
+    so a thread reading it never sees it truncated.
 
 ## `native_vs_vhdl_sim` probe rules
 

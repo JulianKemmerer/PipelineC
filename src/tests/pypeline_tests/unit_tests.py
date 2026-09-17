@@ -179,6 +179,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "path_attribution_test.py"],
         )
     )
+    # Generated VHDL doesn't change between parse passes of one run:
+    # c_structs_pkg only grows within one output directory, and shared C
+    # built-in entities name no call site. Every synthesized leaf hashes these
+    # files, so a flip re-synthesizes leaves even on a warm rerun.
+    tests.append(
+        Test(
+            name="generated_vhdl_stability_test",
+            category="unit",
+            cmd=[INST_DIR / "generated_vhdl_stability_test.py"],
+        )
+    )
     # DEVICE_MODELS sky130 STA diagnostics and fixed internal synthesis
     # recipes: component sums, endpoint semantics, structured arc traces,
     # and recipe-scoped cache/artifact identities. Uses tiny mapped-JSON

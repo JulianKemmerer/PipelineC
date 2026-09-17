@@ -1159,11 +1159,17 @@ def _sha256_file(path):
     return digest.hexdigest()
 
 
-def _vhdl_input_record(vhdl_files_texts, work_dir):
-    """Hash the exact ordered VHDL bytes consumed by the GHDL frontend."""
+def _vhdl_input_record(vhdl_files_texts, work_dir, path_root=None):
+    """Hash the exact ordered VHDL bytes consumed by the GHDL frontend.
+
+    Files under path_root (the build's output directory) are recorded by
+    their path relative to it, so a copy of a warm output directory keeps
+    matching its cached reports. Other files keep their absolute path.
+    """
 
     records = []
     aggregate = hashlib.sha256()
+    root = os.path.abspath(path_root) if path_root is not None else None
     for token in shlex.split(vhdl_files_texts):
         path = token if os.path.isabs(token) else os.path.join(work_dir, token)
         path = os.path.abspath(path)
@@ -1171,7 +1177,10 @@ def _vhdl_input_record(vhdl_files_texts, work_dir):
             raise FileNotFoundError(f"missing synthesis VHDL input: {path}")
         size = os.path.getsize(path)
         sha256 = _sha256_file(path)
-        records.append({"path": path, "bytes": size, "sha256": sha256})
+        recorded_path = path
+        if root is not None and os.path.commonpath([root, path]) == root:
+            recorded_path = os.path.relpath(path, root)
+        records.append({"path": recorded_path, "bytes": size, "sha256": sha256})
         # Length-prefix each digest so ordering and duplicate files are part
         # of the identity without depending on their machine-local roots.
         aggregate.update(size.to_bytes(8, "big"))
@@ -1192,8 +1201,12 @@ def _synthesis_input_identity(
     lib_path,
     yosys_path,
     recipe_name=None,
+    path_root=None,
 ):
-    """Return exact source/model/tool provenance for cache validation."""
+    """Return exact source/model/tool provenance for cache validation.
+
+    path_root: see _vhdl_input_record.
+    """
 
     recipe_name = _get_synthesis_recipe_name(recipe_name)
     condensed_path = os.path.join(
@@ -1209,7 +1222,7 @@ def _synthesis_input_identity(
         "recipe_commands_sha256": hashlib.sha256(
             _get_synthesis_recipe_commands(top_entity_name, lib_path, recipe_name).encode()
         ).hexdigest(),
-        "vhdl": _vhdl_input_record(vhdl_files_texts, work_dir),
+        "vhdl": _vhdl_input_record(vhdl_files_texts, work_dir, path_root),
         "mapping_liberty": {
             "path": os.path.abspath(lib_path),
             "bytes": os.path.getsize(lib_path),
@@ -1231,31 +1244,74 @@ def _synthesis_input_identity(
     return record
 
 
-def _cached_timing_matches(log_path, synthesis_inputs, recipe_name=None):
-    """Fail closed unless a structured report matches exact current inputs."""
+def _cached_timing_mismatch_reason(log_path, synthesis_inputs, recipe_name=None):
+    """Why a structured report can't be reused, or None when it matches.
+
+    Fail closed: anything unreadable or different is a reason. The text is
+    printed with the "remeasuring" message so an unexpected cache miss says
+    which input changed.
+    """
 
     timing_json_path = os.path.splitext(log_path)[0] + "_timing.json"
     try:
         with open(timing_json_path) as f:
             structured = _json.load(f)
-    except (OSError, ValueError):
-        return False
+    except (OSError, ValueError) as exc:
+        return f"unreadable {os.path.basename(timing_json_path)} ({exc.__class__.__name__})"
+    if structured.get("mapping_succeeded") is not True:
+        return "cached run did not map successfully"
+    if structured.get("model_cache_identity") != GET_MODEL_CACHE_IDENTITY(
+        recipe_name=recipe_name
+    ):
+        return "model cache identity changed"
+    if structured.get("synthesis_recipe") != _get_synthesis_recipe_name(recipe_name):
+        return "synthesis recipe changed"
+    cached_inputs = structured.get("synthesis_inputs") or {}
+    if cached_inputs.get("identity_sha256") != synthesis_inputs.get("identity_sha256"):
+        return "synthesis inputs changed: " + _synthesis_inputs_difference(
+            cached_inputs, synthesis_inputs
+        )
     mapped_json_path = structured.get("mapped_json_path")
-    mapped_json_matches = (
-        mapped_json_path is not None
-        and os.path.isfile(mapped_json_path)
-        and structured.get("mapped_json_sha256")
-        == _sha256_file(mapped_json_path)
-    )
+    if mapped_json_path is not None:
+        # Stored relative to the log's directory (older reports: absolute).
+        mapped_json_path = os.path.join(
+            os.path.dirname(os.path.abspath(log_path)), mapped_json_path
+        )
+    if mapped_json_path is None or not os.path.isfile(mapped_json_path):
+        return "mapped JSON netlist missing"
+    if structured.get("mapped_json_sha256") != _sha256_file(mapped_json_path):
+        return "mapped JSON netlist hash changed"
+    return None
+
+
+def _synthesis_inputs_difference(cached, current):
+    """Name the first differing part of two _synthesis_input_identity records."""
+
+    cached_files = (cached.get("vhdl") or {}).get("files") or []
+    current_files = (current.get("vhdl") or {}).get("files") or []
+    for old, new in zip(cached_files, current_files):
+        if old != new:
+            if old.get("path") != new.get("path"):
+                return f"VHDL file list differs at {old.get('path')} vs {new.get('path')}"
+            return f"VHDL file content changed: {new.get('path')}"
+    if len(cached_files) != len(current_files):
+        return (
+            f"VHDL file count {len(cached_files)} -> {len(current_files)}"
+        )
+    for key in sorted(set(cached) | set(current)):
+        if key in ("identity_sha256", "vhdl"):
+            continue
+        if cached.get(key) != current.get(key):
+            return f"{key} changed"
+    return "identity hash differs"
+
+
+def _cached_timing_matches(log_path, synthesis_inputs, recipe_name=None):
+    """Fail closed unless a structured report matches exact current inputs."""
+
     return (
-        structured.get("mapping_succeeded") is True
-        and structured.get("model_cache_identity")
-        == GET_MODEL_CACHE_IDENTITY(recipe_name=recipe_name)
-        and structured.get("synthesis_recipe")
-        == _get_synthesis_recipe_name(recipe_name)
-        and structured.get("synthesis_inputs", {}).get("identity_sha256")
-        == synthesis_inputs.get("identity_sha256")
-        and mapped_json_matches
+        _cached_timing_mismatch_reason(log_path, synthesis_inputs, recipe_name)
+        is None
     )
 
 # Real per-cell synthesis (dfflibmap/abc costing) needs the actual, full
@@ -1705,7 +1761,11 @@ def _run_synth_and_sta(
     sta_result = run_sta(json_path, top=top_entity_name, library=SELECTED_LIBRARY, corner=SELECTED_CORNER)
     sta_result["mapping_succeeded"] = True
     sta_result["mapped_json_sha256"] = _sha256_file(json_path)
-    sta_result["mapped_json_path"] = os.path.abspath(json_path)
+    # Relative to the log's directory, so a copied output directory's report
+    # refers to its own netlist.
+    sta_result["mapped_json_path"] = os.path.relpath(
+        json_path, os.path.dirname(os.path.abspath(log_path))
+    )
     # Free alongside the STA above: area is a flat histogram sum over the
     # same mapped netlist, no separate synthesis pass. This is what makes
     # both an isolated leaf's cacheable area (mode 1, SYN.GET_AREA_CACHE_DIR)
@@ -1830,13 +1890,14 @@ def SYN_AND_REPORT_TIMING_NEW(
         output_directory,
         lib_path,
         yosys_path,
+        path_root=SYN.SYN_OUTPUT_DIRECTORY,
     )
 
-    reuse_existing_log = (
-        os.path.exists(log_path)
-        and use_existing_log_file
-        and _cached_timing_matches(log_path, synthesis_inputs)
-    )
+    reuse_existing_log = os.path.exists(log_path) and use_existing_log_file
+    mismatch_reason = None
+    if reuse_existing_log:
+        mismatch_reason = _cached_timing_mismatch_reason(log_path, synthesis_inputs)
+        reuse_existing_log = mismatch_reason is None
     if reuse_existing_log:
         print("Reading log", log_path)
         log_text = open(log_path).read()
@@ -1858,7 +1919,7 @@ def SYN_AND_REPORT_TIMING_NEW(
             )
     elif os.path.exists(log_path) and use_existing_log_file:
         print(
-            "Cached timing identity/input mismatch; remeasuring:",
+            f"Cached timing identity/input mismatch ({mismatch_reason}); remeasuring:",
             log_path,
             flush=True,
         )

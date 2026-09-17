@@ -36,6 +36,25 @@ def RENDER_TEXT(text, parser_state):
     return names.text(text) if names is not None else text
 
 
+def WRITE_TEXT_IF_CHANGED(path, text):
+    """Write a generated file only when its text differs from what is there.
+
+    SYN's thread pool renders leaves in parallel, and a leaf's VHDL inputs
+    include entity files other threads re-render. open(path, "w") truncates
+    first, so a byte-identical re-render could be read mid-write: empty by
+    DEVICE_MODELS' input hash (a needless re-synthesis), or truncated by
+    GHDL. Every re-render of an existing entity name produces the same text
+    (the name carries the timing hash), so skipping identical writes leaves
+    one version of each file per run.
+    """
+    if os.path.exists(path):
+        with open(path) as f:
+            if f.read() == text:
+                return
+    with open(path, "w") as f:
+        f.write(text)
+
+
 def SOURCE_COMMENT(name, parser_state):
     names = getattr(parser_state, "pypeline_emission_names", None)
     if names is None:
@@ -46,7 +65,11 @@ def SOURCE_COMMENT(name, parser_state):
 
         logic = parser_state.FuncLogicLookupTable.get(name)
         meta = getattr(logic, "ast_meta", None)
-        if meta is not None:
+        # A C built-in operator entity (BIN_OP_AND_uint1_t_uint1_t, ...) is
+        # shared by every call site; its ast_meta is just whichever call
+        # site a parse pass elaborated first. Naming it would make the
+        # entity file differ between passes of one run.
+        if meta is not None and not logic.is_c_built_in:
             comment = f"-- Source: {pypeline_names.display_source(meta.src_file)}:{meta.line}\n"
     return comment
 
@@ -1799,9 +1822,7 @@ end arch;
     output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
     if not os.path.exists(output_dir):
         os.makedirs(output_dir)
-    f = open(output_dir + "/" + filename, "w")
-    f.write(RENDER_TEXT(text, parser_state))
-    f.close()
+    WRITE_TEXT_IF_CHANGED(output_dir + "/" + filename, RENDER_TEXT(text, parser_state))
 
 
 def GET_BLACKBOX_MODULE_TEXT(inst_name, Logic, parser_state, TimingParamsLookupTable):
@@ -2275,9 +2296,7 @@ def WRITE_LOGIC_TOP(
         os.makedirs(output_directory)
 
     # print "NOT WRIT TOP"
-    f = open(output_directory + "/" + filename, "w")
-    f.write(RENDER_TEXT(rv, parser_state))
-    f.close()
+    WRITE_TEXT_IF_CHANGED(output_directory + "/" + filename, RENDER_TEXT(rv, parser_state))
 
 
 def GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(c_type_str):
@@ -3662,9 +3681,7 @@ port map
         os.makedirs(SYN.SYN_OUTPUT_DIRECTORY)
     path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "clk_cross_entities" + VHDL_FILE_EXT
 
-    f = open(path, "w")
-    f.write(RENDER_TEXT(text, parser_state))
-    f.close()
+    WRITE_TEXT_IF_CHANGED(path, RENDER_TEXT(text, parser_state))
 
 
 def GLOBAL_VAR_IS_SHARED(var_name, parser_state):
@@ -3972,9 +3989,7 @@ end global_wires_pkg;
 
     path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "global_wires_pkg" + VHDL_PKG_EXT
 
-    f = open(path, "w")
-    f.write(RENDER_TEXT(text, parser_state))
-    f.close()
+    WRITE_TEXT_IF_CHANGED(path, RENDER_TEXT(text, parser_state))
 
 
 def WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE(parser_state):
@@ -4178,6 +4193,9 @@ end function;
     types_written.append("char")
 
     # Write structs
+    # Where each dependency-resolved type's declarations start in text and
+    # pkg_body_text -- see _WRITE_GROW_ONLY_C_STRUCTS_PACKAGE.
+    type_chunk_marks = []
     done = False
     while not done:
         done = True
@@ -4191,6 +4209,7 @@ end function;
                 width = GET_WIDTH_FROM_C_N_BITS_INT_TYPE_STR(enum_info.int_c_type)
                 done = False
                 types_written.append(enum_name)
+                type_chunk_marks.append((enum_name, len(text), len(pkg_body_text)))
                 # Type
                 text += (
                     """
@@ -4348,6 +4367,7 @@ begin
                 # Write the type if nto already written
                 if new_type not in types_written:
                     types_written.append(new_type)
+                    type_chunk_marks.append((new_type, len(text), len(pkg_body_text)))
                     done = False
                     new_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(new_type, parser_state)
                     inner_type_dims = new_dims[1:]
@@ -4515,6 +4535,7 @@ begin
 
             # Write type
             types_written.append(struct_name)
+            type_chunk_marks.append((struct_name, len(text), len(pkg_body_text)))
             done = False
 
             text += SOURCE_COMMENT(struct_name, parser_state)
@@ -4703,23 +4724,88 @@ begin
 
     ######################
     # End dumb while loop
-    text += """
-end c_structs_pkg;
-"""
+    _WRITE_GROW_ONLY_C_STRUCTS_PACKAGE(
+        text, pkg_body_text, type_chunk_marks, parser_state
+    )
 
-    if pkg_body_text != "":
-        text += "package body c_structs_pkg is\n"
-        text += pkg_body_text
-        text += "end package body c_structs_pkg;\n"
+
+C_STRUCTS_PKG_CHUNKS_FILE = "c_structs_pkg.chunks.json"
+
+
+def _WRITE_GROW_ONLY_C_STRUCTS_PACKAGE(text, pkg_body_text, type_chunk_marks, parser_state):
+    """Write c_structs_pkg so that, within one output directory, it only grows.
+
+    Each parse pass regenerates the package from that pass's types, and the
+    type set can differ between passes of one run (ex. an AUTO_FSM schedule
+    pass elaborates a new FSM whose operand muxes use a new array type). Every
+    synthesized leaf lists the package among its inputs, so a package that
+    changes back and forth invalidates cached leaf results, even on a warm
+    rerun.
+
+    The declarations are split into one chunk per type (type_chunk_marks,
+    in dependency order), rendered, and merged with the chunks this output
+    directory already has (C_STRUCTS_PKG_CHUNKS_FILE):
+    - Every current type already present with identical text: keep all
+      previous chunks in their order and append only the new ones. A new
+      type depends only on earlier chunks, so the order stays valid. Types
+      no longer used stay; they are still valid VHDL.
+    - Otherwise (a type was redefined, or the fixed preamble changed): start
+      over from this pass's chunks.
+    The file is only rewritten when its text changes.
+    """
+    import json
+
+    text_end = len(text)
+    body_end = len(pkg_body_text)
+    starts = [(t, b) for _name, t, b in type_chunk_marks]
+    ends = starts[1:] + [(text_end, body_end)]
+    prefix = [
+        RENDER_TEXT(text[: starts[0][0] if starts else text_end], parser_state),
+        RENDER_TEXT(pkg_body_text[: starts[0][1] if starts else body_end], parser_state),
+    ]
+    chunks = [
+        [
+            name,
+            RENDER_TEXT(text[t0:t1], parser_state),
+            RENDER_TEXT(pkg_body_text[b0:b1], parser_state),
+        ]
+        for (name, t0, b0), (t1, b1) in zip(type_chunk_marks, ends)
+    ]
 
     if not os.path.exists(SYN.SYN_OUTPUT_DIRECTORY):
         os.makedirs(SYN.SYN_OUTPUT_DIRECTORY)
-
     path = SYN.SYN_OUTPUT_DIRECTORY + "/" + "c_structs_pkg" + VHDL_PKG_EXT
+    chunks_path = SYN.SYN_OUTPUT_DIRECTORY + "/" + C_STRUCTS_PKG_CHUNKS_FILE
 
-    f = open(path, "w")
-    f.write(RENDER_TEXT(text, parser_state))
-    f.close()
+    previous = None
+    if os.path.exists(path) and os.path.exists(chunks_path):
+        try:
+            with open(chunks_path) as f:
+                previous = json.load(f)
+        except (OSError, ValueError):
+            previous = None
+    merged = chunks
+    if previous is not None and previous.get("prefix") == prefix:
+        previous_by_name = {c[0]: c for c in previous["chunks"]}
+        if all(previous_by_name.get(c[0], c) == c for c in chunks):
+            merged = previous["chunks"] + [
+                c for c in chunks if c[0] not in previous_by_name
+            ]
+
+    body = prefix[1] + "".join(c[2] for c in merged)
+    rendered = prefix[0] + "".join(c[1] for c in merged)
+    rendered += RENDER_TEXT("""
+end c_structs_pkg;
+""", parser_state)
+    if body != "":
+        rendered += RENDER_TEXT("package body c_structs_pkg is\n", parser_state)
+        rendered += body
+        rendered += RENDER_TEXT("end package body c_structs_pkg;\n", parser_state)
+
+    WRITE_TEXT_IF_CHANGED(path, rendered)
+    if previous is None or previous.get("chunks") != merged or previous.get("prefix") != prefix:
+        with open(chunks_path, "w") as f:
+            json.dump({"prefix": prefix, "chunks": merged}, f)
 
 
 def LOGIC_NEEDS_GLOBAL_TO_MODULE(Logic, parser_state):
@@ -5695,9 +5781,7 @@ def WRITE_LOGIC_ENTITY(
         os.makedirs(output_directory)
 
     # print "NOT WRITE ENTITY"
-    f = open(output_directory + "/" + filename, "w")
-    f.write(RENDER_TEXT(rv, parser_state))
-    f.close()
+    WRITE_TEXT_IF_CHANGED(output_directory + "/" + filename, RENDER_TEXT(rv, parser_state))
 
 
 def LOGIC_IS_RAW_HDL(Logic, parser_state):

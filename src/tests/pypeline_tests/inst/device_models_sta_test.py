@@ -551,6 +551,139 @@ def test_cached_timing_requires_exact_inputs_model_and_mapped_json_hash():
         assert not DEVICE_MODELS._cached_timing_matches(
             log_path, synthesis_inputs, "current"
         )
+        assert (
+            DEVICE_MODELS._cached_timing_mismatch_reason(
+                log_path, synthesis_inputs, "current"
+            )
+            == "mapped JSON netlist hash changed"
+        )
+
+
+def test_cached_timing_mismatch_reason_names_changed_input():
+    # The "remeasuring" message says which input moved, so an unexpected
+    # cache miss (ex. a shared package rewritten by another process) is
+    # diagnosable from the log alone.
+    def inputs(files, yosys_sha="y"):
+        return {
+            "identity_sha256": hashlib.sha256(repr((files, yosys_sha)).encode()).hexdigest(),
+            "vhdl": {"files": [{"path": p, "bytes": 1, "sha256": h} for p, h in files]},
+            "yosys": {"sha256": yosys_sha},
+        }
+
+    base = inputs([("/o/c_structs_pkg.pkg.vhd", "1"), ("/o/leaf.vhd", "2")])
+    with tempfile.TemporaryDirectory(prefix="pipelinec_sta_mismatch_") as td:
+        log_path = os.path.join(td, "timing.log")
+        mapped_path = os.path.join(td, "mapped.json")
+        reason = DEVICE_MODELS._cached_timing_mismatch_reason(log_path, base)
+        assert reason.startswith("unreadable timing_timing.json"), reason
+        with open(mapped_path, "w") as f:
+            f.write('{"modules": {}}\n')
+        DEVICE_MODELS._write_sta_json(
+            log_path,
+            {
+                "worst_period_ns": 1.0,
+                "mapping_succeeded": True,
+                "mapped_json_path": mapped_path,
+                "mapped_json_sha256": DEVICE_MODELS._sha256_file(mapped_path),
+            },
+            DEVICE_MODELS.DEFAULT_LIBRARY,
+            DEVICE_MODELS.DEFAULT_CORNER,
+            None,
+            base,
+        )
+        assert DEVICE_MODELS._cached_timing_mismatch_reason(log_path, base) is None
+        cases = [
+            (
+                inputs([("/o/c_structs_pkg.pkg.vhd", "X"), ("/o/leaf.vhd", "2")]),
+                "synthesis inputs changed: VHDL file content changed: "
+                "/o/c_structs_pkg.pkg.vhd",
+            ),
+            (
+                inputs([("/o/c_structs_pkg.pkg.vhd", "1"), ("/o/other.vhd", "2")]),
+                "synthesis inputs changed: VHDL file list differs at "
+                "/o/leaf.vhd vs /o/other.vhd",
+            ),
+            (
+                inputs([("/o/c_structs_pkg.pkg.vhd", "1")]),
+                "synthesis inputs changed: VHDL file count 2 -> 1",
+            ),
+            (
+                inputs(
+                    [("/o/c_structs_pkg.pkg.vhd", "1"), ("/o/leaf.vhd", "2")],
+                    yosys_sha="z",
+                ),
+                "synthesis inputs changed: yosys changed",
+            ),
+        ]
+        for current, expected in cases:
+            reason = DEVICE_MODELS._cached_timing_mismatch_reason(log_path, current)
+            assert reason == expected, (reason, expected)
+        os.unlink(mapped_path)
+        reason = DEVICE_MODELS._cached_timing_mismatch_reason(log_path, base)
+        assert reason == "mapped JSON netlist missing", reason
+
+
+def test_synthesis_identity_survives_copying_the_output_directory():
+    # pypeline_sim_debug.py gives its native and VHDL runs separate copies of
+    # one warm build directory. VHDL inputs under the output root are
+    # recorded relative to it, and the mapped netlist relative to the log,
+    # so each copy reuses its own cached reports.
+    import shutil
+
+    with tempfile.TemporaryDirectory(prefix="pipelinec_sta_copy_") as td:
+        build = os.path.join(td, "build")
+        leaf_dir = os.path.join(build, "leaf")
+        os.makedirs(leaf_dir)
+        for name, text in (("c_structs_pkg.pkg.vhd", "pkg"), ("leaf/leaf.vhd", "leaf")):
+            with open(os.path.join(build, name), "w") as f:
+                f.write(text + "\n")
+        files_text = " ".join(
+            os.path.join(build, name)
+            for name in ("c_structs_pkg.pkg.vhd", "leaf/leaf.vhd")
+        )
+
+        def record(root, files):
+            return DEVICE_MODELS._vhdl_input_record(files, os.path.join(root, "leaf"), root)
+
+        original = record(build, files_text)
+        assert [f["path"] for f in original["files"]] == [
+            "c_structs_pkg.pkg.vhd",
+            os.path.join("leaf", "leaf.vhd"),
+        ]
+        copy = os.path.join(td, "native")
+        shutil.copytree(build, copy)
+        assert record(copy, files_text.replace(build, copy)) == original
+        # Files outside the root keep their absolute path.
+        outside = os.path.join(td, "outside.vhd")
+        with open(outside, "w") as f:
+            f.write("x\n")
+        assert record(build, outside)["files"][0]["path"] == outside
+
+        # A report's relative mapped_json_path resolves next to its own log.
+        log_path = os.path.join(copy, "leaf", "timing.log")
+        mapped_path = os.path.join(copy, "leaf", "mapped.json")
+        with open(mapped_path, "w") as f:
+            f.write('{"modules": {}}\n')
+        inputs = {"identity_sha256": "c" * 64}
+        DEVICE_MODELS._write_sta_json(
+            log_path,
+            {
+                "worst_period_ns": 1.0,
+                "mapping_succeeded": True,
+                "mapped_json_path": "mapped.json",
+                "mapped_json_sha256": DEVICE_MODELS._sha256_file(mapped_path),
+            },
+            DEVICE_MODELS.DEFAULT_LIBRARY,
+            DEVICE_MODELS.DEFAULT_CORNER,
+            None,
+            inputs,
+        )
+        assert DEVICE_MODELS._cached_timing_mismatch_reason(log_path, inputs) is None
+        os.unlink(mapped_path)
+        assert (
+            DEVICE_MODELS._cached_timing_mismatch_reason(log_path, inputs)
+            == "mapped JSON netlist missing"
+        )
 
 
 def test_durable_qor_evidence_matrices_are_self_consistent():

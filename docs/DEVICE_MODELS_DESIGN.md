@@ -132,6 +132,42 @@ Cache/artifact identity is unaffected: `recipe_commands_sha256` hashes
 or `.ys` file text, and `_vhdl_input_record` hashes the VHDL files' own
 bytes, not how their paths reach yosys.
 
+**Cache identity is independent of where the output directory lives.**
+
+- **VHDL inputs.** `_vhdl_input_record` records each file under the build's
+  output root (`path_root=SYN.SYN_OUTPUT_DIRECTORY`) by its path relative to
+  that root. The root holds the packages, `built_in/` and every leaf directory.
+  Files outside it keep their absolute path.
+- **Mapped netlist.** The `*_timing.json` stores `mapped_json_path` relative to
+  the log's own directory. An absolute path in an older report still resolves.
+- **Why.** A copy of a warm output directory reuses its own cached reports.
+  `pypeline_sim_debug.py` gives its native and VHDL runs separate copies of one
+  build. Before this change, every copied leaf re-synthesized because the
+  recorded paths pointed at the original directory.
+- **Standalone callers.** `_run_synth_and_sta()` without precomputed
+  `synthesis_inputs` (the frozen-VHDL benchmark) passes no root, so its paths
+  stay absolute.
+
+**A cache miss names its reason.** When a timing log exists but can't be
+reused, `SYN_AND_REPORT_TIMING_NEW` prints the reason:
+
+```
+Cached timing identity/input mismatch (<reason>); remeasuring: <log>
+```
+
+The reason comes from `_cached_timing_mismatch_reason()`, the first check that
+fails:
+
+- an unreadable `_timing.json`;
+- a failed cached mapping;
+- a changed model identity or recipe;
+- changed synthesis inputs, naming the first differing VHDL file (content,
+  list position or count) or other identity field such as `yosys`;
+- a missing netlist, or one whose hash changed.
+
+This is how the files that changed between parse passes were found (see
+`VHDL_DESIGN.md`, "Generated VHDL is the same in every pass of a run").
+
 **`<stem>` is capped so every artifact name fits in 255 bytes.**
 `_get_synthesis_recipe_artifact_paths()` names all four artifacts
 (`_liberty.json`, `_synth.log`, `_syn.sh`, `_syn.ys`) from one stem, built by
@@ -362,6 +398,7 @@ decisions this results section motivated are in
 | Real `pipelinec --syn_tool sky130` build, normal throughput sweep (not `--no_sweep`) | the full integration: per-leaf isolated synthesis, multimain confirmation, sweep convergence, all through the real CLI |
 | Carry-save multiplier, latchup-style first candidate at 31 and 60/61 stages | planner/RAW-VHDL structure raises fmax 700.640825→909.794952 MHz while model V4, recipe, liberty, and coefficients remain unchanged |
 | `device_models_sta_test`'s `test_artifact_paths_fit_filename_limit`, plus the `synth_device_models` builds with long generated names (`self_check_stream_auto_fsm_test`, `fir_sweep_test`, `sweep_stateful_boundary_test`) | Every artifact basename, including the worst-case `.tmp` tail, stays within 255 bytes for every recipe and for real soft_cmp leaf names. Long names are deterministic and never collide. Short names keep their historical file names. |
+| `warm_copy_no_resynth_test` (build_report), `device_models_sta_test`'s `test_synthesis_identity_survives_copying_the_output_directory` and `test_cached_timing_mismatch_reason_names_changed_input`, plus `native_vs_vhdl_sim`'s non-`--comb` entries under sky130 | A copied warm output directory keeps its cache identity, and rebuilding in it re-synthesizes no leaf. A cache miss names the input that changed. `pypeline_sim_debug.py`'s per-run copies of one build reuse its leaf reports end to end. |
 | `run_all` regression suite | PyRTL/default behavior is unaffected — every shared `SYN.py` function this feature touches (`PART_SET_TOOL`, `TOOL_DOES_PNR`, cache-dir keying, mux cache-key logic) still does exactly what it did before for every other tool |
 
 ## 5. Limitations and future work

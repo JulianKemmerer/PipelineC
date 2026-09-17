@@ -42,7 +42,7 @@ from common import (
 # (filename, source_dir, extra_args) -- extra_args always includes --sim and
 # --run; --comb selects the fast passthrough-latency compare, its absence
 # selects the full-build pipelined compare (pypeline_sim_debug.py builds once
-# then runs native + VHDL concurrently against the same warm out_dir).
+# then runs native + VHDL concurrently, each in its own copy of the warm build).
 COMB_TEST_FILES = [
     ("self_check_auto_comb_share_composition_test.py", INST_DIR, []),
     ("self_check_auto_comb_unshare_composition_test.py", INST_DIR, []),
@@ -124,10 +124,9 @@ COMB_TEST_FILES = [
 ]
 # Non---comb (pipelined/scheduled) compares: full build, then native sim runs
 # with the discovered latencies emulated, diffed against real pipelined VHDL.
-# Those builds synthesize. They run under PyRTL (--syn_tool pyrtl, see
-# NON_COMB_SYN_TOOL) rather than the suite's default sky130 -- see the comment
-# there. --comb entries above never reach synthesis (cocotb exits first), so
-# they need no tool.
+# Those builds synthesize, under the suite's default sky130 (--syn_tool
+# sky130, see NON_COMB_SYN_TOOL). --comb entries above never reach synthesis
+# (cocotb exits first), so they need no tool.
 NON_COMB_TEST_FILES = [
     ("self_check_auto_comb_share_composition_test.py", INST_DIR, []),
     ("self_check_auto_comb_unshare_composition_test.py", INST_DIR, []),
@@ -180,17 +179,14 @@ NON_COMB_TEST_FILES = [
 ]
 # fmt: on
 
-# Non---comb entries build under PyRTL, not the suite's default sky130.
-# pypeline_sim_debug.py runs its native and VHDL pypelinec invocations
-# concurrently in ONE out_dir, and both re-characterize some leaves (AUTO_FSM /
-# AUTO_COMB schedule passes, raw-VHDL RAM leaves, ...). DEVICE_MODELS'
-# per-leaf synthesis artifacts are not safe against two processes
-# synthesizing the same leaf in the same directory (the shared _syn.ys names a
-# per-process temp netlist), so under sky130 these tests fail at random --
-# seen on the composition, AUTO_FSM and RAM designs. PyRTL's identical-content
-# artifacts tolerate the overlap. Switch this to "device_models" once
-# DEVICE_MODELS is race-free.
-NON_COMB_SYN_TOOL = "pyrtl"
+# Non---comb entries build under the suite's default sky130.
+# pypeline_sim_debug.py builds once into <out_dir>/build, then runs native and
+# VHDL concurrently, each in its own copy of that warm directory (two
+# pypelinec processes never share one out_dir). The copies stay warm because
+# DEVICE_MODELS records its cache identity relative to the output directory,
+# and generated VHDL is the same in every parse pass of a run
+# (warm_copy_no_resynth_test).
+NON_COMB_SYN_TOOL = "device_models"
 
 
 def get_tests() -> list:

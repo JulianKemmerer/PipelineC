@@ -315,11 +315,15 @@ doesn't model yet.
 ### `--out_dir`
 
 `--out_dir <path>` sets the build/simulation output directory explicitly (VHDL, logs,
-timing-params caches, etc.), instead of a freshly generated default directory. Pointing
-two separate invocations at the same `--out_dir` lets a later run reuse an earlier run's
-warm sweep/build results instead of paying for them again — this is how
-`pypeline_sim_debug.py` (below) gets both its native and VHDL runs to agree on the same
-discovered pipeline latencies.
+timing-params caches, etc.), instead of a freshly generated default directory.
+
+- **Reusing a warm directory.** A later invocation pointed at the same `--out_dir`
+  reuses the earlier run's warm sweep/build results instead of paying for them again.
+  So does an invocation pointed at a copy of that directory.
+- **One process at a time.** Never run two invocations in one `--out_dir` at the same
+  time. To run several from the same warm results, give each its own copy.
+- **Example.** This is how `pypeline_sim_debug.py` (below) gets its native and VHDL
+  runs to agree on the same discovered pipeline latencies.
 
 ### `pypeline_sim_debug.py` — native-vs-VHDL cycle diff tool
 
@@ -335,9 +339,10 @@ pypeline_sim_debug.py ./src/my_design_tb.py --sim --run all          # PIPELINED
 ```
 
 `--comb` runs compare zero-latency native sim against comb VHDL, concurrently. Without
-`--comb`, the tool first does a single build-only pass into a shared `out_dir`, then
-points both the native and VHDL `--sim` invocations at that same warm `out_dir` so both
-converge on the same discovered pipeline latencies — see
+`--comb`, the tool first does a single build-only pass into `<out_dir>/build`, then
+runs the native and VHDL `--sim` invocations concurrently, each in its own copy of that
+warm directory (`<out_dir>/native`, `<out_dir>/vhdl`), so both converge on the same
+discovered pipeline latencies — see
 [`docs/pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)'s "Pipelined native sim" section
 for the warm-`out_dir` build orchestration and convergence guarantees.
 
