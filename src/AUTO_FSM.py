@@ -49,7 +49,8 @@ Where the pieces live:
                               schedule-and-confirm loop: measure delays ->
                               schedule -> re-elaborate -> synthesize -> if an
                               FSM is blamed for a timing failure, tighten its
-                              budget and reschedule. Called from src/pipelinec.
+                              budget and reschedule -- until a tightening stops
+                              raising fmax. Called from src/pipelinec.
 
 Generating Python source (rather than a new backend IR) is what keeps this
 feature small: the generated FSM is elaborated by the same path as hand-written
@@ -115,6 +116,17 @@ DEFAULT_BUDGET_SCALE = 0.9
 # Multiplied into budget_scale for every AUTO_FSM blamed for a timing failure,
 # shrinking the per-state budget so the next schedule uses more, smaller states.
 BUDGET_TIGHTEN_FACTOR = 0.75
+
+# Minimum relative fmax gain a tightened (rescheduled) build must show over the
+# build before it. A tightening whose build did not move fmax changed the FSM's
+# states but not the critical path -- that path runs somewhere the state count
+# cannot reach (the FSM's own control, e.g. the input-capture enable fanning out
+# to every input register bit, or elsewhere in the MAIN) -- so the driver stops
+# instead of shrinking further. Found on sky130: 102.25 MHz at 2, 3 and 6
+# states, with the budget then shrunk below one adder until the schedule
+# decomposed into gates. 1% absorbs run-to-run tool noise while still counting
+# any real improvement.
+TIGHTEN_MIN_FMAX_GAIN = 0.01
 
 # How many times the driver may apply BUDGET_TIGHTEN_FACTOR looking for a budget
 # that actually changes the schedule, before concluding more states cannot help.
@@ -349,6 +361,13 @@ class AutoFsmError(Exception):
     function/operation: failing loudly is required here, because the
     alternative is generating an FSM that quietly computes something other than
     the pure function it replaces."""
+
+
+class AutoFsmInternalError(AutoFsmError):
+    """An AUTO_FSM invariant broke -- a compiler bug, not a property of the
+    design. A subclass so the area search, which treats AutoFsmError as "this
+    candidate is not schedulable, try the next one", can let it through
+    instead of quietly discarding the evidence."""
 
 
 # ─────────────────────────────────────────────
@@ -916,6 +935,37 @@ def _snapshot_subtree_delays(parser_state, entity, out=None):
     for sub_entity in logic.submodule_instances.values():
         _snapshot_subtree_delays(parser_state, sub_entity, out)
     return out
+
+
+def _schedule_delays(parser_state, func_entity, snapshot):
+    """entity -> delay (du) for everything a schedule of `func_entity` may use.
+
+    What this pass measured, falling back to the previous pass's snapshot. The
+    fallback is what makes rescheduling possible at all -- on every pass after
+    the first, the FSM has replaced the pure function, so none of its
+    operations are instantiated and none of them get measured, yet the
+    scheduler still needs their delays to decide how many fit in a (now
+    smaller) state.
+
+    Anything in neither is RESOLVED (_resolve_delay_du: path delay cache,
+    submodule sum, width heuristic), never defaulted to 0. A 0 here is final --
+    _resolve_delay_du trusts a known value -- and a zero-delay operation is
+    glue: never scheduled, re-rendered inline at every use. That default once
+    turned a combinational candidate's never-instantiated soft-operator gates
+    (1269 nodes) into a "0 ops, 1 state" schedule that won the area search,
+    then hung codegen re-rendering a carry chain as one exponential inline
+    expression. The resolved value is stored, so the carried snapshot is
+    complete and later passes schedule from identical numbers.
+    """
+    live = _snapshot_subtree_delays(parser_state, func_entity)
+    delays = {k: v for k, v in snapshot.items() if v is not None}
+    for k, v in live.items():
+        if v is not None:
+            delays[k] = v
+    for k in sorted(live):
+        if k not in delays:
+            delays[k] = _resolve_delay_du(parser_state, k, delays)
+    return delays
 
 
 def _subtree_entities(parser_state, entity, out=None):
@@ -3062,17 +3112,8 @@ def BUILD_SCHEDULE(
             f"there is nothing to schedule (internal error)."
         )
     budget_du = _budget_du(parser_state, budget_scale)
-    # Delays: what this pass measured, falling back to the previous pass's
-    # snapshot for anything unmeasured. The fallback is what makes rescheduling
-    # possible at all -- on every pass after the first, the FSM has replaced the
-    # pure function, so none of its operations are instantiated and none of them
-    # get measured, yet the scheduler still needs their delays to decide how
-    # many fit in a (now smaller) state.
     snapshot = (prev_schedule or {}).get("entity_delays_snapshot", {})
-    live = _snapshot_subtree_delays(parser_state, func_entity)
-    delays = {k: (v if v is not None else snapshot.get(k, 0)) for k, v in live.items()}
-    for k, v in snapshot.items():
-        delays.setdefault(k, v)
+    delays = _schedule_delays(parser_state, func_entity, snapshot)
 
     _seed_struct_widths(parser_state)
     opened = tuple(sorted(set(opened)))
@@ -3248,6 +3289,7 @@ def BUILD_SCHEDULE(
         "opened": list(opened),
         "unshared": [list(pair) for pair in unshared],
     }
+    _check_nonempty_schedule(parser_state, key, func_entity, nodes)
     schedule = dict(schedule_core)
     schedule["entity"] = _schedule_entity_name(func_entity, schedule_core)
     # NOT part of schedule_core: it must never affect _schedule_entity_name's
@@ -3255,6 +3297,37 @@ def BUILD_SCHEDULE(
     # DESCRIBE_SCHEDULE, and must not perturb entity names / cache keys.
     schedule["descend_truncated"] = dag.get("descend_truncated", [])
     return schedule
+
+
+def _check_nonempty_schedule(parser_state, key, func_entity, nodes):
+    """Refuse a schedule that placed NO operation while real logic was
+    treated as free.
+
+    Zero scheduled operations is legitimate for a function that is genuinely
+    all wiring, or whose gates really measured below one delay unit (delays
+    are truncated to 0.1 ns). What is never legitimate is an operation priced
+    at 0 that its own delay resolution says costs time: that is an unmeasured
+    delay having been defaulted rather than resolved (see _schedule_delays),
+    and building it renders every such gate inline as glue -- the "0 ops -> 0
+    shared unit(s)" schedule that once hung codegen for half an hour.
+    """
+    if any(node.get("fu") for node in nodes.values()):
+        return
+    for nid in sorted(nodes):
+        node = nodes[nid]
+        if node["kind"] == "inlined" or node["delay_du"] > 0:
+            continue
+        logic = parser_state.FuncLogicLookupTable.get(node["entity"])
+        if logic is None or _leaf_area(node["entity"], logic) <= 0.0:
+            continue
+        resolved = _resolve_delay_du(parser_state, node["entity"], {})
+        if resolved > 0:
+            raise AutoFsmInternalError(
+                f"AUTO_FSM {key}: scheduling {func_entity!r} placed 0 operations, "
+                f"but operation {nid!r} ({node['entity']}) was priced at 0 ns "
+                f"while its delay resolves to {resolved / 10.0:.2f} ns -- an "
+                f"unmeasured delay was treated as free wiring (internal error)"
+            )
 
 
 def _fold_count_per_unit(folds, n_copies):
@@ -3952,6 +4025,8 @@ def _SWEEP_MIN_AREA_SCHEDULE(
                 ctl=ctl,
                 func_entity_override=func_entity_override,
             )
+        except AutoFsmInternalError:
+            raise
         except AutoFsmError:
             return None, "rejected: too many operations to score (DAG cap)", None
         if sched["latency_infeasible"] and not anchor["latency_infeasible"]:
@@ -4093,6 +4168,8 @@ def SWEEP_MIN_AREA_SCHEDULE(
                 parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl, debug=debug,
                 func_entity_override=candidate_entity,
             )
+        except AutoFsmInternalError:
+            raise
         except AutoFsmError:
             continue
         if (candidate["latency_infeasible"] or candidate["worst_state_du"] > candidate["budget_du"]
@@ -4291,13 +4368,79 @@ def _AUTO_FSM_KEYS_UNDER_MAIN(parser_state, main_func_name):
     return keys
 
 
+# Schedule fields that describe HOW a schedule was reached or scored, not the
+# hardware it builds. The budget fields change on every tightening step, and
+# `entity` hashes them in -- comparing them made every tightened trial look
+# "changed", so the driver's "shrinking no longer changes the schedule" stop
+# could never fire and each step spent a synthesis on identical hardware.
+_SCHEDULE_NON_HARDWARE_KEYS = frozenset(
+    (
+        "budget_scale",
+        "budget_du",
+        "worst_state_du",
+        "at_floor",
+        "entity",
+        "est_area",
+        "est_area_anchor",
+        "sweep_candidates",
+        "ctl_auto_candidates",
+        "comb_share_candidates",
+        "descend_truncated",
+    )
+)
+
+
+def _schedule_hardware(schedule):
+    return {
+        k: v for k, v in schedule.items() if k not in _SCHEDULE_NON_HARDWARE_KEYS
+    }
+
+
 def SCHEDULES_EQUAL(a, b) -> bool:
-    """Structural comparison used as the driver loop's convergence test."""
+    """Do two {key: schedule} maps build the same hardware?
+
+    The driver loop's convergence test. Budget and scoring bookkeeping is
+    ignored (see _SCHEDULE_NON_HARDWARE_KEYS): the tighten loop asks whether a
+    smaller budget moved any operation, not whether the number changed."""
     if a is None or b is None:
         return a is b
     if set(a) != set(b):
         return False
-    return all(a[k] == b[k] for k in sorted(a))
+    return all(
+        _schedule_hardware(a[k]) == _schedule_hardware(b[k]) for k in sorted(a)
+    )
+
+
+def FAILED_MAIN_MHZ(multimain_timing_params):
+    """main name -> achieved MHz for every MAIN that missed its goal on the
+    last build (entries with no achieved number are left out)."""
+    failures = getattr(multimain_timing_params, "sweep_timing_failures", None) or []
+    return {
+        main: achieved
+        for main, _goal, achieved, _why in failures
+        if achieved is not None
+    }
+
+
+def TIGHTENING_STALLED(prev_failed_mhz, failed_mhz):
+    """[(main, prev_mhz, mhz)] when a tightened build helped NO failing MAIN,
+    else [].
+
+    Stalled means every MAIN that still fails had also failed before and did
+    not gain more than TIGHTEN_MIN_FMAX_GAIN. Any MAIN without a previous
+    number counts as progress unknown -- never stop on missing data."""
+    if not failed_mhz or not prev_failed_mhz:
+        return []
+    stalled = []
+    for main in sorted(failed_mhz):
+        prev = prev_failed_mhz.get(main)
+        if prev is None:
+            return []
+        mhz = failed_mhz[main]
+        if mhz > prev * (1.0 + TIGHTEN_MIN_FMAX_GAIN):
+            return []
+        stalled.append((main, prev, mhz))
+    return stalled
 
 
 def _reg_bits_from_types(schedule, reg_types):
@@ -4472,6 +4615,12 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
     uses more, smaller states, and go again -- the direct analogue of the sweep
     adding pipeline stages, and the reason an AUTO_FSM can be tuned by iteration
     rather than by hand.
+
+    The loop stops when timing is met, when no AUTO_FSM is blamed, when every
+    blamed FSM is at its floor, when a tightened build did not raise any
+    failing MAIN's fmax (TIGHTEN_MIN_FMAX_GAIN -- the critical path is not in
+    the FSM's states), when shrinking the budget no longer changes the
+    hardware, or at MAX_SCHEDULE_PASSES.
     """
     import sys
 
@@ -4487,6 +4636,9 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
     force_unshare = list(args.auto_fsm_unshare)
     force_open = list(args.auto_fsm_open)
     prev_schedules = None
+    # Set only once a pass has been rebuilt after a tightening: what the build
+    # before it achieved, so the stall check below compares like with like.
+    tightened_from = None
     for schedule_pass in range(1, MAX_SCHEDULE_PASSES + 1):
         print(
             f"================== AUTO_FSM Pass {schedule_pass}: Scheduling "
@@ -4547,6 +4699,28 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
                 flush=True,
             )
             break
+        failed_mhz = FAILED_MAIN_MHZ(multimain_timing_params)
+        if tightened_from is not None:
+            prev_failed_mhz, prev_states = tightened_from
+            stalled = TIGHTENING_STALLED(prev_failed_mhz, failed_mhz)
+            if stalled:
+                states = ", ".join(
+                    f"{key} {prev_states[key]}->{schedules[key]['n_states']} states"
+                    for key in sorted(prev_states)
+                )
+                mains = ", ".join(
+                    f"{main} {mhz:.2f} MHz (was {prev:.2f})"
+                    for main, prev, mhz in stalled
+                )
+                print(
+                    f"AUTO_FSM: tightening changed the schedule ({states}) but "
+                    f"fmax did not improve: {mains}. The critical path does not "
+                    f"run through the FSM's per-state operations (it may be in "
+                    f"the FSM's control, e.g. input-capture enable fanout, or "
+                    f"elsewhere in the MAIN); more states cannot help.",
+                    flush=True,
+                )
+                break
         if schedule_pass == MAX_SCHEDULE_PASSES:
             print(
                 f"AUTO_FSM: still missing timing after "
@@ -4597,6 +4771,10 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
                 flush=True,
             )
             break
+        tightened_from = (
+            failed_mhz,
+            {key: schedules[key]["n_states"] for key in blamed},
+        )
         for key in sorted(blamed):
             print(
                 f"AUTO_FSM {key}: timing missed; tightened per-state budget to "

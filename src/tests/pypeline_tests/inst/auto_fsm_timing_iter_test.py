@@ -51,9 +51,11 @@ def main():
         PYPELINEC,
         DESIGN,
         # PyRTL on purpose (run_all category build_report_pyrtl): under sky130
-        # the design's critical path (~9.8 ns, ~102 MHz) lies outside the FSM
-        # states, so no reschedule changes it -- a goal below it is met by the
-        # first schedule, and one above it can never be met.
+        # the design's critical path (~9.8 ns, ~102 MHz) is the FSM's
+        # input-capture enable fanning out to all 142 input-register bits, not
+        # any state's operations, so no reschedule changes it -- a goal below
+        # it is met by the first schedule, and one above it can never be met
+        # (auto_fsm_tighten_stall_test.py covers that case under sky130).
         "--syn_tool",
         "pyrtl",
         "--out_dir",

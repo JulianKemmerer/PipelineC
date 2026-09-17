@@ -2722,7 +2722,8 @@ gates are far too small a thing to share.
 The search never returns something its model calls bigger than plain
 share-everything. It may spend unused timing margin, but never beyond the
 scaled clock budget; the real synthesis/tighten loop remains the final timing
-authority. `--auto_fsm_no_area_sweep` turns the search *off*, which is useful
+authority. That loop stops, and says so, when a tightened schedule doesn't raise
+fmax. The critical path is then somewhere extra states can't reach. `--auto_fsm_no_area_sweep` turns the search *off*, which is useful
 mainly for comparing the two.
 
 **How much the search can do depends on your clock goal**, and not in the

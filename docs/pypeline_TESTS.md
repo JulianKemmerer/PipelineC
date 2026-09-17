@@ -87,8 +87,11 @@ fastest tool that can check what it tests:
     PyRTL's delay model.
   - `auto_fsm_timing_iter_test.py` needs a first AUTO_FSM schedule that misses
     timing and a tightened one that meets it. Under sky130 the design measures
-    102.25 MHz at every schedule tried (2, 3 and 6 states): its critical path
-    lies outside the FSM states, so rescheduling can't change it.
+    102.25 MHz at every schedule tried (2, 3 and 6 states). Its critical path is
+    the FSM's input-capture enable: one gate drives all 142 input-register bits,
+    and no state count changes that. That sky130 behavior is what
+    `auto_fsm_tighten_stall_test.py` (sky130) checks: the driver stops after the
+    first tightened build with no fmax gain.
   - `sweep_floor_detect_test.py` checks the sweep's floor stop, which ends
     that design's sweep only under PyRTL. There the predicted soft floor
     (~16 MHz) matches the measured plateau. Under sky130 the plateau
@@ -140,7 +143,8 @@ while Vivado takes about 30 minutes.
 
 **Clock goals.** Keep a sweep test's MHz goal low enough that it settles in a
 few synthesis iterations, unless pushing the sweep is the point of the test
-(`sweep_floor_detect_test.py`, `auto_fsm_timing_iter_test.py`, the unreachable
+(`sweep_floor_detect_test.py`, `auto_fsm_timing_iter_test.py`,
+`auto_fsm_tighten_stall_test.py`, the unreachable
 half of `auto_pipeline_constraints_test.py`). Keep it above the design's
 unpipelined fmax wherever the test needs a real pipeline cut.
 

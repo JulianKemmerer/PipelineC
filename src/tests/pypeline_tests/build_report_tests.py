@@ -225,6 +225,18 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # ...and the other half: when rescheduling cannot move the critical path
+    # (sky130, a goal above the FSM's input-capture fanout path), the driver
+    # stops after the first tightened build that gains no fmax, instead of
+    # shrinking the budget into gate-level schedules and a 30-minute hang.
+    tests.append(
+        Test(
+            name="auto_fsm_tighten_stall_test",
+            category=DM,
+            cmd=[INST_DIR / "auto_fsm_tighten_stall_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # Regression guard for src/COCOTB.py's PASS/FAIL reporting: runs one
     # passing and one failing design through --cocotb --ghdl --run all and
     # asserts each is scored correctly. See COCOTB.py's CHECK_COCOTB_RESULTS

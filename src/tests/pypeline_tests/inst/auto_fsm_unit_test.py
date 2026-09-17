@@ -541,6 +541,118 @@ def main():
             "the delay snapshot is carried (later passes reschedule from it)",
         )
 
+        print("[tightening: SCHEDULES_EQUAL compares hardware, not budget]")
+        # The tighten loop shrinks budget_scale and asks whether the plan
+        # moved. Comparing the budget fields (and the entity name hashed from
+        # them) made every step look changed, so its "shrinking no longer
+        # changes the schedule" stop could never fire.
+        roomy_a = schedule_with(ps2, key2, tag2, 4.0)
+        roomy_b = schedule_with(ps2, key2, tag2, 3.0)
+        check(
+            roomy_a["n_states"] == roomy_b["n_states"]
+            and roomy_a["budget_scale"] != roomy_b["budget_scale"]
+            and roomy_a["entity"] != roomy_b["entity"],
+            "precondition: two roomy budgets pack identically but differ in "
+            "budget fields and entity name",
+        )
+        check(
+            AUTO_FSM.SCHEDULES_EQUAL({key2: roomy_a}, {key2: roomy_b}),
+            "SCHEDULES_EQUAL ignores budget bookkeeping when the hardware is "
+            "identical",
+        )
+
+        print("[tightening: stop when fmax did not improve]")
+        stalled = AUTO_FSM.TIGHTENING_STALLED
+        check(
+            stalled({"m": 102.26}, {"m": 102.25}) == [("m", 102.26, 102.25)],
+            "a tightened build at the same fmax is a stall (the sky130 "
+            "102.25 MHz case)",
+        )
+        check(
+            bool(stalled({"m": 100.0}, {"m": 100.5})),
+            "a gain within TIGHTEN_MIN_FMAX_GAIN is still a stall",
+        )
+        check(
+            stalled({"m": 100.0}, {"m": 105.0}) == [],
+            "a real fmax gain keeps tightening",
+        )
+        check(
+            stalled({"m": 100.0, "n": 50.0}, {"m": 100.0, "n": 60.0}) == [],
+            "any failing MAIN improving keeps tightening",
+        )
+        check(
+            stalled({"m": 100.0}, {"m": 100.0, "n": 50.0}) == []
+            and stalled({}, {"m": 100.0}) == [],
+            "a MAIN with no previous number never counts as stalled",
+        )
+        fake_params = type("P", (), {})()
+        fake_params.sweep_timing_failures = [
+            ("m", 110.0, 102.25, "why"),
+            ("n", 110.0, None, "why"),
+        ]
+        check(
+            AUTO_FSM.FAILED_MAIN_MHZ(fake_params) == {"m": 102.25},
+            "FAILED_MAIN_MHZ keeps only failures with an achieved number",
+        )
+
+        print("[unmeasured delays are resolved, never free]")
+        # No fake_delays: nothing in this parse was ever measured, exactly
+        # like a combinational candidate's never-instantiated soft-operator
+        # gates. Defaulting those to 0 turned them into glue -- a 0-op,
+        # 1-state schedule that won the area search and then hung codegen.
+        ps_u, key_u, tag_u = parse_design(tmp, mhz=25.0, name="d_unmeasured")
+        ent_u = AUTO_FSM._entity_key_for_callable(ps_u, tag_u.func)
+        delays_u = AUTO_FSM._schedule_delays(ps_u, ent_u, {})
+        adders_u = [
+            e for e in ps_u.FuncLogicLookupTable[ent_u].submodule_instances.values()
+            if e.startswith("BIN_OP_PLUS")
+        ]
+        check(
+            adders_u and all(delays_u[e] > 0 for e in adders_u),
+            f"an unmeasured adder gets a resolved, nonzero delay "
+            f"({[delays_u.get(e) for e in adders_u]})",
+        )
+        sched_u = AUTO_FSM.BUILD_SCHEDULE(ps_u, key_u, tag_u, 0.9)
+        check(
+            sum(1 for n in sched_u["nodes"].values() if n.get("fu")) == 3,
+            "an unmeasured function still schedules all 3 adds",
+        )
+        check(
+            all(sched_u["entity_delays_snapshot"].get(e, 0) > 0 for e in adders_u),
+            "the resolved delays are carried in the snapshot",
+        )
+
+        print("[zero-op guard]")
+        real_schedule_delays = AUTO_FSM._schedule_delays
+        AUTO_FSM._schedule_delays = lambda p, e, s: {
+            k: 0 for k in real_schedule_delays(p, e, s)
+        }
+        try:
+            for label, build in (
+                ("BUILD_SCHEDULE", AUTO_FSM.BUILD_SCHEDULE),
+                ("the area search", AUTO_FSM.SWEEP_MIN_AREA_SCHEDULE),
+            ):
+                try:
+                    build(ps_u, key_u, tag_u, 0.9)
+                    raised = False
+                except AUTO_FSM.AutoFsmInternalError as e:
+                    raised = "priced at 0 ns" in str(e)
+                check(
+                    raised,
+                    f"{label} refuses a 0-op schedule built from real logic "
+                    f"priced at 0",
+                )
+        finally:
+            AUTO_FSM._schedule_delays = real_schedule_delays
+        # A gate genuinely measured below one delay unit is still legal.
+        ps_z, key_z, tag_z = parse_design(tmp, mhz=25.0, name="d_zero")
+        fake_delays(ps_z, key_z, tag_z, adder_du=0)
+        sched_z = AUTO_FSM.BUILD_SCHEDULE(ps_z, key_z, tag_z, 0.9)
+        check(
+            not any(n.get("fu") for n in sched_z["nodes"].values()),
+            "operations MEASURED at 0 still schedule as free wiring (no error)",
+        )
+
         print("[tag API]")
         check(tag.latency == 0, "an unscheduled tag reports latency 0")
         check(

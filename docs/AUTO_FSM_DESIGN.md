@@ -252,7 +252,12 @@ function's input, or a constant.
 Three classifications:
 
 - **delay 0 → glue.** Never scheduled, never shared, re-rendered inline at each
-  use. Duplicating free wiring costs nothing.
+  use. Duplicating free wiring costs nothing. "Unmeasured" never means 0:
+  `_schedule_delays` takes this pass's measurement or the carried snapshot, and
+  resolves anything in neither through `_resolve_delay_du` (path delay cache,
+  submodule sum, width heuristic). A 0-op schedule built from logic whose own
+  delay resolves above 0 is refused with `AutoFsmInternalError` (see History,
+  "Tighten loop termination").
 - **delay fits a state → atomic unit.** Shareable: two nodes of this entity in
   different states bind to one FU.
 - **delay exceeds a state's budget → descend**, inlining the operation's body
@@ -695,8 +700,24 @@ give up.
 Tightening then shrinks the budget **until the schedule actually changes** — one
 step of the factor does not always move an operation across a state boundary, and
 rebuilding a byte-identical design to discover that would waste a synthesis run.
-The loop stops when timing is met, when nothing is blamed, when every blamed
-region is `at_floor`, when further shrinking changes nothing, or at the pass cap.
+The loop stops when:
+
+- timing is met;
+- nothing is blamed;
+- every blamed region is `at_floor`;
+- **a tightened build did not raise any failing MAIN's fmax** by more than
+  `TIGHTEN_MIN_FMAX_GAIN` (1%). The schedule changed and the critical path did
+  not, so it runs somewhere the state count cannot reach: the FSM's own
+  control, or elsewhere in the MAIN. `TIGHTENING_STALLED` makes this decision.
+  It never stops on missing data, and the stop prints the old and new state
+  counts and fmax;
+- further shrinking changes nothing. `SCHEDULES_EQUAL` compares the hardware
+  (`_SCHEDULE_NON_HARDWARE_KEYS` excludes the budget fields and the entity name
+  hashed from them), so this stop can actually fire;
+- or at the pass cap.
+
+A stop that leaves timing unmet still fails the build through the normal
+timing exit.
 
 ### 3.5 Delay measurement
 
@@ -1238,7 +1259,7 @@ at least 3"*.
 | test | category | what it proves |
 |---|---|---|
 | `auto_fsm_test.py` | native_sim, (synth via wrapper) | the pure function's semantics, and the passthrough behaviour when unscheduled |
-| `auto_fsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing and common-glue factoring, same- and cross-FU register reuse, recovered rolling output and consume/produce storage, field-lifetime input compaction, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--auto_fsm_abstract_area`, real flip-flop area) |
+| `auto_fsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing and common-glue factoring, same- and cross-FU register reuse, recovered rolling output and consume/produce storage, field-lifetime input compaction, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, tighten-loop termination (`SCHEDULES_EQUAL` ignores budget bookkeeping, the `TIGHTENING_STALLED` truth table), unmeasured delays resolved rather than zeroed, the zero-op guard (and measured-0 operations still legal), soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--auto_fsm_abstract_area`, real flip-flop area) |
 | `area_model_test.py` (`src/tests/pypeline_tests/inst/`) | unit | not AUTO_FSM-specific (SYN/DEVICE_MODELS leaf-area-cache coverage), but two tests here directly guard AUTO_FSM.py's own constant: the committed `area_cache/` excludes STA-harness registers, and `AUTO_FSM.UM2_PER_ABSTRACT_AREA_UNIT` refits to what is actually committed |
 | `self_check_auto_fsm_test.py` | native_sim, vhdl_sim, synth ×2 | the FSM computes what the function did — in native sim, in GHDL, at latency 0 and at real latency |
 | `stream_auto_fsm_test.py` | native_sim | `make_stream_auto_fsm`'s handshake protocol: ready deasserts while busy, latency/II == `fsm.latency + 1`, and — the property raw AUTO_FSM cannot provide — a stalled consumer never loses a result and sees stable data while it's held |
@@ -1250,7 +1271,8 @@ at least 3"*.
 | `auto_fsm_min_area_verify_test.py` | synth | the search actually MOVES on a design built to reward moving, the move is smaller in real yosys cells, and no alternative point of the search space (built via `--auto_fsm_open` / `--auto_fsm_unshare`) is smaller still |
 | `auto_fsm_real_area_compare_test.py` | build_report | same question under `--syn_tool sky130`, judged by real `Measured area:` rather than yosys cells: real-µm²-ranked vs `--auto_fsm_abstract_area` vs `--auto_fsm_no_area_sweep`, all three built; pins the 25k µm² v7 structural ceiling and beats the lowest committed AUTO_PIPELINE/latchup.app divider area; plus AUTO_FSM's own allocated-storage bit count against the build's real sequential cell count (the register-fidelity question §3.8 raises explicitly) |
 | `auto_fsm_max_latency_test.py` | synth | a meetable `max_latency` is met by unsharing; an unmeetable one fails the build naming the latency actually needed |
-| `auto_fsm_timing_iter_test.py` | synth | a critical path inside an FSM is found and fixed by rescheduling |
+| `auto_fsm_timing_iter_test.py` | build_report (pyrtl) | a critical path inside an FSM is found and fixed by rescheduling |
+| `auto_fsm_tighten_stall_test.py` | build_report (sky130) | the other half: when rescheduling cannot move the critical path (sky130, 110 MHz, a path the state count cannot change), the driver stops after the first tightened build with no fmax gain, prints why, never produces a 0-op schedule, and exits nonzero within a timeout |
 | `auto_fsm_ctl_compare_test.py` | synth | the constant-table control path is not bigger than the comparator chains it replaced, and the donut FSM still meets the clock goal that v2 misses |
 | `double_parse_file_test.py` | elab | re-parsing an AUTO_FSM design is reproducible |
 
@@ -1456,6 +1478,42 @@ when something changes, revise the entry that owns that topic rather than
 adding a new one. Keep a fact here only if it still changes a decision
 today: an alternative someone would otherwise retry, a measurement that is
 still a live regression reference, or the reason a default is what it is.
+
+### Tighten loop termination
+
+Found under `--syn_tool sky130` with `auto_fsm_tighten_test.py` at 110 and
+150 MHz (`--auto_fsm_budget_scale 1.5`). There, the tighten loop ran for
+20–30+ minutes without ending. Three independent defects combined:
+
+- **Tightening that could not help.**
+  - The design measured 102.25 MHz at 2, 3 and 6 states.
+  - Its critical path is state flop → one `nand2` driving 143 loads
+    (7.99 ns, a max-capacitance violation) → `mux2` → register. That nand2 is
+    the FSM's input-capture enable, which feeds all 142 input-register bits.
+    It is in the FSM, but not in any state, so no schedule moves it.
+  - Blame falls back to every FSM under the MAIN, so the loop kept shrinking
+    the budget until adds decomposed into hundreds of 1-bit ANDs.
+  - Fix: stop when a tightened build gains no fmax (`TIGHTEN_MIN_FMAX_GAIN`).
+  - Splitting under a tightened budget was deliberately kept. The stall stop
+    ends this case before the budget reaches it.
+- **A "0 ops -> 0 shared unit(s), 1 states" schedule, and the hang.**
+  - `BUILD_SCHEDULE` defaulted unmeasured delays to 0. `_resolve_delay_du`
+    trusts a known 0, so its fallbacks never ran.
+  - This hit a combinational candidate's soft-operator gates (1269 nodes),
+    which are never instantiated and so never measured. The candidate became
+    all glue, scored as a free 1-state FSM, and won the area search.
+  - It only competed once the anchor had itself decomposed: the candidate size
+    filter scales with the anchor's node count.
+  - Codegen then rendered that glue inline recursively. A gate-level carry
+    chain, where each carry feeds two consumers, becomes one exponentially
+    large expression.
+  - Fix: `_schedule_delays` resolves unmeasured delays, and the same candidate
+    now prices at 888 ops / 390 states. `_check_nonempty_schedule` is the
+    tripwire. Codegen's inline glue rendering is still unmemoized, and is safe
+    only because genuine glue is plain wiring.
+- **`SCHEDULES_EQUAL` compared `budget_scale`.** Every tightened trial
+  therefore looked changed, so "shrinking no longer changes the schedule" was
+  dead code. It now compares hardware only.
 
 ### Operand multiplexer costing
 

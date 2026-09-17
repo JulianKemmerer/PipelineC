@@ -1558,6 +1558,7 @@ for each schedule pass:
     install schedules, re-PARSE_FILE  <- call sites become the generated FSMs
     SYN.DO_SWEEP_AND_AUTO_PIPELINE     <- §4 sweep + §6 AUTO_PIPELINE loop
     timing met, or nothing/only-floors blamed?  -> done
+    last tightening gained no fmax?             -> done (path is not in the states)
     otherwise shrink the blamed FSMs' per-state budget and go again
 ```
 
