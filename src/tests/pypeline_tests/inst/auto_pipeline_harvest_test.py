@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # In-process unit tests for the AUTO_PIPELINE .latency machinery:
-#   - SYN.HARVEST_AUTO_PIPELINE_LATENCIES grouping + divergence detection
-#   - SYN.SEED_TIMING_PARAMS_FROM_PREVIOUS two-tier matching + the
+#   - AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES grouping + divergence detection
+#   - AUTO_PIPELINE.SEED_TIMING_PARAMS_FROM_PREVIOUS two-tier matching + the
 #     unseeded-auto_pipeline-instance (call-site-set-changed) detection
 #   - PY_TO_LOGIC.CANONICAL_CALLABLE_KEY determinism
 #   - pypeline.AUTO_PIPELINE latency cache + read-flag behavior
@@ -19,7 +19,7 @@ import pickle
 
 import C_TO_LOGIC
 import PY_TO_LOGIC
-import SYN
+import AUTO_PIPELINE as AUTO_PIPELINE_MODULE  # aliased: the pypeline tag has the same name
 import pypeline
 import pypeline_names
 from pypeline import AUTO_PIPELINE, hw_func, uint8_t
@@ -86,7 +86,7 @@ def test_harvest_agreeing_instances():
         "main1" + M + "core0": FakeTimingParams(6),
         "main2" + M + "core0": FakeTimingParams(6),
     }
-    latencies, divergences = SYN.HARVEST_AUTO_PIPELINE_LATENCIES(ps, tpl)
+    latencies, divergences = AUTO_PIPELINE_MODULE.HARVEST_AUTO_PIPELINE_LATENCIES(ps, tpl)
     assert latencies == {"keyA": 6}, latencies
     assert divergences == {}, divergences
 
@@ -100,7 +100,7 @@ def test_harvest_divergent_instances():
         "main1" + M + "core0": FakeTimingParams(6),
         "main2" + M + "core0": FakeTimingParams(9),  # sweep gave it more stages
     }
-    latencies, divergences = SYN.HARVEST_AUTO_PIPELINE_LATENCIES(ps, tpl)
+    latencies, divergences = AUTO_PIPELINE_MODULE.HARVEST_AUTO_PIPELINE_LATENCIES(ps, tpl)
     assert latencies == {}, latencies
     assert "keyA" in divergences and len(divergences["keyA"]) == 2, divergences
 
@@ -108,7 +108,7 @@ def test_harvest_divergent_instances():
 def test_harvest_no_auto_pipeline_is_empty():
     ps = FakeParserState()
     ps.LogicInstLookupTable["main"] = make_logic("plain_func")
-    latencies, divergences = SYN.HARVEST_AUTO_PIPELINE_LATENCIES(ps, {})
+    latencies, divergences = AUTO_PIPELINE_MODULE.HARVEST_AUTO_PIPELINE_LATENCIES(ps, {})
     assert latencies == {} and divergences == {}
 
 
@@ -145,7 +145,7 @@ def test_seed_two_tier_matching_and_unseeded_detection():
         "main" + M + "wrap2" + M + "core": FakeTimingParams(0),
         "main" + M + "wrap2" + M + "newcore": FakeTimingParams(0),
     }
-    seeded, unseeded = SYN.SEED_TIMING_PARAMS_FROM_PREVIOUS(
+    seeded, unseeded = AUTO_PIPELINE_MODULE.SEED_TIMING_PARAMS_FROM_PREVIOUS(
         prev, prev_tpl, new, new_tpl
     )
     # Tier a: exact path
@@ -174,8 +174,8 @@ def test_hash_ext_is_content_aware():
         ps.LogicInstLookupTable["main"] = parent
         ps.LogicInstLookupTable["main" + M + "child0"] = child
         tpl = {
-            "main": SYN.TimingParams("main", parent),
-            "main" + M + "child0": SYN.TimingParams("main" + M + "child0", child),
+            "main": AUTO_PIPELINE_MODULE.TimingParams("main", parent),
+            "main" + M + "child0": AUTO_PIPELINE_MODULE.TimingParams("main" + M + "child0", child),
         }
         return ps, parent, tpl
 
@@ -329,10 +329,10 @@ def test_auto_pipeline_build_modes_and_served_values():
         served = pypeline.AUTO_PIPELINE_SERVED_LATENCIES()
         key = started.canonical_key
         assert served == {key: {2}}, served
-        assert SYN.AUTO_PIPELINE_SERVED_VALUES_MATCH(served, {key: 2})
-        assert not SYN.AUTO_PIPELINE_SERVED_VALUES_MATCH(served, {key: 3})
-        assert SYN.AUTO_PIPELINE_SERVED_VALUES_MATCH(served, {})  # not elaborated
-        assert not SYN.AUTO_PIPELINE_SERVED_VALUES_MATCH({key: {0, 2}}, {key: 2})
+        assert AUTO_PIPELINE_MODULE.AUTO_PIPELINE_SERVED_VALUES_MATCH(served, {key: 2})
+        assert not AUTO_PIPELINE_MODULE.AUTO_PIPELINE_SERVED_VALUES_MATCH(served, {key: 3})
+        assert AUTO_PIPELINE_MODULE.AUTO_PIPELINE_SERVED_VALUES_MATCH(served, {})  # not elaborated
+        assert not AUTO_PIPELINE_MODULE.AUTO_PIPELINE_SERVED_VALUES_MATCH({key: {0, 2}}, {key: 2})
 
         # A harvested cache overrides start/max values; a fixed latency must
         # agree with it
@@ -374,12 +374,12 @@ def test_check_auto_pipeline_constraints_realized():
         "main" + M + "free0": FakeTimingParams(9),
         "main" + M + "start0": FakeTimingParams(7),
     }
-    SYN.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(ps, tpl)
+    AUTO_PIPELINE_MODULE.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(ps, tpl)
     for local_sub, built in (("fixed0", 1), ("fixed0", 3), ("cap0", 4)):
         bad = dict(tpl)
         bad["main" + M + local_sub] = FakeTimingParams(built)
         try:
-            SYN.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(ps, bad)
+            AUTO_PIPELINE_MODULE.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(ps, bad)
         except SystemExit:
             pass
         else:

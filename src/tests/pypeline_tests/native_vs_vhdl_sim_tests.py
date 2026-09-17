@@ -44,10 +44,10 @@ from common import (
 # selects the full-build pipelined compare (pypeline_sim_debug.py builds once
 # then runs native + VHDL concurrently, each in its own copy of the warm build).
 COMB_TEST_FILES = [
-    ("self_check_auto_comb_share_composition_test.py", INST_DIR, []),
-    ("self_check_auto_comb_unshare_composition_test.py", INST_DIR, []),
-    ("self_check_stream_auto_comb_unshare_test.py", INST_DIR, []),
-    ("self_check_stream_auto_comb_share_test.py", INST_DIR, []),
+    ("self_check_auto_comb_area_opt_composition_test.py", INST_DIR, []),
+    ("self_check_auto_comb_delay_opt_composition_test.py", INST_DIR, []),
+    ("self_check_stream_auto_comb_delay_opt_test.py", INST_DIR, []),
+    ("self_check_stream_auto_comb_area_opt_test.py", INST_DIR, []),
     ("pipeline_latency_sim_test.py", INST_DIR, []),
     ("self_check_counter_test.py", INST_DIR, []),
     ("self_check_fifo_test.py", INST_DIR, []),
@@ -128,8 +128,8 @@ COMB_TEST_FILES = [
 # sky130, see NON_COMB_SYN_TOOL). --comb entries above never reach synthesis
 # (cocotb exits first), so they need no tool.
 NON_COMB_TEST_FILES = [
-    ("self_check_auto_comb_share_composition_test.py", INST_DIR, []),
-    ("self_check_auto_comb_unshare_composition_test.py", INST_DIR, []),
+    ("self_check_auto_comb_area_opt_composition_test.py", INST_DIR, []),
+    ("self_check_auto_comb_delay_opt_composition_test.py", INST_DIR, []),
     ("pipeline_latency_sim_test.py", INST_DIR, ["--pipeline_min_effort", "0"]),
     # Same RAM design as the --comb entry, through a real pipelined build: the
     # pure lookup MAIN gets compiler alignment registers around the

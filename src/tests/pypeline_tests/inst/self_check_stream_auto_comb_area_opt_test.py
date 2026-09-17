@@ -1,12 +1,12 @@
-"""Registered ACS stream, native/GHDL backpressure and throughput checks."""
+"""Registered AREA_OPT stream, native/GHDL backpressure and throughput checks."""
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../include/pypeline")))
-from pypeline import (AUTO_COMB_SHARE, MAIN, NamedTuple, Reg, hw_func, struct,
+from pypeline import (AUTO_COMB_AREA_OPT, MAIN, NamedTuple, Reg, hw_func, struct,
                       sim_assert, sim_finish, sim_print, uint1_t, uint8_t, uint16_t)
-from stream.stream_auto_comb_share import make_stream_auto_comb_share
+from stream.stream_auto_comb_area_opt import make_stream_auto_comb_area_opt
 
 
 @struct
@@ -23,8 +23,8 @@ def selected(x: input_t) -> uint16_t:
     return x.a * x.b if x.sel else x.c * x.d
 
 
-CORE = AUTO_COMB_SHARE(selected)
-STREAM, STREAM_T = make_stream_auto_comb_share(CORE)
+CORE = AUTO_COMB_AREA_OPT(selected)
+STREAM, STREAM_T = make_stream_auto_comb_area_opt(CORE)
 
 
 @MAIN(5.0)
@@ -57,16 +57,16 @@ def stream_test() -> uint16_t:
         expected:uint16_t = received * 5
         if received[0]:
             expected = received * 3
-        sim_assert(o.stream_out_if.stream.data == expected, "ACS stream result/order mismatch")
+        sim_assert(o.stream_out_if.stream.data == expected, "AREA_OPT stream result/order mismatch")
         if received < 8:
-            sim_assert(cycle == received + 2, "ACS stream latency/II mismatch")
+            sim_assert(cycle == received + 2, "AREA_OPT stream latency/II mismatch")
         last = o.stream_out_if.stream.data
-        sim_print(f"ACS received={received} value={last}", debug=True)
+        sim_print(f"AREA_OPT received={received} value={last}", debug=True)
         received += 1
     if received == 24:
         # Finish the following cycle so the last debug probe is not lost.
         if ~o.stream_out_if.stream.valid:
             sim_finish()
-    sim_assert(cycle < 300, "ACS stream failed to drain")
+    sim_assert(cycle < 300, "AREA_OPT stream failed to drain")
     cycle += 1
     return last

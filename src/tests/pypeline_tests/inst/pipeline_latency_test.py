@@ -443,8 +443,9 @@ def test_conflicting_auto_pipeline():
 
 
 def test_elaboration_metadata():
+    import AUTO_PIPELINE
+
     import PY_TO_LOGIC as py
-    import SYN
     import pypeline as p
 
     p._pipeline_latency_preparing = True
@@ -453,7 +454,7 @@ def test_elaboration_metadata():
             state = py.ELABORATE_LIVE_ROOTS([fork_join])
             assert sorted(state.func_fixed_latency.values()) == [1, 2, 3]
             timing = {
-                name: SYN.TimingParams(name, logic)
+                name: AUTO_PIPELINE.TimingParams(name, logic)
                 for name, logic in state.LogicInstLookupTable.items()
             }
             for name, logic in state.LogicInstLookupTable.items():
@@ -472,15 +473,16 @@ def test_elaboration_metadata():
 
 
 def test_fixed_vhdl_has_no_added_registers():
+    import AUTO_PIPELINE
+
     import tempfile
     from pathlib import Path
     import PY_TO_LOGIC as py
-    import SYN
     import VHDL
 
     state = py.ELABORATE_LIVE_ROOTS([aligned_add])
     timing = {
-        name: SYN.TimingParams(name, logic)
+        name: AUTO_PIPELINE.TimingParams(name, logic)
         for name, logic in state.LogicInstLookupTable.items()
     }
     with tempfile.TemporaryDirectory() as directory:
@@ -495,8 +497,9 @@ def test_fixed_vhdl_has_no_added_registers():
 
 
 def test_placement_respects_entire_fixed_boundary():
+    import AUTO_PIPELINE
+
     import PY_TO_LOGIC as py
-    import SYN
     import SWEEP
 
     @pipeline_latency(1)
@@ -508,7 +511,7 @@ def test_placement_respects_entire_fixed_boundary():
 
     state = py.ELABORATE_LIVE_ROOTS([registered_sum])
     timing = {
-        name: SYN.TimingParams(name, logic)
+        name: AUTO_PIPELINE.TimingParams(name, logic)
         for name, logic in state.LogicInstLookupTable.items()
     }
     assert len(timing) > 1
@@ -518,7 +521,7 @@ def test_placement_respects_entire_fixed_boundary():
         )
         for apply in (
             lambda: SWEEP.APPLY_PIPELINE_PLACEMENTS([placement], state, timing),
-            lambda: SYN.SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
+            lambda: AUTO_PIPELINE.SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
                 inst, tp.logic, 0.5, state, timing, False, write_files=False
             ),
         ):

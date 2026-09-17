@@ -20,7 +20,7 @@ def core(a:uint8_t,b:uint8_t,c:uint8_t,d:uint8_t,s:uint1_t)->uint16_t:
     x:uint16_t = a*b
     y:uint16_t = c*d
     return x if s else y
-ACS = AUTO_COMB_SHARE(core)
+AREA_OPT = AUTO_COMB_AREA_OPT(core)
 """
 
 
@@ -63,7 +63,7 @@ def main():
     source = CORE + """
 @MAIN(1.0)
 def proof(a:uint8_t,b:uint8_t,c:uint8_t,d:uint8_t,s:uint1_t)->uint1_t:
-    return core(a,b,c,d,s) == ACS(a,b,c,d,s)
+    return core(a,b,c,d,s) == AREA_OPT(a,b,c,d,s)
 """
     files = build(proof, source)
     output = yosys(proof, files, ["flatten", "proc", "opt",
@@ -71,7 +71,7 @@ def proof(a:uint8_t,b:uint8_t,c:uint8_t,d:uint8_t,s:uint1_t)->uint1_t:
     assert "SUCCESS" in output, output[-4000:]
     print("PASS: bit-exact equivalence proved over all input combinations")
     counts = []
-    for label, callee in (("original", "core"), ("shared", "ACS")):
+    for label, callee in (("original", "core"), ("area_opt", "AREA_OPT")):
         path = root / label
         files = build(path, CORE + f"""
 @MAIN(1.0)

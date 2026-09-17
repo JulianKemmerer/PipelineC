@@ -7,7 +7,7 @@ import tempfile
 import textwrap
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
-from pypeline import AUTO_COMB_SHARE, AUTO_COMB_UNSHARE, MAIN, hw_func, uint1_t, uint8_t, uint16_t
+from pypeline import AUTO_COMB_AREA_OPT, AUTO_COMB_DELAY_OPT, MAIN, hw_func, uint1_t, uint8_t, uint16_t
 
 
 @hw_func
@@ -19,21 +19,21 @@ def core(a: uint8_t, b: uint8_t, c: uint8_t, d: uint8_t, sel: uint1_t) -> uint16
     return left * right
 
 
-ACU = AUTO_COMB_UNSHARE(core)
+DELAY_OPT = AUTO_COMB_DELAY_OPT(core)
 
 
 @MAIN(1.0)
 def top(a: uint8_t, b: uint8_t, c: uint8_t, d: uint8_t, sel: uint1_t) -> uint16_t:
-    return ACU(a, b, c, d, sel)
+    return DELAY_OPT(a, b, c, d, sel)
 
 
 def test_native():
-    assert ACU.latency == 0
-    assert inspect.signature(ACU) == inspect.signature(core)
-    assert AUTO_COMB_UNSHARE(ACU).func is core
-    assert AUTO_COMB_SHARE(ACU).func is ACU
-    assert AUTO_COMB_UNSHARE(AUTO_COMB_SHARE(core)).func.func is core
-    assert ACU(9, 7, 6, 5, 0) == core(9, 7, 6, 5, 0)
+    assert DELAY_OPT.latency == 0
+    assert inspect.signature(DELAY_OPT) == inspect.signature(core)
+    assert AUTO_COMB_DELAY_OPT(DELAY_OPT).func is core
+    assert AUTO_COMB_AREA_OPT(DELAY_OPT).func is DELAY_OPT
+    assert AUTO_COMB_DELAY_OPT(AUTO_COMB_AREA_OPT(core)).func.func is core
+    assert DELAY_OPT(9, 7, 6, 5, 0) == core(9, 7, 6, 5, 0)
 
 
 def test_native_without_optimizer():
@@ -43,8 +43,8 @@ def test_native_without_optimizer():
 import importlib.abc, runpy, sys
 class NoCompiler(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname in {'AUTO_COMB_SHARE', 'HLS', 'HLS_SPEED', 'HLS_TIMING', 'AUTO_FSM', 'PY_TO_LOGIC', 'C_TO_LOGIC', 'SYN'}:
-            raise AssertionError('native UNSHARE imported ' + fullname)
+        if fullname in {'AUTO_COMB_OPT', 'AUTO', 'AUTO_FSM', 'PY_TO_LOGIC', 'C_TO_LOGIC', 'SYN'}:
+            raise AssertionError('native DELAY_OPT imported ' + fullname)
 sys.meta_path.insert(0, NoCompiler())
 ns = runpy.run_path(sys.argv[1], run_name='native_gate')
 ns['test_native']()
@@ -54,11 +54,10 @@ ns['test_native']()
 
 def test_timing_dependencies():
     from types import SimpleNamespace
-    from HLS_TIMING import TimingModel
-    import HLS
+    import AUTO
 
     parser = SimpleNamespace(FuncLogicLookupTable={"add": SimpleNamespace(inputs=["a", "b"])})
-    model = TimingModel(parser, {"add": ({"a": 3., "b": 3.}, ["test snapshot"])})
+    model = AUTO.TimingModel(parser, {"add": ({"a": 3., "b": 3.}, ["test snapshot"])})
     def node(a, b):
         return {"kind": "binop", "op": {"kind": "binop", "op": "+"}, "entity": "add", "out_type": "uint8_t",
                 "port_types": ["uint8_t", "uint8_t"], "operands": [a, b], "casts": [[], []], "delay_du": 3}
@@ -73,7 +72,7 @@ def test_timing_dependencies():
     assert model.report(dag)["delay"] == 4  # b does not feed this output
     dag["nodes"]["a"]["operands"][0] = ["node", "c"]
     try:
-        HLS.order(dag)
+        AUTO.order(dag)
     except ValueError:
         pass
     else:
@@ -100,13 +99,13 @@ def test_cases():
         filename = os.path.join(root, "design.py")
         source = ("from pypeline import *\n@hw_func\ndef core(a:uint8_t,b:uint8_t,c:uint8_t,d:uint8_t,sel:uint1_t)->" + return_t + ":\n"
                   + textwrap.indent(body, "    ")
-                  + "\nACU=AUTO_COMB_UNSHARE(core)\n@MAIN(1.0)\ndef top(a:uint8_t,b:uint8_t,c:uint8_t,d:uint8_t,sel:uint1_t)->" + return_t + ":\n    return ACU(a,b,c,d,sel)\n")
+                  + "\nDELAY_OPT=AUTO_COMB_DELAY_OPT(core)\n@MAIN(1.0)\ndef top(a:uint8_t,b:uint8_t,c:uint8_t,d:uint8_t,sel:uint1_t)->" + return_t + ":\n    return DELAY_OPT(a,b,c,d,sel)\n")
         with open(filename, "w") as f:
             f.write(source)
         SYN.SYN_OUTPUT_DIRECTORY = os.path.join(root, "build")
         parser = PY_TO_LOGIC.PARSE_FILE(filename)
         seen = set()
-        for entries in parser.pypeline_comb_unshare_candidates.values():
+        for entries in parser.pypeline_comb_delay_opt_candidates.values():
             for candidate, info in entries[1:]:
                 seen.update(info["moves"])
                 for _ in range(120):
@@ -117,9 +116,9 @@ def test_cases():
                     assert sim_call(candidate, *args) == expected, (body, info["moves"], args)
         if expected_family:
             assert expected_family in seen, (expected_family, seen)
-        first = next(iter(parser.pypeline_comb_unshare_reports.values()))
+        first = next(iter(parser.pypeline_comb_delay_opt_reports.values()))
         again = PY_TO_LOGIC.PARSE_FILE(filename)
-        assert next(iter(again.pypeline_comb_unshare_reports.values())) == first
+        assert next(iter(again.pypeline_comb_delay_opt_reports.values())) == first
 
 
 def test_nested_and_pure():
@@ -131,7 +130,7 @@ def test_nested_and_pure():
     filename = os.path.join(root, "design.py")
     for body in ("return a+b", "r:Reg[uint8_t]\n    r=a\n    return r"):
         source = ("from pypeline import *\n@hw_func\ndef core(a:uint8_t,b:uint8_t)->uint8_t:\n    " + body
-            + "\nONE=AUTO_COMB_UNSHARE(AUTO_COMB_SHARE(core))\nTWO=AUTO_COMB_SHARE(AUTO_COMB_UNSHARE(core))\n"
+            + "\nONE=AUTO_COMB_DELAY_OPT(AUTO_COMB_AREA_OPT(core))\nTWO=AUTO_COMB_AREA_OPT(AUTO_COMB_DELAY_OPT(core))\n"
               "@MAIN(1.0)\ndef top(a:uint8_t,b:uint8_t)->uint8_t:\n    return ONE(a,b)^TWO(a,b)\n")
         with open(filename, "w") as f:
             f.write(source)
@@ -141,11 +140,11 @@ def test_nested_and_pure():
             except Exception as e:
                 assert "pure" in str(e), str(e)
             else:
-                raise AssertionError("stateful UNSHARE accepted")
+                raise AssertionError("stateful DELAY_OPT accepted")
         else:
             parser = PY_TO_LOGIC.PARSE_FILE(filename)
-            assert len(parser.pypeline_comb_share_reports) == 2
-            assert len(parser.pypeline_comb_unshare_reports) == 2
+            assert len(parser.pypeline_comb_area_opt_reports) == 2
+            assert len(parser.pypeline_comb_delay_opt_reports) == 2
 
 
 def test_elaboration():
@@ -153,16 +152,16 @@ def test_elaboration():
     import SYN
     from pypeline import sim_call, sim_reset
 
-    SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(prefix="acu_test_")
+    SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(prefix="delay_opt_test_")
     parser = PY_TO_LOGIC.PARSE_FILE(__file__)
-    report = next(iter(parser.pypeline_comb_unshare_reports.values()))
+    report = next(iter(parser.pypeline_comb_delay_opt_reports.values()))
     assert report["delay"] < report["delay_before"], report
     assert report["timing_is_estimate"]
     assert report["timing_provenance"]
     assert report["critical_path"]
     assert report["objective"] == "delay"
     rng = random.Random(919)
-    for entries in parser.pypeline_comb_unshare_candidates.values():
+    for entries in parser.pypeline_comb_delay_opt_candidates.values():
         original = entries[0][0]
         for candidate, info in entries[1:]:
             for _ in range(200):
@@ -182,4 +181,4 @@ if __name__ == "__main__":
     test_timing_dependencies()
     test_cases()
     test_nested_and_pure()
-    print("All AUTO_COMB_UNSHARE tests passed.")
+    print("All AUTO_COMB_DELAY_OPT tests passed.")

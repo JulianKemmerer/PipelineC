@@ -110,7 +110,7 @@ def stable_key(value, seen=frozenset()):
         )
     if callable(value):
         for attr in (
-            "_is_auto_pipeline_pragma", "_is_auto_fsm_pragma", "_is_auto_comb_share_pragma", "_is_auto_comb_unshare_pragma"
+            "_is_auto_pipeline_pragma", "_is_auto_fsm_pragma", "_is_auto_comb_area_opt_pragma", "_is_auto_comb_delay_opt_pragma"
         ):
             if getattr(value, attr, False):
                 # An AUTO_PIPELINE's constructor latency constraint is
@@ -131,7 +131,7 @@ def stable_key(value, seen=frozenset()):
                     )
                     if attr == "_is_auto_pipeline_pragma"
                     else (
-                        () if attr in ("_is_auto_comb_share_pragma", "_is_auto_comb_unshare_pragma") else (
+                        () if attr in ("_is_auto_comb_area_opt_pragma", "_is_auto_comb_delay_opt_pragma") else (
                             getattr(value, "max_latency", None),
                             getattr(value, "register_output", True),
                         )
@@ -286,7 +286,7 @@ def value_description(value, seen=frozenset()):
         )
     if callable(value):
         if any(getattr(value, attr, False) for attr in (
-            "_is_auto_comb_share_pragma", "_is_auto_comb_unshare_pragma", "_is_auto_pipeline_pragma", "_is_auto_fsm_pragma"
+            "_is_auto_comb_area_opt_pragma", "_is_auto_comb_delay_opt_pragma", "_is_auto_pipeline_pragma", "_is_auto_fsm_pragma"
         )):
             return NameInfo(
                 "wrapper",

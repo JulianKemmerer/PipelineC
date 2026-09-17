@@ -6,7 +6,7 @@ import random
 import textwrap
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
-from pypeline import AUTO_COMB_SHARE, MAIN, hw_func, uint1_t, uint8_t, uint16_t
+from pypeline import AUTO_COMB_AREA_OPT, MAIN, hw_func, uint1_t, uint8_t, uint16_t
 
 
 @hw_func
@@ -16,26 +16,26 @@ def select_product(a: uint8_t, b: uint8_t, c: uint8_t, d: uint8_t, sel: uint1_t)
     return x if sel else y
 
 
-ACS = AUTO_COMB_SHARE(select_product)
+AREA_OPT = AUTO_COMB_AREA_OPT(select_product)
 
 
 @MAIN(5.0)
 def top(a: uint8_t, b: uint8_t, c: uint8_t, d: uint8_t, sel: uint1_t) -> uint16_t:
-    return ACS(a, b, c, d, sel)
+    return AREA_OPT(a, b, c, d, sel)
 
 
 def test_native():
     import pypeline
 
-    assert ACS.latency == 0
-    assert pypeline.hw_arg_types(ACS) == pypeline.hw_arg_types(select_product)
-    assert pypeline.hw_return_type(ACS) == uint16_t
+    assert AREA_OPT.latency == 0
+    assert pypeline.hw_arg_types(AREA_OPT) == pypeline.hw_arg_types(select_product)
+    assert pypeline.hw_return_type(AREA_OPT) == uint16_t
     for a in range(8):
         for b in range(8):
             for s in (0, 1):
-                assert ACS(a, b, 7, 9, s) == (a * b if s else 63)
-                assert ACS(a=a, b=b, c=7, d=9, sel=s) == select_product(a, b, 7, 9, s)
-    assert AUTO_COMB_SHARE(ACS).func is select_product
+                assert AREA_OPT(a, b, 7, 9, s) == (a * b if s else 63)
+                assert AREA_OPT(a=a, b=b, c=7, d=9, sel=s) == select_product(a, b, 7, 9, s)
+    assert AUTO_COMB_AREA_OPT(AREA_OPT).func is select_product
 
 
 def test_native_without_optimizer():
@@ -45,8 +45,8 @@ def test_native_without_optimizer():
 import importlib.abc, runpy, sys
 class NoCompiler(importlib.abc.MetaPathFinder):
     def find_spec(self, fullname, path=None, target=None):
-        if fullname in {'AUTO_COMB_SHARE', 'HLS', 'AUTO_FSM', 'PY_TO_LOGIC', 'C_TO_LOGIC', 'SYN'}:
-            raise AssertionError('native ACS imported ' + fullname)
+        if fullname in {'AUTO_COMB_OPT', 'AUTO', 'AUTO_FSM', 'PY_TO_LOGIC', 'C_TO_LOGIC', 'SYN'}:
+            raise AssertionError('native AREA_OPT imported ' + fullname)
 sys.meta_path.insert(0, NoCompiler())
 ns = runpy.run_path(sys.argv[1], run_name='native_gate')
 ns['test_native']()
@@ -59,14 +59,14 @@ def test_elaboration():
     import SYN
     from pypeline import sim_call
 
-    SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(prefix="acs_test_")
+    SYN.SYN_OUTPUT_DIRECTORY = tempfile.mkdtemp(prefix="area_opt_test_")
     parser = PY_TO_LOGIC.PARSE_FILE(__file__)
-    reports = parser.pypeline_comb_share_reports
+    reports = parser.pypeline_comb_area_opt_reports
     assert len(reports) == 1, reports
     report = next(iter(reports.values()))
     assert report["area"] < report["area_before"], report
-    generated = [(fn, info) for entries in parser.pypeline_comb_share_candidates.values()
-                 for fn, info in entries if hasattr(fn, "_auto_comb_share_generated_src")]
+    generated = [(fn, info) for entries in parser.pypeline_comb_area_opt_candidates.values()
+                 for fn, info in entries if hasattr(fn, "_auto_comb_opt_generated_src")]
     assert generated
     for fn, _ in generated:
         for a in range(16):
@@ -81,7 +81,7 @@ def _parse_case(body, return_t="uint8_t"):
 
     path = tempfile.mkdtemp(prefix="acs_case_")
     source = ("from pypeline import *\n" + textwrap.dedent(body)
-              + f"\nACS = AUTO_COMB_SHARE(core)\n@MAIN(1.0)\ndef top(a: uint8_t, b: uint8_t, c: uint8_t, d: uint8_t, sel: uint1_t) -> {return_t}:\n    return ACS(a,b,c,d,sel)\n")
+              + f"\nAREA_OPT = AUTO_COMB_AREA_OPT(core)\n@MAIN(1.0)\ndef top(a: uint8_t, b: uint8_t, c: uint8_t, d: uint8_t, sel: uint1_t) -> {return_t}:\n    return AREA_OPT(a,b,c,d,sel)\n")
     filename = os.path.join(path, "design.py")
     with open(filename, "w") as f:
         f.write(source)
@@ -94,7 +94,7 @@ def _check_candidates(parser, samples=80):
     from pypeline import sim_call, sim_reset
 
     rng = random.Random(73)
-    for entries in parser.pypeline_comb_share_candidates.values():
+    for entries in parser.pypeline_comb_area_opt_candidates.values():
         original = entries[0][0]
         for candidate, _ in entries[1:]:
             for sample in range(samples):
@@ -205,14 +205,14 @@ def test_arithmetic_and_casts():
 
 
 def test_scoped_operators_and_bounded_graph():
-    import HLS
+    import AUTO
 
     predicates = {"nodes": {str(value): {
         "op": {"kind": "binop", "op": "=="}, "out_type": "uint1_t",
         "operands": [["in", "sel"], ["lit", value, "uint8_t"]],
         "casts": [[], []], "port_types": ["uint8_t", "uint8_t"],
     } for value in (1, 2)}}
-    bdd = HLS.BDD()
+    bdd = AUTO.BDD()
     one = bdd.expression(predicates, ["node", "1"])
     two = bdd.expression(predicates, ["node", "2"])
     assert bdd.apply("and", one, two) == 0
@@ -225,7 +225,7 @@ def test_scoped_operators_and_bounded_graph():
         "operands": [["in", "sel"], ["lit", 255, "uint8_t"]],
         "casts": [[], ["int8_t"]], "port_types": ["uint16_t", "uint16_t"],
     }}}
-    bdd = HLS.BDD()
+    bdd = AUTO.BDD()
     predicate = bdd.expression(signed_predicate, ["node", "eq"])
     assert bdd.render(signed_predicate, predicate) == ["node", "eq"]
 
@@ -235,16 +235,16 @@ def test_scoped_operators_and_bounded_graph():
             return a*b if sel else c*d
         register_operator("INFERRED_MULT", uint8_t, uint8_t, INFERRED, scope=core)
     """)
-    report = next(iter(parser.pypeline_comb_share_reports.values()))
+    report = next(iter(parser.pypeline_comb_area_opt_reports.values()))
     assert "scoped" in report["unsupported"], report
     # Deep-but-legal wiring must not exhaust Python's recursion limit.
     graph = {"nodes": {}, "output": ["node", "4999"]}
     for i in range(5000):
         graph["nodes"][str(i)] = {"operands": [["node", str(i-1)]] if i else [["in", "x"]]}
-    assert len(HLS.order(graph)) == 5000
+    assert len(AUTO.order(graph)) == 5000
     graph["nodes"]["0"]["operands"] = [["node", "4999"]]
     try:
-        HLS.order(graph)
+        AUTO.order(graph)
     except ValueError as error:
         assert "cycle" in str(error)
     else:
@@ -318,7 +318,7 @@ def test_default_fsm_uses_shared_choices():
         logic.delay = 1  # deterministic unit-test timing; real timing is tested separately
     baseline = AUTO_FSM._SWEEP_MIN_AREA_SCHEDULE(parser, key, tag, 0.9)
     shared = AUTO_FSM.SWEEP_MIN_AREA_SCHEDULE(parser, key, tag, 0.9)
-    assert shared.get("comb_share_candidates", 0) > 0, shared
+    assert shared.get("comb_opt_candidates", 0) > 0, shared
     assert shared["est_area"] <= baseline["est_area"], (shared, baseline)
 
 
@@ -331,7 +331,7 @@ def test_purity_and_repeat_parse():
             return a*b if sel else c*d
     """)
     second = PY_TO_LOGIC.PARSE_FILE(filename)
-    assert parser.pypeline_comb_share_reports == second.pypeline_comb_share_reports
+    assert parser.pypeline_comb_area_opt_reports == second.pypeline_comb_area_opt_reports
     try:
         _parse_case("""
             @hw_func
@@ -343,7 +343,7 @@ def test_purity_and_repeat_parse():
     except Exception as error:
         assert "pure combinational" in str(error), error
     else:
-        raise AssertionError("stateful function accepted by ACS")
+        raise AssertionError("stateful function accepted by AREA_OPT")
     try:
         _parse_case("""
             @pipeline_latency(1)
@@ -354,7 +354,7 @@ def test_purity_and_repeat_parse():
     except Exception as error:
         assert "pure combinational" in str(error), error
     else:
-        raise AssertionError("fixed pipeline accepted by ACS")
+        raise AssertionError("fixed pipeline accepted by AREA_OPT")
 
 
 if __name__ == "__main__":

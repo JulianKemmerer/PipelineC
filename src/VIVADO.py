@@ -495,8 +495,10 @@ def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE_MULTIMAIN(
 def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(
     inst_name, Logic, output_directory, TimingParamsLookupTable, parser_state
 ):
+    import AUTO_PIPELINE
+
     # Make fake multimain params
-    multimain_timing_params = SYN.MultiMainTimingParams()
+    multimain_timing_params = AUTO_PIPELINE.MultiMainTimingParams()
     multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
     syn_imp_and_report_timing_tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(
         multimain_timing_params, parser_state, inst_name

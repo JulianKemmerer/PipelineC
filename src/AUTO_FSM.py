@@ -2,7 +2,7 @@
 
 Where AUTO_PIPELINE cuts a function into stages for throughput, AUTO_FSM shares
 units across clock cycles for area. The default search also considers the
-combinational rewrites shared with AUTO_COMB_SHARE, comparing complete scheduled
+combinational rewrites shared with AUTO_COMB_AREA_OPT, comparing complete scheduled
 hardware including muxes, registers and control. Twelve identical adders can
 become one adder used in twelve states; unsharing remains an area/timing choice.
 
@@ -42,8 +42,11 @@ Where the pieces live:
                               Holds .latency and the installed schedule.
   PY_TO_LOGIC._elab_call      probes for the tag at a call site and asks
                               BUILD_AUTO_FSM_FUNC (below) what to instantiate.
-  THIS MODULE                 builds the DAG from the elaborated Logic graph,
-                              schedules + binds it, and GENERATES ORDINARY
+  AUTO (src/AUTO.py)          the machinery shared with AUTO_COMB_OPT: building
+                              the DAG from the elaborated Logic graph (BUILD_DAG),
+                              type resolution, the delay and area models,
+                              source emission helpers.
+  THIS MODULE                 schedules + binds the DAG, and GENERATES ORDINARY
                               PYPELINE PYTHON SOURCE implementing the FSM.
                               DO_SCHEDULE_PASSES (below) drives the
                               schedule-and-confirm loop: measure delays ->
@@ -58,8 +61,9 @@ pypeline, and because it holds non-volatile Reg state, SYN and SWEEP already
 treat it correctly -- unsliceable, zero added latency, measured as one atomic
 block whose delay becomes an fmax floor.
 
-See docs/AUTO_FSM_DESIGN.md for the full design, and docs/SYN_DESIGN.md for the
-delay model and the sweep this rides on.
+See docs/AUTO_FSM_DESIGN.md for the full design, docs/AUTO_DESIGN.md for the
+shared machinery, docs/SYN_DESIGN.md for the delay model, and
+docs/SWEEP_DESIGN.md for the sweep this rides on.
 """
 
 import hashlib
@@ -68,6 +72,7 @@ import math
 import os
 
 import C_TO_LOGIC
+import AUTO
 
 # Schedule dict format version, bumped if the shape changes incompatibly OR the
 # generated hardware changes for an unchanged schedule -- the entity name is a
@@ -101,7 +106,7 @@ CTL_CHOICES = ("auto", "v3", "v2", "onehot")
 DEFAULT_CTL = "auto"
 
 # Maximum schedule+synthesize passes before giving up on meeting timing by
-# adding states (mirrors SYN.AUTO_PIPELINE_MAX_LATENCY_PASSES). Six rather than
+# adding states (mirrors AUTO_PIPELINE.AUTO_PIPELINE_MAX_LATENCY_PASSES). Six rather than
 # four because a pass may now also be spent absorbing freshly MEASURED operand
 # mux delays (see the mux section below): the first build of a given mux shape
 # schedules against the model, and the pass after it knows the real number.
@@ -132,112 +137,10 @@ TIGHTEN_MIN_FMAX_GAIN = 0.01
 # that actually changes the schedule, before concluding more states cannot help.
 MAX_TIGHTEN_STEPS = 8
 
-# Last-resort delay charged per scheduled operation when nothing better is
-# known about its operand multiplexer -- notably before any fold count exists
-# at all. In delay units, so 10 == 1.0 ns. v1 charged this flat for every
-# operation; v2 uses the real per-shape numbers below and keeps this only as
-# the floor/seed.
-MUX_PENALTY_DU = 10
-
-# Operand-mux delay MODEL, used only until a real measurement of that mux shape
-# exists (see _mux_delay_du). An n-way mux built as an array read is a balanced
-# binary selection tree, so its delay grows with log2(n), not n -- which is the
-# whole reason AUTO_FSM builds them that way (see
-# include/pypeline/operators/auto_fsm_mux.py). Delay units.
-MUX_BASE_DU = 2
-MUX_PER_LEVEL_DU = 4
 
 # Cap on generated entity/function name length, for VHDL identifier safety.
 _MAX_NAME_LEN = 96
 
-# ── Area model ────────────────────────────────────────────────────────────
-# Abstract units, per bit of operand width unless noted, normalised so that one
-# bit of an adder is 1.0.
-#
-# These exist because AREA CANNOT BE READ BACK FROM THE USER'S TOOL: only
-# timing/fmax is parsed uniformly from every supported backend (Vivado,
-# Quartus, PYRTL, ...), so an area-minimizing search cannot be closed around a
-# real utilization number the way the fmax loop is closed around a real timing
-# report. The model therefore only ever RANKS candidate schedules against each
-# other, and the search always keeps the plain share-everything schedule as its
-# anchor -- so it cannot regress according to the model. Whole-design synthesis
-# tests remain the authority for catching a model ranking that is wrong in
-# physical cells (especially under limited no-hierarchy/no-sweep synthesis).
-#
-# CALIBRATION. The ratios come from real yosys cell counts, which is the one
-# place in this project real area numbers exist (they are used in the test
-# suite, never in the search itself -- see
-# src/tests/pypeline_tests/inst/auto_fsm_area_sweep_compare_test.py):
-#
-#     16-bit add   ~100 cells    -> 6.25 cells per bit   -> 1.00 here
-#     32-bit add   ~200 cells    -> 6.25 cells per bit
-#     16x16 fabric multiply ~1800 cells -> ~7 cells per partial product
-#     one DFF, one 2-input gate, one 2:1 mux bit: ~1 cell each -> ~0.16 here
-#
-# The single most important ratio is ARITHMETIC vs MULTIPLEXER-AND-REGISTER,
-# because that is the entire sharing trade. An early cut of this model priced a
-# 16-bit adder at the same cost as a 16-bit register and duly decided that
-# unsharing cheap adders was a win; real synthesis said it was 4.5% worse. An
-# adder bit is about six of the things sharing costs, not one.
-AREA_PER_BIT_ADD = 1.0  # ripple add/sub: a full adder per bit
-AREA_PER_BIT_CMP = 1.0  # compare == subtract + sign bit
-AREA_PER_BIT_BITWISE = 0.16  # one 2-input gate per bit
-# One 2:1 multiplexer bit. MEASURED, and the measurement is why this is not the
-# 0.16 the other per-bit gate terms use -- an operand multiplexer costs about
-# twice a plain gate. Built as balanced trees and counted in yosys (the div
-# design behind auto_fsm_min_area_verify_test):
-#
-#     36-way over uint10   726 cells / 350 mux bits = 2.07 cells per bit
-#     27-way over uint10   545 cells / 260 mux bits = 2.10
-#     36-way over uint2    150 cells /  70 mux bits = 2.14
-#
-# against the ~1 cell that 0.16 implies at this model's 6.25-cells-per-unit
-# scale. (Two- and three-way muxes run higher still, 3-4 cells per bit, but
-# fixed overhead on a tiny mux never decides anything.)
-#
-# This is the term that decides whether DECOMPOSITION pays, so a 2x error here
-# is not a rounding matter: opening one unit into N pieces necessarily spreads
-# them across N states and therefore buys an N-way multiplexer on every operand
-# port. Under-priced, descent looks nearly free. On that div design the search
-# duly opened a shared divider, paying 1271 cells of operand multiplexing to
-# save one divider -- its model called it a win, yosys called it 70% worse.
-AREA_PER_BIT_MUX = 0.34
-AREA_PER_BIT_SHIFT_VAR = 0.7  # barrel shifter ~ log2(W) layers of muxes
-# Array multiplier, per PARTIAL PRODUCT (Wl*Wr of them). Slightly above the
-# per-bit adder cost, which is what yosys actually reports: a 16x16 fabric
-# multiply lands around 1800 cells against a 32-bit add's ~200, i.e. ~1.1x an
-# adder bit per partial product. The first cut of this model used 0.5 and
-# under-priced multipliers by better than 2x -- which matters, because
-# under-pricing the unit is exactly what makes sharing it look not worth doing.
-AREA_PER_BIT_PAIR_MULT = 1.1
-AREA_PER_BIT_PAIR_DIV = 2.5  # restoring divider: worse than a multiplier
-AREA_PER_BIT_DEFAULT = 1.0  # unknown leaf: priced like an adder
-# One flip-flop. Deliberately a little above the ~0.16 a yosys cell count
-# implies: on an FPGA a flip-flop comes paired with the LUT in front of it and
-# is nearly free, but registers are also what the FSM's own control has to
-# route and enable, and a schedule holding dozens of live values is genuinely
-# harder than one holding three.
-#
-# This is the one term real sky130 measurement (see UM2_PER_ABSTRACT_AREA_UNIT
-# below) shows is badly off, not just approximate: a real dfxtp_1 flip-flop
-# measures 0.494 abstract units, 2.5x this constant. AREA_PER_BIT_FF stays the
-# FALLBACK for tools with no area measurement -- under DEVICE_MODELS,
-# _ff_area_um2 uses the real cell area instead and this constant is not
-# consulted at all.
-AREA_PER_BIT_FF = 0.2
-# um2 of one abstract area unit (one ripple-adder bit -- AREA_PER_BIT_ADD's
-# 1.0). Used ONLY to express an abstract fallback term in real um2 when
-# DEVICE_MODELS has no measurement for a shape (a cold cache, or a term like
-# control-path decode that has no synthesizable entity of its own to measure).
-# Measured, not chosen: least-squares fit (through the origin) of area vs
-# width across every BIN_OP_PLUS_uintA_t_uintB_t / BIN_OP_MINUS_uintA_t_uintB_t
-# entry in the committed area_cache, width = max(A, B) (both operators cost
-# AREA_PER_BIT_ADD per _leaf_area, so one joint fit covers both) -- 5 points,
-# widths 17-34, absolute residuals 29-159 um2 (1.2-6.3 um2/bit), MAE ~100
-# um2/point. Refit from the committed cache by area_model_test.py, so a
-# library/corner/recipe change that moves this value fails a test instead of
-# silently rescaling every fallback term.
-UM2_PER_ABSTRACT_AREA_UNIT = 98.93
 AREA_PER_STATE_DECODE = 1.0  # ctl "v2" only: per-state next-state/enable decode
 
 # ── Control path, ctl "v3" ────────────────────────────────────────────────
@@ -355,17 +258,9 @@ MAX_REPLICATION_STEPS = 8
 SWEEP_LARGE_SCHEDULE_FOLDS = 64
 
 
-class AutoFsmError(Exception):
-    """A design-level AUTO_FSM problem (unschedulable function, unsupported
-    construct). Always raised with a message naming the offending
-    function/operation: failing loudly is required here, because the
-    alternative is generating an FSM that quietly computes something other than
-    the pure function it replaces."""
-
-
-class AutoFsmInternalError(AutoFsmError):
+class AutoFsmInternalError(AUTO.AutoError):
     """An AUTO_FSM invariant broke -- a compiler bug, not a property of the
-    design. A subclass so the area search, which treats AutoFsmError as "this
+    design. A subclass so the area search, which treats AutoError as "this
     candidate is not schedulable, try the next one", can let it through
     instead of quietly discarding the evidence."""
 
@@ -397,148 +292,14 @@ def GET_TAGS(parser_state) -> dict:
     return getattr(parser_state, "pypeline_auto_fsm_tags", {})
 
 
-def _entity_callables(parser_state):
-    return getattr(parser_state, "pypeline_entity_callables", {})
-
-
-def _entity_key_for_callable(parser_state, func):
-    """Reverse-lookup the FuncLogicLookupTable key a live callable was
-    elaborated under, using the pypeline_entity_callables side table PY_TO_LOGIC
-    populates. Identity-based, and deliberately a lookup rather than a
-    re-derivation: the elaborator's canonical-naming rules are intricate, and a
-    second implementation of them here would be one more thing to keep in sync.
-    """
-    if (getattr(func, "_is_auto_comb_share_pragma", False)
-            or getattr(func, "_is_auto_comb_unshare_pragma", False)):
-        return getattr(parser_state, "pypeline_comb_share_tag_entities", {}).get(func.canonical_key)
-    for key, recorded in _entity_callables(parser_state).items():
-        if recorded is func:
-            return key
-    return None
-
-
 # ─────────────────────────────────────────────
 # Type resolution: ctype string -> live pypeline type object
 # ─────────────────────────────────────────────
 
 
-class _TypeResolver:
-    """Maps the compiler's C type name strings (all a Logic graph carries) back
-    to live pypeline type objects, which generated source needs for its
-    variable annotations.
-
-    Scalars are reconstructible from the name alone, and so is any array whose
-    element type is (recursively) reconstructible -- 'uint16_t[16]' is just
-    'uint16_t' plus a dimension, regardless of whether anything in the design
-    ever carried that exact array type standalone. Only a struct genuinely
-    cannot be rebuilt from its name, so those are seeded from the live objects
-    actually in play: the AUTO_FSM'd function's own input/output types, every
-    unit callable's annotations, and (see _Codegen.__init__) every entity in
-    its elaborated subtree, including ones fully consumed by descent. Any
-    struct type reaching generated source came from one of those, so an
-    unresolvable name at that point is a genuine gap -- raise rather than
-    guess.
-    """
-
-    def __init__(self):
-        import pypeline
-
-        self._pypeline = pypeline
-        self._by_name = {}
-
-    def seed(self, t):
-        if t is None:
-            return
-        try:
-            name = self._pypeline.ctype_name(t)
-        except Exception:
-            return
-        if name in self._by_name:
-            return
-        self._by_name[name] = t
-        # Seed struct fields and array elements too: an operand may be a field
-        # of a seeded struct without that field type ever appearing standalone.
-        fields = getattr(t, "_fields", None)
-        if fields:
-            anns = getattr(t, "__annotations__", {})
-            for f in fields:
-                self.seed(anns.get(f))
-        elem = self._pypeline._array_elem_ctype(t)
-        if elem is not None:
-            self.seed(elem)
-
-    def seed_callable(self, func):
-        from pypeline import hw_arg_types, hw_return_type
-
-        try:
-            for t in hw_arg_types(func):
-                self.seed(t)
-            self.seed(hw_return_type(func))
-        except Exception:
-            # Best-effort: func is anything _entity_callables handed us, not
-            # necessarily a plain @hw_func with clean annotations (a bit-manip
-            # builtin, a partial, ...). A seeding miss here is not fatal by
-            # itself -- resolve() only raises later if some generated line
-            # actually needed the type this call would have provided.
-            pass
-
-    def resolve(self, ctype_str: str):
-        t = self._by_name.get(ctype_str)
-        if t is not None:
-            return t
-        scalar = _scalar_ctype_to_type(ctype_str)
-        if scalar is not None:
-            self._by_name[ctype_str] = scalar
-            return scalar
-        # BASE[d1][d2]... is reconstructible whenever BASE is: rebuild it by
-        # indexing BASE with each dimension in source (outer-to-inner) order,
-        # matching how _CTypeMeta.__getitem__ builds the name in the first
-        # place (each further bracket is APPENDED to the name and pushed onto
-        # the current leaf element -- see its own comment). Recursing through
-        # `resolve` for BASE means a struct-typed leaf that genuinely cannot
-        # be rebuilt still raises naming itself, not the whole array name.
-        base_name, dims = _split_array_ctype(ctype_str)
-        if dims:
-            t = self.resolve(base_name)
-            for d in dims:
-                t = t[d]
-            self._by_name[ctype_str] = t
-            return t
-        raise AutoFsmError(
-            f"AUTO_FSM: cannot reconstruct a live Python type for C type "
-            f"{ctype_str!r} needed by the generated FSM. Only scalar integer "
-            f"types, arrays of a reconstructible type, and struct types "
-            f"reachable from the AUTO_FSM'd function's own elaborated subtree "
-            f"can be regenerated."
-        )
-
-
 # ─────────────────────────────────────────────
 # Operand multiplexers: the price of sharing
 # ─────────────────────────────────────────────
-
-
-def _mux_callable(t, n):
-    """The memoized hw_func implementing an n-way mux over type `t`, or None if
-    this type cannot be arrayed (in which case the caller falls back to an
-    inline if/elif chain).
-
-    Lives in include/pypeline/operators/auto_fsm_mux.py rather than being
-    generated here so that it is (a) one stable canonical entity per (type, n),
-    (b) shipped-library rather than user code, and therefore delay-cacheable on
-    disk, and (c) THE SAME OBJECT the scheduler measured and the code generator
-    instantiates. See that module's docstring."""
-    if n < 2:
-        return None
-    try:
-        from operators.auto_fsm_mux import make_operand_mux
-
-        return make_operand_mux(t, n)
-    except Exception:
-        # An unarrayable port type (or an operators package that is not on the
-        # path) is not a build failure: sharing still works, it just falls back
-        # to the older inline multiplexer.
-        return None
 
 
 def _mux_sel_type(n):
@@ -548,369 +309,14 @@ def _mux_sel_type(n):
     return mux_sel_t(n)
 
 
-def _mux_entity(parser_state, t, n):
-    """FuncLogicLookupTable key the n-way mux over `t` was elaborated under, or
-    None if it has not been elaborated in this pass. Identity-based reverse
-    lookup, which works precisely because make_operand_mux is memoized."""
-    fn = _mux_callable(t, n)
-    if fn is None:
-        return None
-    return _entity_key_for_callable(parser_state, fn)
-
-
-def _mux_delay_du(parser_state, types, ctype, n, snapshot):
-    """Delay of the operand mux feeding one shared-unit port, in delay units.
-
-    Preference order, and the reason for it:
-      1. MEASURED this pass -- the mux is a real entity instantiated inside the
-         generated FSM, and SYN measures it like any other combinational leaf
-         (see RECURSIVE_GET_FUNCS_FOR_PATH_DELAYS' auto_fsm_measure_entities
-         hook). This is the number the user asked for: measured, not modelled.
-      2. Measured on an earlier pass, carried in the previous schedule's
-         snapshot -- later passes rebuild the design with the FSM in place, so
-         a shape that is no longer instantiated is no longer measured.
-      3. The model. Only reached on the very first build of a given mux shape;
-         from the next pass (and, via path_delay_cache, from the next BUILD)
-         onwards the real number is available.
-    """
-    if n < 2:
-        return 0
-    key = f"{ctype}#{n}"
-    cached = (snapshot or {}).get(key)
-    try:
-        t = types.resolve(ctype)
-    except AutoFsmError:
-        t = None
-    if t is not None:
-        entity = _mux_entity(parser_state, t, n)
-        if entity is not None:
-            logic = parser_state.FuncLogicLookupTable.get(entity)
-            if logic is not None and logic.delay is not None:
-                return max(1, int(logic.delay))
-    if cached is not None:
-        return cached
-    levels = max(1, (n - 1).bit_length())
-    return MUX_BASE_DU + MUX_PER_LEVEL_DU * levels
-
-
-def _ctype_width(ctype_str) -> int:
-    """Bit width of a C type name, for the delay/area models. Compound types
-    are summed through their scalar leaves; anything unrecognisable is priced
-    as one bit rather than crashing a model that only ever ranks."""
-    import re
-
-    if not ctype_str:
-        return 1
-    m = re.fullmatch(r"u?int(\d+)_t", ctype_str)
-    if m:
-        return int(m.group(1))
-    m = re.fullmatch(r"(.+)\[(\d+)\]", ctype_str)
-    if m:
-        return _ctype_width(m.group(1)) * int(m.group(2))
-    if ctype_str in ("float", "double"):
-        return 32 if ctype_str == "float" else 64
-    return _STRUCT_WIDTHS.get(ctype_str, 1)
-
-
-_STRUCT_WIDTHS = {}
-
-
-def _seed_struct_widths(parser_state):
-    """Record every struct type's total width, so the models can price a
-    struct-typed operand or register properly instead of calling it one bit."""
-    fields_of = getattr(parser_state, "struct_to_field_type_dict", {})
-    # Two passes: nested structs whose own width is not known yet on the first
-    # visit resolve on the second. Deeper nesting just falls back to the
-    # one-bit default, which only ever costs ranking accuracy.
-    for _ in range(2):
-        for name, fields in fields_of.items():
-            width = sum(_ctype_width(ft) for ft in fields.values())
-            _STRUCT_WIDTHS[name] = max(1, width)
-
-
-def _scalar_ctype_to_type(ctype_str: str):
-    """uint13_t / int9_t -> the live pypeline type; None if not a scalar int."""
-    import re
-
-    from pypeline import make_int_t, make_uint_t
-
-    m = re.fullmatch(r"(u?)int(\d+)_t", ctype_str)
-    if not m:
-        return None
-    width = int(m.group(2))
-    return make_uint_t(width) if m.group(1) == "u" else make_int_t(width)
-
-
-def _split_array_ctype(ctype_str: str):
-    """'BASE[d1][d2]...' -> (BASE, [d1, d2, ...]), dimensions in SOURCE
-    (left-to-right, outer-to-inner, C-declaration) order. (BASE, []) if
-    ctype_str carries no trailing bracket at all.
-
-    Peels one bracket at a time from the right (same regex shape as
-    _ctype_width), which finds dimensions in right-to-left order -- reversed
-    before returning so callers can re-apply them left-to-right and get the
-    same name back (see _TypeResolver.resolve)."""
-    import re
-
-    dims = []
-    rest = ctype_str
-    m = re.fullmatch(r"(.+)\[(\d+)\]", rest)
-    while m:
-        dims.append(int(m.group(2)))
-        rest = m.group(1)
-        m = re.fullmatch(r"(.+)\[(\d+)\]", rest)
-    dims.reverse()
-    return rest, dims
-
-
 # ─────────────────────────────────────────────
 # Decoding elaborated operations back into Python expressions
 # ─────────────────────────────────────────────
-
-# Entity-name operator token -> Python binary operator source text.
-_BIN_OP_SRC = {
-    C_TO_LOGIC.BIN_OP_PLUS_NAME: "+",
-    C_TO_LOGIC.BIN_OP_MINUS_NAME: "-",
-    C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME: "*",
-    C_TO_LOGIC.BIN_OP_MULT_NAME: "*",
-    C_TO_LOGIC.BIN_OP_DIV_NAME: "/",
-    C_TO_LOGIC.BIN_OP_MOD_NAME: "%",
-    C_TO_LOGIC.BIN_OP_AND_NAME: "&",
-    C_TO_LOGIC.BIN_OP_OR_NAME: "|",
-    C_TO_LOGIC.BIN_OP_XOR_NAME: "^",
-    C_TO_LOGIC.BIN_OP_GT_NAME: ">",
-    C_TO_LOGIC.BIN_OP_GTE_NAME: ">=",
-    C_TO_LOGIC.BIN_OP_LT_NAME: "<",
-    C_TO_LOGIC.BIN_OP_LTE_NAME: "<=",
-    C_TO_LOGIC.BIN_OP_EQ_NAME: "==",
-    C_TO_LOGIC.BIN_OP_NEQ_NAME: "!=",
-}
-_UNARY_OP_SRC = {
-    C_TO_LOGIC.UNARY_OP_NOT_NAME: "~",
-    C_TO_LOGIC.UNARY_OP_NEGATE_NAME: "-",
-}
-
-
-def DECODE_OP(logic, inst, entity, parser_state):
-    """Work out which Python construct produced one elaborated operation, so
-    generated source can re-create it.
-
-    The FSM's operand multiplexers change WHICH values reach an operation, never
-    what the operation is -- so re-emitting the original construct with locals
-    declared at the original port types reproduces the identical entity, and
-    therefore the identical hardware and the identical cached delay.
-
-    Returns a dict {"kind", ...} understood by _render_op. Note the deliberate
-    absence of a catch-all: an operation this cannot decode raises, rather than
-    risking an FSM that computes something subtly different.
-    """
-    # Compound reference operations. The same builtin covers two very different
-    # things, told apart by how many input ports the instance has:
-    #   one port   -> a READ of part of a value:  x.field, x[3]
-    #   many ports -> ASSEMBLY of a compound value from its parts, which is what
-    #                 `return my_struct_t(a=..., b=...)` elaborates to. Each
-    #                 port carries one piece, and the per-port ref tokens say
-    #                 where that piece belongs.
-    if entity.startswith(C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX):
-        out_toks = logic.ref_submodule_instance_to_ref_toks.get(inst)
-        if not out_toks:
-            raise AutoFsmError(
-                f"AUTO_FSM: reference operation {inst!r} has no recorded ref tokens"
-            )
-        port_toks = (
-            logic.ref_submodule_instance_to_input_port_driven_ref_toks.get(inst) or []
-        )
-        n_ports = len(logic.submodule_instance_to_input_port_names.get(inst, []))
-        if n_ports <= 1 and len(out_toks) > 1:
-            # out_toks[0] is the base variable; the rest is the path read from it.
-            return {"kind": "ref", "toks": list(out_toks[1:])}
-        if len(port_toks) != n_ports:
-            raise AutoFsmError(
-                f"AUTO_FSM: compound assembly {inst!r} has {n_ports} inputs but "
-                f"{len(port_toks)} recorded destination paths"
-            )
-        # Each port's path, relative to the value being assembled.
-        paths = [list(pt[len(out_toks) :]) for pt in port_toks]
-        if n_ports == 1 and not paths[0]:
-            return {"kind": "copy"}
-        return {"kind": "assemble", "paths": paths}
-
-    # Constant-amount shift: x << 3 / x >> 3, entity CONST_SL_3_int16_t
-    for op_name, py_op in (
-        (C_TO_LOGIC.BIN_OP_SL_NAME, "<<"),
-        (C_TO_LOGIC.BIN_OP_SR_NAME, ">>"),
-    ):
-        prefix = f"{C_TO_LOGIC.CONST_PREFIX}{op_name}_"
-        if entity.startswith(prefix):
-            amount = entity[len(prefix) :].split("_")[0]
-            if amount.isdigit():
-                return {"kind": "shift", "op": py_op, "amount": int(amount)}
-
-    # Multiplexer from an if / conditional expression: ports (cond, iftrue, iffalse)
-    if entity.startswith(C_TO_LOGIC.MUX_LOGIC_NAME + "_"):
-        return {"kind": "mux"}
-
-    # Binary operator: BIN_OP_<OP>_<ltype>_<rtype>
-    bin_prefix = C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_"
-    if entity.startswith(bin_prefix):
-        rest = entity[len(bin_prefix) :]
-        # Longest match first so e.g. INFERRED_MULT is not read as a shorter op.
-        for op_name in sorted(_BIN_OP_SRC, key=len, reverse=True):
-            if rest.startswith(op_name + "_"):
-                return {"kind": "binop", "op": _BIN_OP_SRC[op_name]}
-
-    # Unary operator: UNARY_OP_<OP>_<type>
-    un_prefix = C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_"
-    if entity.startswith(un_prefix):
-        rest = entity[len(un_prefix) :]
-        for op_name in sorted(_UNARY_OP_SRC, key=len, reverse=True):
-            if rest.startswith(op_name + "_"):
-                return {"kind": "unaryop", "op": _UNARY_OP_SRC[op_name]}
-
-    # A bit-manipulation primitive: bit_assign / bit_dup / rotl / concat / ...
-    # Re-emitted as a call to the pypeline builtin of the same name, with the
-    # constant arguments the elaborator baked into the entity name appended
-    # back on. Soft adders are built almost entirely out of bit_assign, so
-    # without this, descending into one would not be regenerable at all.
-    bm = getattr(parser_state, "pypeline_bit_manip_info", {}).get(entity)
-    if bm is not None:
-        return {"kind": "bitmanip", "builtin": bm[0], "consts": list(bm[1])}
-
-    # Anything else must be an ordinary function whose live callable we kept.
-    if _entity_callables(parser_state).get(entity) is not None:
-        return {"kind": "call"}
-
-    raise AutoFsmError(
-        f"AUTO_FSM: operation {inst!r} (entity {entity!r}) cannot be regenerated "
-        f"as Python source, so this function cannot be turned into an FSM. "
-        f"Supported: arithmetic/comparison/bitwise operators, constant shifts, "
-        f"struct-field and constant-index reads, if/conditional muxes, and "
-        f"calls to @hw_func functions."
-    )
-
-
-def _path_suffix(toks):
-    """Render a field/index path: numeric tokens are constant array indices,
-    names are struct fields."""
-    out = ""
-    for tok in toks:
-        out += f"[{tok}]" if str(tok).isdigit() else f".{tok}"
-    return out
-
-
-def _render_op(op, operand_exprs, em, parser_state, entity):
-    """Render one decoded operation as a Python expression string."""
-    kind = op["kind"]
-    if kind == "ref":
-        return operand_exprs[0] + _path_suffix(op["toks"])
-    if kind == "copy":
-        return operand_exprs[0]
-    if kind == "assemble":
-        raise AutoFsmError(
-            "AUTO_FSM: compound assembly needs statements, not an expression "
-            "(internal error -- it should have been rendered as glue)"
-        )
-    if kind == "shift":
-        return f"({operand_exprs[0]} {op['op']} {op['amount']})"
-    if kind == "mux":
-        cond, iftrue, iffalse = operand_exprs
-        return f"({iftrue} if {cond} else {iffalse})"
-    if kind == "binop":
-        return f"({operand_exprs[0]} {op['op']} {operand_exprs[1]})"
-    if kind == "unaryop":
-        return f"({op['op']}{operand_exprs[0]})"
-    if kind == "bitmanip":
-        import pypeline
-
-        if op["builtin"] == "__slice__":
-            # A bit read/slice is Python subscript syntax, not a function call.
-            high, low = op["consts"]
-            idx = f"{high}" if high == low else f"{high}:{low}"
-            return f"({operand_exprs[0]})[{idx}]"
-        fn = getattr(pypeline, op["builtin"], None)
-        if fn is None:
-            raise AutoFsmError(
-                f"AUTO_FSM: no pypeline builtin named {op['builtin']!r} to "
-                f"re-emit entity {entity!r}"
-            )
-        args = list(operand_exprs) + [repr(c) for c in op["consts"]]
-        return f"{em.inj_named(fn, op['builtin'])}({', '.join(args)})"
-    if kind == "call":
-        func = _entity_callables(parser_state).get(entity)
-        if func is None:
-            raise AutoFsmError(
-                f"AUTO_FSM: entity {entity!r} has no live Python callable "
-                f"recorded, so it cannot be emitted."
-            )
-        return f"{em.inj(func, 'f')}({', '.join(operand_exprs)})"
-    raise AutoFsmError(f"AUTO_FSM: unsupported operation kind {kind!r}")
 
 
 # ─────────────────────────────────────────────
 # DAG construction
 # ─────────────────────────────────────────────
-
-
-def _trace_operand(logic, port_wire):
-    """Follow a consumer port back through the wire graph to whatever actually
-    produces its value.
-
-    Returns (ref, cast_types) where ref is a ValueRef:
-        ["node", inst]      another operation's result
-        ["in", name]        one of this function's inputs, by port name
-        ["const", text]     a literal
-    and cast_types is the list of intermediate wire types between the producer
-    and this port. Those matter because assigning a wire narrows to the
-    destination's width: a value that passed through a narrower intermediate
-    variable in the original code must pass through the same narrowing here, or
-    the FSM would compute something the pure function does not.
-    """
-    wire = port_wire
-    port_type = logic.wire_to_c_type.get(wire)
-    chain = []
-    seen = set()
-    while True:
-        driver = logic.wire_driven_by.get(wire)
-        if driver is None:
-            # An undriven wire is a real elaboration hole, not something to
-            # paper over with a default value.
-            raise AutoFsmError(
-                f"AUTO_FSM: wire {wire!r} in {logic.func_name!r} has no driver "
-                f"(tracing back from {port_wire!r})"
-            )
-        if driver in seen:
-            raise AutoFsmError(
-                f"AUTO_FSM: combinational loop reaching {port_wire!r} in "
-                f"{logic.func_name!r}"
-            )
-        seen.add(driver)
-        if C_TO_LOGIC.SUBMODULE_MARKER in driver:
-            inst = driver.rsplit(C_TO_LOGIC.SUBMODULE_MARKER, 1)[0]
-            return ["node", inst], _clean_cast_chain(chain, port_type)
-        if C_TO_LOGIC.WIRE_IS_CONSTANT(driver):
-            return ["const", driver], _clean_cast_chain(chain, port_type)
-        if driver in logic.inputs:
-            # Named, not positional: a descended function may have several
-            # inputs (a float multiplier takes two), and the name is what maps
-            # its body's reads back onto the call's operands.
-            return ["in", driver], _clean_cast_chain(chain, port_type)
-        chain.append(logic.wire_to_c_type.get(driver))
-        wire = driver
-
-
-def _clean_cast_chain(chain, port_type):
-    """Reduce a traced wire-type chain to the casts that actually change the
-    value. `chain` is collected port-first, so reverse it to producer-first,
-    then drop consecutive duplicates and anything equal to the port type (the
-    operand local is declared at the port type and performs that cast itself)."""
-    out = []
-    for t in reversed(chain):
-        if t is None or t == port_type:
-            continue
-        if out and out[-1] == t:
-            continue
-        out.append(t)
-    return out
 
 
 def _snapshot_subtree_delays(parser_state, entity, out=None):
@@ -964,214 +370,9 @@ def _schedule_delays(parser_state, func_entity, snapshot):
             delays[k] = v
     for k in sorted(live):
         if k not in delays:
-            delays[k] = _resolve_delay_du(parser_state, k, delays)
+            delays[k] = AUTO._resolve_delay_du(parser_state, k, delays)
     return delays
 
-
-def _subtree_entities(parser_state, entity, out=None):
-    """Every entity in a subtree, including ones fully consumed by descent and
-    therefore absent from a schedule's `fus`/node entities. Same traversal
-    shape as _snapshot_subtree_delays (FuncLogicLookupTable.submodule_instances
-    recursion with a seen set), used by _Codegen to seed _TypeResolver from
-    types that live only inside a descended body -- see that class's
-    docstring for why seeding from `fus`/nodes alone is not enough."""
-    if out is None:
-        out = set()
-    if entity in out:
-        return out
-    logic = parser_state.FuncLogicLookupTable.get(entity)
-    if logic is None:
-        return out
-    out.add(entity)
-    for sub_entity in logic.submodule_instances.values():
-        _subtree_entities(parser_state, sub_entity, out)
-    return out
-
-
-_DELAY_MEMO_ATTR = "_auto_fsm_delay_memo"
-
-
-def _resolve_delay_du(parser_state, entity, delays, _stack=None):
-    """Delay of one operation, in delay units, however little is known about it.
-
-    In order:
-      1. what this pass measured, or the previous schedule's snapshot -- the
-         normal case for anything the design actually instantiates;
-      2. the Logic's own measured delay;
-      3. the on-disk path delay cache -- which is how a DESCENT CANDIDATE gets
-         a real number. A soft-operator equivalent is never instantiated, so it
-         is never measured; but its leaves are the universal bitwise operators
-         every design uses, so their measurements are almost always already
-         sitting in path_delay_cache;
-      4. bottom-up from its own submodules;
-      5. a width heuristic, as the last resort.
-
-    Steps 3-5 exist entirely for candidates. Getting them wrong costs ranking
-    accuracy in the area search; getting them ABSENT (v1's behavior: no Logic
-    means delay 0) would be worse than wrong, because a zero-delay operation is
-    treated as free wiring and never shared at all.
-    """
-    known = delays.get(entity)
-    if known is not None:
-        return known
-    logic = parser_state.FuncLogicLookupTable.get(entity)
-    if logic is None:
-        return 0
-    if logic.delay is not None:
-        return logic.delay
-
-    memo = getattr(parser_state, _DELAY_MEMO_ATTR, None)
-    if memo is None:
-        memo = {}
-        setattr(parser_state, _DELAY_MEMO_ATTR, memo)
-    hit = memo.get(entity)
-    if hit is not None:
-        return hit
-    _stack = set() if _stack is None else _stack
-    if entity in _stack:
-        return 0
-    _stack.add(entity)
-
-    du = None
-    try:
-        import SYN
-
-        cached_ns = SYN.GET_CACHED_PATH_DELAY(logic, parser_state)
-        if cached_ns is not None:
-            du = max(0, int(cached_ns * SYN.DELAY_UNIT_MULT))
-    except Exception:
-        du = None
-    if du is None and logic.submodule_instances:
-        du = sum(
-            _resolve_delay_du(parser_state, sub, delays, _stack)
-            for sub in set(logic.submodule_instances.values())
-        )
-    if du is None:
-        du = _heuristic_leaf_delay_du(entity, logic)
-    _stack.discard(entity)
-    memo[entity] = du
-    return du
-
-
-def _heuristic_leaf_delay_du(entity, logic):
-    """Rough delay for a leaf operation nothing has ever measured. Only ever
-    reached for a descent candidate on a machine with a cold path_delay_cache;
-    one real build replaces it with a measurement."""
-    from math import log2
-
-    if _leaf_area(entity, logic) <= 0.0:
-        return 0  # genuine wiring: field reads, constant shifts, bit assigns
-    widths = [_ctype_width(logic.wire_to_c_type.get(p)) for p in logic.inputs] or [1]
-    w = max(widths)
-    if entity.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_"):
-        rest = entity[len(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX) + 1 :]
-        if rest.startswith(
-            (
-                C_TO_LOGIC.BIN_OP_AND_NAME + "_",
-                C_TO_LOGIC.BIN_OP_OR_NAME + "_",
-                C_TO_LOGIC.BIN_OP_XOR_NAME + "_",
-            )
-        ):
-            return 1  # one gate, regardless of width (bit-parallel)
-        if rest.startswith(
-            (
-                C_TO_LOGIC.BIN_OP_MULT_NAME + "_",
-                C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME + "_",
-            )
-        ):
-            return max(2, int(4 * log2(max(2, w))))
-    # Carry-chain-ish: logarithmic in width, which is what a synthesizer builds.
-    return max(1, int(2 * log2(max(2, w))))
-
-
-def _is_decomposable(parser_state, entity, logic):
-    """Can this operation be opened up into smaller operations to fit a state?
-
-    Only if it came from Python source we can re-express: a live callable was
-    recorded for it during elaboration. A built-in operator entity (BIN_OP_*,
-    MUX_*, a constant shift) is atomic no matter how slow it is -- its innards
-    are the C/VHDL support library, not Python, so there is nothing to
-    regenerate. Trying anyway is how you end up staring at an error about some
-    internal bit-slice helper.
-    """
-    return (
-        logic is not None
-        and len(logic.submodule_instances) > 0
-        and logic.vhdl_module_text is None
-        and _entity_callables(parser_state).get(entity) is not None
-    )
-
-
-def _soft_equivalents(parser_state):
-    """built-in op entity -> equivalent Python-sourced entity, as prepared by
-    PREPARE_SOFT_EQUIVALENTS during the bootstrap elaboration."""
-    return getattr(parser_state, "pypeline_auto_fsm_soft_equiv", {})
-
-
-# Which soft-operator factory implements each built-in operator. One fixed
-# flavor per op: the library ships several (ripple vs carry-select adders,
-# shift-add vs Karatsuba multipliers, subtract vs bitwise vs parallel-prefix
-# comparators) and choosing between them is a second search axis, deliberately
-# not opened here. The flavors picked are the ones whose structure decomposes
-# most evenly, which is what makes them useful as SHARING candidates rather
-# than as fast hardware -- NOTE this is a different criterion than fmax, so
-# this map intentionally still pins the comparator to make_soft_cmp_sub_swapped
-# even though make_soft_cmp_prefix is now the fmax-optimized default elsewhere
-# (soft.py:register_soft_cmp, see docs/SYN_DESIGN.md#comparator-implementation-selection)
-# -- prefix's even-decomposition properties as a sharing candidate haven't been evaluated.
-#
-# Same reasoning is WHY INFERRED_MULT/MULT stay pinned to
-# make_soft_mult_shift_add even though register_soft_mult() (the registry
-# default everything else goes through) switched to make_soft_mult_carry_save
-# -- do not "fix" this inconsistency. Carry-save is the worst possible shape by
-# THIS map's own criterion: at max_width=2 it is a 30-level serial tail-call
-# chain (uint16 x uint16), and _MAX_DESCEND_DEPTH=8 cannot reach a fitting
-# stage, so descent strands a slow atomic node instead of decomposing evenly.
-# Confirmed directly: qor/multiplier/auto_fsm.py registered plain
-# register_soft_mult() and AUTO_FSM (which reaches a multiplier through THIS
-# map, not the registry, only when descending a BUILT-IN MULT/INFERRED_MULT --
-# that test's own soft_mult_carry_save call site is reached by descent, not by
-# this map, and still hung) folded 247 adds onto one shared unit and never
-# finished scheduling; see qor/multiplier/auto_fsm.py's own comment and
-# docs/AUTO_FSM_DESIGN.md section 3.7. Switching this pin would carry the same
-# failure mode into every OTHER AUTO_FSM design that multiplies without
-# registering a soft flavor itself, e.g. examples/pypeline/
-# vga_donut_auto_fsm_next_state.py.
-_SOFT_FACTORY_FOR_OP = {
-    "PLUS": ("operators.soft_add", "make_soft_add_ripple", None),
-    "MINUS": ("operators.soft_add", "make_soft_sub", None),
-    "INFERRED_MULT": ("operators.soft_mult", "make_soft_mult_shift_add", None),
-    "MULT": ("operators.soft_mult", "make_soft_mult_shift_add", None),
-    "DIV": ("operators.soft_div", "make_soft_div_radix", 1),
-    "MOD": ("operators.soft_div", "make_soft_mod_radix", 1),
-    "GT": ("operators.soft_cmp", "make_soft_cmp_sub_swapped", "GT"),
-    "GTE": ("operators.soft_cmp", "make_soft_cmp_sub_swapped", "GTE"),
-    "LT": ("operators.soft_cmp", "make_soft_cmp_sub_swapped", "LT"),
-    "LTE": ("operators.soft_cmp", "make_soft_cmp_sub_swapped", "LTE"),
-    "EQ": ("operators.soft_misc", "make_soft_eq", False),
-    "NEQ": ("operators.soft_misc", "make_soft_eq", True),
-}
-
-# SIGNEDNESS IS PART OF THE CHOICE, and getting it wrong is not a missed
-# optimization -- it silently builds hardware computing something else.
-# operators/soft.py encodes the same policy in what each register_soft_* call
-# accepts (any_uint_t vs any_integer_t); AUTO_FSM bypasses that registry and so
-# has to repeat it here.
-#
-#   * A SIGNED operand needs a different algorithm for divide, so it gets a
-#     different factory -- restoring division works on magnitudes and applies
-#     the sign afterwards.
-#   * Both soft multipliers sum `a << i` over the set bits of b treating b as
-#     UNSIGNED; for a signed b the top bit carries weight -2**(n-1) and its
-#     partial product would have to be SUBTRACTED. No signed soft multiplier
-#     exists yet, so a signed multiply is simply not openable and stays an
-#     atomic unit. (Verified, not assumed: make_soft_mult_shift_add(int16_t,
-#     int16_t) builds without complaint and computes -3 * 4 = 1048564.)
-_SOFT_FACTORY_FOR_SIGNED_OP = {
-    "DIV": ("operators.soft_div", "make_soft_div_signed_radix", 1),
-    "MOD": ("operators.soft_div", "make_soft_mod_signed_radix", 1),
-}
-_SOFT_UNSIGNED_ONLY_OPS = frozenset({"MULT", "INFERRED_MULT"})
 
 # Shifts (SL/SR) are deliberately absent even though operators/soft_shift.py
 # ships barrel shifters: the built-in takes its amount at the operand's own
@@ -1180,143 +381,6 @@ _SOFT_UNSIGNED_ONLY_OPS = frozenset({"MULT", "INFERRED_MULT"})
 # out-of-range shift zeroes on the built-in and wraps on the barrel. Arity and
 # return type match, so _open_target's checks would NOT catch the difference.
 # Wiring these up needs an adapter that saturates the amount first.
-
-# Ceiling on how many distinct built-in operator shapes get a soft equivalent
-# elaborated. Bounded by the number of DISTINCT (op, operand types) triples in
-# a function -- normally a handful, however many thousand operations use them
-# -- so this only ever trips on something pathological.
-_MAX_SOFT_EQUIVALENTS = 64
-
-
-def _soft_equivalent_callable(parser_state, entity):
-    """A live, decomposable hw_func computing exactly what a built-in operator
-    entity computes -- or None.
-
-    This is the ONLY place AUTO_FSM knows the soft-operator library exists. When
-    the library is not importable everything below simply degrades to v1's
-    behavior: built-in operators stay atomic and descent bottoms out at them.
-    """
-    info = getattr(parser_state, "pypeline_builtin_op_info", {}).get(entity)
-    if info is None:
-        return None
-    op_name, operand_ctypes = info
-    if op_name not in _SOFT_FACTORY_FOR_OP or len(operand_ctypes) != 2:
-        return None
-    types = [_scalar_ctype_to_type(ct) for ct in operand_ctypes]
-    if any(t is None for t in types):
-        return None  # non-integer operands: no soft equivalent exists
-    any_signed = any(not ct.startswith("u") for ct in operand_ctypes)
-    if any_signed and op_name in _SOFT_UNSIGNED_ONLY_OPS:
-        return None
-    spec = (
-        _SOFT_FACTORY_FOR_SIGNED_OP.get(op_name, _SOFT_FACTORY_FOR_OP[op_name])
-        if any_signed
-        else _SOFT_FACTORY_FOR_OP[op_name]
-    )
-    module_name, factory_name, arg = spec
-    try:
-        import importlib
-
-        factory = getattr(importlib.import_module(module_name), factory_name)
-        if arg is not None:
-            factory = factory(arg)
-        return factory(types[0], types[1])
-    except Exception:
-        return None
-
-
-def PREPARE_SOFT_EQUIVALENTS(tag, parser_state, elaborator):
-    """Elaborate soft-operator equivalents for the built-in operators inside an
-    AUTO_FSM'd function, so the area search has something to descend INTO.
-
-    Why here: this runs on the bootstrap pass, the one moment where a live
-    elaborator, the design's module globals, and the tagged function are all in
-    hand at once. The results sit in FuncLogicLookupTable uninstantiated --
-    candidates, not hardware -- exactly as the tagged function's own Logic does
-    on every later pass. Nothing is built unless the search actually picks it.
-
-    Best-effort throughout: a shape with no soft equivalent, or an operators
-    package that is not importable, just means one fewer descent candidate.
-    """
-    equiv = getattr(parser_state, "pypeline_auto_fsm_soft_equiv", None)
-    if equiv is None:
-        equiv = {}
-        parser_state.pypeline_auto_fsm_soft_equiv = equiv
-    try:
-        func_logic = elaborator._elaborate_live_func(
-            getattr(tag.func, "__name__", "auto_fsm_func"), tag.func
-        )
-    except Exception:
-        return
-    builtin_ops = getattr(parser_state, "pypeline_builtin_op_info", {})
-    if not builtin_ops:
-        return
-
-    seen = set()
-    todo = [func_logic.func_name]
-    candidates = []
-    while todo:
-        name = todo.pop()
-        if name in seen:
-            continue
-        seen.add(name)
-        # Checked BEFORE the table lookup: at bootstrap-elaboration time a
-        # built-in operator is still only a submodule REFERENCE -- its Logic is
-        # filled in later by the compiler's built-in resolution -- so requiring
-        # a Logic here would find no candidates at all.
-        if name in builtin_ops:
-            candidates.append(name)
-            continue
-        logic = parser_state.FuncLogicLookupTable.get(name)
-        if logic is None:
-            continue
-        todo.extend(logic.submodule_instances.values())
-
-    for entity in sorted(candidates)[:_MAX_SOFT_EQUIVALENTS]:
-        if entity in equiv:
-            continue
-        fn = _soft_equivalent_callable(parser_state, entity)
-        if fn is None:
-            continue
-        try:
-            soft_logic = elaborator._elaborate_live_func(fn.__name__, fn)
-        except Exception:
-            continue
-        # Whether this really is an equivalent is checked in _open_target, once
-        # the built-in's own Logic exists to compare against.
-        equiv[entity] = soft_logic.func_name
-        _RESOLVE_BUILTIN_SUBMODULES(parser_state, soft_logic.func_name)
-
-
-def _RESOLVE_BUILTIN_SUBMODULES(parser_state, entity, _seen=None):
-    """Materialize the Logic of every built-in operator inside a candidate
-    subtree.
-
-    The compiler builds built-in operator Logic lazily, while walking the
-    INSTANCE tree from the MAINs (_build_inst_lookup). A soft-operator
-    equivalent is deliberately not instantiated -- it is a candidate, not
-    hardware -- so its bitwise leaves would otherwise have no Logic at all, and
-    an operation with no Logic looks to the scheduler like zero delay and to
-    the area model like zero cost. Which would make decomposition appear free,
-    and the search would happily decompose everything.
-    """
-    _seen = set() if _seen is None else _seen
-    if entity in _seen:
-        return
-    _seen.add(entity)
-    logic = parser_state.FuncLogicLookupTable.get(entity)
-    if logic is None:
-        return
-    for inst, sub_entity in logic.submodule_instances.items():
-        if sub_entity not in parser_state.FuncLogicLookupTable:
-            try:
-                sub_logic = C_TO_LOGIC.BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC(
-                    logic, inst, parser_state
-                )
-            except Exception:
-                continue
-            parser_state.FuncLogicLookupTable[sub_logic.func_name] = sub_logic
-        _RESOLVE_BUILTIN_SUBMODULES(parser_state, sub_entity, _seen)
 
 
 def _openable(parser_state, entity, logic):
@@ -1327,363 +391,7 @@ def _openable(parser_state, entity, logic):
     equivalent -- which is what lets descent continue PAST the built-in
     operators v1 bottomed out at, all the way down to bitwise leaves.
     """
-    return _open_target(parser_state, entity, logic)[0] is not None
-
-
-def _open_target(parser_state, entity, logic):
-    """(entity, logic) whose body should be inlined when opening `entity` up:
-    itself if it has source, otherwise its soft-operator equivalent.
-
-    The soft equivalent's SIGNATURE is verified here rather than where it was
-    prepared, because at preparation time (bootstrap elaboration) the built-in
-    operator it replaces is still only a submodule reference with no Logic of
-    its own to compare against. An "equivalent" whose result type or arity
-    differs is not one, and silently swapping it in would build hardware
-    computing something other than the function the user wrote.
-    """
-    if _is_decomposable(parser_state, entity, logic):
-        return entity, logic
-    soft = _soft_equivalents(parser_state).get(entity)
-    if soft is None:
-        return None, None
-    soft_logic = parser_state.FuncLogicLookupTable.get(soft)
-    if not _is_decomposable(parser_state, soft, soft_logic):
-        return None, None
-    if logic is not None:
-        ret = C_TO_LOGIC.RETURN_WIRE_NAME
-        if soft_logic.wire_to_c_type.get(ret) != logic.wire_to_c_type.get(ret):
-            return None, None
-        ce = C_TO_LOGIC.CLOCK_ENABLE_NAME
-        if len([i for i in soft_logic.inputs if i != ce]) != len(
-            [i for i in logic.inputs if i != ce]
-        ):
-            return None, None
-    return soft, soft_logic
-
-
-def BUILD_DAG(parser_state, func_entity, delays, budget_du, opened=()):
-    """Flatten the AUTO_FSM'd function into a dataflow DAG of operations.
-
-    Walks the elaborated Logic graph. Each submodule instance becomes a node.
-    An operation whose own delay already exceeds one state's budget is DESCENDED
-    into -- its body's operations are inlined into this DAG -- so that something
-    too slow to fit a state can still be split across several. Everything else
-    stays atomic, which is what makes it shareable as a unit: two calls to the
-    same entity are two nodes bound to one FU.
-
-    Zero-delay operations (field reads, constant shifts, pure rewiring) are
-    marked as glue: never scheduled, never shared, just re-rendered inline at
-    each point of use, since duplicating free wiring costs nothing.
-
-    `opened` is the set of entities the AREA SWEEP has chosen to open up, on
-    top of whatever the budget forces. That is the whole difference between v1
-    and v2 granularity: v1 descended only when an operation could not fit a
-    state, which is a correctness-driven last resort; the sweep descends when
-    doing so is estimated to make the design SMALLER, which is a search. Per
-    ENTITY rather than per node, because every use of one entity must stay
-    bound to one shared unit for sharing to mean anything.
-    """
-    nodes = {}
-    truncated = []
-    _build_dag_level(
-        parser_state,
-        func_entity,
-        delays,
-        budget_du,
-        nodes,
-        prefix="",
-        depth=0,
-        truncated=truncated,
-        opened=frozenset(opened),
-    )
-    logic = parser_state.FuncLogicLookupTable[func_entity]
-    output_ref, output_casts = _trace_operand(logic, C_TO_LOGIC.RETURN_WIRE_NAME)
-    return {
-        "nodes": nodes,
-        "output": output_ref,
-        "output_casts": output_casts,
-        "out_type": logic.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME),
-        # Entities the depth cap stopped AUTO_FSM from descending into further
-        # (see _MAX_DESCEND_DEPTH) -- diagnostic only, read by
-        # DESCRIBE_SCHEDULE's AT FLOOR text, never consulted by scheduling.
-        "descend_truncated": truncated,
-    }
-
-
-_MAX_DESCEND_DEPTH = 8
-
-
-def _build_dag_level(
-    parser_state,
-    entity,
-    delays,
-    budget_du,
-    nodes,
-    prefix,
-    depth,
-    truncated,
-    opened=frozenset(),
-):
-    """Add one function's operations to the DAG, descending where needed.
-
-    `prefix` namespaces node ids when inlining a descended function's body, so
-    ids stay unique and remain a pure function of the source (op name + source
-    coordinates, joined by the same submodule marker the compiler uses for
-    instance paths).
-
-    `truncated` collects (node_id, sub_entity, delay_du) for every operation
-    the depth cap stopped from descending further -- see the append below and
-    _MAX_DESCEND_DEPTH.
-    """
-    if depth > _MAX_DESCEND_DEPTH:
-        raise AutoFsmError(
-            f"AUTO_FSM: gave up descending into {entity!r} after "
-            f"{_MAX_DESCEND_DEPTH} levels looking for operations small enough "
-            f"to fit one state; the clock goal may simply be unreachable."
-        )
-    logic = parser_state.FuncLogicLookupTable.get(entity)
-    if logic is None:
-        raise AutoFsmError(f"AUTO_FSM: no elaborated Logic for entity {entity!r}")
-    if logic.uses_nonvolatile_state_regs or logic.feedback_vars:
-        raise AutoFsmError(
-            f"AUTO_FSM: {entity!r} holds Reg/Feedback state. Only a PURE "
-            f"combinational function can be turned into an FSM -- move the "
-            f"state out into the calling function."
-        )
-    if logic.read_only_global_wires or logic.write_only_global_wires:
-        raise AutoFsmError(
-            f"AUTO_FSM: {entity!r} reads or writes global wires. Only a pure "
-            f"function of its argument can be turned into an FSM."
-        )
-
-    for inst, sub_entity in logic.submodule_instances.items():
-        if C_TO_LOGIC.CLOCK_ENABLE_NAME in inst:
-            # Clock-enable plumbing (TRUE_CLOCK_ENABLE_mux / FALSE_...), added
-            # to a Logic by the backend when it gates submodules inside an `if`.
-            # Not a data operation, and it only appears on passes where that
-            # backend step has already run over these Logic objects -- which the
-            # driver's later reschedules see, because they reuse the parser
-            # state a full build has already been through. Skipping it by name
-            # is safe: user operation instance names come from operator names
-            # and source coordinates, never from CLOCK_ENABLE.
-            continue
-        sub_logic = parser_state.FuncLogicLookupTable.get(sub_entity)
-        delay_du = _resolve_delay_du(parser_state, sub_entity, delays)
-        node_id = prefix + inst
-        # CLOCK_ENABLE is a control wire the backend threads through instances
-        # that need gating -- it is not a data operand, it appears only on some
-        # passes (whichever ones have run the clock-enable connection), and
-        # tracing it back would look for a driver that the pure function
-        # naturally does not have. Filtered here rather than tolerated in
-        # _trace_operand so an operand that genuinely has no driver still
-        # fails loudly.
-        port_names = [
-            p
-            for p in logic.submodule_instance_to_input_port_names.get(inst, [])
-            if p != C_TO_LOGIC.CLOCK_ENABLE_NAME
-        ]
-        operands = []
-        casts = []
-        port_types = []
-        for port in port_names:
-            port_wire = f"{inst}{C_TO_LOGIC.SUBMODULE_MARKER}{port}"
-            ref, cast_chain = _trace_operand(logic, port_wire)
-            operands.append(_prefix_ref(ref, prefix, _parent_call_id(prefix)))
-            casts.append(cast_chain)
-            port_types.append(logic.wire_to_c_type.get(port_wire))
-
-        # Two independent reasons to open this operation up:
-        #   forced  -- it is slower than one whole state, so keeping it atomic
-        #              would make the clock goal unreachable (v1's only rule);
-        #   chosen  -- the area sweep asked for it, because opening it is
-        #              estimated to shrink the design (v2).
-        too_slow_for_a_state = delay_du + MUX_PENALTY_DU > budget_du
-        want_open = too_slow_for_a_state or sub_entity in opened
-        open_entity, open_logic = (
-            _open_target(parser_state, sub_entity, sub_logic)
-            if want_open
-            else (None, None)
-        )
-        if open_entity is not None:
-            # Open it up and schedule its innards instead. The node itself does
-            # not exist in the DAG; references to it are rewritten to whatever
-            # its body produced (see _resolve_inlined). When `sub_entity` is a
-            # built-in operator, the body inlined here is its SOFT-OPERATOR
-            # EQUIVALENT (open_entity != sub_entity): same function, expressed
-            # in Python that can be taken apart further.
-            #
-            # Descent is an OPTIMIZATION, so a body we cannot regenerate is not
-            # fatal: fall back to keeping the operation atomic, which the
-            # scheduler will report as a floor. Child nodes are built into a
-            # scratch dict so a failed attempt leaves nothing behind.
-            child_prefix = node_id + C_TO_LOGIC.SUBMODULE_MARKER
-            child_nodes = {}
-            try:
-                _build_dag_level(
-                    parser_state,
-                    open_entity,
-                    delays,
-                    budget_du,
-                    child_nodes,
-                    child_prefix,
-                    depth + 1,
-                    truncated,
-                    opened,
-                )
-                child_out_ref, child_out_casts = _trace_operand(
-                    open_logic, C_TO_LOGIC.RETURN_WIRE_NAME
-                )
-            except AutoFsmError:
-                child_nodes = None
-                # depth+1 exceeding the cap is the ONLY raise _build_dag_level
-                # can hit before any other check (see its first line) -- so
-                # this condition being true means that is exactly why the
-                # child call failed, not some other AutoFsmError deeper in it.
-                if depth + 1 > _MAX_DESCEND_DEPTH:
-                    truncated.append((node_id, sub_entity, delay_du))
-            if child_nodes is not None:
-                nodes.update(child_nodes)
-                nodes[node_id] = {
-                    "kind": "inlined",
-                    "entity": sub_entity,
-                    "delay_du": 0,
-                    "operands": operands,
-                    "casts": casts,
-                    "port_types": port_types,
-                    "out_type": sub_logic.wire_to_c_type.get(
-                        C_TO_LOGIC.RETURN_WIRE_NAME
-                    ),
-                    # How to reach the descended body's result, and how the
-                    # body's own input maps back onto this call's operands.
-                    # The input NAMES are the opened body's own (a soft adder
-                    # calls them a/b where the built-in called them left/right);
-                    # positional order is what matches them to the operands,
-                    # and both orders are the call's argument order.
-                    "inlined_out": _prefix_ref(child_out_ref, child_prefix, node_id),
-                    "inlined_out_casts": child_out_casts,
-                    "inlined_inputs": [
-                        i
-                        for i in open_logic.inputs
-                        if i != C_TO_LOGIC.CLOCK_ENABLE_NAME
-                    ],
-                }
-                continue
-
-        op = DECODE_OP(logic, inst, sub_entity, parser_state)
-        nodes[node_id] = {
-            "kind": op["kind"],
-            "op": op,
-            "entity": sub_entity,
-            "delay_du": delay_du,
-            "operands": operands,
-            "casts": casts,
-            "port_types": port_types,
-            "out_type": logic.wire_to_c_type.get(
-                f"{inst}{C_TO_LOGIC.SUBMODULE_MARKER}{C_TO_LOGIC.RETURN_WIRE_NAME}"
-            ),
-        }
-
-
-def _parent_call_id(prefix):
-    """The descended call whose body a prefixed node belongs to: the prefix is
-    that call's node id plus the submodule marker."""
-    return prefix[: -len(C_TO_LOGIC.SUBMODULE_MARKER)] if prefix else ""
-
-
-def _prefix_ref(ref, prefix, node_id):
-    """Namespace a ValueRef into a descended function's node-id space."""
-    if not prefix:
-        return ref
-    if ref[0] == "node":
-        return ["node", prefix + ref[1]]
-    if ref[0] == "in":
-        # A read of the descended function's own input. Leave it marked as such,
-        # carrying the call it belongs to and which input it is; _resolve_inlined
-        # rewrites it to the matching operand of that call.
-        return ["inlined_in", node_id, ref[1]]
-    return ref
-
-
-def _resolve_inlined(dag):
-    """Rewrite references that point at descended (inlined) call nodes.
-
-    A descended node produces no hardware of its own: reading its result means
-    reading whatever its body produced, and its body's reads of its own inputs
-    mean the operands passed at the call. Collapsing both here keeps every later
-    stage -- scheduling, register allocation, code generation -- working on a
-    single flat graph with no notion of descent.
-
-    Cast chains have to be spliced together across the boundary too. A value
-    flowing out of a descended body passed through that body's own intermediate
-    types before reaching the call's result type, and the consumer's chain picks
-    up from there; dropping the inner half would skip a narrowing the original
-    code performed.
-    """
-    nodes = dag["nodes"]
-
-    def resolve(ref, _seen=None):
-        """Returns (ref, extra_casts) where extra_casts apply BEFORE whatever
-        cast chain the consumer already recorded."""
-        _seen = _seen or set()
-        extra = []
-        while True:
-            if ref[0] == "node" and nodes.get(ref[1], {}).get("kind") == "inlined":
-                if ref[1] in _seen:
-                    raise AutoFsmError("AUTO_FSM: cyclic inlined reference")
-                _seen.add(ref[1])
-                node = nodes[ref[1]]
-                # The body's own trailing casts, then the type the call's result
-                # was seen as -- the consumer's chain starts after that.
-                extra = list(node["inlined_out_casts"]) + [node["out_type"]] + extra
-                ref = node["inlined_out"]
-                continue
-            if ref[0] == "inlined_in":
-                _, call_id, input_name = ref
-                node = nodes.get(call_id)
-                if node is None or node["kind"] != "inlined":
-                    raise AutoFsmError(
-                        f"AUTO_FSM: dangling inlined input reference {ref!r}"
-                    )
-                try:
-                    idx = node["inlined_inputs"].index(input_name)
-                except ValueError:
-                    raise AutoFsmError(
-                        f"AUTO_FSM: descended function {node['entity']!r} has no "
-                        f"input named {input_name!r}"
-                    )
-                # Reading the body's input means reading what the call passed,
-                # through the call's own cast chain for that operand.
-                extra = list(node["casts"][idx]) + [node["port_types"][idx]] + extra
-                ref = node["operands"][idx]
-                continue
-            return ref, extra
-
-    def splice(ref, casts):
-        new_ref, extra = resolve(ref)
-        return new_ref, _dedupe_casts(extra + list(casts))
-
-    for node in nodes.values():
-        if node["kind"] == "inlined":
-            continue
-        spliced = [splice(r, c) for r, c in zip(node["operands"], node["casts"])]
-        node["operands"] = [r for r, _ in spliced]
-        node["casts"] = [c for _, c in spliced]
-    dag["output"], dag["output_casts"] = splice(dag["output"], dag["output_casts"])
-    # Drop the placeholders now that nothing points at them.
-    dag["nodes"] = {k: v for k, v in nodes.items() if v["kind"] != "inlined"}
-    return dag
-
-
-def _dedupe_casts(chain):
-    """Collapse consecutive identical types out of a cast chain."""
-    out = []
-    for t in chain:
-        if t is None:
-            continue
-        if out and out[-1] == t:
-            continue
-        out.append(t)
-    return out
+    return AUTO._open_target(parser_state, entity, logic)[0] is not None
 
 
 # ─────────────────────────────────────────────
@@ -1804,8 +512,8 @@ def _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states):
         root = nodes.get(root_id)
         if root is None:
             return None
-        width = _ctype_width(root.get("out_type"))
-        if width < 2 or _scalar_ctype_to_type(root.get("out_type")) is None:
+        width = AUTO._ctype_width(root.get("out_type"))
+        if width < 2 or AUTO._scalar_ctype_to_type(root.get("out_type")) is None:
             return None
 
         steps_outer_first = []
@@ -1820,9 +528,9 @@ def _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states):
                 or node["op"].get("kind") != "bitmanip"
                 or node["op"].get("builtin") != "concat"
                 or len(node.get("operands", ())) != 2
-                or _ctype_width(node.get("out_type")) != width
-                or _ctype_width(node.get("port_types", (None, None))[0]) != width - 1
-                or _ctype_width(node.get("port_types", (None, None))[1]) != 1
+                or AUTO._ctype_width(node.get("out_type")) != width
+                or AUTO._ctype_width(node.get("port_types", (None, None))[0]) != width - 1
+                or AUTO._ctype_width(node.get("port_types", (None, None))[1]) != 1
             ):
                 break
             left = node["operands"][0]
@@ -1926,7 +634,7 @@ def _OUTPUT_SHIFT_PACKS(nodes, output_ref, n_states):
             or node["op"].get("builtin") != "__slice__"
             or len(node.get("operands", ())) != 1
             or tuple(node["operands"][0]) != ("node", source_nid)
-            or _ctype_width(node.get("out_type")) != 1
+            or AUTO._ctype_width(node.get("out_type")) != 1
         ):
             return None
         consts = node["op"].get("consts")
@@ -2097,7 +805,7 @@ def _INPUT_STORAGE_PLAN(nodes, output_ref, n_states):
             and len(toks) == 1
             and len(operands) == 1
             and operands[0][0] == "in"
-            and _scalar_ctype_to_type(node.get("out_type")) is not None
+            and AUTO._scalar_ctype_to_type(node.get("out_type")) is not None
         ):
             qualified[nid] = (str(toks[0]), node["out_type"])
     if set(qualified) != direct_input_consumers or output_ref[0] == "in":
@@ -2539,7 +1247,7 @@ def _operand_factor_plan(
     alternatives = tuple(alternatives)
     _memo = {} if _memo is None else _memo
     if not alternatives:
-        raise AutoFsmError("AUTO_FSM: cannot factor an empty operand choice set")
+        raise AUTO.AutoError("AUTO_FSM: cannot factor an empty operand choice set")
 
     def exact_key(alt):
         _user_i, ref, casts, state = alt
@@ -2758,7 +1466,7 @@ def _critical_path(dag, sched, preds):
         if nid in memo:
             return memo[nid]
         if nid in stack:
-            raise AutoFsmError(f"AUTO_FSM: dependency cycle at {nid!r}")
+            raise AUTO.AutoError(f"AUTO_FSM: dependency cycle at {nid!r}")
         stack.add(nid)
         best = 0
         for s in succs[nid]:
@@ -2811,7 +1519,7 @@ def SCHEDULE_DAG(dag, budget_du, mux_du_of=None, max_states=None, copies=None):
     nodes = dag["nodes"]
     sched = _scheduled_ids(dag)
     copies = copies or {}
-    mux_du_of = mux_du_of or (lambda nid: MUX_PENALTY_DU)
+    mux_du_of = mux_du_of or (lambda nid: AUTO.MUX_PENALTY_DU)
     # What each scheduled operation must wait for: the scheduled operations
     # feeding its OPERANDS, seen through any zero-delay glue in between.
     preds = {}
@@ -2910,7 +1618,7 @@ def SCHEDULE_DAG(dag, budget_du, mux_du_of=None, max_states=None, copies=None):
         if not fus_used:
             # No progress at all: only possible if every ready node was blocked
             # by the acyclicity rule, which an empty state cannot reproduce.
-            raise AutoFsmError(
+            raise AUTO.AutoError(
                 "AUTO_FSM: scheduling stalled with operations left to place "
                 "(internal error)"
             )
@@ -3105,9 +1813,9 @@ def BUILD_SCHEDULE(
     # HARVEST_AUTO_FSM_SCHEDULES expands auto into both candidates below.
     if ctl == "auto":
         ctl = "v3"
-    func_entity = func_entity_override or _entity_key_for_callable(parser_state, tag.func)
+    func_entity = func_entity_override or AUTO._entity_key_for_callable(parser_state, tag.func)
     if func_entity is None:
-        raise AutoFsmError(
+        raise AUTO.AutoError(
             f"AUTO_FSM: the function tagged by {key!r} was never elaborated, so "
             f"there is nothing to schedule (internal error)."
         )
@@ -3115,16 +1823,16 @@ def BUILD_SCHEDULE(
     snapshot = (prev_schedule or {}).get("entity_delays_snapshot", {})
     delays = _schedule_delays(parser_state, func_entity, snapshot)
 
-    _seed_struct_widths(parser_state)
+    AUTO._seed_struct_widths(parser_state)
     opened = tuple(sorted(set(opened)))
-    dag = _resolve_inlined(
-        BUILD_DAG(parser_state, func_entity, delays, budget_du, opened)
+    dag = AUTO._resolve_inlined(
+        AUTO.BUILD_DAG(parser_state, func_entity, delays, budget_du, opened)
     )
     if max_nodes is not None and len(dag["nodes"]) > max_nodes:
         # Checked BEFORE scheduling: this is the area search asking "what if I
         # opened that up", and scheduling something this size to find out it
         # was never going to be worth it is the expensive way to learn it.
-        raise AutoFsmError(
+        raise AUTO.AutoError(
             f"AUTO_FSM: opening {sorted(opened)!r} flattens {key} into "
             f"{len(dag['nodes'])} operations, past the {max_nodes} the area "
             f"search will consider"
@@ -3134,7 +1842,7 @@ def BUILD_SCHEDULE(
     # count, which is known before states/registers exist. Codegen may later
     # coalesce equal per-port values to a narrower mux (or a wire); it never
     # emits anything wider than the delay the scheduler reserved here.
-    types = _TypeResolver()
+    types = AUTO._TypeResolver()
     for t in (tag.in_type, tag.out_type):
         types.seed(t)
     mux_snapshot = dict((prev_schedule or {}).get("mux_delays_snapshot", {}))
@@ -3176,7 +1884,7 @@ def BUILD_SCHEDULE(
         if cached is None:
             cached = 0
             for ctype in node["port_types"]:
-                du = _mux_delay_du(parser_state, types, ctype, n, mux_snapshot)
+                du = AUTO._mux_delay_du(parser_state, types, ctype, n, mux_snapshot)
                 mux_snapshot.setdefault(f"{ctype}#{n}", du)
                 cached = max(cached, du)
             if ctl != "v2" and n >= 2:
@@ -3224,9 +1932,9 @@ def BUILD_SCHEDULE(
         {t for t, _lo, _hi in _LIVE_RANGES(nodes, dag["output"], n_states).values()}
     )
     cross_fu_types = set()
-    ff_area = _ff_area_um2(parser_state)
+    ff_area = AUTO._ff_area_um2(parser_state)
     for ctype in range_types:
-        if _ctype_width(ctype) * ff_area > _mux_bank_area_um2(parser_state, ctype):
+        if AUTO._ctype_width(ctype) * ff_area > AUTO._mux_bank_area_um2(parser_state, ctype):
             cross_fu_types.add(ctype)
 
     writeback_mux_du = {}
@@ -3241,7 +1949,7 @@ def BUILD_SCHEDULE(
             if len(srcs) < 2:
                 continue
             ctype = reg_types[idx]
-            du = _mux_delay_du(parser_state, types, ctype, len(srcs), mux_snapshot)
+            du = AUTO._mux_delay_du(parser_state, types, ctype, len(srcs), mux_snapshot)
             mux_snapshot.setdefault(f"{ctype}#{len(srcs)}", du)
             writeback_mux_du[idx] = du
             for nid, reg_idx in reg_of.items():
@@ -3318,9 +2026,9 @@ def _check_nonempty_schedule(parser_state, key, func_entity, nodes):
         if node["kind"] == "inlined" or node["delay_du"] > 0:
             continue
         logic = parser_state.FuncLogicLookupTable.get(node["entity"])
-        if logic is None or _leaf_area(node["entity"], logic) <= 0.0:
+        if logic is None or AUTO._leaf_area(node["entity"], logic) <= 0.0:
             continue
-        resolved = _resolve_delay_du(parser_state, node["entity"], {})
+        resolved = AUTO._resolve_delay_du(parser_state, node["entity"], {})
         if resolved > 0:
             raise AutoFsmInternalError(
                 f"AUTO_FSM {key}: scheduling {func_entity!r} placed 0 operations, "
@@ -3377,196 +2085,6 @@ def _bump_replication(plan, folds, copies):
 # ─────────────────────────────────────────────
 
 
-def _leaf_area(entity, logic):
-    """Estimated area of one indivisible operation, in the abstract units
-    documented at the top of this module."""
-    widths = [_ctype_width(logic.wire_to_c_type.get(p)) for p in logic.inputs] or [1]
-    w = max(widths)
-    pair = widths[0] * widths[1] if len(widths) >= 2 else w * w
-
-    if entity.startswith(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX + "_"):
-        rest = entity[len(C_TO_LOGIC.BIN_OP_LOGIC_NAME_PREFIX) + 1 :]
-        for op_name in sorted(_BIN_OP_SRC, key=len, reverse=True):
-            if not rest.startswith(op_name + "_"):
-                continue
-            if op_name in (
-                C_TO_LOGIC.BIN_OP_MULT_NAME,
-                C_TO_LOGIC.BIN_OP_INFERRED_MULT_NAME,
-            ):
-                return pair * AREA_PER_BIT_PAIR_MULT
-            if op_name in (C_TO_LOGIC.BIN_OP_DIV_NAME, C_TO_LOGIC.BIN_OP_MOD_NAME):
-                return pair * AREA_PER_BIT_PAIR_DIV
-            if op_name in (
-                C_TO_LOGIC.BIN_OP_AND_NAME,
-                C_TO_LOGIC.BIN_OP_OR_NAME,
-                C_TO_LOGIC.BIN_OP_XOR_NAME,
-            ):
-                return w * AREA_PER_BIT_BITWISE
-            if op_name in (C_TO_LOGIC.BIN_OP_SL_NAME, C_TO_LOGIC.BIN_OP_SR_NAME):
-                return w * AREA_PER_BIT_SHIFT_VAR
-            if op_name in (
-                C_TO_LOGIC.BIN_OP_PLUS_NAME,
-                C_TO_LOGIC.BIN_OP_MINUS_NAME,
-            ):
-                return w * AREA_PER_BIT_ADD
-            return w * AREA_PER_BIT_CMP
-    if entity.startswith(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX + "_"):
-        rest = entity[len(C_TO_LOGIC.UNARY_OP_LOGIC_NAME_PREFIX) + 1 :]
-        if rest.startswith(C_TO_LOGIC.UNARY_OP_NOT_NAME + "_"):
-            return w * AREA_PER_BIT_BITWISE
-        return w * AREA_PER_BIT_ADD
-    if entity.startswith(C_TO_LOGIC.MUX_LOGIC_NAME + "_"):
-        return _ctype_width(logic.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME)) * (
-            AREA_PER_BIT_MUX
-        )
-    if entity.startswith(C_TO_LOGIC.CONST_PREFIX) or entity.startswith(
-        C_TO_LOGIC.CONST_REF_RD_FUNC_NAME_PREFIX
-    ):
-        return 0.0  # constant shifts and field reads are wiring
-    if getattr(logic, "is_new_style_bit_manip", False):
-        return 0.0  # bit_assign / concat / rotate: wiring
-    if entity.startswith(C_TO_LOGIC.VAR_REF_RD_FUNC_NAME_PREFIX):
-        # A variable array index: a balanced mux tree over the array.
-        out_w = _ctype_width(logic.wire_to_c_type.get(C_TO_LOGIC.RETURN_WIRE_NAME))
-        in_w = max(widths)
-        n = max(2, in_w // max(1, out_w))
-        return out_w * (n - 1) * AREA_PER_BIT_MUX
-    return w * AREA_PER_BIT_DEFAULT
-
-
-# Set by src/pipelinec from --auto_fsm_abstract_area (default False = off).
-# _area_unit_scale consults this before SYN_TOOL: real sky130 um2 is used
-# automatically whenever it is available, and this is the only escape hatch
-# back to the abstract model, for A/B comparison against it. Module-level
-# rather than threaded through every area function's signature, matching
-# SYN.SYN_TOOL/SYN.MUX_DELAY_KEY_BY_WIDTH's own convention -- ESTIMATE_* is
-# called directly by tests and by the compare harness with fixed signatures,
-# not only through HARVEST_AUTO_FSM_SCHEDULES.
-FORCE_ABSTRACT_AREA = False
-
-
-def _area_unit_scale(parser_state):
-    """The multiplier that converts one abstract area unit (one ripple-adder
-    bit, AREA_PER_BIT_ADD's 1.0) into the model's current output unit: 1.0 --
-    unchanged from every tool's existing abstract-units-only behavior -- for
-    every SYN_TOOL with no area measurement or when FORCE_ABSTRACT_AREA is
-    set, or UM2_PER_ABSTRACT_AREA_UNIT under DEVICE_MODELS so est_area lands
-    in real um2, directly comparable to a build's own "Measured area:" line
-    and to latchup.app's reported numbers."""
-    if FORCE_ABSTRACT_AREA:
-        return 1.0
-    try:
-        import SYN
-
-        if SYN.SYN_TOOL is SYN.DEVICE_MODELS:
-            return UM2_PER_ABSTRACT_AREA_UNIT
-    except Exception:
-        pass
-    return 1.0
-
-
-def _tally(tally, key):
-    if tally is not None:
-        tally[key] = tally.get(key, 0) + 1
-
-
-def _leaf_area_um2(parser_state, entity, logic, tally=None):
-    """One leaf's area, in the model's current output unit (_area_unit_scale):
-    the real cached sky130 measurement when there is one, the abstract
-    estimate scaled into that unit otherwise. Mirrors _resolve_delay_du's own
-    tiering for exactly the same reason -- a leaf that resolved to zero would
-    read as free wiring and never get shared. Ground truth throughout this
-    model is real synthesis output, never the abstract estimate: a cache hit
-    always wins regardless of how far it sits from _leaf_area's guess.
-
-    A leaf _leaf_area already prices at 0.0 (genuine wiring -- field reads,
-    constant shifts, bit_assign/concat/rotate) stays 0.0 with no cache lookup
-    and no tally: it was never a candidate for measurement, so counting it as
-    "estimated" would understate how much of a schedule's priced area is
-    real.
-
-    `tally`, when given, counts real-vs-fallback PRICED leaves so the caller
-    can report how much of a schedule's area came from measurement (see
-    _describe_area_model) -- a cold cache silently pulls a ranking onto
-    fallback numbers, which needs to be visible in the build log, not just in
-    the resulting number.
-    """
-    abstract = _leaf_area(entity, logic)
-    if abstract <= 0.0:
-        return 0.0
-    scale = _area_unit_scale(parser_state)
-    if scale != 1.0:
-        try:
-            import SYN
-
-            cached = SYN.GET_CACHED_LEAF_AREA(logic, parser_state)
-        except Exception:
-            cached = None
-        if cached is not None and cached[0] > 0.0:
-            _tally(tally, "measured")
-            return cached[0]
-    _tally(tally, "estimated")
-    return abstract * scale
-
-
-def _ff_area_um2(parser_state):
-    """One flip-flop's area, in the model's current output unit: the real
-    sky130 sequential cell area under DEVICE_MODELS (no cache needed --
-    DEVICE_MODELS.GET_SEQUENTIAL_CELL_AREA is a closed-form liberty lookup,
-    not a per-shape measurement), or the scaled AREA_PER_BIT_FF fallback
-    otherwise. This is the single largest correction real sky130 data makes
-    to this model: AREA_PER_BIT_FF is an FPGA number (a flip-flop paired with
-    its LUT is nearly free); a real sky130 dfxtp_1 measures 2.5x it."""
-    scale = _area_unit_scale(parser_state)
-    if scale != 1.0:
-        try:
-            import DEVICE_MODELS
-
-            value, _unit = DEVICE_MODELS.GET_SEQUENTIAL_CELL_AREA()
-            if value > 0.0:
-                return value
-        except Exception:
-            pass
-    return AREA_PER_BIT_FF * scale
-
-
-def _mux_bank_area_um2(parser_state, ctype, tally=None):
-    """One 2:1 multiplexer bank's area over `ctype`, in the model's current
-    output unit: the real cached sky130 measurement for this width's mux bank
-    when there is one, the scaled AREA_PER_BIT_MUX fallback otherwise.
-
-    Priced by width alone (no Logic object exists yet -- this is called
-    while SCHEDULING, before any mux entity is built), using the same
-    _ctype_width the abstract term already assumed as the physical SLV
-    width; a real cache entry for a struct or array ctype with padding would
-    disagree, but that approximation is not new here -- it is the one
-    AREA_PER_BIT_MUX already made.
-
-    The cache key itself goes through SYN.GET_MUX_CACHE_KEY rather than
-    being reconstructed here: under --no_mux_delay_by_width every mux width
-    collapses onto one shared "mux" key (SYN.GET_CACHED_LOGIC_FILE_KEY), and
-    a caller that always asked for "MUX_uint{width}_t" directly would miss
-    every real measurement in that mode, silently and without a wrong
-    answer -- just a 100% fallback rate this function's own tally would not
-    even flag as unusual, since a genuinely cold cache looks the same.
-    """
-    width = _ctype_width(ctype)
-    scale = _area_unit_scale(parser_state)
-    if scale != 1.0:
-        try:
-            import SYN
-
-            key = SYN.GET_MUX_CACHE_KEY(width)
-            cached = SYN.GET_CACHED_LEAF_AREA_BY_KEY(key, parser_state)
-        except Exception:
-            cached = None
-        if cached is not None and cached[0] > 0.0:
-            _tally(tally, "measured")
-            return cached[0]
-    _tally(tally, "estimated")
-    return width * AREA_PER_BIT_MUX * scale
-
-
 def _describe_area_model(parser_state, schedule):
     """One line for DESCRIBE_SCHEDULE: which unit a schedule's est_area is in,
     and -- under DEVICE_MODELS -- how many of its leaves were real
@@ -3574,39 +2092,13 @@ def _describe_area_model(parser_state, schedule):
     area once more with a fresh memo/tally purely to observe that split; the
     cost itself is already known (schedule["est_area"]) and discarded here.
     """
-    if _area_unit_scale(parser_state) == 1.0:
+    if AUTO._area_unit_scale(parser_state) == 1.0:
         return "abstract"
     tally = {}
     ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo={}, tally=tally)
     measured = tally.get("measured", 0)
     estimated = tally.get("estimated", 0)
     return f"sky130 um2 ({measured} leaf/leaves measured, {estimated} estimated)"
-
-
-def ESTIMATE_ENTITY_AREA(parser_state, entity, memo=None, tally=None):
-    """Estimated area of one entity INCLUDING everything it instantiates, in
-    the model's current output unit (see _area_unit_scale).
-
-    Memoized per entity, which matters: a float64 multiplier's tree is large,
-    and the sweep asks for these numbers hundreds of times.
-    """
-    memo = {} if memo is None else memo
-    hit = memo.get(entity)
-    if hit is not None:
-        return hit
-    logic = parser_state.FuncLogicLookupTable.get(entity)
-    if logic is None:
-        return 0.0
-    memo[entity] = 0.0  # cycle guard; real value written below
-    if not logic.submodule_instances:
-        total = _leaf_area_um2(parser_state, entity, logic, tally)
-    else:
-        total = sum(
-            ESTIMATE_ENTITY_AREA(parser_state, sub, memo, tally)
-            for sub in logic.submodule_instances.values()
-        )
-    memo[entity] = total
-    return total
 
 
 def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
@@ -3660,18 +2152,18 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
     bounds the risk of that, not the unit this returns.
     """
     memo = {} if memo is None else memo
-    _seed_struct_widths(parser_state)
-    scale = _area_unit_scale(parser_state)
+    AUTO._seed_struct_widths(parser_state)
+    scale = AUTO._area_unit_scale(parser_state)
     nodes = schedule["nodes"]
     fus = schedule["fus"]
 
     total = 0.0
     for fu, entity in sorted(fus.items()):
-        total += ESTIMATE_ENTITY_AREA(parser_state, entity, memo, tally)
+        total += AUTO.ESTIMATE_ENTITY_AREA(parser_state, entity, memo, tally)
     for nid in schedule["node_order"]:
         node = nodes[nid]
         if not node.get("fu"):
-            total += ESTIMATE_ENTITY_AREA(parser_state, node["entity"], memo, tally)
+            total += AUTO.ESTIMATE_ENTITY_AREA(parser_state, node["entity"], memo, tally)
 
     users = {}
     for nid in schedule["node_order"]:
@@ -3697,14 +2189,14 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
     # mux explicitly so the optimization cannot win merely by hiding cost from
     # the estimator.
     for pack in fused_output_packs:
-        total += _mux_bank_area_um2(parser_state, pack["ctype"], tally)
+        total += AUTO._mux_bank_area_um2(parser_state, pack["ctype"], tally)
         if (
             input_storage is not None
             and pack["root"] in input_storage["preload_by_pack"]
         ):
             # Accept-time field preload is the third source of the rolling
             # register (shift, transformed source, raw input field).
-            total += _mux_bank_area_um2(parser_state, pack["ctype"], tally)
+            total += AUTO._mux_bank_area_um2(parser_state, pack["ctype"], tally)
     mux_plans = {}
     for fu in sorted(users):
         fu_nodes, ports = _operand_mux_plan(schedule, fu, reg_of)
@@ -3715,10 +2207,10 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
             for ctype, n, _mapping in port["muxes"]:
                 if n < 2:
                     continue
-                total += (n - 1) * _mux_bank_area_um2(parser_state, ctype, tally)
+                total += (n - 1) * AUTO._mux_bank_area_um2(parser_state, ctype, tally)
     # Input storage is now field/lifetime aware and therefore can change a
     # ranking (a first-state field may preload a rolling work register).
-    total += _reg_bits_from_types(schedule, reg_types) * _ff_area_um2(parser_state)
+    total += _reg_bits_from_types(schedule, reg_types) * AUTO._ff_area_um2(parser_state)
 
     n_states = schedule["n_states"]
     statew = max(1, int(n_states).bit_length())
@@ -3743,14 +2235,14 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
             for mapping, n in sorted(selector_shapes):
                 for bit in range(max(1, (n - 1).bit_length())):
                     terms = sum(1 for row in mapping if (row >> bit) & 1)
-                    total += max(0, terms - 1) * AREA_PER_BIT_BITWISE * scale
+                    total += max(0, terms - 1) * AUTO.AREA_PER_BIT_BITWISE * scale
         writes_by_reg = {}
         for nid, idx in reg_of.items():
             writes_by_reg.setdefault(idx, set()).add(nodes[nid]["state"])
         for states in writes_by_reg.values():
-            total += max(0, len(states) - 1) * AREA_PER_BIT_BITWISE * scale
+            total += max(0, len(states) - 1) * AUTO.AREA_PER_BIT_BITWISE * scale
         for pack in output_packs:
-            total += max(0, len(pack["steps"]) - 1) * AREA_PER_BIT_BITWISE * scale
+            total += max(0, len(pack["steps"]) - 1) * AUTO.AREA_PER_BIT_BITWISE * scale
         for idx, srcs in sorted(_register_sources(nodes, reg_of).items()):
             if len(srcs) < 2:
                 continue
@@ -3767,12 +2259,12 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
                 rows.append(source_rows[src])
             for bit in range(max(1, (len(srcs) - 1).bit_length())):
                 terms = sum(1 for row in rows if (row >> bit) & 1)
-                total += max(0, terms - 1) * AREA_PER_BIT_BITWISE * scale
+                total += max(0, terms - 1) * AUTO.AREA_PER_BIT_BITWISE * scale
         # idle-and-valid plus idle-and-not-valid in the one-hot transition.
-        total += 2 * AREA_PER_BIT_BITWISE * scale
+        total += 2 * AUTO.AREA_PER_BIT_BITWISE * scale
         if input_storage is not None:
             total += (
-                len(input_storage["preload_by_pack"]) * AREA_PER_BIT_BITWISE * scale
+                len(input_storage["preload_by_pack"]) * AUTO.AREA_PER_BIT_BITWISE * scale
             )
     else:
         # One select table per DISTINCT state-to-choice mapping. Ports whose
@@ -3810,7 +2302,7 @@ def ESTIMATE_SCHEDULE_AREA(parser_state, schedule, memo=None, tally=None):
     # encoding. Same-FU reuse has one unchanged data wire and costs zero here.
     for idx, srcs in sorted(_register_sources(nodes, reg_of).items()):
         if len(srcs) > 1:
-            total += (len(srcs) - 1) * _mux_bank_area_um2(
+            total += (len(srcs) - 1) * AUTO._mux_bank_area_um2(
                 parser_state, reg_types[idx], tally
             )
     return total
@@ -3840,12 +2332,12 @@ def _resolve_entity_pattern(schedule, pattern):
     """
     matches = sorted({e for e in schedule["fus"].values() if pattern in e})
     if not matches:
-        raise AutoFsmError(
+        raise AUTO.AutoError(
             f"AUTO_FSM: no functional unit matching {pattern!r}. This schedule "
             f"binds: " + ", ".join(sorted(set(schedule["fus"].values())))
         )
     if len(matches) > 1:
-        raise AutoFsmError(
+        raise AUTO.AutoError(
             f"AUTO_FSM: {pattern!r} matches more than one functional unit: "
             + ", ".join(matches)
         )
@@ -4027,7 +2519,7 @@ def _SWEEP_MIN_AREA_SCHEDULE(
             )
         except AutoFsmInternalError:
             raise
-        except AutoFsmError:
+        except AUTO.AutoError:
             return None, "rejected: too many operations to score (DAG cap)", None
         if sched["latency_infeasible"] and not anchor["latency_infeasible"]:
             return None, "rejected: cannot meet the max_latency cap", None
@@ -4149,12 +2641,12 @@ def SWEEP_MIN_AREA_SCHEDULE(
     best = _SWEEP_MIN_AREA_SCHEDULE(
         parser_state, key, tag, budget_scale, prev_schedule, ctl=ctl, debug=debug,
     )
-    entity = _entity_key_for_callable(parser_state, tag.func)
-    choices = list(getattr(parser_state, "pypeline_comb_share_candidates", {}).get(entity, []))
-    choices += getattr(parser_state, "pypeline_comb_unshare_candidates", {}).get(entity, [])[:3]
+    entity = AUTO._entity_key_for_callable(parser_state, tag.func)
+    choices = list(getattr(parser_state, "pypeline_comb_area_opt_candidates", {}).get(entity, []))
+    choices += getattr(parser_state, "pypeline_comb_delay_opt_candidates", {}).get(entity, [])[:3]
     considered = 0
     for func, report in choices:
-        candidate_entity = _entity_key_for_callable(parser_state, func)
+        candidate_entity = AUTO._entity_key_for_callable(parser_state, func)
         if candidate_entity is None or candidate_entity == entity:
             continue
         candidate_logic = parser_state.FuncLogicLookupTable[candidate_entity]
@@ -4170,16 +2662,16 @@ def SWEEP_MIN_AREA_SCHEDULE(
             )
         except AutoFsmInternalError:
             raise
-        except AutoFsmError:
+        except AUTO.AutoError:
             continue
         if (candidate["latency_infeasible"] or candidate["worst_state_du"] > candidate["budget_du"]
                 or (candidate["at_floor"] and not best["at_floor"])):
             continue
         if candidate["est_area"] < best["est_area"]:
-            candidate["comb_share_moves"] = report["moves"]
+            candidate["comb_opt_moves"] = report["moves"]
             best = candidate
     if considered:
-        best["comb_share_candidates"] = considered
+        best["comb_opt_candidates"] = considered
     return best
 
 
@@ -4255,7 +2747,7 @@ def HARVEST_AUTO_FSM_SCHEDULES(
     for key in sorted(COLLECT_AUTO_FSM_KEYS(parser_state)):
         tag = tags.get(key)
         if tag is None:
-            raise AutoFsmError(
+            raise AUTO.AutoError(
                 f"AUTO_FSM: no live tag object recorded for call site {key!r} "
                 f"(internal error)"
             )
@@ -4384,7 +2876,7 @@ _SCHEDULE_NON_HARDWARE_KEYS = frozenset(
         "est_area_anchor",
         "sweep_candidates",
         "ctl_auto_candidates",
-        "comb_share_candidates",
+        "comb_opt_candidates",
         "descend_truncated",
     )
 )
@@ -4450,7 +2942,7 @@ def _reg_bits_from_types(schedule, reg_types):
     Shared by ESTIMATE_SCHEDULE_AREA (which already has reg_types from its own
     ALLOCATE_REGISTERS call) and _register_bit_count (which needs the same
     total on its own, with no other area computation)."""
-    reg_bits = sum(_ctype_width(t) for t in reg_types.values())
+    reg_bits = sum(AUTO._ctype_width(t) for t in reg_types.values())
     reg_bits += sum(
         pack["width"]
         for pack in _OUTPUT_SHIFT_PACKS(
@@ -4461,13 +2953,13 @@ def _reg_bits_from_types(schedule, reg_types):
         schedule["nodes"], schedule["output"], schedule["n_states"]
     )
     if input_storage is None:
-        reg_bits += _ctype_width(schedule["in_type"])
+        reg_bits += AUTO._ctype_width(schedule["in_type"])
     else:
         reg_bits += sum(
-            _ctype_width(field["ctype"]) for field in input_storage["stored_fields"]
+            AUTO._ctype_width(field["ctype"]) for field in input_storage["stored_fields"]
         )
     if schedule.get("register_output", True):
-        reg_bits += _ctype_width(schedule["out_type"]) + 1  # data + valid
+        reg_bits += AUTO._ctype_width(schedule["out_type"]) + 1  # data + valid
     if schedule.get("ctl", "v3") == "onehot":
         # One flip-flop per state plus idle, where binary needs only log2.
         reg_bits += schedule["n_states"] + 1
@@ -4529,15 +3021,15 @@ def DESCRIBE_SCHEDULE(parser_state, key, schedule) -> str:
         worst = max(du for _nid, _e, du in truncated)
         more = f", +{len(entities) - 3} more" if len(entities) > 3 else ""
         line += (
-            f"\n  descend cap: gave up after {_MAX_DESCEND_DEPTH} levels for "
+            f"\n  descend cap: gave up after {AUTO._MAX_DESCEND_DEPTH} levels for "
             f"{len(entities)} entity/ies (worst {worst / 10.0:.2f} ns vs "
             f"{budget_ns:.2f} ns/state budget), kept atomic: "
             f"{', '.join(entities[:3])}{more}"
         )
     line += f"\n  register bits: {_register_bit_count(schedule)}"
-    if schedule.get("comb_share_candidates"):
-        line += f"\n  combinational candidates: {schedule['comb_share_candidates']}; "
-        line += ", ".join(schedule.get("comb_share_moves", [])) or "original graph retained"
+    if schedule.get("comb_opt_candidates"):
+        line += f"\n  combinational candidates: {schedule['comb_opt_candidates']}; "
+        line += ", ".join(schedule.get("comb_opt_moves", [])) or "original graph retained"
     ctl_candidates = schedule.get("ctl_auto_candidates")
     if ctl_candidates:
         scores = ", ".join(
@@ -4622,11 +3114,12 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
     the FSM's states), when shrinking the budget no longer changes the
     hardware, or at MAX_SCHEDULE_PASSES.
     """
+    import AUTO_PIPELINE
+
     import sys
 
     import SYN
     import PY_TO_LOGIC
-    import C_TO_LOGIC
     import pypeline
 
     budget_scales = {}
@@ -4676,7 +3169,7 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
         parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
         C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
         DUMP_GENERATED_SOURCE(parser_state, SYN.SYN_OUTPUT_DIRECTORY)
-        parser_state, multimain_timing_params = SYN.DO_SWEEP_AND_AUTO_PIPELINE(
+        parser_state, multimain_timing_params = AUTO_PIPELINE.DO_SWEEP_AND_AUTO_PIPELINE(
             parser_state, args, src_file
         )
 
@@ -4790,78 +3283,6 @@ def DO_SCHEDULE_PASSES(parser_state, args, src_file):
 # ─────────────────────────────────────────────
 
 
-class _Emitter:
-    """Accumulates generated source lines plus the namespace of live objects
-    (types, callables) the source refers to by injected name.
-
-    Injected names are assigned in emission order and derived only from the
-    schedule, so one schedule always produces byte-identical source -- the
-    property that keeps entity names stable across the driver's repeated
-    re-elaborations of one design.
-    """
-
-    def __init__(self):
-        self.lines = []
-        self.globals = {}
-        self._by_obj_key = {}
-        self._n = 0
-
-    def inj_named(self, obj, name):
-        """Inject a live object under an EXACT name, for the few callees the
-        elaborator recognizes by name rather than by value.
-
-        The bit-manipulation builtins (concat, bit_assign, rotl, ...) are
-        intercepted in _elab_call by literal name; injected as `_af_bm0` they
-        instead look like an ordinary callable, and the elaborator tries to
-        elaborate their SIMULATION body -- which is plain Python (`concat` maps
-        a list comprehension over its varargs) and not hardware at all.
-        """
-        if self.globals.get(name) not in (None, obj):
-            raise AutoFsmError(
-                f"AUTO_FSM: generated-source name {name!r} is already bound to a "
-                f"different object (internal error)"
-            )
-        self.globals[name] = obj
-        return name
-
-    def inj(self, obj, hint="v"):
-        """Inject a live object, returning the generated name that refers to it."""
-        # Keyed on identity: two same-named struct classes from different
-        # elaboration passes are different objects and must not collapse.
-        k = id(obj)
-        name = self._by_obj_key.get(k)
-        if name is None:
-            name = f"_af_{hint}{self._n}"
-            self._n += 1
-            self._by_obj_key[k] = name
-            self.globals[name] = obj
-        return name
-
-    def line(self, text=""):
-        self.lines.append(text)
-
-    def src(self):
-        return "\n".join(self.lines) + "\n"
-
-
-def _exec_generated(func_name, src, extra_globals):
-    """exec generated FSM source into a synthetic module, mirroring
-    pypeline._exec_generated_func: a flat top-level def plus a linecache entry
-    so inspect.getsource works during elaboration, under a fake path with no
-    characters illegal in a VHDL identifier (PY_TO_LOGIC._loc_str embeds the
-    file's basename into generated instance names)."""
-    import linecache
-
-    fake_file = f"/pypeline_auto_fsm_gen/{func_name}.py"
-    linecache.cache[fake_file] = (len(src), None, src.splitlines(True), fake_file)
-    code = compile(src, fake_file, "exec")
-    ns = dict(extra_globals)
-    exec(code, ns)
-    fn = ns[func_name]
-    fn._auto_fsm_generated_src = src
-    return fn
-
-
 def _passthrough_name(tag) -> str:
     h = hashlib.sha256(tag.canonical_key.encode()).hexdigest()[:8]
     base = f"auto_fsm_{tag.canonical_key}"
@@ -4884,7 +3305,7 @@ def BUILD_PASSTHROUGH_FUNC(tag):
     from pypeline import hw_func
 
     name = _passthrough_name(tag)
-    em = _Emitter()
+    em = AUTO._Emitter()
     in_t = em.inj(tag.in_stream_t, "t")
     out_t = em.inj(tag.out_stream_t, "t")
     fn = em.inj(tag.func, "f")
@@ -4896,7 +3317,7 @@ def BUILD_PASSTHROUGH_FUNC(tag):
     em.line("    return o")
     em.globals["hw_func"] = hw_func
     _seed_struct_globals(em, [tag.in_stream_t, tag.out_stream_t])
-    return _exec_generated(name, em.src(), em.globals)
+    return AUTO._exec_generated(name, em.src(), em.globals)
 
 
 def _seed_struct_globals(em, types):
@@ -4920,7 +3341,7 @@ def _seed_struct_globals(em, types):
             em.globals.setdefault(name, st)
 
 
-class _Codegen:
+class _Codegen(AUTO._GraphCodegen):
     """Renders one scheduled DAG as pypeline source.
 
     The generated function's shape (see docs/AUTO_FSM_DESIGN.md for a worked
@@ -4944,6 +3365,7 @@ class _Codegen:
         self.tag = tag
         self.schedule = schedule
         self.parser_state = parser_state
+        self.func_entity = schedule.get("func_entity")
         self.nodes = schedule["nodes"]
         self.n_states = schedule["n_states"]
         self.register_output = schedule.get("register_output", True)
@@ -4951,8 +3373,8 @@ class _Codegen:
         # field existed cannot reach here (SCHEDULE_VERSION gates them), so the
         # default is for hand-built test schedules only.
         self.ctl = schedule.get("ctl", "v3")
-        self.em = _Emitter()
-        self.types = _TypeResolver()
+        self.em = AUTO._Emitter()
+        self.types = AUTO._TypeResolver()
         self.local_of_node = {}  # node id -> local name holding its result
         self.reg_of_node = {}  # node id -> snapshot local of its register
         self.pack_of_node = {}  # output concat-chain root -> rolling reg local
@@ -4966,11 +3388,11 @@ class _Codegen:
         for t in (tag.in_type, tag.out_type, tag.in_stream_t, tag.out_stream_t):
             self.types.seed(t)
         for entity in schedule["fus"].values():
-            f = _entity_callables(parser_state).get(entity)
+            f = AUTO._entity_callables(parser_state).get(entity)
             if f is not None:
                 self.types.seed_callable(f)
         for node in self.nodes.values():
-            f = _entity_callables(parser_state).get(node["entity"])
+            f = AUTO._entity_callables(parser_state).get(node["entity"])
             if f is not None:
                 self.types.seed_callable(f)
         # fus/nodes only cover entities that SURVIVED into the schedule -- an
@@ -4982,8 +3404,8 @@ class _Codegen:
         # before constructing this _Codegen, so it is safe to walk here.
         func_entity = schedule.get("func_entity")
         if func_entity is not None:
-            entity_callables = _entity_callables(parser_state)
-            for entity in _subtree_entities(parser_state, func_entity):
+            entity_callables = AUTO._entity_callables(parser_state)
+            for entity in AUTO._subtree_entities(parser_state, func_entity):
                 f = entity_callables.get(entity)
                 if f is not None:
                     self.types.seed_callable(f)
@@ -4994,7 +3416,7 @@ class _Codegen:
         kind = ref[0]
         if kind == "in":
             if self.input_value_name is None:
-                raise AutoFsmError(
+                raise AUTO.AutoError(
                     "AUTO_FSM: whole transaction input reached codegen after "
                     "field-granular input storage was selected"
                 )
@@ -5002,7 +3424,7 @@ class _Codegen:
         if kind == "const":
             return self._render_const(ref[1])
         if kind != "node":
-            raise AutoFsmError(f"AUTO_FSM: unsupported value reference {ref!r}")
+            raise AUTO.AutoError(f"AUTO_FSM: unsupported value reference {ref!r}")
         nid = ref[1]
         input_expr = self.input_ref_of_node.get(
             (nid, self.cur_state), self.input_ref_of_node.get(nid)
@@ -5014,7 +3436,7 @@ class _Codegen:
             return rolling_expr
         node = self.nodes.get(nid)
         if node is None:
-            raise AutoFsmError(f"AUTO_FSM: reference to unknown operation {nid!r}")
+            raise AUTO.AutoError(f"AUTO_FSM: reference to unknown operation {nid!r}")
         if nid in self.pack_of_node:
             return self.pack_of_node[nid]
         if node["delay_du"] > 0:
@@ -5025,134 +3447,13 @@ class _Codegen:
                 return self.local_of_node[nid]
             if nid in self.reg_of_node:
                 return self.reg_of_node[nid]
-            raise AutoFsmError(
+            raise AUTO.AutoError(
                 f"AUTO_FSM: operation {nid!r} (state {node['state']}) is read in "
                 f"state {self.cur_state} but was not given a register "
                 f"(internal scheduling error)"
             )
         # Zero-delay glue: re-render it inline, here, in this state.
         return self._render_glue(nid, node)
-
-    def _render_glue(self, nid, node):
-        # Glue is rendered as a bare INLINE EXPRESSION, so -- unlike a scheduled
-        # operation, whose operands land in an array declared at the port type,
-        # and unlike assembly, which writes into a typed local's fields --
-        # nothing here performs the port's own cast. _clean_cast_chain drops
-        # that cast on exactly that assumption, so replay it here.
-        assemble = node["op"]["kind"] == "assemble"
-        # A bit slice's base must be a plain name: the elaborator resolves it
-        # by looking the identifier up, so a base that is itself an expression
-        # -- notably another slice, which happens as soon as one opened
-        # operation feeds a second -- is not recognized as a slice at all and
-        # is misread as an array index (`((v0)[15:0])[13:0]`).
-        slicing = node["op"].get("builtin") == "__slice__"
-        operand_exprs = [
-            self._render_operand(
-                node, i, at_port_type=not assemble, force_local=slicing
-            )
-            for i in range(len(node["operands"]))
-        ]
-        if assemble:
-            return self._render_assemble(node, operand_exprs)
-        return _render_op(
-            node["op"], operand_exprs, self.em, self.parser_state, node["entity"]
-        )
-
-    def _render_assemble(self, node, operand_exprs):
-        """Build a compound value (what `return my_struct_t(a=..., b=...)`
-        elaborates to) into a typed local, field by field, and return its name.
-
-        Unlike every other operation this needs statements rather than an
-        expression, which is fine: assembly is pure rewiring, so it is glue and
-        gets re-rendered wherever its value is used.
-
-        Assignments go shortest-path-first so that a whole-value base (a port
-        carrying the value being partially updated) lands before the field
-        writes that override parts of it.
-        """
-        name = f"asm{self._tmp_n}"
-        self._tmp_n += 1
-        t = self.em.inj(self.types.resolve(node["out_type"]), "t")
-        self.em.line(f"    {name}: {t}")
-        order = sorted(
-            range(len(operand_exprs)), key=lambda i: len(node["op"]["paths"][i])
-        )
-        for i in order:
-            target = name + _path_suffix(node["op"]["paths"][i])
-            self.em.line(f"    {target} = {operand_exprs[i]}")
-        return name
-
-    def _render_operand(self, node, i, at_port_type=False, force_local=False):
-        """Render operand i of a node, replaying any narrowing the original
-        code performed between the producer and this port.
-
-        `at_port_type` additionally materializes the port's own type, for
-        consumers that render the operand inline instead of assigning it to
-        something declared at that type. It is not cosmetic: a literal is typed
-        at its own minimal width, so an operation reading `440` on a 16-bit port
-        sees a 9-bit value unless the widening the real wire performs is
-        replayed -- which is how descending into a soft multiplier used to
-        produce "Bit index [14:14] out of range for uint9_t".
-        """
-        expr = self._render_ref(node["operands"][i])
-        chain = list(node["casts"][i])
-        if at_port_type:
-            port_type = node["port_types"][i]
-            # Scalar integer ports only: width is the whole point, and a
-            # compound port carries its value through unreinterpreted anyway.
-            if (
-                port_type is not None
-                and _scalar_ctype_to_type(port_type) is not None
-                and self._expr_ctype(node, i, chain) != port_type
-            ):
-                chain.append(port_type)
-        for ctype in chain:
-            expr = self._cast_local(expr, ctype)
-        if force_local and not expr.isidentifier():
-            ctype = node["port_types"][i] or node["out_type"]
-            expr = self._cast_local(expr, ctype)
-        return expr
-
-    def _expr_ctype(self, node, i, chain):
-        """The type a rendered operand expression already carries, or None when
-        that cannot be known (a constant literal carries only its own width)."""
-        if chain:
-            return chain[-1]
-        ref = node["operands"][i]
-        if ref[0] == "node":
-            producer = self.nodes.get(ref[1])
-            return producer.get("out_type") if producer else None
-        return None
-
-    def _cast_local(self, expr, ctype):
-        """Materialize an intermediate narrowing as a typed local."""
-        name = f"cast{self._tmp_n}"
-        self._tmp_n += 1
-        t = self.em.inj(self.types.resolve(ctype), "t")
-        self.em.line(f"    {name}: {t} = {expr}")
-        return name
-
-    def _render_const(self, wire_name):
-        """A literal operand, recovered from the constant wire's name (the
-        compiler encodes the literal text there; see
-        C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE)."""
-        logic = self.parser_state.FuncLogicLookupTable.get(self.schedule["func_entity"])
-        try:
-            val = C_TO_LOGIC.GET_VAL_STR_FROM_CONST_WIRE(
-                wire_name, logic, self.parser_state
-            )
-        except Exception as e:
-            raise AutoFsmError(
-                f"AUTO_FSM: cannot recover the value of constant {wire_name!r}: {e}"
-            )
-        text = str(val).strip()
-        try:
-            return repr(int(text, 0))
-        except ValueError:
-            raise AutoFsmError(
-                f"AUTO_FSM: constant {wire_name!r} has non-integer value "
-                f"{text!r}, which cannot be regenerated as a literal yet"
-            )
 
     def _st_bit(self, state):
         """Source expression for "the FSM is in this state", one-hot only."""
@@ -5407,7 +3708,7 @@ class _Codegen:
                 bit_expr = self._cast_local(bit_expr, ctype)
             root_node = self.nodes[pack["root"]]
             shifted = f"({pack_name})[{pack['width'] - 2}:0]"
-            shift_expr = _render_op(
+            shift_expr = AUTO._render_op(
                 root_node["op"],
                 [shifted, bit_expr],
                 em,
@@ -5429,7 +3730,7 @@ class _Codegen:
             # safer than generating a latent functional bug.
             bit_regs = {reg_of[step["dep"]] for step in pack["steps"]}
             if len(bit_regs) != 1:
-                raise AutoFsmError(
+                raise AUTO.AutoError(
                     "AUTO_FSM: rolling output bits did not bind to one register "
                     f"for pack {pack['root']!r} (got {sorted(bit_regs)})"
                 )
@@ -5453,7 +3754,7 @@ class _Codegen:
                 sel_lut[first_state] = 1
                 em.line(f"    {pack_name}_wslut: {sel_lut_t} = {sel_lut!r}")
                 em.line(f"    {sel}: {u1_t} = {pack_name}_wslut[st]")
-            mux_fn = _mux_callable(pack_t_obj, 2)
+            mux_fn = AUTO._mux_callable(pack_t_obj, 2)
             if mux_fn is not None:
                 em.line(
                     f"    {src}: {t} = " f"{em.inj(mux_fn, 'mux')}({sel}, {choices})"
@@ -5480,7 +3781,7 @@ class _Codegen:
             for ctype in last_step["casts"]:
                 bit_expr = self._cast_local(bit_expr, ctype)
             root_node = self.nodes[pack["root"]]
-            expr = _render_op(
+            expr = AUTO._render_op(
                 root_node["op"],
                 [f"({pack_name})[{pack['width'] - 2}:0]", bit_expr],
                 em,
@@ -5595,7 +3896,7 @@ class _Codegen:
                         lut_t = em.inj(sel_t_obj[self.n_states + 1], "t")
                         em.line(f"    v{idx}_wslut: {lut_t} = {lut!r}")
                         em.line(f"    {sel_name}: {sel_t} = v{idx}_wslut[st]")
-                    mux_fn = _mux_callable(reg_t, len(srcs))
+                    mux_fn = AUTO._mux_callable(reg_t, len(srcs))
                     if mux_fn is not None:
                         choices_t = em.inj(reg_t[len(srcs)], "t")
                         em.line(f"    v{idx}_wchoices: {choices_t}")
@@ -5697,14 +3998,14 @@ class _Codegen:
                 child_name = f"af{self._tmp_n}_f"
                 self._tmp_n += 1
                 args.append(self._emit_operand_factor_plan(child, child_name, selector))
-            expr = _render_op(node["op"], args, em, self.parser_state, node["entity"])
+            expr = AUTO._render_op(node["op"], args, em, self.parser_state, node["entity"])
             for ctype in plan["casts"]:
                 expr = self._cast_local(expr, ctype)
             em.line(f"    {result_name}: {target_t} = {expr}")
             return result_name
 
         if kind != "mux":
-            raise AutoFsmError(f"AUTO_FSM: unknown operand factor-plan kind {kind!r}")
+            raise AUTO.AutoError(f"AUTO_FSM: unknown operand factor-plan kind {kind!r}")
 
         choices = []
         for child in plan["choices"]:
@@ -5712,7 +4013,7 @@ class _Codegen:
             self._tmp_n += 1
             choices.append(self._emit_operand_factor_plan(child, child_name, selector))
         sel_name = selector(plan["mapping"], len(choices))
-        mux_fn = _mux_callable(target_t_obj, len(choices))
+        mux_fn = AUTO._mux_callable(target_t_obj, len(choices))
         if mux_fn is None:
             em.line(f"    {result_name}: {target_t} = {choices[0]}")
             for row, expr in enumerate(choices[1:], start=1):
@@ -5848,7 +4149,7 @@ class _Codegen:
         self.cur_state = first_node["state"]
         em.line(
             f"    {out_local}: {out_ct} = "
-            + _render_op(
+            + AUTO._render_op(
                 first_node["op"], arg_names, em, self.parser_state, first_node["entity"]
             )
         )
@@ -5887,7 +4188,7 @@ def _REGISTER_MUX_ENTITIES(parser_state, mux_shapes):
         pending = []
         parser_state.pypeline_auto_fsm_mux_callables = pending
     for t, n in mux_shapes:
-        fn = _mux_callable(t, n)
+        fn = AUTO._mux_callable(t, n)
         if fn is not None and fn not in pending:
             pending.append(fn)
 
@@ -5897,7 +4198,7 @@ def AUTO_FSM_MEASURE_ENTITIES(parser_state):
     their own. Empty on any build without AUTO_FSM."""
     out = set()
     for fn in getattr(parser_state, "pypeline_auto_fsm_mux_callables", ()):
-        entity = _entity_key_for_callable(parser_state, fn)
+        entity = AUTO._entity_key_for_callable(parser_state, fn)
         if entity is not None:
             out.add(entity)
     return out
@@ -5929,11 +4230,11 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
         # its operations get measured, prepare the descent candidates the area
         # search will consider (see PREPARE_SOFT_EQUIVALENTS).
         if elaborator is not None:
-            PREPARE_SOFT_EQUIVALENTS(tag, parser_state, elaborator)
-            import AUTO_COMB_SHARE
+            AUTO.PREPARE_SOFT_EQUIVALENTS(tag, parser_state, elaborator)
+            import AUTO_COMB_OPT
 
-            AUTO_COMB_SHARE.prepare(tag.func, parser_state, elaborator, strict=False)
-            AUTO_COMB_SHARE.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
+            AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False)
+            AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
         fn = BUILD_PASSTHROUGH_FUNC(tag)
         # Never synthesize the passthrough itself -- see the matching note in
         # SYN.FUNC_PATH_DELAY_IS_ESTIMABLE. It exists to make the tagged
@@ -5953,12 +4254,12 @@ def BUILD_AUTO_FSM_FUNC(tag, parser_state, elaborator=None):
             elaborator._elaborate_live_func(
                 getattr(tag.func, "__name__", "auto_fsm_func"), tag.func
             )
-            import AUTO_COMB_SHARE
+            import AUTO_COMB_OPT
 
-            AUTO_COMB_SHARE.prepare(tag.func, parser_state, elaborator, strict=False)
-            AUTO_COMB_SHARE.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
+            AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False)
+            AUTO_COMB_OPT.prepare(tag.func, parser_state, elaborator, strict=False, objective="delay")
         name, src, extra_globals = GENERATE_FSM_SOURCE(tag, schedule, parser_state)
-        fn = _exec_generated(name, src, extra_globals)
+        fn = AUTO._exec_generated(name, src, extra_globals)
     import pypeline_names
     import inspect
 
@@ -5997,3 +4298,79 @@ def DUMP_GENERATED_SOURCE(parser_state, out_dir):
                 f.write(src)
     except OSError:
         pass
+
+
+# ─────────────────────────────────────────────
+# Delay measurement coverage for AUTO_FSM (consumed by SYN's delay collection)
+# ─────────────────────────────────────────────
+
+def DEL_AUTO_FSM_SUBTREE_CACHE():
+    global _FUNC_SUBTREE_HAS_AUTO_FSM_cache
+
+    _FUNC_SUBTREE_HAS_AUTO_FSM_cache = {}
+
+
+def _AUTO_FSM_MUX_ENTITIES(parser_state):
+    # Operand multiplexers inside generated AUTO_FSM state machines.
+    #
+    # A generated FSM holds state, so it is an ATOMIC SPAN here: one
+    # whole-module synthesis for its register-to-register path, and nothing
+    # inside it is measured (see FUNC_PATH_DELAY_IS_ESTIMABLE). That is right
+    # for its fmax number and wrong for its multiplexers, whose real delay is
+    # the single most load-bearing input to AUTO_FSM's decision about HOW FINELY
+    # to share -- the thing v1 had to guess at with a flat constant. So these
+    # few entities are collected for measurement in their own right. They are
+    # small (one 3-to-8-way mux per shared unit input port), so this is a
+    # handful of quick runs.
+    #
+    # They live under include/pypeline/operators/ intending
+    # _IS_PYPELINE_OPERATOR_LIBRARY_CODE to classify them as non-user code and
+    # so make each shape cacheable in path_delay_cache. NOTE that predicate does
+    # not currently fire, for these or for the soft-operator library it was
+    # written for: it calls inspect.getsourcefile on the callable recorded in
+    # pypeline_entity_callables, which is deliberately the @hw_func WRAPPER (see
+    # _elaborate_live_func), and a wrapper's source file is pypeline.py. An
+    # inspect.unwrap at that lookup would fix it. Delays are correct meanwhile;
+    # they are just measured every build instead of once.
+    cached = getattr(parser_state, "_auto_fsm_mux_entities_cache", None)
+    if cached is not None:
+        return cached
+    rv = set()
+    if getattr(parser_state, "pypeline_auto_fsm_mux_callables", None):
+        try:
+            rv = AUTO_FSM_MEASURE_ENTITIES(parser_state)
+        except Exception:
+            rv = set()
+    parser_state._auto_fsm_mux_entities_cache = rv
+    return rv
+
+
+_FUNC_SUBTREE_HAS_AUTO_FSM_cache = {}
+
+
+def FUNC_SUBTREE_HAS_AUTO_FSM(func_name, parser_state):
+    # Does this func (or anything below it) contain an AUTO_FSM-tagged call site?
+    # Such funcs need their subtree delays resolved for the same reason
+    # AUTO_PIPELINE ones do, though for a different consumer: not the slicer, but
+    # AUTO_FSM's scheduler, which decides how many operations fit in one state
+    # from the per-operation delays measured/estimated here. Without this, a
+    # stateful MAIN containing an AUTO_FSM would be an atomic span and NOTHING
+    # inside it would ever be measured (see FUNC_PATH_DELAY_IS_ESTIMABLE).
+    #
+    # Note this is only ever true on the bootstrap pass, where the call site is
+    # still the combinational passthrough. Once scheduled, the tag lives on the
+    # calling func while the generated FSM entity below it holds state and is
+    # correctly treated as an atomic span -- one whole-module synthesis whose
+    # measured register-to-register path IS its worst state's delay.
+    if func_name in _FUNC_SUBTREE_HAS_AUTO_FSM_cache:
+        return _FUNC_SUBTREE_HAS_AUTO_FSM_cache[func_name]
+    logic = parser_state.FuncLogicLookupTable[func_name]
+    rv = len(logic.sub_inst_to_auto_fsm_key) > 0
+    if not rv:
+        for sub_func_name in logic.submodule_instances.values():
+            if sub_func_name in parser_state.FuncLogicLookupTable:
+                if FUNC_SUBTREE_HAS_AUTO_FSM(sub_func_name, parser_state):
+                    rv = True
+                    break
+    _FUNC_SUBTREE_HAS_AUTO_FSM_cache[func_name] = rv
+    return rv

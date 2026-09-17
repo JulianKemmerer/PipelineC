@@ -11,11 +11,10 @@ import inspect
 import os
 import weakref
 
-import AUTO_FSM
 import C_TO_LOGIC as C
 import PY_TO_LOGIC as PY
-import SYN
-import VHDL
+import AUTO_PIPELINE
+import AUTO
 import pypeline as p
 
 _prepared = weakref.WeakKeyDictionary()
@@ -67,8 +66,8 @@ class _Graph:
             for name, tp in sorted(timing.items())
             if name == inst or name.startswith(inst + C.SUBMODULE_MARKER)
         ]
-        self.map = SYN.GET_PIPELINE_MAP(inst, self.logic, state, timing)
-        self.ranges = VHDL.PiplineHDLParams(
+        self.map = AUTO_PIPELINE.GET_PIPELINE_MAP(inst, self.logic, state, timing)
+        self.ranges = AUTO_PIPELINE.PiplineHDLParams(
             inst, self.logic, state, timing, self.map
         ).wire_to_reg_stage_start_end
         self.children = {}
@@ -86,7 +85,7 @@ class _Graph:
             ):
                 self.children[sub] = _Graph(child_inst, state, timing, types, contains)
             elif entity not in self.callables:
-                self.ops[sub] = AUTO_FSM.DECODE_OP(self.logic, sub, entity, state)
+                self.ops[sub] = AUTO.DECODE_OP(self.logic, sub, entity, state)
         self.constants = {}
         for wire in self.logic.wires:
             if C.WIRE_IS_CONSTANT(wire):
@@ -318,7 +317,7 @@ def prepare(roots, build_timing=None):
     try:
         state = PY.ELABORATE_LIVE_ROOTS(roots)
         timing = {
-            name: SYN.TimingParams(name, logic)
+            name: AUTO_PIPELINE.TimingParams(name, logic)
             for name, logic in state.LogicInstLookupTable.items()
         }
         if build_timing:
@@ -332,7 +331,7 @@ def prepare(roots, build_timing=None):
                     )
                     tp._exact_bit_boundaries = copy.copy(bits)
                     tp.logic.delay = delay
-        types = AUTO_FSM._TypeResolver()
+        types = AUTO._TypeResolver()
         for fn in state.pypeline_entity_callables.values():
             types.seed_callable(fn)
             for value in inspect.unwrap(fn).__globals__.values():

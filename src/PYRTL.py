@@ -79,7 +79,9 @@ def SYN_AND_REPORT_TIMING(
     use_existing_log_file=True,
     is_final_top=False,
 ):
-    multimain_timing_params = SYN.MultiMainTimingParams()
+    import AUTO_PIPELINE
+
+    multimain_timing_params = AUTO_PIPELINE.MultiMainTimingParams()
     multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
     return SYN_AND_REPORT_TIMING_NEW(
         parser_state,

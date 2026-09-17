@@ -6,8 +6,9 @@ generator is the final authority on whether a requested pipeline placement
 can divide logic, can only register an operation boundary, or is illegal.
 
 This document describes that lowering contract. The planner which chooses
-placements is documented in [`SYN_DESIGN.md`](SYN_DESIGN.md); construction of
-complete entities and inter-stage wiring is documented in
+placements is documented in [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md); how placements
+become slices, stages and entities is documented in
+[`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md) and
 [`VHDL_DESIGN.md`](VHDL_DESIGN.md).
 
 > **Reference, not a logbook.** Describe the system as it is now, in the present

@@ -31,7 +31,7 @@ For getting started information see the [README](README.md).
 18. [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation)
     - [`AUTO_PIPELINE(...)`](#auto_pipeline)
     - [`AUTO_MULTI_CYCLE(...)` (New)](#auto_multi_cycle-new)
-    - [`AUTO_COMB_SHARE(...)` / `AUTO_COMB_UNSHARE(...)` (New, Experimental)](#auto_comb_share--auto_comb_unshare-new-experimental)
+    - [`AUTO_COMB_AREA_OPT(...)` / `AUTO_COMB_DELAY_OPT(...)` (New, Experimental)](#auto_comb_area_opt--auto_comb_delay_opt-new-experimental)
     - [`AUTO_FSM(...)` (New, Experimental)](#auto_fsm-new-experimental)
 
 **Part III — Ports and streams**
@@ -49,7 +49,7 @@ For getting started information see the [README](README.md).
 29. [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer)
 30. [Pipelined Stream Wrappers: `make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline)
 31. [Multi-Cycle Stream Wrapper: `make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle)
-32. [Combinational Sharing Stream Wrapper: `make_stream_auto_comb_share` (Experimental)](#combinational-sharing-stream-wrapper-make_stream_auto_comb_share-experimental)
+32. [Combinational Optimization Stream Wrappers: `make_stream_auto_comb_area_opt` / `make_stream_auto_comb_delay_opt` (Experimental)](#combinational-optimization-stream-wrappers-make_stream_auto_comb_area_opt--make_stream_auto_comb_delay_opt-experimental)
 33. [Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental)
 
 **Part IV — Escape hatches**
@@ -2158,15 +2158,15 @@ An ordinary call is same-cycle combinational (Part I). The sections below cover 
 about time and resource use. First comes `MULTI_CYCLE[...]`, a hand-written timing
 constraint that gives one slow register-to-register path `N` cycles to settle. Then come the
 **automatic** (HLS-like) constructs. `AUTO_PIPELINE` pipelines logic for throughput.
-`AUTO_MULTI_CYCLE` tunes a multi-cycle path's cycle count. `AUTO_COMB_SHARE` reduces
-combinational resources without adding cycles; `AUTO_COMB_UNSHARE` trades area for
+`AUTO_MULTI_CYCLE` tunes a multi-cycle path's cycle count. `AUTO_COMB_AREA_OPT` reduces
+combinational resources without adding cycles; `AUTO_COMB_DELAY_OPT` trades area for
 shorter combinational delay. `AUTO_FSM` combines resource sharing
 with scheduling over multiple cycles.
 
 Each one has a valid/ready stream wrapper in Part III, so neighboring hardware doesn't need
 to know which one it's talking to: `make_stream_auto_pipeline`, `make_stream_multi_cycle` /
-`make_stream_auto_multi_cycle`, `make_stream_auto_comb_share`,
-`make_stream_auto_comb_unshare`, and `make_stream_auto_fsm`.
+`make_stream_auto_multi_cycle`, `make_stream_auto_comb_area_opt`,
+`make_stream_auto_comb_delay_opt`, and `make_stream_auto_fsm`.
 
 ## Multi-Cycle Paths: `MULTI_CYCLE[...]`
 
@@ -2232,12 +2232,12 @@ implementation along two independent axes:
 
 | | 0 added cycles | N cycles |
 |---|---|---|
-| Parallel / unsharing | Original; [`AUTO_COMB_UNSHARE`](#auto_comb_share--auto_comb_unshare-new-experimental) | [`AUTO_PIPELINE`](#auto_pipeline), [`AUTO_MULTI_CYCLE`](#auto_multi_cycle-new); optionally after UNSHARE |
-| Sharing transformation | [`AUTO_COMB_SHARE`](#auto_comb_share--auto_comb_unshare-new-experimental) | [`AUTO_FSM`](#auto_fsm-new-experimental); ACS followed by pipeline/MCP |
+| Parallel / unsharing | Original; [`AUTO_COMB_DELAY_OPT`](#auto_comb_area_opt--auto_comb_delay_opt-new-experimental) | [`AUTO_PIPELINE`](#auto_pipeline), [`AUTO_MULTI_CYCLE`](#auto_multi_cycle-new); optionally after AUTO_COMB_DELAY_OPT |
+| Sharing transformation | [`AUTO_COMB_AREA_OPT`](#auto_comb_area_opt--auto_comb_delay_opt-new-experimental) | [`AUTO_FSM`](#auto_fsm-new-experimental); AUTO_COMB_AREA_OPT followed by pipeline/MCP |
 
 Both pipelining and MCP divide computation **along the time axis**: pipelining
 inserts registers; MCP permits longer settling through timing constraints.
-Neither inherently shares the combinational resources. ACS reduces resource
+Neither inherently shares the combinational resources. AUTO_COMB_AREA_OPT reduces resource
 use without adding cycles; FSMs divide computation in both time and space.
 The table describes the requested transformation, not ordinary synthesis CSE.
 
@@ -2245,14 +2245,14 @@ The table describes the requested transformation, not ordinary synthesis CSE.
 |---|---|---|---|
 | `AUTO_PIPELINE` | Extra registers for timing, II=1 | Inserted register slices | `make_stream_auto_pipeline` |
 | `AUTO_MULTI_CYCLE` (New) | Longer settling interval, lower throughput | Allowed path cycles | `make_stream_auto_multi_cycle` (II=`latency + 1`) |
-| `AUTO_COMB_SHARE` (New, Experimental) | Smaller estimated area, potentially longer combinational delay | Always 0 | `make_stream_auto_comb_share` (two boundary cycles, II=1) |
-| `AUTO_COMB_UNSHARE` (New, Experimental) | Shorter estimated delay, potentially larger area | Always 0 | `make_stream_auto_comb_unshare` (two boundary cycles, II=1) |
+| `AUTO_COMB_AREA_OPT` (New, Experimental) | Smaller estimated area, potentially longer combinational delay | Always 0 | `make_stream_auto_comb_area_opt` (two boundary cycles, II=1) |
+| `AUTO_COMB_DELAY_OPT` (New, Experimental) | Shorter estimated delay, potentially larger area | Always 0 | `make_stream_auto_comb_delay_opt` (two boundary cycles, II=1) |
 | `AUTO_FSM` (New, Experimental) | Share resources across states while meeting timing | Accepted input to result | `make_stream_auto_fsm` |
 
-ACS ignores delay; ACU ignores area except to break delay ties. The temporal tools use the
+AUTO_COMB_AREA_OPT ignores delay; AUTO_COMB_DELAY_OPT ignores area except to break delay ties. The temporal tools use the
 `@MAIN` clock goal; pipeline/MCP accept `latency=`, `start_latency=` and
 `max_latency=`, while FSM accepts `max_latency=`. Default FSM area search also
-considers SHARE's choices and delay-ranked UNSHARE finalists, comparing complete FSM area.
+considers AUTO_COMB_AREA_OPT's choices and delay-ranked AUTO_COMB_DELAY_OPT finalists, comparing complete FSM area.
 
 Rules shared by the AUTO tags:
 
@@ -2264,7 +2264,7 @@ Rules shared by the AUTO tags:
   (see each section for the default). A synthesizing build then re-elaborates the design with
   the values it actually built (pin-and-confirm), so the `.latency` your Python consumed always
   matches the hardware. A following non-`--comb` `pypelinec --sim` sees the same values.
-  ACS's latency is always zero and needs no latency feedback pass.
+  AUTO_COMB_AREA_OPT's latency is always zero and needs no latency feedback pass.
 - **Write handshakes that react to the chosen value**, not to a number you guessed. The tool is
   free to change its mind when the clock goal or the design changes.
 
@@ -2293,7 +2293,7 @@ clock. Elaboration exposes the primitive operations and their dependency wiring 
 when the body is one flat sequence, and the planner may register legal operation outputs
 or genuinely split supported wide arithmetic leaves. Helper boundaries are optional
 structure and a placement tie-break, not a prerequisite for auto-pipelining. See
-[`SYN_DESIGN.md`](SYN_DESIGN.md) and
+[`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md), [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md) and
 [`RAW_VHDL_DESIGN.md`](RAW_VHDL_DESIGN.md) for the lowering rules.
 
 ```python
@@ -2381,7 +2381,7 @@ the `.latency` your Python consumed is guaranteed equal to the stage count of th
 hardware actually built. Designs that never read `.latency` pay nothing: the loop exits
 after the ordinary single sweep. The same goes for designs whose reads already match
 what was built, such as fixed `latency=` call sites or a correct `start_latency=`
-guess. (See `docs/SYN_DESIGN.md` for the loop's details and
+guess. (See `docs/AUTO_PIPELINE_DESIGN.md` for the loop's details and
 failure modes.) A non-`--comb` `pypelinec --sim` run then launches native simulation
 with those same latencies installed **and emulated** — `.latency` reads the real value
 during the sim's design import too, and every AUTO_PIPELINE call site behaves as an
@@ -2497,18 +2497,18 @@ For the common case of one slow function behind a valid/ready handshake, use
 [`make_stream_auto_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle),
 which does all of this for you.
 
-<a id="auto_comb_share-new-experimental"></a>
-<a id="auto_comb_unshare-new-experimental"></a>
+<a id="auto_comb_area_opt-new-experimental"></a>
+<a id="auto_comb_delay_opt-new-experimental"></a>
 
-### `AUTO_COMB_SHARE(...)` / `AUTO_COMB_UNSHARE(...)` (New, Experimental)
+### `AUTO_COMB_AREA_OPT(...)` / `AUTO_COMB_DELAY_OPT(...)` (New, Experimental)
 
-`AUTO_COMB_SHARE(func)` returns a combinational callable with the same input and
+`AUTO_COMB_AREA_OPT(func)` returns a combinational callable with the same input and
 output types and bit-exact behavior. It searches for lower resource use without
 a delay constraint: operand selection and longer logic chains are allowed, but
 registers and extra cycles are not.
 
 ```python
-from pypeline import AUTO_COMB_SHARE, AUTO_PIPELINE, hw_func, uint1_t, uint8_t, uint16_t
+from pypeline import AUTO_COMB_AREA_OPT, AUTO_PIPELINE, hw_func, uint1_t, uint8_t, uint16_t
 
 @hw_func
 def selected_product(a: uint8_t, b: uint8_t, c: uint8_t, d: uint8_t,
@@ -2517,8 +2517,8 @@ def selected_product(a: uint8_t, b: uint8_t, c: uint8_t, d: uint8_t,
     y: uint16_t = c * d
     return x if select else y
 
-ACS = AUTO_COMB_SHARE(selected_product)  # may mux operands into one multiplier
-AP = AUTO_PIPELINE(ACS)                 # pipeline the reduced combinational graph
+AREA_OPT = AUTO_COMB_AREA_OPT(selected_product)  # may mux operands into one multiplier
+AP = AUTO_PIPELINE(AREA_OPT)                      # pipeline the reduced combinational graph
 ```
 
 Construct the tag once at module/factory level. `.func` is the original function
@@ -2541,26 +2541,26 @@ Floating-point reassociation and unsafe signed arithmetic transformations are
 not performed.
 
 Plain native simulation calls the original function without running the optimizer.
-To meet timing after sharing, use `AUTO_PIPELINE(ACS)`, put ACS between MCP
+To meet timing after sharing, use `AUTO_PIPELINE(AREA_OPT)`, put `AREA_OPT(...)` between MCP
 registers, or pass it to the existing pipeline/MCP stream factory. For an
 area-reduced core with registered valid/ready ports and II=1, see
-[`make_stream_auto_comb_share`](#combinational-sharing-stream-wrapper-make_stream_auto_comb_share-experimental).
+[`make_stream_auto_comb_area_opt`](#combinational-optimization-stream-wrappers-make_stream_auto_comb_area_opt--make_stream_auto_comb_delay_opt-experimental).
 Default `AUTO_FSM(original_func)` already considers the shared optimization
-choices; explicitly wrapping it in ACS is not required.
+choices; explicitly wrapping it in AUTO_COMB_AREA_OPT is not required.
 
-Implementation details: [`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md).
+Implementation details: [`AUTO_COMB_OPT_DESIGN.md`](AUTO_COMB_OPT_DESIGN.md).
 
-`AUTO_COMB_UNSHARE(func)` chooses the opposite trade-off: reduce estimated
+`AUTO_COMB_DELAY_OPT(func)` chooses the opposite trade-off: reduce estimated
 combinational critical-path delay, allowing area growth without an area budget.
 It has the same signature and zero-cycle contract. The original stays unless
 an emitted candidate has strictly lower estimated delay; area breaks ties
 between improving candidates. It does not stop at the clock goal.
 
 ```python
-from pypeline import AUTO_COMB_UNSHARE
+from pypeline import AUTO_COMB_DELAY_OPT
 
-ACU = AUTO_COMB_UNSHARE(my_comb_func)
-AP = AUTO_PIPELINE(ACU)  # pipeline the selected combinational implementation
+DELAY_OPT = AUTO_COMB_DELAY_OPT(my_comb_func)
+AP = AUTO_PIPELINE(DELAY_OPT)  # pipeline the selected combinational implementation
 ```
 
 Choices include correlated mux speculation (compute both results before selecting),
@@ -2574,17 +2574,17 @@ Selection uses dependency-path estimates and cached timing, with **no extra
 candidate synthesis jobs**. Reports identify heuristics and legacy total-delay
 proxies separately from combinational timing components. Search work is bounded;
 there is no global-optimum or post-route-speed guarantee. Native calls still
-forward to the original. `AUTO_COMB_UNSHARE(AUTO_COMB_SHARE(f))` applies inside
+forward to the original. `AUTO_COMB_DELAY_OPT(AUTO_COMB_AREA_OPT(f))` applies inside
 out; the wrappers do not cancel. Repeating either same wrapper is idempotent.
 
 For registered valid/ready ports use
-`from stream.stream_auto_comb_unshare import make_stream_auto_comb_unshare`.
-Its contract matches the sharing wrapper below (latency 2, II=1), with `.acu`
-exposing the underlying tag. Pipeline, MCP and FSM factories also accept ACU.
+`from stream.stream_auto_comb_delay_opt import make_stream_auto_comb_delay_opt`.
+Its contract matches the area wrapper below (latency 2, II=1), with `.comb_opt`
+exposing the underlying tag. Pipeline, MCP and FSM factories also accept AUTO_COMB_DELAY_OPT.
 Default AUTO_FSM compares new candidates by total scheduled area, not by delay
-alone. AUTO_PIPELINE does not implicitly invoke UNSHARE.
+alone. AUTO_PIPELINE does not implicitly invoke AUTO_COMB_DELAY_OPT.
 
-Implementation details: [`AUTO_COMB_UNSHARE_DESIGN.md`](AUTO_COMB_UNSHARE_DESIGN.md).
+Implementation details: [`AUTO_COMB_OPT_DESIGN.md`](AUTO_COMB_OPT_DESIGN.md).
 
 ### `AUTO_FSM(...)` (New, Experimental)
 
@@ -2596,7 +2596,7 @@ Implementation details: [`AUTO_COMB_UNSHARE_DESIGN.md`](AUTO_COMB_UNSHARE_DESIGN
 `AUTO_PIPELINE` spends area to get throughput: one full copy of your function's
 hardware, sliced into stages, accepting a new input every cycle. `AUTO_FSM` spends
 time to get area: shared units reused across several cycles. Its default search
-also considers the combinational rewrites available to `AUTO_COMB_SHARE`, choosing
+also considers the combinational rewrites available to `AUTO_COMB_AREA_OPT`, choosing
 by full scheduled area (including muxes, registers and control), not simply by
 the smallest combinational graph.
 
@@ -4361,39 +4361,39 @@ re-elaboration pass. See `src/tests/pypeline_tests/inst/stream_auto_multi_cycle_
 
 ---
 
-## Combinational Sharing Stream Wrapper: `make_stream_auto_comb_share` (Experimental)
+## Combinational Optimization Stream Wrappers: `make_stream_auto_comb_area_opt` / `make_stream_auto_comb_delay_opt` (Experimental)
 
 For a reduced combinational core between registered valid/ready ports:
 
 ```python
-from stream.stream_auto_comb_share import make_stream_auto_comb_share
+from stream.stream_auto_comb_area_opt import make_stream_auto_comb_area_opt
 
-shared, shared_t = make_stream_auto_comb_share(my_comb_func)  # or an ACS tag
+opt, opt_t = make_stream_auto_comb_area_opt(my_comb_func)  # or an AUTO_COMB_AREA_OPT tag
 
 @MAIN(20.0)
-def top(stream_in: shared.in_fwd_t, stream_out: shared.out_fb_t) -> shared_t:
-    return shared(stream_in, stream_out)
+def top(stream_in: opt.in_fwd_t, stream_out: opt.out_fb_t) -> opt_t:
+    return opt(stream_in, stream_out)
 ```
 
 `my_comb_func` must be a pure `@hw_func` with one annotated input and an annotated
 return type. The factory returns `(stream_function, result_type)`. Results have
 `stream_in_if.ready` and `stream_out_if.stream.{data,valid}` fields. The function
 exposes `.in_intrf`, `.out_intrf`, their `.in_fwd_t`/`.in_fb_t`/`.out_fwd_t`/
-`.out_fb_t` halves, and the underlying `.acs` tag.
+`.out_fb_t` halves, and the underlying tag as `.comb_opt`.
 
 Both the input and output data/valid are elastic registers. Unstalled latency
-is **two cycles**, reported by `shared.latency`; initiation interval is **one**.
+is **two cycles**, reported by `opt.latency`; initiation interval is **one**.
 Backpressure holds output data/valid stable and propagates through small
 combinational occupancy logic. The large core is absent from the input-to-output
 combinational port path. No FIFO or user-managed counter is required.
 
-This wrapper does not pipeline the shared computation internally. If it cannot
-meet the target clock, pass `AUTO_COMB_SHARE(my_comb_func)` to
+This wrapper does not pipeline the optimized computation internally. If it cannot
+meet the target clock, pass `AUTO_COMB_AREA_OPT(my_comb_func)` to
 `make_stream_auto_pipeline` or `make_stream_auto_multi_cycle` instead.
 
-The delay-oriented sibling is `make_stream_auto_comb_unshare` from
-`stream.stream_auto_comb_unshare`. It uses the same two-bank elastic shell,
-accepts a pure function or ACU tag, and exposes `.acu`. All interface, latency,
+The delay-oriented sibling is `make_stream_auto_comb_delay_opt` from
+`stream.stream_auto_comb_delay_opt`. It uses the same two-bank elastic shell,
+accepts a pure function or AUTO_COMB_DELAY_OPT tag, and exposes it as `.comb_opt`. All interface, latency,
 II and stall behavior above is identical; only the combinational optimization
 objective differs.
 

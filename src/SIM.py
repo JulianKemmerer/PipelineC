@@ -7,6 +7,8 @@ import EDAPLAY
 import MODELSIM
 import pypeline_sim
 import SYN
+import AUTO_PIPELINE
+import AUTO_MULTI_CYCLE
 import VERILATOR
 import VHDL
 
@@ -81,7 +83,7 @@ def DO_OPTIONAL_SIM(
             # was never read -- the pin-and-confirm loop never ran for those,
             # so the cache is still empty. Harvest divergences are already a
             # fatal driver error for every non---comb .py build
-            # (SYN.AUTO_PIPELINE_DIVERGENCE_EXIT), so ignore them here.
+            # (AUTO_PIPELINE.AUTO_PIPELINE_DIVERGENCE_EXIT), so ignore them here.
             main_latencies = None
             ap_latencies = None
             auto_multi_cycle_latencies = None
@@ -112,12 +114,12 @@ def DO_OPTIONAL_SIM(
                         for name, tp in multimain_timing_params.TimingParamsLookupTable.items()
                     }
                 if multimain_timing_params is not None:
-                    ap_latencies, _divergences = SYN.HARVEST_AUTO_PIPELINE_LATENCIES(
+                    ap_latencies, _divergences = AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES(
                         parser_state, multimain_timing_params.TimingParamsLookupTable
                     )
                     # The multi-cycle counts actually constrained, so AUTO_MULTI_CYCLE
                     # handshakes count the same cycles as the built VHDL
-                    auto_multi_cycle_latencies = SYN.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(
+                    auto_multi_cycle_latencies = AUTO_MULTI_CYCLE.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(
                         parser_state, multimain_timing_params
                     )
                 # The AUTO_FSM schedules the build actually used. Taken from

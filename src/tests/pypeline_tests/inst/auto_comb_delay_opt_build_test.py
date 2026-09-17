@@ -6,7 +6,7 @@ import re
 import subprocess
 import sys
 
-from auto_comb_share_build_test import SRC, build, yosys
+from auto_comb_area_opt_build_test import SRC, build, yosys
 
 
 CORE = """
@@ -18,7 +18,7 @@ def core(a:uint4_t,b:uint4_t,c:uint4_t,d:uint4_t,s:uint1_t)->uint8_t:
     left:uint4_t=a if choose else c
     right:uint4_t=b if choose else d
     return left*right
-ACU=AUTO_COMB_UNSHARE(core)
+DELAY_OPT=AUTO_COMB_DELAY_OPT(core)
 """
 
 
@@ -31,14 +31,14 @@ def main():
     files = build(proof, CORE + """
 @MAIN(1.0)
 def proof(a:uint4_t,b:uint4_t,c:uint4_t,d:uint4_t,s:uint1_t)->uint1_t:
-    return core(a,b,c,d,s)==ACU(a,b,c,d,s)
+    return core(a,b,c,d,s)==DELAY_OPT(a,b,c,d,s)
 """)
     output = yosys(proof, files, ["flatten", "proc", "opt",
         "sat -verify -prove proof_return_output 1 -show-inputs -show-outputs"])
     assert "SUCCESS" in output
-    print("PASS: UNSHARE equivalence proved for all inputs", flush=True)
+    print("PASS: DELAY_OPT equivalence proved for all inputs", flush=True)
     measurements = []
-    for label, callee in (("original", "core"), ("unshared", "ACU")):
+    for label, callee in (("original", "core"), ("delay_opt", "DELAY_OPT")):
         path = root / label
         source = CORE + f"""
 PART("sky130")

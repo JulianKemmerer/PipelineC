@@ -696,12 +696,12 @@ def _callable_canonical_name(val, module_globals, _seen=None, _depth=0):
         return _callable_hash_fallback(val)
     _seen = _seen | {val_id}
 
-    if getattr(val, "_is_auto_comb_unshare_pragma", False):
+    if getattr(val, "_is_auto_comb_delay_opt_pragma", False):
         inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
-        return _sanitize_vhdl_name(f"AUTO_COMB_UNSHARE_{inner}")
-    if getattr(val, "_is_auto_comb_share_pragma", False):
+        return _sanitize_vhdl_name(f"AUTO_COMB_DELAY_OPT_{inner}")
+    if getattr(val, "_is_auto_comb_area_opt_pragma", False):
         inner = _callable_canonical_name(val.func, module_globals, _seen, _depth + 1)
-        return _sanitize_vhdl_name(f"AUTO_COMB_SHARE_{inner}")
+        return _sanitize_vhdl_name(f"AUTO_COMB_AREA_OPT_{inner}")
 
     # AUTO_PIPELINE tag objects: their identity is the wrapped function's
     # identity plus any constructor latency constraint (latency= /
@@ -1099,7 +1099,7 @@ def _bin_func_name(op_name, l_type, r_type, parser_state=None):
         # library for a decomposable equivalent, and reading that back out of
         # the name would be re-deriving a formatting decision.
         # NOTE: store the ORIGINAL (unsanitized) l_type/r_type here, not the
-        # bracket-stripped name components -- AUTO_FSM._soft_equivalent_callable
+        # bracket-stripped name components -- AUTO._soft_equivalent_callable
         # (AUTO_FSM.py:1061) reads this back out to ask the soft-operator
         # library for a decomposable equivalent, and needs the true C type.
         getattr(parser_state, "pypeline_builtin_op_info", {}).setdefault(
@@ -5588,16 +5588,16 @@ class FuncElaborator:
         functions reached through two differently-wrapped factories would
         otherwise collide on that shared alias.
         """
-        if (getattr(func, "_is_auto_comb_share_pragma", False)
-                or getattr(func, "_is_auto_comb_unshare_pragma", False)):
-            import AUTO_COMB_SHARE
+        if (getattr(func, "_is_auto_comb_area_opt_pragma", False)
+                or getattr(func, "_is_auto_comb_delay_opt_pragma", False)):
+            import AUTO_COMB_OPT
 
-            generated = AUTO_COMB_SHARE.BUILD_FUNC(func, self.parser_state, self)
+            generated = AUTO_COMB_OPT.BUILD_FUNC(func, self.parser_state, self)
             logic = self._elaborate_live_func(generated.__name__, generated)
-            entities = getattr(self.parser_state, "pypeline_comb_share_tag_entities", None)
+            entities = getattr(self.parser_state, "pypeline_comb_opt_tag_entities", None)
             if entities is None:
                 entities = {}
-                self.parser_state.pypeline_comb_share_tag_entities = entities
+                self.parser_state.pypeline_comb_opt_tag_entities = entities
             entities[func.canonical_key] = logic.func_name
             return logic
 
@@ -6315,7 +6315,7 @@ class FuncElaborator:
         """Record one endpoint of a MULTI_CYCLE[...] tag (see Reg[T, role] in
         _elab_ann_assign). Once both .start and .end of the same tag have been
         seen, emits the (ncycles, start_reg, end_reg) tuple onto logic.mcp_tuples
-        — the same shape SYN.py::GET_MCP_PATH_CONSTRAINTS already consumes from
+        — the same shape AUTO_MULTI_CYCLE.py::GET_MCP_PATH_CONSTRAINTS already consumes from
         the C frontend's #pragma MULTI_CYCLE.
         """
         pending = self._multi_cycle_pending.setdefault(role.tag, [None, None])
@@ -7331,6 +7331,8 @@ def ELABORATE_LIVE_ROOTS(roots):
     Roots may be closures and need not be MAINs. Only reachable functions are
     elaborated; module discovery supplies types/global declarations and naming.
     """
+    import AUTO_PIPELINE
+
     import types
 
     roots = list(roots)
@@ -7363,7 +7365,7 @@ def ELABORATE_LIVE_ROOTS(roots):
 
     C_TO_LOGIC.DEL_ALL_CACHES()
     SYN.DEL_ALL_CACHES()
-    SYN._GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache.clear()
+    AUTO_PIPELINE._GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache.clear()
     dummy = ast.parse("def sim_root(): pass").body[0]
     for root in roots:
         source = inspect.unwrap(root)
@@ -7381,6 +7383,8 @@ def ELABORATE_LIVE_ROOTS(roots):
 
 
 def PARSE_FILE(py_file):
+    import AUTO_PIPELINE
+
     print("PY_TO_LOGIC parsing:", py_file)
 
     # ── Step 1: execute the design file as a Python module ──
@@ -7419,7 +7423,7 @@ def PARSE_FILE(py_file):
         SYN.DEL_ALL_CACHES()
         # Not part of SYN.DEL_ALL_CACHES: cached zero-clk TimingParams hold
         # references to the previous parse's Logic objects
-        SYN._GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache.clear()
+        AUTO_PIPELINE._GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP_cache.clear()
 
     design_dir = os.path.dirname(os.path.abspath(py_file))
     if design_dir not in sys.path:

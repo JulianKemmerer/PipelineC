@@ -29,11 +29,11 @@ PYRTL = syn_tool_category("build_report", "pyrtl")
 
 def get_tests() -> list:
     tests = []
-    tests.append(Test(name="auto_comb_unshare_build_test", category=DM,
-                      cmd=[INST_DIR / "auto_comb_unshare_build_test.py"], needs_out_dir=True,
+    tests.append(Test(name="auto_comb_delay_opt_build_test", category=DM,
+                      cmd=[INST_DIR / "auto_comb_delay_opt_build_test.py"], needs_out_dir=True,
                       requires=["yosys", "ghdl"]))
-    tests.append(Test(name="auto_comb_share_build_test", category=DM,
-                      cmd=[INST_DIR / "auto_comb_share_build_test.py"], needs_out_dir=True,
+    tests.append(Test(name="auto_comb_area_opt_build_test", category=DM,
+                      cmd=[INST_DIR / "auto_comb_area_opt_build_test.py"], needs_out_dir=True,
                       requires=["yosys", "ghdl"]))
     tests.append(
         Test(

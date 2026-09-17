@@ -11,7 +11,7 @@
     and without a cap, on a synthetic Vivado multi-cycle path report;
   - elaboration: stream_auto_multi_cycle_test.py's AUTO_MULTI_CYCLE paths land in
     Logic.auto_multi_cycle_tuples, a cache re-parse changes the count AND renames the
-    holding entity, and an unread tag fails SYN.CHECK_AUTO_MULTI_CYCLE_TAGS_READ.
+    holding entity, and an unread tag fails AUTO_MULTI_CYCLE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ.
 """
 import os
 import sys
@@ -27,8 +27,8 @@ from pypeline import AUTO_MULTI_CYCLE, Reg, uint32_t
 import pypeline_names
 import C_TO_LOGIC
 import PY_TO_LOGIC
-import SYN
-import SWEEP
+import AUTO_PIPELINE
+import AUTO_MULTI_CYCLE as AUTO_MULTI_CYCLE_MODULE  # aliased: the pypeline tag has the same name
 import VIVADO
 
 
@@ -162,23 +162,23 @@ def _fake_parser_state(ncycles="3"):
 
 def test_syn_counts_and_hash():
     parser_state, constraint = _fake_parser_state()
-    assert SYN.ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state) == {"k": 3}
-    mtp = SYN.MultiMainTimingParams()
+    assert AUTO_MULTI_CYCLE_MODULE.ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state) == {"k": 3}
+    mtp = AUTO_PIPELINE.MultiMainTimingParams()
     tup = ("3", "launch", "capture")
-    assert SYN.MCP_EFFECTIVE_NCYCLES(tup, constraint, mtp) == "3"
-    assert SYN.MCP_EFFECTIVE_NCYCLES(tup, None, mtp) == "3"
+    assert AUTO_MULTI_CYCLE_MODULE.MCP_EFFECTIVE_NCYCLES(tup, constraint, mtp) == "3"
+    assert AUTO_MULTI_CYCLE_MODULE.MCP_EFFECTIVE_NCYCLES(tup, None, mtp) == "3"
     h_plain = mtp.GET_HASH_EXT(parser_state)
     mtp.auto_multi_cycle_ncycles = {"k": 3}  # equal to elaborated: hash unchanged
     assert mtp.GET_HASH_EXT(parser_state) == h_plain
-    assert SYN.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(parser_state, mtp) == {"k": 3}
+    assert AUTO_MULTI_CYCLE_MODULE.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(parser_state, mtp) == {"k": 3}
     mtp.auto_multi_cycle_ncycles = {"k": 5}
-    assert SYN.MCP_EFFECTIVE_NCYCLES(tup, constraint, mtp) == "5"
-    assert SYN.MCP_EFFECTIVE_NCYCLES(tup, None, mtp) == "3"
+    assert AUTO_MULTI_CYCLE_MODULE.MCP_EFFECTIVE_NCYCLES(tup, constraint, mtp) == "5"
+    assert AUTO_MULTI_CYCLE_MODULE.MCP_EFFECTIVE_NCYCLES(tup, None, mtp) == "3"
     assert mtp.GET_HASH_EXT(parser_state) != h_plain
-    assert SYN.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(parser_state, mtp) == {"k": 5}
+    assert AUTO_MULTI_CYCLE_MODULE.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(parser_state, mtp) == {"k": 5}
     pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
-    assert SYN.AUTO_MULTI_CYCLE_BUILT_MATCHES_ELABORATED(parser_state, {"k": 3})
-    assert not SYN.AUTO_MULTI_CYCLE_BUILT_MATCHES_ELABORATED(parser_state, {"k": 5})
+    assert AUTO_MULTI_CYCLE_MODULE.AUTO_MULTI_CYCLE_BUILT_MATCHES_ELABORATED(parser_state, {"k": 3})
+    assert not AUTO_MULTI_CYCLE_MODULE.AUTO_MULTI_CYCLE_BUILT_MATCHES_ELABORATED(parser_state, {"k": 5})
     print("test_syn_counts_and_hash PASS")
 
 
@@ -208,7 +208,7 @@ def test_report_matching_and_feedback():
     assert abs(report.requirement_ns - 30.0) < 1e-9
     assert abs(report.path_delay_ns - 11.0) < 1e-9, report.path_delay_ns
 
-    regex = SWEEP._MCP_CELL_GLOB_REGEX("main_top/func_mcp_inst/launch_reg[*]")
+    regex = AUTO_MULTI_CYCLE_MODULE._MCP_CELL_GLOB_REGEX("main_top/func_mcp_inst/launch_reg[*]")
     assert regex.search(report.start_reg_name)
     assert regex.search("outer/main_top/func_mcp_inst/launch_reg[12]")
     # Struct registers are named per field (Vivado: launch_reg[a][limbs][0][5])
@@ -218,16 +218,16 @@ def test_report_matching_and_feedback():
     assert not regex.search("main_top/func_mcp_inst2/launch_reg[3]")
     assert not regex.search("main_top/func_mcp_inst/launch_reg[3]_rep")
 
-    assert SWEEP.AUTO_MULTI_CYCLE_NEEDED_NCYCLES(11.0, 3, 10.0) == 4
-    assert SWEEP.AUTO_MULTI_CYCLE_NEEDED_NCYCLES(9.0, 3, 10.0) == 4  # always grows
-    assert SWEEP.AUTO_MULTI_CYCLE_NEEDED_NCYCLES(40.0, 2, 10.0) == 8
-    assert SWEEP.AUTO_MULTI_CYCLE_NEEDED_NCYCLES(10.0, 4, 10.0) == 5
+    assert AUTO_MULTI_CYCLE_MODULE.AUTO_MULTI_CYCLE_NEEDED_NCYCLES(11.0, 3, 10.0) == 4
+    assert AUTO_MULTI_CYCLE_MODULE.AUTO_MULTI_CYCLE_NEEDED_NCYCLES(9.0, 3, 10.0) == 4  # always grows
+    assert AUTO_MULTI_CYCLE_MODULE.AUTO_MULTI_CYCLE_NEEDED_NCYCLES(40.0, 2, 10.0) == 8
+    assert AUTO_MULTI_CYCLE_MODULE.AUTO_MULTI_CYCLE_NEEDED_NCYCLES(10.0, 4, 10.0) == 5
 
     def run(constraint, current):
-        group = SWEEP.AutoMultiCycleGroup("k", constraint)
-        mtp = SYN.MultiMainTimingParams()
+        group = AUTO_MULTI_CYCLE_MODULE.AutoMultiCycleGroup("k", constraint)
+        mtp = AUTO_PIPELINE.MultiMainTimingParams()
         mtp.auto_multi_cycle_ncycles = {"k": current}
-        action, changed, blame = SWEEP.AUTO_MULTI_CYCLE_FEEDBACK(group, report, 100.0, mtp)
+        action, changed, blame = AUTO_MULTI_CYCLE_MODULE.AUTO_MULTI_CYCLE_FEEDBACK(group, report, 100.0, mtp)
         return mtp.auto_multi_cycle_ncycles["k"], action, changed, blame
 
     n, action, changed, blame = run(C_TO_LOGIC.AutoMultiCycleConstraint("k", None, 3), 3)
@@ -260,7 +260,7 @@ def test_elaboration_and_cache_reparse():
         c.key for entries in paths.values() for n, c in entries if n == 3
     )
     assert start_key.endswith("_start_latency_3_max_latency_8"), start_key
-    SYN.CHECK_AUTO_MULTI_CYCLE_TAGS_READ(parser_state)  # the library reads .latency
+    AUTO_MULTI_CYCLE_MODULE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ(parser_state)  # the library reads .latency
     try:
         pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE({start_key: 5})
         reparsed = PY_TO_LOGIC.PARSE_FILE(design)
@@ -292,7 +292,7 @@ def test_unread_tag_fails_build_check():
     )
     assert _auto_multi_cycle_paths(parser_state)
     try:
-        SYN.CHECK_AUTO_MULTI_CYCLE_TAGS_READ(parser_state)
+        AUTO_MULTI_CYCLE_MODULE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ(parser_state)
     except SystemExit as err:
         assert ".latency was never read" in str(err), err
     else:

@@ -9,7 +9,7 @@ materialize (a real register was set) without deepening the design's
 schedule at all, when it lands on a parallel branch whose sibling already
 bounds a shared downstream consumer's readiness. The old scorer had no way
 to see this -- only the real, post-lowering synchronous schedule
-(SYN.GET_PIPELINE_MAP, via TimingParams.GET_TOTAL_LATENCY) can. Separately,
+(AUTO_PIPELINE.GET_PIPELINE_MAP, via TimingParams.GET_TOTAL_LATENCY) can. Separately,
 a selected packed-MUX output bank's select fanout can be halved for free
 (same depth, same cut count) by chunking it, which used to be reachable
 only after a measured failure -- so --no_sweep (no measurement, ever) could
@@ -17,7 +17,7 @@ never get it.
 
 Two fixture styles, by necessity:
   - SWEEP.DROP_NON_DEEPENING_PLACEMENTS needs a REAL synchronous schedule
-    (SYN.GET_PIPELINE_MAP is a genuine graph-BFS over wire-driven-by data,
+    (AUTO_PIPELINE.GET_PIPELINE_MAP is a genuine graph-BFS over wire-driven-by data,
     not something safe to hand-fake) -- see mux_fanout_planning_design.py,
     parsed for real via PY_TO_LOGIC.PARSE_FILE. No synthesis tool is
     invoked; GET_TOTAL_LATENCY only needs register topology, never ns
@@ -37,7 +37,7 @@ import C_TO_LOGIC
 import PY_TO_LOGIC
 import RAW_VHDL
 import SWEEP
-import SYN
+import AUTO_PIPELINE
 
 _DESIGN_PATH = os.path.join(
     os.path.dirname(os.path.abspath(__file__)), "mux_fanout_planning_design.py"
@@ -102,7 +102,7 @@ def _fixture():
     ]
     assert len(adder_locals) == 3, adder_locals
     downstream, parallel = _classify_adders(main_logic, adder_locals, marker)
-    tpl = SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+    tpl = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
     return (
         main_inst,
         parser_state,
@@ -166,7 +166,7 @@ def test_deepening_cut_is_kept():
 
 
 def test_locked_region_slices_are_not_counted_as_unplanned():
-    # The wireguard decrypt shape (see docs/SYN_DESIGN.md's dated result):
+    # The wireguard decrypt shape (see docs/SWEEP_DESIGN.md's mux select-fanout cliff):
     # a mini-sweep lock contributes realized slices with NO plannable cuts
     # of its own for that subtree (plan.cuts[subtree_root] == [] and
     # plan.landscapes[subtree_root] is None, so the real caller in SWEEP.py
@@ -219,7 +219,7 @@ def test_placement_inside_an_auto_pipeline_region_is_not_dropped():
         and len(logic.submodule_instances) == 0
         and logic.CAN_HAVE_ADDED_LATENCY(parser_state)
     )
-    tpl = SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+    tpl = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
     placements = [
         SWEEP.PipelinePlacement(
             SWEEP.PipelinePlacement.INSTANCE_OUTPUT,

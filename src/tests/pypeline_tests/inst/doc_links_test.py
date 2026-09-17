@@ -242,10 +242,15 @@ _CONVENTION_MARKER = "Reference, not a logbook"
 # design docs + guides that must carry the convention note (docs/README.md
 # carries the anchor the note links to, and is checked separately).
 _DOCS_WITH_CONVENTION_NOTE = [
+    "AUTO_COMB_OPT_DESIGN.md",
+    "AUTO_DESIGN.md",
     "AUTO_FSM_DESIGN.md",
+    "AUTO_MULTI_CYCLE_DESIGN.md",
+    "AUTO_PIPELINE_DESIGN.md",
     "DEVICE_MODELS_DESIGN.md",
     "PY_TO_LOGIC_DESIGN.md",
     "RAW_VHDL_DESIGN.md",
+    "SWEEP_DESIGN.md",
     "SYN_DESIGN.md",
     "VHDL_DESIGN.md",
     "pipelinec_to_pypeline.md",

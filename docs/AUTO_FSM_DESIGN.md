@@ -2,10 +2,10 @@
 
 `AUTO_FSM(func)` implements a pure combinational function as a finite state
 machine that shares operations across several clock cycles. Where
-[`AUTO_PIPELINE`](SYN_DESIGN.md) cuts one full copy of the hardware with N serial
+[`AUTO_PIPELINE`](AUTO_PIPELINE_DESIGN.md) cuts one full copy of the hardware with N serial
 register slices (N clocks of latency and N+1 combinational regions, II=1),
 AUTO_FSM can keep one adder and use it twelve times. Its default area search
-also considers [`AUTO_COMB_SHARE`](AUTO_COMB_SHARE_DESIGN.md)'s combinational
+also considers [`AUTO_COMB_AREA_OPT`](AUTO_COMB_OPT_DESIGN.md)'s combinational
 rewrites, comparing whole scheduled designs rather than assuming maximum
 sharing always minimizes area.
 
@@ -68,7 +68,7 @@ wrote twelve similar lines" produce identical graphs, and AUTO_FSM folds both.
 | functional unit (FU) | one shared hardware instance, identified by entity. |
 
 Background reading, in order: [`docs/SYN_DESIGN.md`](SYN_DESIGN.md) for the
-delay model and the sweep, [`docs/PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md)
+delay model, [`docs/SWEEP_DESIGN.md`](SWEEP_DESIGN.md) for the sweep, [`docs/PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md)
 for how Python becomes a `Logic` graph, and
 [Automatic (HLS-like) Implementation](pypeline_guide.md#automatic-hls-like-implementation) for
 AUTO_PIPELINE, whose machinery AUTO_FSM mirrors.
@@ -413,7 +413,7 @@ was measured for it.
 **It gets measured.** A generated FSM holds state, so SYN treats it as one
 atomic span and never looks inside it (`FUNC_PATH_DELAY_IS_ESTIMABLE`). That is
 right for the FSM's own fmax number and wrong for its multiplexers, so
-`AUTO_FSM._REGISTER_MUX_ENTITIES` and `SYN._AUTO_FSM_MUX_ENTITIES` name these few
+`AUTO_FSM._REGISTER_MUX_ENTITIES` and `AUTO_FSM._AUTO_FSM_MUX_ENTITIES` name these few
 entities and `ADD_PATH_DELAY_TO_LOOKUP` collects them for measurement in their
 own right. They are small — one 3-to-8-way mux per shared unit input port — so
 this is a handful of quick synthesis runs, not a meaningful build cost.
@@ -425,7 +425,7 @@ rather than user code, which is what makes a measured delay eligible for
 `path_delay_cache` — though this classification does not currently fire for
 these entities (or for the soft-operator library the same predicate was
 written for), so both are re-measured each build rather than read from disk;
-see [`SYN_DESIGN.md`](SYN_DESIGN.md)'s Limitations section for why and the
+see [`SYN_DESIGN.md`](SYN_DESIGN.md#10-limitations-and-future-work)'s Limitations section for why and the
 fix. The delays are correct either way — this only affects build time.
 
 Real numbers matter here: on the PYRTL flow a 6-way `int16_t` mux measures
@@ -680,14 +680,54 @@ entity, logical schedule key, original user source and generated source; see
 
 ### 3.4 The driver loop
 
-`AUTO_FSM.DO_SCHEDULE_PASSES`, called from [`src/pipelinec`](../src/pipelinec) via
-`SYN.DO_PIPELINED_BUILD`, wraps `SYN.DO_SWEEP_AND_AUTO_PIPELINE` (the sweep +
-AUTO_PIPELINE convergence flow). Each pass: measure → schedule → install →
-re-execute the design → full sweep + AUTO_PIPELINE convergence → check timing.
+`src/pipelinec` calls `AUTO_PIPELINE.DO_PIPELINED_BUILD`, which dispatches to
+`AUTO_FSM.DO_SCHEDULE_PASSES` when the design contains AUTO_FSM call sites. That
+loop wraps `AUTO_PIPELINE.DO_SWEEP_AND_AUTO_PIPELINE` (the
+[throughput sweep](SWEEP_DESIGN.md) plus the AUTO_PIPELINE
+[pin-and-confirm loop](AUTO_PIPELINE_DESIGN.md#5-latency-pin-and-confirm-loop-pypeline-designs-only)):
+
+```
+bootstrap parse (AUTO_FSM call sites are combinational passthroughs)
+for each schedule pass:
+    SYN.ADD_PATH_DELAY_TO_LOOKUP                  <- measure the operations, do NOT sweep
+    schedule + bind each AUTO_FSM                 <- the minimum-area search (§3.7)
+    install schedules, re-PARSE_FILE              <- call sites become the generated FSMs
+    AUTO_PIPELINE.DO_SWEEP_AND_AUTO_PIPELINE      <- sweep + AUTO_PIPELINE loop
+    timing met, or nothing/only-floors blamed?  -> done
+    last tightening gained no fmax?             -> done (path is not in the states)
+    otherwise shrink the blamed FSMs' per-state budget and go again
+```
 
 The bootstrap design is deliberately **not** swept: it contains the raw
 combinational blob nobody intends to build, so sweeping it would just fail
 timing pointlessly. It exists only to be measured.
+
+**The CLI driver stays thin.** `src/pipelinec` holds only argparse, argument
+validation/combination, propagating flags into module-level settings
+(`SYN.HIER_SYN_MODE`, `AUTO.FORCE_ABSTRACT_AREA`, `SIM.SET_SIM_TOOL`, ...), and a
+top-level sequence of named calls (parse → comb path →
+`AUTO_PIPELINE.DO_PIPELINED_BUILD` → write results →
+`SWEEP.PRINT_TIMING_FAILURES` → optional bitstream → optional sim). It defines
+no functions and no loops; every loop lives in the module whose feature it
+drives.
+
+**Why a generated FSM needs no sweep support.** It holds non-volatile `Reg`
+state, so `CAN_HAVE_ADDED_LATENCY` is already False: the sweep treats it as an
+unsliceable atomic block whose measured delay is a soft floor (the
+`state_regs` reason in [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md#floor)), and
+`CALC_TOTAL_LATENCY` reports 0 added latency to its container.
+
+**Scheduling inside the pass loop.** Each pass runs the minimum-area search
+(§3.7) rather than a single greedy schedule. It is pure computation over
+already-measured delays — no synthesis, no tool output — and it is bounded by
+move and DAG-size caps rather than a wall clock, because the schedule has to
+stay a pure function of the source. `--auto_fsm_no_area_sweep` restores the
+greedy schedule. The search is forbidden from returning a schedule whose worst
+state is longer than the greedy one's, so it can never spend the timing margin
+this loop exists to defend; when a `max_latency=` cap cannot be met the driver
+exits nonzero rather than building something slower than the source asked for.
+`MAX_SCHEDULE_PASSES` is 6, since a pass may also be spent absorbing a freshly
+measured multiplexer delay.
 
 On a timing failure, `BLAMED_AUTO_FSM_KEYS` decides which regions are implicated.
 The sweep names the failing MAIN and, when it could attribute one, the function
@@ -719,19 +759,41 @@ The loop stops when:
 A stop that leaves timing unmet still fails the build through the normal
 timing exit.
 
+**Convergence** is easier than the AUTO_PIPELINE loop's. A schedule is a pure
+function of (the function's Logic graphs, its operations' delays, the budget
+scale) and is independent of the surrounding design, so nothing can oscillate:
+only an explicit tightening changes the answer, and tightening is monotonic and
+capped (`MAX_SCHEDULE_PASSES`).
+
 ### 3.5 Delay measurement
 
-Two changes were needed in `SYN.py`, both small and both about *which* functions
-get delays:
+Three hooks decide *which* functions get delays. The first two live in
+`AUTO_FSM.py` and are consulted by `SYN.py`'s delay collection
+([`SYN_DESIGN.md`](SYN_DESIGN.md#5-delay-model-leaf-only-synthesis-with-estimates));
+`DEL_AUTO_FSM_SUBTREE_CACHE` resets the first one's cache from `SYN.DEL_ALL_CACHES`.
 
-- **`FUNC_SUBTREE_HAS_AUTO_FSM`** — a stateful container holding an AUTO_FSM call
-  site must have its subtree delays resolved. Without this, a stateful MAIN with
-  no AUTO_PIPELINE anywhere is an atomic span and *nothing inside it* is ever
+- **`FUNC_SUBTREE_HAS_AUTO_FSM`**, consulted alongside
+  `AUTO_PIPELINE.FUNC_SUBTREE_HAS_AUTO_PIPELINE` in
+  `SYN.FUNC_PATH_DELAY_IS_ESTIMABLE` — a stateful container holding an AUTO_FSM
+  call site must have its subtree delays resolved. Without this, a stateful MAIN
+  with no AUTO_PIPELINE anywhere is an atomic span and *nothing inside it* is ever
   measured, so the scheduler would see zero delays everywhere and put the whole
   function in one state. (Only ever true on the bootstrap pass: once scheduled,
   the tag lives on the calling function while the FSM entity below it is
   correctly treated as an atomic span, whose one whole-module synthesis measures
-  its register-to-register path — i.e. its worst state.)
+  its register-to-register path — i.e. its worst state, exactly the number
+  timing attribution needs.)
+- **`_AUTO_FSM_MUX_ENTITIES`**, folded into `SYN.ADD_PATH_DELAY_TO_LOOKUP`'s
+  list of functions to synthesize. A generated FSM is an atomic span, which is
+  right for its fmax number and wrong for its operand multiplexers, whose real
+  delay is the most load-bearing input to how finely to share. Those few
+  entities — one 3-to-8-way multiplexer per shared unit input port — are
+  therefore measured in their own right, a handful of quick runs. They live
+  under `include/pypeline/operators/` so that
+  `SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE` would make each shape disk-cacheable;
+  that classification currently never fires (tracked in
+  [`SYN_DESIGN.md`](SYN_DESIGN.md#10-limitations-and-future-work)), so they are
+  measured every build instead of once.
 - **`parser_state.func_force_estimated`** — the bootstrap passthrough looks
   exactly like a measurement frontier (fully combinational, inside a stateful
   caller) and would get one whole-blob synthesis of precisely the giant parallel
@@ -827,10 +889,10 @@ and the `[type resolver: array reconstruction]` section of
 #### The search itself
 
 **Combinational graph choices are included by default.** Bootstrap elaboration
-calls `AUTO_COMB_SHARE.prepare` to create exact alternatives through the shared
-`HLS` engine: CSE, exclusive sharing, factoring, constant arithmetic, bit-width
-reduction and decomposition. No explicit `AUTO_COMB_SHARE` tag is required.
-The delay objective of the same preparation path also exposes UNSHARE's
+calls `AUTO_COMB_OPT.prepare` to create exact alternatives through the shared
+`AUTO` search ([`AUTO_DESIGN.md`](AUTO_DESIGN.md)): CSE, exclusive sharing, factoring, constant arithmetic, bit-width
+reduction and decomposition. No explicit `AUTO_COMB_AREA_OPT` tag is required.
+The delay objective of the same preparation path also exposes AUTO_COMB_DELAY_OPT's
 speculation, balancing, carry-save and operator alternatives by default.
 Up to two delay-ranked finalists join the existing area-oriented candidates;
 they are still judged by complete FSM area and must satisfy timing/latency.
@@ -846,14 +908,14 @@ Candidate graphs and their scores are pinned during a build's repeated parses,
 but generated callables are rematerialized in each parser state. A selected
 schedule records its actual source entity and rewrite moves. The additional
 candidate count is bounded and very large expanded graphs are skipped before
-scheduling; see [the shared search limits](AUTO_COMB_SHARE_DESIGN.md#objective-limits-and-fsm-integration).
+scheduling; see [the shared search limits](AUTO_COMB_OPT_DESIGN.md#6-fsm-integration).
 Explicit forced schedules and `--auto_fsm_no_area_sweep` bypass these choices.
-`AUTO_FSM(acs)` is valid too, but starts from ACS's explicitly selected graph;
+`AUTO_FSM(AUTO_COMB_AREA_OPT(f))` is valid too, but starts from AUTO_COMB_AREA_OPT's explicitly selected graph;
 passing the original function gives the broader joint search.
 
-`AUTO_FSM(acu)` likewise starts from the explicitly selected zero-cycle graph.
+`AUTO_FSM(AUTO_COMB_DELAY_OPT(f))` likewise starts from the explicitly selected zero-cycle graph.
 The shared timing snapshot and implementation limits are described in
-[`AUTO_COMB_UNSHARE_DESIGN.md`](AUTO_COMB_UNSHARE_DESIGN.md).
+[`AUTO_COMB_OPT_DESIGN.md`](AUTO_COMB_OPT_DESIGN.md).
 
 Input-storage and output-pack reachability analyses treat reconvergent glue
 as a DAG. Shared visited sets avoid exponential path expansion, with per-state
@@ -1000,19 +1062,19 @@ before this section existed.
 
 **The API, mirroring delay's own shape:**
 
-| delay (`_resolve_delay_du`) | area (`AUTO_FSM._leaf_area_um2` et al.) |
+| delay (`_resolve_delay_du`) | area (`AUTO._leaf_area_um2` et al.) |
 |---|---|
 | `SYN.GET_CACHED_PATH_DELAY(logic, parser_state)` — per-leaf disk cache read | `SYN.GET_CACHED_LEAF_AREA(logic, parser_state)` → `(value_um2, "um2")` or `None` |
 | — (no by-key form needed; delay is always looked up via a `Logic`) | `SYN.GET_CACHED_LEAF_AREA_BY_KEY(key, parser_state)` — same read, keyed directly (`"MUX_uint{width}_t"`) for operand multiplexers, priced from `(ctype, fold count)` during scheduling before any mux entity exists |
 | `_heuristic_leaf_delay_du` | `_leaf_area` (§3.7), scaled by `UM2_PER_ABSTRACT_AREA_UNIT` into µm² |
 | — | `DEVICE_MODELS.GET_SEQUENTIAL_CELL_AREA()` → `(48.84, "um2")` — a closed-form liberty lookup, not a per-shape measurement, so `_ff_area_um2` needs no cache at all |
 
-`AUTO_FSM._area_unit_scale(parser_state)` is the single switch: `1.0`
+`AUTO._area_unit_scale(parser_state)` is the single switch: `1.0`
 (abstract units, unchanged behavior) for every non-`DEVICE_MODELS` tool or
 when `FORCE_ABSTRACT_AREA` is set, `UM2_PER_ABSTRACT_AREA_UNIT` otherwise —
 every other area function multiplies its abstract fallback by this, so
 `est_area` is directly comparable to a build's own `Measured area: ...` line
-under sky130 without further conversion. `AUTO_FSM._leaf_area_um2`,
+under sky130 without further conversion. `AUTO._leaf_area_um2`,
 `_ff_area_um2` and `_mux_bank_area_um2` each implement the cache-hit →
 scaled-fallback tier for one kind of term; `ESTIMATE_ENTITY_AREA`'s own hierarchy
 walk stays AUTO_FSM's, deliberately **not** delegated to
@@ -1260,7 +1322,7 @@ at least 3"*.
 |---|---|---|
 | `auto_fsm_test.py` | native_sim, (synth via wrapper) | the pure function's semantics, and the passthrough behaviour when unscheduled |
 | `auto_fsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing and common-glue factoring, same- and cross-FU register reuse, recovered rolling output and consume/produce storage, field-lifetime input compaction, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, tighten-loop termination (`SCHEDULES_EQUAL` ignores budget bookkeeping, the `TIGHTENING_STALLED` truth table), unmeasured delays resolved rather than zeroed, the zero-op guard (and measured-0 operations still legal), soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--auto_fsm_abstract_area`, real flip-flop area) |
-| `area_model_test.py` (`src/tests/pypeline_tests/inst/`) | unit | not AUTO_FSM-specific (SYN/DEVICE_MODELS leaf-area-cache coverage), but two tests here directly guard AUTO_FSM.py's own constant: the committed `area_cache/` excludes STA-harness registers, and `AUTO_FSM.UM2_PER_ABSTRACT_AREA_UNIT` refits to what is actually committed |
+| `area_model_test.py` (`src/tests/pypeline_tests/inst/`) | unit | not AUTO_FSM-specific (SYN/DEVICE_MODELS leaf-area-cache coverage), but two tests here directly guard AUTO_FSM.py's own constant: the committed `area_cache/` excludes STA-harness registers, and `AUTO.UM2_PER_ABSTRACT_AREA_UNIT` refits to what is actually committed |
 | `self_check_auto_fsm_test.py` | native_sim, vhdl_sim, synth ×2 | the FSM computes what the function did — in native sim, in GHDL, at latency 0 and at real latency |
 | `stream_auto_fsm_test.py` | native_sim | `make_stream_auto_fsm`'s handshake protocol: ready deasserts while busy, latency/II == `fsm.latency + 1`, and — the property raw AUTO_FSM cannot provide — a stalled consumer never loses a result and sees stable data while it's held |
 | `self_check_stream_auto_fsm_test.py` | native_sim, vhdl_sim, synth ×2 | same shape as `self_check_auto_fsm_test.py`, one layer up: the wrapper's handshake + the real scheduled FSM underneath it compute and sequence what the function did, with real backpressure toggled from the testbench, in native sim, in GHDL, at latency 1 and at real latency |

@@ -38,6 +38,7 @@ import C_TO_LOGIC
 import DEVICE_MODELS
 import PY_TO_LOGIC
 import SYN
+import AUTO
 import pypeline
 
 FAILURES = []
@@ -258,7 +259,7 @@ def parse_design(tmpdir, mhz=25.0, name="af_unit_design", source=DESIGN_SRC):
 def fake_delays(parser_state, key, tag, adder_du=115):
     """Delays as a real build would have measured them, without running one:
     every adder costs adder_du, all rewiring is free."""
-    func_entity = AUTO_FSM._entity_key_for_callable(parser_state, tag.func)
+    func_entity = AUTO._entity_key_for_callable(parser_state, tag.func)
     logic = parser_state.FuncLogicLookupTable[func_entity]
     for entity in set(logic.submodule_instances.values()):
         sub = parser_state.FuncLogicLookupTable[entity]
@@ -601,7 +602,7 @@ def main():
         # gates. Defaulting those to 0 turned them into glue -- a 0-op,
         # 1-state schedule that won the area search and then hung codegen.
         ps_u, key_u, tag_u = parse_design(tmp, mhz=25.0, name="d_unmeasured")
-        ent_u = AUTO_FSM._entity_key_for_callable(ps_u, tag_u.func)
+        ent_u = AUTO._entity_key_for_callable(ps_u, tag_u.func)
         delays_u = AUTO_FSM._schedule_delays(ps_u, ent_u, {})
         adders_u = [
             e for e in ps_u.FuncLogicLookupTable[ent_u].submodule_instances.values()
@@ -1102,7 +1103,7 @@ def main():
     }
 
     def soft_name(entity):
-        fn = AUTO_FSM._soft_equivalent_callable(ps_soft, entity)
+        fn = AUTO._soft_equivalent_callable(ps_soft, entity)
         return getattr(fn, "__name__", None)
 
     check(
@@ -1119,8 +1120,8 @@ def main():
     # So the check that matters is not the name but that the two are different
     # functions computing different things -- a collision here would silently
     # turn `a % b` into `a / b`.
-    div_fn = AUTO_FSM._soft_equivalent_callable(ps_soft, "u_div")
-    mod_fn = AUTO_FSM._soft_equivalent_callable(ps_soft, "u_mod")
+    div_fn = AUTO._soft_equivalent_callable(ps_soft, "u_div")
+    mod_fn = AUTO._soft_equivalent_callable(ps_soft, "u_mod")
     check(
         mod_fn is not None and mod_fn is not div_fn,
         "unsigned modulo opens into its own function, not the divider's",
@@ -1209,7 +1210,7 @@ def main():
         a: pypeline.uint8_t
         b: pypeline.uint8_t
 
-    resolver = AUTO_FSM._TypeResolver()
+    resolver = AUTO._TypeResolver()
     t1 = resolver.resolve("uint16_t[16]")
     check(
         t1 is not None and pypeline.ctype_name(t1) == "uint16_t[16]",
@@ -1237,7 +1238,7 @@ def main():
     raised_name = None
     try:
         resolver.resolve("some_unseeded_struct_t[8]")
-    except AUTO_FSM.AutoFsmError as e:
+    except AUTO.AutoError as e:
         raised_name = str(e)
     check(
         raised_name is not None and "some_unseeded_struct_t" in raised_name,
@@ -1255,7 +1256,7 @@ def main():
     print("\n[area model: real sky130 um2]")
     with tempfile.TemporaryDirectory() as design_tmp, tempfile.TemporaryDirectory() as area_tmp:
         ps2, key2, tag2 = parse_design(design_tmp, mhz=25.0, name="af_unit_area_design")
-        func_entity2 = AUTO_FSM._entity_key_for_callable(ps2, tag2.func)
+        func_entity2 = AUTO._entity_key_for_callable(ps2, tag2.func)
         add_logic = None
         for entity in set(
             ps2.FuncLogicLookupTable[func_entity2].submodule_instances.values()
@@ -1268,20 +1269,20 @@ def main():
 
         old_tool = SYN.SYN_TOOL
         old_env = os.environ.get("PYPELINEC_AREA_CACHE_DIR")
-        old_force = AUTO_FSM.FORCE_ABSTRACT_AREA
+        old_force = AUTO.FORCE_ABSTRACT_AREA
         try:
             # Not DEVICE_MODELS: unchanged from every tool's existing
             # abstract-units-only behavior, regardless of cache contents.
             SYN.SYN_TOOL = SYN.PYRTL
             check(
-                AUTO_FSM._area_unit_scale(ps2) == 1.0,
+                AUTO._area_unit_scale(ps2) == 1.0,
                 "non-DEVICE_MODELS tools stay in abstract units (scale 1.0)",
             )
 
             SYN.SYN_TOOL = DEVICE_MODELS
             os.environ["PYPELINEC_AREA_CACHE_DIR"] = area_tmp + "/"
             check(
-                AUTO_FSM._area_unit_scale(ps2) == AUTO_FSM.UM2_PER_ABSTRACT_AREA_UNIT,
+                AUTO._area_unit_scale(ps2) == AUTO.UM2_PER_ABSTRACT_AREA_UNIT,
                 "DEVICE_MODELS scales into real um2",
             )
 
@@ -1290,10 +1291,10 @@ def main():
             # and never get shared (the same failure mode _resolve_delay_du's
             # own tiering exists to avoid for delay).
             cold_tally = {}
-            cold_val = AUTO_FSM._leaf_area_um2(ps2, add_entity, add_logic, cold_tally)
+            cold_val = AUTO._leaf_area_um2(ps2, add_entity, add_logic, cold_tally)
             expected_cold = (
-                AUTO_FSM._leaf_area(add_entity, add_logic)
-                * AUTO_FSM.UM2_PER_ABSTRACT_AREA_UNIT
+                AUTO._leaf_area(add_entity, add_logic)
+                * AUTO.UM2_PER_ABSTRACT_AREA_UNIT
             )
             check(
                 cold_val > 0.0 and abs(cold_val - expected_cold) < 1e-6,
@@ -1307,28 +1308,28 @@ def main():
             # synthesis, never the fallback model.
             SYN.WRITE_CACHED_LEAF_AREA(add_logic, ps2, 999.5, "um2")
             warm_tally = {}
-            warm_val = AUTO_FSM._leaf_area_um2(ps2, add_entity, add_logic, warm_tally)
+            warm_val = AUTO._leaf_area_um2(ps2, add_entity, add_logic, warm_tally)
             check(warm_val == 999.5, "a cached real area is used as-is")
             check(warm_tally == {"measured": 1}, "warm leaf tallies as measured")
 
             # --auto_fsm_abstract_area (FORCE_ABSTRACT_AREA): reproduces the
             # non-DEVICE_MODELS numbers exactly, even with a warm cache --
             # the escape hatch this session's own A/B measurement needs.
-            AUTO_FSM.FORCE_ABSTRACT_AREA = True
+            AUTO.FORCE_ABSTRACT_AREA = True
             check(
-                AUTO_FSM._area_unit_scale(ps2) == 1.0,
+                AUTO._area_unit_scale(ps2) == 1.0,
                 "--auto_fsm_abstract_area forces scale back to 1.0",
             )
-            forced_val = AUTO_FSM._leaf_area_um2(ps2, add_entity, add_logic)
+            forced_val = AUTO._leaf_area_um2(ps2, add_entity, add_logic)
             check(
-                forced_val == AUTO_FSM._leaf_area(add_entity, add_logic),
+                forced_val == AUTO._leaf_area(add_entity, add_logic),
                 "--auto_fsm_abstract_area ignores a warm cache entirely",
             )
-            AUTO_FSM.FORCE_ABSTRACT_AREA = False
+            AUTO.FORCE_ABSTRACT_AREA = False
 
             # Flip-flop area needs no cache at all -- a closed-form liberty
             # lookup, not a per-shape measurement.
-            ff_val = AUTO_FSM._ff_area_um2(ps2)
+            ff_val = AUTO._ff_area_um2(ps2)
             expected_ff, _unit = DEVICE_MODELS.GET_SEQUENTIAL_CELL_AREA()
             check(
                 ff_val == expected_ff,
@@ -1337,7 +1338,7 @@ def main():
             )
         finally:
             SYN.SYN_TOOL = old_tool
-            AUTO_FSM.FORCE_ABSTRACT_AREA = old_force
+            AUTO.FORCE_ABSTRACT_AREA = old_force
             if old_env is None:
                 os.environ.pop("PYPELINEC_AREA_CACHE_DIR", None)
             else:

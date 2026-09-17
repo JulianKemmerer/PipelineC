@@ -478,8 +478,8 @@ The wrapped function may be flat or hierarchical. Neither frontend requires user
 split its source into helper functions sized like pipeline stages: elaboration exposes
 individual operations, and the common backend chooses legal operation-output or
 bit-internal placements. Generated `N` register slices correspond to `N + 1`
-combinational pipeline stages; see [SYN_DESIGN.md](SYN_DESIGN.md) and
-[VHDL_DESIGN.md](VHDL_DESIGN.md).
+combinational pipeline stages; see [AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md),
+[SWEEP_DESIGN.md](SWEEP_DESIGN.md) and [VHDL_DESIGN.md](VHDL_DESIGN.md).
 
 ### 8c. GLOBAL_VALID_READY_PIPELINE_INST — stream pipeline with FIFO
 

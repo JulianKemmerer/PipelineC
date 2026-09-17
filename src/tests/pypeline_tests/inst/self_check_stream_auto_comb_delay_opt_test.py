@@ -1,12 +1,12 @@
-"""Registered ACU stream, native/GHDL backpressure and throughput checks."""
+"""Registered DELAY_OPT stream, native/GHDL backpressure and throughput checks."""
 import os
 import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../include/pypeline")))
-from pypeline import (AUTO_COMB_UNSHARE, MAIN, NamedTuple, Reg, hw_func, struct,
+from pypeline import (AUTO_COMB_DELAY_OPT, MAIN, NamedTuple, Reg, hw_func, struct,
                       sim_assert, sim_finish, sim_print, uint1_t, uint8_t, uint16_t)
-from stream.stream_auto_comb_unshare import make_stream_auto_comb_unshare
+from stream.stream_auto_comb_delay_opt import make_stream_auto_comb_delay_opt
 
 
 @struct
@@ -25,8 +25,8 @@ def selected(x: input_t) -> uint16_t:
     return left * right
 
 
-CORE = AUTO_COMB_UNSHARE(selected)
-STREAM, STREAM_T = make_stream_auto_comb_unshare(CORE)
+CORE = AUTO_COMB_DELAY_OPT(selected)
+STREAM, STREAM_T = make_stream_auto_comb_delay_opt(CORE)
 
 
 @MAIN(5.0)
@@ -59,16 +59,16 @@ def stream_test() -> uint16_t:
         expected:uint16_t = received * 5
         if received[0]:
             expected = received * 3
-        sim_assert(o.stream_out_if.stream.data == expected, "ACU stream result/order mismatch")
+        sim_assert(o.stream_out_if.stream.data == expected, "DELAY_OPT stream result/order mismatch")
         if received < 8:
-            sim_assert(cycle == received + 2, "ACU stream latency/II mismatch")
+            sim_assert(cycle == received + 2, "DELAY_OPT stream latency/II mismatch")
         last = o.stream_out_if.stream.data
-        sim_print(f"ACU received={received} value={last}", debug=True)
+        sim_print(f"DELAY_OPT received={received} value={last}", debug=True)
         received += 1
     if received == 24:
         # Finish the following cycle so the last debug probe is not lost.
         if ~o.stream_out_if.stream.valid:
             sim_finish()
-    sim_assert(cycle < 300, "ACU stream failed to drain")
+    sim_assert(cycle < 300, "DELAY_OPT stream failed to drain")
     cycle += 1
     return last

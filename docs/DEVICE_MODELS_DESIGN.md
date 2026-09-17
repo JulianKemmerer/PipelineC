@@ -13,7 +13,8 @@ against both the locally installed 0.11.3 and the latest 1.0.3 release; this
 has not changed). Real sky130 synthesis shows a hard, load-dependent cliff:
 driving past a cell's characterized `max_capacitance` costs several times the
 in-range delay, and that cliff is exactly the shape a per-gate flat model can
-never reproduce. See [`SYN_DESIGN.md`](SYN_DESIGN.md) for the pipelining
+never reproduce. See [`SYN_DESIGN.md`](SYN_DESIGN.md) for the synthesis API this
+backend implements, [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md) for the pipelining
 sweep this feeds into, and [`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md) for the
 sibling feature whose delay budget comes from the same `SYN_TOOL` interface.
 
@@ -381,7 +382,7 @@ The combined gate and arithmetic acceptance record — the actual divider build
 this model's own recipe and STA feed into — is tracked from
 [`pypeline_TESTS.md`](pypeline_TESTS.md#related); the pipeline-depth-scheduling
 decisions this results section motivated are in
-[`SYN_DESIGN.md`](SYN_DESIGN.md)'s History section.
+[`SWEEP_DESIGN.md`](SWEEP_DESIGN.md#history)'s History section.
 
 ## 4. Verification
 
@@ -454,7 +455,7 @@ decisions this results section motivated are in
 - **Mux select-fanout cliff.** A register on a short parallel branch can be
   free in pipeline depth but ruinous in fanout, and planning did not always
   catch it — the fix (`SWEEP.DROP_NON_DEEPENING_PLACEMENTS`) and the
-  measured cliff it closes live in [`SYN_DESIGN.md`](SYN_DESIGN.md)'s
+  measured cliff it closes live in [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md#mux-select-fanout-cliff)'s
   History section, since the fix itself is in the planner, not this model.
 - **`--no_hier_syn` sums isolated per-leaf delays, which runs high on a mux
   chain specifically.** On `soft_shift_rot`, `--no_hier_syn` reports 38.2 ns
@@ -649,7 +650,7 @@ string is not part of the key.
 `AUTO_FSM.py`'s ranking (`docs/AUTO_FSM_DESIGN.md` §3.8) uses real cached
 leaf/register/multiplexer µm² from this cache wherever a measurement exists,
 falling back to its own abstract per-bit model (scaled into µm² by a
-constant refit from this cache, `AUTO_FSM.UM2_PER_ABSTRACT_AREA_UNIT`) only
+constant refit from this cache, `AUTO.UM2_PER_ABSTRACT_AREA_UNIT`) only
 where one does not — `--auto_fsm_abstract_area` forces the old abstract-only
 ranking for comparison. Every non-sky130 tool is unaffected: the abstract
 model is still the only signal there, unchanged. Real measurement confirmed

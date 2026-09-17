@@ -20,6 +20,7 @@ sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../
 
 import C_TO_LOGIC
 import SWEEP
+import AUTO_PIPELINE
 
 M = C_TO_LOGIC.SUBMODULE_MARKER
 AL = C_TO_LOGIC.AutoPipelineLatency
@@ -49,14 +50,14 @@ def _chain_landscape(n_ops=N_OPS, units_per_op=UNITS_PER_OP):
 def test_exact_counts():
     landscape = _chain_landscape()
     for count in range(0, N_OPS):
-        cuts, placements, budget = SWEEP.COUNT_TARGETED_PLACEMENTS(landscape, count)
+        cuts, placements, budget = AUTO_PIPELINE.COUNT_TARGETED_PLACEMENTS(landscape, count)
         assert len(cuts) == count, (count, cuts)
         assert len(placements) >= count, (count, placements)
         assert budget > 0.0
     # Spread for the tightest stages: 1 cut splits 6 ops 3/3, 2 cuts 2/2/2
-    cuts, _, _ = SWEEP.COUNT_TARGETED_PLACEMENTS(landscape, 1)
+    cuts, _, _ = AUTO_PIPELINE.COUNT_TARGETED_PLACEMENTS(landscape, 1)
     assert cuts == [3 * UNITS_PER_OP - 1], cuts
-    cuts, _, _ = SWEEP.COUNT_TARGETED_PLACEMENTS(landscape, 2)
+    cuts, _, _ = AUTO_PIPELINE.COUNT_TARGETED_PLACEMENTS(landscape, 2)
     assert cuts == [2 * UNITS_PER_OP - 1, 4 * UNITS_PER_OP - 1], cuts
 
 
@@ -64,12 +65,12 @@ def test_more_cuts_than_positions():
     landscape = _chain_landscape()
     n_legal = sum(1 for legal in landscape.legal if legal)
     try:
-        SWEEP.COUNT_TARGETED_PLACEMENTS(landscape, n_legal + 1)
-    except SWEEP.AutoPipelineLatencyInfeasible as err:
+        AUTO_PIPELINE.COUNT_TARGETED_PLACEMENTS(landscape, n_legal + 1)
+    except AUTO_PIPELINE.AutoPipelineLatencyInfeasible as err:
         assert "legal register position" in str(err), str(err)
     else:
         raise AssertionError("strict count beyond legal positions accepted")
-    cuts, _, _ = SWEEP.COUNT_TARGETED_PLACEMENTS(
+    cuts, _, _ = AUTO_PIPELINE.COUNT_TARGETED_PLACEMENTS(
         landscape, n_legal + 1, strict=False
     )
     assert len(cuts) <= n_legal, cuts
@@ -77,8 +78,8 @@ def test_more_cuts_than_positions():
 
 def test_trim_plan_to_count():
     landscape = _chain_landscape()
-    over = SWEEP.COUNT_TARGETED_PLACEMENTS(landscape, 4)
-    trimmed = SWEEP._TRIM_PLACEMENT_PLAN_TO_COUNT(landscape, over, 2)
+    over = AUTO_PIPELINE.COUNT_TARGETED_PLACEMENTS(landscape, 4)
+    trimmed = AUTO_PIPELINE._TRIM_PLACEMENT_PLAN_TO_COUNT(landscape, over, 2)
     assert trimmed is not None
     cuts, placements, _ = trimmed
     assert len(cuts) == 2, cuts
@@ -97,9 +98,9 @@ class _FakeParserState:
 
 
 def test_region_caps_and_hotspot_attribution():
-    fixed = SWEEP.AutoPipelineRegion(f"main{M}r0", AL(latency=2), "key_fixed", "core")
-    capped = SWEEP.AutoPipelineRegion(f"main{M}r1", AL(max_latency=3), None, "core2")
-    started = SWEEP.AutoPipelineRegion(f"main{M}r2", AL(start_latency=1), "key_s", "core3")
+    fixed = AUTO_PIPELINE.AutoPipelineRegion(f"main{M}r0", AL(latency=2), "key_fixed", "core")
+    capped = AUTO_PIPELINE.AutoPipelineRegion(f"main{M}r1", AL(max_latency=3), None, "core2")
+    started = AUTO_PIPELINE.AutoPipelineRegion(f"main{M}r2", AL(start_latency=1), "key_s", "core3")
     assert capped.group == ("inst", capped.inst) and fixed.group == "key_fixed"
     assert started.start_pending and not fixed.start_pending
     fixed.realized = 2
@@ -118,11 +119,11 @@ def test_region_caps_and_hotspot_attribution():
             "elsewhere": {f"other_main{M}r0{M}leaf"},
         }
     )
-    assert SWEEP.REGION_FOR_HOTSPOT("leaf", plan, ps) is fixed
-    assert SWEEP.REGION_FOR_HOTSPOT("shared", plan, ps) is None  # two groups
-    assert SWEEP.REGION_FOR_HOTSPOT("outside", plan, ps) is None
-    assert SWEEP.REGION_FOR_HOTSPOT("elsewhere", plan, ps) is None
-    assert SWEEP.REGION_FOR_HOTSPOT("leaf", _FakePlan("main", []), ps) is None
+    assert AUTO_PIPELINE.REGION_FOR_HOTSPOT("leaf", plan, ps) is fixed
+    assert AUTO_PIPELINE.REGION_FOR_HOTSPOT("shared", plan, ps) is None  # two groups
+    assert AUTO_PIPELINE.REGION_FOR_HOTSPOT("outside", plan, ps) is None
+    assert AUTO_PIPELINE.REGION_FOR_HOTSPOT("elsewhere", plan, ps) is None
+    assert AUTO_PIPELINE.REGION_FOR_HOTSPOT("leaf", _FakePlan("main", []), ps) is None
 
 
 if __name__ == "__main__":

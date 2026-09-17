@@ -17,12 +17,14 @@ import utilities
 
 # import CLANG_TO_LOGIC
 import SYN
+import AUTO_PIPELINE
 import SWEEP
 
 # Imported up here (elsewhere it is imported lazily, inside the functions that
 # schedule) so --auto_fsm_ctl's choices can come from AUTO_FSM itself rather than
 # being restated. Its own imports are all already loaded above.
 import AUTO_FSM
+import AUTO
 
 # Defaults
 default_src_file = C_TO_LOGIC.REPO_ABS_DIR() + "/main.py"
@@ -350,9 +352,9 @@ SYN.HIER_SYN_MODE = (
     "full" if args.full_hier_syn else ("prim" if args.no_hier_syn else "leaf")
 )
 # Post-met pipeline stage reduction effort
-SYN.PIPELINE_MIN_EFFORT = args.pipeline_min_effort
+SWEEP.PIPELINE_MIN_EFFORT = args.pipeline_min_effort
 # Plan-only: skip all sweep synthesis iterations, emit the first guess as-is
-SYN.NO_SWEEP = args.no_sweep
+SWEEP.NO_SWEEP = args.no_sweep
 # Multiplier style
 C_TO_LOGIC.MULT_STYLE = args.mult
 # Open tools flag to not run nextpnr
@@ -382,7 +384,7 @@ SYN.MUX_DELAY_KEY_BY_WIDTH = args.mux_delay_by_width
 # AUTO_FSM area-search escape hatch: real sky130 um2 is used automatically
 # whenever SYN.SYN_TOOL is DEVICE_MODELS; this forces the abstract per-bit
 # model instead, for A/B comparison.
-AUTO_FSM.FORCE_ABSTRACT_AREA = args.auto_fsm_abstract_area
+AUTO.FORCE_ABSTRACT_AREA = args.auto_fsm_abstract_area
 
 print(
     "================== Parsing C Code to Logical Hierarchy ================================",
@@ -460,7 +462,7 @@ if SYN.SYN_TOOL is None:
 if args.comb or args.no_synth:
     # Zero added pipelining, except fixed AUTO_PIPELINE latency= call sites
     # (None when there are none: exactly the historical zero-clock files)
-    comb_timing_params = SYN.BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS(parser_state)
+    comb_timing_params = AUTO_PIPELINE.BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS(parser_state)
 if args.comb:
     SYN.WRITE_FINAL_FILES(comb_timing_params, parser_state)
     # Here is a good point to check basic single cycle/comb logic functionality before pipelining with synth tools
@@ -479,7 +481,7 @@ elif args.no_synth and comb_timing_params is not None:
     SYN.WRITE_FINAL_FILES(comb_timing_params, parser_state)
 
 if not args.no_synth:
-    parser_state, multimain_timing_params = SYN.DO_PIPELINED_BUILD(
+    parser_state, multimain_timing_params = AUTO_PIPELINE.DO_PIPELINED_BUILD(
         parser_state, args, src_file
     )
 
@@ -511,8 +513,8 @@ if not args.no_synth:
         args.sim, parser_state, args, multimain_timing_params, source_file=src_file
     )
 
-import AUTO_COMB_SHARE
+import AUTO_COMB_OPT
 
-AUTO_COMB_SHARE.DUMP_GENERATED_SOURCE(parser_state, SYN.SYN_OUTPUT_DIRECTORY)
+AUTO_COMB_OPT.DUMP_GENERATED_SOURCE(parser_state, SYN.SYN_OUTPUT_DIRECTORY)
 SYN.WRITE_NAME_INDEX_LOG(parser_state)
 print("Done.", flush=True)

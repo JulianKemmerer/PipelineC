@@ -926,7 +926,7 @@ The removed `depth=` keyword raises a `TypeError` that names its replacements.
 `.latency` is decided when the tag is constructed, in this order:
 1. A fixed `latency=N` is always N.
 2. Otherwise, the harvested stage count once the module-level cache
-   (`pypeline._auto_pipeline_latency_cache`) holds the tag's key. `SYN.DO_AUTO_PIPELINE_LATENCY_PASSES`
+   (`pypeline._auto_pipeline_latency_cache`) holds the tag's key. `AUTO_PIPELINE.DO_AUTO_PIPELINE_LATENCY_PASSES`
    installs the cache between pin-and-confirm passes, and again before a non-`--comb`
    `--sim` run imports the design for native sim.
 3. Otherwise, `start_latency` in a synthesizing build.
@@ -972,18 +972,18 @@ the resulting submodule instance with a `C_TO_LOGIC.AutoPipelineLatency` constra
 the same field. The Pypeline frontend also records `sub_inst_to_auto_pipeline_key`
 (instance -> `AUTO_PIPELINE.canonical_key`), so the stage counts the sweep builds can be
 harvested per call site and fed back into `.latency`. How the sweep, the coarse sweep
-and no-sweep builds enforce constraints is in `SYN_DESIGN.md` §"Constrained
-AUTO_PIPELINE regions".
+and no-sweep builds enforce constraints is in
+[`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md#6-constrained-auto_pipeline-regions-latency--start_latency--max_latency).
 
 The internal helper `_auto_pipeline_with_io_regs(func, has_input_reg, has_output_reg)`
 (used by `make_stream_auto_pipeline` and the FIR library) wraps `AUTO_PIPELINE(func)` with
 optional unconditional `Reg[T]` boundary registers and returns
 `(wrapped_func, auto_pipeline_call)` so library code can read `.latency`.
 
-### `AUTO_COMB_SHARE(func)` — Zero-Cycle Resource Sharing
+### `AUTO_COMB_AREA_OPT(func)` — Zero-Cycle Resource Sharing
 
-`AUTO_COMB_SHARE` is a lightweight callable tag with
-`_is_auto_comb_share_pragma` and `_is_hw_func` markers. It retains `.func`, copies
+`AUTO_COMB_AREA_OPT` is a lightweight callable tag with
+`_is_auto_comb_area_opt_pragma` and `_is_hw_func` markers. It retains `.func`, copies
 the original annotated signature, and reports `.latency == 0`. It deliberately
 does not expose `__wrapped__`: generic hardware type introspection should work,
 but the elaborator must still see the tag and perform the transformation.
@@ -995,17 +995,17 @@ Canonical identity includes the wrapped function, not the chosen implementation.
 fixed-pipeline reachability follows through to its underlying callable.
 `PY_TO_LOGIC._elaborate_live_func` substitutes the chosen ordinary hardware
 function, which permits composition with `AUTO_PIPELINE` and stream factories.
-Purity and exact typed rewrites live in `AUTO_COMB_SHARE`/`HLS`; see
-[`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md).
+Purity lives in `AUTO_COMB_OPT` and the exact typed rewrites in `AUTO`; see
+[`AUTO_COMB_OPT_DESIGN.md`](AUTO_COMB_OPT_DESIGN.md).
 
-`AUTO_COMB_UNSHARE` reuses the lightweight signature/forwarding contract with
-`_is_auto_comb_unshare_pragma`, a distinct canonical identity, and a delay-first
+`AUTO_COMB_DELAY_OPT` reuses the lightweight signature/forwarding contract with
+`_is_auto_comb_delay_opt_pragma`, a distinct canonical identity, and a delay-first
 objective. Both tags stay visible to elaboration; mixed nesting applies in
 written order, while repeating the same tag is idempotent. The selected pure
 function is still zero-cycle. Timing uses read-only caches/estimates, without
 new finalist synthesis jobs. The two stream factories share one elastic shell
-(latency 2, II=1); UNSHARE exposes `.acu`. See
-[`AUTO_COMB_UNSHARE_DESIGN.md`](AUTO_COMB_UNSHARE_DESIGN.md).
+(latency 2, II=1); both expose the tag as `.comb_opt`. See
+[`AUTO_COMB_OPT_DESIGN.md`](AUTO_COMB_OPT_DESIGN.md).
 
 ### `AUTO_FSM(func)` — Resource-Shared State Machines with `.latency`
 
@@ -1014,8 +1014,8 @@ one full copy of `func`'s hardware cut by serial register slices (N slices give
 N clocks of latency and N+1 combinational regions; initiation interval 1,
 extra register area), `AUTO_FSM(func)` builds a resource-shared state machine
 and runs `func` over several cycles. Its default area search includes the same
-combinational candidates as `AUTO_COMB_SHARE`, plus bounded delay-ranked
-`AUTO_COMB_UNSHARE` finalists, scored by complete FSM area.
+combinational candidates as `AUTO_COMB_AREA_OPT`, plus bounded delay-ranked
+`AUTO_COMB_DELAY_OPT` finalists, scored by complete FSM area.
 Twelve identical adds can become one adder used in twelve states; unsharing is
 also considered when mux/register overhead or a latency cap warrants it.
 
@@ -1139,7 +1139,7 @@ AUTO_PIPELINE's `.latency` feedback, with a few deliberate differences:
   - `.latency` (alias `.ncycles`) records the value in `_auto_multi_cycle_served`.
   - The compiler reads through `_ncycles_for_compiler()`, which records nothing.
   - `AUTO_MULTI_CYCLE_UNREAD_KEYS()` lists non-fixed tags no design code read; the driver refuses
-    those (`SYN.CHECK_AUTO_MULTI_CYCLE_TAGS_READ`).
+    those (`AUTO_MULTI_CYCLE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ`).
 - **Name identity.** `pypeline_names.stable_key` encodes the key, the constraint **and the
   resolved count**. An AUTO_PIPELINE's identity deliberately omits its served latency.
   Here the function holding the tagged registers bakes `.latency`-derived constants into
@@ -1150,7 +1150,7 @@ The library factories `make_stream_multi_cycle(func, latency)` (fixed `MULTI_CYC
 `make_stream_auto_multi_cycle(func, *, latency=, start_latency=, max_latency=)` live in
 `include/pypeline/stream/stream_multi_cycle.py`; the auto one exposes its tag as `func_mcp.mcp`.
 Sweep and pin-and-confirm handling are in
-[`SYN_DESIGN.md`](SYN_DESIGN.md#auto_multi_cycle-multi-cycle-counts); elaboration is in
+[`AUTO_MULTI_CYCLE_DESIGN.md`](AUTO_MULTI_CYCLE_DESIGN.md); elaboration is in
 [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#multi_cyclencycles--regt-tag--multi-cycle-path-constraint).
 
 ### Fixed User Pipelines
@@ -1938,8 +1938,8 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `sim_assert(cond, msg=None)` | simulation-only condition check — raises `AssertionError` in native sim, elaborates to VHDL `assert ... report ... severity failure;` (see `PY_TO_LOGIC_DESIGN.md`) |
 | `sim_finish()` | simulation-only stop signal — raises `SimFinish` in native sim (caught by `pypeline_sim.py`'s CLI run loop), elaborates to VHDL `std.env.finish;` (see `PY_TO_LOGIC_DESIGN.md`) |
 | `AUTO_PIPELINE(func, latency=, start_latency=, max_latency=)` | Callable tag: calls through it may be auto-pipelined inside register/feedback contexts; `.latency` reads the built register count; optional fixed / starting / maximum latency (equivalent to `#pragma AUTOPIPELINE [N]`) |
-| `AUTO_COMB_SHARE(func)` | Experimental area-first combinational callable; same types/bits, zero added cycles, `.func`, `.latency == 0`; composes with pipeline/MCP/FSM wrappers |
-| `AUTO_COMB_UNSHARE(func)` | Experimental delay-first combinational callable; same zero-cycle contract, allowing area growth; cached timing/estimates, no extra selection synthesis |
+| `AUTO_COMB_AREA_OPT(func)` | Experimental area-first combinational callable; same types/bits, zero added cycles, `.func`, `.latency == 0`; composes with pipeline/MCP/FSM wrappers |
+| `AUTO_COMB_DELAY_OPT(func)` | Experimental delay-first combinational callable; same zero-cycle contract, allowing area growth; cached timing/estimates, no extra selection synthesis |
 | `AUTO_MULTI_CYCLE` | `AUTO_MULTI_CYCLE(latency= / start_latency= / max_latency=)` multi-cycle tag whose count the throughput sweep raises; `.start`/`.end` like `MULTI_CYCLE`, `.latency` read-tracked (see [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle--tool-tuned-multi-cycle-path-tag)) |
 | `MULTI_CYCLE` / `_MultiCycleTag` / `_MultiCycleRole` | `MULTI_CYCLE[ncycles]` tag; `.start`/`.end` attach to `Reg[T, tag]` declarations to relax setup timing between them (equivalent to `#pragma MULTI_CYCLE`) |
 | `wires` | Marks a function as pure rewiring/bit-casting with no real delay; implies `@hw_func`; stacks with `@MAIN` in either order (equivalent to `#pragma FUNC_WIRES`) |

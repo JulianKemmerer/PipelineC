@@ -1,7 +1,7 @@
 # pyright: reportInvalidTypeForm=none
 # A raw AUTO_MULTI_CYCLE tag whose .latency nothing in the design reads (the handshake
 # counter is hard-coded): a synthesizing build must refuse it
-# (SYN.CHECK_AUTO_MULTI_CYCLE_TAGS_READ). Used by auto_multi_cycle_unit_test.py.
+# (AUTO_MULTI_CYCLE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ). Used by auto_multi_cycle_unit_test.py.
 from pypeline import (
     MAIN,
     PART,

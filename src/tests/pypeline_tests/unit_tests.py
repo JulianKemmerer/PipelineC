@@ -34,8 +34,8 @@ def get_tests() -> list:
         )
     )
     # Pure-unit tests for the AUTO_PIPELINE .latency machinery
-    # (SYN.HARVEST_AUTO_PIPELINE_LATENCIES grouping + divergence detection,
-    # SYN.SEED_TIMING_PARAMS_FROM_PREVIOUS two-tier matching + call-site-change
+    # (AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES grouping + divergence detection,
+    # AUTO_PIPELINE.SEED_TIMING_PARAMS_FROM_PREVIOUS two-tier matching + call-site-change
     # detection, CANONICAL_CALLABLE_KEY determinism, latency cache/read-flag
     # behavior) against hand-built fixtures -- no design build involved.
     tests.append(
@@ -229,8 +229,8 @@ def get_tests() -> list:
     # funnel-shift muxes under real sky130 STA (105.95 -> 377.41 MHz at an
     # unchanged --no_hier_syn --no_sweep target, once both the wasted cut is
     # dropped and the remaining wide MUX banks are chunked by default) --
-    # see the test file's own docstring and docs/SYN_DESIGN.md's dated
-    # result.
+    # see the test file's own docstring and docs/SWEEP_DESIGN.md's mux
+    # select-fanout cliff history.
     tests.append(
         Test(
             name="mux_fanout_planning_test",

@@ -75,7 +75,7 @@ fastest tool that can check what it tests:
   `path_delay_cache/device_models_sky130_fd_sc_hvl_tt_025C_3v30_v4` cache: the
   library and corner are fixed, and the part string is not part of the cache key.
 - **`vivado`, only for Vivado-specific features.** Today that means MULTI_CYCLE
-  path constraints (`SYN.GET_MCP_PATH_CONSTRAINTS` supports only Vivado) and
+  path constraints (`AUTO_MULTI_CYCLE.GET_MCP_PATH_CONSTRAINTS` supports only Vivado) and
   the PDW synth tops' real-part Block RAM and 125 MHz checks. Use a part with
   a committed cache (`xc7a35ticsg324-1l`, `xc7a100tcsg324-1`); a part without
   one re-characterizes every leaf on every run.
@@ -186,8 +186,8 @@ from a different angle:
     unchanged);
   - `.latency` per build mode and cache;
   - the served-value predicate behind the pin-and-confirm pass-2 skip;
-  - `SYN.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED`.
-- `auto_pipeline_region_planning_test.py` (unit): `SWEEP.COUNT_TARGETED_PLACEMENTS`,
+  - `AUTO_PIPELINE.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED`.
+- `auto_pipeline_region_planning_test.py` (unit): `AUTO_PIPELINE.COUNT_TARGETED_PLACEMENTS`,
   plan trimming, cap bookkeeping, and hotspot-to-region attribution on synthetic
   landscapes.
 - `auto_pipeline_fixed_latency_sim_test.py` (native_sim): plain native sim emulates a
@@ -211,11 +211,11 @@ from a different angle:
   - construction-site keys and the inline-construction guard;
   - design-read vs. compiler-read tracking;
   - identity that follows the resolved count;
-  - `SYN` constraint overrides and the timing-params hash;
-  - `SWEEP` report matching and grow-only feedback on a synthetic Vivado report;
+  - `AUTO_MULTI_CYCLE` constraint overrides and the timing-params hash;
+  - `AUTO_MULTI_CYCLE` report matching and grow-only sweep feedback on a synthetic Vivado report;
   - elaboration into `Logic.auto_multi_cycle_tuples`, where a cache re-parse changes the count and
     renames the holding entity;
-  - an unread tag refused by `SYN.CHECK_AUTO_MULTI_CYCLE_TAGS_READ`.
+  - an unread tag refused by `AUTO_MULTI_CYCLE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ`.
 - `stream_auto_multi_cycle_test.py` (native_sim and synth_vivado `--comb`): the handshake waits
   `.latency + 1` cycles for `start_latency=` and fixed `latency=`, and the Xilinx-part
   `--comb` build emits both `set_multicycle_path` constraints.
@@ -228,12 +228,12 @@ from a different angle:
   - restarting at that count settles immediately, with pass 2 skipped;
   - `max_latency=1` fails the build naming the cap.
 
-## AUTO_COMB_SHARE coverage
+## AUTO_COMB_AREA_OPT coverage
 
-The companion `AUTO_COMB_UNSHARE` suite adds `auto_comb_unshare_test.py`
+The companion `AUTO_COMB_DELAY_OPT` suite adds `auto_comb_delay_opt_test.py`
 (native isolation, dependency timing, exact candidates, casts, arithmetic
 families, purity, nesting and repeat-parse pinning),
-`auto_comb_unshare_build_test.py` (Yosys SAT equivalence, register-free core,
+`auto_comb_delay_opt_build_test.py` (Yosys SAT equivalence, register-free core,
 separate original/optimized sky130 timing builds), and stream/composition
 native-versus-GHDL fixtures. The stream asserts latency 2, II=1 and stable
 data/valid under stalls; composition covers pipeline and FSM.
@@ -244,23 +244,23 @@ exponential input-storage traversal. `qor_multiplier_auto_fsm_test` keeps its
 real builds and the 3% area tolerance. The latter saves each variant's complete
 live output in `build.log`, with elapsed/status summaries. Retaining the
 original area incumbent is valid; a search move is not required. See
-[`AUTO_COMB_UNSHARE_DESIGN.md`](AUTO_COMB_UNSHARE_DESIGN.md).
+[`AUTO_COMB_OPT_DESIGN.md`](AUTO_COMB_OPT_DESIGN.md).
 
-`AUTO_COMB_SHARE` is exercised at the callable, graph, RTL and stream boundaries:
+`AUTO_COMB_AREA_OPT` is exercised at the callable, graph, RTL and stream boundaries:
 
-- `auto_comb_share_test.py` (`elab_introspect`): metadata/native forwarding,
+- `auto_comb_area_opt_test.py` (`elab_introspect`): metadata/native forwarding,
   generated candidate equivalence, exclusive predicates, multiple consumers,
   signed casts, modular factoring, constant arithmetic, demanded/known bits,
   custom narrow-width operators, scoped fallback, purity and repeat parsing.
-- `auto_comb_share_build_test.py` (`build_report_device_models`, Yosys + GHDL): SAT proves
+- `auto_comb_area_opt_build_test.py` (`build_report_device_models`, Yosys + GHDL): SAT proves
   bit-exact equivalence for all inputs of the two-multiplier/output-mux example;
   independent mapped-cell builds require a strict area reduction and no
   flip-flops/latches in the combinational replacement.
-- `self_check_stream_auto_comb_share_test.py` (`synth_device_models`, native-vs-VHDL `--comb`):
+- `self_check_stream_auto_comb_area_opt_test.py` (`synth_device_models`, native-vs-VHDL `--comb`):
   two-cycle registered boundaries, unstalled II=1, bubbles, backpressure and
   stable output while stalled.
-- `self_check_auto_comb_share_composition_test.py` (both native-vs-VHDL modes):
-  fixed/discovered pipelines, default raw-function FSM and explicit-ACS FSM. It
+- `self_check_auto_comb_area_opt_composition_test.py` (both native-vs-VHDL modes):
+  fixed/discovered pipelines, default raw-function FSM and explicit-AUTO_COMB_AREA_OPT FSM. It
   sets no `PART`; the pipelined build runs under `--syn_tool sky130` (see
   `NON_COMB_SYN_TOOL`). There is
   no multi-cycle member: MULTI_CYCLE constraints are Vivado-only, and one used to
@@ -268,8 +268,8 @@ original area incumbent is valid; a search move is not required. See
   covered by the `synth_vivado`/`build_report_vivado` tests above.
 
 Run the full suite with `python3 src/tests/pypeline_tests/run_all.py -j 5 --no_timeout`.
-Use `-k auto_comb_share` to select the feature tests. See
-[`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md) for the contract and limits.
+Use `-k auto_comb_area_opt` to select the feature tests. See
+[`AUTO_COMB_OPT_DESIGN.md`](AUTO_COMB_OPT_DESIGN.md) for the contract and limits.
 
 ## Global wire name coverage
 
@@ -606,7 +606,7 @@ categories.
   at 164.69 MHz, then tries one generic chunked-MUX neighbor and returns
   49 slices / 50 stages at 194.22 MHz. Negative A/B evidence is retained for
   all exact subtract boundaries, periodic phase variants (see
-  [`SYN_DESIGN.md`'s Divider acceptance entry](SYN_DESIGN.md#divider-acceptance-and-the-48-slice-intermediate-level)
+  [`SWEEP_DESIGN.md`'s Divider acceptance entry](SWEEP_DESIGN.md#divider-acceptance-and-the-48-slice-intermediate-level)
   for what distinguishes a phase variant from a real level), stage-local
   ripple borrow, and chunking without the terminal MUX. `--plans-only`, `--continue`,
   and the exact-boundary options support diagnosis; none is a public compiler

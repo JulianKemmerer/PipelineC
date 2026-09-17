@@ -18,10 +18,10 @@ from common import INST_DIR, Test, main
 
 def get_tests() -> list:
     tests = []
-    tests.append(Test(name="auto_comb_unshare_test", category="elab_introspect",
-                      cmd=[INST_DIR / "auto_comb_unshare_test.py"]))
-    tests.append(Test(name="auto_comb_share_test", category="elab_introspect",
-                      cmd=[INST_DIR / "auto_comb_share_test.py"]))
+    tests.append(Test(name="auto_comb_delay_opt_test", category="elab_introspect",
+                      cmd=[INST_DIR / "auto_comb_delay_opt_test.py"]))
+    tests.append(Test(name="auto_comb_area_opt_test", category="elab_introspect",
+                      cmd=[INST_DIR / "auto_comb_area_opt_test.py"]))
     # A hardware local must shadow a same-named module global/closure name in
     # every constant-folding path (_try_eval_const and friends). Failure modes
     # range from a raw KeyError to silent miscompiles (const-folded array index,

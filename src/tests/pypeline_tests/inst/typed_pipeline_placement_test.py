@@ -9,7 +9,7 @@ import tempfile
 sys.path.insert(0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../"))
 
 import SWEEP
-import SYN
+import AUTO_PIPELINE
 import RAW_VHDL
 
 
@@ -214,7 +214,7 @@ def test_typed_lowering_is_local_not_recursive():
         {"left": "uint8_t", "right": "uint8_t", "out": "uint8_t"},
     )
     ps = FakeParserState({"main": root, "main__step": step, "main__leaf": leaf})
-    tpl = {inst: SYN.TimingParams(inst, logic) for inst, logic in ps.LogicInstLookupTable.items()}
+    tpl = {inst: AUTO_PIPELINE.TimingParams(inst, logic) for inst, logic in ps.LogicInstLookupTable.items()}
     boundary = SWEEP.PipelinePlacement(
         SWEEP.PipelinePlacement.INSTANCE_OUTPUT, "main__step", "step", 5, 5.5
     )
@@ -238,7 +238,7 @@ def test_input_boundary_is_a_typed_local_placement():
         "step", ["x"], ["out"], {"x": "uint8_t", "out": "uint8_t"}
     )
     ps = FakeParserState({"main": root, "main__step": step})
-    tpl = {inst: SYN.TimingParams(inst, logic) for inst, logic in ps.LogicInstLookupTable.items()}
+    tpl = {inst: AUTO_PIPELINE.TimingParams(inst, logic) for inst, logic in ps.LogicInstLookupTable.items()}
     boundary = SWEEP.PipelinePlacement(
         SWEEP.PipelinePlacement.INSTANCE_INPUT, "main__step", "step", 0, 0.0
     )
@@ -359,20 +359,20 @@ def test_minisweep_zero_cut_pass_never_locks_io_only_latency():
         met_timing = True
         initial_guess_latency = 0
 
-    old_has_hier = SWEEP.SYN.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL
-    old_coarse = SWEEP.SYN.DO_COARSE_THROUGHPUT_SWEEP
+    old_has_hier = SWEEP.AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL
+    old_coarse = SWEEP.DO_COARSE_THROUGHPUT_SWEEP
     try:
-        SWEEP.SYN.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL = (
+        SWEEP.AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL = (
             lambda _func, _ps: True
         )
-        SWEEP.SYN.DO_COARSE_THROUGHPUT_SWEEP = (
+        SWEEP.DO_COARSE_THROUGHPUT_SWEEP = (
             lambda *_args, **_kwargs: (MetState(), [], None)
         )
         assert not SWEEP.RUN_HOTSPOT_MINISWEEP("step", plan, ps)
         assert plan.locked == {}
     finally:
-        SWEEP.SYN.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL = old_has_hier
-        SWEEP.SYN.DO_COARSE_THROUGHPUT_SWEEP = old_coarse
+        SWEEP.AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL = old_has_hier
+        SWEEP.DO_COARSE_THROUGHPUT_SWEEP = old_coarse
 
 
 def test_bit_requests_materialize_to_raw_equal_width_boundaries():
@@ -423,7 +423,7 @@ def test_bit_requests_materialize_to_raw_equal_width_boundaries():
         {"left": "uint10_t", "right": "uint10_t", "out": "uint10_t"},
     )
     ps = FakeParserState({"main__leaf": leaf})
-    tpl = {"main__leaf": SYN.TimingParams("main__leaf", leaf)}
+    tpl = {"main__leaf": AUTO_PIPELINE.TimingParams("main__leaf", leaf)}
     SWEEP.APPLY_PIPELINE_PLACEMENTS(placements, ps, tpl)
     assert tpl["main__leaf"]._slices == [0.3, 0.7]
     emitted = RAW_VHDL.GET_BITS_PER_STAGE_DICT(10, tpl["main__leaf"])
@@ -450,7 +450,7 @@ def test_exact_typed_bit_boundaries_lower_and_hash_distinctly():
         {"left": "uint10_t", "right": "uint10_t", "out": "uint10_t"},
     )
     ps = FakeParserState({"main__leaf": leaf})
-    tpl = {"main__leaf": SYN.TimingParams("main__leaf", leaf)}
+    tpl = {"main__leaf": AUTO_PIPELINE.TimingParams("main__leaf", leaf)}
     placements = []
     for ordinal, boundary in enumerate((2, 7), start=1):
         placements.append(SWEEP.PipelinePlacement(
@@ -470,7 +470,7 @@ def test_exact_typed_bit_boundaries_lower_and_hash_distinctly():
     SWEEP.CHECK_PIPELINE_PLACEMENTS_REALIZED(placements, ps, tpl)
 
     exact_hash = tp.GET_HASH_EXT(tpl, ps)
-    equal_tp = SYN.TimingParams("main__leaf", leaf)
+    equal_tp = AUTO_PIPELINE.TimingParams("main__leaf", leaf)
     equal_tp.SET_SLICES([0.2, 0.7])
     equal_hash = equal_tp.GET_HASH_EXT({"main__leaf": equal_tp}, ps)
     assert exact_hash != equal_hash

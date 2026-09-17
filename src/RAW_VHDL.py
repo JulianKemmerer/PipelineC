@@ -2124,7 +2124,7 @@ def _EQUAL_WIDTH_BITS_PER_STAGE_DICT(num_bits, num_slices):
     """D2 fix, corrected: the naive read of timing_params._slices as bit
     boundaries to hit via a delay-fraction curve inversion (an earlier
     version of this function) turned out to model the WRONG quantity, found
-    by testing against real sky130 synthesis (see docs/SYN_DESIGN.md) - it
+    by testing against real sky130 synthesis (see docs/AUTO_PIPELINE_DESIGN.md) - it
     made highly-sliced leaves noticeably WORSE than the plain linear split
     it was replacing, not better.
 
@@ -2177,8 +2177,8 @@ def _EQUAL_WIDTH_BITS_PER_STAGE_DICT(num_bits, num_slices):
     suboptimal (48 slices at 164.69 MHz on the divider, below the 32-slice
     plan's 169.57 MHz), which is the shape of result a leaf-split interface
     able to honor a requested fraction might improve. Deciding that means
-    measuring both under the current model. See docs/SYN_DESIGN.md#10-limitations-and-future-work,
-    item 9 (uneven bit-split boundaries)."""
+    measuring both under the current model. See docs/SWEEP_DESIGN.md#7-limitations-and-future-work,
+    item 6 (uneven bit-split boundaries)."""
     chunks = num_slices + 1
     boundaries = GET_EQUAL_WIDTH_BIT_BOUNDARIES(num_bits, num_slices)
     bits_per_stage_dict = {}

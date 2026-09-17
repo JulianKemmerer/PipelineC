@@ -36,8 +36,8 @@ VIVADO = "vivado"  # the design's own PART("xc...") selects Vivado
 # fmt: off
 # (filename, source_dir, extra_args, tool)
 SYNTH_TEST_FILES = [
-    ("self_check_stream_auto_comb_share_test.py", INST_DIR, [], DM),
-    ("self_check_stream_auto_comb_unshare_test.py", INST_DIR, [], DM),
+    ("self_check_stream_auto_comb_area_opt_test.py", INST_DIR, [], DM),
+    ("self_check_stream_auto_comb_delay_opt_test.py", INST_DIR, [], DM),
     # The slowest synth_device_models test (a ~48-stage unrolled float32
     # divider, ~8 minutes of sky130 synth+STA; over 25 minutes under PyRTL, see
     # float_ops_div_test.py's own comment) -- listed early so run_all.py's FIFO dispatch starts it
@@ -63,7 +63,7 @@ SYNTH_TEST_FILES = [
     # 255-byte filename limit in DEVICE_MODELS' synthesis artifact names.
     ("self_check_stream_auto_fsm_test.py", INST_DIR, [], DM),
     # MULTI_CYCLE path constraints are Vivado-only
-    # (SYN.GET_MCP_PATH_CONSTRAINTS), so these need their Xilinx PART.
+    # (AUTO_MULTI_CYCLE.GET_MCP_PATH_CONSTRAINTS), so these need their Xilinx PART.
     ("stream_multi_cycle_test.py", INST_DIR, ["--comb"], VIVADO),
     ("stream_auto_multi_cycle_test.py", INST_DIR, ["--comb"], VIVADO),
     # vga_donut stays on its board's Vivado part: under sky130 its whole-design

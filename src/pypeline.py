@@ -947,10 +947,10 @@ def encode_param_value(val) -> str:
         # fallback used here and anywhere a live compiler isn't available.)
         import inspect
 
-        if getattr(val, "_is_auto_comb_unshare_pragma", False):
-            return "AUTO_COMB_UNSHARE_" + encode_param_value(val.func)
-        if getattr(val, "_is_auto_comb_share_pragma", False):
-            return "AUTO_COMB_SHARE_" + encode_param_value(val.func)
+        if getattr(val, "_is_auto_comb_delay_opt_pragma", False):
+            return "AUTO_COMB_DELAY_OPT_" + encode_param_value(val.func)
+        if getattr(val, "_is_auto_comb_area_opt_pragma", False):
+            return "AUTO_COMB_AREA_OPT_" + encode_param_value(val.func)
         if getattr(val, "_is_auto_pipeline_pragma", False):
             return (
                 "AUTO_PIPELINE_" + encode_param_value(val.func) + val.latency_suffix()
@@ -1588,7 +1588,7 @@ def _check_auto_pipeline_latency_arg(name, value):
         raise ValueError(f"AUTO_PIPELINE(func, {name}={value}): must be >= 0")
 
 
-class AUTO_COMB_SHARE:
+class AUTO_COMB_AREA_OPT:
     """Area-first, bit-exact combinational implementation of a pure @hw_func.
 
     The compiler may add operand selection and increase propagation delay, but
@@ -1596,7 +1596,7 @@ class AUTO_COMB_SHARE:
     function. Compose with AUTO_PIPELINE or a multi-cycle stream for timing.
     """
 
-    _is_auto_comb_share_pragma = True
+    _is_auto_comb_area_opt_pragma = True
     _is_hw_func = True
     latency = 0
 
@@ -1607,7 +1607,7 @@ class AUTO_COMB_SHARE:
             raise TypeError(f"{type(self).__name__}(func): func must be @hw_func-decorated")
         self.func = func
         original = _inspect.unwrap(func)
-        self.__name__ = getattr(original, "__name__", "auto_comb_share")
+        self.__name__ = getattr(original, "__name__", "auto_comb_area_opt")
         self.__qualname__ = getattr(original, "__qualname__", self.__name__)
         self.__annotations__ = dict(getattr(original, "__annotations__", {}))
         self.__signature__ = _inspect.signature(original)
@@ -1618,7 +1618,7 @@ class AUTO_COMB_SHARE:
     def canonical_key(self):
         import PY_TO_LOGIC
 
-        return "AUTO_COMB_SHARE_" + PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func)
+        return "AUTO_COMB_AREA_OPT_" + PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func)
 
     def __call__(self, *args, **kwargs):
         return self.func(*args, **kwargs)
@@ -1626,30 +1626,30 @@ class AUTO_COMB_SHARE:
     def __repr__(self):
         if "PY_TO_LOGIC" in _sys.modules:
             return self.canonical_key
-        return f"AUTO_COMB_SHARE({self.func.__module__}.{self.__qualname__})"
+        return f"AUTO_COMB_AREA_OPT({self.func.__module__}.{self.__qualname__})"
 
 
-class AUTO_COMB_UNSHARE(AUTO_COMB_SHARE):
+class AUTO_COMB_DELAY_OPT(AUTO_COMB_AREA_OPT):
     """Delay-first, bit-exact, zero-cycle implementation of a pure @hw_func.
 
     Allows area growth, but adds no registers. Selection uses cached timing
     and estimates, not extra synthesis runs. Native calls retain the original
-    semantics; explicit nesting with SHARE preserves the written order.
+    semantics; explicit nesting with AUTO_COMB_AREA_OPT preserves the written order.
     """
 
-    _is_auto_comb_share_pragma = False
-    _is_auto_comb_unshare_pragma = True
+    _is_auto_comb_area_opt_pragma = False
+    _is_auto_comb_delay_opt_pragma = True
 
     @property
     def canonical_key(self):
         import PY_TO_LOGIC
 
-        return "AUTO_COMB_UNSHARE_" + PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func)
+        return "AUTO_COMB_DELAY_OPT_" + PY_TO_LOGIC.CANONICAL_CALLABLE_KEY(self.func)
 
     def __repr__(self):
         if "PY_TO_LOGIC" in _sys.modules:
             return self.canonical_key
-        return f"AUTO_COMB_UNSHARE({self.func.__module__}.{self.__qualname__})"
+        return f"AUTO_COMB_DELAY_OPT({self.func.__module__}.{self.__qualname__})"
 
 
 class AUTO_PIPELINE:
@@ -1696,7 +1696,7 @@ class AUTO_PIPELINE:
     On a real build the pipelinec driver re-executes the design after the
     throughput sweep with the built stage counts installed, so .latency then
     resolves to the real value (see the pin-and-confirm loop in
-    docs/SYN_DESIGN.md) -- including in the native simulation a non---comb
+    docs/AUTO_PIPELINE_DESIGN.md) -- including in the native simulation a non---comb
     `--sim` build launches at the end.
 
     `func` must already be @hw_func-decorated. In elaboration the call becomes
@@ -4012,7 +4012,7 @@ def _exec_generated_func(
 # convention used by _exec_generated_func (default folder
 # "pypeline_generated_bytes", or "pypeline_generated_casts" -- the
 # lazily-built @cast functions in include/pypeline/stream/stream.py -- via
-# its folder= override) and AUTO_FSM._exec_generated ("pypeline_auto_fsm_gen");
+# its folder= override) and AUTO._exec_generated ("pypeline_auto_fsm_gen");
 # see dump_generated_sources.
 _GENERATED_SOURCE_DIR_MARKERS = (
     "pypeline_generated_bytes",
@@ -4030,7 +4030,7 @@ def dump_generated_sources(out_dir):
 
     Covers every synthetic-filename convention in this codebase: the
     "/<marker>/<name>.py" absolute-path convention (_exec_generated_func,
-    AUTO_FSM._exec_generated) and interface_func.py's "ifgen_<...>.py" bare
+    AUTO._exec_generated) and interface_func.py's "ifgen_<...>.py" bare
     relative filename. Best-effort and read-only against linecache: only
     entries actually present in linecache.cache at call time are written, so
     calling this before any design has been elaborated writes nothing.
@@ -7276,7 +7276,7 @@ def _pipeline_latency_reachable(func):
         seen.add(id(value))
         if getattr(value, "_pipeline_latency", 0) > 0:
             return True
-        if isinstance(value, (AUTO_PIPELINE, AUTO_FSM, AUTO_COMB_SHARE)):
+        if isinstance(value, (AUTO_PIPELINE, AUTO_FSM, AUTO_COMB_AREA_OPT)):
             return visit(value.func)
         if isinstance(value, dict):
             return any(visit(v) for v in value.values())

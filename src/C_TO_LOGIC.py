@@ -17,6 +17,7 @@ import AST
 import C_TO_FSM
 import SW_LIB
 import SYN
+import AUTO_PIPELINE
 import VHDL
 from pycparser import c_ast, c_parser
 from utilities import REPO_ABS_DIR, GET_TOOL_PATH
@@ -10844,9 +10845,9 @@ def WRITE_0_ADDED_CLKS_INIT_FILES(parser_state):
         parser_state.part, allow_fail=True
     )  # Comb logic only might not have tool set
     ZeroAddedClocksTimingParamsLookupTable = (
-        SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+        AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
     )
-    multimain_timing_params = SYN.MultiMainTimingParams()
+    multimain_timing_params = AUTO_PIPELINE.MultiMainTimingParams()
     multimain_timing_params.TimingParamsLookupTable = (
         ZeroAddedClocksTimingParamsLookupTable
     )
@@ -10862,7 +10863,7 @@ def WRITE_0_ADDED_CLKS_INIT_FILES(parser_state):
         "Writing VHDL files for all functions (before any added pipelining)...",
         flush=True,
     )
-    SYN.WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroAddedClocksTimingParamsLookupTable)
+    AUTO_PIPELINE.WRITE_ALL_ZERO_CLK_VHDL(parser_state, ZeroAddedClocksTimingParamsLookupTable)
     print(
         "Writing the constant struct+enum definitions as defined from C code...",
         flush=True,

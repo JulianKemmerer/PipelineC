@@ -724,7 +724,7 @@ def test_bin_func_name_scalar_types_unaffected():
 
 def test_bin_func_name_builtin_op_info_keeps_unsanitized_types():
     # parser_state.pypeline_builtin_op_info's value tuple must keep the TRUE
-    # (unsanitized) operand C type strings -- AUTO_FSM._soft_equivalent_callable
+    # (unsanitized) operand C type strings -- AUTO._soft_equivalent_callable
     # (AUTO_FSM.py:1061) reads this back out to ask the soft-operator library
     # for a decomposable equivalent; a bracket-stripped string is not a valid
     # C type to look up.

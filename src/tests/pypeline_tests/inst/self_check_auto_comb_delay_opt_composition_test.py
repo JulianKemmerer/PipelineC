@@ -1,4 +1,4 @@
-"""ACU composed with fixed/discovered pipelines and default AUTO_FSM.
+"""DELAY_OPT composed with fixed/discovered pipelines and default AUTO_FSM.
 
 No PART: native_vs_vhdl_sim_tests.py picks the tool (--syn_tool pyrtl for the
 pipelined build, see NON_COMB_SYN_TOOL there). A make_stream_auto_multi_cycle member used to
@@ -11,7 +11,7 @@ import sys
 
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../..")))
 sys.path.insert(0, os.path.abspath(os.path.join(os.path.dirname(__file__), "../../../../include/pypeline")))
-from pypeline import (AUTO_COMB_UNSHARE, AUTO_PIPELINE, MAIN, NamedTuple, Reg, hw_func,
+from pypeline import (AUTO_COMB_DELAY_OPT, AUTO_PIPELINE, MAIN, NamedTuple, Reg, hw_func,
     struct, sim_assert, sim_finish, sim_print, uint1_t, uint8_t, uint16_t)
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 from stream.stream_auto_fsm import make_stream_auto_fsm
@@ -57,11 +57,11 @@ def core(x: input_t) -> output_t:
     return o
 
 
-ACU = AUTO_COMB_UNSHARE(core)
-FIXED = AUTO_PIPELINE(ACU, latency=1)
-PIPE, PIPE_T = make_stream_auto_pipeline(ACU)
+DELAY_OPT = AUTO_COMB_DELAY_OPT(core)
+FIXED = AUTO_PIPELINE(DELAY_OPT, latency=1)
+PIPE, PIPE_T = make_stream_auto_pipeline(DELAY_OPT)
 FSM, FSM_T = make_stream_auto_fsm(core)
-EXPLICIT, EXPLICIT_T = make_stream_auto_fsm(ACU)
+EXPLICIT, EXPLICIT_T = make_stream_auto_fsm(DELAY_OPT)
 
 
 def make_checker(stream, t, name):
@@ -88,11 +88,11 @@ def make_checker(stream, t, name):
             expected: uint16_t = received * 5
             if received[0]:
                 expected = received * 3
-            sim_assert(o.stream_out_if.stream.data.seq == received, "ACU composition ordering")
-            sim_assert(o.stream_out_if.stream.data.value == expected, "ACU composition value")
+            sim_assert(o.stream_out_if.stream.data.seq == received, "DELAY_OPT composition ordering")
+            sim_assert(o.stream_out_if.stream.data.value == expected, "DELAY_OPT composition value")
             sim_print(f"{name} seq={received} value={o.stream_out_if.stream.data.value}", debug=True)
             received += 1
-        sim_assert(cycle < 1000, "ACU composition failed to drain")
+        sim_assert(cycle < 1000, "DELAY_OPT composition failed to drain")
         cycle += 1
         # sim_assert/print are synthesis-off. Export the payload so synthesis
         # retains the datapath.
@@ -124,8 +124,8 @@ def composition() -> composition_t:
     y: output_t = FIXED(x)
     if cycle > 2:
         expected_seq: uint8_t = cycle - 1
-        sim_assert(y.seq == expected_seq, "fixed ACU pipeline latency")
-        sim_assert(y.value == 6, "fixed ACU pipeline data")
+        sim_assert(y.seq == expected_seq, "fixed DELAY_OPT pipeline latency")
+        sim_assert(y.value == 6, "fixed DELAY_OPT pipeline data")
     p: checker_t = CHECK_PIPE()
     f: checker_t = CHECK_FSM()
     e: checker_t = CHECK_EXPLICIT()

@@ -1,10 +1,15 @@
 #!/usr/bin/env python
 """
-Planned throughput sweep: auto-pipelining driven by a static delay model
-("slice landscape") plus synthesis feedback attribution, replacing the old
-multiplier-driven middle-out sweep.
+Throughput sweeps: using the synthesis API (SYN.py) to iterate toward a timing
+goal. This is the machinery common to every temporal AUTO feature -- the
+planned sweep (a static delay model, the "slice landscape", plus synthesis
+feedback attribution), the coarse sweep, the seeded confirm-or-sweep used by
+the `.latency` pin-and-confirm loop, hotspot mini-sweeps, and
+sweep_history.json. Feature-specific feedback lives with its feature:
+AUTO_PIPELINE.py (constrained regions), AUTO_MULTI_CYCLE.py (cycle counts),
+AUTO_FSM.py (schedule-and-confirm).
 
-Terminology (see docs/SYN_DESIGN.md):
+Terminology (see docs/SWEEP_DESIGN.md):
   cut         - a planned register position along a module's combinational
                 delay. Cuts select typed physical placements: an operation's
                 output boundary or a genuine bit-internal leaf split. The
@@ -42,7 +47,10 @@ from datetime import timedelta
 from multiprocessing.pool import ThreadPool
 from timeit import default_timer as timer
 
+import AUTO_MULTI_CYCLE
+import AUTO_PIPELINE
 import C_TO_LOGIC
+import OPEN_TOOLS
 import RAW_VHDL
 import SYN
 import VHDL
@@ -76,6 +84,18 @@ FLOOR_TOLERANCE = 0.95
 # Consecutive unmet measured results, flat within noise while the cut count
 # grew, that stop the sweep as a plateau (see AT_PLATEAU)
 PLATEAU_STREAK = 3
+
+# Coarse sweep: multiplier limit for individual module coarse register insertion
+# (the coarse sweep's give-up point)
+MAX_ALLOWED_LATENCY_MULT = 5.0
+# Plan the pipelining once from the delay model, write it, and stop -- no
+# sweep synthesis iterations verify it meets timing. --no_sweep cmd line flag.
+NO_SWEEP = False
+# How many extra full-design synthesis iterations the throughput sweep may
+# spend reducing pipeline stages after timing is already met (hunting the
+# fewest-registers solution). 0 = accept the first met result (fastest).
+# --pipeline_min_effort cmd line flag.
+PIPELINE_MIN_EFFORT = 2
 
 
 def AT_PREDICTED_FLOOR(curr_mhz, floor, target_mhz, tolerance=FLOOR_TOLERANCE):
@@ -1036,7 +1056,7 @@ def COLLECT_CUT_SUBTREES(main_inst, parser_state):
 
     def rec(inst, logic):
         if logic.CAN_HAVE_ADDED_LATENCY(parser_state):
-            if SYN.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+            if AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
                 logic.func_name, parser_state
             ):
                 subtrees.append(inst)
@@ -1059,7 +1079,7 @@ def BUILD_SLICE_LANDSCAPE(
     root_logic = parser_state.LogicInstLookupTable[subtree_root_inst]
     if root_logic.delay is None or root_logic.delay <= 0:
         return None
-    root_map = SYN.GET_ZERO_ADDED_CLKS_PIPELINE_MAP(
+    root_map = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_PIPELINE_MAP(
         subtree_root_inst, root_logic, parser_state
     )
     total_units_f = float(root_map.zero_clk_max_delay)
@@ -1087,7 +1107,7 @@ def BUILD_SLICE_LANDSCAPE(
         return bits
 
     def rec(inst, logic, abs_start, unit_scale, ancestor_funcs):
-        pm = SYN.GET_ZERO_ADDED_CLKS_PIPELINE_MAP(inst, logic, parser_state)
+        pm = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_PIPELINE_MAP(inst, logic, parser_state)
         for sub_inst_local in pm.zero_clk_submodule_start_offset:
             start_off = pm.zero_clk_submodule_start_offset[sub_inst_local]
             sub_func = logic.submodule_instances[sub_inst_local]
@@ -1217,7 +1237,7 @@ def BUILD_SLICE_LANDSCAPE(
                 )
             else:
                 # Hierarchical - recurse with rescale into child map coordinates
-                child_map = SYN.GET_ZERO_ADDED_CLKS_PIPELINE_MAP(
+                child_map = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_PIPELINE_MAP(
                     child_inst, sub_logic, parser_state
                 )
                 child_total = float(child_map.zero_clk_max_delay)
@@ -1254,8 +1274,6 @@ def BUILD_SLICE_LANDSCAPE(
     )
     landscape.finalize(func_delay_scale)
     return landscape
-
-
 
 
 def _RUN_BOUNDARY_UNITS(landscape):
@@ -1553,7 +1571,6 @@ def _PLACEMENT_RANK_KEY(placement):
         0 if placement.kind == PipelinePlacement.INSTANCE_OUTPUT else 1,
         placement.candidate_id,
     )
-
 
 
 def _IS_INST_ANCESTOR(ancestor, descendant):
@@ -2321,7 +2338,7 @@ def _LOWER_CHUNKED_MUX_TARGETS(targets, placements, landscape, parser_state):
 # muxes, soft_shift_rot's 64-bit concat mux -- both 105.95 -> 292.48 MHz
 # chunked, unchanged cut count); narrow banks have far less fanout to shed
 # and should not be churned for no measured benefit -- wireguard's own MUX
-# candidates are all 8-bit. See the dated result in docs/SYN_DESIGN.md.
+# candidates are all 8-bit. See the mux select-fanout cliff in docs/SWEEP_DESIGN.md.
 DEFAULT_MUX_CHUNK_MIN_WIDTH = 32
 
 
@@ -3123,7 +3140,7 @@ def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
 def RECORD_CONFIRMATION_RESULTS(
     parser_state, multimain_timing_params, measured_mhz, met
 ):
-    """Pin-and-confirm confirmation run (SYN.DO_SEEDED_CONFIRM_OR_SWEEP): one
+    """Pin-and-confirm confirmation run (DO_SEEDED_CONFIRM_OR_SWEEP): one
     iteration record per goal main, and on a pass its outcome. measured_mhz:
     main inst -> MHz for mains a path report named; when every report passed,
     unnamed goal mains are met with no MHz measured. A failed confirmation
@@ -3237,7 +3254,7 @@ def APPLY_PIPELINE_PLACEMENTS(
             )
         timing_params = TimingParamsLookupTable[placement.inst_path]
         logic = parser_state.LogicInstLookupTable[placement.inst_path]
-        SYN.CHECK_FIXED_LATENCY_BOUNDARY(placement.inst_path, parser_state)
+        AUTO_PIPELINE.CHECK_FIXED_LATENCY_BOUNDARY(placement.inst_path, parser_state)
         if timing_params.params_are_fixed:
             raise ValueError(
                 f"Cannot add pipeline placement to locked instance "
@@ -3484,7 +3501,7 @@ def DROP_NON_DEEPENING_PLACEMENTS(
     count without deepening the pipeline"), just not one geometry alone can
     reliably catch (a tighter ``_straddled`` rule rejects far more
     legitimate candidates elsewhere, e.g. most of a real chacha20 decrypt
-    path's own landscape -- see docs/SYN_DESIGN.md). Ground truth after real
+    path's own landscape -- see docs/SWEEP_DESIGN.md). Ground truth after real
     lowering (GET_TOTAL_LATENCY, itself a real synchronous schedule via
     GET_PIPELINE_MAP) is the only signal that can't be fooled this way.
 
@@ -3508,7 +3525,7 @@ def DROP_NON_DEEPENING_PLACEMENTS(
     ever runs once subtree_root's own monolithic latency alone already
     looks short, and cache invalidation is bounded by this subtree's own
     placement count times its hierarchy depth (no full LogicInstLookupTable
-    walk otherwise, unlike SYN.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES).
+    walk otherwise, unlike AUTO_PIPELINE.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES).
     The per-candidate search loop only ever runs on a genuine mismatch.
 
     Returns (cuts, placements), unchanged unless a mismatch is found and a
@@ -4183,7 +4200,7 @@ def WHY_HOTSPOT_NOT_PIPELINABLE(func_name, parser_state):
     h_logic = parser_state.FuncLogicLookupTable[func_name]
     if not h_logic.CAN_HAVE_ADDED_LATENCY(parser_state):
         return WHY_NOT_SLICEABLE(h_logic, parser_state)
-    if not SYN.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+    if not AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
         func_name, parser_state
     ):
         return "no sliceable logic beneath it"
@@ -4598,7 +4615,7 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     func_logic = parser_state.FuncLogicLookupTable[hotspot_func]
     if not func_logic.CAN_HAVE_ADDED_LATENCY(parser_state):
         return False
-    if not SYN.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+    if not AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
         hotspot_func, parser_state
     ):
         return False
@@ -4618,19 +4635,19 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
         f"(goal {plan.target_mhz:.2f} MHz)",
         flush=True,
     )
-    inst_sweep_state = SYN.InstSweepState()
+    inst_sweep_state = InstSweepState()
     (
         inst_sweep_state,
         working_slices,
         _,
-    ) = SYN.DO_COARSE_THROUGHPUT_SWEEP(
+    ) = DO_COARSE_THROUGHPUT_SWEEP(
         inst,
         plan.target_mhz,
         inst_sweep_state,
         parser_state,
         starting_guess_latency=None,
         do_incremental_guesses=True,
-        max_allowed_latency_mult=SYN.MAX_ALLOWED_LATENCY_MULT,
+        max_allowed_latency_mult=MAX_ALLOWED_LATENCY_MULT,
         stop_at_n_worse_result=4,
     )
     if not inst_sweep_state.met_timing or working_slices is None:
@@ -4678,12 +4695,12 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
             f"(known failing: {lo}, met: {hi})",
             flush=True,
         )
-        probe_state = SYN.InstSweepState()
+        probe_state = InstSweepState()
         (
             probe_state,
             probe_slices,
             _,
-        ) = SYN.DO_COARSE_THROUGHPUT_SWEEP(
+        ) = DO_COARSE_THROUGHPUT_SWEEP(
             inst,
             plan.target_mhz,
             probe_state,
@@ -4729,7 +4746,7 @@ def APPLY_LOCKS(plan, parser_state, TimingParamsLookupTable):
         lock = plan.locked[locked_inst]
         locked_logic = parser_state.LogicInstLookupTable[locked_inst]
         TimingParamsLookupTable = (
-            SYN.ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
+            AUTO_PIPELINE.ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
                 locked_inst,
                 locked_logic,
                 lock.slices,
@@ -4850,7 +4867,7 @@ def RUN_AS_WRITTEN_CHECKS(goal_mains, parser_state):
     results = {}  # main inst -> standalone MHz
     if len(goal_mains) == 0:
         return results
-    zero_clk_tpl = SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+    zero_clk_tpl = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
     num_processes = int(
         open(C_TO_LOGIC.EXE_ABS_DIR() + "/../config/num_processes.cfg", "r").readline()
     )
@@ -4893,479 +4910,13 @@ def RUN_AS_WRITTEN_CHECKS(goal_mains, parser_state):
 
 
 # ─────────────────────────────────────────────
-# Constrained AUTO_PIPELINE regions (latency= / start_latency= / max_latency=)
+# Plan accounting: cuts across a main's own subtrees and its constrained
+# AUTO_PIPELINE regions (enforced by AUTO_PIPELINE.ENFORCE_AUTO_PIPELINE_REGIONS)
 # ─────────────────────────────────────────────
-
-AUTO_PIPELINE_REGION_RETRIES = 4
-COUNT_TARGET_BISECT_STEPS = 32
-
-
-class AutoPipelineLatencyInfeasible(Exception):
-    """A constrained AUTO_PIPELINE call site's latency cannot be built."""
-
-
-class AutoPipelineRegion:
-    """One instance of a constrained AUTO_PIPELINE call site.
-
-    The region is latency-decoupled from its container (GET_SUBMODULE_LATENCY
-    reports tagged instances as 0), so it is planned on its own landscape,
-    lowered, verified against its real GET_TOTAL_LATENCY and then locked
-    (params_are_fixed) before any containing landscape is built -- the
-    container sees an ordinary Segment.LOCKED, the same path mini-sweep locks
-    use. Instances sharing a canonical key form one group and are planned to
-    one register count, so the harvested .latency cannot diverge."""
-
-    def __init__(self, inst, constraint, key, func_name):
-        self.inst = inst
-        self.constraint = constraint
-        self.key = key  # canonical .latency key (None for C designs)
-        self.func_name = func_name
-        self.group = key if key is not None else ("inst", inst)
-        # Budget divisor private to this region, multiplied on top of the
-        # plan's global_scale; calibrated so start_latency / nudges persist
-        self.scale = 1.0
-        self.start_pending = constraint.start_latency is not None
-        self.landscape = None
-        self.cuts = []
-        self.placements = []
-        self.realized = 0
-        self.count = None  # register count planned last iteration
-        self.predicted_ns = 0.0
-        self.rebalance_attempted = False
-
-    def label(self):
-        return self.key if self.key is not None else self.func_name
-
-    def at_cap(self):
-        cap = self.constraint.upper_bound()
-        return cap is not None and self.realized >= cap
-
-    def to_dict(self):
-        return {
-            "inst": self.inst,
-            "key": self.key,
-            "constraint": self.constraint.describe(),
-            "realized_latency": self.realized,
-            "cuts": len(self.cuts),
-            "scale": round(self.scale, 4),
-        }
-
-
-def COLLECT_AUTO_PIPELINE_REGIONS(parser_state, scope_inst=None, fixed_only=False):
-    """Every instance of a constrained AUTO_PIPELINE call site (optionally only
-    those at/under scope_inst, or only fixed latency=N ones), sorted. Empty
-    for designs without constraints, which keeps every region code path off."""
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
-    regions = []
-    for inst_name in sorted(parser_state.LogicInstLookupTable):
-        logic = parser_state.LogicInstLookupTable[inst_name]
-        for local_sub in sorted(logic.sub_inst_to_auto_pipeline_latency):
-            constraint = logic.sub_inst_to_auto_pipeline_latency[local_sub]
-            if constraint is None or constraint.is_unconstrained():
-                continue
-            if fixed_only and not constraint.is_fixed():
-                continue
-            sub_inst = inst_name + marker + local_sub
-            sub_logic = parser_state.LogicInstLookupTable.get(sub_inst)
-            if sub_logic is None:
-                continue
-            if scope_inst is not None and not (
-                sub_inst == scope_inst or sub_inst.startswith(scope_inst + marker)
-            ):
-                continue
-            regions.append(
-                AutoPipelineRegion(
-                    sub_inst,
-                    constraint,
-                    logic.sub_inst_to_auto_pipeline_key.get(local_sub),
-                    sub_logic.func_name,
-                )
-            )
-    return regions
-
-
-def _TRIM_PLACEMENT_PLAN_TO_COUNT(landscape, plan, count):
-    """Reduce a planned (cuts, placements, budget) with too many cuts to
-    exactly `count` by repeatedly dropping the cut whose removal merges the
-    two lightest adjacent stages, then re-lowering the kept placements as
-    required boundaries. None if the plan's placements aren't reusable as
-    fixed placements (e.g. relocated bit-internal splits) or lowering moved
-    the count."""
-    cuts, placements, budget = plan
-    by_unit = {}
-    for placement in placements:
-        by_unit.setdefault(placement.axis_unit, []).append(placement)
-    for unit, unit_placements in by_unit.items():
-        legal_ids = {
-            c.candidate_id for c in landscape.candidates_by_unit.get(unit, ())
-        }
-        if any(p.candidate_id not in legal_ids for p in unit_placements):
-            return None
-    units = sorted(by_unit)
-    weight = landscape.weight
-    while len(units) > count:
-        bounds = [-1] + units + [landscape.total_units - 1]
-        stage_w = [
-            sum(weight[bounds[i] + 1 : bounds[i + 1] + 1])
-            for i in range(len(bounds) - 1)
-        ]
-        drop = min(
-            range(len(units)), key=lambda j: (stage_w[j] + stage_w[j + 1], j)
-        )
-        del units[drop]
-    fixed = [p for unit in units for p in by_unit[unit]]
-    try:
-        new_cuts, new_placements = PLAN_PIPELINE_PLACEMENTS(
-            landscape, float(sum(weight)) + 1.0, fixed_placements=fixed
-        )
-    except (ValueError, RuntimeError):
-        return None
-    if len(new_cuts) != count:
-        return None
-    return new_cuts, new_placements, budget
-
-
-def COUNT_TARGETED_PLACEMENTS(landscape, count, strict=True, prefer_fewer=False):
-    """Plan exactly `count` cuts on a landscape: bisect the stage budget
-    PLAN_PIPELINE_PLACEMENTS is given (cut count is monotone non-increasing in
-    the budget) until it yields `count`, so the positions are the planner's own
-    tightest-stage placement for that many registers. When the count jumps
-    over `count`, trim the nearest larger plan down to it; failing that return
-    the nearest plan (fewer cuts when prefer_fewer, else more) -- the caller
-    verifies the realized latency and retries.
-
-    Returns (cuts, placements, budget_units). strict: more cuts than legal
-    register positions raises AutoPipelineLatencyInfeasible instead of
-    clamping."""
-    total_w = float(sum(landscape.weight))
-    if count <= 0:
-        return [], [], total_w + 1.0
-    n_legal = sum(1 for legal in landscape.legal if legal)
-    if count > n_legal:
-        if strict:
-            raise AutoPipelineLatencyInfeasible(
-                f"only {n_legal} legal register position(s) exist in "
-                f"{landscape.subtree_root_inst}, {count} requested"
-            )
-        count = n_legal
-        if count == 0:
-            return [], [], total_w + 1.0
-    lo, hi = 0.0, total_w + 1.0
-    over = None
-    under = None
-    for _ in range(COUNT_TARGET_BISECT_STEPS):
-        mid = 0.5 * (lo + hi)
-        cuts, placements = PLAN_PIPELINE_PLACEMENTS(landscape, mid)
-        if len(cuts) == count:
-            return cuts, placements, mid
-        if len(cuts) > count:
-            lo = mid
-            over = (cuts, placements, mid)
-        else:
-            hi = mid
-            under = (cuts, placements, mid)
-        if hi - lo <= 1e-6 * max(1.0, hi):
-            break
-    if over is not None:
-        trimmed = _TRIM_PLACEMENT_PLAN_TO_COUNT(landscape, over, count)
-        if trimmed is not None:
-            return trimmed
-    if prefer_fewer and under is not None:
-        return under
-    if over is not None:
-        return over
-    if under is not None:
-        return under
-    return [], [], hi
-
-
-def _INVALIDATE_REGION_CACHES(inst, TimingParamsLookupTable):
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
-    for name, timing_params in TimingParamsLookupTable.items():
-        if (
-            name == inst
-            or name.startswith(inst + marker)
-            or inst.startswith(name + marker)
-        ):
-            timing_params.INVALIDATE_CACHE()
-
-
-def AUTO_PIPELINE_LATENCY_INFEASIBLE_MESSAGE(region, realized, tried, parser_state, why=""):
-    return (
-        f"AUTO_PIPELINE {region.label()} ({region.constraint.describe()}) at "
-        f"{region.inst}{SYN.FUNC_SRC_LOC_STR(parser_state, region.func_name)}: "
-        f"cannot build the requested latency"
-        + (f" ({why})" if why else "")
-        + f" -- realized {realized} clock(s) after planning "
-        f"{', '.join(str(k) for k in tried)} register position(s). Relax or "
-        "remove the constraint, or give the function more register positions."
-    )
-
-
-def _AUTO_PIPELINE_REGION_COUNT(region, period_ns, global_scale):
-    """(register count to plan, calibrate region.scale to it?) before nudges."""
-    constraint = region.constraint
-    if constraint.is_fixed():
-        return constraint.latency, False
-    if region.landscape is None:
-        return 0, False
-    cap = constraint.max_latency
-    if period_ns is None:
-        count = constraint.start_latency or 0
-        calibrate = False
-    elif region.start_pending:
-        region.start_pending = False
-        count = constraint.start_latency
-        calibrate = True
-    else:
-        budget = region.landscape.budget_units_for_period(period_ns) / (
-            global_scale * region.scale
-        )
-        count = len(PLAN_PIPELINE_PLACEMENTS(region.landscape, budget)[0])
-        calibrate = False
-    if cap is not None and count > cap:
-        count = cap
-    count = min(count, sum(1 for legal in region.landscape.legal if legal))
-    return count, calibrate
-
-
-def _ENFORCE_ONE_AUTO_PIPELINE_REGION(
-    region,
-    count,
-    parser_state,
-    tpl,
-    func_delay_scale,
-    period_ns=None,
-    global_scale=1.0,
-    calibrate=False,
-):
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
-    constraint = region.constraint
-    goal = constraint.latency if constraint.is_fixed() else None
-    cap = constraint.max_latency
-    k = count
-    tried = []
-    zero_tpl = None
-    for attempt in range(AUTO_PIPELINE_REGION_RETRIES + 1):
-        tried.append(k)
-        if attempt > 0:
-            # Undo the previous attempt's registers inside the region only
-            if zero_tpl is None:
-                zero_tpl = SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
-            for inst in list(tpl.keys()):
-                if inst == region.inst or inst.startswith(region.inst + marker):
-                    tpl[inst] = copy.deepcopy(zero_tpl[inst])
-            region.landscape = BUILD_SLICE_LANDSCAPE(
-                region.inst, parser_state, tpl, func_delay_scale
-            )
-        budget = None
-        cuts, placements = [], []
-        if k > 0:
-            if region.landscape is None:
-                if goal is not None:
-                    raise AutoPipelineLatencyInfeasible(
-                        AUTO_PIPELINE_LATENCY_INFEASIBLE_MESSAGE(
-                            region, 0, tried, parser_state,
-                            "no measurable pipelinable delay inside it",
-                        )
-                    )
-            else:
-                try:
-                    cuts, placements, budget = COUNT_TARGETED_PLACEMENTS(
-                        region.landscape,
-                        k,
-                        strict=goal is not None,
-                        prefer_fewer=goal is None and cap is not None,
-                    )
-                except AutoPipelineLatencyInfeasible as err:
-                    raise AutoPipelineLatencyInfeasible(
-                        AUTO_PIPELINE_LATENCY_INFEASIBLE_MESSAGE(
-                            region, 0, tried, parser_state, str(err)
-                        )
-                    )
-        elif region.landscape is not None:
-            budget = float(sum(region.landscape.weight)) + 1.0
-        if placements:
-            tpl = APPLY_PIPELINE_PLACEMENTS(placements, parser_state, tpl)
-            CHECK_PIPELINE_PLACEMENTS_REALIZED(placements, parser_state, tpl)
-            _INVALIDATE_REGION_CACHES(region.inst, tpl)
-            cuts, placements = DROP_NON_DEEPENING_PLACEMENTS(
-                region.inst, cuts, placements, parser_state, tpl
-            )
-        _INVALIDATE_REGION_CACHES(region.inst, tpl)
-        realized = tpl[region.inst].GET_TOTAL_LATENCY(parser_state, tpl)
-        if goal is not None:
-            target = goal
-        elif cap is not None and realized > cap:
-            target = cap
-        else:
-            target = None
-        if target is None or realized == target:
-            break
-        next_k = max(0, k + (target - realized))
-        if next_k in tried:
-            next_k = k + (1 if target > realized else -1)
-        if next_k < 0 or next_k in tried or attempt == AUTO_PIPELINE_REGION_RETRIES:
-            raise AutoPipelineLatencyInfeasible(
-                AUTO_PIPELINE_LATENCY_INFEASIBLE_MESSAGE(
-                    region, realized, tried, parser_state
-                )
-            )
-        k = next_k
-    if calibrate and budget is not None and budget > 0.0 and period_ns is not None:
-        # Make the unchanged knobs reproduce this count next iteration
-        base = region.landscape.budget_units_for_period(period_ns) / global_scale
-        region.scale = max(base / budget, 1e-9)
-    region.cuts = list(cuts)
-    region.placements = list(placements)
-    region.realized = realized
-    region.predicted_ns = (
-        PREDICTED_STAGE_NS(cuts, region.landscape)
-        if region.landscape is not None
-        else 0.0
-    )
-    tpl[region.inst].params_are_fixed = True
-    return tpl
-
-
-def ENFORCE_AUTO_PIPELINE_REGIONS(
-    regions,
-    parser_state,
-    tpl,
-    func_delay_scale=None,
-    period_ns=None,
-    global_scale=1.0,
-    unresolved=False,
-    trim_pending=False,
-):
-    """Plan, lower, verify and lock every constrained AUTO_PIPELINE region.
-
-    Register count per region group:
-      - latency=N: N, always;
-      - start_latency=S on its first iteration (or with no period to plan
-        against): S, with region.scale calibrated so unchanged knobs keep
-        reproducing S;
-      - otherwise the count the planner picks for the plan's period, budget
-        divided by global_scale * region.scale, capped at max_latency.
-    With `unresolved` (timing still failing, the plan has no landscape of its
-    own that could change) and no region count changed since last iteration,
-    the group with the worst predicted stage grows by one register;
-    `trim_pending` shrinks the group with the best predicted stage by one.
-
-    Realized latency is verified after lowering (built-in operator stage
-    granularity and non-deepening drops can make it differ from the cut
-    count); fixed and capped regions retry with a corrected count and raise
-    AutoPipelineLatencyInfeasible when the constraint cannot be met.
-    Returns the updated table."""
-    func_delay_scale = func_delay_scale or {}
-    groups = {}
-    order = []
-    for region in regions:
-        if region.group not in groups:
-            groups[region.group] = []
-            order.append(region.group)
-        groups[region.group].append(region)
-    decisions = []
-    for group_key in order:
-        members = groups[group_key]
-        for region in members:
-            region.landscape = BUILD_SLICE_LANDSCAPE(
-                region.inst, parser_state, tpl, func_delay_scale
-            )
-        count, calibrate = _AUTO_PIPELINE_REGION_COUNT(
-            members[0], period_ns, global_scale
-        )
-        decisions.append([members, count, calibrate])
-    unchanged = all(d[0][0].count is not None and d[0][0].count == d[1] for d in decisions)
-    if unchanged and (unresolved or trim_pending):
-        if trim_pending:
-            movable = [
-                d
-                for d in decisions
-                if not d[0][0].constraint.is_fixed() and d[1] > 0
-            ]
-            if movable:
-                d = min(movable, key=lambda d: d[0][0].predicted_ns)
-                d[1] -= 1
-                d[2] = True
-        else:
-            movable = [
-                d
-                for d in decisions
-                if not d[0][0].constraint.is_fixed()
-                and d[0][0].landscape is not None
-                and (
-                    d[0][0].constraint.max_latency is None
-                    or d[1] < d[0][0].constraint.max_latency
-                )
-            ]
-            if movable:
-                d = max(movable, key=lambda d: d[0][0].predicted_ns)
-                d[1] += 1
-                d[2] = True
-    for members, count, calibrate in decisions:
-        for region in members:
-            tpl = _ENFORCE_ONE_AUTO_PIPELINE_REGION(
-                region,
-                count,
-                parser_state,
-                tpl,
-                func_delay_scale,
-                period_ns=period_ns,
-                global_scale=global_scale,
-                calibrate=calibrate and period_ns is not None,
-            )
-            region.count = count
-    return tpl
-
-
-def REENFORCE_AUTO_PIPELINE_REGIONS(parser_state, tpl, scope_inst=None):
-    """Pin-and-confirm seeding (SYN.SEED_TIMING_PARAMS_FROM_PREVIOUS) copies
-    slices by instance path or function name, which can hand a constrained
-    region another call site's pipelining. Keep every region that still
-    satisfies its constraint, re-plan any that doesn't (fixed regions to N,
-    over-cap regions to their cap), and lock them all. Also used by the
-    coarse sweep after its even-fraction slicing (scope_inst = the swept
-    instance)."""
-    regions = COLLECT_AUTO_PIPELINE_REGIONS(parser_state, scope_inst=scope_inst)
-    if not regions:
-        return tpl
-    for timing_params in tpl.values():
-        timing_params.INVALIDATE_CACHE()
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
-    zero_tpl = None
-    for region in regions:
-        realized = tpl[region.inst].GET_TOTAL_LATENCY(parser_state, tpl)
-        cap = region.constraint.upper_bound()
-        violates = cap is not None and (
-            realized > cap or (region.constraint.is_fixed() and realized != cap)
-        )
-        if not violates:
-            tpl[region.inst].params_are_fixed = True
-            continue
-        if zero_tpl is None:
-            zero_tpl = SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
-        for inst in list(tpl.keys()):
-            if inst == region.inst or inst.startswith(region.inst + marker):
-                tpl[inst] = copy.deepcopy(zero_tpl[inst])
-        region.landscape = BUILD_SLICE_LANDSCAPE(region.inst, parser_state, tpl, {})
-        try:
-            tpl = _ENFORCE_ONE_AUTO_PIPELINE_REGION(
-                region, cap, parser_state, tpl, {}
-            )
-        except AutoPipelineLatencyInfeasible as err:
-            sys.exit(str(err))
-    for timing_params in tpl.values():
-        timing_params.INVALIDATE_CACHE()
-    return tpl
-
-
-def PLAN_REGION_CUTS(plan):
-    return sum(len(region.cuts) for region in plan.regions)
 
 
 def PLAN_TOTAL_CUTS(plan):
-    return sum(len(cuts) for cuts in plan.cuts.values()) + PLAN_REGION_CUTS(plan)
+    return sum(len(cuts) for cuts in plan.cuts.values()) + AUTO_PIPELINE.PLAN_REGION_CUTS(plan)
 
 
 def PLAN_TRIMMABLE_CUTS(plan):
@@ -5381,259 +4932,6 @@ def PLAN_FINGERPRINT_PLACEMENTS(plan):
     for region in plan.regions:
         merged["auto_pipeline_region:" + region.inst] = region.placements
     return merged
-
-
-def REGION_FOR_HOTSPOT(hotspot_func, plan, parser_state):
-    """The constrained region group every in-plan instance of hotspot_func
-    lies inside, else None."""
-    if not plan.regions:
-        return None
-    marker = C_TO_LOGIC.SUBMODULE_MARKER
-    insts = sorted(
-        inst
-        for inst in parser_state.FuncToInstances.get(hotspot_func, ())
-        if inst == plan.main_inst or inst.startswith(plan.main_inst + marker)
-    )
-    found = None
-    for inst in insts:
-        owner = next(
-            (
-                r
-                for r in plan.regions
-                if inst == r.inst or inst.startswith(r.inst + marker)
-            ),
-            None,
-        )
-        if owner is None or (found is not None and owner.group != found.group):
-            return None
-        if found is None:
-            found = owner
-    return found
-
-
-def STOP_AT_AUTO_PIPELINE_LATENCY_LIMIT(plan, parser_state, capped_regions, hotspot_func=None):
-    main_func_name = parser_state.LogicInstLookupTable[plan.main_inst].func_name
-    seen = set()
-    names = []
-    for region in capped_regions:
-        if region.group in seen:
-            continue
-        seen.add(region.group)
-        names.append(
-            f"{region.label()} ({region.constraint.describe()}, "
-            f"{region.realized} clks built)"
-        )
-    names_str = ", ".join(names) if names else "?"
-    where = (
-        f" (critical path in {hotspot_func}"
-        f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)})"
-        if hotspot_func is not None
-        else ""
-    )
-    print(
-        f"[sweep] WARNING: {main_func_name} limited by AUTO_PIPELINE latency "
-        f"constraint(s) {names_str}{where}: the constrained call site(s) cannot "
-        "take more registers. Raise or remove latency= / max_latency=, or lower "
-        "the clock goal. Keeping best result.",
-        flush=True,
-    )
-    plan.stopped_reason = "auto_pipeline_latency_limit"
-    plan.auto_pipeline_limit_blame = names_str
-
-
-def AUTO_PIPELINE_REGION_FEEDBACK(plan, region, hotspot_func, target_mhz, curr_mhz, parser_state):
-    """Failing-timing feedback for a critical path inside a constrained region.
-    Returns (action string, made_change)."""
-    step = min(
-        max((target_mhz / curr_mhz) * 1.05, FUNC_SCALE_MIN_STEP),
-        FUNC_SCALE_MAX_STEP,
-    )
-    group = [r for r in plan.regions if r.group == region.group]
-    if not region.at_cap():
-        for r in group:
-            r.scale *= step
-        plan.func_delay_scale[hotspot_func] = (
-            plan.func_delay_scale.get(hotspot_func, 1.0) * step
-        )
-        return f"grow_auto_pipeline({region.label()} x{region.scale:.2f})", True
-    if not region.rebalance_attempted:
-        # Same register count, re-placed with the hotspot weighted heavier
-        for r in group:
-            r.rebalance_attempted = True
-        plan.func_delay_scale[hotspot_func] = (
-            plan.func_delay_scale.get(hotspot_func, 1.0) * step
-        )
-        return (
-            f"rebalance_auto_pipeline({region.label()} at "
-            f"{region.constraint.describe()})",
-            True,
-        )
-    STOP_AT_AUTO_PIPELINE_LATENCY_LIMIT(plan, parser_state, [region], hotspot_func)
-    return f"stop(auto-pipeline latency limit {region.label()})", False
-
-
-def SNAPSHOT_AUTO_PIPELINE_REGIONS(plans):
-    return {
-        mi: [
-            (list(r.cuts), list(r.placements), r.realized, r.scale, r.count)
-            for r in p.regions
-        ]
-        for mi, p in plans.items()
-        if p.regions
-    }
-
-
-def RESTORE_AUTO_PIPELINE_REGIONS(plans, snapshot):
-    if not snapshot:
-        return
-    for mi, states in snapshot.items():
-        for region, (cuts, placements, realized, scale, count) in zip(
-            plans[mi].regions, states
-        ):
-            region.cuts = list(cuts)
-            region.placements = list(placements)
-            region.realized = realized
-            region.scale = scale
-            region.count = count
-
-
-class AutoMultiCycleGroup:
-    """All multi-cycle paths elaborated from one pypeline.AUTO_MULTI_CYCLE tag. They
-    share a single cycle count (the design's Python reads one .latency int),
-    kept in MultiMainTimingParams.auto_multi_cycle_ncycles[key] during the sweep."""
-
-    def __init__(self, key, constraint):
-        self.key = key
-        self.constraint = constraint  # C_TO_LOGIC.AutoMultiCycleConstraint
-        self.paths = []  # (inst, start_reg, end_reg)
-
-    def label(self):
-        return self.key
-
-
-def COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state):
-    """AUTO_MULTI_CYCLE canonical key -> AutoMultiCycleGroup, over every instance whose
-    Logic carries AUTO_MULTI_CYCLE multi-cycle paths."""
-    groups = {}
-    for inst in sorted(parser_state.LogicInstLookupTable):
-        logic = parser_state.LogicInstLookupTable[inst]
-        auto_multi_cycle_tuples = getattr(logic, "auto_multi_cycle_tuples", None)
-        if not auto_multi_cycle_tuples:
-            continue
-        for (start_reg, end_reg), constraint in sorted(
-            auto_multi_cycle_tuples.items(), key=lambda item: item[0]
-        ):
-            group = groups.setdefault(
-                constraint.key, AutoMultiCycleGroup(constraint.key, constraint)
-            )
-            group.paths.append((inst, start_reg, end_reg))
-    return groups
-
-
-def _MCP_CELL_GLOB_REGEX(cell_glob):
-    """Regex for a report's register cell name (e.g. top/sub/launch_reg[12], or
-    top/sub/launch_reg[field][12] for a struct register) matching a Vivado XDC
-    cell glob (top/sub/launch_reg[*]; Vivado's * spans anything but a
-    hierarchy separator)."""
-    import re
-
-    pattern = re.escape(cell_glob).replace(re.escape("[*]"), r"\[[^/]*\]")
-    return re.compile(r"(^|/)" + pattern + r"$")
-
-
-def AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT(
-    path_report, groups, parser_state, multimain_timing_params
-):
-    """The AutoMultiCycleGroup whose multi-cycle path this timing report's critical
-    path is -- start register = a tagged .start reg, end register = the same
-    path's .end reg, and a requirement of (current count) clock periods -- or
-    None. Cell names come from SYN.GET_MCP_CELL_PATHS, the same globs the
-    set_multicycle_path constraints are written with."""
-    import VHDL
-
-    if (
-        not groups
-        or path_report.start_reg_name is None
-        or path_report.end_reg_name is None
-    ):
-        return None
-    tpl = multimain_timing_params.TimingParamsLookupTable
-    period_ns = path_report.source_ns_per_clock
-    requirement_ns = getattr(path_report, "requirement_ns", None)
-    for key in sorted(groups):
-        group = groups[key]
-        ncycles = multimain_timing_params.auto_multi_cycle_ncycles.get(key)
-        if (
-            ncycles is not None
-            and requirement_ns is not None
-            and period_ns
-            and round(requirement_ns / period_ns) != ncycles
-        ):
-            continue
-        for inst in sorted({path[0] for path in group.paths}):
-            main_func = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(
-                inst, parser_state
-            )
-            main_logic = parser_state.LogicInstLookupTable[main_func]
-            top_path = VHDL.GET_ENTITY_NAME(main_func, main_logic, tpl, parser_state)
-            for _tup, start_glob, end_glob, constraint in SYN.GET_MCP_CELL_PATHS(
-                inst, main_func, top_path, parser_state
-            ):
-                if constraint is None or constraint.key != key:
-                    continue
-                if _MCP_CELL_GLOB_REGEX(start_glob).search(
-                    path_report.start_reg_name
-                ) and _MCP_CELL_GLOB_REGEX(end_glob).search(path_report.end_reg_name):
-                    return group
-    return None
-
-
-def AUTO_MULTI_CYCLE_NEEDED_NCYCLES(path_delay_ns, ncycles, target_period_ns):
-    """Cycle count a failing multi-cycle path needs. path_delay_ns is the
-    per-cycle figure VIVADO.PathReport reports for a multi-cycle path
-    ((requirement - slack) / ncycles), so the real launch->capture delay is
-    ncycles * path_delay_ns. Always at least one more than the current count
-    (the path failed at it)."""
-    import math
-
-    total_ns = path_delay_ns * ncycles
-    needed = int(math.ceil(total_ns / target_period_ns - 1e-9))
-    return max(ncycles + 1, needed)
-
-
-def AUTO_MULTI_CYCLE_FEEDBACK(group, path_report, target_mhz, multimain_timing_params):
-    """Failing-timing feedback for a critical path that IS an AUTO_MULTI_CYCLE
-    multi-cycle path: raise the group's count to what the slack says it needs,
-    unless that exceeds its latency= / max_latency= cap. Grow-only -- the count
-    never drops below where it started. Returns (action, changed, limit blame
-    or None)."""
-    ncycles = multimain_timing_params.auto_multi_cycle_ncycles[group.key]
-    needed = AUTO_MULTI_CYCLE_NEEDED_NCYCLES(
-        path_report.path_delay_ns, ncycles, 1000.0 / target_mhz
-    )
-    cap = group.constraint.upper_bound()
-    label = group.label()
-    total_ns = path_report.path_delay_ns * ncycles
-    if cap is not None and needed > cap:
-        blame = (
-            f"AUTO_MULTI_CYCLE {label} ({group.constraint.describe()}, {ncycles} cycles "
-            f"built, ~{needed} needed)"
-        )
-        print(
-            f"[sweep] WARNING: limited by {blame}: its multi-cycle path "
-            f"(~{total_ns:.2f} ns) is the critical path and cannot take more "
-            "cycles. Raise or remove latency= / max_latency=, or lower the clock "
-            "goal. Keeping best result.",
-            flush=True,
-        )
-        return f"stop(auto_multi_cycle latency limit {label})", False, blame
-    multimain_timing_params.auto_multi_cycle_ncycles[group.key] = needed
-    print(
-        f"[sweep] AUTO_MULTI_CYCLE {label}: critical path is its multi-cycle path "
-        f"(~{total_ns:.2f} ns at {ncycles} cycles); raising to {needed} cycles",
-        flush=True,
-    )
-    return f"auto_multi_cycle({label} {ncycles}->{needed})", True, None
 
 
 def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
@@ -5675,7 +4973,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     # --no_sweep skips this too: it is purely informational, not needed to
     # produce the first planned guess.
     as_written_mhz = {}
-    if not SYN.NO_SWEEP:
+    if not NO_SWEEP:
         as_written_mhz = RUN_AS_WRITTEN_CHECKS(planless_goal_mains, parser_state)
 
     # NOTE on budget calibration: cut counts are anchored to reality by the
@@ -5690,7 +4988,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     # Constrained AUTO_PIPELINE call sites belong to the plan of the main they
     # sit under; those under goal-less mains are still enforced (no period).
     planless_regions = []
-    for region in COLLECT_AUTO_PIPELINE_REGIONS(parser_state):
+    for region in AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(parser_state):
         owner = next(
             (
                 plan
@@ -5707,10 +5005,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     # AUTO_MULTI_CYCLE multi-cycle paths start at their elaborated counts; a failing
     # report whose critical path is one of them raises that count instead of
     # adding pipelining (AUTO_MULTI_CYCLE_FEEDBACK)
-    auto_multi_cycle_groups = COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
+    auto_multi_cycle_groups = AUTO_MULTI_CYCLE.COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
     multimain_timing_params.auto_multi_cycle_ncycles = {
         key: n
-        for key, n in SYN.ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state).items()
+        for key, n in AUTO_MULTI_CYCLE.ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state).items()
         if key in auto_multi_cycle_groups
     }
     best_auto_multi_cycle = None
@@ -5764,7 +5062,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         planless_results = {}
         planless_auto_multi_cycle_blame = {}
         # Fresh zero-clock table, then locks, then planned cuts
-        tpl = SYN.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+        tpl = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
         for plan in plans.values():
             tpl = APPLY_LOCKS(plan, parser_state, tpl)
         # Constrained AUTO_PIPELINE regions (latency= / start_latency= /
@@ -5773,7 +5071,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         try:
             for plan in plans.values():
                 if plan.regions:
-                    tpl = ENFORCE_AUTO_PIPELINE_REGIONS(
+                    tpl = AUTO_PIPELINE.ENFORCE_AUTO_PIPELINE_REGIONS(
                         plan.regions,
                         parser_state,
                         tpl,
@@ -5792,10 +5090,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         trim_pending=plan.trim_pending,
                     )
             if planless_regions:
-                tpl = ENFORCE_AUTO_PIPELINE_REGIONS(
+                tpl = AUTO_PIPELINE.ENFORCE_AUTO_PIPELINE_REGIONS(
                     planless_regions, parser_state, tpl
                 )
-        except AutoPipelineLatencyInfeasible as err:
+        except AUTO_PIPELINE.AutoPipelineLatencyInfeasible as err:
             sys.exit(str(err))
         for plan in plans.values():
             # Build landscapes (locked subtree roots already carry their
@@ -5824,7 +5122,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 and plan.stopped_reason is None
                 and plan.prev_total_cuts is not None
             )
-            total_cuts = PLAN_REGION_CUTS(plan)
+            total_cuts = AUTO_PIPELINE.PLAN_REGION_CUTS(plan)
             pending_refinement = plan.pending_placement_refinement
             plan.pending_placement_refinement = None
             plan.active_placement_refinement = None
@@ -5846,7 +5144,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             )
             scale_before_attempts = plan.global_scale
             for attempt in planning_attempts:
-                total_cuts = PLAN_REGION_CUTS(plan)
+                total_cuts = AUTO_PIPELINE.PLAN_REGION_CUTS(plan)
                 for subtree_root in plan.subtrees:
                     landscape = plan.landscapes.get(subtree_root)
                     if landscape is None:
@@ -5935,7 +5233,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             ):
                 # Identical hardware to an already-synthesized iteration, and
                 # a latency constraint is what keeps it from changing
-                STOP_AT_AUTO_PIPELINE_LATENCY_LIMIT(
+                AUTO_PIPELINE.STOP_AT_AUTO_PIPELINE_LATENCY_LIMIT(
                     plan, parser_state, [r for r in plan.regions if r.at_cap()]
                 )
             plan.attempted_placement_fingerprints.add(
@@ -5993,15 +5291,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         # Instances above the modified (sliced/locked) ones still carry stale
         # zero clock hash/latency caches - refresh them and rewrite their
         # entities since the names of their instantiated children changed
-        ancestor_insts = SYN.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(tpl, parser_state)
+        ancestor_insts = AUTO_PIPELINE.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(tpl, parser_state)
 
         # Write output files and run the one full-design synthesis
         print("Updating output files...", flush=True)
-        SYN.WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(tpl, parser_state, ancestor_insts)
+        AUTO_PIPELINE.WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(tpl, parser_state, ancestor_insts)
         SYN.WRITE_REGISTERS_ESTIMATE_FILE(parser_state, multimain_timing_params)
         SYN.WRITE_AREA_ESTIMATE_FILE(parser_state, multimain_timing_params)
 
-        if SYN.NO_SWEEP:
+        if NO_SWEEP:
             # First planned guess only -- no sweep synthesis iterations.
             # Timing is NOT verified; raise the @MAIN mhz target for more
             # pipeline stages.
@@ -6150,7 +5448,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     "is likely only limited by built in FIFO implementations...",
                 )
                 continue
-            auto_multi_cycle_group = AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT(
+            auto_multi_cycle_group = AUTO_MULTI_CYCLE.AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT(
                 path_report, auto_multi_cycle_groups, parser_state, multimain_timing_params
             )
             auto_multi_cycle_feedback = None  # computed once per report, if failing
@@ -6172,7 +5470,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     # cycles (not more pipelining) is the remedy, and this is
                     # no evidence about the plan's cut count either way
                     if auto_multi_cycle_feedback is None:
-                        auto_multi_cycle_feedback = AUTO_MULTI_CYCLE_FEEDBACK(
+                        auto_multi_cycle_feedback = AUTO_MULTI_CYCLE.AUTO_MULTI_CYCLE_FEEDBACK(
                             auto_multi_cycle_group,
                             path_report,
                             target_mhz,
@@ -6457,12 +5755,12 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 made_change = True
                         elif (
                             hotspot_func is not None
-                            and REGION_FOR_HOTSPOT(hotspot_func, plan, parser_state)
+                            and AUTO_PIPELINE.REGION_FOR_HOTSPOT(hotspot_func, plan, parser_state)
                             is not None
                         ):
-                            action, region_changed = AUTO_PIPELINE_REGION_FEEDBACK(
+                            action, region_changed = AUTO_PIPELINE.AUTO_PIPELINE_REGION_FEEDBACK(
                                 plan,
-                                REGION_FOR_HOTSPOT(hotspot_func, plan, parser_state),
+                                AUTO_PIPELINE.REGION_FOR_HOTSPOT(hotspot_func, plan, parser_state),
                                 hotspot_func,
                                 target_mhz,
                                 curr_mhz,
@@ -6590,7 +5888,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         ):
                             # Every register this main can take is inside a
                             # constrained region already at its limit
-                            STOP_AT_AUTO_PIPELINE_LATENCY_LIMIT(
+                            AUTO_PIPELINE.STOP_AT_AUTO_PIPELINE_LATENCY_LIMIT(
                                 plan, parser_state, plan.regions
                             )
                             action = "stop(auto-pipeline latency limit)"
@@ -6749,7 +6047,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             best_tpl = copy.deepcopy(tpl)
             best_auto_multi_cycle = dict(synthesized_auto_multi_cycle)
             best_iter_records = iter_records
-            best_plan_regions = SNAPSHOT_AUTO_PIPELINE_REGIONS(plans)
+            best_plan_regions = AUTO_PIPELINE.SNAPSHOT_AUTO_PIPELINE_REGIONS(plans)
             best_plan_cuts = {mi: copy.deepcopy(p.cuts) for mi, p in plans.items()}
             best_plan_placements = {
                 mi: copy.deepcopy(p.placements) for mi, p in plans.items()
@@ -6862,7 +6160,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     met_snapshot_tpl = copy.deepcopy(tpl)
                     met_snapshot_auto_multi_cycle = dict(synthesized_auto_multi_cycle)
                     met_snapshot_iter_records = iter_records
-                    met_snapshot_plan_regions = SNAPSHOT_AUTO_PIPELINE_REGIONS(plans)
+                    met_snapshot_plan_regions = AUTO_PIPELINE.SNAPSHOT_AUTO_PIPELINE_REGIONS(plans)
                     met_snapshot_plan_cuts = {
                         mi: copy.deepcopy(p.cuts) for mi, p in plans.items()
                     }
@@ -6898,7 +6196,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         continue
                     trim_candidates.append((p, met_cuts, desired))
                 if (
-                    trim_iters_used < SYN.PIPELINE_MIN_EFFORT
+                    trim_iters_used < PIPELINE_MIN_EFFORT
                     and len(trim_candidates) > 0
                 ):
                     trim_iters_used += 1
@@ -6910,7 +6208,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         print(
                             f"[sweep] Trimming stages: {parser_state.LogicInstLookupTable[p.main_inst].func_name} "
                             f"met at {met_cuts} cuts (known failing: {p.last_failing_total_cuts}), "
-                            f"retrying at ~{desired} cuts (trim {trim_iters_used}/{SYN.PIPELINE_MIN_EFFORT})",
+                            f"retrying at ~{desired} cuts (trim {trim_iters_used}/{PIPELINE_MIN_EFFORT})",
                             flush=True,
                         )
                     continue
@@ -6931,7 +6229,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             final_iter_records = met_snapshot_iter_records
             multimain_timing_params.TimingParamsLookupTable = tpl
             multimain_timing_params.auto_multi_cycle_ncycles = dict(met_snapshot_auto_multi_cycle)
-            RESTORE_AUTO_PIPELINE_REGIONS(plans, met_snapshot_plan_regions)
+            AUTO_PIPELINE.RESTORE_AUTO_PIPELINE_REGIONS(plans, met_snapshot_plan_regions)
             for mi, p in plans.items():
                 if mi in met_snapshot_plan_cuts:
                     p.cuts = met_snapshot_plan_cuts[mi]
@@ -6943,10 +6241,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     p.mini_sweep_boundary_diagnostics = (
                         met_snapshot_plan_boundary_diagnostics[mi]
                     )
-            ancestor_insts = SYN.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
+            ancestor_insts = AUTO_PIPELINE.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
                 tpl, parser_state
             )
-            SYN.WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(tpl, parser_state, ancestor_insts)
+            AUTO_PIPELINE.WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(tpl, parser_state, ancestor_insts)
             for p in plans.values():
                 if p.stopped_reason is None:
                     p.met_timing = True
@@ -7016,7 +6314,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         multimain_timing_params.TimingParamsLookupTable = best_tpl
         multimain_timing_params.auto_multi_cycle_ncycles = dict(best_auto_multi_cycle)
         final_iter_records = best_iter_records
-        RESTORE_AUTO_PIPELINE_REGIONS(plans, best_plan_regions)
+        AUTO_PIPELINE.RESTORE_AUTO_PIPELINE_REGIONS(plans, best_plan_regions)
         if best_plan_cuts is not None:
             for mi, p in plans.items():
                 if mi in best_plan_cuts:
@@ -7029,10 +6327,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     p.mini_sweep_boundary_diagnostics = (
                         best_plan_boundary_diagnostics[mi]
                     )
-        best_ancestors = SYN.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
+        best_ancestors = AUTO_PIPELINE.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
             best_tpl, parser_state
         )
-        SYN.WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(best_tpl, parser_state, best_ancestors)
+        AUTO_PIPELINE.WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(best_tpl, parser_state, best_ancestors)
         if BEST_SNAPSHOT_MET_ALL_GOALS(best_score):
             for p in plans.values():
                 p.met_timing = True
@@ -7071,7 +6369,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             f"constrained on {len(group.paths)} multi-cycle path(s)",
             flush=True,
         )
-    SYN.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(
+    AUTO_PIPELINE.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(
         parser_state, multimain_timing_params.TimingParamsLookupTable
     )
     WRITE_PIPELINE_PLACEMENT_TRACE(
@@ -7159,3 +6457,654 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete=False)
 
     return multimain_timing_params
+
+
+# ─────────────────────────────────────────────
+# Sweep drivers: the throughput sweep entry point, the coarse sweep, and the
+# seeded confirm-or-sweep used by the .latency pin-and-confirm loop
+# ─────────────────────────────────────────────
+
+# Sweep state for a single pipeline inst of logic
+# (a main inst or an isolated hotspot func inst - used by the coarse sweep)
+class InstSweepState:
+    def __init__(self):
+        self.met_timing = False
+        self.timing_report = None  # Current timing report with multiple paths
+        self.mhz_to_latency = {}  # BEST dict[mhz] = latency
+        self.latency_to_mhz = {}  # BEST dict[latency] = mhz
+        self.last_mhz = None
+        self.last_latency = None
+
+        # Coarse grain sweep
+        self.coarse_latency = None
+        self.initial_guess_latency = None
+        self.last_non_passing_latency = None
+        self.last_latency_increase = None
+        self.worse_or_same_tries_count = 0
+
+
+def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
+    """Pin-and-confirm pass 2: with pipelining seeded from the previous
+    pass's sweep result (SEED_TIMING_PARAMS_FROM_PREVIOUS), run ONE
+    full-design synthesis and check timing instead of a fresh sweep.
+
+    Returns (multimain_timing_params, met). met=True is the expected cheap
+    path: the pinned stage counts still meet timing, so the .latency values
+    the design's Python consumed equal the stage counts actually built. On
+    timing failure, falls back to the full planned sweep -- which replans
+    from a fresh zero-clock table each iteration (informed by the disk-cached
+    measured path delays), so the seeded table can't corrupt it."""
+    SYN.PART_SET_TOOL(parser_state.part)
+    # Mirror the planned sweep's per-iteration write sequence for the seeded params
+    VHDL.WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params)
+    ancestor_insts = AUTO_PIPELINE.INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES(
+        multimain_timing_params.TimingParamsLookupTable, parser_state
+    )
+    AUTO_PIPELINE.WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(
+        multimain_timing_params.TimingParamsLookupTable, parser_state, ancestor_insts
+    )
+    VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
+    SYN.WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, False)
+    SYN.WRITE_REGISTERS_ESTIMATE_FILE(parser_state, multimain_timing_params)
+    SYN.WRITE_AREA_ESTIMATE_FILE(parser_state, multimain_timing_params)
+
+    if NO_SWEEP:
+        # --no_sweep: skip the confirmation synthesis. The convergence loop's
+        # real job (making the .latency ints the Python consumed equal the
+        # stage counts actually built) is decided by HARVEST_AUTO_PIPELINE_LATENCIES,
+        # not by this timing verdict, so it still works.
+        print(
+            "--no_sweep: skipping AUTO_PIPELINE confirmation synthesis. "
+            "Timing is NOT confirmed.",
+            flush=True,
+        )
+        multimain_timing_params.sweep_timing_failures = []
+        return multimain_timing_params, True
+
+    # What's about to be synthesized, printed BEFORE the long wait below --
+    # mirrors SWEEP.py's own "about to synthesize" print, but reads directly
+    # off the seeded TimingParamsLookupTable (the pinned state actually
+    # about to be built) rather than a fresh plan.
+    TimingParamsLookupTable = multimain_timing_params.TimingParamsLookupTable
+    for main_inst in parser_state.main_mhz:
+        main_logic = parser_state.LogicInstLookupTable[main_inst]
+        if SYN.LOGIC_IS_ZERO_DELAY(main_logic, parser_state, allow_none_delay=True):
+            continue
+        subtrees = COLLECT_CUT_SUBTREES(main_inst, parser_state)
+        if len(subtrees) == 0:
+            continue
+        _monolithic, _regions, total_stages = SUMMARIZE_SUBTREE_PIPELINE(
+            main_inst, subtrees, TimingParamsLookupTable, parser_state
+        )
+        cuts = sum(len(TimingParamsLookupTable[d]._slices) for d in subtrees)
+        print(
+            f"[sweep] {main_logic.func_name}: about to synthesize (pinned "
+            f"from previous pass), cuts={cuts}, {total_stages} pipeline "
+            f"register stage(s) ({total_stages + 1} pipeline stages)",
+            flush=True,
+        )
+
+    print(
+        "Running one confirmation synthesis with pipelining pinned from the previous pass...",
+        flush=True,
+    )
+    timing_report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
+        parser_state, multimain_timing_params
+    )
+    if len(timing_report.path_reports) == 0:
+        print(timing_report.orig_text)
+        print("Using a bad syn log file?")
+        sys.exit(-1)
+    SYN.PRINT_MEASURED_AREA_IF_AVAILABLE(
+        timing_report,
+        SYN.ESTIMATE_DESIGN_AREA(parser_state, multimain_timing_params)["total_area"],
+    )
+    met = True
+    confirmation_failures = []
+    measured_mhz = {}  # main inst -> worst reported MHz (sweep_history.json)
+    for reported_clock_group, path_report in timing_report.path_reports.items():
+        curr_mhz = 1000.0 / path_report.path_delay_ns
+        main_insts = GET_MAIN_INSTS_FOR_PATH_REPORT(
+            path_report, parser_state, multimain_timing_params
+        )
+        for main_inst in main_insts:
+            target_mhz = SYN.GET_TARGET_MHZ(main_inst, parser_state)
+            if target_mhz is None:
+                continue
+            passfail = "PASS" if curr_mhz >= target_mhz else "FAIL"
+            measured_mhz[main_inst] = min(
+                curr_mhz, measured_mhz.get(main_inst, curr_mhz)
+            )
+            print(
+                f"{passfail} {parser_state.LogicInstLookupTable[main_inst].func_name}: "
+                f"{curr_mhz:.2f} MHz vs {target_mhz:.2f} MHz goal (confirmation run)",
+                flush=True,
+            )
+            if curr_mhz < target_mhz:
+                met = False
+                confirmation_failures.append(
+                    (
+                        parser_state.LogicInstLookupTable[main_inst].func_name,
+                        target_mhz,
+                        curr_mhz,
+                        "confirmation run",
+                    )
+                )
+    # Feed the driver's TIMING NOT MET exit gate: the confirmation's verdict
+    # is the pass-2 result when it holds; when it fails, the fallback sweep
+    # below sets its own sweep_timing_failures, which governs instead.
+    multimain_timing_params.sweep_timing_failures = confirmation_failures
+    # A passing confirmation runs no sweep, so without this the history would
+    # still describe the previous pass's sweep
+    RECORD_CONFIRMATION_RESULTS(
+        parser_state, multimain_timing_params, measured_mhz, met
+    )
+    if met:
+        return multimain_timing_params, True
+    print(
+        "AUTO_PIPELINE confirmation run failed timing; falling back to a full throughput sweep...",
+        flush=True,
+    )
+    return DO_PLANNED_THROUGHPUT_SWEEP(
+        parser_state, multimain_timing_params
+    ), False
+
+
+def DO_THROUGHPUT_SWEEP(
+    parser_state,
+    coarse_only=False,
+    starting_guess_latency=None,
+    do_incremental_guesses=True,
+    comb_only=False,
+    stop_at_latency=None,
+):
+    # Make sure syn tool is set
+    SYN.PART_SET_TOOL(parser_state.part)
+
+    for main_func in parser_state.main_mhz:
+        main_logic = parser_state.FuncLogicLookupTable[main_func]
+        if main_logic.delay is not None and main_logic.delay > 0:
+            mhz = SYN.GET_TARGET_MHZ(main_func, parser_state, allow_no_syn_tool=True)
+            print("Function:", main_func, "Target MHz:", mhz, flush=True)
+
+    # Populate timing lookup table as all 0 clk
+    print("Starting with no added pipelining...", flush=True)
+    ZeroAddedClocksTimingParamsLookupTable = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(
+        parser_state
+    )
+    multimain_timing_params = AUTO_PIPELINE.MultiMainTimingParams()
+    multimain_timing_params.TimingParamsLookupTable = (
+        ZeroAddedClocksTimingParamsLookupTable
+    )
+
+    # Write clock cross entities
+    VHDL.WRITE_CLK_CROSS_ENTITIES(parser_state, multimain_timing_params)
+
+    # Write multi-main top
+    VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
+
+    # Re-write black box modules that are no longer in final state starting throughput sweep
+    SYN.WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, False)
+
+    # Can only do comb. logic with yosys json for now
+    if OPEN_TOOLS.YOSYS_JSON_ONLY:
+        print(
+            "Running Yosys on top level without added pipelining. logic. TODO: Complete feedback for pipeline params..."
+        )
+        comb_only = True
+        SYN.SYN_TOOL = OPEN_TOOLS
+
+    # If comb. logic only
+    if comb_only:
+        # Fixed AUTO_PIPELINE latency= call sites keep their registers even here
+        fixed_timing_params = AUTO_PIPELINE.BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS(parser_state)
+        if fixed_timing_params is not None:
+            multimain_timing_params = fixed_timing_params
+            VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
+        print("Running synthesis on top level without added pipelining...", flush=True)
+        for main_func in parser_state.main_mhz:
+            main_func_timing_params = multimain_timing_params.TimingParamsLookupTable[
+                main_func
+            ]
+            main_func_latency = main_func_timing_params.GET_TOTAL_LATENCY(
+                parser_state, multimain_timing_params.TimingParamsLookupTable
+            )
+            if main_func_latency > 0:
+                print(
+                    main_func,
+                    ":",
+                    main_func_latency,
+                    "clocks latency total...",
+                    len(main_func_timing_params._slices),
+                    "slices...",
+                    flush=True,
+                )
+        # Comb logic only AND coarse?
+        if coarse_only:
+            print("Using --coarse and --comb doesnt make sense? TODO fix?")
+            sys.exit(-1)
+        else:
+            # Regular multi main top comb logic
+            timing_report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
+                parser_state, multimain_timing_params
+            )
+
+        # Print a little timing info to characterize comb logic
+        clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
+            parser_state
+        )
+        for reported_clock_group, path_report in timing_report.path_reports.items():
+            passfail = ""
+            mhz = 1000.0 / path_report.path_delay_ns
+            if reported_clock_group in clk_to_mhz:
+                target_mhz = clk_to_mhz[reported_clock_group]
+                if target_mhz is not None:
+                    if mhz >= target_mhz:
+                        passfail = "PASS "
+                    else:
+                        passfail = "FAIL "
+            print(
+                f"{passfail}Clock {reported_clock_group} FMAX: {mhz:.3f} MHz ({path_report.path_delay_ns:.3f} ns)",
+                flush=True,
+            )
+        SYN.PRINT_MEASURED_AREA_IF_AVAILABLE(
+            timing_report,
+            SYN.ESTIMATE_DESIGN_AREA(parser_state, multimain_timing_params)["total_area"],
+        )
+
+        return multimain_timing_params
+
+    # Switch to coase if single main with no target mhz
+    # -- but only if the coarse sweep could add latency somewhere under it. A
+    # stateful main (Reg/Feedback, no AUTO_PIPELINE below) cannot take added
+    # latency: coarse slicing into it is the "for no reason" sanity failure.
+    # Such a design has nothing to pipeline; the planned sweep skips goal-less
+    # mains and characterizes the design as written with one synthesis run.
+    if len(parser_state.main_mhz) == 1:
+        main_func = list(parser_state.main_mhz.keys())[0]
+        target_mhz = SYN.GET_TARGET_MHZ(main_func, parser_state)
+        if target_mhz is None:
+            if AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                parser_state.FuncLogicLookupTable[main_func].func_name, parser_state
+            ):
+                print(
+                    "Switching to coarse sweep since only main function has no specified frequency..."
+                )
+                coarse_only = True
+            elif not coarse_only:
+                print(
+                    f"Main function {main_func} has no specified frequency and "
+                    "nothing auto-pipelining can add latency to (ex. stateful, "
+                    "no AUTO_PIPELINE regions) - no coarse sweep, characterizing "
+                    "the design as written...",
+                    flush=True,
+                )
+
+    # if coarse only
+    if coarse_only:
+        print("Doing coarse sweep only...", flush=True)
+        for region in AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(parser_state):
+            if region.constraint.start_latency is not None:
+                print(
+                    f"NOTE: AUTO_PIPELINE {region.label()} "
+                    f"start_latency={region.constraint.start_latency} only sets "
+                    "its bootstrap .latency under a coarse sweep; coarse slicing "
+                    "starts from the main's own latency guess.",
+                    flush=True,
+                )
+        if len(parser_state.main_mhz) == 1:
+            main_func = list(parser_state.main_mhz.keys())[0]
+            if not AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                parser_state.FuncLogicLookupTable[main_func].func_name, parser_state
+            ):
+                # Explicit --coarse (the automatic switch above never picks
+                # an ineligible main): say why instead of failing deep in
+                # slicing with "Trying to slice into ... for no reason"
+                raise Exception(
+                    f"No main functions are elligible for pipelining: --coarse "
+                    f"main function {main_func} has nothing auto-pipelining can "
+                    "add latency to (ex. stateful, no AUTO_PIPELINE regions). "
+                    "Drop --coarse to characterize the design as written."
+                )
+        elif len(parser_state.main_mhz) > 1:
+            # Try to guess at main func, find funcs with delay and can be sliced
+            possible_mains = []
+            for main_func in parser_state.main_mhz:
+                main_logic = parser_state.FuncLogicLookupTable[main_func]
+                if (
+                    main_logic.delay != 0
+                    and AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+                        main_logic.func_name, parser_state
+                    )
+                ):
+                    possible_mains.append(main_func)
+            if len(possible_mains) == 1:
+                main_func = possible_mains[0]
+                print("Assuming coarse sweep is for main function:", main_func)
+            elif len(possible_mains) == 0:
+                raise Exception("No main functions are elligible for pipelining.")
+            else:
+                raise Exception(
+                    f"Cannot do use a single coarse sweep with multiple pipelined main functions. Possible main functions: {possible_mains}"
+                )
+                sys.exit(-1)
+        target_mhz = SYN.GET_TARGET_MHZ(main_func, parser_state)
+        if target_mhz is None:
+            print("Main function:", main_func, "does not have a set target frequency.")
+            target_mhz = SYN.INF_MHZ
+            if starting_guess_latency is None:
+                if NO_SWEEP:
+                    # The incremental-from-zero strategy needs sweep
+                    # iterations to grow the latency; --no_sweep takes the
+                    # first guess as-is, which here would be zero added
+                    # pipelining. Nothing to grow from - say so plainly
+                    # instead of silently emitting an unpipelined design.
+                    print(
+                        "WARNING: --no_sweep with a coarse sweep of a main "
+                        "with no target frequency has no first guess to make "
+                        "(the coarse strategy grows incrementally from zero "
+                        "added latency, which needs sweep iterations). "
+                        "Emitting ZERO added pipelining. Set a @MAIN mhz "
+                        "target, or pass --start N for N clocks of latency.",
+                        flush=True,
+                    )
+                else:
+                    print(
+                        "Starting a coarse sweep incrementally from zero added latency logic.",
+                        flush=True,
+                    )
+                starting_guess_latency = 0
+                do_incremental_guesses = False
+        max_allowed_latency_mult = None
+        stop_at_n_worse_result = None
+        inst_sweep_state = InstSweepState()
+        (
+            inst_sweep_state,
+            working_slices,
+            multimain_timing_params.TimingParamsLookupTable,
+        ) = DO_COARSE_THROUGHPUT_SWEEP(
+            main_func,
+            target_mhz,
+            inst_sweep_state,
+            parser_state,
+            starting_guess_latency,
+            do_incremental_guesses,
+            max_allowed_latency_mult,
+            stop_at_n_worse_result,
+            stop_at_latency,
+        )
+
+        # Do update of top vhdl (not final though)
+        is_final_top = False
+        VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params, is_final_top)
+        AUTO_PIPELINE.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED(
+            parser_state, multimain_timing_params.TimingParamsLookupTable
+        )
+
+        # Record unmet timing so the build fails with non zero exit (a coarse
+        # sweep with no user target uses INF_MHZ = characterization, no gate).
+        # --no_sweep never measured anything, so there is nothing to fail.
+        if (
+            not NO_SWEEP
+            and target_mhz != SYN.INF_MHZ
+            and not inst_sweep_state.met_timing
+        ):
+            achieved = inst_sweep_state.last_mhz
+            if len(inst_sweep_state.mhz_to_latency) > 0:
+                achieved = max(inst_sweep_state.mhz_to_latency.keys())
+            multimain_timing_params.sweep_timing_failures = [
+                (main_func, target_mhz, achieved, "coarse_sweep_not_met")
+            ]
+
+        NEXT_SWEEP_HISTORY_RUN()
+        coarse_mhz = None
+        if not NO_SWEEP:
+            coarse_mhz = inst_sweep_state.last_mhz
+            if not inst_sweep_state.met_timing and inst_sweep_state.mhz_to_latency:
+                coarse_mhz = max(inst_sweep_state.mhz_to_latency.keys())
+        RECORD_SWEEP_OUTCOME(
+            parser_state.LogicInstLookupTable[main_func].func_name,
+            None if target_mhz == SYN.INF_MHZ else target_mhz,
+            "no_sweep" if NO_SWEEP else "coarse_sweep",
+            achieved_mhz=None if coarse_mhz is None else round(coarse_mhz, 3),
+        )
+
+        return multimain_timing_params
+
+    # Planned sweep: static slice landscape analysis + one full design syn per
+    # iteration with critical path attribution (see docs/SWEEP_DESIGN.md)
+    print("Starting planned throughput sweep...", flush=True)
+    return DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params)
+
+
+def CHECK_INST_TIMING_REPORT_AND_ADJUST(
+    inst_name,
+    logic,
+    inst_sweep_state,
+    parser_state,
+    TimingParamsLookupTable,
+    target_mhz,
+    working_slices,
+    do_incremental_guesses,
+    max_allowed_latency_mult,
+    stop_at_n_worse_result,
+    stop_at_latency,
+):
+    # Did it meet timing? Make adjusments as checking
+    made_adj = False
+    has_paths = len(inst_sweep_state.timing_report.path_reports) > 0
+    inst_sweep_state.met_timing = has_paths
+    for reported_clock_group in inst_sweep_state.timing_report.path_reports:
+        path_report = inst_sweep_state.timing_report.path_reports[reported_clock_group]
+        curr_mhz = 1000.0 / path_report.path_delay_ns
+        # Oh boy old log files can still be used if target freq changes right?
+        # Do a little hackery to get actual target freq right now, not from log
+        # Could be a clock crossing too right?
+
+        # Met timing?
+        func_logic = parser_state.LogicInstLookupTable[inst_name]
+        timing_params = TimingParamsLookupTable[inst_name]
+        latency = timing_params.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+        met_timing = curr_mhz >= target_mhz
+        if not met_timing:
+            inst_sweep_state.met_timing = False
+
+        # Print, log, maybe give up
+        # NOTE: cuts (requested slices) and latency (rebuilt pipeline depth) are
+        # intentionally reported as separate numbers - they need not match.
+        print(
+            "{} Clock Goal: {:.2f} (MHz) Current: {:.2f} (MHz)({:.2f} ns) latency={} clks cuts={} slices".format(
+                func_logic.func_name,
+                target_mhz,
+                curr_mhz,
+                path_report.path_delay_ns,
+                latency,
+                len(timing_params._slices),
+            ),
+            flush=True,
+        )
+        best_mhz_so_far = 0.0
+        if len(inst_sweep_state.mhz_to_latency) > 0:
+            best_mhz_so_far = max(inst_sweep_state.mhz_to_latency.keys())
+        better_mhz = curr_mhz >= best_mhz_so_far
+        if better_mhz:
+            # Log result
+            inst_sweep_state.mhz_to_latency[curr_mhz] = latency
+            inst_sweep_state.latency_to_mhz[latency] = curr_mhz
+            # Log return val best result fmax
+            best_guess_slices = AUTO_PIPELINE.GET_BEST_GUESS_IDEAL_SLICES(
+                inst_sweep_state.coarse_latency
+            )
+            working_slices = best_guess_slices
+            # Reset count of bad tries
+            inst_sweep_state.worse_or_same_tries_count = 0
+        else:
+            # Same or worse timing result
+            inst_sweep_state.worse_or_same_tries_count += 1
+            print(
+                f"Same or worse timing result... (best={best_mhz_so_far})",
+                flush=True,
+            )
+            if stop_at_n_worse_result is not None:
+                if inst_sweep_state.worse_or_same_tries_count >= stop_at_n_worse_result:
+                    print(
+                        logic.func_name,
+                        "giving up after",
+                        inst_sweep_state.worse_or_same_tries_count,
+                        "bad tries...",
+                    )
+                    continue
+
+        # Intentionally stopping?
+        if (
+            stop_at_latency is not None
+            and inst_sweep_state.coarse_latency >= stop_at_latency
+        ):
+            print("Stopping at", stop_at_latency, "clocks latency added...")
+            continue
+
+        # Make adjustment if can be sliced
+        if not met_timing and AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+            func_logic.func_name, parser_state
+        ):
+            # DO incremental guesses based on time report results
+            if do_incremental_guesses:
+                max_path_delay = path_report.path_delay_ns
+                # Given current latency for pipeline and stage delay what new total comb logic delay does this imply?
+                total_delay = max_path_delay * (inst_sweep_state.coarse_latency + 1)
+                # How many slices for that delay to meet timing
+                fake_one_clk_mhz = 1000.0 / total_delay
+                mult = target_mhz / fake_one_clk_mhz
+                if mult > 1.0:
+                    # Divide up into that many clocks
+                    clks = int(mult) - 1
+                    print("Timing report suggests", clks, "clocks...")
+                    # Reached max check again before setting main_inst_to_coarse_latency
+                    if max_allowed_latency_mult is not None:
+                        if inst_sweep_state.initial_guess_latency == 0:
+                            limit = max_allowed_latency_mult
+                        else:
+                            limit = (
+                                inst_sweep_state.initial_guess_latency
+                                * max_allowed_latency_mult
+                            )
+                        if clks >= limit:
+                            print(
+                                logic.func_name,
+                                "reached maximum allowed latency, no more adjustments...",
+                                "multiplier =",
+                                max_allowed_latency_mult,
+                            )
+                            continue
+
+                    # If very close to goal suggestion might be same clocks (or less?), still increment
+                    if clks <= inst_sweep_state.coarse_latency:
+                        clks = inst_sweep_state.coarse_latency + 1
+                    # Calc diff in latency change
+                    clk_inc = clks - inst_sweep_state.coarse_latency
+                    # Should be getting smaller
+                    if (
+                        inst_sweep_state.last_latency_increase is not None
+                        and clk_inc >= inst_sweep_state.last_latency_increase
+                    ):
+                        # Clip to last inc size - 1, minus one to always be narrowing down
+                        # Extra div by 2 helps?
+                        clk_inc = int(inst_sweep_state.last_latency_increase / 2)  # - 1
+                        if clk_inc <= 0:
+                            clk_inc = 1
+                        clks = inst_sweep_state.coarse_latency + clk_inc
+                        print("Clipped for decreasing jump size to", clks, "clocks...")
+
+                    # Record
+                    inst_sweep_state.last_non_passing_latency = (
+                        inst_sweep_state.coarse_latency
+                    )
+                    inst_sweep_state.coarse_latency = clks
+                    inst_sweep_state.last_latency_increase = clk_inc
+                    made_adj = True
+            else:
+                # No guess, dumb increment by 1
+                # Record, save non passing latency
+                inst_sweep_state.last_non_passing_latency = (
+                    inst_sweep_state.coarse_latency
+                )
+                inst_sweep_state.coarse_latency += 1
+                inst_sweep_state.last_latency_increase = 1
+                made_adj = True
+
+    return made_adj, working_slices
+
+
+def DO_COARSE_THROUGHPUT_SWEEP(
+    inst_name,
+    target_mhz,
+    inst_sweep_state,
+    parser_state,
+    starting_guess_latency=None,
+    do_incremental_guesses=True,
+    max_allowed_latency_mult=None,
+    stop_at_n_worse_result=None,
+    stop_at_latency=None,
+):
+    working_slices = None
+    logic = parser_state.LogicInstLookupTable[inst_name]
+    AUTO_PIPELINE.SET_INITIAL_COARSE_LATENCY_GUESS(
+        inst_name, target_mhz, inst_sweep_state, parser_state, starting_guess_latency
+    )
+
+    # Do loop of:
+    #   Reset top to 0 clk
+    #   Slice each main evenly based on latency
+    #   Syn multimain top
+    #   Course adjust func latency
+    # until mhz goals met
+    while True:
+        TimingParamsLookupTable = AUTO_PIPELINE.BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS(
+            inst_name, logic, inst_sweep_state, parser_state
+        )
+
+        if NO_SWEEP:
+            # First planned guess only -- no sweep synthesis iterations.
+            print(
+                "--no_sweep: writing the first coarse guess for",
+                logic.func_name,
+                "without verifying it against real synthesis. Timing is NOT "
+                "confirmed -- raise the @MAIN mhz target for more pipeline "
+                "stages.",
+                flush=True,
+            )
+            return inst_sweep_state, working_slices, TimingParamsLookupTable
+
+        SYN.RUN_INST_SYN_AND_UPDATE_CACHE(
+            inst_name, logic, inst_sweep_state, parser_state, TimingParamsLookupTable
+        )
+
+        made_adj, working_slices = CHECK_INST_TIMING_REPORT_AND_ADJUST(
+            inst_name,
+            logic,
+            inst_sweep_state,
+            parser_state,
+            TimingParamsLookupTable,
+            target_mhz,
+            working_slices,
+            do_incremental_guesses,
+            max_allowed_latency_mult,
+            stop_at_n_worse_result,
+            stop_at_latency,
+        )
+
+        # Intentionally stopping?
+        if (
+            stop_at_latency is not None
+            and inst_sweep_state.coarse_latency >= stop_at_latency
+        ):
+            return inst_sweep_state, working_slices, TimingParamsLookupTable
+        # Passed timing?
+        if inst_sweep_state.met_timing:
+            return inst_sweep_state, working_slices, TimingParamsLookupTable
+        # Stuck?
+        if not made_adj:
+            print(
+                "Unable to make further adjustments. Failed coarse grain attempt meet timing for this module."
+            )
+            return inst_sweep_state, working_slices, TimingParamsLookupTable

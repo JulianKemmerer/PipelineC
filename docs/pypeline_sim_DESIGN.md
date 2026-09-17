@@ -1726,7 +1726,7 @@ first when `--comb` is absent** (see the next section). Simulator selection is i
 - `DO_OPTIONAL_SIM(...)` calls `pypeline_sim.run_sim(...)` in-process (no subprocess) when
   `SIM_TOOL is pypeline_sim`, passing the final per-MAIN latencies
   (`SIM.GET_MAIN_FUNC_LATENCIES`) and the converged AUTO_PIPELINE harvest
-  (`SYN.HARVEST_AUTO_PIPELINE_LATENCIES`) whenever a build's `parser_state`/timing params are
+  (`AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES`) whenever a build's `parser_state`/timing params are
   available — all zeros/None on the comb path.
 - `src/pipelinec` checks `SIM.NATIVE_SIM_SKIPS_BUILD(args)` right after tool selection — true
   when `SIM_TOOL is pypeline_sim` and **comb** simulation was requested (`--sim --comb`/
@@ -1751,7 +1751,7 @@ pipeline latency (only explicit `Reg[T]`/FIFO state advances). Fixed user pipeli
 selective alignment path described under [Fixed User Pipelines](#fixed-user-pipelines).
 A non-`--comb` `pipelinec --sim` run does the **full
 build first** — path-delay measurement, the throughput sweep, and the AUTO_PIPELINE
-pin-and-confirm loop (`SYN_DESIGN.md` §6) — and then launches native sim with the discovered
+pin-and-confirm loop ([`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md#5-latency-pin-and-confirm-loop-pypeline-designs-only)) — and then launches native sim with the discovered
 per-instance pipeline latencies **emulated by delay lines wrapped around the unchanged
 combinational Python**. Because the sliced/auto-pipelined logic is purely combinational, delaying
 its outputs by N cycles is an exact model of the N register stages the sweep inserted — so the
@@ -1760,7 +1760,7 @@ native run stays cycle-accurate against the generated VHDL. This is verified end
 encrypt/decrypt/shared syn testbenches all `MATCH` their pipelined GHDL builds cycle-for-cycle.
 
 This section documents **how it is implemented**. Everything below lives in `src/pypeline.py`,
-`src/pypeline_sim.py`, `src/SIM.py`, `src/SYN.py`, and `src/pipelinec`.
+`src/pypeline_sim.py`, `src/SIM.py`, `src/AUTO_PIPELINE.py`, `src/AUTO_MULTI_CYCLE.py`, and `src/pipelinec`.
 
 #### End-to-end control flow
 
@@ -1774,12 +1774,12 @@ This section documents **how it is implemented**. Everything below lives in `src
    to the `pypeline_sim` branch, which builds two latency maps and hands them to `run_sim`:
    - `main_latencies = SIM.GET_MAIN_FUNC_LATENCIES(parser_state, multimain_timing_params)` —
      `{main hw name → GET_TOTAL_LATENCY}` for every `@MAIN`.
-   - `auto_pipeline_latencies, _ = SYN.HARVEST_AUTO_PIPELINE_LATENCIES(parser_state, tpl)` —
+   - `auto_pipeline_latencies, _ = AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES(parser_state, tpl)` —
      `{AUTO_PIPELINE canonical_key → stage count}`. Harvested here (not read from
      `pypeline._auto_pipeline_latency_cache`) so it is populated even for designs whose Python
      never read `.latency`, where the pin-and-confirm loop never ran. Divergences are already a
      fatal driver error for any non-`--comb` `.py` build, so they are ignored here.
-   - `auto_multi_cycle_latencies = SYN.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(parser_state, multimain_timing_params)` —
+   - `auto_multi_cycle_latencies = AUTO_MULTI_CYCLE.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(parser_state, multimain_timing_params)` —
      `{AUTO_MULTI_CYCLE canonical_key → multi-cycle count constrained}`, so an `AUTO_MULTI_CYCLE`'s `.latency`
      (e.g. `make_stream_auto_multi_cycle`'s handshake) counts the same cycles as the VHDL.
 4. `run_sim(source_file, args.run, main_latencies=…, auto_pipeline_latencies=…)` installs the
@@ -1974,8 +1974,8 @@ register store and is cleared by `sim_reset()`.
 
 ### Stage execution
 
-The selective evaluator consumes `SYN.GET_PIPELINE_MAP` and
-`VHDL.PiplineHDLParams.wire_to_reg_stage_start_end`, the execution order and
+The selective evaluator consumes `AUTO_PIPELINE.GET_PIPELINE_MAP` and
+`AUTO_PIPELINE.PiplineHDLParams.wire_to_reg_stage_start_end`, the execution order and
 register lifetimes used by VHDL emission. It evaluates constant/global networks,
 wire assignments and submodule calls at their assigned stages, reading earlier
 stages from committed register values. VHDL expression/function input aliases are
@@ -2111,31 +2111,31 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   and passes `-s <path>` instead of `-p '<commands>'` — a script file's contents are never one
   exec argv, regardless of length. See `src/tests/pypeline_tests/inst/long_file_list_arg_len_test.py`.
 
-#### AUTO_COMB_SHARE call sites
+#### AUTO_COMB_AREA_OPT call sites
 
-`AUTO_COMB_SHARE(func)` forwards native calls to the original `@hw_func`, with
+`AUTO_COMB_AREA_OPT(func)` forwards native calls to the original `@hw_func`, with
 the original argument/return types and zero added latency. A direct native run
-does not import `AUTO_COMB_SHARE.py` or `HLS.py`; no optimizer-specific state,
+does not import `AUTO_COMB_OPT.py` or `AUTO.py`; no optimizer-specific state,
 latency cache or simulator evaluator is necessary. The compiled replacement
 must be bit-exact, so pipeline delay lines and FSM transaction models can keep
 evaluating the original computation.
 
-`make_stream_auto_comb_share` is ordinary simulated hardware with input and
+`make_stream_auto_comb_area_opt` is ordinary simulated hardware with input and
 output elastic registers: two unstalled cycles, II=1, stable output under
 backpressure. Its occupancy ready path is combinational. The wrapper's two
-cycles must not be confused with its underlying ACS tag's `.latency == 0`.
-Native/GHDL tests cover this wrapper and ACS composition with fixed/discovered
+cycles must not be confused with its underlying AUTO_COMB_AREA_OPT tag's `.latency == 0`.
+Native/GHDL tests cover this wrapper and AUTO_COMB_AREA_OPT composition with fixed/discovered
 pipelines, MCP and scheduled FSMs; see
-[`AUTO_COMB_SHARE_DESIGN.md`](AUTO_COMB_SHARE_DESIGN.md#stream-wrapper-and-simulation).
+[`AUTO_COMB_OPT_DESIGN.md`](AUTO_COMB_OPT_DESIGN.md#7-stream-wrappers-and-simulation).
 
-`AUTO_COMB_UNSHARE` has exactly the same native forwarding and zero-latency
+`AUTO_COMB_DELAY_OPT` has exactly the same native forwarding and zero-latency
 semantics. It needs no new evaluator or simulation state; native runs do not
-import `HLS_SPEED`/`HLS_TIMING`. `make_stream_auto_comb_unshare` reuses the same
-elastic register shell, exposes `.acu`, and retains latency 2, II=1 and stall
-stability. Mixed SHARE/UNSHARE nesting changes compiled implementation order,
+import `AUTO`. `make_stream_auto_comb_delay_opt` reuses the same
+elastic register shell, exposes `.comb_opt`, and retains latency 2, II=1 and stall
+stability. Mixed AUTO_COMB_AREA_OPT/AUTO_COMB_DELAY_OPT nesting changes compiled implementation order,
 not the native mathematical result. Its native/GHDL composition tests cover
 pipeline, FSM and MCP wrappers as well. See
-[`AUTO_COMB_UNSHARE_DESIGN.md`](AUTO_COMB_UNSHARE_DESIGN.md).
+[`AUTO_COMB_OPT_DESIGN.md`](AUTO_COMB_OPT_DESIGN.md).
 
 #### AUTO_FSM call sites (non-`--comb` `--sim`)
 
