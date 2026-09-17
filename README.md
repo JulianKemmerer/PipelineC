@@ -99,11 +99,11 @@ uint1_t blink()
 | Multiple clock domains / Clock domain crossings | No | Yes |
 | Parameterized/Template Functions+Types | [Yes](docs/pypeline_guide.md#parametric-hardware-with-factory-functions) | No |
 | Operator overloading | [Yes](docs/pypeline_guide.md#custom-operators) | Yes (hacky) |
-| `AUTO_PIPELINE`: user-visible automatic pipeline depths | [Yes](docs/pypeline_guide.md#latency-reading-back-the-discovered-pipeline-depth) | No |
+| User-visible automatic pipeline latency | [Yes](docs/pypeline_guide.md#latency-reading-back-the-discovered-pipeline-depth) | No |
 | Multi-cycle path constraints | [Yes](docs/pypeline_guide.md#multi-cycle-paths-multi_cycle) | Yes |
-| `AUTO_MULTI_CYCLE`: automatic multi-cycle path tuning (New) | [Yes](docs/pypeline_guide.md#auto_multi_cycle-new) | No |
-| `AUTO_COMB_AREA_OPT` / `AUTO_COMB_DELAY_OPT`: combinational area / delay optimization (New, experimental) | [Yes](docs/pypeline_guide.md#auto_comb_area_opt--auto_comb_delay_opt-new-experimental) | No |
-| `AUTO_FSM`: automatic resource-shared state machines (New, experimental) | [Yes](docs/pypeline_guide.md#auto_fsm-new-experimental) | No |
+| Automatic multi-cycle path tuning (New) | [Yes](docs/pypeline_guide.md#auto_multi_cycle-new) | No |
+| Combinational area / delay optimization (New, experimental) | [Yes](docs/pypeline_guide.md#auto_comb_area_opt--auto_comb_delay_opt-new-experimental) | No |
+| Automatic resource-shared state machines (New, experimental) | [Yes](docs/pypeline_guide.md#auto_fsm-new-experimental) | No |
 | SoC system bus helpers | No | Yes |
 | Generates software Helper Code | [Yes](docs/pypeline_guide.md#host-side-generated-types) | Yes |
 | Derived FSM style code | No | Yes |
