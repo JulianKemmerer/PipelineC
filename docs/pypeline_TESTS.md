@@ -72,7 +72,7 @@ fastest tool that can check what it tests:
   ([`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md)), selected with
   `--syn_tool sky130` or `PART("sky130...")`. Both spellings, and any board or
   Xilinx `PART` the flag overrides, share the one committed
-  `path_delay_cache/device_models_sky130_fd_sc_hvl_tt_025C_3v30_v4` cache: the
+  `cache/delay/device_models_sky130_fd_sc_hvl_tt_025C_3v30_v4` cache: the
   library and corner are fixed, and the part string is not part of the cache key.
 - **`vivado`, only for Vivado-specific features.** Today that means MULTI_CYCLE
   path constraints (`AUTO_MULTI_CYCLE.GET_MCP_PATH_CONSTRAINTS` supports only Vivado) and

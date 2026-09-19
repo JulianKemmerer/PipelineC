@@ -26,7 +26,7 @@ FSM source:
     overload, but because SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE treats
     everything under this directory as shipped library code rather than user
     code -- which is exactly what makes a measured delay eligible for
-    path_delay_cache. A mux shape measured once is measured for good.
+    cache/delay. A mux shape measured once is measured for good.
 
 The entity AUTO_FSM measures IS the entity AUTO_FSM instantiates: the generated
 FSM calls the very same memoized hw_func whose delay the scheduler read.

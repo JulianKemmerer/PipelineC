@@ -4325,7 +4325,7 @@ def _AUTO_FSM_MUX_ENTITIES(parser_state):
     #
     # They live under include/pypeline/operators/ intending
     # _IS_PYPELINE_OPERATOR_LIBRARY_CODE to classify them as non-user code and
-    # so make each shape cacheable in path_delay_cache. NOTE that predicate does
+    # so make each shape cacheable in cache/delay. NOTE that predicate does
     # not currently fire, for these or for the soft-operator library it was
     # written for: it calls inspect.getsourcefile on the callable recorded in
     # pypeline_entity_callables, which is deliberately the @hw_func WRAPPER (see

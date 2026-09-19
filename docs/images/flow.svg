@@ -328,7 +328,7 @@
 <polygon fill="#7fc97f" stroke="black" points="524.5,-876.12 305.5,-876.12 305.5,-832.12 530.5,-832.12 530.5,-870.12 524.5,-876.12"/>
 <polyline fill="none" stroke="black" points="524.5,-876.12 524.5,-870.12 "/>
 <polyline fill="none" stroke="black" points="530.5,-870.12 524.5,-870.12 "/>
-<text text-anchor="middle" x="418" y="-863.32" font-family="Helvetica,sans-Serif" font-size="11.00">path_delay_cache/ &#160;area_cache/</text>
+<text text-anchor="middle" x="418" y="-863.32" font-family="Helvetica,sans-Serif" font-size="11.00">cache/delay/ &#160;cache/area/</text>
 <text text-anchor="middle" x="418" y="-851.32" font-family="Helvetica,sans-Serif" font-size="11.00">per part + tool + operator delays and areas,</text>
 <text text-anchor="middle" x="418" y="-839.32" font-family="Helvetica,sans-Serif" font-size="11.00">committed in the repo</text>
 </g>

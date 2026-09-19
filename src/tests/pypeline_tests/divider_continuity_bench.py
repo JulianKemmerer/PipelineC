@@ -217,7 +217,7 @@ def _build_plan(
     original_source,
     goal,
     run_dir,
-    cache_dir,
+    cache_root,
     placement_config=None,
     chunked_mux=False,
     exact_requested_bits=False,
@@ -228,7 +228,7 @@ def _build_plan(
         _launch_context(source_path, original_source, goal),
     )
     env = os.environ.copy()
-    env["PYPELINEC_PATH_DELAY_CACHE_DIR"] = str(cache_dir.resolve())
+    env["PYPELINEC_CACHE_DIR"] = str(cache_root.resolve())
     if placement_config is not None:
         env["PIPELINEC_INTERNAL_PLACEMENT_FILE"] = str(
             Path(placement_config).resolve()
@@ -495,7 +495,7 @@ def _map_exact_leaf(plan_dir, boundary, evidence_dir):
     }
 
 
-def _map_frozen(run_dir, map_dir, cache_dir):
+def _map_frozen(run_dir, map_dir, cache_root):
     cmd = [
         sys.executable,
         DIVIDER_QOR_BENCH,
@@ -515,7 +515,7 @@ def _map_frozen(run_dir, map_dir, cache_dir):
     if plan and plan.get("slices") is not None:
         cmd += ["--existing-latency", str(plan["slices"])]
     env = os.environ.copy()
-    env["PYPELINEC_PATH_DELAY_CACHE_DIR"] = str(cache_dir.resolve())
+    env["PYPELINEC_CACHE_DIR"] = str(cache_root.resolve())
     returncode, runtime = _run_logged(cmd, map_dir.parent / f"{map_dir.name}.log", env)
     evidence_path = map_dir / "recipe_evidence.json"
     if not evidence_path.is_file():
@@ -533,14 +533,14 @@ def _map_frozen(run_dir, map_dir, cache_dir):
     }
 
 
-def _build_normal_sweep(source_path, original_source, goal, run_dir, cache_dir):
+def _build_normal_sweep(source_path, original_source, goal, run_dir, cache_root):
     run_dir.mkdir(parents=True, exist_ok=False)
     _write_json(
         run_dir / "launch_context.json",
         _launch_context(source_path, original_source, goal),
     )
     env = os.environ.copy()
-    env["PYPELINEC_PATH_DELAY_CACHE_DIR"] = str(cache_dir.resolve())
+    env["PYPELINEC_CACHE_DIR"] = str(cache_root.resolve())
     cmd = [
         PYPELINEC,
         source_path,
@@ -573,7 +573,7 @@ def _build_normal_sweep(source_path, original_source, goal, run_dir, cache_dir):
     }
     if (run_dir / "vhdl_files.txt").is_file():
         record["exact_final"] = _map_frozen(
-            run_dir, run_dir / "exact_final_remap", cache_dir
+            run_dir, run_dir / "exact_final_remap", cache_root
         )
     _write_json(run_dir / "continuity_sweep.json", record)
     return record
@@ -864,8 +864,8 @@ def main(argv=None):
             f"output directory must be empty unless --continue is used: {out_dir}"
         )
     out_dir.mkdir(parents=True, exist_ok=True)
-    cache_dir = out_dir / "path_delay_cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_root = out_dir / "cache"
+    cache_root.mkdir(parents=True, exist_ok=True)
     original = source.read_text()
 
     plans = []
@@ -889,7 +889,7 @@ def main(argv=None):
                 source,
                 goal,
                 run_dir,
-                cache_dir,
+                cache_root,
                 exact_requested_bits=args.automatic_exact_requested_bits,
             )
         plans.append(record)
@@ -950,7 +950,7 @@ def main(argv=None):
                     source,
                     reference["goal_mhz"],
                     run_dir,
-                    cache_dir,
+                    cache_root,
                     placement_config=config_path,
                     chunked_mux=args.exact_chunked_mux_boundary is not None,
                 )
@@ -969,7 +969,7 @@ def main(argv=None):
                 if map_dir.exists():
                     raise RuntimeError(f"incomplete mapping directory: {map_dir}")
                 plan_dir = out_dir / "plans" / _goal_tag(plan["goal_mhz"])
-                mapping = _map_frozen(plan_dir, map_dir, cache_dir)
+                mapping = _map_frozen(plan_dir, map_dir, cache_root)
                 _write_json(map_record_path, mapping)
             mapped.append({**plan, "mapping": mapping})
 
@@ -1014,7 +1014,7 @@ def main(argv=None):
                 if map_dir.exists():
                     raise RuntimeError(f"incomplete exact mapping directory: {map_dir}")
                 mapping = _map_frozen(
-                    experiment_root / "plan", map_dir, cache_dir
+                    experiment_root / "plan", map_dir, cache_root
                 )
                 _write_json(map_record_path, mapping)
             exact_mapped.append({**plan, "mapping": mapping})
@@ -1035,7 +1035,7 @@ def main(argv=None):
                 if run_dir.exists():
                     raise RuntimeError(f"incomplete sweep directory: {run_dir}")
                 record = _build_normal_sweep(
-                    source_path, source, goal, run_dir, cache_dir
+                    source_path, source, goal, run_dir, cache_root
                 )
             sweeps.append(record)
 

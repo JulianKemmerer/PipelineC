@@ -287,7 +287,7 @@ def test_syn_disk_caches_are_recipe_scoped():
         DEVICE_MODELS._SELECTED_SYNTHESIS_RECIPE = "synth_flatten"
         flatten_path = SYN.GET_PATH_DELAY_CACHE_DIR(ParserState())
         flatten_period_path = SYN.GET_PATH_DELAY_CACHE_DIR(
-            ParserState(), "pipeline_min_period_cache"
+            ParserState(), "pipeline_min_period"
         )
         SYN.USE_COMBINATIONAL_PLANNER_WEIGHTS = True
         comb_planner_suffix = SYN.GET_PLANNER_DELAY_CACHE_SUFFIX()
@@ -298,6 +298,11 @@ def test_syn_disk_caches_are_recipe_scoped():
         SYN.USE_COMBINATIONAL_PLANNER_WEIGHTS = old_comb_weights
 
     suffix = DEVICE_MODELS.GET_SYNTHESIS_RECIPE_CACHE_SUFFIX("synth_flatten")
+    # Delay lives under the one combined cache root as a sibling of the area
+    # tree, and a non-default subtree name is a sibling too -- not a whole
+    # separate root (see SYN.GET_CACHE_ROOT_DIR).
+    assert "/cache/delay/" in production_path, production_path
+    assert "/cache/pipeline_min_period/" in flatten_period_path, flatten_period_path
     assert suffix not in production_path, production_path
     assert suffix in flatten_path, flatten_path
     assert suffix in flatten_period_path, flatten_period_path
@@ -377,7 +382,7 @@ def test_struct_mux_reads_plain_uint_cache_entry():
             SYN.SYN_TOOL = DEVICE_MODELS
             SYN.MUX_DELAY_KEY_BY_WIDTH = True
             SYN.GET_PATH_DELAY_CACHE_DIR = (
-                lambda parser_state, dir_name="path_delay_cache": td
+                lambda parser_state, dir_name="delay": td
             )
             with open(os.path.join(td, "MUX_uint32_t.delay"), "w") as f:
                 f.write("3.25\n")
@@ -442,7 +447,7 @@ def test_component_cache_sidecar_round_trip_and_validation():
     original_cache_dir = SYN.GET_PATH_DELAY_CACHE_DIR
     with tempfile.TemporaryDirectory(prefix="pipelinec_component_cache_unit_") as td:
         try:
-            SYN.GET_PATH_DELAY_CACHE_DIR = lambda parser_state, dir_name="path_delay_cache": td
+            SYN.GET_PATH_DELAY_CACHE_DIR = lambda parser_state, dir_name="delay": td
             SYN._WRITE_CACHED_PATH_DELAY_COMPONENTS(
                 logic, ParserState(), components
             )

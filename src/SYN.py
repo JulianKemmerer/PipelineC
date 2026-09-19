@@ -941,10 +941,10 @@ def GET_ESTIMATED_COMBINATIONAL_AREA(logic, parser_state, area_memo=None):
     Returns (area, unit, missing_leaf_func_names). A leaf with no cached
     area contributes 0.0 and its func_name to the missing set rather than
     triggering synthesis here -- see ADD_PATH_DELAY_TO_LOOKUP's forced
-    remeasure clause for where area_cache actually gets filled in. The
+    remeasure clause for where cache/area actually gets filled in. The
     exception is a leaf LOGIC_IS_ZERO_DELAY already excludes from synthesis
     entirely (bit-manip/concat/const-ref wiring, black boxes, ...): it
-    correctly has no area_cache entry because nothing ever measured it, so
+    correctly has no cache/area entry because nothing ever measured it, so
     it contributes 0.0 without being counted as missing.
 
     Genuinely combinational as of AREA_MODEL_VERSION 2: GET_CACHED_LEAF_AREA
@@ -1311,7 +1311,7 @@ def LOGIC_SINGLE_SUBMODULE_DELAY(logic, parser_state):
 
 
 # Pypeline's shipped operator-overload library (include/pypeline/operators/)
-# is library code, not user code, for path_delay_cache purposes -- like
+# is library code, not user code, for cache/delay purposes -- like
 # floating_point.py/fixed_point.py, its entities are reused verbatim across
 # any design at a given (op, widths) and should be measured once and cached,
 # the same as a built-in BIN_OP_* leaf. Without this, IS_USER_CODE's default
@@ -1384,11 +1384,21 @@ def IS_USER_CODE(logic, parser_state):
     return user_code
 
 
-def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
-    cache_dir = os.environ.get(
-        "PYPELINEC_PATH_DELAY_CACHE_DIR",
-        C_TO_LOGIC.EXE_ABS_DIR() + f"/../{dir_name}/",
+def GET_CACHE_ROOT_DIR():
+    """Root of the committed measurement cache tree: cache/delay, cache/area.
+
+    One env override for the whole tree -- the subtrees are siblings under it
+    (see GET_PATH_DELAY_CACHE_DIR / GET_AREA_CACHE_DIR), never independently
+    relocatable, so a build can never read delay from one tree and area from
+    another.
+    """
+    return os.environ.get(
+        "PYPELINEC_CACHE_DIR", C_TO_LOGIC.EXE_ABS_DIR() + "/../cache/"
     )
+
+
+def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="delay"):
+    cache_dir = os.path.join(GET_CACHE_ROOT_DIR(), dir_name)
     PATH_DELAY_CACHE_DIR = os.path.join(cache_dir, str(SYN_TOOL.__name__).lower())
     if SYN_TOOL is PYRTL:
         PATH_DELAY_CACHE_DIR += (
@@ -1426,7 +1436,7 @@ def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="path_delay_cache"):
     return PATH_DELAY_CACHE_DIR
 
 
-def GET_AREA_CACHE_DIR(parser_state, dir_name="area_cache"):
+def GET_AREA_CACHE_DIR(parser_state, dir_name="area"):
     """Leaf area cache directory, mirroring GET_PATH_DELAY_CACHE_DIR above.
 
     Returns None for any SYN_TOOL that has no area source -- only
@@ -1438,14 +1448,11 @@ def GET_AREA_CACHE_DIR(parser_state, dir_name="area_cache"):
     synthesis recipe maps to (a flat histogram sum, see
     DEVICE_MODELS.MEASURE_NETLIST_AREA), not on run_sta()'s own STA physics.
     A future STA-only MODEL_VERSION bump must not discard an
-    otherwise-still-valid committed area_cache, and vice versa.
+    otherwise-still-valid committed cache/area, and vice versa.
     """
     if SYN_TOOL is not DEVICE_MODELS:
         return None
-    cache_dir = os.environ.get(
-        "PYPELINEC_AREA_CACHE_DIR",
-        C_TO_LOGIC.EXE_ABS_DIR() + f"/../{dir_name}/",
-    )
+    cache_dir = os.path.join(GET_CACHE_ROOT_DIR(), dir_name)
     AREA_CACHE_DIR = os.path.join(cache_dir, str(SYN_TOOL.__name__).lower())
     AREA_CACHE_DIR += (
         "_" + DEVICE_MODELS.SELECTED_LIBRARY
@@ -1665,7 +1672,7 @@ def _WRITE_CACHED_PATH_DELAY_COMPONENTS(logic, parser_state, components):
 
 def GET_CACHED_LEAF_AREA_FILE_PATH(logic, parser_state):
     """Same relative path as this leaf's .delay file (shared cache key), in
-    the separately-versioned area_cache tree. None when the active
+    the separately-versioned cache/area tree. None when the active
     SYN_TOOL has no area source (GET_AREA_CACHE_DIR)."""
     cache_dir = GET_AREA_CACHE_DIR(parser_state)
     if cache_dir is None:
@@ -2216,8 +2223,8 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
                 # run that produces delay (DEVICE_MODELS._run_synth_and_sta
                 # measures both from one mapped netlist), but a warm delay
                 # cache short-circuits before that run ever happens. Force
-                # one real synthesis so a cold area_cache entry gets filled
-                # exactly the way a cold path_delay_cache entry would --
+                # one real synthesis so a cold cache/area entry gets filled
+                # exactly the way a cold cache/delay entry would --
                 # mirrors the combinational-planner-weights clause just
                 # above, which does the same thing for a missing sidecar.
                 cached_path_delay = None

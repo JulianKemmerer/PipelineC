@@ -202,7 +202,7 @@ def get_tests() -> list:
         )
     )
     # sky130 area model: liberty area extraction, mapped-netlist area
-    # summation, the leaf area_cache (SYN.GET_AREA_CACHE_DIR and friends),
+    # summation, the leaf cache/area (SYN.GET_AREA_CACHE_DIR and friends),
     # and the whole-hierarchy estimate. Tiny synthetic fixtures only; no
     # external synthesis tool is invoked.
     tests.append(

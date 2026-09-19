@@ -588,23 +588,23 @@ consumes this model (see the note at the end of this section). See History
 for why the model landed on these v2 numbers rather than the much larger
 ones an early version reported.
 
-### Leaf area cache — `area_cache/`, mirrors `path_delay_cache/`
+### Leaf area cache — `cache/area/`, mirrors `cache/delay/`
 
 Per-leaf area is measured and cached exactly like delay, in a **separately
 versioned** tree so the two invalidate independently:
 
 ```
-area_cache/device_models_<library>_<corner>_a<AREA_MODEL_VERSION><recipe_suffix>/syn/<leaf_key>.area
+cache/area/device_models_<library>_<corner>_a<AREA_MODEL_VERSION><recipe_suffix>/syn/<leaf_key>.area
 ```
 
 `AREA_MODEL_VERSION` (currently 2; see History for why it was bumped from 1)
 is deliberately not `MODEL_VERSION`: leaf area depends only on which cells
 the synthesis recipe maps to, not on `run_sta()`'s own STA algorithm, so a
 future STA-only `MODEL_VERSION` bump must not discard an otherwise-valid
-committed `area_cache`, and vice versa. `SYN.GET_AREA_CACHE_DIR` mirrors
-`GET_PATH_DELAY_CACHE_DIR` exactly (same `PYPELINEC_AREA_CACHE_DIR` env
-override pattern, same recipe suffix, `None` for every `SYN_TOOL` but
-`DEVICE_MODELS`). Cache files hold the value *and its unit* as text
+committed `cache/area`, and vice versa. `SYN.GET_AREA_CACHE_DIR` mirrors
+`GET_PATH_DELAY_CACHE_DIR` exactly (a sibling subtree under the one
+`PYPELINEC_CACHE_DIR` root, same recipe suffix, `None` for every `SYN_TOOL`
+but `DEVICE_MODELS`). Cache files hold the value *and its unit* as text
 (`"255886.4 um2"`), not a bare number — deliberately, since a future
 non-sky130 profile would use a different unit and a silent mismatch would be
 far worse than a cache miss; `SYN.GET_CACHED_LEAF_AREA` rejects a stored
@@ -615,7 +615,7 @@ in.
 `area_estimate_build_report_test`:
 
 1. **latchup.app's own usage** (`--no_hier_syn --no_sweep`): every leaf
-   either hits a warm `area_cache` entry, or — when its `.delay` is cached
+   either hits a warm `cache/area` entry, or — when its `.delay` is cached
    but its `.area` is missing — `ADD_PATH_DELAY_TO_LOOKUP` forces one real
    synthesis to fill both, mirroring the existing clause that does the same
    for a missing combinational-planner-weights sidecar. The hierarchy above
@@ -634,17 +634,17 @@ Estimated area: 83788.0 um2 (comb 53311.8 + regs 30476.2, 624 FFs) [estimate, pr
 Measured area: 6812.2 um2 (estimate +61.40%)
 ```
 
-The `area_cache/` tree ships pre-populated (every leaf the repo's own
+The `cache/area/` tree ships pre-populated (every leaf the repo's own
 `synth_device_models` / `build_report_device_models` / `native_vs_vhdl_sim`
 tests happen to touch while running, not a deliberately curated set; see
 `git log` for the generating builds). `PART("sky130")`,
 `PART("sky130_fd_sc_hvl")` and `--syn_tool sky130` all read and write this
-same tree and the same `path_delay_cache/device_models_*` tree. The library
+same tree and the same `cache/delay/device_models_*` tree. The library
 and corner are fixed (`SELECTED_LIBRARY`/`SELECTED_CORNER`), and the part
 string is not part of the key.
-`nix/package.nix` copies it out of the read-only store into
-`.pypelinec_area_cache/` + exports `PYPELINEC_AREA_CACHE_DIR`, mirroring
-`path_delay_cache`'s existing treatment exactly.
+`nix/package.nix` copies the whole `cache/` root out of the read-only store
+into `.pypelinec_cache/` + exports `PYPELINEC_CACHE_DIR` — one copy covering
+both subtrees.
 
 **Consumed by AUTO_FSM's minimum-area search.** Under `--syn_tool sky130`,
 `AUTO_FSM.py`'s ranking (`docs/AUTO_FSM_DESIGN.md` §3.8) uses real cached

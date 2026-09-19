@@ -422,7 +422,7 @@ this is a handful of quick synthesis runs, not a meaningful build cost.
 The module lives under `include/pypeline/operators/` so that
 `SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE` classifies it as shipped library code
 rather than user code, which is what makes a measured delay eligible for
-`path_delay_cache` — though this classification does not currently fire for
+`cache/delay` — though this classification does not currently fire for
 these entities (or for the soft-operator library the same predicate was
 written for), so both are re-measured each build rather than read from disk;
 see [`SYN_DESIGN.md`](SYN_DESIGN.md#10-limitations-and-future-work)'s Limitations section for why and the
@@ -859,7 +859,7 @@ wrong:
   *instance* tree from the MAINs, so a candidate's bitwise leaves have no
   `Logic` at all until `_RESOLVE_BUILTIN_SUBMODULES` materializes them. Without
   that they look like zero delay and zero area, and decomposition looks **free**.
-- Their delays come from `path_delay_cache` via `_resolve_delay_du`: a candidate
+- Their delays come from `cache/delay` via `_resolve_delay_du`: a candidate
   is never instantiated so never measured, but its leaves are the universal
   bitwise operators every design uses, so real measurements are normally already
   on disk.
@@ -1096,7 +1096,7 @@ depends on the details, only on the corrected values being what's cached.
 
 **What real measurement corrected, once the harness was out of the way.**
 Fitting real cached µm² against width across the `BIN_OP_PLUS`/`MINUS`
-entries in `area_cache/` gives `UM2_PER_ABSTRACT_AREA_UNIT ≈ 98.93` µm² per
+entries in `cache/area` gives `UM2_PER_ABSTRACT_AREA_UNIT ≈ 98.93` µm² per
 adder bit. Both operators cost `AREA_PER_BIT_ADD` per `_leaf_area`, so one
 joint fit covers both. The fit uses only entries whose operands are both at
 least 8 bits wide: an incrementer such as `uint16 + uint1` costs about half a
@@ -1322,7 +1322,7 @@ at least 3"*.
 |---|---|---|
 | `auto_fsm_test.py` | native_sim, (synth via wrapper) | the pure function's semantics, and the passthrough behaviour when unscheduled |
 | `auto_fsm_unit_test.py` | unit | scheduler/codegen internals: binding, one-op-per-unit-per-state, dependency order, distinct-operand mux coalescing and common-glue factoring, same- and cross-FU register reuse, recovered rolling output and consume/produce storage, field-lifetime input compaction, optional output bank, automatic control encoding, budget → states, floors, determinism, schedule is carryable data, tighten-loop termination (`SCHEDULES_EQUAL` ignores budget bookkeeping, the `TIGHTENING_STALLED` truth table), unmeasured delays resolved rather than zeroed, the zero-op guard (and measured-0 operations still legal), soft-operator equivalents, soft adder sign extension, `_TypeResolver` array reconstruction, real-sky130-area tiering (cold cache falls back to scaled abstract not zero, a cache hit wins over any abstract guess, `--auto_fsm_abstract_area`, real flip-flop area) |
-| `area_model_test.py` (`src/tests/pypeline_tests/inst/`) | unit | not AUTO_FSM-specific (SYN/DEVICE_MODELS leaf-area-cache coverage), but two tests here directly guard AUTO_FSM.py's own constant: the committed `area_cache/` excludes STA-harness registers, and `AUTO.UM2_PER_ABSTRACT_AREA_UNIT` refits to what is actually committed |
+| `area_model_test.py` (`src/tests/pypeline_tests/inst/`) | unit | not AUTO_FSM-specific (SYN/DEVICE_MODELS leaf-area-cache coverage), but two tests here directly guard AUTO_FSM.py's own constant: the committed `cache/area` excludes STA-harness registers, and `AUTO.UM2_PER_ABSTRACT_AREA_UNIT` refits to what is actually committed |
 | `self_check_auto_fsm_test.py` | native_sim, vhdl_sim, synth ×2 | the FSM computes what the function did — in native sim, in GHDL, at latency 0 and at real latency |
 | `stream_auto_fsm_test.py` | native_sim | `make_stream_auto_fsm`'s handshake protocol: ready deasserts while busy, latency/II == `fsm.latency + 1`, and — the property raw AUTO_FSM cannot provide — a stalled consumer never loses a result and sees stable data while it's held |
 | `self_check_stream_auto_fsm_test.py` | native_sim, vhdl_sim, synth ×2 | same shape as `self_check_auto_fsm_test.py`, one layer up: the wrapper's handshake + the real scheduled FSM underneath it compute and sequence what the function did, with real backpressure toggled from the testbench, in native sim, in GHDL, at latency 1 and at real latency |

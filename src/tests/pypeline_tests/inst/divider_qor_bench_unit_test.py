@@ -274,7 +274,10 @@ def test_generated_python_and_delay_caches_do_not_enter_snapshot_hash():
         Path("src/tests/pypeline_tests/qor/divider/__pycache__/gate.pyc")
     )
     assert bench._is_generated_untracked_path(
-        Path("path_delay_cache/backend/library/op.delay")
+        Path("cache/delay/backend/library/op.delay")
+    )
+    assert bench._is_generated_untracked_path(
+        Path("cache/area/backend/library/op.area")
     )
     assert not bench._is_generated_untracked_path(
         Path("src/tests/pypeline_tests/qor/divider/gate.py")

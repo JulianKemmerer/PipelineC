@@ -37,7 +37,7 @@ Modes:
 
 The decision metric is pipelined per-stage delay at n_cuts >= 1 -- NOT
 n_cuts=0 (comb), which is measured only as context and never used to pick a
-winner. This harness never writes to path_delay_cache/ -- results are parsed
+winner. This harness never writes to cache/delay -- results are parsed
 directly from Vivado/PyRTL's own printed summary line and (for vivado) the
 timing/utilization report text.
 """
@@ -398,7 +398,7 @@ def run_single_case(case):
         env["PYPELINE_FORCE_RAW_INT_CMP"] = "1"
 
     work_dir = tempfile.mkdtemp(prefix="op_qor_bench_")
-    # NOTE: this shares the repo's path_delay_cache/ with normal builds, so a
+    # NOTE: this shares the repo's cache/delay with normal builds, so a
     # run does add entries there. They are real measurements of real entities,
     # so that is harmless for the implementations reachable by default. The one
     # case to keep in mind is raw_revived_sliced: FORCE_RAW_INT_CMP_FOR_QOR_BENCH
@@ -438,7 +438,7 @@ def run_single_case(case):
         # Force the tool via the CLI flag rather than emitting PART(...) in
         # gen_source -- no generated-source change, and it sidesteps the
         # PART("sky130") vs PART("sky130_fd_sc_hvl") spelling split (both
-        # share one path_delay_cache tree either way, but only the flag is
+        # share one cache/delay tree either way, but only the flag is
         # unambiguous about which was actually used).
         cmd += ["--syn_tool", "sky130"]
     # No timeout: real (or pyrtl) synthesis runs legitimately take a while.

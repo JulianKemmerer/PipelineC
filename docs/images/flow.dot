@@ -71,7 +71,7 @@ digraph PypelineC {
   AutoPipeline [label="Auto-pipelining\ncut the logic graph into N pipeline stages,\nsynthesize, read fmax, re-cut -- iterate until\nthe @MAIN target frequency is met"
                 fillcolor="#fdc086" color="#1f5fbf" penwidth=2]
 
-  DelayCache [label="path_delay_cache/  area_cache/\nper part + tool + operator delays and areas,\ncommitted in the repo" shape=note fillcolor="#7fc97f"]
+  DelayCache [label="cache/delay/  cache/area/\nper part + tool + operator delays and areas,\ncommitted in the repo" shape=note fillcolor="#7fc97f"]
 
   AUTO_FSM [label="AUTO_FSM(f)   experimental (Pypeline only)\none pure function -> resource-shared FSM\n(schedule + bind): area over throughput"
            fillcolor="#fdc086" color="#b35806" penwidth=2 style="filled,dashed"]

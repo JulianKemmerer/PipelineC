@@ -134,14 +134,14 @@ Note the one place `"prim"` can do *more* work than `"leaf"`: because every
 hierarchical module is now estimated, `_FUNC_NEEDS_SUBMODULE_DELAYS` must
 descend into stateful spans that `"leaf"` mode covered with a single
 whole-module run, collecting every `BIN_OP` leaf underneath them. Those leaves
-are small and disk-cacheable, but on a *cold* `path_delay_cache` a state-heavy
+are small and disk-cacheable, but on a *cold* `cache/delay` a state-heavy
 design can trade one big synthesis run for many small ones.
 
 **Area rides the same leaf-synthesis path, sky130 only.** Every leaf syn run
 under `DEVICE_MODELS` measures real µm² for free from the same mapped
-netlist it already STAs, cached to `area_cache/` alongside
-`path_delay_cache/` (own `PYPELINEC_AREA_CACHE_DIR`, own version, so an
-STA-only cache bump can't invalidate it and vice versa). A `--no_hier_syn`
+netlist it already STAs, cached to `cache/area/` alongside
+`cache/delay/` (own version, so an STA-only cache bump can't invalidate it and
+vice versa). A `--no_hier_syn`
 build therefore leaves every touched leaf area-cached as a side effect, even
 though `--no_hier_syn` disables the delay estimate-vs-measure fallback.
 `SYN.WRITE_AREA_ESTIMATE_FILE` prints one `Estimated area: ...` line (cheap,
@@ -249,9 +249,15 @@ Two more hooks decide *which* functions get delays, for AUTO_FSM's scheduler
 
 ## 6. Caches
 
-Measurements outlive a build in two committed directories next to `src/`:
+Measurements outlive a build in one committed `cache/` tree next to `src/`,
+holding two subtrees. `PYPELINEC_CACHE_DIR` relocates the whole root
+(`GET_CACHE_ROOT_DIR`) -- there is no per-subtree override, so a build can never
+read delay from one tree and area from another. `GET_PATH_DELAY_CACHE_DIR` /
+`GET_AREA_CACHE_DIR` take the subtree name as `dir_name`, so a non-default name
+(`"pipeline_min_period"`) is a sibling under the same root rather than a
+separate one:
 
-- **`path_delay_cache/`** (`PYPELINEC_PATH_DELAY_CACHE_DIR` overrides it). The
+- **`cache/delay/`**. The
   directory is keyed by tool, the tool's model identity (PyRTL tech node and
   flip-flop overhead; DEVICE_MODELS library, corner, `MODEL_VERSION` and
   synthesis recipe), the planner-weight suffix
@@ -263,7 +269,7 @@ Measurements outlive a build in two committed directories next to `src/`:
   capped at 235 bytes; a built-in MUX is keyed by packed width
   (`GET_MUX_CACHE_KEY`), or collapsed to one entry where the tool does not
   distinguish widths (`MUX_DELAY_KEY_BY_WIDTH` overrides that).
-- **`area_cache/`** (`PYPELINEC_AREA_CACHE_DIR`), DEVICE_MODELS only, keyed by
+- **`cache/area/`**, DEVICE_MODELS only, keyed by
   `AREA_MODEL_VERSION` rather than `MODEL_VERSION` so an STA-only change keeps it.
 
 Only non-user code is disk-cached (`IS_USER_CODE`), plus built-in MUXes of any
@@ -432,7 +438,7 @@ Five harness properties that are easy to get wrong:
   so it is the *same netlist* as `raw_default` (confirmed: identical measured
   delay). Only `raw_default` is a real measurement for `MINUS`; there is
   nothing to compare against until a genuinely different subtractor exists.
-- **The harness shares the repo's `path_delay_cache/`.** Entries it adds are
+- **The harness shares the repo's `cache/delay`.** Entries it adds are
   real measurements of real entities, so this is harmless for anything
   reachable by default. The exception is `raw_revived_sliced`, whose
   `FORCE_RAW_INT_CMP_FOR_QOR_BENCH` path emits a raw comparator under the same
@@ -479,7 +485,7 @@ section, below.
 2. **Caching for AUTO_FSM's operand-mux measurement entities doesn't fire**
    ([`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md#35-delay-measurement)). `_IS_PYPELINE_OPERATOR_LIBRARY_CODE` is meant to classify
    `include/pypeline/operators/` entities as non-user code so their delays
-   are cacheable in `path_delay_cache`, but it calls `inspect.getsourcefile`
+   are cacheable in `cache/delay`, but it calls `inspect.getsourcefile`
    on the `@hw_func` wrapper callable rather than the wrapped function, so
    it always resolves to `pypeline.py` and never fires. An `inspect.unwrap`
    at that lookup would fix it. Nothing is incorrect meanwhile — the

@@ -929,7 +929,9 @@ def _is_generated_untracked_path(path):
     return (
         "__pycache__" in path.parts
         or path.suffix in (".pyc", ".pyo")
-        or (path.parts and path.parts[0] == "path_delay_cache")
+        # The whole committed measurement tree: a build legitimately adds
+        # cache/delay and cache/area entries, and those are not a source change.
+        or (path.parts and path.parts[0] == "cache")
     )
 
 

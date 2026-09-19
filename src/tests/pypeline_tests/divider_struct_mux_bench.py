@@ -67,8 +67,10 @@ def main(argv=None):
             f"output directory must be empty unless --continue is used: {out_dir}"
         )
     out_dir.mkdir(parents=True, exist_ok=True)
-    cache_dir = out_dir / "path_delay_cache"
-    cache_dir.mkdir(parents=True, exist_ok=True)
+    cache_root = out_dir / "cache"
+    cache_root.mkdir(parents=True, exist_ok=True)
+    # The delay subtree of that root is where .delay/.timing.json land.
+    cache_dir = cache_root / "delay"
     run_dir = out_dir / "sweep_180mhz"
     sweep_record_path = run_dir / "continuity_sweep.json"
     if sweep_record_path.is_file():
@@ -77,7 +79,7 @@ def main(argv=None):
         if run_dir.exists():
             raise RuntimeError(f"incomplete sweep directory: {run_dir}")
         record = continuity._build_normal_sweep(
-            SOURCE, SOURCE, TARGET_MHZ, run_dir, cache_dir
+            SOURCE, SOURCE, TARGET_MHZ, run_dir, cache_root
         )
 
     trace_path = run_dir / "top" / "placement_trace.json"

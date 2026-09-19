@@ -5595,7 +5595,7 @@ whatever `_canonical_func_name` derives from the factory (e.g.
 key off the built-in naming convention and were not updated as part of this library:
 `DEVICE_MODELS.func_name_to_op_and_widths` (delay estimation falls back to per-entity
 synthesis instead of a fast model lookup for soft-op entities — slower sweeps, not incorrect
-ones) and the `path_delay_cache` (new entries accumulate under the new names; old
+ones) and the `cache/delay` (new entries accumulate under the new names; old
 `BIN_OP_LT*`/`GT*`/etc. entries for int types simply stop being hit once a soft comparator is
 registered for that scope). `AUTO.DECODE_OP` does **not** need updating — it already falls
 back to `parser_state.pypeline_entity_callables` for any entity name it doesn't recognize as

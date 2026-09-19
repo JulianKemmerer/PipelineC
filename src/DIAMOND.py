@@ -15,7 +15,7 @@ if ENV_TOOL_PATH:
 else:
     DIAMOND_PATH = "/usr/local/diamond/3.11_x64/bin/lin64/diamondc"
 DIAMOND_TOOL = "synplify"  # lse|synplify
-# * If changing tool then need to delete FPGA part path_delay_cache dirs to be re synthesized
+# * If changing tool then need to delete FPGA part cache/delay dirs to be re synthesized
 # * Might need this to make synplify work on Debian based systems:
 #     https://electronics.stackexchange.com/questions/327527/lattice-icecube2-error-synplify-pro-321
 

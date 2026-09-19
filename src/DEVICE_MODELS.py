@@ -25,7 +25,7 @@ def part_supported(part_str):
     # inconsistent (sometimes-modeled, sometimes-not) delay estimates within
     # the same design and destabilizing AUTO_PIPELINE/throughput-sweep
     # planning. Always return False so every function goes through real
-    # synthesis or the path_delay_cache uniformly until this is revisited.
+    # synthesis or the cache/delay uniformly until this is revisited.
     return False
 
 
@@ -901,7 +901,7 @@ def MEASURE_NETLIST_AREA(json_path, top=None, library=DEFAULT_LIBRARY, corner=DE
 # ═══════════════════════════════════════════════════════════════════════════
 
 # Which liberty library/corner every synth + STA call in this process uses.
-# Settable like PYRTL.TECH_IN_NM/FF_OVERHEAD; joins the path_delay_cache key
+# Settable like PYRTL.TECH_IN_NM/FF_OVERHEAD; joins the cache/delay key
 # (SYN.GET_PATH_DELAY_CACHE_DIR) so a change here can never silently reuse a
 # stale leaf delay measured under a different corner.
 SELECTED_LIBRARY = DEFAULT_LIBRARY
@@ -918,7 +918,7 @@ MODEL_VERSION = 4
 # cells the synthesis recipe maps to (MEASURE_NETLIST_AREA is a flat sum,
 # not a graph algorithm), not on run_sta()'s own STA physics. A future
 # STA-only MODEL_VERSION bump must not discard an otherwise-still-valid
-# committed area_cache, and vice versa -- see SYN.GET_AREA_CACHE_DIR, which
+# committed cache/area, and vice versa -- see SYN.GET_AREA_CACHE_DIR, which
 # joins this alongside library/corner/recipe the same way
 # GET_PATH_DELAY_CACHE_DIR joins MODEL_VERSION.
 #

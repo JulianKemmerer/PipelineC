@@ -9,8 +9,9 @@
 #    build additionally prints one "Measured area: ..." line taken from the
 #    exact mapped netlist that synthesis run, produced free by the same
 #    DEVICE_MODELS._run_synth_and_sta call that already measures delay.
-# Uses an isolated PYPELINEC_AREA_CACHE_DIR so this test never depends on,
-# or writes into, the real committed area_cache/.
+# Uses an isolated PYPELINEC_CACHE_DIR whose area/ is private (so this test
+# never depends on, or writes into, the real committed cache/area) while its
+# delay/ is the committed cache/delay -- see _cache_isolation.
 import glob
 import json
 import os
@@ -19,13 +20,15 @@ import subprocess
 import sys
 import tempfile
 
+from _cache_isolation import make_isolated_cache_root
+
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
 MODE1_DESIGN = os.path.join(THIS_DIR, "leaf_1ll_cap_design.py")
 MODE2_DESIGN = os.path.join(THIS_DIR, "split_model_design.py")
 
 
-def _run(design, extra_args, out_dir, area_cache_dir):
+def _run(design, extra_args, out_dir, cache_root):
     cmd = [
         sys.executable,
         PYPELINEC,
@@ -36,7 +39,7 @@ def _run(design, extra_args, out_dir, area_cache_dir):
         out_dir,
     ] + extra_args
     env = dict(os.environ)
-    env["PYPELINEC_AREA_CACHE_DIR"] = area_cache_dir
+    env["PYPELINEC_CACHE_DIR"] = cache_root
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
         cmd,
@@ -59,7 +62,7 @@ def main():
     if base_out_dir is None:
         base_out_dir = tempfile.mkdtemp(prefix="area_estimate_build_report_test_")
         cleanup = True
-    area_cache_dir = os.path.join(base_out_dir, "area_cache")
+    cache_root = make_isolated_cache_root(base_out_dir)
 
     # ---- Mode 1: --no_hier_syn --no_sweep ----
     mode1_out = os.path.join(base_out_dir, "mode1")
@@ -68,7 +71,7 @@ def main():
         MODE1_DESIGN,
         ["--no_hier_syn", "--no_sweep"],
         mode1_out,
-        area_cache_dir,
+        cache_root,
     )
     if result.returncode != 0:
         print("FAIL: mode-1 (--no_hier_syn --no_sweep) build did not succeed")
@@ -120,13 +123,13 @@ def main():
         )
         sys.exit(1)
 
-    # A second run against the now-warm area_cache must report the SAME
+    # A second run against the now-warm cache/area must report the SAME
     # total without re-synthesizing any leaf (cache actually got used).
     result2 = _run(
         MODE1_DESIGN,
         ["--no_hier_syn", "--no_sweep"],
         os.path.join(base_out_dir, "mode1_rerun"),
-        area_cache_dir,
+        cache_root,
     )
     if result2.returncode != 0:
         print("FAIL: mode-1 rerun build did not succeed")
@@ -134,7 +137,7 @@ def main():
     if "Synthesizing function" in result2.stdout:
         print(
             "FAIL: mode-1 rerun re-synthesized a leaf despite a warm "
-            "area_cache + path_delay_cache"
+            "cache/area + cache/delay"
         )
         sys.exit(1)
     m2 = re.search(r"Estimated area: ([\d.]+) um2", result2.stdout)
@@ -148,7 +151,7 @@ def main():
     # ---- Mode 2: normal use, a real confirmation/sweep synthesis runs ----
     mode2_out = os.path.join(base_out_dir, "mode2")
     os.makedirs(mode2_out, exist_ok=True)
-    result3 = _run(MODE2_DESIGN, [], mode2_out, area_cache_dir)
+    result3 = _run(MODE2_DESIGN, [], mode2_out, cache_root)
     if result3.returncode != 0:
         print("FAIL: mode-2 (real sweep) build did not succeed")
         sys.exit(1)

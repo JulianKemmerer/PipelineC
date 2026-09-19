@@ -8,3 +8,6 @@ yacctab.py
 
 # dsp/fir_tb.py plots, written into the CWD by the fir_*_tb.py examples
 *_tb.png
+
+# nix/package.nix copies the committed cache/ tree here on first run (needs to be writable)
+.pypelinec_cache/

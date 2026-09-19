@@ -1254,7 +1254,7 @@ def main():
     # area_model_test.py's own fixtures, just exercised through AUTO_FSM's own
     # entry points rather than SYN's directly.
     print("\n[area model: real sky130 um2]")
-    with tempfile.TemporaryDirectory() as design_tmp, tempfile.TemporaryDirectory() as area_tmp:
+    with tempfile.TemporaryDirectory() as design_tmp, tempfile.TemporaryDirectory() as cache_tmp:
         ps2, key2, tag2 = parse_design(design_tmp, mhz=25.0, name="af_unit_area_design")
         func_entity2 = AUTO._entity_key_for_callable(ps2, tag2.func)
         add_logic = None
@@ -1268,7 +1268,7 @@ def main():
         add_entity, add_logic = add_logic
 
         old_tool = SYN.SYN_TOOL
-        old_env = os.environ.get("PYPELINEC_AREA_CACHE_DIR")
+        old_env = os.environ.get("PYPELINEC_CACHE_DIR")
         old_force = AUTO.FORCE_ABSTRACT_AREA
         try:
             # Not DEVICE_MODELS: unchanged from every tool's existing
@@ -1280,7 +1280,7 @@ def main():
             )
 
             SYN.SYN_TOOL = DEVICE_MODELS
-            os.environ["PYPELINEC_AREA_CACHE_DIR"] = area_tmp + "/"
+            os.environ["PYPELINEC_CACHE_DIR"] = cache_tmp + "/"
             check(
                 AUTO._area_unit_scale(ps2) == AUTO.UM2_PER_ABSTRACT_AREA_UNIT,
                 "DEVICE_MODELS scales into real um2",
@@ -1340,9 +1340,9 @@ def main():
             SYN.SYN_TOOL = old_tool
             AUTO.FORCE_ABSTRACT_AREA = old_force
             if old_env is None:
-                os.environ.pop("PYPELINEC_AREA_CACHE_DIR", None)
+                os.environ.pop("PYPELINEC_CACHE_DIR", None)
             else:
-                os.environ["PYPELINEC_AREA_CACHE_DIR"] = old_env
+                os.environ["PYPELINEC_CACHE_DIR"] = old_env
 
     if FAILURES:
         print(f"\n{len(FAILURES)} AUTO_FSM unit check(s) FAILED")

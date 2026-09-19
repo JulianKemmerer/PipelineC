@@ -2,7 +2,7 @@
 """KNOWN ISSUE (reproducer, not a fix): SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE
 never returns True for any real operator-library callable, so operator-
 library entities (AUTO_FSM's operand muxes, the soft-operator library under
-include/pypeline/operators/) never get cached in path_delay_cache the way
+include/pypeline/operators/) never get cached in cache/delay the way
 the predicate exists to enable -- delays for them are re-measured on every
 build instead of read from cache. Effect is BUILD TIME ONLY; delay numbers
 themselves are correct either way (see src/SYN.py's own comment right above

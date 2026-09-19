@@ -901,7 +901,7 @@ AREA_PER_BIT_FF = 0.2
 # control-path decode that has no synthesizable entity of its own to measure).
 # Measured, not chosen: least-squares fit (through the origin) of area vs
 # width across every BIN_OP_PLUS_uintA_t_uintB_t / BIN_OP_MINUS_uintA_t_uintB_t
-# entry in the committed area_cache, width = max(A, B) (both operators cost
+# entry in the committed cache/area, width = max(A, B) (both operators cost
 # AREA_PER_BIT_ADD per _leaf_area, so one joint fit covers both) -- 5 points,
 # widths 17-34, absolute residuals 29-159 um2 (1.2-6.3 um2/bit), MAE ~100
 # um2/point. Refit from the committed cache by area_model_test.py, so a
@@ -1074,7 +1074,7 @@ def _mux_delay_du(parser_state, types, ctype, n, snapshot):
          snapshot -- later passes rebuild the design with the FSM in place, so
          a shape that is no longer instantiated is no longer measured.
       3. The model. Only reached on the very first build of a given mux shape;
-         from the next pass (and, via path_delay_cache, from the next BUILD)
+         from the next pass (and, via cache/delay, from the next BUILD)
          onwards the real number is available.
     """
     if n < 2:
@@ -1387,7 +1387,7 @@ def _resolve_delay_du(parser_state, entity, delays, _stack=None):
          a real number. A soft-operator equivalent is never instantiated, so it
          is never measured; but its leaves are the universal bitwise operators
          every design uses, so their measurements are almost always already
-         sitting in path_delay_cache;
+         sitting in cache/delay;
       4. bottom-up from its own submodules;
       5. a width heuristic, as the last resort.
 
@@ -1438,7 +1438,7 @@ def _resolve_delay_du(parser_state, entity, delays, _stack=None):
 
 def _heuristic_leaf_delay_du(entity, logic):
     """Rough delay for a leaf operation nothing has ever measured. Only ever
-    reached for a descent candidate on a machine with a cold path_delay_cache;
+    reached for a descent candidate on a machine with a cold cache/delay;
     one real build replaces it with a measurement."""
     from math import log2
 

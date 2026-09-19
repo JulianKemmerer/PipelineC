@@ -200,5 +200,5 @@ meaning, the second when the timing model does.
 search, BDD predicates, CSE, rewrites and timing model directly;
 `auto_fsm_unit_test.py` covers DAG decoding, descent, type resolution and the
 area model inside scheduling; `area_model_test.py` holds the area constants
-to the committed sky130 `area_cache/`. See
+to the committed sky130 `cache/area`. See
 [`pypeline_TESTS.md`](pypeline_TESTS.md).

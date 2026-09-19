@@ -26,9 +26,10 @@ estimate is already known to have. If it does, a real-um2 register term
 (_ff_area_um2) would be amplifying a bad count rather than fixing one, and
 that is worth knowing before trusting this ranking on a state-heavy design.
 
-Uses an isolated PYPELINEC_AREA_CACHE_DIR (shared across the three builds, so
-later variants benefit from what an earlier one already measured, but never
-touching -- or depending on -- the real committed area_cache/) matching
+Uses an isolated PYPELINEC_CACHE_DIR whose area/ is private and shared across
+the three builds (so later variants benefit from what an earlier one already
+measured, but never touch -- or depend on -- the real committed cache/area),
+while delay/ is the committed cache/delay; see _cache_isolation, matching
 area_estimate_build_report_test.py's own pattern.
 
 The default also exercises area-based automatic state encoding. Finally, the
@@ -45,6 +46,8 @@ import re
 import subprocess
 import sys
 import tempfile
+
+from _cache_isolation import make_isolated_cache_root
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
@@ -73,10 +76,10 @@ def fail(msg):
     sys.exit(1)
 
 
-def run_build(out_dir, extra, area_cache_dir):
+def run_build(out_dir, extra, cache_root):
     cmd = [sys.executable, PYPELINEC, DESIGN, "--out_dir", out_dir] + extra
     env = dict(os.environ)
-    env["PYPELINEC_AREA_CACHE_DIR"] = area_cache_dir
+    env["PYPELINEC_CACHE_DIR"] = cache_root
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env
@@ -155,7 +158,7 @@ def main():
     if base is None:
         base = tempfile.mkdtemp(prefix="auto_fsm_real_area_compare_")
         cleanup = True
-    area_cache_dir = os.path.join(base, "area_cache")
+    cache_root = make_isolated_cache_root(base)
 
     variants = [
         ("real sky130 um2 (default)", "real", []),
@@ -166,7 +169,7 @@ def main():
     results = {}
     for label, sub, extra in variants:
         out_dir = os.path.join(base, sub)
-        out = run_build(out_dir, extra, area_cache_dir)
+        out = run_build(out_dir, extra, cache_root)
         results[sub] = {
             "label": label,
             "out": out,

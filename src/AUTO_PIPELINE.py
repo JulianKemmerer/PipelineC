@@ -2875,7 +2875,7 @@ def UPDATE_PIPELINE_MIN_PERIOD_CACHE(
 ):
     return  # Disabled for now - wasnt using anyway...
     # Make dir if needed
-    cache_dir = SYN.GET_PATH_DELAY_CACHE_DIR(parser_state, "pipeline_min_period_cache")
+    cache_dir = SYN.GET_PATH_DELAY_CACHE_DIR(parser_state, "pipeline_min_period")
     if not os.path.exists(cache_dir):
         os.makedirs(cache_dir)
 

@@ -206,7 +206,7 @@ parser.add_argument(
 )
 parser.add_argument(
     "--no_hier_syn",
-    help="Opposite of --full_hier_syn: never synthesize any hierarchical module (including MAINs and stateful atomic spans) -- only true primitive leaf functions are ever synthesized. Everything else is estimated from submodule delays. Fastest possible pre-pipelining delay collection, especially with a warm path_delay_cache, but gives up the automatic estimate-was-inaccurate fallback to real synthesis: a stalled sweep stops at its best result instead of measuring for real.",
+    help="Opposite of --full_hier_syn: never synthesize any hierarchical module (including MAINs and stateful atomic spans) -- only true primitive leaf functions are ever synthesized. Everything else is estimated from submodule delays. Fastest possible pre-pipelining delay collection, especially with a warm cache/delay, but gives up the automatic estimate-was-inaccurate fallback to real synthesis: a stalled sweep stops at its best result instead of measuring for real.",
     action="store_true",
 )
 parser.add_argument(
