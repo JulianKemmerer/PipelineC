@@ -199,14 +199,24 @@ run on those tools is slow; afterwards the cache carries it.
 
 **Measured comb fmax**, which is what each goal is set from:
 
-| backend | comb fmax | goal | sweep iterations | settles at |
+| backend | part | comb fmax | goal | settles at |
 |---|---|---|---|---|
-| `pyrtl` | 12.80 MHz | 40 | 2 | 42.4 MHz @ 4 stages |
-| `quartus` | 28.79 MHz | 60 | 4 | 70.8 MHz @ 3 stages |
-| `open_tools` | 29.71 MHz | 60 | 3 | 62.1 MHz @ 4 stages |
-| `device_models` | 29.91 MHz | 60 | 2 | 103.0 MHz @ 4 stages |
-| `vivado` | 38.47 MHz | 75 | 4 | 93.3 MHz @ 5 stages |
-| `efinity` | 128.84 MHz | 260 | | |
+| `pyrtl` | *(none -- tech node, not a part)* | 12.80 MHz | 40 | 46.0 MHz @ 5 stages |
+| `device_models` | `sky130` | 28.06 MHz | 60 | 80.5 MHz @ 4 stages |
+| `quartus` | `5CEBA4F23C8` | 41.58 MHz | 60 | 71.7 MHz @ 2 stages |
+| `open_tools` | `LFE5U-85F-6BG381C` | 28.84 MHz | 60 | 61.0 MHz @ 4 stages |
+| `vivado` | `xc7a35ticsg324-1l` | 47.84 MHz | 130 | 167.3 MHz @ 5 stages |
+| `efinity` | `Ti60F225` | 286.17 MHz | 500 | 510.4 MHz @ 11 stages |
+
+**Comb fmax is only meaningful next to the goal it was measured under, and
+only for Quartus.** Measured with a deliberately slack 1 MHz goal instead of
+the real one, `quartus` reports 28.21 MHz rather than 41.58 -- its fitter
+works to the constraint. Every other backend here returned an identical number
+under both (`pyrtl` 12.804, `device_models` 28.056, `open_tools` 28.840,
+`vivado` 47.9, `efinity` 286.171), so this is a Quartus behavior, not a
+place-and-route-versus-estimate split. `sweep_float32_tool_compare.py` always
+builds its comb reference point under the same goal as the sweep, so each
+tool's curve is internally consistent.
 
 Three backends are in `known_issues` instead, none for a PipelineC bug:
 
@@ -246,8 +256,31 @@ into `synth_<tool>`.
 `run_all.py`) builds the same design on every backend -- `--comb` first for the
 unpipelined reference point, then the sweep -- and overlays every backend's
 iterations on one plot: total pipeline latency (stages / fmax) on X, achieved
-fmax on Y. Each point is one real synthesis run, so the curve shows what added
-stages actually bought on that tool.
+fmax on Y, one curve per tool labelled with the part it used. Each point is one
+real synthesis run annotated with its pipeline stage count, so the curve shows
+what added stages actually bought on that tool.
+
+![float32 adder: fmax vs total pipeline latency, per SYN_TOOL](images/sweep_float32_tool_compare.png)
+
+```
+python3 src/tests/pypeline_tests/sweep_float32_tool_compare.py --out_root DIR
+```
+
+The curves are not all monotonic, and that is the measurement rather than a
+bug. On `quartus` the 3-stage result came out slower than the 2-stage one, and
+on `vivado` the 4-stage result is slower than the 3-stage. `efinity` is the
+clearest case: its first two cuts made the design *worse* than unpipelined
+(286 -> 230 -> 217 MHz) before it climbed to 510 MHz at 11 stages. Added stages
+only help when the tool can place and route the shorter segments, and a deeper
+pipeline brings its own placement pressure.
+
+Two reads worth taking from the plot:
+
+- `pyrtl`'s 4-stage and 5-stage points sit at the same 108.7 ns total latency
+  while fmax goes 36.8 -> 46.0 MHz. That step is free.
+- `efinity` needs 11 stages to reach 510 MHz, against `quartus` reaching
+  71.7 MHz at 2. Comparing tools on fmax alone hides that the deeper pipeline
+  costs proportionally more latency to get there.
 
 ## Fixed user pipeline coverage
 

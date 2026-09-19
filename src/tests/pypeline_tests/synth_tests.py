@@ -175,12 +175,13 @@ SYNTH_TEST_FILES = [
 #
 # Re-measure with:  pypelinec inst/sweep_float32_test.py --syn_tool <tool> --comb
 SWEEP_FLOAT32_MHZ = {
-    "pyrtl": 40.0,  # comb 12.8 MHz
-    "device_models": 60.0,  # comb 29.9 MHz; settles at ~103 MHz in 2 iterations
-    "vivado": 75.0,  # comb 38.5 MHz; settles at ~93 MHz in 4 iterations
-    "quartus": 60.0,  # comb 28.8 MHz; settles at ~70.8 MHz in 4 iterations
-    "open_tools": 60.0,  # comb 29.7 MHz; settles at ~62 MHz in 3 iterations
-    "efinity": 25.0,
+    # comb fmax -> goal -> what the sweep settles on. Measured 2026-09-19.
+    "pyrtl": 40.0,  # comb 12.8 -> 46.0 MHz @ 5 stages
+    "device_models": 60.0,  # comb 28.1 -> 80.5 MHz @ 4 stages
+    "quartus": 60.0,  # comb 41.6 -> 71.7 MHz @ 2 stages
+    "open_tools": 60.0,  # comb 28.8 -> 61.0 MHz @ 4 stages
+    "vivado": 130.0,  # comb 47.8 -> 167.3 MHz @ 5 stages
+    "efinity": 500.0,  # comb 286.2 -> 510.4 MHz @ 11 stages (16nm Titanium)
     "gowin": 25.0,
     "cc_tools": 25.0,
     "diamond": 15.0,

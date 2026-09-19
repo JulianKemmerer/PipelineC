@@ -23,6 +23,7 @@ backend builds; this is for looking at how they compare.
 
 import argparse
 import json
+import re
 import os
 from pathlib import Path
 import subprocess
@@ -70,6 +71,25 @@ def build(tool, out_dir, goal_mhz, timeout, comb=False):
     return rc == 0, log_path
 
 
+# SYN prints this once the part and tool are settled (SYN.RESOLVE_PART_AND_TOOL).
+PART_RE = re.compile(r"^Using \S+ synthesizing for part: (\S+)\s*$", re.M)
+
+
+def collect_part(build_dir_log):
+    """The part a build actually used, straight from its log."""
+    try:
+        text = build_dir_log.read_text(errors="replace")
+    except OSError:
+        return None
+    found = PART_RE.findall(text)
+    if not found:
+        return None
+    # Last one wins: an early part-less line can precede the resolved one.
+    part = found[-1]
+    # PyRTL models a tech node, not a part, and prints the literal "None".
+    return None if part == "None" else part
+
+
 def _point(stages, mhz, met):
     """(total_latency_ns, fmax_mhz, stages, met).
 
@@ -112,7 +132,7 @@ def collect(build_dir):
     return points
 
 
-def plot(per_tool, png_path):
+def plot(per_tool, png_path, per_tool_part=None):
     import matplotlib
     matplotlib.use("Agg")
     import matplotlib.pyplot as plt
@@ -122,10 +142,12 @@ def plot(per_tool, png_path):
     for i, (tool, points) in enumerate(sorted(per_tool.items())):
         if not points:
             continue
-        xs = [p[0] for p in points]
-        ys = [p[1] for p in points]
         color = cmap(i % 10)
-        ax.plot(xs, ys, "-", color=color, alpha=0.45, linewidth=1.2, zorder=1)
+        # Connect in STAGE order, not x order: stages is the variable the sweep
+        # actually moves, so the line reads as "what the next cut bought".
+        by_stage = sorted(points, key=lambda p: p[2])
+        ax.plot([p[0] for p in by_stage], [p[1] for p in by_stage],
+                "-", color=color, alpha=0.45, linewidth=1.2, zorder=1)
         # Filled = met its goal, hollow = did not; the shape of the trade is
         # the point, but whether a run was acceptable matters too.
         met = [p for p in points if p[3]]
@@ -136,12 +158,21 @@ def plot(per_tool, png_path):
         if met:
             ax.scatter([p[0] for p in met], [p[1] for p in met],
                        color=color, s=42, zorder=3)
-        ax.plot([], [], "o-", color=color, label=f"{tool}  ({len(points)} iters)")
+        # Stage count is the variable being traded for fmax, so name it on
+        # each point rather than making the reader infer it from the x value.
+        for latency_ns, mhz, stages, _met in points:
+            ax.annotate(str(stages), (latency_ns, mhz),
+                        textcoords="offset points", xytext=(0, 7),
+                        ha="center", fontsize=7, color=color)
+        part = (per_tool_part or {}).get(tool)
+        label = f"{tool}" + (f"  [{part}]" if part else "  [no part]")
+        ax.plot([], [], "o-", color=color, label=label)
 
     ax.set_xlabel("Total pipeline latency (ns)  =  stages / fmax")
     ax.set_ylabel("Achieved fmax (MHz)")
-    ax.set_title("float32 adder: fmax vs total latency, per SYN_TOOL\n"
-                 "one point per sweep iteration (filled = timing goal met)")
+    ax.set_title("float32 adder: fmax vs total pipeline latency, per SYN_TOOL\n"
+                 "one point per synthesis run; number = pipeline stages; "
+                 "filled = met its clock goal", fontsize=10)
     ax.grid(True, alpha=0.3)
     ax.legend(loc="best", fontsize=9)
     fig.tight_layout()
@@ -167,6 +198,7 @@ def main():
     tools = args.tool or list(SYN_TOOLS)
 
     per_tool = {}
+    per_tool_part = {}
     failed = []
     for tool in tools:
         out_dir = out_root / tool
@@ -179,6 +211,9 @@ def main():
             if not ok:
                 failed.append(tool)
         points = collect(out_dir / "comb_o") + collect(out_dir / "o")
+        part = collect_part(out_dir / "build.log") or collect_part(out_dir / "comb.log")
+        if part:
+            per_tool_part[tool] = part
         # One point per distinct stage count; keep the best fmax measured there.
         best_at = {}
         for pt in points:
@@ -188,12 +223,14 @@ def main():
         if points:
             per_tool[tool] = points
 
-    print("\n" + "=" * 72)
-    print(f"{'tool':16s} {'stages':>7s} {'fmax MHz':>10s} {'latency ns':>12s}  met")
-    print("=" * 72)
+    print("\n" + "=" * 86)
+    print(f"{'tool':15s} {'part':22s} {'stages':>7s} {'fmax MHz':>10s} {'latency ns':>12s}  met")
+    print("=" * 86)
     for tool, points in sorted(per_tool.items()):
+        # PyRTL genuinely has no part -- say so rather than "unknown".
+        part = per_tool_part.get(tool) or "(no part)"
         for latency_ns, mhz, stages, met in points:
-            print(f"{tool:16s} {stages:7d} {mhz:10.2f} {latency_ns:12.1f}"
+            print(f"{tool:15s} {part:22s} {stages:7d} {mhz:10.2f} {latency_ns:12.1f}"
                   f"  {'yes' if met else 'no'}")
         if len(points) < 3:
             print(f"{'':16s} ^^ only {len(points)} point(s) -- expected the comb "
@@ -201,12 +238,17 @@ def main():
         print("-" * 72)
     if failed:
         print("\nBuild failed (no data): " + ", ".join(failed))
-    no_data = [t for t in tools if t not in per_tool and t not in failed]
+    # Only complain about tools that actually produced a build directory;
+    # --no_build over a partial out_root legitimately has nothing for the rest.
+    no_data = [
+        t for t in tools
+        if t not in per_tool and t not in failed and (out_root / t).is_dir()
+    ]
     if no_data:
         print("Built but no sweep iterations recorded: " + ", ".join(no_data))
 
     if per_tool:
-        plot(per_tool, out_root / "sweep_float32_tool_compare.png")
+        plot(per_tool, out_root / "sweep_float32_tool_compare.png", per_tool_part)
     else:
         print("\nNo data to plot.")
     return 1 if failed else 0
