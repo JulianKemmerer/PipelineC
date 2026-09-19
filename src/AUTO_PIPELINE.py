@@ -497,6 +497,28 @@ Remove stateful static local variables to allow pipelining."""
 _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache = {}
 
 
+def NORMALIZE_KNOWN_ZERO_DELAY_SUBMODULE_DELAYS(logic, parser_state):
+    """Make intrinsically zero-delay child timing explicit.
+
+    Generated helpers such as CONST_REF_RD intentionally skip path-delay
+    synthesis, so their ``delay`` can still be None when pipeline-map code
+    begins doing arithmetic. Normalize only children that the existing
+    zero-delay classifier recognizes; return the first genuinely unresolved
+    child so callers retain the existing hard-error behavior for missing timing.
+    """
+    for sub_inst in logic.submodule_instances:
+        func_name = logic.submodule_instances[sub_inst]
+        sub_func_logic = parser_state.FuncLogicLookupTable[func_name]
+        if sub_func_logic.delay is None:
+            if SYN.LOGIC_IS_ZERO_DELAY(
+                sub_func_logic, parser_state, allow_none_delay=True
+            ):
+                sub_func_logic.delay = 0
+            else:
+                return sub_func_logic
+    return None
+
+
 def GET_ZERO_ADDED_CLKS_PIPELINE_MAP(inst_name, Logic, parser_state, write_files=True):
     key = Logic.func_name
 
@@ -512,16 +534,12 @@ def GET_ZERO_ADDED_CLKS_PIPELINE_MAP(inst_name, Logic, parser_state, write_files
             return rv
         del _GET_ZERO_ADDED_CLKS_PIPELINE_MAP_cache[key]
 
-    has_delay = True
-    # Only need to check submodules, not self
-    for sub_inst in Logic.submodule_instances:
-        func_name = Logic.submodule_instances[sub_inst]
-        sub_func_logic = parser_state.FuncLogicLookupTable[func_name]
-        if sub_func_logic.delay is None:
-            print(Logic.func_name, "/", sub_func_logic.func_name)
-            has_delay = False
-            break
-    if not has_delay:
+    unresolved_submodule = NORMALIZE_KNOWN_ZERO_DELAY_SUBMODULE_DELAYS(
+        Logic, parser_state
+    )
+    has_delay = unresolved_submodule is None
+    if unresolved_submodule is not None:
+        print(Logic.func_name, "/", unresolved_submodule.func_name)
         raise Exception("Can't get zero clock pipeline map without delay?")
 
     # Populate table as all 0 added clks
@@ -917,16 +935,12 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
 
     # Delay stuff was hacked into here and only works for combinatorial logic
     est_total_latency = None
-    has_delay = True
-    # Only need to check submodules, not self
-    for sub_inst in logic.submodule_instances:
-        func_name = logic.submodule_instances[sub_inst]
-        sub_func_logic = parser_state.FuncLogicLookupTable[func_name]
-        if sub_func_logic.delay is None:
-            if print_debug:
-                print("Submodule", sub_inst, "has None delay")
-            has_delay = False
-            break
+    unresolved_submodule = NORMALIZE_KNOWN_ZERO_DELAY_SUBMODULE_DELAYS(
+        logic, parser_state
+    )
+    has_delay = unresolved_submodule is None
+    if print_debug and unresolved_submodule is not None:
+        print("Submodule", unresolved_submodule.func_name, "has None delay")
 
     if print_debug:
         print("timing_params._slices", timing_params._slices)
