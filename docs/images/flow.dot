@@ -60,6 +60,8 @@ digraph PypelineC {
   }
   RawVHDL  [label="Existing VHDL\nvhdl() / #pragma passthrough" shape=note fillcolor="#7fc97f"]
   PinsFile [label="Pin constraints\n--pins" shape=note fillcolor="#7fc97f"]
+  OpenXC7ChipDB [label="nextpnr-xilinx chipdb\nOPENXC7 / OPENXC7_CHIPDB" shape=note fillcolor="#7fc97f"]
+  ProjectXRayDB [label="Project X-Ray database\nOPENXC7 / PRJXRAY_DB_DIR" shape=note fillcolor="#7fc97f"]
 
   // ============================ Front ends ============================
   C_TO_LOGIC  [label="C_TO_LOGIC" fillcolor="#fdc086"]
@@ -94,6 +96,8 @@ digraph PypelineC {
   BlifFile    [label=".blif netlist" shape=note fillcolor="white"]
   LibertyJson [label="liberty-mapped .json" shape=note fillcolor="white"]
   GateMateV   [label="top_synth.v" shape=note fillcolor="white"]
+  XC7Fasm     [label=".fasm" shape=note fillcolor="white"]
+  XC7Frames   [label=".frames" shape=note fillcolor="white"]
   VerilogFile [label="Verilog\ntop.v, --verilog" shape=note fillcolor="#a6cee3"]
   CxxrtlCpp   [label="top.cpp" shape=note fillcolor="white"]
 
@@ -105,6 +109,10 @@ digraph PypelineC {
       label = "Yosys-based -- fed by the netlists above"
       NextPnr    [label=<<B>nextpnr</B><BR/>ECP5 / ice40 place-and-route>
                   shape=octagon fillcolor="#ffff99"]
+      NextPnrXC7 [label=<<B>nextpnr-xilinx</B><BR/>Xilinx 7-series place-and-route>
+                  shape=octagon fillcolor="#ffff99"]
+      ProjectXRay [label=<<B>Project X-Ray</B><BR/>fasm2frames + xc7frames2bit>
+                   shape=octagon fillcolor="#ffff99"]
       PnR        [label=<<B>p_r</B><BR/>Cologne Chip place-and-route>
                   shape=octagon fillcolor="#ffff99"]
       PyRTLModel [label=<<B>PyRTL</B><BR/>timing estimate from the netlist<BR/>(default backend)> shape=octagon fillcolor="#ffff99"]
@@ -189,7 +197,15 @@ digraph PypelineC {
   Yosys -> GateMateV
   Yosys -> VerilogFile [style=dashed weight=30]
   Yosys -> CxxrtlCpp [style=dashed weight=30]
-  NetlistJson -> NextPnr [label="  OPEN_TOOLS\l"]
+  NetlistJson -> NextPnr [label="  OPEN_TOOLS ECP5/iCE40\l"]
+  NetlistJson -> NextPnrXC7 [label="  OPEN_TOOLS XC7\l"]
+  OpenXC7ChipDB -> NextPnrXC7
+  PinsFile -> NextPnrXC7 [style=dashed label="  final implementation\l"]
+  NextPnrXC7 -> XC7Fasm
+  XC7Fasm -> ProjectXRay
+  ProjectXRayDB -> ProjectXRay
+  ProjectXRay -> XC7Frames
+  XC7Frames -> Bitstream [style=dashed label="  --pins\l"]
   NetlistJson -> YosysJSON [style=dashed label="  --yosys_json\l"]
   BlifFile -> PyRTLModel [label="  PYRTL\l"]
   LibertyJson -> Sky130STA [label="  DEVICE_MODELS\l"]
@@ -234,7 +250,7 @@ digraph PypelineC {
   leg_it_dst -> LogicGraph [style=invis]
   leg_def_dst -> XOFile [style=invis]
   { rank=same; NetlistJson BlifFile LibertyJson GateMateV VerilogFile CxxrtlCpp }
-  { rank=same; NextPnr PnR PyRTLModel Sky130STA }
+  { rank=same; NextPnr NextPnrXC7 ProjectXRay PnR PyRTLModel Sky130STA }
   { rank=same; Vivado Quartus Diamond Efinity Gowin }
   { rank=same; Cocotb Modelsim EDAPlay Verilator Clangpp }
   NextPnr -> Vivado [style=invis weight=50]

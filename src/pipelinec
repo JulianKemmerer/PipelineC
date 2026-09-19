@@ -472,6 +472,17 @@ parser_state.part, _resolved_tool = SYN.RESOLVE_PART_AND_TOOL(
     allow_fail=True,
 )
 
+# A requested XC7 bitstream needs Project X-Ray conversion tools in addition
+# to the synthesis/P&R payload CHECK_TOOL_INSTALLED already verified. Diagnose
+# that before generating files or spending time in a throughput sweep.
+if (
+    not args.no_synth
+    and _resolved_tool is OPEN_TOOLS
+    and OPEN_TOOLS.IS_XC7_PART(parser_state.part)
+    and SYN.PIN_CONSTRAINTS_FILE
+):
+    OPEN_TOOLS.GET_XC7_BITSTREAM_TOOLS_AND_DB(parser_state.part)
+
 print(
     "================== Writing Resulting Logic to File ================================",
     flush=True,

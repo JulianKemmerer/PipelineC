@@ -186,15 +186,19 @@ written.
 `inst/sweep_float32_test.py` -- a single float32 adder `@MAIN`, the Pypeline
 twin of `examples/pipeline.c` -- is registered once per backend in
 `synth_tests.py`, giving every synthesis tool one real planned throughput
-sweep. Before this, six of the nine backends had no test at all: `quartus`,
-`open_tools`, `diamond`, `efinity`, `gowin` and `cc_tools` could break and
-nothing would notice.
+sweep. `OPEN_TOOLS` has a second registration for XC7 because its default
+part exercises ECP5; `sweep_float32_openxc7` passes an explicit Artix-7 part
+and lives in the same `synth_open_tools` category. Before this matrix, six of
+the nine backends had no test at all: `quartus`, `open_tools`, `diamond`,
+`efinity`, `gowin` and `cc_tools` could break and nothing would notice.
 
-**One design file, not nine.** The design sets no `PART`. Each registration
-passes only `--syn_tool <tool>`, and the tool's own `DEFAULT_PART`
-(`src/<TOOL>.py`) supplies the part -- so every backend builds *the same*
-design and a failure is about the backend, nothing else. This is what
-`--syn_tool` accepting every tool bought.
+**One design file, not per-target copies.** The design sets no `PART`. Each
+generic registration passes only `--syn_tool <tool>`, and the tool's own
+`DEFAULT_PART` (`src/<TOOL>.py`) supplies the part -- so every backend builds
+*the same* design and a failure is about the backend, nothing else. The
+OpenXC7 sibling uses that same source but adds `--part xc7a35tcpg236-1`, since
+selecting `open_tools` alone intentionally retains the established ECP5
+default.
 
 **Per-tool clock goals** come from `synth_tests.SWEEP_FLOAT32_MHZ`, passed via
 `Test.env` as `SWEEP_FLOAT32_MHZ`. A float32 adder's unpipelined fmax differs
@@ -216,6 +220,7 @@ run on those tools is slow; afterwards the cache carries it.
 | `device_models` | `sky130` | 28.06 MHz | 60 | 80.5 MHz @ 4 stages |
 | `quartus` | `5CEBA4F23C8` | 41.58 MHz | 60 | 71.7 MHz @ 2 stages |
 | `open_tools` | `LFE5U-85F-6BG381C` | 28.84 MHz | 60 | 61.0 MHz @ 4 stages |
+| `open_tools` (OpenXC7) | `xc7a35tcpg236-1` | 43.88 MHz | 200 | 277.62 MHz @ 44 stages |
 | `vivado` | `xc7a35ticsg324-1l` | 47.84 MHz | 130 | 167.3 MHz @ 5 stages |
 | `efinity` | `Ti60F225` | 286.17 MHz | 500 | 510.4 MHz @ 11 stages |
 

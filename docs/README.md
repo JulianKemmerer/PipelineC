@@ -518,7 +518,7 @@ named without a part supplies its default part.
 | Part/family | `--syn_tool` | Default part | Timing flow |
 |---|---|---|---|
 | No part | `pyrtl` | none | Generic PyRTL software delay model; default when nothing is selected |
-| `xc...` | `vivado` | `xc7a35ticsg324-1l` | Vivado synthesis and optional place-and-route |
+| `xc...` | `vivado` or `open_tools` | `xc7a35ticsg324-1l` | Vivado, or open tools when selected |
 | `ep...`, `10c...`, `5c...` | `quartus` | `5CEBA4F23C8` | Quartus |
 | ECP5 `lfe5u...` | `open_tools` | `LFE5U-85F-6BG381C` | GHDL + Yosys + nextpnr |
 | iCE40 `ice...` | `open_tools` or `diamond` | `ICE40UP5K-SG48` | Open tools, or Diamond when selected/available |
@@ -532,6 +532,7 @@ Examples:
 ```sh
 pypelinec design.py --syn_tool quartus
 pypelinec design.py --part xc7a35ticsg324-1l
+pypelinec design.py --part xc7a35tcpg236-1 --syn_tool open_tools
 pypelinec design.py --syn_tool device_models
 ```
 
@@ -656,7 +657,6 @@ pin-constraint file with `--pins`:
 * **OpenXC7**: Pass an `.xdc` pin/IO-standard file, an explicit XC7 part, and
   `--syn_tool open_tools`. The flow runs nextpnr-xilinx, converts its FASM output with
   Project X-Ray, and writes `<out_dir>/top/top.bit`.
-  * Test: `pypelinec ./examples/blink.c --part xc7a35tcpg236-1 --syn_tool open_tools --comb --pins ./docs/openxc7_basys3_blink.xdc`
 
 
 ## Set up your tools
@@ -708,14 +708,14 @@ for which part selects which tool.
   * Older `ghdl` versions do not support the `IEEE` `float` library.
   * Yosys fails to load the `ghdl` shared library if `ghdl-yosys-plugin` isn't installed.
   * Test: `pypelinec ./examples/tool_tests/open_tools.c`
-* **OpenXC7 (open-source Xilinx 7-series flow)**: Use the OSS CAD Suite for GHDL and Yosys.
-  Also install a matching `nextpnr-xilinx`, its chipdb, the Project X-Ray database,
-  `fasm2frames`, and `xc7frames2bit`, and set `OPENXC7` to the directory that contains
-  them. Select this backend explicitly with `--syn_tool open_tools`: an `xc...` part on its
-  own still selects Vivado. [Testing PR 308 with OpenXC7](OPENXC7_PR_308_LOCAL_TEST.md)
-  describes the install layout, including a pinned prebuilt install that also works on
-  older Linux distributions.
-  * Test: `pypelinec ./examples/blink.c --part xc7a35tcpg236-1 --syn_tool open_tools --comb --pins ./docs/openxc7_basys3_blink.xdc`
+* **OpenXC7 (open-source Xilinx 7-series flow)**:
+  * Set `OSS_CAD_SUITE` to a current
+    [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build).
+  * Set `OPENXC7` to an OpenXC7 bundle:
+    * [FPGAwars/OpenXC7 prebuilt releases](https://github.com/FPGAwars/tools-openxc7/releases).
+    * [openXC7/toolchain-installer](https://github.com/openXC7/toolchain-installer) for a source build.
+    * `OPENXC7_CHIPDB` and `PRJXRAY_DB_DIR` override nonstandard chipdb/database layouts.
+  * Smoke test (unconstrained; no board XDC required): `pypelinec ./examples/pypeline/blink.py --part xc7a35tcpg236-1 --syn_tool open_tools --comb`
 * **Gowin EDA**: Finds `gw_sh` on the `PATH`, or edit the `GOWIN_PATH` constant in
   [GOWIN.py](../src/GOWIN.py).
   * Test: `pypelinec ./examples/tool_tests/gowin_pipeline.c`

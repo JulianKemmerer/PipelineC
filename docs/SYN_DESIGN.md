@@ -46,7 +46,7 @@ settles all four in one place, right after the design is parsed.
 | part prefix | `SYN_TOOL` | `--syn_tool` name | `DEFAULT_PART` | runs |
 |---|---|---|---|---|
 | none | `PYRTL` | `pyrtl` | *(none)* | PyRTL's software gate-delay model (no FPGA part) |
-| `xc` | `VIVADO` | `vivado` | `xc7a35ticsg324-1l` | Vivado synthesis, optionally place-and-route (`VIVADO.DO_PNR`) |
+| `xc` | `VIVADO` or `OPEN_TOOLS` | `vivado` / `open_tools` | `xc7a35ticsg324-1l` | Vivado, or open tools when selected |
 | `ep`, `10c`, `5c` | `QUARTUS` | `quartus` | `5CEBA4F23C8` | Quartus |
 | `lfe5u` (ECP5) / `ice` | `OPEN_TOOLS` (yosys + nextpnr); ice40 uses `DIAMOND` when installed | `open_tools` / `diamond` | `LFE5U-85F-6BG381C` / `ICE40UP5K-SG48` | |
 | `T8` / `Ti` | `EFINITY` | `efinity` | `Ti60F225` | Efinity |
@@ -75,6 +75,16 @@ alone, and still respects a tool already chosen. **ice40 is the one family two
 backends serve** — Diamond when installed, open tools otherwise — so
 `TOOL_MATCHES_PART()` accepts either for an ice40 part, and the same command
 line does not succeed on one machine and fail on another.
+
+Xilinx 7-series also accepts `OPEN_TOOLS`; Vivado remains the default and
+`--syn_tool open_tools` selects OpenXC7. Supported devices depend on matching
+nextpnr-Xilinx/Project X-Ray data; hardware validation is currently Artix-7
+(`xc7a35tcpg236-1`, Basys 3).
+
+OpenXC7 uses `synth_xilinx -noiopad` for unconstrained characterization;
+`--comb --pins` instead times the board-facing top. Final bitstream generation
+reruns implementation after `WRITE_FINAL_FILES` and `@final(syn)`, then converts
+FASM with Project X-Ray.
 
 `--yosys_json` (`OPEN_TOOLS.YOSYS_JSON_ONLY`) turns synthesis into netlist
 export only. `TOOL_DOES_PNR()` says whether a tool's timing is
@@ -109,6 +119,9 @@ and these functions:
   synthesize the whole multi-MAIN top;
 - (most backends) `SYN_AND_REPORT_TIMING_NEW`, the shared implementation of
   both;
+- optionally `GENERATE_BITSTREAM(parser_state, multimain_timing_params)`, for
+  backends such as OpenXC7 whose final implementation artifact needs a separate
+  bitstream-format conversion step;
 - optionally `FUNC_IS_PRIMITIVE` / `GET_PRIMITIVE_MODULE_TEXT`, for tools with
   vendor primitives that `VHDL.py` instantiates directly.
 
@@ -138,7 +151,7 @@ the tool's syntax), `GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH` and
 | per-function delay measurement | `ADD_PATH_DELAY_TO_LOOKUP` (the pre-synthesis wave), `MEASURE_DELAYS` (re-measure named functions), `ESTIMATE_HIER_PATH_DELAYS` (no synthesis: pipeline-map estimates) | every build; the sweep's measured-delay fallback; `AUTO.TimingModel` reads the results |
 | one instance at a given latency | `RUN_INST_SYN_AND_UPDATE_CACHE` | the coarse sweep and hotspot mini-sweeps |
 | the whole multi-MAIN design | `SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN` | each planned-sweep iteration, the pin-and-confirm confirmation, `--comb` characterization |
-| the final bitstream | `GENERATE_FINAL_BITSTREAM` | `--pins` builds (after the design's `@final(syn)` hooks, which run right after the final VHDL is written -- see `PY_TO_LOGIC_DESIGN.md`) |
+| the final bitstream | `GENERATE_FINAL_BITSTREAM`, dispatching to a backend `GENERATE_BITSTREAM` hook when present | `--pins` builds (after the design's `@final(syn)` hooks, which run right after the final VHDL is written -- see `PY_TO_LOGIC_DESIGN.md`) |
 
 **Parallelism is a memory budget.** Per-function delay measurement and the
 coarse sweep run several synthesis jobs at once through a `ThreadPool` sized
