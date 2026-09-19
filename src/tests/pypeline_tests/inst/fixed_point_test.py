@@ -256,6 +256,19 @@ def test_unary_negate():
     r2 = sim_call(neg, most_negative)
     assert float(r2) == -8.0, float(r2)  # wraps back to itself, documented limitation
 
+    # Full sweep of the representable range against a Python golden. Two
+    # spot checks leave most of the domain untested, and the failure mode of
+    # a mis-shaped two's-complement negate is a silently wrong value at a
+    # subset of inputs (e.g. only where the invert carries all the way), not
+    # a build error.
+    step = 2.0 ** -4
+    raw = -8.0
+    while raw < 8.0:
+        got = float(sim_call(neg, t.as_const(raw)))
+        want = -raw if raw != -8.0 else -8.0  # most-negative wraps to itself
+        assert got == want, f"negate({raw}): got {got} want {want}"
+        raw += step
+
     unsigned_bad = make_fixed_t(4, 4, signed=False)
     try:
         make_fixed_negate(unsigned_bad)

@@ -170,7 +170,14 @@ def make_fixed_negate(a_t):
 
     @hw_func
     def fixed_negate(a: a_t) -> a_t:
-        result_val: val_t = a.val * -1
+        # Two's complement negate, same shape as floating_point._make_negate:
+        # invert then increment, both at val_t's own width (the widen there
+        # is a no-op here since in and out types match). Not `a.val * -1`,
+        # which elaborates to a real HDL multiply and is characterized as
+        # one; not unary `-a.val`, whose built-in result type widens by a
+        # bit and would need casting back anyway.
+        not_val: val_t = ~a.val
+        result_val: val_t = not_val + 1
         result: a_t = a_t(val=result_val)
         return result
 

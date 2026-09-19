@@ -57,7 +57,14 @@ from operators.soft_div import (
     make_soft_div_radix, make_soft_mod_radix,
     make_soft_div_signed_radix, make_soft_mod_signed_radix,
 )
-from operators.soft_cmp import make_soft_cmp_sub
+from operators.soft_cmp import (
+    make_soft_cmp_sub,
+    make_soft_cmp_sub_swapped,
+    make_soft_cmp_borrow,
+    make_soft_cmp_bitwise,
+    make_soft_cmp_prefix,
+    make_soft_cmp_chunked,
+)
 from operators.soft_shift import (
     make_soft_shift_barrel_sl,
     make_soft_shift_barrel_sr,
@@ -111,11 +118,22 @@ def test_soft_sub():
 
 
 def test_soft_negate():
+    """Signed AND unsigned operands. The unsigned case is the one that
+    matters: negating an unsigned value is exactly where a same-width
+    two's-complement negate silently returns the unsigned wrap instead of a
+    negative number, so it is the case an `x * -1` workaround was papering
+    over. make_soft_negate widens to int(width+1) FIRST, which is what makes
+    the cheap ~x+1 form correct."""
     st = make_int_t(6)
     neg = make_soft_negate(st)
     for a in range(-32, 32, 3):
         got = sim_call(neg, SimVal(a, st))
-        check(f"soft_negate({a})", got, -a)
+        check(f"soft_negate_s({a})", got, -a)
+    ut = make_uint_t(6)
+    neg_u = make_soft_negate(ut)
+    for a in range(0, 64, 3):
+        got = sim_call(neg_u, SimVal(a, ut))
+        check(f"soft_negate_u({a})", got, -a)
     print("test_soft_negate passed")
 
 
@@ -533,15 +551,71 @@ def test_soft_mult_default_is_carry_save():
     print("test_soft_mult_default_is_carry_save passed")
 
 
+_CMP_OPS = (
+    ("GT", lambda a, b: a > b),
+    ("GTE", lambda a, b: a >= b),
+    ("LT", lambda a, b: a < b),
+    ("LTE", lambda a, b: a <= b),
+)
+
+# Every comparator flavor soft_cmp.py exposes. Named as (label, maker) so a
+# failure says which flavor broke, not just which op.
+_CMP_FLAVORS = (
+    ("sub", make_soft_cmp_sub),
+    ("sub_swapped", make_soft_cmp_sub_swapped),
+    ("borrow", make_soft_cmp_borrow),
+    ("bitwise", make_soft_cmp_bitwise),
+    ("prefix", make_soft_cmp_prefix),
+    ("chunked", lambda op: make_soft_cmp_chunked(op, chunk_bits=3)),
+)
+
+
 def test_soft_cmp():
+    """All six comparator flavors x all four ops x unsigned and signed.
+
+    Only make_soft_cmp_sub used to be covered here, which left the five
+    bitwise/prefix/chunk/borrow/swapped flavors -- where most of the
+    library's one-bit inversion logic lives -- with no golden at all. Their
+    failure mode is a silently wrong boolean, not a build error, so the
+    golden is plain Python comparison.
+
+    chunk_bits=3 against 6-bit operands deliberately gives make_soft_cmp_chunked
+    two whole chunks (the leaf scan AND the cross-chunk select tree both get
+    exercised); chunk_bits=8 would collapse it to a single chunk and never
+    reach _make_prefix_tree.
+    """
     ut = make_uint_t(6)
-    for op, pyop in (("GT", lambda a, b: a > b), ("GTE", lambda a, b: a >= b),
-                      ("LT", lambda a, b: a < b), ("LTE", lambda a, b: a <= b)):
-        cmp_fn = make_soft_cmp_sub(op)(ut, ut)
-        for a, b in itertools.product(range(0, 64, 6), range(0, 64, 9)):
-            got = sim_call(cmp_fn, SimVal(a, ut), SimVal(b, ut))
-            check(f"soft_cmp_{op}({a},{b})", got, 1 if pyop(a, b) else 0)
+    st = make_int_t(6)
+    for flavor, maker in _CMP_FLAVORS:
+        for op, pyop in _CMP_OPS:
+            cmp_fn_u = maker(op)(ut, ut)
+            for a, b in itertools.product(range(0, 64, 6), range(0, 64, 9)):
+                got = sim_call(cmp_fn_u, SimVal(a, ut), SimVal(b, ut))
+                check(f"soft_cmp_{flavor}_u_{op}({a},{b})", got, 1 if pyop(a, b) else 0)
+            cmp_fn_s = maker(op)(st, st)
+            for a, b in itertools.product(range(-32, 32, 6), range(-32, 32, 9)):
+                got = sim_call(cmp_fn_s, SimVal(a, st), SimVal(b, st))
+                check(f"soft_cmp_{flavor}_s_{op}({a},{b})", got, 1 if pyop(a, b) else 0)
     print("test_soft_cmp passed")
+
+
+def test_soft_cmp_mixed_width():
+    """Mismatched operand widths and mixed signedness -- the paths where each
+    flavor has to resize to a common width before comparing (the resize bug
+    make_soft_cmp_bitwise's own docstring documents)."""
+    u6, u3 = make_uint_t(6), make_uint_t(3)
+    s6, u4 = make_int_t(6), make_uint_t(4)
+    for flavor, maker in _CMP_FLAVORS:
+        for op, pyop in _CMP_OPS:
+            fn = maker(op)(u6, u3)
+            for a, b in itertools.product(range(0, 64, 7), range(0, 8)):
+                got = sim_call(fn, SimVal(a, u6), SimVal(b, u3))
+                check(f"soft_cmp_{flavor}_u6u3_{op}({a},{b})", got, 1 if pyop(a, b) else 0)
+            fn = maker(op)(s6, u4)
+            for a, b in itertools.product(range(-32, 32, 7), range(0, 16, 3)):
+                got = sim_call(fn, SimVal(a, s6), SimVal(b, u4))
+                check(f"soft_cmp_{flavor}_s6u4_{op}({a},{b})", got, 1 if pyop(a, b) else 0)
+    print("test_soft_cmp_mixed_width passed")
 
 
 def test_soft_eq():
@@ -686,6 +760,7 @@ if __name__ == "__main__":
     test_soft_mult_carry_save_max_width_override()
     test_soft_mult_default_is_carry_save()
     test_soft_cmp()
+    test_soft_cmp_mixed_width()
     test_soft_eq()
     test_soft_shift()
     test_soft_rotate()

@@ -251,7 +251,7 @@ def _make_radix_restoring(bits_per_step, want_remainder):
                         ge: uint1_t = 0
                         if rem_ext >= d[m]:
                             ge = 1
-                        take: uint1_t = (1 - decided) & ge
+                        take: uint1_t = (decided ^ 1) & ge
                         if take:
                             rem_new = rem_ext - d[m]
                             qk = m

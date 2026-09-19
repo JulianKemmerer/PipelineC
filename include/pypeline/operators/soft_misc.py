@@ -6,8 +6,11 @@ def make_soft_negate(t):
     """-x == ~x + 1, matching SW_LIB.GET_UNARY_OP_NEGATE_INT_UINT_C_CODE's
     structure exactly (int NEGATE widens by 1 bit and becomes signed -- the
     same typing rule PY_TO_LOGIC._elab_unary already applies to the built-in
-    path, at PY_TO_LOGIC.py:4142-4144 -- so the caller must pass the same
-    output type here)."""
+    path -- so the caller must pass the same output type here).
+
+    The widen has to be its own statement, before the `~`. Written as
+    `result: out_t = ~x + 1` the inversion happens at x's own width and the
+    trailing annotation cannot recover the sign afterwards."""
     from pypeline import make_int_t
 
     width = len(t)
@@ -47,7 +50,7 @@ def make_soft_eq(negate=False):
             if negate:
                 result = diff_bits
             else:
-                result = 1 - diff_bits
+                result = diff_bits ^ 1
             return result
 
         return soft_eq

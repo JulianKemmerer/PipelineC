@@ -55,8 +55,8 @@ def build_terms(coeffs_q, symmetry, skip_zero_taps):
     Term j computes: (window[A[j]] + SGN[j] * window[B[j]]) * C[j]
       SGN =  1 -> symmetric pre-adder pair
       SGN = -1 -> anti-symmetric pre-subtractor pair
-      SGN =  0 -> single tap (B == A; the 0-multiplied operand is
-                  constant-folded away by synthesis)
+      SGN =  0 -> single tap (B == A; fir_core branches on SGN at
+                  elaboration time and emits no pre-op for this case)
 
     Folding halves the multiplier count exactly like the vendor cores'
     symmetric-coefficient optimization; `skip_zero_taps` drops zero-coefficient
@@ -217,7 +217,17 @@ def make_fir_core(
         def fir_core(window: window_t) -> out_t_actual:
             nodes: accum_val_t[LEVELS + 1][NPAD]
             for j in range(NT):
-                nodes[0][j] = (window[A[j]].val + SGN[j] * window[B[j]].val) * CQ[j]
+                # SGN[j] is a Python constant (+1/-1/0, see build_terms) and
+                # j a Python loop ordinal, so this resolves at elaboration
+                # time to a pre-adder, a pre-subtractor, or no pre-op at
+                # all. `SGN[j] * window[B[j]].val` would instead emit a real
+                # multiply by a constant, once per tap.
+                if SGN[j] == 1:
+                    nodes[0][j] = (window[A[j]].val + window[B[j]].val) * CQ[j]
+                elif SGN[j] == -1:
+                    nodes[0][j] = (window[A[j]].val - window[B[j]].val) * CQ[j]
+                else:
+                    nodes[0][j] = window[A[j]].val * CQ[j]
             for j in range(NT, NPAD):
                 nodes[0][j] = 0
             for lvl in range(LEVELS):
@@ -234,7 +244,17 @@ def make_fir_core(
         def fir_core(window: window_t) -> out_t_actual:
             nodes: accum_val_t[LEVELS + 1][NPAD]
             for j in range(NT):
-                nodes[0][j] = (window[A[j]].val + SGN[j] * window[B[j]].val) * CQ[j]
+                # SGN[j] is a Python constant (+1/-1/0, see build_terms) and
+                # j a Python loop ordinal, so this resolves at elaboration
+                # time to a pre-adder, a pre-subtractor, or no pre-op at
+                # all. `SGN[j] * window[B[j]].val` would instead emit a real
+                # multiply by a constant, once per tap.
+                if SGN[j] == 1:
+                    nodes[0][j] = (window[A[j]].val + window[B[j]].val) * CQ[j]
+                elif SGN[j] == -1:
+                    nodes[0][j] = (window[A[j]].val - window[B[j]].val) * CQ[j]
+                else:
+                    nodes[0][j] = window[A[j]].val * CQ[j]
             for j in range(NT, NPAD):
                 nodes[0][j] = 0
             for lvl in range(LEVELS):

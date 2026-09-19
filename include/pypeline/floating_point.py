@@ -116,23 +116,40 @@ def make_float_t(exponent_width, mantissa_width):
 
 
 def _make_negate(value_t, out_t):
-    # Negation via multiply-by-(-1), not `~a + 1`: a negative Python literal
-    # (-1) is inferred as a signed ctype, correctly triggering sign/width
-    # promotion to out_t regardless of simulation context. `~a_signed + 1`
-    # (the two's-complement identity) looks equivalent but silently computes
-    # the wrong value in pure simulation: the widening annotation on the
-    # intermediate is a no-op there, and `+ 1` (a positive literal) infers
-    # unsigned, so the result never actually promotes to a signed type.
+    # Two's complement negate: widen to out_t FIRST, then invert, then
+    # increment. Structurally identical to
+    # operators/soft_misc.py:make_soft_negate.
     #
-    # The literal is written inline (`* -1`), not hoisted into a named
-    # closure constant: factory-produced hw_func names are mangled from
-    # referenced closure variables' values, and a negative-valued one (e.g.
-    # NEG_ONE = -1) bakes a bare '-' into the generated VHDL entity name,
-    # which VHDL's identifier syntax rejects.
+    # The widen has to come first and has to be its own statement. Written as
+    # `result: out_t = ~a + 1`, the inversion happens in `a`'s own (possibly
+    # unsigned) width, and the trailing annotation cannot recover the sign
+    # afterwards -- it zero-extends an already-wrong value. That is true in
+    # hardware and in simulation alike (elaboration's `~` is UNARY_OP_NOT,
+    # which preserves width and signedness, exactly as SimVal.__invert__
+    # does), so it is a genuine bug, not a simulation artifact. This is what
+    # an earlier `a * -1` spelling was working around; that spelling was
+    # correct but elaborated to a real HDL multiply, which per-leaf delay
+    # characterization then timed as a genuine NxM multiplier -- it
+    # synthesizes each leaf standalone, with the -1 as an ordinary input
+    # port rather than a constant, and the auto-pipeliner plans cuts against
+    # that number.
+    #
+    # Correct for both width directions, because negation is exact modulo
+    # 2**len(out_t): widening (uint24_t -> int25_t: zero-extend, then negate)
+    # and narrowing (int26_t -> uint25_t: truncate, then negate) both yield
+    # (-a) mod 2**len(out_t). Pinned by float_ops_test.test_negate_primitive.
+    #
+    # Deliberately NOT written as unary `-a`: this very function gets
+    # registered as the NEGATE implementation for its own input type (see
+    # register_unary_operator calls in make_float_adder below), so `-a` in
+    # its body would resolve straight back into itself -- infinite
+    # recursion. The explicit form depends on no operator dispatch at all.
 
     @hw_func
     def negate(a: value_t) -> out_t:
-        result: out_t = a * -1
+        wide: out_t = a
+        not_wide: out_t = ~wide
+        result: out_t = not_wide + 1
         return result
 
     return negate
@@ -507,6 +524,7 @@ def make_float_to_int(float_t, int_t):
     sl_wide = _make_shifter_sl(wide_t, shift_amount_t)
     sr_wide = _make_shifter_sr(wide_t, shift_amount_t)
     negate_result = _make_negate(int_t, int_t)
+    negate_shift = _make_negate(shift_amount_t, shift_amount_t)
 
     @hw_func
     def float_to_int(x: float_t) -> int_t:
@@ -522,7 +540,7 @@ def make_float_to_int(float_t, int_t):
             if shift_amount >= 0:
                 magnitude = sl_wide(man_h_wide, shift_amount)
             else:
-                neg_shift_amount: shift_amount_t = shift_amount * -1
+                neg_shift_amount: shift_amount_t = negate_shift(shift_amount)
                 magnitude = sr_wide(man_h_wide, neg_shift_amount)
             unsigned_result: int_t = magnitude
             if x.sign:

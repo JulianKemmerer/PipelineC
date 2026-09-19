@@ -134,7 +134,60 @@ def test_unregistered_operator_raises_clear_error():
     print("test_unregistered_operator_raises_clear_error passed")
 
 
+def test_negate_primitive():
+    """_make_negate directly, at both width shapes make_float_adder actually
+    instantiates -- widening (man_hidden_t uint24 -> signed_man_t int25) and
+    narrowing (sum_man_t int26 -> abs_sum_t uint25).
+
+    Negation is exact modulo 2**len(out_t), so BOTH directions are well
+    defined and the golden is (-a) % 2**out_width reinterpreted in out_t.
+    This is pinned separately from the float adders above because the
+    adders only ever feed it values whose negation happens to be in range --
+    a negate that was wrong at the edges would still pass them."""
+    from floating_point import _make_negate
+    from pypeline import sim_call, SimVal, make_uint_t, make_int_t
+
+    def golden(a, out_width, out_signed):
+        v = (-a) % (1 << out_width)
+        if out_signed and v >= (1 << (out_width - 1)):
+            v -= 1 << out_width
+        return v
+
+    fails = []
+
+    # Widening: uint24_t -> int25_t (float_add's negate_man_h).
+    in_t, out_t = make_uint_t(24), make_int_t(25)
+    neg = _make_negate(in_t, out_t)
+    for a in (0, 1, 5, 100, 0x7FFFFF, 0x800000, 0xFFFFFE, 0xFFFFFF):
+        got = int(sim_call(neg, SimVal(a, in_t)))
+        want = golden(a, 25, True)
+        if got != want:
+            fails.append(f"negate_u24_i25({a}): got {got} want {want}")
+
+    # Narrowing: int26_t -> uint25_t (float_add's negate_sum_man).
+    in_t, out_t = make_int_t(26), make_uint_t(25)
+    neg = _make_negate(in_t, out_t)
+    for a in (0, 1, -1, 5, -5, 1000, -1000, (1 << 24), -(1 << 24), (1 << 25) - 1):
+        got = int(sim_call(neg, SimVal(a, in_t)))
+        want = golden(a, 25, False)
+        if got != want:
+            fails.append(f"negate_i26_u25({a}): got {got} want {want}")
+
+    # Same-width signed: int32_t -> int32_t (float_to_int's negate_result).
+    t = make_int_t(32)
+    neg = _make_negate(t, t)
+    for a in (0, 1, -1, 12345, -12345, (1 << 31) - 1, -(1 << 31)):
+        got = int(sim_call(neg, SimVal(a, t)))
+        want = golden(a, 32, True)
+        if got != want:
+            fails.append(f"negate_i32_i32({a}): got {got} want {want}")
+
+    assert not fails, "\n".join(fails)
+    print("test_negate_primitive passed")
+
+
 if __name__ == "__main__":
     test_bare_operators_native_sim()
     test_conversions()
     test_unregistered_operator_raises_clear_error()
+    test_negate_primitive()

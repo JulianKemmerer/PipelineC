@@ -55,6 +55,15 @@ for an overlapping matcher wins.
     out of scope for the PyRTL-only pass that produced this docstring. Not
     the default; kept for that follow-up measurement.
 
+One-bit inversion is written `x ^ 1`, never `1 - x` and never `~x`. `1 - x`
+emits a MINUS, which under register_soft_ops() resolves to a whole ripple-borrow
+soft_sub submodule -- inside comparators whose entire point is to avoid
+arithmetic, two per compared bit. `~x` would be one inverter (marginally cheaper
+than a constant-operand XOR once characterized) but is wrong under
+pypeline_sim's --mode raw, where typed-assignment casts are not applied and `x`
+is a plain Python int, so `~0` is -1 rather than 1. `x ^ 1` is one bitwise leaf
+and is correct in strict, loose and raw modes alike.
+
 Naming: every soft comparator's generated hardware entity name starts with
 `soft_cmp_<algorithm>` -- op family first, algorithm second -- e.g.
 `soft_cmp_sub_swapped_greater_True_...`. (An earlier version of this file
@@ -119,9 +128,9 @@ def make_soft_cmp_sub(op):
             result: uint1_t = 0
             if greater:
                 if strict:
-                    result = (1 - neg) & (1 - is_zero)
+                    result = (neg ^ 1) & (is_zero ^ 1)
                 else:
-                    result = 1 - neg
+                    result = neg ^ 1
             else:
                 if strict:
                     result = neg
@@ -165,7 +174,7 @@ def make_soft_cmp_sub_swapped(op):
                 else:
                     diff: sub_t = ae - be
                 neg: uint1_t = diff[len(sub_t) - 1]
-                result = neg if strict else (1 - neg)
+                result = neg if strict else (neg ^ 1)
             else:
                 # a<b: neg(a-b).  a<=b: !neg(b-a)
                 if strict:
@@ -173,7 +182,7 @@ def make_soft_cmp_sub_swapped(op):
                 else:
                     diff: sub_t = be - ae
                 neg: uint1_t = diff[len(sub_t) - 1]
-                result = neg if strict else (1 - neg)
+                result = neg if strict else (neg ^ 1)
             return result
 
         return soft_cmp_sub_swapped
@@ -220,11 +229,11 @@ def make_soft_cmp_borrow(op):
             for i in range(width - 1):
                 xi: uint1_t = x[i]
                 yi: uint1_t = y[i]
-                borrow = ((1 - xi) & yi) | ((1 - xi) & borrow) | (yi & borrow)
+                borrow = ((xi ^ 1) & yi) | ((xi ^ 1) & borrow) | (yi & borrow)
             x_msb: uint1_t = x[width - 1]
             y_msb: uint1_t = y[width - 1]
             neg: uint1_t = (x_msb ^ y_msb) ^ borrow
-            result: uint1_t = neg if strict else (1 - neg)
+            result: uint1_t = neg if strict else (neg ^ 1)
             return result
 
         return soft_cmp_borrow
@@ -267,11 +276,11 @@ def make_soft_cmp_bitwise(op):
                 bi: uint1_t = be[i]
                 if is_signed and i == n_bits - 1:
                     # Sign bit: 0 (non-negative) is greater than 1 (negative).
-                    this_gt: uint1_t = (1 - ai) & bi
-                    this_lt: uint1_t = ai & (1 - bi)
+                    this_gt: uint1_t = (ai ^ 1) & bi
+                    this_lt: uint1_t = ai & (bi ^ 1)
                 else:
-                    this_gt: uint1_t = ai & (1 - bi)
-                    this_lt: uint1_t = (1 - ai) & bi
+                    this_gt: uint1_t = ai & (bi ^ 1)
+                    this_lt: uint1_t = (ai ^ 1) & bi
                 if not decided:
                     if this_gt:
                         gt = 1
@@ -281,9 +290,9 @@ def make_soft_cmp_bitwise(op):
                         decided = 1
             result: uint1_t = 0
             if greater:
-                result = gt if strict else (gt | (1 - (gt | lt)))
+                result = gt if strict else (gt | ((gt | lt) ^ 1))
             else:
-                result = lt if strict else (lt | (1 - (gt | lt)))
+                result = lt if strict else (lt | ((gt | lt) ^ 1))
             return result
 
         return soft_cmp_bitwise
@@ -416,11 +425,11 @@ def make_soft_cmp_prefix(op):
                 ai: uint1_t = ae[i]
                 bi: uint1_t = be[i]
                 if is_signed and i == n_bits - 1:
-                    this_gt: uint1_t = (1 - ai) & bi
-                    this_lt: uint1_t = ai & (1 - bi)
+                    this_gt: uint1_t = (ai ^ 1) & bi
+                    this_lt: uint1_t = ai & (bi ^ 1)
                 else:
-                    this_gt: uint1_t = ai & (1 - bi)
-                    this_lt: uint1_t = (1 - ai) & bi
+                    this_gt: uint1_t = ai & (bi ^ 1)
+                    this_lt: uint1_t = (ai ^ 1) & bi
                 leaf: u2_t = 0
                 if this_gt:
                     leaf = 2
@@ -432,9 +441,9 @@ def make_soft_cmp_prefix(op):
             lt: uint1_t = root[0]
             result: uint1_t = 0
             if greater:
-                result = gt if strict else (gt | (1 - (gt | lt)))
+                result = gt if strict else (gt | ((gt | lt) ^ 1))
             else:
-                result = lt if strict else (lt | (1 - (gt | lt)))
+                result = lt if strict else (lt | ((gt | lt) ^ 1))
             return result
 
         return soft_cmp_prefix
@@ -462,11 +471,11 @@ def _make_chunk_leaf(chunk_bits, is_top_chunk, is_signed):
             ai: uint1_t = a[i]
             bi: uint1_t = b[i]
             if is_signed and is_top_chunk and i == chunk_bits - 1:
-                this_gt: uint1_t = (1 - ai) & bi
-                this_lt: uint1_t = ai & (1 - bi)
+                this_gt: uint1_t = (ai ^ 1) & bi
+                this_lt: uint1_t = ai & (bi ^ 1)
             else:
-                this_gt: uint1_t = ai & (1 - bi)
-                this_lt: uint1_t = (1 - ai) & bi
+                this_gt: uint1_t = ai & (bi ^ 1)
+                this_lt: uint1_t = (ai ^ 1) & bi
             if not decided:
                 if this_gt:
                     gt = 1
@@ -582,9 +591,9 @@ def make_soft_cmp_chunked(op, chunk_bits=8):
             lt: uint1_t = root[0]
             result: uint1_t = 0
             if greater:
-                result = gt if strict else (gt | (1 - (gt | lt)))
+                result = gt if strict else (gt | ((gt | lt) ^ 1))
             else:
-                result = lt if strict else (lt | (1 - (gt | lt)))
+                result = lt if strict else (lt | ((gt | lt) ^ 1))
             return result
 
         return soft_cmp_chunked

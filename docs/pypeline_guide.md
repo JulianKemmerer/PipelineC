@@ -1992,6 +1992,38 @@ same whether or not you're inside `sim_call`) — `@struct` types get `__add__` 
 registries, raising a clear `TypeError` if nothing is registered for the pair
 rather than falling through to `NamedTuple`'s default tuple concatenation/repeat.
 
+> **Exception:** this is true of *concrete-type* registrations.
+> A **matcher** registration (`any_integer_t` and friends) currently dispatches
+> during elaboration only; native simulation falls through to its built-in
+> arithmetic for those. The values agree for every default soft op except
+> unary negate on an unsigned operand. Tracked separately — do not rely on a
+> matcher-registered implementation being the thing that runs in sim.
+
+### Cheap and expensive ways to say the same thing
+
+Hardware-function bodies are elaborated, not executed, so an operator you write
+is an operator you get. Two things make an innocent-looking line expensive:
+
+- **A constant operand is still a port during leaf characterization.** Each
+  leaf is synthesized *standalone* to measure its delay (see
+  [`SYN_DESIGN.md`](SYN_DESIGN.md) §4), with constants as ordinary inputs. So
+  `x * -1` is timed as a real NxM multiplier even where the vendor tool would
+  later fold it, and the auto-pipeliner plans its cuts against that number.
+- **A soft-registered operator is a whole submodule.** Under
+  `register_soft_ops()`, a stray `1 - bit` is not an inverter — `MINUS` resolves
+  to a ripple-borrow `soft_sub` instance.
+
+| Instead of | Write | Why |
+|---|---|---|
+| `-x` as `x * -1` | `wide: out_t = x` / `not_wide: out_t = ~wide` / `result: out_t = not_wide + 1` | An inverter row plus an increment, not a multiplier. The widen must be its own statement *before* the `~`, or the inversion happens at `x`'s width and a trailing annotation cannot recover the sign. |
+| `1 - bit` (a `uint1_t`) | `bit ^ 1` | One bitwise leaf instead of a subtract. Prefer `^ 1` over `~bit`: it is also correct under `--mode raw`, where annotations are not applied and `~0` is `-1`. |
+| `k * x` for a Python-constant `k` | a Python `if` on `k`, or `operators/comb_opt.py`'s `make_constant_mult` | A branch on an elaboration-time constant costs nothing; only the taken arm is elaborated. |
+| `x / 2**n`, `x % 2**n` | `operators/comb_opt.py`'s `make_power_of_two` | A shift or a mask instead of a divider. |
+| widening by arithmetic | an annotated assignment (`wide: big_t = x`) | Pure wiring — zero-extend or sign-extend, no operator at all. |
+
+`include/pypeline/bits.py` (`make_clz`, `make_shifter_sl`, `make_shifter_sr`) and
+`include/pypeline/operators/comb_opt.py` hold the ready-made cheap primitives.
+
 ---
 
 ## Global Signals

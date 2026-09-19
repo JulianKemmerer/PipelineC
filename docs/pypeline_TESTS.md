@@ -499,6 +499,46 @@ end. Three tests cover it:
   - an identical re-render doesn't rewrite the file (`WRITE_TEXT_IF_CHANGED`),
     so a thread reading it never sees it truncated.
 
+## Operator-cost regression coverage
+
+The `include/pypeline/` libraries are audited for operations built out of
+primitives heavier than the operation needs — a two's-complement negate
+emitted as an HDL multiply, a one-bit inversion emitted as a subtract. These
+are correctness-neutral in principle and value-wrong in practice if the
+replacement is written even slightly wrong, so each one is pinned by a native-sim
+golden rather than by a build.
+
+- **`soft_ops_test.test_soft_cmp` / `test_soft_cmp_mixed_width` (native_sim):**
+  all six comparator flavors `soft_cmp.py` exposes (`sub`, `sub_swapped`,
+  `borrow`, `bitwise`, `prefix`, `chunked`) × `GT`/`GTE`/`LT`/`LTE` × signed and
+  unsigned, plus mismatched widths and mixed signedness, against Python
+  comparison as golden.
+
+  All six flavors are covered, not just the default one: most of the library's
+  one-bit inversion logic lives in the five non-`sub` flavors. Mutation-checked —
+  breaking one sign-bit term in the prefix flavor produces 76 failures, all in
+  `soft_cmp_prefix_s_*`. `make_soft_cmp_chunked` is
+  instantiated with `chunk_bits=3` against 6-bit operands on purpose, so both
+  the leaf scan and the cross-chunk select tree run; `chunk_bits=8` would
+  collapse it to one chunk and never reach `_make_prefix_tree`.
+- **`soft_ops_test.test_soft_negate` (native_sim):** signed *and* unsigned
+  operands. The unsigned case is the one that matters — negating an unsigned
+  value is where a same-width two's-complement negate silently returns the
+  unsigned wrap instead of a negative number.
+- **`float_ops_test.test_negate_primitive` (native_sim):** `_make_negate` at all
+  three width shapes the float library instantiates — widening
+  (`uint24_t → int25_t`), narrowing (`int26_t → uint25_t`) and same-width signed
+  (`int32_t → int32_t`) — against `(-a) % 2**out_width`. Pinned separately from
+  the float adders because those only ever feed it values whose negation is in
+  range; a negate wrong at the edges would still pass them.
+- **`fixed_point_test.test_unary_negate` (native_sim):** sweeps the whole
+  representable range, not two spot values, plus the documented
+  most-negative-wraps-to-itself case.
+- **`fir_test` (native_sim):** `test_symmetry_fold_bit_identical`,
+  `test_antisymmetric_fold` and `test_halfband_zero_tap_skip` between them cover
+  all three `SGN[j]` values, so they pin the elaboration-time branch that
+  replaced `SGN[j] * window[B[j]].val`.
+
 ## `native_vs_vhdl_sim` probe rules
 
 A design registered in `native_vs_vhdl_sim_tests.py` must:
