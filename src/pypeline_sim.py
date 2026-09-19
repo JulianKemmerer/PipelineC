@@ -368,7 +368,13 @@ def _discover_wire_names(module) -> list:
         seen_ids.add(id(mod))
         for name, ann in getattr(mod, "__annotations__", {}).items():
             if isinstance(
-                ann, (pypeline._WireType, pypeline._InputType, pypeline._OutputType)
+                ann,
+                (
+                    pypeline._WireType,
+                    pypeline._InputType,
+                    pypeline._OutputType,
+                    pypeline._OpenDrainType,
+                ),
             ):
                 qualified = f"{mod.__name__}.{name}"
                 if qualified not in result_keys:

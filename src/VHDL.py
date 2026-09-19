@@ -486,6 +486,9 @@ port(
         if var_name in parser_state.input_wires:
             vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(var_info.type_name, parser_state)
             global_io_text += var_name + " : in " + vhdl_type + ";\n"
+        if var_name in parser_state.open_drain_wires:
+            vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(var_info.type_name, parser_state)
+            global_io_text += var_name + " : inout " + vhdl_type + ";\n"
     if global_io_text != "":
         text += (
             """
@@ -1445,6 +1448,16 @@ begin
                     f"Looks like variable {var_name} is never written? Maybe missing a #pragma MAIN somewhere?"
                 )
 
+        # OpenDrain[uint1_t]: the writer value is drive intent, not the pad
+        # value. Zero actively pulls low; one releases the resolved pin to Z.
+        if var_name in parser_state.open_drain_wires:
+            if multi_writer_regions is not None:
+                raise Exception(f"OpenDrain global {var_name} must have exactly one writer")
+            text += (
+                f"{var_name} <= to_unsigned(0, 1) when {write_text} = to_unsigned(0, 1) "
+                f"else (others => 'Z');\n"
+            )
+
         # One reader of the wire might be an output port
         if var_name in parser_state.output_wires:
             if multi_writer_regions is not None:
@@ -1495,7 +1508,12 @@ begin
                     else:
                         text += f"{read_text}{suffix} <= {C_TYPE_STR_TO_VHDL_NULL_STR(region_type, parser_state)};\n"
             else:
-                text += f"{read_text} <= {write_text};\n"
+                read_source = (
+                    var_name
+                    if var_name in parser_state.open_drain_wires
+                    else write_text
+                )
+                text += f"{read_text} <= {read_source};\n"
 
         # Feed writer functions that also read back their own wire
         # (readback_global_wires): their <var>_PYPELINE_READBACK global_to_module input
@@ -1518,7 +1536,10 @@ begin
                     else:
                         text += f"{rb_text}{suffix} <= {C_TYPE_STR_TO_VHDL_NULL_STR(region_type, parser_state)};\n"
             else:
-                text += f"{rb_text} <= {C_TYPE_STR_TO_VHDL_NULL_STR(var_info.type_name, parser_state)};\n"
+                if var_name in parser_state.open_drain_wires:
+                    text += f"{rb_text} <= {var_name};\n"
+                else:
+                    text += f"{rb_text} <= {C_TYPE_STR_TO_VHDL_NULL_STR(var_info.type_name, parser_state)};\n"
 
         text += "\n"
 
@@ -3687,6 +3708,11 @@ port map
 
 
 def GLOBAL_VAR_IS_SHARED(var_name, parser_state):
+    # OpenDrain is inherently shared even when a single hardware function is its
+    # only Pypeline user: that function drives an intent value outward while also
+    # sampling the independently resolved physical pad value back inward.
+    if var_name in parser_state.open_drain_wires:
+        return True
     if var_name in parser_state.output_wires:
         return True
     if var_name in parser_state.input_wires:

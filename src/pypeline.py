@@ -4005,6 +4005,38 @@ class Output(metaclass=_OutputMeta):
     pass
 
 
+class _OpenDrainType:
+    """Produced by OpenDrain[T]. Marks a top-level open-drain bidirectional pin."""
+
+    def __init__(self, inner_ctype):
+        self.inner_ctype = inner_ctype
+
+    def __str__(self):
+        return f"OpenDrain[{self.inner_ctype}]"
+
+    def __repr__(self):
+        return str(self)
+
+
+class _OpenDrainMeta(type):
+    def __getitem__(cls, inner_type):
+        return _OpenDrainType(inner_type)
+
+
+class OpenDrain(metaclass=_OpenDrainMeta):
+    """A one-bit top-level open-drain pin.
+
+    The internal value is the drive intent: writing 0 pulls the physical pin low;
+    writing 1 releases it to high impedance. Reads always sample the resolved
+    physical pad value, including an external device and pull-up. Exactly one
+    hardware function may write the pin; any number may read it.
+
+    Currently only ``OpenDrain[uint1_t]`` is supported.
+    """
+
+    pass
+
+
 # make_clock(mhz) — tag a global Wire/Input as a clock (PipelineC's CLK_MHZ)
 # ──────────────────────────────────────────────────────────────────────────
 
@@ -6769,12 +6801,12 @@ def _build_reg_sim_func(fn):
     global_wire_names = {
         name: f"{_own_mod_name}.{name}"
         for name, ann in fn.__globals__.get("__annotations__", {}).items()
-        if isinstance(ann, (_WireType, _InputType, _OutputType))
+        if isinstance(ann, (_WireType, _InputType, _OutputType, _OpenDrainType))
     }
     global_wire_ctypes = {
         name: _wire_ann_inner_ctype(ann)
         for name, ann in fn.__globals__.get("__annotations__", {}).items()
-        if isinstance(ann, (_WireType, _InputType, _OutputType))
+        if isinstance(ann, (_WireType, _InputType, _OutputType, _OpenDrainType))
     }
     # Also build a map for cross-module wire access (module_alias.wire_name).
     # Scans all module objects in fn.__globals__ for wire annotations.
@@ -6784,7 +6816,7 @@ def _build_reg_sim_func(fn):
         if not isinstance(_obj, _types.ModuleType):
             continue
         for _wname, _ann in getattr(_obj, "__annotations__", {}).items():
-            if isinstance(_ann, (_WireType, _InputType, _OutputType)):
+            if isinstance(_ann, (_WireType, _InputType, _OutputType, _OpenDrainType)):
                 module_wire_attrs[(_alias, _wname)] = f"{_obj.__name__}.{_wname}"
                 module_wire_ctypes[(_alias, _wname)] = _wire_ann_inner_ctype(_ann)
     # Register every discovered wire's ctype globally (keyed by qualified sim name)

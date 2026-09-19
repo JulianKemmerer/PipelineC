@@ -19,6 +19,7 @@ from pypeline import (
     _WireType,
     _InputType,
     _OutputType,
+    _OpenDrainType,
     _ClockMarker,
     BIT_MANIP_FUNC_NAMES as _BIT_MANIP_FUNC_NAMES,
     _INT_CTYPE_RE,
@@ -3400,9 +3401,9 @@ class FuncElaborator:
             if ann_val.multi_cycle_role is not None:
                 self._tag_multi_cycle_reg(var_name, ann_val.multi_cycle_role)
             return
-        if isinstance(ann_val, (_WireType, _InputType, _OutputType)):
+        if isinstance(ann_val, (_WireType, _InputType, _OutputType, _OpenDrainType)):
             raise ElaborationError(
-                f"Wire/Input/Output[T] can only be used for global declarations, "
+                f"Wire/Input/Output/OpenDrain[T] can only be used for global declarations, "
                 f"not inside function '{self.func_name}'"
             )
         if isinstance(ann_val, _FeedbackType):
@@ -6624,6 +6625,8 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
             kind = "Input"
         elif isinstance(ann_val, _OutputType):
             kind = "Output"
+        elif isinstance(ann_val, _OpenDrainType):
+            kind = "OpenDrain"
         else:
             continue
         clock_marker = None
@@ -6631,12 +6634,11 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
             maybe_marker = module_globals.get(node.target.id)
             if isinstance(maybe_marker, _ClockMarker):
                 clock_marker = maybe_marker
-                if kind == "Output":
+                if kind in ("Output", "OpenDrain"):
                     raise ElaborationError(
-                        f"Global Output '{node.target.id}' cannot be tagged with "
-                        f"make_clock() -- a clock net must have exactly one driver, "
-                        f"which an Output (a top-level design output, driven from "
-                        f"inside the design) does not model. Use Wire or Input."
+                        f"Global {kind} '{node.target.id}' cannot be tagged with "
+                        f"make_clock() -- a clock net must have exactly one driver. "
+                        f"Use Wire or Input."
                     )
             else:
                 raise ElaborationError(
@@ -6679,12 +6681,12 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
         bare_name = node.target.id
         safe_name = _sanitize_vhdl_name(bare_name)
         if safe_name != bare_name:
-            if kind in ("Input", "Output"):
+            if kind in ("Input", "Output", "OpenDrain"):
                 raise ElaborationError(
                     f"Global {kind} name '{bare_name}' is not a valid VHDL identifier. "
                     f"Rename to '{safe_name}' — VHDL identifiers may not start or end "
                     f"with underscores, contain consecutive underscores, or be reserved "
-                    f"words. Input/Output names must match constraint files exactly."
+                    f"words. Chip-boundary names must match constraint files exactly."
                 )
             else:
                 print(
@@ -6695,7 +6697,12 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
                 bare_name = safe_name
         # I/O ports are boundary signals — globally unique, no module prefix.
         # Wire[T] gets the namespace-isolating prefix to avoid collisions.
-        if kind in ("Input", "Output"):
+        type_name = _inner_ctype_to_str(ann_val.inner_ctype, parser_state)
+        if kind == "OpenDrain" and type_name != "uint1_t":
+            raise ElaborationError(
+                f"Global OpenDrain '{bare_name}' must be uint1_t, got {type_name}"
+            )
+        if kind in ("Input", "Output", "OpenDrain"):
             reg_name = bare_name
             if reg_name in parser_state.global_vars:
                 raise ElaborationError(
@@ -6706,7 +6713,7 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
             reg_name = f"{name_prefix}_{bare_name}" if name_prefix else bare_name
         var_info = C_TO_LOGIC.VariableInfo()
         var_info.name = reg_name
-        var_info.type_name = _inner_ctype_to_str(ann_val.inner_ctype, parser_state)
+        var_info.type_name = type_name
         parser_state.global_vars[reg_name] = var_info
         parser_state.pypeline_global_wire_names[reg_name] = (
             f"{module_globals['__name__']}.{node.target.id}"
@@ -6721,6 +6728,8 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
             parser_state.input_wires.add(reg_name)
         elif kind == "Output":
             parser_state.output_wires.add(reg_name)
+        elif kind == "OpenDrain":
+            parser_state.open_drain_wires.add(reg_name)
         if clock_marker is not None:
             if var_info.type_name != "uint1_t":
                 raise ElaborationError(
@@ -7713,12 +7722,25 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
                     f"got: {writers}"
                 )
         else:
-            # Wire[T] and Output[T]: at least one writer; each writer exactly one
-            # instance. Multiple writers are allowed iff each one's driven struct-
+            # Wire[T], Output[T], and OpenDrain[T]: at least one writer; each writer
+            # exactly one instance. OpenDrain is deliberately narrower and permits
+            # exactly one writer; ordinary compound wires may have disjoint writers.
+            if wire_name in parser_state.open_drain_wires and len(writers) != 1:
+                raise ElaborationError(
+                    f"Global OpenDrain '{wire_name}' must be written by exactly 1 "
+                    f"function, got {len(writers)}: {writers}"
+                )
+            # Multiple writers are allowed iff each one's driven struct-
             # field leaf paths (global_wire_driven_paths) are pairwise non-overlapping
             # (see _check_no_overlapping_driven_paths) -- e.g. main_a driving only
             # `.x` and main_b driving only `.y` of the same compound Wire[T].
-            kind = "Output" if wire_name in parser_state.output_wires else "Wire"
+            kind = (
+                "Output"
+                if wire_name in parser_state.output_wires
+                else "OpenDrain"
+                if wire_name in parser_state.open_drain_wires
+                else "Wire"
+            )
             if len(writers) == 0:
                 raise ElaborationError(
                     f"Global {kind} '{wire_name}' must be written by at least 1 "
@@ -7766,6 +7788,7 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
         set(parser_state.main_mhz)
         | set(parser_state.input_wires)
         | set(parser_state.output_wires)
+        | set(parser_state.open_drain_wires)
     )
     for main_name in parser_state.main_mhz:
         main_logic = parser_state.FuncLogicLookupTable[main_name]

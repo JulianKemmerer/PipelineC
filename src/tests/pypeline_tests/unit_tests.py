@@ -273,6 +273,15 @@ def get_tests() -> list:
             requires=["make", "ghdl"],
         )
     )
+    # Open-drain chip-boundary semantics: single writer, resolved pad readback,
+    # and VHDL inout/tri-state generation.
+    tests.append(
+        Test(
+            name="open_drain_test",
+            category="unit",
+            cmd=[INST_DIR / "open_drain_test.py"],
+        )
+    )
     return tests
 
 

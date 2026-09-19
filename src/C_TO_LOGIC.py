@@ -10311,6 +10311,7 @@ class ParserState:
         self.async_wires = set()
         self.input_wires = set()
         self.output_wires = set()
+        self.open_drain_wires = set()
         self.clk_mhz = {}
         self.clk_group = {}  # dict[user_clk_wire]=clk_group_str
 
@@ -10379,6 +10380,7 @@ class ParserState:
         rv.async_wires = set(self.async_wires)
         rv.input_wires = set(self.input_wires)
         rv.output_wires = set(self.output_wires)
+        rv.open_drain_wires = set(self.open_drain_wires)
         rv.clk_mhz = dict(self.clk_mhz)
         rv.clk_group = dict(self.clk_group)
 
