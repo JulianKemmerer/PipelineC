@@ -7397,6 +7397,7 @@ def PARSE_FILE(py_file):
     pypeline._main_registry.clear()  # reset in case of multiple PARSE_FILE calls
     pypeline._main_mhz_registry.clear()
     pypeline._part_registry = None
+    pypeline._syn_tool_registry = None
     pypeline.CLEAR_AUTO_PIPELINE_LATENCY_READ_FLAG()
 
     # Make imports relative to the design file's directory work (e.g. 'import file_a')
@@ -7465,6 +7466,8 @@ def PARSE_FILE(py_file):
     # ── Apply pypeline pragmas (PART, MAIN_MHZ) from the live module ──
     if pypeline._part_registry is not None:
         parser_state.part = pypeline._part_registry
+    if pypeline._syn_tool_registry is not None:
+        parser_state.syn_tool_name = pypeline._syn_tool_registry
 
     # ── Step 2: discover structs and enums from live module namespace ──
     _discover_structs_from_module(module, parser_state)

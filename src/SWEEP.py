@@ -3030,7 +3030,10 @@ def BUILD_FINAL_MAIN_RECORD(goal_mhz, outcome, failure, depth):
     elif goal_mhz is None:
         met = None
         met_basis = "no_goal"
-    elif source is None or source == "no_sweep":
+    elif source is None or source in ("no_sweep", "comb"):
+        # "comb" builds the design as written with no added pipelining, so
+        # like --no_sweep they never verified the goal -- claiming "met"
+        # because nothing failed would read as a passing timing result.
         met = None
         met_basis = "unverified"
     elif achieved_mhz is not None:
@@ -4868,10 +4871,7 @@ def RUN_AS_WRITTEN_CHECKS(goal_mains, parser_state):
     if len(goal_mains) == 0:
         return results
     zero_clk_tpl = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
-    num_processes = int(
-        open(C_TO_LOGIC.EXE_ABS_DIR() + "/../config/num_processes.cfg", "r").readline()
-    )
-    my_thread_pool = ThreadPool(processes=num_processes)
+    my_thread_pool = ThreadPool(processes=SYN.GET_NUM_PROCESSES())
     main_inst_to_async_result = {}
     for main_inst, target_mhz in goal_mains:
         main_logic = parser_state.LogicInstLookupTable[main_inst]
@@ -6710,6 +6710,57 @@ def DO_THROUGHPUT_SWEEP(
         SYN.PRINT_MEASURED_AREA_IF_AVAILABLE(
             timing_report,
             SYN.ESTIMATE_DESIGN_AREA(parser_state, multimain_timing_params)["total_area"],
+        )
+
+        # sweep_history.json gets a record for every top level synthesis run,
+        # and a --comb build is one: the design as written, no added
+        # pipelining. Without this the unpipelined point -- the one every
+        # sweep starts from, and the only measurement of what the logic costs
+        # before any cuts -- was reported to the console and then thrown away.
+        NEXT_SWEEP_HISTORY_RUN()
+        for main_func in parser_state.main_mhz:
+            main_clk = "clk_" + VHDL.CLK_EXT_STR(main_func, parser_state)
+            path_report = timing_report.path_reports.get(main_clk)
+            if path_report is None and len(timing_report.path_reports) == 1:
+                # Single clock: whatever the tool called it is this main's.
+                (path_report,) = timing_report.path_reports.values()
+            curr_mhz = (
+                1000.0 / path_report.path_delay_ns
+                if path_report is not None and path_report.path_delay_ns
+                else None
+            )
+            goal_mhz = SYN.GET_TARGET_MHZ(
+                main_func, parser_state, allow_no_syn_tool=True
+            )
+            main_latency = multimain_timing_params.TimingParamsLookupTable[
+                main_func
+            ].GET_TOTAL_LATENCY(
+                parser_state, multimain_timing_params.TimingParamsLookupTable
+            )
+            record = RECORD_SWEEP_ITERATION(
+                main_func,
+                goal_mhz,
+                {
+                    "iter": 0,
+                    "main": main_func,
+                    "goal_mhz": goal_mhz,
+                    "achieved_mhz": None if curr_mhz is None else round(curr_mhz, 3),
+                    "met": (
+                        None
+                        if (curr_mhz is None or goal_mhz is None)
+                        else curr_mhz >= goal_mhz
+                    ),
+                    "cuts": 0,
+                    "main_latency": main_latency,
+                    # Stage count, not added clocks: +1 like every other
+                    # pipeline_stages in this file (see "deepest + 1").
+                    "pipeline_stages": main_latency + 1,
+                    "action": "comb",
+                },
+            )
+            RECORD_SWEEP_OUTCOME(main_func, goal_mhz, "comb", record=record)
+        WRITE_SWEEP_HISTORY(
+            parser_state, multimain_timing_params, build_complete=True
         )
 
         return multimain_timing_params

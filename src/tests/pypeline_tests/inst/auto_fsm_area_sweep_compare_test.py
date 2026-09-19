@@ -11,7 +11,7 @@ utilization output would only work on some of them.
 That makes this test the place where the estimate meets reality. Mapped cell
 counts are used HERE, in the test suite, and nowhere in the search itself.
 
-Both builds run under --syn_tool sky130 (fast, and its STA report records the
+Both builds run under --syn_tool device_models (fast, and its STA report records the
 mapped cell count) with --auto_fsm_abstract_area: under DEVICE_MODELS the
 search would otherwise rank candidates by real cached sky130 area, and it is
 the abstract per-bit model this test exists to check
@@ -56,7 +56,7 @@ def fail(msg):
 def run_build(out_dir, extra):
     cmd = [
         sys.executable, PYPELINEC, DESIGN,
-        "--syn_tool", "sky130", "--auto_fsm_abstract_area",
+        "--syn_tool", "device_models", "--auto_fsm_abstract_area",
         "--out_dir", out_dir,
     ] + extra
     print("Running:", " ".join(cmd), flush=True)
@@ -72,7 +72,7 @@ def run_build(out_dir, extra):
 def top_cell_count(out_dir):
     """Mapped sky130 standard-cell count of the whole-design top entity, from
     the "N cells:" line of the DEVICE_MODELS STA report the build already
-    wrote (this wrapper builds with --syn_tool sky130). The mapped netlist is
+    wrote (this wrapper builds with --syn_tool device_models). The mapped netlist is
     flattened, so it has no $scopeinfo hierarchy-bookkeeping cells to
     subtract."""
     top_dir = os.path.join(out_dir, "top")

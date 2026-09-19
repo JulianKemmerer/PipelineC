@@ -8,7 +8,7 @@ the clock; the driver must then blame the FSM, shrink its per-state budget,
 reschedule into more states, and converge -- the AUTO_FSM analogue of the
 throughput sweep adding pipeline stages.
 
-Sized for sky130 (the test builds with --syn_tool sky130). Each add grows the
+Sized for sky130 (the test builds with --syn_tool device_models). Each add grows the
 previous result (t + 2t) instead of taking a new input, so the FSM captures
 only 32 input bits. With wide per-add inputs (auto_fsm_tighten_test.py, 142
 captured bits) the input-capture enable's fanout is the critical path under

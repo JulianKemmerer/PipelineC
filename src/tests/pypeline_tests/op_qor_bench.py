@@ -440,7 +440,7 @@ def run_single_case(case):
         # PART("sky130") vs PART("sky130_fd_sc_hvl") spelling split (both
         # share one cache/delay tree either way, but only the flag is
         # unambiguous about which was actually used).
-        cmd += ["--syn_tool", "sky130"]
+        cmd += ["--syn_tool", "device_models"]
     # No timeout: real (or pyrtl) synthesis runs legitimately take a while.
     proc = subprocess.run(cmd, env=env, capture_output=True, text=True)
 
@@ -614,7 +614,7 @@ if __name__ == "__main__":
     parser.add_argument("--tool", choices=["pyrtl", "vivado", "sky130"], default="pyrtl",
                          help="pyrtl = fast software timing estimate (no PART); vivado = real synthesis "
                               "on xc7a200tffg1156-2; sky130 = real yosys+ghdl synthesis and liberty STA "
-                              "via --syn_tool sky130 (DEVICE_MODELS)")
+                              "via --syn_tool device_models (DEVICE_MODELS)")
     parser.add_argument("--ops", default=None,
                          help="Comma-separated op filter, e.g. PLUS,MINUS (default: all)")
     parser.add_argument("--widths", default=None,

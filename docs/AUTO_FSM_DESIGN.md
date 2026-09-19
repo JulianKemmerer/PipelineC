@@ -1017,7 +1017,7 @@ the things sharing costs, not one.
 `auto_fsm_area_sweep_compare_test.py` is where that correspondence is held to
 account.
 
-**Under `--syn_tool sky130`, this changes for three of the five terms.** The
+**Under `--syn_tool device_models`, this changes for three of the five terms.** The
 portability argument above is about *timing*, not area specifically — it is
 why the abstract model has to exist for every tool, not why it has to be the
 only source when a better one is available. Real per-leaf µm² exists for
@@ -1055,7 +1055,7 @@ A/B comparison against real data.
 
 **Gating.** Every function below only returns real numbers when
 `SYN.SYN_TOOL is DEVICE_MODELS` (i.e. `PART("sky130...")` or
-`--syn_tool sky130`); for every other tool the cache is empty by
+`--syn_tool device_models`); for every other tool the cache is empty by
 construction (`SYN.GET_AREA_CACHE_DIR` returns `None`) and every AUTO_FSM
 build outside sky130 is unaffected — same schedules, same numbers, as
 before this section existed.
@@ -1286,7 +1286,7 @@ combinational (--comb, no sharing):    12117 cells
 resource-shared FSM              :      3392 cells      3.57x smaller
 ```
 
-Under `--syn_tool sky130`, the real-area search (§3.7, §3.8) currently reaches
+Under `--syn_tool device_models`, the real-area search (§3.7, §3.8) currently reaches
 24,095.7 µm² total (14,278.9 combinational + 9,816.8 sequential, 201 real FF
 cells) on a divider design, at 70.40 MHz — **10.62× smaller** than the lowest
 committed AUTO_PIPELINE/latchup.app reference for the same design (255,886.4
@@ -1331,7 +1331,7 @@ at least 3"*.
 | `auto_fsm_resources_compare_test.py` | synth | the FSM is actually smaller than the logic it replaces |
 | `auto_fsm_area_sweep_compare_test.py` | synth | the area search does not make designs bigger, and its cost model agrees with yosys about which of two schedules is smaller — the calibration guard |
 | `auto_fsm_min_area_verify_test.py` | synth | the search actually MOVES on a design built to reward moving, the move is smaller in real yosys cells, and no alternative point of the search space (built via `--auto_fsm_open` / `--auto_fsm_unshare`) is smaller still |
-| `auto_fsm_real_area_compare_test.py` | build_report | same question under `--syn_tool sky130`, judged by real `Measured area:` rather than yosys cells: real-µm²-ranked vs `--auto_fsm_abstract_area` vs `--auto_fsm_no_area_sweep`, all three built; pins the 25k µm² v7 structural ceiling and beats the lowest committed AUTO_PIPELINE/latchup.app divider area; plus AUTO_FSM's own allocated-storage bit count against the build's real sequential cell count (the register-fidelity question §3.8 raises explicitly) |
+| `auto_fsm_real_area_compare_test.py` | build_report | same question under `--syn_tool device_models`, judged by real `Measured area:` rather than yosys cells: real-µm²-ranked vs `--auto_fsm_abstract_area` vs `--auto_fsm_no_area_sweep`, all three built; pins the 25k µm² v7 structural ceiling and beats the lowest committed AUTO_PIPELINE/latchup.app divider area; plus AUTO_FSM's own allocated-storage bit count against the build's real sequential cell count (the register-fidelity question §3.8 raises explicitly) |
 | `auto_fsm_max_latency_test.py` | synth | a meetable `max_latency` is met by unsharing; an unmeetable one fails the build naming the latency actually needed |
 | `auto_fsm_timing_iter_test.py` | build_report (sky130) | a critical path inside an FSM is found and fixed by rescheduling (`auto_fsm_timing_iter_design.py`: narrow inputs, so the states, not the input-capture fanout, set the critical path) |
 | `auto_fsm_tighten_stall_test.py` | build_report (sky130) | the other half: when rescheduling cannot move the critical path (sky130, 110 MHz, a path the state count cannot change), the driver stops after the first tightened build with no fmax gain, prints why, never produces a 0-op schedule, and exits nonzero within a timeout |
@@ -1369,7 +1369,7 @@ and at `fsm.latency + 1` (scheduled).
   candidates in abstract units calibrated against yosys cell counts (§3.7),
   which is not the same thing as LUTs on the part you are targeting — on an
   FPGA, flip-flops come paired with the LUTs in front of them and are far
-  cheaper than a cell count suggests. Under `--syn_tool sky130` (§3.8) the
+  cheaper than a cell count suggests. Under `--syn_tool device_models` (§3.8) the
   unit, register and multiplexer terms use real cached µm² instead, which
   fixes the FPGA-calibrated flip-flop term's biggest error (2.5x too cheap)
   but does not fix two gaps a per-leaf sum cannot see by construction: (1)
@@ -1543,7 +1543,7 @@ still a live regression reference, or the reason a default is what it is.
 
 ### Tighten loop termination
 
-Found under `--syn_tool sky130` with `auto_fsm_tighten_test.py` at 110 and
+Found under `--syn_tool device_models` with `auto_fsm_tighten_test.py` at 110 and
 150 MHz (`--auto_fsm_budget_scale 1.5`). There, the tighten loop ran for
 20–30+ minutes without ending. Three independent defects combined:
 

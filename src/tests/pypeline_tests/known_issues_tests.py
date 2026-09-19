@@ -28,9 +28,34 @@ from common import (
     EXAMPLES_PYPELINE_DIR,
     INST_DIR,
     PYPELINEC,
+    SYN_TOOL_ARGS,
     Test,
     main,
 )
+
+# Backends the per-SYN_TOOL sweep matrix cannot run on this machine. Each is a
+# real, reproducible failure of that tool -- none of them is a PipelineC bug,
+# which is why the fix is not in this repo:
+#
+#   gowin     gw_sh exits "License verification failed  License hostid not
+#             match." The IDE is installed; its license is not valid for this
+#             host.
+#   diamond   "Error: License checkout failed. FlexNet Licensing error:-10,32"
+#             from diamondc. Same situation.
+#   cc_tools  yosys synthesis succeeds and writes the netlist, then CologneChip
+#             p_r crashes inside itself: "Exception Handler called. ExitCode:
+#             112, Exception Class: ERangeError". The design presents 357
+#             inputs / 480 outputs to p_r, far past a CCGM1A1's real I/O count,
+#             and the tool range-errors instead of reporting that.
+#
+# These stay registered so the matrix documents every backend, and so a fixed
+# license or a working part/tool combination shows up as an XPASS telling
+# someone to move the entry back into synth_<tool>.
+SWEEP_FLOAT32_BLOCKED = {
+    "gowin": "gw_sh license hostid mismatch",
+    "diamond": "diamondc FlexNet license checkout failed (-10,32)",
+    "cc_tools": "CologneChip p_r crashes (ERangeError, exit 112)",
+}
 
 
 def get_tests() -> list:
@@ -82,6 +107,23 @@ def get_tests() -> list:
             expect_fail=True,
         )
     )
+    # Per-SYN_TOOL sweep matrix entries whose backend cannot run here. Same
+    # design and goal as the synth_<tool> entries in synth_tests.py; only the
+    # category and expect_fail differ. See SWEEP_FLOAT32_BLOCKED above.
+    from synth_tests import SWEEP_FLOAT32_MHZ
+
+    for tool, why in SWEEP_FLOAT32_BLOCKED.items():
+        tests.append(
+            Test(
+                name=f"sweep_float32_{tool}_known_issue",
+                category="known_issues",
+                cmd=[PYPELINEC, INST_DIR / "sweep_float32_test.py"]
+                + SYN_TOOL_ARGS[tool],
+                needs_out_dir=True,
+                expect_fail=True,
+                env={"SWEEP_FLOAT32_MHZ": SWEEP_FLOAT32_MHZ[tool]},
+            )
+        )
     return tests
 
 

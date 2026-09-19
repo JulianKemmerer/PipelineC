@@ -9,6 +9,16 @@ import VHDL
 TECH_IN_NM = 20  # Why does decreasing nm get lower fmax?
 FF_OVERHEAD = 0  # Set to zero since not using pyrtl max_length()
 
+# Part used when this tool is selected without a part (--syn_tool/SYN_TOOL()
+# with no --part/PART()). See SYN.RESOLVE_PART_AND_TOOL.
+# Deliberately None: PyRTL models a generic tech node, not an FPGA part, and
+# GET_PATH_DELAY_CACHE_DIR appends a non-None part as its own directory (it
+# only skips that for DEVICE_MODELS). Giving PyRTL a part string here would
+# move every lookup into cache/delay/pyrtl_.../<part>/syn and orphan the
+# committed cache.
+DEFAULT_PART = None
+
+
 # Printed by the generated PyRTL script when the synthesized netlist has a zero
 # length critical path: nothing is left to time. That is always an error (never
 # a skipped/passing measurement) - an Fmax of a circuit with no paths means the

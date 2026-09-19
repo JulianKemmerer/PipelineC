@@ -559,7 +559,7 @@ and correct `start_latency` guesses cost no second elaboration.
 Tests live in `src/tests/pypeline_tests/inst/`; see
 [`pypeline_TESTS.md`](pypeline_TESTS.md#auto_pipeline-latency-constraint-coverage)
 for the full coverage list. The ones that exercise this module end to end
-(all under `--syn_tool sky130` unless marked):
+(all under `--syn_tool device_models` unless marked):
 
 | test | proves |
 |---|---|
@@ -567,6 +567,7 @@ for the full coverage list. The ones that exercise this module end to end
 | `auto_pipeline_constraints_test.py` | §6 constrained regions: `latency=2` / `start_latency=1` call sites built with exactly 2 / 1 registers and pass 2 skipped; a `max_latency=1` cap stops an unreachable goal promptly, naming the cap, then `TIMING NOT MET` |
 | `auto_pipeline_c_pragma_test.py` | C `#pragma AUTOPIPELINE 2` is a fixed latency, built with exactly 2 clocks even by a `--comb` build |
 | `sweep_fsm_auto_pipeline_test.py` | Reg-FSM main + AUTO_PIPELINE region: the cut subtree is the tagged child, the FSM's latency stays 0 |
+| `sweep_float32_test.py` (registered once per backend, **every** `--syn_tool`) | a plain auto-pipelined float32 adder MAIN sweeps to its goal on every synthesis backend, not just sky130 -- see [pypeline_TESTS.md](pypeline_TESTS.md#per-syn_tool-sweep-coverage) |
 
 In-process: `auto_pipeline_harvest_test.py` (harvest grouping and divergence,
 two-tier seed matching, call-site-change detection, latency cache/read flag,

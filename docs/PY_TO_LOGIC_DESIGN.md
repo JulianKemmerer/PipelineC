@@ -5834,7 +5834,7 @@ category breakdown: [pypeline_TESTS.md](pypeline_TESTS.md). The two most relevan
 - **`synth_tests.py`** — runs `pipelinec` (with or without `--comb`, but without
   `--no_synth`) on the remaining design files, exercising the full pipeline: elaboration →
   `SWEEP.DO_THROUGHPUT_SWEEP` auto-pipelining → synthesis. Each entry names its synthesis
-  tool, which picks its `run_all.py` category: `synth_device_models` (`--syn_tool sky130`,
+  tool, which picks its `run_all.py` category: `synth_device_models` (`--syn_tool device_models`,
   the default), `synth_vivado` (Vivado-specific features only) or `synth_pyrtl` (see
   [pypeline_TESTS.md](pypeline_TESTS.md#choosing-a-synthesis-tool)). Exit code is the
   entire verdict here too, plus the runner's tool check; see

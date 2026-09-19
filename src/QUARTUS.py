@@ -14,6 +14,10 @@ if ENV_TOOL_PATH:
     QUARTUS_PATH = os.path.abspath(os.path.dirname(QUARTUS_SH_PATH))
 else:
     QUARTUS_PATH = "/media/1TB/Programs/Linux/intelFPGA_lite/20.1/quartus/bin"
+# Part used when this tool is selected without a part (--syn_tool/SYN_TOOL()
+# with no --part/PART()). See SYN.RESOLVE_PART_AND_TOOL.
+DEFAULT_PART = "5CEBA4F23C8"
+
 
 
 # Need to know family in addition to part number?

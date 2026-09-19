@@ -13,7 +13,7 @@ Method: build auto_fsm_resources_test.py twice.
            design is the full parallel blob: six multipliers, five adders.
   (full)   the scheduled FSM: one multiplier and one adder, time-multiplexed.
 Then compare mapped cell counts for the same top-level entity in each build.
-Both builds run under --syn_tool sky130, whose DEVICE_MODELS STA report
+Both builds run under --syn_tool device_models, whose DEVICE_MODELS STA report
 already records the mapped sky130 standard-cell count -- no extra tool
 invocation is needed. (On a real FPGA part the
 equivalent numbers are in Vivado's report_utilization output.)
@@ -45,7 +45,7 @@ def fail(msg):
 
 
 def run_build(out_dir, extra):
-    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "sky130", "--out_dir", out_dir] + extra
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "device_models", "--out_dir", out_dir] + extra
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
         cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
@@ -59,7 +59,7 @@ def run_build(out_dir, extra):
 def top_cell_count(out_dir):
     """Mapped sky130 standard-cell count of the whole-design top entity, from
     the "N cells:" line of the DEVICE_MODELS STA report the build already
-    wrote (this wrapper builds with --syn_tool sky130). The mapped netlist is
+    wrote (this wrapper builds with --syn_tool device_models). The mapped netlist is
     flattened, so it has no $scopeinfo hierarchy-bookkeeping cells to
     subtract."""
     top_dir = os.path.join(out_dir, "top")

@@ -5260,7 +5260,16 @@ def WRITE_LOGIC_ENTITY(
     rv += "--   Output regs?: " + str(timing_params._has_output_regs) + "\n"
     rv += "library std;\n"
     rv += "use std.textio.all;\n"
-    rv += "use std.env.all;\n"
+    # std.env is VHDL-2008 only, and the one thing that needs it is
+    # sim_finish's std.env.finish (GET_SIM_FINISH_MODULE_TEXT). Emitting it in
+    # every module made VHDL-93 flows reject the whole design: Quartus
+    # compiles as VHDL-93 (that is why ieee_proposed is bundled for
+    # fixed/float), so "design library std does not contain primary unit env"
+    # failed the very first leaf of any build, sim_finish or not.
+    if Logic.is_c_built_in and Logic.func_name.startswith(
+        C_TO_LOGIC.SIM_FINISH_FUNC_NAME
+    ):
+        rv += "use std.env.all;\n"
     rv += "library ieee;" + "\n"
     rv += "use ieee.std_logic_1164.all;" + "\n"
     rv += "use ieee.numeric_std.all;" + "\n"

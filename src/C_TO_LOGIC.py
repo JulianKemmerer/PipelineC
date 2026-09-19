@@ -10303,6 +10303,8 @@ class ParserState:
         self.func_marked_debug = set()
         self.marked_onehot = set()
         self.part = None
+        # Set by pypeline's SYN_TOOL(...) / --syn_tool; no C pragma yet.
+        self.syn_tool_name = None
         self.io_pairs = set()
         self.inst_array_dict = dict()
         self.async_wires = set()
@@ -10369,6 +10371,7 @@ class ParserState:
         rv.func_marked_debug = set(self.func_marked_debug)
         rv.marked_onehot = set(self.marked_onehot)
         rv.part = self.part
+        rv.syn_tool_name = self.syn_tool_name
         rv.io_pairs = set(self.io_pairs)
         rv.inst_array_dict = dict(self.inst_array_dict)
         rv.async_wires = set(self.async_wires)

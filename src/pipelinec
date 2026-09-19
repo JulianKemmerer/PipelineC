@@ -94,7 +94,7 @@ parser.add_argument(
 parser.add_argument(
     "--auto_fsm_abstract_area",
     help="Rank AUTO_FSM's area search with the abstract per-bit model "
-    "(AREA_* constants) even under --syn_tool sky130, instead of real cached "
+    "(AREA_* constants) even under --syn_tool device_models, instead of real cached "
     "leaf/register/multiplexer um2. Real area is used automatically whenever "
     "it is available; this is the escape hatch for A/B comparison against it.",
     action="store_true",
@@ -257,14 +257,35 @@ parser.add_argument(
     help="Specify a pin constraints file.",
 )
 parser.add_argument(
+    "-j",
+    "--jobs",
+    type=int,
+    default=None,
+    help="Maximum synthesis runs in flight at once. Default is "
+    "config/num_processes.cfg. Each job is a whole vendor tool process, so "
+    "this is mostly a memory knob -- lower it for backends that need a lot of "
+    "RAM per run (ex. Efinity's efx_pnr peaks near 3.7GB per leaf).",
+)
+parser.add_argument(
+    "--part",
+    type=str,
+    default=None,
+    help="FPGA part to target, instead of PART(...) in the source. The part "
+    "selects the synthesis tool. Setting this and PART(...) to different "
+    "values is an error.",
+)
+parser.add_argument(
     "--syn_tool",
     type=str,
     default=None,
-    choices=["pyrtl", "sky130"],
-    help="Force a specific timing-estimation SYN_TOOL regardless of PART. "
-    "'pyrtl' = generic PyRTL-based estimate (default when no PART is set). "
-    "'sky130' = real sky130 liberty NLDM STA (src/DEVICE_MODELS.py). Lets "
-    "both be compared on one unmodified source file.",
+    choices=SYN.TOOL_NAMES,
+    help="Synthesis tool to build with, instead of SYN_TOOL(...) in the "
+    "source. Named alone, the tool supplies its own default part, which is "
+    "how one part-neutral source file can be built on any backend. A tool "
+    "that contradicts the part is an error, not an override: the two are one "
+    "decision spelled two ways. 'pyrtl' (generic PyRTL estimate) is the "
+    "default when neither a part nor a tool is set; 'device_models' is the "
+    "real sky130 liberty NLDM STA (src/DEVICE_MODELS.py).",
 )
 parser.add_argument(
     "--mux_delay_by_width",
@@ -370,15 +391,23 @@ if SIM.NATIVE_SIM_SKIPS_BUILD(args):
 SYN.WRITE_AXIS_XO_FILE = args.xo_axis
 # Pin constraints file (if specified)
 SYN.PIN_CONSTRAINTS_FILE = pins_file
-# Force a specific SYN_TOOL regardless of PART -- PART_SET_TOOL respects a
-# pre-set SYN.SYN_TOOL (its own `if SYN_TOOL is None:` guard), so setting it
-# here, before any build step runs, is enough to override part-based
-# inference everywhere downstream. No part and no --syn_tool stays PyRTL,
-# unchanged from today.
-if args.syn_tool == "pyrtl":
-    SYN.SYN_TOOL = SYN.PYRTL
-elif args.syn_tool == "sky130":
-    SYN.SYN_TOOL = SYN.DEVICE_MODELS
+# --syn_tool alone can be honored before the design is parsed, and must be:
+# parsing itself calls PART_SET_TOOL(allow_fail=True) in places, and that
+# respects an already-set SYN.SYN_TOOL (its own `if SYN_TOOL is None:` guard).
+# The full reconciliation against the source's own PART()/SYN_TOOL() has to
+# wait until after parsing -- see RESOLVE_PART_AND_TOOL below.
+if args.syn_tool is not None:
+    SYN.SYN_TOOL = SYN.GET_TOOL_MODULE(args.syn_tool)
+elif args.part is not None:
+    # Same idea for a CLI part with no CLI tool: without this the in-parse
+    # calls see no part yet and announce PyRTL, which the resolver then
+    # contradicts a few lines later. Any disagreement with the source's own
+    # PART()/SYN_TOOL() is still caught by RESOLVE_PART_AND_TOOL below.
+    SYN.SYN_TOOL = SYN.PART_TO_TOOL(args.part)
+# Parallel synthesis run cap (None = config/num_processes.cfg)
+if args.jobs is not None and args.jobs < 1:
+    sys.exit(f"--jobs must be at least 1, got {args.jobs}")
+SYN.NUM_PROCESSES = args.jobs
 # Mux path-delay cache key override (None = automatic per SYN_TOOL)
 SYN.MUX_DELAY_KEY_BY_WIDTH = args.mux_delay_by_width
 # AUTO_FSM area-search escape hatch: real sky130 um2 is used automatically
@@ -426,6 +455,20 @@ elif src_file.endswith(".py"):
             flush=True,
         )
 
+
+# Settle part and tool from all four possible sources (--part / PART(...),
+# --syn_tool / SYN_TOOL(...)) now that the design has been parsed and its own
+# values are known. Errors on any contradiction; fills in a tool's default
+# part when only a tool was named. Must run before WRITE_0_ADDED_CLKS_INIT_FILES
+# below, which is the first step to consume the tool.
+SYN.SYN_TOOL = None  # let the resolver have the final say, not the early set above
+parser_state.part, _resolved_tool = SYN.RESOLVE_PART_AND_TOOL(
+    cli_part=args.part,
+    cli_tool=args.syn_tool,
+    src_part=parser_state.part,
+    src_tool=parser_state.syn_tool_name,
+    allow_fail=True,
+)
 
 print(
     "================== Writing Resulting Logic to File ================================",

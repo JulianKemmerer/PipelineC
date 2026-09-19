@@ -1344,6 +1344,7 @@ def enum(cls):
 _main_registry: list = []
 _main_mhz_registry: dict = {}  # func.__name__ → float mhz
 _part_registry: "str | None" = None
+_syn_tool_registry: "str | None" = None
 
 
 def PART(part_string: str):
@@ -1352,9 +1353,54 @@ def PART(part_string: str):
     Call once at module level, e.g.::
 
         PART("xc7a35ticsg324-1l")
+
+    The part selects the synthesis tool (see SYN_TOOL for naming one
+    directly). Can also come from the command line as ``--part``; setting
+    both to different values is an error. Calling this twice with different
+    parts is an error too, matching ``#pragma PART``.
     """
     global _part_registry
+    if (
+        _part_registry is not None
+        and part_string is not None
+        and _part_registry != part_string
+    ):
+        raise Exception(
+            f"Already set part to: {_part_registry} != {part_string}. "
+            "A design has one FPGA part -- is a board/part module imported twice?"
+        )
     _part_registry = part_string
+
+
+def SYN_TOOL(tool_name: str):
+    """Set the global synthesis tool by name, instead of implying it from PART.
+
+    Call once at module level, e.g.::
+
+        SYN_TOOL("quartus")
+
+    Named alone, the tool supplies its own default part (its ``DEFAULT_PART``
+    in ``src/<TOOL>.py``), which is how a design stays part-neutral and still
+    builds on a specific backend. Can also come from the command line as
+    ``--syn_tool``. Setting both to different tools is an error, and so is
+    naming a tool that the design's PART does not select -- a part and a tool
+    are one decision spelled two ways, never an override.
+    """
+    global _syn_tool_registry
+    # Validate here so a typo points at this call, not at a later build step.
+    import SYN
+
+    SYN.GET_TOOL_MODULE(tool_name)
+    if (
+        _syn_tool_registry is not None
+        and tool_name is not None
+        and _syn_tool_registry != tool_name
+    ):
+        raise Exception(
+            f"Already set synthesis tool to: {_syn_tool_registry} != {tool_name}. "
+            "A design builds with one tool."
+        )
+    _syn_tool_registry = tool_name
 
 
 def _register_main(func, mhz):

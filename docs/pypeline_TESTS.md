@@ -4,7 +4,8 @@
 `.py` design files in `inst/`. There is no test-discovery mechanism -- every test is a
 hand-written entry in one of eight category modules, run together via `run_all.py`.
 Two of those modules, `synth_tests.py` and `build_report_tests.py`, each feed one
-category per synthesis tool (see [Choosing a synthesis tool](#choosing-a-synthesis-tool)).
+category per synthesis tool -- one pair for every backend `pypelinec` can select
+(see [Choosing a synthesis tool](#choosing-a-synthesis-tool)).
 
 > **Reference, not a logbook.** Describe the system as it is now, in the present
 > tense. No dated entries, no session write-ups — `git log` is the change record.
@@ -22,9 +23,14 @@ category per synthesis tool (see [Choosing a synthesis tool](#choosing-a-synthes
 | `elab` | `pypelinec --no_synth` -- does it elaborate | exit code only |
 | `elab_introspect` | Calls `PY_TO_LOGIC.PARSE_FILE` in-process and asserts on `parser_state` / `FuncLogicLookupTable` / a raised `ElaborationError`'s type and message | in-process `assert`s |
 | `unit` | Pure compiler-helper tests against hand-built fixtures -- no design build | in-process `assert`s |
-| `synth_device_models`, `synth_vivado`, `synth_pyrtl` | Full elaboration + auto-pipelining + synthesis (no `--no_synth`), with the tool the category names (`synth_tests.py`) | exit code, plus the tool check |
-| `build_report_device_models`, `build_report_vivado`, `build_report_pyrtl` | Wrapper scripts that run `pypelinec` themselves and assert on its build log or generated artifacts (mapped cell counts, `TIMING NOT MET` text, `sweep_history.json`), with the tool the category names (`build_report_tests.py`). Wrappers that run no synthesis at all live in `build_report_device_models` | in-process `assert`s over subprocess output, plus the tool check |
+| `synth_<tool>` | Full elaboration + auto-pipelining + synthesis (no `--no_synth`), with the tool the category names (`synth_tests.py`). One per backend: `device_models`, `vivado`, `pyrtl`, `quartus`, `open_tools`, `diamond`, `efinity`, `gowin`, `cc_tools` | exit code, plus the tool check |
+| `build_report_<tool>` | Wrapper scripts that run `pypelinec` themselves and assert on its build log or generated artifacts (mapped cell counts, `TIMING NOT MET` text, `sweep_history.json`), with the tool the category names (`build_report_tests.py`). Wrappers that run no synthesis at all live in `build_report_device_models` | in-process `assert`s over subprocess output, plus the tool check |
 | `known_issues` | Reproducers for known, unfixed compiler bugs. **Excluded from `run_all.py`'s default set** -- run explicitly with `--category known_issues`. Every entry has `expect_fail=True`: a passing run means the bug is still present (XFAIL); a clean run means it got fixed without the test being updated (XPASS, reported as a *failure* -- promote the test out of this category) | inverted exit code (or, where exit code doesn't capture the issue, an explicit log-content assertion -- see that entry's own docstring) |
+
+Every backend gets both categories even when it has nothing tool-specific to
+check, so the [per-SYN_TOOL sweep matrix](#per-syn_tool-sweep-coverage) has
+somewhere to land and a new backend test has an obvious home. Several of those
+categories are empty; an empty category costs nothing to run.
 
 `elab_introspect` vs `unit` is decided by the file's *purpose*, not by whether
 `PARSE_FILE` happens to appear in it: a 600-line scheduler/codegen test that calls
@@ -66,14 +72,19 @@ run its `test_*` functions -- those categories check elaboration/build only.
 ## Choosing a synthesis tool
 
 Synthesis is nearly all of the suite's runtime, so every synthesizing test uses the
-fastest tool that can check what it tests:
+fastest tool that can check what it tests. The exception is the
+[per-SYN_TOOL sweep matrix](#per-syn_tool-sweep-coverage), whose whole purpose
+is to run one design on *every* backend.
 
 - **`device_models` (sky130, the default).** Real sky130 liberty STA
   ([`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md)), selected with
-  `--syn_tool sky130` or `PART("sky130...")`. Both spellings, and any board or
-  Xilinx `PART` the flag overrides, share the one committed
-  `cache/delay/device_models_sky130_fd_sc_hvl_tt_025C_3v30_v4` cache: the
-  library and corner are fixed, and the part string is not part of the cache key.
+  `--syn_tool device_models` or `PART("sky130...")`. Every sky130 spelling shares
+  the one committed `cache/delay/device_models_sky130_fd_sc_hvl_tt_025C_3v30_v4`
+  cache: the library and corner are fixed, and the part string is not part of
+  the cache key. Note this tool can no longer be forced onto a design whose
+  `PART` selects another backend -- a part and a tool that disagree are a hard
+  error ([`SYN_DESIGN.md` §2](SYN_DESIGN.md#2-choosing-a-tool)), so a design
+  meant to be built under several tools simply sets no `PART`.
 - **`vivado`, only for Vivado-specific features.** Today that means MULTI_CYCLE
   path constraints (`AUTO_MULTI_CYCLE.GET_MCP_PATH_CONSTRAINTS` supports only Vivado) and
   the PDW synth tops' real-part Block RAM and 125 MHz checks. Use a part with
@@ -92,20 +103,23 @@ fastest tool that can check what it tests:
     - The donut's v3 FSM meets 40 MHz on its first schedule. Under sky130 it
       reaches 39.26 MHz and passes only after one tightening.
 
-  Each test runs under exactly one tool. `sweep_floor_detect_test.py` runs
-  under sky130 (100 MHz goal) and checks the prediction-independent `plateau`
-  stop (`SWEEP.AT_PLATEAU`). Its `--syn_tool pyrtl` mode (50 MHz,
-  `empirical_floor` stop) is kept for manual runs but not registered.
+  Each *feature* test runs under exactly one tool. `sweep_floor_detect_test.py`
+  runs under sky130 (100 MHz goal) and checks the prediction-independent
+  `plateau` stop (`SWEEP.AT_PLATEAU`). Its `--syn_tool pyrtl` mode (50 MHz,
+  `empirical_floor` stop) is kept for manual runs but not registered. The
+  sweep matrix below is the deliberate exception: there, running the same
+  design on every tool *is* the test.
 
 How a test picks its tool:
 
 - **`synth_tests.py`** entries carry the tool as their last field. The
-  registration appends `common.SYN_TOOL_ARGS[tool]` (`--syn_tool sky130`,
-  `--syn_tool pyrtl`, or nothing for Vivado, whose design sets its own
-  `PART("xc...")`), so design files stay tool-neutral. Board examples keep
-  their board `PART`.
+  registration appends `common.SYN_TOOL_ARGS[tool]`, which is uniformly
+  `--syn_tool <tool>` now that the flag accepts every backend, so design files
+  stay tool-neutral. A design may still set its own `PART` (board examples keep
+  their board part, the PDW tops keep theirs) as long as that part selects the
+  same tool the entry names.
 - **`native_vs_vhdl_sim_tests.py`** builds its non-`--comb` entries under
-  sky130 (`NON_COMB_SYN_TOOL`, passed as `--syn_tool sky130`). `--comb`
+  sky130 (`NON_COMB_SYN_TOOL`, passed as `--syn_tool device_models`). `--comb`
   entries never reach synthesis.
   - **Warm copies:** `pypeline_sim_debug.py` builds once into
     `<out_dir>/build`, then runs its native and VHDL invocations concurrently,
@@ -118,7 +132,7 @@ How a test picks its tool:
   - **History:** these entries once ran under PyRTL. The two sims shared one
     out_dir, and sky130 synthesis of the same leaf from both processes
     collided at random (composition, AUTO_FSM and RAM tests).
-- **`build_report` wrappers** pass `--syn_tool sky130` (or their design sets the
+- **`build_report` wrappers** pass `--syn_tool device_models` (or their design sets the
   `PART`) in the `pypelinec` command they build.
   - The sky130 AUTO_FSM cell-count comparisons (resources, area search,
     minimum area) read the mapped sky130 cell count (`N cells:`) from the
@@ -155,6 +169,85 @@ unpipelined fmax wherever the test needs a real pipeline cut.
 subprocesses inherit it. Graphviz `pipeline_map` renders cost more than many
 whole tests and nothing reads them; the text `pipeline_map.log` is still
 written.
+
+## Per-SYN_TOOL sweep coverage
+
+`inst/sweep_float32_test.py` -- a single float32 adder `@MAIN`, the Pypeline
+twin of `examples/pipeline.c` -- is registered once per backend in
+`synth_tests.py`, giving every synthesis tool one real planned throughput
+sweep. Before this, six of the nine backends had no test at all: `quartus`,
+`open_tools`, `diamond`, `efinity`, `gowin` and `cc_tools` could break and
+nothing would notice.
+
+**One design file, not nine.** The design sets no `PART`. Each registration
+passes only `--syn_tool <tool>`, and the tool's own `DEFAULT_PART`
+(`src/<TOOL>.py`) supplies the part -- so every backend builds *the same*
+design and a failure is about the backend, nothing else. This is what
+`--syn_tool` accepting every tool bought.
+
+**Per-tool clock goals** come from `synth_tests.SWEEP_FLOAT32_MHZ`, passed via
+`Test.env` as `SWEEP_FLOAT32_MHZ`. A float32 adder's unpipelined fmax differs
+by an order of magnitude between an ASIC standard-cell model and an FPGA, so
+one shared goal would either cut nothing on the fast tools or churn on the
+slow ones. Each goal sits above the design's comb fmax (so the sweep must
+place real cuts) and low enough to settle in a few iterations.
+
+**Cost.** `quartus`, `open_tools`, `efinity` and `cc_tools` return `True` from
+`SYN.TOOL_DOES_PNR()`, so every uncached leaf is a full place-and-route run,
+and no committed cache holds this design's `float_8_23_t` leaves. The first
+run on those tools is slow; afterwards the cache carries it.
+
+**Measured comb fmax**, which is what each goal is set from:
+
+| backend | comb fmax | goal | sweep iterations | settles at |
+|---|---|---|---|---|
+| `pyrtl` | 12.80 MHz | 40 | 2 | 42.4 MHz @ 4 stages |
+| `quartus` | 28.79 MHz | 60 | 4 | 70.8 MHz @ 3 stages |
+| `open_tools` | 29.71 MHz | 60 | 3 | 62.1 MHz @ 4 stages |
+| `device_models` | 29.91 MHz | 60 | 2 | 103.0 MHz @ 4 stages |
+| `vivado` | 38.47 MHz | 75 | 4 | 93.3 MHz @ 5 stages |
+| `efinity` | 128.84 MHz | 260 | | |
+
+Three backends are in `known_issues` instead, none for a PipelineC bug:
+
+| backend | why |
+|---|---|
+| `gowin` | `gw_sh`: "License verification failed  License hostid not match" |
+| `diamond` | `diamondc`: "License checkout failed. FlexNet Licensing error:-10,32" |
+| `cc_tools` | yosys synthesis succeeds, then CologneChip `p_r` crashes inside itself ("Exception Handler called. ExitCode: 112, Exception Class: ERangeError"). It is fed 357 inputs / 480 outputs, far past a CCGM1A1's real I/O count |
+
+`efinity` is registered with `-j 1` (`SWEEP_FLOAT32_EXTRA_ARGS` in
+`synth_tests.py`). Its `efx_pnr` builds a whole Titanium routing graph per leaf
+and peaks near 3.7GB resident, so the default four parallel jobs exhaust a 16GB
+machine; the build then fails with a missing `.timing.rpt` while the OOM killer
+takes whatever had the worst `oom_score` -- usually an editor, not the build.
+It is the only backend here that needs the cap.
+
+`efinity` reporting 128.84 MHz comb -- roughly four times every other backend
+for the same logic -- is expected, not suspicious: `Ti60F225` is a 16nm
+Titanium part, against 28nm for the Cyclone V and Artix-7, 40nm for the ECP5
+and 130nm for the sky130 standard cells. Its goal is scaled to match.
+
+A large part is also *required* here, not a choice. Efinity has no
+out-of-context synthesis mode, so every leaf is built as a real top level with
+real I/O pins; the float32 adder's internal leaves (ex. `int25_t + int25_t`)
+need far more pins than a small Trion device such as `T8F49` physically has.
+That is also why each run is expensive -- `efx_pnr` builds the routing graph
+for the whole 218x322 Titanium fabric every time.
+
+The three blocked backends are registered in `known_issues_tests.py`
+(`SWEEP_FLOAT32_BLOCKED`) with `expect_fail=True`, not in their `synth_<tool>`
+category: none of the three failures is a PipelineC bug, so a default run
+should not pay for them. A fixed license, or a part/tool combination `p_r`
+accepts, turns the entry into an XPASS -- which is the signal to move it back
+into `synth_<tool>`.
+
+**Cross-tool comparison.** `sweep_float32_tool_compare.py` (opt-in, outside
+`run_all.py`) builds the same design on every backend -- `--comb` first for the
+unpipelined reference point, then the sweep -- and overlays every backend's
+iterations on one plot: total pipeline latency (stages / fmax) on X, achieved
+fmax on Y. Each point is one real synthesis run, so the curve shows what added
+stages actually bought on that tool.
 
 ## Fixed user pipeline coverage
 
@@ -261,7 +354,7 @@ original area incumbent is valid; a search move is not required. See
   stable output while stalled.
 - `self_check_auto_comb_area_opt_composition_test.py` (both native-vs-VHDL modes):
   fixed/discovered pipelines, default raw-function FSM and explicit-AUTO_COMB_AREA_OPT FSM. It
-  sets no `PART`; the pipelined build runs under `--syn_tool sky130` (see
+  sets no `PART`; the pipelined build runs under `--syn_tool device_models` (see
   `NON_COMB_SYN_TOOL`). There is
   no multi-cycle member: MULTI_CYCLE constraints are Vivado-only, and one used to
   force the whole design onto a slow Vivado sweep. Multi-cycle streams are
@@ -372,7 +465,7 @@ that a synthesis backend builds from them. Two tests cover this:
   bytes, including its temporary-netlist tail. It checks every recipe, and uses
   both real soft_cmp leaf names and oversized names.
 - **`self_check_stream_auto_fsm_test` (synth_device_models):** builds the
-  AUTO_FSM design under `--syn_tool sky130`, whose soft_cmp leaves first exposed
+  AUTO_FSM design under `--syn_tool device_models`, whose soft_cmp leaves first exposed
   the overflow. Every `synth_device_models` build with long factory names
   (stream AUTO_PIPELINE, soft_div) exercises the same path. See
   `DEVICE_MODELS_DESIGN.md` §2.
@@ -468,12 +561,27 @@ python3 src/tests/pypeline_tests/run_all.py -j 5 --no_timeout     # full suite, 
 python3 src/tests/pypeline_tests/run_all.py --category native_sim
 python3 src/tests/pypeline_tests/run_all.py --category synth_device_models --category build_report_device_models
 python3 src/tests/pypeline_tests/run_all.py --category synth_vivado --category build_report_vivado  # needs Vivado
+python3 src/tests/pypeline_tests/run_all.py --category synth_quartus   # needs Quartus; likewise synth_<any backend>
+python3 src/tests/pypeline_tests/run_all.py -k sweep_float32           # the per-SYN_TOOL sweep matrix, every backend
 python3 src/tests/pypeline_tests/run_all.py --category known_issues   # opt-in
 python3 src/tests/pypeline_tests/run_all.py -t <name>              # one test, by name or list index
 python3 src/tests/pypeline_tests/run_all.py -k <substring>          # tests whose name contains SUBSTRING
 python3 src/tests/pypeline_tests/run_all.py --list                  # print the numbered list, don't run
 python3 src/tests/pypeline_tests/run_all.py --timeout 60             # override every test's timeout
 ```
+
+A `synth_<tool>` / `build_report_<tool>` category needs that tool installed.
+The backends are found by `PATH` first and then a hardcoded fallback path in
+`src/<TOOL>.py`, so a tool that is installed but not on `PATH` still works --
+which also means `Test.requires=` (a `shutil.which` check) cannot gate these
+categories, and a missing backend shows up as a failure rather than a skip.
+
+```
+python3 src/tests/pypeline_tests/sweep_float32_tool_compare.py --out_root DIR
+```
+
+builds the float32 adder on every backend and plots fmax against total
+pipeline latency, one curve per tool. Opt-in, outside `run_all.py`.
 
 Each test gets an isolated `--out_dir` under a fresh tmp root (`common.py`'s
 `make_tmp_root()` / `run_test()`), so tests run in parallel safely; a per-category
@@ -695,7 +803,7 @@ designs without a Vivado-specific feature ran on Vivado. Together that made
 synthesis nearly all of a multi-hour suite. One PyRTL whole-design timing run of
 `float_ops_div_test.py` took 6,392 s on its own.
 
-Each design below was built with `--syn_tool pyrtl` and `--syn_tool sky130` at
+Each design below was built with `--syn_tool pyrtl` and `--syn_tool device_models` at
 the same time on an idle 4-core machine, each run with its own warm copy of the
 committed caches:
 
@@ -719,6 +827,12 @@ Suite totals, summed per-test time:
   - Most sky130 builds finish in seconds to a few minutes.
   - The remaining long poles are the Vivado tests, `pdw_tb`'s native sim, and
   the four PyRTL-pinned `build_report_pyrtl` tests.
+
+These totals predate the [per-SYN_TOOL sweep matrix](#per-syn_tool-sweep-coverage),
+which added nine tests across the vendor backends. Those are the new long poles
+on a cold cache -- four of them place-and-route every uncached leaf -- so the
+comparison above is still the right one for the sky130-vs-PyRTL question it
+answers, but it is no longer the suite's total.
 
 ### Why there is no `vhdl_sim` category
 

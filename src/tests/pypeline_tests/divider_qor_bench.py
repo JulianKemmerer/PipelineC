@@ -1497,7 +1497,7 @@ def _build_one(args, variant, run_dir):
         PYPELINEC,
         FIXTURE_DIR / f"{variant}.py",
         "--syn_tool",
-        "sky130",
+        "device_models",
         "--out_dir",
         run_dir,
     ]

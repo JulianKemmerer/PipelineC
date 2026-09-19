@@ -8,10 +8,9 @@ living one process layer below the runner instead of being "exit code only"
 (that's synth_tests.py).
 
 Each Test's category names the synthesis tool its wrapper's builds use
-(build_report_device_models / build_report_vivado / build_report_pyrtl, see
-common.SYN_TOOLS). The wrapper itself passes the matching --syn_tool (or its
-design sets the PART), and run_all's tool check fails the test if the log
-shows any other tool. DEVICE_MODELS (sky130) is the default; the few wrappers
+(build_report_<tool>, one per backend in common.SYN_TOOLS). The wrapper itself
+passes the matching --syn_tool (or its design sets a PART that selects the same
+tool), and run_all's tool check fails the test if the log shows any other tool. DEVICE_MODELS (sky130) is the default; the few wrappers
 that build no synthesis at all (--no_synth, or sim-only) also live under
 build_report_device_models.
 
@@ -52,7 +51,7 @@ def get_tests() -> list:
         Test(
             name="sweep_floor_detect_test",
             category=DM,
-            cmd=[INST_DIR / "sweep_floor_detect_test.py", "--syn_tool", "sky130"],
+            cmd=[INST_DIR / "sweep_floor_detect_test.py", "--syn_tool", "device_models"],
             needs_out_dir=True,
         )
     )

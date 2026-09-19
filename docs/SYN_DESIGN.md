@@ -38,26 +38,49 @@ that module inside the function, so importing `SYN` stays cycle-free.
 
 ## 2. Choosing a tool
 
-`PART_SET_TOOL(part)` sets the module-level `SYN_TOOL` to a backend module from
-the design's `PART(...)` string, the first time it is called:
+The backend is one decision with **two axes and four spellings**. The part can
+come from `PART("...")` in the source or `--part` on the command line; the tool
+from `SYN_TOOL("...")` in the source or `--syn_tool`. `RESOLVE_PART_AND_TOOL()`
+settles all four in one place, right after the design is parsed.
 
-| part prefix | `SYN_TOOL` | runs |
-|---|---|---|
-| none | `PYRTL` | PyRTL's software gate-delay model (no FPGA part) |
-| `xc` | `VIVADO` | Vivado synthesis, optionally place-and-route (`VIVADO.DO_PNR`) |
-| `ep`, `10c`, `5c` | `QUARTUS` | Quartus |
-| `lfe5u` (ECP5) / `ice` | `OPEN_TOOLS` (yosys + nextpnr); ice40 uses `DIAMOND` when installed | |
-| `T8` / `Ti` | `EFINITY` | Efinity |
-| `GW` | `GOWIN` | Gowin |
-| `CCGM` | `CC_TOOLS` | CologneChip toolchain |
-| `sky130` | `DEVICE_MODELS` | yosys + ghdl mapping to a sky130 liberty library, then the compiler's own STA ([`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md)) |
+| part prefix | `SYN_TOOL` | `--syn_tool` name | `DEFAULT_PART` | runs |
+|---|---|---|---|---|
+| none | `PYRTL` | `pyrtl` | *(none)* | PyRTL's software gate-delay model (no FPGA part) |
+| `xc` | `VIVADO` | `vivado` | `xc7a35ticsg324-1l` | Vivado synthesis, optionally place-and-route (`VIVADO.DO_PNR`) |
+| `ep`, `10c`, `5c` | `QUARTUS` | `quartus` | `5CEBA4F23C8` | Quartus |
+| `lfe5u` (ECP5) / `ice` | `OPEN_TOOLS` (yosys + nextpnr); ice40 uses `DIAMOND` when installed | `open_tools` / `diamond` | `LFE5U-85F-6BG381C` / `ICE40UP5K-SG48` | |
+| `T8` / `Ti` | `EFINITY` | `efinity` | `Ti60F225` | Efinity |
+| `GW` | `GOWIN` | `gowin` | `GW2AR-LV18QN88PC8:C` | Gowin |
+| `CCGM` | `CC_TOOLS` | `cc_tools` | `CCGM1A1` | CologneChip toolchain |
+| `sky130` | `DEVICE_MODELS` | `device_models` | `sky130` | yosys + ghdl mapping to a sky130 liberty library, then the compiler's own STA ([`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md)) |
 
-`pipelinec --syn_tool pyrtl|sky130` presets `SYN_TOOL` before the design is
-parsed, overriding the part. `--yosys_json` (`OPEN_TOOLS.YOSYS_JSON_ONLY`) turns
-synthesis into netlist export only. `TOOL_DOES_PNR()` says whether a tool's
-timing is post-place-and-route (Vivado/Gowin with PnR enabled, Quartus,
-open tools, Efinity, CologneChip) or a synthesis estimate (Diamond, PyRTL,
-DEVICE_MODELS); the answer is part of the delay-cache directory (§6).
+**The two axes cannot contradict.** A part and a tool that disagree is a hard
+error, not an override — they are one decision spelled two ways, so there is no
+"which wins" rule to remember:
+
+- `--part` vs `PART(...)` set to different parts: error.
+- `--syn_tool` vs `SYN_TOOL(...)` set to different tools: error.
+- a named tool the part does not select (`--syn_tool quartus` on an `xc...`
+  part): error, naming the part, the tool it implies and the tool asked for.
+
+**A tool named on its own supplies its part** from its `DEFAULT_PART`
+(`src/<TOOL>.py`, the table above). This is what lets one part-neutral source
+file be built on any backend — the per-SYN_TOOL sweep matrix in
+[`pypeline_TESTS.md`](pypeline_TESTS.md#per-syn_tool-sweep-coverage) is exactly
+that, one design registered once per tool.
+
+`PART_TO_TOOL(part)` is the pure part-prefix lookup above; `PART_SET_TOOL(part)`
+is the thin back-compat wrapper that sets the `SYN_TOOL` global from a part
+alone, and still respects a tool already chosen. **ice40 is the one family two
+backends serve** — Diamond when installed, open tools otherwise — so
+`TOOL_MATCHES_PART()` accepts either for an ice40 part, and the same command
+line does not succeed on one machine and fail on another.
+
+`--yosys_json` (`OPEN_TOOLS.YOSYS_JSON_ONLY`) turns synthesis into netlist
+export only. `TOOL_DOES_PNR()` says whether a tool's timing is
+post-place-and-route (Vivado/Gowin with PnR enabled, Quartus, open tools,
+Efinity, CologneChip) or a synthesis estimate (Diamond, PyRTL, DEVICE_MODELS);
+the answer is part of the delay-cache directory (§6).
 
 `SYN_TOOL` and the other build options (`SYN_OUTPUT_DIRECTORY`,
 `TOP_LEVEL_MODULE`, `HIER_SYN_MODE`, `MUX_DELAY_KEY_BY_WIDTH`, ...) are module
@@ -66,7 +89,19 @@ never through a copied name, so a later assignment is seen everywhere.
 
 ## 3. The backend contract
 
-A backend module provides:
+A backend module provides these module-level names:
+
+- `TOOL_EXE` and its resolved install path — looked up on `PATH` first
+  (`utilities.GET_TOOL_PATH`), then a hardcoded fallback. A tool installed but
+  not on `PATH` still works, which is why an install check cannot be a
+  `shutil.which` call.
+- `DEFAULT_PART` — the part used when this tool is selected without one
+  (`--syn_tool`/`SYN_TOOL()` with no `--part`/`PART()`); see §2's table.
+  `None` only for PYRTL, which models a tech node rather than a part — a
+  non-`None` value there would add a part directory to its delay-cache path
+  (§6) and orphan the committed cache.
+
+and these functions:
 
 - `SYN_AND_REPORT_TIMING(inst_name, Logic, parser_state, TimingParamsLookupTable, total_latency=None, hash_ext=None, use_existing_log_file=True, is_final_top=False)`
   — synthesize one instance (or, with `is_final_top`, build the final design);
@@ -104,6 +139,18 @@ the tool's syntax), `GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH` and
 | one instance at a given latency | `RUN_INST_SYN_AND_UPDATE_CACHE` | the coarse sweep and hotspot mini-sweeps |
 | the whole multi-MAIN design | `SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN` | each planned-sweep iteration, the pin-and-confirm confirmation, `--comb` characterization |
 | the final bitstream | `GENERATE_FINAL_BITSTREAM` | `--pins` builds |
+
+**Parallelism is a memory budget.** Per-function delay measurement and the
+coarse sweep run several synthesis jobs at once through a `ThreadPool` sized
+by `GET_NUM_PROCESSES()` — `-j/--jobs` if given, else
+`config/num_processes.cfg`, else 4. Every job is a whole vendor tool process,
+so the peak is N x that tool's per-run footprint. Most backends are small
+enough that the default is fine; Efinity is not. `efx_pnr` builds a complete
+Titanium routing graph for each leaf and peaks near 3.7GB resident doing it,
+so four at once exhausts a 16GB machine. Worse, the kernel's OOM killer picks
+by `oom_score_adj`, so what dies is typically a browser or editor rather than
+the build, and the build fails later with a confusing missing-`.timing.rpt`
+error. `-j 1` is the fix there.
 
 `SET_MEASURED_DELAY_FROM_REPORT` turns a per-function report into
 `Logic.delay` (integer tenths of a nanosecond, `DELAY_UNIT_MULT`), records its
@@ -362,7 +409,9 @@ just to find which line of which file a printed name refers to.
 
 | flag | meaning |
 |---|---|
-| `--syn_tool pyrtl\|sky130` | use that backend regardless of `PART(...)` |
+| `--syn_tool NAME` | build with that backend (`vivado`, `quartus`, `diamond`, `gowin`, `efinity`, `open_tools`, `cc_tools`, `pyrtl`, `device_models`); alone, it supplies its own `DEFAULT_PART`. Must agree with the part -- see §2 |
+| `--part PARTSTR` | target that FPGA part instead of `PART(...)` in the source; setting both differently is an error |
+| `-j N` / `--jobs N` | cap synthesis runs in flight (default `config/num_processes.cfg`). Really a memory knob -- see §4 |
 | `--comb` | no pipelining; one synthesis run reporting combinational fmax per clock |
 | `--no_synth` | like `--comb`, without synthesis: just write the combinational HDL |
 | `--full_hier_syn` | synthesize every hierarchy level for path delays (no estimates) |

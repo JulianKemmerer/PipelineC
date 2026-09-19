@@ -57,6 +57,14 @@ SYN_TOOL = None  # Attempts to figure out from part number
 # width-keyed or collapsed for every tool. Set by --mux_delay_by_width /
 # --no_mux_delay_by_width.
 MUX_DELAY_KEY_BY_WIDTH = None
+# How many synthesis runs may be in flight at once. None = read
+# config/num_processes.cfg; set by pipelinec's -j/--jobs. Each in-flight run is
+# a whole vendor tool process, so this is really a memory knob: Efinity's
+# efx_pnr peaks near 3.7GB building a Titanium routing graph, and four of those
+# at once will exhaust a 16GB machine (the OOM killer then takes whatever has
+# the worst oom_score, not necessarily the build).
+NUM_PROCESSES = None
+_NUM_PROCESSES_CFG = None
 CONVERT_FINAL_TOP_VERILOG = False  # Flag for final top level converison to verilog
 WRITE_AXIS_XO_FILE = False
 PIN_CONSTRAINTS_FILE = None  # Pin constraints file to use
@@ -113,104 +121,295 @@ def GET_PLANNER_DELAY(logic):
     return logic.delay
 
 
-def PART_SET_TOOL(part_str, allow_fail=False):
-    global SYN_TOOL
-    if SYN_TOOL is None:
-        # Try to guess synthesis tool based on part number
-        # Hacky for now...
-        if part_str is None:
-            # Try to default to part-less estimates from pyrtl?
-            if PYRTL.IS_INSTALLED():
-                SYN_TOOL = PYRTL
-                print("Defaulting to pyrtl based timing estimates...")
-            else:
-                if allow_fail:
-                    return
-                print(
-                    "Need to set FPGA part somewhere in the code to continue with synthesis tool support!"
-                )
-                print('Ex. #pragma PART "LFE5U-85F-6BG381C"')
-                sys.exit(0)
-        else:
-            if part_str.lower().startswith("xc"):
-                SYN_TOOL = VIVADO
-                if os.path.exists(VIVADO.VIVADO_PATH):
-                    print("Vivado:", VIVADO.VIVADO_PATH, flush=True)
-                else:
-                    if not allow_fail:
-                        raise Exception("Vivado install not found!")
-            elif (
-                part_str.lower().startswith("ep")
-                or part_str.lower().startswith("10c")
-                or part_str.lower().startswith("5c")
-            ):
-                SYN_TOOL = QUARTUS
-                if os.path.exists(QUARTUS.QUARTUS_PATH):
-                    print("Quartus:", QUARTUS.QUARTUS_PATH, flush=True)
-                else:
-                    if not allow_fail:
-                        raise Exception("Quartus install not found!")
-            elif part_str.lower().startswith("lfe5u") or part_str.lower().startswith(
-                "ice"
-            ):
-                # Diamond fails to create proj for UMG5G part?
-                if "um5g" in part_str.lower():
-                    SYN_TOOL = OPEN_TOOLS
-                # Default to open tools for non ice40 (nextpnr not support ooc mode yet)
-                elif "ice40" not in part_str.lower():
-                    SYN_TOOL = OPEN_TOOLS
-                else:
-                    if os.path.exists(DIAMOND.DIAMOND_PATH):
-                        SYN_TOOL = DIAMOND
-                        print("Diamond:", DIAMOND.DIAMOND_PATH, flush=True)
-                    else:
-                        if not allow_fail:
-                            raise Exception("Diamond install not found!")
-                        # But also fall back to open tools for ice40 if no Diamond
-                        SYN_TOOL = OPEN_TOOLS
-            elif part_str.upper().startswith("T8") or part_str.upper().startswith("TI"):
-                SYN_TOOL = EFINITY
-                if os.path.exists(EFINITY.EFINITY_PATH):
-                    print("Efinity:", EFINITY.EFINITY_PATH, flush=True)
-                else:
-                    if not allow_fail:
-                        raise Exception("Efinity install not found!")
-            elif part_str.upper().startswith("GW"):
-                SYN_TOOL = GOWIN
-                if os.path.exists(GOWIN.GOWIN_PATH):
-                    print("Gowin:", GOWIN.GOWIN_PATH, flush=True)
-                else:
-                    if not allow_fail:
-                        raise Exception("Gowin install not found!")
-            elif part_str.upper().startswith("CCGM"):
-                SYN_TOOL = CC_TOOLS
-                # TODO dont base on cc-toolchain directory?
-                if os.path.exists(CC_TOOLS.CC_TOOLS_PATH):
-                    print("CologneChip Tools:", CC_TOOLS.CC_TOOLS_PATH, flush=True)
-                else:
-                    if not allow_fail:
-                        raise Exception("CologneChip toolchain install not found!")
-            elif part_str.lower().startswith("sky130"):
-                SYN_TOOL = DEVICE_MODELS
-                if DEVICE_MODELS.IS_INSTALLED():
-                    print("DEVICE_MODELS (sky130 liberty STA):", DEVICE_MODELS.SELECTED_LIBRARY, flush=True)
-                else:
-                    if not allow_fail:
-                        raise Exception(
-                            "sky130 liberty STA not available -- need yosys+ghdl "
-                            "(OPEN_TOOLS) and a volare sky130 PDK install "
-                            "(see DEVICE_MODELS.LIBERTY_RAW_LIB_PATH / "
-                            "PIPELINEC_SKY130_LIB_PATH)!"
-                        )
-            else:
-                if not allow_fail:
-                    print(
-                        "No known synthesis tool for FPGA part:", part_str, flush=True
-                    )
-                    sys.exit(-1)
+def GET_NUM_PROCESSES():
+    """Parallel synthesis runs allowed. -j/--jobs wins, else
+    config/num_processes.cfg, else 4."""
+    global _NUM_PROCESSES_CFG
+    if NUM_PROCESSES is not None:
+        return max(1, int(NUM_PROCESSES))
+    if _NUM_PROCESSES_CFG is None:
+        try:
+            with open(
+                C_TO_LOGIC.EXE_ABS_DIR() + "/../config/num_processes.cfg", "r"
+            ) as f:
+                _NUM_PROCESSES_CFG = max(1, int(f.readline()))
+        except (OSError, ValueError):
+            _NUM_PROCESSES_CFG = 4
+    return _NUM_PROCESSES_CFG
 
-        if SYN_TOOL is not None:
-            print("Using", SYN_TOOL.__name__, "synthesizing for part:", part_str)
+
+# Every selectable synthesis backend, by the name used on the command line
+# (--syn_tool) and in source (SYN_TOOL("...")). These names are also what a
+# build log's "Running: .../<name>_....log" lines say, and what the test
+# suite's per-tool categories are named after (common.SYN_TOOLS).
+TOOL_MODULES = {
+    "vivado": VIVADO,
+    "quartus": QUARTUS,
+    "diamond": DIAMOND,
+    "gowin": GOWIN,
+    "efinity": EFINITY,
+    "open_tools": OPEN_TOOLS,
+    "cc_tools": CC_TOOLS,
+    "pyrtl": PYRTL,
+    "device_models": DEVICE_MODELS,
+}
+TOOL_NAMES = tuple(TOOL_MODULES.keys())
+
+
+def TOOL_NAME(tool):
+    """The --syn_tool spelling of a backend module, or None."""
+    for name, module in TOOL_MODULES.items():
+        if module is tool:
+            return name
+    return None
+
+
+def GET_TOOL_MODULE(tool_name):
+    """Backend module for a --syn_tool/SYN_TOOL() name. Raises on a typo."""
+    try:
+        return TOOL_MODULES[tool_name]
+    except KeyError:
+        raise Exception(
+            f"Unknown synthesis tool '{tool_name}'! Expected one of: "
+            + ", ".join(TOOL_NAMES)
+        )
+
+
+def PART_TO_TOOL(part_str):
+    """The backend a part string selects, or None if nothing matches.
+
+    Pure: no install checks, no writes to the SYN_TOOL global. A part of None
+    means "no part given" and selects PYRTL, the part-less estimator.
+    """
+    if part_str is None:
+        return PYRTL
+    if part_str.lower().startswith("xc"):
+        return VIVADO
+    elif (
+        part_str.lower().startswith("ep")
+        or part_str.lower().startswith("10c")
+        or part_str.lower().startswith("5c")
+    ):
+        return QUARTUS
+    elif part_str.lower().startswith("lfe5u") or part_str.lower().startswith("ice"):
+        # Diamond fails to create proj for UMG5G part?
+        if "um5g" in part_str.lower():
+            return OPEN_TOOLS
+        # Default to open tools for non ice40 (nextpnr not support ooc mode yet)
+        elif "ice40" not in part_str.lower():
+            return OPEN_TOOLS
+        else:
+            # ice40 is the one part family two backends can serve: Diamond when
+            # it is installed, open tools otherwise. PART_TO_TOOL reports the
+            # install-dependent preference; TOOL_MATCHES_PART treats both as
+            # consistent so an explicit --syn_tool never depends on which
+            # machine it runs on.
+            if os.path.exists(DIAMOND.DIAMOND_PATH):
+                return DIAMOND
+            return OPEN_TOOLS
+    elif part_str.upper().startswith("T8") or part_str.upper().startswith("TI"):
+        return EFINITY
+    elif part_str.upper().startswith("GW"):
+        return GOWIN
+    elif part_str.upper().startswith("CCGM"):
+        return CC_TOOLS
+    elif part_str.lower().startswith("sky130"):
+        return DEVICE_MODELS
+    return None
+
+
+def _PART_IS_ICE40(part_str):
+    return part_str is not None and "ice40" in part_str.lower()
+
+
+def TOOL_MATCHES_PART(tool, part_str):
+    """Is an explicitly named tool consistent with an explicitly given part?
+
+    Exact match, except ice40, which DIAMOND and OPEN_TOOLS both serve (see
+    PART_TO_TOOL) -- accepting only the installed one would make the same
+    command line succeed on one machine and fail on another.
+    """
+    if tool is PART_TO_TOOL(part_str):
+        return True
+    if _PART_IS_ICE40(part_str) and tool in (DIAMOND, OPEN_TOOLS):
+        return True
+    return False
+
+
+def CHECK_TOOL_INSTALLED(tool, part_str=None, allow_fail=False):
+    """Report/verify that a selected backend is actually installed.
+
+    Returns True when usable. With allow_fail the caller gets False instead of
+    an exception, which is how pipelinec falls back to --comb --no_synth.
+    """
+    if tool is None:
+        return False
+
+    def _found(label, path):
+        print(label + ":", path, flush=True)
+        return True
+
+    def _missing(msg):
+        if not allow_fail:
+            raise Exception(msg)
+        return False
+
+    if tool is VIVADO:
+        if os.path.exists(VIVADO.VIVADO_PATH):
+            return _found("Vivado", VIVADO.VIVADO_PATH)
+        return _missing("Vivado install not found!")
+    elif tool is QUARTUS:
+        if os.path.exists(QUARTUS.QUARTUS_PATH):
+            return _found("Quartus", QUARTUS.QUARTUS_PATH)
+        return _missing("Quartus install not found!")
+    elif tool is DIAMOND:
+        if os.path.exists(DIAMOND.DIAMOND_PATH):
+            return _found("Diamond", DIAMOND.DIAMOND_PATH)
+        return _missing("Diamond install not found!")
+    elif tool is EFINITY:
+        if os.path.exists(EFINITY.EFINITY_PATH):
+            return _found("Efinity", EFINITY.EFINITY_PATH)
+        return _missing("Efinity install not found!")
+    elif tool is GOWIN:
+        if os.path.exists(GOWIN.GOWIN_PATH):
+            return _found("Gowin", GOWIN.GOWIN_PATH)
+        return _missing("Gowin install not found!")
+    elif tool is CC_TOOLS:
+        # TODO dont base on cc-toolchain directory?
+        if os.path.exists(CC_TOOLS.CC_TOOLS_PATH):
+            return _found("CologneChip Tools", CC_TOOLS.CC_TOOLS_PATH)
+        return _missing("CologneChip toolchain install not found!")
+    elif tool is OPEN_TOOLS:
+        if OPEN_TOOLS.YOSYS_BIN_PATH is not None:
+            return _found("Open tools (yosys)", OPEN_TOOLS.YOSYS_BIN_PATH)
+        return _missing("Open tools (yosys/nextpnr/ghdl) install not found!")
+    elif tool is PYRTL:
+        if PYRTL.IS_INSTALLED():
+            return True
+        return _missing(
+            "PyRTL not installed -- need the pyrtl and pyparsing python modules!"
+        )
+    elif tool is DEVICE_MODELS:
+        if DEVICE_MODELS.IS_INSTALLED():
+            return _found(
+                "DEVICE_MODELS (sky130 liberty STA)", DEVICE_MODELS.SELECTED_LIBRARY
+            )
+        return _missing(
+            "sky130 liberty STA not available -- need yosys+ghdl "
+            "(OPEN_TOOLS) and a volare sky130 PDK install "
+            "(see DEVICE_MODELS.LIBERTY_RAW_LIB_PATH / "
+            "PIPELINEC_SKY130_LIB_PATH)!"
+        )
+    return _missing(f"Do not know how to check install of {tool.__name__}!")
+
+
+def _RECONCILE(axis, cli_value, cli_flag, src_value, src_call):
+    """One value from two sources that must not disagree."""
+    if cli_value is not None and src_value is not None and cli_value != src_value:
+        raise Exception(
+            f"Conflicting {axis}: {cli_flag} says '{cli_value}' but the source's "
+            f"{src_call} says '{src_value}'. Set only one, or set both the same."
+        )
+    return cli_value if cli_value is not None else src_value
+
+
+def RESOLVE_PART_AND_TOOL(
+    cli_part=None, cli_tool=None, src_part=None, src_tool=None, allow_fail=False
+):
+    """Settle the part and the synthesis tool from all four possible sources.
+
+    Part comes from --part or PART(...), tool from --syn_tool or SYN_TOOL(...).
+    Same-axis disagreements are errors, and so is naming a tool that the part
+    does not select -- the two are one decision spelled two ways, never an
+    override. Naming a tool with no part falls back to that tool's
+    DEFAULT_PART.
+
+    Returns (part_str, tool_module); tool_module is None when nothing is
+    installed and allow_fail is set. Sets the SYN_TOOL global.
+    """
+    global SYN_TOOL
+    part = _RECONCILE("FPGA part", cli_part, "--part", src_part, 'PART("...")')
+    tool_name = _RECONCILE(
+        "synthesis tool", cli_tool, "--syn_tool", src_tool, 'SYN_TOOL("...")'
+    )
+
+    if tool_name is not None:
+        tool = GET_TOOL_MODULE(tool_name)
+        if part is None:
+            # Tool named on its own: it supplies the part it is normally used with.
+            part = tool.DEFAULT_PART
+            if part is not None:
+                print(
+                    f"Using {tool_name} default part:", part, flush=True
+                )
+        elif not TOOL_MATCHES_PART(tool, part):
+            implied = PART_TO_TOOL(part)
+            implied_name = TOOL_NAME(implied) if implied else "no known tool"
+            raise Exception(
+                f"Part '{part}' selects {implied_name}, but the synthesis tool "
+                f"was set to '{tool_name}'. A part and a tool cannot contradict: "
+                f"either drop the tool and let the part choose it, or pass a part "
+                f"{tool_name} supports (ex. --part {tool.DEFAULT_PART})."
+            )
+    else:
+        tool = PART_TO_TOOL(part)
+        if tool is None:
+            if not allow_fail:
+                print("No known synthesis tool for FPGA part:", part, flush=True)
+                sys.exit(-1)
+            return part, None
+
+    if part is None and tool is not PYRTL:
+        # Only PYRTL models something that isn't a part.
+        if not allow_fail:
+            raise Exception(
+                f"{TOOL_NAME(tool)} needs an FPGA part -- set --part or PART(...)."
+            )
+        return part, None
+
+    if not CHECK_TOOL_INSTALLED(tool, part, allow_fail=allow_fail):
+        return part, None
+
+    SYN_TOOL = tool
+    print("Using", SYN_TOOL.__name__, "synthesizing for part:", part)
+    return part, tool
+
+
+def PART_SET_TOOL(part_str, allow_fail=False):
+    """Set the SYN_TOOL global from a part string, if not already set.
+
+    Thin back-compat wrapper over PART_TO_TOOL + CHECK_TOOL_INSTALLED, kept
+    for the many call sites that only have a part in hand. A SYN_TOOL already
+    chosen (by --syn_tool/SYN_TOOL(), via RESOLVE_PART_AND_TOOL) always wins.
+    """
+    global SYN_TOOL
+    if SYN_TOOL is not None:
+        return
+    if part_str is None:
+        if PYRTL.IS_INSTALLED():
+            SYN_TOOL = PYRTL
+            print("Defaulting to pyrtl based timing estimates...")
+        else:
+            if allow_fail:
+                return
+            print(
+                "Need to set FPGA part somewhere in the code to continue with synthesis tool support!"
+            )
+            print('Ex. #pragma PART "LFE5U-85F-6BG381C"')
+            sys.exit(0)
+    else:
+        tool = PART_TO_TOOL(part_str)
+        if tool is None:
+            if not allow_fail:
+                print("No known synthesis tool for FPGA part:", part_str, flush=True)
+                sys.exit(-1)
+            return
+        if not CHECK_TOOL_INSTALLED(tool, part_str, allow_fail=allow_fail):
+            return
+        SYN_TOOL = tool
+
+    if SYN_TOOL is not None:
+        print("Using", SYN_TOOL.__name__, "synthesizing for part:", part_str)
 
 
 def TOOL_DOES_PNR():
@@ -2078,10 +2277,7 @@ def MEASURE_DELAYS(func_names, parser_state):
         flush=True,
     )
     TimingParamsLookupTable = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
-    NUM_PROCESSES = int(
-        open(C_TO_LOGIC.EXE_ABS_DIR() + "/../config/num_processes.cfg", "r").readline()
-    )
-    my_thread_pool = ThreadPool(processes=NUM_PROCESSES)
+    my_thread_pool = ThreadPool(processes=GET_NUM_PROCESSES())
     func_name_to_async_result = {}
     for func_name in funcs_to_measure:
         logic = parser_state.FuncLogicLookupTable[func_name]
@@ -2167,10 +2363,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
     main_to_min_mhz_func_name = {}
 
     # Run multiple syn runs in parallel
-    NUM_PROCESSES = int(
-        open(C_TO_LOGIC.EXE_ABS_DIR() + "/../config/num_processes.cfg", "r").readline()
-    )
-    my_thread_pool = ThreadPool(processes=NUM_PROCESSES)
+    my_thread_pool = ThreadPool(processes=GET_NUM_PROCESSES())
     func_name_to_async_result = {}
     func_name_to_async_owner = {}
     mux_cache_key_to_async_owner = {}

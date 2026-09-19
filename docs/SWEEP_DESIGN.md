@@ -28,7 +28,7 @@ into the loop is documented with that feature.
 | `src/AUTO_PIPELINE.py` | The pipeline representation the sweep edits, and AUTO_PIPELINE-specific feedback: constrained regions are planned and enforced on every iteration ([`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md#6-constrained-auto_pipeline-regions-latency--start_latency--max_latency)). |
 | `src/AUTO_MULTI_CYCLE.py` | AUTO_MULTI_CYCLE feedback: failing multi-cycle paths raise their cycle count ([`AUTO_MULTI_CYCLE_DESIGN.md`](AUTO_MULTI_CYCLE_DESIGN.md#3-sweep-feedback)). |
 | `src/AUTO_FSM.py` | Wraps the whole sweep in its own schedule-and-confirm loop ([`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md#34-the-driver-loop)). |
-| `src/PYRTL.py`, `src/DEVICE_MODELS.py` | The `SYN_TOOL` backends the delay model and fast sweeps are built on — see [`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md) for the real sky130 liberty STA backend (`PART("sky130...")` / `--syn_tool sky130`) and why it exists (PyRTL's own cost model has no fanout/load term at all). |
+| `src/PYRTL.py`, `src/DEVICE_MODELS.py` | The `SYN_TOOL` backends the delay model and fast sweeps are built on — see [`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md) for the real sky130 liberty STA backend (`PART("sky130...")` / `--syn_tool device_models`) and why it exists (PyRTL's own cost model has no fanout/load term at all). |
 
 Vocabulary used throughout (each defined in detail later; the measurement
 frontier and estimated delays are part of the delay model in
@@ -930,7 +930,7 @@ end-to-end tests are listed with their features
 [AUTO_FSM](AUTO_FSM_DESIGN.md#5-tests)).
 
 They run under
-`--syn_tool sky130` (DEVICE_MODELS, seconds per synth run; see
+`--syn_tool device_models` (DEVICE_MODELS, seconds per synth run; see
 [pypeline_TESTS.md](pypeline_TESTS.md#choosing-a-synthesis-tool)) unless marked.
 The plain design files are registered in `synth_tests.py`, and the `*_test.py`
 wrappers that assert on build output in `build_report_tests.py`:
@@ -944,6 +944,14 @@ wrappers that assert on build output in `build_report_tests.py`:
 | `sweep_floor_detect_test.py` (build_report_device_models, sky130, 100 MHz; its unregistered `--syn_tool pyrtl` mode uses 50 MHz) | unreachable goal: floor predicted & blamed up front, sweep stops within 6 syn runs with `plateau` (sky130, prediction off) / `empirical_floor` (PyRTL, prediction matches) in `sweep_history.json`, results written, then `TIMING NOT MET` + non-zero exit |
 | `sweep_unpipelinable_test.py` | stateful MAIN with a goal but nothing cuttable: told plainly that auto-pipelining cannot help (planning time + standalone as-written check FAIL + failing report), one full syn run, `TIMING NOT MET` + non-zero exit, and `sweep_history.json` `final` agrees (not met, same MHz, a failure reason) |
 | `sweep_planless_test.py` | stateful MAIN with a met goal but nothing cuttable: one standalone as-written check synthesis prints PASS, its critical path is NOT stored as the func delay, one full syn run, exit 0, `sweep_history.json` `final` is a met `as_written` record with `standalone_mhz` |
+| `sweep_float32_test.py` (registered once per backend, **every** `--syn_tool`) | the sweep still runs end to end on each synthesis tool: one part-neutral float32 adder MAIN, each tool supplying its own `DEFAULT_PART` and clock goal. See [pypeline_TESTS.md](pypeline_TESTS.md#per-syn_tool-sweep-coverage) |
+
+Every build that synthesizes the top level writes a `sweep_history.json`
+iteration record, **including `--comb`** (`action: "comb"`, 0 cuts): that is
+the unpipelined measurement every sweep starts from, and the reference point
+`sweep_float32_tool_compare.py` plots each tool's curve against. A `--comb`
+build never pursued the goal, so its `final` record is
+`met: null` / `met_basis: "unverified"`, like `--no_sweep`.
 
 In-process: `sweep_history_record_unit_test.py`
 (registered in `unit_tests.py`) pins the `sweep_history.json` `final`

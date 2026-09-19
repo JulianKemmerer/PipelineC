@@ -28,7 +28,7 @@ def main():
     parser.add_argument("--out_dir", default=None)
     args = parser.parse_args()
 
-    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "sky130"]
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "device_models"]
     if args.out_dir:
         cmd += ["--out_dir", args.out_dir]
     print("Running:", " ".join(cmd), flush=True)

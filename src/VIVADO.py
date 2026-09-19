@@ -33,6 +33,10 @@ else:
         VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2019.2"
     VIVADO_PATH = VIVADO_DIR + "/bin/vivado"
 VIVADO_VERSION = None
+# Part used when this tool is selected without a part (--syn_tool/SYN_TOOL()
+# with no --part/PART()). See SYN.RESOLVE_PART_AND_TOOL.
+DEFAULT_PART = "xc7a35ticsg324-1l"
+
 
 FIXED_PKG_PATH = VIVADO_DIR + "/scripts/rt/data/fixed_pkg_2008.vhd"
 

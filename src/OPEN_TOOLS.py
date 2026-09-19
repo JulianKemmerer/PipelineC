@@ -51,6 +51,11 @@ if NEXTPNR_BIN_PATH is None or not os.path.exists(
         NEXTPNR_BIN_PATH = os.path.abspath(os.path.dirname(NEXTPNR_EXE_PATH))
 
 
+# Part used when this tool is selected without a part (--syn_tool/SYN_TOOL()
+# with no --part/PART()). See SYN.RESOLVE_PART_AND_TOOL.
+DEFAULT_PART = "LFE5U-85F-6BG381C"
+
+
 def _GHDL_PLUGIN_IS_BUILT_IN(yosys_bin_path):
     """Real probe (not a hardcoded guess) for whether this yosys build
     recognizes the `ghdl` command on its own, without the separate `-m ghdl`

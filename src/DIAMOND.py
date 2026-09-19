@@ -14,6 +14,12 @@ if ENV_TOOL_PATH:
     DIAMOND_PATH = ENV_TOOL_PATH
 else:
     DIAMOND_PATH = "/usr/local/diamond/3.11_x64/bin/lin64/diamondc"
+# Part used when this tool is selected without a part (--syn_tool/SYN_TOOL()
+# with no --part/PART()). See SYN.RESOLVE_PART_AND_TOOL.
+# No committed cache/delay entry exists for this part yet, so a build that
+# falls back to it characterizes every leaf from scratch.
+DEFAULT_PART = "ICE40UP5K-SG48"
+
 DIAMOND_TOOL = "synplify"  # lse|synplify
 # * If changing tool then need to delete FPGA part cache/delay dirs to be re synthesized
 # * Might need this to make synplify work on Debian based systems:

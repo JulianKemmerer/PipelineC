@@ -37,7 +37,7 @@ def fail(msg):
 
 
 def build(out_dir):
-    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "sky130", "--out_dir", out_dir]
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "device_models", "--out_dir", out_dir]
     print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True)
     print(result.stdout, flush=True)

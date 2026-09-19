@@ -34,7 +34,7 @@ def _run(design, extra_args, out_dir, cache_root):
         PYPELINEC,
         design,
         "--syn_tool",
-        "sky130",
+        "device_models",
         "--out_dir",
         out_dir,
     ] + extra_args

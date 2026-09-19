@@ -515,8 +515,33 @@ from pypeline import PART
 PART("xc7a35ticsg324-1l")   # Arty A7-35T
 ```
 
-Without `PART`, the tool chain uses a software timing estimator rather than real
-synthesis.
+The part selects the synthesis tool (Xilinx parts pick Vivado, Intel parts pick
+Quartus, and so on). To name the **tool** instead and let it pick its own
+default part, use `SYN_TOOL()`:
+
+```python
+from pypeline import SYN_TOOL
+
+SYN_TOOL("quartus")   # builds on Quartus, part 5CEBA4F23C8
+```
+
+Either can also come from the command line — `--part` and `--syn_tool` — which
+is how one part-neutral source file gets built on several backends:
+
+```
+pypelinec design.py --syn_tool quartus
+pypelinec design.py --part xc7a35ticsg324-1l
+```
+
+**The two cannot contradict.** Setting `--part` and `PART()` to different
+parts, `--syn_tool` and `SYN_TOOL()` to different tools, or naming a tool the
+part does not select, is an error rather than an override — a part and a tool
+are one decision spelled two ways. See
+[`SYN_DESIGN.md` §2](SYN_DESIGN.md#2-choosing-a-tool) for the full table of
+parts, tools and their default parts.
+
+With neither a part nor a tool, the tool chain uses a software timing estimator
+(PyRTL) rather than real synthesis.
 
 ### Naming a clock with `make_clock`
 

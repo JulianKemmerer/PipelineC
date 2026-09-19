@@ -28,7 +28,7 @@ MAIN_NAME = "sweep_floor_main"
 
 # tool -> (goal MHz, expected stopped_reason, expected stop warning text)
 TOOLS = {
-    "sky130": (100.0, "plateau", "fmax plateaued at"),
+    "device_models": (100.0, "plateau", "fmax plateaued at"),
     "pyrtl": (50.0, "empirical_floor", "at empirical (soft) fmax floor"),
 }
 
@@ -49,7 +49,7 @@ MAX_FULL_SYN_RUNS = 6
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out_dir", default=None)
-    parser.add_argument("--syn_tool", choices=sorted(TOOLS), default="sky130")
+    parser.add_argument("--syn_tool", choices=sorted(TOOLS), default="device_models")
     args = parser.parse_args()
     goal_mhz, want_reason, want_warning = TOOLS[args.syn_tool]
     out_dir = args.out_dir or tempfile.mkdtemp(prefix="sweep_floor_detect_")

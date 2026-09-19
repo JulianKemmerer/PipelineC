@@ -5,9 +5,9 @@ native_vs_vhdl_sim_tests.py, elab_tests.py, elab_introspect_tests.py,
 unit_tests.py, synth_tests.py, build_report_tests.py, known_issues_tests.py)
 and run_all.py. See docs/pypeline_TESTS.md for what belongs in each.
 
-synth_tests.py and build_report_tests.py each feed three categories, one per
-synthesis tool (synth_vivado / synth_pyrtl / synth_device_models, and the same
-for build_report_*). See SYN_TOOLS below."""
+synth_tests.py and build_report_tests.py each feed one category per synthesis
+tool -- synth_<tool> and build_report_<tool> for every backend pypelinec can
+select. See SYN_TOOLS below."""
 
 import argparse
 import dataclasses
@@ -76,27 +76,42 @@ QOR_DIR = REPO_ROOT / "src" / "tests" / "pypeline_tests" / "qor"
 # own. None of these are precise -- they only exist so a hung GHDL/synthesis
 # subprocess can't block the whole suite forever. Override per-Test via
 # timeout= for anything known to legitimately run longer/shorter.
-# Synthesis tools a synth_*/build_report_* category can be pinned to. The
-# default is device_models (real sky130 liberty STA, src/DEVICE_MODELS.py):
-# measured several times faster than PyRTL on both single --comb builds and
-# full sweeps (docs/pypeline_TESTS.md "Choosing a synthesis tool"). vivado is
-# only for Vivado-specific features (multi-cycle path constraints, real-part
-# BRAM/timing checks); pyrtl only for PyRTL-specific behavior.
-SYN_TOOLS = ("vivado", "pyrtl", "device_models")
+# Synthesis tools a synth_*/build_report_* category can be pinned to -- every
+# backend pypelinec can select, so each one has somewhere to be tested. These
+# are exactly SYN.TOOL_MODULES' keys (kept as a literal so importing the test
+# suite does not drag in the compiler); registration_audit_test.py checks the
+# two stay in sync.
+#
+# device_models (real sky130 liberty STA, src/DEVICE_MODELS.py) is the default
+# for tests that do not care which tool runs: measured several times faster
+# than PyRTL on both single --comb builds and full sweeps (see
+# docs/pypeline_TESTS.md "Choosing a synthesis tool"). The other backends carry
+# only the tests that are about that backend -- Vivado-specific features
+# (multi-cycle path constraints, real-part BRAM/timing checks), PyRTL-specific
+# behavior, and the per-SYN_TOOL sweep matrix that exists to prove every
+# backend still builds at all.
+SYN_TOOLS = (
+    "vivado",
+    "pyrtl",
+    "device_models",
+    "quartus",
+    "open_tools",
+    "diamond",
+    "efinity",
+    "gowin",
+    "cc_tools",
+)
 SYN_TOOL_CATEGORY_PREFIXES = ("synth", "build_report")
 SYN_TOOL_CATEGORIES = tuple(
     f"{prefix}_{tool}" for prefix in SYN_TOOL_CATEGORY_PREFIXES for tool in SYN_TOOLS
 )
 
-# pypelinec args that force each tool. vivado has none: the design's own
-# PART("xc...") selects it. device_models is also safe on a design that
-# declares a Xilinx/board PART -- --syn_tool overrides part-based inference,
-# and the DEVICE_MODELS delay cache ignores the part string.
-SYN_TOOL_ARGS = {
-    "vivado": [],
-    "pyrtl": ["--syn_tool", "pyrtl"],
-    "device_models": ["--syn_tool", "sky130"],
-}
+# pypelinec args that select each tool. Uniform since --syn_tool accepts every
+# backend: naming the tool is enough, and a tool named without a part uses its
+# own DEFAULT_PART (src/<TOOL>.py). Safe on designs that do set a PART, as long
+# as that PART selects the same tool -- a part and a tool that disagree are a
+# hard error, not an override (SYN.RESOLVE_PART_AND_TOOL).
+SYN_TOOL_ARGS = {tool: ["--syn_tool", tool] for tool in SYN_TOOLS}
 
 # How a build log names the tool it actually synthesized with: every synthesis
 # run prints "Running: <dir>/<tool module, lowercase>_<hash>....log", and those
@@ -164,6 +179,11 @@ class Test:
     requires: list = dataclasses.field(
         default_factory=list
     )  # external tool names (shutil.which) needed to run at all
+    # Extra environment variables for the subprocess, on top of the inherited
+    # environment. Lets one design file be registered several times with a
+    # different parameter each -- the per-SYN_TOOL sweep matrix uses it to give
+    # each backend its own clock goal without a near-duplicate design per tool.
+    env: dict = dataclasses.field(default_factory=dict)
 
 
 @dataclasses.dataclass
@@ -265,6 +285,7 @@ def run_test(test: Test, tmp_root: Path) -> TestResult:
         **os.environ,
         "TMPDIR": str(test_dir),
         "PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG": "1",
+        **{k: str(v) for k, v in test.env.items()},
     }
 
     start = time.monotonic()

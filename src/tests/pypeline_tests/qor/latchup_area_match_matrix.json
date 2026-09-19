@@ -48,7 +48,7 @@
     "mae_pct": 0.0001
   },
   "reproduced_builds": {
-    "description": "Each design rebuilt from latchup's own solution.py (CLK_RATE_MHZ/PART unchanged) via this repo's pypelinec, `--syn_tool sky130 --no_hier_syn --no_sweep` (latchup's own build flags, confirmed by their pypelinec.log). Slice count is whatever --no_sweep's planner guess produces at that target MHz -- NOT forced to match latchup's reported slice count.",
+    "description": "Each design rebuilt from latchup's own solution.py (CLK_RATE_MHZ/PART unchanged) via this repo's pypelinec, `--syn_tool device_models --no_hier_syn --no_sweep` (latchup's own build flags, confirmed by their pypelinec.log). Slice count is whatever --no_sweep's planner guess produces at that target MHz -- NOT forced to match latchup's reported slice count.",
     "compiler_commit": "9fb4be5878a96a9d1d05b5f5cc8d9352ea817cd5",
     "commit_date_utc": "2026-08-27T15:08:34+00:00",
     "recipe": "early_flatten_noabc",

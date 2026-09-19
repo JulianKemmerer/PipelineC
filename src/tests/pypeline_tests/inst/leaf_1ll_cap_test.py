@@ -3,7 +3,7 @@
 # operation boundaries without pretending their one logic level has an
 # arbitrary interior): builds leaf_1ll_cap_design.py (a serial AND/OR/XOR/MUX-only
 # chain - no SPLIT_KIND_BITS leaf anywhere, the shape where this bug is
-# total) under --syn_tool sky130 at an aggressive clock target, and checks
+# total) under --syn_tool device_models at an aggressive clock target, and checks
 #  - the build succeeds
 #  - no generated AND/OR/XOR/NOT entity ever exceeds latency 1, no MUX ever
 #    exceeds latency 2 (RAW_VHDL.LEAF_MAX_SPLIT_SLICES's real ceiling -
@@ -52,7 +52,7 @@ def main():
         PYPELINEC,
         DESIGN,
         "--syn_tool",
-        "sky130",
+        "device_models",
         "--no_sweep",
         "--out_dir",
         out_dir,

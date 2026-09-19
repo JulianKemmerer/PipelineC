@@ -882,7 +882,7 @@ def MEASURE_NETLIST_AREA(json_path, top=None, library=DEFAULT_LIBRARY, corner=DE
 #
 # Modelled directly on src/PYRTL.py, the smallest working example of the
 # contract SYN.py requires (see docs/DEVICE_MODELS_DESIGN.md for the full
-# interface list). Selected via PART("sky130...") or --syn_tool sky130 (see
+# interface list). Selected via PART("sky130...") or --syn_tool device_models (see
 # SYN.PART_SET_TOOL / src/pipelinec) -- never the part-less default, so every
 # existing PyRTL-estimated design is completely unaffected by this section
 # existing at all.
@@ -906,6 +906,13 @@ def MEASURE_NETLIST_AREA(json_path, top=None, library=DEFAULT_LIBRARY, corner=DE
 # stale leaf delay measured under a different corner.
 SELECTED_LIBRARY = DEFAULT_LIBRARY
 SELECTED_CORNER = DEFAULT_CORNER
+
+# Part used when this tool is selected without a part (--syn_tool/SYN_TOOL()
+# with no --part/PART()). See SYN.RESOLVE_PART_AND_TOOL. Safe to be a real
+# string (unlike PYRTL.DEFAULT_PART): the part is only ever a selector that
+# routes here, and GET_PATH_DELAY_CACHE_DIR deliberately never appends it for
+# DEVICE_MODELS -- the library/corner above already key the cache.
+DEFAULT_PART = "sky130"
 
 # Bump whenever run_sta()'s algorithm or the production synth recipe
 # (including ABC_EXTRA_ARGS below) changes in a way that could change a cached

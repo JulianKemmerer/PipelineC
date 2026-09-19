@@ -99,7 +99,7 @@ digraph PypelineC {
 
   // ============= Synthesis / P&R / timing backends =============
   subgraph cluster_syn {
-    label = "Synthesis / place-and-route / timing backends   (one SYN_TOOL, picked from PART or --syn_tool)"
+    label = "Synthesis / place-and-route / timing backends   (one SYN_TOOL, from PART()/--part or SYN_TOOL()/--syn_tool)"
 
     subgraph cluster_yosysbased {
       label = "Yosys-based -- fed by the netlists above"
@@ -108,7 +108,7 @@ digraph PypelineC {
       PnR        [label=<<B>p_r</B><BR/>Cologne Chip place-and-route>
                   shape=octagon fillcolor="#ffff99"]
       PyRTLModel [label=<<B>PyRTL</B><BR/>timing estimate from the netlist<BR/>(default backend)> shape=octagon fillcolor="#ffff99"]
-      Sky130STA  [label=<<B>sky130</B> ASIC model<BR/>liberty STA + cell area<BR/>--syn_tool sky130> fillcolor="#fdc086"]
+      Sky130STA  [label=<<B>sky130</B> ASIC model<BR/>liberty STA + cell area<BR/>--syn_tool device_models> fillcolor="#fdc086"]
     }
 
     subgraph cluster_vendor {

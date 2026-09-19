@@ -30,8 +30,12 @@ from common import (
     syn_tool_category,
 )
 
-DM = "device_models"  # --syn_tool sky130; overrides any PART in the design
-VIVADO = "vivado"  # the design's own PART("xc...") selects Vivado
+# Tool per entry -- picks the run_all category AND the --syn_tool the
+# registration appends (common.SYN_TOOL_ARGS). A design may also set its own
+# PART, but it must select this same tool: a part and a tool that disagree are
+# a hard error, not an override (SYN.RESOLVE_PART_AND_TOOL).
+DM = "device_models"  # real sky130 liberty STA; the default for tool-neutral designs
+VIVADO = "vivado"  # Vivado-specific features; these designs set PART("xc...") too
 
 # fmt: off
 # (filename, source_dir, extra_args, tool)
@@ -71,7 +75,7 @@ SYNTH_TEST_FILES = [
     # int28*int28 / int21*int16 multipliers (Vivado: ~30 minutes).
     ("vga_donut.py", EXAMPLES_PYPELINE_DIR, ["--comb"], VIVADO),
     # The other board examples: their board import sets a Xilinx PART, but
-    # nothing in them is Vivado-specific, so --syn_tool sky130 builds them.
+    # nothing in them is Vivado-specific, so --syn_tool device_models builds them.
     ("vga_test_pattern.py", EXAMPLES_PYPELINE_DIR, ["--comb"], DM),
     ("float32_add_test.py", INST_DIR, ["--comb"], DM),
     ("float_ops_test.py", INST_DIR, ["--comb"], DM),
@@ -158,6 +162,44 @@ SYNTH_TEST_FILES = [
 # fmt: on
 
 
+# Clock goal (MHz) for the per-SYN_TOOL sweep matrix, per backend. See the
+# registration loop in get_tests() for what these are and why they differ.
+#
+# Tuned per tool from that tool's MEASURED comb fmax for this design, at
+# roughly 3x it. Lower and the sweep meets the goal in a single cut-step
+# (two operating points, one of them unpipelined -- nothing about pipelining
+# is really exercised); much higher and it runs out of room and fails
+# TIMING NOT MET. At ~3x each tool does the comb build plus 2-3 sweep
+# iterations, which is also what makes sweep_float32_tool_compare.py's
+# fmax-vs-latency curve worth plotting.
+#
+# Re-measure with:  pypelinec inst/sweep_float32_test.py --syn_tool <tool> --comb
+SWEEP_FLOAT32_MHZ = {
+    "pyrtl": 40.0,  # comb 12.8 MHz
+    "device_models": 60.0,  # comb 29.9 MHz; settles at ~103 MHz in 2 iterations
+    "vivado": 75.0,  # comb 38.5 MHz; settles at ~93 MHz in 4 iterations
+    "quartus": 60.0,  # comb 28.8 MHz; settles at ~70.8 MHz in 4 iterations
+    "open_tools": 60.0,  # comb 29.7 MHz; settles at ~62 MHz in 3 iterations
+    "efinity": 25.0,
+    "gowin": 25.0,
+    "cc_tools": 25.0,
+    "diamond": 15.0,
+}
+
+# Extra pypelinec args for particular backends in the matrix.
+#
+# efinity: efx_pnr rebuilds the whole 218x322 Titanium routing graph for every
+# leaf and peaks near 3.5GB resident doing it. At the default 4 parallel jobs
+# that is ~14GB, which OOMs a 16GB machine -- and the OOM killer picks by
+# oom_score, so what dies is usually an editor or browser rather than the
+# build, which then fails confusingly on a missing .timing.rpt. Capping the
+# jobs also made each run FASTER, not just survivable: without the memory
+# thrash, per-leaf BuildGraph dropped from 226s to 53s.
+SWEEP_FLOAT32_EXTRA_ARGS = {
+    "efinity": ["-j", "2"],
+}
+
+
 def _synth_test(name, args, tool, **kwargs) -> Test:
     return Test(
         name=name,
@@ -233,6 +275,39 @@ def get_tests() -> list:
                 [QOR_DIR / qor_name / "auto_fsm.py"],
                 DM,
                 timeout=1800,
+            )
+        )
+    # ── Per-SYN_TOOL AUTO_PIPELINE sweep matrix ──
+    # One part-neutral design ("sweep_float32_test.py", a float32 adder @MAIN),
+    # registered once per backend so every synthesis tool pypelinec can select
+    # is proven to still run a real planned throughput sweep end to end. Before
+    # this, six of the nine backends had no test at all and a refactor could
+    # break them silently.
+    #
+    # Each entry passes only --syn_tool <tool>; the tool's own DEFAULT_PART
+    # (src/<TOOL>.py) supplies the part, which is what keeps it to ONE design
+    # file instead of one near-duplicate per tool.
+    #
+    # The goal per tool is set through Test.env, low enough to settle in a few
+    # sweep iterations but above the design's unpipelined fmax so the sweep
+    # must actually place cuts. Tuned by running them; see
+    # docs/pypeline_TESTS.md "Per-SYN_TOOL sweep coverage".
+    from known_issues_tests import SWEEP_FLOAT32_BLOCKED
+
+    for tool, goal_mhz in SWEEP_FLOAT32_MHZ.items():
+        if tool in SWEEP_FLOAT32_BLOCKED:
+            # That backend cannot run here at all (license / vendor tool
+            # crash, see SWEEP_FLOAT32_BLOCKED). Its entry lives in
+            # known_issues_tests.py with expect_fail=True instead, so a
+            # default run does not pay for a failure nobody can fix here.
+            continue
+        tests.append(
+            _synth_test(
+                f"sweep_float32_{tool}",
+                [INST_DIR / "sweep_float32_test.py"]
+                + SWEEP_FLOAT32_EXTRA_ARGS.get(tool, []),
+                tool,
+                env={"SWEEP_FLOAT32_MHZ": goal_mhz},
             )
         )
     return tests

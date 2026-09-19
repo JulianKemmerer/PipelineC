@@ -37,15 +37,21 @@ PART("sky130_fd_sc_hvl")          # or #pragma PART "sky130..." in C
 ```
 
 ```
-pipelinec design.py --syn_tool sky130     # overrides PART, either direction
-pipelinec design.py --syn_tool pyrtl      # forces PyRTL even with a sky130 PART
+pipelinec design.py --syn_tool device_models   # no PART needed: DEFAULT_PART = "sky130"
+pipelinec design.py --syn_tool pyrtl           # the part-less PyRTL estimate
 ```
 
+**A tool and a part must agree.** `--syn_tool device_models` on a design whose
+`PART` selects another backend is a hard error, not an override — see
+[`SYN_DESIGN.md` §2](SYN_DESIGN.md#2-choosing-a-tool). Any sky130 spelling is
+fine (`PART("sky130")`, `PART("sky130_fd_sc_hvl")`, `--part sky130...`): they
+all resolve to this backend, and the part string is only ever the selector.
+To build a Xilinx-parted design under sky130, drop its `PART` rather than
+trying to override it.
+
 **No part and no flag stays PyRTL — completely unchanged.** Every existing
-part-less design keeps today's behavior; nothing about this feature is
-default-on. `SYN.PART_SET_TOOL` (`src/SYN.py`) gained one `elif` branch, and
-`--syn_tool` just pre-sets `SYN.SYN_TOOL` before that function's own
-`if SYN_TOOL is None:` guard ever runs.
+part-less design keeps today's behavior; nothing about this backend is
+default-on.
 
 ## 2. How it works
 
@@ -396,7 +402,7 @@ decisions this results section motivated are in
 | Replay of all 4 shipped cache-source builds after a `MODEL_VERSION` bump | the regenerated leaf cache is complete: 100% cache hits, zero re-synthesis, exactly one sky130 cache directory |
 | Per-stage bit-distribution readback (`*_registers.log`), all hash-verified builds | no zero-bit or degenerate pipeline splits silently wasting a stage |
 | Whole-design STA, our own synthesis, all 7 stage counts | the end-to-end shape bar: monotone, saturating, real 32→64 knee reproduced |
-| Real `pipelinec --syn_tool sky130` build, normal throughput sweep (not `--no_sweep`) | the full integration: per-leaf isolated synthesis, multimain confirmation, sweep convergence, all through the real CLI |
+| Real `pipelinec --syn_tool device_models` build, normal throughput sweep (not `--no_sweep`) | the full integration: per-leaf isolated synthesis, multimain confirmation, sweep convergence, all through the real CLI |
 | Carry-save multiplier, latchup-style first candidate at 31 and 60/61 stages | planner/RAW-VHDL structure raises fmax 700.640825→909.794952 MHz while model V4, recipe, liberty, and coefficients remain unchanged |
 | `device_models_sta_test`'s `test_artifact_paths_fit_filename_limit`, plus the `synth_device_models` builds with long generated names (`self_check_stream_auto_fsm_test`, `fir_sweep_test`, `sweep_stateful_boundary_test`) | Every artifact basename, including the worst-case `.tmp` tail, stays within 255 bytes for every recipe and for real soft_cmp leaf names. Long names are deterministic and never collide. Short names keep their historical file names. |
 | `warm_copy_no_resynth_test` (build_report), `device_models_sta_test`'s `test_synthesis_identity_survives_copying_the_output_directory` and `test_cached_timing_mismatch_reason_names_changed_input`, plus `native_vs_vhdl_sim`'s non-`--comb` entries under sky130 | A copied warm output directory keeps its cache identity, and rebuilding in it re-synthesizes no leaf. A cache miss names the input that changed. `pypeline_sim_debug.py`'s per-run copies of one build reuse its leaf reports end to end. |
@@ -638,7 +644,7 @@ The `cache/area/` tree ships pre-populated (every leaf the repo's own
 `synth_device_models` / `build_report_device_models` / `native_vs_vhdl_sim`
 tests happen to touch while running, not a deliberately curated set; see
 `git log` for the generating builds). `PART("sky130")`,
-`PART("sky130_fd_sc_hvl")` and `--syn_tool sky130` all read and write this
+`PART("sky130_fd_sc_hvl")` and `--syn_tool device_models` all read and write this
 same tree and the same `cache/delay/device_models_*` tree. The library
 and corner are fixed (`SELECTED_LIBRARY`/`SELECTED_CORNER`), and the part
 string is not part of the key.
@@ -646,7 +652,7 @@ string is not part of the key.
 into `.pypelinec_cache/` + exports `PYPELINEC_CACHE_DIR` — one copy covering
 both subtrees.
 
-**Consumed by AUTO_FSM's minimum-area search.** Under `--syn_tool sky130`,
+**Consumed by AUTO_FSM's minimum-area search.** Under `--syn_tool device_models`,
 `AUTO_FSM.py`'s ranking (`docs/AUTO_FSM_DESIGN.md` §3.8) uses real cached
 leaf/register/multiplexer µm² from this cache wherever a measurement exists,
 falling back to its own abstract per-bit model (scaled into µm² by a

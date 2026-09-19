@@ -42,7 +42,7 @@ def _run(out_dir):
         PYPELINEC,
         DESIGN,
         "--syn_tool",
-        "sky130",
+        "device_models",
         "--no_sweep",
         "--out_dir",
         out_dir,

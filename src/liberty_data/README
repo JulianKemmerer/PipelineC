@@ -5,7 +5,7 @@ Real SkyWater sky130 PDK liberty timing file, `sky130_fd_sc_hvl` library,
 (src/DEVICE_MODELS.py) currently supports or has any ground truth to
 validate against (see docs/DEVICE_MODELS_DESIGN.md).
 
-Vendored directly into the repo so `--syn_tool sky130` works out of the box
+Vendored directly into the repo so `--syn_tool device_models` works out of the box
 with no PDK manager (volare or otherwise) required. Used only by the
 external yosys/GHDL/abc synthesis step (dfflibmap/abc -liberty, mapping the
 design to real standard cells) -- DEVICE_MODELS.py's own Python STA engine
@@ -31,7 +31,7 @@ liberty-mapped netlist -- deliberately kept import-independent from the rest
 of the compiler so it (and the .lib above) can be driven completely
 standalone for calibration/validation, with zero PipelineC integration.
 
-Both files are needed for a real `--syn_tool sky130` build: the .lib by the
+Both files are needed for a real `--syn_tool device_models` build: the .lib by the
 external EDA tools (yosys/GHDL/abc) that map and report which real cells got
 used, the .json by PipelineC's own STA to turn that mapping into an actual
 timing number.

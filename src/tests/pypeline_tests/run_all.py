@@ -3,10 +3,12 @@
 """Run all pypeline tests in parallel. See docs/pypeline_TESTS.md for what
 belongs in each category.
 
-synth_tests.py and build_report_tests.py each feed three categories, one per
-synthesis tool (synth_vivado / synth_pyrtl / synth_device_models and
-build_report_vivado / build_report_pyrtl / build_report_device_models), so a
-category here selects that module's tests whose Test.category matches.
+synth_tests.py and build_report_tests.py each feed one category per synthesis
+tool -- synth_<tool> and build_report_<tool> for every backend in
+common.SYN_TOOLS -- so a category here selects that module's tests whose
+Test.category matches. Several of those categories are empty: a backend with
+no tool-specific behavior to check still gets its pair, so the per-SYN_TOOL
+sweep matrix has somewhere to land, and an empty category costs nothing.
 
 known_issues is deliberately NOT part of the default category set: every
 entry there is expect_fail=True (documents a known, unfixed compiler bug),
@@ -64,6 +66,20 @@ ALL_CATEGORY_MODULES = dict(DEFAULT_CATEGORY_MODULES, known_issues=known_issues_
 _DEFAULT_CATEGORY_ORDER = [
     "synth_vivado",
     "build_report_vivado",
+    # Vendor backends that place-and-route for every leaf characterization
+    # (SYN.TOOL_DOES_PNR) -- slowest per uncached leaf, so they start first.
+    "synth_quartus",
+    "build_report_quartus",
+    "synth_open_tools",
+    "build_report_open_tools",
+    "synth_efinity",
+    "build_report_efinity",
+    "synth_cc_tools",
+    "build_report_cc_tools",
+    "synth_diamond",
+    "build_report_diamond",
+    "synth_gowin",
+    "build_report_gowin",
     "synth_device_models",
     "build_report_device_models",
     "synth_pyrtl",

@@ -38,7 +38,7 @@ def build(path, source):
     design.write_text(source)
     # sky130 (DEVICE_MODELS) is the suite's fast synthesis tool; the RTL
     # checks below run their own yosys and don't depend on it.
-    run([sys.executable, SRC / "pypelinec", design, "--comb", "--syn_tool", "sky130",
+    run([sys.executable, SRC / "pypelinec", design, "--comb", "--syn_tool", "device_models",
          "--out_dir", path], path)
     return (path / "vhdl_files.txt").read_text()
 

@@ -16,6 +16,10 @@ if ENV_TOOL_PATH:
     CC_TOOLS_PATH = os.path.abspath(os.path.dirname(CC_TOOLS_PR_PATH) + "../../")
 else:
     CC_TOOLS_PATH = "/media/1TB/Programs/Linux/cc-toolchain-linux_testing_12.09.24"
+# Part used when this tool is selected without a part (--syn_tool/SYN_TOOL()
+# with no --part/PART()). See SYN.RESOLVE_PART_AND_TOOL.
+DEFAULT_PART = "CCGM1A1"
+
 
 
 class ParsedTimingReport:

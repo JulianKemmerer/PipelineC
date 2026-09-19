@@ -13,6 +13,10 @@ if ENV_TOOL_PATH:
     GOWIN_PATH = ENV_TOOL_PATH
 else:
     GOWIN_PATH = "/usr/local/share/gowin/IDE/bin/gw_sh"
+# Part used when this tool is selected without a part (--syn_tool/SYN_TOOL()
+# with no --part/PART()). See SYN.RESOLVE_PART_AND_TOOL.
+DEFAULT_PART = "GW2AR-LV18QN88PC8:C"
+
 
 # Do full place and route for timing results
 # for "all" modules

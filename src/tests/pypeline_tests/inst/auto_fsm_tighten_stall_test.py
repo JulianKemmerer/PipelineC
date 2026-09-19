@@ -73,7 +73,7 @@ def main():
         PYPELINEC,
         design,
         "--syn_tool",
-        "sky130",
+        "device_models",
         "--out_dir",
         os.path.join(out_dir, "build"),
         "--auto_fsm_budget_scale",

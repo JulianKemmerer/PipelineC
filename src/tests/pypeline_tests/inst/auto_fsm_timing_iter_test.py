@@ -7,7 +7,7 @@ met", and it is the property that makes the feature usable in practice: a user
 who sees a timing report blaming an AUTO_FSM must be able to get more states out
 of the tool without hand-editing anything.
 
-Method: build auto_fsm_timing_iter_design.py under --syn_tool sky130 with a
+Method: build auto_fsm_timing_iter_design.py under --syn_tool device_models with a
 deliberately LOOSE per-state budget (--auto_fsm_budget_scale 2.5, i.e. the
 scheduler is told a state's operation chain may fill 2.5x the clock period --
 sky130's cached add delays are pessimistic enough that 1.5x still fits real
@@ -53,7 +53,7 @@ def main():
         PYPELINEC,
         DESIGN,
         "--syn_tool",
-        "sky130",
+        "device_models",
         "--out_dir",
         out_dir,
         "--auto_fsm_budget_scale",

@@ -106,7 +106,7 @@ For a more officially-packaged install currently limited to open source tools, t
 nix-build default.nix
 export PATH=$PATH:$(pwd)/result/bin
 pypelinec examples/pypeline/blink.py --comb   # runs the real PyRTL+GHDL+Yosys flow
-# can specify --syn_tool sky130 (or source code PART('sky130')) to use an alternative ASIC timing model instead
+# can specify --syn_tool device_models (or source code PART('sky130')) to use an alternative ASIC timing model instead
 ```
 
 ## Next Steps
@@ -281,10 +281,11 @@ pypelinec ./examples/pypeline/pipeline.py --comb
 **To produce a pipeline that meets timing at operating frequency `F`**:
 
 * First [have tools installed](https://github.com/JulianKemmerer/PipelineC/wiki/Running-the-Tool).
-  * Or use `PART("sky130")` / `--syn_tool sky130` to use a custom internal ASIC timing model.
+  * Or use `PART("sky130")` / `--syn_tool device_models` to use a custom internal ASIC timing model.
 * And then [open and edit](../examples/pypeline/pipeline.py) `pipeline.py` to specify the target frequency and FPGA part:
   * Ex. `@MAIN(F)` says the `my_pipeline` function is a single top level `@MAIN` function intended to run at `F`MHz — see [Top-Level Entry Points](pypeline_guide.md#top-level-entry-points).
   * Ex. `PART("LFE5UM5G-85F-8BG756C")` for `ghdl+yosys+nextpnr` `ECP5U` flow.
+  * Or name the tool instead and let it pick its own default part: `SYN_TOOL("quartus")` in the source, or `--syn_tool quartus` / `--part 5CEBA4F23C8` on the command line — see [FPGA target device](pypeline_guide.md#fpga-target-device).
 
 * Since `my_pipeline` is a pure function the Pypeline tool will auto-pipeline the function to meet the target operating frequency.
 ```

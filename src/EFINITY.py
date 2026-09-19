@@ -13,6 +13,10 @@ if ENV_TOOL_PATH:
     EFINITY_PATH = os.path.abspath(os.path.dirname(EFINITY_EFX_RUN_PATH) + "/../bin")
 else:
     EFINITY_PATH = "/media/1TB/Programs/Linux/efinity/2021.1/bin"
+# Part used when this tool is selected without a part (--syn_tool/SYN_TOOL()
+# with no --part/PART()). See SYN.RESOLVE_PART_AND_TOOL.
+DEFAULT_PART = "Ti60F225"
+
 
 
 def PART_TO_FAMILY_TIMING_MODEL(part_str):
