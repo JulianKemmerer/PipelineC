@@ -16,6 +16,17 @@ category per synthesis tool -- one pair for every backend `pypelinec` can select
 
 ## Categories
 
+Auto-pipelined RAM coverage includes `auto_pipeline_ram_test` (plan constraints, native
+memory contracts, byte enables, reader replication, randomized stalls, and sustained
+throughput), `self_check_auto_pipeline_ram_test` (native/GHDL cycle parity and bypass
+alignment and clock-enable pauses), `self_check_auto_pipeline_ram_selected_plan`
+(native/GHDL parity after the synthesis-selected plan is installed), and ECP5
+`auto_pipeline_ram_build_test` / `auto_pipeline_ram_qor_test`
+(actual BRAM mapping, exact/flexible latency, failure bounds, and splitting gains).
+The [RAM benchmark](AUTO_PIPELINE_DESIGN.md#ram-stream-wrapper-and-verification) records the
+full three-seed 16K/64K frequency/resource frontier. Run the complete suite with
+`python3 src/tests/pypeline_tests/run_all.py -j 5 --no_timeout`.
+
 | Category | What it checks | Verdict |
 |---|---|---|
 | `native_sim` | Python golden-model checks (`sim_call`) and `pypeline_sim.py` multi-MAIN runs; fixed user pipelines selectively prepare alignment | exit code, plus in-process `assert`s |

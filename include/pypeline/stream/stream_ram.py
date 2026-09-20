@@ -30,7 +30,15 @@ same generator and simulation model `make_ram` uses), and the function
 returned here only gives it interface ports. It is NOT `@pipeline_latency`:
 latency varies with backpressure, so it is a stateful block like a FIFO.
 `.latency` is the unstalled request-to-response latency.
+
+`make_stream_auto_pipeline_ram` uses the same port interfaces around an
+auto-pipelined BRAM, with response FIFOs and credits instead of per-port
+pipeline stalls. Its `.latency` is the core latency; `.min_response_latency`
+includes the FIFO. See docs/AUTO_PIPELINE_DESIGN.md.
 """
+import pypeline as py
+from fifo import make_fifo
+
 from pypeline import (
     _exec_generated_func,
     _finalize_hw_name,
@@ -43,6 +51,7 @@ from pypeline import (
 from ram import (
     RAM_GENERATED_FOLDER,
     RamConfig,
+    make_auto_pipeline_ram,
     ram_exec_globals,
     ram_make_struct,
     ram_model_class,
@@ -217,3 +226,150 @@ def make_stream_ram(
         setattr(stream_ram, f"p{i}_resp_t", resp_ts[i])
     _STREAM_RAM_CACHE[cfg.key] = (stream_ram, stream_ram_t)
     return stream_ram, stream_ram_t
+
+
+def make_stream_auto_pipeline_ram(
+    elem_t,
+    size,
+    ports=("rw",),
+    init=None,
+    byte_write_enables=False,
+    *,
+    latency=None,
+    start_latency=None,
+    max_latency=None,
+):
+    """make_stream_ram's interfaces around a freely advancing auto-pipelined RAM.
+
+    .latency is the core latency; .min_response_latency includes the FIFO's
+    two cycles. Credits reserve storage until a response is consumed. All
+    ports accept independently, and every accepted request gets a response.
+    """
+    core, core_t = make_auto_pipeline_ram(
+        elem_t,
+        size,
+        ports,
+        init,
+        byte_write_enables,
+        latency=latency,
+        start_latency=start_latency,
+        max_latency=max_latency,
+    )
+    depth = 1 << (core.latency + 2).bit_length()  # ceil_pow2(L + 3)
+    counter_t = py.make_uint_t(depth.bit_length())
+    req_ts, resp_ts, req_intrfs, resp_intrfs, fifos = [], [], [], [], []
+    for kind in core.ports:
+        req, resp = ram_port_payload_fields(core, kind)
+        req_t = ram_make_struct(f"ram_{kind}_req_t", req)
+        resp_t = ram_make_struct(f"ram_{kind}_resp_t", resp)
+        req_ts.append(req_t)
+        resp_ts.append(resp_t)
+        req_intrfs.append(make_stream_interface(req_t))
+        resp_intrfs.append(make_stream_interface(resp_t))
+        fifos.append(make_fifo(resp_t, depth))
+    fields = []
+    for i in range(len(core.ports)):
+        fields += [
+            (f"p{i}_resp_if", resp_intrfs[i].fwd_t),
+            (f"p{i}_req_if", req_intrfs[i].fb_t),
+        ]
+    out_t = ram_make_struct("stream_auto_pipeline_ram_t", fields)
+    name = f"stream_auto_pipeline_ram_h{core._auto_pipeline_ram['key'][:12]}_p{core.plan.fingerprint}"
+    params = ", ".join(
+        f"p{i}_req_if: P{i}_REQ_FWD_T, p{i}_resp_if: P{i}_RESP_FB_T"
+        for i in range(len(core.ports))
+    )
+    lines = ["@hw_func", f"def {name}({params}) -> OUT_T:", "    o: OUT_T"]
+    ns = dict(
+        hw_func=py.hw_func,
+        Reg=py.Reg,
+        uint1_t=py.uint1_t,
+        COUNTER_T=counter_t,
+        OUT_T=out_t,
+        CORE=core,
+        CORE_T=core_t,
+        DEPTH=depth,
+    )
+    for i, kind in enumerate(core.ports):
+        ns.update(
+            {
+                f"P{i}_REQ_FWD_T": req_intrfs[i].fwd_t,
+                f"P{i}_RESP_FB_T": resp_intrfs[i].fb_t,
+                f"P{i}_IN_T": core.in_ts[i],
+                f"P{i}_RESP_T": resp_ts[i],
+                f"FIFO{i}": fifos[i][0],
+                f"FIFO{i}_T": fifos[i][1],
+            }
+        )
+        lines += [
+            f"    count{i}: Reg[COUNTER_T]",
+            f"    ready{i}: Reg[uint1_t]",
+            f"    o.p{i}_req_if.ready = ready{i}",
+            f"    x{i}: P{i}_IN_T",
+            f"    x{i}.valid = p{i}_req_if.stream.valid & ready{i}",
+        ]
+        for field, _ in ram_port_payload_fields(core, kind)[0]:
+            lines.append(f"    x{i}.{field} = p{i}_req_if.stream.data.{field}")
+    lines.append(
+        f"    r: CORE_T = CORE({', '.join(f'x{i}' for i in range(len(core.ports)))})"
+    )
+    for i, kind in enumerate(core.ports):
+        lines.append(f"    payload{i}: P{i}_RESP_T")
+        for field, _ in ram_port_payload_fields(core, kind)[1]:
+            lines.append(f"    payload{i}.{field} = r.p{i}.{field}")
+        lines += [
+            f"    f{i}: FIFO{i}_T = FIFO{i}(p{i}_resp_if.ready, payload{i}, r.p{i}.valid)",
+            f"    o.p{i}_resp_if.stream.data = f{i}.data_out",
+            f"    o.p{i}_resp_if.stream.valid = f{i}.data_out_valid",
+            f"    accepted{i}: uint1_t = x{i}.valid",
+            f"    retired{i}: uint1_t = f{i}.data_out_valid & p{i}_resp_if.ready",
+            f"    ready{i} = count{i} < DEPTH",
+            f"    if accepted{i} & ~retired{i}:",
+            f"        ready{i} = count{i} < (DEPTH - 1)",
+            f"        count{i} += 1",
+            f"    elif retired{i} & ~accepted{i}:",
+            f"        ready{i} = 1",
+            f"        count{i} -= 1",
+        ]
+    lines.append("    return o")
+    ram_exec_globals(ns, elem_t, out_t, core_t, *req_ts, *resp_ts)
+    init = core._auto_pipeline_ram["key"]  # avoid large init values in generated names
+    wrapped = py._exec_generated_func(
+        name, "\n".join(lines) + "\n", ns, folder=RAM_GENERATED_FOLDER
+    )
+    info = py._names.replace(
+        wrapped._pypeline_name_info,
+        params=(("implementation", core.plan.fingerprint),)
+        + wrapped._pypeline_name_info.params,
+    )
+    wrapped._pypeline_name_info = py._inspect.unwrap(wrapped)._pypeline_name_info = info
+    for attr in (
+        "elem_t",
+        "size",
+        "addr_t",
+        "ports",
+        "read_latency",
+        "in_regs",
+        "out_regs",
+        "latency",
+        "byte_write_enables",
+        "we_t",
+        "read_after_write_gap",
+        "plan",
+    ):
+        setattr(wrapped, attr, getattr(core, attr))
+    wrapped.core, wrapped.out_t = core, out_t
+    wrapped._sim_clocked_pipeline_boundary = True
+    wrapped.min_response_latency = core.latency + 2
+    wrapped.fifo_depth = depth
+    wrapped.req_ts, wrapped.resp_ts = tuple(req_ts), tuple(resp_ts)
+    wrapped.req_intrfs, wrapped.resp_intrfs = tuple(req_intrfs), tuple(resp_intrfs)
+    for i in range(len(core.ports)):
+        for attr, values in (
+            ("req_t", req_ts),
+            ("resp_t", resp_ts),
+            ("req_intrf", req_intrfs),
+            ("resp_intrf", resp_intrfs),
+        ):
+            setattr(wrapped, f"p{i}_{attr}", values[i])
+    return wrapped, out_t

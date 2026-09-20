@@ -74,9 +74,8 @@ SYNTH_TEST_FILES = [
     # yosys run sat in `opt -full` for over an hour on the flattened
     # int28*int28 / int21*int16 multipliers (Vivado: ~30 minutes).
     ("vga_donut.py", EXAMPLES_PYPELINE_DIR, ["--comb"], VIVADO),
-    # The other board examples: their board import sets a Xilinx PART, but
-    # nothing in them is Vivado-specific, so --syn_tool device_models builds them.
-    ("vga_test_pattern.py", EXAMPLES_PYPELINE_DIR, ["--comb"], DM),
+    # Board imports select a Xilinx PART, so the backend must agree.
+    ("vga_test_pattern.py", EXAMPLES_PYPELINE_DIR, ["--comb"], VIVADO),
     ("float32_add_test.py", INST_DIR, ["--comb"], DM),
     ("float_ops_test.py", INST_DIR, ["--comb"], DM),
     ("fixed_point_test.py", INST_DIR, ["--comb"], DM),
@@ -142,7 +141,7 @@ SYNTH_TEST_FILES = [
     ("interface_boundary_test.py", INST_DIR, ["--comb"], DM),
     ("interface_array_port_test.py", INST_DIR, ["--comb"], DM),
     ("interface_mixing_rules_test.py", INST_DIR, ["--comb"], DM),
-    ("fm_radio_decim.py", EXAMPLES_PYPELINE_DIR / "dsp", ["--comb"], DM),
+    ("fm_radio_decim.py", EXAMPLES_PYPELINE_DIR / "dsp", ["--comb"], VIVADO),
     # PDW synth tops stay on their real Artix-7 part: each proves its block
     # closes 125 MHz on real hardware ports (and pulse_extract that its data
     # FIFO infers Block RAM).
@@ -216,6 +215,40 @@ def get_tests() -> list:
         _synth_test(filename[: -len(".py")], [source_dir / filename] + extra_args, tool)
         for filename, source_dir, extra_args, tool in SYNTH_TEST_FILES
     ]
+    tests.append(
+        Test(
+            name="auto_pipeline_ram_build_test",
+            category="synth_open_tools",
+            cmd=[
+                INST_DIR / "auto_pipeline_ram_build_test.py",
+                "--syn_tool",
+                "open_tools",
+            ],
+            needs_out_dir=True,
+        )
+    )
+    tests.append(
+        Test(
+            name="auto_pipeline_ram_qor_test",
+            category="synth_open_tools",
+            cmd=[
+                INST_DIR.parent / "auto_pipeline_ram_qor_bench.py",
+                "--sizes",
+                "65536",
+                "--latencies",
+                "3",
+                "7",
+                "9",
+                "--seeds",
+                "1",
+                "-j",
+                "1",
+                "--require_improvement",
+            ],
+            needs_out_dir=True,
+        )
+    )
+
     # The composed PDW design (pulse_gen + pulse_detect + pulse_extract). The
     # pulse_detect/pulse_extract entries above check their blocks in isolation;
     # only this one proves the whole thing builds together, and that the

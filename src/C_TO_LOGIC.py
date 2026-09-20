@@ -10298,6 +10298,7 @@ class ParserState:
         self.func_mult_style = {}
         self.func_marked_wires = set()
         self.func_fixed_latency = {}
+        self.auto_pipeline_rams = {}
         self.func_marked_blackbox = set()
         self.func_marked_no_add_io_regs = set()
         self.func_marked_debug = set()
@@ -10366,6 +10367,7 @@ class ParserState:
         rv.func_mult_style = dict(self.func_mult_style)
         rv.func_marked_wires = set(self.func_marked_wires)
         rv.func_fixed_latency = dict(self.func_fixed_latency)
+        rv.auto_pipeline_rams = dict(self.auto_pipeline_rams)
         rv.func_marked_blackbox = set(self.func_marked_blackbox)
         rv.func_marked_no_add_io_regs = set(self.func_marked_no_add_io_regs)
         rv.func_marked_debug = set(self.func_marked_debug)

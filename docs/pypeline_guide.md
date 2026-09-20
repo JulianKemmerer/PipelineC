@@ -2522,6 +2522,23 @@ Note `.latency` reports the AUTO_PIPELINE'd core's own depth only — boundary r
 you add around the call are yours to count (e.g. total latency here is
 `1 + PIPELINE_STAGE_AP.latency + 1`).
 
+#### AUTO_PIPELINE_RAM
+
+[Automatically pipelined RAM](AUTO_PIPELINE_DESIGN.md#8-auto-pipelined-ram) provides synchronous FPGA
+block RAM with automatic registers, bank splitting, and a valid/ready FIFO
+wrapper.
+
+For timing-driven FPGA block RAM, use `make_auto_pipeline_ram` from `ram` or
+`make_stream_auto_pipeline_ram` from `stream.stream_ram`. They keep the port/type
+interfaces below, replace manual stage counts with `latency`, `start_latency`, and
+`max_latency`, and always start with a one-cycle synchronous read. Can select input/output registers and split deep memories into pipelined banks.
+The stream variant uses response FIFOs and credits to absorb backpressure.
+
+Unlike the manual factories, auto-pipelined RAMs require a dependent read to wait
+`.read_after_write_gap` enabled clocks after accepting a write. Collision data and
+`rw` write-response `rd_data` are unspecified. See the
+[auto-pipelined RAM API, examples, and splitting diagram](AUTO_PIPELINE_DESIGN.md#8-auto-pipelined-ram).
+
 ### `AUTO_MULTI_CYCLE(...)` (New)
 
 Picking `N` by hand means guessing how slow the logic really is. Too small, and the build

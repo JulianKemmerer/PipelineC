@@ -5,6 +5,13 @@ planned sweep, the coarse sweep, and the seeded confirm-or-sweep. This is the
 machinery every temporal AUTO feature shares; each feature's own feedback
 into the loop is documented with that feature.
 
+[Auto-pipelined RAM search](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-and-simulation) invokes
+this sweep for each register/bank-tree candidate and restores the winning graph.
+`sweep_history.json` records selected `auto_pipeline_rams` and measured
+`auto_pipeline_ram_iterations`; `auto_pipeline_ram_history.json` also retains the
+RAM frontier. An exhausted RAM latency/subdivision search propagates through the
+same nonzero-exit timing-failure gate as an ordinary pipeline search.
+
 - Implementation: [`src/SWEEP.py`](../src/SWEEP.py).
 - The synthesis runs, reports and delay model it drives:
   [`SYN_DESIGN.md`](SYN_DESIGN.md).

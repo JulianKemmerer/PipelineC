@@ -3,6 +3,11 @@
 How PypelineC represents pipelines, builds them into VHDL, and turns
 `AUTO_PIPELINE(func)` call sites into a known, readable `.latency`.
 
+`make_auto_pipeline_ram` uses a separate [RAM implementation search](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-and-simulation)
+around this build flow. Each candidate is an immutable synchronous pipeline with
+at least one clock of latency; the existing fixed-latency mapper aligns its callers.
+Memory banks are never treated as zero-cycle combinational operators.
+
 - Implementation: [`src/AUTO_PIPELINE.py`](../src/AUTO_PIPELINE.py); the tag
   class in [`src/pypeline.py`](../src/pypeline.py); the elaborator hook in
   [`src/PY_TO_LOGIC.py`](../src/PY_TO_LOGIC.py) (see its
@@ -575,6 +580,239 @@ constructor validation), `auto_pipeline_region_planning_test.py` (region
 planning), `pipeline_latency_test.py` (fixed user pipelines),
 `typed_pipeline_placement_test.py` and `mux_fanout_planning_test.py`
 (placement lowering through `TimingParams` and the pipeline map).
+
+## 8. Auto-pipelined RAM
+
+`ram.make_auto_pipeline_ram` and
+`stream.stream_ram.make_stream_auto_pipeline_ram` use the existing RAM port
+types and initialization conventions, with a synchronous memory access at
+every implementation point. Their minimum latency is **one enabled clock**.
+They never use a zero-cycle asynchronous-read memory as a timing baseline.
+
+The initial supported synthesis target is ECP5 with `OPEN_TOOLS` (GHDL,
+Yosys, nextpnr-ecp5), tested on `LFE5U-85F-6BG381C`. A synthesis build using a
+different backend is rejected. Native simulation and VHDL emission do not
+require an FPGA tool. The manual `make_ram` and `make_stream_ram` factories
+retain their existing implementations and semantics.
+
+### RAM API and ordering
+
+```python
+from pypeline import uint32_t
+from ram import make_auto_pipeline_ram
+from stream.stream_ram import make_stream_auto_pipeline_ram
+
+ram, ram_out_t = make_auto_pipeline_ram(
+    uint32_t, 65536, ports=("w", "r"), max_latency=9,
+)
+stream_ram, stream_ram_t = make_stream_auto_pipeline_ram(
+    uint32_t, 65536, ports=("w", "r"), max_latency=9,
+)
+```
+
+Both factories take `elem_t, size, ports=("rw",), init=None,
+byte_write_enables=False`, then keyword-only `latency=None,
+start_latency=None, max_latency=None`. These constraints count **total** RAM
+latency, including the synchronous read. Every supplied value must be an
+integer at least one; fixed `latency` cannot be combined with the other two.
+`start_latency` is a synthesis bootstrap guess, which can subsequently be
+trimmed; `max_latency` is a hard ceiling. Fixed latency is exact in native
+simulation, HDL-only builds, and synthesis. Without a fixed latency, plain
+native simulation and builds without a sweep use one cycle.
+
+Port structures, request-field echoes, signed/compound element packing,
+initialization, and byte-write-enable types match `make_ram`. All raw RAM ports
+have the same fixed response latency, available as `.latency`. Each physical
+instance owns independent memory. The `.plan` value describes the chosen
+implementation for inspection; build reports include its fields as well.
+
+`.read_after_write_gap` is a conservative guaranteed separation between
+accepting a write and accepting a dependent read to the same address. It is
+`1 + input_regs + request_levels`, counted in **enabled clocks**, not in
+transactions. Waiting that many clocks guarantees that the write has reached
+memory before the dependent read, unless another write intervenes. Waiting
+for the corresponding stream write response before issuing the read is also
+sufficient. Balanced paths can work with a smaller separation, but callers
+must not depend on that stronger behavior.
+
+The new factories do not promise read-first collision behavior or a
+highest-port write priority. Native simulation and simulation-only VHDL
+assertions diagnose early dependent reads and simultaneous writes to
+overlapping bits. Ordinary `rw` writes are legal: their echoed request is
+valid, but their `rd_data` is unspecified. Disjoint byte writes do not
+constitute overlapping writes. Invalid requests do not write memory.
+
+Non-power-of-two sizes preserve the manual factory's convention: simulation
+wraps addresses modulo size; out-of-range hardware addresses are undefined.
+`CLOCK_ENABLE` freezes memory updates and every pipeline stage, including the
+simulation hazard history. There is no new reset or flush port.
+
+### RAM register placement and splitting
+
+The unsplit candidates are tried first:
+
+```text
+1 cycle:   request --------------------> [BRAM read: 1] ----------> response
+2 cycles:  request --> [input register] > [BRAM read: 1] ----------> response
+     or:   request --------------------> [BRAM read: 1] --> [out] > response
+3 cycles:  request --> [input register] > [BRAM read: 1] --> [out] > response
+```
+
+Splitting partitions the address space into contiguous depth banks. High
+address bits select a bank; low bits address a word inside that bank. Write
+data and byte enables accompany the request. Each routing node distributes
+to only two children, registering the bundle and bank-specific valid. Only
+the selected bank writes. Read results travel back through a binary tree;
+each result carries its own valid bit, so selection does not require a
+single global bank-select signal with large fanout.
+
+Here is a fully registered **four-bank** implementation (`split_depth=2`):
+
+```text
+                         REQUEST TREE        MEMORY LEAVES        RETURN TREE
+
+                         /--[R]--------> [BRAM 0] -->[O]--\
+              /--[R]----<                                [M]--\
+             /           \--[R]--------> [BRAM 1] -->[O]--/     \
+request->[I]<                                                  [M]-->response
+             \           /--[R]--------> [BRAM 2] -->[O]--\     /
+              \--[R]----<                                [M]--/
+                         \--[R]--------> [BRAM 3] -->[O]--/
+
+stage:    1       2           3               4        5    6     7
+
+[I]    input register
+[R]    registered request routing (address, data, enables, valid)
+[BRAM] one-cycle synchronous read; writes commit at this memory stage
+[O]    local output register, directly after each BRAM and before any mux
+[M]    registered two-input read selection, with accompanying valid
+```
+
+The extra output register is local to each leaf, so the slow BRAM output
+does not pass through a selection LUT before reaching a register. Request
+echo fields are delayed alongside this structure to the same final cycle.
+
+This example has latency seven and `read_after_write_gap=4`. In general a
+fully registered tree of depth `d` takes `3 + 2*d` clocks. At intermediate
+latencies, the newly introduced request level or return level can remain
+combinational; both alternatives are measured. Automatic splitting always
+retains the input and local output registers first.
+
+For a write accepted at enabled cycle `t`, the four-bank example guarantees
+a dependent read can be accepted at `t+4`; its response arrives at `t+11`.
+Disabled clocks do not count toward either interval. The tree pads the
+address space to a power of two, so non-power-of-two sizes can leave unused
+capacity in the last banks.
+
+Leaf depth is bounded by ECP5 BRAM geometry: the search stops subdividing
+when a leaf no longer needs serial depth cascading. Width packing remains
+the synthesis tool's responsibility. A fixed latency beyond useful
+subdivision adds output delay registers to satisfy the exact contract;
+automatic timing search does not treat padding as a way to improve timing.
+
+One writer with any number of readers is supported by BRAM replication.
+Two writable ports are supported when the logical ports fit the two physical
+ports. Additional independent read ports in a two-writer configuration, or
+more than two writers, are rejected. Arbitrary multiwriter emulation and
+arbitration are outside this implementation. The `ram_style=block` and
+`no_rw_check` attributes survive the GHDL import into Yosys, even with GHDL's
+unhandled-attribute warning. Live storage must map to block RAM; it must not
+silently become a register array.
+
+### RAM compiler, sweep, and simulation
+
+`src/AUTO_PIPELINE.py` owns immutable `RamPlan` values, candidate enumeration, and
+the measured search. The library generates ordinary `@pipeline_latency(L)`
+raw VHDL for each candidate. The elaborator records its logical key, complete
+plan, and constraints in `ParserState.auto_pipeline_rams`. The shared
+backend's existing fixed-latency mapper then aligns surrounding logic.
+
+The outer RAM search invokes the ordinary throughput sweep on each
+candidate. Thus a RAM remains stateful, and normal operator pipelining still
+works elsewhere in the same design. All instances sharing a factory key
+use one plan, evaluated against the entire design's clock requirements.
+The search advances a bounded frontier across RAM groups, then tries
+per-group latency reductions and same-latency alternatives. This avoids
+stalling when several RAMs tie for the worst path. It does not claim an
+exhaustive search over every combination of several independent RAMs.
+
+Passing candidates are ranked by total RAM latency and then BRAM/LUT/FF
+usage. If no candidate meets timing, the best measured frequency-to-goal
+ratio is retained and the build fails with a latency-limit/subdivision
+diagnostic. More stages need not be faster: placement, BRAM timing, and
+routing eventually dominate.
+
+Each candidate is re-elaborated with its complete plan installed in
+`pypeline` runtime state. Its generated function identity and emitted name
+include the physical-plan fingerprint, distinguishing equal-latency input
+and output register placements. Caller pipelines and response FIFOs are
+rebuilt against that graph, and the winning graph is restored after losing
+probes. `sweep_history.json` includes selected RAM plans; the companion
+`auto_pipeline_ram_history.json` records candidates, frequencies, resources,
+and the winner.
+
+The simulator receives the final plans before importing the design. The
+existing RAM model implements the equal-depth tree as a logical memory with
+the same write stage and output delay. Writes commit once per enabled clock,
+including during delta-cycle convergence. Pure callers use the existing
+selective pipeline evaluator; the stream controller is an explicit native
+clock boundary because its interface has handshake-dependent latency.
+
+### RAM stream wrapper and verification
+
+```text
+request valid/data --> admission --> freely advancing RAM --> response FIFO --> response
+                          ^                                      |
+                          |                                      v
+                   registered ready <--- outstanding credits <--- retired
+```
+
+There is one FIFO and credit counter per port. A request is admitted only
+when its response has reserved storage. Downstream stalls stop admissions,
+while accepted writes and reads continue through memory exactly once.
+Credits are returned when responses are consumed, not when the RAM produces
+them. This differs from manual `make_stream_ram`, which stalls its pipeline
+using each port's ready as a clock enable.
+
+For core latency `L`, each port reserves `ceil_pow2(L + 3)` entries, including
+the existing FIFO's two-cycle presentation delay and registered admission
+control. This sustains one request per enabled clock after filling, while
+also surviving an arbitrarily long downstream stall. `.latency` describes
+the core; `.min_response_latency=L+2` describes the unstalled wrapper.
+
+Coverage includes native contract/random-stall tests, native/GHDL cycle
+comparison, real ECP5 BRAM mapping, constraint/search tests, and the QoR
+frontier benchmark:
+
+```sh
+python3 src/tests/pypeline_tests/auto_pipeline_ram_qor_bench.py \
+  --out_dir /media/1TB/tmp/auto_pipeline_ram_qor --require_improvement
+python3 src/tests/pypeline_tests/run_all.py -j 5 --no_timeout
+```
+
+The benchmark compares 16K/64K x 32 memories at latencies 1, 3, 5, 7, and 9
+over placement seeds 1–3. It retains mapped-cell counts and per-seed results
+in `ram_qor.json`. `PIPELINEC_OPEN_TOOLS_SEED` selects the nextpnr seed and is
+included in the synthesis log cache name; the default remains one.
+
+Representative seed-1 measurements on `LFE5U-85F-6BG381C`, with one write
+port and one read port, are retained with plans, mapped-cell counts, tool
+versions, and a reproduction command in
+[`auto_pipeline_ram_ecp5.json`](../src/tests/pypeline_tests/qor/auto_pipeline_ram_ecp5.json):
+
+| Total latency | Banks | 16K x 32 Fmax | 64K x 32 Fmax |
+|---:|---:|---:|---:|
+| 1 | 1 | 149.10 MHz | 94.99 MHz |
+| 3 | 1 | 138.52 MHz | 86.52 MHz |
+| 5 | 2 | 149.10 MHz | 103.21 MHz |
+| 7 | 4 | 145.84 MHz | 138.27 MHz |
+
+All four points use 32 BRAMs for 16K words and 128 BRAMs for 64K words.
+The 64K four-bank implementation improves Fmax by about 60% over the
+three-cycle unsplit implementation, while the smaller memory already
+approaches its timing limit without splitting. Placement seeds and register
+overhead matter; the search measures candidates instead of assuming that
+adding stages always helps.
 
 ## History
 

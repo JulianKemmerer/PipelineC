@@ -27,7 +27,7 @@ elsewhere and only calls into this layer.
 | `src/SYN.py` | The synthesis API: tool selection, the run kinds of §4, report handling, delay/area caches, constraint and final output files, pre-synthesis area/register estimates. |
 | backend modules (§2) | Run one tool and parse its output into the report objects of §3. |
 | `src/SWEEP.py` | Throughput sweeps: plan registers, run synthesis, react to reports ([`SWEEP_DESIGN.md`](SWEEP_DESIGN.md)). |
-| `src/AUTO_PIPELINE.py` | Pipeline representation (`TimingParams`), pipelined VHDL, and the AUTO_PIPELINE build loop ([`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md)). |
+| `src/AUTO_PIPELINE.py` | Pipeline representation (`TimingParams`), pipelined VHDL, and the AUTO_PIPELINE build loop, including measured BRAM register/bank-tree search ([`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md)). |
 | `src/AUTO_MULTI_CYCLE.py` | Multi-cycle path constraints and AUTO_MULTI_CYCLE counts ([`AUTO_MULTI_CYCLE_DESIGN.md`](AUTO_MULTI_CYCLE_DESIGN.md)). |
 | `src/AUTO_FSM.py`, `src/AUTO_COMB_OPT.py`, `src/AUTO.py` | The other AUTO features and their shared machinery ([`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md), [`AUTO_COMB_OPT_DESIGN.md`](AUTO_COMB_OPT_DESIGN.md), [`AUTO_DESIGN.md`](AUTO_DESIGN.md)). |
 

@@ -7,6 +7,11 @@ internals (Logic() graph, FuncElaborator, CONST_REF_RD, etc.) see
 (`@hw_func`, `_build_reg_sim_func`, multi-MAIN runner, performance tuning) see
 [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md).
 
+Auto-pipelined RAM factories use `SET_AUTO_PIPELINE_RAM_PLAN_CACHE` and
+`AUTO_PIPELINE_RAM_PLAN_CACHE` to retain complete implementations across design
+re-imports. Plans include request/write timing and bank structure, not just output
+latency. See [auto-pipelined RAM](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-and-simulation).
+
 # Documentation conventions
 
 **Reference, not a logbook.** `docs/*.md` are **reference documents**: they describe

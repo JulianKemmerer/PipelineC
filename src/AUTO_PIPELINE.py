@@ -9,12 +9,16 @@ See docs/AUTO_PIPELINE_DESIGN.md. This module owns:
   architecture text (stages, stage registers, IO registers);
 - `AUTO_PIPELINE(...)` call sites: fixed `latency=` builds, constrained
   regions (`latency=` / `start_latency=` / `max_latency=`) enforced on sweep
-  plans, and the `.latency` pin-and-confirm build loop.
+  plans, and the `.latency` pin-and-confirm build loop;
+- auto-pipelined RAMs: synchronous BRAM register placement and bank-tree
+  candidates, measured through the same throughput sweep.
 
 The search for good slices -- iterating synthesis toward a timing goal -- is
 SWEEP.py; the synthesis runs and reports themselves are SYN.py.
 """
 import copy
+from dataclasses import asdict, dataclass, replace
+import json
 import hashlib
 import math
 import os
@@ -2498,7 +2502,322 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
     return parser_state, multimain_timing_params
 
 
-def DO_SWEEP_AND_AUTO_PIPELINE(parser_state, args, src_file):
+# Auto-pipelined RAMs: fixed-latency implementations measured by the
+# ordinary throughput sweep, re-elaborating callers after each topology change.
+
+
+@dataclass(frozen=True)
+class RamPlan:
+    input_regs: int = 0
+    output_regs: int = 0
+    split_depth: int = 0
+    request_levels: int = 0
+    response_levels: int = 0
+
+    @property
+    def latency(self):
+        return (
+            1
+            + self.input_regs
+            + self.output_regs
+            + self.request_levels
+            + self.response_levels
+        )
+
+    @property
+    def write_stage(self):
+        return self.input_regs + self.request_levels
+
+    @property
+    def read_after_write_gap(self):
+        return 1 + self.write_stage
+
+    @property
+    def banks(self):
+        return 1 << self.split_depth
+
+    @property
+    def fingerprint(self):
+        return hashlib.sha256(repr(self).encode()).hexdigest()[:12]
+
+    def record(self):
+        return dict(
+            asdict(self),
+            latency=self.latency,
+            banks=self.banks,
+            read_after_write_gap=self.read_after_write_gap,
+        )
+
+
+def RAM_VALIDATE_CONSTRAINTS(latency, start_latency, max_latency):
+    for name, value in (
+        ("latency", latency),
+        ("start_latency", start_latency),
+        ("max_latency", max_latency),
+    ):
+        if value is not None and (
+            isinstance(value, bool) or not isinstance(value, int) or value < 1
+        ):
+            raise ValueError(f"make_auto_pipeline_ram: {name} must be an integer >= 1")
+    if latency is not None and (start_latency is not None or max_latency is not None):
+        raise ValueError(
+            "make_auto_pipeline_ram: latency cannot be combined with start_latency/max_latency"
+        )
+    if (
+        start_latency is not None
+        and max_latency is not None
+        and start_latency > max_latency
+    ):
+        raise ValueError("make_auto_pipeline_ram: start_latency exceeds max_latency")
+
+
+def RAM_VALIDATE_PORTS(ports):
+    writers = sum(p != "r" for p in ports)
+    if writers > 1 and (writers > 2 or len(ports) > 2):
+        raise ValueError(
+            "make_auto_pipeline_ram: unsupported BRAM port configuration; use one writer "
+            "with any number of readers, or at most two physical rw/w/r ports"
+        )
+
+
+def RAM_MAX_SPLIT_DEPTH(size, width, ports, byte_write_enables):
+    # ECP5: 16K data bits; 9/18/36-bit configurations include parity lanes.
+    # The 36-bit SDP mode does not provide independently enabled byte lanes.
+    max_width = (
+        36 if sum(p != "r" for p in ports) <= 1 and not byte_write_enables else 18
+    )
+    physical_width = next(
+        (w for w in (1, 2, 4, 9, 18, 36) if w >= width and w <= max_width), max_width
+    )
+    depth = {1: 16384, 2: 8192, 4: 4096, 9: 2048, 18: 1024, 36: 512}[physical_width]
+    return max(0, (size - 1).bit_length() - int(math.log2(depth)))
+
+
+def RAM_CANDIDATES(
+    size,
+    width,
+    ports,
+    byte_write_enables,
+    latency=None,
+    start_latency=None,
+    max_latency=None,
+):
+    plans = [RamPlan(), RamPlan(output_regs=1), RamPlan(input_regs=1), RamPlan(1, 1)]
+    for d in range(1, RAM_MAX_SPLIT_DEPTH(size, width, ports, byte_write_enables) + 1):
+        plans.extend(
+            (
+                RamPlan(1, 1, d, d - 1, d),
+                RamPlan(1, 1, d, d, d - 1),
+                RamPlan(1, 1, d, d, d),
+            )
+        )
+    if latency is not None:
+        plans = [
+            replace(p, output_regs=p.output_regs + latency - p.latency)
+            for p in plans
+            if p.latency <= latency
+        ]
+        # Prefer useful routing stages to delay padding for the native default.
+        plans.sort(
+            key=lambda p: (
+                -p.split_depth,
+                -p.request_levels - p.response_levels,
+                -min(p.input_regs, 1),
+                p.output_regs,
+            )
+        )
+    else:
+        plans = [p for p in plans if max_latency is None or p.latency <= max_latency]
+        if start_latency is not None:
+            lower = [p for p in plans if p.latency < start_latency]
+            plans = [p for p in plans if p.latency >= start_latency]
+            if not plans or plans[0].latency > start_latency:
+                start = (
+                    RamPlan(1, start_latency - 2)
+                    if start_latency >= 3
+                    else RamPlan(0, start_latency - 1)
+                )
+                plans.insert(0, start)
+            plans += lower  # start is a bootstrap guess, not a lower bound
+    return list(dict.fromkeys(plans))
+
+
+def RAM_COLLECT(parser_state):
+    entries = getattr(parser_state, "auto_pipeline_rams", {})
+    instances = getattr(parser_state, "FuncToInstances", {})
+    return {name: entry for name, entry in entries.items() if instances.get(name)}
+
+
+def RAM_PLANS_FROM_STATE(parser_state):
+    return {entry["key"]: entry["plan"] for entry in RAM_COLLECT(parser_state).values()}
+
+
+def RAM_VALIDATE_BACKEND(parser_state):
+    import SYN
+    import OPEN_TOOLS
+
+    if (
+        RAM_COLLECT(parser_state)
+        and SYN.SYN_TOOL is not None
+        and (
+            SYN.SYN_TOOL is not OPEN_TOOLS
+            or not str(parser_state.part).upper().startswith("LFE5")
+        )
+    ):
+        raise ValueError(
+            "make_auto_pipeline_ram: synthesis currently requires ECP5 OPEN_TOOLS "
+            "(--syn_tool open_tools); other backends have not been validated"
+        )
+
+
+def RAM_REPORT_PLANS(parser_state):
+    return {
+        entry["key"]: dict(
+            entry["options"],
+            **entry["plan"].record(),
+            constraints={
+                k: entry["options"][k]
+                for k in ("latency", "start_latency", "max_latency")
+            },
+        )
+        for entry in RAM_COLLECT(parser_state).values()
+    }
+
+
+def RAM_SEARCH(parser_state, args, src_file, build):
+    """Measure a bounded frontier, then trim each RAM against the whole design.
+
+    Advancing all groups permits progress when several RAMs tie for the critical
+    path. Per-group trim and same-latency probes recover unnecessary registers.
+    Every probe uses the ordinary logic sweep, so RAM/operator timing is checked
+    together. No fractional pipeline cut ever enters a memory.
+    """
+    import C_TO_LOGIC
+    import PY_TO_LOGIC
+    import SYN
+    import SWEEP
+    import pypeline
+
+    RAM_VALIDATE_BACKEND(parser_state)
+    entries = {e["key"]: e for e in RAM_COLLECT(parser_state).values()}
+    choices = {key: RAM_CANDIDATES(**entry["options"]) for key, entry in entries.items()}
+    initial = RAM_PLANS_FROM_STATE(parser_state)
+    history, measured = [], {}
+    original_part = parser_state.part
+
+    def evaluate(plans, state=None):
+        signature = tuple(sorted(plans.items()))
+        pypeline.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(plans)
+        if state is None:
+            pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({})
+            state = PY_TO_LOGIC.PARSE_FILE(src_file)
+            state.part = original_part
+            if set(RAM_PLANS_FROM_STATE(state)) != set(initial):
+                raise ValueError(
+                    "auto-pipelined RAM call sites changed during plan re-elaboration"
+                )
+            C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(state)
+        print(
+            "AUTO_PIPELINE_RAM candidate: "
+            + ", ".join(f"{k[:12]} {p.record()}" for k, p in sorted(plans.items())),
+            flush=True,
+        )
+        state, timing = build(state)
+        report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(state, timing)
+        clocks, _ = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(state)
+        mhz = {
+            clk: 1000.0 / path.path_delay_ns
+            for clk, path in report.path_reports.items()
+            if path.path_delay_ns
+        }
+        ratios = [
+            frequency / clocks[clk] for clk, frequency in mhz.items() if clocks.get(clk)
+        ]
+        met = not getattr(timing, "sweep_timing_failures", []) and all(
+            r >= 1.0 for r in ratios
+        )
+        resources = getattr(report, "ram_resources", {})
+        record = dict(
+            iteration=len(history),
+            plans={k: p.record() for k, p in plans.items()},
+            achieved_mhz=mhz,
+            met=met,
+            resources=resources,
+        )
+        history.append(record)
+        # Prefer meeting the goal, fewer cycles, then lower area. On failure
+        # retain the highest measured worst-clock/goal ratio.
+        area = (
+            resources.get("DP16KD", 0),
+            resources.get("LUT4", 0),
+            resources.get("DFF", 0),
+        )
+        score = (
+            met,
+            -sum(p.latency for p in plans.values())
+            if met
+            else min(ratios or [min(mhz.values(), default=0)]),
+            tuple(-n for n in area),
+            -sum(p.latency for p in plans.values()),
+        )
+        result = (score, dict(plans), state, timing, record)
+        measured[signature] = result
+        return result
+
+    best = evaluate(initial, parser_state)
+    has_goal = any(SYN.GET_TARGET_MHZ(main, best[2]) for main in best[2].main_mhz)
+    if has_goal:
+        for step in range(max(map(len, choices.values()))):
+            plans = {
+                key: options[min(step, len(options) - 1)]
+                for key, options in choices.items()
+            }
+            signature = tuple(sorted(plans.items()))
+            trial = measured.get(signature) or evaluate(plans)
+            if trial[0] > best[0]:
+                best = trial
+            if best[0][0]:
+                break
+        if best[0][0]:
+            for key in sorted(choices):
+                for plan in sorted(choices[key], key=lambda p: p.latency):
+                    if plan.latency > best[1][key].latency:
+                        continue
+                    plans = dict(best[1], **{key: plan})
+                    signature = tuple(sorted(plans.items()))
+                    trial = measured.get(signature) or evaluate(plans)
+                    if trial[0] > best[0]:
+                        best = trial
+
+    # Reinstall the winning graph and regenerate final files/history after
+    # losing probes. Cached synthesis results make this confirmation cheap.
+    winner = evaluate(best[1]) if history[-1] is not best[4] else best
+    state, timing = winner[2], winner[3]
+    pypeline.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(best[1])
+    if not winner[0][0]:
+        reason = "auto-pipelined RAM latency limit or useful BRAM subdivision exhausted"
+        print("AUTO_PIPELINE_RAM: " + reason, flush=True)
+        timing.sweep_timing_failures = [
+            (main, goal, achieved, reason + "; " + why)
+            for main, goal, achieved, why in getattr(
+                timing, "sweep_timing_failures", []
+            )
+        ]
+    timing.auto_pipeline_ram_history = history
+    output = os.path.join(SYN.SYN_OUTPUT_DIRECTORY, SYN.TOP_LEVEL_MODULE)
+    os.makedirs(output, exist_ok=True)
+    with open(os.path.join(output, "auto_pipeline_ram_history.json"), "w") as f:
+        json.dump(dict(selected=RAM_REPORT_PLANS(state), iterations=history), f, indent=2)
+    for key, plan in best[1].items():
+        print(
+            f"AUTO_PIPELINE_RAM {key}: {plan.latency} clocks, {plan.banks} banks, read_after_write_gap={plan.read_after_write_gap}",
+            flush=True,
+        )
+    SWEEP.WRITE_SWEEP_HISTORY(state, timing, build_complete=True)
+    return state, timing
+
+
+def DO_SWEEP_AND_AUTO_PIPELINE(parser_state, args, src_file, _ram_search=True):
     """Measure delays, run the throughput sweep, then converge AUTO_PIPELINE
     .latency feedback -- i.e. everything between "here is an elaborated design"
     and "here is a pipelined design whose Python agrees with what was built".
@@ -2511,6 +2830,14 @@ def DO_SWEEP_AND_AUTO_PIPELINE(parser_state, args, src_file):
     handed in is not necessarily the one that comes back out.
     """
     import SWEEP
+
+    if RAM_COLLECT(parser_state):
+        RAM_VALIDATE_BACKEND(parser_state)
+        if _ram_search and not args.comb and not args.yosys_json and not args.no_sweep:
+            return RAM_SEARCH(
+                parser_state, args, src_file,
+                lambda state: DO_SWEEP_AND_AUTO_PIPELINE(state, args, src_file, False),
+            )
 
     if not args.comb and not args.yosys_json:
         if src_file.endswith(".py"):

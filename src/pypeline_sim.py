@@ -76,6 +76,7 @@ def run_sim(
     auto_fsm_schedules=None,
     pipeline_timing=None,
     auto_multi_cycle_latencies=None,
+    auto_pipeline_ram_plans=None,
 ) -> None:
     """Run the native simulation.
 
@@ -112,6 +113,8 @@ def run_sim(
     # AUTO_PIPELINE objects capture ._latency at construction (import time),
     # and .latency-derived structure (e.g. make_stream_auto_pipeline FIFO depths)
     # must elaborate identically to the VHDL build's pin-and-confirm pass.
+    if auto_pipeline_ram_plans is not None:
+        pypeline.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(auto_pipeline_ram_plans)
     if auto_pipeline_latencies:
         pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE(auto_pipeline_latencies)
     # Same reasoning for AUTO_FSM: the tag captures ._schedule/._latency at

@@ -44,6 +44,7 @@ from common import (
 # selects the full-build pipelined compare (pypeline_sim_debug.py builds once
 # then runs native + VHDL concurrently, each in its own copy of the warm build).
 COMB_TEST_FILES = [
+    ("self_check_auto_pipeline_ram_test.py", INST_DIR, []),
     ("self_check_auto_comb_area_opt_composition_test.py", INST_DIR, []),
     ("self_check_auto_comb_delay_opt_composition_test.py", INST_DIR, []),
     ("self_check_stream_auto_comb_delay_opt_test.py", INST_DIR, []),
@@ -211,6 +212,26 @@ def get_tests() -> list:
         )
         for filename, source_dir, extra_args in NON_COMB_TEST_FILES
     ]
+    tests.append(
+        Test(
+            name="self_check_auto_pipeline_ram_selected_plan",
+            category="native_vs_vhdl_sim",
+            cmd=[
+                PYPELINE_SIM_DEBUG,
+                INST_DIR / "self_check_auto_pipeline_ram_test.py",
+                "--sim",
+                "--run",
+                "all",
+                "--syn_tool",
+                "open_tools",
+                "--pipeline_min_effort",
+                "0",
+            ],
+            env={"AUTO_PIPELINE_RAM_AUTO": "1"},
+            needs_out_dir=True,
+        )
+    )
+
     return tests
 
 

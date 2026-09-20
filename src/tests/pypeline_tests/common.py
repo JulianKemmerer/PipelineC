@@ -113,9 +113,9 @@ SYN_TOOL_CATEGORIES = tuple(
 # hard error, not an override (SYN.RESOLVE_PART_AND_TOOL).
 SYN_TOOL_ARGS = {tool: ["--syn_tool", tool] for tool in SYN_TOOLS}
 
-# How a build log names the tool it actually synthesized with: every synthesis
-# run prints "Running: <dir>/<tool module, lowercase>_<hash>....log", and those
-# module names are exactly the SYN_TOOLS spellings. (SYN's "Using <TOOL>
+# How a build log names the tool it actually synthesized with: most runs
+# print "Running: <dir>/<tool module, lowercase>_<hash>....log"; Quartus,
+# Efinity and CC_TOOLS name their launch scripts instead. (SYN's "Using <TOOL>
 # synthesizing for part" line is not used: it only reports tool SELECTION --
 # printed even by --no_synth builds that never run it, and not printed at all
 # when --syn_tool preset the tool.)
@@ -123,6 +123,9 @@ _RUNNING_TOOL_RE = re.compile(
     r"^Running: \S*/(vivado|pyrtl|device_models|quartus|open_tools|diamond|"
     r"efinity|gowin|cc_tools)_[^/\s]*\.log\s*$",
     re.MULTILINE,
+)
+_RUNNING_SCRIPT_TOOL_RE = re.compile(
+    r"^Running (Quartus|Efinity|CC_TOOLS): .+\.sh\s*$", re.MULTILINE
 )
 
 
@@ -342,6 +345,7 @@ def _check_syn_tool(test: Test, out_log: Path):
         return None
     expected = tool
     used = set(_RUNNING_TOOL_RE.findall(text))
+    used.update(name.lower() for name in _RUNNING_SCRIPT_TOOL_RE.findall(text))
     wrong = sorted(used - {expected})
     if wrong:
         return (

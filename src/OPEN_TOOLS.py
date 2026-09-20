@@ -381,6 +381,18 @@ def NODE_TO_ELEM(node_str):
 class ParsedTimingReport:
     def __init__(self, syn_output):
         self.orig_text = syn_output
+        import re
+
+        self.ram_resources = {
+            name: int(count)
+            for name, count in re.findall(
+                r"Info:\s+(DP16KD|TRELLIS_SLICE|TRELLIS_FF|LUT4):\s+(\d+)/", syn_output
+            )
+        }
+        for label, key in (("Total LUT4s", "LUT4"), ("Total DFFs", "DFF")):
+            match = re.search(r"Info:\s+" + label + r":\s+(\d+)/", syn_output)
+            if match:
+                self.ram_resources[key] = int(match[1])
         # Clocks reported once at end
         clock_to_act_tar_mhz = {}
         tok1 = "Max frequency for clock"
@@ -550,6 +562,11 @@ def SYN_AND_REPORT_TIMING_NEW(
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
 
+    nextpnr_seed = int(os.environ.get("PIPELINEC_OPEN_TOOLS_SEED", "1"))
+    if nextpnr_seed < 1:
+        raise ValueError("PIPELINEC_OPEN_TOOLS_SEED must be a positive integer")
+    if nextpnr_seed != 1:
+        log_file_name = log_file_name[:-4] + f"_seed{nextpnr_seed}.log"
     log_path = output_directory + "/" + log_file_name
 
     # Use same configs based on to speed up run time?
@@ -656,7 +673,7 @@ export GHDL_PREFIX="""
                 + ".json --pre-pack "
                 + constraints_filepath
                 + " --timing-allow-fail "
-                + " --seed 1 "
+                + f" --seed {nextpnr_seed} "
                 + optional_router2
                 + " &>> "
                 + log_file_name

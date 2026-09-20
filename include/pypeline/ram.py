@@ -4,6 +4,10 @@
 read+write/read-only/write-only ports, 0/1/2 clocks of latency, byte write
 enables).
 
+`make_auto_pipeline_ram` adds measured BRAM register placement and depth
+splitting. It has a minimum one-cycle read and a relaxed collision contract;
+see docs/AUTO_PIPELINE_DESIGN.md. The manual factory's semantics follow below.
+
     ram, ram_out_t = make_ram(uint32_t, 1024, ports=("w", "r"), read_latency=1)
     o = ram(ram.p0_in_t(addr=wa, wr_data=wd, wr_en=we, valid=1),
             ram.p1_in_t(addr=ra, valid=1))
@@ -43,6 +47,7 @@ values, and the model starts from the very same normalized values.
 """
 import copy
 import hashlib
+import pypeline as py
 import operator
 from typing import NamedTuple
 
@@ -875,3 +880,389 @@ def make_ram(
         setattr(ram, f"p{i}_out_t", out_ts[i])
     _RAM_CACHE[cfg.key] = (ram, ram_out_t)
     return ram, ram_out_t
+
+
+# Auto-pipelined synchronous RAMs (see AUTO_PIPELINE_DESIGN.md).
+
+
+def _auto_pipeline_ram_vhdl(cfg, plan):
+    """A binary request tree and return tree around synchronous leaf arrays.
+
+    Request valid selects one bank. Return valid travels with the data, avoiding
+    a high-fanout global bank-select bus on the read tree. Echo fields use the
+    same total latency but need not fan out to every memory leaf.
+    """
+    decl, body, clocked = [], [], []
+    d, s, c = decl.append, body.append, clocked.append
+    L, D = plan.latency, plan.split_depth
+    bank_depth = 1 << max(0, cfg.addr_width - D)
+    local_bits = max(0, cfg.addr_width - D)
+    layouts = [_PortLayout(cfg, i, k, False) for i, k in enumerate(cfg.ports)]
+    d(f"-- auto-pipelined RAM: {plan.record()}")
+    d(
+        f"type auto_pipeline_ram_mem_t is array(0 to {bank_depth - 1}) of std_logic_vector({cfg.width-1} downto 0);"
+    )
+    d("attribute ram_style : string;")
+    d("attribute no_rw_check : boolean;")
+    for b in range(plan.banks):
+        entries = [
+            f'{a-b*bank_depth} => "{v:0{cfg.width}b}"'
+            for a, v in sorted(cfg.init_bits.items())
+            if a // bank_depth == b
+        ]
+        if len(entries) < bank_depth:
+            entries.append("others => (others => '0')")
+        mem = f"auto_pipeline_ram_mem_b{b}"
+        d(f"signal {mem} : auto_pipeline_ram_mem_t := ({', '.join(entries)});")
+        d(f'attribute ram_style of {mem} : signal is "block";')
+        d(f"attribute no_rw_check of {mem} : signal is true;")
+
+    def qdecl(name):
+        d(
+            f"signal {name} : std_logic_vector({cfg.width-1} downto 0) := (others => '0');"
+        )
+        d(f"signal {name}_v : std_logic := '0';")
+
+    for p in layouts:
+        for stage in range(L + 1):
+            d(
+                f"signal {p.b(stage)} : std_logic_vector({p.bw-1} downto 0) := (others => '0');"
+            )
+        parts = [f"std_logic_vector({p.in_valid})"]
+        if p.writable:
+            if cfg.byte_write_enables:
+                parts += [
+                    f"std_logic_vector({p.in_prefix}wr_en({j}))"
+                    for j in reversed(range(cfg.we_bits))
+                ]
+            else:
+                parts.append(f"std_logic_vector({p.in_prefix}wr_en)")
+            parts.append(_vhdl_to_slv(cfg.elem_t, p.in_prefix + "wr_data"))
+        parts.append(f"std_logic_vector({p.in_prefix}addr)")
+        s(f"{p.b(0)} <= {' & '.join(parts)};")
+        for stage in range(1, L + 1):
+            c(f"{p.b(stage)} <= {p.b(stage-1)};")
+
+        root = f"rq_p{p.i}_d0_n0"
+        d(f"signal {root} : std_logic_vector({p.bw-1} downto 0);")
+        src = p.b(plan.input_regs)
+        s(
+            f"{root}({p.bw-1} downto {cfg.addr_width}) <= {src}({p.bw-1} downto {cfg.addr_width});"
+        )
+        addr_expr = f"to_integer(unsigned({src}({cfg.addr_width-1} downto 0)))"
+        if cfg.addr_wraps:
+            addr_expr += f"\n-- synthesis translate_off\nmod {cfg.size}\n-- synthesis translate_on\n"
+        s(
+            f"{root}({cfg.addr_width-1} downto 0) <= std_logic_vector(to_unsigned({addr_expr}, {cfg.addr_width}));"
+        )
+        for level in range(1, D + 1):
+            bit = cfg.addr_width - level
+            for n in range(1 << level):
+                name = f"rq_p{p.i}_d{level}_n{n}"
+                parent = f"rq_p{p.i}_d{level-1}_n{n//2}"
+                d(
+                    f"signal {name} : std_logic_vector({p.bw-1} downto 0) := (others => '0');"
+                )
+                emit = c if level <= plan.request_levels else s
+                emit(
+                    f"{name}({p.valid_bit-1} downto 0) <= {parent}({p.valid_bit-1} downto 0);"
+                )
+                condition = f"{parent}({bit})" if n % 2 else f"not {parent}({bit})"
+                emit(
+                    f"{name}({p.valid_bit}) <= {parent}({p.valid_bit}) and {condition};"
+                )
+
+        for b in range(plan.banks):
+            req = f"rq_p{p.i}_d{D}_n{b}"
+            mem = f"auto_pipeline_ram_mem_b{b}"
+            addr = (
+                f"to_integer(unsigned({req}({local_bits-1} downto 0)))"
+                if local_bits
+                else "0"
+            )
+            if p.readable:
+                q = f"rd_p{p.i}_d{D}_n{b}"
+                qdecl(q)
+                memory_q = q
+                if D and plan.output_regs:
+                    # Keep the first extra output register directly beside
+                    # each BRAM, BEFORE any return mux. Placing it only at the
+                    # root leaves a LUT on the slow BRAM clk-to-Q path.
+                    memory_q = q + "_memory"
+                    qdecl(memory_q)
+                    c(f"{q} <= {memory_q};")
+                    c(f"{q}_v <= {memory_q}_v;")
+                c(f"{memory_q}_v <= {req}({p.valid_bit});")
+                c(
+                    f"if {req}({p.valid_bit}) = '1' then {memory_q} <= {mem}({addr}); end if;"
+                )
+            if p.writable:
+                for byte in range(cfg.we_bits):
+                    lo, hi = (
+                        (8 * byte, 8 * byte + 7)
+                        if cfg.byte_write_enables
+                        else (0, cfg.width - 1)
+                    )
+                    c(
+                        f"if {req}({p.valid_bit}) = '1' and {req}({p.we_lo+byte}) = '1' then"
+                    )
+                    c(
+                        f"  {mem}({addr})({hi} downto {lo}) <= {req}({p.wd_lo+hi} downto {p.wd_lo+lo});"
+                    )
+                    c("end if;")
+        if p.readable:
+            for level in reversed(range(D)):
+                # Register the levels nearest the leaves first.
+                registered = D - level <= plan.response_levels
+                for n in range(1 << level):
+                    q = f"rd_p{p.i}_d{level}_n{n}"
+                    left, right = (f"rd_p{p.i}_d{level+1}_n{2*n+j}" for j in (0, 1))
+                    qdecl(q)
+                    emit = c if registered else s
+                    emit(f"{q}_v <= {left}_v or {right}_v;")
+                    if registered:
+                        emit(
+                            f"if {left}_v = '1' then {q} <= {left}; else {q} <= {right}; end if;"
+                        )
+                    else:
+                        emit(f"{q} <= {left} when {left}_v = '1' else {right};")
+            q = f"rd_p{p.i}_d0_n0"
+            for stage in range(plan.output_regs - int(bool(D and plan.output_regs))):
+                reg = f"rd_p{p.i}_out{stage}"
+                qdecl(reg)
+                c(f"{reg} <= {q};")
+                c(f"{reg}_v <= {q}_v;")
+                q = reg
+            s(f"{p.out_prefix}rd_data <= {_vhdl_from_slv(cfg.elem_t, q)};")
+        last = p.b(L)
+        s(f"{p.out_prefix}addr <= unsigned({last}({cfg.addr_width-1} downto 0));")
+        s(f"{p.out_valid} <= unsigned({last}({p.valid_bit} downto {p.valid_bit}));")
+        if p.writable:
+            wd = f"ram_p{p.i}_wd"
+            d(f"signal {wd} : std_logic_vector({cfg.width-1} downto 0);")
+            s(f"{wd} <= {last}({p.wd_hi} downto {p.wd_lo});")
+            s(f"{p.out_prefix}wr_data <= {_vhdl_from_slv(cfg.elem_t, wd)};")
+            for j in range(cfg.we_bits):
+                target = (
+                    f"{p.out_prefix}wr_en({j})"
+                    if cfg.byte_write_enables
+                    else f"{p.out_prefix}wr_en"
+                )
+                s(f"{target} <= unsigned({last}({p.we_lo+j} downto {p.we_lo+j}));")
+    s(
+        "process(clk) begin\n  if rising_edge(clk) then\n    if CLOCK_ENABLE(0) = '1' then"
+    )
+    body.extend("      " + line for line in clocked)
+    s("    end if;\n  end if;\nend process;")
+    # The same caller contract as the native model. These checks have no
+    # hardware cost and do not impose read-first/priority logic on inference.
+    s("-- synthesis translate_off")
+    s("process(clk)")
+    writers = [p for p in layouts if p.writable]
+    gap = plan.read_after_write_gap
+    if gap > 1:
+        s(f"  type history_t is array(0 to {gap-2}) of integer;")
+        for p in writers:
+            s(f"  variable history_p{p.i} : history_t := (others => -1);")
+    s("begin\n  if rising_edge(clk) then\n    if CLOCK_ENABLE(0) = '1' then")
+
+    def address(p):
+        return f"(to_integer(unsigned(p{p.i}.addr)) mod {cfg.size})"
+
+    def enabled(p):
+        mask = f"unsigned({p.b(0)}({p.we_lo+cfg.we_bits-1} downto {p.we_lo}))"
+        return f"(p{p.i}.valid(0) = '1' and {mask} /= 0)"
+
+    for p in layouts:
+        if p.readable:
+            condition = f"p{p.i}.valid(0) = '1'"
+            if p.writable:
+                condition += f" and not {enabled(p)}"
+            s(f"      if {condition} then")
+            for w in writers:
+                s(
+                    f'        assert not ({enabled(w)} and {address(w)} = {address(p)}) report "auto-pipelined RAM: read_after_write_gap violation" severity failure;'
+                )
+                if gap > 1:
+                    s(f"        for age in 0 to {gap-2} loop")
+                    s(
+                        f'          assert history_p{w.i}(age) /= {address(p)} report "auto-pipelined RAM: read_after_write_gap violation" severity failure;'
+                    )
+                    s("        end loop;")
+            s("      end if;")
+    for j, p in enumerate(writers):
+        for w in writers[j + 1 :]:
+            pm = f"unsigned({p.b(0)}({p.we_lo+cfg.we_bits-1} downto {p.we_lo}))"
+            wm = f"unsigned({w.b(0)}({w.we_lo+cfg.we_bits-1} downto {w.we_lo}))"
+            s(
+                f'      assert not ({enabled(p)} and {enabled(w)} and {address(p)} = {address(w)} and ({pm} and {wm}) /= 0) report "auto-pipelined RAM: overlapping writes" severity failure;'
+            )
+    if gap > 1:
+        for p in writers:
+            for age in reversed(range(1, gap - 1)):
+                s(f"      history_p{p.i}({age}) := history_p{p.i}({age-1});")
+            s(
+                f"      if {enabled(p)} then history_p{p.i}(0) := {address(p)}; else history_p{p.i}(0) := -1; end if;"
+            )
+    s("    end if;\n  end if;\nend process;")
+    s("-- synthesis translate_on")
+    return "\n".join(decl) + "\nbegin\n" + "\n".join(body) + "\n"
+
+
+def _auto_pipeline_ram_model(cfg, plan, out_ts, out_t):
+    # Equal-depth bank paths are equivalent to this shared logical memory.
+    base = ram_model_class(cfg, False, out_ts, out_t)
+
+    class AutoPipelineRamModel(base):
+        def __init__(self):
+            super().__init__()
+            self.recent_writes = []
+
+        def __deepcopy__(self, memo):
+            new = super().__deepcopy__(memo)
+            new.__class__ = AutoPipelineRamModel
+            new.recent_writes = list(self.recent_writes)
+            return new
+
+        def __call__(self, *args, **kwargs):
+            args = _bind_args([f"p{i}" for i in range(len(cfg.ports))], args, kwargs)
+            writes, reads = [], []
+            for i, (x, kind) in enumerate(zip(args, cfg.ports)):
+                if not int(x.valid):
+                    continue
+                addr = int(x.addr) % cfg.size
+                mask = 0
+                if kind != "r":
+                    mask = (
+                        sum((int(e) & 1) << j for j, e in enumerate(x.wr_en))
+                        if cfg.byte_write_enables
+                        else int(x.wr_en) & 1
+                    )
+                if mask:
+                    writes.append((addr, mask, i))
+                elif kind != "w":
+                    reads.append((addr, i))
+            for addr, mask, i in writes:
+                if any(a == addr and m & mask and j != i for a, m, j in writes):
+                    raise ValueError(
+                        f"auto-pipelined RAM: overlapping writes at address {addr}"
+                    )
+            for addr, i in reads:
+                if any(a == addr for a, _, _ in writes) or any(
+                    a == addr for a, _ in self.recent_writes
+                ):
+                    raise ValueError(
+                        f"auto-pipelined RAM: read at address {addr} violates read_after_write_gap={plan.read_after_write_gap}"
+                    )
+            self.recent_writes = [
+                (a, age + 1)
+                for a, age in self.recent_writes
+                if age + 1 < plan.read_after_write_gap - 1
+            ]
+            if plan.read_after_write_gap > 1:
+                self.recent_writes.extend((a, 0) for a, _, _ in writes)
+            return super().__call__(*args)
+
+    return AutoPipelineRamModel
+
+
+def make_auto_pipeline_ram(
+    elem_t,
+    size,
+    ports=("rw",),
+    init=None,
+    byte_write_enables=False,
+    *,
+    latency=None,
+    start_latency=None,
+    max_latency=None,
+):
+    """BRAM with automatically selected registers and depth partitioning.
+
+    The ports and return types match make_ram. Latency constraints count TOTAL
+    cycles, never less than one. .read_after_write_gap is the conservative
+    enabled-cycle separation required before a dependent read. Same-address
+    collisions and rd_data on an rw write are unspecified. See the RAM section
+    of docs/AUTO_PIPELINE_DESIGN.md.
+    """
+    import AUTO_PIPELINE
+
+    AUTO_PIPELINE.RAM_VALIDATE_CONSTRAINTS(latency, start_latency, max_latency)
+    cfg = RamConfig(
+        "make_auto_pipeline_ram", elem_t, size, ports, 1, 0, 0, init, byte_write_enables
+    )
+    AUTO_PIPELINE.RAM_VALIDATE_PORTS(cfg.ports)
+    key = hashlib.sha256(
+        repr((cfg.key, latency, start_latency, max_latency)).encode()
+    ).hexdigest()
+    options = dict(
+        size=size,
+        width=cfg.width,
+        ports=cfg.ports,
+        byte_write_enables=byte_write_enables,
+        latency=latency,
+        start_latency=start_latency,
+        max_latency=max_latency,
+    )
+    plan = py.AUTO_PIPELINE_RAM_PLAN_CACHE().get(key)
+    if plan is None:
+        native_options = dict(options)
+        if py.AUTO_PIPELINE_BUILD_MODE() != "sweep":
+            native_options["start_latency"] = None
+        plan = AUTO_PIPELINE.RAM_CANDIDATES(**native_options)[0]
+    cfg.in_regs = plan.write_stage
+    cfg.out_regs = plan.output_regs + plan.response_levels
+    cfg.latency = plan.latency
+    in_ts, out_ts = [], []
+    for kind in cfg.ports:
+        req, resp = ram_port_payload_fields(cfg, kind)
+        in_ts.append(ram_make_struct(f"ram_{kind}_in_t", req + [("valid", py.uint1_t)]))
+        out_ts.append(
+            ram_make_struct(
+                f"ram_{kind}_out_t",
+                [f for f in resp if f[0] != "rd_data"]
+                + [("valid", py.uint1_t)]
+                + ([("rd_data", elem_t)] if kind != "w" else []),
+            )
+        )
+    out_t = ram_make_struct("ram_out_t", [(f"p{i}", t) for i, t in enumerate(out_ts)])
+    name = f"auto_pipeline_ram_h{key[:12]}_p{plan.fingerprint}"
+    params = ", ".join(f"p{i}: P{i}_IN_T" for i in range(len(in_ts)))
+    source = f"@pipeline_latency({plan.latency})\ndef {name}({params}) -> OUT_T:\n    vhdl(VHDL_TEXT)\n"
+    ns = dict(
+        pipeline_latency=py.pipeline_latency,
+        vhdl=py.vhdl,
+        OUT_T=out_t,
+        VHDL_TEXT=_auto_pipeline_ram_vhdl(cfg, plan),
+    )
+    ns.update({f"P{i}_IN_T": t for i, t in enumerate(in_ts)})
+    ram_exec_globals(ns, elem_t, out_t, *in_ts)
+    init = cfg.init_desc
+    ram = py._exec_generated_func(name, source, ns, folder=RAM_GENERATED_FOLDER)
+    info = py._names.replace(
+        ram._pypeline_name_info,
+        params=(("implementation", plan.fingerprint),) + ram._pypeline_name_info.params,
+    )
+    ram._pypeline_name_info = py._inspect.unwrap(ram)._pypeline_name_info = info
+    py.sim_model(ram)(_auto_pipeline_ram_model(cfg, plan, out_ts, out_t))
+    ram._auto_pipeline_ram = dict(key=key, plan=plan, options=options)
+    for attr in (
+        "elem_t",
+        "size",
+        "addr_t",
+        "ports",
+        "read_latency",
+        "in_regs",
+        "out_regs",
+        "latency",
+        "byte_write_enables",
+        "we_t",
+    ):
+        setattr(ram, attr, getattr(cfg, attr))
+    ram.read_after_write_gap = plan.read_after_write_gap
+    ram.plan = plan
+    ram.in_ts, ram.out_ts, ram.out_t = tuple(in_ts), tuple(out_ts), out_t
+    for i, (in_t, port_out_t) in enumerate(zip(in_ts, out_ts)):
+        setattr(ram, f"p{i}_in_t", in_t)
+        setattr(ram, f"p{i}_out_t", port_out_t)
+    return ram, out_t

@@ -1346,6 +1346,15 @@ correctly-typed but otherwise arbitrary value. Real hardware gives no guarantee 
 
 ## `make_ram` / `make_stream_ram` Simulation Model
 
+The automatic variants, `make_auto_pipeline_ram` and
+`make_stream_auto_pipeline_ram`, reuse the memory/stage model with a selected bank
+plan and a conservative write-to-read contract. `SIM` passes complete RAM plans to
+`run_sim(auto_pipeline_ram_plans=...)` before design import. Equal-depth bank paths
+are modeled with their actual write stage; the stream controller executes as a
+native clock boundary and uses real FIFO/credit state. Native checks and
+simulation-only VHDL assertions diagnose undefined collisions. See
+[auto-pipelined RAM simulation and streaming](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-and-simulation).
+
 `include/pypeline/ram.py`'s `ram_model_class(cfg, handshake, ...)` builds one class-form
 `@sim_model` per RAM configuration. It is attached to `make_ram`'s generated function and to
 `make_stream_ram`'s raw handshake core. Unlike `make_fifo`'s model, it is **cycle-exact**. It

@@ -97,6 +97,7 @@ def test_registered_filenames_actually_exist():
     missing = []
     for f in registered:
         in_inst = os.path.isfile(os.path.join(INST_DIR, f))
+        in_runner_dir = os.path.isfile(os.path.join(PYPELINE_TESTS_DIR, f))
         in_examples = any(
             f == name
             for _, _, names in os.walk(EXAMPLES_PYPELINE_DIR)
@@ -105,12 +106,12 @@ def test_registered_filenames_actually_exist():
         in_qor = any(
             f == name for _, _, names in os.walk(QOR_DIR) for name in names
         )
-        if not (in_inst or in_examples or in_qor):
+        if not (in_inst or in_runner_dir or in_examples or in_qor):
             missing.append(f)
     missing.sort()
     assert not missing, (
         f"{len(missing)} filename(s) referenced by a category module don't "
-        f"exist in inst/, under examples/pypeline/, or under qor/ (stale "
+        f"exist in the test runner directory, inst/, examples/pypeline/, or qor/ (stale "
         f"registration after a rename/delete?): {missing}"
     )
 

@@ -1601,6 +1601,22 @@ def sim_input(fn):
 # run directly) and in --comb/--no_synth/--yosys_json builds, so .latency
 # reads its constructor value there (fixed latency=N, else 0).
 _auto_pipeline_latency_cache: dict = {}
+
+# Complete auto-pipelined RAM implementations, installed before design re-import.
+# These live in the runtime module so compiler/design module eviction cannot
+# discard the selected topology (latency alone is insufficient).
+_auto_pipeline_ram_plan_cache: dict = {}
+
+
+def SET_AUTO_PIPELINE_RAM_PLAN_CACHE(plans):
+    global _auto_pipeline_ram_plan_cache
+    _auto_pipeline_ram_plan_cache = dict(plans or {})
+
+
+def AUTO_PIPELINE_RAM_PLAN_CACHE():
+    return dict(_auto_pipeline_ram_plan_cache)
+
+
 # True once any AUTO_PIPELINE .latency was read during the current design-file
 # execution. The pipelinec driver uses this to skip the pin-and-confirm pass
 # entirely: if no Python code consumed a latency value, the cache cannot have
@@ -7585,6 +7601,10 @@ def _pipeline_latency_reachable(func):
         if id(value) in seen:
             return False
         seen.add(id(value))
+        if getattr(value, "_sim_clocked_pipeline_boundary", False):
+            # A library handshake controller already executes once per clock;
+            # its internal fixed pipeline is not a latency of its interface.
+            return False
         if getattr(value, "_pipeline_latency", 0) > 0:
             return True
         if isinstance(value, (AUTO_PIPELINE, AUTO_FSM, AUTO_COMB_AREA_OPT)):

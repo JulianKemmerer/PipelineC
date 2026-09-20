@@ -1,0 +1,304 @@
+{
+  "part": "LFE5U-85F-6BG381C",
+  "width": 32,
+  "ports": [
+    "w",
+    "r"
+  ],
+  "tools": {
+    "yosys": "0.48+51 (git 17a53b838)",
+    "ghdl": "5.0.0-dev (4.1.0.r453.g85927f052.dirty)",
+    "nextpnr_ecp5": "0.7-142-g55bd7608"
+  },
+  "command": "python3 src/tests/pypeline_tests/auto_pipeline_ram_qor_bench.py --out_dir /media/1TB/tmp/auto_pipeline_ram_qor --latencies 1 3 5 7 --seeds 1 --require_improvement",
+  "results": [
+    {
+      "size": 16384,
+      "latency": 1,
+      "seed": 1,
+      "mhz": 149.1,
+      "plan": {
+        "size": 16384,
+        "width": 32,
+        "ports": [
+          "w",
+          "r"
+        ],
+        "byte_write_enables": false,
+        "latency": 1,
+        "start_latency": null,
+        "max_latency": null,
+        "input_regs": 0,
+        "output_regs": 0,
+        "split_depth": 0,
+        "request_levels": 0,
+        "response_levels": 0,
+        "banks": 1,
+        "read_after_write_gap": 1,
+        "constraints": {
+          "latency": 1,
+          "start_latency": null,
+          "max_latency": null
+        }
+      },
+      "cells": {
+        "$specify2": 19,
+        "LUT4": 29,
+        "TRELLIS_FF": 251,
+        "DP16KD": 32
+      }
+    },
+    {
+      "size": 16384,
+      "latency": 3,
+      "seed": 1,
+      "mhz": 138.52,
+      "plan": {
+        "size": 16384,
+        "width": 32,
+        "ports": [
+          "w",
+          "r"
+        ],
+        "byte_write_enables": false,
+        "latency": 3,
+        "start_latency": null,
+        "max_latency": null,
+        "input_regs": 1,
+        "output_regs": 1,
+        "split_depth": 0,
+        "request_levels": 0,
+        "response_levels": 0,
+        "banks": 1,
+        "read_after_write_gap": 2,
+        "constraints": {
+          "latency": 3,
+          "start_latency": null,
+          "max_latency": null
+        }
+      },
+      "cells": {
+        "$specify2": 19,
+        "TRELLIS_FF": 409,
+        "DP16KD": 32,
+        "LUT4": 29
+      }
+    },
+    {
+      "size": 16384,
+      "latency": 5,
+      "seed": 1,
+      "mhz": 149.1,
+      "plan": {
+        "size": 16384,
+        "width": 32,
+        "ports": [
+          "w",
+          "r"
+        ],
+        "byte_write_enables": false,
+        "latency": 5,
+        "start_latency": null,
+        "max_latency": null,
+        "input_regs": 1,
+        "output_regs": 1,
+        "split_depth": 1,
+        "request_levels": 1,
+        "response_levels": 1,
+        "banks": 2,
+        "read_after_write_gap": 3,
+        "constraints": {
+          "latency": 5,
+          "start_latency": null,
+          "max_latency": null
+        }
+      },
+      "cells": {
+        "$specify2": 19,
+        "TRELLIS_FF": 605,
+        "DP16KD": 32,
+        "LUT4": 64
+      }
+    },
+    {
+      "size": 16384,
+      "latency": 7,
+      "seed": 1,
+      "mhz": 145.84,
+      "plan": {
+        "size": 16384,
+        "width": 32,
+        "ports": [
+          "w",
+          "r"
+        ],
+        "byte_write_enables": false,
+        "latency": 7,
+        "start_latency": null,
+        "max_latency": null,
+        "input_regs": 1,
+        "output_regs": 1,
+        "split_depth": 2,
+        "request_levels": 2,
+        "response_levels": 2,
+        "banks": 4,
+        "read_after_write_gap": 4,
+        "constraints": {
+          "latency": 7,
+          "start_latency": null,
+          "max_latency": null
+        }
+      },
+      "cells": {
+        "$specify2": 19,
+        "TRELLIS_FF": 872,
+        "DP16KD": 32,
+        "LUT4": 137
+      }
+    },
+    {
+      "size": 65536,
+      "latency": 1,
+      "seed": 1,
+      "mhz": 94.99,
+      "plan": {
+        "size": 65536,
+        "width": 32,
+        "ports": [
+          "w",
+          "r"
+        ],
+        "byte_write_enables": false,
+        "latency": 1,
+        "start_latency": null,
+        "max_latency": null,
+        "input_regs": 0,
+        "output_regs": 0,
+        "split_depth": 0,
+        "request_levels": 0,
+        "response_levels": 0,
+        "banks": 1,
+        "read_after_write_gap": 1,
+        "constraints": {
+          "latency": 1,
+          "start_latency": null,
+          "max_latency": null
+        }
+      },
+      "cells": {
+        "$specify2": 19,
+        "LUT4": 130,
+        "TRELLIS_FF": 269,
+        "DP16KD": 128
+      }
+    },
+    {
+      "size": 65536,
+      "latency": 3,
+      "seed": 1,
+      "mhz": 86.52,
+      "plan": {
+        "size": 65536,
+        "width": 32,
+        "ports": [
+          "w",
+          "r"
+        ],
+        "byte_write_enables": false,
+        "latency": 3,
+        "start_latency": null,
+        "max_latency": null,
+        "input_regs": 1,
+        "output_regs": 1,
+        "split_depth": 0,
+        "request_levels": 0,
+        "response_levels": 0,
+        "banks": 1,
+        "read_after_write_gap": 2,
+        "constraints": {
+          "latency": 3,
+          "start_latency": null,
+          "max_latency": null
+        }
+      },
+      "cells": {
+        "$specify2": 19,
+        "TRELLIS_FF": 435,
+        "DP16KD": 128,
+        "LUT4": 130
+      }
+    },
+    {
+      "size": 65536,
+      "latency": 5,
+      "seed": 1,
+      "mhz": 103.21,
+      "plan": {
+        "size": 65536,
+        "width": 32,
+        "ports": [
+          "w",
+          "r"
+        ],
+        "byte_write_enables": false,
+        "latency": 5,
+        "start_latency": null,
+        "max_latency": null,
+        "input_regs": 1,
+        "output_regs": 1,
+        "split_depth": 1,
+        "request_levels": 1,
+        "response_levels": 1,
+        "banks": 2,
+        "read_after_write_gap": 3,
+        "constraints": {
+          "latency": 5,
+          "start_latency": null,
+          "max_latency": null
+        }
+      },
+      "cells": {
+        "$specify2": 19,
+        "TRELLIS_FF": 639,
+        "DP16KD": 128,
+        "LUT4": 133
+      }
+    },
+    {
+      "size": 65536,
+      "latency": 7,
+      "seed": 1,
+      "mhz": 138.27,
+      "plan": {
+        "size": 65536,
+        "width": 32,
+        "ports": [
+          "w",
+          "r"
+        ],
+        "byte_write_enables": false,
+        "latency": 7,
+        "start_latency": null,
+        "max_latency": null,
+        "input_regs": 1,
+        "output_regs": 1,
+        "split_depth": 2,
+        "request_levels": 2,
+        "response_levels": 2,
+        "banks": 4,
+        "read_after_write_gap": 4,
+        "constraints": {
+          "latency": 7,
+          "start_latency": null,
+          "max_latency": null
+        }
+      },
+      "cells": {
+        "$specify2": 19,
+        "TRELLIS_FF": 912,
+        "DP16KD": 128,
+        "LUT4": 141
+      }
+    }
+  ]
+}

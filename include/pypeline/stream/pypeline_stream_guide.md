@@ -3,6 +3,12 @@
 The library source lives in `include/pypeline/stream/` (same directory as this guide)
 and `include/pypeline/axi/type_axis.py`.
 
+For memory-backed request/response streams, `stream_ram.make_stream_auto_pipeline_ram`
+wraps an automatically pipelined BRAM in independent response FIFOs and registered
+credits. Its port interfaces match `make_stream_ram`, while accepted requests keep
+advancing during downstream stalls. See the [auto-pipelined RAM guide and bank-tree
+diagram](../../../docs/AUTO_PIPELINE_DESIGN.md#8-auto-pipelined-ram).
+
 This is the pypeline answer to "I have a `@struct` on one side and bytes on the other."
 It replaces old PipelineC's `include/stream/serializer.h`,
 `include/stream/deserializer.h` and the conversion macros in `include/axi/axis.h`

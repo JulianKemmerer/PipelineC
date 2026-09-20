@@ -134,6 +134,11 @@ def DO_OPTIONAL_SIM(
                 args.run,
                 main_latencies=main_latencies,
                 auto_pipeline_latencies=ap_latencies,
+                auto_pipeline_ram_plans=(
+                    AUTO_PIPELINE.RAM_PLANS_FROM_STATE(parser_state)
+                    if parser_state is not None
+                    else None
+                ),
                 auto_fsm_schedules=auto_fsm_schedules,
                 pipeline_timing=pipeline_timing,
                 auto_multi_cycle_latencies=auto_multi_cycle_latencies,

@@ -17,6 +17,13 @@ def get_tests() -> list:
     tests = []
     tests.append(
         Test(
+            name="auto_pipeline_ram_test",
+            category="unit",
+            cmd=[INST_DIR / "auto_pipeline_ram_test.py"],
+        )
+    )
+    tests.append(
+        Test(
             name="generated_naming_test",
             category="unit",
             cmd=[INST_DIR / "generated_naming_test.py"],

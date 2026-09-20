@@ -6829,6 +6829,11 @@ def _is_hardware_func(func_def, eval_ns=None):
 
 
 def _register_pipeline_latency(parser_state, name, func):
+    ram = getattr(func, "_auto_pipeline_ram", None)
+    if ram is not None:
+        if not hasattr(parser_state, "auto_pipeline_rams"):
+            parser_state.auto_pipeline_rams = {}
+        parser_state.auto_pipeline_rams[name] = ram
     cycles = getattr(func, "_pipeline_latency", None)
     if cycles is None:
         return
@@ -7349,8 +7354,13 @@ def ELABORATE_LIVE_ROOTS(roots):
         seen_files.add(filename)
         namespace = source.__globals__
         module = types.SimpleNamespace(**namespace)
-        with open(filename) as source_file:
-            tree = ast.parse(source_file.read(), filename)
+        if getattr(source, "_pypeline_generated_origin", False):
+            # Generated factories keep source in linecache, not on disk.
+            # Their globals already contain the reachable type/callable graph.
+            tree = ast.parse(textwrap.dedent(inspect.getsource(source)), filename)
+        else:
+            with open(filename) as source_file:
+                tree = ast.parse(source_file.read(), filename)
         _discover_structs_from_module(module, parser_state)
         _discover_enums_from_module(module, parser_state)
         _discover_global_wires(tree, namespace, parser_state)

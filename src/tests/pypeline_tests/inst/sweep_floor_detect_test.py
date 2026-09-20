@@ -32,18 +32,11 @@ TOOLS = {
     "pyrtl": (50.0, "empirical_floor", "at empirical (soft) fmax floor"),
 }
 
-# Raised from 4 -- sweep_floor_detect_design.py's soft comparator (from the
-# soft-operator-library default flip, see include/pypeline/operators/) has a
-# hierarchical, multi-submodule delay whose bottom-up *estimate* is
-# measurably less accurate than a flat built-in op's, costing one extra
-# "estimate was wrong -> resynthesize for real -> replan" cycle (2 extra
-# full-design runs) before the sweep locks onto the true floor. The floor
-# is still detected and the sweep still stops promptly relative to that --
-# this just accounts for the soft comparator's estimation-accuracy cost.
-# Accepted as a documented tradeoff; revisit only if this (or the wireguard
-# build) shows it actually matters. Under sky130 the plateau stop lands
-# exactly here: 3 flat results spanning the measured-delay fallback.
-MAX_FULL_SYN_RUNS = 6
+# Bound the complete search, including the measured-delay fallback for the
+# hierarchical soft comparator and the one permitted chunked-MUX refinement.
+# Measured sky130 history: fallback at run 2, MUX probe at run 4, final plateau
+# at run 7. These bounded probes must not become unbounded global densification.
+MAX_FULL_SYN_RUNS = 7
 
 
 def main():

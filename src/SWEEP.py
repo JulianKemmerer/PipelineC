@@ -3127,6 +3127,13 @@ def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
     auto_multi_cycle = getattr(multimain_timing_params, "auto_multi_cycle_ncycles", None)
     if auto_multi_cycle:
         doc["auto_multi_cycle_ncycles"] = dict(auto_multi_cycle)
+    import AUTO_PIPELINE
+
+    if AUTO_PIPELINE.RAM_COLLECT(parser_state):
+        doc["auto_pipeline_rams"] = AUTO_PIPELINE.RAM_REPORT_PLANS(parser_state)
+        doc["auto_pipeline_ram_iterations"] = getattr(
+            multimain_timing_params, "auto_pipeline_ram_history", []
+        )
     try:
         out_dir = os.path.join(SYN.SYN_OUTPUT_DIRECTORY, SYN.TOP_LEVEL_MODULE)
         os.makedirs(out_dir, exist_ok=True)
