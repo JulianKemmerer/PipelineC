@@ -388,6 +388,11 @@ def get_tests() -> list:
         Test(
             name="pdw_tb",
             category="native_sim",
+            # The longest single test in the suite (measured 1435 s). Its
+            # category is second-to-last in run_all.py's order, so without
+            # this it starts once nearly everything else has been submitted
+            # and its ~24 minutes land in the tail.
+            long_pole=True,
             cmd=[
                 PYPELINEC,
                 EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_tb.py",

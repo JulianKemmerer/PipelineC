@@ -179,6 +179,10 @@ class Test:
     needs_out_dir: bool = False
     expect_fail: bool = False  # this test documents a known, unfixed bug
     timeout: float = None  # seconds; None = DEFAULT_CATEGORY_TIMEOUT_S[category]
+    # One of the suite's longest tests: start it before everything else,
+    # whatever category it is in (see run_tests). Set it from a MEASURED
+    # duration, and say what that was at the registration.
+    long_pole: bool = False
     requires: list = dataclasses.field(
         default_factory=list
     )  # external tool names (shutil.which) needed to run at all
@@ -360,7 +364,23 @@ def _check_syn_tool(test: Test, out_log: Path):
     return None
 
 
+def submission_order(tests: list) -> list:
+    """Longest tests first."""
+    return sorted(tests, key=lambda t: not t.long_pole)
+
+
 def run_tests(tests: list, jobs: int, tmp_root: Path) -> list:
+    # Longest tests first. Every test is submitted to the pool up front and a
+    # thread pool dispatches queued work FIFO, so submission order IS start
+    # order: whatever is submitted last can only overlap with whatever is
+    # still running when a worker frees up. A 24-minute test submitted near
+    # the end (pdw_tb, in the second-to-last category) therefore lands almost
+    # entirely in the tail. run_all.py orders whole CATEGORIES heaviest-first,
+    # which handles everything except a long test inside an otherwise quick
+    # category -- that is what Test.long_pole is for. The sort is stable, so
+    # everything else keeps its given order (run_all.py's category order, and
+    # registration order within a module).
+    tests = submission_order(tests)
     results = []
     with ThreadPoolExecutor(max_workers=jobs) as pool:
         futures = [pool.submit(run_test, test, tmp_root) for test in tests]
@@ -465,7 +485,8 @@ def make_arg_parser(description: str) -> argparse.ArgumentParser:
 
 def filter_tests(tests: list, args) -> list:
     if args.list:
-        for i, t in enumerate(tests):
+        # In the order they will actually be submitted/started.
+        for i, t in enumerate(submission_order(tests)):
             print(f"  {i:3d}  [{t.category}]  {t.name}")
         sys.exit(0)
     if args.test is not None:

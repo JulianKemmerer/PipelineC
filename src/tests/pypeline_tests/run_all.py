@@ -63,6 +63,10 @@ ALL_CATEGORY_MODULES = dict(DEFAULT_CATEGORY_MODULES, known_issues=known_issues_
 # second-to-last and first respectively -- accidental, not deliberate. This
 # order is the deliberate one; explicit --category flags are unaffected.
 # Vivado runs are the slowest per test, so they start first.
+#
+# This orders whole CATEGORIES. A long test inside an otherwise quick category
+# (pdw_tb in native_sim) is handled per-test instead: Test.long_pole submits it
+# ahead of everything here, including the Vivado entries (common.run_tests).
 _DEFAULT_CATEGORY_ORDER = [
     "synth_vivado",
     "build_report_vivado",

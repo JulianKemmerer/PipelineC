@@ -49,6 +49,9 @@ def get_tests() -> list:
         Test(
             name="auto_fsm_unit_test",
             category="unit",
+            # Measured 358 s, by far the longest test in unit -- the category
+            # run_all.py submits LAST, since the other 20 finish in seconds.
+            long_pole=True,
             cmd=[INST_DIR / "auto_fsm_unit_test.py"],
         )
     )

@@ -677,6 +677,17 @@ failure, which tool the log named). `run_test` also sets
 `PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG=1`; see
 [Choosing a synthesis tool](#choosing-a-synthesis-tool).
 
+**Longest tests start first.** Every test is submitted to the pool up front and
+the pool dispatches FIFO, so submission order is start order: a long test
+submitted late cannot overlap with much and lands in the tail.
+`run_all.py`'s `_DEFAULT_CATEGORY_ORDER` puts the heaviest *categories* first,
+and `Test(long_pole=True)` handles a long test inside an otherwise quick
+category by submitting it ahead of everything, including the Vivado entries
+(`common.run_tests`). Two tests set it: `pdw_tb` (`native_sim`, measured
+1435 s, the longest in the suite) and `auto_fsm_unit_test` (`unit`, 358 s, in
+the category submitted last). Set it from a measured duration and record that
+duration at the registration; the sort is stable, so nothing else moves.
+
 Each category module can also run standalone, e.g.
 `python3 src/tests/pypeline_tests/native_sim_tests.py [-j N]`. Run standalone,
 `synth_tests.py` and `build_report_tests.py` run all three of their tool
