@@ -2415,7 +2415,9 @@ track which op names have any global registration. `__rshift__`, `__lshift__`, `
 ```python
 def __rshift__(self, o):
     v = int(self) >> int(o)
-    if self._ctype is None or "SR" in _registered_binary_op_names:
+    if self._ctype is None:
+        return SimVal(v)
+    if "SR" in _registered_binary_op_names and type(o) is SimVal and o._ctype is not None:
         return self._dispatch_binary("SR", o, v, preserve_ctype=True)
     return _sim_val_make(v, self._ctype)
 ```
@@ -2423,20 +2425,41 @@ def __rshift__(self, o):
 `__rshift__` runs ~1.95 M times/1000 cycles in the CORDIC benchmark. **~3.3 s saved.**
 Unary dispatch bypass: **~0.15 s saved.**
 
-The same fast-path-set gate now also covers `__lt__`/`__le__`/`__gt__`/`__ge__` (ops
+The same gate also covers `__lt__`/`__le__`/`__gt__`/`__ge__` (ops
 `"LT"`/`"LTE"`/`"GT"`/`"GTE"`) and `__truediv__`/`__mod__` (ops `"DIV"`/`"MOD"`), added when
 the soft-operator library made these dispatchable for the first time (see
-`pypeline_DESIGN.md`'s Operator Registry / Soft Operator Library sections). Structural
-fidelity was chosen over raw sim speed for these: when `PY_TO_LOGIC.PARSE_FILE` or
-`pypeline_sim.py`'s `_import_design` runs (i.e. anywhere outside a bare unit test that
-imports `pypeline` directly and never touches a design file), the default soft replacements
-for int `NEGATE`/compare/`DIV`/`MOD`/variable-shift are registered globally before the
-design is elaborated or simulated — so native sim for those ops now runs the same unrolled
-per-bit Pypeline HDL hardware runs, not a single Python operator. Full `run_all.py -j 4`
-wall time was re-measured after this change and showed no regression outside normal run
-variance — the fast-path-set check keeps unregistered ops on the direct-computation branch,
-and the categories most exercising these ops (`native_sim`, `elab`) stayed in the same few-
-seconds-per-test range as before.
+`pypeline_DESIGN.md`'s The Native-Sim Dispatch Gate).
+
+Note the `type(o) is SimVal and o._ctype is not None` condition on the shifts. A **constant**
+shift amount is not a dispatch point at all: `PY_TO_LOGIC._elab_binop` sends it to the
+`CONST_SL`/`CONST_SR_<n>_<type>` built-in and never consults the registry, and sim has to
+make the same split. Without it, a registered barrel shifter recurses forever — its own
+body shifts by a constant — and takes `DIV`/`MOD` down with it, since the divider shifts
+internally.
+
+**What actually dispatches, and when.** `PY_TO_LOGIC.PARSE_FILE` and `pypeline_sim.py`'s
+`_import_design` both register the default soft replacements for int
+`NEGATE`/compare/`DIV`/`MOD`/variable-shift globally before the design is elaborated or
+simulated. Those are all *matcher* (`any_integer_t`) registrations, and for a long time the
+matcher branch of `register_*_operator` returned before recording the op name — so none of
+them ever ran in native sim, despite this section previously claiming they did. Now they
+do, governed by `SIM_SOFT_OPS` (`PYPELINE_SIM_SOFT_OPS` / `set_sim_soft_ops()`), which
+defaults to dispatching everything.
+
+That default is expensive, and deliberately so — it buys structural fidelity, not
+correctness. Both paths compute the same value for every default soft family. Measured on
+uint16 operands, steady state:
+
+| op | built-in | dispatched | ratio |
+|---|---|---|---|
+| `DIV` | 1.55 µs | 41,842 µs | 27,000x |
+| `LT` | 0.50 µs | 1,353 µs | 2,700x |
+| `NEGATE` | 1.31 µs | 16.8 µs | 13x |
+
+A sim-heavy run that does not care which structure produced a value should set
+`PYPELINE_SIM_SOFT_OPS=none` (built-in fallbacks, which remain value- and ctype-faithful to
+elaboration) or name just the cheap families, e.g.
+`PYPELINE_SIM_SOFT_OPS=NEGATE,LT,LTE,GT,GTE`.
 
 ### 4. `_push_scoped_registrations` Short-Circuit
 

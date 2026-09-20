@@ -1366,21 +1366,84 @@ a scoped registration. `_push_scoped_registrations` returns the module-level sin
 `_EMPTY_SAVED = []` immediately when `id(func) not in _scoped_funcs`, avoiding the dict
 iteration entirely for the vast majority of functions.
 
-**`_registered_binary_op_names`** and **`_registered_unary_op_names`** are module-level
-sets that track which op names have at least one registration. `SimVal.__rshift__`,
-`__lshift__`, `__neg__`, `__invert__` check these sets and skip dispatch entirely when no
-registration exists — critical for performance in the common case (see
-`pypeline_sim_DESIGN.md` performance section).
+### The Native-Sim Dispatch Gate
 
-`register_operator` and `register_left_operator` add to `_registered_binary_op_names` when
-`scope is None`. `register_unary_operator` adds to `_registered_unary_op_names` when `scope
-is None`. For a *scoped* registration, `_push_scoped_registrations` provisionally adds the
-op name to the relevant set too (recorded in the save-list as a `_SCOPED_SET_ADD`-tagged
-entry, removed again on pop via `.discard()`, only if the name wasn't already present) —
-without this, a scoped-only registration (the common case: a factory's own internal
-NEGATE/SR/SL helpers, never registered globally) would never actually dispatch unless some
-unrelated module happened to also hold a global registration for that same op name, purely
-as an accidental side effect of the fast-path-set optimization.
+**`_registered_binary_op_names`**, **`_registered_unary_op_names`** and
+**`_registered_mux_type_names`** are module-level sets that `SimVal`'s dunders check
+before looking in the precise per-type registries at all, so an unregistered design pays
+one set lookup and nothing else (see `pypeline_sim_DESIGN.md` performance section).
+
+**Hardware elaboration never consults them.** `PY_TO_LOGIC` goes straight to the
+registries, so what is or is not in these sets can only make simulation more or less
+faithful to the hardware — it can never change the hardware that gets built.
+
+They are derived, not written directly. Two bookkeeping sets feed them:
+
+| source | recorded in | dispatches in sim |
+|---|---|---|
+| concrete — `register_operator("SR", signed_man_t, exp_t, impl)` | `_concrete_binary_op_names` / `_concrete_unary_op_names` / `_concrete_mux_type_names` | always |
+| matcher — `register_operator("DIV", any_uint_t, any_uint_t, factory)` | `_matcher_binary_op_names` / `_matcher_unary_op_names` / `_matcher_mux_type_names` | subject to `SIM_SOFT_OPS` |
+
+`_recompute_sim_gate_sets()` rebuilds the gate sets from those two plus the policy, and is
+called whenever a registration or the policy changes — never per operator evaluation. The
+distinction is that a concrete registration names an exact type and is a deliberate, narrow
+override, while a matcher registration is a process-wide default:
+`operators.soft.register_sw_lib_replacements()` installs one covering every integer op in
+every design at once.
+
+The name is recorded at **registration** time. It used to be added lazily, by
+`_resolve_generic_*` on the first successful resolution, with the matcher branch of
+`register_*_operator` returning before any `.add()` at all. That had two consequences,
+both fixed: every matcher registration — i.e. every family in
+`register_sw_lib_replacements()` — was elaboration-only and never ran in native sim; and
+because elaboration *did* back-fill the sets as a side effect, a sim that followed a build
+in the same process behaved differently from a pure native run.
+
+For a *scoped* registration, `_push_scoped_registrations` provisionally records the name in
+the same bookkeeping sets (save-list entries tagged `_SCOPED_SET_ADD`, removed again on pop
+via `.discard()`, only if the name wasn't already present) and then recomputes — without
+this, a scoped-only registration (the common case: a factory's own internal NEGATE/SR/SL
+helpers, never registered globally) would never dispatch unless some unrelated module
+happened to also hold a global registration for that same op name. Scoped *matcher* entries
+get the same treatment; they previously had no name recorded at all.
+
+### `SIM_SOFT_OPS`
+
+Which matcher-registered ops execute their implementation during native simulation.
+`PYPELINE_SIM_SOFT_OPS` (read once at import) or `set_sim_soft_ops(spec)`:
+
+| spelling | meaning |
+|---|---|
+| unset, `all`, `1` | every registered op dispatches (**default**) |
+| `none`, `0` | matcher registrations do not dispatch; built-in fallbacks run |
+| comma list, e.g. `NEGATE,LT,LTE,GT,GTE` | only those op names |
+
+Both paths compute the same **value** — verified for every default soft family — so this
+is a fidelity/performance trade, not a correctness one. Dispatching gives *structural*
+fidelity: sim runs the same unrolled per-bit logic the hardware will, which is what you
+want when the thing under test is the operator implementation itself. It is expensive.
+Measured on uint16 operands, steady state:
+
+| op | built-in | dispatched | ratio |
+|---|---|---|---|
+| `DIV` | 1.55 µs | 41,842 µs | 27,000x |
+| `LT` | 0.50 µs | 1,353 µs | 2,700x |
+| `NEGATE` | 1.31 µs | 16.8 µs | 13x |
+
+The `none` path is not a correctness compromise: the built-in fallbacks are value- *and*
+ctype-faithful to elaboration (`SimVal.__neg__`'s widening rule, the constant-shift split
+— both below). It costs structural fidelity and nothing else.
+
+### Scoped Generic Registrations Are Not Memoized Globally
+
+`_resolve_generic_*` memoizes a resolved implementation into the precise registry so later
+lookups skip the list scan. Doing that for an entry that came from a `scope=` registration
+leaked it past scope exit — `_pop_scoped_registrations` pops the generic list entries but
+cannot reach a memo — so one function's scoped implementation silently became every other
+function's. That is wrong *hardware*, not just wrong sim, since elaboration reads the same
+memo. `_scoped_generic_tail` counts how many entries at the tail of each `_generic_*`
+registry list are currently scope-pushed; a resolution matching one of those is cached in
+the (pop-cleared) `_generic_*_cache` but never written to the precise registry.
 
 ### Struct-Type Operator Dispatch
 
@@ -1777,7 +1840,26 @@ lowering, so there's no equivalent "nothing registered" fallback gap for them to
 
 Fast-path: check `_registered_binary_op_names` / `_registered_unary_op_names` sets first.
 If the op name is not in the set, skip registry lookup entirely and compute the result
-directly (with `_ctype` preserved for shifts/DIV/MOD).
+directly (with `_ctype` preserved for shifts/DIV/MOD). What is in those sets is governed by
+`SIM_SOFT_OPS` — see The Native-Sim Dispatch Gate above.
+
+Two built-in paths carry hardware type rules that are easy to get wrong, and were:
+
+- **Unary `-` on an integer widens by one bit and becomes signed.** `SW_LIB`'s
+  `GET_UNARY_OP_NEGATE_INT_UINT_C_CODE` is the authority (`result_t = "int" +
+  str(in_width + 1) + "_t"`); `PY_TO_LOGIC._elab_unary` applies the same rule, and the
+  library's `make_soft_negate` is annotated to match. `SimVal.__neg__` used to mask back
+  into the operand's own type, so `-uint24_t(5)` was `uint24_t 16777211` in sim against
+  hardware's `int25_t -5` — wrong for *every* unsigned value, and for the signed minimum
+  too (wrapped instead of widened). `_negate_ctype` now computes the widened type; the
+  result always fits it, so there is nothing to mask.
+- **A constant shift amount is not a dispatch point.** `PY_TO_LOGIC._elab_binop` sends it
+  to the `CONST_SL`/`CONST_SR_<n>_<type>` built-in (pure rewiring) and never consults the
+  registry; only a variable amount looks up a registered implementation. `__lshift__` /
+  `__rshift__` mirror that split by dispatching only when the right operand is a *typed*
+  `SimVal`. Without it, a registered barrel shifter recurses forever — its own body shifts
+  by a constant (`operators/soft_shift.py`: `result << (1 << i)`) — and takes `DIV`/`MOD`
+  down with it, since the divider shifts internally.
 
 Before the soft-operator-library work, `<`/`<=`/`>`/`>=` fell straight through to `int`'s own
 comparison (silently never consulting the registry, matching `_elab_compare`'s gap at the
@@ -1807,7 +1889,12 @@ When either operand lacks `_ctype` (plain int literal, shift result, etc.), the 
 falls back to a bare `SimVal` with no `_ctype`. Typed operands are re-injected by
 `@hw_func` input casts and `_TypedAnnAssignRewriter` at assignment points.
 
-Bitwise ops (`&`, `|`, `^`, `~`) always return bare `SimVal` with no `_ctype`.
+Bitwise ops (`&`, `|`, `^`, `~`) **preserve** `_ctype` via `_bitwise_ctype` — hardware
+requires matching-width operands and the result keeps that width. (They used to return a
+bare `SimVal` with no `_ctype`, which made downstream width inference fall back to
+`int(v).bit_length()` and silently corrupt `rotl`/`rotr`/`bswap` applied to a bitwise
+result. The stale version of this sentence is what the float library's `a * -1` workaround
+was reasoning from: it blamed a simulation-layer promotion bug that no longer existed.)
 
 ### Allocation Helpers
 

@@ -398,12 +398,20 @@ def _import_design(path: str):
     if _include_pypeline not in sys.path:
         sys.path.insert(0, _include_pypeline)
     # Mirror PY_TO_LOGIC.PARSE_FILE's default soft-operator registration (int
-    # NEGATE/compare/DIV/MOD, variable shift) so native sim executes the same
-    # soft implementations hardware does for these -- structural fidelity,
-    # not just golden-value correctness. Pure native runs never import
+    # NEGATE/compare/DIV/MOD, variable shift). Pure native runs never import
     # PY_TO_LOGIC, so this is the only place that registration happens for
     # them; the pipelinec --sim (non---comb) flow gets it from PARSE_FILE
     # too, and operators.soft de-dupes so registering it twice is harmless.
+    #
+    # Whether those implementations then EXECUTE in sim -- structural fidelity
+    # rather than golden-value correctness -- is pypeline.SIM_SOFT_OPS, set by
+    # PYPELINE_SIM_SOFT_OPS or set_sim_soft_ops(). It defaults to executing
+    # them. They are all matcher (any_integer_t) registrations, which for a
+    # long time never reached native sim at all; this comment used to assert
+    # that they did. Dispatching is expensive (a uint16 DIV is ~42 ms against
+    # ~1.5 us for the built-in), and the built-in fallbacks are value- and
+    # ctype-faithful to elaboration, so PYPELINE_SIM_SOFT_OPS=none is a
+    # speed-only trade. See docs/pypeline_sim_DESIGN.md.
     import operators.soft as _pypeline_default_soft_ops
 
     _pypeline_default_soft_ops.register_sw_lib_replacements()

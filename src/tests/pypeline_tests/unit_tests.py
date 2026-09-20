@@ -22,6 +22,18 @@ def get_tests() -> list:
             cmd=[INST_DIR / "generated_naming_test.py"],
         )
     )
+    # Native-sim vs. elaboration operator parity: the unary-negate widening
+    # rule, matcher ("generic") registrations actually reaching sim, the
+    # constant-vs-variable shift split that keeps a registered barrel shifter
+    # from recursing, and the scoped-registration leak. Pure in-process
+    # registry/SimVal work -- no design build.
+    tests.append(
+        Test(
+            name="sim_elab_operator_parity_test",
+            category="unit",
+            cmd=[INST_DIR / "sim_elab_operator_parity_test.py"],
+        )
+    )
     # AUTO_FSM scheduler/code-generator unit tests: exact schedule, register
     # allocation, byte-identical generated source across re-elaborations --
     # not visible in a build log, would otherwise only be checked indirectly

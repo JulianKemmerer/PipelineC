@@ -4234,6 +4234,22 @@ an early-stop message instead of propagating the exception as an error.
 
 ## Custom Operator Registration
 
+> Elaboration reads the registries (`_operator_registry`,
+> `_left_operator_registry`, `_unary_operator_registry`, `_mux_registry`, and the
+> `_generic_*` matcher lists) **directly**. It never consults
+> `_registered_binary_op_names` / `_registered_unary_op_names` / `_registered_mux_type_names`
+> — those are the native-simulation dispatch gate and are documented in
+> `pypeline_DESIGN.md`. Nothing about `SIM_SOFT_OPS` can change the hardware that gets
+> built.
+>
+> Two elaboration rules here are the authority that simulation mirrors, and both were
+> once mismatched:
+> - **Unary `-` on an integer** widens by one bit and becomes signed (`_elab_unary`,
+>   following `SW_LIB.GET_UNARY_OP_NEGATE_INT_UINT_C_CODE`).
+> - **A constant shift amount** goes to the `CONST_SL`/`CONST_SR_<n>_<type>` built-in and
+>   never reaches the registry; only a variable amount looks up an implementation
+>   (`_elab_binop`).
+
 Any binary or unary Python operator can be overloaded for specific operand types by
 registering a hardware function. The elaborator checks the registry before the built-in
 path; registered implementations take full precedence.

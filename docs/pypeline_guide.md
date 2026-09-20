@@ -537,7 +537,7 @@ pypelinec design.py --part xc7a35ticsg324-1l
 parts, `--syn_tool` and `SYN_TOOL()` to different tools, or naming a tool the
 part does not select, is an error rather than an override — a part and a tool
 are one decision spelled two ways. See
-[`SYN_DESIGN.md` §2](SYN_DESIGN.md#2-choosing-a-tool) for the full table of
+[`SYN_DESIGN.md`'s Choosing a Tool](SYN_DESIGN.md#2-choosing-a-tool) for the full table of
 parts, tools and their default parts.
 
 With neither a part nor a tool, the tool chain uses a software timing estimator
@@ -1992,12 +1992,29 @@ same whether or not you're inside `sim_call`) — `@struct` types get `__add__` 
 registries, raising a clear `TypeError` if nothing is registered for the pair
 rather than falling through to `NamedTuple`'s default tuple concatenation/repeat.
 
-> **Exception:** this is true of *concrete-type* registrations.
-> A **matcher** registration (`any_integer_t` and friends) currently dispatches
-> during elaboration only; native simulation falls through to its built-in
-> arithmetic for those. The values agree for every default soft op except
-> unary negate on an unsigned operand. Tracked separately — do not rely on a
-> matcher-registered implementation being the thing that runs in sim.
+Matcher registrations (`any_integer_t` and friends) dispatch in sim too, but because
+one of them covers every integer op in every design at once, whether they *execute*
+is a policy, set by `PYPELINE_SIM_SOFT_OPS` or `set_sim_soft_ops()`:
+
+| spelling | meaning |
+|---|---|
+| unset, `all`, `1` | every registered op dispatches (**default**) |
+| `none`, `0` | matcher registrations do not dispatch; built-ins run |
+| `NEGATE,LT,LTE,GT,GTE` | only those op names |
+
+Both paths compute the same value, so this trades simulation speed against *structural*
+fidelity — running the same unrolled per-bit logic the hardware will, which is what you
+want when the thing under test is the operator implementation itself. It is not free:
+on uint16 operands a dispatched `DIV` costs ~42 ms against ~1.5 µs for the built-in, and
+a compare ~1.4 ms against ~0.5 µs. Turn it down for sim-heavy runs that only care about
+values. Concrete-type registrations ignore the policy — naming an exact type pair is
+taken as asking for that implementation specifically.
+
+> **Unary `-` widens.** `-x` on an integer produces `int<width+1>_t`, signed, in both
+> layers: `-uint24_t(5)` is `int25_t -5`, and negating a signed minimum widens rather
+> than wrapping. Annotate the destination accordingly. A registered `NEGATE`
+> implementation must return that type too, or registering it would change the type of
+> every negate in the design — see `make_soft_negate`.
 
 ### Cheap and expensive ways to say the same thing
 
@@ -2006,7 +2023,7 @@ is an operator you get. Two things make an innocent-looking line expensive:
 
 - **A constant operand is still a port during leaf characterization.** Each
   leaf is synthesized *standalone* to measure its delay (see
-  [`SYN_DESIGN.md`](SYN_DESIGN.md) §4), with constants as ordinary inputs. So
+  [`SYN_DESIGN.md`'s Kinds of Synthesis Runs](SYN_DESIGN.md#4-kinds-of-synthesis-runs)), with constants as ordinary inputs. So
   `x * -1` is timed as a real NxM multiplier even where the vendor tool would
   later fold it, and the auto-pipeliner plans its cuts against that number.
 - **A soft-registered operator is a whole submodule.** Under

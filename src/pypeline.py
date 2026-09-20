@@ -242,6 +242,37 @@ def _int_ctype(is_signed: bool, width: int) -> str:
     return f"{'int' if is_signed else 'uint'}{width}_t"
 
 
+_negate_ctype_cache: dict = {}
+
+
+def _negate_ctype(ctype):
+    """Result ctype OBJECT of unary `-` applied to *ctype*.
+
+    Integer NEGATE widens by one bit and becomes signed. SW_LIB's
+    GET_UNARY_OP_NEGATE_INT_UINT_C_CODE is the authority -- it builds the
+    generated function's return type as `"int" + str(in_width + 1) + "_t"` --
+    and PY_TO_LOGIC._elab_unary applies the same rule on the built-in path.
+    The library's make_soft_negate (include/pypeline/operators/soft_misc.py)
+    is annotated to match, so registering the default soft ops does not change
+    the type of a single negate in a design.
+
+    Returns None for anything that is not an integer type (floats, @struct
+    types), leaving those to the caller's own handling.
+    """
+    try:
+        return _negate_ctype_cache[ctype]
+    except KeyError:
+        pass
+    try:
+        width = _ctype_info(_ctype_str(ctype))[1]
+    except NotImplementedError:
+        out = None
+    else:
+        out = make_int_t(width + 1)
+    _negate_ctype_cache[ctype] = out
+    return out
+
+
 @_functools.lru_cache(maxsize=None)
 def _arith_promote(l_type: str, r_type: str):
     """Compute effective input types after sign promotion for arithmetic/compare ops.
@@ -419,6 +450,16 @@ class SimVal(int):
         v = -int(self)
         if self._ctype is None or "NEGATE" in _registered_unary_op_names:
             return self._dispatch_unary("NEGATE", v)
+        # Built-in path. Integer NEGATE widens by one bit and becomes signed
+        # (see _negate_ctype for the authority). The widened type always holds
+        # the result, so there is nothing to mask -- masking back into
+        # self._ctype, which is what this used to do, made -uint24_t(5) come
+        # out uint24_t 16777211 in sim against hardware's int25_t -5, and
+        # wrapped the signed minimum instead of widening it. Unsigned operands
+        # were wrong for every value.
+        widened = _negate_ctype(self._ctype)
+        if widened is not None:
+            return _sim_val_make(v, widened)
         if SIM_STRICT_ARITH:
             try:
                 mask, sign_bit, is_signed = _sim_cast_param_cache[self._ctype]
@@ -475,11 +516,27 @@ class SimVal(int):
                 return _sim_cast(fallback_int, self._ctype)
         return SimVal(fallback_int)
 
+    # A CONSTANT shift amount is not a dispatch point. PY_TO_LOGIC._elab_binop
+    # sends it to the CONST_SL/CONST_SR_<n>_<type> built-in -- pure rewiring --
+    # and never consults the operator registry; only a variable amount looks up
+    # a registered implementation. Sim has to make the same split. A registered
+    # barrel shifter shifts by a constant in its own body
+    # (include/pypeline/operators/soft_shift.py: `result << (1 << i)`), so
+    # dispatching on a constant amount recurses into the shifter forever, and
+    # takes DIV/MOD down with it because the divider shifts internally.
+    # An untyped SimVal counts as a constant here: a hardware shift amount is
+    # always a typed wire.
     def __rshift__(self, o):
         v = int(self) >> int(o)
         if SIM_RAW_INTS:
             return v
-        if self._ctype is None or "SR" in _registered_binary_op_names:
+        if self._ctype is None:
+            return SimVal(v)
+        if (
+            "SR" in _registered_binary_op_names
+            and type(o) is SimVal
+            and o._ctype is not None
+        ):
             return self._dispatch_binary("SR", o, v, preserve_ctype=True)
         return _sim_val_make(v, self._ctype)
 
@@ -487,7 +544,13 @@ class SimVal(int):
         v = int(self) << int(o)
         if SIM_RAW_INTS:
             return v
-        if self._ctype is None or "SL" in _registered_binary_op_names:
+        if self._ctype is None:
+            return SimVal(v)
+        if (
+            "SL" in _registered_binary_op_names
+            and type(o) is SimVal
+            and o._ctype is not None
+        ):
             return self._dispatch_binary("SL", o, v, preserve_ctype=True)
         if SIM_STRICT_ARITH:
             try:
@@ -2483,12 +2546,148 @@ def _value_ctype(val):
 _operator_registry: dict = {}  # (op_str, l_type_str, r_type_str) -> name_or_callable
 _left_operator_registry: dict = {}  # (op_str, l_type_str) -> name_or_callable
 _unary_operator_registry: dict = {}  # (op_str, type_str) -> name_or_callable
-# Set of op_name strings that have at least one global (non-scoped) registration.
-# Used by __rshift__/__lshift__ to skip _dispatch_binary when no operators are registered.
+# ── Native-sim dispatch gate ─────────────────────────────────────────────
+#
+# SimVal's dunders (__neg__/__invert__, __rshift__/__lshift__, the comparisons,
+# __truediv__/__mod__) check one of these sets before bothering to look in the
+# precise per-type registries at all, so an unregistered design pays a single
+# set lookup and nothing else. Membership means "executing a registered
+# implementation for this op is enabled in native simulation".
+#
+# HARDWARE ELABORATION NEVER CONSULTS THESE SETS. PY_TO_LOGIC goes straight to
+# the registries, so what is or is not in here can only make sim more or less
+# faithful to the hardware -- it can never change the hardware that gets built.
 _registered_binary_op_names: set = set()
-
-# Parallel set for unary ops — used by __neg__/__invert__ to skip _dispatch_unary.
 _registered_unary_op_names: set = set()
+# (_registered_mux_type_names, the MUX equivalent, is defined with the rest of
+#  the MUX registry below -- it is keyed by muxed type string, not op name.)
+
+# The two sources a gate name can come from. They are kept apart because the
+# SIM_SOFT_OPS policy below treats them differently:
+#
+#   concrete -- register_operator("SR", signed_man_t, exp_t, impl): a
+#               deliberate, narrow override naming an exact type. Always
+#               dispatches; the policy does not switch it off.
+#   matcher  -- register_operator("DIV", any_uint_t, any_uint_t, factory): a
+#               process-wide default. operators.soft.register_sw_lib_replacements()
+#               installs one for int NEGATE, GT/GTE/LT/LTE, DIV, MOD and
+#               variable-amount SL/SR, i.e. every integer op in every design
+#               at once. Subject to the policy.
+#
+# Recording the name at REGISTRATION time (rather than lazily, on the first
+# successful _resolve_generic_* call, which is what used to happen) is what
+# lets a matcher registration reach native sim at all, and is what stops sim
+# behaving differently depending on whether an elaboration happened to run
+# first in the same process.
+_concrete_binary_op_names: set = set()
+_concrete_unary_op_names: set = set()
+_concrete_mux_type_names: set = set()
+_matcher_binary_op_names: set = set()
+_matcher_unary_op_names: set = set()
+_matcher_mux_type_names: set = set()
+
+# ── SIM_SOFT_OPS ─────────────────────────────────────────────────────────
+#
+# Which matcher-registered ops execute their implementation during native
+# simulation. Both paths compute the same VALUE -- verified for every default
+# soft family -- so this is a fidelity/performance trade, not a correctness
+# one. Dispatching gives *structural* fidelity: sim runs the same unrolled
+# per-bit logic the hardware will, which is what you want when the thing under
+# test is the operator implementation itself. It is expensive. Measured on
+# uint16 operands, steady state:
+#
+#     DIV      1.55 us -> 41,842 us   (27,000x)
+#     LT       0.50 us ->  1,353 us   ( 2,700x)
+#     NEGATE   1.31 us ->     16.8 us (    13x)
+#
+# PYPELINE_SIM_SOFT_OPS, read once at import, selects the policy:
+#
+#   unset / "all" / "1"   every registered op dispatches (DEFAULT)
+#   "none" / "0"          matcher registrations do not dispatch; the built-in
+#                         fallbacks run instead. Those are value- AND
+#                         ctype-faithful to elaboration (SimVal.__neg__'s
+#                         widening rule, the constant-shift split above), so
+#                         this costs structural fidelity and nothing else.
+#   comma list            only those op names, e.g. "NEGATE,LT,LTE,GT,GTE" to
+#                         keep compare fidelity without paying for DIV/MOD.
+#
+# set_sim_soft_ops() is the programmatic equivalent. The policy is applied when
+# a name is ADDED to a gate set, never when an operator is evaluated, so the
+# hot path stays at exactly one set-membership test either way.
+_SIM_SOFT_OPS_ALL = object()  # sentinel: "every op", distinct from any name set
+
+
+def _parse_sim_soft_ops(spec):
+    """Turn a PYPELINE_SIM_SOFT_OPS spelling into a policy value."""
+    if spec is None:
+        return _SIM_SOFT_OPS_ALL
+    text = str(spec).strip()
+    if text.lower() in ("all", "1", "true", "yes"):
+        return _SIM_SOFT_OPS_ALL
+    if text.lower() in ("none", "0", "false", "no", ""):
+        return frozenset()
+    return frozenset(part.strip().upper() for part in text.split(",") if part.strip())
+
+
+def _sim_soft_ops_allows(op_name) -> bool:
+    return _sim_soft_ops_policy is _SIM_SOFT_OPS_ALL or op_name in _sim_soft_ops_policy
+
+
+def _recompute_sim_gate_sets() -> None:
+    """Rebuild the gate sets from the concrete/matcher bookkeeping + policy.
+    A couple of dozen names at most, and only called when a registration or
+    the policy changes -- never per operator evaluation."""
+    for gate, concrete, matcher in (
+        (
+            _registered_binary_op_names,
+            _concrete_binary_op_names,
+            _matcher_binary_op_names,
+        ),
+        (_registered_unary_op_names, _concrete_unary_op_names, _matcher_unary_op_names),
+    ):
+        gate.clear()
+        gate.update(concrete)
+        gate.update(name for name in matcher if _sim_soft_ops_allows(name))
+    # MUX has no operator string of its own (one fixed shape, keyed by the
+    # muxed type), so the whole family is gated on the name "MUX".
+    _registered_mux_type_names.clear()
+    _registered_mux_type_names.update(_concrete_mux_type_names)
+    if _sim_soft_ops_allows("MUX"):
+        _registered_mux_type_names.update(_matcher_mux_type_names)
+
+
+def set_sim_soft_ops(spec) -> None:
+    """Set which matcher-registered operators execute during native simulation.
+
+    spec: None or "all"/"1" for every op (the default), "none"/"0" for none, or
+    a comma-separated list of op names ("NEGATE,LT,LTE,GT,GTE"). Equivalent to
+    the PYPELINE_SIM_SOFT_OPS environment variable, which is read at import.
+
+    Call before simulating: it rebuilds the dispatch gate sets, so it has no
+    effect on a value already computed. It has no effect at all on hardware
+    elaboration -- the same hardware gets built either way.
+    """
+    global _sim_soft_ops_policy
+    _sim_soft_ops_policy = _parse_sim_soft_ops(spec)
+    _recompute_sim_gate_sets()
+
+
+def _sim_soft_ops_env_policy():
+    import os as _os
+
+    return _parse_sim_soft_ops(_os.environ.get("PYPELINE_SIM_SOFT_OPS"))
+
+
+_sim_soft_ops_policy = _sim_soft_ops_env_policy()
+
+# Number of entries at the TAIL of each _generic_*_registry list that came from
+# a scope= registration currently pushed by _push_scoped_registrations. A
+# resolution that matches one of those must not be memoized into the global
+# precise registry: _pop_scoped_registrations pops the list entries but cannot
+# reach a memo, so the scoped implementation would leak past scope exit and
+# silently become every other function's implementation -- wrong hardware, not
+# just wrong sim.
+_scoped_generic_tail = {"op": 0, "left": 0, "unary": 0, "mux": 0}
 
 # Scoped registrations: active only while elaborating the keyed function.
 # id(func) -> {registry_key: name_or_callable}
@@ -2626,8 +2825,12 @@ def _resolve_generic_operator(op, l_str, r_str):
     if key in _generic_operator_cache:
         return _generic_operator_cache[key]
     impl = None
-    for entry_op, lm, rm, factory in reversed(_generic_operator_registry):
+    from_scope = False
+    scoped_from = len(_generic_operator_registry) - _scoped_generic_tail["op"]
+    for idx in range(len(_generic_operator_registry) - 1, -1, -1):
+        entry_op, lm, rm, factory = _generic_operator_registry[idx]
         if entry_op == op and lm.matches(l_str) and rm.matches(r_str):
+            from_scope = idx >= scoped_from
             impl = (
                 factory
                 if factory is INFERRED
@@ -2635,9 +2838,12 @@ def _resolve_generic_operator(op, l_str, r_str):
             )
             break
     _generic_operator_cache[key] = impl
-    if impl is not None and impl is not INFERRED:
+    # Memoize into the precise registry so later lookups skip the scan -- but
+    # only for a globally registered entry (see _scoped_generic_tail). The
+    # gate-set name is deliberately NOT added here: it is recorded at
+    # registration time instead.
+    if impl is not None and impl is not INFERRED and not from_scope:
         _operator_registry[key] = impl
-        _registered_binary_op_names.add(op)
     return impl
 
 
@@ -2646,14 +2852,17 @@ def _resolve_generic_left_operator(op, l_str):
     if key in _generic_left_operator_cache:
         return _generic_left_operator_cache[key]
     impl = None
-    for entry_op, lm, factory in reversed(_generic_left_operator_registry):
+    from_scope = False
+    scoped_from = len(_generic_left_operator_registry) - _scoped_generic_tail["left"]
+    for idx in range(len(_generic_left_operator_registry) - 1, -1, -1):
+        entry_op, lm, factory = _generic_left_operator_registry[idx]
         if entry_op == op and lm.matches(l_str):
+            from_scope = idx >= scoped_from
             impl = factory if factory is INFERRED else factory(_reconstruct_int_ctype(l_str))
             break
     _generic_left_operator_cache[key] = impl
-    if impl is not None and impl is not INFERRED:
+    if impl is not None and impl is not INFERRED and not from_scope:
         _left_operator_registry[key] = impl
-        _registered_binary_op_names.add(op)
     return impl
 
 
@@ -2662,14 +2871,17 @@ def _resolve_generic_unary_operator(op, t_str):
     if key in _generic_unary_operator_cache:
         return _generic_unary_operator_cache[key]
     impl = None
-    for entry_op, m, factory in reversed(_generic_unary_operator_registry):
+    from_scope = False
+    scoped_from = len(_generic_unary_operator_registry) - _scoped_generic_tail["unary"]
+    for idx in range(len(_generic_unary_operator_registry) - 1, -1, -1):
+        entry_op, m, factory = _generic_unary_operator_registry[idx]
         if entry_op == op and m.matches(t_str):
+            from_scope = idx >= scoped_from
             impl = factory if factory is INFERRED else factory(_reconstruct_int_ctype(t_str))
             break
     _generic_unary_operator_cache[key] = impl
-    if impl is not None and impl is not INFERRED:
+    if impl is not None and impl is not INFERRED and not from_scope:
         _unary_operator_registry[key] = impl
-        _registered_unary_op_names.add(op)
     return impl
 
 
@@ -2688,14 +2900,23 @@ def _resolve_generic_mux(t_str):
     if t_str in _generic_mux_cache:
         return _generic_mux_cache[t_str]
     impl = None
-    for m, factory in reversed(_generic_mux_registry):
+    from_scope = False
+    scoped_from = len(_generic_mux_registry) - _scoped_generic_tail["mux"]
+    for idx in range(len(_generic_mux_registry) - 1, -1, -1):
+        m, factory = _generic_mux_registry[idx]
         if m.matches(t_str):
+            from_scope = idx >= scoped_from
             impl = factory if factory is INFERRED else factory(_reconstruct_int_ctype(t_str))
             break
     _generic_mux_cache[t_str] = impl
-    if impl is not None and impl is not INFERRED:
+    if impl is not None and impl is not INFERRED and not from_scope:
         _mux_registry[t_str] = impl
-        _registered_mux_type_names.add(t_str)
+        # MUX matcher entries have no op-name string to record at registration
+        # time (the registry is keyed by muxed type), so the gate name is still
+        # recorded lazily here -- subject to the SIM_SOFT_OPS policy.
+        _matcher_mux_type_names.add(t_str)
+        if _sim_soft_ops_allows("MUX"):
+            _registered_mux_type_names.add(t_str)
     return impl
 
 
@@ -2720,6 +2941,7 @@ def register_mux_impl(type_, func, scope=None) -> None:
     key = _ctype_str(type_)
     if scope is None:
         _mux_registry[key] = func
+        _concrete_mux_type_names.add(key)
         _registered_mux_type_names.add(key)
     else:
         _scoped_funcs.add(id(scope))
@@ -2749,6 +2971,11 @@ def register_operator(op: str, left_type, right_type, func, scope=None) -> None:
         if scope is None:
             _generic_operator_registry.append(entry)
             _generic_operator_cache.clear()
+            # Record the gate name now, not lazily on the first successful
+            # resolution -- see the _matcher_*_op_names comment above. Subject
+            # to SIM_SOFT_OPS, which _recompute_sim_gate_sets applies.
+            _matcher_binary_op_names.add(op)
+            _recompute_sim_gate_sets()
         else:
             _scoped_funcs.add(id(scope))
             _scoped_generic_operator_registry.setdefault(id(scope), []).append(entry)
@@ -2756,6 +2983,7 @@ def register_operator(op: str, left_type, right_type, func, scope=None) -> None:
     key = (op, _ctype_str(left_type), _ctype_str(right_type))
     if scope is None:
         _operator_registry[key] = func
+        _concrete_binary_op_names.add(op)
         _registered_binary_op_names.add(op)
     else:
         _scoped_funcs.add(id(scope))
@@ -2781,6 +3009,8 @@ def register_left_operator(op: str, left_type, func, scope=None) -> None:
         if scope is None:
             _generic_left_operator_registry.append(entry)
             _generic_left_operator_cache.clear()
+            _matcher_binary_op_names.add(op)
+            _recompute_sim_gate_sets()
         else:
             _scoped_funcs.add(id(scope))
             _scoped_generic_left_operator_registry.setdefault(id(scope), []).append(entry)
@@ -2788,6 +3018,7 @@ def register_left_operator(op: str, left_type, func, scope=None) -> None:
     key = (op, _ctype_str(left_type))
     if scope is None:
         _left_operator_registry[key] = func
+        _concrete_binary_op_names.add(op)
         _registered_binary_op_names.add(op)
     else:
         _scoped_funcs.add(id(scope))
@@ -2811,6 +3042,8 @@ def register_unary_operator(op: str, operand_type, func, scope=None) -> None:
         if scope is None:
             _generic_unary_operator_registry.append(entry)
             _generic_unary_operator_cache.clear()
+            _matcher_unary_op_names.add(op)
+            _recompute_sim_gate_sets()
         else:
             _scoped_funcs.add(id(scope))
             _scoped_generic_unary_operator_registry.setdefault(id(scope), []).append(entry)
@@ -2818,6 +3051,7 @@ def register_unary_operator(op: str, operand_type, func, scope=None) -> None:
     key = (op, _ctype_str(operand_type))
     if scope is None:
         _unary_operator_registry[key] = func
+        _concrete_unary_op_names.add(op)
         _registered_unary_op_names.add(op)
     else:
         _scoped_funcs.add(id(scope))
@@ -3013,17 +3247,20 @@ def _push_scoped_registrations(func):
     Scoped entries from outer elaboration frames are already present in the global
     registries, so inner callees automatically inherit them.
 
-    Also provisionally adds the op name to _registered_binary_op_names /
-    _registered_unary_op_names (the fast-path sets SimVal's __neg__/__invert__/
-    __rshift__/__lshift__ check before bothering to look in the precise
-    per-type registries at all) if not already present, so a scoped-only
-    registration dispatches correctly even when no unrelated global
-    registration for that op name happens to already exist. Without this, a
-    scoped NEGATE/SR/SL registration would silently never be consulted --
-    SimVal would take its default int-arithmetic fallback instead -- unless
-    some other, unrelated module happened to have also globally registered
-    that same op name (for any type), which is not something a self-contained
+    Also provisionally records the op name in the concrete/matcher bookkeeping
+    sets that feed the native-sim dispatch gate (see _recompute_sim_gate_sets),
+    so a scoped-only registration dispatches correctly even when no unrelated
+    global registration for that op name happens to already exist. Without
+    this, a scoped NEGATE/SR/SL registration would silently never be consulted
+    -- SimVal would take its default int-arithmetic fallback instead -- unless
+    some other, unrelated module happened to have also globally registered that
+    same op name (for any type), which is not something a self-contained
     factory function should have to depend on.
+
+    Scoped MATCHER entries get the same treatment, via _matcher_*_op_names.
+    They used to be extended onto the live generic list without any name being
+    recorded at all, which is the scoped half of the same hole that kept every
+    matcher registration out of native sim.
     """
     func_id = id(func)
     if func_id not in _scoped_funcs:
@@ -3032,27 +3269,27 @@ def _push_scoped_registrations(func):
     for key, val in _scoped_operator_registry.get(func_id, {}).items():
         saved.append((_operator_registry, key, _operator_registry.get(key)))
         _operator_registry[key] = val
-        if key[0] not in _registered_binary_op_names:
-            _registered_binary_op_names.add(key[0])
-            saved.append((_registered_binary_op_names, key[0], _SCOPED_SET_ADD))
+        if key[0] not in _concrete_binary_op_names:
+            _concrete_binary_op_names.add(key[0])
+            saved.append((_concrete_binary_op_names, key[0], _SCOPED_SET_ADD))
     for key, val in _scoped_left_operator_registry.get(func_id, {}).items():
         saved.append((_left_operator_registry, key, _left_operator_registry.get(key)))
         _left_operator_registry[key] = val
-        if key[0] not in _registered_binary_op_names:
-            _registered_binary_op_names.add(key[0])
-            saved.append((_registered_binary_op_names, key[0], _SCOPED_SET_ADD))
+        if key[0] not in _concrete_binary_op_names:
+            _concrete_binary_op_names.add(key[0])
+            saved.append((_concrete_binary_op_names, key[0], _SCOPED_SET_ADD))
     for key, val in _scoped_unary_operator_registry.get(func_id, {}).items():
         saved.append((_unary_operator_registry, key, _unary_operator_registry.get(key)))
         _unary_operator_registry[key] = val
-        if key[0] not in _registered_unary_op_names:
-            _registered_unary_op_names.add(key[0])
-            saved.append((_registered_unary_op_names, key[0], _SCOPED_SET_ADD))
+        if key[0] not in _concrete_unary_op_names:
+            _concrete_unary_op_names.add(key[0])
+            saved.append((_concrete_unary_op_names, key[0], _SCOPED_SET_ADD))
     for key, val in _scoped_mux_registry.get(func_id, {}).items():
         saved.append((_mux_registry, key, _mux_registry.get(key)))
         _mux_registry[key] = val
-        if key not in _registered_mux_type_names:
-            _registered_mux_type_names.add(key)
-            saved.append((_registered_mux_type_names, key, _SCOPED_SET_ADD))
+        if key not in _concrete_mux_type_names:
+            _concrete_mux_type_names.add(key)
+            saved.append((_concrete_mux_type_names, key, _SCOPED_SET_ADD))
     # Generic (matcher-based) scoped entries: appended to the live list (stack
     # discipline -- nested push/pop always fully completes before this pop
     # runs, so popping the last N entries is always correct), and the
@@ -3061,26 +3298,44 @@ def _push_scoped_registrations(func):
     if generic_entries:
         _generic_operator_registry.extend(generic_entries)
         _generic_operator_cache.clear()
+        _scoped_generic_tail["op"] += len(generic_entries)
         saved.append((_generic_operator_registry, len(generic_entries), _SCOPED_GENERIC_POP))
+        for entry in generic_entries:
+            if entry[0] not in _matcher_binary_op_names:
+                _matcher_binary_op_names.add(entry[0])
+                saved.append((_matcher_binary_op_names, entry[0], _SCOPED_SET_ADD))
     generic_left_entries = _scoped_generic_left_operator_registry.get(func_id, [])
     if generic_left_entries:
         _generic_left_operator_registry.extend(generic_left_entries)
         _generic_left_operator_cache.clear()
+        _scoped_generic_tail["left"] += len(generic_left_entries)
         saved.append(
             (_generic_left_operator_registry, len(generic_left_entries), _SCOPED_GENERIC_POP)
         )
+        for entry in generic_left_entries:
+            if entry[0] not in _matcher_binary_op_names:
+                _matcher_binary_op_names.add(entry[0])
+                saved.append((_matcher_binary_op_names, entry[0], _SCOPED_SET_ADD))
     generic_unary_entries = _scoped_generic_unary_operator_registry.get(func_id, [])
     if generic_unary_entries:
         _generic_unary_operator_registry.extend(generic_unary_entries)
         _generic_unary_operator_cache.clear()
+        _scoped_generic_tail["unary"] += len(generic_unary_entries)
         saved.append(
             (_generic_unary_operator_registry, len(generic_unary_entries), _SCOPED_GENERIC_POP)
         )
+        for entry in generic_unary_entries:
+            if entry[0] not in _matcher_unary_op_names:
+                _matcher_unary_op_names.add(entry[0])
+                saved.append((_matcher_unary_op_names, entry[0], _SCOPED_SET_ADD))
     generic_mux_entries = _scoped_generic_mux_registry.get(func_id, [])
     if generic_mux_entries:
         _generic_mux_registry.extend(generic_mux_entries)
         _generic_mux_cache.clear()
+        _scoped_generic_tail["mux"] += len(generic_mux_entries)
         saved.append((_generic_mux_registry, len(generic_mux_entries), _SCOPED_GENERIC_POP))
+    if saved:
+        _recompute_sim_gate_sets()
     return saved
 
 
@@ -3091,7 +3346,7 @@ _EMPTY_SAVED = []  # returned by _push_scoped_registrations when nothing to push
 
 
 def _pop_scoped_registrations(saved):
-    """Restore registry entries (and fast-path set membership) to their pre-push state."""
+    """Restore registry entries (and gate-set membership) to their pre-push state."""
     for registry, key, old_val in saved:
         if old_val is _SCOPED_SET_ADD:
             registry.discard(key)
@@ -3100,14 +3355,24 @@ def _pop_scoped_registrations(saved):
             del registry[len(registry) - n :]
             if registry is _generic_operator_registry:
                 _generic_operator_cache.clear()
+                _scoped_generic_tail["op"] -= n
             elif registry is _generic_left_operator_registry:
                 _generic_left_operator_cache.clear()
+                _scoped_generic_tail["left"] -= n
+            elif registry is _generic_mux_registry:
+                # Used to fall into the unary branch below and clear the wrong
+                # cache, leaving a popped scoped mux resolution memoized.
+                _generic_mux_cache.clear()
+                _scoped_generic_tail["mux"] -= n
             else:
                 _generic_unary_operator_cache.clear()
+                _scoped_generic_tail["unary"] -= n
         elif old_val is None:
             registry.pop(key, _SCOPED_MISSING)
         else:
             registry[key] = old_val
+    if saved:
+        _recompute_sim_gate_sets()
 
 
 # ─────────────────────────────────────────────
