@@ -86,35 +86,23 @@ port(
 end top;
 ```
 
-## Set up your tools
+## Next Steps
 
 Depending on what you're doing, 'install' could be as as simple as adding `pypelinec` to your `PATH` for convenience:
 ```
 export PATH=$PATH:$(pwd)/src
 ```
 
-For installing/configuring simulation, synthesis, and bitstream generation tools see the wiki's [Set up your tools](https://github.com/JulianKemmerer/PipelineC/wiki/Running-the-Tool) page.
-
 Vendor toolchains (Vivado/Quartus/Diamond/etc.) still need their own proprietary installs
 regardless of which path you take.
-
-### Nix
-
-For a more officially-packaged install currently limited to open source tools, the repo provides a Nix package
-(`default.nix`/`nix/package.nix`). It installs a self-contained PyRTL + GHDL + Yosys toolchain in one step, the same flow tools like [Latchup.app](https://latchup.app) are built around:
-```
-nix-build default.nix
-export PATH=$PATH:$(pwd)/result/bin
-pypelinec examples/pypeline/blink.py --comb   # runs the real PyRTL+GHDL+Yosys flow
-# can specify --syn_tool device_models (or source code PART('sky130')) to use an alternative ASIC timing model instead
-```
-
-## Next Steps
 
 * Read the [Pypeline language guide](pypeline_guide.md). It walks
   through a full worked example ([VGA test pattern](../examples/pypeline/vga_test_pattern.py))
   and then covers every language feature in its own section.
 * See the [examples/pypeline](../examples/pypeline) directory for more example code.
+* [Install your toolchains.](#set-up-your-tools)
+* Putting a design on hardware for the first time? See
+  [Dev Board Setup](https://github.com/JulianKemmerer/PipelineC/wiki/Dev-Board-Setup).
 * Coming from the C front end? See
   [`docs/pipelinec_to_pypeline.md`](pipelinec_to_pypeline.md) for a pattern-by-pattern
   translation reference.
@@ -323,7 +311,7 @@ pypelinec ./examples/pypeline/pipeline.py --comb
 ```
 **To produce a pipeline that meets timing at operating frequency `F`**:
 
-* First [have tools installed](https://github.com/JulianKemmerer/PipelineC/wiki/Running-the-Tool).
+* First [have tools installed](#set-up-your-tools).
   * Or use `PART("sky130")` / `--syn_tool device_models` to use a custom internal ASIC timing model.
 * And then [open and edit](../examples/pypeline/pipeline.py) `pipeline.py` to specify the target frequency and FPGA part:
   * Ex. `@MAIN(F)` says the `my_pipeline` function is a single top level `@MAIN` function intended to run at `F`MHz — see [Top-Level Entry Points](pypeline_guide.md#top-level-entry-points).
@@ -476,6 +464,20 @@ timing-params caches, etc.), instead of a freshly generated default directory.
   time. To run several from the same warm results, give each its own copy.
 - **Example.** The cycle-diff tool uses separate copies of one warm directory so its
   native and VHDL runs agree on the same discovered pipeline latencies.
+- **Resuming.** If a run stops before it finishes, rerun it with the same `--out_dir` to
+  pick up where it left off. This helps with large designs and long synthesis sweeps.
+- **Stale files.** If you see odd behavior, start again from a fresh output directory
+  ([#82](https://github.com/JulianKemmerer/PipelineC/issues/82)). If
+  a run was stopped during synthesis, delete the failed run's (tool-specific) synthesis
+  log before trying again.
+- **Default and layout.** Without `--out_dir`, a new output directory is created inside
+  the current one. `built_in/` holds the VHDL for built-in operators and muxes, `<top>/`
+  (named by `--top`) holds the final top level, and code from each source file goes in a
+  directory named after that file's path. For example, code from
+  `examples/pypeline/blink.py` goes in `examples/pypeline/blink.py/`. This layout may
+  change ([#183](https://github.com/JulianKemmerer/PipelineC/issues/183),
+  [#214](https://github.com/JulianKemmerer/PipelineC/discussions/214)). Use the manifests
+  in [Generated files and reports](#generated-files-and-reports) rather than relying on it.
 
 ### Build modes and output options
 
@@ -491,7 +493,7 @@ timing-params caches, etc.), instead of a freshly generated default directory.
 | `--verilog` | Convert the final VHDL top to Verilog through GHDL and Yosys |
 | `--yosys_json` | Stop after writing the Yosys JSON netlist |
 | `--xo_axis` | Write the packaging script for a Vitis AXI-Stream `.xo` IP |
-| `--pins FILE` | Supply the pin-constraint file used for the final implementation |
+| `--pins FILE` | Supply the pin-constraint file used for the final implementation (see [Full bitstream builds](#full-bitstream-builds---pins)) |
 | `--top NAME` | Change the generated top-level module name from `top` |
 
 `--mux_delay_by_width` and `--no_mux_delay_by_width` force mux timing-cache keys to
@@ -616,3 +618,144 @@ Consume the explicit manifests and indexes instead of globbing generated directo
 Timing-specific generated entities are not a stable integration API. Depend on the
 stable top, import record declarations from `c_structs_pkg`, or add a small scalar-port
 wrapper when external HDL needs a durable boundary.
+
+### Using the output in an existing project
+
+The simplest and most flexible way to use Pypeline is to add only the generated VHDL to
+an existing bitstream build flow. Add the files listed in `vhdl_files.txt`, plus
+whatever tool-specific file the backend generates:
+
+| Backend | Generated files to use |
+|---|---|
+| Xilinx Vivado | `read_vhdl.tcl` |
+| Intel Quartus | `pipelinec_top.qip` Quartus IP file |
+| Lattice Diamond | `vhdl_files.txt` and the top module's project file |
+| GHDL + Yosys + nextpnr | `vhdl_files.txt` and the top module's build script (`.sh`) |
+| OpenXC7 | `vhdl_files.txt`, the top build script (GHDL/Yosys + nextpnr-xilinx), and its `.fasm` intermediate; a final constrained build also writes `.frames` and `.bit` |
+| Gowin EDA | `vhdl_files.txt` and the top module's build script (`.tcl`) |
+| Efinix Efinity | `vhdl_files.txt`, the top module's build script (`.sh`), and project (`.xml`) |
+| Cologne Chip toolchain | `vhdl_files.txt` and the top module's build script (`.sh`) |
+| PyRTL models | `vhdl_files.txt` and the top module's build script (`.sh`) |
+
+For example, this Vivado Tcl removes all old Pypeline files from a project and adds the
+newly generated VHDL:
+
+```tcl
+remove_files /home/user/pipelinec_output/*;
+source /home/user/pipelinec_output/read_vhdl.tcl;
+```
+
+### Full bitstream builds: `--pins`
+
+Some backends can also run the full build through to bitstream generation. Pass the
+pin-constraint file with `--pins`:
+
+* **Gowin EDA**: Pass a `.cst` pin-mapping file. By default the flow writes a `top.fs`
+  bitstream to a directory like `<out_dir>/top/impl/pnr/`.
+  * Test: `pypelinec ./examples/tool_tests/gowin_bitstream.c --pins ./examples/gowin/blink.cst`
+* **OpenXC7**: Pass an `.xdc` pin/IO-standard file, an explicit XC7 part, and
+  `--syn_tool open_tools`. The flow runs nextpnr-xilinx, converts its FASM output with
+  Project X-Ray, and writes `<out_dir>/top/top.bit`.
+  * Test: `pypelinec ./examples/blink.c --part xc7a35tcpg236-1 --syn_tool open_tools --comb --pins ./docs/openxc7_basys3_blink.xdc`
+
+
+## Set up your tools
+
+### Requirements
+
+The `pypelinec` tool is pure Python. It only needs extra setup for the synthesis and
+simulation tools it calls. You can run it without an FPGA part or any synthesis tool
+installed, but then you get no automatic pipelining or timing feedback: only plain
+generated VHDL, as in `--comb --no_synth` mode.
+
+Only Linux environments are supported, and a C preprocessor (`cpp`) must be installed.
+Native Windows and [Mac](https://github.com/JulianKemmerer/PipelineC/issues/286) support
+still needs work. On those systems, run Pypeline and the synthesis/simulation tools inside
+a Linux virtual machine or [Windows Subsystem for Linux (WSL)](https://docs.microsoft.com/en-us/windows/wsl/about).
+
+[ghdl](https://github.com/ghdl/ghdl), [yosys](https://github.com/YosysHQ/yosys), and
+[ghdl-yosys-plugin](https://github.com/ghdl/ghdl-yosys-plugin) are required for `--verilog`
+and `--verilator` support.
+
+### Synthesis tools
+
+Install one or more synthesis tools. Each backend first looks for its executable on the
+user `PATH`. If it isn't there, it falls back to the path constant at the top of that
+backend's source file. Each entry below has a small smoke-test design under
+[`examples/tool_tests/`](../examples/tool_tests). See
+[Synthesis backends and target selection](#synthesis-backends-and-target-selection)
+for which part selects which tool.
+
+* **Xilinx Vivado**: Finds `vivado` on the `PATH`. Failing that, set the `XILINX_VIVADO`
+  environment variable (a path like `/Xilinx/Vivado/2019.2`) or edit the `VIVADO_DIR`
+  constant in [VIVADO.py](../src/VIVADO.py).
+  * Test: `pypelinec ./examples/tool_tests/vivado.c`
+* **Intel Quartus**: Finds `quartus_sh` on the `PATH`, or edit the `QUARTUS_PATH` constant in
+  [QUARTUS.py](../src/QUARTUS.py).
+  * Test: `pypelinec ./examples/tool_tests/quartus.c`
+* **Lattice Diamond**: Finds `diamondc` on the `PATH`, or edit the `DIAMOND_PATH` and
+  `DIAMOND_TOOL` constants in [DIAMOND.py](../src/DIAMOND.py).
+  * Test: `pypelinec ./examples/tool_tests/diamond.c`
+* **GHDL + Yosys + ghdl-yosys-plugin + nextpnr**: The easiest install is the
+  [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build). Extract a current build
+  and set `OSS_CAD_SUITE` to its root. Without it, Pypeline looks for the executables on
+  the `PATH`.
+  * **Warning:** Tool versions installed with `apt-get` are likely too old to work. If you
+    build the tools yourself, use the latest [ghdl](https://github.com/ghdl/ghdl),
+    [yosys](https://github.com/YosysHQ/yosys), and
+    [ghdl-yosys-plugin](https://github.com/ghdl/ghdl-yosys-plugin).
+    [nextpnr](https://github.com/YosysHQ/nextpnr) is needed for automatic pipelining.
+  * Older `ghdl` versions do not support the `IEEE` `float` library.
+  * Yosys fails to load the `ghdl` shared library if `ghdl-yosys-plugin` isn't installed.
+  * Test: `pypelinec ./examples/tool_tests/open_tools.c`
+* **OpenXC7 (open-source Xilinx 7-series flow)**: Use the OSS CAD Suite for GHDL and Yosys.
+  Also install a matching `nextpnr-xilinx`, its chipdb, the Project X-Ray database,
+  `fasm2frames`, and `xc7frames2bit`, and set `OPENXC7` to the directory that contains
+  them. Select this backend explicitly with `--syn_tool open_tools`: an `xc...` part on its
+  own still selects Vivado. [Testing PR 308 with OpenXC7](OPENXC7_PR_308_LOCAL_TEST.md)
+  describes the install layout, including a pinned prebuilt install that also works on
+  older Linux distributions.
+  * Test: `pypelinec ./examples/blink.c --part xc7a35tcpg236-1 --syn_tool open_tools --comb --pins ./docs/openxc7_basys3_blink.xdc`
+* **Gowin EDA**: Finds `gw_sh` on the `PATH`, or edit the `GOWIN_PATH` constant in
+  [GOWIN.py](../src/GOWIN.py).
+  * Test: `pypelinec ./examples/tool_tests/gowin_pipeline.c`
+* **Efinix Efinity**: Finds `efx_run.py` on the `PATH`, or edit the `EFINITY_PATH` constant in
+  [EFINITY.py](../src/EFINITY.py).
+  * Test: `pypelinec ./examples/tool_tests/efinity.c`
+* **Cologne Chip toolchain**: Finds `p_r` on the `PATH`, or edit the `CC_TOOLS_PATH` constant
+  in [CC_TOOLS.py](../src/CC_TOOLS.py). Either way, Pypeline expects an extracted
+  `cc-toolchain` directory from the
+  [most recent build](https://www.colognechip.com/programmable-logic/gatemate/gatemate-download).
+  * Test: `pypelinec ./examples/tool_tests/cc_tools.c`
+* **PyRTL models**: Install the Python packages `pyrtl` and its dependency `pyparsing`. These
+  models are the default when no part is specified.
+  * Test: `pypelinec ./examples/tool_tests/pyrtl.c`
+* **sky130 device models**: Built in. Select them with `--syn_tool device_models` or
+  `PART("sky130")`. They use the GHDL/Yosys tools listed above.
+
+### Simulation tools
+
+These are only needed for `--sim` runs (see [Simulation](#simulation)):
+
+* **Native Python**: No install or setup needed. `--sim` with no simulator selected uses
+  the native simulator.
+* **Modelsim**: Install Modelsim, then put `vsim` on the `PATH` or edit the `MODELSIM_PATH`
+  constant in [MODELSIM.py](../src/MODELSIM.py). Use `--modelsim`.
+* **Verilator or CXXRTL**: The easiest install is the
+  [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build) with `OSS_CAD_SUITE` set
+  (see above). Without it, Pypeline looks for the executables on the `PATH`. Use
+  `--verilator` or `--cxxrtl`.
+* **cocotb + GHDL**: Follow the [cocotb install instructions](https://docs.cocotb.org/).
+  GHDL is currently the only simulator supported, and `ghdl` must be on the `PATH`. Use
+  `--cocotb --ghdl`.
+
+### Nix
+
+For a more officially-packaged install currently limited to open source tools, the repo provides a Nix package
+(`default.nix`/`nix/package.nix`). It installs a self-contained PyRTL + GHDL + Yosys toolchain in one step, the same flow tools like [Latchup.app](https://latchup.app) are built around:
+```
+nix-build default.nix
+export PATH=$PATH:$(pwd)/result/bin
+pypelinec examples/pypeline/blink.py --comb   # runs the real PyRTL+GHDL+Yosys flow
+# can specify --syn_tool device_models (or source code PART('sky130')) to use an alternative ASIC timing model instead
+```
