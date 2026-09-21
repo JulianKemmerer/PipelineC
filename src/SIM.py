@@ -60,6 +60,36 @@ def SIM_AT_COMB_STAGE(args) -> bool:
 def DO_OPTIONAL_SIM(
     do_sim, parser_state, args, multimain_timing_params=None, source_file=None
 ):
+    # The native sim runs a Pypeline design's @initial/@final(sim) hooks inside
+    # its own run loop (pypeline_sim.run_sim); every other simulator is an
+    # external tool run here, so its hooks wrap that run.
+    pypeline = sys.modules.get("pypeline")
+    if (
+        do_sim
+        and SIM_TOOL is not pypeline_sim
+        and pypeline is not None
+        and pypeline._hook_registry
+    ):
+        pending_exc = None
+        try:
+            pypeline.RUN_INITIAL_HOOKS("sim")
+            _DO_OPTIONAL_SIM(
+                do_sim, parser_state, args, multimain_timing_params, source_file
+            )
+        except BaseException as e:
+            pending_exc = e
+            raise
+        finally:
+            pypeline.RUN_FINAL_HOOKS("sim", pending_exc=pending_exc)
+    else:
+        _DO_OPTIONAL_SIM(
+            do_sim, parser_state, args, multimain_timing_params, source_file
+        )
+
+
+def _DO_OPTIONAL_SIM(
+    do_sim, parser_state, args, multimain_timing_params=None, source_file=None
+):
     if SIM_TOOL is COCOTB:
         if do_sim:
             COCOTB.DO_SIM(multimain_timing_params, parser_state, args)

@@ -432,7 +432,9 @@ pypeline.SET_AUTO_PIPELINE_BUILD_MODE(
 if src_file.endswith(".c"):
     parser_state = C_TO_LOGIC.PARSE_FILE(src_file)
 elif src_file.endswith(".py"):
-    parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
+    # First parse only: runs the design's @initial(syn) hooks after its import,
+    # before elaboration
+    parser_state = PY_TO_LOGIC.PARSE_FILE(src_file, run_syn_initial_hooks=True)
     # Every struct this design serializes to bytes registered itself while the
     # design was imported (pypeline._host_register, called from
     # make_type_to_bytes/make_type_from_bytes). Write the standalone Python
@@ -502,12 +504,28 @@ if SYN.SYN_TOOL is None:
         parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
         C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
 
+_syn_final_hooks_ran = False
+
+
+def _run_syn_final_hooks():
+    """The design's @final(syn) hooks, once, right after the final VHDL is first
+    written (a --comb build writes it again after its pipelined-build step).
+    Run from the snapshot @initial(syn) ran from, so both see one import of the
+    design (see PY_TO_LOGIC.PARSE_FILE's run_syn_initial_hooks)."""
+    global _syn_final_hooks_ran
+    if _syn_final_hooks_ran or not src_file.endswith(".py"):
+        return
+    _syn_final_hooks_ran = True
+    pypeline.RUN_FINAL_HOOKS("syn", pypeline._syn_hook_snapshot or [])
+
+
 if args.comb or args.no_synth:
     # Zero added pipelining, except fixed AUTO_PIPELINE latency= call sites
     # (None when there are none: exactly the historical zero-clock files)
     comb_timing_params = AUTO_PIPELINE.BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS(parser_state)
 if args.comb:
     SYN.WRITE_FINAL_FILES(comb_timing_params, parser_state)
+    _run_syn_final_hooks()
     # Here is a good point to check basic single cycle/comb logic functionality before pipelining with synth tools
     # (A native non---comb --sim run degraded to comb by the no-synth-tool
     # fallback above still sims here -- zero latency, warning already printed.)
@@ -522,6 +540,11 @@ if args.comb:
     )
 elif args.no_synth and comb_timing_params is not None:
     SYN.WRITE_FINAL_FILES(comb_timing_params, parser_state)
+    _run_syn_final_hooks()
+elif args.no_synth:
+    # No fixed AUTO_PIPELINE latencies: the zero-added-clocks files written
+    # above are the final VHDL
+    _run_syn_final_hooks()
 
 if not args.no_synth:
     parser_state, multimain_timing_params = AUTO_PIPELINE.DO_PIPELINED_BUILD(
@@ -541,6 +564,7 @@ if not args.no_synth:
         parser_state, multimain_timing_params, build_complete=True
     )
     SYN.WRITE_FINAL_FILES(multimain_timing_params, parser_state)
+    _run_syn_final_hooks()
 
     # The build must FAIL if any timing goal was not met - results above are
     # still written (useful for debugging) but simulation and bitstream

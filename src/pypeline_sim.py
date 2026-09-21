@@ -212,41 +212,57 @@ def run_sim(
     # falling through to raw functions (which the elaborator relies on for its
     # exception-based hardware-function detection via _try_eval_const).
     pypeline._sim_active = True
-    t0 = time.perf_counter()
-    run_all = num_cycles == RUN_ALL
-    cycle_iter = itertools.count() if run_all else range(num_cycles)
-    finished = False
-    cycles_run = 0
-    for cycle in cycle_iter:
-        if run_all and cycle >= _RUN_ALL_SAFETY_CAP:
-            raise RuntimeError(
-                f"--run all exceeded {_RUN_ALL_SAFETY_CAP} cycles without "
-                f"sim_finish() ever being called -- likely a design bug (a design "
-                f"that should terminate but never does), not a slow-but-working "
-                f"simulation."
-            )
-        print("Clock: ", cycle, flush=True)
-        cycles_run = cycle + 1
-        try:
-            _run_clock_cycle(mains, cycle)
-        except pypeline.SimFinish:
+    # @initial(sim) hooks run before cycle 0 (so before any @sim_input);
+    # @final(sim) hooks run however the run ends -- sim_finish(), --run N
+    # reaching N, or an error, which stays the error that propagates.
+    pending_exc = None
+    try:
+        pypeline.RUN_INITIAL_HOOKS("sim")
+        t0 = time.perf_counter()
+        run_all = num_cycles == RUN_ALL
+        cycle_iter = itertools.count() if run_all else range(num_cycles)
+        finished = False
+        cycles_run = 0
+        for cycle in cycle_iter:
+            if run_all and cycle >= _RUN_ALL_SAFETY_CAP:
+                raise RuntimeError(
+                    f"--run all exceeded {_RUN_ALL_SAFETY_CAP} cycles without "
+                    f"sim_finish() ever being called -- likely a design bug (a design "
+                    f"that should terminate but never does), not a slow-but-working "
+                    f"simulation."
+                )
+            print("Clock: ", cycle, flush=True)
+            cycles_run = cycle + 1
+            try:
+                _run_clock_cycle(mains, cycle)
+            except pypeline.SimFinish:
+                print("")
+                print(f"sim_finish() called — stopping early at cycle {cycle}")
+                finished = True
+                break
             print("")
-            print(f"sim_finish() called — stopping early at cycle {cycle}")
-            finished = True
-            break
-        print("")
-    if run_all and not finished:
-        raise RuntimeError(
-            "--run all: cycle loop ended without sim_finish() ever being called "
-            "(unreachable in normal operation -- itertools.count() only stops via "
-            "the safety cap above, which raises separately)."
+        if run_all and not finished:
+            raise RuntimeError(
+                "--run all: cycle loop ended without sim_finish() ever being called "
+                "(unreachable in normal operation -- itertools.count() only stops via "
+                "the safety cap above, which raises separately)."
+            )
+        elapsed = time.perf_counter() - t0
+        print(
+            f"{cycles_run} cycles in {elapsed:.3f}s"
+            f"  ({elapsed / cycles_run * 1000:.2f} ms/cycle,"
+            f" {cycles_run / elapsed:.1f} cycles/s)"
         )
-    elapsed = time.perf_counter() - t0
-    print(
-        f"{cycles_run} cycles in {elapsed:.3f}s"
-        f"  ({elapsed / cycles_run * 1000:.2f} ms/cycle,"
-        f" {cycles_run / elapsed:.1f} cycles/s)"
-    )
+    except BaseException as e:
+        pending_exc = e
+        raise
+    finally:
+        # An error mid-cycle can leave convergence gating on (which would
+        # silence sim_print in the hooks) and a half-cycle of buffered
+        # register writes that never reached its clock edge.
+        pypeline._sim_converging = False
+        pypeline._sim_reg_write_buffer = None
+        pypeline.RUN_FINAL_HOOKS("sim", pending_exc=pending_exc)
 
 
 def _run_clock_cycle(mains: list, cycle: int) -> None:
@@ -383,8 +399,9 @@ def _evict_design_modules():
 
 def _import_design(path: str):
     """Import a pypeline design file, triggering all decorator registrations."""
-    # Clear any previously registered MAINs from a prior import in the same process.
+    # Clear any previously registered MAINs/hooks from a prior import in the same process.
     pypeline._main_registry.clear()
+    pypeline._hook_registry.clear()
 
     abs_path = os.path.abspath(path)
     spec = importlib.util.spec_from_file_location("pypeline_design", abs_path)

@@ -925,6 +925,17 @@ goes through `pdw_verify.py` — which adds what the golden model cannot, since 
 model reproduces the hardware's *own* phasor/CORDIC arithmetic and would agree
 with a conceptually wrong estimator, whereas an FFT disagrees.
 
+It is framed by two hooks. An `@initial(sim=True)` hook fills the scoreboards and
+prints the phase table before the first cycle; filling them any earlier would let
+decoration-time introspection consume a real expected entry (see the comment on
+section 6). `check_done` calls `sim_finish()` once every expected output has
+arrived, and an `@final(sim=True)` hook then runs the end-of-run checks once: the
+per-stream counts, that the reset window was really visited, record-before-next-
+packet ordering, the `pdw_verify.py` cross-check and the summary line. The final
+hook runs however the simulation ended, so a run that stops early fails on
+"simulation ended before every expected output arrived" instead of exiting 0 with
+those checks never reached.
+
 It also asserts `rx0_s_axis_tready` never goes low across the run. No phase arms
 the alarm, so a single low cycle means either the alarm fired unbidden — implying
 an internal FIFO drop the rest of the file should also be failing on — or its

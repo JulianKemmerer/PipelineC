@@ -54,6 +54,17 @@ def get_tests() -> list:
         )
         for filename in NO_SYNTH_TEST_FILES
     ]
+    # @initial/@final(syn) hooks around a --no_synth build, and a MAIN calling
+    # a hook failing elaboration
+    for variant in ("no_synth", "call_from_hw"):
+        tests.append(
+            Test(
+                name=f"hooks_order_{variant}",
+                category="elab",
+                cmd=[INST_DIR / "hooks_order_test.py", "--variant", variant],
+                needs_out_dir=True,
+            )
+        )
     return tests
 
 

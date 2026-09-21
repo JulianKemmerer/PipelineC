@@ -2166,6 +2166,18 @@ class FuncElaborator:
         self._vhdl_names_lower[safe_lower] = safe
         return safe
 
+    def _reject_hook_call(self, callee, call_node):
+        """@initial/@final hooks are run by the tools at the start/end of a run,
+        never called from hardware."""
+        if getattr(callee, "_is_pypeline_hook", False):
+            raise ElaborationError(
+                f"In '{self.func_name}': '{callee.__name__}()' is an "
+                f"@initial/@final hook -- hooks are plain Python the tools run "
+                f"once at the start/end of a simulation or build, and cannot be "
+                f"called from hardware code.",
+                call_node,
+            )
+
     def _resolve_global_wire(self, bare_name):
         """Return the global_vars key of the Wire/Input/Output that bare_name names
         in this function, else None.
@@ -2609,6 +2621,7 @@ class FuncElaborator:
             pass  # docstring or bare string expression — skip
         elif isinstance(stmt, ast.Expr) and isinstance(stmt.value, ast.Call):
             callee = self._try_eval_const(stmt.value.func)
+            self._reject_hook_call(callee, stmt.value)
             if getattr(callee, "_is_sim_output", False):
                 pass  # @sim_output call — sim-only side effect, skip in hardware
             elif getattr(callee, "_is_sim_input", False):
@@ -3083,6 +3096,8 @@ class FuncElaborator:
         compound_pyval = None
         if isinstance(stmt.value, ast.Call):
             ctor_callee = self._try_eval_const(stmt.value.func)
+            # Before the _try_eval_const(stmt.value) below, which would run it
+            self._reject_hook_call(ctor_callee, stmt.value)
             # x = some_sim_input_fn() / x = some_sim_output_fn() — the whole RHS is a
             # bare call to a sim-only function (@sim_input's return-value form, or the
             # symmetric case for @sim_output). This must be checked, and must return,
@@ -7392,7 +7407,15 @@ def ELABORATE_LIVE_ROOTS(roots):
     return parser_state
 
 
-def PARSE_FILE(py_file):
+def PARSE_FILE(py_file, run_syn_initial_hooks=False):
+    """Import and elaborate a Pypeline design file.
+
+    run_syn_initial_hooks: run the design's @initial(syn) hooks right after the
+    import, before elaboration, and keep them as pypeline._syn_hook_snapshot
+    for the matching @final(syn) hooks. Only the pipelinec driver's first parse
+    passes True -- re-parses (pin-and-confirm passes, the no-synth-tool
+    re-elaboration) must not re-run them.
+    """
     import AUTO_PIPELINE
 
     print("PY_TO_LOGIC parsing:", py_file)
@@ -7406,6 +7429,7 @@ def PARSE_FILE(py_file):
 
     pypeline._main_registry.clear()  # reset in case of multiple PARSE_FILE calls
     pypeline._main_mhz_registry.clear()
+    pypeline._hook_registry.clear()
     pypeline._part_registry = None
     pypeline._syn_tool_registry = None
     pypeline.CLEAR_AUTO_PIPELINE_LATENCY_READ_FLAG()
@@ -7469,6 +7493,10 @@ def PARSE_FILE(py_file):
     spec = importlib.util.spec_from_file_location("pypeline_design", py_file)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+
+    if run_syn_initial_hooks:
+        pypeline._syn_hook_snapshot = pypeline.SNAPSHOT_HOOKS()
+        pypeline.RUN_INITIAL_HOOKS("syn", pypeline._syn_hook_snapshot)
 
     module_globals = vars(module)
     parser_state = _new_parser_state(module_globals)
@@ -7548,6 +7576,9 @@ def PARSE_FILE(py_file):
                 if (
                     getattr(_top_level_callee, "_is_sim_output", False)
                     or getattr(_top_level_callee, "_is_sim_input", False)
+                    # @initial/@final hook bodies are host Python run by the
+                    # tools, never hardware.
+                    or getattr(_top_level_callee, "_is_pypeline_hook", False)
                     # An interface function's raw body is written in the
                     # feedforward direction only (submodule calls with their
                     # reverse args omitted) and is NOT directly elaboratable -- it

@@ -253,6 +253,27 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # @initial/@final hooks through a sky130 build + native sim, and a --comb
+    # build + cocotb+GHDL sim: syn hooks once each, before elaboration / after
+    # the final VHDL, sim hooks around the clock loop
+    tests.append(
+        Test(
+            name="hooks_order_native_pipelined",
+            category=DM,
+            cmd=[INST_DIR / "hooks_order_test.py", "--variant", "native_pipelined"],
+            needs_out_dir=True,
+            requires=["yosys"],
+        )
+    )
+    tests.append(
+        Test(
+            name="hooks_order_vhdl_comb",
+            category=DM,
+            cmd=[INST_DIR / "hooks_order_test.py", "--variant", "vhdl_comb"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+        )
+    )
     # Regression guard for src/COCOTB.py's PASS/FAIL reporting: runs one
     # passing and one failing design through --cocotb --ghdl --run all and
     # asserts each is scored correctly. See COCOTB.py's CHECK_COCOTB_RESULTS

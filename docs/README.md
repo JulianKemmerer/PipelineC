@@ -389,6 +389,14 @@ The direct simulator accepts a numeric cycle count or `all` to run until
 `sim_finish()` (subject to its safety cap). `pypelinec --sim` currently always uses
 strict mode.
 
+A design's `@initial(sim=True)` / `@final(sim=True)` hooks run once before the first
+clock and once after the last, with every simulator (native or cocotb+GHDL, `--comb`
+or not). The final hooks run however the run ended, which makes them the place for
+end-of-run checks. `@initial(syn=True)` / `@final(syn=True)` hooks run once around a
+`pypelinec` build: after the design is imported, and right after the final VHDL is
+written (before any `--pins` bitstream step). See
+[`@initial` / `@final`](pypeline_guide.md#initial--final--startend-of-run-hooks).
+
 `PYPELINE_SIM_SOFT_OPS` controls whether matcher-registered operators execute their
 structural implementation during native simulation. Leave it unset (or set `all`/`1`)
 to dispatch every registered operation, use `none`/`0` for the faster built-in

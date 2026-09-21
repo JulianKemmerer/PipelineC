@@ -53,6 +53,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "char_array_test.py",
     "sim_print_test.py",
     "sim_assert_finish_test.py",
+    "hooks_test.py",
     "type_bytes_test.py",
     "type_bytes_sw_test.py",
     "host_types_test.py",
@@ -388,19 +389,36 @@ def get_tests() -> list:
         Test(
             name="pdw_tb",
             category="native_sim",
-            # The longest single test in the suite (measured 1435 s). Its
-            # category is second-to-last in run_all.py's order, so without
-            # this it starts once nearly everything else has been submitted
-            # and its ~24 minutes land in the tail.
+            # The longest single test in the suite. Its category is
+            # second-to-last in run_all.py's order, so without this it starts
+            # once nearly everything else has been submitted and lands in the
+            # tail. Once measured at 1435 s; with native sim executing
+            # matcher-registered soft operators by default it measured
+            # ~523 ms/cycle alone (~148 with PYPELINE_SIM_SOFT_OPS=none) and
+            # reached only 5846 of its 7323 cycles in 7200 s under run_all -j 5
+            # (~1.23 s/cycle, ~9000 s projected) -- hence its own timeout.
             long_pole=True,
+            timeout=4 * 3600,
             cmd=[
                 PYPELINEC,
                 EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_tb.py",
                 "--sim",
                 "--comb",
+                # Ends itself: sim_finish() once every output has arrived, or
+                # its deadline assert; its @final hook checks the run finished
                 "--run",
-                "9200",
+                "all",
             ],
+        )
+    )
+    # @initial/@final hooks around a --sim --comb run, through the driver
+    # (build variants: elab_tests.py, build_report_tests.py)
+    tests.append(
+        Test(
+            name="hooks_order_native_comb",
+            category="native_sim",
+            cmd=[INST_DIR / "hooks_order_test.py", "--variant", "native_comb"],
+            needs_out_dir=True,
         )
     )
     # Self-checking sim_assert/sim_finish designs -- no external Python

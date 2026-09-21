@@ -1456,9 +1456,14 @@ pypelinec my_design.py --sim --comb --run 1000
 
 Imports the design file (triggering all `@MAIN`/`@hw_func` decorations, populating
 `_main_registry`), discovers global wire names recursively from module `__annotations__`,
-and runs N simulated clock cycles.
+and runs N simulated clock cycles, bracketed by the design's `@initial`/`@final(sim)`
+hooks (see [Start/end-of-run hooks](#initial--final--startend-of-run-hooks) below).
 
 ### Per Clock Cycle
+
+(Once per run, before cycle 0: the `@initial(sim)` hooks; once after the last cycle,
+however the run ended: the `@final(sim)` hooks. See
+[Start/end-of-run hooks](#initial--final--startend-of-run-hooks).)
 
 ```
 1. _sim_reg_begin_buffer()           ← register writes go to buffer, not _sim_reg_state
@@ -1712,6 +1717,49 @@ breaks out of the run loop cleanly (prints an early-stop message, still prints t
 elapsed-time summary) instead of treating it as a crash; `sim_call()`-based tests instead
 typically assert `SimFinish` is raised directly (see
 `src/tests/pypeline_tests/inst/sim_assert_finish_test.py`).
+
+Because `SimFinish` propagates out of the final pass, a `sim_finish()` call ends the cycle
+right there: MAINs later in `_main_registry` order skip their final pass (and their
+`@sim_output` calls) that cycle, and the cycle's buffered register writes are never
+flushed. A testbench whose last cycle's checks matter registers the finishing MAIN last,
+and puts end-of-run checking in an `@final(sim=True)` hook, which runs after all of that.
+
+### `@initial` / `@final` — start/end-of-run hooks
+
+`pypeline.initial` / `pypeline.final` (user-facing reference: `pypeline_guide.md`) are
+plain decorators, not `_sim_type_wrap`ped: the function is returned unchanged, marked
+`_is_pypeline_hook = True`, and appended as `(fn, when, sim, syn)` to
+`pypeline._hook_registry`. That registry is cleared together with `_main_registry` on
+every design (re)import (`pypeline_sim._import_design`, `PY_TO_LOGIC.PARSE_FILE`), so it
+always holds exactly the current import's hooks. Decoration rejects a hook with required
+parameters and `sim=False, syn=False`.
+
+`pypeline.RUN_INITIAL_HOOKS(flow, hooks=None)` / `RUN_FINAL_HOOKS(flow, hooks=None,
+pending_exc=None)` run the hooks enabled for `flow` (`"sim"` or `"syn"`), from the live
+registry or an explicit list. Both turn a `SimFinish` escaping a hook into a
+`RuntimeError`. `RUN_FINAL_HOOKS` runs every hook even if one raises; with `pending_exc`
+(the error that ended the run) it only prints hook errors, so the original error is what
+propagates, and otherwise re-raises the first hook error after the rest have run.
+
+Where the sim hooks run:
+
+- **Native** — inside `run_sim`, after `sim_reset()` and the wire initialisation (and
+  after the "no `@MAIN` functions" early return), just before the cycle loop. The loop
+  through the timing summary sits in a `try`/`finally`; the `finally` first clears
+  `_sim_converging` (an error raised mid-convergence would otherwise leave `sim_print`
+  silenced inside the hooks) and drops any half-cycle `_sim_reg_write_buffer`, then runs
+  `RUN_FINAL_HOOKS("sim", pending_exc=...)`. So finals follow `sim_finish()`, the end of
+  `--run N`, an exception, and the `--run all` cap alike. `run_sim` owns this for every
+  native path: the `pypeline_sim.py` CLI, `pypelinec --sim --comb`, and the pipelined
+  native sim after a build.
+- **External simulators** — `SIM.DO_OPTIONAL_SIM` wraps the non-native branches (cocotb,
+  Verilator, CXXRTL, ModelSim, EDAPlay) the same way, around the tool run in the
+  `pypelinec` process, catching the `SystemExit` of a failed cocotb run too. It uses the
+  registry of the driver's latest parse; the native branch is left to `run_sim`, so hooks
+  never run twice.
+
+Layer 1 `sim_call` never runs hooks: each top-level call is one cycle, with no run start or
+end to attach them to. Syn hooks are the driver's (see `PY_TO_LOGIC_DESIGN.md`).
 
 ### Invocation via `pipelinec --sim --run N`
 
@@ -2533,6 +2581,15 @@ calls in `for` and `while` loops, duplicate iterator values, nested loops, two l
 reaching one stateful call through a pure helper, and runtime-gated iterations. It runs as direct
 `sim_call` assertions, through the multi-MAIN runner in loose and raw modes, and through the
 strict `native_vs_vhdl_sim` GHDL comparison.
+
+`@initial`/`@final` hooks are covered by `inst/hooks_test.py` (plain `python3`, `native_sim`),
+which runs `inst/hooks_design.py` through `pypeline_sim.run_sim` in-process once per
+`HOOKS_TEST_MODE` and checks its `EVENTS` log: sim initials before the first `@sim_input`,
+sim finals after the last `@sim_output` for a `sim_finish()` end, a `--run N` cutoff, a
+mid-run assert (still the error raised) and a failing final hook; syn-only hooks never
+running in sim; and the `sim_finish()`-in-a-hook and bad-decorator errors.
+`inst/hooks_order_test.py` covers the driver flows (native `--sim --comb` here; the build
+variants in `elab_tests.py` and `build_report_tests.py`).
 
 `sim_model` is covered by `inst/sim_model_test.py`, registered twice: as a plain-`python3`
 run (both model forms on vhdl-bodied accumulators, two-call-site instance independence,

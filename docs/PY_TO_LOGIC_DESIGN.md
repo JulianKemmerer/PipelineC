@@ -109,6 +109,7 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
 
 **Reference**
 - [`@sim_output` / `@sim_input` Calls — Elaborator Skip](#sim_output--sim_input-calls--elaborator-skip)
+- [`@initial` / `@final` Hooks — Never Elaborated; Syn Hooks in the Driver](#initial--final-hooks--never-elaborated-syn-hooks-in-the-driver)
 - [VHDL Identifier Safety — Name Sanitization](#vhdl-identifier-safety--name-sanitization)
 - [Predicting C/VHDL Output Names](#predicting-cvhdl-output-names)
 - [Tests](#tests)
@@ -5354,6 +5355,52 @@ immediately after `_is_sim_output`/`_is_sim_input` — but routes to `_elab_sim_
 instead of `pass`: `sim_print(...)` calls are *not* invisible to the hardware elaborator;
 they produce a real `printf`-prefixed submodule instance. See "`sim_print` — printf-style
 Console Output" above.
+
+---
+
+## `@initial` / `@final` Hooks — Never Elaborated; Syn Hooks in the Driver
+
+`@initial`/`@final` functions (`pypeline.initial`/`pypeline.final`; user-facing reference in
+`pypeline_guide.md`, sim-side run loop in `pypeline_sim_DESIGN.md`) are host Python that
+the tools run once at the start/end of a simulation or a build. The elaborator sees them
+in three places:
+
+- **Top-level sweep.** `PARSE_FILE` Step 5 excludes any top-level function whose live object
+  carries `_is_pypeline_hook`, alongside the `_is_sim_output`/`_is_sim_input` exclusion
+  above, so a hook's body (file I/O, numpy, a subprocess) is never elaborated even when it
+  has annotations.
+- **Calls from hardware are a compile error.** `FuncElaborator._reject_hook_call` raises an
+  `ElaborationError` for a hook called as a bare statement (`_elab_stmt`) or as the whole
+  RHS of an assignment (`_elab_assign`). The assignment check runs before
+  `_try_eval_const(stmt.value)`, which would otherwise *run* the hook during elaboration.
+- **Syn `@initial` hooks run inside `PARSE_FILE`.** `PARSE_FILE(py_file,
+  run_syn_initial_hooks=False)`: with `True`, right after Step 1's `exec_module` (the hooks
+  only exist once the design is imported) and before any elaboration, it stores
+  `pypeline._syn_hook_snapshot = pypeline.SNAPSHOT_HOOKS()` and runs
+  `RUN_INITIAL_HOOKS("syn", <snapshot>)`. Only the driver's first parse passes `True`. The
+  no-synth-tool re-elaboration and every pin-and-confirm re-parse keep the default, so the
+  hooks run once per `pypelinec` run.
+
+**Syn `@final` hooks run in the driver** (`src/pipelinec`), in `_run_syn_final_hooks()`.
+It is called right after each `SYN.WRITE_FINAL_FILES` (the `--comb` path, the `--no_synth`
+fixed-latency path, the pipelined path), plus once for a `--no_synth` build whose
+zero-added-clocks files are already the final VHDL. A once-guard makes the first call the
+only one that runs, because a `--comb` build without `--no_synth` writes its final files
+again after `DO_PIPELINED_BUILD`. So the hooks run after the final VHDL (and `--verilog`
+conversion) exists, and before the timing-failure exit, `GENERATE_FINAL_BITSTREAM` and any
+simulation of the built design. A build that fails before writing final files never
+reaches them.
+
+**Why a snapshot.** Every re-parse evicts the design's modules from `sys.modules` and
+re-imports them, and `PARSE_FILE` clears `pypeline._hook_registry` each time. By the time
+the final files exist, the live registry holds the last import's functions, whose module
+globals are fresh. Running syn finals from the snapshot taken at syn-initial time keeps
+them on the same module instance as the initials. The old function objects keep their
+`__globals__` alive after eviction, so state an initial set (a start time, an opened
+log) is still there for the final.
+Sim hooks do not use the snapshot. Native sim runs them from `run_sim`'s own import, and
+external simulators from the driver's latest parse, so sim initials and finals always
+share one import. Syn and sim hooks can see different imports.
 
 ---
 

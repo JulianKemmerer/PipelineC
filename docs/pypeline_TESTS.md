@@ -433,6 +433,32 @@ stubbing out `pypeline._check_no_local_binds_wire_name`.
 
 All cases except the positive control fail on the tree before the fix.
 
+## `@initial` / `@final` hook coverage
+
+One design, `inst/hooks_design.py`, serves every hook test. Each hook appends its name to
+`EVENTS` and prints `HOOK: <name>`. The `HOOKS_TEST_MODE` environment variable picks the
+variant: `finish`, `cutoff`, `assert`, `final_raises`, `hook_finish` or `call_from_hw`.
+
+- **`hooks_test`** (`native_sim`, plain `python3`) runs the design in-process through
+  `pypeline_sim.run_sim` and reads `EVENTS` through a hook's `__globals__`. Checks:
+  - sim initials run before the first `@sim_input`, which also asserts this itself;
+  - sim finals run after the last `@sim_output` for a `sim_finish()` end, a `--run N`
+    cutoff, a mid-run assert, and a failing final hook — in the last two the original
+    error is still the one raised;
+  - syn-only hooks never run;
+  - `sim_finish()` inside a hook, a hook with a parameter, and `sim=False, syn=False`
+    are errors.
+- **`inst/hooks_order_test.py --variant V`** runs `pypelinec` as a subprocess. It checks
+  where the `HOOK:` lines land relative to the driver's own output: `PY_TO_LOGIC
+  parsing:`, `elaborating func:`, the final-files lines and `Clock:`.
+  - `hooks_order_native_comb` (`native_sim`): no syn hooks.
+  - `hooks_order_no_synth` (`elab`): syn hooks only, once each.
+  - `hooks_order_call_from_hw` (`elab`): a MAIN calling a hook is an `ElaborationError`.
+  - `hooks_order_native_pipelined` (`build_report_device_models`): sky130 build, then
+    native sim.
+  - `hooks_order_vhdl_comb` (`build_report_device_models`): cocotb+GHDL, where the
+    `--comb` build writes its final files twice and syn `@final` must still run once.
+
 ## RAM coverage
 
 `make_ram` (`include/pypeline/ram.py`) and `make_stream_ram` (`stream/stream_ram.py`) share one
@@ -683,9 +709,11 @@ submitted late cannot overlap with much and lands in the tail.
 `run_all.py`'s `_DEFAULT_CATEGORY_ORDER` puts the heaviest *categories* first,
 and `Test(long_pole=True)` handles a long test inside an otherwise quick
 category by submitting it ahead of everything, including the Vivado entries
-(`common.run_tests`). Two tests set it: `pdw_tb` (`native_sim`, measured
-1435 s, the longest in the suite) and `auto_fsm_unit_test` (`unit`, 358 s, in
-the category submitted last). Set it from a measured duration and record that
+(`common.run_tests`). Two tests set it: `pdw_tb` (`native_sim`, the longest in
+the suite: ~523 ms/cycle over 7323 cycles alone since native sim executes
+matcher-registered soft operators by default, ~9000 s projected under `-j 5`,
+so it also carries its own 4-hour `timeout`) and `auto_fsm_unit_test` (`unit`,
+358 s, in the category submitted last). Set it from a measured duration and record that
 duration at the registration; the sort is stable, so nothing else moves.
 
 Each category module can also run standalone, e.g.

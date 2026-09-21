@@ -138,7 +138,7 @@ the tool's syntax), `GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH` and
 | per-function delay measurement | `ADD_PATH_DELAY_TO_LOOKUP` (the pre-synthesis wave), `MEASURE_DELAYS` (re-measure named functions), `ESTIMATE_HIER_PATH_DELAYS` (no synthesis: pipeline-map estimates) | every build; the sweep's measured-delay fallback; `AUTO.TimingModel` reads the results |
 | one instance at a given latency | `RUN_INST_SYN_AND_UPDATE_CACHE` | the coarse sweep and hotspot mini-sweeps |
 | the whole multi-MAIN design | `SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN` | each planned-sweep iteration, the pin-and-confirm confirmation, `--comb` characterization |
-| the final bitstream | `GENERATE_FINAL_BITSTREAM` | `--pins` builds |
+| the final bitstream | `GENERATE_FINAL_BITSTREAM` | `--pins` builds (after the design's `@final(syn)` hooks, which run right after the final VHDL is written -- see `PY_TO_LOGIC_DESIGN.md`) |
 
 **Parallelism is a memory budget.** Per-function delay measurement and the
 coarse sweep run several synthesis jobs at once through a `ThreadPool` sized

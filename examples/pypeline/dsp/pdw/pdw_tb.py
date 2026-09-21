@@ -51,17 +51,19 @@ loopback mux would show up as a golden-model mismatch, not silently pass).
 
 Style: @sim_input/@sim_output (the only mechanism that can drive a real
 top-level Input[T] in native sim -- see src/tests/pypeline_tests/inst/
-sim_input_test.py). Only runs under `pypelinec ... --sim --comb --run N`;
-@sim_input/@sim_output are invisible to GHDL/cocotb.
+sim_input_test.py). Only runs under `pypelinec ... --sim --comb`;
+@sim_input/@sim_output are invisible to GHDL/cocotb. An @initial(sim=True) hook
+fills the scoreboards and prints the banner before the first cycle;
+`check_done` calls sim_finish() once everything has arrived, and an
+@final(sim=True) hook then runs the end-of-run checks once, however the run
+ended -- so a run cut short fails instead of skipping them.
 
 Checking follows the wireguard-fpga testbenches' shape (encrypt_tb.py /
 decrypt_tb.py): a `Scoreboard` (include/pypeline/axi/axis_sim.py) per output
-stream, populated from the golden model at import time, `expect()`ed once and
-`check()`ed in arrival order as real frames show up. Unlike those testbenches
-(which only sim_print "ERROR: ..." because their build script greps the log),
-`run_all.py` judges purely on process exit code
-(src/tests/pypeline_tests/common.py), so every mismatch here prints a rich
-diagnostic AND raises AssertionError -- the dsp_tb.py convention.
+stream, populated from the golden model, `expect()`ed once and `check()`ed in
+arrival order as real frames show up. `run_all.py` judges purely on process
+exit code (src/tests/pypeline_tests/common.py), so every mismatch here prints
+a rich diagnostic AND raises AssertionError -- the dsp_tb.py convention.
 
 -----------------------------------------------------------------------------
 PATH B ALIGNMENT
@@ -79,7 +81,7 @@ or Path B's wiring fails here with a clear message rather than as opaque
 packet-content garbage.
 
 Run:
-    pypelinec examples/pypeline/dsp/pdw/pdw_tb.py --sim --comb --run 9200
+    pypelinec examples/pypeline/dsp/pdw/pdw_tb.py --sim --comb --run all
 """
 
 import struct as _pystruct
@@ -90,6 +92,8 @@ import pdw_paths  # noqa: F401  (puts include/pypeline on sys.path)
 from pypeline import (
     MAIN,
     byte_length,
+    final,
+    initial,
     sim_finish,
     sim_input,
     sim_output,
@@ -1059,21 +1063,13 @@ for _i, _b in enumerate([b for b, _e in phase_bounds] + [TOTAL_SAMPLES]):
     )
 
 TOTAL_CYCLES = PRE_ROLL + TOTAL_SAMPLES
-sim_print(
-    f"pdw_tb: {len(PHASES)} phases, {TOTAL_SAMPLES} stimulus samples, "
-    f"{len(expected_pdws)} candidates -> {len(expected_valid_pdws)} released + "
-    f"{len(expected_rejects)} rejected, "
-    f"DSP_LAT={DSP_LAT} GATE_LAT={GATE_LAT} PDW_LAT={PDW_LAT} "
-    f"path_b_delay={_DP.get_path_b_delay()}"
-)
 
 
 # ---------------------------------------------------------------------------
 # 6. Scoreboards
 #
-# Population is deliberately DEFERRED to the first simulated cycle (see
-# _populate_scoreboards() call in drive_stimulus() below), not done here at
-# import time. Reason: `_build_reg_sim_func`'s decoration-time introspection
+# Populated by the @initial hook in section 7, not here at import time.
+# Reason: `_build_reg_sim_func`'s decoration-time introspection
 # (`_local_const_ns`, see docs/pypeline_sim_DESIGN.md) speculatively
 # `eval()`s any bare `x = f(...)` assignment found in a later @sim_output
 # function's body, to resolve local-variable references in Reg[T]/
@@ -1084,13 +1080,18 @@ sim_print(
 # speculative eval would silently execute the real check() call as a side
 # effect, consuming one real expected entry before the simulation ever runs
 # (this is exactly what happened during development: the very first packet
-# always came up missing). Deferring population until cycle 0 (well after
-# decoration) makes that same speculative probe hit an empty, harmless
-# queue instead.
+# always came up missing). An @initial hook runs once the whole design is
+# decorated, so that same speculative probe hits an empty, harmless queue.
 # ---------------------------------------------------------------------------
 _pdw_sb = Scoreboard()  # rx2_m_axis_* -- Path A candidates, every detected pulse
 _vpdw_sb = Scoreboard()  # rx1_m_axis_* -- engine PDW records, accepted only
 _pkt_sb = Scoreboard()  # rx0_m_axis_* -- engine, released packets only
+
+
+def _all_done():
+    return (
+        _pdw_sb.pending() == 0 and _vpdw_sb.pending() == 0 and _pkt_sb.pending() == 0
+    )
 
 
 def _populate_scoreboards():
@@ -1176,7 +1177,6 @@ VERIFY_FS = 125e6
 # module-level name would not be visible across calls.
 ST = {
     "cycle": 0,
-    "announced": False,
     "first_beat_cycle": None,
     "alignment_checked": False,
     "n_pdw_done": 0,
@@ -1189,7 +1189,7 @@ ST = {
     "pkt_starts": [],
     "in_pdw_frame": False,
     "in_pkt_frame": False,
-    # (record dict, packet bytes) pairs, fed to pdw_verify in check_done. Both
+    # (record dict, packet bytes) pairs, fed to pdw_verify in final_checks. Both
     # streams carry exactly one entry per ACCEPTED pulse, in order, so the k-th
     # record describes the k-th packet -- the same pairing the host script
     # relies on, checked here against real output.
@@ -1213,17 +1213,40 @@ PDW_READY_PERIOD = 7
 TX1_READY_PERIOD = 13
 # Candidates are ~4 beats every pri (>= 192 cycles), so a 1-in-11 stall cannot
 # make one frame still be draining when the next arrives -- no candidate is
-# ever dropped here, which check_done asserts. The stall is real backpressure
+# ever dropped here, which final_checks asserts. The stall is real backpressure
 # on a port a deployed system will tie high; the drop path itself is a
 # negative control (hold this ready low for a whole phase), not a committed
 # expectation.
 CAND_READY_PERIOD = 11
 
 
+@initial(sim=True)
+def start():
+    _populate_scoreboards()
+    sim_print("=== pdw_tb: top-level PDW pipeline testbench ===")
+    sim_print(
+        f"pdw_tb: {len(PHASES)} phases, {TOTAL_SAMPLES} stimulus samples, "
+        f"{len(expected_pdws)} candidates -> {len(expected_valid_pdws)} released + "
+        f"{len(expected_rejects)} rejected, "
+        f"DSP_LAT={DSP_LAT} GATE_LAT={GATE_LAT} PDW_LAT={PDW_LAT} "
+        f"path_b_delay={_DP.get_path_b_delay()}"
+    )
+    sim_print(
+        f"  control: {len(CTRL_FRAMES)} frames of {CTRL_BEATS} beats, "
+        f"apply latency {CTRL_LAT}, PRE_ROLL {PRE_ROLL} cycles; "
+        f"records: PDW {VPDW_N_BYTES}B, candidate {CAND_N_BYTES}B"
+    )
+    for _i, _ph in enumerate(PHASES):
+        sim_print(
+            f"  phase {_i} ({_ph.name}): pri={_ph.pri} width={_ph.width} "
+            f"amp={_ph.amplitude} thr_hi={_ph.thr_hi} thr_lo={_ph.thr_lo} "
+            f"min_width={_ph.min_width} max_width={_ph.max_width} "
+            f"-> {'RELEASED' if _ph.expect_valid and _ph.expect_pdws else 'none'}"
+        )
+
+
 @sim_input
 def drive_stimulus():
-    if ST["cycle"] == 0:
-        _populate_scoreboards()
     n = ST["cycle"]
 
     # -- reset: two domains, staged ---------------------------------------
@@ -1276,25 +1299,6 @@ def drive_stimulus():
     top.rx2_m_axis_tready = 0 if (n % CAND_READY_PERIOD) == 0 else 1
     top.tx0_m_axis_tready = 1  # ignored by design; driven for completeness
     ST["cycle"] = n + 1
-
-
-@sim_output
-def announce():
-    if not ST["announced"]:
-        ST["announced"] = True
-        sim_print("=== pdw_tb: top-level PDW pipeline testbench ===")
-        sim_print(
-            f"  control: {len(CTRL_FRAMES)} frames of {CTRL_BEATS} beats, "
-            f"apply latency {CTRL_LAT}, PRE_ROLL {PRE_ROLL} cycles; "
-            f"records: PDW {VPDW_N_BYTES}B, candidate {CAND_N_BYTES}B"
-        )
-        for _i, _ph in enumerate(PHASES):
-            sim_print(
-                f"  phase {_i} ({_ph.name}): pri={_ph.pri} width={_ph.width} "
-                f"amp={_ph.amplitude} thr_hi={_ph.thr_hi} thr_lo={_ph.thr_lo} "
-                f"min_width={_ph.min_width} max_width={_ph.max_width} "
-                f"-> {'RELEASED' if _ph.expect_valid and _ph.expect_pdws else 'none'}"
-            )
 
 
 @sim_output
@@ -1459,7 +1463,7 @@ def check_valid_pdw():
     """rx1_m_axis_*: README box 3's metadata output, only ACCEPTED pulses, one
     40-byte frame each. Each must START before its own released packet -- the
     ordering a DMA consumer needs to size the transfer that follows -- which is
-    checked against pkt_starts in check_done.
+    checked against pkt_starts in final_checks.
 
     The frame bytes are also handed to gr_pdw_record.records_from_bytes() and the
     result compared field for field, so the host-side decoder is tested against
@@ -1704,77 +1708,13 @@ def _verify_records_against_packets():
 
 @sim_output
 def check_done():
+    """Ends the run once every expected output has arrived; final_checks then
+    does the end-of-run checking."""
     # Generous: the release path is rate-limited by both consumers' stutter
     # (see PKT_READY_PERIOD/PDW_READY_PERIOD) on top of the DSP pipeline's own
     # fill, so this is a liveness backstop, not a tight bound.
     deadline = TOTAL_CYCLES + DSP_LAT + GATE_LAT + 1024
-    all_done = (
-        _pdw_sb.pending() == 0 and _vpdw_sb.pending() == 0 and _pkt_sb.pending() == 0
-    )
-    if ST["cycle"] >= TOTAL_CYCLES and all_done:
-        # A rejected pulse leaves no trace on either engine output, so
-        # "released == expected" alone cannot prove nothing extra leaked
-        # through. Assert the counts directly.
-        assert ST["n_pkt_done"] == len(expected_released), (
-            f"pdw_tb: released {ST['n_pkt_done']} packets, expected "
-            f"{len(expected_released)}"
-        )
-        assert ST["n_vpdw_done"] == len(expected_valid_pdws), (
-            f"pdw_tb: emitted {ST['n_vpdw_done']} valid PDWs, expected "
-            f"{len(expected_valid_pdws)}"
-        )
-        # rx2_m_axis_* drops rather than stalls (Path A cannot be stopped), so
-        # "every candidate arrived" is a real result here, not a given -- and
-        # it is what lets check_pdw compare exactly instead of tolerating gaps.
-        assert ST["n_pdw_done"] == len(expected_pdws), (
-            f"pdw_tb: received {ST['n_pdw_done']} candidate records, expected "
-            f"{len(expected_pdws)} -- rx2_m_axis_* dropped {len(expected_pdws) - ST['n_pdw_done']} "
-            f"(CAND_READY_PERIOD={CAND_READY_PERIOD} is stalling it too hard for "
-            f"a {CAND_N_BYTES // 4}-beat frame to drain between pulses)"
-        )
-        assert ST["n_ctrl_frames"] == len(CTRL_FRAMES), (
-            f"pdw_tb: {ST['n_ctrl_frames']} control frames were accepted, sent "
-            f"{len(CTRL_FRAMES)}"
-        )
-        # check_reset only asserts inside a window, so prove that window was
-        # actually visited rather than skipped -- otherwise a scheduling
-        # mistake would silently turn the reset test into nothing at all.
-        assert ST["n_rst_cycles"] == CTRL_REGS_SETTLED, (
-            f"pdw_tb: check_reset saw {ST['n_rst_cycles']} in-reset cycles, "
-            f"expected {CTRL_REGS_SETTLED} -- the reset window was not driven"
-        )
-        assert ST["phase0_live"], (
-            "pdw_tb: check_reset never reached RST_RELEASE, so the "
-            "configure-before-release path went unverified"
-        )
-        # Record k must belong to packet k, not be deferred into the next
-        # pulse's slot: its frame has to start before packet k+1 does.
-        #
-        # NOT "before packet k does". The engine still hands the record over in
-        # EMIT_PDW before entering SEND_PKT, but the record then goes through a
-        # serializer whose first beat costs a fill cycle the packet path does
-        # not pay, and a skid buffer's registered stage after that -- so the
-        # record's first beat lands AFTER its packet's, and the two streams run
-        # concurrently on separate ports. This weaker invariant is deliberately
-        # phrased so it does not depend on that skew: adding or removing a
-        # register stage on the record path must not require editing it.
-        # See the README's note on ordering.
-        for _k in range(ST["n_pkt_done"] - 1):
-            assert ST["pdw_starts"][_k] < ST["pkt_starts"][_k + 1], (
-                f"pdw_tb: PDW record {_k} started at cycle "
-                f"{ST['pdw_starts'][_k]}, not before the NEXT pulse's packet at "
-                f"{ST['pkt_starts'][_k + 1]} -- a record has slipped out of its "
-                f"own pulse's slot"
-            )
-        _verify_records_against_packets()
-        sim_print(
-            f"pdw_tb: {ST['n_pdw_done']} candidates detected, "
-            f"{ST['n_vpdw_done']} released with packets, "
-            f"{len(expected_rejects)} rejected "
-            f"({sum(1 for _p, r in expected_rejects if r == 'glitch')} glitch, "
-            f"{sum(1 for _p, r in expected_rejects if r == 'cw')} CW) "
-            f"-- Test DONE!"
-        )
+    if ST["cycle"] >= TOTAL_CYCLES and _all_done():
         sim_finish()
     assert ST["cycle"] < deadline, (
         f"pdw_tb: not done after {ST['cycle']} cycles "
@@ -1784,10 +1724,85 @@ def check_done():
     )
 
 
+@final(sim=True)
+def final_checks():
+    """Once, after the last simulated cycle -- however the run ended. A run cut
+    short (an earlier assert, or a --run N too small to finish) fails here
+    rather than passing with the checks below never reached."""
+    assert _all_done(), (
+        f"pdw_tb: simulation ended at cycle {ST['cycle']} before every expected "
+        f"output arrived ({ST['n_pdw_done']}/{len(expected_pdws)} candidates, "
+        f"{ST['n_vpdw_done']}/{len(expected_valid_pdws)} valid PDWs, "
+        f"{ST['n_pkt_done']}/{len(expected_released)} released packets)"
+    )
+    # A rejected pulse leaves no trace on either engine output, so
+    # "released == expected" alone cannot prove nothing extra leaked
+    # through. Assert the counts directly.
+    assert ST["n_pkt_done"] == len(expected_released), (
+        f"pdw_tb: released {ST['n_pkt_done']} packets, expected "
+        f"{len(expected_released)}"
+    )
+    assert ST["n_vpdw_done"] == len(expected_valid_pdws), (
+        f"pdw_tb: emitted {ST['n_vpdw_done']} valid PDWs, expected "
+        f"{len(expected_valid_pdws)}"
+    )
+    # rx2_m_axis_* drops rather than stalls (Path A cannot be stopped), so
+    # "every candidate arrived" is a real result here, not a given -- and
+    # it is what lets check_pdw compare exactly instead of tolerating gaps.
+    assert ST["n_pdw_done"] == len(expected_pdws), (
+        f"pdw_tb: received {ST['n_pdw_done']} candidate records, expected "
+        f"{len(expected_pdws)} -- rx2_m_axis_* dropped {len(expected_pdws) - ST['n_pdw_done']} "
+        f"(CAND_READY_PERIOD={CAND_READY_PERIOD} is stalling it too hard for "
+        f"a {CAND_N_BYTES // 4}-beat frame to drain between pulses)"
+    )
+    assert ST["n_ctrl_frames"] == len(CTRL_FRAMES), (
+        f"pdw_tb: {ST['n_ctrl_frames']} control frames were accepted, sent "
+        f"{len(CTRL_FRAMES)}"
+    )
+    # check_reset only asserts inside a window, so prove that window was
+    # actually visited rather than skipped -- otherwise a scheduling
+    # mistake would silently turn the reset test into nothing at all.
+    assert ST["n_rst_cycles"] == CTRL_REGS_SETTLED, (
+        f"pdw_tb: check_reset saw {ST['n_rst_cycles']} in-reset cycles, "
+        f"expected {CTRL_REGS_SETTLED} -- the reset window was not driven"
+    )
+    assert ST["phase0_live"], (
+        "pdw_tb: check_reset never reached RST_RELEASE, so the "
+        "configure-before-release path went unverified"
+    )
+    # Record k must belong to packet k, not be deferred into the next
+    # pulse's slot: its frame has to start before packet k+1 does.
+    #
+    # NOT "before packet k does". The engine still hands the record over in
+    # EMIT_PDW before entering SEND_PKT, but the record then goes through a
+    # serializer whose first beat costs a fill cycle the packet path does
+    # not pay, and a skid buffer's registered stage after that -- so the
+    # record's first beat lands AFTER its packet's, and the two streams run
+    # concurrently on separate ports. This weaker invariant is deliberately
+    # phrased so it does not depend on that skew: adding or removing a
+    # register stage on the record path must not require editing it.
+    # See the README's note on ordering.
+    for _k in range(ST["n_pkt_done"] - 1):
+        assert ST["pdw_starts"][_k] < ST["pkt_starts"][_k + 1], (
+            f"pdw_tb: PDW record {_k} started at cycle "
+            f"{ST['pdw_starts'][_k]}, not before the NEXT pulse's packet at "
+            f"{ST['pkt_starts'][_k + 1]} -- a record has slipped out of its "
+            f"own pulse's slot"
+        )
+    _verify_records_against_packets()
+    sim_print(
+        f"pdw_tb: {ST['n_pdw_done']} candidates detected, "
+        f"{ST['n_vpdw_done']} released with packets, "
+        f"{len(expected_rejects)} rejected "
+        f"({sum(1 for _p, r in expected_rejects if r == 'glitch')} glitch, "
+        f"{sum(1 for _p, r in expected_rejects if r == 'cw')} CW) "
+        f"-- Test DONE!"
+    )
+
+
 @MAIN(125.0)
 def pdw_tb_main():
     drive_stimulus()
-    announce()
     check_ctrl()
     check_reset()
     check_pdw()

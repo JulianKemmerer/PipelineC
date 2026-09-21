@@ -2029,6 +2029,8 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `sim_print(fstring_or_str)` | printf-style console output — same once-per-cycle firing as `@sim_output`, but *also* elaborates to a real VHDL `write(output, ...)` statement (see `PY_TO_LOGIC_DESIGN.md`) |
 | `sim_assert(cond, msg=None)` | simulation-only condition check — raises `AssertionError` in native sim, elaborates to VHDL `assert ... report ... severity failure;` (see `PY_TO_LOGIC_DESIGN.md`) |
 | `sim_finish()` | simulation-only stop signal — raises `SimFinish` in native sim (caught by `pypeline_sim.py`'s CLI run loop), elaborates to VHDL `std.env.finish;` (see `PY_TO_LOGIC_DESIGN.md`) |
+| `@initial` / `@final` (`sim=`, `syn=`) | Host-Python hooks run once at the start / end of a simulation and/or a `pypelinec` build (bare form = both); never elaborated, zero-argument; marks `_is_pypeline_hook`, appends `(fn, when, sim, syn)` to `_hook_registry` (see `pypeline_sim_DESIGN.md` and `PY_TO_LOGIC_DESIGN.md`) |
+| `RUN_INITIAL_HOOKS(flow, hooks=None)` / `RUN_FINAL_HOOKS(flow, hooks=None, pending_exc=None)` / `SNAPSHOT_HOOKS()` | Tool-side hook runners (`flow` = `"sim"`/`"syn"`): every final runs even if one raises; with `pending_exc` hook errors are printed so the original error propagates; `SNAPSHOT_HOOKS` copies the registry (`_syn_hook_snapshot`) |
 | `AUTO_PIPELINE(func, latency=, start_latency=, max_latency=)` | Callable tag: calls through it may be auto-pipelined inside register/feedback contexts; `.latency` reads the built register count; optional fixed / starting / maximum latency (equivalent to `#pragma AUTOPIPELINE [N]`) |
 | `AUTO_COMB_AREA_OPT(func)` | Experimental area-first combinational callable; same types/bits, zero added cycles, `.func`, `.latency == 0`; composes with pipeline/MCP/FSM wrappers |
 | `AUTO_COMB_DELAY_OPT(func)` | Experimental delay-first combinational callable; same zero-cycle contract, allowing area growth; cached timing/estimates, no extra selection synthesis |
@@ -2082,6 +2084,7 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `_sim_reg_begin_buffer()` | Switch register writes to buffered mode (used by `pypeline_sim.py` per cycle) |
 | `_sim_reg_flush_buffer()` | Commit buffered register writes atomically — the simulated clock edge |
 | `_main_registry` | Module-level list of all `@MAIN`-decorated (wrapped) functions in decoration order |
+| `_hook_registry` / `_syn_hook_snapshot` | `@initial`/`@final` hooks of the current design import (cleared with `_main_registry`); the syn hooks the driver ran `@initial` from, reused for syn `@final` |
 | `_main_mhz_registry` | Module-level dict: `func.__name__` → MHz (read by `PY_TO_LOGIC.PARSE_FILE`) |
 | `_part_registry` | Module-level str or None: FPGA part string (read by `PY_TO_LOGIC.PARSE_FILE`) |
 | `SIM_STRICT_ARITH` | Bool flag (default `True`): apply hardware type-promotion and masking on arithmetic |

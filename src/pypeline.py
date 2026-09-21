@@ -1589,6 +1589,135 @@ def sim_input(fn):
 
 
 # ─────────────────────────────────────────────
+# @initial / @final: start/end-of-run hooks for simulation and synthesis
+# ─────────────────────────────────────────────
+
+# (fn, when, sim, syn) per decorated hook, in registration order. Cleared with
+# _main_registry on every design (re)import: PY_TO_LOGIC.PARSE_FILE and
+# pypeline_sim._import_design.
+_hook_registry: list = []
+# The syn hooks the pipelinec driver ran @initial from (set by PARSE_FILE's
+# run_syn_initial_hooks=True). Re-parses re-import the design into fresh module
+# globals; running syn @final hooks from this same list keeps them on the
+# initial hooks' module instance, so state shared between the two survives.
+_syn_hook_snapshot = None
+
+
+def _hook_decorator(when, fn, sim, syn):
+    if sim is None and syn is None:
+        sim = syn = True
+    sim, syn = bool(sim), bool(syn)
+
+    def register(f):
+        if not (sim or syn):
+            raise ValueError(
+                f"@{when} on {f.__name__!r}: sim=False and syn=False means the "
+                f"hook never runs -- enable at least one of sim/syn."
+            )
+        try:
+            required = [
+                p
+                for p in _inspect.signature(f).parameters.values()
+                if p.default is p.empty
+                and p.kind not in (p.VAR_POSITIONAL, p.VAR_KEYWORD)
+            ]
+        except (TypeError, ValueError):
+            required = []
+        if required:
+            raise TypeError(
+                f"@{when} hook {f.__name__!r} must take no arguments, got "
+                f"{[p.name for p in required]}."
+            )
+        f._is_pypeline_hook = True
+        _hook_registry.append((f, when, sim, syn))
+        return f
+
+    return register if fn is None else register(fn)
+
+
+def initial(fn=None, *, sim=None, syn=None):
+    """Run a plain Python function once at the start of a simulation and/or a
+    synthesis (hardware build) run.
+
+        @initial                  # both sim and syn
+        @initial(sim=True)        # simulation only
+        @initial(syn=True)        # synthesis only
+
+    The body is host Python, never hardware: it is not elaborated, and it
+    takes no arguments. Sim @initial hooks run once after the design is loaded
+    and reset, before the first clock cycle (so before any @sim_input), for
+    every simulator. Syn @initial hooks run once per pipelinec run, right after
+    the design is imported and before it is elaborated. Several hooks may
+    exist; they run in no particular order.
+    """
+    return _hook_decorator("initial", fn, sim, syn)
+
+
+def final(fn=None, *, sim=None, syn=None):
+    """Run a plain Python function once at the end of a simulation and/or a
+    synthesis (hardware build) run. Same forms as @initial.
+
+    Sim @final hooks run once after the last simulated cycle's @sim_output
+    calls, however the simulation ended: sim_finish(), --run N reaching N, or
+    an error (an assert, the --run all cap). On an error the original
+    exception is still the one raised. Syn @final hooks run once, right after
+    the final VHDL is written and before any bitstream generation.
+    """
+    return _hook_decorator("final", fn, sim, syn)
+
+
+def SNAPSHOT_HOOKS():
+    """A copy of the currently registered hooks (see _syn_hook_snapshot)."""
+    return list(_hook_registry)
+
+
+def _hook_fns(when, flow, hooks):
+    hooks = _hook_registry if hooks is None else hooks
+    return [fn for fn, w, sim, syn in hooks if w == when and (sim if flow == "sim" else syn)]
+
+
+def _call_hook(fn, when):
+    try:
+        fn()
+    except SimFinish:
+        raise RuntimeError(
+            f"sim_finish() called inside @{when} hook {fn.__name__!r} -- "
+            f"sim_finish() ends the clock loop and only means something inside "
+            f"a simulated cycle."
+        ) from None
+
+
+def RUN_INITIAL_HOOKS(flow, hooks=None):
+    """Run every @initial hook enabled for flow ("sim" or "syn")."""
+    for fn in _hook_fns("initial", flow, hooks):
+        _call_hook(fn, "initial")
+
+
+def RUN_FINAL_HOOKS(flow, hooks=None, pending_exc=None):
+    """Run every @final hook enabled for flow ("sim" or "syn").
+
+    Every hook runs even if an earlier one raises. With pending_exc (the error
+    that ended the run), hook errors are only printed so the original error is
+    what propagates; otherwise the first hook error is raised after all hooks
+    ran.
+    """
+    first_err = None
+    for fn in _hook_fns("final", flow, hooks):
+        try:
+            _call_hook(fn, "final")
+        except BaseException as e:
+            if pending_exc is not None or first_err is not None:
+                import traceback
+
+                print(f"ERROR in @final hook {fn.__name__!r}:", flush=True)
+                traceback.print_exception(type(e), e, e.__traceback__)
+            else:
+                first_err = e
+    if first_err is not None:
+        raise first_err
+
+
+# ─────────────────────────────────────────────
 # AUTO_PIPELINE: tool-pipelined regions with .latency feedback
 # ─────────────────────────────────────────────
 

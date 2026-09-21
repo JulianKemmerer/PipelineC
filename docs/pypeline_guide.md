@@ -374,7 +374,8 @@ wherever a passage risks ambiguity about which of these worlds is being discusse
 Pypeline source can be simulated directly in Python. This section covers the language
 APIs for decorating and calling functions. The rest of the
 simulation feature set — `@sim_output`/`@sim_input`, `sim_print`/`sim_assert`/`sim_finish`,
-`@sim_model`, and debug-tagged output — is reference material covered in
+`@initial`/`@final` start/end hooks, `@sim_model`, and debug-tagged output — is reference
+material covered in
 [Simulation Reference](#simulation-reference) in Part V, once you've got the basics down.
 
 ### `@hw_func`
@@ -4792,8 +4793,8 @@ See `src/tests/pypeline_tests/inst/vhdl_text_test.py` for a complete example.
 ## Simulation Reference
 
 The rest of the simulation feature set, beyond the [Simulation](#simulation) basics in
-Part I: side-effect hooks, console output and simulation control, the native-vs-VHDL
-debug probes, and Python simulation models for hand-written VHDL.
+Part I: side-effect hooks, console output and simulation control, start/end-of-run hooks,
+the native-vs-VHDL debug probes, and Python simulation models for hand-written VHDL.
 
 ### `@sim_output` — side effects once per cycle
 
@@ -4908,6 +4909,83 @@ the same f-string interpolation rules as `sim_print`'s argument.
 `sim_finish()` takes no arguments and signals "stop simulating now": it raises a
 `SimFinish` exception in native simulation and elaborates to VHDL's
 `std.env.finish;`, halting a VHDL simulation.
+
+### `@initial` / `@final` — start/end-of-run hooks
+
+`@initial` and `@final` mark plain Python functions the tools run **once** at the start or
+end of a simulation and/or a synthesis (hardware build) run. They replace the "first
+cycle?" flags and "all done?" checks a testbench would otherwise hand-roll inside its
+per-cycle `@sim_input`/`@sim_output` functions:
+
+```python
+from pypeline import final, initial, sim_finish, sim_output, sim_print
+
+state = {"errors": 0, "checked": 0}      # mutate in place, see below
+
+@initial(sim=True)
+def start():
+    scoreboard.fill(expected_packets)    # once, before the first clock
+    sim_print(f"=== my_tb: {len(expected_packets)} packets ===")
+
+@sim_output
+def check_done():
+    if state["checked"] == len(expected_packets):
+        sim_finish()                     # the per-cycle "when to stop" test stays here
+
+@final(sim=True)
+def finish_checks():                     # once, after the last cycle, however it ended
+    assert state["errors"] == 0, f"{state['errors']} mismatches"
+    assert state["checked"] == len(expected_packets), "simulation ended early"
+    sim_print("my_tb: all packets PASSED")
+```
+
+| Form | Runs for |
+|---|---|
+| `@initial` / `@final` | both simulation and synthesis |
+| `@initial(sim=True)` / `@final(sim=True)` | simulation only |
+| `@initial(syn=True)` / `@final(syn=True)` | synthesis only |
+
+**When they run:**
+
+- **Sim `@initial`** — once, after the design is loaded and reset, before the first clock
+  cycle (so before any `@sim_input`). This holds for every simulator: native (`--comb` or
+  pipelined) and cocotb+GHDL/Verilator/CXXRTL, where it runs just before the simulator is
+  launched.
+- **Sim `@final`** — once, after the last cycle's `@sim_output` calls, **however the
+  simulation ended**: `sim_finish()`, `--run N` reaching N, or an error (a failed assert,
+  the `--run all` safety cap). After an error, the original error is still the one reported
+  (a `@final` hook's own error is printed but does not replace it), so a `@final` check is
+  the natural place for "did the run actually finish?" — a run cut short fails there
+  instead of exiting 0 with the end-of-run checks never reached. For an external
+  simulator it runs after the simulator exits.
+- **Syn `@initial`** — once per `pypelinec` run, right after the design file is imported
+  and before it is elaborated.
+- **Syn `@final`** — once, right after the final VHDL is written and before any bitstream
+  generation (`--pins`) or simulation of the built design. A plain native
+  `--sim --comb` run builds nothing, so it runs no syn hooks.
+
+A design may have any number of hooks; they run in no particular order. A `--sim` build
+that is not `--comb` runs both: the syn hooks around its build, then the sim hooks around
+its simulation.
+
+**Rules:**
+
+- A hook is host Python, never hardware: its body is not elaborated (it can open files,
+  use numpy, run a script), it takes no arguments, and calling one from hardware code is
+  a compile error.
+- In an external simulator (cocotb+GHDL, ...) hooks run in the `pypelinec` process, not
+  inside the simulation, so they cannot read the design's `Reg`/`Wire` values — only Python
+  state your `@sim_input`/`@sim_output` functions keep (which also only exist in native sim).
+  Hardware-side end-of-run checks still belong in `sim_assert`s.
+- Calling `sim_finish()` inside a hook is an error — it only means something inside a
+  simulated cycle.
+- Share state with `@sim_input`/`@sim_output` functions through a mutable object mutated
+  in place (a dict, a list, a scoreboard), not by rebinding a module-level name: those
+  functions run against a detached copy of the module's globals.
+- A build re-imports the design several times. Syn `@final` hooks run from the same import
+  as the syn `@initial` hooks, and sim `@final` hooks from the same import as the sim
+  `@initial` hooks, so state each pair shares survives. Syn and sim hooks may see
+  **different** imports of the design, though — don't share state between them.
 
 ### `sim_print(..., debug=True)` — tagged prints
 
@@ -5077,6 +5155,7 @@ built yet."
 | Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine |
 | Language | **`@enum` member names that are VHDL reserved words** | Fails in VHDL only | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. Native simulation cannot see this — only a `synth_*`-category or GHDL run can, which is why every enum-bearing design wants one |
 | Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it |
+| Simulation | **`@initial`/`@final` under `sim_call`** | Not run | Hooks run in clocked simulation runs (`pypelinec --sim`, `pypeline_sim.py`) and `pypelinec` builds. A plain Python script that drives `sim_call` itself has no run start/end for the tools to hook — call its setup/teardown code directly |
 
 Native simulation cannot detect restrictions that appear only after emitting VHDL, such
 as a reserved enum member or VHDL integer display overflow. Give every reusable source
