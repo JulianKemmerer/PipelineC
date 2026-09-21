@@ -295,7 +295,28 @@ multiple clock domains or asynchronous clock crossings.
 
 ## Tools & CLI
 
-## Pure functions can be pipelined!
+This section owns tool invocation and generated artifacts. Source syntax and semantics
+belong in the [Pypeline HDL Language Guide](pypeline_guide.md).
+
+### Common workflows
+
+```sh
+# Generate combinational VHDL without invoking synthesis
+pypelinec examples/pypeline/blink.py --comb --no_synth
+
+# Characterize combinational timing without automatic pipelining
+pypelinec examples/pypeline/pipeline.py --comb
+
+# Run timing-driven automatic implementation using source PART/SYN_TOOL/@MAIN settings
+pypelinec examples/pypeline/pipeline.py
+
+# Exercise HDL generation and synthesis for a small wrapper
+pypelinec design_synth_top.py --comb --syn_tool device_models
+```
+
+Run `pypelinec --help` for the complete current option list.
+
+### Automatic pipelining
 **Quickly render basic un-pipelined combinatorial logic VHDL:**
 ```
 pypelinec ./examples/pypeline/pipeline.py --comb
@@ -326,7 +347,56 @@ more stages) or on hierarchical delay measurement:
 pypelinec ./examples/pypeline/pipeline.py --no_sweep --no_hier_syn
 ```
 
-### VHDL (cocotb+GHDL) simulation: `--cocotb --ghdl`
+### Simulation
+
+Use native strict simulation for fast source-level tests, then include at least one
+generated-VHDL check for every reusable block. Native simulation cannot expose
+VHDL-only identifier restrictions, unknown-value warm-up, raw-VHDL mismatches, or
+VHDL integer display overflow.
+
+```sh
+# Native source simulation for a fixed number of cycles
+pypelinec examples/pypeline/blink.py --sim --comb --run 10
+
+# Run until source calls sim_finish()
+pypelinec design_tb.py --sim --comb --run all
+
+# Simulate generated VHDL through cocotb + GHDL
+pypelinec design_tb.py --sim --comb --cocotb --ghdl --run all
+
+# Run the language guide's VGA example for one 800x525 frame
+pypelinec examples/pypeline/vga_test_pattern.py --sim --comb --run 420000
+```
+
+`pypelinec DESIGN.py --sim --run N` simulates the final, possibly automatically
+pipelined implementation. Add `--comb` to simulate the source
+without running automatic implementation first. With no external simulator selected,
+Pypeline uses its native Python simulator in strict, width-accurate mode.
+
+For lower-level native-simulator control:
+
+```sh
+python3 src/pypeline_sim.py DESIGN.py --run 1000 --mode strict
+```
+
+| Mode | Behavior |
+|---|---|
+| `strict` (default) | Typed values with masking/sign behavior at every operation and assignment |
+| `loose` | Typed `SimVal` values and bit indexing, without arithmetic-width masking |
+| `raw` | Plain Python integers for maximum speed; no casting and no reliable bit indexing on arithmetic results |
+
+The direct simulator accepts a numeric cycle count or `all` to run until
+`sim_finish()` (subject to its safety cap). `pypelinec --sim` currently always uses
+strict mode.
+
+`PYPELINE_SIM_SOFT_OPS` controls whether matcher-registered operators execute their
+structural implementation during native simulation. Leave it unset (or set `all`/`1`)
+to dispatch every registered operation, use `none`/`0` for the faster built-in
+value-equivalent paths, or provide a comma-separated list such as
+`NEGATE,LT,LTE,GT,GTE`. Source can make the same choice with
+`set_sim_soft_ops(spec)` before simulation; it does not change elaborated hardware.
+
+#### VHDL (cocotb+GHDL) simulation: `--cocotb --ghdl`
 
 Passing `--cocotb --ghdl` on the `pypelinec` command line elaborates the design to VHDL
 and simulates it with a real GHDL simulator via cocotb, instead of using the native
@@ -335,20 +405,16 @@ generated VHDL (e.g. verifying a `vhdl()` passthrough or a hand-written `@sim_mo
 really matches its hardware), or when a design uses a feature the native simulator
 doesn't model yet.
 
-### `--out_dir`
+Other simulator/output selectors are `--edaplay`, `--modelsim`, `--cxxrtl`, and
+`--verilator`. `--makefile FILE` supplies an existing simulator Makefile;
+`--main_cpp FILE` supplies a C++ driver for CXXRTL or Verilator.
 
-`--out_dir <path>` sets the build/simulation output directory explicitly (VHDL, logs,
-timing-params caches, etc.), instead of a freshly generated default directory.
+For designs with automatic latency, omit `--comb` from both native and generated-VHDL
+simulation and reuse or copy a warm output directory so both runs see the same converged
+implementation. Pair hand-written `vhdl()` with `@sim_model`; use the cycle-diff tool
+below when their timing may disagree.
 
-- **Reusing a warm directory.** A later invocation pointed at the same `--out_dir`
-  reuses the earlier run's warm sweep/build results instead of paying for them again.
-  So does an invocation pointed at a copy of that directory.
-- **One process at a time.** Never run two invocations in one `--out_dir` at the same
-  time. To run several from the same warm results, give each its own copy.
-- **Example.** This is how `pypeline_sim_debug.py` (below) gets its native and VHDL
-  runs to agree on the same discovered pipeline latencies.
-
-### `pypeline_sim_debug.py` — native-vs-VHDL cycle diff tool
+#### `pypeline_sim_debug.py` — native-vs-VHDL cycle diff tool
 
 `src/pypeline_sim_debug.py` runs a testbench both ways — native sim, and `--cocotb
 --ghdl` VHDL sim — and diffs their `sim_print(..., debug=True)` output cycle by cycle.
@@ -365,9 +431,9 @@ pypeline_sim_debug.py ./src/my_design_tb.py --sim --run all          # PIPELINED
 `--comb`, the tool first does a single build-only pass into `<out_dir>/build`, then
 runs the native and VHDL `--sim` invocations concurrently, each in its own copy of that
 warm directory (`<out_dir>/native`, `<out_dir>/vhdl`), so both converge on the same
-discovered pipeline latencies — see
-[`docs/pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)'s "Pipelined native sim" section
-for the warm-`out_dir` build orchestration and convergence guarantees.
+discovered pipeline latencies. The build is repeated only if installing a discovered
+latency changes the realized pipeline shape; both simulator directories are copied from
+the same converged build, so native and VHDL compare the same implementation.
 
 There are three constraints on a pipelined (non-`--comb`) compare:
 - **Valid-gate every probe.** VHDL pipeline registers read `'U'` during warm-up; native
@@ -387,5 +453,158 @@ defaults to a fresh `./pypeline_sim_debug_out_<design>_<pid>` directory if not g
 On mismatch, the tool also prints a side-by-side dump of both runs' debug-tagged lines
 for `--context` cycles before and after the first divergence (default 10; pass
 `--context 0` to suppress it). See the guide's
-[`sim_print(..., debug=True)`](pypeline_guide.md#sim_print-debugtrue--tagged-prints-for-pypeline_sim_debugpy)
+[`sim_print(..., debug=True)`](pypeline_guide.md#sim_print-debugtrue--tagged-prints)
 section for how to tag prints for this tool.
+
+### Output directories: `--out_dir`
+
+`--out_dir <path>` sets the build/simulation output directory explicitly (VHDL, logs,
+timing-params caches, etc.), instead of a freshly generated default directory.
+
+- **Reusing a warm directory.** A later invocation pointed at the same `--out_dir`
+  reuses the earlier run's warm sweep/build results instead of paying for them again.
+  So does an invocation pointed at a copy of that directory.
+- **One process at a time.** Never run two invocations in one `--out_dir` at the same
+  time. To run several from the same warm results, give each its own copy.
+- **Example.** The cycle-diff tool uses separate copies of one warm directory so its
+  native and VHDL runs agree on the same discovered pipeline latencies.
+
+### Build modes and output options
+
+| Option | Meaning |
+|---|---|
+| *(no mode flag)* | Run the planned timing-driven pipeline sweep for each eligible `@MAIN` with a clock goal |
+| `--comb` | Keep the design combinational and run one timing characterization per clock |
+| `--no_synth` | Generate combinational HDL without invoking a synthesis backend |
+| `--full_hier_syn` | Measure every hierarchy level rather than estimating hierarchy from measured leaves |
+| `--no_hier_syn` | Measure primitive leaves only; fastest warm-cache path, but disables fallback when hierarchy estimates are inaccurate |
+| `--pipeline_min_effort N` | After timing is met, allow up to N additional full-design runs to reduce register count; zero accepts the first passing result |
+| `--mult infer\|fabric` | Infer target multiplier/DSP primitives or force multipliers into fabric logic |
+| `--verilog` | Convert the final VHDL top to Verilog through GHDL and Yosys |
+| `--yosys_json` | Stop after writing the Yosys JSON netlist |
+| `--xo_axis` | Write the packaging script for a Vitis AXI-Stream `.xo` IP |
+| `--pins FILE` | Supply the pin-constraint file used for the final implementation |
+| `--top NAME` | Change the generated top-level module name from `top` |
+
+`--mux_delay_by_width` and `--no_mux_delay_by_width` force mux timing-cache keys to
+include or ignore operand width. The default is backend-dependent: PyRTL uses its
+measured width-independent model, while the sky130 device model keys by width.
+
+`-j N` / `--jobs N` limits concurrent synthesis processes. Treat it primarily as a
+memory limit: each job is a complete vendor process. Efinity place-and-route has been
+observed near 3.7 GB per leaf, so use `-j 1` on a memory-constrained machine.
+
+An implemented netlist with no timing paths is an error, commonly because all logic was
+optimized away and no top-level output remains. Mark intentionally path-free source with
+`@wires`; otherwise connect an observable output.
+
+### Synthesis backends and target selection
+
+The target is one decision with two inputs. A part can come from source `PART("...")` or
+`--part`; a backend can come from source `SYN_TOOL("...")` or `--syn_tool`. Duplicate
+settings must agree, and a named backend must be compatible with the part. A backend
+named without a part supplies its default part.
+
+| Part/family | `--syn_tool` | Default part | Timing flow |
+|---|---|---|---|
+| No part | `pyrtl` | none | Generic PyRTL software delay model; default when nothing is selected |
+| `xc...` | `vivado` | `xc7a35ticsg324-1l` | Vivado synthesis and optional place-and-route |
+| `ep...`, `10c...`, `5c...` | `quartus` | `5CEBA4F23C8` | Quartus |
+| ECP5 `lfe5u...` | `open_tools` | `LFE5U-85F-6BG381C` | GHDL + Yosys + nextpnr |
+| iCE40 `ice...` | `open_tools` or `diamond` | `ICE40UP5K-SG48` | Open tools, or Diamond when selected/available |
+| `T8...`, `Ti...` | `efinity` | `Ti60F225` | Efinity |
+| `GW...` | `gowin` | `GW2AR-LV18QN88PC8:C` | Gowin |
+| `CCGM...` | `cc_tools` | `CCGM1A1` | CologneChip tools |
+| `sky130...` | `device_models` | `sky130` | GHDL/Yosys mapping plus internal liberty STA |
+
+Examples:
+
+```sh
+pypelinec design.py --syn_tool quartus
+pypelinec design.py --part xc7a35ticsg324-1l
+pypelinec design.py --syn_tool device_models
+```
+
+`device_models` currently ships only `sky130_fd_sc_hvl` at the
+`tt_025C_3v30` corner. It reports a pre-place-and-route estimate and models no
+net/interconnect delay; its area and delay results are useful for consistent local
+comparisons, not signoff.
+
+### Automatic implementation and sweeps
+
+The default planned sweep places cuts through eligible combinational logic and uses
+timing feedback to refine the result. Coarse mode instead treats the design as a single
+uniform slicing problem:
+
+```sh
+# Search a coarse latency range one cycle at a time
+pypelinec design.py --coarse --sweep --start 2 --stop 8
+
+# Write only the first planned placement; timing is not verified
+pypelinec design.py --no_sweep
+```
+
+`--no_sweep` performs zero sweep synthesis iterations and must never be described as a
+timing-passing build. The coarse sweep also has a known limitation on designs with many
+1–3-bit leaves at high cut counts: it can fail with an interior zero-bit-stage error;
+use the default planned sweep for those designs.
+
+Automatic latency values depend on the workflow. A normal timing-driven build starts
+`AUTO_PIPELINE(start_latency=S)` at S, discovers the implemented value, and
+re-elaborates until every source read of `.latency` agrees with the hardware. A
+non-`--comb` native simulation uses that converged configuration. `--comb`,
+`--no_synth`, `--yosys_json`, and direct source simulation do not
+discover an unconstrained pipeline or FSM latency: `AUTO_PIPELINE`/`AUTO_FSM` read zero
+there unless a fixed pipeline latency applies. `AUTO_MULTI_CYCLE` reads `latency=`, else
+`start_latency=`, else one. An automatic RAM without a fixed or selected plan uses its
+mandatory one-cycle synchronous baseline. Fixed `AUTO_PIPELINE(latency=N)` and RAM
+latencies are honored in every mode.
+
+Automatic features add these controls and reports:
+
+- `AUTO_PIPELINE` and `AUTO_MULTI_CYCLE` participate in the latency feedback pass.
+  `sweep_history.json` records the actual cuts, constraints, timing measurements, final
+  outcome, and confirmation run. Fixed `latency=` remains fixed; `max_latency=` is a hard
+  limit.
+- `AUTO_COMB_AREA_OPT` and `AUTO_COMB_DELAY_OPT` write
+  `auto_comb_area_opt_report.json` / `auto_comb_delay_opt_report.json` and candidate
+  source under `auto_comb_opt_generated/`.
+- `AUTO_FSM` writes generated implementations under `auto_fsm_generated/`.
+  `--auto_fsm_budget_scale` sets the initial fraction of one clock available to a
+  state. `--auto_fsm_no_area_sweep`, `--auto_fsm_abstract_area`,
+  `--auto_fsm_sweep_debug`, repeatable `--auto_fsm_open SUBSTR`, repeatable
+  `--auto_fsm_unshare SUBSTR=N`, and `--auto_fsm_ctl {auto,v3,v2,onehot}` are
+  diagnostic/A-B controls; the defaults perform the normal minimum-area search and
+  automatically select a control encoding.
+- Auto-pipelined RAM plan search is currently synthesis-supported by the ECP5 open-tools
+  flow. Its selected plans also appear in `sweep_history.json`, while
+  `auto_pipeline_ram_history.json` records all tried plans, frequencies, resources, and
+  the winner.
+
+### Generated files and reports
+
+The output directory contains intermediate sweep shapes as well as the final design.
+Consume the explicit manifests and indexes instead of globbing generated directories:
+
+- `vhdl_files.txt` is the authoritative dependency-ordered list of final VHDL sources.
+  It is one whitespace-separated line of absolute paths and can be used as a GHDL
+  response-file list. Do not compile a directory glob: it can mix incompatible timing
+  variants left by sweep iterations.
+- `top/top.vhd` is the stable public top after final timing selection.
+  `c_structs_pkg.pkg.vhd` contains translated structs, arrays, enums, and conversions;
+  `global_wires_pkg.pkg.vhd` contains shared-global records.
+- `name_index.log` maps emitted entities, types, helpers, instances, wires, shortened
+  names, source paths/lines, generated sources, and pipeline variants back to Pypeline
+  source. Use it instead of parsing a generated identifier or timing hash.
+- `pypeline_generated_source/` contains navigable Python source for generated interface,
+  cast, byte-conversion, and other helper functions.
+- `<top>/sweep_history.json` records every whole-design timing iteration and its final
+  verified or unverified status.
+- `host/pypeline_host_types.py` is a standalone standard-library-only Python module for
+  types registered by byte serialization or `host_export(...)`. Copy it beside host
+  software; exported structs are namedtuples with `zero()`, `_replace`, `to_bytes`,
+  `from_bytes`, and `BYTE_LENGTH`, while exported enums are `IntEnum`s.
+
+Timing-specific generated entities are not a stable integration API. Depend on the
+stable top, import record declarations from `c_structs_pkg`, or add a small scalar-port
+wrapper when external HDL needs a durable boundary.

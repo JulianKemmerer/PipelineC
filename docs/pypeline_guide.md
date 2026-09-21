@@ -1,6 +1,9 @@
 # Pypeline HDL Language Guide
 
-Pypeline is the Python front-end for PypelineC.
+Pypeline is the Python front-end for PypelineC. This guide describes the
+Pypeline HDL source language: its syntax, types, APIs, hardware meaning, and
+source-level restrictions. Commands, build modes, synthesis backends, and
+generated files are documented in the [Tools & CLI](README.md#tools--cli) guide.
 
 For getting started information see the [README](README.md).
 
@@ -30,9 +33,10 @@ For getting started information see the [README](README.md).
 17. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle)
 18. [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation)
     - [`AUTO_PIPELINE(...)`](#auto_pipeline)
-    - [`AUTO_MULTI_CYCLE(...)` (New)](#auto_multi_cycle-new)
-    - [`AUTO_COMB_AREA_OPT(...)` / `AUTO_COMB_DELAY_OPT(...)` (New, Experimental)](#auto_comb_area_opt--auto_comb_delay_opt-new-experimental)
-    - [`AUTO_FSM(...)` (New, Experimental)](#auto_fsm-new-experimental)
+      - [`AUTO_PIPELINE_RAM`](#auto_pipeline_ram)
+    - [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle)
+    - [`AUTO_COMB_AREA_OPT(...)` / `AUTO_COMB_DELAY_OPT(...)` (Experimental)](#auto_comb_area_opt--auto_comb_delay_opt-experimental)
+    - [`AUTO_FSM(...)` (Experimental)](#auto_fsm-experimental)
 
 **Part III — Ports and streams**
 
@@ -43,7 +47,7 @@ For getting started information see the [README](README.md).
 23. [AXI-Stream: `axis_t`](#axi-stream-axis_t)
 24. [Byte-Stream Serialization: `make_serializer` / `make_deserializer`](#byte-stream-serialization-make_serializer--make_deserializer)
 25. [Struct ↔ AXI-Stream: `make_axis_to_type` / `make_type_to_axis`](#struct--axi-stream-make_axis_to_type--make_type_to_axis)
-26. [Host-Side Generated Types](#host-side-generated-types)
+26. [Host Type Export Declarations](#host-type-export-declarations)
 27. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
 28. [RAMs: `make_ram` / `make_stream_ram`](#rams-make_ram--make_stream_ram)
 29. [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer)
@@ -62,7 +66,8 @@ For getting started information see the [README](README.md).
 
 37. [Simulation Reference](#simulation-reference)
 38. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
-39. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
+39. [Source Naming Rules](#source-naming-rules)
+40. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
 
 ---
 
@@ -171,22 +176,12 @@ def capture_pixel(sig, px):
 ```
 
 `@sim_output` marks this as simulation-only — see [Simulation](#simulation).
-The hardware compiler skips it entirely; `pypeline_sim.py` calls it once per clock cycle
-after convergence.
+The hardware compiler skips it entirely; complete-design native simulation calls it once
+per clock cycle after wire convergence.
 
-### Running the simulation
-
-```
-pypelinec examples/pypeline/vga_test_pattern.py --sim --comb --run 420000
-```
-
-One frame of 640×480 video at 25 MHz = 800 × 525 = 420 000 cycles.
-A matplotlib window appears and fills in as the simulation runs.
-
-### Synthesising for the FPGA
-
-Run `pypelinec` on the design file (see the main PypelineC documentation for build steps).
-The `PART()` call and `@MAIN(mhz)` frequency constraint are forwarded to Vivado.
+One frame of 640×480 video at 25 MHz is 800 × 525 = 420,000 cycles. See
+[Tools & CLI](README.md#tools--cli) for commands that simulate this source or build it
+for the selected device.
 
 ### Reference: HDL concept → Pypeline syntax
 
@@ -356,7 +351,7 @@ common source of confusion:
 |---|---|
 | Elaboration time | Plain Python, at compile time — module-level code, factories, `for` loop unrolling |
 | Hardware cycle time | Real clock edges on real (or synthesized) silicon |
-| Native simulation time | Python `sim_call`/`pypelinec --sim` — hardware behaviour re-implemented in Python |
+| Native simulation time | Python simulation of Pypeline source through `sim_call` or the complete-design simulator |
 | VHDL simulation time | cocotb + GHDL simulating the actual generated VHDL |
 
 This guide uses "elaboration time" and "compile time" interchangeably for the first row —
@@ -364,10 +359,10 @@ This guide uses "elaboration time" and "compile time" interchangeably for the fi
 loop bound" as the idiomatic adjective form for a value known at that point. Both name the
 same world.
 
-Native and VHDL simulation *should* always agree — when they don't, that's a real bug,
-and [`pypeline_sim_debug.py`](#sim_print-debugtrue--tagged-prints-for-pypeline_sim_debugpy)
-exists specifically to localize where they diverge. Don't collapse these two into one
-"simulation" world when a passage is distinguishing them.
+Native and VHDL simulation *should* always agree. Do not collapse these two into one
+"simulation" world when a passage is distinguishing them. The
+[`sim_print(..., debug=True)`](#sim_print-debugtrue--tagged-prints) source annotation
+marks observations that the cycle-diff tooling can compare.
 
 Later sections use inline **Compile time:** / **Hardware:** / **Simulation:** labels
 wherever a passage risks ambiguity about which of these worlds is being discussed.
@@ -376,11 +371,10 @@ wherever a passage risks ambiguity about which of these worlds is being discusse
 
 ## Simulation
 
-pypeline designs can be simulated in Python before synthesising for an FPGA — no toolchain
-required. This section covers the zero-toolchain basics: decorating functions for
-simulation, calling them directly, and running a multi-`@MAIN` design. The rest of the
+Pypeline source can be simulated directly in Python. This section covers the language
+APIs for decorating and calling functions. The rest of the
 simulation feature set — `@sim_output`/`@sim_input`, `sim_print`/`sim_assert`/`sim_finish`,
-`@sim_model`, and the native-vs-VHDL debug tool — is reference material covered in
+`@sim_model`, and debug-tagged output — is reference material covered in
 [Simulation Reference](#simulation-reference) in Part V, once you've got the basics down.
 
 ### `@hw_func`
@@ -416,6 +410,13 @@ assert r1 == 15
 Each call to `sim_call` advances the function by one clock cycle.
 Call `sim_reset()` at the start of each independent test.
 
+`sim_zero(T)` constructs the same correctly typed recursive zero that an
+uninitialized `Reg[T]` receives. It works for scalars, structs, arrays, and their
+combinations, and is useful when a generic `@sim_model` needs an empty output value.
+`sim_wire_reset()` clears only simulated global-wire values and ownership claims while
+leaving register/model state intact; ordinary tests normally want the broader
+`sim_reset()`.
+
 ### Registers in simulation — multiple instances
 
 When the same function is called from two different call sites in a `@MAIN`, each site
@@ -434,42 +435,17 @@ r = sim_call(dual_accum, 10, 5)   # sum_a: 0+10=10, sum_b: 0+5=5 → 15
 r = sim_call(dual_accum, 10, 5)   # sum_a: 10+10=20, sum_b: 5+5=10 → 30
 ```
 
-### `pypelinec --sim` — multi-MAIN designs
+### Complete designs with multiple `@MAIN` functions
 
-Designs that use `Wire[T]` global signals (see [Global Signals](#global-signals))
-require running multiple `@MAIN` functions together.
-Use the `pypelinec` CLI:
+Designs that communicate through global `Wire[T]` signals require all `@MAIN`
+functions to advance together. Within each simulated cycle, the complete-design
+simulator repeatedly evaluates affected functions until the global wires converge,
+then performs one final side-effect pass and commits register values. A failure to
+converge within 1,000 delta iterations reports a combinational loop or unstable model.
 
-```
-pypelinec my_design.py --sim --comb --run 1000
-```
-
-This runs 1000 simulated clock cycles, with delta-cycle convergence each cycle to resolve
-global wires before committing register values. `pypelinec` detects the `.py` design and
-defaults to the native simulator (implemented in `src/pypeline_sim.py`), skipping VHDL
-elaboration/synthesis entirely, whenever no other simulator is explicitly selected (no
-`--cocotb`, `--edaplay`, `--modelsim`, `--cxxrtl`, or `--verilator` flag). `--sim --comb` is
-comb-only, no auto-pipelining pass first. Dropping `--comb` (just `--sim`)
-instead builds the final (maybe auto-pipelined) version first and then native-sims that with
-its discovered pipeline latencies emulated — see [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation).
-Explicitly passing `--cocotb --ghdl` (etc.) still elaborates the design to VHDL and simulates
-that instead.
-
-For lower-level control — a `--mode` flag that trades simulation accuracy for speed — call
-the native simulator's own script directly instead of through `pypelinec`:
-
-```
-python3 src/pypeline_sim.py my_design.py --run 1000 --mode raw
-```
-
-| Mode | Description |
-|---|---|
-| `strict` (default) | Full hardware accuracy — integer widths masked at every typed operation |
-| `loose` | SimVal objects preserved (bit-indexing works) but no bit-width masking on arithmetic |
-| `raw` | Maximum speed (~9× faster than strict) — plain Python ints throughout; use for structural tests where precise overflow behaviour is not needed |
-
-There's no `--mode` passthrough from `pypelinec` yet, so the `pypelinec --sim`/`--sim --comb`
-path above always runs at `strict` accuracy.
+Use `sim_call` for a single function and the complete-design simulator for a hierarchy
+with global wires or multiple `@MAIN` functions. Simulator selection, accuracy modes,
+and invocation belong to [Simulation](README.md#simulation) under Tools & CLI.
 
 ---
 
@@ -515,9 +491,8 @@ from pypeline import PART
 PART("xc7a35ticsg324-1l")   # Arty A7-35T
 ```
 
-The part selects the synthesis tool (Xilinx parts pick Vivado, Intel parts pick
-Quartus, and so on). To name the **tool** instead and let it pick its own
-default part, use `SYN_TOOL()`:
+The part also determines the compatible synthesis backend. To make the backend the
+source-level declaration and use its default part, call `SYN_TOOL()` instead:
 
 ```python
 from pypeline import SYN_TOOL
@@ -525,23 +500,10 @@ from pypeline import SYN_TOOL
 SYN_TOOL("quartus")   # builds on Quartus, part 5CEBA4F23C8
 ```
 
-Either can also come from the command line — `--part` and `--syn_tool` — which
-is how one part-neutral source file gets built on several backends:
-
-```
-pypelinec design.py --syn_tool quartus
-pypelinec design.py --part xc7a35ticsg324-1l
-```
-
-**The two cannot contradict.** Setting `--part` and `PART()` to different
-parts, `--syn_tool` and `SYN_TOOL()` to different tools, or naming a tool the
-part does not select, is an error rather than an override — a part and a tool
-are one decision spelled two ways. See
-[`SYN_DESIGN.md`'s Choosing a Tool](SYN_DESIGN.md#2-choosing-a-tool) for the full table of
-parts, tools and their default parts.
-
-With neither a part nor a tool, the tool chain uses a software timing estimator
-(PyRTL) rather than real synthesis.
+Declare at most one `PART()` and one `SYN_TOOL()` per design. When both are present,
+they must describe a compatible pair. See [Synthesis backends and target
+selection](README.md#synthesis-backends-and-target-selection) for supported backend
+names, default parts, and command-line selection rules.
 
 ### Naming a clock with `make_clock`
 
@@ -709,6 +671,10 @@ but the loop *control* itself (the range, the condition, the counter variable(s)
 pure Python. One exception: don't iterate a `set`/`frozenset` — its order isn't guaranteed
 across runs (`sorted(...)` it first if you need one).
 
+A `while` loop may unroll at most 65,536 iterations; exceeding the limit is treated as
+a non-terminating elaboration loop. Loop targets may be names or nested tuple/list
+patterns, but starred targets such as `for first, *rest in items` are not supported.
+
 ---
 
 ## Calling Functions
@@ -728,6 +694,28 @@ def two_adders(x: uint32_t, y: uint32_t, z: uint32_t) -> uint32_t:
     partial = add(x, y)     # one adder instance
     return add(partial, z)  # a second, independent adder instance
 ```
+
+Calls may use positional arguments, keyword arguments, or a positional prefix followed
+by keywords, with ordinary Python binding rules:
+
+```python
+add(x, y)
+add(a=x, b=y)
+add(x, b=y)
+```
+
+A call may also select a callable from a compile-time tuple or list. This is useful in
+an unrolled loop because the index is a Python constant for each elaborated iteration:
+
+```python
+ADDERS = (make_adder(1), make_adder(2), make_adder(4))
+for i in range(3):
+    values[i] = ADDERS[i](values[i])
+```
+
+A void function can be called as a bare statement. A non-void function may also be
+called this way when only its state or global-signal effects matter; its return value is
+discarded.
 
 ### Feed-forward hierarchy
 
@@ -868,6 +856,21 @@ import my_lib
 SHIFT = my_lib.SHIFT_AMOUNT   # now available as a plain Python int in this module
 ```
 
+### Tuple and list unpacking
+
+Compile-time values support nested tuple/list unpacking. Hardware expressions support a
+flat tuple or list on each side, including swaps; all right-hand expressions are evaluated
+before any target is written:
+
+```python
+a, b = b, a
+lo, hi = x[7:0], x[15:8]
+```
+
+For a hardware-valued right side, nested targets, starred targets, and unpacking a
+non-literal tuple/list expression are not supported. Assign fields or elements explicitly
+in those cases.
+
 ---
 
 ## Registers: `Reg[T]`
@@ -961,6 +964,10 @@ pt:  Reg[point_t] = point_t(x=5, y=2)  # struct — NamedTuple constructor form
 ```
 
 Without an initialiser the register resets to zero.
+
+A register does not have to be written. A read-only declaration is legal and behaves as
+a constant power-on value: zero without an initializer, or the declared initializer when
+the type supports one.
 
 ### Counter example
 
@@ -1118,13 +1125,8 @@ pypeline provides fixed-width integer types matching C hardware-description conv
 
 | Type | Width | Range |
 |---|---|---|
-| `uint1_t` | 1 bit | 0 … 1 |
-| `uint8_t` | 8 bits | 0 … 255 |
-| `uint16_t` | 16 bits | 0 … 65535 |
-| `uint32_t` | 32 bits | 0 … 2³²−1 |
-| `uint64_t` | 64 bits | 0 … 2⁶⁴−1 |
-| `int8_t` | 8 bits signed | −128 … 127 |
-| `int32_t` | 32 bits signed | −2³¹ … 2³¹−1 |
+| `uint1_t` … `uint64_t` | Every width from 1 through 64 bits | 0 … 2^N−1 |
+| `int1_t` … `int64_t` | Every width from 1 through 64 bits, signed | −2^(N−1) … 2^(N−1)−1 |
 
 Use `make_uint_t` / `make_int_t` for widths that are computed at module level:
 
@@ -1136,8 +1138,31 @@ uint24_t = make_uint_t(N)
 int33_t  = make_int_t(N + 9)
 ```
 
-Integer literals in hardware function bodies are automatically given the minimum-width
-unsigned type that fits the value (`0` → `uint1_t`, `255` → `uint8_t`, etc.).
+Integer literals in hardware function bodies receive the smallest type that represents
+them. Non-negative literals are unsigned with at least one bit (`0` → `uint1_t`, `5` →
+`uint3_t`, `255` → `uint8_t`); negative literals are signed (`-1` → `int1_t`, `-2` →
+`int2_t`).
+
+At elaboration time, `len(T)` reports an integer type's bit width or an array's outer
+dimension. Scalar integer and `char_t` types also expose `T.width`; array types do not.
+
+#### Integer arithmetic result types
+
+Arithmetic grows to retain its mathematical result rather than silently truncating:
+
+| Expression | Result width after operand promotion |
+|---|---|
+| `a + b`, `a - b` | `max(width(a), width(b)) + 1` |
+| `a * b` | `width(a) + width(b)` |
+| Other integer binary operations | `max(width(a), width(b))` |
+| `-a` | `width(a) + 1`, signed |
+
+For mixed signed/unsigned arithmetic, if the unsigned operand is at least as wide as the
+signed operand, the signed side is first extended by one bit so every unsigned value and
+every signed value remain representable; the result is signed. Assigning that result to a
+narrower annotated destination performs the explicit truncation. Bitwise operations do not
+add a carry bit—their result uses the promoted maximum width—and comparisons produce
+`uint1_t`.
 
 ### Casting
 
@@ -1183,6 +1208,11 @@ built the function (`include/pypeline/floating_point.py`'s `make_float_converter
 with no registered conversion from the argument's type is an `ElaborationError`, except
 for a struct with exactly one field, which falls back to filling that field directly
 (the same thing `T(x)` meant before casting existed).
+
+`register_lazy_cast(src_t, dst_t, build)` has the same result as `register_cast`, but
+defers the zero-argument `build()` factory until that exact conversion is first used. Use
+it when constructing the conversion function is expensive or mutually recursive with
+other library setup.
 
 `include/pypeline/stream/stream.py`'s `make_stream_interface` registers casts both ways
 between a stream interface's two halves and their plain payload types, so the common
@@ -1239,8 +1269,7 @@ class state_t(IntEnum):
 The internal type key is `state_t_IDLE_RUNNING_DONE`: sequential `0..n-1` values
 are omitted there, while sparse enums retain explicit values. The VHDL type also
 identifies its source module and member values; in `controller.py` this example is
-`state_t_from_controller_IDLE_0_RUNNING_1_DONE_2`. The build index links it back to
-the Python declaration.
+`state_t_from_controller_IDLE_0_RUNNING_1_DONE_2`.
 
 Members are accessed with dot notation and compare with `==`:
 
@@ -1373,7 +1402,7 @@ class packet_t(NamedTuple):
 @hw_func
 def make_packet(v: uint32_t) -> packet_t:
     p: packet_t
-    p.name = "sensor_1"
+    p.name = "sensor1"
     p.value = v
     return p
 
@@ -1388,7 +1417,7 @@ def call_site() -> uint32_t:
 
 `strlen(arr)` returns the array's **declared capacity**, not the length of whatever text
 happens to be stored in it — `strlen()` on the `name` field above always returns `16`,
-even when it holds `"sensor_1"` (8 characters). This matches PipelineC's C-side `strlen()`
+even when it holds `"sensor1"` (7 characters). This matches PipelineC's C-side `strlen()`
 exactly: it's a compile-time constant (the array size), not a runtime scan for a
 null terminator.
 
@@ -1401,10 +1430,14 @@ r = sim_call(greet)
 assert r == "hello"
 
 p = sim_call(make_packet, v=42)
-assert p.name == "sensor_1"
+assert p.name == "sensor1"
 
-r = sim_call(log_event, tag="custom_tag")
+r = sim_call(log_event, tag="customtag")
 ```
+
+String literals containing an underscore are currently unsafe: the shared constant
+decoder truncates the literal at the first `_`. Use a spelling without underscores or a
+numeric `char_t[N]` initializer until that limitation is removed.
 
 Char arrays support ordinary per-element arithmetic like any other array — each element
 is just an 8-bit value:
@@ -1418,10 +1451,9 @@ def increment_chars(s: char_t[16]) -> char_t[16]:
     return out
 ```
 
-Known limitation: `Reg[char_t[N]]` cannot have an explicit initializer (`Reg[char_t[16]] =
-"hello"` raises an `ElaborationError`) — only zero-initialized char-array registers
-(`Reg[char_t[16]]` with no `=`) are currently supported. See
-[`pypeline_DESIGN.md`](pypeline_DESIGN.md#char-array-support) for why.
+Known limitation: a `Reg[T]` whose leaf type is `char_t` cannot have an explicit
+initializer. This includes a scalar `Reg[char_t]` and `Reg[char_t[N]]` initialized from
+an integer, list, or string. Zero-initialized char registers are supported.
 
 ### Arrays
 
@@ -1430,8 +1462,11 @@ Append `[N]` to any type to get a fixed-length array of that type:
 ```python
 uint32_t[4]       # 4-element array of 32-bit values
 point_t[10]       # 10-element array of point_t structs
-uint8_t[4][2]     # 4-element array where each element is a 2-byte array (like C)
+uint8_t[4][2]     # 4-element outer array; each element is a 2-byte array (like C)
 ```
+
+Python evaluates chained brackets left to right, but Pypeline preserves C array order:
+in `T[A][B]`, `A` is always the outer dimension and `B` the inner dimension.
 
 Index arrays with a compile-time constant or with a hardware signal:
 
@@ -1624,12 +1659,8 @@ correct bit widths.
 Calling the same specialisation multiple times reuses the same entity definition but
 creates separate instances.
 
-Generated names include the function's source symbol, defining module/factory and
-parameter values. For example, the adder in `arithmetic.py` has a base such as
-`add_from_arithmetic_make_adder_T_uint32_t`, followed by its latency and timing hash.
-Scalar settings such as FIFO depth appear before nested type descriptions so they
-remain visible in long names. See [Reading generated VHDL names](#reading-generated-vhdl-names)
-for record examples, shortening rules and source-index lookup.
+Each specialization keeps its own type identity. The generated-output naming and lookup
+conventions are documented under [Generated files and reports](README.md#generated-files-and-reports).
 
 ### Generic structs
 
@@ -1685,10 +1716,11 @@ There's no factory call site to ask for these types — `func` is just an ordina
 annotated Python function. `hw_arg_types(func)` and `hw_return_type(func)` recover them:
 
 ```python
-from pypeline import hw_arg_types, hw_return_type
+from pypeline import hw_arg_types, hw_return_type, is_hw_func
 
 (in_type,) = hw_arg_types(func)   # tuple of parameter types, in declaration order
 out_type = hw_return_type(func)   # the declared return type
+assert is_hw_func(func)            # True for @hw_func and @MAIN wrappers
 ```
 
 Both work whether `func` is undecorated or already `@hw_func`-decorated — but for
@@ -1700,8 +1732,7 @@ otherwise (see [Automatic (HLS-like) Implementation](#automatic-hls-like-impleme
 [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle)). `@hw_func`
 decoration does not propagate into plain functions called from inside that body — a
 factory that calls an undecorated `func` won't simulate `Reg[T]`/`Feedback[T]` or bare
-struct/array locals correctly under `sim_call`, which is why the check exists (see
-`docs/pypeline_sim_DESIGN.md` for how `@hw_func` decoration makes simulation work).
+struct/array locals correctly under `sim_call`, which is why the check exists.
 
 Prefer `hw_arg_types`/`hw_return_type` over reading `func.__annotations__` directly, or
 having a factory stash a type as a custom attribute on the function it returns (e.g.
@@ -1735,6 +1766,10 @@ def bias_one(x: float32_t) -> float32_t:
 elaboration time; `float(x)` (on any value returned from a `float32_t`/`float64_t`
 computation) converts back to a Python `float`, for printing/debugging/comparing
 against a reference implementation.
+
+A bare Python float literal is not a hardware value and cannot be used directly inside
+a hardware expression. Convert it at elaboration time with `float_t.as_const(...)`, as
+shown above, and capture the resulting constant.
 
 Need a non-standard precision, or just the building blocks? `make_float_t(E, M)`
 (also from `floating_point`) builds the struct type itself, and
@@ -1994,11 +2029,11 @@ rather than falling through to `NamedTuple`'s default tuple concatenation/repeat
 
 Matcher registrations (`any_integer_t` and friends) dispatch in sim too, but because
 one of them covers every integer op in every design at once, whether they *execute*
-is a policy, set by `PYPELINE_SIM_SOFT_OPS` or `set_sim_soft_ops()`:
+is a policy. Set it in source with `set_sim_soft_ops(spec)` before simulating:
 
 | spelling | meaning |
 |---|---|
-| unset, `all`, `1` | every registered op dispatches (**default**) |
+| `None`, `all`, `1` | every registered op dispatches (**default**) |
 | `none`, `0` | matcher registrations do not dispatch; built-ins run |
 | `NEGATE,LT,LTE,GT,GTE` | only those op names |
 
@@ -2022,8 +2057,7 @@ Hardware-function bodies are elaborated, not executed, so an operator you write
 is an operator you get. Two things make an innocent-looking line expensive:
 
 - **A constant operand is still a port during leaf characterization.** Each
-  leaf is synthesized *standalone* to measure its delay (see
-  [`SYN_DESIGN.md`'s Kinds of Synthesis Runs](SYN_DESIGN.md#4-kinds-of-synthesis-runs)), with constants as ordinary inputs. So
+  leaf is characterized standalone, with constants represented as ordinary inputs. So
   `x * -1` is timed as a real NxM multiplier even where the vendor tool would
   later fold it, and the auto-pipeliner plans its cuts against that number.
 - **A soft-registered operator is a whole submodule.** Under
@@ -2033,7 +2067,7 @@ is an operator you get. Two things make an innocent-looking line expensive:
 | Instead of | Write | Why |
 |---|---|---|
 | `-x` as `x * -1` | `wide: out_t = x` / `not_wide: out_t = ~wide` / `result: out_t = not_wide + 1` | An inverter row plus an increment, not a multiplier. The widen must be its own statement *before* the `~`, or the inversion happens at `x`'s width and a trailing annotation cannot recover the sign. |
-| `1 - bit` (a `uint1_t`) | `bit ^ 1` | One bitwise leaf instead of a subtract. Prefer `^ 1` over `~bit`: it is also correct under `--mode raw`, where annotations are not applied and `~0` is `-1`. |
+| `1 - bit` (a `uint1_t`) | `bit ^ 1` | One bitwise leaf instead of a subtract. `^ 1` also keeps the one-bit intent explicit in less strictly typed simulation. |
 | `k * x` for a Python-constant `k` | a Python `if` on `k`, or `operators/comb_opt.py`'s `make_constant_mult` | A branch on an elaboration-time constant costs nothing; only the taken arm is elaborated. |
 | `x / 2**n`, `x % 2**n` | `operators/comb_opt.py`'s `make_power_of_two` | A shift or a mask instead of a divider. |
 | widening by arithmetic | an annotated assignment (`wide: big_t = x`) | Pure wiring — zero-extend or sign-extend, no operator at all. |
@@ -2283,9 +2317,9 @@ without a `PART()` target it has no effect. See
 `examples/mcp/mcp_test.c`) for the full example, including the `PART(...)` call needed to
 target a real device.
 
-**Letting the tool choose `N`.** [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle-new) is the
-tool-tuned version of this tag. The throughput sweep picks the cycle count, and your logic
-reads it back as `.latency`.
+**Automatically choosing `N`.** [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle) is the
+timing-driven version of this tag. The chosen cycle count is exposed to source as
+`.latency`.
 
 ### Wrapping a whole slow function
 
@@ -2306,8 +2340,8 @@ implementation along two independent axes:
 
 | | 0 added cycles | N cycles |
 |---|---|---|
-| Parallel / unsharing | Original; [`AUTO_COMB_DELAY_OPT`](#auto_comb_area_opt--auto_comb_delay_opt-new-experimental) | [`AUTO_PIPELINE`](#auto_pipeline), [`AUTO_MULTI_CYCLE`](#auto_multi_cycle-new); optionally after AUTO_COMB_DELAY_OPT |
-| Sharing transformation | [`AUTO_COMB_AREA_OPT`](#auto_comb_area_opt--auto_comb_delay_opt-new-experimental) | [`AUTO_FSM`](#auto_fsm-new-experimental); AUTO_COMB_AREA_OPT followed by pipeline/MCP |
+| Parallel / unsharing | Original; [`AUTO_COMB_DELAY_OPT`](#auto_comb_area_opt--auto_comb_delay_opt-experimental) | [`AUTO_PIPELINE`](#auto_pipeline), [`AUTO_MULTI_CYCLE`](#auto_multi_cycle); optionally after AUTO_COMB_DELAY_OPT |
+| Sharing transformation | [`AUTO_COMB_AREA_OPT`](#auto_comb_area_opt--auto_comb_delay_opt-experimental) | [`AUTO_FSM`](#auto_fsm-experimental); AUTO_COMB_AREA_OPT followed by pipeline/MCP |
 
 Both pipelining and MCP divide computation **along the time axis**: pipelining
 inserts registers; MCP permits longer settling through timing constraints.
@@ -2318,10 +2352,10 @@ The table describes the requested transformation, not ordinary synthesis CSE.
 | Feature | Trade-off | Core `.latency` | Stream wrapper |
 |---|---|---|---|
 | `AUTO_PIPELINE` | Extra registers for timing, II=1 | Inserted register slices | `make_stream_auto_pipeline` |
-| `AUTO_MULTI_CYCLE` (New) | Longer settling interval, lower throughput | Allowed path cycles | `make_stream_auto_multi_cycle` (II=`latency + 1`) |
-| `AUTO_COMB_AREA_OPT` (New, Experimental) | Smaller estimated area, potentially longer combinational delay | Always 0 | `make_stream_auto_comb_area_opt` (two boundary cycles, II=1) |
-| `AUTO_COMB_DELAY_OPT` (New, Experimental) | Shorter estimated delay, potentially larger area | Always 0 | `make_stream_auto_comb_delay_opt` (two boundary cycles, II=1) |
-| `AUTO_FSM` (New, Experimental) | Share resources across states while meeting timing | Accepted input to result | `make_stream_auto_fsm` |
+| `AUTO_MULTI_CYCLE` | Longer settling interval, lower throughput | Allowed path cycles | `make_stream_auto_multi_cycle` (II=`latency + 1`) |
+| `AUTO_COMB_AREA_OPT` (Experimental) | Smaller estimated area, potentially longer combinational delay | Always 0 | `make_stream_auto_comb_area_opt` (two boundary cycles, II=1) |
+| `AUTO_COMB_DELAY_OPT` (Experimental) | Shorter estimated delay, potentially larger area | Always 0 | `make_stream_auto_comb_delay_opt` (two boundary cycles, II=1) |
+| `AUTO_FSM` (Experimental) | Share resources across states while meeting timing | Accepted input to result | `make_stream_auto_fsm` |
 
 AUTO_COMB_AREA_OPT ignores delay; AUTO_COMB_DELAY_OPT ignores area except to break delay ties. The temporal tools use the
 `@MAIN` clock goal; pipeline/MCP accept `latency=`, `start_latency=` and
@@ -2334,10 +2368,10 @@ Rules shared by the AUTO tags:
   function's top level) and capture it by closure in the `@hw_func` that uses it. That is
   what lets the surrounding Python read `.latency`.
 - **`.latency` is an ordinary Python `int` at elaboration time**, so you can use it to size
-  FIFOs, counters and handshakes. Before any synthesis it reads the fixed or starting value
-  (see each section for the default). A synthesizing build then re-elaborates the design with
-  the values it actually built (pin-and-confirm), so the `.latency` your Python consumed always
-  matches the hardware. A following non-`--comb` `pypelinec --sim` sees the same values.
+  FIFOs, counters and handshakes. A fixed value is visible immediately. An automatically
+  chosen value is zero (or its starting value, where supported) until timing-driven
+  implementation chooses it; the source is then elaborated again with the chosen value so
+  constants derived from `.latency` match the implemented hardware.
   AUTO_COMB_AREA_OPT's latency is always zero and needs no latency feedback pass.
 - **Write handshakes that react to the chosen value**, not to a number you guessed. The tool is
   free to change its mind when the clock goal or the design changes.
@@ -2363,12 +2397,25 @@ and, unlike a plain pragma, it exposes the **discovered stage count** back to yo
 Python as `.latency`:
 
 The function does not need to be pre-divided into helpers that each happen to fit one
-clock. Elaboration exposes the primitive operations and their dependency wiring even
-when the body is one flat sequence, and the planner may register legal operation outputs
-or genuinely split supported wide arithmetic leaves. Helper boundaries are optional
-structure and a placement tie-break, not a prerequisite for auto-pipelining. See
-[`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md), [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md) and
-[`RAW_VHDL_DESIGN.md`](RAW_VHDL_DESIGN.md) for the lowering rules.
+clock. Primitive operations and their dependency wiring remain visible even when the
+body is one flat sequence. Legal cuts include operation boundaries and supported
+bit-internal splits for wide arithmetic, comparisons, and muxes. A `vhdl()`
+body is opaque: it can be pipelined only at boundaries declared by its fixed-latency
+contract. Helper boundaries are optional structure and a placement tie-break, not a
+prerequisite for auto-pipelining.
+
+The current built-in leaf split contract is:
+
+| Operation kind | Interior behavior when pipelined |
+|---|---|
+| `+`, `-`, comparisons, accumulator | Bit work can be divided across stages |
+| Built-in muxes | Packed output bits can be divided across stages, including compound values |
+| Bitwise operations, `~`, unary `-`, multiply | The operation remains whole; registers may be placed at its boundaries (at most two useful slices) |
+| Casts, constant shifts, constant references, pure bit rewiring | Zero-delay/atomic; no interior slice |
+| User `vhdl()` | Opaque; only its declared fixed latency and surrounding boundaries are visible |
+
+Division, remainder, and variable shifts use their registered soft implementations, so
+their internal source hierarchy may expose additional legal operation boundaries.
 
 ```python
 MY_AP = AUTO_PIPELINE(some_func)           # tool picks how many registers
@@ -2380,8 +2427,8 @@ def my_pipeline(i: my_struct_t) -> my_struct_t:
 MY_AP.latency    # int: the number of registers (clocks of latency) built
 ```
 
-Build reports distinguish inserted register **slices** from combinational pipeline
-**stages**: zero slices is one stage, and `N` serial slices separate `N + 1` stages.
+An inserted register **slice** is not the same count as a combinational pipeline
+**stage**: zero slices is one stage, and `N` serial slices separate `N + 1` stages.
 The `latency` arguments below and `.latency` are the core's clock delay in inserted
 register slices, not the number of combinational regions. So `latency=2` separates
 three combinational regions and reports two clocks of core latency. Any explicit
@@ -2393,34 +2440,30 @@ It is delayed by `.latency` cycles when that is nonzero (see below), so while
 
 #### Controlling the latency: `latency=`, `start_latency=`, `max_latency=`
 
-By default the throughput sweep decides how many registers a call site gets,
+By default timing-driven implementation decides how many registers a call site gets,
 starting from none. Three optional keyword arguments change that:
 
 ```python
 AUTO_PIPELINE(some_func, latency=3)                       # fixed: exactly 3 registers, always
-AUTO_PIPELINE(some_func, start_latency=2)                 # a starting guess for the sweep
+AUTO_PIPELINE(some_func, start_latency=2)                 # a starting guess
 AUTO_PIPELINE(some_func, max_latency=5)                   # a hard limit
 AUTO_PIPELINE(some_func, start_latency=2, max_latency=5)  # guess and limit together
 ```
 
 - **`latency=N` sets a fixed latency.** The call site always gets exactly `N`
-  registers, in every build. That includes `--comb`, `--no_synth` and `--yosys_json`
-  builds, which measure delays for just those call sites so the registers are still
-  placed sensibly. `.latency` reads `N` from the moment the object is constructed, and
-  native simulation, even a plain `pypeline_sim.py` run, delays the call by `N` cycles.
-  Use it when surrounding logic depends on an exact latency. If `N` registers can't
-  meet the clock goal, the build fails timing with a warning that names the
-  constraint. `latency=` can't be combined with the other two arguments. The C
-  frontend's `#pragma AUTOPIPELINE N` means the same thing.
-- **`start_latency=S` is a starting guess.** On its first iteration, a synthesizing
-  build's sweep builds `S` registers at the call site. It adds more if timing fails,
-  and the trimming pass after timing is met (`--pipeline_min_effort`) may still remove
-  some. `.latency` reads `S` instead of 0 during that build's first elaboration, so when
-  the guess is right the build skips the pin-and-confirm re-elaboration entirely.
-  Plain native sim and `--comb`-style builds ignore it, and `.latency` reads 0 there.
-- **`max_latency=M` is a limit.** The sweep never builds more than `M` registers at
-  the call site. If that limit is what keeps the design from meeting its clock goal,
-  the sweep stops, names the constraint in a warning, and the build fails timing.
+  registers. `.latency` reads `N` from the moment the object is constructed, and
+  native simulation delays the call by `N` cycles.
+  Use it when surrounding logic depends on an exact latency. If `N` registers cannot
+  meet the clock goal, implementation fails rather than violating the fixed source
+  contract. `latency=` can't be combined with the other two arguments.
+- **`start_latency=S` is a starting guess.** Timing-driven implementation starts with
+  `S` registers, may add more when timing fails, and may remove unnecessary registers
+  after timing is met. Its bootstrap elaboration reads `.latency == S`; plain source
+  simulation and non-automatic elaboration read 0 until an implemented latency is
+  supplied.
+- **`max_latency=M` is a limit.** Automatic implementation never builds more than `M`
+  registers at the call site. If that limit prevents the clock goal, implementation
+  fails rather than exceeding the source constraint.
 
 The rules for these arguments:
 - Values are ints of at least 0, and `start_latency` can't exceed `max_latency`.
@@ -2435,31 +2478,13 @@ The rules for these arguments:
 most useful for sizing FIFOs and counters that sit next to the free-running pipeline;
 this is exactly how `make_stream_auto_pipeline` sizes its output FIFO automatically (see
 [Pipelined Stream Wrappers: `make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline)).
-A fixed `latency=N` always reads `N`. Otherwise `.latency` reads **0**:
-
-- always in plain native Pypeline sim (`pypeline_sim.py` run directly, or
-  `pypelinec --sim --comb` — no synthesis ever runs),
-- always in `--comb` / `--no_synth` / `--yosys_json` builds (no throughput sweep runs),
-- during the bootstrap elaboration pass of a real synthesizing build, unless
-  `start_latency=S` is given, in which case it reads `S`.
-
-On a real build, the `pypelinec` driver's **pin-and-confirm** loop makes the value real:
-the design is first elaborated with `.latency` reading 0 and swept as usual; the
-discovered stage counts are then installed and the design re-elaborated, with the
-previous sweep's pipelining carried over as pinned seeds so only a **seeded confirmation
-synthesis** runs per pass (not a fresh sweep). The loop repeats until the stage counts
-harvested from the built result equal the values the design's Python consumed — an extra
-pass is normal when realizing the seeded slices hierarchically (e.g. into pipelined
-built-in div entities with their own stage granularity) changes the total — so on exit
-the `.latency` your Python consumed is guaranteed equal to the stage count of the
-hardware actually built. Designs that never read `.latency` pay nothing: the loop exits
-after the ordinary single sweep. The same goes for designs whose reads already match
-what was built, such as fixed `latency=` call sites or a correct `start_latency=`
-guess. (See `docs/AUTO_PIPELINE_DESIGN.md` for the loop's details and
-failure modes.) A non-`--comb` `pypelinec --sim` run then launches native simulation
-with those same latencies installed **and emulated** — `.latency` reads the real value
-during the sim's design import too, and every AUTO_PIPELINE call site behaves as an
-N-stage pipeline (see the "Pipelined native sim" section in `docs/pypeline_sim_DESIGN.md`).
+A fixed `latency=N` always reads `N`. Otherwise `.latency` reads 0 when no completed
+timing-driven implementation has supplied a value, except that an active automatic
+implementation bootstraps `start_latency=S` at S. During implementation the source is
+re-elaborated until the value consumed by surrounding Python equals the actual inserted
+register count. Native simulation supplied with that implemented configuration emulates
+the same N-cycle delay. The commands and build modes that do or do not perform this
+feedback are listed under [Automatic implementation and sweeps](README.md#automatic-implementation-and-sweeps).
 
 **Construction timing matters**: construct `AUTO_PIPELINE(...)` once, eagerly, as plain
 Python — typically at a factory function's own top level — and capture the object by
@@ -2524,32 +2549,159 @@ you add around the call are yours to count (e.g. total latency here is
 
 #### AUTO_PIPELINE_RAM
 
-[Automatically pipelined RAM](AUTO_PIPELINE_DESIGN.md#8-auto-pipelined-ram) provides synchronous FPGA
-block RAM with automatic registers, bank splitting, and a valid/ready FIFO
-wrapper.
+`make_auto_pipeline_ram` provides synchronous block RAM whose input/output registers
+and depth banks can be selected automatically. `make_stream_auto_pipeline_ram` adds
+independent valid/ready request and response interfaces with enough response buffering
+to tolerate downstream backpressure.
 
-For timing-driven FPGA block RAM, use `make_auto_pipeline_ram` from `ram` or
-`make_stream_auto_pipeline_ram` from `stream.stream_ram`. They keep the port/type
-interfaces below, replace manual stage counts with `latency`, `start_latency`, and
-`max_latency`, and always start with a one-cycle synchronous read. Can select input/output registers and split deep memories into pipelined banks.
-The stream variant uses response FIFOs and credits to absorb backpressure.
+```python
+from pypeline import hw_func, uint1_t, uint32_t
+from ram import make_auto_pipeline_ram
+from stream.stream_ram import make_stream_auto_pipeline_ram
 
-Unlike the manual factories, auto-pipelined RAMs require a dependent read to wait
-`.read_after_write_gap` enabled clocks after accepting a write. Collision data and
-`rw` write-response `rd_data` are unspecified. See the
-[auto-pipelined RAM API, examples, and splitting diagram](AUTO_PIPELINE_DESIGN.md#8-auto-pipelined-ram).
+ram, ram_out_t = make_auto_pipeline_ram(
+    uint32_t, 65536, ports=("w", "r"), max_latency=9
+)
+stream_ram, stream_ram_t = make_stream_auto_pipeline_ram(
+    uint32_t, 65536, ports=("w", "r"), max_latency=9
+)
+```
 
-### `AUTO_MULTI_CYCLE(...)` (New)
+Both factories have this signature:
+
+```python
+factory(elem_t, size, ports=("rw",), init=None, byte_write_enables=False,
+        *, latency=None, start_latency=None, max_latency=None)
+```
+
+The raw factory is called once per enabled clock with one request per port. Its
+response `.valid` and data describe the request from `.latency` enabled clocks ago:
+
+```python
+addr_t = ram.addr_t
+write_t = ram.p0_in_t
+read_t = ram.p1_in_t
+
+@hw_func
+def access_ram(write_addr: addr_t, write_data: uint32_t,
+               read_addr: addr_t, do_write: uint1_t) -> ram_out_t:
+    write: write_t
+    write.addr = write_addr
+    write.valid = do_write
+    write.wr_en = 1
+    write.wr_data = write_data
+
+    read: read_t
+    read.addr = read_addr
+    read.valid = 1
+
+    return ram(write, read)  # caller uses .p1.valid and .p1.rd_data
+```
+
+The stream factory takes the request-forward and response-feedback halves for every
+port. A request transfers on `request.stream.valid & result.*_req_if.ready`; a response
+transfers on `result.*_resp_if.stream.valid & response_ready`:
+
+```python
+write_req_if_t = stream_ram.p0_req_intrf.fwd_t
+write_resp_fb_t = stream_ram.p0_resp_intrf.fb_t
+read_req_if_t = stream_ram.p1_req_intrf.fwd_t
+read_resp_fb_t = stream_ram.p1_resp_intrf.fb_t
+
+@hw_func
+def access_stream_ram(write_req: write_req_if_t, write_response_ready: uint1_t,
+                      read_req: read_req_if_t, read_response_ready: uint1_t
+                      ) -> stream_ram_t:
+    return stream_ram(
+        write_req,
+        write_resp_fb_t(ready=write_response_ready),
+        read_req,
+        read_resp_fb_t(ready=read_response_ready),
+    )
+```
+
+The port request/response fields, initialization values, byte-write-enable types, and
+clock-enable behavior match [`make_ram`](#rams-make_ram--make_stream_ram). Each factory
+instance owns independent storage. `latency`, `start_latency`, and `max_latency` count
+the **total** request-to-response latency, including the mandatory one-cycle synchronous
+memory read, so every supplied value must be an integer of at least one. A fixed
+`latency` cannot be combined with the other two. Fixed latency is exact in simulation
+and hardware. Without a selected automatic plan or fixed value, the RAM uses its
+one-cycle synchronous baseline; `start_latency` is the automatic-plan bootstrap guess
+and may later be trimmed, while `max_latency` is a hard ceiling. There is no reset or
+flush port.
+
+The returned RAM function exposes:
+
+- `.latency`: total response latency shared by all ports.
+- `.plan`: the selected input/output register and bank-tree layout.
+- `.read_after_write_gap`: enabled-clock separation required between an accepted write
+  and a dependent read of the same address.
+- The same `.pN_in_t`, `.pN_out_t`, `.in_ts`, `.out_ts`, `.addr_t`, `.we_t`, and
+  configuration attributes as the manual RAM factory.
+
+Waiting `.read_after_write_gap` enabled clocks, or waiting for the corresponding stream
+write response, guarantees that a dependent read observes the write. Disabled clocks do
+not count. Same-address read/write collision data, ordering between overlapping
+simultaneous writes, and `rd_data` returned by an `"rw"` write are unspecified. Disjoint
+byte writes are not overlapping. Invalid requests never write memory.
+Native and generated-HDL simulation assertions diagnose an early dependent read and
+simultaneous writes to overlapping bits; do not rely on either unspecified result.
+
+Non-power-of-two memories retain the manual RAM convention: native simulation wraps an
+address modulo `size`, while an out-of-range hardware address has undefined behavior.
+One writer with any number of readers is supported by read-memory replication. Two
+writable ports are supported when they fit the two physical RAM ports; more than two
+writers, or extra independent readers alongside two writers, are rejected.
+
+An unsplit RAM can place registers before and/or after its synchronous read:
+
+```text
+request --> [optional input register] --> [BRAM read: 1 cycle]
+        --> [optional local output register] --> response
+```
+
+For a deep memory, splitting uses high address bits to choose contiguous banks and
+pipelines two-way request and response trees. The valid bit travels with each branch,
+avoiding one high-fanout global bank selector:
+
+```text
+                         REQUEST TREE       MEMORY LEAVES       RETURN TREE
+                         /--[R]-------> [BRAM 0] -->[O]--\
+              /--[R]----<                               [M]--\
+request->[I]<           \--[R]-------> [BRAM 1] -->[O]--/     [M]-->response
+             \           /--[R]-------> [BRAM 2] -->[O]--\     /
+              \--[R]----<                               [M]--/
+                         \--[R]-------> [BRAM 3] -->[O]--/
+
+[I] input register  [R] request-routing register
+[O] per-bank output register  [M] registered response selection
+```
+
+The stream wrapper reserves one response FIFO and credit counter per port. It admits a
+request only after reserving response space; once admitted, a request advances through
+the RAM exactly once even if the consumer stalls. Credits return when responses are
+consumed. It exposes the core `.latency` and `.min_response_latency == .latency + 2`.
+After filling, it can sustain one accepted request per enabled clock (II=1) while the
+consumer remains ready.
+
+Automatic RAM plan selection is currently supported by the ECP5 open-source synthesis
+flow. Backend availability and RAM-plan reports are documented under [Automatic
+implementation and sweeps](README.md#automatic-implementation-and-sweeps).
+
+<a id="auto_multi_cycle"></a>
+
+### `AUTO_MULTI_CYCLE(...)`
 
 Picking `N` by hand means guessing how slow the logic really is. Too small, and the build
 fails timing; too large, and throughput is wasted. `AUTO_MULTI_CYCLE(...)` is the tool-tuned
-version of `MULTI_CYCLE[N]`, in the same spirit as `AUTO_PIPELINE(...)`: the pypelinec
-throughput sweep chooses the cycle count.
+version of `MULTI_CYCLE[N]`, in the same spirit as `AUTO_PIPELINE(...)`: timing-driven
+implementation chooses the cycle count.
 
 ```python
 from pypeline import Reg, AUTO_MULTI_CYCLE, uint8_t
 
-MC = AUTO_MULTI_CYCLE(start_latency=3)                # sweep starts at 3 cycles
+MC = AUTO_MULTI_CYCLE(start_latency=3)                # selection starts at 3 cycles
 # MC = AUTO_MULTI_CYCLE(start_latency=3, max_latency=8)   ...and never goes past 8
 # MC = AUTO_MULTI_CYCLE(latency=4)                         fixed: exactly 4 cycles
 
@@ -2565,33 +2717,29 @@ def my_fsm(i: my_struct_t) -> my_struct_t:
     ...
 ```
 
-- **`.latency` is the cycle count.** Before any synthesis it reads `latency=`, else
-  `start_latency=`, else 1. The same value applies in native simulation and in `--comb`
-  builds.
-- **The sweep only raises it.** In a synthesizing build, each timing report is checked.
-  When the failing path runs from this tag's `.start` register to its `.end` register,
-  the count jumps to what the reported slack needs. It never drops below where it started
-  and never exceeds `max_latency=`. A cap that blocks the clock goal fails the build with
-  `limited by AUTO_MULTI_CYCLE ...` and `TIMING NOT MET`.
-- **The design is rebuilt with the final count.** Like AUTO_PIPELINE's `.latency`, the
-  build re-elaborates the design so every `.latency`-derived constant matches the
-  constraint, and a following `--sim` counts the same cycles. If the count never moved,
-  that extra pass is skipped.
+- **`.latency` is the cycle count.** Before timing-driven implementation it reads
+  `latency=`, else `start_latency=`, else 1. Native simulation uses the same source-visible
+  value it is supplied.
+- **Automatic selection only raises it.** The count never drops below its starting value
+  and never exceeds `max_latency=`. A cap that prevents the clock goal is a hard failure.
+- **The source is re-elaborated with the final count.** Like `AUTO_PIPELINE.latency`, this
+  keeps every counter, buffer, and handshake derived from `.latency` consistent with the
+  implemented constraint.
 - **Your logic must read `.latency`.** An `AUTO_MULTI_CYCLE` whose `.latency` nothing reads can't
   follow the sweep, so a synthesizing build refuses it. For a hand-timed path, use
   `MULTI_CYCLE[N]` or `AUTO_MULTI_CYCLE(latency=N)`.
 - **Construct it once, outside any `@hw_func` body**, and capture it by closure, e.g. at
   a factory's top level. Constructing it inside a body is an error.
-- **Vivado only**, like `MULTI_CYCLE[...]`.
+- **Vivado only**, like `MULTI_CYCLE[...]`; see [Synthesis backends and target
+  selection](README.md#synthesis-backends-and-target-selection).
 
 For the common case of one slow function behind a valid/ready handshake, use
 [`make_stream_auto_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle),
 which does all of this for you.
 
-<a id="auto_comb_area_opt-new-experimental"></a>
-<a id="auto_comb_delay_opt-new-experimental"></a>
+<a id="auto_comb_area_opt--auto_comb_delay_opt-experimental"></a>
 
-### `AUTO_COMB_AREA_OPT(...)` / `AUTO_COMB_DELAY_OPT(...)` (New, Experimental)
+### `AUTO_COMB_AREA_OPT(...)` / `AUTO_COMB_DELAY_OPT(...)` (Experimental)
 
 `AUTO_COMB_AREA_OPT(func)` returns a combinational callable with the same input and
 output types and bit-exact behavior. It searches for lower resource use without
@@ -2625,7 +2773,8 @@ into one serial use of a unit without storage.
 
 **Experimental and bounded.** The original is retained unless a candidate has
 strictly lower estimated area. This is not a global-minimum or mapped-area
-guarantee. Reports state moves, area-model coverage and search limits. Stateful
+guarantee. The search is bounded to 4,096 graph nodes, 96 candidates, eight rounds,
+a beam width of four, and 8,192 Boolean-proof nodes. Stateful
 functions, temporal calls and raw VHDL fail the purity check; unsupported decoded
 operations and scoped operator implementations conservatively retain the original.
 Floating-point reassociation and unsafe signed arithmetic transformations are
@@ -2638,8 +2787,6 @@ area-reduced core with registered valid/ready ports and II=1, see
 [`make_stream_auto_comb_area_opt`](#combinational-optimization-stream-wrappers-make_stream_auto_comb_area_opt--make_stream_auto_comb_delay_opt-experimental).
 Default `AUTO_FSM(original_func)` already considers the shared optimization
 choices; explicitly wrapping it in AUTO_COMB_AREA_OPT is not required.
-
-Implementation details: [`AUTO_COMB_OPT_DESIGN.md`](AUTO_COMB_OPT_DESIGN.md).
 
 `AUTO_COMB_DELAY_OPT(func)` chooses the opposite trade-off: reduce estimated
 combinational critical-path delay, allowing area growth without an area budget.
@@ -2662,8 +2809,7 @@ Unsafe speculation of division, variable shifts or arbitrary calls, signed/float
 reassociation and pure fanout-only cloning are excluded.
 
 Selection uses dependency-path estimates and cached timing, with **no extra
-candidate synthesis jobs**. Reports identify heuristics and legacy total-delay
-proxies separately from combinational timing components. Search work is bounded;
+candidate synthesis jobs**. Search work is bounded;
 there is no global-optimum or post-route-speed guarantee. Native calls still
 forward to the original. `AUTO_COMB_DELAY_OPT(AUTO_COMB_AREA_OPT(f))` applies inside
 out; the wrappers do not cancel. Repeating either same wrapper is idempotent.
@@ -2675,12 +2821,12 @@ exposing the underlying tag. Pipeline, MCP and FSM factories also accept AUTO_CO
 Default AUTO_FSM compares new candidates by total scheduled area, not by delay
 alone. AUTO_PIPELINE does not implicitly invoke AUTO_COMB_DELAY_OPT.
 
-Implementation details: [`AUTO_COMB_OPT_DESIGN.md`](AUTO_COMB_OPT_DESIGN.md).
+<a id="auto_fsm-experimental"></a>
 
-### `AUTO_FSM(...)` (New, Experimental)
+### `AUTO_FSM(...)` (Experimental)
 
-> **Experimental.** `AUTO_FSM` is new. Its scheduler, minimum-area search and `--auto_fsm_*`
-> command-line options may still change. It has no `ready` backpressure of its own; for a
+> **Experimental.** `AUTO_FSM`'s scheduler and minimum-area search may still change.
+> It has no `ready` backpressure of its own; for a
 > real valid/ready port use
 > [`make_stream_auto_fsm`](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental).
 
@@ -2713,17 +2859,9 @@ UPDATE.latency                            # fixed in→out cycle count; 0 until 
 ```
 
 Twelve identical adds in `next_state` — whether written as a Python loop that
-elaborates unrolled, or as twelve separate lines — become **one** adder used in
-twelve different states. Nothing in your source says how many states to use or
-what shares what: the build measures your operations' delays, schedules them
-against the clock goal, and prints what it did:
-
-```
-AUTO_FSM pypeline_design_next_state: 28 ops -> 9 shared unit(s), 8 states,
-        latency 9 clks, budget 22.50 ns/state (scale 0.900), worst state 13.10 ns
-  BIN_OP_PLUS_int16_t_int16_t x12 -> 1 unit
-  ...
-```
+elaborates unrolled, or as twelve separate lines — can become one adder reused in
+twelve different states. The implementation schedules operations against the clock
+goal and chooses which compatible operations share a unit.
 
 This is the right tool when a computation has a lot of *slack* — something that
 runs once per video frame, or once per packet, while a million cycles go by.
@@ -2749,12 +2887,14 @@ all of the time.
   interval == `.latency`.
 - Construct `AUTO_FSM(...)` once, eagerly, at module or factory level and capture
   it by closure — same rule and same reason as `AUTO_PIPELINE`.
+- Dynamic hardware array indices are not supported in the pure function. An operation
+  that consumes a complete array value cannot be shared because its operand multiplexer
+  would require an unsupported array-of-arrays shape.
 
-**Write the caller to react to `valid`, not to count cycles.** `.latency` is 0
-in plain native sim and in `--comb`/`--no_synth` builds (where the call site is
-a zero-latency passthrough) and a real number in a full build. Code that waits
-for `resp.valid` is correct in both, and stays correct when the tool changes its
-mind about the state count:
+**Write the caller to react to `valid`, not to count cycles.** Before an implemented
+schedule is supplied, `.latency` is 0 and the call is a combinational passthrough.
+Code that waits for `resp.valid` is correct both then and with a multi-cycle schedule,
+and stays correct when the state count changes:
 
 ```python
 busy: Reg[uint1_t]
@@ -2768,13 +2908,10 @@ if resp.valid:
     busy = 0
 ```
 
-**If the FSM misses timing**, the build says so, shrinks its per-state budget,
-reschedules into smaller states and tries again — the same iteration you get
-from the sweep adding pipeline stages. `--auto_fsm_budget_scale` sets the
-starting point (default `0.9` of the clock period) if you want to begin tighter
-or looser. One thing it cannot fix: a single indivisible operation slower than
-your clock (a float64 multiply, say). That is reported as `AT FLOOR`, because no
-number of extra states makes one multiplier faster.
+One thing scheduling cannot fix is a single indivisible operation slower than the
+clock, such as an opaque floating-point multiplier with no decomposable implementation.
+No number of extra states makes that operation faster; the clock goal must be reachable
+by the slowest indivisible operation.
 
 **Capping the latency.** `AUTO_FSM(func, max_latency=N)` says the result must
 arrive within N cycles. Sharing everything onto one unit of each kind can force
@@ -2789,16 +2926,6 @@ It is a hard constraint. If no schedule meeting your clock goal fits in N
 cycles, the build fails and tells you the latency it actually needs, rather than
 handing back something slower than you asked for.
 
-**The build also looks for the smallest FSM it can find**, and prints what it
-decided:
-
-```
-AUTO_FSM pypeline_design_next_state: 28 ops -> 9 shared unit(s), 8 states, ...
-  area search: -7.8% area vs sharing everything (estimated 260 against 282),
-               3 kind(s) opened up, 1 kind(s) given extra unit(s),
-               110 candidate schedule(s) tried
-```
-
 Sharing is not free: every shared unit needs a multiplexer picking its operands
 per state, and more states means more registers holding values in between. For
 an expensive unit — a multiplier, a wide adder — sharing wins easily. For a
@@ -2812,10 +2939,7 @@ gates are far too small a thing to share.
 
 The search never returns something its model calls bigger than plain
 share-everything. It may spend unused timing margin, but never beyond the
-scaled clock budget; the real synthesis/tighten loop remains the final timing
-authority. That loop stops, and says so, when a tightened schedule doesn't raise
-fmax. The critical path is then somewhere extra states can't reach. `--auto_fsm_no_area_sweep` turns the search *off*, which is useful
-mainly for comparing the two.
+per-state clock budget.
 
 **How much the search can do depends on your clock goal**, and not in the
 direction people expect. A high goal FORCES decomposition — an operation that
@@ -2825,22 +2949,8 @@ choice*: with a budget big enough for the whole operation, keeping it atomic is
 the starting point and opening it up is a decision made on area grounds. So if
 you want the smallest design and do not care about speed, ask for a low clock
 and let the search work; asking for a high one takes the choice away from it.
-See [`docs/AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md) for what is and is not
-openable (signed multiplies and floating point are not).
-
-`--auto_fsm_sweep_debug` prints one line per candidate the search considers —
-the move, its estimated area, and why it was accepted or rejected. Without it
-the build log reports only the final choice, which makes "the search declined
-to move" indistinguishable from "the search never looked".
-
-`--auto_fsm_open SUBSTR` and `--auto_fsm_unshare SUBSTR=N` skip the search and
-build one explicitly chosen point instead: open up the unit whose entity name
-contains `SUBSTR`, or give it `N` copies. These exist for measurement — the
-tool cannot read area back from a synthesis tool, so the only way to check that
-the search's answer really is the smallest is to build the alternatives it
-passed over and count cells, which is what
-`src/tests/pypeline_tests/inst/auto_fsm_min_area_verify_test.py` does. An
-ambiguous or unmatched `SUBSTR` is an error rather than a silent no-op.
+Built-in unsigned integer operators can often be decomposed through their soft
+implementations; signed multiplication and floating-point operations remain atomic.
 
 The mux cost is based on **distinct values per port**, not simply the number of
 operations using the unit. If twenty states all feed the same coefficient or
@@ -2850,30 +2960,19 @@ the same mapping. Under sky130, non-overlapping same-type values from different
 units may also share a register when the real FF saving exceeds the writeback
 mux cost and the mux still fits the clock budget.
 
-#### Control path — `--auto_fsm_ctl`
-
-Something has to decode the state into "which operand does this unit take",
-"which registers are written now" and "what is the next state". `--auto_fsm_ctl`
-picks how, and the default is normally right:
-
-| value | how state is decoded | comparators per FSM |
-|---|---|---|
-| `auto` (default) | area-rank v3 and onehot independently; keep the smaller feasible schedule | selected encoding's count |
-| `v3` | constant lookup tables indexed by the state | one (the accept) |
-| `v2` | an equality comparator per state per unit, in priority chains | O(states × units) |
-| `onehot` | one bit per state; every control signal is a bit read | zero |
-
-`v2` exists for A/B comparison against `v3` — it is measurably both bigger and
-slower. `onehot` can eliminate more decode but spends
-a flip-flop per state where v3 spends `log2(states)`. `auto` evaluates that
-trade with the active area model and prints both scores; the resolved choice is
-part of the schedule's identity, so switching it re-measures rather than
-reusing timing from the other one.
+`AUTO_FSM(func, max_latency=N, register_output=False)` omits the default result
+register bank. The result and one-cycle valid pulse are then driven directly from the
+final execution state, so `.latency` equals the execution-state count. The default
+`register_output=True` keeps `.data` stable between valid pulses. Most source should use
+the default; `make_stream_auto_fsm` selects `False` because its own backpressure holding
+register already supplies that boundary. The minimum scheduled latency is two cycles
+with the default registered output and one cycle with `register_output=False`;
+`max_latency` smaller than the corresponding minimum is rejected at construction.
 
 Working examples: `examples/pypeline/auto_fsm_donut_update.py` (per-frame
 rotation math) and `examples/pypeline/float_sine_auto_fsm.py` (a float64
-polynomial onto one multiplier). Full design notes in
-[`docs/AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md).
+polynomial onto one multiplier). Build controls and reports are documented under
+[Automatic implementation and sweeps](README.md#automatic-implementation-and-sweeps).
 
 ---
 
@@ -3069,10 +3168,9 @@ bus_intrf.stream_t  # the plain {data, valid} half nested at .fwd_t.stream,
 There is no separate `make_interface_type`/`make_interface_feedback_type` to call, and no local
 alias to invent either: always write `bus_intrf.fwd_t` (etc.) directly at each use site rather than
 binding it to a shorter name first. A bound alias (`bus_t = bus_intrf.fwd_t`) throws away exactly
-the information `.fwd_t`/`.fb_t` exist to preserve — a reader can no longer tell from the name
-alone whether a type is a paired port half or a standalone struct (see
-`docs/PY_TO_LOGIC_DESIGN.md` for why this also matters to the elaborator itself in
-factory-closure contexts). This is also why the interface-holding variable
+the information `.fwd_t`/`.fb_t` exist to preserve — both a reader and elaboration of a
+factory closure can no longer distinguish a paired port half from a standalone struct.
+This is also why the interface-holding variable
 itself gets a distinct suffix, so the two kinds of name are never visually interchangeable:
 
 - **`_intrf`**: a variable holding the `@interface` class itself (`bus_intrf`) — always accessed
@@ -3119,8 +3217,7 @@ choose. Direction follows from which side holds the feedforward half:
 - an **output** port does the opposite.
 
 **Convention (enforced by a lint): suffix the port variable with `_if`.** A lint warns if a
-paired port name doesn't end in `_if` (see `docs/PY_TO_LOGIC_DESIGN.md` for the check itself)
-— not a hard error (it's a style convention, not a correctness rule), but every port name
+paired port name doesn't end in `_if`. This is not a hard error, but every port name
 in this codebase follows it. Because one name legitimately means two
 different types depending on which side you're reading (an argument of the feedforward type, a
 return field of the reverse type — or vice versa for an output port), a bare port name like
@@ -3616,8 +3713,7 @@ their internal `for i in range(n)` loop at elaboration time (see
 [for/while → loop unrolling](#your-first-hardware-function)), so there's no need for
 the per-width duplication older, non-generic AXIS implementations require.
 
-See `src/tests/pypeline_tests/inst/axis_test.py` for a complete worked example, including
-synthesis through `pypelinec`.
+See `src/tests/pypeline_tests/inst/axis_test.py` for a complete source example.
 
 ### Testbench byte-stream generator/checker
 
@@ -3655,7 +3751,7 @@ start on a fresh beat, so a non-block-aligned leading segment needs its last bea
 with not-kept bytes rather than letting the trailer merge into the leftover lanes).
 `AxisSimSource.send(frame, keep_mask=...)` is the same idea for native sim.
 
-For native (non-synthesizable) `--sim` testbenches driven via `@sim_input`/`@sim_output`,
+For native testbenches driven via `@sim_input`/`@sim_output`,
 `include/pypeline/axi/axis_sim.py`'s `AxisSimSource`/`AxisSimSink` cover the same ground in
 plain Python — API-inspired by cocotb's `cocotbext-axi` (queue-backed `send()`/`recv()`, a
 `set_pause_generator()` backpressure hook) but not that library itself: Pypeline's native
@@ -3847,39 +3943,16 @@ hardcoded `tkeep` all-ones on transmit and ignored it entirely on receive.
 
 ---
 
-## Host-Side Generated Types
+## Host Type Export Declarations
 
 The sections above put a struct on a wire. Something on the other end has to parse it —
 usually a program on a host machine, written in plain Python, with no Pypeline checkout.
 [`type_to_bytes`](#software-side-conversion-type_to_bytes--tto_bytes) covers that only
 while Pypeline is importable, which on a target board it generally is not.
 
-So every `pypelinec` build of a `.py` design writes one standalone file:
-
-```
-<out_dir>/host/pypeline_host_types.py
-```
-
-Copy that file next to the host program. It imports nothing but the Python standard
-library, and gives the same API by the same names as in-repo:
-
-```python
-from pypeline_host_types import pdw_ctrl_t, valid_pdw_t
-
-frame = pdw_ctrl_t.to_bytes(pdw_ctrl_t.zero()._replace(threshold_high=4096))
-writeStream(tx, frame)                       # your own byte-array function
-
-rec = valid_pdw_t.from_bytes(readStream(rx, valid_pdw_t.BYTE_LENGTH))
-print(rec.toa, rec.peak_power_db)            # named fields, signed correctly
-print(rec._asdict())                         # namedtuple, so dict interop is free
-```
-
-`@struct` types become namedtuples (every field required, exactly as in Pypeline — use
-`zero()` and `_replace` for partial construction); `@enum` types become `IntEnum`s;
-`byte_length` / `type_to_bytes` / `type_from_bytes` exist at module level too and accept
-anything in the module's `TYPES` dict.
-
-### What gets exported
+Pypeline source records the types and constants that a host needs. Types used by
+`make_type_to_bytes` or `make_type_from_bytes` register themselves automatically because
+the AXI and byte-stream converters all pass through those factories.
 
 Any type the hardware serializes registers itself, because
 `make_type_to_bytes` / `make_type_from_bytes` is the choke point that
@@ -3899,32 +3972,10 @@ host_export(some_t,                       # a type never put on a wire
             RECORD_T=valid_pdw_t)         # a friendlier alias for a type
 ```
 
-### Why it cannot drift
-
-Nothing in the generated file is re-derived. The leaf walk, the leaf sizing, the total
-size and the mask/sign rule are the same functions the hardware generator and
-`type_to_bytes` use — one walk, three consumers. Since `type_to_bytes` is itself asserted
-equal to simulated hardware, and the generated module is asserted equal to `type_to_bytes`
-(in a subprocess that cannot import Pypeline), the chain is: generated host module ≡
-in-repo software ≡ native-sim hardware ≡ VHDL hardware.
-
-Two details worth knowing. A flat struct of standard-width, non-enum scalars also gets a
-`struct`-module `FORMAT` string as a fast path for bulk parsing — derived from the same
-walk, never authored, and checked against `BYTE_LENGTH` when the module loads. And a type
-the design serialized both little- and big-endian defaults to little, saying so in the
-generated file's docstring; pass `endian=` explicitly in that case.
-
-### In practice
-
-`examples/pypeline/dsp/pdw` is the case this was built for. Its host files
-used to re-express two struct layouts by hand
-as `struct` format strings, with `pdw_host_types_test.py` existing solely to catch drift
-between those copies and the hardware. That project could instead copy the generated
-`pypeline_host_types.py` off a build and keep only its genuinely host-side logic — the
-gr-pdw column scaling, `build_config`, the dB conversions — with the layout, the defaults
-struct and the drift guard all gone. (The generator derives exactly the format strings
-those files hand-wrote, `"<IIiihHIIIII"` and `"<QIIIIhhhhIHH"`, which is asserted as a
-regression test.) That migration has not been made; the files still work as they are.
+The exported representation uses the same leaf order, widths, signedness, and total byte
+size as the hardware conversion functions, so no separate packing schema is required.
+How to generate and consume the standalone host module is documented under
+[Generated files and reports](README.md#generated-files-and-reports).
 
 **See also:**
 [Struct/type ↔ bytes conversion](#structtype--bytes-conversion) ·
@@ -3979,11 +4030,12 @@ only underlying FIFO implementation currently available.
 
 **Simulates via a functional model.** Even though the FIFO is a raw VHDL entity under the
 hood, `make_fifo` attaches a `collections.deque`-based FWFT [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions)
-to it, so `stream_fifo_func` works under `sim_call()`/`pypeline_sim.py` too — same data,
+to it, so `stream_fifo_func` works under both single-function and complete-design native
+simulation — same data,
 same valid/ready handshake, and the same rounded-up-to-a-power-of-two capacity as real
-hardware, just not cycle-accurate internally. See `pypeline_sim_DESIGN.md`'s
-"`make_fifo` Simulation Model" section for the exact contract, and
-`src/tests/pypeline_tests/inst/stream_fifo_test.py`.
+hardware, just not cycle-accurate internally. The model is first-word-fall-through,
+rounds capacity up to a power of two, accepts a push only while ready, presents the
+oldest word while valid, and pops it when the consumer asserts ready.
 
 **There is no flush, no occupancy count and no rollback.** `make_fifo` is a black-box
 wrapper over `src/vhdl/pipelinec_fifo_fwft.vhd` that exposes push and pop and nothing
@@ -4176,16 +4228,15 @@ a FIFO it is a stateful block. `sram.latency` is its latency when nothing stalls
 ### Simulation
 
 `make_ram` and `make_stream_ram` share one cycle-exact Python simulation model, so they work
-under `sim_call()`, `pypeline_sim.py` and `pypelinec --sim`. `self_check_ram_test.py` compares
-that model against the generated VHDL in GHDL, cycle by cycle. The model shares its memory
+under `sim_call()` and complete-design native simulation. The model shares its memory
 across evaluations, so a large RAM does not copy its contents every simulated cycle.
 
 Because `make_ram` is a fixed pipeline, two things follow for simulation:
 
 - A design that reaches a RAM with `latency > 0` from an untagged function loads the compiler
   at simulation start, to align its callers (see [Fixed User Pipelines](#fixed-user-pipelines)).
-- `AUTO_PIPELINE(f, latency=N)` over code that reaches such a RAM needs
-  `pypelinec <design> --sim`.
+- An `AUTO_PIPELINE(f, latency=N)` region that reaches such a RAM must be simulated with
+  a complete-design configuration that knows the fixed pipeline boundaries.
 
 Tests: `src/tests/pypeline_tests/inst/ram_test.py`, `stream_ram_test.py`,
 `self_check_ram_test.py`, `ram_sim_model_test.py`.
@@ -4348,16 +4399,11 @@ def buffered_div_inv(
 | `stream_auto_pipeline_t.stream_out` | `stream_t(out_type)` | `func`'s result, after AUTO_PIPELINE retiming and the output FIFO |
 | `stream_auto_pipeline_t.stream_in.ready` | `uint1_t` | high while the pipeline can accept a new `stream_in` (tracks in-flight count against the FIFO depth) |
 
-The FIFO depth is `max(2, 1 + AUTO_PIPELINE latency + 1)` — input reg + discovered core
-stages + output reg, i.e. every word that can be in flight at once, so downstream
-stalls can never overflow the FIFO and full 1-word/cycle throughput is sustained. On
-the bootstrap pass (and in plain native sim / `--comb` builds, where `.latency` stays
-0) the depth floors at 2 — which in those contexts is exact, since the effective
-pipeline latency really is just the two boundary registers; on a real build the
-pin-and-confirm loop re-elaborates with the discovered latency (see
-[Automatic (HLS-like) Implementation](#automatic-hls-like-implementation)), and a non-`--comb` `pypelinec --sim` run's
-native simulation imports the design with the same latency installed — so the FIFO is
-sized identically and the AUTO_PIPELINE call site is emulated at the same depth.
+The FIFO depth is `max(2, 1 + AUTO_PIPELINE latency + 1)` — input register,
+discovered core stages, and output register — so it can hold every word in flight and
+sustain one word per cycle while the consumer is ready. Before an automatic latency is
+known, the depth floors at two. Re-elaboration with the implemented `.latency` resizes
+the FIFO to the real pipeline depth.
 
 `in_type`/`out_type` are inferred from `func`'s own annotations via `hw_arg_types`/
 `hw_return_type`, the same way
@@ -4370,8 +4416,8 @@ locals in its body to simulate correctly (see [Automatic (HLS-like) Implementati
 
 **Simulates end-to-end.** Since `make_fifo`'s internal FIFO now carries a
 [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions), the whole
-pipeline — AUTO_PIPELINE retiming plus the output FIFO — simulates via `sim_call()` or
-`pypeline_sim.py`, including realistic backpressure when the consumer stalls. See
+pipeline — AUTO_PIPELINE retiming plus the output FIFO — simulates through the Pypeline
+simulation APIs, including realistic backpressure when the consumer stalls. See
 `src/tests/pypeline_tests/inst/stream_auto_pipeline_test.py`.
 
 **See also:** [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation) ·
@@ -4426,11 +4472,11 @@ simulation always sees `func`'s result settle the same cycle it is computed. See
 `src/tests/pypeline_tests/inst/stream_multi_cycle_test.py` (translated from
 `examples/mcp/mcp_divider.c`) for the full example.
 
-### Tool-chosen cycle count: `make_stream_auto_multi_cycle` (New)
+### Tool-chosen cycle count: `make_stream_auto_multi_cycle`
 
 `make_stream_auto_multi_cycle` is the same wrapper with an
-[`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle-new) tag in place of the fixed
-`MULTI_CYCLE[latency]`, so the pypelinec throughput sweep picks the cycle count:
+[`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle) tag in place of the fixed
+`MULTI_CYCLE[latency]`, so timing-driven implementation selects the cycle count:
 
 ```python
 from stream.stream_multi_cycle import make_stream_auto_multi_cycle
@@ -4444,11 +4490,9 @@ divider_mcp.mcp.latency    # the cycle count (results are valid latency + 1 cycl
 ```
 
 The ports and `func_mcp_t` are identical to `make_stream_multi_cycle`'s. The handshake
-is written in terms of `func_mcp.mcp.latency`, so after a build it always waits exactly as
-many cycles as the path is constrained for. Giving `start_latency=` a known-good count
-costs nothing when it holds: the sweep starts there, keeps it, and skips the
-re-elaboration pass. See `src/tests/pypeline_tests/inst/stream_auto_multi_cycle_test.py`
-(native sim) and `auto_multi_cycle_sweep_test.py` (a real Vivado sweep).
+is written in terms of `func_mcp.mcp.latency`, so it always waits exactly as many cycles
+as the path is constrained for. A correct `start_latency=` can already match the final
+value; otherwise source re-elaboration updates the handshake automatically.
 
 ---
 
@@ -4492,7 +4536,7 @@ objective differs.
 
 ## Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)
 
-[`AUTO_FSM(func)`](#auto_fsm-new-experimental) has no backpressure of
+[`AUTO_FSM(func)`](#auto_fsm-experimental) has no backpressure of
 its own: an input is accepted only while the FSM is idle, a `valid` pulse asserted while it's
 busy is ignored, and the result itself is only a **one-cycle `valid` pulse** — every raw
 AUTO_FSM call site (`self_check_auto_fsm_test.py`, the donut/sine examples) hand-rolls a `busy`
@@ -4547,19 +4591,14 @@ input can be accepted that same cycle.
 
 **The handshake body never reads `.latency`.** Unlike the raw AUTO_FSM call site's manual
 spacing (which reads `.latency` to know how far apart to place requests), `make_stream_auto_fsm`'s
-generated hardware is identical whether `fsm.latency` is 0 (bootstrap pass / `--comb` / plain
-native sim) or a real scheduled value — only the register-transfer *timing* differs, not the
-RTL shape. That is what keeps its generated entity name stable across a build's passes; see
-[`docs/AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md) for why a schedule-dependent body would risk a
-stale delay-cache hit.
+generated hardware is identical whether `fsm.latency` is 0 or a real scheduled value — only
+the register-transfer *timing* differs, not the source structure. This avoids making the
+wrapper's hardware identity depend on a schedule that is not known during initial elaboration.
 
 **Simulates end-to-end**, in the same sense `make_stream_auto_pipeline` does: plain native sim never
 installs a schedule, so `fsm.latency` stays 0 and the wrapper degrades to a correct
-1-cycle-latency, 1-cycle-II stream; a pipelined `--sim` build's native sim runs against the real
-discovered latency instead. See `src/tests/pypeline_tests/inst/stream_auto_fsm_test.py` for the
-handshake/backpressure tests and `self_check_stream_auto_fsm_test.py` for the full self-checking
-design (also driven through real GHDL — see
-[docs/AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md)'s test table).
+1-cycle-latency, 1-cycle-II stream. When native simulation is supplied an implemented
+schedule, it uses that schedule's actual latency instead.
 
 ---
 
@@ -4633,7 +4672,7 @@ those registers form a fixed pipeline, declare it with
 
 **Simulating raw VHDL requires a model.** There is no general way to simulate arbitrary
 user-supplied VHDL text in Python, so calling a `vhdl(...)`-bodied function in simulation
-— directly, via `sim_call()`, or via `pypeline_sim.py` — raises `NotImplementedError`
+— directly or via `sim_call()` — raises `NotImplementedError`
 unless you attach a Python simulation model to it with `@sim_model(target)` (see
 [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions)): either a
 synthesizable `@hw_func` written in pypeline, or an arbitrary Python class with
@@ -4690,12 +4729,10 @@ AUTO_PIPELINE asks the tool to implement pipelining. `pipeline_latency` describe
 pipelining supplied by the user. MULTI_CYCLE constrains setup timing between
 registers and does not declare a function's pipeline latency.
 
-Standalone native simulation also aligns callers around fixed user pipelines,
-using selective elaboration without synthesis. Designs without this decorator
-keep the existing `--comb` path; ordinary registers, AUTO_PIPELINE and AUTO_FSM alone
-do not activate the new simulation model. See the
-[simulation design](pypeline_sim_DESIGN.md#fixed-user-pipelines) for activation,
-state handling and warm-up details.
+Native simulation aligns callers around fixed user pipelines using the declared
+latency. During warm-up, pipeline registers contain typed zeros; register state inside
+each stage still advances with the stage's enabled input. Ordinary registers and AUTO
+tags do not turn an undeclared raw-VHDL pipeline into a fixed user pipeline.
 
 ## Just-Wires Synthesis Hint: `@wires`
 
@@ -4756,7 +4793,7 @@ See `src/tests/pypeline_tests/inst/vhdl_text_test.py` for a complete example.
 
 The rest of the simulation feature set, beyond the [Simulation](#simulation) basics in
 Part I: side-effect hooks, console output and simulation control, the native-vs-VHDL
-cycle-diff debug tool, and Python simulation models for hand-written VHDL.
+debug probes, and Python simulation models for hand-written VHDL.
 
 ### `@sim_output` — side effects once per cycle
 
@@ -4847,13 +4884,10 @@ def print_name(name: char_t[16]):
     sim_print(f"name={name} len={strlen(name)}")
 ```
 
-See `docs/pypeline_sim_DESIGN.md` and `docs/PY_TO_LOGIC_DESIGN.md` for the simulation and
-elaboration mechanics.
-
 ### `sim_assert` / `sim_finish` — simulation control
 
-Two more `sim_print`-style builtins for controlling simulation itself, elaborating to real
-hardware just like `sim_print` does:
+Two more `sim_print`-style builtins for controlling simulation itself. Like `sim_print`,
+they are represented in generated simulation VHDL rather than skipped by elaboration:
 
 ```python
 from pypeline import sim_assert, sim_finish
@@ -4871,14 +4905,11 @@ condition raises `AssertionError` in native Python simulation and elaborates to 
 ... report ... severity failure;` that halts a real GHDL simulation immediately. `msg` follows
 the same f-string interpolation rules as `sim_print`'s argument.
 
-`sim_finish()` takes no arguments and signals "stop simulating now": it raises a `SimFinish`
-exception in native simulation (caught by `pypeline_sim.py`'s `--run` CLI loop to end the run
-cleanly) and elaborates to VHDL's `std.env.finish;`, halting a real GHDL simulation.
+`sim_finish()` takes no arguments and signals "stop simulating now": it raises a
+`SimFinish` exception in native simulation and elaborates to VHDL's
+`std.env.finish;`, halting a VHDL simulation.
 
-See `docs/pypeline_sim_DESIGN.md` and `docs/PY_TO_LOGIC_DESIGN.md` for the simulation and
-elaboration mechanics.
-
-### `sim_print(..., debug=True)` — tagged prints for `pypeline_sim_debug.py`
+### `sim_print(..., debug=True)` — tagged prints
 
 `sim_print(s, debug=True)` behaves identically to plain `sim_print(s)`, except the printed
 message is prefixed with a `[SIM DEBUG PRINT: <abs path>:<N>]` tag identifying the call site.
@@ -4894,43 +4925,29 @@ sim_print(f"n={n} hex={hex(n)}", debug=True)
 # prints: [SIM DEBUG PRINT: /home/me/proj/my_design.py:42]: n=3 hex=03
 ```
 
-Use `debug=True` for prints you want compared cycle-by-cycle between a native Python sim and a
-VHDL (cocotb+GHDL) sim by the `pypeline_sim_debug.py` tool — see below. Plain `sim_print(...)`
-(`debug=False`, the default) output is deliberately ignored by that tool: not every console line
-is useful for cycle-accuracy debugging, and tagging only the ones that are keeps the diff signal
-clean. In a `--comb` compare (zero pipeline latency) any `debug=True` print is fair game; in a
-**pipelined** (non-`--comb`) compare there are extra rules on *where* such prints may live — see
-the three constraints in the `pypeline_sim_debug.py` section below. `hex(...)`/`chr(...)`/plain `{expr}` interpolation rules are unaffected by `debug`; using
+Use `debug=True` for prints that should be compared cycle-by-cycle between native and
+VHDL simulation. Plain `sim_print(...)` (`debug=False`, the default) is not a comparison
+probe. For a pipelined comparison, valid-gate every probe, place it in stateful code
+outside the pipelined combinational region, and bundle co-timed outputs of a pipelined
+pure `@MAIN` into one struct wire. Native delay lines warm up with typed zeros while VHDL
+pipeline registers may be unknown, and separate output wires can have distinct physical
+cone depths; those three source rules avoid false cycle mismatches.
+
+`hex(...)`/`chr(...)`/plain `{expr}` interpolation rules are unaffected by `debug`; using
 `from pypeline import hex` (not Python's builtin) matters here more than usual, since only
 Pypeline's `hex()` is guaranteed to render identically in both native and VHDL sim (see its
 docstring in `pypeline.py`).
-
-#### `pypeline_sim_debug.py` — native-vs-VHDL cycle diff tool
-
-`src/pypeline_sim_debug.py` runs a testbench both ways — native sim, and `--cocotb --ghdl` VHDL
-sim — and diffs their `sim_print(..., debug=True)` output cycle by cycle. It exists to localize
-*cycle-timing* mismatches (data correct, but arriving on the wrong clock cycle) that ordinary
-`sim_assert`s don't catch.
-
-Invocation, the `--comb`/pipelined-compare distinction, the three constraints on a pipelined
-compare, and the `--context`/log-file behavior have moved to
-[`docs/README.md`'s Tools & CLI section](README.md#pypeline_sim_debugpy--native-vs-vhdl-cycle-diff-tool)
-— see there for the full how-to-invoke reference. The deeper "why" (warm `out_dir` build
-orchestration, convergence guarantees) is in `docs/pypeline_sim_DESIGN.md`'s "Pipelined native
-sim" section.
-
-To narrow down *where* in a design a cycle-timing bug originates, add `debug=True` at successive
-points along the suspect data path and re-run — the tool reports the first point at which native
-and VHDL disagree.
 
 Any hardware function that pairs a hand-written [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions)
 with raw `vhdl(...)` text (rather than letting the elaborator derive both from one
 description) is exactly where native sim and real VHDL can silently diverge in cycle
 timing — the two implementations are maintained independently, and nothing checks they
-agree. `debug=True` + `pypeline_sim_debug.py` is the tool for finding and localizing that
+agree. `debug=True` marks the probes used to find and localize that
 class of bug: add debug prints at successive points along a suspect data path (bisecting
 the hierarchy, narrowest first at the two ends of a call, then walking inward) and re-run;
 the first cycle where native and VHDL disagree pinpoints the boundary responsible.
+See [Native-vs-VHDL cycle diff](README.md#pypeline_sim_debugpy--native-vs-vhdl-cycle-diff-tool)
+for tool invocation and output files.
 
 ### `@sim_model` — Python simulation models for hardware functions
 
@@ -4985,7 +5002,7 @@ to the target's declared return type at the boundary like any other hw_func resu
 State timing is Reg-like: each evaluation runs on a `copy.deepcopy` of the instance
 committed at the last clock edge, and the mutated copy commits at the edge. Outputs are
 therefore a pure function of (cycle-start state, current inputs), so under
-`pypeline_sim.py` a model can be safely re-evaluated during wire convergence — even with
+complete-design simulation can safely re-evaluate a model during wire convergence — even with
 a combinational input→output path through it — and its state still advances exactly once
 per cycle. Because `__call__` may run several times per cycle during convergence, keep
 model bodies side-effect-free (or gate side effects the way `@sim_output` does). For
@@ -5009,30 +5026,24 @@ next to the library source it documents. See that file for the full reference.
 
 ---
 
-## Reading generated VHDL names
+## Source Naming Rules
 
-Generated names describe the Python definition and factory settings automatically.
-For example, `make_kept_data_bus_t(uint8_t, 4)` produces the record
-`kept_data_bus_t_from_kept_data_bus_n_4_data_t_uint8_t`, instead of repeating the
-`data` and `keep` array layouts in its name. A function name starts with its Python
-symbol and defining module; nested interface parameters retain payload type and lane
-count. The four- and eight-byte broadcast entities visibly differ at `n_4` and `n_8`,
-and their own `n_2` parameter describes the fan-out.
+Python names used for locals, parameters, functions, struct fields, global `Wire`s,
+and instances are converted to legal VHDL basic identifiers. Leading/trailing
+underscores are normalized, repeated underscores collapse, and reserved words gain a
+suffix. Because VHDL names are case-insensitive, two source names in the same scope
+that differ only by case, or that normalize to the same identifier, are rejected.
 
-Interface record names include `fwd_t`, `fb_t` or `wire_t` and retain the payload
-context even for a reverse record containing only `ready`. Multiple widths of an
-interface-taking factory can coexist in one design while preserving the original
-interface objects used for port pairing. No type-only workaround or manual name
-format is needed.
+`Input[T]` and `Output[T]` are different: their bare source names become top-level
+ports exactly, without a module prefix or silent normalization, so they must already be
+legal, globally unique VHDL identifiers. Imported `Wire[T]` names are module-prefixed;
+import aliases do not change that prefix. Enum member names are also emitted verbatim
+and therefore must not be VHDL reserved words. Struct field names are normalized.
 
-Very long names retain readable tokens plus an `_h...` digest. Entity suffixes such
-as `_0CLK_<hash>` describe latency and timing configuration. Generated declarations
-include Python source comments, and every build (including `--no_synth`) writes
-`name_index.log` with full descriptions, original source paths, generated helper
-sources and instance/wire mappings. Search it for the identifier from VHDL or a
-timing report to recover the full origin. Top-level port names retain their existing
-spelling for constraint files. See the
-[detailed naming examples](PY_TO_LOGIC_DESIGN.md#generated-vhdl-names).
+These source rules are the stable contract. Generated entity/type names and timing
+suffixes are implementation artifacts; use the lookup files described under
+[Generated files and reports](README.md#generated-files-and-reports) instead of parsing
+their spelling.
 
 ## Limitations / Not Yet Supported
 
@@ -5046,35 +5057,32 @@ built yet."
 | Language | **Multiple/early `return` statements** | Not supported | A function may have at most one `return`, and it must be the function's final top-level statement; assign to a variable inside `if`/`else` branches and return it once at the end (see [Control flow](#your-first-hardware-function)) |
 | Language | **Casting to `char_t`, an `@enum`, or an array type** | Not supported | Scalar int/uint casting, and compound (struct/`@interface`-half) casting via `@cast`/`register_cast`, are supported (see [Casting](#casting)) — these three destination kinds are the exceptions |
 | Language | **Hardware signals as loop conditions** | Not supported | `for`/`while` loop bounds must be compile-time Python integers (fully unrollable) |
+| Language | **More than 65,536 `while` iterations** | Not supported | The elaborator stops at the safety limit rather than hanging on a non-terminating loop |
 | Language | **`break` inside a loop** | Not supported | Restructure the loop body (e.g. an early-exit flag checked each iteration) instead |
+| Language | **Starred unpack targets** | Not supported | Nested unpacking is supported for compile-time values; hardware-valued unpacking must be flat and use a literal tuple/list RHS |
 | Language | **Iterating a `set`/`frozenset` in a `for` loop** | Not supported | Iteration order is `PYTHONHASHSEED`-dependent, not a deterministic function of the design source; `sorted(...)` it first — tuple/list/dict/str/`enumerate`/`zip`/generator iteration, and a nested-tuple loop target (`for kind, a, b in ops:`), are all fine |
 | Language | **Exotic closure value types** | Restricted | A closure capture must be a C-type, `int`/`bool`/`None`, a callable, or a list/tuple of the above — other captured Python object types fail to elaborate |
 | Language | **A slice used directly as a call argument** | Not supported | `f(ae[hi:lo], ...)` fails the same way a subscripted call target used to; assign the slice to a typed local first (`x: t = ae[hi:lo]`, then `f(x, ...)`) |
 | Language | **`from module import *`** | Not supported | Only qualified imports (`import module`) are supported |
 | Language | **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead |
+| Language | **Float literals as hardware values** | Not supported | Use `float_t.as_const(value)` at elaboration time |
+| Language | **Underscores in string literals** | Incorrectly truncated | Use string literals without `_`, or initialize the `char_t[N]` data numerically |
 | Language | **Control flow inside an interface function** | Rejected | `if`/`for`/`while` and conditional expressions in an interface-function body raise an `InterfaceError`; route conditional steering through an explicit handshake mux/demux module instead (see [`@interface`](#bidirectional-ports-interface)). Interfaces are also point-to-point: fan-out of a single interface, dangling outputs and input-to-output bypass are rejected — fan out through a module with an [array port](#array-ports-fan-out) instead. Array *input* ports are not supported. Compile-time `for`/`while` unrolling in ordinary `@hw_func`s is unaffected |
-| Synthesis | **Named/generated clocks (single domain)** | Supported | `make_clock(mhz)` on a global `Input[uint1_t]`/`Wire[uint1_t]` — pypeline equivalent of `CLK_MHZ`, see [Top-Level Entry Points](#top-level-entry-points) |
-| Synthesis | **Multiple clock domains** | Not supported | `MAIN_MHZ_GROUP` (clock groups) and `#pragma ASYNC_WIRE` have no pypeline equivalent; `make_clock`'s rate must match some single `@MAIN`'s rate exactly |
-| Synthesis | **Async clock-crossing FIFOs** | Not supported | `GLOBAL_STREAM_FIFO` across clock boundaries cannot yet be expressed |
-| Synthesis | **RAMs, ROMs and stream RAMs** | Supported | [`make_ram` / `make_stream_ram`](#rams-make_ram--make_stream_ram) cover the `include/ram.h` shapes, including `DECL_STREAM_RAM_DP_W_R_1`; vendor RAM IP still needs `vhdl()` |
-| Synthesis | **`MULTI_CYCLE[...]`** | Synthesis only | No effect without `PART()` / Vivado; ignored in simulation |
-| Synthesis | **`AUTO_MULTI_CYCLE(...)`** | Synthesis + `.latency` in simulation | Cycle count chosen by the Vivado sweep; sim sees `.latency` (the handshake), never settling time |
-| Synthesis | **`AUTO_PIPELINE(...).latency` before synthesis** | Reads `0` unless constrained | A fixed `latency=N` reads `N` everywhere. Otherwise the real value only exists after a synthesizing build's pin-and-confirm pass: that build's bootstrap pass reads `start_latency` (or 0), and plain native sim and `--comb`/`--no_synth`/`--yosys_json` builds read 0. A non-`--comb` `pypelinec --sim` run's native sim reads the built value |
+| Source model | **Named clocks (single domain)** | Supported | Use `make_clock(mhz)` on a global `Input[uint1_t]`/`Wire[uint1_t]`; see [Top-Level Entry Points](#top-level-entry-points) |
+| Source model | **Multiple clock domains** | Not supported | Clock groups and asynchronous-wire declarations have no Pypeline source equivalent; `make_clock` must match the design's supported `@MAIN` rate |
+| Source model | **Async clock-crossing FIFOs** | Not supported | Cross-clock global stream FIFOs cannot yet be expressed |
+| Source model | **RAMs, ROMs and stream RAMs** | Supported | [`make_ram` / `make_stream_ram`](#rams-make_ram--make_stream_ram) provide the portable source shapes; vendor-specific memory IP still needs `vhdl()` |
+| Source model | **`AUTO_PIPELINE(...).latency` before implementation** | Usually reads `0` | `latency=N` reads N immediately; an active automatic implementation bootstraps `start_latency=S` at S. The selected value becomes visible when source is re-elaborated with the implemented plan |
 | Simulation | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo`, `make_ram` and `make_stream_ram` do, covering `make_stream_fifo`/`make_stream_auto_pipeline` too); this still includes `make_stream_multi_cycle` |
 | Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine |
 | Language | **`@enum` member names that are VHDL reserved words** | Fails in VHDL only | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. Native simulation cannot see this — only a `synth_*`-category or GHDL run can, which is why every enum-bearing design wants one |
 | Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it |
 
-**Several rows above share one root cause: native simulation never emits VHDL, so it
-cannot catch anything Vivado or GHDL would reject.** A design covered only by
-`pypelinec --sim` tests has no coverage at all of that class of bug — the `@enum`
-reserved-word row, the mixed-width ternary and the `sim_print` overflow row are each a
-real bug that passed every native-sim test in this repo. The cheap remedy is to give
-every design a small `*_synth_top.py` alongside its testbench: a handful of
-`Input[T]`/`Output[T]` ports and one `@MAIN` that instantiates the block, registered as a
-`synth_device_models` test with `--comb`. It costs minutes of build time and is the only thing that
-looks at the generated VHDL. Worked examples:
-`examples/pypeline/dsp/pdw/pulse_detect_synth_top.py` and its two siblings.
+Native simulation cannot detect restrictions that appear only after emitting VHDL, such
+as a reserved enum member or VHDL integer display overflow. Give every reusable source
+block a small synthesizable `@MAIN` wrapper with representative `Input[T]`/`Output[T]`
+ports, then exercise that wrapper using the flows described in
+[Simulation](README.md#simulation) under Tools & CLI.
 
 Coming from PipelineC? See also [docs/pipelinec_to_pypeline.md](pipelinec_to_pypeline.md)
 for a pattern-by-pattern translation reference.
