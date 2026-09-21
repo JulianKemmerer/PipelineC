@@ -585,7 +585,7 @@ from the same leaf walk the hardware serializer is built from, so the frame this
 project sends cannot disagree with the frame the hardware expects. Nothing generated is committed — no
 checked-in copy to go stale — so the in-repo tests build it on demand via
 `pdw_host_gen.ensure_host_types()`. See
-[Host-Side Generated Types](../../../../docs/pypeline_guide.md#host-side-generated-types).
+[Host Type Export Declarations](../../../../docs/pypeline_guide.md#host-type-export-declarations).
 `top.py`'s `host_export` call carries the non-layout constants across too:
 `CTRL_DEFAULTS`, `CTRL_FLAG_*`, the `STATUS_*` bits, `POWER_FRAC_BITS`,
 `FREQ_BLOCK_K` and the two FIFO depths — read off the built instances, so a

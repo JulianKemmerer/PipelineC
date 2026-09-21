@@ -641,7 +641,7 @@ See `docs/pypeline_sim_DESIGN.md`'s Limitations section for the full contract
 ## Testing generated host code
 
 The standalone host module a build writes to `<out_dir>/host/` (see
-[Host-Side Generated Types](pypeline_guide.md#host-side-generated-types)) is tested in a
+[Host Type Export Declarations](pypeline_guide.md#host-type-export-declarations)) is tested in a
 way worth copying whenever "this artifact must work somewhere else" is the claim:
 
 - `inst/host_types_test.py` (`native_sim`) checks the GENERATOR. It runs the generated

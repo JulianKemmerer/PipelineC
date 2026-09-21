@@ -140,4 +140,4 @@ One thing that falls out of using any of these factories: because they all reach
 `make_type_to_bytes`/`make_type_from_bytes` underneath, a design that streams a struct
 also gets a standalone Python module for the host on the other end of the wire, written
 to `<out_dir>/host/pypeline_host_types.py` by every build — no design change needed. See
-[Host-Side Generated Types](../../../docs/pypeline_guide.md#host-side-generated-types).
+[Host Type Export Declarations](../../../docs/pypeline_guide.md#host-type-export-declarations).
