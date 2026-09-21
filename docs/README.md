@@ -200,54 +200,62 @@ assign output_wire = the_wire;
 
 <img alt="schematic of generic hdl" src="https://github.com/user-attachments/assets/e68811e2-591f-462d-88e7-22723233f33b" />
 
-Pypeline functions are a single clock domain, rising edge assumed. Function arguments are
-input ports, the return value is the output port (both type-annotated). Function bodies are
-combinatorial logic dataflow graphs; a `Reg[T]`-annotated local variable is the only thing
-that turns a function into a stateful process like the VHDL/Verilog above. 
-If a function is marked with [`@MAIN`](pypeline_guide.md#top-level-entry-points)
-then its inputs and return value are used for top level input and output ports.
+## Direct RTL semantics
 
-[Is this HLS?](https://github.com/JulianKemmerer/PipelineC/wiki/Is-this-HLS%3F)
-Combinatorial logic can be [automatically pipelined](pypeline_guide.md#auto_pipeline), alongside the guide's other [automatic (HLS-like) constructs](pypeline_guide.md#automatic-hls-like-implementation).
-Stateless/feedback free pure functions can be pipelined to 'arbitrary depth' N>0 clock cycle pipelines.
+The shorter Pypeline example above describes the same hardware without an event-driven
+process model. A typed function is a hardware module: arguments are input ports, its
+return value is an output port, and ordinary local variables are combinational wires.
+A local annotated with [`Reg[T]`](pypeline_guide.md#registers-regt) is explicit stored
+state. Pypeline assumes rising-edge operation within a single clock domain, so there are
+no sensitivity lists, blocking/nonblocking assignment choices, or separate templates for
+combinational and registered logic.
 
-[`Reg[T]`](pypeline_guide.md#registers-regt) local variables = registers. Use a
-register and N=0. The function now describes a "stateful function" of combinatorial
-logic and registers, think processes in HDL.
+The [Python-versus-hardware execution
+model](pypeline_guide.md#python-vs-hardware-execution) defines how each construct maps to
+hardware: an `if` on a hardware value becomes a MUX, compile-time loops are unrolled,
+register writes commit on a clock edge, and every call site creates a distinct module instance.
+Functions marked [`@MAIN`](pypeline_guide.md#top-level-entry-points) become single-instance
+top-level modules whose typed arguments and return value define FPGA ports.
 
-'Invocation is instantiation' is the default behavior of function calls. Each function
-call location is a new instance of the function's module.
+## Hierarchy and interconnect by composition
 
-[Global signals](pypeline_guide.md#global-signals) (`Wire[T]`/`Input[T]`/`Output[T]`)
-work similar to registers but also can be used as a mechanism for moving data between
-functions. Multiple locations can read a global wire but there can only be one instance
-of a function that writes to it.
+“Invocation is instantiation”: [calling a hardware
+function](pypeline_guide.md#calling-functions) creates and connects a module instance.
+Functions can call functions to any depth, using typed values and structs instead of
+repeating component declarations and one signal assignment per port. Multiple outputs
+are grouped in [struct types](pypeline_guide.md#struct-types), while
+[`Wire[T]`, `Input[T]`, and `Output[T]` global
+signals](pypeline_guide.md#global-signals) connect logic that is not naturally expressed
+as feed-forward function calls.
 
-Python isn't a great hardware description language in itself. Some functionality is
-provided to bridge the gap between Python and traditional HDLs (see
-[Bit Manipulation](pypeline_guide.md#bit-manipulation) and
-[Types](pypeline_guide.md#basic-types)).
+Real buses often carry signals in both directions. Pypeline's
+[`@interface`](pypeline_guide.md#bidirectional-ports-interface) associates forward fields
+such as payload and valid with reverse fields such as ready or credit, preserving their
+direction as the two halves of one typed port. For straight-line composition,
+[interface functions](pypeline_guide.md#interface-functions-write-feedforward-get-the-reverse-wired)
+let the source describe the forward dataflow while Pypeline generates the reverse-path
+wiring.
 
-Pypeline can replace VHDL/Verilog almost entirely. However, if the need arises there
-are [hooks for writing arbitrary VHDL](pypeline_guide.md#raw-vhdl-passthrough-vhdl)
-instead of Pypeline code.
+## Parameterized, reusable hardware
 
-The Pypeline tool is pure Python other than calls to the synthesis+simulation tools.
-See how to setup and [run the tool](https://github.com/JulianKemmerer/PipelineC/wiki/Running-the-Tool).
+A Pypeline design file is also a regular Python module. Module-level code executes at
+elaboration time, so ordinary Python can compute constants, inspect types, build lookup
+tables, and create specialized hardware. [Factory
+functions](pypeline_guide.md#parametric-hardware-with-factory-functions) parameterize
+functions and compound types by widths, element types, counts, or configuration values;
+each specialized hardware function receives its own correctly typed VHDL entity.
+Libraries can also define [custom operators](pypeline_guide.md#custom-operators), allowing
+a reusable type to carry an implementation rather than forcing every design to
+reconstruct it from low-level wires.
 
-Pypeline is synthesized into hardware so we can't avoid talking hardware for long.
+This elaboration model goes beyond a fixed set of HDL `generate` constructs: Python code
+can define new hardware abstractions, and those abstractions compose with the same
+functions, structs, arrays, streams, and interfaces used by hand-written Pypeline logic.
 
-Hardware modules have input ports. Input ports are function arguments (type-annotated).
-Function return statements are the single output port. Do multiple outputs as a
-[struct](pypeline_guide.md#basic-types).
+## Automatic implementation with visible hardware
 
-Each function describes comb. logic (possibly to be auto-pipelined) that exists in a
-single clock domain. Functions marked `@MAIN` are single instance top level design
-modules (i.e. where you can have board connections). The clock domain for most
-functions is inferred from use within frequency-specified `@MAIN` functions.
-
-The comb. logic body of a Pypeline function is synthesized to a hardware pipeline. That
-is, a sequential series of combinatorial stages of logic separated by registers.
+Pure, feedback-free functions describe dataflow that Pypeline can transform into a
+hardware pipeline: combinational stages separated by inserted registers.
 
 ```python
 # Simple example of math pipeline
@@ -257,19 +265,33 @@ def main(x1: float, x2: float, y1: float, y2: float) -> float:
     return x_sum + y_sum
 ```
 The above example instantiates 3 floating point adders. Two in parallel, and a third
-for the return. You can think of the Pypeline main function as executing over and over
-again in a loop, each time getting a new set of inputs. The body of Pypeline functions
-are data flow graphs.
+for the return. The function behaves as a continuously active dataflow graph, accepting
+new inputs as the pipeline permits rather than running like a software subroutine.
 
-**Examples:** See the [examples/pypeline](../examples/pypeline) directory.
+The [automatic implementation
+features](pypeline_guide.md#automatic-hls-like-implementation) can insert pipeline stages
+to meet a clock target or select a multi-cycle implementation. Experimental transforms
+can optimize combinational area or delay and explore resource-shared FSM implementations.
+The chosen latency remains visible to the design so handshakes and surrounding storage
+can adapt to the result. This keeps cycles and interfaces explicit while moving
+repetitive implementation search into the compiler.
 
-Pypeline can generate a hardware pipeline for almost any operating frequency by
-increasing the depth/latency of the pipeline. All functions (ex. including floating
-point operations) are broken down into subpipelines thus allowing for fine grained
-control of synthesis results.
+## Conventional output and incremental adoption
 
-See the guide's [Limitations / Not Yet Supported](pypeline_guide.md#limitations--not-yet-supported)
-section for the current list of known gaps.
+Pypeline resolves factories, parameterized types, and interface composition during its
+own elaboration, rather than requiring every downstream EDA tool to implement equivalent
+advanced HDL features. It then emits human-readable VHDL, keeping generated designs
+inside established FPGA synthesis and HDL simulation flows. Its native Python simulator
+supports fast iteration, while [cocotb with GHDL](pypeline_guide.md#simulation) can check
+the actual generated VHDL. Existing blocks and vendor primitives can be integrated with the
+[raw VHDL passthrough](pypeline_guide.md#raw-vhdl-passthrough-vhdl), so adopting Pypeline
+does not require rewriting every block at once.
+
+See the [examples](../examples/pypeline), the complete [language
+guide](pypeline_guide.md), and the guide's [Limitations / Not Yet
+Supported](pypeline_guide.md#limitations--not-yet-supported) section. In particular,
+Pypeline currently describes each function in one clock domain and does not yet support
+multiple clock domains or asynchronous clock crossings.
 
 ## Tools & CLI
 

@@ -133,17 +133,44 @@ Simulation:
 
 ![PypelineC Tool Flow](./docs/images/flow.svg)
 
-_An easy to understand hardware description language with a powerful auto-pipelining compiler and growing set of real life hardware design inspired features._
+## Why Pypeline?
 
-* Familiar software-like syntax that eliminates many HDL quirks that beginners (and experts) can fall victim to (ex. blocking/nonblocking assignments, reasoning about the sequential ordering of combinatorial logic).
-* Compatible with all HDL simulators. Ex. Can start Modelsim in seconds and imports human readable+debuggable VHDL w/ working print's. Pypeline allows native Python simulations to launch instantly. PipelineC can also craft custom ultra-fast compiled C based 'simulations'. Conversion to Verilog is also included as needed, i.e. for Verilator.
-* Helpful timing feedback derived from synthesis tool reports to help identify critical path logic that cannot be automatically pipelined - especially helpful for those new to digital logic design.
-* PipelineC integrates with software side C easily; helpful built in code generation. (ex. for un/packing structs from de/serialized byte arrays when moving data from host<->FPGA).
-* A full hardware description language replacement. Can start by cloning existing VHDL/Verilog designs or including raw VHDL - not forced to use entire language at all times.
-* Globally visible point-to-point wires, multi-rate/width clock domain crossings, and complex derived FSMs, are just some of the growing list of composability features inspired by real life hardware design requirements/tasks.
-* Automatic pipelining as a feature of the compiler. Basic use of the tool can be to generate single pipelines to drop into existing designs elsewhere. Eliminate the practice of pipelining logic by hand = not portable (relies on operating frequency and part).
+Pypeline describes hardware directly, but replaces much of the ceremony of traditional
+RTL with compact Python syntax and reusable abstractions:
 
-Fundamental design elements are state machines/stateful elements(registers, rams, etc), auto-pipelined stateless pure functions, and interconnects (wires,cdc,async fifos,etc). Designs can be structured to look like 'communicating sequential processes/threads' as needed.
+* **RTL semantics without event-driven boilerplate.** A typed function is a hardware
+  module, ordinary locals are combinational wires, and [`Reg[T]` is explicit
+  state](docs/pypeline_guide.md#registers-regt). There are no sensitivity lists or
+  separate combinational and clocked process templates to maintain; the
+  [execution model](docs/pypeline_guide.md#python-vs-hardware-execution) states exactly
+  what becomes wiring, a MUX, a register, or a module instance.
+* **Reusable, parameterized hardware.** Ordinary compile-time Python can create
+  specialized [functions and types with factory
+  functions](docs/pypeline_guide.md#parametric-hardware-with-factory-functions), including
+  width- and type-parameterized structs, arrays, streams, FIFOs, and arithmetic blocks.
+* **Interfaces with direction and structure.** [`@interface` bundles bidirectional
+  ports](docs/pypeline_guide.md#bidirectional-ports-interface), including forward payloads
+  and reverse ready/credit signals, while interface functions can
+  [generate reverse-path wiring](docs/pypeline_guide.md#interface-functions-write-feedforward-get-the-reverse-wired)
+  instead of requiring every signal to be connected by hand.
+* **Composition instead of port-map repetition.** Calling a hardware function
+  [instantiates a module](docs/pypeline_guide.md#calling-functions); types and return
+  values carry connections through a hierarchy using normal function composition.
+* **A real elaboration language.** Compile-time Python supports loops, constants, type
+  introspection, user-defined factories, and [custom
+  operators](docs/pypeline_guide.md#custom-operators), enabling libraries to express
+  higher-level hardware patterns rather than repeatedly manipulating individual wires.
+* **Automation with conventional HDL output.** Pure functions can use
+  [automatic pipelining and other implementation
+  strategies](docs/pypeline_guide.md#automatic-hls-like-implementation), with synthesis
+  timing feedback guiding the result. Higher-level parameterization is elaborated before
+  Pypeline emits human-readable VHDL, rather than depending on every downstream tool to
+  implement equivalent HDL language features. A [raw VHDL escape
+  hatch](docs/pypeline_guide.md#raw-vhdl-passthrough-vhdl) for existing IP or
+  vendor-specific primitives keeps the generated design in established FPGA and
+  simulation flows.
+
+Fundamental design elements are state machines/stateful elements(registers, rams, etc), auto-pipelined stateless pure functions, and interconnects (wires,cdc,async fifos,etc).
 
 By isolating complex logic into auto-pipelineable functions, and only writing literal clock by clock hardware description when absolutely necessary, PypelineC designs do not need to be rewritten for each new target device / operating frequency.
 The hope is to build shared, high performance, device agnostic, hardware designs described in a familiar and powerfully composable software-like look.
