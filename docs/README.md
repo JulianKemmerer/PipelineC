@@ -715,7 +715,7 @@ for which part selects which tool.
     * [FPGAwars/OpenXC7 prebuilt releases](https://github.com/FPGAwars/tools-openxc7/releases).
     * [openXC7/toolchain-installer](https://github.com/openXC7/toolchain-installer) for a source build.
     * `OPENXC7_CHIPDB` and `PRJXRAY_DB_DIR` override nonstandard chipdb/database layouts.
-  * Smoke test (unconstrained; no board XDC required): `pypelinec ./examples/pypeline/blink.py --part xc7a35tcpg236-1 --syn_tool open_tools --comb`
+  * Smoke test: `pypelinec ./examples/pypeline/blink.py --part xc7a35tcpg236-1 --syn_tool open_tools --comb`
 * **Gowin EDA**: Finds `gw_sh` on the `PATH`, or edit the `GOWIN_PATH` constant in
   [GOWIN.py](../src/GOWIN.py).
   * Test: `pypelinec ./examples/tool_tests/gowin_pipeline.c`
