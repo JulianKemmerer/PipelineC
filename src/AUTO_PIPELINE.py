@@ -958,6 +958,13 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     # Replaced wires_driven_so_far
     wires_driven_by_so_far = {}  # driven wire -> driving wire
 
+    # Fast path bookkeeping for zero-added-clock graphs. Initialized after
+    # constant/read-only network propagation so already-scheduled nodes are
+    # excluded from the dependency worklist.
+    submodule_waiters_by_wire = None
+    submodule_missing_input_count = None
+    submodules_ready = None
+
     def RECORD_DRIVEN_BY(driving_wire, driven_wire_or_wires):
         if type(driven_wire_or_wires) is list:
             driven_wires = driven_wire_or_wires
@@ -969,9 +976,15 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         else:
             driven_wires = [driven_wire_or_wires]
         for driven_wire in driven_wires:
+            was_newly_driven = driven_wire not in wires_driven_by_so_far
             wires_driven_by_so_far[driven_wire] = driving_wire
             # Also set clks? Seems right?
             wire_to_remaining_clks_before_driven[driven_wire] = 0
+            if was_newly_driven and submodule_waiters_by_wire is not None:
+                for waiting_submodule in submodule_waiters_by_wire.pop(driven_wire, ()):
+                    submodule_missing_input_count[waiting_submodule] -= 1
+                    if submodule_missing_input_count[waiting_submodule] == 0:
+                        submodules_ready.add(waiting_submodule)
 
     # Some wires are driven to start with
     RECORD_DRIVEN_BY(None, logic.inputs)
@@ -1199,6 +1212,48 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             if not SYN.LOGIC_IS_ZERO_DELAY(sub_logic, parser_state, True):
                 continue
             things_to_follow.add(sub_inst_reached)
+
+    # Zero-added-clock designs do not need to rediscover readiness by rescanning
+    # every remaining submodule on every logic level. Build the dependency
+    # frontier once, then let RECORD_DRIVEN_BY advance only affected nodes.
+    zero_latency_worklist = True
+    for submodule_inst in logic.submodule_instances:
+        submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+        if timing_params.GET_SUBMODULE_LATENCY(
+            submodule_inst_name, parser_state, TimingParamsLookupTable
+        ) != 0:
+            zero_latency_worklist = False
+            break
+    if zero_latency_worklist:
+        submodule_waiters_by_wire = {}
+        submodule_missing_input_count = {}
+        submodules_ready = set()
+        for submodule_inst in sorted(not_fully_driven_submodules):
+            submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+            submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
+            prerequisite_wires = []
+            if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
+                ce_wire = (
+                    submodule_inst
+                    + C_TO_LOGIC.SUBMODULE_MARKER
+                    + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                )
+                prerequisite_wires.append(logic.wire_driven_by[ce_wire])
+            for input_port_name in submodule_logic.inputs:
+                prerequisite_wires.append(
+                    C_TO_LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(
+                        logic, submodule_inst, input_port_name
+                    )
+                )
+            missing_wires = {
+                wire for wire in prerequisite_wires if wire not in wires_driven_by_so_far
+            }
+            submodule_missing_input_count[submodule_inst] = len(missing_wires)
+            if len(missing_wires) == 0:
+                submodules_ready.add(submodule_inst)
+            else:
+                for wire in missing_wires:
+                    submodule_waiters_by_wire.setdefault(wire, set()).add(submodule_inst)
 
     # Pipeline is done when
     def PIPELINE_DONE():
@@ -1471,9 +1526,13 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             fully_driven_submodule_inst_this_level_2_logic = {}
             # Get submodule logics
             # Loop over each sumodule and check if all inputs are driven
-            not_fully_driven_submodules_iter = sorted(
-                not_fully_driven_submodules
-            )
+            if zero_latency_worklist:
+                not_fully_driven_submodules_iter = sorted(submodules_ready)
+                submodules_ready.clear()
+            else:
+                not_fully_driven_submodules_iter = sorted(
+                    not_fully_driven_submodules
+                )
             for submodule_inst in not_fully_driven_submodules_iter:
                 submodule_inst_name = (
                     inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
@@ -1674,6 +1733,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             submodule_level_iteration_has_submodules = (
                 len(fully_driven_submodule_inst_this_level_2_logic) > 0
             )
+            zero_latency_output_wires_this_level = []
 
             ################## INSTANTIATIONS + OUTPUT WIRES FROM SUBMODULE LEVEL ###################################
             # Get list of output wires for this all the submodules in this level
@@ -1707,6 +1767,12 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                     wire_to_remaining_clks_before_driven[submodule_output_wire] = (
                         submodule_latency_from_container_logic
                     )
+                    if (
+                        zero_latency_worklist
+                        and submodule_latency_from_container_logic == 0
+                        and submodule_output_wire not in wires_driven_by_so_far
+                    ):
+                        zero_latency_output_wires_this_level.append(submodule_output_wire)
 
                     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                     # Set delay_offset_when_driven for this output wire
@@ -1755,7 +1821,11 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             wires_starting_level = []
             # Also are added to wires driven so far
             # (done per submodule level iteration since ALSO DOES 0 CLK SUBMODULE OUTPUTS)
-            for wire in sorted(wire_to_remaining_clks_before_driven):
+            if zero_latency_worklist:
+                wires_ready_now = sorted(zero_latency_output_wires_this_level)
+            else:
+                wires_ready_now = sorted(wire_to_remaining_clks_before_driven)
+            for wire in wires_ready_now:
                 if wire_to_remaining_clks_before_driven[wire] == 0:
                     if wire not in wires_driven_by_so_far:
                         if bad_inf_loop:
