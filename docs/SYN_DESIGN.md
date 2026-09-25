@@ -81,10 +81,11 @@ Xilinx 7-series also accepts `OPEN_TOOLS`; Vivado remains the default and
 nextpnr-Xilinx/Project X-Ray data; hardware validation is currently Artix-7
 (`xc7a35tcpg236-1`, Basys 3).
 
-OpenXC7 uses `synth_xilinx -noiopad` for unconstrained characterization;
-`--comb --pins` instead times the board-facing top. Final bitstream generation
-reruns implementation after `WRITE_FINAL_FILES` and `@final(syn)`, then converts
-FASM with Project X-Ray.
+OpenXC7 times characterization tops -- `--comb` included -- synthesized with
+`synth_xilinx -noiopad` and their ports removed (`delete -port`), so
+nextpnr-xilinx makes no package PADs for them. A `--pins` build then implements
+the board-facing `top` that `WRITE_FINAL_FILES` wrote, once, with the XDC, and
+converts its FASM with Project X-Ray.
 
 `--yosys_json` (`OPEN_TOOLS.YOSYS_JSON_ONLY`) turns synthesis into netlist
 export only. `TOOL_DOES_PNR()` says whether a tool's timing is

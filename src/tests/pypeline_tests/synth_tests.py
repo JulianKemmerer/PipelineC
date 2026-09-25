@@ -362,6 +362,16 @@ def get_tests() -> list:
             env={"SWEEP_FLOAT32_MHZ": 200.0},
         )
     )
+    # --pins on OpenXC7: a full and a --comb build of blink.py, each checked
+    # for a top.bit with the part's IDCODE and the XDC's pins placed.
+    tests.append(
+        Test(
+            name="openxc7_bitstream_test",
+            category="synth_open_tools",
+            cmd=[INST_DIR / "openxc7_bitstream_test.py", "--syn_tool", "open_tools"],
+            needs_out_dir=True,
+        )
+    )
     return tests
 
 

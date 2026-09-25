@@ -220,7 +220,7 @@ run on those tools is slow; afterwards the cache carries it.
 | `device_models` | `sky130` | 28.06 MHz | 60 | 80.5 MHz @ 4 stages |
 | `quartus` | `5CEBA4F23C8` | 41.58 MHz | 60 | 71.7 MHz @ 2 stages |
 | `open_tools` | `LFE5U-85F-6BG381C` | 28.84 MHz | 60 | 61.0 MHz @ 4 stages |
-| `open_tools` (OpenXC7) | `xc7a35tcpg236-1` | 43.88 MHz | 200 | 277.62 MHz @ 44 stages |
+| `open_tools` (OpenXC7) | `xc7a35tcpg236-1` | 43.64 MHz | 200 | 213.2 MHz @ 19 stages |
 | `vivado` | `xc7a35ticsg324-1l` | 47.84 MHz | 130 | 167.3 MHz @ 5 stages |
 | `efinity` | `Ti60F225` | 286.17 MHz | 500 | 510.4 MHz @ 11 stages |
 
@@ -297,6 +297,37 @@ Two reads worth taking from the plot:
 - `efinity` needs 11 stages to reach 510 MHz, against `quartus` reaching
   71.7 MHz at 2. Comparing tools on fmax alone hides that the deeper pipeline
   costs proportionally more latency to get there.
+
+## OpenXC7 `--pins` bitstream coverage
+
+`inst/openxc7_bitstream_test.py` (`synth_open_tools`) builds
+`examples/pypeline/blink.py` for a Basys 3 (`xc7a35tcpg236-1`) with
+`constraints/openxc7_basys3_blink.xdc`, three times:
+
+- a full build: the sweep times `-noiopad` characterization tops, then
+  `GENERATE_BITSTREAM` implements the board-facing top;
+- a `--comb` build, timed on a characterization top the same way;
+- the full build again, into the first build's out_dir once it has finished.
+
+Each build must implement the board-facing top exactly once, and its
+`open_tools_final.log` must hold that one nextpnr run: the log is appended to,
+so a re-run in the same out_dir must start it over. Each build must also leave
+a `top/top.bit` whose IDCODE write matches the part's Project X-Ray
+`part.yaml`. Every XDC `PACKAGE_PIN`'s IOB tile (looked up in
+`package_pins.csv`) must also be configured in `top/top.fasm`, because exit
+code 0 alone does not show the pins were honored. Each of these mutations
+fails the test:
+- dropping `--xdc` (nextpnr-xilinx rejects the unconstrained pad);
+- skipping `xc7frames2bit`;
+- handing nextpnr an XDC with the LED moved to E19;
+- having `--comb` time the board-facing top again, which puts two board
+  implementations in one run;
+- not clearing `open_tools_final.log` first, which leaves two nextpnr runs in
+  the re-run's log.
+
+Like the rest of `synth_open_tools` it needs its tools installed: here the
+OpenXC7 bundle, found through `OPENXC7` or the `OPENXC7_PATH` default in
+`src/OPEN_TOOLS.py` (see the OpenXC7 entry in [README.md](README.md)).
 
 ## Fixed user pipeline coverage
 

@@ -1,12 +1,11 @@
 #!/usr/bin/env python3
 """Pure unit coverage for PipelineC's open-source Xilinx 7-series flow.
 
-No FPGA tools are invoked here.  The real Basys 3 hardware proof is kept out of
-run_all; these tests pin the configuration/selection behavior that makes that
-flow reproducible on any host with a compatible OpenXC7 toolchain.
+No FPGA tools are invoked here: the real OpenXC7 builds are the synth_open_tools
+tests openxc7_bitstream_test and sweep_float32_openxc7. These tests pin the
+configuration/selection behavior and the parsing of nextpnr-xilinx reports.
 """
 
-import json
 import os
 import sys
 import tempfile
@@ -24,6 +23,42 @@ import OPEN_TOOLS
 
 PART = "xc7a35tcpg236-1"
 
+# Real nextpnr-xilinx output (openXC7 bundle 2026-09-15, examples/pypeline/blink.py
+# characterization top): its older "curr total" path table, and the clock timed
+# on the net past the BUFG rather than on the constrained clk_25p0.
+NEXTPNR_XILINX_BLINK_REPORT = r"""
+Info: constraining clock net 'clk_25p0' to 25.00 MHz
+Info: Propagating clock constraints...
+Info:     derived 25.0 MHz for net 'blink_0clk_c4b4c111.clk' (through BUFG '$auto$clkbufmap.cc:261:execute$2748')
+Info: Critical path report for clock 'blink_0clk_c4b4c111.clk' (posedge -> posedge):
+Info: curr total
+Info:  0.1  0.1  Source $auto$ff.cc:266:slice$1711.Q
+Info:  0.0  0.1    Net blink_0clk_c4b4c111.bin_op_eq_blink_py_l24_c7_ec32_left[0] budget 0.000000 ns (13,1) -> (13,1)
+Info:                Sink $abc$2731$lut$not$aiger2730$3.A3
+Info:  0.1  0.2  Source $abc$2731$lut$not$aiger2730$3.O6
+Info:  1.2  1.4    Net blink_0clk_c4b4c111.bin_op_plus_blink_py_l28_c18_ec29_return_output[0] budget 0.000000 ns (13,1) -> (10,9)
+Info:                Sink blink_0clk_c4b4c111.bin_op_plus_blink_py_l28_c18_ec29_return_output[0]$LUT$2.A4
+Info:  0.1  1.5  Source blink_0clk_c4b4c111.bin_op_plus_blink_py_l28_c18_ec29_return_output[0]$LUT$2.O6
+Info:  0.0  1.5    Net blink_0clk_c4b4c111.bin_op_plus_blink_py_l28_c18_ec29_return_output[0]$legal$1 budget 2.688000 ns (10,9) -> (10,9)
+Info:                Sink $auto$alumacc.cc:485:replace_alu$1290.genblk1.slice[0].genblk1.carry4.S0
+Info:  0.5  2.0  Source $auto$alumacc.cc:485:replace_alu$1290.genblk1.slice[0].genblk1.carry4.CO3
+Info:  0.1  2.2    Net $auto$alumacc.cc:485:replace_alu$1290.genblk1.slice[0].genblk1.carry4$carry$130 budget 3.160000 ns (10,9) -> (10,8)
+Info:                Sink $auto$alumacc.cc:485:replace_alu$1290.genblk1.slice[0].genblk1.carry4$split$129.CIN
+Info:  0.2  2.3  Source $auto$alumacc.cc:485:replace_alu$1290.genblk1.slice[0].genblk1.carry4$split$129.CO1
+Info:  1.0  3.3    Net $techmap2738$abc$2731$lut$aiger2730$112.A[4] budget 0.000000 ns (10,8) -> (10,2)
+Info:                Sink $abc$2731$lut$aiger2730$112.A3
+Info:  0.1  3.4  Source $abc$2731$lut$aiger2730$112.O6
+Info:  0.3  3.7    Net $techmap2745$abc$2731$lut\blink_return_output_output.A[1] budget 0.000000 ns (10,2) -> (10,2)
+Info:                Sink $abc$2731$lut$auto$rtlil.cc:2976:NotGate$2036.A1
+Info:  0.1  3.8  Source $abc$2731$lut$auto$rtlil.cc:2976:NotGate$2036.O6
+Info:  1.1  4.9    Net $abc$2731$auto$rtlil.cc:2976:NotGate$2036 budget 5.519000 ns (10,2) -> (10,3)
+Info:                Sink $auto$ff.cc:266:slice$1731.SR
+Info:  0.1  5.0  Setup $auto$ff.cc:266:slice$1731.SR
+Info: 1.4 ns logic, 3.7 ns routing
+
+Info: Max frequency for clock 'blink_0clk_c4b4c111.clk': 199.08 MHz (PASS at 25.00 MHz)
+"""
+
 
 def _restore_env(name, old):
     if old is None:
@@ -32,25 +67,35 @@ def _restore_env(name, old):
         os.environ[name] = old
 
 
-def test_xc7_part_and_chipdb_candidates():
+def test_xc7_part_and_chipdb_name():
     assert OPEN_TOOLS.IS_XC7_PART(PART)
     assert not OPEN_TOOLS.IS_XC7_PART("LFE5U-85F-6BG381C")
-    assert OPEN_TOOLS._XC7_ARCH_CHIPDB_NAMES(PART) == [
-        "xc7a35tcpg236.bin",
-        "xc7a35t.bin",
-    ]
+    # Base part (device + package), no speed grade: the Apio/openXC7 naming
+    assert OPEN_TOOLS.XC7_CHIPDB_NAME(PART) == "xc7a35tcpg236.bin"
 
 
-def test_xc7_chipdb_directory_lookup_accepts_device_fallback():
-    old_openxc7 = os.environ.get("OPENXC7_CHIPDB")
+def test_xc7_chipdb_lookup_needs_the_parts_package():
+    # A device-only chipdb (xc7a35t.bin) may hold another package's pin map, so
+    # a directory search never picks it; naming the file directly still does.
+    old_root = OPEN_TOOLS.OPENXC7_PATH
+    old_chipdb = os.environ.get("OPENXC7_CHIPDB")
     try:
+        OPEN_TOOLS.OPENXC7_PATH = None  # keep the default install out of this
         with tempfile.TemporaryDirectory() as tmp_dir:
-            candidate = Path(tmp_dir) / "xc7a35t.bin"
-            candidate.write_bytes(b"chipdb")
+            device_only = Path(tmp_dir) / "xc7a35t.bin"
+            device_only.write_bytes(b"chipdb")
             os.environ["OPENXC7_CHIPDB"] = tmp_dir
-            assert OPEN_TOOLS.GET_XC7_CHIPDB_PATH(PART) == str(candidate)
+            assert OPEN_TOOLS.GET_XC7_CHIPDB_PATH(PART) is None
+
+            exact = Path(tmp_dir) / "xc7a35tcpg236.bin"
+            exact.write_bytes(b"chipdb")
+            assert OPEN_TOOLS.GET_XC7_CHIPDB_PATH(PART) == str(exact)
+
+            os.environ["OPENXC7_CHIPDB"] = str(device_only)
+            assert OPEN_TOOLS.GET_XC7_CHIPDB_PATH(PART) == str(device_only)
     finally:
-        _restore_env("OPENXC7_CHIPDB", old_openxc7)
+        OPEN_TOOLS.OPENXC7_PATH = old_root
+        _restore_env("OPENXC7_CHIPDB", old_chipdb)
 
 
 def test_openxc7_root_locates_tools_chipdb_and_family_database():
@@ -87,56 +132,21 @@ def test_xc7_database_family_is_not_hardcoded_to_artix7():
 
 
 def test_openxc7_characterization_avoids_physical_iopads():
-    import openxc7_characterization_netlist
-
-    characterization_cmd = OPEN_TOOLS.XC7_SYNTH_XILINX_COMMAND(
-        "timing_top", is_final_top=False
-    )
-    final_cmd = OPEN_TOOLS.XC7_SYNTH_XILINX_COMMAND("top", is_final_top=True)
-    assert "-noiopad" in characterization_cmd
-    assert "-noiopad" not in final_cmd
-    assert characterization_cmd.endswith("-top timing_top")
-    assert final_cmd.endswith("-top top")
-
-    with tempfile.TemporaryDirectory() as tmp_dir:
-        json_path = Path(tmp_dir) / "top.json"
-        json_path.write_text(
-            json.dumps(
-                {
-                    "modules": {
-                        "timing_top": {
-                            "ports": {
-                                "clk": {"direction": "input", "bits": [2]},
-                                "a": {"direction": "input", "bits": [3, 4]},
-                                "y": {"direction": "output", "bits": [5]},
-                            },
-                            "netnames": {
-                                "clk": {"bits": [2]},
-                                "a_input_reg": {"bits": [6, 7]},
-                                "y_output_reg": {"bits": [8]},
-                            },
-                            "cells": {
-                                "input_ff": {
-                                    "type": "FDRE",
-                                    "connections": {"C": [9], "D": [3], "Q": [6]},
-                                },
-                                "output_ff": {
-                                    "type": "FDRE",
-                                    "connections": {"C": [9], "D": [10], "Q": [5]},
-                                },
-                            },
-                        }
-                    }
-                }
-            )
-        )
-        openxc7_characterization_netlist.strip_top_ports(json_path, "timing_top")
-        netlist = json.loads(json_path.read_text())
-        top = netlist["modules"]["timing_top"]
-        assert top["ports"] == {}
-        assert top["netnames"]["a_input_reg"]["bits"] == [6, 7]
-        assert top["cells"]["input_ff"]["type"] == "FDRE"
-        assert top["cells"]["output_ff"]["type"] == "FDRE"
+    characterization = OPEN_TOOLS.XC7_YOSYS_COMMANDS("a.vhd", "timing_top", False)
+    final = OPEN_TOOLS.XC7_YOSYS_COMMANDS("a.vhd", "top", True)
+    # Characterization: no I/O buffers, and no top-level ports left for
+    # nextpnr-xilinx to turn into PADs
+    assert "-noiopad" in characterization[1]
+    assert characterization[1].endswith("-top timing_top")
+    assert characterization[-2:] == [
+        "delete -port timing_top",
+        "write_json timing_top.json",
+    ]
+    # Final: normal board I/O for the --pins XDC
+    assert "-noiopad" not in final[1]
+    assert final[1].endswith("-top top")
+    assert not any(command.startswith("delete") for command in final)
+    assert final[-1] == "write_json top.json"
 
 
 def test_openxc7_timing_parser_accepts_colons_in_synthesized_clock_names():
@@ -157,25 +167,30 @@ Info: Max frequency for clock '$auto$clkbufmap.cc:294:execute$2176': 498.50 MHz 
     assert path.source_ns_per_clock == 1.0
 
 
-def test_openxc7_comb_timing_uses_board_top_only_with_pins():
-    import SWEEP
+def test_openxc7_timing_parser_reads_nextpnr_xilinx_report():
+    report = OPEN_TOOLS.ParsedTimingReport(NEXTPNR_XILINX_BLINK_REPORT)
+    # Keyed by the constrained clock, as nextpnr-ecp5 reports it
+    assert list(report.path_reports) == ["clk_25p0"]
+    path = report.path_reports["clk_25p0"]
+    assert path.path_group == "clk_25p0"
+    assert abs(path.path_delay_ns - (1000.0 / 199.08)) < 1e-9
+    assert path.source_ns_per_clock == 1000.0 / 25.0
+    # Register and net names, for the sweep's critical path attribution
+    assert path.start_reg_name.startswith("blink_0clk_c4b4c111/")
+    assert path.end_reg_name is not None
+    assert len(path.netlist_resources) == 7
 
-    old_tool = SYN.SYN_TOOL
-    old_pins = SYN.PIN_CONSTRAINTS_FILE
-    try:
-        parser_state = SimpleNamespace(part=PART)
-        SYN.SYN_TOOL = OPEN_TOOLS
-        SYN.PIN_CONSTRAINTS_FILE = None
-        assert not SWEEP._OPENXC7_COMB_USES_FINAL_TOP(parser_state)
 
-        SYN.PIN_CONSTRAINTS_FILE = "/tmp/board.xdc"
-        assert SWEEP._OPENXC7_COMB_USES_FINAL_TOP(parser_state)
-
-        parser_state.part = "LFE5U-85F-6BG381C"
-        assert not SWEEP._OPENXC7_COMB_USES_FINAL_TOP(parser_state)
-    finally:
-        SYN.SYN_TOOL = old_tool
-        SYN.PIN_CONSTRAINTS_FILE = old_pins
+def test_openxc7_clock_alias_needs_one_constrained_clock_at_that_frequency():
+    # Two clocks at one frequency: which one the derived net came from is
+    # unknown, so it keeps the name nextpnr reported
+    text = NEXTPNR_XILINX_BLINK_REPORT.replace(
+        "Info: Propagating clock constraints...",
+        "Info: constraining clock net 'clk_25p0_other' to 25.00 MHz\n"
+        "Info: Propagating clock constraints...",
+    )
+    report = OPEN_TOOLS.ParsedTimingReport(text)
+    assert list(report.path_reports) == ["blink_0clk_c4b4c111.clk"]
 
 
 def test_openxc7_bitstream_conversion_is_an_explicit_backend_operation():
@@ -280,6 +295,11 @@ def test_openxc7_bitstream_runs_final_implementation_before_conversion():
             top_dir.mkdir(parents=True)
             pins = Path(tmp_dir) / "board.xdc"
             pins.write_text("# pins\n")
+            # An earlier run's outputs, which must be gone before this run's
+            # implementation can fail part way
+            outputs = ("top.fasm", "top.frames", "top.bit")
+            for name in outputs:
+                (top_dir / name).write_text("stale\n")
 
             class Params:
                 TimingParamsLookupTable = {}
@@ -295,6 +315,8 @@ def test_openxc7_bitstream_runs_final_implementation_before_conversion():
 
             def fake_final_impl(*args):
                 implementation_calls.append(args)
+                stale = [name for name in outputs if (top_dir / name).exists()]
+                assert stale == [], f"stale outputs at implementation: {stale}"
                 (top_dir / "top.fasm").write_text("test fasm\n")
                 return final_report
 

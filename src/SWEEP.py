@@ -6617,15 +6617,6 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
     ), False
 
 
-def _OPENXC7_COMB_USES_FINAL_TOP(parser_state):
-    """Whether --comb should time the physical board-facing XC7 top."""
-    return (
-        SYN.SYN_TOOL is OPEN_TOOLS
-        and OPEN_TOOLS.IS_XC7_PART(parser_state.part)
-        and bool(SYN.PIN_CONSTRAINTS_FILE)
-    )
-
-
 def DO_THROUGHPUT_SWEEP(
     parser_state,
     coarse_only=False,
@@ -6700,20 +6691,10 @@ def DO_THROUGHPUT_SWEEP(
             print("Using --coarse and --comb doesnt make sense? TODO fix?")
             sys.exit(-1)
         else:
-            # Regular multi main top comb logic. With real board constraints,
-            # time the exact board-facing XC7 implementation. Without --pins,
-            # keep using the characterization path: nextpnr-xilinx cannot
-            # reliably place unconstrained synthetic top-level PADs, so that
-            # path synthesizes with -noiopad and strips only the synthetic top
-            # ports before P&R.
-            if _OPENXC7_COMB_USES_FINAL_TOP(parser_state):
-                timing_report = OPEN_TOOLS.SYN_AND_REPORT_TIMING_FINAL_TOP(
-                    parser_state, multimain_timing_params
-                )
-            else:
-                timing_report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
-                    parser_state, multimain_timing_params
-                )
+            # Regular multi main top comb logic
+            timing_report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
+                parser_state, multimain_timing_params
+            )
 
         # Print a little timing info to characterize comb logic
         clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(

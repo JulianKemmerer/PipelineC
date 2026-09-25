@@ -222,10 +222,6 @@ def _PART_IS_ICE40(part_str):
     return part_str is not None and "ice40" in part_str.lower()
 
 
-def _PART_IS_XC7(part_str):
-    return part_str is not None and part_str.lower().startswith("xc7")
-
-
 def TOOL_MATCHES_PART(tool, part_str):
     """Is an explicitly named tool consistent with an explicitly given part?
 
@@ -239,7 +235,7 @@ def TOOL_MATCHES_PART(tool, part_str):
         return True
     if _PART_IS_ICE40(part_str) and tool in (DIAMOND, OPEN_TOOLS):
         return True
-    if _PART_IS_XC7(part_str) and tool in (VIVADO, OPEN_TOOLS):
+    if OPEN_TOOLS.IS_XC7_PART(part_str) and tool in (VIVADO, OPEN_TOOLS):
         return True
     return False
 
@@ -288,7 +284,7 @@ def CHECK_TOOL_INSTALLED(tool, part_str=None, allow_fail=False):
             return _found("CologneChip Tools", CC_TOOLS.CC_TOOLS_PATH)
         return _missing("CologneChip toolchain install not found!")
     elif tool is OPEN_TOOLS:
-        if _PART_IS_XC7(part_str):
+        if OPEN_TOOLS.IS_XC7_PART(part_str):
             missing = []
             if OPEN_TOOLS.YOSYS_BIN_PATH is None:
                 missing.append("yosys")
@@ -299,7 +295,9 @@ def CHECK_TOOL_INSTALLED(tool, part_str=None, allow_fail=False):
                 missing.append("nextpnr-xilinx")
             chipdb = OPEN_TOOLS.GET_XC7_CHIPDB_PATH(part_str)
             if chipdb is None:
-                missing.append("matching nextpnr-xilinx chipdb")
+                missing.append(
+                    "nextpnr-xilinx chipdb " + OPEN_TOOLS.XC7_CHIPDB_NAME(part_str)
+                )
             if missing:
                 return _missing(
                     "OpenXC7 install incomplete for "

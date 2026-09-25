@@ -518,7 +518,7 @@ named without a part supplies its default part.
 | Part/family | `--syn_tool` | Default part | Timing flow |
 |---|---|---|---|
 | No part | `pyrtl` | none | Generic PyRTL software delay model; default when nothing is selected |
-| `xc...` | `vivado` or `open_tools` | `xc7a35ticsg324-1l` | Vivado, or open tools when selected |
+| `xc...` | `vivado`; `xc7...` also `open_tools` | `xc7a35ticsg324-1l` | Vivado, or OpenXC7 open tools when selected |
 | `ep...`, `10c...`, `5c...` | `quartus` | `5CEBA4F23C8` | Quartus |
 | ECP5 `lfe5u...` | `open_tools` | `LFE5U-85F-6BG381C` | GHDL + Yosys + nextpnr |
 | iCE40 `ice...` | `open_tools` or `diamond` | `ICE40UP5K-SG48` | Open tools, or Diamond when selected/available |
@@ -632,7 +632,7 @@ whatever tool-specific file the backend generates:
 | Intel Quartus | `pipelinec_top.qip` Quartus IP file |
 | Lattice Diamond | `vhdl_files.txt` and the top module's project file |
 | GHDL + Yosys + nextpnr | `vhdl_files.txt` and the top module's build script (`.sh`) |
-| OpenXC7 | `vhdl_files.txt`, the top build script (GHDL/Yosys + nextpnr-xilinx), and its `.fasm` intermediate; a final constrained build also writes `.frames` and `.bit` |
+| OpenXC7 | `vhdl_files.txt` and the top build script (GHDL/Yosys + nextpnr-xilinx); a `--pins` build also writes `top.fasm`, `top.frames` and `top.bit` |
 | Gowin EDA | `vhdl_files.txt` and the top module's build script (`.tcl`) |
 | Efinix Efinity | `vhdl_files.txt`, the top module's build script (`.sh`), and project (`.xml`) |
 | Cologne Chip toolchain | `vhdl_files.txt` and the top module's build script (`.sh`) |
@@ -657,6 +657,7 @@ pin-constraint file with `--pins`:
 * **OpenXC7**: Pass an `.xdc` pin/IO-standard file, an explicit XC7 part, and
   `--syn_tool open_tools`. The flow runs nextpnr-xilinx, converts its FASM output with
   Project X-Ray, and writes `<out_dir>/top/top.bit`.
+  * Test: `pypelinec ./examples/pypeline/blink.py --part xc7a35tcpg236-1 --syn_tool open_tools --pins ./src/tests/pypeline_tests/constraints/openxc7_basys3_blink.xdc`
 
 
 ## Set up your tools
@@ -711,10 +712,14 @@ for which part selects which tool.
 * **OpenXC7 (open-source Xilinx 7-series flow)**:
   * Set `OSS_CAD_SUITE` to a current
     [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build).
-  * Set `OPENXC7` to an OpenXC7 bundle:
+  * Set `OPENXC7` to an OpenXC7 bundle, or edit the `OPENXC7_PATH` default in
+    [OPEN_TOOLS.py](../src/OPEN_TOOLS.py):
     * [FPGAwars/OpenXC7 prebuilt releases](https://github.com/FPGAwars/tools-openxc7/releases).
     * [openXC7/toolchain-installer](https://github.com/openXC7/toolchain-installer) for a source build.
     * `OPENXC7_CHIPDB` and `PRJXRAY_DB_DIR` override nonstandard chipdb/database layouts.
+    * The chipdb must be the part's own package: `xc7a35tcpg236.bin` for
+      `xc7a35tcpg236-1`. To use a chipdb named only by device, such as the
+      `xc7a35t.bin` the nextpnr-xilinx README builds, set `OPENXC7_CHIPDB` to that file.
   * Smoke test: `pypelinec ./examples/pypeline/blink.py --part xc7a35tcpg236-1 --syn_tool open_tools --comb`
 * **Gowin EDA**: Finds `gw_sh` on the `PATH`, or edit the `GOWIN_PATH` constant in
   [GOWIN.py](../src/GOWIN.py).

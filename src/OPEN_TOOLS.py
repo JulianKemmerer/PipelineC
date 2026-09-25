@@ -283,25 +283,32 @@ XC7_NEXTPNR_EXE = "nextpnr-xilinx"
 XC7_FASM2FRAMES_EXE = "fasm2frames"
 XC7_FRAMES2BIT_EXE = "xc7frames2bit"
 
-# Optional root of a self-contained OpenXC7 install. Keep this separate from
+# Root of a self-contained OpenXC7 install. Keep this separate from
 # OSS_CAD_SUITE: it is useful (and common) to take Yosys/GHDL from OSS CAD
 # Suite while taking nextpnr-xilinx, Project X-Ray and the matching chipdb from
 # an OpenXC7/Apio bundle.
-OPENXC7_PATH = os.environ.get("OPENXC7")
+# https://github.com/FPGAwars/tools-openxc7/releases/
+# Download, extract, set env var or path here
+OPENXC7_ENV_PATH = os.environ.get("OPENXC7")
+if OPENXC7_ENV_PATH:
+    OPENXC7_PATH = OPENXC7_ENV_PATH
+else:
+    OPENXC7_PATH = "/media/1TB/Programs/Linux/openxc7-2026-09-15"
+
 
 def IS_XC7_PART(part_str):
     return bool(part_str) and part_str.lower().startswith("xc7")
 
 
-def _XC7_ARCH_CHIPDB_NAMES(part_str):
-    """Return plausible nextpnr-xilinx architecture chipdb names."""
-    package_part = part_str.lower().split("-", 1)[0]
-    names = [package_part + ".bin"]
-    for marker in ("xc7a35t", "xc7a50t", "xc7a100t", "xc7a200t"):
-        if package_part.startswith(marker):
-            names.append(marker + ".bin")
-            break
-    return names
+def XC7_CHIPDB_NAME(part_str):
+    """The nextpnr-xilinx chipdb file for a part: its base part (device and
+    package, no speed grade), ex. xc7a35tcpg236-1 -> xc7a35tcpg236.bin.
+
+    A chipdb holds one package's pin map, so a device-only file such as
+    xc7a35t.bin is never searched for: it may be another package's. Point
+    OPENXC7_CHIPDB at such a file to use it anyway.
+    """
+    return part_str.lower().split("-", 1)[0] + ".bin"
 
 
 def GET_XC7_TOOL_PATH(exe_name):
@@ -328,11 +335,9 @@ def GET_XC7_CHIPDB_PATH(part_str):
             ]
         )
     for directory in search_paths:
-        if os.path.isdir(directory):
-            for name in _XC7_ARCH_CHIPDB_NAMES(part_str):
-                candidate = os.path.join(directory, name)
-                if os.path.isfile(candidate):
-                    return candidate
+        candidate = os.path.join(directory, XC7_CHIPDB_NAME(part_str))
+        if os.path.isfile(candidate):
+            return candidate
     return None
 
 
@@ -382,6 +387,25 @@ def XC7_SYNTH_XILINX_COMMAND(top_entity_name, is_final_top):
         f"synth_xilinx -flatten -abc9 -arch xc7{iopad_arg} "
         f"-top {top_entity_name}"
     )
+
+
+def XC7_YOSYS_COMMANDS(vhdl_files_texts, top_entity_name, is_final_top):
+    """The Yosys script for an XC7 timing/final top, one command per line.
+
+    Characterization tops are synthetic register-to-register timing shells, not
+    board interfaces. -noiopad keeps I/O buffers out of them, and delete -port
+    turns their ports into plain wires: otherwise nextpnr-xilinx makes a
+    package PAD of every top-level port, which it rejects without a pin and
+    IOSTANDARD constraint. Final tops keep normal I/O for the --pins XDC.
+    """
+    commands = [
+        f"ghdl --std=08 -frelaxed {vhdl_files_texts} -e {top_entity_name}",
+        XC7_SYNTH_XILINX_COMMAND(top_entity_name, is_final_top),
+    ]
+    if not is_final_top:
+        commands.append(f"delete -port {top_entity_name}")
+    commands.append(f"write_json {top_entity_name}.json")
+    return commands
 
 
 def GET_XC7_BITSTREAM_TOOLS_AND_DB(part_str):
@@ -554,7 +578,34 @@ class ParsedTimingReport:
                 # print(clk_name, actual_mhz, target_mhz)
                 clock_to_act_tar_mhz[clk_name] = (actual_mhz, target_mhz)
 
+        # nextpnr-xilinx times each clock on the net past its IBUF/BUFG, named
+        # by synthesis (ex. main_0clk_1234.clk), where nextpnr-ecp5 reports the
+        # constrained clock port (clk_25p0). It logs how each such net got its
+        # constraint:
+        #   Info: constraining clock net 'clk_25p0' to 25.00 MHz
+        #   Info:     derived 25.0 MHz for net 'main_0clk_1234.clk' (through BUFG ...)
+        # Report a derived net under the constrained clock with its frequency
+        # (derived is rounded to 0.1 MHz), if exactly one constrained clock has it.
+        constrained_mhz = {
+            name: float(mhz)
+            for name, mhz in re.findall(
+                r"Info: constraining clock net '([^']+)' to ([0-9.]+) MHz", syn_output
+            )
+        }
+        clock_aliases = {}
+        for mhz, net in re.findall(
+            r"Info:\s+derived ([0-9.]+) MHz for net '([^']+)'", syn_output
+        ):
+            sources = [
+                name
+                for name, constrained in constrained_mhz.items()
+                if abs(constrained - float(mhz)) <= 0.05 + 1e-6
+            ]
+            if len(sources) == 1:
+                clock_aliases[net] = sources[0]
+
         self.path_reports = {}
+        reported_net = {}  # path_reports key -> the clock net nextpnr named
         PATH_SPLIT = "Info: Critical path report for "
         maybe_path_texts = syn_output.split(PATH_SPLIT)
         for path_text in maybe_path_texts:
@@ -572,8 +623,20 @@ class ParsedTimingReport:
                 if tar_mhz < 0.01:
                     tar_mhz = 0.01
                 path_report.source_ns_per_clock = 1000.0 / tar_mhz
-                # Save in dict
-                self.path_reports[path_report.path_group] = path_report
+                # Save in dict, under the constrained clock's name when known
+                net = path_report.path_group
+                key = clock_aliases.get(net, net)
+                path_report.path_group = key
+                prev = self.path_reports.get(key)
+                if (
+                    prev is not None
+                    and reported_net[key] != net
+                    and prev.path_delay_ns >= path_report.path_delay_ns
+                ):
+                    # Another derived net of the same clock was slower
+                    continue
+                self.path_reports[key] = path_report
+                reported_net[key] = net
 
         if len(self.path_reports) == 0:
             print("Bad synthesis log?:", syn_output)
@@ -583,7 +646,7 @@ class ParsedTimingReport:
 class PathReport:
     def __init__(self, path_report_text):
         # print(path_report_text)
-        self.path_delay_ns = None  # nanoseconds
+        self.path_delay_ns = None  # nanoseconds, set by ParsedTimingReport
         # self.slack_ns = None
         self.source_ns_per_clock = None  # From latch edge time
         self.path_group = None  # Clock name?
@@ -596,18 +659,6 @@ class PathReport:
         is_first_net = True
         last_net_name = None
         for line in path_report_text.split("\n"):
-            # Path delay ns
-            tok1 = "Max frequency for clock"
-            if tok1 in line:
-                toks = line.split(tok1)
-                toks = toks[1].split(":")
-                toks = toks[1].split("MHz")
-                mhz = float(toks[0])
-                ns = 1000.0 / mhz
-                self.path_delay_ns = ns
-                # print("mhz",mhz)
-                # print("ns",ns)
-
             # Clock name  /path group
             tok1 = "(posedge -> posedge)"
             if tok1 in line:
@@ -629,8 +680,9 @@ class PathReport:
             if "ns logic," in line and "ns routing" in line:
                 in_netlist_resources = False
                 self.end_reg_name = last_net_name
-            tok1 = "Info:       type"
-            if tok1 in line:
+            # Header of the path table: current nextpnr, or the older
+            # "curr total" one nextpnr-xilinx prints
+            if "Info:       type" in line or "Info: curr total" in line:
                 in_netlist_resources = True
 
 
@@ -752,6 +804,10 @@ def SYN_AND_REPORT_TIMING_NEW(
         log_text = f.read()
         f.close()
     else:
+        if xc7_final_top and os.path.exists(log_path):
+            # Always re-run, and the script below appends (&>>): start from an
+            # empty log so a run never parses an earlier run's report.
+            os.remove(log_path)
         # Write top level vhdl for this module/multimain
         if inst_name:
             VHDL.WRITE_LOGIC_ENTITY(
@@ -769,9 +825,9 @@ def SYN_AND_REPORT_TIMING_NEW(
                 multimain_timing_params.TimingParamsLookupTable,
             )
         else:
-            # Final XC7 implementation consumes the final top already emitted
-            # by SYN.WRITE_FINAL_FILES. In particular this preserves edits made
-            # by @final(syn) hooks between file emission and implementation.
+            # Final XC7 implementation builds the board-facing top that
+            # SYN.WRITE_FINAL_FILES already wrote (as Vivado's final build
+            # does), not a hashed characterization top.
             if not xc7_final_top:
                 VHDL.WRITE_MULTIMAIN_TOP(
                     parser_state, multimain_timing_params, False
@@ -804,8 +860,12 @@ def SYN_AND_REPORT_TIMING_NEW(
                 raise Exception("nextpnr-xilinx not installed? Put it on PATH.")
             if chipdb_path is None:
                 raise Exception(
-                    "No nextpnr-xilinx chipdb for " + parser_state.part + ". Set "
-                    "OPENXC7_CHIPDB to the chipdb file or containing directory."
+                    "No nextpnr-xilinx chipdb "
+                    + XC7_CHIPDB_NAME(parser_state.part)
+                    + " for "
+                    + parser_state.part
+                    + ". Put it in the OPENXC7 chipdb directory, or set "
+                    "OPENXC7_CHIPDB to the chipdb file or its directory."
                 )
         elif NEXTPNR_BIN_PATH is None:
             raise Exception("nextpnr not installed?")
@@ -824,16 +884,8 @@ def SYN_AND_REPORT_TIMING_NEW(
         # -v --debug
         if not YOSYS_JSON_ONLY:
             if is_xc7:
-                # Characterization tops are synthetic register-to-register
-                # timing shells, not physical board interfaces. Avoid inferred
-                # I/O pads there; unconstrained synthetic ports can otherwise
-                # land on unbonded package BELs. Final tops keep normal I/O.
                 yosys_script_arg = WRITE_YOSYS_SCRIPT(
-                    [
-                        f"ghdl --std=08 -frelaxed {vhdl_files_texts} -e {top_entity_name}",
-                        XC7_SYNTH_XILINX_COMMAND(top_entity_name, is_final_top),
-                        f"write_json {top_entity_name}.json",
-                    ],
+                    XC7_YOSYS_COMMANDS(vhdl_files_texts, top_entity_name, is_final_top),
                     output_directory + "/" + top_entity_name + "_yosys.ys",
                 )
                 f.write(
@@ -851,21 +903,6 @@ export GHDL_PREFIX="""
                 xdc_arg = ""
                 if is_final_top and SYN.PIN_CONSTRAINTS_FILE:
                     xdc_arg = " --xdc " + shlex.quote(SYN.PIN_CONSTRAINTS_FILE)
-                elif not is_final_top:
-                    characterization_netlist_helper = os.path.join(
-                        os.path.dirname(os.path.abspath(__file__)),
-                        "openxc7_characterization_netlist.py",
-                    )
-                    f.write(
-                        shlex.quote(sys.executable)
-                        + " "
-                        + shlex.quote(characterization_netlist_helper)
-                        + " "
-                        + shlex.quote(top_entity_name + ".json")
-                        + " "
-                        + shlex.quote(top_entity_name)
-                        + "\n"
-                    )
 
                 fasm_arg = ""
                 if is_final_top:
@@ -997,15 +1034,21 @@ def GENERATE_BITSTREAM(parser_state, multimain_timing_params):
         GET_XC7_BITSTREAM_TOOLS_AND_DB(parser_state.part)
     )
 
-    timing_report = SYN_AND_REPORT_TIMING_FINAL_TOP(
-        parser_state, multimain_timing_params
-    )
-
     output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
     top_entity_name = SYN.TOP_LEVEL_MODULE
     fasm_path = os.path.join(output_directory, top_entity_name + ".fasm")
     frames_path = os.path.join(output_directory, top_entity_name + ".frames")
     bit_path = os.path.join(output_directory, top_entity_name + ".bit")
+    # A run that fails part way must not leave an earlier run's bitstream
+    # looking like its own
+    for stale_path in (fasm_path, frames_path, bit_path):
+        if os.path.exists(stale_path):
+            os.remove(stale_path)
+
+    timing_report = SYN_AND_REPORT_TIMING_FINAL_TOP(
+        parser_state, multimain_timing_params
+    )
+
     if not os.path.isfile(fasm_path):
         raise Exception("OpenXC7 final implementation did not produce: " + fasm_path)
 
