@@ -222,16 +222,24 @@ def _PART_IS_ICE40(part_str):
     return part_str is not None and "ice40" in part_str.lower()
 
 
+def _PART_IS_XC7(part_str):
+    return part_str is not None and part_str.lower().startswith("xc7")
+
+
 def TOOL_MATCHES_PART(tool, part_str):
     """Is an explicitly named tool consistent with an explicitly given part?
 
-    Exact match, except ice40, which DIAMOND and OPEN_TOOLS both serve (see
-    PART_TO_TOOL) -- accepting only the installed one would make the same
-    command line succeed on one machine and fail on another.
+    Exact match, except families with more than one supported backend:
+    ice40 may use DIAMOND or OPEN_TOOLS, and Xilinx 7-series may use VIVADO
+    or the open Yosys/nextpnr-xilinx flow in OPEN_TOOLS. PART_TO_TOOL keeps
+    the historical/default choice; an explicit --syn_tool may select the
+    alternate backend without making the part/tool pair contradictory.
     """
     if tool is PART_TO_TOOL(part_str):
         return True
     if _PART_IS_ICE40(part_str) and tool in (DIAMOND, OPEN_TOOLS):
+        return True
+    if _PART_IS_XC7(part_str) and tool in (VIVADO, OPEN_TOOLS):
         return True
     return False
 
@@ -280,6 +288,28 @@ def CHECK_TOOL_INSTALLED(tool, part_str=None, allow_fail=False):
             return _found("CologneChip Tools", CC_TOOLS.CC_TOOLS_PATH)
         return _missing("CologneChip toolchain install not found!")
     elif tool is OPEN_TOOLS:
+        if _PART_IS_XC7(part_str):
+            missing = []
+            if OPEN_TOOLS.YOSYS_BIN_PATH is None:
+                missing.append("yosys")
+            if OPEN_TOOLS.GHDL_PREFIX is None:
+                missing.append("ghdl")
+            nextpnr = OPEN_TOOLS.GET_XC7_TOOL_PATH(OPEN_TOOLS.XC7_NEXTPNR_EXE)
+            if nextpnr is None:
+                missing.append("nextpnr-xilinx")
+            chipdb = OPEN_TOOLS.GET_XC7_CHIPDB_PATH(part_str)
+            if chipdb is None:
+                missing.append("matching nextpnr-xilinx chipdb")
+            if missing:
+                return _missing(
+                    "OpenXC7 install incomplete for "
+                    + part_str
+                    + ": missing "
+                    + ", ".join(missing)
+                    + ". Put the OpenXC7 tools on PATH and set OPENXC7_CHIPDB, "
+                    "or use OPENXC7 for a self-contained tool root."
+                )
+            return _found("Open tools (OpenXC7)", nextpnr)
         if OPEN_TOOLS.YOSYS_BIN_PATH is not None:
             return _found("Open tools (yosys)", OPEN_TOOLS.YOSYS_BIN_PATH)
         return _missing("Open tools (yosys/nextpnr/ghdl) install not found!")
@@ -1314,7 +1344,11 @@ def PRINT_MEASURED_AREA_IF_AVAILABLE(timing_report, estimated_total_area=None):
 
 def GENERATE_FINAL_BITSTREAM(parser_state, multimain_timing_params):
     print("================== Generating Bitstream ==================", flush=True)
-    SYN_TOOL.SYN_AND_REPORT_TIMING(
+    generate_bitstream = getattr(SYN_TOOL, "GENERATE_BITSTREAM", None)
+    if generate_bitstream is not None:
+        return generate_bitstream(parser_state, multimain_timing_params)
+    # Backends without an explicit bitstream hook keep the historical path.
+    return SYN_TOOL.SYN_AND_REPORT_TIMING(
         None,
         None,
         parser_state,

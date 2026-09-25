@@ -116,9 +116,10 @@ Tools:
 Currently Supported Tools (Linux only):
 Synthesis: 
   Xilinx Vivado, 
+  OpenXC7 (Xilinx 7-series: GHDL+Yosys+nextpnr-xilinx+Project X-Ray),
   Intel Quartus, 
   Lattice Diamond, 
-  GHDL+Yosys+nextpnr,
+  GHDL+Yosys+nextpnr (ECP5/iCE40),
   Gowin EDA, 
   Efinix Efinity,
   Cologne Chip Toolchain,

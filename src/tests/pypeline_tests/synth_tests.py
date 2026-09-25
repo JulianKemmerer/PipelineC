@@ -36,6 +36,7 @@ from common import (
 # a hard error, not an override (SYN.RESOLVE_PART_AND_TOOL).
 DM = "device_models"  # real sky130 liberty STA; the default for tool-neutral designs
 VIVADO = "vivado"  # Vivado-specific features; these designs set PART("xc...") too
+OPEN_TOOLS = "open_tools"  # ECP5 by default; explicit parts also select OpenXC7
 
 # fmt: off
 # (filename, source_dir, extra_args, tool)
@@ -344,6 +345,23 @@ def get_tests() -> list:
                 env={"SWEEP_FLOAT32_MHZ": goal_mhz},
             )
         )
+
+    # OPEN_TOOLS defaults to ECP5, so the generic entry above cannot also
+    # exercise its Xilinx 7-series path. Keep that coverage and add an
+    # explicit OpenXC7 sibling: this is a real characterization + iterative
+    # auto-pipeline + nextpnr-xilinx timing run, not only command generation.
+    tests.append(
+        _synth_test(
+            "sweep_float32_openxc7",
+            [
+                INST_DIR / "sweep_float32_test.py",
+                "--part",
+                "xc7a35tcpg236-1",
+            ],
+            OPEN_TOOLS,
+            env={"SWEEP_FLOAT32_MHZ": 200.0},
+        )
+    )
     return tests
 
 
