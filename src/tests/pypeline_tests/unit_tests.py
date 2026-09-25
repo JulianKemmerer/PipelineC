@@ -260,6 +260,14 @@ def get_tests() -> list:
             cmd=[INST_DIR / "mux_fanout_planning_test.py"],
         )
     )
+    # Large-design VHDL emission regression.
+    tests.append(
+        Test(
+            name="hdl_emission_scalability_test",
+            category="unit",
+            cmd=[INST_DIR / "hdl_emission_scalability_test.py"],
+        )
+    )
     # Byte-count regression for the cocotb/yosys "Argument list too long"
     # bug: a large design's VHDL file list, inlined whole into a single
     # generated recipe/command-line argument, can exceed Linux's
