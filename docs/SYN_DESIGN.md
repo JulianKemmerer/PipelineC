@@ -54,6 +54,11 @@ settles all four in one place, right after the design is parsed.
 | `CCGM` | `CC_TOOLS` | `cc_tools` | `CCGM1A1` | CologneChip toolchain |
 | `sky130` | `DEVICE_MODELS` | `device_models` | `sky130` | yosys + ghdl mapping to a sky130 liberty library, then the compiler's own STA ([`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md)) |
 
+A Gowin part may end in `:<version>` (`GW2AR-LV18QN88PC8:C`). That is a
+PipelineC suffix, not part of Gowin's part number: `GOWIN.py` splits it off and
+passes it to gw_sh as `set_device --device_version <version>`. Without it, a
+part with several known versions gets the last one listed in `GOWIN.py`.
+
 **The two axes cannot contradict.** A part and a tool that disagree is a hard
 error, not an override — they are one decision spelled two ways, so there is no
 "which wins" rule to remember:
@@ -323,7 +328,11 @@ separate one:
   flip-flop overhead; DEVICE_MODELS library, corner, `MODEL_VERSION` and
   synthesis recipe), the planner-weight suffix
   (`GET_PLANNER_DELAY_CACHE_SUFFIX`), the part (except for DEVICE_MODELS, whose
-  part only selects the tool), and `pnr` / `syn` (`TOOL_DOES_PNR`). Each entry is
+  part only selects the tool), and `pnr` / `syn` (`TOOL_DOES_PNR`). The part's
+  directory name goes through `PART_CACHE_DIR_NAME`, which maps characters
+  Windows forbids in a path (`:`, `/`, ...) to `_`, so the committed tree checks
+  out on Windows: `GW2AR-LV18QN88PC8:C` is cached under `GW2AR-LV18QN88PC8_C`.
+  The part string itself keeps its spelling everywhere else. Each entry is
   `<key>.delay` (total ns) with an optional `<key>.timing.json` sidecar (schema 1:
   `launch_clock_to_q_ns`, `combinational_delay_ns`, `setup_ns`, `path_delay_ns`).
   `GET_CACHED_LOGIC_FILE_KEY` makes the key: the function name plus input types,

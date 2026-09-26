@@ -282,6 +282,16 @@ def get_tests() -> list:
             requires=["make", "ghdl"],
         )
     )
+    # Every repo path checks out on Windows (PR #298: a Gowin PART:VERSION part
+    # name became a committed cache/delay dir with a ':' in it), and the Gowin
+    # delay-cache lookup still lands on the committed, sanitized directory.
+    tests.append(
+        Test(
+            name="path_portability_test",
+            category="unit",
+            cmd=[INST_DIR / "path_portability_test.py"],
+        )
+    )
     # Pure configuration/selection coverage for the Xilinx 7-series open-source
     # flow. No FPGA tools are invoked.
     tests.append(

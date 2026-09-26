@@ -1628,6 +1628,23 @@ def GET_CACHE_ROOT_DIR():
     )
 
 
+# Windows forbids these in a path component. `:` is the live case: Gowin parts
+# are spelled PART:DEVICE_VERSION (GOWIN.py splits on it) and a committed
+# cache/delay/gowin/<part> dir named that way broke every Windows checkout
+# (PR #298). `/` would silently nest directories (a Gowin tool grade like C8/I7).
+_UNSAFE_PATH_CHARS_RE = re.compile(r'[<>:"/\\|?*]')
+
+
+def PART_CACHE_DIR_NAME(part):
+    """The part as one filesystem-safe path component (cache dirs only).
+
+    The part string itself keeps its spelling everywhere else -- tools parse
+    it (GOWIN.py splits PART:DEVICE_VERSION on the colon) -- only the directory
+    it is cached under is sanitized.
+    """
+    return _UNSAFE_PATH_CHARS_RE.sub("_", part)
+
+
 def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="delay"):
     cache_dir = os.path.join(GET_CACHE_ROOT_DIR(), dir_name)
     PATH_DELAY_CACHE_DIR = os.path.join(cache_dir, str(SYN_TOOL.__name__).lower())
@@ -1659,7 +1676,7 @@ def GET_PATH_DELAY_CACHE_DIR(parser_state, dir_name="delay"):
     # leaf).
     part_already_encoded = SYN_TOOL is DEVICE_MODELS
     if parser_state.part is not None and not part_already_encoded:
-        PATH_DELAY_CACHE_DIR += "/" + parser_state.part
+        PATH_DELAY_CACHE_DIR += "/" + PART_CACHE_DIR_NAME(parser_state.part)
     if TOOL_DOES_PNR():
         PATH_DELAY_CACHE_DIR += "/pnr"
     else:
