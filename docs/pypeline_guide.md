@@ -204,13 +204,13 @@ This is the positive-space complement to [Limitations](#limitations--not-yet-sup
 
 | Python construct | Meaning | Restriction |
 |---|---|---|
-| `if` / `else` | Multiplexer selecting between both elaborated branches | No early return from inside a branch |
-| `for range(N)` | Unrolled N times at compile time | `N` must be a compile-time constant |
-| `while` | Unrolled at compile time | Condition must be compile-time evaluable |
+| `if` / `else` | Multiplexer selecting between both elaborated branches | No early return from inside a branch ([#343](https://github.com/JulianKemmerer/PipelineC/discussions/343)) |
+| `for range(N)` | Unrolled N times at compile time | `N` must be a compile-time constant ([#344](https://github.com/JulianKemmerer/PipelineC/discussions/344)) |
+| `while` | Unrolled at compile time | Condition must be compile-time evaluable ([#344](https://github.com/JulianKemmerer/PipelineC/discussions/344)) |
 | Function call | Instantiates a hardware submodule | Each call site is a distinct instance |
 | Assignment | Drives a wire/register | — |
 | Ternary (`a if c else b`) | Same MUX as `if`/`else`, as an expression | — |
-| `return` | Declares the module's output port(s) | At most one, as the final top-level statement |
+| `return` | Declares the module's output port(s) | At most one, as the final top-level statement ([#343](https://github.com/JulianKemmerer/PipelineC/discussions/343)) |
 | Augmented assignment (`+=`, etc.) | Sugar for `x = x <op> y` | — |
 | `and` / `or` | Boolean combine, each operand normalised to `uint1_t` | Result is always `uint1_t` |
 
@@ -436,6 +436,11 @@ r = sim_call(dual_accum, 10, 5)   # sum_a: 0+10=10, sum_b: 0+5=5 → 15
 r = sim_call(dual_accum, 10, 5)   # sum_a: 10+10=20, sum_b: 5+5=10 → 30
 ```
 
+Simulation tells call sites apart by source line. Two calls to the same stateful function
+on one line, such as `accumulator(a) + accumulator(b)`, currently share one register in
+simulation, while hardware has two, so the results differ ([#353](https://github.com/JulianKemmerer/PipelineC/issues/353)). Put each call on its
+own line.
+
 ### Complete designs with multiple `@MAIN` functions
 
 Designs that communicate through global `Wire[T]` signals require all `@MAIN`
@@ -529,9 +534,11 @@ def solution(x: uint1_t) -> uint1_t:
 match is how the tool decides which `@MAIN`'s clock this wire is. Use it on an
 `Input[uint1_t]` for an external clock, or a `Wire[uint1_t]` for an internally
 generated one (driven by another `@MAIN`, mirroring PipelineC's
-[internal_clocks.c](../examples/internal_clocks.c) example — note that pattern
-needs two `@MAIN`s at different rates, i.e. multiple clock domains, which is not
-yet supported end-to-end; see [Limitations / Not Yet Supported](#limitations--not-yet-supported)). It cannot be used on an `Output[T]` (a clock
+[internal_clocks.c](../examples/internal_clocks.c) example). That pattern needs
+two `@MAIN`s at different rates. The hardware builds, but no signal can cross
+between the two clock domains ([#342](https://github.com/JulianKemmerer/PipelineC/discussions/342)), and simulation handles only one clock rate
+([#354](https://github.com/JulianKemmerer/PipelineC/issues/354)); see
+[Limitations / Not Yet Supported](#limitations--not-yet-supported). It cannot be used on an `Output[T]` (a clock
 net needs exactly one driver, which an `Output` doesn't model) or on a wire whose
 rate collides with another `make_clock`-tagged wire at the same rate.
 
@@ -669,12 +676,14 @@ def sum_scaled(arr: uint32_t[3]) -> uint32_t:
 
 The loop body may contain hardware expressions (reads from inputs, assignments to wires),
 but the loop *control* itself (the range, the condition, the counter variable(s)) is always
-pure Python. One exception: don't iterate a `set`/`frozenset` — its order isn't guaranteed
+pure Python ([#344](https://github.com/JulianKemmerer/PipelineC/discussions/344) discusses loops that run over several clock cycles). One
+exception: don't iterate a `set`/`frozenset` — its order isn't guaranteed
 across runs (`sorted(...)` it first if you need one).
 
 A `while` loop may unroll at most 65,536 iterations; exceeding the limit is treated as
 a non-terminating elaboration loop. Loop targets may be names or nested tuple/list
-patterns, but starred targets such as `for first, *rest in items` are not supported.
+patterns, but starred targets such as `for first, *rest in items` are not supported
+([#345](https://github.com/JulianKemmerer/PipelineC/discussions/345)).
 
 ---
 
@@ -793,8 +802,10 @@ import file_a
 import file_b
 ```
 
-**Only `import file_a` (qualified attribute access) is supported.**
-`from file_a import *` is intentionally not supported.
+**Use `import file_a` and qualified attribute access (`file_a.func`).**
+`from file_a import func` and `from file_a import *` also work for functions, types and
+constants, but not for global wires: a `Wire[T]` has no Python value to import, so reach
+it as `file_a.w`.
 
 **Import aliases use the actual module name for hardware, not the alias.**
 `import file_a as fa` lets you write `fa.func()` in Python, but the generated VHDL
@@ -803,11 +814,10 @@ Two aliases pointing at the same file both refer to the same hardware wires.
 
 **Recursive (transitive) imports are followed automatically.**
 If `file_a.py` itself imports `file_b.py`, `file_b` is discovered and elaborated
-too — you don't need to also import it from the top file. Only plain top-level
-`import module_name` statements are followed at each hop (still not
-`from file_a import *`, and not an `import` written inside a function/`if`/`try`
-body), so each file only needs to import what it directly uses, the same way
-plain Python code is organized.
+too — you don't need to also import it from the top file. Top-level `import module_name`
+and `from module_name import ...` statements are followed at each hop (an `import`
+written inside a function/`if`/`try` body is not), so each file only needs to import
+what it directly uses, the same way plain Python code is organized.
 
 Call hardware functions from imported files using attribute syntax:
 
@@ -869,7 +879,8 @@ lo, hi = x[7:0], x[15:8]
 ```
 
 For a hardware-valued right side, nested targets, starred targets, and unpacking a
-non-literal tuple/list expression are not supported. Assign fields or elements explicitly
+non-literal tuple/list expression are not supported ([#345](https://github.com/JulianKemmerer/PipelineC/discussions/345)). Assign fields or elements
+explicitly
 in those cases.
 
 ---
@@ -1096,8 +1107,8 @@ packed: uint24_t = concat(r, g, b)         # three uint8_t values → uint24_t
 | `bit_assign(base, val, offset)` | Overwrite bits `[offset+W-1:offset]` of `base` with `val` |
 | `array_to_uint_be(arr)` | Concatenate array elements, big-endian (arr[0] = MSB) |
 | `array_to_uint_le(arr)` | Concatenate array elements, little-endian (arr[0] = LSB) |
-| `uint_to_array_be(x, n)` | Split integer into `n` equal elements, big-endian |
-| `uint_to_array_le(x, n)` | Split integer into `n` equal elements, little-endian |
+| `uint_to_array_be(x, w)` | Split integer into `w`-bit elements, big-endian (element 0 = MSBs) |
+| `uint_to_array_le(x, w)` | Split integer into `w`-bit elements, little-endian (element 0 = LSBs) |
 
 All size/count arguments must be compile-time constants.
 
@@ -1181,12 +1192,14 @@ it lowers to the same mechanism, not a separate one. `y = type2_t(x)` and
 two integer types of the *same* width and signedness (or casting a value to its own
 type) costs nothing extra — it's the same wire, not a new one.
 
-`char_t` and `@enum` destinations, and casting *to* an array type (`uint8_t[4](x)`), are
-not supported — the last of these is rejected explicitly (an array's `[4]` looks like a
-bit width to the same machinery that computes one, so silently accepting it would risk
-masking to the wrong width); an enum destination is unsupported because `state_t(2)`
-already has an unrelated meaning (`IntEnum` member lookup) that casting would silently
-shadow.
+`char_t` is a scalar destination like the integer types: `char_t(x)` works the same way.
+Casting *to* an array type (`uint8_t[4](x)`) is rejected explicitly (an array's `[4]` looks
+like a bit width to the same machinery that computes one, so silently accepting it would
+risk masking to the wrong width). An `@enum` destination is not supported, because
+`state_t(2)` already has an unrelated meaning (`IntEnum` member lookup) that casting would
+silently shadow. Inside a hardware function, any `state_t(...)` call currently crashes
+with an internal `TypeError` instead of a clear error ([#362](https://github.com/JulianKemmerer/PipelineC/issues/362)); use the members (`state_t.RUN`)
+directly.
 
 For a compound (struct, or `@interface` half) destination, a cast dispatches to a
 **registered conversion function** — an ordinary hardware function of the form
@@ -1436,9 +1449,11 @@ assert p.name == "sensor1"
 r = sim_call(log_event, tag="customtag")
 ```
 
-String literals containing an underscore are currently unsafe: the shared constant
-decoder truncates the literal at the first `_`. Use a spelling without underscores or a
-numeric `char_t[N]` initializer until that limitation is removed.
+String literals containing an underscore produce invalid VHDL ([#356](https://github.com/JulianKemmerer/PipelineC/issues/356)): the shared constant
+decoder cuts the literal at the first `_`, dropping its closing quote. The build and
+native simulation still succeed; GHDL and synthesis tools reject the generated file. The C
+front end has the same bug. Use a spelling without underscores or a numeric `char_t[N]`
+initializer.
 
 Char arrays support ordinary per-element arithmetic like any other array — each element
 is just an 8-bit value:
@@ -1454,7 +1469,7 @@ def increment_chars(s: char_t[16]) -> char_t[16]:
 
 Known limitation: a `Reg[T]` whose leaf type is `char_t` cannot have an explicit
 initializer. This includes a scalar `Reg[char_t]` and `Reg[char_t[N]]` initialized from
-an integer, list, or string. Zero-initialized char registers are supported.
+an integer, list, or string ([#357](https://github.com/JulianKemmerer/PipelineC/issues/357)). Zero-initialized char registers are supported.
 
 ### Arrays
 
@@ -1769,7 +1784,7 @@ computation) converts back to a Python `float`, for printing/debugging/comparing
 against a reference implementation.
 
 A bare Python float literal is not a hardware value and cannot be used directly inside
-a hardware expression. Convert it at elaboration time with `float_t.as_const(...)`, as
+a hardware expression ([#345](https://github.com/JulianKemmerer/PipelineC/discussions/345)). Convert it at elaboration time with `float_t.as_const(...)`, as
 shown above, and capture the resulting constant.
 
 Need a non-standard precision, or just the building blocks? `make_float_t(E, M)`
@@ -2224,7 +2239,7 @@ Restrictions:
   subtree enclosing another's claim, or one whole-wire write plus any other writer —
   is an `ElaborationError` naming both functions and paths.
 - Writes through a **variable** (non-constant) array index are not supported when the
-  wire has more than one writer function.
+  wire has more than one writer function ([#350](https://github.com/JulianKemmerer/PipelineC/discussions/350)).
 - Each writer function must still have exactly one instance in the design hierarchy.
 - Leaves no writer claims read as zero, exactly like the single-writer partial-write
   case above.
@@ -2313,7 +2328,9 @@ effect on what value ends up in the registers, only on how much time the tool is
 to assume is available for the logic between them to settle.
 
 **Requires Vivado.** Like `PART()`, this only does something during real FPGA synthesis;
-without a `PART()` target it has no effect. See
+without a `PART()` target it has no effect, and with another synthesis tool the build stops
+with an error (see [Limitations](#limitations--not-yet-supported); support for other tools
+is discussed in [#346](https://github.com/JulianKemmerer/PipelineC/discussions/346)). See
 `src/tests/pypeline_tests/inst/multi_cycle_test.py` (translated from
 `examples/mcp/mcp_test.c`) for the full example, including the `PART(...)` call needed to
 target a real device.
@@ -2888,9 +2905,9 @@ all of the time.
   interval == `.latency`.
 - Construct `AUTO_FSM(...)` once, eagerly, at module or factory level and capture
   it by closure — same rule and same reason as `AUTO_PIPELINE`.
-- Dynamic hardware array indices are not supported in the pure function. An operation
-  that consumes a complete array value cannot be shared because its operand multiplexer
-  would require an unsupported array-of-arrays shape.
+- Dynamic hardware array indices are not supported in the pure function ([#347](https://github.com/JulianKemmerer/PipelineC/discussions/347)). An
+  operation that consumes a complete array value cannot be shared: its operand multiplexer
+  currently builds the wrong array shape ([#359](https://github.com/JulianKemmerer/PipelineC/issues/359)).
 
 **Write the caller to react to `valid`, not to count cycles.** Before an implemented
 schedule is supplied, `.latency` is 0 and the call is a combinational passthrough.
@@ -4044,7 +4061,7 @@ else — no write-pointer rewind, no "how full is it", no clear input. A buffer 
 any of those is built on [`make_ram`](#rams-make_ram--make_stream_ram) instead. With
 `make_fifo` itself, two consequences are worth designing around:
 
-* **A reset cannot clear a FIFO; it can only drain one.** The only way to empty an
+* **A reset cannot clear a FIFO; it can only drain one** ([#349](https://github.com/JulianKemmerer/PipelineC/discussions/349)). The only way to empty an
   instance is to clock its contents out, so a design whose reset must leave its buffers
   empty has to force the read enable high for the duration (`data_ready |= rst`) and
   **hold reset for at least the FIFO's depth in cycles** — at 125 MHz a 16K-deep FIFO
@@ -4468,7 +4485,8 @@ arguments) and returns `(func_mcp, func_mcp_t)`. Its ports are the two halves of
 Internally it is the same `MULTI_CYCLE[latency]` / `Reg[T, MC.start]` / `Reg[T, MC.end]`
 pattern from [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle), with `launch`/`capture` registers and a
 `cycles_since_launch` counter driving the handshake. Like `MULTI_CYCLE[...]` itself, the
-relaxed timing only matters during real FPGA synthesis (requires `PART()` + Vivado);
+relaxed timing only matters during real FPGA synthesis (requires `PART()` + Vivado; see
+[#346](https://github.com/JulianKemmerer/PipelineC/discussions/346) for other tools);
 simulation always sees `func`'s result settle the same cycle it is computed. See
 `src/tests/pypeline_tests/inst/stream_multi_cycle_test.py` (translated from
 `examples/mcp/mcp_divider.c`) for the full example.
@@ -4858,6 +4876,10 @@ result cache, not a fixed call location, is what guarantees this — so a non-id
 driving value (a counter, a random sample, a queue pop) advances exactly once per cycle
 even though a `@MAIN` body actually runs at least twice per cycle internally.
 
+That cache is keyed by the function alone, not by its arguments. Calling one `@sim_input`
+function twice in a cycle with different arguments currently returns the first call's
+value both times ([#355](https://github.com/JulianKemmerer/PipelineC/issues/355)). Use a separate function for each value.
+
 ### `sim_print` — printf-style console output
 
 `sim_print(...)` looks like `@sim_output` (fires once per cycle, in the final pass) but is
@@ -4909,6 +4931,9 @@ the same f-string interpolation rules as `sim_print`'s argument.
 `sim_finish()` takes no arguments and signals "stop simulating now": it raises a
 `SimFinish` exception in native simulation and elaborates to VHDL's
 `std.env.finish;`, halting a VHDL simulation.
+
+A `sim_print` that runs on the same cycle as `sim_finish()` appears in native simulation
+but is missing from VHDL simulation output ([#361](https://github.com/JulianKemmerer/PipelineC/issues/361)). Print one cycle before finishing.
 
 ### `@initial` / `@final` — start/end-of-run hooks
 
@@ -5116,7 +5141,7 @@ that differ only by case, or that normalize to the same identifier, are rejected
 ports exactly, without a module prefix or silent normalization, so they must already be
 legal, globally unique VHDL identifiers. Imported `Wire[T]` names are module-prefixed;
 import aliases do not change that prefix. Enum member names are also emitted verbatim
-and therefore must not be VHDL reserved words. Struct field names are normalized.
+and therefore must not be VHDL reserved words ([#358](https://github.com/JulianKemmerer/PipelineC/issues/358)). Struct field names are normalized.
 
 These source rules are the stable contract. Generated entity/type names and timing
 suffixes are implementation artifacts; use the lookup files described under
@@ -5125,40 +5150,50 @@ their spelling.
 
 ## Limitations / Not Yet Supported
 
-The table below consolidates all known limitations and unsupported features, grouped by
+The table below lists known limitations, unsupported features and known bugs, grouped by
 category so unrelated kinds of restriction don't read as equivalent — a language
 restriction you must design around is a different kind of fact than "this hasn't been
-built yet."
+built yet," and both differ from a bug. A status that names a failure, such as *Invalid
+VHDL* or *Wrong in native simulation*, marks a known bug; its notes give the workaround.
+The last column links the GitHub issue (a bug) or discussion (a feature idea) that
+tracks the row.
 
-| Category | Feature | Status | Notes |
-|---|---|---|---|
-| Language | **Multiple/early `return` statements** | Not supported | A function may have at most one `return`, and it must be the function's final top-level statement; assign to a variable inside `if`/`else` branches and return it once at the end (see [Control flow](#your-first-hardware-function)) |
-| Language | **Casting to `char_t`, an `@enum`, or an array type** | Not supported | Scalar int/uint casting, and compound (struct/`@interface`-half) casting via `@cast`/`register_cast`, are supported (see [Casting](#casting)) — these three destination kinds are the exceptions |
-| Language | **Hardware signals as loop conditions** | Not supported | `for`/`while` loop bounds must be compile-time Python integers (fully unrollable) |
-| Language | **More than 65,536 `while` iterations** | Not supported | The elaborator stops at the safety limit rather than hanging on a non-terminating loop |
-| Language | **`break` inside a loop** | Not supported | Restructure the loop body (e.g. an early-exit flag checked each iteration) instead |
-| Language | **Starred unpack targets** | Not supported | Nested unpacking is supported for compile-time values; hardware-valued unpacking must be flat and use a literal tuple/list RHS |
-| Language | **Iterating a `set`/`frozenset` in a `for` loop** | Not supported | Iteration order is `PYTHONHASHSEED`-dependent, not a deterministic function of the design source; `sorted(...)` it first — tuple/list/dict/str/`enumerate`/`zip`/generator iteration, and a nested-tuple loop target (`for kind, a, b in ops:`), are all fine |
-| Language | **Exotic closure value types** | Restricted | A closure capture must be a C-type, `int`/`bool`/`None`, a callable, or a list/tuple of the above — other captured Python object types fail to elaborate |
-| Language | **A slice used directly as a call argument** | Not supported | `f(ae[hi:lo], ...)` fails the same way a subscripted call target used to; assign the slice to a typed local first (`x: t = ae[hi:lo]`, then `f(x, ...)`) |
-| Language | **`from module import *`** | Not supported | Only qualified imports (`import module`) are supported |
-| Language | **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead |
-| Language | **Float literals as hardware values** | Not supported | Use `float_t.as_const(value)` at elaboration time |
-| Language | **Underscores in string literals** | Incorrectly truncated | Use string literals without `_`, or initialize the `char_t[N]` data numerically |
-| Language | **Control flow inside an interface function** | Rejected | `if`/`for`/`while` and conditional expressions in an interface-function body raise an `InterfaceError`; route conditional steering through an explicit handshake mux/demux module instead (see [`@interface`](#bidirectional-ports-interface)). Interfaces are also point-to-point: fan-out of a single interface, dangling outputs and input-to-output bypass are rejected — fan out through a module with an [array port](#array-ports-fan-out) instead. Array *input* ports are not supported. Compile-time `for`/`while` unrolling in ordinary `@hw_func`s is unaffected |
-| Source model | **Named clocks (single domain)** | Supported | Use `make_clock(mhz)` on a global `Input[uint1_t]`/`Wire[uint1_t]`; see [Top-Level Entry Points](#top-level-entry-points) |
-| Source model | **Multiple clock domains** | Not supported | Clock groups and asynchronous-wire declarations have no Pypeline source equivalent; `make_clock` must match the design's supported `@MAIN` rate |
-| Source model | **Async clock-crossing FIFOs** | Not supported | Cross-clock global stream FIFOs cannot yet be expressed |
-| Source model | **RAMs, ROMs and stream RAMs** | Supported | [`make_ram` / `make_stream_ram`](#rams-make_ram--make_stream_ram) provide the portable source shapes; vendor-specific memory IP still needs `vhdl()` |
-| Source model | **`AUTO_PIPELINE(...).latency` before implementation** | Usually reads `0` | `latency=N` reads N immediately; an active automatic implementation bootstraps `start_latency=S` at S. The selected value becomes visible when source is re-elaborated with the implemented plan |
-| Simulation | **Simulation of `vhdl()`** | Not supported | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo`, `make_ram` and `make_stream_ram` do, covering `make_stream_fifo`/`make_stream_auto_pipeline` too); this still includes `make_stream_multi_cycle` |
-| Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine |
-| Language | **`@enum` member names that are VHDL reserved words** | Fails in VHDL only | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. Native simulation cannot see this — only a `synth_*`-category or GHDL run can, which is why every enum-bearing design wants one |
-| Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it |
-| Simulation | **`@initial`/`@final` under `sim_call`** | Not run | Hooks run in clocked simulation runs (`pypelinec --sim`, `pypeline_sim.py`) and `pypelinec` builds. A plain Python script that drives `sim_call` itself has no run start/end for the tools to hook — call its setup/teardown code directly |
+| Category | Feature | Status | Notes | Tracked in |
+|---|---|---|---|---|
+| Language | **Multiple/early `return` statements** | Not supported | A function may have at most one `return`, and it must be the function's final top-level statement; assign to a variable inside `if`/`else` branches and return it once at the end (see [Control flow](#your-first-hardware-function)) | [#343](https://github.com/JulianKemmerer/PipelineC/discussions/343) |
+| Language | **`break` or `continue` inside a loop** | Not supported | Restructure the loop body (e.g. an early-exit flag checked each iteration) instead | [#343](https://github.com/JulianKemmerer/PipelineC/discussions/343) |
+| Language | **Hardware signals as loop conditions** | Not supported | `for`/`while` loop bounds must be compile-time Python integers (fully unrollable) | [#344](https://github.com/JulianKemmerer/PipelineC/discussions/344) |
+| Language | **More than 65,536 `while` iterations** | Not supported | The elaborator stops at the safety limit rather than hanging on a non-terminating loop | — |
+| Language | **Starred unpack targets** | Not supported | Nested unpacking is supported for compile-time values; hardware-valued unpacking must be flat and use a literal tuple/list RHS | [#345](https://github.com/JulianKemmerer/PipelineC/discussions/345) |
+| Language | **Iterating a `set`/`frozenset` in a `for` loop** | Not supported | Iteration order is `PYTHONHASHSEED`-dependent, not a deterministic function of the design source; `sorted(...)` it first — tuple/list/dict/str/`enumerate`/`zip`/generator iteration, and a nested-tuple loop target (`for kind, a, b in ops:`), are all fine | — |
+| Language | **Bit index from a hardware signal (`x[i]`)** | Not supported | Bit positions must be compile-time constants. A hardware index currently crashes the elaborator with `ValueError: substring not found` instead of a clear error. Split the value into bits first, `bits: uint1_t[32] = uint_to_array_le(x, 1)`, then index `bits[i]` (see [Built-in bit helpers](#built-in-bit-helpers)) | [#362](https://github.com/JulianKemmerer/PipelineC/issues/362), [#323](https://github.com/JulianKemmerer/PipelineC/discussions/323) |
+| Language | **Casting to an `@enum` or an array type** | Not supported | Scalar int/uint and `char_t` casting, and compound (struct/`@interface`-half) casting via `@cast`/`register_cast`, are supported (see [Casting](#casting)). An array destination is rejected with a clear error. Any `state_t(...)` call inside a hardware function currently crashes with an internal `TypeError`; use the members (`state_t.RUN`) directly | [#362](https://github.com/JulianKemmerer/PipelineC/issues/362) |
+| Language | **Assigning or returning an array of a different length** | Invalid VHDL | A `uint2_t[4]` value assigned to a `uint2_t[16]` local, or returned from a function declared `-> uint2_t[16]`, is accepted. Native simulation passes the 4-element value through, and GHDL rejects the generated VHDL. Keep array lengths equal | [#359](https://github.com/JulianKemmerer/PipelineC/issues/359) |
+| Language | **Arrays of `@enum` (`some_enum_t[N]`)** | Not supported | `@struct` installs `__class_getitem__`, `@enum` does not, so the subscript is an `IntEnum` member lookup and raises `KeyError`. Wrap the enum in a `@struct` and make an array of that — an enum inside a struct inside an array is fine | [#362](https://github.com/JulianKemmerer/PipelineC/issues/362) |
+| Language | **`@enum` member names that are VHDL reserved words** | Invalid VHDL | Member names are emitted verbatim into the generated VHDL enumeration type and are *not* sanitized (unlike locals and struct fields, which `_sanitize_vhdl_name` mangles), so a member called `ON`, `OPEN`, `OUT`, `BUS`, `RELEASE`, `REGISTER`, `RANGE`, `NEXT`, `REM` or `SIGNAL` produces uncompilable VHDL. Native simulation cannot see this — only a `synth_*`-category or GHDL run can, which is why every enum-bearing design wants one | [#358](https://github.com/JulianKemmerer/PipelineC/issues/358) |
+| Language | **Underscores in string literals** | Invalid VHDL | The literal is cut at the first `_` and loses its closing quote. The build and native simulation succeed; GHDL and synthesis tools reject the file. Use a string without `_`, or initialize the `char_t[N]` data numerically | [#356](https://github.com/JulianKemmerer/PipelineC/issues/356) |
+| Language | **An initializer on a `Reg[T]` whose element type is `char_t`** | Not supported | Rejected with a clear error; a zero-initialized char register works (see [Char arrays](#char-arrays-strings)) | [#357](https://github.com/JulianKemmerer/PipelineC/issues/357) |
+| Language | **Float literals as hardware values** | Not supported | Use `float_t.as_const(value)` at elaboration time | [#345](https://github.com/JulianKemmerer/PipelineC/discussions/345) |
+| Language | **Global wires through `from module import ...`** | Not supported | `from module import *` and `from module import name` work for functions, types and constants. A `Wire[T]` has no Python value to import, so use `import module` and `module.w` (see [Calling functions across files](#calling-functions-across-files)) | — |
+| Language | **Initializers on `Wire[T]` / `Input[T]` / `Output[T]`** | Not allowed | Assign inside `@MAIN` instead | — |
+| Language | **Control flow inside an interface function** | Rejected | `if`/`for`/`while` and conditional expressions in an interface-function body raise an `InterfaceError`; route conditional steering through an explicit handshake mux/demux module instead (see [`@interface`](#bidirectional-ports-interface)). Interfaces are also point-to-point: fan-out of a single interface, dangling outputs and input-to-output bypass are rejected — fan out through a module with an [array port](#array-ports-fan-out) instead. Array *input* ports are not supported. Compile-time `for`/`while` unrolling in ordinary `@hw_func`s is unaffected | — |
+| Source model | **Named clocks (single domain)** | Supported | Use `make_clock(mhz)` on a global `Input[uint1_t]`/`Wire[uint1_t]`; see [Top-Level Entry Points](#top-level-entry-points) | — |
+| Source model | **Multiple clock domains** | Partly supported | `@MAIN`s at different rates build, each with its own clock, including a clock generated by another `@MAIN` (see [Naming a clock with `make_clock`](#naming-a-clock-with-make_clock)). Nothing can cross between domains: a global wire shared by two rates is rejected, and there are no clock groups or asynchronous wires. Simulation handles one rate: native simulation steps every `@MAIN` once per cycle whatever its rate, so a multi-rate design simulates incorrectly, and cocotb testbench generation supports a single clock | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342), [#354](https://github.com/JulianKemmerer/PipelineC/issues/354) |
+| Source model | **Async clock-crossing FIFOs** | Not supported | Cross-clock global stream FIFOs cannot yet be expressed | [#342](https://github.com/JulianKemmerer/PipelineC/discussions/342) |
+| Source model | **RAMs, ROMs and stream RAMs** | Supported | [`make_ram` / `make_stream_ram`](#rams-make_ram--make_stream_ram) provide the portable source shapes; vendor-specific memory IP still needs `vhdl()` | — |
+| Source model | **Multi-cycle paths with a synthesis tool other than Vivado** | Not supported | Constraints for `MULTI_CYCLE[...]`, `AUTO_MULTI_CYCLE` and `make_stream_multi_cycle` are written only for Vivado. Other tools stop with "Multi cycle paths have only been tested with Vivado!" | [#346](https://github.com/JulianKemmerer/PipelineC/discussions/346) |
+| Source model | **`AUTO_PIPELINE(...).latency` before implementation** | Usually reads `0` | `latency=N` reads N immediately; an active automatic implementation bootstraps `start_latency=S` at S. The selected value becomes visible when source is re-elaborated with the implemented plan | — |
+| Simulation | **Simulation of `vhdl()`** | Needs a model | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo`, `make_ram` and `make_stream_ram` do, covering `make_stream_fifo`/`make_stream_auto_pipeline` too) | — |
+| Simulation | **Two calls to one stateful function on the same source line** | Wrong in native simulation | Native simulation keys register state by source line, so `acc(a) + acc(b)` shares one register there but has two in hardware. Put each call on its own line (see [Registers in simulation](#registers-in-simulation--multiple-instances)) | [#353](https://github.com/JulianKemmerer/PipelineC/issues/353) |
+| Simulation | **`@sim_input` called with different arguments in one cycle** | Wrong in native simulation | The once-per-cycle cache ignores arguments, so every call in a cycle returns the first call's value. Use one function per value | [#355](https://github.com/JulianKemmerer/PipelineC/issues/355) |
+| Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it | [#360](https://github.com/JulianKemmerer/PipelineC/issues/360) |
+| Simulation | **`sim_print` on the `sim_finish()` cycle** | Missing in VHDL simulation | Native simulation prints the line; in GHDL the run ends before it is written. Print one cycle before finishing | [#361](https://github.com/JulianKemmerer/PipelineC/issues/361) |
+| Simulation | **`@initial`/`@final` under `sim_call`** | Not run | Hooks run in clocked simulation runs (`pypelinec --sim`, `pypeline_sim.py`) and `pypelinec` builds. A plain Python script that drives `sim_call` itself has no run start/end for the tools to hook — call its setup/teardown code directly | — |
+| Tools | **Building without a C preprocessor** | Not supported | `pypelinec` loads the C front end, which stops at import if `cpp` is not on `PATH`, even for a `.py` design. Install `cpp` (see [Requirements](README.md#requirements)) | [#363](https://github.com/JulianKemmerer/PipelineC/issues/363) |
 
 Native simulation cannot detect restrictions that appear only after emitting VHDL, such
-as a reserved enum member or VHDL integer display overflow. Give every reusable source
+as a reserved enum member, an underscore in a string literal, an array-length mismatch or
+VHDL integer display overflow. Give every reusable source
 block a small synthesizable `@MAIN` wrapper with representative `Input[T]`/`Output[T]`
 ports, then exercise that wrapper using the flows described in
 [Simulation](README.md#simulation) under Tools & CLI.

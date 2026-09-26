@@ -224,7 +224,8 @@ The multimain writer constructs the clock ports required by the selected
 MAIN frequencies, instantiates each MAIN, and connects global-wire records.
 Pypeline stream interfaces commonly appear at the final top as record ports
 (`input.data`, `input.valid`, `output.data`, `output.valid`) plus explicit
-ready signals. A stream type's generated hash is intentionally not a stable
+ready signals (flattening them to scalar ports is discussed in [#339](https://github.com/JulianKemmerer/PipelineC/discussions/339)). A stream type's
+generated hash is intentionally not a stable
 API; testbenches should discover types from `c_structs_pkg` or bind through a
 small wrapper with scalar ports.
 

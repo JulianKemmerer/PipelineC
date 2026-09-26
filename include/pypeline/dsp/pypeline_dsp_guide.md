@@ -312,6 +312,8 @@ mode form its detector's front end, and `make_cordic_atan2`, `make_cordic_rotate
 
 ## Roadmap (not yet implemented)
 
+Discussed in [#348](https://github.com/JulianKemmerer/PipelineC/discussions/348).
+
 - Polyphase interpolation/decimation.
 - Resource-folded II>1 "slow" filters (time-shared MACs for fclk >> fs, port of
   `include/dsp/slow_fir.h`).

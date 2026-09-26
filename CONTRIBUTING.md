@@ -34,8 +34,9 @@ But nothing was ever good enough for anyone (including myself) it seems. And now
 
 # General Information
 
+* Looking for something to work on? Start with the [open issues inventory](docs/issues_inventory.md). It lists every open [issue](https://github.com/JulianKemmerer/PipelineC/issues), most serious first, with how to reproduce it, where to look in the code, and any workaround.
 * Fully expect to begin with [discussions](https://github.com/JulianKemmerer/PipelineC/discussions) about changes.
-  * The code base is large and only loosely structured with essentially no documentation.
+  * The code base is large and only loosely structured. The design docs described under [Architecture](#architecture) are most of its documentation.
   * You will almost certainly need some pointing in the right direction - happy to help.
 * Move onto PRs w/ code once the idea is making sense
   * Try to keep PRs small/compartmentalized for easy review
@@ -43,6 +44,12 @@ But nothing was ever good enough for anyone (including myself) it seems. And now
 # Architecture
 
 See the [How does the compiler work?](https://github.com/JulianKemmerer/PipelineC/wiki/How-does-the-compiler-work%3F) page.
+
+Most of the compiler's main modules also have an LLM-generated design document in [`docs/`](docs/), named after the module: `src/SWEEP.py` is described in [`docs/SWEEP_DESIGN.md`](docs/SWEEP_DESIGN.md), `src/PY_TO_LOGIC.py` in [`docs/PY_TO_LOGIC_DESIGN.md`](docs/PY_TO_LOGIC_DESIGN.md), and so on. Read the one for the code you are changing: it explains how the module works and where a change belongs. The C front end (`src/C_TO_LOGIC.py`, `src/C_TO_FSM.py`) and the synthesis-tool backends do not have one yet.
+
+# Tests
+
+[`docs/pypeline_TESTS.md`](docs/pypeline_TESTS.md) describes the test suites under `src/tests/pypeline_tests/`: what each category checks and how to run them with `run_all.py`. The C front end has a smaller smoke-build script, `src/tests/c_tests/test_builds.sh`.
 
 # Pre-Commit
 
@@ -56,7 +63,7 @@ Cheers!
 
 This section is painful because it is essentially enabling this whole multi-years long hackathon to continue - its both exciting and exhausting.
 
-First, see existing [issues](https://github.com/JulianKemmerer/PipelineC/issues). Some are pretty easy for new folks to do.
+First, see the [open issues inventory](docs/issues_inventory.md), which ranks the existing [issues](https://github.com/JulianKemmerer/PipelineC/issues). Some are pretty easy for new folks to do.
 
 But generally, in kinda easier first order:
 

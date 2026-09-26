@@ -91,22 +91,11 @@ def get_tests() -> list:
     # (pdw_tb was here while Path B's delay line was misaligned. That is
     # fixed -- make_delay_line is now self-timed off the FSM's gate_advance --
     # so it lives in native_sim_tests.py as a normal passing test.)
-    # Structurally richest multi-writer global wire design (3 writers splitting
-    # nested struct leaves + a mixed-depth whole-subtree claim + readback), moved
-    # here from synth_tests.py: PY_TO_LOGIC.PARSE_FILE raises ElaborationError
-    # complaining that Global Output 'combined' has two whole-wire writers
-    # ('combiner' and a soft_cmp_prefix helper), even though the writers'
-    # actually-driven fields are disjoint -- the overlap check is over-eager
-    # about "whole wire" vs. the fields each writer really touches.
-    tests.append(
-        Test(
-            name="global_wire_nested_split_known_issue",
-            category="known_issues",
-            cmd=[PYPELINEC, INST_DIR / "global_wire_nested_split_test.py", "--comb"],
-            needs_out_dir=True,
-            expect_fail=True,
-        )
-    )
+    # (global_wire_nested_split_known_issue was here while the multi-writer
+    # overlap check misread a soft_cmp_prefix helper as a second whole-wire
+    # writer of Global Output 'combined'. That no longer reproduces, so
+    # global_wire_nested_split_test.py is back in synth_tests.py as a normal
+    # --comb entry.)
     # Per-SYN_TOOL sweep matrix entries whose backend cannot run here. Same
     # design and goal as the synth_<tool> entries in synth_tests.py; only the
     # category and expect_fail differ. See SWEEP_FLOAT32_BLOCKED above.

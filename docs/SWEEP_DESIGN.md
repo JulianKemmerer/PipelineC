@@ -971,7 +971,9 @@ no-cut-growth, short, met, or incomplete windows never stop.
 
 ## 7. Limitations and future work
 
-1. **The coarse path crashes on narrow leaves.** `--coarse --sweep` can
+Items 2-6 are collected with the other timing-model gaps in [#352](https://github.com/JulianKemmerer/PipelineC/discussions/352).
+
+1. **The coarse path crashes on narrow leaves** ([#365](https://github.com/JulianKemmerer/PipelineC/issues/365)). `--coarse --sweep` can
    raise `GET_BITS_PER_STAGE_DICT: interior zero-bit stage ... for a 2-bit
    op` on a design with many narrow (1-3 bit) leaves at a high cut count —
    reproducible independent of which design triggers it. The leaf-bit-width

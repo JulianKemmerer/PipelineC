@@ -48,8 +48,9 @@ clock-crossing headers. pypeline uses ordinary Python imports.
 | `#include "dsp/fir_decim.h"` / `"dsp/fir_interp.h"` | `from dsp.fir_decim import make_fir_decim` / `from dsp.fir_interp import make_fir_interp` |
 | `#include "mymodule.h"` | `import mymodule` |
 
-Only **qualified imports** are supported in pypeline — `import mymodule` then
-`mymodule.my_func(...)`. The `from mymodule import *` form is not supported.
+Use **qualified imports** in pypeline — `import mymodule` then
+`mymodule.my_func(...)`. `from mymodule import ...` also works for functions, types and
+constants, but global wires must be reached as `mymodule.w`.
 
 ```c
 // PipelineC
@@ -152,9 +153,9 @@ def widen(x: uint16_t) -> uint32_t:
     return uint32_t(x)   # identical to: tmp: uint32_t = x; return tmp
 ```
 
-Casting to `char_t`, an `@enum` type, or an array type (`uint8_t[4](x)`) is not
-supported. Casting between compound (struct/`@interface`-half) types is supported, but
-unlike C's cast it is never an unchecked bit reinterpretation — it dispatches to a
+`char_t(x)` casts like the integer types. Casting to an `@enum` type or an array type
+(`uint8_t[4](x)`) is not supported. Casting between compound (struct/`@interface`-half)
+types is supported, but unlike C's cast it is never an unchecked bit reinterpretation — it dispatches to a
 function registered with `register_cast(src_t, dst_t, func)` or `@cast`, so a struct
 cast is always a real, defined conversion. See
 [pypeline_guide.md §11 (Casting)](pypeline_guide.md#casting).
@@ -230,7 +231,8 @@ like the Python string it represents) — pass and compare plain Python `str` va
 directly, no conversion needed (see [pypeline_guide.md: Basic Types](pypeline_guide.md#basic-types)).
 
 `Reg[char_t[N]]` currently only supports zero-init (no `=` initializer) — see
-[pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) for the known limitation.
+[pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) for the known limitation
+([#357](https://github.com/JulianKemmerer/PipelineC/issues/357)).
 
 ### 3g. Floating-Point Types
 
@@ -882,11 +884,11 @@ The following PipelineC features do not yet have a pypeline equivalent.
 
 | PipelineC feature | Notes |
 |---|---|
-| Multiple clock domains (`MAIN_MHZ_GROUP`, `#pragma ASYNC_WIRE`) | Not supported — `make_clock(mhz)` (§11 above) covers a single named/generated clock, but a tagged clock must match some `@MAIN`'s rate exactly; clock groups (distinct domains at the same rate) and async wires are not supported |
-| Async clock-crossing FIFOs (`GLOBAL_STREAM_FIFO` across clock domains) | Not supported |
-| Multiple / early `return` statements (returning from inside an `if` branch) | Not supported — a pypeline function has exactly one `return`, which must be the final top-level statement; restructure to assign a result variable in each branch and return it once at the end (see [pypeline_guide.md: Your First Hardware Function](pypeline_guide.md#your-first-hardware-function)) |
-| `Reg[char_t[N]] = <initializer>` (register power-on value for a char array, e.g. equivalent of C's `static char name[16] = "boot";`) | Not supported for hardware elaboration — raises `ElaborationError`. `Reg[char_t[N]]` with no initializer (zero-init) works normally. See [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) |
-| C-style casts to `char_t`, an `@enum` type, or an array type | Not supported (scalar int↔int and struct/`@interface`-half casts are — see [§3d Casting](#3d-casting)) |
+| Multiple clock domains (`MAIN_MHZ_GROUP`, `#pragma ASYNC_WIRE`) | Partly supported — `@MAIN`s at different rates build, each with its own clock, and `make_clock(mhz)` (§11 above) can name or generate one, but a tagged clock must match some `@MAIN`'s rate exactly. Nothing can cross between domains: clock groups (distinct domains at the same rate) and async wires are not supported, and simulation handles a single clock rate ([#342](https://github.com/JulianKemmerer/PipelineC/discussions/342), [#354](https://github.com/JulianKemmerer/PipelineC/issues/354)) |
+| Async clock-crossing FIFOs (`GLOBAL_STREAM_FIFO` across clock domains) | Not supported ([#342](https://github.com/JulianKemmerer/PipelineC/discussions/342)) |
+| Multiple / early `return` statements (returning from inside an `if` branch) | Not supported — a pypeline function has exactly one `return`, which must be the final top-level statement; restructure to assign a result variable in each branch and return it once at the end (see [pypeline_guide.md: Your First Hardware Function](pypeline_guide.md#your-first-hardware-function)); discussed in [#343](https://github.com/JulianKemmerer/PipelineC/discussions/343) |
+| `Reg[char_t[N]] = <initializer>` (register power-on value for a char array, e.g. equivalent of C's `static char name[16] = "boot";`) | Not supported for hardware elaboration — raises `ElaborationError`. `Reg[char_t[N]]` with no initializer (zero-init) works normally. See [pypeline_DESIGN.md](pypeline_DESIGN.md#char-array-support) and [#357](https://github.com/JulianKemmerer/PipelineC/issues/357) |
+| C-style casts to an `@enum` type or an array type | Not supported (scalar int↔int, `char_t`, and struct/`@interface`-half casts are — see [§3d Casting](#3d-casting)) |
 
 See also the [Limitations](pypeline_guide.md#limitations--not-yet-supported) section
 of the pypeline guide.

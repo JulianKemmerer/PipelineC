@@ -477,7 +477,7 @@ not per-character wires. See
 [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#string-literal-initializers) for the full
 elaboration-side writeup, including the target-type-override trick that gives free
 zero-padding via the existing VHDL `to_byte_array` helper, and the known
-underscore-in-literal limitation inherited unmodified from the shared backend.
+underscore-in-literal bug ([#356](https://github.com/JulianKemmerer/PipelineC/issues/356)) inherited unmodified from the shared backend.
 
 ### `strlen(arr)` Builtin
 
@@ -504,7 +504,9 @@ simplest case (`Reg[char_t] = 65`, no arrays or strings involved), so it predate
 independent of char-array support specifically; fixing it would require editing
 `VHDL.py`, which char-array support deliberately avoids. `Reg[char_t[N]]` with **no**
 initializer (zero-init) is unaffected and works normally through the generic `Reg[T]`
-machinery.
+machinery. The C front end reaches the same branch with an integer initializer:
+`static char c = 65;` builds, and GHDL rejects the generated `character'pos('65')`.
+Tracked in [#357](https://github.com/JulianKemmerer/PipelineC/issues/357).
 
 ---
 
@@ -1557,7 +1559,7 @@ lowering, above); fixing it would change emitted VHDL for every existing `.c` de
 that narrows a signed value through an explicit cast, which is out of scope here. Not
 tracked as a `known_issues_tests.py` entry — that suite is pypeline-only (`src/tests/
 pypeline_tests/`), and this bug is in the separate C frontend (`src/tests/c_tests/`),
-whose conventions this work didn't otherwise touch.
+whose conventions this work didn't otherwise touch. Tracked in [#367](https://github.com/JulianKemmerer/PipelineC/issues/367).
 
 ### Compound casts: `register_cast` / `@cast`
 

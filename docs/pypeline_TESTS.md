@@ -656,8 +656,8 @@ A design registered in `native_vs_vhdl_sim_tests.py` must:
   process-ordering race the diff must not depend on -- the print is silently DROPPED
   from the VHDL/cocotb log entirely if this rule is broken (present in native sim,
   absent in VHDL -- not a text-visible failure, just a missing line the cycle diff
-  will flag as a mismatch). This is a documented tool constraint, not a compiler
-  bug -- see `known_issues_tests.py`'s `sim_finish_debug_print_race_test` for a
+  will flag as a mismatch). It is tracked as bug [#361](https://github.com/JulianKemmerer/PipelineC/issues/361) --
+  see `known_issues_tests.py`'s `sim_finish_debug_print_race_test` for a
   direct reproduction of what happens if it's broken, and e.g.
   `self_check_counter_test.py` for the standard one-cycle gate
   (`if n < NUM_COUNTS - 1: sim_print(...)`).

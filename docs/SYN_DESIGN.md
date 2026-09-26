@@ -546,16 +546,18 @@ section, below.
 1. **Watch for "rewire-only" entities when building a deep, many-node
    soft-operator tree.** A `@hw_func`-tagged entity whose synthesized result
    is pure wiring (a bit-slice, a concat-of-slices, or a reduction level
-   with zero arithmetic ops) makes PyRTL's `max_freq` divide by a zero
-   critical-path delay and crash the first time it is independently
-   timing-estimated. `@wires` is the fix, but must be applied truthfully and
+   with zero arithmetic ops) has no timing path, so the first time it is
+   independently timing-estimated the build stops with the "no timing
+   paths" error (`PYRTL.NO_TIMING_PATHS_MARKER`; PyRTL's own `max_freq`
+   would otherwise divide by zero). `@wires` is the fix, but must be applied truthfully and
    propagated through the *entire* reachable computation — tagging
    something `@wires` that calls real arithmetic would silently hide that
    delay from every future estimate. Preferring fewer, coarser-grained
    entities (one `@hw_func` per structural level rather than per bit-slice/
    concat node) reduces how many entities are even candidates for this.
 2. **Caching for AUTO_FSM's operand-mux measurement entities doesn't fire**
-   ([`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md#35-delay-measurement)). `_IS_PYPELINE_OPERATOR_LIBRARY_CODE` is meant to classify
+   ([#364](https://github.com/JulianKemmerer/PipelineC/issues/364); see
+   [`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md#35-delay-measurement)). `_IS_PYPELINE_OPERATOR_LIBRARY_CODE` is meant to classify
    `include/pypeline/operators/` entities as non-user code so their delays
    are cacheable in `cache/delay`, but it calls `inspect.getsourcefile`
    on the `@hw_func` wrapper callable rather than the wrapped function, so
@@ -564,7 +566,8 @@ section, below.
    affected delays are just measured every build instead of once.
 3. **`INFERRED_MULT` raw-vs-soft comparison is skipped under the PyRTL tool**
    in the operator QoR benchmark (§9) — PyRTL has no DSP-inference cost
-   model, so multiplier coverage there is sky130/Vivado-only.
+   model, so multiplier coverage there is sky130/Vivado-only
+   ([#352](https://github.com/JulianKemmerer/PipelineC/discussions/352)).
 4. **`PLUS` has the same PyRTL blind spot as `INFERRED_MULT`, with a bigger
    real-hardware caveat.** PyRTL's own sweep shows `soft_carry_select`
    beating `raw_default` by a wide margin (uint32 `+` uint32 at 6 cuts: 219
@@ -573,7 +576,7 @@ section, below.
    primitive gives the raw adder a dedicated fast-carry chain that a
    generic gate-delay model cannot represent, so the PyRTL numbers are not
    trustworthy here without a `--tool vivado` re-measurement, which hasn't
-   been done. Not implicated by the wireguard regression either way:
+   been done ([#352](https://github.com/JulianKemmerer/PipelineC/discussions/352)). Not implicated by the wireguard regression either way:
    chacha20's quarter round uses only `+`, `^`, `|`, and constant-amount
    rotates, and a constant shift/rotate amount resolves to a
    `CONST_SL`/`SR_<n>_<type>` built-in before it ever reaches the operator

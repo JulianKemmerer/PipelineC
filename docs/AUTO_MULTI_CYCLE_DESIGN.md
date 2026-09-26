@@ -114,7 +114,10 @@ elaborated counts overlaid with the sweep's final overrides.
 
 ## 5. Limitations
 
-- Only Vivado emits multi-cycle constraints (`GET_MCP_PATH_CONSTRAINTS`).
+- Only Vivado emits multi-cycle constraints (`GET_MCP_PATH_CONSTRAINTS`). Every other
+  backend writes its constraints through the same function, so a design with a
+  multi-cycle path stops there with "Multi cycle paths have only been tested with Vivado!".
+  Support for other tools is discussed in [#346](https://github.com/JulianKemmerer/PipelineC/discussions/346).
 - The coarse sweep, `--no_sweep` and `--comb` build the elaborated counts unchanged.
 - The count never goes below where it started: a post-met probe downward would cost a
   full synthesis per step on large designs.

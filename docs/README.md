@@ -277,9 +277,7 @@ does not require rewriting every block at once.
 
 See the [examples](../examples/pypeline), the complete [language
 guide](pypeline_guide.md), and the guide's [Limitations / Not Yet
-Supported](pypeline_guide.md#limitations--not-yet-supported) section. In particular,
-Pypeline currently describes each function in one clock domain and does not yet support
-multiple clock domains or asynchronous clock crossings.
+Supported](pypeline_guide.md#limitations--not-yet-supported) section.
 
 ## Tools & CLI
 
@@ -475,7 +473,7 @@ timing-params caches, etc.), instead of a freshly generated default directory.
   (named by `--top`) holds the final top level, and code from each source file goes in a
   directory named after that file's path. For example, code from
   `examples/pypeline/blink.py` goes in `examples/pypeline/blink.py/`. This layout may
-  change ([#183](https://github.com/JulianKemmerer/PipelineC/issues/183),
+  change ([#331](https://github.com/JulianKemmerer/PipelineC/discussions/331),
   [#214](https://github.com/JulianKemmerer/PipelineC/discussions/214)). Use the manifests
   in [Generated files and reports](#generated-files-and-reports) rather than relying on it.
 
@@ -557,7 +555,7 @@ pypelinec design.py --no_sweep
 
 `--no_sweep` performs zero sweep synthesis iterations and must never be described as a
 timing-passing build. The coarse sweep also has a known limitation on designs with many
-1–3-bit leaves at high cut counts: it can fail with an interior zero-bit-stage error;
+1–3-bit leaves at high cut counts: it can fail with an interior zero-bit-stage error ([#365](https://github.com/JulianKemmerer/PipelineC/issues/365));
 use the default planned sweep for those designs.
 
 Automatic latency values depend on the workflow. A normal timing-driven build starts
@@ -669,7 +667,8 @@ simulation tools it calls. You can run it without an FPGA part or any synthesis 
 installed, but then you get no automatic pipelining or timing feedback: only plain
 generated VHDL, as in `--comb --no_synth` mode.
 
-Only Linux environments are supported, and a C preprocessor (`cpp`) must be installed.
+Only Linux environments are supported, and a C preprocessor (`cpp`) must be installed,
+even for Python designs ([#363](https://github.com/JulianKemmerer/PipelineC/issues/363)).
 Native Windows and [Mac](https://github.com/JulianKemmerer/PipelineC/issues/286) support
 still needs work. On those systems, run Pypeline and the synthesis/simulation tools inside
 a Linux virtual machine or [Windows Subsystem for Linux (WSL)](https://docs.microsoft.com/en-us/windows/wsl/about).

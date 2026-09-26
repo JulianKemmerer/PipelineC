@@ -1608,7 +1608,8 @@ The cache (`pypeline._sim_input_cache`) is reset once per cycle: at the top of
 
 **Known limitation:** the cache key is the function identity only (no args/kwargs
 awareness) — a `@sim_input` function called with different arguments within the same cycle
-returns the first call's cached result regardless of the later call's own arguments.
+returns the first call's cached result regardless of the later call's own arguments
+([#355](https://github.com/JulianKemmerer/PipelineC/issues/355)).
 
 ### `sim_print` — printf-style Console + Hardware Output
 
@@ -2110,7 +2111,7 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   cleanly). Bundle a pipelined MAIN's co-timed outputs into one struct wire (which also aligns
   them in hardware), or build with `--comb`. A precise (non-conservative) version would export
   each wire's end-stage from the pipeline map and give it its own delay line — left as future
-  work. Mechanism A does not have this issue: an AUTO_PIPELINE core is a single function whose
+  work ([#351](https://github.com/JulianKemmerer/PipelineC/discussions/351)). Mechanism A does not have this issue: an AUTO_PIPELINE core is a single function whose
   whole return value, struct included, is delayed together.
 - **[HARD ERROR] `sim_print(debug=True)` inside a pipelined comb region.** A `debug=True` print
   fires in native sim at the cycle its inputs arrive (stage 0), but in VHDL at whatever pipeline
@@ -2129,15 +2130,16 @@ refused rather than silently mis-simulated); the rest are constraints on how you
 - **Same source line, multiple AUTO_PIPELINE instances.** Two calls of the *same* AUTO_PIPELINE
   object on one physical source line share one delay line (identical `_sim_inst_stack` key)
   unless `SIM_TRACE_LOCATIONS=True` restores column-level call identity — the same pre-existing
-  limitation multi-instance `Reg[T]` designs already carry.
+  limitation multi-instance `Reg[T]` designs already carry ([#353](https://github.com/JulianKemmerer/PipelineC/issues/353)).
 - **`sim_finish` cycle prints are racy across sims.** GHDL gives no ordering guarantee between a
   write process and `std.env.finish` on the same clock edge, so a design must not emit
-  `debug=True` prints on the cycle it calls `sim_finish()` — quiesce prints one cycle earlier
+  prints on the cycle it calls `sim_finish()` — plain `sim_print` lines are dropped the same
+  way as `debug=True` ones — quiesce prints one cycle earlier
   (the shipped `native_vs_vhdl_*` test designs gate their final prints with a `done` register).
   This is a testbench-authoring rule, not a native-sim inaccuracy, but it governs whether a diff
   reads clean. Broken, it does not raise or warn — the print simply never appears in the VHDL log
   (present in native sim, absent in VHDL); see `src/tests/pypeline_tests/inst/
-  sim_finish_debug_print_race_test.py` for a direct reproduction.
+  sim_finish_debug_print_race_test.py` for a direct reproduction, and [#361](https://github.com/JulianKemmerer/PipelineC/issues/361).
 - **cocotb's own pass/fail verdict, not `make`'s exit code.** `std.env.finish` (from
   `sim_finish()`) terminates GHDL out from under cocotb's still-awaiting test coroutine; cocotb
   cannot distinguish that from a real crash on its own, and its makefile cannot set an exit code
@@ -2376,6 +2378,11 @@ Two traps when writing a design that will be diffed against real VHDL:
   site otherwise — see `is_hw_func(func)` above.
 - **Global variables** — only `Wire[T]`/`Input[T]`/`Output[T]` annotations are valid as
   shared cross-function globals. No other form of module-level mutable state is supported.
+- **One clock rate (known bug, [#354](https://github.com/JulianKemmerer/PipelineC/issues/354))** — every `@MAIN` runs once per simulated cycle whatever its
+  `@MAIN(mhz)` rate, with no warning. Hardware gives `@MAIN`s at different rates their own
+  clocks, so a multi-rate design simulates incorrectly: a 50 MHz counter advances in step
+  with a 100 MHz one. The cocotb testbench generator refuses multi-clock designs instead
+  ("Only single clock designs supported").
 - **Bit-accurate arithmetic** — `SIM_STRICT_ARITH=True` + `_TypedAnnAssignRewriter` together
   make simulation hardware-accurate for functions decorated with `@hw_func` or `@MAIN`. Inner
   functions must carry `@hw_func` to opt in. See Bit-Accurate Arithmetic section for ctype-chain

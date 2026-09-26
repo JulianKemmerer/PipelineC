@@ -410,6 +410,8 @@ decisions this results section motivated are in
 
 ## 5. Limitations and future work
 
+These are collected with the sweep planner's modeling gaps in [#352](https://github.com/JulianKemmerer/PipelineC/discussions/352).
+
 - **A zero worst period is a hard error, not a measurement.** A mapped netlist
   with nothing left to time (logic synthesized away, ex. no top-level outputs)
   used to report `Worst period (ns): 0` and `Total cell area: 0`. The build then

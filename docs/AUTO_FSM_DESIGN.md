@@ -422,7 +422,7 @@ this is a handful of quick synthesis runs, not a meaningful build cost.
 The module lives under `include/pypeline/operators/` so that
 `SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE` classifies it as shipped library code
 rather than user code, which is what makes a measured delay eligible for
-`cache/delay` — though this classification does not currently fire for
+`cache/delay` — though this classification does not currently fire ([#364](https://github.com/JulianKemmerer/PipelineC/issues/364)) for
 these entities (or for the soft-operator library the same predicate was
 written for), so both are re-measured each build rather than read from disk;
 see [`SYN_DESIGN.md`](SYN_DESIGN.md#10-limitations-and-future-work)'s Limitations section for why and the
@@ -791,7 +791,7 @@ Three hooks decide *which* functions get delays. The first two live in
   therefore measured in their own right, a handful of quick runs. They live
   under `include/pypeline/operators/` so that
   `SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE` would make each shape disk-cacheable;
-  that classification currently never fires (tracked in
+  that classification currently never fires ([#364](https://github.com/JulianKemmerer/PipelineC/issues/364); details in
   [`SYN_DESIGN.md`](SYN_DESIGN.md#10-limitations-and-future-work)), so they are
   measured every build instead of once.
 - **`parser_state.func_force_estimated`** — the bootstrap passthrough looks
@@ -1350,6 +1350,8 @@ and at `fsm.latency + 1` (scheduled).
 
 ## 6. Limitations and future work
 
+Priorities are discussed in [#347](https://github.com/JulianKemmerer/PipelineC/discussions/347).
+
 **Current limitations**
 
 - One argument (bundle into a struct); one computation in flight; the raw
@@ -1398,12 +1400,16 @@ and at `fsm.latency + 1` (scheduled).
   `SYN.ESTIMATE_DESIGN_AREA`'s whole-design build-log estimate as of the
   terms feeding `ESTIMATE_SCHEDULE_AREA`. The anchor bounds model-space
   regressions; the real whole-design A/B tests guard the physical result.
-- An ARRAY-typed operand cannot be shared. Its operand multiplexer is an array
-  of arrays, and `T[A][B]` currently mis-elaborates to VHDL — a bare
-  `make_operand_mux(uint2_t[16], 4)` design fails GHDL import with "can't match
-  ... with type array type uint2_t_4", with no AUTO_FSM involved. Reachable only
-  from a schedule that shares an operation taking a whole array, which is rare;
-  the underlying 2D-array bug is not an AUTO_FSM one and is unfixed.
+- An ARRAY-typed operand cannot be shared. Its operand multiplexer,
+  `make_operand_mux(t, n)`, declares its choices as `t[n]`. For an array `t`,
+  C-order indexing makes that the wrong shape: `uint2_t[16][4]` is sixteen
+  `uint2_t[4]` elements, not four `uint2_t[16]` ones, so the mux returns a
+  `uint2_t[4]` where `uint2_t[16]` is declared. Elaboration accepts that
+  length mismatch (a general Pypeline bug, [#359](https://github.com/JulianKemmerer/PipelineC/issues/359), not an AUTO_FSM one), and GHDL
+  rejects the result with "type of element not compatible with the expected
+  type" — a bare `make_operand_mux(uint2_t[16], 4)` design fails with no
+  AUTO_FSM involved. Reachable only from a schedule that shares an operation
+  taking a whole array, which is rare.
   **Not the same bug** as the array-reconstruction guarantee in §3.7's
   "Descending past the operator level" — this one is about SHARING an
   array-typed value across states (the mux), which is still open.
@@ -1511,7 +1517,7 @@ and at `fsm.latency + 1` (scheduled).
   large register file or lookup table could eventually map to SRAM, but no
   latchup-compatible inferred SRAM primitive exists in this flow yet; treating
   an ordinary array as one today only produces combinational logic.
-- **A latent bit-slice bug in deeply-opened schedules.** Rescheduling the donut
+- **A latent bit-slice bug in deeply-opened schedules** ([#366](https://github.com/JulianKemmerer/PipelineC/issues/366)). Rescheduling the donut
   design under a tightened budget produces a 412-operation, 131-state plan whose
   generated source fails to elaborate: *"Bit index [14:14] out of range for
   uint9_t"*. This is unrelated to which control-path encoding is chosen — the

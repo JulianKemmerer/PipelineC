@@ -105,8 +105,10 @@ COMB_TEST_FILES = [
     # 'soft_cmp_prefix_n_leaves_8_level_5ca4ac95' drives (whole wire)" --
     # an internal soft-compare submodule is being misidentified as a second
     # writer of the global wire. It still builds fine under plain --comb
-    # (synth_tests.py) and passes native_sim. See
-    # known_issues_tests.py:global_wire_soft_cmp_false_writer_test.
+    # (synth_tests.py) and passes native_sim. The same false-writer error
+    # used to break the plain --comb build too (the former
+    # global_wire_nested_split_known_issue); that build passes again, but this
+    # combination has not been re-checked.
     ("global_wire_hier_writer_test.py", INST_DIR, []),
     ("global_wire_cond_driver_test.py", INST_DIR, []),
     ("global_wire_array_split_test.py", INST_DIR, []),

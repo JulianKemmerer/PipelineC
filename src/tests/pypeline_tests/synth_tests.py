@@ -152,12 +152,9 @@ SYNTH_TEST_FILES = [
     # (The composed PDW design, examples/pypeline/dsp/pdw/top.py, is registered
     # in get_tests() below rather than here -- this list names each test after
     # its file, and a bare "top" is too generic for a suite-wide registry.)
-    # global_wire_nested_split_test.py (structurally richest multi-writer global
-    # wire design: 3 writers splitting nested struct leaves + a mixed-depth
-    # whole-subtree claim + readback) moved to known_issues_tests.py --
-    # ElaborationError: 'combined' reported as having two whole-wire writers
-    # even though their driven fields are disjoint. See
-    # global_wire_nested_split_known_issue there.
+    # Structurally richest multi-writer global wire design: 3 writers splitting
+    # nested struct leaves + a mixed-depth whole-subtree claim + readback.
+    ("global_wire_nested_split_test.py", INST_DIR, ["--comb"], DM),
 ]
 # fmt: on
 

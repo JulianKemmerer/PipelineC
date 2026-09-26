@@ -1965,9 +1965,10 @@ The literal's text — with its surrounding quote characters preserved, matching
 string constant's `.value` already includes them — lives directly in the wire name. The
 shared backend's `GET_VAL_STR_FROM_CONST_WIRE` (`C_TO_LOGIC.py`) recovers it later by
 splitting on `"_"` and taking the first token, so **no new value-decoding code is needed
-on the Pypeline side at all**. Known, inherited limitation: a literal containing `"_"`
-gets truncated on readback — this is a pre-existing PipelineC bug shared by both frontends
-(same recovery function), not something new here; it is not worked around.
+on the Pypeline side at all**. Known bug ([#356](https://github.com/JulianKemmerer/PipelineC/issues/356)), shared by both front ends (same recovery
+function): a literal containing `"_"` is cut at the first `_` on readback, which also drops
+its closing quote, so the emitted VHDL does not compile (`to_byte_array("ab, 8)` for
+`"ab_cd"`). It is not worked around.
 
 **Zero-padding is free.** When `target_ctype` is known (e.g. the declared type of the
 variable/field/param being assigned), the CONST wire's `c_type` is set to `target_ctype`
@@ -1988,12 +1989,14 @@ the same shape `_elab_expr`/`_elab_python_value` return — it drops directly in
 site's existing `_write_ref`/`input_ports` plumbing with no per-leaf writes or scratch
 variables needed.
 
-**Known limitation — `Reg[T]` initializers**: `Reg[T]` where `T`'s leaf element type is
+**Known limitation — `Reg[T]` initializers** ([#357](https://github.com/JulianKemmerer/PipelineC/issues/357)): `Reg[T]` where `T`'s leaf element type is
 `"char"` cannot have *any* explicit initializer (int, list, or string) — see
 [pypeline_DESIGN.md's Char Array Support section](pypeline_DESIGN.md#char-array-support)
 for why (a pre-existing `VHDL.py` bug in the Python-value register-init path, independent
 of this feature). `_elab_ann_assign` raises a clear `ElaborationError` for this case;
-zero-init (`Reg[T]` with no `=`) is unaffected.
+zero-init (`Reg[T]` with no `=`) is unaffected. The C front end reaches the same bug
+unguarded: `static char c = 65;` emits `character'pos('65')`, which GHDL rejects, while
+`static char c = 'A';` works.
 
 ### `strlen()` Builtin
 
@@ -2911,7 +2914,10 @@ are pre-existing and documented.
 
 ### Constraints specific to multi-file imports
 
-- Only `import file_a` (qualified access) is supported; `from file_a import *` is not.
+- `import file_a` (qualified access) is the documented form. `_process_imports` also
+  follows `from file_a import ...`, so imported functions, types and constants work, but a
+  global wire declared in `file_a` is only reachable as `file_a.w` (a `Wire[T]` annotation
+  binds no Python name for `from ... import` to copy).
 - `import` aliases are resolved to the actual module name for hardware naming:
   `import file_a as fa` → hardware prefix `file_a`, not `fa`.
 - Only `.py` source files are processed; `.so`, built-in, and package modules are skipped.
@@ -4069,6 +4075,7 @@ matching `BUILD_C_BUILT_IN_SUBMODULE_FUNC_LOGIC`'s existing
 No format-spec or wrapper function maps to a float specifier — `sim_print` has no way to emit
 `%f`. Pypeline has no native Python-float representation for its bit-packed float type
 (`make_float_t`), so there's no natural wrapper function (analogous to `hex`/`chr`) to add yet.
+Discussed in [#345](https://github.com/JulianKemmerer/PipelineC/discussions/345).
 
 ### VHDL console output is clocked, not value-change-triggered
 
