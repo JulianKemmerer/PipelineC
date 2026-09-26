@@ -3970,7 +3970,6 @@ class PiplineHDLParams:
         self, inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_map
     ):
         self.pipeline_map = pipeline_map
-        self.wires_to_decl = {}
         self.wire_to_reg_stage_start_end = {}  # Same as comb range too
         # These used just internally? \/
         self.stage_to_driver_wires = {}
@@ -4008,7 +4007,6 @@ class PiplineHDLParams:
                 wire_name, Logic, parser_state
             ):
                 continue
-            self.wires_to_decl[wire_name] = None
             self.wire_to_reg_stage_start_end[wire_name] = [None, None]
 
         # Arrange into list of driven(write) wires per stage, and list of driver(read) wires
@@ -4225,8 +4223,12 @@ class PiplineHDLParams:
                 ):
                     wires_to_rm.append(wire)
         for wire_to_rm in wires_to_rm:
-            del self.wires_to_decl[wire_to_rm]
             self.wire_to_reg_stage_start_end.pop(wire_to_rm)
+
+    @property
+    def wires_to_decl(self):
+        # Same wires, same order, as wire_to_reg_stage_start_end's keys
+        return self.wire_to_reg_stage_start_end.keys()
 
 
 def GET_PIPELINE_ARCH_DECL_TEXT(

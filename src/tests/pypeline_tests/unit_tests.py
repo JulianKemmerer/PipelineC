@@ -260,12 +260,13 @@ def get_tests() -> list:
             cmd=[INST_DIR / "mux_fanout_planning_test.py"],
         )
     )
-    # Large-design VHDL emission regression.
+    # WRITE_LOGIC_ENTITY's joined submodule port maps: exact items per
+    # instance, including a stateful submodule's leading clk + CLOCK_ENABLE.
     tests.append(
         Test(
-            name="hdl_emission_scalability_test",
+            name="vhdl_submodule_port_map_test",
             category="unit",
-            cmd=[INST_DIR / "hdl_emission_scalability_test.py"],
+            cmd=[INST_DIR / "vhdl_submodule_port_map_test.py"],
         )
     )
     # Byte-count regression for the cocotb/yosys "Argument list too long"

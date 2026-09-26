@@ -172,6 +172,22 @@ This module supplies the pieces that architecture is built from:
 predicates, and it imports `AUTO_PIPELINE` only inside `WRITE_LOGIC_ENTITY`,
 `GET_ARCH_DECL_TEXT` and `GET_ENTITY_PROCESS_STAGES_TEXT`.
 
+Emitting one entity must stay linear in its submodule and wire counts. A large
+CPU elaborates to one entity with ~19.6k submodules and ~86k wires. Two
+quadratic paths were found there:
+- `PiplineHDLParams.wires_to_decl` was a list. It is now the keys view of
+  `wire_to_reg_stage_start_end`: one ordered container with hashed membership.
+- `WRITE_LOGIC_ENTITY` used to slice the trailing `,\n` off each port map by
+  slicing the whole growing entity text, copying it once per submodule. It now
+  joins each port map instead.
+
+Plain `rv += ...` appends are not the problem, because CPython resizes the only
+reference in place. A slice or copy of `rv` inside the loop is the problem.
+
+**Coverage.** `vhdl_submodule_port_map_test.py` (unit) checks every joined port
+map item by item, including a stateful submodule's leading `clk` and
+`CLOCK_ENABLE`.
+
 ## Type conversion on a mismatched connection
 
 `TYPE_RESOLVE_ASSIGNMENT_RHS` wraps the RHS expression whenever a connection's

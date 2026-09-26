@@ -5430,6 +5430,8 @@ def WRITE_LOGIC_ENTITY(
         rv += "\n"
         # Connect submodules
         if len(Logic.submodule_instances) > 0:
+            # Port maps are joined, not trimmed: slicing the trailing ",\n" off
+            # the growing rv copied it once per submodule (quadratic)
             submodule_instance_text = ["-- SUBMODULE INSTANCES \n"]
             for inst in Logic.submodule_instances:
                 instance_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + inst
