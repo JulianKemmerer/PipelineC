@@ -157,6 +157,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "floor_and_bits_cap_unit_test.py"],
         )
     )
+    # Pipeline-map timing must turn intentionally unmeasured generated helpers
+    # such as CONST_REF_RD into explicit zero-delay children, while leaving
+    # genuinely unresolved timing as an error candidate.
+    tests.append(
+        Test(
+            name="zero_delay_pipeline_map_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "zero_delay_pipeline_map_unit_test.py"],
+        )
+    )
     # sweep_history.json "final" record semantics: an assumed-met main is a
     # goal lower bound (never a measured fmax), a timing failure overrides the
     # outcome, confirmation runs and restored snapshots keep their own
