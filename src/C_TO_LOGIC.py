@@ -20,7 +20,7 @@ import SYN
 import AUTO_PIPELINE
 import VHDL
 from pycparser import c_ast, c_parser
-from utilities import REPO_ABS_DIR, GET_TOOL_PATH
+from utilities import REPO_ABS_DIR, GET_TOOL_PATH, INDEX_BIT_WIDTH
 
 # Detect cpp install
 if GET_TOOL_PATH("cpp") is None:
@@ -2722,9 +2722,7 @@ def GET_VAR_REF_REF_TOK_INDICES_DIMS_ITER_TYPES(ref_toks, c_ast_node, parser_sta
             # Save
             var_dim_ref_tok_indices.append(last_index)
             var_dims.append(first_dim)
-            var_dim_iter_types.append(
-                "uint" + str(int(math.ceil(math.log(first_dim, 2)))) + "_t"
-            )
+            var_dim_iter_types.append("uint" + str(INDEX_BIT_WIDTH(first_dim)) + "_t")
         else:
             # Pop off this entry
             curr_ref_toks = curr_ref_toks[:last_index]

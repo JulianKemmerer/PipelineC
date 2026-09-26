@@ -13,6 +13,7 @@ import pypeline_names
 import C_TO_LOGIC
 import VHDL
 import AST as pypeline_ast
+from utilities import INDEX_BIT_WIDTH
 from pypeline import (
     _RegType,
     _FeedbackType,
@@ -157,8 +158,7 @@ def _covering_ref_toks_str(covering_ref_toks_list):
 
 def _select_type_for_dim(dim_size):
     """Minimum unsigned type to hold 0..dim_size-1. e.g. 10 -> 'uint4_t'"""
-    bits = max(1, (dim_size - 1).bit_length()) if dim_size > 1 else 1
-    return f"uint{bits}_t"
+    return f"uint{INDEX_BIT_WIDTH(dim_size)}_t"
 
 
 def _ref_toks_to_ctype(ref_toks, base_type, parser_state):

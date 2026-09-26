@@ -13,6 +13,12 @@ def GET_TOOL_PATH(tool_exe_name: str) -> Optional[str]:
     return None
 
 
+def INDEX_BIT_WIDTH(num_elements: int) -> int:
+    # Unsigned bits to index 0..num_elements-1, never 0 (no uint0_t for 1-element arrays)
+    # Integer math, math.log(2**29, 2) float rounding would give 30
+    return max(1, (num_elements - 1).bit_length())
+
+
 _REPO_ABS_DIR = None
 
 

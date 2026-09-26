@@ -9,6 +9,7 @@ import C_TO_LOGIC
 import SYN
 import VHDL
 from pycparser import c_ast
+from utilities import INDEX_BIT_WIDTH
 
 # Hey lets bootstrap for fun
 # Yeah... fun ;)
@@ -1789,21 +1790,13 @@ def GET_MEM_H_LOGIC_LOOKUP(parser_state):
                         if ram_type.startswith(RAM_SP_RF):
                             for i in range(0, len(dims)):
                                 dim = dims[i]
-                                addr_t = (
-                                    "uint"
-                                    + str(int(math.ceil(math.log(dim, 2))))
-                                    + "_t"
-                                )
+                                addr_t = "uint" + str(INDEX_BIT_WIDTH(dim)) + "_t"
                                 text += addr_t + " addr" + str(i) + ", "
                         elif ram_type.startswith(RAM_DP_RF):
                             for port_postfix in ["r", "w"]:
                                 for i in range(0, len(dims)):
                                     dim = dims[i]
-                                    addr_t = (
-                                        "uint"
-                                        + str(int(math.ceil(math.log(dim, 2))))
-                                        + "_t"
-                                    )
+                                    addr_t = "uint" + str(INDEX_BIT_WIDTH(dim)) + "_t"
                                     text += (
                                         addr_t + " addr_" + port_postfix + str(i) + ", "
                                     )
@@ -2090,7 +2083,7 @@ def GET_BIT_MATH_H_LOGIC_LOOKUP_FROM_CODE_TEXT(c_text, parser_state):
             new_toks = nmux_func_name.split("_mux")
             mux_name = "mux" + new_toks[1]
             n = int(mux_name.replace("mux", ""))
-            sel_width = int(math.ceil(math.log(n, 2)))
+            sel_width = INDEX_BIT_WIDTH(n)
             sel_t = "uint" + str(sel_width) + "_t"
             type_prefix = new_toks[0]
 
