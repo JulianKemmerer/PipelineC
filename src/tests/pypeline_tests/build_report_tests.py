@@ -105,6 +105,20 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # A wiring-only helper under a fixed-latency AUTO_PIPELINE region leaves
+    # its generated CONST_REF_RD children unmeasured by the delay walk. They
+    # must still classify recursively as zero-delay so the real build reaches
+    # the requested two-register implementation instead of crashing while
+    # constructing the zero-clock pipeline map.
+    tests.append(
+        Test(
+            name="zero_delay_helper_build_test",
+            category=DM,
+            cmd=[INST_DIR / "zero_delay_helper_build_test.py"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+        )
+    )
     # AUTO_MULTI_CYCLE under a real Vivado sweep (Xilinx part): from the default start
     # the sweep raises the multi-cycle count until timing is met, pass 2
     # re-elaborates the handshake and the pipelined native sim asserts it

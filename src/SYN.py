@@ -1514,6 +1514,12 @@ def LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=False):
                 submodule_func_name = logic.submodule_instances[submodule_inst]
                 submodule_logic = parser_state.FuncLogicLookupTable[submodule_func_name]
                 if submodule_logic.delay is None:
+                    # A delay walk may not have visited this child yet, but it can
+                    # still be intrinsically zero-delay (for example CONST_REF_RD).
+                    if LOGIC_IS_ZERO_DELAY(
+                        submodule_logic, parser_state, allow_none_delay=True
+                    ):
+                        continue
                     if allow_none_delay:
                         return False
                     else:
