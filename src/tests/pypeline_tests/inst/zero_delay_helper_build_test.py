@@ -18,6 +18,7 @@ import os
 import re
 import subprocess
 import sys
+import tempfile
 
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
@@ -34,7 +35,9 @@ def main():
     parser.add_argument("--out_dir", default=None)
     args = parser.parse_args()
 
-    out_dir = args.out_dir or os.path.join(THIS_DIR, "zero_delay_helper_build_test_out")
+    out_dir = args.out_dir
+    if out_dir is None:
+        out_dir = tempfile.mkdtemp(prefix="zero_delay_helper_build_test_")
     cmd = [
         sys.executable,
         PYPELINEC,
@@ -56,8 +59,12 @@ def main():
         fail(f"pypelinec exited nonzero ({result.returncode})")
     if "Can't get zero clock pipeline map without delay?" in out:
         fail("build hit the zero-delay pipeline-map regression")
+    # The region label is derived from the design module name (for example
+    # pypeline_design_core_latency_2), so match the core instance instead.
     if not re.search(
-        r"^AUTO_PIPELINE core \(latency=2\): 2 clk\(s\) built at ", out, re.M
+        r"^AUTO_PIPELINE \S+ \(latency=2\): 2 clk\(s\) built at \S*____core\[",
+        out,
+        re.M,
     ):
         fail("fixed-latency core did not report exactly 2 clk(s) built")
 
