@@ -37,6 +37,7 @@ Memory banks are never treated as zero-cycle combinational operators.
 | `DO_PIPELINED_BUILD`, `DO_SWEEP_AND_AUTO_PIPELINE`, `DO_AUTO_PIPELINE_LATENCY_PASSES`, `HARVEST_AUTO_PIPELINE_LATENCIES`, `SEED_TIMING_PARAMS_FROM_PREVIOUS` | the build entry point and the `.latency` pin-and-confirm loop (§4, §5) |
 | `BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS`, `COLLECT_AUTO_PIPELINE_REGIONS`, `ENFORCE_AUTO_PIPELINE_REGIONS`, `REENFORCE_AUTO_PIPELINE_REGIONS`, `AUTO_PIPELINE_REGION_FEEDBACK`, ... | constrained call sites: `latency=` / `start_latency=` / `max_latency=` (§6) |
 | `FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL`, `FUNC_SUBTREE_HAS_AUTO_PIPELINE` | "can registers be added below here?" predicates, used by slicing, the sweep and SYN's delay collection |
+| `ADDED_LATENCY_BLOCKER`, `DESCRIBE_ADDED_LATENCY_BLOCKER`, `CHECK_ADDED_LATENCY_CONTEXT`, `CHECK_ADDED_LATENCY_CONTEXTS` | caller-context eligibility, source-located diagnostics, lowering guards, and the pre-write whole-table check (§2) |
 | `DEL_PIPELINE_CACHES` | this module's per-parse caches; called from `SYN.DEL_ALL_CACHES` |
 
 Vocabulary shared with [`SWEEP_DESIGN.md`](SWEEP_DESIGN.md#1-who-does-what):
@@ -175,6 +176,17 @@ reports latency 0 to its container** (so FSMs keep their cycle accounting) —
 a stateful MAIN prints `main_latency=0` while a deep pipeline runs inside
 it. That is expected, not a bug.
 
+An **untagged** callee under a stateful caller must keep zero compiler-added
+latency. `CALC_TOTAL_LATENCY` returns zero for that caller and VHDL renders
+only stage 0; adding a register below it would move a child output to a stage
+that is never emitted. `ADDED_LATENCY_BLOCKER` walks callers until a direct
+tag or MAIN, rejecting any non-sliceable step. A deeper tag only authorizes
+traversal toward itself. MCP wrappers therefore keep their untagged logic
+combinational even when the same helper is pipelined at another call site.
+`CHECK_ADDED_LATENCY_CONTEXTS` checks physical registers across the table
+before `WRITE_ALL_NON_ZERO_CLK_VHDL_FILES` emits anything, including restored,
+seeded, fixed-only, and final builds; non-leaf bookkeeping slices are ignored.
+
 **A module's latency is not its slice count.** A module's total latency is
 its own leaf slices *plus* the summed latencies of its submodule instances,
 so an entity named `foo_25CLK` can legitimately carry only 8 slices of its
@@ -240,6 +252,9 @@ Both typed placements and legacy fractional slicing call
 of its descendants. Python stateful/fixed bodies mark pipeline calls as
 `submodule_latencies_are_self_timed`; `GET_SUBMODULE_LATENCY` exposes their physical
 outputs to that body's stage-zero logic. Sliceable callers continue to see N.
+The sibling `CHECK_ADDED_LATENCY_CONTEXT` guard enforces caller absorption for
+compiler-added registers. Self-timed user pipelines do not bypass that guard:
+their stage-zero consumption does not authorize extra compiler latency.
 
 The native simulator uses these same placements only for affected user-pipeline
 regions. Its architecture and compatibility gate are documented in
@@ -389,7 +404,10 @@ repeat-the-sweep one:
    because entity names encode closure values, so a `.latency`-derived parameter
    change (e.g. FIFO depth) renames its factory entity and every instance path
    underneath, exactly where the AUTO_PIPELINE'd core lives (the core's own name is
-   stable — its closure captures only the user's func). Seeding ends by
+   stable — its closure captures only the user's func). Both tiers skip non-empty
+   params when the new instance has an added-latency blocker. Renaming an MCP
+   holder cannot seed slices or IO banks from another pipelined call into its
+   combinational interior or primitive leaves. Seeding ends by
    invalidating EVERY entry's cached hash/latency strings — cached hash
    chains embed child func names, and any cache carried across the
    re-elaboration boundary may reference since-renamed entities (the class
@@ -476,6 +494,11 @@ constrained instance is treated as its own *region*. Every iteration, right afte
    `SWEEP.DROP_NON_DEEPENING_PLACEMENTS`);
 5. verification against its real `GET_TOTAL_LATENCY`;
 6. `params_are_fixed`.
+
+Mini-sweep locks cover only eligible instances within the blamed MAIN.
+`MINISWEEP_LOCK_TARGETS` also bounds region-conflict checks, so one MAIN's
+region retries cannot replace another MAIN's lock. If no in-MAIN instance
+can absorb latency, the helper is unpipelinable in that plan.
 
 Containing landscapes then see an ordinary `Segment.LOCKED`, the mini-sweep lock path. A
 region that is itself a cut-subtree root takes the existing locked-root branch. Clamping
@@ -574,7 +597,10 @@ for the full coverage list. The ones that exercise this module end to end
 | `sweep_fsm_auto_pipeline_test.py` | Reg-FSM main + AUTO_PIPELINE region: the cut subtree is the tagged child, the FSM's latency stays 0 |
 | `sweep_float32_test.py` (registered once per backend, **every** `--syn_tool`) | a plain auto-pipelined float32 adder MAIN sweeps to its goal on every synthesis backend, not just sky130 -- see [pypeline_TESTS.md](pypeline_TESTS.md#per-syn_tool-sweep-coverage) |
 
-In-process: `auto_pipeline_harvest_test.py` (harvest grouping and divergence,
+In-process: [`added_latency_context_test.py`](../src/tests/pypeline_tests/inst/added_latency_context_test.py)
+checks the shared caller rule, pre-write rejection, both seeding tiers, per-MAIN
+locks, and bridge gaps with an elaborated fixed/auto MCP design and synthetic
+delays. `auto_pipeline_harvest_test.py` (harvest grouping and divergence,
 two-tier seed matching, call-site-change detection, latency cache/read flag,
 constructor validation), `auto_pipeline_region_planning_test.py` (region
 planning), `pipeline_latency_test.py` (fixed user pipelines),

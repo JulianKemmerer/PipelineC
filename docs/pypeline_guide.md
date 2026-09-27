@@ -2301,6 +2301,10 @@ registers, and you know it's fine for it to take several clock periods to settle
 the surrounding logic only samples the result every `N` cycles anyway (e.g. inside a small
 FSM that only advances every `N` cycles). `MULTI_CYCLE[...]` tells the synthesiser to
 relax its setup-timing check between two specific registers by `N` cycles instead of one.
+The compiler places no pipeline registers in the untagged logic between
+`.start` and `.end`, even when the same helper is pipelined elsewhere.
+An explicit AUTO_PIPELINE call inside that logic still authorizes pipelining;
+its latency is not included in the multi-cycle count.
 
 ```python
 from pypeline import Reg, MULTI_CYCLE
@@ -2331,9 +2335,9 @@ to assume is available for the logic between them to settle.
 without a `PART()` target it has no effect, and with another synthesis tool the build stops
 with an error (see [Limitations](#limitations--not-yet-supported); support for other tools
 is discussed in [#346](https://github.com/JulianKemmerer/PipelineC/discussions/346)). See
-`src/tests/pypeline_tests/inst/multi_cycle_test.py` (translated from
-`examples/mcp/mcp_test.c`) for the full example, including the `PART(...)` call needed to
-target a real device.
+[`stream_multi_cycle_test.py`](../src/tests/pypeline_tests/inst/stream_multi_cycle_test.py)
+and [`stream_auto_multi_cycle_test.py`](../src/tests/pypeline_tests/inst/stream_auto_multi_cycle_test.py)
+for complete examples including `PART(...)` targets.
 
 **Automatically choosing `N`.** [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle) is the
 timing-driven version of this tag. The chosen cycle count is exposed to source as
@@ -2406,7 +2410,10 @@ split its logic across multiple clock cycles. That's normally what you want for 
 state machine. But sometimes you want to call a large, otherwise-combinational pipeline
 stage (a multiplier, a divider, a deep arithmetic chain) from inside such a context, and
 you're fine with it taking several cycles internally — its result simply appears a fixed
-number of cycles later.
+number of cycles later. This rule is per call site: pipelining one call does
+not add latency to untagged calls of the same function inside FSM or MCP
+logic. An untagged function containing a deeper AUTO_PIPELINE call keeps its
+own logic combinational; only that tagged call may gain latency.
 
 `AUTO_PIPELINE(func)` produces a callable tag object (the same all-caps factory style as
 `MULTI_CYCLE[...]`) that tells the synthesiser it's allowed to insert pipeline registers

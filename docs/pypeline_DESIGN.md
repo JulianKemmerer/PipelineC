@@ -1074,6 +1074,9 @@ Full design in [`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md).
 
 ### `MULTI_CYCLE[ncycles]` — Multi-Cycle Path Tag
 
+Its untagged launch-to-capture logic stays combinational across sweep locks and
+re-elaboration; see the [caller-context invariant](AUTO_MULTI_CYCLE_DESIGN.md).
+
 Python equivalent of PipelineC's `#pragma MULTI_CYCLE <ncycles> <start_reg> <end_reg>`.
 Unlike `PART(...)`, this is not a call at all — `MULTI_CYCLE` (like `AUTO_PIPELINE`) is a
 subscriptable class (same idiom as `Reg`/`Feedback`/`Wire`), and the cycle count and two
@@ -1118,6 +1121,9 @@ for how `PY_TO_LOGIC.FuncElaborator._elab_ann_assign`/`_tag_multi_cycle_reg` con
 role and populate `Logic.mcp_tuples` — shared, unmodified, with the C frontend.
 
 ### `AUTO_MULTI_CYCLE(...)` — Tool-Tuned Multi-Cycle Path Tag
+
+Its untagged launch-to-capture logic stays combinational across sweep locks and
+re-elaboration; see the [caller-context invariant](AUTO_MULTI_CYCLE_DESIGN.md).
 
 `AUTO_MULTI_CYCLE(*, latency=None, start_latency=None, max_latency=None)` is a `MULTI_CYCLE`-shaped
 tag whose cycle count the throughput sweep picks. It has `.start` / `.end`

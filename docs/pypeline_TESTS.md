@@ -379,6 +379,11 @@ from a different angle:
 ## AUTO_MULTI_CYCLE coverage
 
 `AUTO_MULTI_CYCLE(latency= / start_latency= / max_latency=)` and the multi-cycle stream wrappers:
+- [`added_latency_context_test.py`](../src/tests/pypeline_tests/inst/added_latency_context_test.py)
+  (unit): two MAINs share a helper across AUTO_PIPELINE, fixed/auto MCP, FSM-direct,
+  and untagged-bridge contexts. Checks per-MAIN lock targets, all boundary strategies,
+  wrapper stage-zero scheduling, guards before mutation/emission, both seeding tiers,
+  and planner/coarse-slicer agreement using synthetic leaf delays.
 - `auto_multi_cycle_unit_test.py` (unit):
   - constructor validation and `.latency` resolution;
   - construction-site keys and the inline-construction guard;
@@ -915,6 +920,8 @@ categories.
   intervening-operation graphs without an external synthesis tool, proving
   that a repeated helper chain uses one input-or-output bank per direct edge,
   respects `FUNC_NO_ADD_IO_REGS`, and fingerprints the selected lock banks.
+  Its `run_module_tests()` entrypoint discovers all boundary/mini-sweep cases;
+  the zero-cut probe uses real hierarchy paths to exercise target selection.
   It also covers synchronized parallel-output and bit-internal frontiers,
   rejects serial peers, proves a provisional bit frontier may move together
   to one equal-width physical unit, and preserves a cheaper coherent ancestor

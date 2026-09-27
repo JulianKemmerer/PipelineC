@@ -1054,8 +1054,8 @@ def COLLECT_CUT_SUBTREES(main_inst, parser_state):
     sites under stateful containers."""
     subtrees = []
 
-    def rec(inst, logic):
-        if logic.CAN_HAVE_ADDED_LATENCY(parser_state):
+    def rec(inst, logic, absorbing):
+        if absorbing and logic.CAN_HAVE_ADDED_LATENCY(parser_state):
             if AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
                 logic.func_name, parser_state
             ):
@@ -1066,10 +1066,14 @@ def COLLECT_CUT_SUBTREES(main_inst, parser_state):
             if logic.SUB_HAS_AUTO_PIPELINE_IN_HIER(sub_inst_local, parser_state):
                 sub_func = logic.submodule_instances[sub_inst_local]
                 sub_logic = parser_state.FuncLogicLookupTable[sub_func]
-                rec(inst + C_TO_LOGIC.SUBMODULE_MARKER + sub_inst_local, sub_logic)
+                rec(
+                    inst + C_TO_LOGIC.SUBMODULE_MARKER + sub_inst_local,
+                    sub_logic,
+                    sub_inst_local in getattr(logic, "sub_inst_to_auto_pipeline_latency", {}),
+                )
 
     main_logic = parser_state.LogicInstLookupTable[main_inst]
-    rec(main_inst, main_logic)
+    rec(main_inst, main_logic, True)
     return subtrees
 
 
@@ -1106,7 +1110,7 @@ def BUILD_SLICE_LANDSCAPE(
             return None
         return bits
 
-    def rec(inst, logic, abs_start, unit_scale, ancestor_funcs):
+    def rec(inst, logic, abs_start, unit_scale, ancestor_funcs, absorbing, blocker):
         pm = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_PIPELINE_MAP(inst, logic, parser_state)
         for sub_inst_local in pm.zero_clk_submodule_start_offset:
             start_off = pm.zero_clk_submodule_start_offset[sub_inst_local]
@@ -1120,13 +1124,19 @@ def BUILD_SLICE_LANDSCAPE(
             child_ancestors = ancestor_funcs | {sub_logic.func_name}
 
             child_timing_params = TimingParamsLookupTable[child_inst]
-            # Same descend rule as SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES
+            # Traversal toward a deeper tag does not authorize registers in
+            # this child's own logic. Only a direct tag resets the context.
+            child_can = sub_logic.CAN_HAVE_ADDED_LATENCY(parser_state)
+            tagged = sub_inst_local in getattr(
+                logic, "sub_inst_to_auto_pipeline_latency", {}
+            )
+            child_absorbing = child_can and (tagged or absorbing)
+            child_blocker = (
+                None if child_absorbing else child_inst if not child_can else blocker
+            )
             descend_ok = logic.SUB_HAS_AUTO_PIPELINE_IN_HIER(
                 sub_inst_local, parser_state
-            ) or (
-                logic.CAN_HAVE_ADDED_LATENCY(parser_state)
-                and sub_logic.CAN_HAVE_ADDED_LATENCY(parser_state)
-            )
+            ) or (absorbing and child_can)
 
             # A child output is a concrete legal stage boundary in its own
             # right.  Record this before deciding whether the child is a raw
@@ -1136,9 +1146,8 @@ def BUILD_SLICE_LANDSCAPE(
             # pushed into all of the helper's descendants.  Flat user code is
             # covered too because each elaborated operator is itself a child.
             if (
-                descend_ok
+                child_absorbing
                 and not child_timing_params.params_are_fixed
-                and sub_logic.CAN_HAVE_ADDED_LATENCY(parser_state)
                 and len(sub_logic.outputs) > 0
             ):
                 axis_u = min(
@@ -1169,11 +1178,9 @@ def BUILD_SLICE_LANDSCAPE(
             elif not descend_ok:
                 # Child may itself be sliceable comb but blocked by its
                 # stateful container (which can't absorb the added latency)
-                if sub_logic.CAN_HAVE_ADDED_LATENCY(parser_state):
-                    reason = (
-                        "inside_"
-                        + WHY_NOT_SLICEABLE(logic, parser_state)
-                        + "_container"
+                if child_can:
+                    reason, _ = AUTO_PIPELINE.DESCRIBE_ADDED_LATENCY_BLOCKER(
+                        child_inst, child_blocker, parser_state
                     )
                 else:
                     reason = WHY_NOT_SLICEABLE(sub_logic, parser_state)
@@ -1187,7 +1194,7 @@ def BUILD_SLICE_LANDSCAPE(
                 )
             elif len(sub_logic.submodule_instances) == 0:
                 # Raw HDL leaf
-                if sub_logic.CAN_HAVE_ADDED_LATENCY(parser_state):
+                if child_absorbing:
                     split_kind = RAW_VHDL.GET_LEAF_SPLIT_KIND(sub_logic)
                     seg_kind = (
                         Segment.SLICEABLE_1LL
@@ -1224,7 +1231,9 @@ def BUILD_SLICE_LANDSCAPE(
                         s,
                         e,
                         Segment.ATOMIC,
-                        WHY_NOT_SLICEABLE(sub_logic, parser_state),
+                        AUTO_PIPELINE.DESCRIBE_ADDED_LATENCY_BLOCKER(
+                            child_inst, child_blocker, parser_state
+                        )[0],
                     )
             elif sub_logic.vhdl_module_text is not None:
                 seg = Segment(
@@ -1249,6 +1258,8 @@ def BUILD_SLICE_LANDSCAPE(
                     s,
                     unit_scale * sub_logic.delay / child_total,
                     child_ancestors,
+                    child_absorbing,
+                    child_blocker,
                 )
                 continue
             seg.ancestor_funcs = child_ancestors
@@ -1265,12 +1276,15 @@ def BUILD_SLICE_LANDSCAPE(
                 seg.planner_scale = combinational_ns / full_delay_ns
             landscape.segments.append(seg)
 
+    root_blocker = AUTO_PIPELINE.ADDED_LATENCY_BLOCKER(subtree_root_inst, parser_state)
     rec(
         subtree_root_inst,
         root_logic,
         0.0,
         1.0,
         {root_logic.func_name},
+        root_blocker is None,
+        root_blocker,
     )
     landscape.finalize(func_delay_scale)
     return landscape
@@ -3265,6 +3279,7 @@ def APPLY_PIPELINE_PLACEMENTS(
         timing_params = TimingParamsLookupTable[placement.inst_path]
         logic = parser_state.LogicInstLookupTable[placement.inst_path]
         AUTO_PIPELINE.CHECK_FIXED_LATENCY_BOUNDARY(placement.inst_path, parser_state)
+        AUTO_PIPELINE.CHECK_ADDED_LATENCY_CONTEXT(placement.inst_path, parser_state)
         if timing_params.params_are_fixed:
             raise ValueError(
                 f"Cannot add pipeline placement to locked instance "
@@ -4203,10 +4218,17 @@ def ATTRIBUTE_PATH_TO_FUNC(path_report, plan, parser_state):
     return best, _PATH_REPORT_STAGE_INFO(path_report)
 
 
-def WHY_HOTSPOT_NOT_PIPELINABLE(func_name, parser_state):
+def WHY_HOTSPOT_NOT_PIPELINABLE(func_name, parser_state, plan=None):
     """None if auto-pipelining can help this func; otherwise the reason it
     cannot subdivide the path attributed to it. Mirrors the two-part check
     the sweep uses before declaring a hotspot unpipelinable."""
+    if plan is not None:
+        targets, excluded = MINISWEEP_LOCK_TARGETS(func_name, plan, parser_state)
+        if excluded and not targets:
+            inst, blocker = next(iter(excluded.items()))
+            return AUTO_PIPELINE.DESCRIBE_ADDED_LATENCY_BLOCKER(
+                inst, blocker, parser_state
+            )[0]
     h_logic = parser_state.FuncLogicLookupTable[func_name]
     if not h_logic.CAN_HAVE_ADDED_LATENCY(parser_state):
         return WHY_NOT_SLICEABLE(h_logic, parser_state)
@@ -4234,11 +4256,11 @@ def RESOLVE_PIPELINABLE_HOTSPOT(path_report, plan, parser_state):
     if len(ranked) == 0:
         return None, None, stage_info
     hotspot_func = ranked[0]
-    reason = WHY_HOTSPOT_NOT_PIPELINABLE(hotspot_func, parser_state)
+    reason = WHY_HOTSPOT_NOT_PIPELINABLE(hotspot_func, parser_state, plan)
     if reason is None:
         return hotspot_func, None, stage_info
     for candidate in ranked[1:]:
-        if WHY_HOTSPOT_NOT_PIPELINABLE(candidate, parser_state) is None:
+        if WHY_HOTSPOT_NOT_PIPELINABLE(candidate, parser_state, plan) is None:
             return candidate, None, stage_info
     return hotspot_func, reason, stage_info
 
@@ -4543,7 +4565,17 @@ def SET_MINISWEEP_BOUNDARY_STRATEGY(plan, hotspot_func, strategy, parser_state):
         plan.locked[inst].has_output_regs = True
     for inst in selected_inputs:
         plan.locked[inst].has_input_regs = True
+    _, excluded = MINISWEEP_LOCK_TARGETS(hotspot_func, plan, parser_state)
     diagnostics = {
+        "excluded_instances": {
+            inst: {
+                "blocker": blocker,
+                "reason": AUTO_PIPELINE.DESCRIBE_ADDED_LATENCY_BLOCKER(
+                    inst, blocker, parser_state
+                )[0],
+            }
+            for inst, blocker in excluded.items()
+        },
         "strategy": strategy,
         "direct_edges": [
             {"producer": producer, "consumer": consumer}
@@ -4590,21 +4622,55 @@ def TRY_NEXT_MINISWEEP_BOUNDARY_STRATEGY(plan, hotspot_func, parser_state):
     return next_strategy
 
 
+def MINISWEEP_LOCK_TARGETS(hotspot_func, plan, parser_state):
+    """Eligible instances in the blamed MAIN, plus in-MAIN context blockers."""
+    targets, excluded = [], {}
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    for inst in sorted(getattr(parser_state, "FuncToInstances", {}).get(hotspot_func, ())):
+        if inst != plan.main_inst and not inst.startswith(plan.main_inst + marker):
+            continue
+        blocker = AUTO_PIPELINE.ADDED_LATENCY_BLOCKER(inst, parser_state)
+        if blocker is None:
+            targets.append(inst)
+        else:
+            excluded[inst] = blocker
+    return targets, excluded
+
+
+def DESCRIBE_EXCLUDED_MINISWEEP_INSTANCES(excluded, parser_state):
+    if not excluded:
+        return ""
+    shown = 3
+    descriptions = [
+        AUTO_PIPELINE.DESCRIBE_ADDED_LATENCY_BLOCKER(inst, blocker, parser_state)[1]
+        for inst, blocker in list(excluded.items())[:shown]
+    ]
+    if len(excluded) > shown:
+        descriptions.append(f"... and {len(excluded) - shown} more")
+    return f"; left {len(excluded)} instance(s) combinational (" + "; ".join(descriptions) + ")"
+
+
 def HOTSPOT_IS_LOCKED(hotspot_func, plan, parser_state):
-    if hotspot_func not in parser_state.FuncToInstances:
-        return False
-    insts = parser_state.FuncToInstances[hotspot_func]
-    return len(insts) > 0 and all(inst in plan.locked for inst in insts)
+    targets, _ = MINISWEEP_LOCK_TARGETS(hotspot_func, plan, parser_state)
+    return bool(targets) and all(inst in plan.locked for inst in targets)
 
 
 def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     """Isolated coarse sweep of one hotspot func.
 
-    A nonzero result locks the *interior* slices on every instance.  Boundary
+    A nonzero result locks interior slices on eligible instances in this MAIN. Boundary
     registers are selected separately from the real parent dataflow: direct
     serial helpers share one bank instead of every instance receiving the old
     unconditional input-plus-output pair.
     """
+    targets, excluded = MINISWEEP_LOCK_TARGETS(hotspot_func, plan, parser_state)
+    if not targets:
+        print(
+            f"[sweep] No eligible instances of {hotspot_func} in {plan.main_inst}"
+            + DESCRIBE_EXCLUDED_MINISWEEP_INSTANCES(excluded, parser_state),
+            flush=True,
+        )
+        return False
     if HOTSPOT_IS_LOCKED(hotspot_func, plan, parser_state):
         return False  # already locked, sweeping it again changes nothing
     # Never mini-sweep a subtree root (or the main): "isolating" the whole
@@ -4618,7 +4684,7 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
         return False
     # Never lock inside, or around, a constrained AUTO_PIPELINE region: its
     # register count is owned by ENFORCE_AUTO_PIPELINE_REGIONS
-    for func_inst in parser_state.FuncToInstances.get(hotspot_func, ()):
+    for func_inst in targets:
         for region in getattr(plan, "regions", ()):
             if _INSTS_CONFLICT(func_inst, region.inst):
                 return False
@@ -4629,9 +4695,7 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
         hotspot_func, parser_state
     ):
         return False
-    if hotspot_func not in parser_state.FuncToInstances:
-        return False
-    inst = sorted(parser_state.FuncToInstances[hotspot_func])[0]
+    inst = targets[0]
     # The coarse sweep's initial guess divides this func's delay by the
     # target period and only ever grows from there - an inflated estimated
     # delay would over-pipeline the lock from the start. Measure for real
@@ -4725,7 +4789,7 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
         else:
             lo = mid
     # Replace any conflicting (nested/containing) older locks
-    for func_inst in sorted(parser_state.FuncToInstances[hotspot_func]):
+    for func_inst in targets:
         for locked_inst in list(plan.locked.keys()):
             if _INSTS_CONFLICT(func_inst, locked_inst):
                 del plan.locked[locked_inst]
@@ -4744,7 +4808,8 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
         f"({len(boundary['selected_inputs'])} input + "
         f"{len(boundary['selected_outputs'])} output boundary bank(s), "
         f"{len(boundary['direct_edges'])} direct edge(s)) on "
-        f"{len(parser_state.FuncToInstances[hotspot_func])} instance(s)",
+        f"{len(targets)} instance(s) in {plan.main_inst}"
+        + DESCRIBE_EXCLUDED_MINISWEEP_INSTANCES(excluded, parser_state),
         flush=True,
     )
     return True
@@ -4753,6 +4818,7 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
 def APPLY_LOCKS(plan, parser_state, TimingParamsLookupTable):
     boundary_placements = []
     for locked_inst in sorted(plan.locked.keys()):
+        AUTO_PIPELINE.CHECK_ADDED_LATENCY_CONTEXT(locked_inst, parser_state)
         lock = plan.locked[locked_inst]
         locked_logic = parser_state.LogicInstLookupTable[locked_inst]
         TimingParamsLookupTable = (
@@ -5813,7 +5879,11 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                     f"already-locked {hotspot_func}"
                                     f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} "
                                     "(best isolated pipelining applied); "
-                                    "cannot improve further. Keeping best result.",
+                                    "cannot improve further. Keeping best result."
+                                    + DESCRIBE_EXCLUDED_MINISWEEP_INSTANCES(
+                                        MINISWEEP_LOCK_TARGETS(hotspot_func, plan, parser_state)[1],
+                                        parser_state,
+                                    ),
                                     flush=True,
                                 )
                                 plan.stopped_reason = "locked_hotspot_limit"

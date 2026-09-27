@@ -30,6 +30,8 @@ M = C_TO_LOGIC.SUBMODULE_MARKER
 class FakeParserState:
     def __init__(self):
         self.LogicInstLookupTable = {}
+        self.func_fixed_latency = {}
+        self.func_marked_blackbox = set()
 
 
 class FakeTimingParams:

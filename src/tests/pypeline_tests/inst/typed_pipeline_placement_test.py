@@ -20,6 +20,7 @@ class FakeLogic:
         self.outputs = list(outputs)
         self.wire_to_c_type = dict(wire_to_c_type or {})
         self.submodule_instances = {}
+        self.sub_inst_to_auto_pipeline_latency = {}
         self.wire_driven_by = {}
         self.wire_drives = {}
 
@@ -348,10 +349,10 @@ def test_minisweep_zero_cut_pass_never_locks_io_only_latency():
     root = FakeLogic("main")
     step = FakeLogic("step")
     step.delay_is_estimated = False
-    ps = FakeParserState(
-        {"main": root, "main__step_0": step, "main__step_1": step}
-    )
-    ps.FuncToInstances = {"step": ["main__step_0", "main__step_1"]}
+    marker = SWEEP.C_TO_LOGIC.SUBMODULE_MARKER
+    insts = [f"main{marker}step_{i}" for i in range(2)]
+    ps = FakeParserState({"main": root, **{inst: step for inst in insts}})
+    ps.FuncToInstances = {"step": insts}
     plan = SWEEP.MainSweepPlan("main", 100.0)
     plan.subtrees = ["main"]
 
@@ -1178,29 +1179,6 @@ def test_internal_placement_file_rejects_empty_request():
 
 
 if __name__ == "__main__":
-    test_landscape_exposes_typed_candidates()
-    test_coherent_boundary_wins_same_position()
-    test_fixed_position_partitions_budget()
-    test_slightly_sub_budget_helpers_cut_at_previous_boundary()
-    test_setup_op_and_repeated_helpers_do_not_merge_or_leave_empty_tail()
-    test_planner_component_weights_change_geometry_not_total_budget()
-    test_typed_lowering_is_local_not_recursive()
-    test_minisweep_zero_cut_pass_never_locks_io_only_latency()
-    test_bit_requests_materialize_to_raw_equal_width_boundaries()
-    test_exact_typed_bit_boundaries_lower_and_hash_distinctly()
-    test_internal_exact_bit_boundary_group_resolves_without_raster_aliasing()
-    test_chunked_mux_refinement_replaces_outputs_and_covers_terminal_tail()
-    test_chunked_mux_lowering_preserves_group_identity()
-    test_chunked_mux_skips_partially_qualifying_group()
-    test_parallel_output_frontier_grouping_and_serial_rejection()
-    test_component_stage_budget_and_legacy_fallback()
-    test_parallel_bit_frontier_is_one_logical_cut()
-    test_parallel_bit_frontier_can_move_as_one_physical_group()
-    test_common_coherent_boundary_beats_parallel_leaf_group()
-    test_two_cuts_per_leaf_move_the_whole_bit_frontier()
-    test_moved_bit_frontier_group_is_accepted()
-    test_split_bit_frontier_group_is_rejected()
-    test_incomplete_group_is_rejected()
-    test_internal_selector_is_deterministic_and_strict()
-    test_internal_placement_file_rejects_empty_request()
-    print("All typed pipeline-placement tests passed.")
+    from _test_main import run_module_tests
+
+    run_module_tests()

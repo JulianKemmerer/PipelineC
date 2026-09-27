@@ -4,6 +4,9 @@ A multi-cycle path relaxes the timing requirement between two registers:
 `MULTI_CYCLE[N]` tells synthesis the launch register's value is only captured
 every N clock cycles, and `AUTO_MULTI_CYCLE(...)` lets the throughput sweep
 choose N. Neither adds registers; they widen the permitted settling time.
+The untagged logic between launch and capture stays combinational, even when
+another call to the same helper is pipelined. The holder's state registers
+block compiler-added latency under the [caller-context rule](SWEEP_DESIGN.md#cut-subtree).
 
 - Implementation: [`src/AUTO_MULTI_CYCLE.py`](../src/AUTO_MULTI_CYCLE.py).
 - The tags: [`pypeline_DESIGN.md`](pypeline_DESIGN.md#multi_cyclencycles--multi-cycle-path-tag)
@@ -23,6 +26,7 @@ choose N. Neither adds registers; they widen the permitted settling time.
 
 | piece of `src/AUTO_MULTI_CYCLE.py` | used by | role |
 |---|---|---|
+| `DESCRIBE_MCP_PATHS` | caller-context diagnostics | readable launch -> capture paths for an instance whose state blocks added latency |
 | `GET_MCP_CELL_PATHS` | constraint writer, sweep | the Vivado cell globs of every multi-cycle path in an instance: the one source for both constraints and report matching |
 | `GET_MCP_PATH_CONSTRAINTS`, `MCP_EFFECTIVE_NCYCLES` | `SYN.WRITE_CLK_CONSTRAINTS_FILE` | `set_multicycle_path` / `KEEP` lines for the clock constraints file, with the sweep's current count |
 | `ELABORATED_AUTO_MULTI_CYCLE_NCYCLES` | everything below, `MultiMainTimingParams.GET_HASH_EXT` | the counts the design was elaborated with |
@@ -59,6 +63,11 @@ Designs without a raised AUTO_MULTI_CYCLE hash exactly as before.
 XDC writer and by report matching.
 
 ## 3. Sweep feedback
+
+Pipelining feedback never inserts registers in an untagged MCP interior:
+mini-sweeps, boundary banks, coarse slicing, and the planner all enforce the
+same absorbing-caller rule. A fixed MULTI_CYCLE path receives the same
+protection; AUTO_MULTI_CYCLE feedback changes only its allowed count.
 
 `SWEEP.DO_PLANNED_THROUGHPUT_SWEEP` handles AUTO_MULTI_CYCLE paths as follows:
 
@@ -105,7 +114,9 @@ elaborated counts overlaid with the sweep's final overrides.
   `AUTO_MULTI_CYCLE <key>: N cycles`.
 - **Renaming.** Re-elaborating renames the function holding the tagged registers (the
   resolved count is part of its identity). The fresh `MultiMainTimingParams` carries no
-  overrides, so the confirmation constrains the elaborated counts.
+  overrides, so the confirmation constrains the elaborated counts. Both
+  exact-path and function-name pipeline seeding check the new caller chain;
+  the renamed MCP interior and its primitive leaves remain combinational.
 - **Unread tags.** `CHECK_AUTO_MULTI_CYCLE_TAGS_READ` runs at the start of
   `AUTO_PIPELINE.DO_SWEEP_AND_AUTO_PIPELINE`: a non-fixed AUTO_MULTI_CYCLE nothing read would let the XDC and the
   handshake disagree, so the build exits before any synthesis.
@@ -113,6 +124,10 @@ elaborated counts overlaid with the sweep's final overrides.
   (`auto_multi_cycle_latencies=`).
 
 ## 5. Limitations
+
+- A user-written AUTO_PIPELINE call inside MCP logic still authorizes that call
+  to be pipelined. The MCP count does not include this added latency; the
+  caller-context rule deliberately preserves that explicit authorization.
 
 - Only Vivado emits multi-cycle constraints (`GET_MCP_PATH_CONSTRAINTS`). Every other
   backend writes its constraints through the same function, so a design with a
@@ -141,3 +156,8 @@ the pipelined native `--sim` asserts the handshake waits count + 1 cycles;
 (2) restarting at that count settles with no change and pass 2 skipped; (3) a
 `max_latency=1` cap fails the build naming it. `auto_multi_cycle_unit_test.py`
 covers this module's functions in-process on synthetic reports.
+[`added_latency_context_test.py`](../src/tests/pypeline_tests/inst/added_latency_context_test.py)
+adds a shared-helper regression across two MAINs, tagged bodies, fixed/auto
+MCP wrappers, direct FSM calls, and untagged bridges. It checks actual
+stage-zero wrapper maps, lock/boundary strategies, seeding, and pre-write
+rejection without synthesis.

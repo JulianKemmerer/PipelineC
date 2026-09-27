@@ -46,13 +46,14 @@ frontier and estimated delays are part of the delay model in
 | **slice** | one serial register boundary inserted by pipelining; it is represented either by a raw-leaf-local fraction in `TimingParams._slices` or by an operation instance's input/output-register flag |
 | **cut** | a requested stage boundary on a whole *cut subtree*'s delay axis; typed planning resolves it to one or more concrete physical placements |
 | **cut subtree** | the largest subtree registers may be added to (a comb MAIN, or each AUTO_PIPELINE-tagged region) |
+| **absorbing** | an instance is sliceable and every untagged caller up to MAIN can absorb added latency; a directly AUTO_PIPELINE-tagged call stops the caller walk |
 | **landscape** | the flattened delay axis of one cut subtree: where every nanosecond of logic lives and whether a cut may land there |
 | **segment** | one leaf-most piece of that axis (sliceable / atomic / locked) |
 | **placement** | one typed physical register location: an operation-instance input/output boundary or a genuine bit-internal leaf cut; `fixed` placements are retained by controlled internal experiments |
 | **floor** | the fmax that no amount of added registers can beat (longest un-cuttable stretch) |
 | **plan** | per-MAIN sweep state: cut subtrees, landscapes, cuts, learned scale factors, locks |
 | **measurement frontier** | the topmost fully-combinational funcs — the only hierarchical modules ever synthesized per-module; their measured through-delays calibrate the estimates of everything above (and thus how many cuts the first plan gets) |
-| **lock** | a mini-sweep result whose internal slices are frozen onto all instances of a func (`params_are_fixed`); optional input/output banks are selected from parent dataflow rather than assumed per instance |
+| **lock** | a mini-sweep result whose internal slices are frozen onto eligible instances of a func in the blamed MAIN (`params_are_fixed`); optional input/output banks are selected from parent dataflow rather than assumed per instance |
 | **trim** | post-met iterations that retry with fewer cuts to prove the stage count is minimal |
 
 ## 2. Concepts: cut subtrees, landscapes, and cut planning
@@ -135,21 +136,34 @@ so registers may only be added inside explicitly tagged regions:
 Instead of discovering boundaries by trial synthesis, the cut subtrees are
 computed once from the sliceability rules below.
 
-The descend rule (used both by the recursive slicer and the landscape):
-descend into a child iff
+`AUTO_PIPELINE.ADDED_LATENCY_BLOCKER` supplies the strict rule: the instance
+itself must satisfy `CAN_HAVE_ADDED_LATENCY`, and every caller must also be
+sliceable until the walk reaches MAIN or a directly AUTO_PIPELINE-tagged call.
+That call decouples its caller. This is the **absorbing** context carried by
+cut-subtree collection, landscape construction, and coarse slicing.
+
+Traversal into a child is allowed when:
 
 ```
-call site is AUTO_PIPELINE tagged (or contains a tag deeper)     # override
-OR (parent is sliceable AND child is sliceable)                 # plain comb
+call site is AUTO_PIPELINE tagged (or contains a tag deeper)
+OR (parent context is absorbing AND child is sliceable)
 ```
 
-The child-side check matters: a sliceable parent does not by itself license
-descending into a stateful child. Without it, a cut could be planned against
-a stateful child where it produces no register and silently vanishes; the
-descend rule prevents that class of bug by construction — such a cut now
-stops and the child boundary becomes the stage boundary instead.
+A tag deeper only licenses descending to find that tag. It never licenses a
+cut or an output bank in an untagged comb bridge under a stateful caller.
+The child's own context is `child.sliceable AND (direct_tag OR absorbing)`.
 Sliceability itself (`CAN_HAVE_ADDED_LATENCY`): no fixed-latency/vhdl-text/
-clock-crossing/state-regs/memory/blackbox/feedback.
+clock-crossing/state-regs/memory/blackbox/feedback. An MCP holder has state
+registers, so its untagged interior remains combinational for both fixed
+MULTI_CYCLE and AUTO_MULTI_CYCLE paths. User fixed-latency
+`submodule_latencies_are_self_timed` does not decouple compiler-added latency.
+
+`CHECK_ADDED_LATENCY_CONTEXT` guards lock and typed-placement lowering and raw
+leaf slicing. Before any nonzero-clock VHDL is written,
+`CHECK_ADDED_LATENCY_CONTEXTS` checks the entire table: leaf slices/exact bit
+boundaries and all IO-register flags must have an absorbing context.
+Non-leaf slices are bookkeeping. Diagnostics name the blocking caller and
+source location, including its multi-cycle launch/capture path when present.
 
 ### Landscape, segments, and typed candidates
 
@@ -184,7 +198,9 @@ leaf-most **segments**:
   unregistered MUX split remains behind the bounded physical-neighbor
   refinement, reached after whole-design timing says the schedule is poor.
 - `atomic` — unsliceable span (reason recorded: `state_regs`,
-  `feedback_vars`, `vhdl_module_text`, `inside_X_container`, ...),
+  `feedback_vars`, `vhdl_module_text`, `inside_X_container`, ...). An untagged
+  span blocked by a caller is `inside_state_regs_container` (or that caller
+  reason) and a hard floor, including gaps traversed toward a deeper tag.
 - `locked` — `params_are_fixed` (a mini-sweep result); already pipelined
   internally, forbids new cuts, costs no stage budget.
 
@@ -454,7 +470,8 @@ coarse mini-sweep lock, including its fixed internal slices, selected input/
 output banks, boundary strategy, rebuilt latency, and realization check.
 `mini_sweep_boundary_diagnostics` records the alias-only direct edges, the
 minimum-cost input/output cover, and any edge ineligible because a no-I/O
-pragma applied. The trace, generated VHDL, mapped JSON, and STA report
+pragma applied. Its `excluded_instances` maps in-MAIN instances left combinational
+to their blocking caller and reason. The trace, generated VHDL, mapped JSON, and STA report
 together are the evidence for a placement claim; requested cut counts alone
 are not.
 
@@ -694,11 +711,11 @@ iteration".
    attribute critical path to a function (approximate)
           |
    hotspot found:   func_delay_scale[hotspot] *= target/achieved  -> replan
-   same hotspot 2x: isolated mini-sweep of that func, lock result
+   same hotspot 2x: isolated mini-sweep, lock eligible instances in this MAIN
                     (the isolated probe measures that helper itself)
    hotspot locked:  try the opposite compact boundary side, then bounded
                     one-sided/both-sided fallback policies before rescaling
-   hotspot cannot be auto-pipelined (state regs, vhdl text, ...):
+   hotspot cannot be auto-pipelined (no eligible in-MAIN instance, state regs, ...):
                     rescale once (boundary registers may cut its IO paths),
                     then if fmax stagnates stop and tell the user PLAINLY:
                     "critical path is in function F, which cannot be
@@ -732,6 +749,10 @@ compact repeated-helper solution before global densification skips past it:
    — the lock lands on the proven-minimal latency, never the first passing
    overshoot. A zero-cut isolated pass is deliberately not locked: adding
    IO registers alone would add latency without splitting the hot path.
+   `MINISWEEP_LOCK_TARGETS` scopes probing, conflicts, and locks to eligible
+   instances in the blamed MAIN; another MAIN owns its own locks. Ineligible
+   instances stay combinational and are named in the log and trace. No eligible
+   in-MAIN instance makes the hotspot unpipelinable.
 4. fmax stuck while cuts grow and the targeted probe did not help → **measure**
    the remaining estimated delays for real and replan with true geometry.
 
@@ -909,7 +930,8 @@ feature's module:
   `PLAN_TOTAL_CUTS` / `PLAN_TRIMMABLE_CUTS` / `PLAN_FINGERPRINT_PLACEMENTS` (here)
   count region cuts along with the main's own.
 - **AUTO_MULTI_CYCLE counts.** A failing path matched to an AUTO_MULTI_CYCLE group
-  raises that group's count before any pipelining feedback for the main.
+  raises that group's count before any pipelining feedback for the main. An MCP
+  path's only timing lever is its count; its untagged interior stays combinational.
 - **The `.latency` pin-and-confirm loop.** After pass 1,
   `AUTO_PIPELINE.DO_AUTO_PIPELINE_LATENCY_PASSES` re-elaborates with the harvested
   latencies and calls `DO_SEEDED_CONFIRM_OR_SWEEP`: one confirmation synthesis of
@@ -928,6 +950,13 @@ feature's module:
 | `--no_sweep` | write the sweep's first planned guess as final VHDL and stop -- zero sweep synthesis iterations, timing NOT verified. Works with both the default planned sweep and `--coarse`. |
 
 ## 6. Tests
+
+[`added_latency_context_test.py`](../src/tests/pypeline_tests/inst/added_latency_context_test.py)
+uses an elaborated two-MAIN design and synthetic delays to check per-MAIN locks,
+all boundary strategies, fixed/auto MCP stage-zero interiors, caller-context
+guards, renamed seeding, and the untagged-bridge gap.
+`typed_pipeline_placement_test.py` covers the mini-sweep target filter and
+boundary-bank selection on synthetic hierarchies.
 
 Fast tests in `src/tests/pypeline_tests/inst/`; see
 [`pypeline_TESTS.md`](pypeline_TESTS.md) for categories. Feature-specific

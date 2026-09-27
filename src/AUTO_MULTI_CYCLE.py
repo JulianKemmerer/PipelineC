@@ -16,6 +16,14 @@ import VHDL
 import VIVADO
 
 
+def DESCRIBE_MCP_PATHS(logic):
+    """Readable launch/capture names shared by latency-context diagnostics."""
+    return ", ".join(
+        f"{launch} -> {capture}"
+        for _, launch, capture in sorted(getattr(logic, "mcp_tuples", ()))
+    )
+
+
 def ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state):
     """AUTO_MULTI_CYCLE canonical key -> cycle count the design was elaborated with
     (the matching Logic.mcp_tuples entry's count)."""

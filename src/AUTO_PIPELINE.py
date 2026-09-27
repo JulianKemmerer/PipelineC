@@ -1876,6 +1876,90 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     return rv
 
 
+def ADDED_LATENCY_BLOCKER(inst_name, parser_state):
+    """Return the instance that cannot absorb compiler-added latency, or None.
+
+    Only a directly tagged AUTO_PIPELINE call decouples its caller. A tag
+    deeper in the hierarchy permits traversal, not registers on the way to it.
+    User fixed-latency/self-timed children do not authorize compiler latency.
+    """
+    current = inst_name
+    while current:
+        logic = parser_state.LogicInstLookupTable[current]
+        if not logic.CAN_HAVE_ADDED_LATENCY(parser_state):
+            return current
+        parent = C_TO_LOGIC.GET_CONTAINER_INST(current)
+        if parent is None:
+            return None
+        parent_logic = parser_state.LogicInstLookupTable[parent]
+        if C_TO_LOGIC.LEAF_NAME(current) in getattr(
+            parent_logic, "sub_inst_to_auto_pipeline_latency", {}
+        ):
+            return None
+        current = parent
+    return None
+
+
+def DESCRIBE_ADDED_LATENCY_BLOCKER(inst, blocker, parser_state):
+    """Return (landscape reason, source-located explanation) for a blocker.
+
+    An instance that blocks itself keeps its own WHY_NOT_SLICEABLE reason, so
+    soft-floor reasons (state_regs, fixed_latency, ...) stay soft."""
+    import SWEEP
+    import AUTO_MULTI_CYCLE
+
+    logic = parser_state.LogicInstLookupTable[blocker]
+    why = SWEEP.WHY_NOT_SLICEABLE(logic, parser_state)
+    if blocker == inst:
+        reason = why
+        message = (
+            f"{inst} ({logic.func_name}"
+            f"{SYN.FUNC_SRC_LOC_STR(parser_state, logic.func_name)}) "
+            f"cannot hold added pipeline latency ({why})"
+        )
+    else:
+        reason = f"inside_{why}_container"
+        caller_kind = "stateful" if why in ("state_regs", "feedback_vars") else why.replace("_", " ")
+        message = (
+            f"{inst} is called from {caller_kind} caller {logic.func_name}"
+            f"{SYN.FUNC_SRC_LOC_STR(parser_state, logic.func_name)} ({blocker}), "
+            "which cannot absorb added pipeline latency"
+        )
+    paths = AUTO_MULTI_CYCLE.DESCRIBE_MCP_PATHS(logic)
+    if paths:
+        message += (
+            f"; holds multi-cycle path {paths}, whose logic stays combinational; "
+            "only its cycle count relaxes timing"
+        )
+    return reason, message
+
+
+def CHECK_ADDED_LATENCY_CONTEXT(inst_name, parser_state):
+    """Reject physical pipeline registers whose caller would drop their latency."""
+    blocker = ADDED_LATENCY_BLOCKER(inst_name, parser_state)
+    if blocker is not None:
+        _, message = DESCRIBE_ADDED_LATENCY_BLOCKER(inst_name, blocker, parser_state)
+        raise ValueError(f"Cannot add pipeline registers: {message}")
+
+
+def CHECK_ADDED_LATENCY_CONTEXTS(parser_state, TimingParamsLookupTable):
+    """Check physical registers before emission; hierarchy slices are bookkeeping."""
+    violations = []
+    for inst, params in TimingParamsLookupTable.items():
+        logic = parser_state.LogicInstLookupTable[inst]
+        physical = params._has_input_regs or params._has_output_regs or (
+            not logic.submodule_instances
+            and (params._slices or getattr(params, "_exact_bit_boundaries", None))
+        )
+        if physical:
+            blocker = ADDED_LATENCY_BLOCKER(inst, parser_state)
+            if blocker is not None:
+                _, message = DESCRIBE_ADDED_LATENCY_BLOCKER(inst, blocker, parser_state)
+                violations.append(message)
+    if violations:
+        raise ValueError("Invalid added pipeline latency contexts:\n" + "\n".join(violations))
+
+
 def CHECK_FIXED_LATENCY_BOUNDARY(inst_name, parser_state):
     """Reject added registers anywhere inside a user fixed-latency boundary."""
     fixed = getattr(parser_state, "func_fixed_latency", {})
@@ -1904,10 +1988,15 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
     skip_boundary_slice,
     write_files=True,
     rounding_so_fuck_it=False,
+    absorbing=None,
 ):
     print_debug = False
 
     CHECK_FIXED_LATENCY_BOUNDARY(inst_name, parser_state)
+    if not logic.submodule_instances:
+        CHECK_ADDED_LATENCY_CONTEXT(inst_name, parser_state)
+    if absorbing is None:
+        absorbing = ADDED_LATENCY_BLOCKER(inst_name, parser_state) is None
     # Get timing params for this logic
     timing_params = TimingParamsLookupTable[inst_name]
     if timing_params.params_are_fixed:
@@ -1989,20 +2078,12 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
                 print(" Slicing:", submodule_inst)
                 print("   @", slice_pos)
 
-            # Slice into submodule only if the cut can actually land there:
-            #  - the call site is AUTO_PIPELINE tagged (or contains a tag deeper),
-            #    which overrides stateful boundaries on both sides, OR
-            #  - both this func and the submodule are plain sliceable comb logic.
-            # Checking the submodule side too keeps cuts from descending into
-            # stateful (feedback/state reg) children where they would produce no
-            # registers (latency stays 0) and silently vanish - such cuts instead
-            # stop here and the child boundary becomes the stage boundary.
-            # Checking the parent side keeps untagged comb children of stateful
-            # funcs (e.g. FSMs) from gaining latency their container can't absorb.
+            # A deeper tag licenses traversal only. Own logic needs an
+            # absorbing chain of callers, reset only by a direct tag.
             if not (
                 logic.SUB_HAS_AUTO_PIPELINE_IN_HIER(submodule_inst, parser_state)
                 or (
-                    logic.CAN_HAVE_ADDED_LATENCY(parser_state)
+                    absorbing
                     and submodule_logic.CAN_HAVE_ADDED_LATENCY(parser_state)
                 )
             ):
@@ -2029,6 +2110,12 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
                 ):
                     continue
 
+            tagged = submodule_inst in getattr(
+                logic, "sub_inst_to_auto_pipeline_latency", {}
+            )
+            child_absorbing = submodule_logic.CAN_HAVE_ADDED_LATENCY(
+                parser_state
+            ) and (tagged or absorbing)
             # Slice into that submodule
             skip_boundary_slice = False
             TimingParamsLookupTable = SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
@@ -2039,6 +2126,7 @@ def SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES(
                 TimingParamsLookupTable,
                 skip_boundary_slice,
                 write_files,
+                absorbing=child_absorbing,
             )
 
             # Might be bad slice
@@ -2217,6 +2305,8 @@ def SEED_TIMING_PARAMS_FROM_PREVIOUS(
     Instances with no match in either tier keep zero slices -- correct for
     genuinely-new entities (the resized FIFO / widened counter: stateful,
     never sliced).
+    Neither tier seeds non-empty params where the caller cannot absorb added
+    latency, including untagged MCP/FSM interiors and paths to deeper tags.
 
     Returns (TimingParamsLookupTable, unseeded_auto_pipeline_insts):
     unseeded_auto_pipeline_insts lists AUTO_PIPELINE-tagged instances whose
@@ -2252,6 +2342,8 @@ def SEED_TIMING_PARAMS_FROM_PREVIOUS(
         if prev_params is None:
             prev_params = prev_func_to_params.get(logic.func_name)
         if prev_params is None or prev_params.IS_EMPTY():
+            continue
+        if ADDED_LATENCY_BLOCKER(inst_name, parser_state) is not None:
             continue
         # Setters invalidate calcd_total_latency/hash_ext caches themselves
         timing_params.SET_SLICES(prev_params._slices)
@@ -2891,6 +2983,7 @@ def DO_PIPELINED_BUILD(parser_state, args, src_file):
 def WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(
     TimingParamsLookupTable, parser_state, extra_insts=None
 ):
+    CHECK_ADDED_LATENCY_CONTEXTS(parser_state, TimingParamsLookupTable)
     # extra_insts: additional instances to write even though their own timing
     # params are empty - ancestors of modified instances whose rendered
     # entity (names of instantiated children) changed (see
