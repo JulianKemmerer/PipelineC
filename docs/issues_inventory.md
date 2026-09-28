@@ -4,7 +4,7 @@ This lists every open [PipelineC issue][issues], most serious first, for contrib
 
 Feature ideas and design questions live in [Discussions][discussions]. Before starting on code, read [`CONTRIBUTING.md`](../CONTRIBUTING.md): changes usually start with a discussion.
 
-- **Baseline:** commit `5d2a9ca62616932aa401c8a3b07973afbb357ce5` (2026-09-25), with issues as of 2026-09-26. Every `file:line` reference points into that commit.
+- **Baseline:** commit `5d2a9ca62616932aa401c8a3b07973afbb357ce5`. Every `file:line` reference points into that commit.
 - **Verified** means reproduced on that commit, in some cases by simulating the generated VHDL in GHDL. Unverified entries come from reading the code or from the issue thread.
 
 ## Before you start
