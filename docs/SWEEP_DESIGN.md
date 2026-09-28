@@ -932,6 +932,12 @@ feature's module:
 - **AUTO_MULTI_CYCLE counts.** A failing path matched to an AUTO_MULTI_CYCLE group
   raises that group's count before any pipelining feedback for the main. An MCP
   path's only timing lever is its count; its untagged interior stays combinational.
+  The Vivado backend rejects identifiable exception-coverage failures before
+  returning timing to the sweep: a wrong requirement on named MCP endpoints or
+  a DSP startpoint mapped into an untagged combinational MCP interior is an
+  error, not evidence for changing a separate AUTO_PIPELINE body. Control paths
+  and explicitly pipelined descendants are excluded from that diagnostic.
+  See [MCP feedback](AUTO_MULTI_CYCLE_DESIGN.md#3-sweep-feedback).
 - **The `.latency` pin-and-confirm loop.** After pass 1,
   `AUTO_PIPELINE.DO_AUTO_PIPELINE_LATENCY_PASSES` re-elaborates with the harvested
   latencies and calls `DO_SEEDED_CONFIRM_OR_SWEEP`: one confirmation synthesis of

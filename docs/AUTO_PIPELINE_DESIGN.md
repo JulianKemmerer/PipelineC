@@ -262,6 +262,15 @@ regions. Its architecture and compatibility gate are documented in
 
 ## 3. The pipelined VHDL architecture
 
+`GET_PIPELINE_ARCH_DECL_TEXT` also emits user state registers in zero-added-
+latency holders. Registers named by `Logic.mcp_tuples` receive RTL `dont_touch`
+attributes before synthesis can absorb them into DSPs. This applies only to
+MCP endpoints, including aggregate signals; it changes neither the helper's
+arithmetic nor a separate AUTO_PIPELINE instance's register placement rules.
+The recursive timing identity includes the MCP implementation version and
+sorted tuples at each holder, invalidating its ancestors without invalidating
+unrelated leaves. See [MCP constraints](AUTO_MULTI_CYCLE_DESIGN.md#2-constraints).
+
 `VHDL.WRITE_LOGIC_ENTITY` renders every entity. For a function whose
 `TimingParams` add latency it builds a `PiplineHDLParams` from the pipeline map
 and asks this module for the architecture's stage declarations

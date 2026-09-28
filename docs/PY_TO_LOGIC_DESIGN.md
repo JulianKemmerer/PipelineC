@@ -4964,11 +4964,12 @@ shared, unmodified, with the C frontend:
 self.mcp_tuples = set()  # Tuples of (ncycles, start_reg, end_reg) — strings
 ```
 
-`AUTO_MULTI_CYCLE.py`'s `GET_MCP_PATH_CONSTRAINTS` (emits `set_multicycle_path` + `KEEP` constraints,
-Vivado-only) consumes `mcp_tuples` generically by register name — it has no dependency on
-which frontend produced the `Logic()`. Porting the feature to Pypeline therefore required
-**no changes to `C_TO_LOGIC.py` or the constraint writer** — only teaching `PY_TO_LOGIC.py`'s
-elaborator to populate the same field.
+`AUTO_MULTI_CYCLE.py`'s `GET_MCP_PATH_CONSTRAINTS` emits Vivado setup `N`,
+hold `N-1`, and endpoint `DONT_TOUCH` constraints. The VHDL emitter also applies
+`dont_touch` to the tagged register signals before synthesis can absorb them.
+Both consume `mcp_tuples` generically by register name, independently of which
+frontend produced the `Logic()`. The Python elaborator populates the same field
+as the C frontend; see [MCP preservation and constraints](AUTO_MULTI_CYCLE_DESIGN.md#2-constraints).
 
 ### Syntax — tag the `Reg[T]` declarations, not a call
 

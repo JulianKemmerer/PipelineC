@@ -238,6 +238,11 @@ class TimingParams:
             timing_params._has_input_regs,
             timing_params._has_output_regs,
         )
+        if Logic.mcp_tuples:
+            rv += (
+                ("mcp", AUTO_MULTI_CYCLE.MCP_IMPLEMENTATION_VERSION,
+                 tuple(sorted(Logic.mcp_tuples))),
+            )
         # Only lowest level raw VHDL modules with no submodules include slices
         if len(Logic.submodule_instances) > 0:
             # Not raw hdl, slices dont guarentee describe pipeline structure
@@ -4351,6 +4356,9 @@ def GET_PIPELINE_ARCH_DECL_TEXT(
     rv += "-- Types and such\n"
     rv += "-- Declarations\n"
     rv += "attribute mark_debug : string;\n"
+    mcp_endpoint_regs = AUTO_MULTI_CYCLE.MCP_ENDPOINT_REGS(Logic)
+    if mcp_endpoint_regs:
+        rv += "attribute dont_touch : string;\n"
 
     # Declare latency for just the pipeline portion of logic, not io regs
     rv += (
@@ -4476,6 +4484,8 @@ type output_registers_t is record\n"""
                 + VHDL.STATE_REG_TO_VHDL_INIT_STR(state_reg, Logic, parser_state)
                 + ";\n"
             )
+            if state_reg in mcp_endpoint_regs:
+                rv += f'attribute dont_touch of {vhdl_name} : signal is "true";\n'
             # Mark debug?
             local_mark_debug = state_reg in Logic.debug_names
             global_mark_debug = Logic.func_name in parser_state.func_marked_debug

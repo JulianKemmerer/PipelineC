@@ -16,6 +16,14 @@ import VHDL
 import VIVADO
 
 
+# Invalidate MCP-bearing synthesis artifacts and ancestors, not arithmetic leaves.
+MCP_IMPLEMENTATION_VERSION = 1
+
+
+def MCP_ENDPOINT_REGS(logic):
+    return {reg for _, start, end in logic.mcp_tuples for reg in (start, end)}
+
+
 def DESCRIBE_MCP_PATHS(logic):
     """Readable launch/capture names shared by latency-context diagnostics."""
     return ", ".join(
@@ -104,11 +112,15 @@ def GET_MCP_PATH_CONSTRAINTS(
         start_reg_path = start_reg_cell_path + "/C"
         end_reg_path = end_reg_cell_path + "/D"
         rv.append(
-            f"set_multicycle_path {ncycles} -setup -from [get_pins {start_reg_path}] -to [get_pins {end_reg_path}]"
+            f"set_multicycle_path {ncycles} -setup -from [get_pins {{{start_reg_path}}}] -to [get_pins {{{end_reg_path}}}]"
         )
-        # Also need to stop tool from mangling the path of start and end regs
-        rv.append(f"set_property KEEP TRUE [get_cells {start_reg_cell_path}]")
-        rv.append(f"set_property KEEP TRUE [get_cells {end_reg_cell_path}]")
+        rv.append(
+            f"set_multicycle_path {int(ncycles) - 1} -hold -from [get_pins {{{start_reg_path}}}] -to [get_pins {{{end_reg_path}}}]"
+        )
+        # RTL DONT_TOUCH acts before synthesis can pack endpoints into DSPs.
+        # Reinforce it on the cells for downstream implementation.
+        rv.append(f"set_property DONT_TOUCH TRUE [get_cells {{{start_reg_cell_path}}}]")
+        rv.append(f"set_property DONT_TOUCH TRUE [get_cells {{{end_reg_cell_path}}}]")
     return rv
 
 
@@ -208,6 +220,94 @@ def _MCP_CELL_GLOB_REGEX(cell_glob):
     return re.compile(r"(^|/)" + pattern + r"$")
 
 
+def _DSP_IN_COMBINATIONAL_MCP(source, holder, holder_path, parser_state, tpl):
+    """Only attribute a DSP to a known, untagged combinational descendant.
+
+    Hierarchy membership alone is insufficient: an explicit AUTO_PIPELINE or
+    user stateful/raw-HDL descendant can legitimately contain sequential DSPs.
+    Unmapped/flattened names are left unclassified rather than guessed.
+    """
+    import AUTO_PIPELINE
+
+    match = re.search(r"(?:^|/)" + re.escape(holder_path) + r"/(.+)$", source)
+    if match is None:
+        return False
+    relative = match.group(1)
+    current = holder
+    while True:
+        logic = parser_state.LogicInstLookupTable[current]
+        child = next(
+            (local for local in logic.submodule_instances
+             if relative.startswith(VHDL.WIRE_TO_VHDL_NAME(local, parser_state) + "/")),
+            None,
+        )
+        if child is None:
+            break
+        relative = relative.split("/", 1)[1]
+        current += C_TO_LOGIC.SUBMODULE_MARKER + child
+    if current == holder:
+        return False
+    logic = parser_state.LogicInstLookupTable[current]
+    return (
+        AUTO_PIPELINE.ADDED_LATENCY_BLOCKER(current, parser_state) == holder
+        and not VHDL.LOGIC_NEEDS_CLOCK(current, logic, parser_state, tpl)
+    )
+
+
+def CHECK_MCP_TIMING_REPORT(timing_report, parser_state, multimain_timing_params, top_inst=None):
+    """Reject identifiable lost exceptions before timing drives any sweep.
+
+    This is a diagnostic for reported paths, not exhaustive coverage proof.
+    Fixed and automatic MCPs, fresh and cached reports, use the same checks.
+    """
+    tpl = multimain_timing_params.TimingParamsLookupTable
+    mcp_insts = sorted(
+        inst
+        for logic in parser_state.FuncLogicLookupTable.values()
+        if logic.mcp_tuples
+        for inst in parser_state.FuncToInstances[logic.func_name]
+    )
+    for inst in mcp_insts:
+        if top_inst is not None and inst != top_inst and not inst.startswith(
+            top_inst + C_TO_LOGIC.SUBMODULE_MARKER
+        ):
+            continue
+        root = top_inst or C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(inst, parser_state)
+        root_logic = parser_state.LogicInstLookupTable[root]
+        top_path = VHDL.GET_ENTITY_NAME(root, root_logic, tpl, parser_state)
+        for tup, start, end, auto in GET_MCP_CELL_PATHS(inst, root, top_path, parser_state):
+            ncycles = int(MCP_EFFECTIVE_NCYCLES(tup, auto, multimain_timing_params))
+            for report in timing_report.path_reports.values():
+                source, dest = report.start_reg_name, report.end_reg_name
+                if not source or not dest or not _MCP_CELL_GLOB_REGEX(end).search(dest):
+                    continue
+                # CE/R/control timing is never covered by the D-pin exception.
+                if getattr(report, "end_pin_name", None) not in (None, "D"):
+                    continue
+                period = report.source_ns_per_clock
+                requirement = getattr(report, "requirement_ns", None)
+                reason = None
+                if _MCP_CELL_GLOB_REGEX(start).search(source):
+                    if period and requirement is not None and not math.isclose(
+                        # Vivado prints both period and requirement to 0.001 ns.
+                        requirement, ncycles * period, rel_tol=0,
+                        abs_tol=0.001 * (ncycles + 1)
+                    ):
+                        reason = "tagged endpoints have the wrong setup requirement"
+                elif (getattr(report, "start_cell_type", None) or "").startswith("DSP"):
+                    if _DSP_IN_COMBINATIONAL_MCP(source, inst, end.rsplit("/", 1)[0], parser_state, tpl):
+                        reason = "sequential DSP startpoint inside an untagged combinational MCP interior"
+                if reason:
+                    raise ValueError(
+                        f"MCP timing coverage error in {inst} ({tup[1]} -> {tup[2]}): {reason}; "
+                        f"source={source}/{getattr(report, 'start_pin_name', None)}, "
+                        f"destination={dest}/{getattr(report, 'end_pin_name', None)}, "
+                        f"expected {ncycles} cycles ({ncycles * period:g} ns), "
+                        f"observed requirement={requirement} ns. Check endpoint RTL DONT_TOUCH "
+                        "and regenerate affected synthesis artifacts. Pipeline feedback cannot repair this exception."
+                    )
+
+
 def AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT(
     path_report, groups, parser_state, multimain_timing_params
 ):
@@ -220,6 +320,7 @@ def AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT(
         not groups
         or path_report.start_reg_name is None
         or path_report.end_reg_name is None
+        or getattr(path_report, "end_pin_name", None) not in (None, "D")
     ):
         return None
     tpl = multimain_timing_params.TimingParamsLookupTable

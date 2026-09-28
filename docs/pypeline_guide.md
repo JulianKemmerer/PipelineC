@@ -2339,6 +2339,19 @@ is discussed in [#346](https://github.com/JulianKemmerer/PipelineC/discussions/3
 and [`stream_auto_multi_cycle_test.py`](../src/tests/pypeline_tests/inst/stream_auto_multi_cycle_test.py)
 for complete examples including `PART(...)` targets.
 
+**Endpoint preservation.** Tagged launch/capture registers receive RTL
+`DONT_TOUCH` attributes so synthesis cannot silently pack those timing endpoints
+into DSP registers. The XDC reinforces preservation and emits setup `N` plus
+hold `N-1` on the launch-clock/capture-data pins. This leaves ordinary control
+paths single-cycle. Arithmetic can still use DSPs; separate AUTO_PIPELINE calls
+of the same helper keep their normal pipelining behavior. Preservation can use
+more fabric registers than unrestricted packing.
+
+An `MCP timing coverage error` identifies a reported path whose endpoints or
+requirement conflict with its MCP constraint. Repair preservation/coverage and
+regenerate affected synthesis artifacts; increasing an unrelated pipeline's
+latency will not repair the exception. See [constraints and diagnostics](AUTO_MULTI_CYCLE_DESIGN.md#2-constraints).
+
 **Automatically choosing `N`.** [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle) is the
 timing-driven version of this tag. The chosen cycle count is exposed to source as
 `.latency`.
@@ -5130,7 +5143,7 @@ guide.
 
 The DSP library (`make_fir`, `make_fir_decim`/`make_fir_interp`, `make_magnitude`,
 `make_dc_block`, `make_moving_avg`, `make_cordic_atan2`/`make_cordic_rotate`,
-`make_log2_db`, and their testbench helpers) has moved to
+`make_lut_nco`, `make_log2_db`, and their testbench helpers) has moved to
 [`include/pypeline/dsp/pypeline_dsp_guide.md`](../include/pypeline/dsp/pypeline_dsp_guide.md),
 next to the library source it documents. See that file for the full reference.
 

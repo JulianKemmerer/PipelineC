@@ -65,7 +65,7 @@ def final_xdc_counts(out_dir):
     syn runs, e.g. the planless as-written check, write their own clock.xdc
     under the module's directory -- not the result)."""
     with open(os.path.join(out_dir, "clocks.xdc")) as f:
-        return {int(n) for n in re.findall(r"set_multicycle_path (\d+) ", f.read())}
+        return {int(n) for n in re.findall(r"set_multicycle_path (\d+) -setup ", f.read())}
 
 
 def check_raises_count(out_dir):

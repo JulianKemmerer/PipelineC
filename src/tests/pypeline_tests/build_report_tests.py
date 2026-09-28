@@ -132,6 +132,16 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # Per-bit endpoint preservation and real setup/hold coverage with inferred DSPs.
+    tests.append(
+        Test(
+            name="mcp_dsp_packing_test",
+            category=VIVADO,
+            cmd=[INST_DIR / "mcp_dsp_packing_test.py"],
+            needs_out_dir=True,
+            requires=["ghdl"],
+        )
+    )
     # ── AUTO_FSM: pure function -> resource-shared FSM ──
     # Full build of auto_fsm_test.py plus assertions on the schedule: several
     # same-kind operations folded onto fewer shared units, latency matching the

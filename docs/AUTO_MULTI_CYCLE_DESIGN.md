@@ -28,7 +28,9 @@ block compiler-added latency under the [caller-context rule](SWEEP_DESIGN.md#cut
 |---|---|---|
 | `DESCRIBE_MCP_PATHS` | caller-context diagnostics | readable launch -> capture paths for an instance whose state blocks added latency |
 | `GET_MCP_CELL_PATHS` | constraint writer, sweep | the Vivado cell globs of every multi-cycle path in an instance: the one source for both constraints and report matching |
-| `GET_MCP_PATH_CONSTRAINTS`, `MCP_EFFECTIVE_NCYCLES` | `SYN.WRITE_CLK_CONSTRAINTS_FILE` | `set_multicycle_path` / `KEEP` lines for the clock constraints file, with the sweep's current count |
+| `GET_MCP_PATH_CONSTRAINTS`, `MCP_EFFECTIVE_NCYCLES` | `SYN.WRITE_CLK_CONSTRAINTS_FILE` | `set_multicycle_path` / `DONT_TOUCH` lines for the clock constraints file, with the sweep's current count |
+| `MCP_ENDPOINT_REGS`, `MCP_IMPLEMENTATION_VERSION` | VHDL emission, timing identity | preserve tagged endpoint signals before synthesis and invalidate affected artifacts |
+| `CHECK_MCP_TIMING_REPORT` | Vivado backend | reject identifiable exception coverage failures before timing feedback |
 | `ELABORATED_AUTO_MULTI_CYCLE_NCYCLES` | everything below, `MultiMainTimingParams.GET_HASH_EXT` | the counts the design was elaborated with |
 | `AutoMultiCycleGroup`, `COLLECT_AUTO_MULTI_CYCLE_GROUPS`, `AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT`, `AUTO_MULTI_CYCLE_NEEDED_NCYCLES`, `AUTO_MULTI_CYCLE_FEEDBACK` | `SWEEP.DO_PLANNED_THROUGHPUT_SWEEP` | sweep feedback (§3) |
 | `HARVEST_AUTO_MULTI_CYCLE_NCYCLES`, `AUTO_MULTI_CYCLE_BUILT_MATCHES_ELABORATED`, `PRINT_AUTO_MULTI_CYCLE_NCYCLES`, `CHECK_AUTO_MULTI_CYCLE_TAGS_READ` | `AUTO_PIPELINE.DO_AUTO_PIPELINE_LATENCY_PASSES`, `SIM` | pin-and-confirm (§4) |
@@ -44,13 +46,32 @@ elaborated N in `Logic.mcp_tuples`, as for any MCP, and additionally records
 constraints file as
 
 ```
-set_multicycle_path N -setup -from [get_pins <start>_reg[*]/C] -to [get_pins <end>_reg[*]/D]
-set_property KEEP TRUE [get_cells <start>_reg[*]]
-set_property KEEP TRUE [get_cells <end>_reg[*]]
+set_multicycle_path N -setup -from [get_pins {<start>_reg[*]/C}] -to [get_pins {<end>_reg[*]/D}]
+set_multicycle_path N-1 -hold -from [get_pins {<start>_reg[*]/C}] -to [get_pins {<end>_reg[*]/D}]
+set_property DONT_TOUCH TRUE [get_cells {<start>_reg[*]}]
+set_property DONT_TOUCH TRUE [get_cells {<end>_reg[*]}]
 ```
 
 relative to the synthesized top. Only Vivado is supported: any other tool
-raises an error when a design has a multi-cycle path.
+raises an error when a design has a multi-cycle path. `N-1` above is emitted
+as an integer, including zero when `N=1`. The setup exception permits N
+periods; the hold exception restores the ordinary same-clock hold relationship.
+Both use the same C-to-D pin collections, leaving enable/reset paths untouched.
+See [Vivado set_multicycle_path](https://docs.amd.com/r/en-US/ug835-vivado-tcl-commands/set_multicycle_path).
+
+**Preservation starts in RTL.** `GET_PIPELINE_ARCH_DECL_TEXT` places a string
+`dont_touch` attribute on each tagged state-register signal. This includes
+record/array payloads and both fixed and automatic MCPs. The XDC reinforces
+that property on the resulting cells. `KEEP` in XDC alone is insufficient:
+early synthesis can transform an endpoint before XDC processing, and `KEEP`
+does not preserve it through implementation. An absorbed DSP input register
+changes the timing startpoint, potentially escaping the named exception.
+See [Vivado KEEP](https://docs.amd.com/r/en-US/ug901-vivado-synthesis/KEEP) and
+[UG901 synthesis attributes](https://www.amd.com/content/dam/xilinx/support/documents/sw_manuals/xilinx2022_1/ug901-vivado-synthesis.pdf).
+Only tagged endpoints receive these attributes; arithmetic can still map to
+DSPs, and a separate AUTO_PIPELINE call of the same helper retains its ordinary
+optimization and pipelining behavior. Preserving endpoints can cost fabric
+registers and restrict packing, so preservation is deliberately narrow.
 
 **Constraint value.** `MultiMainTimingParams.auto_multi_cycle_ncycles` holds the sweep's current
 count per AUTO_MULTI_CYCLE key. `GET_MCP_PATH_CONSTRAINTS` writes
@@ -58,7 +79,14 @@ count per AUTO_MULTI_CYCLE key. `GET_MCP_PATH_CONSTRAINTS` writes
 count without re-elaborating, and only the XDC changes, so
 `MultiMainTimingParams.GET_HASH_EXT` appends the overrides that **differ** from the
 elaborated counts. Otherwise a same-named log from another count would be replayed.
-Designs without a raised AUTO_MULTI_CYCLE hash exactly as before.
+Counts equal to their elaborated values add no override to that hash.
+Independently, `TimingParams` includes `MCP_IMPLEMENTATION_VERSION` and the
+sorted MCP tuples at each MCP-bearing instance. Their recursive contribution
+changes ancestor and top-level identities while leaving unrelated arithmetic
+leaves unchanged. A preservation/constraint recipe change must bump this
+version. Existing reports/checkpoints remain available as evidence, but are
+not reused under the new identities; an unchanged warm run still reuses them.
+See [synthesis caches](SYN_DESIGN.md#6-caches).
 `GET_MCP_CELL_PATHS` is the one source of the register cell globs, used both by the
 XDC writer and by report matching.
 
@@ -69,13 +97,25 @@ mini-sweeps, boundary banks, coarse slicing, and the planner all enforce the
 same absorbing-caller rule. A fixed MULTI_CYCLE path receives the same
 protection; AUTO_MULTI_CYCLE feedback changes only its allowed count.
 
+Before a Vivado report reaches any sweep, `CHECK_MCP_TIMING_REPORT` checks
+fixed and automatic MCPs in both fresh and reused per-module/top-level reports.
+A named C-to-D pair with the wrong setup requirement raises `MCP timing
+coverage error`. A sequential DSP startpoint mapped inside a known untagged,
+combinational MCP descendant also raises that error. Diagnostics name the
+holder, physical endpoints, expected cycles/time, and observed requirement.
+These failures require repairing preservation/coverage; changing another
+instance's pipeline cannot repair them. Enable/reset destinations and explicitly
+pipelined or user-stateful descendants are not treated as escaped MCP data paths.
+Unmapped hierarchy is left unclassified rather than guessed.
+
 `SWEEP.DO_PLANNED_THROUGHPUT_SWEEP` handles AUTO_MULTI_CYCLE paths as follows:
 
 1. **Setup.** `COLLECT_AUTO_MULTI_CYCLE_GROUPS` gathers every instance's AUTO_MULTI_CYCLE paths by key; a key
    is one group with one count, since the design reads one `.latency` int. The counts are
    seeded from the elaborated values.
 2. **Matching.** For each report, `AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT` matches the report's
-   start/end register cells against the XDC globs (`[*]` → `\[\d+\]`) and requires
+   start/end register cells against the XDC globs (`[*]` → `\[[^/]*\]`), excludes
+   non-D destination pins, and requires
    `requirement / period` to equal the group's current count.
 3. **Feedback.** When the matched path fails, `AUTO_MULTI_CYCLE_FEEDBACK` runs **before** any
    pipelining feedback for that main:
@@ -138,10 +178,13 @@ elaborated counts overlaid with the sweep's final overrides.
   full synthesis per step on large designs.
 - Only the worst path per clock group is reported, so an AUTO_MULTI_CYCLE path hidden behind a
   worse path is raised in a later iteration.
-- The tagged `.start` / `.end` registers must survive synthesis. A capture register
-  whose value nothing uses is optimized away, along with the launch register feeding
-  it, and Vivado then rejects the `set_multicycle_path` because it names no cells. That
-  is true of `MULTI_CYCLE[...]` as well.
+- Tagged endpoints must exist in the synthesized netlist. Preservation is not a
+  substitute for an observable datapath or valid handshake. Empty endpoint
+  collections remain errors; a nonempty collection alone does not prove every
+  relevant bit survived or received the exception.
+- Report diagnostics inspect the reported worst paths, not every netlist path.
+  Full coverage requires checking physical endpoints and setup/hold requirements;
+  the DSP regression performs that audit on its variable-input fixture.
 - Report matching accepts struct registers, whose cells are named per field
   (`launch_reg[field][bit]`, matched by `[*]` → `\[[^/]*\]`).
 
@@ -161,3 +204,22 @@ adds a shared-helper regression across two MAINs, tagged bodies, fixed/auto
 MCP wrappers, direct FSM calls, and untagged bridges. It checks actual
 stage-zero wrapper maps, lock/boundary strategies, seeding, and pre-write
 rejection without synthesis.
+
+`mcp_dsp_packing_test.py` adds a variable-input DSP chain shared across fixed
+and automatic MCPs and an AUTO_PIPELINE call. It checks per-bit endpoint
+preservation, actual setup/hold requirements, DSP register settings, control
+and neighboring timing, native/GHDL data and backpressure behavior, automatic
+count growth/confirmation, routed preservation, negative audit cases, and warm
+reuse. Launch control is checked from controller registers to each preserved
+launch register's CE or D pin: Vivado can legally tie CE high and implement the
+enable with a data-input feedback mux. This transformation keeps the MCP timing
+endpoints intact. The audit requires single-cycle setup and ordinary hold on
+those controller paths, and a negative case deliberately relaxes them to ensure
+that the check rejects incorrect control exceptions.
+The routed fixed-count fixture uses `--comb`, leaving its separate body call
+unpipelined. Its audit checks MCP preservation and timing requirements; it does
+not require whole-design timing closure, and the body can violate the target.
+The automatic fixture separately checks synthesis timing confirmation with body
+pipelining enabled; it is not routed by this test.
+`--prepare-only` runs elaboration and native/GHDL checks without Vivado synthesis.
+Focused tests do not establish whole-application timing or QoR.

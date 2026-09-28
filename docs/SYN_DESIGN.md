@@ -347,6 +347,18 @@ type. `USE_COMBINATIONAL_PLANNER_WEIGHTS` selects whether the planner weighs
 the combinational component or the full register-to-register delay
 (`GET_PLANNER_DELAY`); it is part of the cache directory so the two never mix.
 
+Vivado also reuses build-local synthesis logs named by the recursive timing
+identity. MCP-bearing instances contribute their sorted constraints and
+`AUTO_MULTI_CYCLE.MCP_IMPLEMENTATION_VERSION`; that contribution reaches their
+ancestors and the whole-design hash. Updating the MCP recipe therefore gives
+affected VHDL, logs, and checkpoints new names while preserving unrelated leaf
+characterization. Continue in the existing output directory: retain old
+reports/checkpoints as evidence and let the new identities trigger the required
+runs. Do not delete the output tree or validate new constraints using an old
+checkpoint. Warm builds with the same recipe and timing parameters still reuse
+reports. This versioning is scoped to MCP changes, not a general content hash
+of every compiler source or arbitrary user-edited constraint.
+
 ## 7. Constraints and output files
 
 - **Clock constraints.** `GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH` picks the file
@@ -355,6 +367,10 @@ the combinational component or the full register-to-register delay
   `INF_MHZ` so a report can still be produced), then asks
   `AUTO_MULTI_CYCLE.GET_MCP_PATH_CONSTRAINTS` for multi-cycle paths
   ([`AUTO_MULTI_CYCLE_DESIGN.md`](AUTO_MULTI_CYCLE_DESIGN.md#2-constraints)).
+- **Vivado MCP coverage diagnostics.** Fresh and cached per-module/top-level
+  reports retain endpoint pins and cell types. `CHECK_MCP_TIMING_REPORT` rejects
+  identifiable missing MCP coverage before the report can drive pipeline
+  feedback; see [MCP feedback](AUTO_MULTI_CYCLE_DESIGN.md#3-sweep-feedback).
 - **Final files.** `WRITE_FINAL_FILES` writes the VHDL of the final
   `TimingParams` table (dumping AUTO_COMB_OPT's generated sources first),
   invalidates every cached hash/latency in that table so the files are computed

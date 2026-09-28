@@ -383,7 +383,9 @@ from a different angle:
   (unit): two MAINs share a helper across AUTO_PIPELINE, fixed/auto MCP, FSM-direct,
   and untagged-bridge contexts. Checks per-MAIN lock targets, all boundary strategies,
   wrapper stage-zero scheduling, guards before mutation/emission, both seeding tiers,
-  and planner/coarse-slicer agreement using synthetic leaf delays.
+  and planner/coarse-slicer agreement using synthetic leaf delays. Also checks
+  endpoint-only RTL attributes, selective MCP cache identities, setup/hold XDC,
+  DSP-origin/wrong-requirement diagnostics, and control/explicit-pipeline exclusions.
 - `auto_multi_cycle_unit_test.py` (unit):
   - constructor validation and `.latency` resolution;
   - construction-site keys and the inline-construction guard;
@@ -396,7 +398,7 @@ from a different angle:
   - an unread tag refused by `AUTO_MULTI_CYCLE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ`.
 - `stream_auto_multi_cycle_test.py` (native_sim and synth_vivado `--comb`): the handshake waits
   `.latency + 1` cycles for `start_latency=` and fixed `latency=`, and the Xilinx-part
-  `--comb` build emits both `set_multicycle_path` constraints.
+  `--comb` build emits setup/hold exceptions for both wrappers.
 - `stream_multi_cycle_test.py` (native_sim and synth_vivado `--comb`): the fixed
   `make_stream_multi_cycle`.
 - `auto_multi_cycle_sweep_test.py` (build_report_vivado, **real Vivado**, `auto_multi_cycle_sweep_design.py`):
@@ -405,6 +407,24 @@ from a different angle:
     `--sim`'s `sim_assert` checks the handshake;
   - restarting at that count settles immediately, with pass 2 skipped;
   - `max_latency=1` fails the build naming the cap.
+
+- `mcp_dsp_packing_test.py` (build_report_vivado, requires GHDL): variable-input
+  DSP multiplication shared by fixed/automatic MCPs and AUTO_PIPELINE, on
+  `xc7a200tffg1156-2` at 80 MHz. Checks every launch/capture bit (including
+  struct/array fields), DONT_TOUCH, DSP register settings, actual setup/hold
+  requirements, unchanged control/neighbor timing, routed preservation,
+  automatic count growth and confirmation, native/GHDL data/latency/backpressure,
+  and warm log reuse. Negative audit checks reject a nonempty collection missing
+  one bit, a wrong setup requirement, and a relaxed launch-control path. Control
+  timing is checked from controller registers to each launch register's CE or D
+  pin, covering both hardware enables and data-input feedback muxes. The routed
+  fixed-count fixture uses `--comb`: its unpipelined body can fail timing, so this
+  audit verifies MCP preservation/requirements without asserting whole-design
+  closure. The automatic fixture checks synthesis timing confirmation with body
+  pipelining enabled and does not run place-and-route.
+  `--prepare-only --out_dir DIR` runs
+  native simulation, HDL emission and GHDL protocol checks without Vivado
+  synthesis. These focused checks do not replace application timing validation.
 
 ## AUTO_COMB_AREA_OPT coverage
 

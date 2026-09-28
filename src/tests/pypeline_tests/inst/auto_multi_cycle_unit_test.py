@@ -201,6 +201,10 @@ Slack (VIOLATED) :        -3.000ns  (required time - arrival time)
 
 def test_report_matching_and_feedback():
     report = VIVADO.PathReport(_REPORT)
+    assert (report.start_pin_name, report.end_pin_name) == ("C", "D")
+    assert (report.start_cell_type, report.end_cell_type) == ("FDRE", "FDRE")
+    dsp_report = VIVADO.PathReport(_REPORT.replace("launch_reg[3]/C", "mul/dsp/CLK").replace("cell FDRE", "cell DSP48E1", 1))
+    assert (dsp_report.start_pin_name, dsp_report.start_cell_type) == ("CLK", "DSP48E1")
     assert report.start_reg_name == "main_top/func_mcp_inst/launch_reg[3]", (
         report.start_reg_name
     )

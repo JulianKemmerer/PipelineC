@@ -172,6 +172,13 @@ This module supplies the pieces that architecture is built from:
 predicates, and it imports `AUTO_PIPELINE` only inside `WRITE_LOGIC_ENTITY`,
 `GET_ARCH_DECL_TEXT` and `GET_ENTITY_PROCESS_STAGES_TEXT`.
 
+MCP launch/capture state signals receive RTL `dont_touch` attributes from
+`AUTO_PIPELINE.GET_PIPELINE_ARCH_DECL_TEXT`, including record and array
+signals. The XDC reinforcement is insufficient by itself because synthesis
+can pack an endpoint into a DSP before processing it. Other user state,
+combinational arithmetic, and separate pipelined helper instances receive no
+MCP preservation attributes. See [MCP preservation and timing](AUTO_MULTI_CYCLE_DESIGN.md#2-constraints).
+
 Emitting one entity must stay linear in its submodule and wire counts. A large
 CPU elaborates to one entity with ~19.6k submodules and ~86k wires. Two
 quadratic paths were found there:

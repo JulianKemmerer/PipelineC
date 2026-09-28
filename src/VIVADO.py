@@ -7,6 +7,7 @@ import hashlib
 import math
 import os
 import pickle
+import re
 import subprocess
 import sys
 
@@ -237,6 +238,10 @@ class PathReport:
         self.source_ns_per_clock = 0.0
         self.start_reg_name = None
         self.end_reg_name = None
+        self.start_pin_name = None
+        self.end_pin_name = None
+        self.start_cell_type = None
+        self.end_cell_type = None
         self.path_delay_ns = None
         self.logic_delay = None
         self.path_group = None
@@ -284,6 +289,9 @@ class PathReport:
                 self.start_reg_name = prev_line.replace(tok1, "").strip()
                 # Remove everything after last "/"
                 toks = self.start_reg_name.split("/")
+                self.start_pin_name = toks[-1]
+                cell_type = re.search(r"cell (\S+) clocked by", syn_output_line)
+                self.start_cell_type = cell_type.group(1) if cell_type else None
                 self.start_reg_name = "/".join(toks[0 : len(toks) - 1])
                 # print("self.start_reg_name",self.start_reg_name)
 
@@ -293,6 +301,9 @@ class PathReport:
                 self.end_reg_name = prev_line.replace(tok1, "").strip()
                 # Remove everything after last "/"
                 toks = self.end_reg_name.split("/")
+                self.end_pin_name = toks[-1]
+                cell_type = re.search(r"cell (\S+) clocked by", syn_output_line)
+                self.end_cell_type = cell_type.group(1) if cell_type else None
                 self.end_reg_name = "/".join(toks[0 : len(toks) - 1])
 
             # Path group
@@ -572,7 +583,11 @@ def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
         print("Running:", log_path, flush=True)
         log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd)
 
-    return ParsedTimingReport(log_text)
+    import AUTO_MULTI_CYCLE
+
+    report = ParsedTimingReport(log_text)
+    AUTO_MULTI_CYCLE.CHECK_MCP_TIMING_REPORT(report, parser_state, multimain_timing_params)
+    return report
 
 
 # Returns parsed timing report
@@ -661,7 +676,14 @@ def SYN_AND_REPORT_TIMING(
         print("Running:", log_path, flush=True)
         log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd)
 
-    return ParsedTimingReport(log_text)
+    import AUTO_MULTI_CYCLE
+    import AUTO_PIPELINE
+
+    report = ParsedTimingReport(log_text)
+    mtp = AUTO_PIPELINE.MultiMainTimingParams()
+    mtp.TimingParamsLookupTable = TimingParamsLookupTable
+    AUTO_MULTI_CYCLE.CHECK_MCP_TIMING_REPORT(report, parser_state, mtp, inst_name)
+    return report
 
 
 def WRITE_AXIS_XO(parser_state):

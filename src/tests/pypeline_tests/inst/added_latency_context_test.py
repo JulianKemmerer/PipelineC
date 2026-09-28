@@ -6,11 +6,15 @@ import os
 from pathlib import Path
 import sys
 import tempfile
+from types import SimpleNamespace
 from unittest.mock import patch
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[3]))
 
 import AUTO_PIPELINE as AP
+import AUTO_MULTI_CYCLE as MCP
+import VHDL
+import VIVADO
 import C_TO_LOGIC
 import PY_TO_LOGIC
 import SWEEP
@@ -269,6 +273,115 @@ def test_only_stateful_callers_and_self_timed_do_not_decouple():
             interior = next(i for i in _insts(ps, "helper") if _under(i, holder))
             assert AP.ADDED_LATENCY_BLOCKER(interior, ps) is None
 
+
+
+def test_mcp_endpoint_attributes_and_cache_identity():
+    ps = _state()
+    tpl = _empty(ps)
+    mtp = AP.MultiMainTimingParams()
+    mtp.TimingParamsLookupTable = tpl
+    hashes = {i: tp.GET_HASH_EXT(tpl, ps) for i, tp in tpl.items()}
+    top_hash = mtp.GET_HASH_EXT(ps)
+    with patch.object(MCP, "MCP_IMPLEMENTATION_VERSION", MCP.MCP_IMPLEMENTATION_VERSION + 1):
+        updated = _empty(ps)
+        for inst, tp in updated.items():
+            contains_mcp = any(_under(holder, inst) for holder in _holders(ps))
+            assert (tp.GET_HASH_EXT(updated, ps) != hashes[inst]) == contains_mcp, inst
+        mtp.TimingParamsLookupTable = updated
+        assert mtp.GET_HASH_EXT(ps) != top_hash
+    mtp.TimingParamsLookupTable = tpl
+    assert mtp.GET_HASH_EXT(ps) == top_hash  # warm identity is stable
+    fixed_holder, fixed_logic = next((i, l) for i, l in _holders(ps).items() if not l.auto_multi_cycle_tuples)
+    changed_tuples = {(str(int(n) + 1), start, end) for n, start, end in fixed_logic.mcp_tuples}
+    with patch.object(fixed_logic, "mcp_tuples", changed_tuples):
+        updated = _empty(ps)
+        for inst, tp in updated.items():
+            assert (tp.GET_HASH_EXT(updated, ps) != hashes[inst]) == _under(fixed_holder, inst), inst
+    with tempfile.TemporaryDirectory() as out:
+        for inst, logic in _holders(ps).items():
+            VHDL.WRITE_LOGIC_ENTITY(inst, logic, out, ps, tpl)
+            entity = VHDL.GET_ENTITY_NAME(inst, logic, tpl, ps)
+            text = Path(out, entity + ".vhd").read_text()
+            assert text.count("attribute dont_touch : string;") == 1
+            for reg in MCP.MCP_ENDPOINT_REGS(logic):
+                name = VHDL.WIRE_TO_VHDL_NAME(reg, logic)
+                assert f'attribute dont_touch of {name} : signal is "true";' in text
+            assert text.count("attribute dont_touch of ") == 2
+        # A shared helper's AUTO_PIPELINE instance receives no MCP attributes.
+        body = next(i for i in _insts(ps, "helper") if AP.ADDED_LATENCY_BLOCKER(i, ps) is None)
+        logic = ps.LogicInstLookupTable[body]
+        VHDL.WRITE_LOGIC_ENTITY(body, logic, out, ps, tpl)
+        text = Path(out, VHDL.GET_ENTITY_NAME(body, logic, tpl, ps) + ".vhd").read_text()
+        assert "attribute dont_touch" not in text
+
+
+def test_mcp_constraints_and_lost_coverage_diagnostics():
+    ps = _state()
+    tpl = _empty(ps)
+    mtp = AP.MultiMainTimingParams()
+    mtp.TimingParamsLookupTable = tpl
+    mtp.auto_multi_cycle_ncycles = MCP.ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(ps)
+    for holder, logic in _holders(ps).items():
+        main = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(holder, ps)
+        top = VHDL.GET_ENTITY_NAME(main, ps.LogicInstLookupTable[main], tpl, ps)
+        tup, start, end, auto = MCP.GET_MCP_CELL_PATHS(holder, main, top, ps)[0]
+        for count in (1, 4):
+            replacement = {(str(count), tup[1], tup[2])}
+            overrides = {auto.key: count} if auto else {}
+            with patch.object(logic, "mcp_tuples", replacement), patch.object(mtp, "auto_multi_cycle_ncycles", overrides), patch.object(SYN, "SYN_TOOL", VIVADO):
+                xdc = "\n".join(MCP.GET_MCP_PATH_CONSTRAINTS(holder, main, top, mtp, ps))
+                assert f"set_multicycle_path {count} -setup" in xdc
+                assert f"set_multicycle_path {count - 1} -hold" in xdc
+                assert xdc.count(f"[get_pins {{{start}/C}}]") == 2
+                assert xdc.count(f"[get_pins {{{end}/D}}]") == 2
+                assert xdc.count("set_property DONT_TOUCH TRUE") == 2
+                report = SimpleNamespace(
+                    start_reg_name=start.replace("[*]", "[3]"),
+                    end_reg_name=end.replace("[*]", "[7]"),
+                    start_pin_name="C", end_pin_name="D", start_cell_type="FDRE",
+                    source_ns_per_clock=12.5, requirement_ns=count * 12.5,
+                )
+                timing = SimpleNamespace(path_reports={"clk": report})
+                MCP.CHECK_MCP_TIMING_REPORT(timing, ps, mtp)
+                if auto:
+                    group = MCP.AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT(report, MCP.COLLECT_AUTO_MULTI_CYCLE_GROUPS(ps), ps, mtp)
+                    assert group is not None and group.key == auto.key
+                report.requirement_ns = (count + 1) * 12.5
+                try:
+                    MCP.CHECK_MCP_TIMING_REPORT(timing, ps, mtp)
+                except ValueError as err:
+                    assert "MCP timing coverage error" in str(err) and holder in str(err)
+                else:
+                    raise AssertionError("wrong setup requirement accepted")
+                report.end_pin_name = "CE"
+                MCP.CHECK_MCP_TIMING_REPORT(timing, ps, mtp)
+                assert MCP.AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT(report, MCP.COLLECT_AUTO_MULTI_CYCLE_GROUPS(ps), ps, mtp) is None
+                report.end_pin_name = "D"
+                # Reproduce the DSP-origin report with a real combinational
+                # descendant; endpoints alone still partially match the XDC.
+                interior = next(i for i in _insts(ps, "helper") if _under(i, holder))
+                suffix = interior[len(holder + M):].split(M)
+                dsp = end.rsplit("/", 1)[0] + "/" + "/".join(VHDL.WIRE_TO_VHDL_NAME(x, ps) for x in suffix) + "/return_output0__55"
+                report.start_reg_name = dsp
+                report.start_pin_name = "CLK"
+                report.start_cell_type = "DSP48E1"
+                report.requirement_ns = 12.5
+                try:
+                    MCP.CHECK_MCP_TIMING_REPORT(timing, ps, mtp)
+                except ValueError as err:
+                    assert "sequential DSP" in str(err) and "expected" in str(err)
+                else:
+                    raise AssertionError("escaped DSP endpoint accepted")
+                # A different hierarchy or an explicitly pipelined descendant
+                # is not evidence of lost MCP coverage.
+                report.start_reg_name = "unrelated/dsp"
+                MCP.CHECK_MCP_TIMING_REPORT(timing, ps, mtp)
+                report.start_reg_name = dsp
+                local = suffix[0]
+                tags = dict(logic.sub_inst_to_auto_pipeline_latency)
+                tags[local] = C_TO_LOGIC.AutoPipelineLatency()
+                with patch.object(logic, "sub_inst_to_auto_pipeline_latency", tags):
+                    MCP.CHECK_MCP_TIMING_REPORT(timing, ps, mtp)
 
 if __name__ == "__main__":
     from _test_main import run_module_tests
