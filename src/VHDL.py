@@ -4195,8 +4195,9 @@ end function;
     types_written.append("char")
 
     # Write structs
-    # Where each dependency-resolved type's declarations start in text and
-    # pkg_body_text -- see _WRITE_GROW_ONLY_C_STRUCTS_PACKAGE.
+    # (declared VHDL type name, where its declarations start in text, where
+    # they start in pkg_body_text) for each dependency-resolved type -- see
+    # _WRITE_GROW_ONLY_C_STRUCTS_PACKAGE.
     type_chunk_marks = []
     done = False
     while not done:
@@ -4369,9 +4370,9 @@ begin
                 # Write the type if nto already written
                 if new_type not in types_written:
                     types_written.append(new_type)
-                    type_chunk_marks.append((new_type, len(text), len(pkg_body_text)))
-                    done = False
                     new_vhdl_type = C_TYPE_STR_TO_VHDL_TYPE_STR(new_type, parser_state)
+                    type_chunk_marks.append((new_vhdl_type, len(text), len(pkg_body_text)))
+                    done = False
                     inner_type_dims = new_dims[1:]
                     inner_type = elem_type
                     for inner_type_dim in inner_type_dims:
@@ -4732,6 +4733,10 @@ begin
 
 
 C_STRUCTS_PKG_CHUNKS_FILE = "c_structs_pkg.chunks.json"
+# Layout version of C_STRUCTS_PKG_CHUNKS_FILE. An index in any other format
+# is not merged; the package starts over. Format 1 keyed chunks by logical C
+# type and could hold two declarations of one VHDL name.
+C_STRUCTS_PKG_CHUNKS_FORMAT = 2
 
 
 def _WRITE_GROW_ONLY_C_STRUCTS_PACKAGE(text, pkg_body_text, type_chunk_marks, parser_state):
@@ -4746,13 +4751,20 @@ def _WRITE_GROW_ONLY_C_STRUCTS_PACKAGE(text, pkg_body_text, type_chunk_marks, pa
 
     The declarations are split into one chunk per type (type_chunk_marks,
     in dependency order), rendered, and merged with the chunks this output
-    directory already has (C_STRUCTS_PKG_CHUNKS_FILE):
+    directory already has (C_STRUCTS_PKG_CHUNKS_FILE). A chunk is keyed by
+    its emitted VHDL type name, lowercased because VHDL names are
+    case-insensitive. Emitted names are unique only within one pass: a
+    factory struct whose field is sized by something other than a factory
+    parameter (ex. an AUTO_PIPELINE .latency) keeps its emitted name while
+    its logical C type and layout change between passes.
     - Every current type already present with identical text: keep all
       previous chunks in their order and append only the new ones. A new
       type depends only on earlier chunks, so the order stays valid. Types
-      no longer used stay; they are still valid VHDL.
-    - Otherwise (a type was redefined, or the fixed preamble changed): start
-      over from this pass's chunks.
+      no longer used stay; no other chunk declares their names, so they are
+      still valid VHDL.
+    - Otherwise (a VHDL type name's declaration changed, the fixed preamble
+      changed, or the index isn't C_STRUCTS_PKG_CHUNKS_FORMAT): start over
+      from this pass's chunks.
     The file is only rewritten when its text changes.
     """
     import json
@@ -4765,14 +4777,24 @@ def _WRITE_GROW_ONLY_C_STRUCTS_PACKAGE(text, pkg_body_text, type_chunk_marks, pa
         RENDER_TEXT(text[: starts[0][0] if starts else text_end], parser_state),
         RENDER_TEXT(pkg_body_text[: starts[0][1] if starts else body_end], parser_state),
     ]
-    chunks = [
-        [
-            name,
-            RENDER_TEXT(text[t0:t1], parser_state),
-            RENDER_TEXT(pkg_body_text[b0:b1], parser_state),
-        ]
-        for (name, t0, b0), (t1, b1) in zip(type_chunk_marks, ends)
-    ]
+    chunks = []
+    emitted = {}  # key -> (declared VHDL name before rendering, emitted name)
+    for (name, t0, b0), (t1, b1) in zip(type_chunk_marks, ends):
+        emitted_name = RENDER_TEXT(name, parser_state)
+        key = emitted_name.lower()
+        if key in emitted:
+            raise Exception(
+                f"c_structs_pkg: types {emitted[key][0]} and {name} both declare "
+                f"VHDL type {emitted_name} (VHDL names are case-insensitive)"
+            )
+        emitted[key] = (name, emitted_name)
+        chunks.append(
+            [
+                key,
+                RENDER_TEXT(text[t0:t1], parser_state),
+                RENDER_TEXT(pkg_body_text[b0:b1], parser_state),
+            ]
+        )
 
     if not os.path.exists(SYN.SYN_OUTPUT_DIRECTORY):
         os.makedirs(SYN.SYN_OUTPUT_DIRECTORY)
@@ -4786,13 +4808,25 @@ def _WRITE_GROW_ONLY_C_STRUCTS_PACKAGE(text, pkg_body_text, type_chunk_marks, pa
                 previous = json.load(f)
         except (OSError, ValueError):
             previous = None
+    if previous is not None and previous.get("format") != C_STRUCTS_PKG_CHUNKS_FORMAT:
+        previous = None
     merged = chunks
     if previous is not None and previous.get("prefix") == prefix:
-        previous_by_name = {c[0]: c for c in previous["chunks"]}
-        if all(previous_by_name.get(c[0], c) == c for c in chunks):
+        previous_by_key = {c[0]: c for c in previous["chunks"]}
+        redefined = [c[0] for c in chunks if previous_by_key.get(c[0], c) != c]
+        if len(previous_by_key) != len(previous["chunks"]):
+            pass  # Duplicate keys: not written by this function, start over.
+        elif not redefined:
             merged = previous["chunks"] + [
-                c for c in chunks if c[0] not in previous_by_name
+                c for c in chunks if c[0] not in previous_by_key
             ]
+        else:
+            print(
+                f"c_structs_pkg: {len(redefined)} VHDL type(s) declared differently "
+                f"than in the package so far (ex. {emitted[redefined[0]][1]}); "
+                "writing it from this pass's types only",
+                flush=True,
+            )
 
     body = prefix[1] + "".join(c[2] for c in merged)
     rendered = prefix[0] + "".join(c[1] for c in merged)
@@ -4807,7 +4841,14 @@ end c_structs_pkg;
     WRITE_TEXT_IF_CHANGED(path, rendered)
     if previous is None or previous.get("chunks") != merged or previous.get("prefix") != prefix:
         with open(chunks_path, "w") as f:
-            json.dump({"prefix": prefix, "chunks": merged}, f)
+            json.dump(
+                {
+                    "format": C_STRUCTS_PKG_CHUNKS_FORMAT,
+                    "prefix": prefix,
+                    "chunks": merged,
+                },
+                f,
+            )
 
 
 def LOGIC_NEEDS_GLOBAL_TO_MODULE(Logic, parser_state):

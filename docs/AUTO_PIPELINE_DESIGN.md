@@ -406,7 +406,11 @@ repeat-the-sweep one:
 3. **Pass 2 (pin + confirm):** install the harvested latencies
    (`pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE`), re-run `PARSE_FILE` (re-executes the
    whole design import graph; `.latency` reads now resolve), rewrite the zero-clk
-   VHDL, re-run path delays (mostly disk-cached), then
+   VHDL (a struct sized from `.latency` can change layout under an unchanged VHDL type
+   name, and `c_structs_pkg` then starts over from pass 2's types instead of declaring
+   that name twice, see
+   [VHDL_DESIGN.md](VHDL_DESIGN.md#generated-vhdl-is-the-same-in-every-pass-of-a-run)),
+   re-run path delays (mostly disk-cached), then
    `SEED_TIMING_PARAMS_FROM_PREVIOUS` carries pass 1's sweep solution (slices +
    IO-reg flags) into the fresh zero-clk table. Matching is **two-tier**: exact
    instance path first, else func (entity) name — the func-name tier is load-bearing

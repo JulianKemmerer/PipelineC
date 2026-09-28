@@ -211,7 +211,9 @@ def get_tests() -> list:
     # Generated VHDL doesn't change between parse passes of one run:
     # c_structs_pkg only grows within one output directory, and shared C
     # built-in entities name no call site. Every synthesized leaf hashes these
-    # files, so a flip re-synthesizes leaves even on a warm rerun.
+    # files, so a flip re-synthesizes leaves even on a warm rerun. The package
+    # is merged by emitted VHDL type name: a type whose layout changes between
+    # passes under one name starts it over instead of being declared twice.
     tests.append(
         Test(
             name="generated_vhdl_stability_test",

@@ -5462,6 +5462,22 @@ base collisions are resolved deterministically with a logical-key digest, indepe
 of discovery order. Structurally shared types choose a deterministic source description
 and retain all origins in the index.
 
+**Emitted names are unique within one pass, not across the passes of a run.** Each
+parse builds its own `EmissionNames`, and a collision is only seen, and hashed apart,
+when both logical keys are in the same pass.
+
+- **Why a name can be reused.** Factory parameters replace field expansion, so a factory
+  struct whose field is sized by something else keeps its emitted name while its
+  logical key and layout change. An AUTO_PIPELINE `.latency` is one example: WireGuard's
+  Poly1305 `powers_t` is 2 lanes in pin-and-confirm pass 1 and 5 in pass 2, and both
+  passes emit `powers_t_from_poly1305_mac_pipelined_make_poly1305_mac_pipelined_direction_encrypt`.
+- **What must handle it.** Anything that merges emitted declarations across passes must
+  key them by emitted name and compare their content. `c_structs_pkg` does (see
+  [VHDL_DESIGN.md](VHDL_DESIGN.md#generated-vhdl-is-the-same-in-every-pass-of-a-run)).
+- **Why entity files are safe.** Entity files carry a timing hash covering each child's
+  logical name. The lane-dependent WireGuard entities got different hashes in the two
+  passes.
+
 The backend continues to operate on logical C type/function names. `VHDL.GET_ENTITY_NAME`,
 `WIRE_TO_VHDL_NAME`, output directories and constraint paths use the emission mapping.
 At VHDL file writes a lexer translates basic identifiers, including type fragments in

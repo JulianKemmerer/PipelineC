@@ -119,6 +119,19 @@ def get_tests() -> list:
             cmd=[INST_DIR / "double_parse_file_test.py"],
         )
     )
+    # Parses a design whose struct is sized by an AUTO_PIPELINE .latency
+    # twice in one output directory (pin-and-confirm pass 1, then pass 2
+    # latencies): its layout changes but its emitted VHDL name doesn't, and
+    # c_structs_pkg must still declare it once (GHDL-analyzed each pass). The
+    # WireGuard shared build failed in Vivado with a duplicate declaration.
+    tests.append(
+        Test(
+            name="c_structs_pkg_relayout_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "c_structs_pkg_relayout_test.py"],
+            requires=["ghdl"],
+        )
+    )
     # In-process PARSE_FILE regression test for the _loc_str()
     # multiline-instance-collision bug (missing node.end_lineno let
     # same-width, different-line BinOp operands collide into the same

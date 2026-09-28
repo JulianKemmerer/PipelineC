@@ -69,17 +69,48 @@ files are handled:
   types.
 - **How it stays stable.** `_WRITE_GROW_ONLY_C_STRUCTS_PACKAGE` splits the declarations
   into one chunk per type, in the dependency order of
-  `WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE`'s resolve loop (`type_chunk_marks`). It merges
-  them with the chunks already recorded in `<out_dir>/c_structs_pkg.chunks.json`:
+  `WRITE_C_DEFINED_VHDL_STRUCTS_PACKAGE`'s resolve loop (`type_chunk_marks`). Each chunk
+  declares one VHDL type, plus the `_NULL`/`_SLV_LEN` constants and conversion
+  functions named after it. It merges them with the chunks already recorded in
+  `<out_dir>/c_structs_pkg.chunks.json`:
   - **Nothing redefined.** If every current type is either new or identical to its
     recorded chunk, the recorded chunks keep their order and the new ones are appended.
-    A new type depends only on earlier chunks. Types a pass no longer uses stay, since
-    they are still valid VHDL.
+    A new type depends only on earlier chunks. Types a pass no longer uses stay. No other
+    chunk declares their names, so they are still valid VHDL.
   - **A type was redefined** (or the fixed preamble changed): the package starts over
-    from this pass's chunks.
+    from this pass's chunks. The build prints one line naming a redefined type.
   - **Unchanged text.** The file is only rewritten when its text changes.
+- **Keyed by emitted VHDL name.** A chunk's key is its emitted VHDL type name,
+  lowercased because VHDL names are case-insensitive. It is not the logical C type,
+  because emitted names are unique only within one pass (see
+  [PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#generated-vhdl-names)).
+  - **The case that needs it.** A factory struct whose field is sized by something
+    other than a factory parameter keeps its emitted name while its layout changes.
+    For example, WireGuard's Poly1305 `powers_t` has `values: uint130_t[lanes]` with
+    `lanes = body_ap.latency + 2`. AUTO_PIPELINE pass 1 elaborates 2 lanes and pass 2
+    elaborates 5. Each pass emits the same
+    `powers_t_from_poly1305_mac_pipelined_make_poly1305_mac_pipelined_direction_encrypt`.
+  - **What went wrong before.** Keyed by C type, the pass-2 chunk looked new and was
+    appended after the pass-1 one. That declared the name twice, along with its
+    constants, conversion functions and every record that contains it. Vivado failed
+    with `[Synth 8-989] ... is already declared`.
+  - **What happens now.** Keyed by VHDL name, the changed declaration is a
+    redefinition, and the package starts over from pass 2's types.
+- **Guards.**
+  - Two types of one pass that emit the same VHDL name (ignoring case) are an error at
+    package generation, not a Vivado failure later.
+  - The index records a `format`. An index in any other format is not merged, and the
+    package starts over. That includes format 1, keyed by C type, which may already
+    hold duplicate declarations.
+- **Cost of a flip.** If a layout keeps changing between passes, the package starts over
+  on every change. Leaves synthesized under the previous package are then re-synthesized
+  by DEVICE_MODELS, which checks its VHDL inputs. Vivado replays an existing leaf log by
+  name without checking inputs, so it is unaffected. Passes that only add types, such as
+  AUTO_FSM schedule passes, still leave a warm rerun with nothing to re-synthesize.
 - **Rendering.** Chunks are rendered (`RENDER_TEXT`) one at a time. Identifier
   translation is token-local, so this is byte-identical to rendering the whole package.
+  A chunk's key is `RENDER_TEXT` of its declared type name, the same translation its
+  text gets.
 
 **Shared C built-in entities name no call site.** `SOURCE_COMMENT`'s `-- Source:`
 fallback skips `is_c_built_in` logic. Its `ast_meta` is whichever call site the pass

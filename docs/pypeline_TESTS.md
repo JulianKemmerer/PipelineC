@@ -625,10 +625,41 @@ end. Three tests cover it:
   - `c_structs_pkg` only grows: a pass with no new types leaves the file
     untouched, new types are appended after the existing ones, and a
     redefined type or a changed preamble starts the package over;
+  - the package is merged by emitted VHDL type name, rendered by real
+    `EmissionNames`:
+    - a type whose layout changes under one name (lanes 2 to 5 and 2 to 7,
+      with a dependent record) starts the package over, and each name is
+      declared once;
+    - a repeated pass then leaves the file untouched;
+    - an identical declaration from a new C type is kept;
+    - names differing only in case count as one name;
+    - a pre-format index holding a duplicate declaration is replaced;
+    - two types of one pass with one VHDL name are an error;
   - a shared C built-in operator entity gets no call-site `-- Source:`
     comment;
   - an identical re-render doesn't rewrite the file (`WRITE_TEXT_IF_CHANGED`),
     so a thread reading it never sees it truncated.
+
+**One VHDL type name, two layouts.**
+`c_structs_pkg_relayout_test.py` (elab_introspect, needs GHDL) is the
+real-parse counterpart of the package-merge cases above.
+
+- **What it does.** It parses `c_structs_pkg_relayout_design.py` twice into one
+  output directory, the way the AUTO_PIPELINE pin-and-confirm loop does, with no
+  synthesis. Pass 1 has an empty latency cache (2 lanes). Pass 2 uses latencies 3
+  and 5 (5 and 7 lanes).
+- **The design.** It is shaped like WireGuard's Poly1305 MAC: `powers_t` is sized
+  by `body_ap.latency + 2`, so its C type changes between passes while its
+  emitted VHDL name doesn't.
+- **What it asserts.**
+  - That shape holds. If the names ever diverge, the test fails rather than
+    passing without exercising the case.
+  - GHDL analyzes the package after each pass.
+  - After pass 2, each `powers_t` is declared once, with pass 2's lane count.
+  - A third identical pass rewrites nothing.
+- **What it catches.** With the previous merge, keyed by C type, pass 2's GHDL
+  analysis fails with "already used for a declaration". That is the WireGuard
+  shared build's Vivado `[Synth 8-989]` failure.
 
 ## Operator-cost regression coverage
 
