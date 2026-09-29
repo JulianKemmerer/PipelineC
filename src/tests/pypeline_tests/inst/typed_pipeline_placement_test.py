@@ -23,6 +23,7 @@ class FakeLogic:
         self.sub_inst_to_auto_pipeline_latency = {}
         self.wire_driven_by = {}
         self.wire_drives = {}
+        self.mcp_tuples = set()
 
     def CAN_HAVE_ADDED_LATENCY(self, _parser_state):
         return True
