@@ -15,7 +15,7 @@ entry there is expect_fail=True (documents a known, unfixed compiler bug),
 so it must be requested explicitly with --category known_issues.
 
 Replaces the old run_all.sh. Run standalone:
-python3 run_all.py [-j N] [--category CATEGORY ...]
+python3 run_all.py [-j N] [--category CATEGORY [CATEGORY ...]] ...
 """
 
 import sys
@@ -109,13 +109,17 @@ def main() -> int:
     parser.add_argument(
         "--category",
         choices=sorted(ALL_CATEGORY_MODULES),
-        action="append",
+        nargs="+",
+        action="extend",
         help="Limit to one or more categories (default: all EXCEPT known_issues, "
-        "which must be requested explicitly). May be passed multiple times.",
+        "which must be requested explicitly). Takes several categories at once "
+        "and may also be passed multiple times.",
     )
     args = parser.parse_args()
 
-    categories = args.category or _DEFAULT_CATEGORY_ORDER
+    # A category named twice would submit its tests twice, into the same
+    # tmp_root/<category>/<name>/ directories.
+    categories = list(dict.fromkeys(args.category or _DEFAULT_CATEGORY_ORDER))
     tests = []
     module_tests = {}
     for category in categories:

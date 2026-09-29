@@ -6317,7 +6317,7 @@ class FuncElaborator:
         _add_wire(self.logic, var_name, c_type)
         self.logic.variable_names.add(var_name)
         self.env[var_name] = (var_name, c_type)
-        self.logic.feedback_vars.add(var_name)
+        self.logic.feedback_vars[var_name] = None
 
     def _declare_global_read_wire(self, name):
         """Lazily initialize a global Wire[T] as read-only for this function.

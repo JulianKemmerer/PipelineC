@@ -571,7 +571,9 @@ class Logic:
         self.variable_names = set()  # Unordered set original variable names
         self.wires = set()  # Unordered set ["a","b","return"] wire names (renamed variable regs), includes inputs+outputs
         self.clock_enable_wires = []  # Over time, nesting ifs create more entries in list
-        self.feedback_vars = set()  # Vars pragmad to be combinatorial feedback wires
+        # Vars pragmad to be combinatorial feedback wires: name -> None, an
+        # insertion-ordered set so emitted VHDL follows declaration order
+        self.feedback_vars = {}
         self.inputs = []  # Ordered list of inputs ["a","b"]
         self.outputs = []  # Ordered list of outputs ["return"]
         self.state_regs = {}  # name -> variable info
@@ -754,7 +756,7 @@ class Logic:
         }
         rv.global_wire_dynamic_index_writes = set(self.global_wire_dynamic_index_writes)
         rv.readback_global_wires = dict(self.readback_global_wires)
-        rv.feedback_vars = set(self.feedback_vars)
+        rv.feedback_vars = dict.fromkeys(self.feedback_vars)
         rv.uses_nonvolatile_state_regs = self.uses_nonvolatile_state_regs
         rv.submodule_instances = dict(
             self.submodule_instances
@@ -982,7 +984,9 @@ class Logic:
         self.wires = self.wires | logic_b.wires
         self.state_regs = UNIQUE_KEY_DICT_MERGE(self.state_regs, logic_b.state_regs)
         self.variable_names = self.variable_names | logic_b.variable_names
-        self.feedback_vars = self.feedback_vars | logic_b.feedback_vars
+        self.feedback_vars = dict.fromkeys(
+            [*self.feedback_vars, *logic_b.feedback_vars]
+        )
         self.debug_names = self.debug_names | logic_b.debug_names
 
         self.write_only_global_wires = UNIQUE_KEY_DICT_MERGE(
@@ -2400,7 +2404,7 @@ def C_AST_PRAGMA_TO_LOGIC(c_ast_node, driven_wire_names, prepend_text, parser_st
     # FEEDBACK WIRES
     if toks[0] == "FEEDBACK":
         var_name = toks[1]
-        parser_state.existing_logic.feedback_vars.add(var_name)
+        parser_state.existing_logic.feedback_vars[var_name] = None
         # Clears all known aliases/drivers of this wire
         # (clears default null assignment, all aliases, so read comes from feedback wire)
         parser_state.existing_logic.REMOVE_VAR_WIRE_DRIVE_HISTORY(var_name)

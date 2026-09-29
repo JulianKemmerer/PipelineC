@@ -792,7 +792,7 @@ python3 src/tests/pypeline_tests/run_all.py                       # default cate
 python3 src/tests/pypeline_tests/run_all.py -j 5 --no_timeout     # full suite, five workers, no timeout
 python3 src/tests/pypeline_tests/run_all.py --category native_sim
 python3 src/tests/pypeline_tests/run_all.py --category synth_device_models --category build_report_device_models
-python3 src/tests/pypeline_tests/run_all.py --category synth_vivado --category build_report_vivado  # needs Vivado
+python3 src/tests/pypeline_tests/run_all.py --category synth_vivado build_report_vivado  # needs Vivado; several at once also works
 python3 src/tests/pypeline_tests/run_all.py --category synth_quartus   # needs Quartus; likewise synth_<any backend>
 python3 src/tests/pypeline_tests/run_all.py -k sweep_float32           # the per-SYN_TOOL sweep matrix, every backend
 python3 src/tests/pypeline_tests/run_all.py --category known_issues   # opt-in

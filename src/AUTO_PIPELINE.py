@@ -982,7 +982,7 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     RECORD_DRIVEN_BY(None, logic.inputs)
     RECORD_DRIVEN_BY(None, C_TO_LOGIC.CLOCK_ENABLE_NAME)
     RECORD_DRIVEN_BY(None, set(logic.state_regs.keys()))
-    RECORD_DRIVEN_BY(None, logic.feedback_vars)
+    RECORD_DRIVEN_BY(None, sorted(logic.feedback_vars))
 
     # Keep track of delay offset when wire is driven
     # ONLY MAKES SENSE FOR 0 CLK RIGHT NOW
