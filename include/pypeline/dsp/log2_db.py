@@ -1,33 +1,52 @@
 # pyright: reportInvalidTypeForm=none
-"""Linear power -> decibels, with no multiplier-hungry logarithm.
+"""Linear power -> decibels: a count-leading-zeros exponent plus a mantissa term.
 
 A pulse detector measures power as a plain linear I^2+Q^2 sum, but every
 consumer of a pulse descriptor word wants dB: gr-pdw reports pulse power and
 noise power in dBFS (or dBm once a calibration offset is added), and a dB
 difference is how you get SNR. This block is that conversion.
 
-The method is the classic one: a base-2 exponent from count-leading-zeros, plus
-a small piecewise-linear correction for the mantissa.
-
     v = 2^e * (1 + m),   0 <= m < 1
     log2(v) = e + log2(1 + m)
     dB      = 10*log10(v) = (10/log2(10)) * log2(v) = 3.0103 * log2(v)
 
-`log2(1+m)` is approximated by chords over `2^seg_bits` equal segments of m,
-with the 3.0103 scaling folded into the stored constants at elaboration time,
-so the runtime cost is one small multiply and one add. With the defaults
-(8 mantissa bits, 4 segments) the worst-case end-to-end error is **0.046 dB**,
-measured over 300k random inputs against `10*log10`.
+Two implementations of the same interface, chosen by `method=`:
+
+  "rom" (default)  Both terms are table lookups, from two `ram.make_ram` ROMs:
+                   `(e - frac_bits) * 3.0103 dB` indexed by the leading-zero
+                   count, and `3.0103 * log2(1 + m)` indexed by the top
+                   `mant_bits` (10) mantissa bits. Every table entry is rounded
+                   from the exact value once, at elaboration time, so there is
+                   no multiplier, no shift-add tree and no approximation beyond
+                   those two roundings and the mantissa truncation. Worst-case
+                   end-to-end error **0.008 dB** (2 LSB of Q8.8), measured over
+                   300k random inputs against `10*log10`. Costs one RAMB18 for
+                   the mantissa table (shared by every instance with the same
+                   `mant_bits`) plus a 2^ceil(log2(W+1))-entry exponent table.
+
+  "pwl"            No ROM. The mantissa term is a chord over 2^seg_bits equal
+                   segments -- one small multiply and one add -- and the exponent
+                   is scaled by the integer constant 771 (10/log2(10) * 256,
+                   rounded) with a shift-add tree. Worst case **0.046 dB**,
+                   nearly all of it the chords and the 8-bit mantissa (0.0455
+                   dB with an exact constant in place of 771). Use it where a
+                   ROM is unwanted.
+
+The mantissa table is sampled at each bin's LEFT edge, not its centre, so an
+exact power of two -- `1.0`, `2.0`, ... -- converts to exactly `0`, `3.0103`,
+... dB rather than half a bin high. The cost is that the truncation error is
+one-sided (always low, by at most one bin, 0.0042 dB at mant_bits=10).
 
 THE FRACTIONAL-BITS SUBTRACTION IS NOT OPTIONAL. `in_t` is a fixed_t, so the
 integer the hardware holds is `2^frac_bits` times the value it represents.
-Taking dB of the raw integer instead of the represented value both reports the
-wrong number and overflows the output: for the PDW project's 46-bit,
-12-fraction-bit `power_t` the raw range reaches 135.5 dB, past Q8.8's +128,
-while the true represented range is -36.1 .. +99.4 dB and fits comfortably.
-That is why `dB = (e - in_t.frac_bits) * K + correction` below, not `e * K`.
+Taking dB of the raw integer instead both reports the wrong number and
+overflows the output: for the PDW project's 46-bit, 12-fraction-bit `power_t`
+the raw range reaches 135.5 dB, past Q8.8's +128, while the true represented
+range is -36.1 .. +99.4 dB and fits comfortably. Both methods compute
+`dB(e - in_t.frac_bits)`, not `dB(e)`.
 
-Output is signed Q8.8 dB (one LSB = 1/256 dB), saturated at the ends.
+Output is signed Q8.8 dB (one LSB = 1/256 dB), saturated at the ends. Both
+methods have `.latency` 4 and the same ports, so they are interchangeable.
 """
 
 import math
@@ -44,12 +63,17 @@ from pypeline import (
 )
 
 from bits import make_clz, make_shifter_sl
+from ram import make_ram
 
-# dB per unit of log2, in the output's Q8.8 units: 10/log2(10) * 256.
-DB_PER_LOG2_Q8 = round(10.0 / math.log2(10.0) * 256.0)  # 771
+# dB per unit of log2, in the output's Q8.8 units: 10/log2(10) * 256. The "pwl"
+# method uses it rounded; the "rom" method folds the exact value into its tables.
+Q8_PER_LOG2 = 2560.0 * math.log10(2.0)  # 770.637
+DB_PER_LOG2_Q8 = round(Q8_PER_LOG2)  # 771
 # Set-bit positions of that constant, for the shift-add in place of a multiply.
 K_SHIFTS = [i for i in range(DB_PER_LOG2_Q8.bit_length()) if (DB_PER_LOG2_Q8 >> i) & 1]
 N_K_TERMS = len(K_SHIFTS)
+
+LOG2_DB_METHODS = ("rom", "pwl")
 
 
 def pwl_log2_tables(mant_bits=8, seg_bits=2):
@@ -78,8 +102,201 @@ def pwl_log2_tables(mant_bits=8, seg_bits=2):
     return A, B
 
 
-def make_log2_db(in_t, mant_bits=8, seg_bits=2):
+def rom_log2_tables(width, frac_bits, mant_bits=10):
+    """The "rom" method's two ROM contents, in Q8.8 dB.
+
+    Returns `(LOG_TAB, EXP_TAB)`:
+
+        LOG_TAB[m]  = round(Q8_PER_LOG2 * log2(1 + m / 2^mant_bits))
+        EXP_TAB[lz] = round(Q8_PER_LOG2 * ((width - 1 - lz) - frac_bits))
+
+    indexed by the mantissa's top `mant_bits` bits and by the leading-zero
+    count of a `width`-bit magnitude. EXP_TAB has 2^ceil(log2(width + 1))
+    entries so the count indexes it directly; entries at and past `lz = width`
+    (a zero input, which is floored instead) are 0.
+    """
+    log_tab = [
+        round(Q8_PER_LOG2 * math.log2(1.0 + m / float(1 << mant_bits)))
+        for m in range(1 << mant_bits)
+    ]
+    n_exp = 1 << width.bit_length()
+    exp_tab = [
+        round(Q8_PER_LOG2 * ((width - 1 - lz) - frac_bits)) if lz < width else 0
+        for lz in range(n_exp)
+    ]
+    return log_tab, exp_tab
+
+
+def make_log2_db(in_t, mant_bits=None, seg_bits=2, method="rom"):
     """Build a linear->dB converter. Returns (log2_db, log2_db_t).
+
+    in_t:      a `fixed_t` (from fixed_point.make_fixed_t). Its `.frac_bits`
+               sets the scaling, and a signed `in_t` is clamped at zero -- a
+               DC-blocked power estimate legitimately goes negative between
+               pulses, and dB of a non-positive number does not exist.
+    method:    "rom" (default) or "pwl" -- see the module docstring.
+    mant_bits: mantissa bits used. Default 10 for "rom" (a 1024-entry table,
+               one RAMB18) and 8 for "pwl".
+    seg_bits:  "pwl" only: 2^seg_bits chord segments.
+
+        log2_db(v: in_t, valid_in: uint1_t) -> log2_db_t
+        log2_db_t: .db (int16_t, Q8.8 dB), .valid, .floored
+
+    `.floored` marks an input at or below zero, whose `.db` is the floor value
+    (the dB of the smallest representable positive quantity) rather than a
+    measurement.
+
+    Latency is 4 cycles for both methods, fully pipelined. Read `.latency`
+    rather than assuming it.
+    """
+    if method not in LOG2_DB_METHODS:
+        raise ValueError(
+            f"make_log2_db: method must be one of {LOG2_DB_METHODS}, got {method!r}"
+        )
+    if method == "rom":
+        return _make_log2_db_rom(in_t, 10 if mant_bits is None else mant_bits)
+    return _make_log2_db_pwl(in_t, 8 if mant_bits is None else mant_bits, seg_bits)
+
+
+def _make_log2_db_rom(in_t, mant_bits):
+    """method="rom". Returns (log2_db, log2_db_t)."""
+    val_t = in_t.typeof("val")
+    W = len(val_t)
+    F = in_t.frac_bits
+    M = mant_bits
+    if M < 1:
+        raise ValueError(f"make_log2_db: mant_bits must be >= 1, got {M}")
+    if M >= W:
+        raise ValueError(
+            f"make_log2_db: mant_bits ({M}) must be less than in_t's width ({W})"
+        )
+
+    LOG_TAB, EXP_TAB = rom_log2_tables(W, F, M)
+    DB_FLOOR = round(-F * Q8_PER_LOG2)  # dB of the smallest representable value
+    DB_MAX = 32767
+    DB_MIN = -32768
+
+    mag_t = make_uint_t(W)
+    shamt_t = make_uint_t(W.bit_length())
+    clz_fn = make_clz(mag_t)
+    shift_fn = make_shifter_sl(mag_t, amount_t=shamt_t)
+    mant_t = make_uint_t(M)
+
+    log_elem_t = make_uint_t(max(max(LOG_TAB), 1).bit_length())
+    exp_span = max(max(abs(x) for x in EXP_TAB), abs(DB_FLOOR), 1)
+    exp_elem_t = make_int_t(exp_span.bit_length() + 1)
+    acc_t = make_int_t(max(exp_span.bit_length() + 3, 18))
+
+    # read_latency=1 is the block RAM's own read register; out_regs=1 its
+    # optional output register, so the add below starts from a register rather
+    # than a ~2.5 ns block-RAM clock-to-out. That puts the whole ROM stage in
+    # the two cycles the "pwl" method spends on its multiply, so both methods
+    # have the same latency.
+    log_rom, _log_rom_t = make_ram(
+        log_elem_t, 1 << M, ports=("r",), read_latency=1, out_regs=1, init=LOG_TAB
+    )
+    exp_rom, _exp_rom_t = make_ram(
+        exp_elem_t, len(EXP_TAB), ports=("r",), read_latency=1, out_regs=1, init=EXP_TAB
+    )
+    if log_rom.latency != exp_rom.latency:
+        raise ValueError("make_log2_db: the two ROMs must have equal latency")
+    ROM_LAT = log_rom.latency
+
+    @struct
+    class log2_db_t(NamedTuple):
+        db: int16_t  # Q8.8 dB
+        valid: uint1_t
+        floored: uint1_t  # input was <= 0; .db is the floor, not a measurement
+
+    @hw_func
+    def log2_db(v: in_t, valid_in: uint1_t) -> log2_db_t:
+        # Present the registered result first, then compute the next one.
+        c_db: Reg[int16_t]
+        c_valid: Reg[uint1_t]
+        c_floored: Reg[uint1_t]
+        o: log2_db_t
+        o.db = c_db
+        o.valid = c_valid
+        o.floored = c_floored
+
+        # ---- stage A: clamp + count-leading-zeros ------------------------
+        a_mag: Reg[mag_t]
+        a_lz: Reg[shamt_t]
+        a_valid: Reg[uint1_t]
+        a_floored: Reg[uint1_t]
+
+        raw: val_t = v.val
+        nonpos: uint1_t = raw <= 0
+        zero_mag: mag_t = 0
+        mag_in: mag_t = zero_mag if nonpos else raw[W - 1 : 0]
+        lz_in: shamt_t = clz_fn(mag_in)
+
+        # ---- stage B: normalize, then both lookups ------------------------
+        # Left-align so the leading 1 sits at bit W-1; the mantissa is the
+        # next M bits below it. The leading-zero count indexes the exponent
+        # table directly -- (e - F) * 3.0103 dB, rounded per entry.
+        norm: mag_t = shift_fn(a_mag, a_lz)
+        mant: mant_t = norm[W - 2 : W - 1 - M]
+        lr = log_rom(log_rom.p0_in_t(addr=mant, valid=a_valid))
+        er = exp_rom(exp_rom.p0_in_t(addr=a_lz, valid=a_valid))
+
+        # The floored flag rides alongside the ROM reads. Read the tail before
+        # shifting: it is then the flag of the request the ROMs answer now.
+        fl_d: Reg[uint1_t[ROM_LAT]]
+        fl_tail: uint1_t = fl_d[ROM_LAT - 1]
+        nfl: uint1_t[ROM_LAT]
+        nfl[0] = a_floored
+        for j in range(ROM_LAT - 1):
+            nfl[j + 1] = fl_d[j]
+
+        # ---- stage C: sum and clamp ----------------------------------------
+        l_val: acc_t = lr.p0.rd_data
+        e_val: acc_t = er.p0.rd_data
+        total: acc_t = e_val + l_val
+        floor_acc: acc_t = DB_FLOOR
+        hi_acc: acc_t = DB_MAX
+        lo_acc: acc_t = DB_MIN
+        picked: acc_t = floor_acc if fl_tail else total
+        clamped: acc_t = picked
+        if picked > hi_acc:
+            clamped = hi_acc
+        elif picked < lo_acc:
+            clamped = lo_acc
+
+        # Register updates last, in REVERSE pipeline order (see the "pwl"
+        # method's note on why that order is load-bearing).
+        c_db = clamped[15:0]
+        c_valid = lr.p0.valid
+        c_floored = fl_tail
+        fl_d = nfl
+        a_mag = mag_in
+        a_lz = lz_in
+        a_valid = valid_in
+        a_floored = nonpos
+        return o
+
+    log2_db.method = "rom"
+    log2_db.in_t = in_t
+    log2_db.out_t = log2_db_t
+    log2_db.mant_bits = M
+    log2_db.log_table = LOG_TAB
+    log2_db.exp_table = EXP_TAB
+    log2_db.db_floor = DB_FLOOR
+    log2_db.frac_bits = F
+    log2_db.width = W
+    log2_db.log_rom = log_rom
+    log2_db.exp_rom = exp_rom
+    # stage A + the ROM (read register + output register) + stage C.
+    log2_db.latency = 1 + ROM_LAT + 1
+    # A stateful block to native simulation, exactly like the "pwl" method: it
+    # aligns the ROMs' physical outputs with its own registers, so nothing
+    # outside needs aligning around them. See dsp/nco.py's identical note.
+    log2_db._sim_clocked_pipeline_boundary = True
+    return log2_db, log2_db_t
+
+
+def _make_log2_db_pwl(in_t, mant_bits, seg_bits):
+    """method="pwl": the piecewise-linear converter. Returns (log2_db, log2_db_t).
 
     in_t: a `fixed_t` (from fixed_point.make_fixed_t). Its `.frac_bits` sets
           the scaling, and a signed `in_t` is clamped at zero -- a DC-blocked
@@ -272,6 +489,7 @@ def make_log2_db(in_t, mant_bits=8, seg_bits=2):
         a_floored = nonpos
         return o
 
+    log2_db.method = "pwl"
     log2_db.in_t = in_t
     log2_db.out_t = log2_db_t
     log2_db.mant_bits = mant_bits
@@ -286,13 +504,11 @@ def make_log2_db(in_t, mant_bits=8, seg_bits=2):
 
 
 def golden_log2_db(block, raw):
-    """Bit-exact Python model of `make_log2_db`. Returns (db_q8, floored)."""
+    """Bit-exact Python model of `make_log2_db` (either method). Returns
+    (db_q8, floored)."""
     W = block.width
     F = block.frac_bits
     mant_bits = block.mant_bits
-    seg_bits = block.seg_bits
-    low_bits = mant_bits - seg_bits
-    A_TAB, B_TAB = block.a_table, block.b_table
 
     if raw <= 0:
         db = block.db_floor
@@ -301,9 +517,15 @@ def golden_log2_db(block, raw):
         lz = W - mag.bit_length()
         norm = (mag << lz) & ((1 << W) - 1)
         mant = (norm >> (W - 1 - mant_bits)) & ((1 << mant_bits) - 1)
-        seg = mant >> low_bits
-        low = mant & ((1 << low_bits) - 1)
-        e = (W - 1) - lz
-        db = (e - F) * DB_PER_LOG2_Q8 + A_TAB[seg] + ((B_TAB[seg] * low) >> low_bits)
+        if block.method == "rom":
+            db = block.exp_table[lz] + block.log_table[mant]
+        else:
+            seg_bits = block.seg_bits
+            low_bits = mant_bits - seg_bits
+            A_TAB, B_TAB = block.a_table, block.b_table
+            seg = mant >> low_bits
+            low = mant & ((1 << low_bits) - 1)
+            e = (W - 1) - lz
+            db = (e - F) * DB_PER_LOG2_Q8 + A_TAB[seg] + ((B_TAB[seg] * low) >> low_bits)
     db = max(-32768, min(32767, db))
     return db, raw <= 0

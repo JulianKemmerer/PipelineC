@@ -33,7 +33,7 @@ proves nothing is worse than no check at all:
     here, and unaffected by any fixed-point scaling question below.
   * `pkt_samples`, `pulse_width`, `pri`, `toa`  exact integers, exactly checked.
   * `peak_power_db` vs `peak_power`  exact to the log block's own documented
-    0.046 dB worst-case error. Needs no knowledge of the samples at all, so it
+    0.008 dB worst-case error. Needs no knowledge of the samples at all, so it
     isolates the log converter.
   * `peak_power` vs the samples  APPROXIMATE, AND DUTY-CYCLE DEPENDENT. Path A
     is magnitude -> dc_block -> moving_avg, so the reported peak is a
@@ -99,9 +99,11 @@ TURNS_16 = 65536.0
 FREQ_STOP_BLOCKS = 2  # the `last` window spans up to 2*FREQ_BLOCK_K
 
 # log2_db.py's own measured worst-case end-to-end error, over 300k random
-# inputs against 10*log10. The dB consistency check allows this plus Q8.8
+# inputs against 10*log10, for the "rom" method the design uses (0.0076 dB; its
+# ROM-less "pwl" method is 0.046 dB -- raise this if a build switches to it,
+# which pdw_tb.py would catch). The dB consistency check allows this plus Q8.8
 # quantisation.
-LOG2_DB_MAX_ERR_DB = 0.046
+LOG2_DB_MAX_ERR_DB = 0.008
 
 
 def _as_complex(samples):

@@ -33,12 +33,20 @@ channel, so it is spelled out:
     readStream (RX,1)  dwd_rx1_s_axis <- rx1_m_axis   valid_pdw_t, 40 bytes
     writeStream(TX,1)  dwd_tx1_m_axis                 priming only, discarded
                        dwd_tx1_s_axis <- tx1_m_axis   packet replay, to radio
+                       dwd_rx0_m_axis -> rx0_s_axis   ADC channel 0
+                       dwd_rx1_m_axis                 ADC channel 1, UNUSED
 
-There is no RX2 in 2-channel mode, so the candidate-record stream is left
-unconnected: tie `rx2_m_axis_rst` LOW and `rx2_m_axis_tready` HIGH in the
-wrapper. Tying that reset low is not optional -- `global_rst` is the OR of every
-channel reset, so a floating or asserted one holds the whole design in reset
-forever and this script simply times out with no pulses.
+FOUR WRAPPER TIE-OFFS, all required:
+  * `rx2_m_axis_rst` LOW and `rx2_m_axis_tready` HIGH. There is no RX2 in
+    2-channel mode. The reset is not optional -- `global_rst` is the OR of every
+    channel reset, so a floating or asserted one holds the whole design in
+    reset forever and this script simply times out with no pulses.
+  * `dwd_tx1_m_axis_tready` HIGH. The design has no tx1 slave port, and the
+    priming write below would otherwise block on the port it exists to unblock.
+  * `dwd_rx1_m_axis_tready` HIGH. The design has no port for ADC channel 1 at
+    all, and AirStack assumes constant tready on every ADC stream: a low one
+    drops samples, and dropped samples are an OVERFLOW -- on the very stream
+    this script reads its records from.
 
 ⚠ THE ONE SYMPTOM. Because RX2 does not exist here, a detected-but-REJECTED
 pulse produces nothing at all, and so does a design held in reset, a
@@ -149,6 +157,50 @@ class StreamDesync(Exception):
     to recover by reading further -- the only remedy is a resync, which resets
     the design and starts over.
     """
+
+
+class StreamOverflow(StreamDesync):
+    """readStream reported SOAPY_SDR_OVERFLOW. `label` names the stream.
+
+    A subclass rather than a message, because for `--alarm-test` it is the
+    expected outcome rather than a failure -- see `capture`.
+    """
+
+    def __init__(self, msg, label):
+        super().__init__(msg)
+        self.label = label
+
+
+def overflow_message(label, got, n_elems, alarm_armed):
+    """What an OVERFLOW on `label` means FOR THIS DESIGN.
+
+    Not what it means in AirStack's default passthrough bitstream, where a host
+    that falls behind back-pressures the ADC and overflows it. This design
+    decouples the two: the host back-pressures only the design's own output
+    ports, which its FIFOs absorb -- and past PKT_QUEUE_DEPTH they corrupt
+    SILENTLY, with no overflow. The only ADC tready this design ever drops is
+    the internal-error alarm's. So an overflow is the alarm, or the wrapper.
+    """
+    head = f"readStream({label}) reported OVERFLOW after {got}/{n_elems} elements. "
+    if alarm_armed:
+        cause = (
+            "The alarm is armed, so this is most likely the DESIGN reporting an "
+            "internal error (a dropped descriptor or measurement) -- which has "
+            "already corrupted the packet stream. "
+        )
+    else:
+        cause = (
+            "The alarm is NOT armed, and this design never drops ADC tready "
+            "otherwise -- a slow host cannot cause this here. An ADC input's "
+            "tready is low in the bitstream wrapper: on the records stream "
+            "(RX1), almost certainly dwd_rx1_m_axis_tready not tied HIGH (the "
+            "design has no port for ADC channel 1); on the packets stream "
+            "(RX0), rx0_s_axis_tready not reaching dwd_rx0_m_axis_tready. "
+        )
+    return head + cause + (
+        "AirStack also stops ADC sample flow on an overflow, so nothing "
+        "resumes without a reset -- resync."
+    )
 
 
 # ─────────────────────────────────────────────
@@ -469,7 +521,8 @@ def validate_record(rec, cfg=None, prev_toa=None):
 # ─────────────────────────────────────────────
 
 
-def read_exact(sdr, stream, n_elems, timeout_us, deadline_s, alarm_armed=False):
+def read_exact(sdr, stream, n_elems, timeout_us, deadline_s, alarm_armed=False,
+               label="RX"):
     """Read exactly `n_elems` CS16 elements, accumulating across partial reads.
 
     This is the load-bearing helper. readStream may return fewer elements than
@@ -507,24 +560,10 @@ def read_exact(sdr, stream, n_elems, timeout_us, deadline_s, alarm_armed=False):
             if time.time() > end:
                 raise StreamTimeout(f"got {got}/{n_elems} elements before the deadline")
         elif ret == SoapySDR.SOAPY_SDR_OVERFLOW:
-            # Two causes, one code. Either the host fell behind, or -- if the
-            # alarm is armed -- the design deliberately dropped ADC samples to
-            # report an internal error it has no other way to tell us about.
-            # The right response is the same either way (resync: a descriptor
-            # drop is permanent), so the distinction is in what we say, not in
-            # what we do.
-            raise StreamDesync(
-                "readStream reported OVERFLOW after "
-                f"{got}/{n_elems} elements. "
-                + (
-                    "The alarm is armed, so this is most likely the DESIGN "
-                    "reporting an internal error (a dropped descriptor or "
-                    "measurement) -- which has already corrupted the packet "
-                    "stream. Either way the alignment is lost."
-                    if alarm_armed
-                    else "The host fell behind and the stream alignment is "
-                    "lost. Lower --pulses-per-sec or shorten --pulse-us."
-                )
+            # The response is the same whatever the cause (resync), so the
+            # distinction is in what we say -- see overflow_message.
+            raise StreamOverflow(
+                overflow_message(label, got, n_elems, alarm_armed), label
             )
         else:
             raise RuntimeError(f"readStream failed: {SoapySDR.errToStr(ret)} ({ret})")
@@ -560,14 +599,14 @@ class RadioSource:
     def record(self):
         buf = read_exact(
             self.sdr, self.rx_pdw, RECORD_ELEMS, self.args.timeout_us,
-            self.deadline, self.alarm_armed,
+            self.deadline, self.alarm_armed, label=f"RX{CH_PDW_RX} records",
         )
         return cs16_to_bytes(buf, RECORD_ELEMS)
 
     def packet(self, n_elems):
         buf = read_exact(
             self.sdr, self.rx_pkt, n_elems, self.args.timeout_us,
-            self.deadline, self.alarm_armed,
+            self.deadline, self.alarm_armed, label=f"RX{CH_PKT_RX} packets",
         )
         return buf, cs16_to_bytes(buf, n_elems)
 
@@ -615,6 +654,20 @@ Try, in order:
   * in the bitstream wrapper, tie tx1_m_axis_tready HIGH; the design documents
     this tie-off for exactly the case where the replay port is unused
 """.strip()
+
+ALARM_TEST_OK = """OVERFLOW on {label}, as --alarm-test commanded: the internal-error
+alarm reaches the host. Rung 6 PASSES. Stopping here -- AirStack keeps the ADC
+stream down until a reset, and the test bit would fire again on every resync.
+Re-run without --alarm-test (keep --alarm) to capture.""".strip()
+
+ALARM_TEST_MISSING = """--alarm-test: NO OVERFLOW was observed, so the alarm path does NOT reach
+the host, and a real alarm would go unseen. Check, in order:
+  * --dry-run shows flags with bits 1 AND 2 set (alarm + alarm-test)
+  * the wrapper connects rx0_s_axis_tready to dwd_rx0_m_axis_tready -- a
+    constant 1 there hides every alarm
+  * the ADC stream is live at all: the alarm counts DROPPED samples, so with
+    no ADC tvalid it drops nothing and only its ALARM_MAX_CYCLES backstop ends
+    it, silently""".strip()
 
 SILENCE_HELP = """
 No records at all, which is the one symptom this design cannot narrow down on
@@ -790,6 +843,11 @@ def run(args):
 
         print()
         armed = bool(cfg["flags"] & CTRL_FLAG_ALARM_EN)
+        if args.alarm_test:
+            print(
+                "alarm test: expecting ONE readStream OVERFLOW, most likely on "
+                f"RX{CH_PKT_RX}, from the alarm the design fired as it left reset\n"
+            )
         source = RadioSource(sdr, rx_pdw, rx_pkt, args, armed)
         return capture(
             source, cfg, fs, args,
@@ -818,6 +876,11 @@ def capture(source, cfg, fs, args, reset=None):
     cap = capture_open(args.record, fs) if args.record else None
     headroom = queue_headroom_s(args.pulses_per_sec)
     end_at = time.time() + args.duration if args.duration else None
+    # --alarm-test (rung 6): the design fires ONE alarm as its datapath leaves
+    # reset, so an OVERFLOW is the result being tested for, not a failure, and
+    # its absence is. getattr: callers that predate the option leave it unset.
+    alarm_test = bool(getattr(args, "alarm_test", False))
+    alarm_seen = False
 
     i = 0
     try:
@@ -846,11 +909,15 @@ def capture(source, cfg, fs, args, reset=None):
                 break
             except StreamTimeout as e:
                 print(f"pulse {i}: no PDW record ({e})")
-                if i == 0:
+                if i == 0 and not alarm_test:
                     print("\n" + SILENCE_HELP)
                 n_failed += 1
                 break
             except StreamDesync as e:
+                if alarm_test and isinstance(e, StreamOverflow):
+                    print(f"pulse {i}: " + ALARM_TEST_OK.format(label=e.label))
+                    alarm_seen = True
+                    break
                 print(f"pulse {i}: {e}")
                 n_failed += 1
                 if reset and args.resync_on_error:
@@ -884,8 +951,21 @@ def capture(source, cfg, fs, args, reset=None):
                 n_failed += 1
                 break
             except StreamDesync as e:
+                if alarm_test and isinstance(e, StreamOverflow):
+                    print(f"pulse {i}: " + ALARM_TEST_OK.format(label=e.label))
+                    alarm_seen = True
+                    break
                 print(f"pulse {i}: {e}")
                 n_failed += 1
+                # The same remedy as a desync on the record side. This is also
+                # where an armed alarm most often surfaces: the alarm drops ADC
+                # channel 0, which is the packet stream's channel.
+                if reset and args.resync_on_error:
+                    n_resync += 1
+                    print("  resyncing ...")
+                    reset()
+                    prev_toa = None
+                    continue
                 break
 
             if cap:
@@ -933,6 +1013,9 @@ def capture(source, cfg, fs, args, reset=None):
         if cap:
             cap.close()
 
+    if alarm_test and not alarm_seen:
+        print("\n" + ALARM_TEST_MISSING + "\n")
+        n_failed += 1
     print(f"{len(records)} pulses captured, {n_failed} with failures", end="")
     print(f", {n_resync} resyncs" if n_resync else "")
     if slowest and not isinstance(source, ReplaySource):

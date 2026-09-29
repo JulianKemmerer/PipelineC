@@ -25,6 +25,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "float_ops_test.py",
     "fixed_point_test.py",
     "cordic_test.py",
+    "lut_nco_test.py",
     "log2_db_test.py",
     "pypeline_test.py",
     "sim_loop_reg_state_test.py",

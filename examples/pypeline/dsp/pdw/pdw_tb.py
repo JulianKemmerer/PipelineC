@@ -193,8 +193,9 @@ RST_HOLD = RST_RELEASE - top.RST_LATENCY
 
 # Cycles before sample 0. Unlike the pre-AXIS-reset version there is no
 # "default-configured" window left to model: the generator is reset too, so it
-# leaves reset with its LFSRs at their seeds, an empty CORDIC pipeline and phase
-# 0's real config already loaded. The golden model's first cycle IS the
+# leaves reset with its LFSRs at their seeds, an empty NCO pipeline (reset feeds
+# it zero amplitude -- see pulse_gen.py) and phase 0's real config already
+# loaded. The golden model's first cycle IS the
 # hardware's first out-of-reset cycle.
 PRE_ROLL = RST_RELEASE
 
@@ -426,7 +427,7 @@ for _p in PHASES:
 
 
 # The generator's output trails its control inputs by the NCO pipeline depth
-# (the pulse envelope is applied as the CORDIC's seed amplitude -- see
+# (the pulse envelope is applied as the NCO's amplitude input -- see
 # pulse_gen.py). Read it from the hardware rather than writing a number.
 GEN_LAT = top.pulse_gen.latency
 

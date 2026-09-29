@@ -4,9 +4,10 @@
 A free-running PRI/width counter gating a complex pulse onto an always-valid
 stream(iq_t), with three things a bare amplitude step does not have:
 
-  * a CARRIER, from a phase accumulator driving a rotation-mode CORDIC
-    (dsp/cordic.py). `freq` is the phase increment per sample, in turns x 2^32,
-    so 0 is DC and 2^31 is Fs/2.
+  * a CARRIER, from a phase accumulator driving a table-lookup NCO
+    (dsp/nco.py: a quarter-wave sine ROM and one multiplier per rail). `freq`
+    is the phase increment per sample, in turns x 2^32, so 0 is DC and 2^31 is
+    Fs/2.
   * an LFM CHIRP, from `chirp_rate` added to that increment on every sample of
     the pulse, so the tone sweeps within the pulse.
   * NOISE, from two Galois LFSRs, scaled by `noise_amp`.
@@ -25,12 +26,21 @@ All three are deterministic, so golden models stay bit-exact -- `noise_amp`
 seeds a fixed LFSR, not a random number generator.
 
 TIMING. The whole output is delayed by `pulse_gen.latency` cycles relative to
-the internal PRI counter, because the pulse envelope is applied as the CORDIC's
-seed amplitude and therefore rides through its pipeline. That is deliberate:
-gating the seed rather than the output keeps the envelope and the carrier
-aligned with each other for free. The noise is added after the CORDIC and is
-NOT delayed, which is immaterial for noise but does mean a golden model must
-pair sample `n` with LFSR step `n`, not `n - latency`.
+the internal PRI counter, because the pulse envelope is applied as the NCO's
+amplitude input and therefore rides through its pipeline. That is deliberate:
+gating the amplitude rather than the output keeps the envelope and the carrier
+aligned with each other for free. The noise is added after the NCO and is NOT
+delayed, which is immaterial for noise but does mean a golden model must pair
+sample `n` with LFSR step `n`, not `n - latency`.
+
+WHY THE NCO IS A ROM, NOT A CORDIC. It used to be a 16-iteration rotation
+CORDIC, with an 18-cycle latency and an amplitude 0.35% high from its shift-add
+gain compensation. `make_lut_nco` has a 5-cycle latency and an exact amplitude.
+Measured on pulse_gen_synth_top.py (xc7a100t), this whole block went from 2742
+LUTs, 1373 flip-flops and 133.3 MHz to 520 LUTs, 345 flip-flops and 141.5 MHz,
+for one RAMB18 and two DSP48s. The table's phase truncation costs spurs at
+-72 dBc and no frequency bias (see dsp/nco.py). For a stimulus that feeds a
+frequency estimator, that is the better trade on every axis that matters.
 
 `pulse_gen` is a plain reusable @hw_func submodule -- no Input[T]/Output[T]
 ports of its own. Its arguments are conceptually "as if from ctrl regs"; a
@@ -53,7 +63,7 @@ from pypeline import (
 )
 
 from stream.stream import make_stream_t
-from dsp.cordic import golden_cordic_rotate, make_cordic_rotate
+from dsp.nco import golden_lut_nco, make_lut_nco
 
 # Galois LFSR feedback polynomials (maximal length, period 2^32-1) and seeds.
 # Two different polynomials rather than two seeds of one polynomial, so the I
@@ -81,8 +91,7 @@ def make_pulse_gen(
     pri_t=uint32_t,
     width_t=uint32_t,
     amplitude_t=int16_t,
-    nco_iters=16,
-    nco_work_bits=24,
+    nco_table_bits=10,
 ):
     """Build a pulse generator. Returns (pulse_gen, out_stream_t).
 
@@ -98,14 +107,13 @@ def make_pulse_gen(
                 instantaneous frequency ramps linearly (LFM). 0 gives a tone.
     noise_amp:  0 disables noise entirely.
     rst:        active high. Returns every register to its power-on value,
-                including the LFSR seeds and the phase accumulator, so the
-                output sequence after a reset is bit-identical to the one after
-                configuration. Does NOT gate `valid` -- see the reset block.
+                including the LFSR seeds and the phase accumulator, and feeds
+                the NCO zero amplitude, so the output sequence after a reset is
+                bit-identical to the one after configuration. Does NOT gate
+                `valid` -- see the reset block.
     """
     out_stream_t = make_stream_t(iq_t)
-    nco, nco_t = make_cordic_rotate(
-        amplitude_t, n_iters=nco_iters, work_bits=nco_work_bits, phase_bits=32
-    )
+    nco, nco_t = make_lut_nco(amplitude_t, table_bits=nco_table_bits, phase_bits=32)
     # 4 signed bytes summed: +-512, so 11 bits signed; times a 16-bit scale.
     byte_t = make_int_t(8)  # reinterpret an LFSR byte as signed
     nsum_t = make_int_t(11)
@@ -130,11 +138,24 @@ def make_pulse_gen(
 
         pulse_active: uint1_t = pri_counter < width
 
-        # Gate the CORDIC's SEED, not its output: the envelope then travels
+        # Gate the NCO's AMPLITUDE, not its output: the envelope then travels
         # down the same pipeline as the carrier and cannot drift out of step
         # with it.
+        #
+        # `~rst` as well, and that is not tidiness. Reset pins pri_counter at 0,
+        # which is INSIDE a pulse (0 < width), and the documented bring-up
+        # writes the configuration while the datapath is still held -- so
+        # without this term the NCO's pipeline fills with the carrier at phase
+        # 0 for as long as reset lasts, and the first `nco.latency` samples
+        # after release are that stale carrier, prepended to the first real
+        # pulse. On hardware that made pulse 0 come out `latency` samples wider
+        # than commanded and fail pdw_verify's width check; pdw_tb never saw it
+        # because it lands its configuration exactly on the release cycle.
+        # Feeding zero during reset makes "the pipeline is empty at release" --
+        # which golden_pulse_gen assumes -- true however long reset is held.
         zero_amp: amplitude_t = 0
-        amp_now: amplitude_t = amplitude if pulse_active else zero_amp
+        amp_on: uint1_t = pulse_active & (~rst)
+        amp_now: amplitude_t = amplitude if amp_on else zero_amp
         n = nco(phase=phase_acc, amplitude=amp_now, valid_in=1)
 
         # ---- noise: 4 disjoint bytes of each LFSR, read as SIGNED, summed --
@@ -275,8 +296,10 @@ def golden_pulse_gen(gen, n_samples, _pri, _width, _amplitude, _freq=0,
     """Bit-exact Python model of `make_pulse_gen`'s output stream.
 
     Returns a list of `(i, q)` int16 pairs, one per cycle, INCLUDING the
-    `gen.latency` cycles of CORDIC fill at the start (during which the carrier
+    `gen.latency` cycles of NCO fill at the start (during which the carrier
     is zero but the noise is already running -- see the module docstring).
+    Cycle 0 is the first cycle out of reset; the hardware feeds its NCO zero
+    amplitude during reset precisely so that this holds.
 
     Every parameter may be either a scalar or a per-cycle sequence. The
     sequence form exists because the generator's state -- the LFSRs, the phase
@@ -304,7 +327,7 @@ def golden_pulse_gen(gen, n_samples, _pri, _width, _amplitude, _freq=0,
     phase_acc = 0
     chirp_acc = 0
     li, lq = seed_i, seed_q
-    pipe = []  # (phase, amp) awaiting the CORDIC's latency
+    pipe = []  # (phase, amp) awaiting the NCO's latency
     # The noise path's own registers: byte sum, then scaled value, then the
     # shared output register. Mirrored exactly rather than approximated -- the
     # whole point of an LFSR source is that the model stays bit-exact.
@@ -325,7 +348,7 @@ def golden_pulse_gen(gen, n_samples, _pri, _width, _amplitude, _freq=0,
 
         if len(pipe) > nco.latency:
             ph, am = pipe.pop(0)
-            ci, cq = golden_cordic_rotate(nco, ph, am)
+            ci, cq = golden_lut_nco(nco, ph, am)
         else:
             ci, cq = 0, 0
 

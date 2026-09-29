@@ -314,12 +314,23 @@ def test_inconsistent_db_is_caught():
     is what proves the dB check is independent of it rather than redundant."""
     s = make_pulse()
     rec = make_record(s)
-    rec["peak_power_db"] += int(3.0 * DB_Q8_8)  # 3 dB off, far past 0.046
+    rec["peak_power_db"] += int(3.0 * DB_Q8_8)  # 3 dB off, far past 0.008
     bad = _expect_only(rec, s, "peak_power_db vs peak_power")
     assert not any(
         "peak_power vs max" in n for n in bad
     ), f"a dB-only error should not fail the linear check: {bad}"
     print("test_inconsistent_db_is_caught passed")
+
+
+def test_small_db_error_is_caught():
+    """Five Q8.8 LSBs (0.02 dB) off. The ROM log converter is good to 0.008 dB,
+    so this is a real fault -- and one the old 0.046 dB tolerance, sized for the
+    piecewise-linear converter, let through without a word."""
+    s = make_pulse()
+    rec = make_record(s)
+    rec["peak_power_db"] += 5
+    _expect_only(rec, s, "peak_power_db vs peak_power")
+    print("test_small_db_error_is_caught passed")
 
 
 def test_wrong_pkt_samples_is_caught():
@@ -402,6 +413,7 @@ if __name__ == "__main__":
     test_wrong_freq_stop_is_caught()
     test_halved_peak_power_is_caught()
     test_inconsistent_db_is_caught()
+    test_small_db_error_is_caught()
     test_wrong_pkt_samples_is_caught()
     test_width_mismatch_is_caught()
     test_wrong_pri_is_caught()

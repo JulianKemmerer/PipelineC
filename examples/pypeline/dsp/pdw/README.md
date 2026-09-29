@@ -46,7 +46,7 @@ number below is that part at the 125 MHz system clock.
  |              completed pulse into the descriptor FIFO                    |
  |    Qualify:  glitch (width < min_width), CW (width >= max_width)         |
  |    Measure:  pulse_measure, once per pulse, ~16 cycles pipelined --      |
- |              CORDIC atan2 for frequency, log2->dB, PRI                   |
+ |              CORDIC atan2 for frequency, ROM log2->dB, PRI               |
  |    Release:  accepted -> emit valid_pdw_t, then the packet               |
  |              rejected -> drop the record, flush the beats                |
  +-------------------------------------------------------------------------+
@@ -57,9 +57,9 @@ number below is that part at the 125 MHz system clock.
 
 ## Architecture
 
-**1. Stimulus.** `pulse_gen` synthesizes RF pulses with a real carrier (a
-rotation-mode CORDIC NCO), an optional LFM chirp and an optional LFSR noise
-source, all deterministic so golden models stay bit-exact. It drives TX0 for a
+**1. Stimulus.** `pulse_gen` synthesizes RF pulses with a real carrier (an NCO
+built from a quarter-wave sine ROM, `make_lut_nco`), an optional LFM chirp and an
+optional LFSR noise source, all deterministic so golden models stay bit-exact. It drives TX0 for a
 physical loopback cable, and `CTRL_FLAG_LOOPBACK_EN` shortcuts the same samples
 straight into the detector.
 
@@ -168,7 +168,8 @@ this section is only about where the line falls in *this* design.
 **The valid-only side has no `ready` anywhere and nothing can stop it.** Every
 name there is a plain `{data, valid}` (or `{data, valid, last}`) value —
 `in_stream`, `gated_out`, `freq_acc` — and none of them ends in `_if`.
-`rx0_s_axis_tready` is a constant 1; an ADC cannot be back-pressured.
+`rx0_s_axis_tready` is 1 except while the internal-error alarm fires; an ADC
+cannot be back-pressured.
 
 **The elastic side is real valid/ready.** Those ports are declared as stream
 interfaces, so their names end in `_if` and their types are `.fwd_t`/`.fb_t`
@@ -281,6 +282,16 @@ estimator, the phasor accumulators, `toa_counter` — advances only on an accept
 sample. All four master `tvalid`s (and their `tlast`s) are gated too, so no drain
 traffic is ever visible outside.
 
+The generator's NCO is also fed zero amplitude while reset is held. That matters
+because of the bring-up order below: the configuration lands while the datapath
+is still in reset, and reset pins the PRI counter at 0, which is *inside* a
+pulse. Without the gate, the NCO pipeline fills with the carrier during reset and
+the first pulse after release comes out `nco.latency` samples wider than
+commanded — enough to fail `pdw_verify`'s width check on pulse 0 of every hardware
+run. `pdw_tb.py` could not see this, because it lands its configuration on the
+release cycle itself. `pulse_gen_tb.py`'s `pulse_gen_reset_tb` holds reset with a
+live configuration, and fails without the gate.
+
 **Drain.** While reset is asserted every FIFO read enable is forced and the
 buffers empty into the bit bucket — not a convenience but the only mechanism
 available, since `make_fifo` has no flush. Each block forces its own read enables
@@ -320,7 +331,7 @@ across a channel reopen needs its own epoch counter.
 
 ### What reset does not reach
 
-`magnitude`, `dc_block`, `moving_avg` and the CORDIC/`log2_db` pipelines are
+`magnitude`, `dc_block`, `moving_avg` and the NCO/CORDIC/`log2_db` pipelines are
 library blocks in `include/pypeline/dsp/`, which this project does not put a
 reset into. The pipelines are valid-gated and self-flush, but `dc_block`'s
 running mean and `moving_avg`'s window are *frozen* by the input gate and thaw
@@ -522,7 +533,8 @@ bin.
 
 `peak_power_db` and `noise_power_db` come from a shared
 [`make_log2_db`](../../../../include/pypeline/dsp/pypeline_dsp_guide.md#make_log2_db--linear-power-to-dbfs)
-conversion. Two things specific to this design:
+conversion, its default ROM method: both the exponent and the mantissa terms are
+table lookups, good to 0.008 dB. Two things specific to this design:
 
 * **The fractional bits must be subtracted** — `power_t` is fixed-point, so the
   integer the hardware holds is 2¹² times the value it represents. `log2_db`
@@ -603,17 +615,83 @@ and assuming a match silently swaps a whole channel.
 | — (to radio) | `dwd_tx0_s_axis` | `tx0_m_axis` | generator stimulus |
 | `readStream(RX,0)` | `dwd_rx0_s_axis` | `rx0_m_axis` | pulse packets, variable length |
 | — (from radio) | `dwd_rx0_m_axis` | `rx0_s_axis` | ADC samples |
+| — (from radio) | `dwd_rx1_m_axis` | *(unconnected)* | ADC channel 1, discarded |
 | `readStream(RX,1)` | `dwd_rx1_s_axis` | `rx1_m_axis` | `valid_pdw_t`, 40 bytes |
 | `writeStream(TX,1)` priming | `dwd_tx1_m_axis` | *(unconnected)* | dummy, discarded |
 | — (to radio) | `dwd_tx1_s_axis` | `tx1_m_axis` | packet replay |
 
-**Wrapper tie-offs, all three required.** There is no RX2 in 2-channel mode, so
-tie `rx2_m_axis_rst` **LOW** and `rx2_m_axis_tready` **HIGH**; `global_rst` is
-the OR of every channel reset, so an asserted or floating one holds the whole
-design in reset forever and the host simply sees no pulses. Tie
-`dwd_tx1_m_axis_tready` **HIGH** as well: this design has no `tx1_s_axis` port to
-consume software's writes to that channel, so without it the priming write blocks
-on the very port it is meant to unblock.
+**Wrapper tie-offs: four signals, all required.**
+
+* **`rx2_m_axis_rst` LOW and `rx2_m_axis_tready` HIGH.** There is no RX2 in
+  2-channel mode. `global_rst` is the OR of every channel reset, so an asserted or
+  floating one holds the whole design in reset forever and the host simply sees
+  no pulses.
+* **`dwd_tx1_m_axis_tready` HIGH.** This design has no `tx1_s_axis` port to
+  consume software's writes to that channel, so without it the priming write
+  blocks on the very port it is meant to unblock.
+* **`dwd_rx1_m_axis_tready` HIGH.** This design has no port for ADC channel 1 at
+  all, and AirStack assumes constant `tready` on every ADC stream: a low one drops
+  samples, and dropped samples are an *overflow*, which AirStack reports through
+  its API — presumably on channel 1's software stream, the one the records come
+  back on (the guide does not say which stream carries which channel's overflow).
+  Expect `readStream` OVERFLOW on the first RX1 read; `airt_pdw_test.py` names
+  this tie-off when it sees an unarmed overflow.
+
+Everything else maps one to one. Per-channel resets: `dwd_rx_axis_rst[0]` drives
+`rx0_s_axis_rst` and `rx0_m_axis_rst`, `dwd_rx_axis_rst[1]` drives
+`rx1_m_axis_rst`, `dwd_tx_axis_rst[0]` drives `tx0_s_axis_rst` and
+`tx0_m_axis_rst`, and `dwd_tx_axis_rst[1]` drives `tx1_m_axis_rst`. All of them
+are active high and synchronous to `dwd_axis_clk`, which is this design's 125 MHz
+clock.
+
+The whole wrapper, as an instantiation inside AirStack's user logic in 2-channel
+mode. The Deepwave names are the `dwd_*` ones from AirStack's programming guide;
+check them against your AirStack version's template. The design's top-level
+entity is `top`, and each 1-bit port is VHDL `unsigned(0 downto 0)`, i.e. a
+`[0:0]` vector from Verilog:
+
+```verilog
+top pdw (
+  .clk_125p0         (dwd_axis_clk),
+  // resets: active high, one per channel; tx0's also gates the control file
+  .rx0_s_axis_rst    (dwd_rx_axis_rst[0]),
+  .rx0_m_axis_rst    (dwd_rx_axis_rst[0]),
+  .rx1_m_axis_rst    (dwd_rx_axis_rst[1]),
+  .tx0_s_axis_rst    (dwd_tx_axis_rst[0]),
+  .tx0_m_axis_rst    (dwd_tx_axis_rst[0]),
+  .tx1_m_axis_rst    (dwd_tx_axis_rst[1]),
+  .rx2_m_axis_rst    (1'b0),                    // TIE-OFF: no RX2
+  // writeStream(TX,0): pdw_ctrl_t frames in
+  .tx0_s_axis_tdata  (dwd_tx0_m_axis_tdata),   .tx0_s_axis_tkeep  (dwd_tx0_m_axis_tkeep),
+  .tx0_s_axis_tlast  (dwd_tx0_m_axis_tlast),   .tx0_s_axis_tvalid (dwd_tx0_m_axis_tvalid),
+  .tx0_s_axis_tready (dwd_tx0_m_axis_tready),
+  // generator stimulus out to DAC 0
+  .tx0_m_axis_tdata  (dwd_tx0_s_axis_tdata),   .tx0_m_axis_tkeep  (dwd_tx0_s_axis_tkeep),
+  .tx0_m_axis_tlast  (dwd_tx0_s_axis_tlast),   .tx0_m_axis_tvalid (dwd_tx0_s_axis_tvalid),
+  .tx0_m_axis_tready (dwd_tx0_s_axis_tready),
+  // ADC 0 in to the detector (tready drops only for the alarm)
+  .rx0_s_axis_tdata  (dwd_rx0_m_axis_tdata),   .rx0_s_axis_tkeep  (dwd_rx0_m_axis_tkeep),
+  .rx0_s_axis_tlast  (dwd_rx0_m_axis_tlast),   .rx0_s_axis_tvalid (dwd_rx0_m_axis_tvalid),
+  .rx0_s_axis_tready (dwd_rx0_m_axis_tready),
+  // readStream(RX,0): released pulse packets
+  .rx0_m_axis_tdata  (dwd_rx0_s_axis_tdata),   .rx0_m_axis_tkeep  (dwd_rx0_s_axis_tkeep),
+  .rx0_m_axis_tlast  (dwd_rx0_s_axis_tlast),   .rx0_m_axis_tvalid (dwd_rx0_s_axis_tvalid),
+  .rx0_m_axis_tready (dwd_rx0_s_axis_tready),
+  // readStream(RX,1): valid_pdw_t records
+  .rx1_m_axis_tdata  (dwd_rx1_s_axis_tdata),   .rx1_m_axis_tkeep  (dwd_rx1_s_axis_tkeep),
+  .rx1_m_axis_tlast  (dwd_rx1_s_axis_tlast),   .rx1_m_axis_tvalid (dwd_rx1_s_axis_tvalid),
+  .rx1_m_axis_tready (dwd_rx1_s_axis_tready),
+  // packet replay out to DAC 1
+  .tx1_m_axis_tdata  (dwd_tx1_s_axis_tdata),   .tx1_m_axis_tkeep  (dwd_tx1_s_axis_tkeep),
+  .tx1_m_axis_tlast  (dwd_tx1_s_axis_tlast),   .tx1_m_axis_tvalid (dwd_tx1_s_axis_tvalid),
+  .tx1_m_axis_tready (dwd_tx1_s_axis_tready),
+  // candidate records: nowhere to go in 2-channel mode
+  .rx2_m_axis_tdata  (), .rx2_m_axis_tkeep (), .rx2_m_axis_tlast (), .rx2_m_axis_tvalid (),
+  .rx2_m_axis_tready (1'b1)                     // TIE-OFF
+);
+assign dwd_tx1_m_axis_tready = 1'b1;            // TIE-OFF: software's TX1 writes, discarded
+assign dwd_rx1_m_axis_tready = 1'b1;            // TIE-OFF: ADC 1, discarded
+```
 
 **CS16 is this design's own packing.** Deepwave specifies
 `I = tdata[15:0]; Q = tdata[31:16]` — identical to this project. A CS16 buffer is
@@ -691,7 +769,7 @@ those samples. What is honestly checkable is narrower than the record:
 |---|---|
 | `freq_start`, `freq_stop` | independent and absolute — the strongest here |
 | `pkt_samples`, `pulse_width`, `pri`, `toa` | exact integers |
-| `peak_power_db` | exact against `peak_power`, to the log block's own 0.046 dB |
+| `peak_power_db` | exact against `peak_power`, to the log block's own 0.008 dB |
 | `peak_power` | **approximate, and duty-cycle dependent** — Path A is `magnitude → dc_block → moving_avg`, so the reported peak is a DC-blocked, smoothed envelope, not `max(I²+Q²)`. The DC blocker subtracts a running mean, so the higher the duty cycle the more of the pulse's own power gets subtracted back out: measured across `pdw_tb.py`'s phases (duty cycles up to ~50%) the ratio ranges **0.035–0.64**, near 1 at a realistic duty cycle. A wide-tolerance ratio check whose measured value is always reported |
 | `noise_power_db` | **not checkable** from a packet — the floor is estimated between pulses. Bounded by SNR > 0 only |
 
@@ -764,6 +842,24 @@ causing overflow"*, and that overflow events are reported by its API. So
 `pdw_alarm.py` deasserts `rx0_s_axis_tready` on purpose, the platform drops
 samples, and `readStream` returns `SOAPY_SDR_OVERFLOW`.
 
+**Nothing else in this design can cause that overflow.** In AirStack's default
+passthrough bitstream a host that falls behind back-pressures the ADC and
+overflows it. Here the host back-pressures only the design's own output ports,
+which its FIFOs absorb — and past `PKT_QUEUE_DEPTH` they corrupt *silently*.
+So an unarmed overflow means a wrapper fault, never a slow host (see the tie-offs
+above).
+
+**AirStack also stops ADC sample flow on an overflow** (*"to prevent using
+unaligned data streams, overflow events also terminate sample flow from the
+radio"*) until the stream is reset. Three consequences follow:
+
+* An alarm is always followed by a resync. `--resync-on-error` does this
+  automatically.
+* Once flow stops, `tvalid` stops, so the drop count usually cannot complete.
+  The `ALARM_MAX_CYCLES` backstop (8.4 ms) is what ends an alarm on this platform,
+  not the 4096-sample count.
+* With `--no-loopback` the detector has no input at all until the resync.
+
 **The counter counts dropped samples, not cycles**, and that is the mechanism
 rather than a detail. A sample is destroyed only on a cycle where `tvalid` is
 high *and* `tready` is low; holding `tready` low while the input is idle destroys
@@ -784,11 +880,14 @@ account.
 
 **Off by default**, in `CTRL_DEFAULTS` and in the script. Arming it means
 consenting to destroy real samples to send a one-bit message, which is only the
-right trade when a host is watching for it. Two properties make it cheap in
-practice: **in loopback the alarm is free**, because the detector is fed from
-`pulse_gen` and those ADC samples were not being used for anything; and the
-triggers are sticky, so `error_alarm` deliberately limits a standing trigger to
-**one** alarm rather than taking the receive path down permanently.
+right trade when a host is watching for it. Two properties keep the cost down.
+
+* **In loopback the dropped ADC samples cost nothing**, because the detector is
+  fed from `pulse_gen`. It is not quite free, though: the detector's input is
+  still held for as long as the alarm lasts, whatever its source. At bring-up
+  pulse rates that costs at most one pulse.
+* **The triggers are sticky**, so `error_alarm` deliberately limits a standing
+  trigger to **one** alarm rather than taking the receive path down permanently.
 
 The `_TEST` bit exists so the signalling path can be proved on a good day (rung
 6) instead of first being exercised during a fault, when nobody knows what the
@@ -837,8 +936,11 @@ or I/Q-packing fault, not a measurement one — CS16 and this design's packing a
 byte-identical, so any offset means the streams are crossed.
 
 **Rung 6 — the alarm path.** `--alarm --alarm-test`, once, while everything else
-is known good. Skipping it means the first alarm ever seen will be during a real
-fault.
+is known good. The design fires one alarm as its datapath leaves reset. The
+script treats the OVERFLOW as the result it is testing for: it prints
+`Rung 6 PASSES`, stops, and exits 0. A run that captures cleanly with no overflow
+**fails**, because the alarm path does not reach the host. Skipping this rung
+means the first alarm ever seen will be during a real fault.
 
 **Rung 7 — soak and stress.** `--duration` with `--resync-on-error`, sweeping the
 pulse rate toward the queue-headroom limit, adding `--chirp-rate` (the only real
@@ -852,11 +954,13 @@ analog path last, with every digital question already answered.
 
 | Symptom | Most likely | How to tell |
 |---|---|---|
-| no records at all | a reset still asserted, or config never landed | rung 3's TX0 measurement; then check the three wrapper tie-offs |
+| no records at all | a reset still asserted, or config never landed | rung 3's TX0 measurement; then check the wrapper tie-offs |
 | no records, config confirmed live | thresholds, or everything rejected | `--dry-run` prints thresholds in both raw and power units; widen `min_width`/`max_width` |
 | one record, then nothing on RX0 | TX1 replay leg wedged | `--prime-tx1`, or tie `tx1_m_axis_tready` high |
 | records stop after N pulses | host stalled past the queue headroom | the capture loop prints slowest-iteration vs headroom |
-| `readStream` OVERFLOW | host fell behind — or, if armed, the alarm | see the alarm above; either way, resync |
+| `readStream` OVERFLOW on the first RX1 read | `dwd_rx1_m_axis_tready` not tied high | the fourth wrapper tie-off; a slow host **cannot** overflow this design |
+| `readStream` OVERFLOW, alarm armed | the alarm: a dropped descriptor, measurement or packet beats | see the alarm above; resync — AirStack keeps the ADC stream down until you do |
+| `readStream` OVERFLOW on RX0, alarm not armed | `rx0_s_axis_tready` not reaching `dwd_rx0_m_axis_tready` in the wrapper | the design never drops that tready unarmed |
 | records arrive but fail validation | the stream has slipped | `channel`/`padding` are known-zero; framing is pure counting, so nothing after this is interpretable |
 | records pass validation, `pdw_verify` fails frequency | channels crossed, or I/Q swapped | a large *constant* offset means wiring, not measurement |
 | every record after some point has wrong measurements | a dropped descriptor or measurement (permanent) | only a reset clears it; arm the alarm to be told next time |
@@ -884,7 +988,7 @@ Everything lives flat in this directory. Hardware first, then host-side.
 
 | File | Scope | Style |
 |---|---|---|
-| `pulse_gen_tb.py` | Generator alone — carrier, LFM chirp, noise source, and the zero-mean check a DC-biased noise source would fail | `sim_assert`, hardware-generated stimulus |
+| `pulse_gen_tb.py` | Generator alone — carrier, LFM chirp, noise source, the zero-mean check a DC-biased noise source would fail, and reset held with a live configuration (nothing from the reset window may leak into the first pulse) | `sim_assert`, hardware-generated stimulus |
 | `pulse_detect_tb.py` | Bare hysteresis FSM, hand-fed a power stream — elastic, valid_only, and CW/`max_width`-cap variants | `sim_assert`, hardware-generated stimulus |
 | `pulse_extract_tb.py` | The engine alone, hand-fed synthetic gate streams — accept path + PDW/packet ordering, glitch reject, CW reject, `status_flags`, long-stall backpressure | `sim_assert`, hardware-generated stimulus |
 | `pulse_measure_test.py` | The measurement engine over its full input range, where a width or normalization mistake shows up (`pdw_tb.py` only covers the levels the real detector happens to produce) | `sim_call` vs a bit-exact model |
@@ -892,7 +996,7 @@ Everything lives flat in this directory. Hardware first, then host-side.
 | `pdw_reset_test.py` | Reset semantics for the composed datapath — a reset landing **mid-pulse**: nothing emitted for the interrupted pulse, its buffered samples drained rather than prepended to the next packet, TOA and PRI restarting, and the release artifact bounded below `min_width`. Both the drain term and the `gate_armed` clear have negative controls | `sim_call` on `pulse_detect` + `pulse_extract` wired as `top.py` wires them |
 | `pdw_alarm_test.py` | The alarm alone. Its job is to destroy a known number of ADC samples, so the property tested is "exactly N samples were dropped", not "tready went low" — and those diverge only when the input is **gapped**. Carries its own negative control: the same stimulus through a deliberately-wrong cycle-counting model, asserted to get a different answer | `sim_call` |
 | `pdw_verify_test.py` | That `pdw_verify.py` actually catches a wrong record. Mostly negative controls: corrupt one field, assert the check for **that** field fails and the others do not. Also generates `pypeline_host_types.py` and checks the host files compose with it | numpy, synthetic pulses |
-| `airt_pdw_replay_test.py` | `airt_pdw_test.py`'s capture loop with no radio — the framing, `validate_record`, and the loop itself, served from a `--record` file | numpy, `pdw_verify_test`'s helpers |
+| `airt_pdw_replay_test.py` | `airt_pdw_test.py`'s capture loop with no radio — the framing, `validate_record`, the resync paths, what an OVERFLOW is reported as, and `--alarm-test`'s pass and fail, served from a `--record` file | numpy, `pdw_verify_test`'s helpers |
 | `pdw_tb.py` | The whole `top.py` — see below | `@sim_input`/`@sim_output`, exact Python golden model |
 
 `pulse_extract_tb.py` exists alongside `pdw_tb.py` rather than being folded into
@@ -993,7 +1097,7 @@ mis-wired to a stale register and everything else would still pass.
 
 Everything here tests *this example project*, not the Pypeline DSP library —
 whose own unit tests live in `src/tests/pypeline_tests/inst/` (`cordic_test.py`,
-`log2_db_test.py`, `magnitude_test.py`, ...). That is why these files stay next to
+`lut_nco_test.py`, `log2_db_test.py`, `magnitude_test.py`, ...). That is why these files stay next to
 the design; one under `inst/` would need a `sys.path` hack back into this
 directory to import it. All ten are registered in
 `src/tests/pypeline_tests/native_sim_tests.py`.
@@ -1021,15 +1125,46 @@ only ever visible at this level — see
 
 | Build | fmax |
 |---|---|
-| `pulse_gen_synth_top.py` | 134.4 MHz |
-| `pulse_detect_synth_top.py` | 132.1 MHz |
+| `pulse_gen_synth_top.py` | 141.5 MHz |
+| `pulse_detect_synth_top.py` | 132.0 MHz |
 | `pulse_extract_synth_top.py` (incl. the measurement engine) | 126.7 MHz |
-| `top.py`, everything composed | **128.5 MHz** |
+| `top.py`, everything composed | **128.6 MHz** |
 
-The composed design uses 23.9% of the part's LUTs (15,153), 5.7% of its
-flip-flops (7,251), 16.7% of its block RAM and 3.3% of its DSP48s. Both the
-16,384-deep packet FIFO and the Path B delay line infer block RAM; making every
-top-level port an AXI-Stream cost about 3,900 LUTs and no fmax.
+The composed design uses 20.1% of the part's LUTs (12,764), 4.8% of its
+flip-flops (6,127), 17.4% of its block RAM and 4.2% of its DSP48s. The
+16,384-deep packet FIFO, the Path B delay line, the NCO's sine table and the log
+converter's mantissa table all infer block RAM. Making every top-level port an
+AXI-Stream cost about 3,900 LUTs and no fmax.
+
+**Tables instead of iterations** (2026-09-27). The generator's NCO was a
+16-iteration rotation CORDIC and is now a quarter-wave sine ROM plus two DSP48s
+(`make_lut_nco`). The generator alone went from 2,742 LUTs, 1,373 flip-flops and
+133.3 MHz to 520 LUTs, 345 flip-flops and 141.5 MHz, for one RAMB18 and two DSP48s.
+The NCO's latency went from 18 cycles to 5, and its amplitude is now exact rather
+than 0.35% high. `log2_db`'s default is now its ROM method: 0.046 dB worst-case error
+became 0.008 dB, with the same latency and slightly less logic. The composed
+design lost 2,339 LUTs and 1,124 flip-flops and kept its fmax, because its
+critical path is elsewhere. Both are `make_ram` ROMs. `make_auto_pipeline_ram`
+cannot be used here: its synthesis support is ECP5 with OPEN_TOOLS only, and it
+rejects a Vivado build.
+
+The frequency `atan2` stays a CORDIC. A table-based `atan2` has to divide first,
+and it runs once per pulse, so it has no per-sample cost to save.
+
+**Where the margin is.** Slack at 125 MHz, per destination register, composed
+build:
+
+| Slack | Path |
+|---|---|
+| 0.22 ns | `freq_accum` output → the measurement `atan2`'s magnitude stage |
+| 0.36 ns | the hysteresis state machine's `state`/`width`/`peak` recurrence |
+| 0.53 ns | the `valid_pdw_t` serializer's buffer |
+| 0.73 ns | the NCO's signed-amplitude delay line |
+
+That is thin for a build inside AirStack's own project on the real part. If it
+misses, the first path is cheap to fix: split the `atan2` magnitude stage, at +1
+cycle, once per pulse. The second is a genuine per-sample recurrence, and it sets
+the ceiling after that.
 
 Getting there took eight timing fixes, each read off the reported critical path
 rather than guessed. Two generalize:

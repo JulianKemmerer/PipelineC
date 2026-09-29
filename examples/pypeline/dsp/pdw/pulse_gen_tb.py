@@ -1,14 +1,17 @@
 # pyright: reportInvalidTypeForm=none
 """Native-sim testbench for the PDW pulse generator (pulse_gen.py).
 
-Three @MAINs, one per feature the generator gained when it stopped being a flat
-DC step:
+Four @MAINs, one per feature the generator gained when it stopped being a flat
+DC step, plus the reset contract:
 
   * `pulse_gen_dc_tb`   -- freq=0: the original envelope/period checks, which
                            still have to hold.
   * `pulse_gen_tone_tb` -- a carrier: constant envelope through the pulse, and
                            a Q rail that is genuinely non-zero.
   * `pulse_gen_noise_tb`-- noise only: bounded, live, and ZERO MEAN.
+  * `pulse_gen_reset_tb`-- reset held with a LIVE configuration (the hardware
+                           bring-up order): nothing from the reset window may
+                           leak into the first pulse after release.
 
 All checks are structural (`sim_assert` on properties), not sample-by-sample
 comparisons -- bit-exactness against `golden_pulse_gen` is checked by
@@ -46,10 +49,12 @@ NOISE_AMP = 400
 pulse_gen, out_stream_t = make_pulse_gen()
 LAT = pulse_gen.latency
 
-# The CORDIC's 1/K seed compensation is the shift-add 0.609375 rather than the
-# exact 0.607253, so the emitted amplitude runs ~0.36% high. Allow 3%.
-AMP_LO = (TEST_AMPLITUDE * 97) // 100
-AMP_HI = (TEST_AMPLITUDE * 103) // 100
+# The table NCO's amplitude is exact to a rounding step: |cos|^2 + |sin|^2 of
+# the same bin centre is 1 to within 2^-16. Allow 1%, which a gain error of the
+# kind the old CORDIC's shift-add 1/K had (0.35%) would still pass but a wrong
+# table scale or a dropped bit would not.
+AMP_LO = (TEST_AMPLITUDE * 99) // 100
+AMP_HI = (TEST_AMPLITUDE * 101) // 100
 MAG2_LO = AMP_LO * AMP_LO
 MAG2_HI = AMP_HI * AMP_HI
 
@@ -74,10 +79,10 @@ def pulse_gen_dc_tb():
     )
 
     # Golden reference: an independent free-running PRI counter, DELAYED by the
-    # generator's own latency. The envelope is applied as the NCO's seed
-    # amplitude, so it comes out the far end of the CORDIC pipeline -- a
-    # reference that did not delay would be `LAT` cycles early and every check
-    # below would fail on the pulse edges only.
+    # generator's own latency. The envelope is applied as the NCO's amplitude
+    # input, so it comes out the far end of the NCO pipeline -- a reference
+    # that did not delay would be `LAT` cycles early and every check below
+    # would fail on the pulse edges only.
     phase: Reg[uint32_t] = 0
     active_now: uint1_t = phase < TEST_WIDTH
     if phase == (TEST_PRI - 1):
@@ -107,8 +112,8 @@ def pulse_gen_dc_tb():
             (abs_i >= AMP_LO) & (abs_i <= AMP_HI),
             f"in-pulse |i| out of range: got {abs_i}, want {AMP_LO}..{AMP_HI}",
         )
-        # freq=0 means the phase never advances, so Q stays at the CORDIC's
-        # residual -- a couple of LSBs, not a rail.
+        # freq=0 means the phase never advances, so Q is sin() of the first
+        # table bin's centre (half a bin past 0) -- an LSB, not a rail.
         sim_assert(abs_q <= 4, f"freq=0 should leave q ~ 0, got {q_val}")
     else:
         sim_assert(abs_i == 0, f"out-of-pulse i must be 0, got {i_val}")
@@ -147,10 +152,10 @@ def pulse_gen_dc_tb():
 def pulse_gen_tone_tb():
     """A carrier must have a CONSTANT ENVELOPE and a live Q rail.
 
-    Envelope is the property that catches a broken CORDIC: a wrong quadrant
-    fold, a missing gain compensation or a bad seed all show up as a magnitude
-    that varies with phase, while the individual I and Q samples still look
-    like plausible numbers.
+    Envelope is the property that catches a broken NCO: a wrong quadrant
+    fold, a cos/sin address swap or a bad table scale all show up as a
+    magnitude that varies with phase, while the individual I and Q samples
+    still look like plausible numbers.
     """
     o = pulse_gen(
         pri=TEST_PRI,
@@ -265,3 +270,57 @@ def pulse_gen_noise_tb():
             f"noise Q is not zero mean: sum over 500 cycles = {sum_q} "
             "(LFSR bytes are probably being read unsigned)",
         )
+
+
+# Longer than the NCO pipeline, so a pipeline filled during reset would still
+# be draining when the check below starts looking.
+RST_CYCLES = 40
+FIRST_PULSE_AT = RST_CYCLES + LAT  # release, then the pipeline fill
+
+
+@MAIN(125.0)
+def pulse_gen_reset_tb():
+    """Reset held WITH a live configuration must not leak into the output.
+
+    This is the hardware bring-up order (README "Bring-up order"): the host
+    configures the generator while the datapath is still held in reset, then
+    releases it. Reset pins the PRI counter at 0, which is inside a pulse, so
+    unless the NCO is fed zero amplitude during reset its pipeline fills with
+    the carrier, and the first `LAT` samples after release are that stale
+    carrier prepended to the first pulse -- which came out `LAT` samples wider
+    than commanded. pdw_tb.py cannot see it: it lands its configuration on the
+    release cycle itself, so CTRL_DEFAULTS' zero amplitude is what fills the
+    pipeline there.
+    """
+    cyc: Reg[uint32_t] = 0
+    t: uint32_t = cyc
+    in_rst: uint1_t = t < RST_CYCLES
+    o = pulse_gen(
+        pri=TEST_PRI,
+        width=TEST_WIDTH,
+        amplitude=TEST_AMPLITUDE,
+        freq=0,
+        chirp_rate=0,
+        noise_amp=0,
+        rst=in_rst,
+    )
+    cyc = t + 1
+
+    live: uint1_t = (o.data.i != 0) | (o.data.q != 0)
+    if t < FIRST_PULSE_AT:
+        sim_assert(
+            live == 0,
+            f"cycle {t}: output must stay silent until the NCO has refilled "
+            f"after reset, got i={o.data.i} q={o.data.q} -- the reset window's "
+            "carrier leaked into the first pulse",
+        )
+    elif t < (FIRST_PULSE_AT + TEST_WIDTH):
+        sim_assert(live == 1, f"cycle {t}: inside the first pulse, output is 0")
+    elif t < (FIRST_PULSE_AT + TEST_PRI):
+        sim_assert(
+            live == 0,
+            f"cycle {t}: the first pulse after reset is longer than "
+            f"TEST_WIDTH={TEST_WIDTH}",
+        )
+    elif t == (FIRST_PULSE_AT + TEST_PRI):
+        sim_assert(live == 1, "second pulse did not start one PRI after the first")

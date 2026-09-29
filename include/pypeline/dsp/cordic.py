@@ -357,11 +357,13 @@ def make_cordic_rotate(amp_t, n_iters=16, work_bits=24, phase_bits=32):
     rotates a seed vector by the requested angle. Seeded with `(amplitude, 0)`
     it produces `(amplitude*cos(phase), amplitude*sin(phase))`.
 
-    This is what lets a test stimulus have a CARRIER. A quarter-wave sine
-    table would need a ROM (make_ram), and a table coarse enough to be
-    affordable would quantize the phase badly enough to bias a frequency
-    measurement.
-    The CORDIC has no table at all.
+    A ROM-free NCO. Where a block RAM is available, dsp/nco.py's
+    `make_lut_nco` is the cheaper way to get the same outputs: one ROM and one
+    multiplier per rail instead of n_iters add stages, and exact amplitude.
+    Its phase truncation costs spurs (72 dBc at its default 10 table bits),
+    not frequency bias -- the truncation error telescopes out of a
+    phasor-difference estimate. Use this one where a ROM is unwanted or an
+    angle finer than ~2^-13 turn matters.
 
         cordic_rotate(phase, amplitude, valid_in) -> cordic_rotate_t
         cordic_rotate_t: .i, .q (amp_t), .valid

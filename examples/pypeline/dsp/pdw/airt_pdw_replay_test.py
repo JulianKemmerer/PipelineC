@@ -371,6 +371,93 @@ def test_resync_gives_up_on_a_persistent_fault():
     print("test_resync_gives_up_on_a_persistent_fault passed")
 
 
+def test_packet_desync_resyncs_when_asked():
+    """A desync on the PACKET side takes the same remedy as one on the record
+    side. It used to stop the run even with --resync-on-error -- and the packet
+    stream is where an armed alarm most often surfaces, since the alarm drops
+    ADC channel 0, the packet stream's channel."""
+    def short(k, rec, pkt):
+        if k == 1:
+            pkt = pkt[: len(pkt) - 8]
+        return rec, pkt
+    n_failed, out = _replay_with_reset(make_session(4, short), lambda src: None)
+    assert "resyncing" in out, out
+    assert "3 pulses captured" in out and "1 resyncs" in out, f"did not resume:\n{out}"
+    assert n_failed == 1, n_failed
+    print("test_packet_desync_resyncs_when_asked passed")
+
+
+# ─────────────────────────────────────────────
+# OVERFLOW: what it means for this design, and --alarm-test
+# ─────────────────────────────────────────────
+
+
+class OverflowSource(A.ReplaySource):
+    """A replay that reports an OVERFLOW on pulse `at`'s packet read, the way
+    read_exact does when readStream returns SOAPY_SDR_OVERFLOW."""
+
+    def __init__(self, path, at, alarm_armed=True):
+        super().__init__(path)
+        self.at, self.alarm_armed = at, alarm_armed
+
+    def packet(self, n_elems):
+        if self.i == self.at:
+            self.i += 1
+            label = f"RX{A.CH_PKT_RX} packets"
+            raise A.StreamOverflow(
+                A.overflow_message(label, 0, n_elems, self.alarm_armed), label
+            )
+        return super().packet(n_elems)
+
+
+def _replay_overflow(at, **over):
+    src = OverflowSource(make_session(4), at)
+    cfg = V.cfg_for(amp=AMP, width=WIDTH, pri=PRI)
+    out = io.StringIO()
+    with contextlib.redirect_stdout(out):
+        n_failed = A.capture(src, cfg, FS, _args(**over))
+    return n_failed, out.getvalue()
+
+
+def test_alarm_test_overflow_is_the_pass():
+    """Rung 6: the test alarm's OVERFLOW is the result asked for. It used to be
+    reported as "the DESIGN reporting an internal error", exit status 1 -- the
+    one rung whose success looked exactly like a failure."""
+    n_failed, out = _replay_overflow(1, alarm_test=True)
+    assert n_failed == 0, f"the commanded overflow counted as a failure:\n{out}"
+    assert "Rung 6 PASSES" in out, out
+    assert "internal error" not in out, out
+    print("test_alarm_test_overflow_is_the_pass passed")
+
+
+def test_alarm_test_without_an_overflow_fails():
+    """The negative half: a clean capture under --alarm-test means the alarm
+    never reached the host, and must not pass."""
+    n_failed, out = _replay(make_session(4), alarm_test=True)
+    assert n_failed == 1, f"a missing test alarm passed:\n{out}"
+    assert "NO OVERFLOW was observed" in out, out
+    print("test_alarm_test_without_an_overflow_fails passed")
+
+
+def test_unrequested_overflow_is_a_failure():
+    n_failed, out = _replay_overflow(1)
+    assert n_failed == 1 and "reported OVERFLOW" in out, out
+    assert "1 pulses captured" in out, out
+    print("test_unrequested_overflow_is_a_failure passed")
+
+
+def test_unarmed_overflow_blames_the_wrapper_not_the_host():
+    """This design never drops ADC tready except for the alarm, so a slow host
+    CANNOT overflow it -- the message it used to print ("the host fell behind")
+    sent a bring-up down the wrong path. Unarmed, it must name the tie-off."""
+    msg = A.overflow_message("RX1 records", 3, 10, alarm_armed=False)
+    assert "dwd_rx1_m_axis_tready" in msg, msg
+    assert "fell behind" not in msg and "cannot cause" in msg, msg
+    armed = A.overflow_message("RX0 packets", 0, 500, alarm_armed=True)
+    assert "alarm is armed" in armed and "dwd_rx1_m_axis_tready" not in armed, armed
+    print("test_unarmed_overflow_blames_the_wrapper_not_the_host passed")
+
+
 def test_pulses_limit_is_honoured():
     n_failed, out = _replay(make_session(6), pulses=2)
     assert n_failed == 0 and "2 pulses captured" in out, out
@@ -398,4 +485,9 @@ if __name__ == "__main__":
     test_resync_recovers_and_continues()
     test_resync_gives_up_on_a_persistent_fault()
     test_pulses_limit_is_honoured()
+    test_packet_desync_resyncs_when_asked()
+    test_alarm_test_overflow_is_the_pass()
+    test_alarm_test_without_an_overflow_fails()
+    test_unrequested_overflow_is_a_failure()
+    test_unarmed_overflow_blames_the_wrapper_not_the_host()
     print("All airt_pdw_replay tests passed")
