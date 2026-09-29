@@ -2021,6 +2021,10 @@ Each elaborated callable's port types come from its own resolved `__annotations_
 parameter typed through a factory argument (`p: src.pair_t`, `src` never a closure cell)
 elaborates here exactly as in a build (see **Port types** under
 [Specialised Functions](PY_TO_LOGIC_DESIGN.md#specialised-functions)).
+Integer compares, NEGATE, DIV, MOD and variable shifts get the default soft lowerings a
+build gets, installed for the elaboration only, so native-sim operator dispatch is the same
+afterwards as before (see
+[Default replacements for SW_LIB-only operators](pypeline_DESIGN.md#default-replacements-for-sw_lib-only-operators)).
 Standalone `sim_call()` and CLI simulations construct zero-added-clock timing
 parameters: those still include user latency and the caller's alignment registers.
 No synthesis executable is needed for this preparation.

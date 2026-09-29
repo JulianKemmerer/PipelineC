@@ -50,6 +50,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "func_wires_test.py",
     "pipeline_latency_test.py",
     "factory_arg_port_annotation_test.py",
+    "live_root_default_ops_test.py",
     "if_test.py",
     "enum_test.py",
     "char_array_test.py",

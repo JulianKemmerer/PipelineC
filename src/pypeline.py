@@ -2833,6 +2833,10 @@ _sim_soft_ops_policy = _sim_soft_ops_env_policy()
 # silently become every other function's implementation -- wrong hardware, not
 # just wrong sim.
 _scoped_generic_tail = {"op": 0, "left": 0, "unary": 0, "mux": 0}
+# Number of entries at the HEAD of each _generic_*_registry list that came from
+# _push_fallback_registrations: lowest-priority defaults installed for one
+# elaboration only. Never memoized either, for the same reason as the tail.
+_fallback_generic_head = {"op": 0, "left": 0, "unary": 0, "mux": 0}
 
 # Scoped registrations: active only while elaborating the keyed function.
 # id(func) -> {registry_key: name_or_callable}
@@ -2970,12 +2974,12 @@ def _resolve_generic_operator(op, l_str, r_str):
     if key in _generic_operator_cache:
         return _generic_operator_cache[key]
     impl = None
-    from_scope = False
+    transient = False
     scoped_from = len(_generic_operator_registry) - _scoped_generic_tail["op"]
     for idx in range(len(_generic_operator_registry) - 1, -1, -1):
         entry_op, lm, rm, factory = _generic_operator_registry[idx]
         if entry_op == op and lm.matches(l_str) and rm.matches(r_str):
-            from_scope = idx >= scoped_from
+            transient = idx >= scoped_from or idx < _fallback_generic_head["op"]
             impl = (
                 factory
                 if factory is INFERRED
@@ -2984,10 +2988,10 @@ def _resolve_generic_operator(op, l_str, r_str):
             break
     _generic_operator_cache[key] = impl
     # Memoize into the precise registry so later lookups skip the scan -- but
-    # only for a globally registered entry (see _scoped_generic_tail). The
-    # gate-set name is deliberately NOT added here: it is recorded at
-    # registration time instead.
-    if impl is not None and impl is not INFERRED and not from_scope:
+    # only for a globally registered entry (see _scoped_generic_tail and
+    # _fallback_generic_head). The gate-set name is deliberately NOT added
+    # here: it is recorded at registration time instead.
+    if impl is not None and impl is not INFERRED and not transient:
         _operator_registry[key] = impl
     return impl
 
@@ -2997,16 +3001,16 @@ def _resolve_generic_left_operator(op, l_str):
     if key in _generic_left_operator_cache:
         return _generic_left_operator_cache[key]
     impl = None
-    from_scope = False
+    transient = False
     scoped_from = len(_generic_left_operator_registry) - _scoped_generic_tail["left"]
     for idx in range(len(_generic_left_operator_registry) - 1, -1, -1):
         entry_op, lm, factory = _generic_left_operator_registry[idx]
         if entry_op == op and lm.matches(l_str):
-            from_scope = idx >= scoped_from
+            transient = idx >= scoped_from or idx < _fallback_generic_head["left"]
             impl = factory if factory is INFERRED else factory(_reconstruct_int_ctype(l_str))
             break
     _generic_left_operator_cache[key] = impl
-    if impl is not None and impl is not INFERRED and not from_scope:
+    if impl is not None and impl is not INFERRED and not transient:
         _left_operator_registry[key] = impl
     return impl
 
@@ -3016,16 +3020,16 @@ def _resolve_generic_unary_operator(op, t_str):
     if key in _generic_unary_operator_cache:
         return _generic_unary_operator_cache[key]
     impl = None
-    from_scope = False
+    transient = False
     scoped_from = len(_generic_unary_operator_registry) - _scoped_generic_tail["unary"]
     for idx in range(len(_generic_unary_operator_registry) - 1, -1, -1):
         entry_op, m, factory = _generic_unary_operator_registry[idx]
         if entry_op == op and m.matches(t_str):
-            from_scope = idx >= scoped_from
+            transient = idx >= scoped_from or idx < _fallback_generic_head["unary"]
             impl = factory if factory is INFERRED else factory(_reconstruct_int_ctype(t_str))
             break
     _generic_unary_operator_cache[key] = impl
-    if impl is not None and impl is not INFERRED and not from_scope:
+    if impl is not None and impl is not INFERRED and not transient:
         _unary_operator_registry[key] = impl
     return impl
 
@@ -3045,16 +3049,16 @@ def _resolve_generic_mux(t_str):
     if t_str in _generic_mux_cache:
         return _generic_mux_cache[t_str]
     impl = None
-    from_scope = False
+    transient = False
     scoped_from = len(_generic_mux_registry) - _scoped_generic_tail["mux"]
     for idx in range(len(_generic_mux_registry) - 1, -1, -1):
         m, factory = _generic_mux_registry[idx]
         if m.matches(t_str):
-            from_scope = idx >= scoped_from
+            transient = idx >= scoped_from or idx < _fallback_generic_head["mux"]
             impl = factory if factory is INFERRED else factory(_reconstruct_int_ctype(t_str))
             break
     _generic_mux_cache[t_str] = impl
-    if impl is not None and impl is not INFERRED and not from_scope:
+    if impl is not None and impl is not INFERRED and not transient:
         _mux_registry[t_str] = impl
         # MUX matcher entries have no op-name string to record at registration
         # time (the registry is keyed by muxed type), so the gate name is still
@@ -3518,6 +3522,72 @@ def _pop_scoped_registrations(saved):
             registry[key] = old_val
     if saved:
         _recompute_sim_gate_sets()
+
+
+def _push_fallback_registrations(scope):
+    """Install *scope*'s scoped matcher registrations as the lowest-priority
+    generic entries (the head of each list, behind every global and scoped
+    entry) until _pop_fallback_registrations(saved).
+
+    PY_TO_LOGIC.ELABORATE_LIVE_ROOTS uses this for the default operator
+    lowerings. PARSE_FILE registers those globally before the design file is
+    imported, so every design registration outranks them; here the design's
+    registrations already exist, and the head is the position that keeps that
+    precedence. Unlike a global registration this records no sim gate name,
+    and nothing resolved through it is memoized (_fallback_generic_head), so
+    native-sim dispatch afterwards is exactly what it was before.
+
+    Matcher entries only: an exact-type entry would sit in a precise registry,
+    where it would override global registrations instead of backing them up.
+    """
+    func_id = id(scope)
+    if any(
+        func_id in registry
+        for registry in (
+            _scoped_operator_registry,
+            _scoped_left_operator_registry,
+            _scoped_unary_operator_registry,
+            _scoped_mux_registry,
+        )
+    ):
+        raise TypeError("fallback registrations must use type matchers, not exact types")
+    saved = []
+    for kind, registry, scoped, cache in (
+        (
+            "op",
+            _generic_operator_registry,
+            _scoped_generic_operator_registry,
+            _generic_operator_cache,
+        ),
+        (
+            "left",
+            _generic_left_operator_registry,
+            _scoped_generic_left_operator_registry,
+            _generic_left_operator_cache,
+        ),
+        (
+            "unary",
+            _generic_unary_operator_registry,
+            _scoped_generic_unary_operator_registry,
+            _generic_unary_operator_cache,
+        ),
+        ("mux", _generic_mux_registry, _scoped_generic_mux_registry, _generic_mux_cache),
+    ):
+        entries = scoped.get(func_id, [])
+        if entries:
+            registry[:0] = entries
+            _fallback_generic_head[kind] += len(entries)
+            cache.clear()
+            saved.append((kind, registry, cache, len(entries)))
+    return saved
+
+
+def _pop_fallback_registrations(saved):
+    """Remove what _push_fallback_registrations(scope) installed."""
+    for kind, registry, cache, n in saved:
+        del registry[:n]
+        _fallback_generic_head[kind] -= n
+        cache.clear()
 
 
 # ─────────────────────────────────────────────

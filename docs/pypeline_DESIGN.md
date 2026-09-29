@@ -1800,7 +1800,21 @@ unboundedly.
 `C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD`, armed by `PY_TO_LOGIC.PARSE_FILE` right after that
 registration, makes `BUILD_LOGIC_AS_C_CODE` raise (naming the offending entity) if a
 Pypeline build ever reaches it anyway — the permanent enforcement that this path stays dead
-for Pypeline. `SW_LIB.py` itself is untouched: the C frontend still needs it, and `VHDL.py`
+for Pypeline.
+
+`PY_TO_LOGIC.ELABORATE_LIVE_ROOTS`, the other elaboration entry point, is what a plain
+`sim_call` uses to align a caller of a `@pipeline_latency` function. It needs the same
+lowerings and guard, but only for its own duration (`_push_default_operator_lowerings`).
+A global registration there would switch native sim to the soft implementations
+(`SIM_SOFT_OPS`) for every later `sim_call` in the process, just because one call reached
+a fixed pipeline. So the lowerings are registered once under a private `scope=` object,
+and each call pushes them with `pypeline._push_fallback_registrations`. That puts them at
+the *head* of the generic lists, the lowest priority. The design's registrations already
+exist by then, and the head keeps them winning, as registering first does under
+`PARSE_FILE`. Head entries record no sim gate name and are never memoized into the precise
+registries (`_fallback_generic_head`, the counterpart of `_scoped_generic_tail`), so
+popping them leaves the process exactly as it was. The guard is restored to its previous
+value on exit. `SW_LIB.py` itself is untouched: the C frontend still needs it, and `VHDL.py`
 / `RAW_VHDL.py` / `SYN.py` still import it for cheap name predicates
 (`IS_BIT_MANIP`, `IS_MEM`, `IS_AUTO_GENERATED`, RAM helpers) that were never C generation.
 

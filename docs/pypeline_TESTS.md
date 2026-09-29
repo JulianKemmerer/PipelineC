@@ -364,6 +364,21 @@ three ways:
 
 See [Port types](PY_TO_LOGIC_DESIGN.md#specialised-functions) in PY_TO_LOGIC_DESIGN.md.
 
+`live_root_default_ops_test.py` (`native_sim`) runs plain `sim_call` on ROM callers
+that contain an integer compare. It runs as a plain Python process, because
+`pypelinec` and `pypeline_sim.py` register the default soft operators before the
+design loads and so never showed the bug. Before the fix, the live-root elaboration had
+no lowering for `>`, fell through to the SW_LIB C path, and crashed on the unset
+`SYN_OUTPUT_DIRECTORY`. The test covers:
+- a stateful caller, and a pure caller whose compare runs inside the aligned graph,
+  both with a signed operand only a signed compare gets right;
+- the operator registries and native-sim gate sets being unchanged after the
+  `sim_call`, checked first so no earlier elaboration can mask a change;
+- a design's own matcher registration outranking the defaults;
+- an operator pinned to `INFERRED` hitting the armed `PYPELINE_NO_SW_LIB_GUARD`.
+
+See [Default replacements for SW_LIB-only operators](pypeline_DESIGN.md#default-replacements-for-sw_lib-only-operators).
+
 ## AUTO_PIPELINE latency constraint coverage
 
 Each test below covers `AUTO_PIPELINE(func, latency= / start_latency= / max_latency=)`

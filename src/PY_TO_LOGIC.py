@@ -7295,6 +7295,60 @@ def _new_parser_state(module_globals):
     return parser_state
 
 
+def _add_include_pypeline_to_path():
+    """Put the reusable include/pypeline library on sys.path, so designs can
+    `from stream import ...`, `from dsp.fir import ...`, etc. (and the compiler
+    can import operators.soft) without PYTHONPATH being set up manually."""
+    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+    _include_pypeline = os.path.join(_repo_root, "include", "pypeline")
+    if _include_pypeline not in sys.path:
+        sys.path.insert(0, _include_pypeline)
+
+
+# The scope= object ELABORATE_LIVE_ROOTS registers the default soft operators
+# under, once per process; see _push_default_operator_lowerings.
+_default_operator_lowerings_scope = None
+
+
+def _push_default_operator_lowerings():
+    """Give one ELABORATE_LIVE_ROOTS call what PARSE_FILE gives a build: the
+    default soft-operator lowerings (operators.soft.register_sw_lib_replacements)
+    and an armed C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD. Without them, an integer
+    compare/NEGATE/DIV/MOD/variable shift in a live root falls through to
+    BUILD_LOGIC_AS_C_CODE, which a standalone sim_call has no output directory
+    for. Undo with _pop_default_operator_lowerings.
+
+    PARSE_FILE registers the lowerings globally, which also makes native sim
+    dispatch them (pypeline.SIM_SOFT_OPS). Doing that here would change every
+    later sim_call in the process, only because one reached a
+    @pipeline_latency callee. So they are pushed as lowest-priority fallbacks
+    for this call only: the design's own registrations still win, as they do
+    under PARSE_FILE, and native-sim dispatch is left unchanged.
+    """
+    global _default_operator_lowerings_scope
+    import pypeline as _pypeline
+
+    if _default_operator_lowerings_scope is None:
+        _add_include_pypeline_to_path()
+        import operators.soft as _pypeline_default_soft_ops
+
+        scope = object()
+        _pypeline_default_soft_ops.register_sw_lib_replacements(scope=scope)
+        _default_operator_lowerings_scope = scope
+    saved_guard = C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD
+    fallbacks = _pypeline._push_fallback_registrations(_default_operator_lowerings_scope)
+    C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD = True
+    return fallbacks, saved_guard
+
+
+def _pop_default_operator_lowerings(saved):
+    import pypeline as _pypeline
+
+    fallbacks, saved_guard = saved
+    C_TO_LOGIC.PYPELINE_NO_SW_LIB_GUARD = saved_guard
+    _pypeline._pop_fallback_registrations(fallbacks)
+
+
 def ELABORATE_LIVE_ROOTS(roots):
     """Elaborate existing callables for native pipeline alignment, without import
     side effects, MAIN registration, synthesis, or emitted files.
@@ -7302,6 +7356,14 @@ def ELABORATE_LIVE_ROOTS(roots):
     Roots may be closures and need not be MAINs. Only reachable functions are
     elaborated; module discovery supplies types/global declarations and naming.
     """
+    saved = _push_default_operator_lowerings()
+    try:
+        return _elaborate_live_roots(roots)
+    finally:
+        _pop_default_operator_lowerings(saved)
+
+
+def _elaborate_live_roots(roots):
     import AUTO_PIPELINE
 
     import types
@@ -7415,13 +7477,7 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     if design_dir not in sys.path:
         sys.path.insert(0, design_dir)
 
-    # Bootstrap the reusable include/pypeline library onto sys.path so designs
-    # can `from stream import ...`, `from dsp.fir import ...`, etc. without
-    # requiring PYTHONPATH to be set up manually.
-    _repo_root = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-    _include_pypeline = os.path.join(_repo_root, "include", "pypeline")
-    if _include_pypeline not in sys.path:
-        sys.path.insert(0, _include_pypeline)
+    _add_include_pypeline_to_path()
 
     # Register the default soft-operator replacements for the operator
     # families that have no inferred lowering (int NEGATE/compare/DIV/MOD,
@@ -7432,7 +7488,10 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     # double_parse_file_test) don't grow the registry unboundedly. Any
     # later, more specific registration in the design file itself (an exact
     # type pin, a different flavor, or INFERRED) still wins -- the registry
-    # always resolves most-recently-registered-first.
+    # always resolves most-recently-registered-first. ELABORATE_LIVE_ROOTS
+    # gets the same lowerings and guard per call instead, via
+    # _push_default_operator_lowerings; a new elaboration entry point needs
+    # one or the other.
     import operators.soft as _pypeline_default_soft_ops
 
     _pypeline_default_soft_ops.register_sw_lib_replacements()
