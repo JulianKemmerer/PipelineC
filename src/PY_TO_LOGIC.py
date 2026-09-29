@@ -436,6 +436,24 @@ def _inner_ctype_to_str(inner_ctype, parser_state=None):
     return str(inner_ctype)
 
 
+def _resolved_annotation_to_ctype(result, parser_state=None):
+    """C type string for an already-evaluated annotation value: the result of
+    `_annotation_to_ctype`'s eval(), or a port's entry in a live function's own
+    `__annotations__` (see FuncElaborator's port_annotations).
+    _CType objects give their C type string via str(); class objects give __name__.
+    If parser_state provided, registers the struct/enum type it names.
+    """
+    if isinstance(result, type):
+        if parser_state is not None:
+            _register_struct_recursive(result, parser_state)
+            if getattr(result, "_pypeline_is_enum", False):
+                _register_enum(result, parser_state)
+        return getattr(result, "_pypeline_ctype_name", None) or getattr(
+            result, "_pypeline_ctype_canonical", result.__name__
+        )
+    return str(result)
+
+
 def _annotation_to_ctype(ann, eval_ns=None, parser_state=None):
     """Convert Python AST annotation to C type string. Returns None if no annotation.
     If eval_ns provided, evaluates the annotation expression against that namespace.
@@ -447,21 +465,12 @@ def _annotation_to_ctype(ann, eval_ns=None, parser_state=None):
     if ann is None:
         return None
     # With eval_ns: evaluate the annotation expression as Python.
-    # _CType objects give their C type string via str(); class objects give __name__.
     if eval_ns is not None:
         try:
             expr = ast.Expression(body=ann)
             ast.fix_missing_locations(expr)
             result = eval(compile(expr, "<annotation>", "eval"), eval_ns)
-            if isinstance(result, type):
-                if parser_state is not None:
-                    _register_struct_recursive(result, parser_state)
-                    if getattr(result, "_pypeline_is_enum", False):
-                        _register_enum(result, parser_state)
-                return getattr(result, "_pypeline_ctype_name", None) or getattr(
-                    result, "_pypeline_ctype_canonical", result.__name__
-                )
-            return str(result)
+            return _resolved_annotation_to_ctype(result, parser_state)
         except Exception:
             pass  # fall through to static handling
     # Static fallback (no eval_ns or eval failed)
@@ -566,9 +575,10 @@ def _recover_annotation_closure_vars(func_def, func_for_source, closure_ns):
     the same canonical name -- regardless of which caller reaches it first.
 
     Deliberately limited to bare-name annotations: closure_ns feeds
-    _canonical_func_name, so anything added here renames entities. The element
-    types of subscripted annotations are supplied separately, and for
-    elaboration only, by _annotation_elem_type_ns.
+    _canonical_func_name, so anything added here renames entities. Port types
+    never depend on this: _elaborate_live_func hands FuncElaborator the resolved
+    __annotations__ values themselves (port_annotations), which covers every
+    annotation form (`elem_t[n]`, `some_obj.attr_t`, `hw_return_type(f)`, ...).
     """
     ann_dict = getattr(func_for_source, "__annotations__", {})
     for ast_arg in func_def.args.args:
@@ -580,74 +590,6 @@ def _recover_annotation_closure_vars(func_def, func_for_source, closure_ns):
         var_name = func_def.returns.id
         if var_name not in closure_ns and "return" in ann_dict:
             closure_ns[var_name] = ann_dict["return"]
-
-
-def _annotation_elem_type_ns(func_def, func_for_source):
-    """`{base_name: element_type}` for subscripted annotations like `v: elem_t[n]`.
-
-    A name used *only* inside an annotation is not captured as a closure cell, so
-    a factory-local element type would be unresolvable when the annotation is
-    re-evaluated during elaboration (an array interface port, `axis_out:
-    axis_fb[n]`, is the case that surfaced this). The already-resolved array type
-    in __annotations__ knows its element, so recover the name from there.
-
-    Kept out of closure_ns and merged at lowest priority: it must never rename an
-    entity or shadow a name that genuinely resolves.
-    """
-    ann_dict = getattr(func_for_source, "__annotations__", {})
-    out = {}
-
-    def add(ann_node, key):
-        if (
-            isinstance(ann_node, ast.Subscript)
-            and isinstance(ann_node.value, ast.Name)
-            and key in ann_dict
-        ):
-            elem = getattr(ann_dict[key], "_elem_ctype", None)
-            if elem is not None:
-                out.setdefault(ann_node.value.id, elem)
-
-    for ast_arg in func_def.args.args:
-        add(ast_arg.annotation, ast_arg.arg)
-    add(func_def.returns, "return")
-    return out
-
-
-def _annotation_attr_base_ns(func_def, func_for_source):
-    """`{base_name: interface}` for dotted-attribute annotations like
-    `v: some_intrf.fwd_t` (also `.fb_t`/`.stream_t`).
-
-    A name used *only* inside an annotation is not captured as a closure
-    cell (see _recover_annotation_closure_vars, deliberately limited to
-    bare-name annotations so it never affects canonical naming), so
-    `some_intrf` is unresolvable when the annotation is re-evaluated from
-    source during elaboration -- `_annotation_to_ctype` then silently falls
-    back to the bare attribute name ('fwd_t'/'fb_t'/'stream_t') as if it
-    were the type itself. The already-resolved value in __annotations__
-    carries a `_pypeline_interface` back-reference (stamped by
-    `@interface`), so recover `some_intrf` from there.
-
-    Kept out of closure_ns and merged at lowest priority, like
-    _annotation_elem_type_ns: it must never rename an entity or shadow a
-    name that genuinely resolves.
-    """
-    ann_dict = getattr(func_for_source, "__annotations__", {})
-    out = {}
-
-    def add(ann_node, key):
-        if (
-            isinstance(ann_node, ast.Attribute)
-            and isinstance(ann_node.value, ast.Name)
-            and key in ann_dict
-        ):
-            base = getattr(ann_dict[key], "_pypeline_interface", None)
-            if base is not None:
-                out.setdefault(ann_node.value.id, base)
-
-    for ast_arg in func_def.args.args:
-        add(ast_arg.annotation, ast_arg.arg)
-    add(func_def.returns, "return")
-    return out
 
 
 def _parsed_func_def(func_for_source):
@@ -2081,6 +2023,7 @@ class FuncElaborator:
         module_globals=None,
         module_prefix=None,
         scope_globals=None,
+        port_annotations=None,
     ):
         self.func_def = func_def
         # Hardware function name: mangled with module prefix for sub-file functions
@@ -2091,6 +2034,15 @@ class FuncElaborator:
         # module_globals: live Python namespace from executing the design file.
         # Provides N, M, sum_widths etc. for elaboration-time evaluation.
         self.module_globals = module_globals or {}
+        # port_annotations: the live function's own __annotations__ (a live
+        # closure reached through _elaborate_live_func). Python evaluated them at
+        # def time in the enclosing scope, and a name used only in a parameter or
+        # return annotation is never captured as a closure cell -- e.g. the
+        # factory argument `producer` in `p: producer.pair_t` -- so re-evaluating
+        # the annotation's AST here can fail, or resolve that name to some
+        # unrelated same-named global. _setup_inputs/_setup_outputs use these
+        # resolved values instead (the same objects @hw_func's simulation casts to).
+        self.port_annotations = port_annotations or {}
         # scope_globals: only the names Python itself lets this function see (its
         # own module's globals + its closure). module_globals can be wider: a
         # function reached through _elaborate_live_func also gets the top design
@@ -2576,11 +2528,22 @@ class FuncElaborator:
             if final_wire != wire_name:
                 _connect(self.logic, final_wire, wire_name)
 
+    def _port_ctype(self, ann_key, ann, eval_ns):
+        """C type of a parameter (ann_key = its name) or the return ("return").
+        Prefers the resolved value in port_annotations. Falls back to evaluating
+        the AST annotation when there is none (a top-level def elaborated by
+        PARSE_FILE), or when it is a string: a quoted forward reference, or every
+        annotation under `from __future__ import annotations`."""
+        resolved = self.port_annotations.get(ann_key)
+        if ann is not None and resolved is not None and not isinstance(resolved, str):
+            return _resolved_annotation_to_ctype(resolved, self.parser_state)
+        return _annotation_to_ctype(ann, eval_ns, self.parser_state)
+
     def _setup_inputs(self):
         eval_ns = self._make_eval_ns()
         for arg in self.func_def.args.args:
             name = self._hw_name(arg.arg)
-            typ = _annotation_to_ctype(arg.annotation, eval_ns, self.parser_state)
+            typ = self._port_ctype(arg.arg, arg.annotation, eval_ns)
             self.logic.inputs.append(name)
             _add_wire(self.logic, name, typ)
             self.logic.variable_names.add(name)
@@ -2588,9 +2551,7 @@ class FuncElaborator:
 
     def _setup_outputs(self):
         eval_ns = self._make_eval_ns()
-        ret_typ = _annotation_to_ctype(
-            self.func_def.returns, eval_ns, self.parser_state
-        )
+        ret_typ = self._port_ctype("return", self.func_def.returns, eval_ns)
         self._return_type = ret_typ
         if ret_typ is not None:
             self.logic.outputs.append(C_TO_LOGIC.RETURN_WIRE_NAME)
@@ -3348,8 +3309,8 @@ class FuncElaborator:
             elem = _array_elem_ctype(ann_val.inner_ctype) or ann_val.inner_ctype
             # _pypeline_interface_role (set only on .fwd_t/.fb_t, by @interface's
             # _derive) distinguishes a real port-pairing half from .stream_t, which
-            # also carries a _pypeline_interface back-reference (for PY_TO_LOGIC's
-            # annotation-closure recovery) but is never itself a paired port type.
+            # also carries a _pypeline_interface back-reference (so interface_of()
+            # answers for it) but is never itself a paired port type.
             owning_intrf = (
                 getattr(elem, "_pypeline_interface", None)
                 if getattr(elem, "_pypeline_interface_role", None) is not None
@@ -5769,28 +5730,17 @@ class FuncElaborator:
             if isinstance(func_for_source, _types_mod.FunctionType)
             else {}
         )
-        # Lowest priority: element types of subscripted annotations, which exist
-        # only so such an annotation can be re-evaluated (see
-        # _annotation_elem_type_ns). Never shadows a name that already resolves.
-        ann_elem_ns = _annotation_elem_type_ns(func_def, func_for_source)
-        ann_attr_base_ns = _annotation_attr_base_ns(func_def, func_for_source)
         # NOTE: deliberately the *true*, unpolluted top-level design-file globals
         # (parser_state.top_level_module_globals), not self.module_globals. When
         # this elaboration is reached via a nested _elaborate_live_func call (e.g.
         # elaborating make_stream_auto_pipeline's returned closure from inside
         # make_fir's), self here is the *caller's* FuncElaborator, whose own
-        # module_globals is that caller's already-merged_globals -- including its
-        # own ann_attr_base_ns/ann_elem_ns recovery for identically-named local
-        # variables (e.g. two different factories both naming a local `in_intrf`
-        # for their own, differently-shaped stream interface). Merging that in
-        # here at higher priority than this callee's own (correct) ann_attr_base_ns
-        # would let the caller's `in_intrf` silently shadow the callee's, corrupting
-        # the callee's annotation resolution -- exactly the bug that produced a
-        # scalar CONST_REF_RD wire driving an array-typed field in the FIR/
-        # stream_auto_pipeline VHDL codegen (see docs/PY_TO_LOGIC_DESIGN.md).
+        # module_globals is that caller's already-merged_globals -- including the
+        # caller's closure variables. Two factories naming a local identically
+        # (e.g. both call their own, differently-shaped stream interface
+        # `in_intrf`) would otherwise let the caller's value resolve a name in
+        # the callee (see docs/PY_TO_LOGIC_DESIGN.md).
         merged_globals = {
-            **ann_elem_ns,
-            **ann_attr_base_ns,
             **func_own_globals,
             **getattr(self.parser_state, "top_level_module_globals", {}),
             **closure_ns,
@@ -5838,6 +5788,7 @@ class FuncElaborator:
                     else None
                 ),
                 scope_globals={**func_own_globals, **closure_ns},
+                port_annotations=getattr(func_for_source, "__annotations__", {}),
             )
             logic = elab.elaborate()
         finally:

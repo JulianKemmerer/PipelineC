@@ -64,6 +64,11 @@ COMB_TEST_FILES = [
     # (widen, sign-extend, truncate, uint->int, keyword-bound): the port wire
     # must take the parameter type, or GHDL rejects the instance port map.
     ("call_arg_width_test.py", INST_DIR, []),
+    # Port annotations reaching a factory-local struct through a factory
+    # argument (`p: src.pair_t`): the port must take the resolved type, not a
+    # bare 'pair_t' (KeyError) or an unrelated same-named global's struct
+    # (GHDL rejects the port map).
+    ("factory_arg_port_annotation_test.py", INST_DIR, []),
     # self_check_bit_math_test.py is deliberately NOT here: its whole body is
     # one combinational block that calls sim_finish() the very same cycle it
     # computes everything, with nothing before that cycle to safely print --

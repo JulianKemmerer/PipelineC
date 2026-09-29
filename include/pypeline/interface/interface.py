@@ -262,13 +262,9 @@ def interface(cls):
         else None
     )
     # .fwd_t/.fb_t already carry a _pypeline_interface back-reference (set by
-    # _derive, above). Stamp .stream_t the same way -- it isn't a _derive
-    # product, but PY_TO_LOGIC's annotation-closure recovery
-    # (_annotation_attr_base_ns) needs the same uniform back-reference to
-    # reconstruct `some_intrf` from a resolved `some_intrf.stream_t` value
-    # when `some_intrf` itself was used only in a dotted-attribute
-    # annotation, never in a function body statement (so Python never
-    # captured it as a closure cell).
+    # _derive, above). Stamp .stream_t the same way, so interface_of() answers
+    # for it too. It gets no _pypeline_interface_role: it is a plain type, not
+    # one half of a port.
     if cls.stream_t is not None:
         cls.stream_t._pypeline_interface = cls
     cls.wire_t = _derive_wire(cls)

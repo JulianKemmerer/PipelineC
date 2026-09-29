@@ -1203,7 +1203,8 @@ an annotation is not captured as a free variable — naively, that would make fa
 invisible here (`x: some_fb_t[n]` → `NameError` on `some_fb_t`, even though `n`, used in the body,
 resolves). Each parameter's already-resolved annotation object is instead bound to a generated
 name and substituted into the AST, which works for every annotation form rather than bare names
-only.
+only. The hardware elaborator takes port types from the same resolved objects (see **Port
+types** under [Specialised Functions](PY_TO_LOGIC_DESIGN.md#specialised-functions)).
 
 Note the limit of that guarantee: it covers the *wiring*, not port **types**. Native sim is
 duck-typed, so passing a bare `uint1_t` where a module expects an interface's `{ready}` struct
@@ -2016,6 +2017,10 @@ remains intact.
 `PY_TO_LOGIC.ELABORATE_LIVE_ROOTS` supplies types, globals, canonical function names
 and reachable Logic instances from callables already imported by the simulator.
 It neither reexecutes the source module nor requires a root to be `@MAIN`.
+Each elaborated callable's port types come from its own resolved `__annotations__`, so a
+parameter typed through a factory argument (`p: src.pair_t`, `src` never a closure cell)
+elaborates here exactly as in a build (see **Port types** under
+[Specialised Functions](PY_TO_LOGIC_DESIGN.md#specialised-functions)).
 Standalone `sim_call()` and CLI simulations construct zero-added-clock timing
 parameters: those still include user latency and the caller's alignment registers.
 No synthesis executable is needed for this preparation.

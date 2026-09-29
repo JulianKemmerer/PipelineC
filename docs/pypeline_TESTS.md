@@ -349,6 +349,21 @@ pipelined MAIN and an AUTO_PIPELINE region. Valid-gated debug probes compare exa
 clock timing against GHDL, including draining the pipeline, register initialization,
 synchronous reset and clock enables within a stateful caller.
 
+`factory_arg_port_annotation_test.py` (`native_sim` and `native_vs_vhdl_sim --comb`)
+covers port annotations that reach a factory-local `@struct` through a factory argument
+used only in the annotation, so the argument is never a closure cell. Its `sim_call` test
+calls a stateful ROM caller (`p: pair_src.pair_t`), which elaborates the caller as a live
+root. The MAIN also calls two more consumers: one annotated `p: src.pair_t`, where `src`
+matches an unrelated module global with a different `pair_t`, and one annotated
+`p: hw_return_type(pair_src)`. Re-evaluating the annotations used to fail these three in
+three ways:
+- the first port got the bare name `'pair_t'`, failing both `sim_call` and the build with
+  `KeyError: 'pair_t'`;
+- the second port got the global's record, which GHDL rejects at the port map;
+- the third raised `NotImplementedError: Unsupported type annotation`.
+
+See [Port types](PY_TO_LOGIC_DESIGN.md#specialised-functions) in PY_TO_LOGIC_DESIGN.md.
+
 ## AUTO_PIPELINE latency constraint coverage
 
 Each test below covers `AUTO_PIPELINE(func, latency= / start_latency= / max_latency=)`

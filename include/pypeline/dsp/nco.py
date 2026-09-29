@@ -250,9 +250,8 @@ def make_lut_nco(amp_t, table_bits=10, phase_bits=32):
     # takes the ROM's physical outputs and aligns them with its own registers,
     # so there is nothing outside it to align around the ROM. Saying so stops a
     # standalone sim_call from running the pure-caller alignment pass over it,
-    # which it does not need -- and which currently fails on it (handoffs
-    # sim_call_pipeline_latency_compare_handoff.md and
-    # sim_call_live_root_struct_discovery_handoff.md). Same attribute, same
+    # which it does not need -- and which currently fails on it (handoff
+    # sim_call_pipeline_latency_compare_handoff.md). Same attribute, same
     # reason, as stream/stream_ram.py's handshake controller.
     lut_nco._sim_clocked_pipeline_boundary = True
     return lut_nco, lut_nco_t

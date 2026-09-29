@@ -1757,6 +1757,20 @@ function's own annotations, so there's no need for either function authors or ca
 to manage it by hand. See `include/pypeline/stream/stream_multi_cycle.py` for the full
 `make_stream_multi_cycle` example.
 
+A port annotation may reach its type through any factory argument, even one the function
+body never mentions:
+
+```python
+def make_consumer(src):
+    @hw_func
+    def consumer(p: hw_return_type(src)) -> uint16_t:   # `src` appears only here
+        return p.a + p.b
+    return consumer
+```
+
+Python evaluates a parameter or return annotation once, when the `def` runs, and both
+simulation and hardware elaboration use that resolved type.
+
 ---
 
 ## Factory-Generated Types

@@ -1196,8 +1196,9 @@ invokes `_elaborate_live_func`:
 1. `inspect.getsource` + `textwrap.dedent` recovers the inner function's source text
 2. Closure variables are extracted from `func.__code__.co_freevars` / `func.__closure__`
    — e.g. `{"LO_SIZE": 3, "HI_SIZE": 4, "OUT_SIZE": 7}`
-3. Names used only in annotations (not body) are recovered from `func.__annotations__`
-   and merged into the closure namespace
+3. Bare names used only in annotations (not body) are recovered from
+   `func.__annotations__` and merged into the closure namespace (for naming; the port
+   types themselves come straight from `func.__annotations__`, see **Port types** below)
 4. A **canonical name** is computed from the factory chain + its REAL captured argument
    values (or, as a fallback, closure variables — see Canonical function name format)
 5. Dedup check: if the canonical name is already in `FuncLogicLookupTable`, return the
@@ -1246,17 +1247,42 @@ a genuinely completed elaboration from a not-yet-elaborated stub (e.g. one PARSE
 planted for a forward reference that this call is racing).
 
 **Closure globals merge:** when elaborating a closure function, the namespace used for
-`_try_eval_const` and annotation resolution is built as:
+`_try_eval_const` and body annotation resolution is built as:
 
 ```
-merged_globals = {**func.__globals__, **self.module_globals, **closure_ns}
+merged_globals = {**func.__globals__, **parser_state.top_level_module_globals, **closure_ns}
 ```
 
-Priority: `closure_ns` > `self.module_globals` > `func.__globals__`. The lowest-priority
-`func.__globals__` captures types imported at the top of the closure's source file (e.g.
-`vga_pos_t` imported in `vga/timing.py`) that are not present in the calling module's
-globals. The struct-scan pass that registers closure structs in
-`parser_state.struct_to_field_type_dict` also inspects `func.__globals__` for struct types.
+Priority: `closure_ns` > the top design file's globals > `func.__globals__`. The
+lowest-priority `func.__globals__` captures types imported at the top of the closure's
+source file (e.g. `vga_pos_t` imported in `vga/timing.py`) that are not present in the
+design file's globals. The calling `FuncElaborator`'s own namespace is never merged in (see
+[the same-named local variable case](#interface--generated-reverse-wiring) under `@interface`). The
+struct-scan pass that registers closure structs in `parser_state.struct_to_field_type_dict`
+also inspects `func.__globals__` for struct types.
+
+**Port types** do not go through that namespace. Python evaluates a parameter or return
+annotation once, at `def` time, in the *enclosing* scope, so a name used only there never
+becomes a closure cell: in
+
+```python
+def make_consumer(src):
+    @hw_func
+    def consumer(p: src.pair_t) -> uint16_t:   # src: annotation-only
+        return p.a + p.b
+    return consumer
+```
+
+`src` is not in `consumer.__closure__`, and re-evaluating the annotation's AST would either
+fail or find some unrelated global that happens to be named `src`. `_elaborate_live_func`
+therefore passes the function's own `__annotations__` to `FuncElaborator`
+(`port_annotations`), and `_setup_inputs`/`_setup_outputs` convert those resolved objects
+(`_resolved_annotation_to_ctype`, which also registers the struct/enum they name). This
+covers every annotation form — `T`, `elem_t[n]`, `some_intrf.fwd_t`, `src.pair_t`,
+`hw_return_type(src)` — and uses the same objects `@hw_func`'s simulation casts arguments
+to. The AST is re-evaluated only when there is no resolved value: top-level `def`s
+elaborated by `PARSE_FILE` (their annotations name module globals), and string annotations
+(a quoted forward reference, or `from __future__ import annotations`).
 
 **Nested factory functions** — factory-produced functions whose result is local to another
 factory (never bound at module level) — work the same way. The closure of the outer
@@ -1586,52 +1612,36 @@ variable holding the interface class itself is suffixed `_intrf`; a variable hol
 *instance* of a port half is suffixed `_if` — the two suffixes never collide, so a reader (and
 the elaborator, see below) can always tell which kind of name they're looking at.
 
-**Elaborating a dotted-attribute annotation from inside a factory closure** needs one extra
-step beyond a bare-name annotation, because of how Python resolves annotations. A parameter
-annotation like `stream_in_if: in_intrf.fwd_t`, when `in_intrf` is a factory-local variable used
-*only* in annotations (never in the function's own body statements), is evaluated by Python at
-`def`-time in the *enclosing* scope — so `in_intrf` never becomes one of the inner function's own
-closure cells (`co_freevars`/`__closure__`). When `_elaborate_live_func` later re-parses that
-function from source to elaborate a fresh instantiation, its own merged eval namespace has no
-`in_intrf` to resolve the annotation against. `_recover_annotation_closure_vars` already covers
-the bare-name case (`stream_in_if: stream_t`) by pulling the pre-resolved value straight out of
-`func.__annotations__`, but is deliberately restricted to `ast.Name` annotations — it feeds
-`closure_ns`, which also drives canonical entity naming, and extending it to attribute chains
-would rename entities. `_annotation_attr_base_ns` (kept out of `closure_ns`, merged at lowest
-priority into `_elaborate_live_func`'s namespace, alongside `_annotation_elem_type_ns`'s
-subscript-element recovery) instead handles exactly the `ast.Attribute` case: it recovers
-`{base_name: interface}` using a `_pypeline_interface` back-reference that `@interface` stamps
-onto every `.fwd_t`/`.fb_t`/`.stream_t` it derives, pointing back at the owning interface class.
-Without this, `_annotation_to_ctype`'s eval() raises on the missing name, its broad exception
-handler falls through to a "static" fallback that returns the bare attribute name (`ann.attr`,
-e.g. the literal string `"fwd_t"`) as if it were the resolved ctype, and elaboration proceeds
-with a silently wrong type until a later nested field access fails — worth knowing since that
-fallback exists for other legitimate reasons (annotations that generally can't be `eval`'d) and
-gives no direct signal that *this* is what happened.
+**A dotted-attribute port annotation inside a factory closure** (`stream_in_if:
+in_intrf.fwd_t`, with `in_intrf` a factory-local variable used *only* in annotations) is the
+usual case of an annotation-only name: `in_intrf` never becomes a closure cell. The port
+type is the resolved `.fwd_t` in `func.__annotations__`, not a re-evaluation of the
+annotation (see **Port types** under
+[Specialised Functions](#specialised-functions)), so no interface-specific recovery is
+involved. Where an annotation still is re-evaluated (a top-level `def`, a local
+`x: some_t` in a body), an `eval()` failure falls through to `_annotation_to_ctype`'s
+"static" fallback, which returns the bare attribute name (`ann.attr`, e.g. the literal
+string `"fwd_t"`) as if it were the resolved ctype. That fallback exists for annotations that
+generally can't be `eval`'d, and gives no direct signal when it fires: elaboration proceeds
+with the wrong type until a later field access raises `KeyError: 'fwd_t'`.
 
-**A same-named local variable in two different factory closures can still shadow a correct
-recovery, one level up.** `_elaborate_live_func`'s merged namespace uses a separate,
-never-mutated `parser_state.top_level_module_globals` (the true design-file globals, set
-once in `PARSE_FILE`) as its fallback for names imported at the top of a closure's defining
-file — not `self.module_globals` (the *calling* `FuncElaborator`'s own already-merged
-namespace). This matters because when elaboration of one factory closure is reached *from
-inside* another's (e.g. `make_stream_auto_pipeline`'s returned function, called while elaborating
-`make_fir`'s), `self` at that point is the *caller's* `FuncElaborator`, and
-`self.module_globals` would already contain the caller's own `_annotation_attr_base_ns`
-recovery. If both factories happen to name their own interface variable identically — a
-likely coincidence given the `_intrf` naming convention above (`fir.py`'s own `in_intrf`,
-scalar per-sample data, vs. `stream_auto_pipeline.py`'s internal `in_intrf`, the windowed/
-array-shaped data `fir_core` actually operates on) — using `self.module_globals` would merge
-the caller's stale `in_intrf` at *higher* priority than the callee's own correctly-recovered
-one, silently overriding it: the callee's `stream_in_if` parameter would elaborate with the
-caller's (wrong) interface type, producing a scalar-typed `CONST_REF_RD` wire feeding an
-array-typed field — an elaboration-time mistake invisible until VHDL writing, where
-`TYPE_RESOLVE_ASSIGNMENT_RHS` (`VHDL.py`) has no array/scalar broadcast branch and hard-fails
-with "Cant support this assignment in vhdl?". `func_own_globals`
-(`func_for_source.__globals__`, the closure's *own* defining module) already covers the
-"names imported at the top of the file" intent without risking a nested caller's recovered,
-closure-local names leaking into the callee — `top_level_module_globals` is what makes that
-safe.
+**A same-named local variable in two different factory closures must not leak between
+them.** `_elaborate_live_func`'s merged namespace uses a separate, never-mutated
+`parser_state.top_level_module_globals` (the true design-file globals, set once in
+`PARSE_FILE`) as its fallback for names imported at the top of a closure's defining file —
+not `self.module_globals` (the *calling* `FuncElaborator`'s own already-merged namespace).
+When elaboration of one factory closure is reached *from inside* another's (e.g.
+`make_stream_auto_pipeline`'s returned function, called while elaborating `make_fir`'s),
+`self` at that point is the *caller's* `FuncElaborator`, and `self.module_globals` already
+contains the caller's closure variables. Both of those factories name their own interface
+variable `in_intrf` — a likely coincidence given the `_intrf` naming convention above
+(`fir.py`'s scalar per-sample data vs. `stream_auto_pipeline.py`'s windowed, array-shaped
+data that `fir_core` operates on). Merging the caller's namespace would let the caller's
+`in_intrf` resolve a name in the callee — for an interface type, a scalar-typed
+`CONST_REF_RD` wire feeding an array-typed field, which `TYPE_RESOLVE_ASSIGNMENT_RHS`
+(`VHDL.py`) rejects only at VHDL writing, with "Cant support this assignment in vhdl?".
+`func_own_globals` (`func_for_source.__globals__`, the closure's *own* defining module)
+already covers the "names imported at the top of the file" intent without that risk.
 
 Relatedly, `Reg[T]`/`Feedback[T]` local declarations and global `Wire[T]`/`Input[T]`/`Output[T]`
 declarations resolve their inner type via `_inner_ctype_to_str`, a different, narrower path than
@@ -1642,7 +1652,7 @@ and, as a side effect, registers any struct/enum type it evaluates to via
 reached only through one of these three declaration forms — never separately bound to a name
 that some other annotation would register — could reach elaboration with its fields never
 entered into `struct_to_field_type_dict`, surfacing later as a `KeyError` keyed on the *whole
-struct's canonical name* (not a single field, unlike the attribute-annotation case above) the
+struct's canonical name* (unlike the bare `'fwd_t'` of the attribute-annotation case above) the
 first time a nested field read needed it.
 
 `Reg[T]` additionally rejects `T` being one of an `@interface`'s derived `.fwd_t`/`.fb_t`
@@ -1654,9 +1664,9 @@ state that happens to look like stream data. The check unwraps one array dimensi
 (`_array_elem_ctype`, so `Reg[some_intrf.fwd_t[n]]` is caught too), then looks for
 `_pypeline_interface_role` on the (possibly-unwrapped) type — set only by `@interface`'s
 `_derive` on `.fwd_t`/`.fb_t`, deliberately *not* on `.stream_t` even though `.stream_t` also
-carries a `_pypeline_interface` back-reference (for the annotation-closure recovery
-described above) — `_pypeline_interface_role` is what distinguishes "a real paired half" from
-"the plain type that happens to know which interface it came from."
+carries a `_pypeline_interface` back-reference (so `interface_of()` answers for it) —
+`_pypeline_interface_role` is what distinguishes "a real paired half" from "the plain type
+that happens to know which interface it came from."
 
 **`Feedback[T]` is banned the same way, not exempt.** `Feedback[some_intrf.fwd_t]` might look
 legitimate — a `Feedback` wire stands in for a real, forward-referenced port value rather than
@@ -1850,12 +1860,11 @@ gensym-counter suffix, `pypeline_interface_func_gen_` boilerplate) becomes
 `decrypt_dataflow_core_if8040c842` (readable, no counter, no boilerplate).
 
 **Subscripted annotations on factory-local types.** A name used only inside an annotation is not
-captured as a closure cell, so `axis_out: axis_fb_t[n]` could not be re-evaluated during
-elaboration. `_annotation_elem_type_ns` recovers the element type from the already-resolved array
-in `__annotations__` and merges it at *lowest* priority. It is deliberately kept out of
-`closure_ns`: that dict feeds `_canonical_func_name`, so adding to it renames entities.
-(`pypeline.py`'s `_build_reg_sim_func` had the same problem on the simulation side and now
-substitutes pre-resolved annotation objects into the AST it re-`exec`s.)
+captured as a closure cell, so `axis_out: axis_fb_t[n]` cannot be re-evaluated during
+elaboration. The port takes the already-resolved array type from `__annotations__` instead
+(see **Port types** under [Specialised Functions](#specialised-functions)).
+`pypeline.py`'s `_build_reg_sim_func` does the same on the simulation side: it substitutes
+the pre-resolved annotation objects into the AST it re-`exec`s.
 
 **The wiring rule.** Calls are emitted in source order over the full dataflow graph; an edge
 gets a `Feedback[T]` iff the value's source is emitted *after* the destination consuming it.
