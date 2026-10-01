@@ -210,21 +210,21 @@ async def my_first_test(dut):
     # Settle the '0' with a real (if tiny) time advance -- a delta-only
     # NextTimeStep() was not enough to get GHDL/VPI to commit the '0' before
     # the '1' assignment below; an actual Timer wait is.
-    await Timer(0.001, units="ns")
+    await Timer(1, units="ps")
     cycle = 0
     print("Clock: ", cycle, flush=True)
     DUMP_PIPELINEC_DEBUG(dut)
     dut.{clock_name}.value = 1
-    await Timer({(ns/2):.3f}, units="ns")
+    await Timer({int(round(ns/2*1000))}, units="ps")
     print("^End Clock: ", cycle, flush=True)
     for i in {remaining_cycles_expr}:
         dut.{clock_name}.value = 0
-        await Timer({(ns/2):.3f}, units="ns")
+        await Timer({int(round(ns/2*1000))}, units="ps")
         print("")
         print("Clock: ", i+1, flush=True)
         DUMP_PIPELINEC_DEBUG(dut)
         dut.{clock_name}.value = 1
-        await Timer({(ns/2):.3f}, units="ns")
+        await Timer({int(round(ns/2*1000))}, units="ps")
 {run_all_cap_check}
 '''
         py_filepath = COCOTB_OUT_DIR + "/" + py_basename + ".py"
