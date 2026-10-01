@@ -123,8 +123,10 @@ def make_stream_auto_multi_cycle(
     throughput sweep picks: an AUTO_MULTI_CYCLE(latency=, start_latency=,
     max_latency=) tag replaces the fixed MULTI_CYCLE[...] (see
     pypeline.AUTO_MULTI_CYCLE). The sweep starts at start_latency (default 1) and
-    raises the count when the launch->capture path fails timing, never above
-    max_latency; latency=N fixes it. The handshake is written in terms of the
+    can seed from isolated registered-endpoint timing before whole-design confirmation.
+    It raises the count when the launch->capture path fails timing, never above
+    max_latency; latency=N fixes it. A provisional isolated seed can be confirmed
+    down once per datapath shape before counts become grow-only. The handshake is written in terms of the
     tag's .latency, so the final design always waits exactly as many cycles as
     the path is constrained for.
 

@@ -4,12 +4,15 @@ import copy
 import difflib
 import glob
 import hashlib
+import json
+from pathlib import Path
 import math
 import os
 import pickle
 import re
 import subprocess
 import sys
+import time
 
 import C_TO_LOGIC
 import MODELSIM
@@ -34,6 +37,7 @@ else:
         VIVADO_DIR = "/media/1TB/Programs/Linux/Xilinx/Vivado/2019.2"
     VIVADO_PATH = VIVADO_DIR + "/bin/vivado"
 VIVADO_VERSION = None
+VIVADO_VERSION_ID = None
 # Part used when this tool is selected without a part (--syn_tool/SYN_TOOL()
 # with no --part/PART()). See SYN.RESOLVE_PART_AND_TOOL.
 DEFAULT_PART = "xc7a35ticsg324-1l"
@@ -54,6 +58,10 @@ class ParsedTimingReport:
         single_timing_report = split_marker_toks[0]
 
         self.orig_text = syn_output
+        self.utilization = PARSE_UTILIZATION(syn_output)
+        self.extra_paths, self.coverage = PARSE_EXTRA_PATHS(syn_output)
+        report_times = re.findall(r"^PYPELINEC_REPORT_MS (\d+)$", syn_output, re.M)
+        self.optional_report_ms = int(report_times[-1]) if report_times else None
         self.reg_merged_with = {}  # dict[new_sig] = [orig,sigs]
         self.has_loops = True
         self.has_latch_loops = True
@@ -195,9 +203,68 @@ class ParsedTimingReport:
                 path_report = PathReport(path_report_text)
                 self.path_reports[path_report.path_group] = path_report
 
-        if len(self.path_reports) == 0:
+        if len(self.path_reports) == 0 and self.utilization["status"] != "over_capacity":
             print("Bad synthesis log?:", syn_output)
             raise Exception(f"Bad synthesis log?:{syn_output}")
+
+
+def PARSE_UTILIZATION(text):
+    """Capacity evidence: over_capacity / within_reported_limits / unknown.
+
+    Keeps requested overflow (Synth 8-3323) even when final mapping spills
+    back under capacity.
+    """
+    warnings = []
+    for resource, used, available in re.findall(
+        r"Resources of type (\S+) have been overutilized\. Used = ([\d,]+), Available = ([\d,]+)",
+        text,
+    ):
+        row = {
+            "resource": resource,
+            "used": int(used.replace(",", "")),
+            "available": int(available.replace(",", "")),
+        }
+        if row not in warnings:
+            warnings.append(row)
+    resources = {}
+    # Columns by header name: Vivado 2019.2 prints
+    # Site Type | Used | Fixed | Available | Util%; newer releases add
+    # Prohibited. Rows are read only under a "Site Type" header.
+    columns = None
+    for line in text.splitlines():
+        if not line.strip().startswith("|"):
+            continue
+        cells = [s.strip() for s in line.strip().strip("|").split("|")]
+        if cells and cells[0] == "Site Type":
+            columns = {name: i for i, name in enumerate(cells)}
+            if "Used" not in columns or "Available" not in columns:
+                columns = None
+            continue
+        if columns is None or len(cells) != len(columns):
+            continue
+        used, available = cells[columns["Used"]], cells[columns["Available"]]
+        if not (re.fullmatch(r"[\d,]+", used) and re.fullmatch(r"[\d,]+", available)):
+            continue
+        name = cells[0].rstrip("*").strip()
+        row = {
+            "used": int(used.replace(",", "")),
+            "available": int(available.replace(",", "")),
+        }
+        resources[name] = row
+    over = warnings + [
+        dict(resource=k, **v)
+        for k, v in resources.items()
+        if v["used"] > v["available"]
+    ]
+    return {
+        "status": "over_capacity"
+        if over
+        else "within_reported_limits"
+        if resources
+        else "unknown",
+        "resources": resources,
+        "overutilization": warnings,
+    }
 
 
 class ParsedUtilizationReport:
@@ -366,9 +433,10 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(
 
     # Add in VHDL 2008 fixed/float support for pre 2022.2
     # (currently the only reason why we need to know vivado version...)
-    global VIVADO_VERSION
+    global VIVADO_VERSION, VIVADO_VERSION_ID
     if VIVADO_VERSION is None and os.path.exists(VIVADO_PATH):
         ver_output = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(VIVADO_PATH + " -version")
+        VIVADO_VERSION_ID = ver_output.strip()
         VIVADO_VERSION = ver_output.split("\n")[0].split(" ")[1].strip("v")
     if VIVADO_VERSION:
         if float(VIVADO_VERSION) < 2022.2:
@@ -481,10 +549,13 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(
         rv += "report_utilization\n"
         rv += "report_timing_summary -setup\n"
 
+    rv += EXTRA_PATHS_TCL(multimain_timing_params, parser_state, inst_name)
+
     # Write checkpoint for top - not individual inst runs
     if inst_name is None:
         rv += "write_checkpoint " + output_dir + "/" + top_entity_name + ".dcp\n"
 
+    rv += 'puts "PYPELINEC_SYNTHESIS_COMPLETE"\n'
     return rv
 
 
@@ -535,62 +606,197 @@ def WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(
     return out_filepath
 
 
-# Returns parsed timing report
-def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
-    # First create directory for this logic
-    output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
-    if not os.path.exists(output_directory):
-        os.makedirs(output_directory)
+def INPUT_MANIFEST(tcl, part, tool_version, output_root):
+    """Synthesis input identity: HDL/XDC bytes, part, tool version and the
+    normalized Tcl recipe, independent of output-directory spelling. See
+    docs/SYN_DESIGN.md#6-caches."""
+    inputs = []
+    normalized = tcl
+    groups = re.findall(r"read_vhdl[^\n]*?\{([^}]+)\}", tcl)
+    paths = [p for group in groups for p in group.split()]
+    paths += re.findall(r"read_xdc\s+\{([^}]+)\}", tcl)
+    paths += [
+        s.strip().strip("{}")
+        for s in re.findall(r"^add_files -norecurse (.+)$", tcl, re.M)
+    ]
+    xdc = {}
+    # Longest first, so a path that prefixes another is never mis-replaced.
+    for filename in sorted(set(paths), key=lambda f: (-len(f), f)):
+        content_hash = hashlib.sha256(Path(filename).read_bytes()).hexdigest()
+        kind = (
+            "xdc" if filename in re.findall(r"read_xdc\s+\{([^}]+)\}", tcl) else "hdl"
+        )
+        inputs.append(
+            {"name": Path(filename).name, "kind": kind, "sha256": content_hash}
+        )
+        normalized = normalized.replace(filename, "@input/" + kind + "/" + content_hash)
+        if kind == "xdc":
+            xdc[Path(filename).name] = content_hash
+    normalized = normalized.replace(str(output_root), "@output")
+    manifest = {
+        "schema_version": 1,
+        "part": part,
+        "tool_version": tool_version,
+        "inputs": sorted(inputs, key=lambda v: (v["kind"], v["name"], v["sha256"])),
+        "xdc_hash": SYN.JSON_DIGEST(xdc),
+        "recipe_hash": hashlib.sha256(normalized.encode()).hexdigest(),
+    }
+    manifest["signature"] = SYN.JSON_DIGEST(manifest)
+    return manifest
 
-    # Set log path
-    # Hash for multi main is just hash of main pipes
-    hash_ext = multimain_timing_params.GET_HASH_EXT(parser_state)
-    log_path = output_directory + "/vivado" + hash_ext + ".log"
 
-    # If log file exists dont run syn
-    if os.path.exists(log_path):
-        print("Reading log", log_path)
-        f = open(log_path, "r")
-        log_text = f.read()
-        f.close()
-    else:
-        # O@O@()(@)Q@$*@($_!@$(@_$(
-        # Here stands a moument to "[Synth 8-312] ignoring unsynthesizable construct: non-synthesizable procedure call"
-        # meaning "procedure is named the same as the entity"
-        VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
+def _WITHOUT_OPTIONAL_SECTIONS(text):
+    """Drop output between the optional-report markers (errors there are
+    caught in Tcl and only make optional evidence unavailable)."""
+    return re.sub(
+        r"^PYPELINEC_OPTIONAL_BEGIN\s*$.*?^PYPELINEC_OPTIONAL_END\s*$",
+        "",
+        text,
+        flags=re.M | re.S,
+    )
 
-        # Write a syn tcl into there
-        syn_imp_tcl_filepath = WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE_MULTIMAIN(
-            multimain_timing_params, parser_state
+
+def REQUIRE_COMPLETE_LOG(text, path):
+    required = _WITHOUT_OPTIONAL_SECTIONS(text)
+    if re.search(r"^ERROR:", required, re.M) or not re.search(
+        r"^PYPELINEC_SYNTHESIS_COMPLETE\s*$", required, re.M
+    ):
+        # Place and route typically fails outright on an over-capacity design:
+        # say so, instead of only "errored" (synthesis warnings are still in the log).
+        overflow = PARSE_UTILIZATION(text)["overutilization"]
+        capacity = (
+            " DOES NOT FIT: requested "
+            + ", ".join(f"{r['resource']} {r['used']}/{r['available']}" for r in overflow)
+            + "."
+            if overflow
+            else ""
+        )
+        raise RuntimeError(
+            "Synthesis log is errored or incomplete: "
+            + str(path)
+            + "."
+            + capacity
+            + " Preserved; inspect and move this exact log aside before retrying. No automatic rerun."
         )
 
-        # Execute vivado sourcing the tcl
-        syn_imp_bash_cmd = (
-            VIVADO_PATH + " "
-            "-log "
-            + log_path
-            + " "
-            + '-source "'
-            + syn_imp_tcl_filepath
-            + '" '
-            + "-journal "
-            + output_directory
-            + "/vivado.jou"
-            + " "
-            + "-mode batch"
-        )  # Quotes since I want to keep brackets in inst names
 
+def _RUN_IDENTIFIED(
+    parser_state,
+    params,
+    output_directory,
+    stem,
+    inst_name=None,
+    is_final_top=False,
+    use_existing_log_file=True,
+):
+    started = time.monotonic()
+    tcl = GET_SYN_IMP_AND_REPORT_TIMING_TCL(
+        params, parser_state, inst_name, is_final_top
+    )
+    manifest = INPUT_MANIFEST(
+        tcl,
+        parser_state.part,
+        VIVADO_VERSION_ID or VIVADO_VERSION,
+        SYN.SYN_OUTPUT_DIRECTORY,
+    )
+    suffix = manifest["signature"][:16]
+    base = Path(output_directory) / (stem + "_" + suffix)
+    log_path = str(base) + ".log"
+    tcl_path = str(base) + ".tcl"
+    # Checkpoints and journals belong to the same observation as its log.
+    tcl = re.sub(
+        r"^write_checkpoint .*?$",
+        "write_checkpoint {" + str(base) + ".dcp}",
+        tcl,
+        flags=re.M,
+    )
+    hit = os.path.exists(log_path)
+    if hit:
+        # Never overwrite a failed/partial log, including explicit force callers.
+        log_text = Path(log_path).read_text()
+        REQUIRE_COMPLETE_LOG(log_text, log_path)
+        if not use_existing_log_file:
+            raise RuntimeError(
+                "Existing synthesis artifact preserved: "
+                + log_path
+                + "; move it aside explicitly before requesting a rerun"
+            )
+        print("Reading log", log_path, flush=True)
+    else:
+        Path(tcl_path).write_text(tcl)
+        Path(str(base) + ".inputs.json").write_text(
+            json.dumps(manifest, indent=2) + "\n"
+        )
         print("Running:", log_path, flush=True)
-        log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd)
-
-    import AUTO_MULTI_CYCLE
-
+        result = subprocess.run(
+            [
+                VIVADO_PATH,
+                "-log",
+                log_path,
+                "-source",
+                tcl_path,
+                "-journal",
+                str(base) + ".jou",
+                "-mode",
+                "batch",
+            ],
+            stdout=subprocess.PIPE,
+            stderr=subprocess.STDOUT,
+            text=True,
+        )
+        log_text = (
+            Path(log_path).read_text() if Path(log_path).exists() else result.stdout
+        )
+        REQUIRE_COMPLETE_LOG(log_text, log_path)
+        if result.returncode:
+            raise RuntimeError(
+                "Vivado exited " + str(result.returncode) + ": " + log_path
+            )
     report = ParsedTimingReport(log_text)
-    AUTO_MULTI_CYCLE.CHECK_MCP_TIMING_REPORT(report, parser_state, multimain_timing_params)
+    report.log_path = log_path
+    report.input_signature = manifest["signature"]
+    report.cache_hit = hit
+    report.elapsed_seconds = time.monotonic() - started
     return report
 
 
-# Returns parsed timing report
+def SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params):
+    import AUTO_MULTI_CYCLE
+
+    output_directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
+    os.makedirs(output_directory, exist_ok=True)
+    VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
+    report = _RUN_IDENTIFIED(
+        parser_state,
+        multimain_timing_params,
+        output_directory,
+        "vivado" + multimain_timing_params.GET_HASH_EXT(parser_state),
+    )
+    import SWEEP
+
+    over = report.utilization["status"] == "over_capacity"
+    if not (SWEEP.STOP_ON_OVER_CAPACITY and over):
+        try:
+            AUTO_MULTI_CYCLE.CHECK_MCP_TIMING_REPORT(
+                report, parser_state, multimain_timing_params
+            )
+        except ValueError as error:
+            if not over:
+                raise
+            # Default (no fit stop): say why the netlist may be unusable
+            # before the MCP coverage error ends the build.
+            overflow = ", ".join(
+                f"{r['resource']} {r['used']}/{r['available']}"
+                for r in report.utilization["overutilization"]
+            ) or "final utilization table"
+            raise ValueError(
+                f"{error} NOTE: this netlist is over device capacity ({overflow}); "
+                "over-capacity mapping can change or remove MCP endpoints. "
+                "Consider --stop_on_over_capacity."
+            ) from error
+    return report
+
+
 def SYN_AND_REPORT_TIMING(
     inst_name,
     Logic,
@@ -601,88 +807,36 @@ def SYN_AND_REPORT_TIMING(
     use_existing_log_file=True,
     is_final_top=False,
 ):
-    # Timing params for this logic
-    timing_params = TimingParamsLookupTable[inst_name]
-
-    # First create syn/imp directory for this logic
-    output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)
-
-    if not os.path.exists(output_directory):
-        os.makedirs(output_directory)
-
-    # Set log path
-    if hash_ext is None:
-        hash_ext = timing_params.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
-    if total_latency is None:
-        total_latency = timing_params.GET_TOTAL_LATENCY(
-            parser_state, TimingParamsLookupTable
-        )
-    log_path = (
-        output_directory
-        + "/vivado"
-        + "_"
-        + str(total_latency)
-        + "CLK"
-        + hash_ext
-        + ".log"
-    )
-    # vivado -mode batch -source <your_Tcl_script>
-
-    # Use same configs based on to speed up run time?
-    log_to_read = log_path
-
-    # If log file exists dont run syn
-    if os.path.exists(log_to_read) and use_existing_log_file:
-        # print "SKIPPED:", syn_imp_bash_cmd
-        print("Reading log", log_to_read, flush=True)
-        f = open(log_path, "r")
-        log_text = f.read()
-        f.close()
-    else:
-        # O@O@()(@)Q@$*@($_!@$(@_$(
-        # Here stands a moument to "[Synth 8-312] ignoring unsynthesizable construct: non-synthesizable procedure call"
-        # meaning "procedure is named the same as the entity"
-        # VHDL.GENERATE_PACKAGE_FILE(Logic, parser_state, TimingParamsLookupTable, timing_params, output_directory)
-        VHDL.WRITE_LOGIC_ENTITY(
-            inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable
-        )
-        VHDL.WRITE_LOGIC_TOP(
-            inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable
-        )
-
-        # Write xdc describing clock rate
-
-        # Write a syn tcl into there
-        syn_imp_tcl_filepath = WRITE_SYN_IMP_AND_REPORT_TIMING_TCL_FILE(
-            inst_name, Logic, output_directory, TimingParamsLookupTable, parser_state
-        )
-
-        # Execute vivado sourcing the tcl
-        syn_imp_bash_cmd = (
-            VIVADO_PATH + " "
-            "-log "
-            + log_path
-            + " "
-            + '-source "'
-            + syn_imp_tcl_filepath
-            + '" '
-            + "-journal "  # Quotes since I want to keep brackets in inst names
-            + output_directory
-            + "/vivado.jou"
-            + " "
-            + "-mode batch"
-        )
-
-        print("Running:", log_path, flush=True)
-        log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(syn_imp_bash_cmd)
-
     import AUTO_MULTI_CYCLE
     import AUTO_PIPELINE
 
-    report = ParsedTimingReport(log_text)
-    mtp = AUTO_PIPELINE.MultiMainTimingParams()
-    mtp.TimingParamsLookupTable = TimingParamsLookupTable
-    AUTO_MULTI_CYCLE.CHECK_MCP_TIMING_REPORT(report, parser_state, mtp, inst_name)
+    tp = TimingParamsLookupTable[inst_name]
+    output_directory = SYN.GET_OUTPUT_DIRECTORY(Logic)
+    os.makedirs(output_directory, exist_ok=True)
+    if hash_ext is None:
+        hash_ext = tp.GET_HASH_EXT(TimingParamsLookupTable, parser_state)
+    if total_latency is None:
+        total_latency = tp.GET_TOTAL_LATENCY(parser_state, TimingParamsLookupTable)
+    VHDL.WRITE_LOGIC_ENTITY(
+        inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable
+    )
+    VHDL.WRITE_LOGIC_TOP(
+        inst_name, Logic, output_directory, parser_state, TimingParamsLookupTable
+    )
+    params = AUTO_PIPELINE.MultiMainTimingParams()
+    params.TimingParamsLookupTable = TimingParamsLookupTable
+    report = _RUN_IDENTIFIED(
+        parser_state,
+        params,
+        output_directory,
+        "vivado_" + str(total_latency) + "CLK" + hash_ext,
+        inst_name,
+        is_final_top,
+        use_existing_log_file,
+    )
+    AUTO_MULTI_CYCLE.CHECK_MCP_TIMING_REPORT(report, parser_state, params, inst_name)
+    # Only endpoint-qualified reports may seed automatic cycle counts later.
+    AUTO_MULTI_CYCLE.REMEMBER_ISOLATED_REPORTS(report, parser_state, params, inst_name)
     return report
 
 
@@ -874,3 +1028,133 @@ ipx::archive_core $script_path/ip_repo/user.org_user_{ip_name}_1.0.zip [ipx::fin
     f = open(out_filepath, "w")
     f.write(text)
     f.close()
+
+
+def EXTRA_PATHS_TCL(params, parser_state, top_inst=None):
+    """Bounded optional evidence. Query filters do not change timing constraints."""
+    import AUTO_MULTI_CYCLE
+
+    # Everything below is optional evidence. It runs inside markers and a Tcl
+    # catch: a failure here must never error the synthesis log (which would
+    # block reuse and retries), only make this evidence unavailable. See
+    # REQUIRE_COMPLETE_LOG / PARSE_EXTRA_PATHS.
+    text = r"""
+puts "PYPELINEC_OPTIONAL_BEGIN"
+if {[catch {
+set pypeline_extra_started [clock milliseconds]
+proc pypeline_paths {scope paths limit} {
+    puts [join [list PYPELINEC_COVERAGE $scope [llength $paths] $limit] "\t"]
+    foreach p $paths {
+        set src [get_property STARTPOINT_PIN $p]
+        set dst [get_property ENDPOINT_PIN $p]
+        set clock [get_clocks -quiet [get_property STARTPOINT_CLOCK $p]]
+        if {[llength $clock] != 1} {continue}
+        set period [get_property PERIOD $clock]
+        set sc [get_cells -quiet -of_objects [get_pins -quiet $src]]
+        set dc [get_cells -quiet -of_objects [get_pins -quiet $dst]]
+        set st ""; set dt ""
+        if {[llength $sc] == 1} {set st [get_property REF_NAME $sc]}
+        if {[llength $dc] == 1} {set dt [get_property REF_NAME $dc]}
+        puts [join [list PYPELINEC_PATH $scope [get_property GROUP $p] \
+            [get_property SLACK $p] [get_property REQUIREMENT $p] \
+            [get_property DATAPATH_DELAY $p] [get_property LOGIC_LEVELS $p] \
+            $period $src $dst $st $dt] "\t"]
+    }
+}
+"""
+    tpl = params.TimingParamsLookupTable
+    roots = [top_inst] if top_inst is not None else sorted(parser_state.main_mhz)
+    for root in roots:
+        entity = VHDL.GET_ENTITY_NAME(
+            root, parser_state.LogicInstLookupTable[root], tpl, parser_state
+        )
+        if top_inst is None:
+            text += f"set pypeline_cells [get_cells -quiet -hier -filter {{NAME =~ {entity}/* && IS_SEQUENTIAL}}]\n"
+            text += f"if {{[llength $pypeline_cells]}} {{pypeline_paths {{main:{root}}} [get_timing_paths -quiet -to $pypeline_cells -max_paths 1] 1}}\n"
+        for inst in sorted(parser_state.LogicInstLookupTable):
+            if inst != root and not inst.startswith(root + C_TO_LOGIC.SUBMODULE_MARKER):
+                continue
+            for tup, start, end, auto in AUTO_MULTI_CYCLE.GET_MCP_CELL_PATHS(
+                inst, root, entity, parser_state
+            ):
+                # Each physical pair is separately queried, including replicated groups.
+                scope = "mcp:" + inst + ":" + tup[1] + ":" + tup[2]
+                # The same /C -> /D pins the set_multicycle_path exception uses:
+                # a cell-to-cell worst path may end on CE/R, which that
+                # exception (and MCP evidence) does not cover.
+                text += f"set pypeline_launch [get_pins -quiet {{{start}/C}}]\nset pypeline_capture [get_pins -quiet {{{end}/D}}]\n"
+                text += f"if {{[llength $pypeline_launch] && [llength $pypeline_capture]}} {{pypeline_paths {{{scope}}} [get_timing_paths -quiet -from $pypeline_launch -to $pypeline_capture -max_paths 1] 1}}\n"
+    if top_inst is None:
+        text += "pypeline_paths failing [get_timing_paths -quiet -max_paths 4096 -nworst 1 -slack_lesser_than 0] 4096\n"
+    text += 'puts "PYPELINEC_REPORT_MS [expr {[clock milliseconds] - $pypeline_extra_started}]"\n'
+    text += '} pypeline_optional_error]} {puts [join [list PYPELINEC_OPTIONAL_ERROR $pypeline_optional_error] "\\t"]}\n'
+    text += 'puts "PYPELINEC_OPTIONAL_END"\n'
+    return text
+
+
+def PARSE_EXTRA_PATHS(text):
+    from types import SimpleNamespace
+
+    paths, coverage = [], {}
+    for line in text.splitlines():
+        cols = line.split("\t")
+        if cols[0] == "PYPELINEC_COVERAGE" and len(cols) == 4:
+            scope, count, limit = cols[1], int(cols[2]), int(cols[3])
+            coverage[scope] = dict(
+                count=count,
+                limit=limit,
+                truncated=scope == "failing" and count >= limit,
+                complete=scope == "failing" and count < limit,
+            )
+        elif cols[0] == "PYPELINEC_OPTIONAL_ERROR":
+            # The optional queries failed inside their Tcl catch: no evidence.
+            coverage["optional_error"] = dict(
+                count=0, limit=0, truncated=False, complete=False,
+                error="\t".join(cols[1:]),
+            )
+        elif cols[0] == "PYPELINEC_PATH" and len(cols) == 12:
+            (
+                _,
+                scope,
+                group,
+                slack,
+                requirement,
+                data,
+                levels,
+                period,
+                src,
+                dst,
+                st,
+                dt,
+            ) = cols
+            slack, requirement, data, period = map(
+                float, (slack, requirement, data, period)
+            )
+            if requirement <= 0 or period <= 0 or requirement - slack <= 0:
+                continue  # unsupported/non-setup timing is not evidence of a pass
+            start, _, spin = src.rpartition("/")
+            end, _, epin = dst.rpartition("/")
+            paths.append(
+                SimpleNamespace(
+                    scope=scope,
+                    path_group=group,
+                    slack_ns=slack,
+                    requirement_ns=requirement,
+                    data_path_ns=data,
+                    logic_levels=int(levels),
+                    source_ns_per_clock=period,
+                    path_delay_ns=(requirement - slack) / (requirement / period),
+                    start_reg_name=start or src,
+                    end_reg_name=end or dst,
+                    start_pin_name=spin,
+                    end_pin_name=epin,
+                    start_cell_type=st,
+                    end_cell_type=dt,
+                    netlist_resources=set(),
+                    logic_delay=data,
+                )
+            )
+    for scope, row in coverage.items():
+        row["parsed_count"] = sum(path.scope == scope for path in paths)
+        row["complete"] = row["complete"] and row["parsed_count"] == row["count"]
+    return paths, coverage

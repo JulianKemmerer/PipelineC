@@ -29,7 +29,7 @@ MAIN_NAME = "sweep_floor_main"
 # tool -> (goal MHz, expected stopped_reason, expected stop warning text)
 TOOLS = {
     "device_models": (100.0, "plateau", "fmax plateaued at"),
-    "pyrtl": (50.0, "empirical_floor", "at empirical (soft) fmax floor"),
+    "pyrtl": (50.0, "empirical_floor", "at empirical (soft) frequency ceiling"),
 }
 
 # Bound the complete search, including the measured-delay fallback for the
@@ -55,6 +55,7 @@ def main():
         args.syn_tool,
         "--out_dir",
         out_dir,
+        "-j", "1",
     ]
     env = dict(os.environ, SWEEP_FLOOR_DETECT_MHZ=str(goal_mhz))
     print(f"Running (goal {goal_mhz} MHz):", " ".join(cmd), flush=True)
@@ -75,8 +76,8 @@ def main():
     if "Writing Results of Throughput Sweep" not in out:
         print("FAIL: results were not written before failing")
         sys.exit(1)
-    if "predicted fmax floor" not in out:
-        print("FAIL: no predicted fmax floor report before synthesis")
+    if "estimated frequency ceiling" not in out:
+        print("FAIL: no estimated frequency ceiling report before synthesis")
         sys.exit(1)
     if "below the" not in out or "goal" not in out:
         print("FAIL: no warning that the floor is below the timing goal")

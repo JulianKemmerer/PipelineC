@@ -1088,7 +1088,7 @@ def GENERATE_BITSTREAM(parser_state, multimain_timing_params):
 def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
     output_dir = SYN.SYN_OUTPUT_DIRECTORY + "/" + SYN.TOP_LEVEL_MODULE
     out_file = f"{output_dir}/{SYN.TOP_LEVEL_MODULE}.v"
-    print("Rendering top level Verilog...")
+    print("Rendering top level Verilog with GHDL/Yosys...", flush=True)
     # Identify tool versions
     if not os.path.exists(f"{GHDL_BIN_PATH}/ghdl"):
         raise Exception("ghdl executable not found!")
@@ -1114,10 +1114,10 @@ def RENDER_FINAL_TOP_VERILOG(multimain_timing_params, parser_state):
 
     # Run command
     bash_cmd = f"bash {sh_path}"
-    # print(bash_cmd, flush=True)
+    print("Conversion script:", sh_path, flush=True)
     log_text = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(bash_cmd, cwd=output_dir)
     # print(log_text)
-    print(f"Top level Verilog file: {out_file}")
+    print(f"Top level Verilog file: {out_file}", flush=True)
 
 
 def FUNC_IS_PRIMITIVE(func_name):

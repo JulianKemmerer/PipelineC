@@ -23,7 +23,7 @@ DESIGN = os.path.join(THIS_DIR, "auto_multi_cycle_sweep_design.py")
 
 
 def run(out_dir, start=None, max_latency=None, extra=()):
-    cmd = [sys.executable, PYPELINEC, DESIGN]
+    cmd = [sys.executable, PYPELINEC, DESIGN, "-j", "1"]
     if out_dir:
         cmd += ["--out_dir", out_dir]
     cmd += list(extra)
@@ -72,8 +72,9 @@ def check_raises_count(out_dir):
     rc, out = run(out_dir, extra=["--sim", "--run", "60"])
     if rc != 0:
         fail(f"default-start AUTO_MULTI_CYCLE build/sim exited {rc}")
-    if "action=auto_multi_cycle(" not in out:
-        fail("the sweep never raised the AUTO_MULTI_CYCLE count")
+    # Endpoint characterization now seeds all groups before the first top run.
+    if "provisional seed 1->6" not in out:
+        fail("the measured mixing-chain MCP was not directly seeded from 1 to 6")
     counts = harvested(out)
     if len(counts) != 1:
         fail(f"expected one AUTO_MULTI_CYCLE harvest line, got {counts}")

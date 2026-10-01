@@ -150,6 +150,42 @@ the tool's syntax), `GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH` and
 `WRITE_CLK_CONSTRAINTS_FILE` (§7). A single-instance run wraps its table in an
 `AUTO_PIPELINE.MultiMainTimingParams`, imported inside the function.
 
+Vivado additionally returns optional `extra_paths`, `coverage`, `utilization`,
+`input_signature`, `log_path`, and `cache_hit`. Extra reports never replace the
+base one-worst-path-per-clock contract: `SYN.TIMING_REPORT_PATHS(report)` returns
+the base paths followed by any extra ones, for every backend. `SYN.DISTINCT_PATHS`
+groups them by clock and start/end register bank, so the same bit reported for
+the clock, a MAIN and an MCP pair counts once. A bank (`SYN.PATH_REGISTER_BANK`)
+collapses payload indices but keeps hierarchy, fields and `raw_hdl_pipeline`
+stage numbers. `SYN.SERIALIZE_PATH_REPORT` is the row `sweep_history.json`
+keeps per path. The same synthesis queries the worst
+path into each MAIN's sequential cells, each registered MCP launch/capture
+pair, and at most 4096 failing endpoint paths. These are report filters, not
+`group_path` constraints. Compact rows retain slack, requirement, data delay,
+logic levels, clock period, endpoint pins and cell types. The failing-path
+query records its limit and truncation; absent optional sections mean unknown
+coverage. The optional queries run between `PYPELINEC_OPTIONAL_BEGIN` and
+`PYPELINEC_OPTIONAL_END` inside a Tcl `catch`. A failure there prints
+`PYPELINEC_OPTIONAL_ERROR`, makes that evidence unavailable, and does not make
+the log errored: the completeness check ignores output between the markers.
+When a log is rejected as errored or incomplete (for example a place-and-route
+failure on an over-capacity design), the error names any requested-resource
+overflow found in it.
+MCP pairs are queried on the same `/C` → `/D` pins as the
+`set_multicycle_path` exception, so a CE/R endpoint is never mistaken for MCP
+evidence. Paths whose requirement minus slack is not positive are ignored. See [Vivado timing-path properties](https://docs.amd.com/r/en-US/ug912-vivado-properties/TIMING_PATH).
+
+`VIVADO.PARSE_UTILIZATION` retains `Synth 8-3323` requested-resource overflow
+even when Vivado spills arithmetic into LUTs and the final utilization table
+falls to the device limit. Every resource type is checked. Final utilization tables are read by
+their `Site Type` header columns, so releases that add a `Prohibited` column
+still parse. Whole-design observations record final
+counts, requested overflow and changes in MAIN/AUTO_PIPELINE latency since
+the last observation within reported capacity. The default is a prominent
+warning; `--stop_on_over_capacity` exits nonzero before timing feedback or a
+confirmation fallback. Backends without capacity evidence report `unknown`.
+Synthesis timing and reported capacity do not establish routed timing or fit.
+
 ## 4. Kinds of synthesis runs
 
 | run | entry point | used by |
@@ -347,17 +383,33 @@ type. `USE_COMBINATIONAL_PLANNER_WEIGHTS` selects whether the planner weighs
 the combinational component or the full register-to-register delay
 (`GET_PLANNER_DELAY`); it is part of the cache directory so the two never mix.
 
-Vivado also reuses build-local synthesis logs named by the recursive timing
-identity. MCP-bearing instances contribute their sorted constraints and
-`AUTO_MULTI_CYCLE.MCP_IMPLEMENTATION_VERSION`; that contribution reaches their
-ancestors and the whole-design hash. Updating the MCP recipe therefore gives
-affected VHDL, logs, and checkpoints new names while preserving unrelated leaf
-characterization. Continue in the existing output directory: retain old
-reports/checkpoints as evidence and let the new identities trigger the required
-runs. Do not delete the output tree or validate new constraints using an old
-checkpoint. Warm builds with the same recipe and timing parameters still reuse
-reports. This versioning is scoped to MCP changes, not a general content hash
-of every compiler source or arbitrary user-edited constraint.
+Vivado's build-local log names contain both the recursive timing hash and a
+SHA256-derived input signature. `VIVADO.INPUT_MANIFEST` hashes the actual
+HDL and XDC bytes, part, Vivado version, and normalized TCL/report recipe.
+Relocating the output directory does not change identity. Changing a clock,
+MCP allowance, or report recipe does. Each observation has its own TCL,
+checkpoint, journal and `.inputs.json`. Compiler edits alone do not invalidate
+identical synthesis inputs.
+
+All HDL inputs participate, including the type package. An isolated
+synthesis lists a package holding only the types its files use
+([VHDL_DESIGN.md](VHDL_DESIGN.md#generated-vhdl-is-the-same-in-every-pass-of-a-run)), so re-elaboration that changes an unrelated
+type or FIFO depth does not invalidate its log. A change to a type it does use
+still does. Use `.inputs.json` to distinguish such a miss from changed cuts or
+constraints. Whole-design syntheses read the full `c_structs_pkg.pkg.vhd`.
+
+Logs named without an input signature, as older compiler versions wrote them,
+stay on disk for investigation but are never matched: they carry no input or
+recipe evidence, so an output directory from such a version re-synthesizes
+once. The shared operator-delay cache is separate. A matching log must have the
+completion marker and no ERROR lines (`VIVADO.REQUIRE_COMPLETE_LOG`).
+Incomplete or errored matching logs raise a clear error; they are never
+overwritten or automatically retried. Inspect and manually move aside only
+that exact artifact before retrying. Reuse is reported as a cache hit.
+
+Design Python source is frozen for the whole build, so later passes elaborate
+what the first parse read
+([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#repeated-parse_file-support-the-pin-and-confirm-loops-foundation)).
 
 ## 7. Constraints and output files
 
@@ -377,6 +429,12 @@ of every compiler source or arbitrary user-edited constraint.
   against current state, and runs `CHECK_VHDL_FILES_CONSISTENCY`: every
   `entity work.X` referenced inside a listed file must be defined by a listed
   file.
+- **Final Verilog.** After a passing sweep, GHDL/Yosys conversion can still take
+  substantial time. The conversion-start message and script path are flushed
+  before the tools run, even when stdout is redirected. `sweep_history.json`
+  describes synthesis completion; the process exit and the requested final
+  artifacts determine whether the whole build succeeded, and a live GHDL LLVM
+  worker after timing confirmation is still build work.
 - **Estimates.** `WRITE_REGISTERS_ESTIMATE_FILE` and `WRITE_AREA_ESTIMATE_FILE`
   print `Estimated register usage: ...` / `Estimated area: ...` before
   synthesis; `PRINT_MEASURED_AREA_IF_AVAILABLE` prints `Measured area: ...` after
@@ -439,12 +497,18 @@ the index uses whatever source and timing information is available.
 `SYN.FUNC_SRC_LOC_STR(parser_state, func_name)` appends `" [file.py:line]"` (from the same
 `Logic.ast_meta` `name_index.log` reads, empty string when there is none) to every stdout
 line that names a function without a location: `"Synthesizing function:"`,
-`"Design likely limited to ~N MHz due to function:"`, and every `[sweep]` WARNING/NOTE
+`"Isolated effective stage-delay estimate ..."`, and every `[sweep]` WARNING/NOTE
 line in `SWEEP.py` that names a hotspot or a MAIN. Reading a failing build's own console
 output no longer requires separately grepping `module_instances.log`/`pipeline_map.log`
 just to find which line of which file a printed name refers to.
 
 ## 8. Command line
+
+`--stop_on_over_capacity` is opt-in and applies to whole-design synthesis,
+including pinned confirmation and combinational builds. It preserves artifacts,
+records `device_over_capacity`, and exits with `DOES NOT FIT` before using that
+netlist's timing to change the design. Without it, the sweep warns and retains
+the over-capacity qualification in its history.
 
 | flag | meaning |
 |---|---|

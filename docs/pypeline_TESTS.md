@@ -298,6 +298,53 @@ Two reads worth taking from the plot:
   71.7 MHz at 2. Comparing tools on fmax alone hides that the deeper pipeline
   costs proportionally more latency to get there.
 
+## Sweep evidence and cross-pass replay coverage
+
+`sweep_evidence_test.py` (`unit`, no synthesis tool) exercises concrete lock
+replay across model refresh, input-content cache identity, capacity warnings,
+endpoint-bank deduplication, raw MCP seeding, and rejection of incomplete
+logs. Its `scripted_sweep_backend.py` drives the actual sweep loop:
+unimplicated MAINs stay unchanged, ineffective feedback triggers no synthesis,
+locks survive another parse, MAIN-order reversal gives identical
+implementations, and multiple paths reach the same result with fewer backend
+calls. Further cases cover a real two-pass re-elaboration (locks carried to new
+lane instances, never to another MAIN), failing-before-passing evidence,
+bounded MCP confirmation repair, confirm-down reuse, pipelined confirmation
+failures that preserve unaffected MAINs, optional-report Tcl robustness and
+header-based utilization parsing. The suite registers it under two pinned
+`PYTHONHASHSEED` values (`sweep_evidence_test`, `sweep_evidence_test_seed777`),
+so no decision may depend on set iteration order. Real Vivado MCP tests
+additionally check the report recipe, endpoint constraints, stream handshake
+and re-elaboration.
+
+The same file exercises bounded trim probes with independently specified
+stage delays: a smaller pipeline can pass despite little timing margin when
+stages are uneven or the worst path is in an unchanged subtree. The tests also
+verify the probe budget, zero-effort behavior, and restoration of the actual
+passing implementation after a failed probe. A cut-count ratio is not a
+frequency bound. It also reparses a real latency-sized hierarchy with renamed
+callers and additional replicas: every core must keep the same concrete timing
+parameters, entity hash and depth. Its reporting cases keep estimated ceilings
+distinct from timing verdicts and aggregate confirmation paths once per MAIN.
+`floor_and_bits_cap_unit_test.py` requires path evidence before a hard-floor
+stop.
+
+`added_latency_context_test.py` also runs path-delay characterization on two
+real parses at different AUTO_MULTI_CYCLE counts: the rebuilt holder keeps its
+`MCP_SHAPE` and reuses isolated evidence instead of being synthesized, while a
+holder without evidence is synthesized.
+
+`c_structs_pkg_relayout_test.py` also checks that an isolated synthesis reads a
+type package holding only its own types: a function that doesn't use the resized
+lane type keeps identical package bytes across the relayout, one that does gets a
+new package, and GHDL analyzes both file lists.
+
+`auto_pipeline_harvest_test.py` covers MAIN ownership, differing same-key
+replicas (majority replay; an error without a shared key), changed region
+interiors, empty placements, fixed flags and exact bit boundaries during
+re-elaboration. It also scripts the latency-pass driver: a pass ended by
+isolated MCP seeding runs no synthesis and does not use the pass budget.
+
 ## OpenXC7 `--pins` bitstream coverage
 
 `inst/openxc7_bitstream_test.py` (`synth_open_tools`) builds

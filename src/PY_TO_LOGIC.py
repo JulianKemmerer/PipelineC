@@ -1,12 +1,19 @@
 import ast
+import atexit
 import functools
 import hashlib
+import importlib.machinery
 import importlib.util
 import inspect
+import io
+import json
+import linecache
 import os
 import re
 import sys
+import sysconfig
 import textwrap
+import tokenize
 import types as _types
 import pypeline_names
 
@@ -7089,8 +7096,7 @@ def _discover_and_queue_module(
         # module) -- return the same verdict as the first encounter.
 
     sub_globals = vars(sub_mod)
-    with open(sub_file, "r") as fh:
-        sub_src = fh.read()
+    sub_src = READ_SOURCE_TEXT(sub_file)
     sub_tree = ast.parse(sub_src)
 
     has_content = _module_has_explicit_pypeline_content(sub_mod, sub_tree)
@@ -7241,6 +7247,99 @@ def _process_imports(
 # survive -- required, since the latency cache lives in pypeline module state.
 _modules_before_first_parse = None
 
+# Design source frozen for the whole build. Each re-parse above re-executes
+# the evicted design import graph, re-reads the files for hardware ASTs and
+# calls inspect.getsource on live closures -- hours after the first parse in a
+# pin-and-confirm build. Editing a design file in the meantime would make a
+# later pass elaborate different code than the one the sweep measured (or make
+# getsource return shifted lines). FREEZE_DESIGN_SOURCES (pypelinec only) makes
+# every such read return the bytes first read. Only re-read sources are
+# frozen: the design's files and include/pypeline. The compiler's own modules,
+# Python's stdlib/site-packages and generated output-directory source load
+# normally.
+_frozen_sources = {}  # absolute path -> bytes first read
+_freeze_output_dir = None
+_freeze_skipped_roots = ()
+_ORIGINAL_SOURCE_GET_CODE = importlib.machinery.SourceFileLoader.get_code
+
+
+def _is_frozen_source(path):
+    if _freeze_output_dir is None:
+        return False
+    if os.path.dirname(path) == os.path.dirname(os.path.abspath(__file__)):
+        return False  # the compiler's own modules
+    parts = path.split(os.sep)
+    if "site-packages" in parts or "dist-packages" in parts:
+        return False
+    return not path.startswith(_freeze_skipped_roots)
+
+
+def _frozen_source_bytes(filename):
+    path = os.path.abspath(filename)
+    if path not in _frozen_sources:
+        data = open(path, "rb").read()
+        _frozen_sources[path] = data
+        encoding = tokenize.detect_encoding(io.BytesIO(data).readline)[0]
+        lines = data.decode(encoding).splitlines(keepends=True)
+        # mtime=None: linecache.checkcache never reloads these from disk.
+        # (Loaders and code objects use absolute paths.)
+        linecache.cache[path] = (len(data), None, lines, path)
+    return _frozen_sources[path]
+
+
+def READ_SOURCE_TEXT(filename):
+    """Text of a Python source file; the first-read text once frozen."""
+    if not _is_frozen_source(os.path.abspath(filename)):
+        with open(filename, "r") as f:
+            return f.read()
+    data = _frozen_source_bytes(filename)
+    return data.decode(tokenize.detect_encoding(io.BytesIO(data).readline)[0])
+
+
+def _frozen_get_code(loader, fullname):
+    filename = loader.get_filename(fullname)
+    if not _is_frozen_source(os.path.abspath(filename)):
+        return _ORIGINAL_SOURCE_GET_CODE(loader, fullname)
+    return loader.source_to_code(_frozen_source_bytes(filename), filename)
+
+
+def FREEZE_DESIGN_SOURCES(output_dir):
+    """Freeze design sources from here on; record their hashes and any later
+    on-disk edits (disk_drift) in <output_dir>/source_provenance.json."""
+    global _freeze_output_dir, _freeze_skipped_roots
+    # Before patching the loader: get_paths() can import _sysconfigdata_*.
+    stdlib = {
+        os.path.abspath(sysconfig.get_paths()[name]) + os.sep
+        for name in ("stdlib", "platstdlib")
+    }
+    output_root = os.path.abspath(output_dir)
+    _freeze_skipped_roots = tuple(sorted(stdlib)) + (output_root + os.sep,)
+    if _freeze_output_dir is None:
+        importlib.machinery.SourceFileLoader.get_code = _frozen_get_code
+        atexit.register(WRITE_SOURCE_PROVENANCE)
+    _freeze_output_dir = output_root
+    WRITE_SOURCE_PROVENANCE()
+
+
+def WRITE_SOURCE_PROVENANCE():
+    if _freeze_output_dir is None:
+        return
+    sources = {}
+    for path, data in sorted(_frozen_sources.items()):
+        try:
+            drift = open(path, "rb").read() != data
+        except OSError:
+            drift = True
+        sources[path] = dict(
+            sha256=hashlib.sha256(data).hexdigest(), bytes=len(data), disk_drift=drift
+        )
+    os.makedirs(_freeze_output_dir, exist_ok=True)
+    with open(os.path.join(_freeze_output_dir, "source_provenance.json"), "w") as f:
+        json.dump(
+            dict(source_policy="design-frozen-at-first-read", sources=sources), f, indent=2
+        )
+        f.write("\n")
+
 
 def _new_parser_state(module_globals):
     parser_state = C_TO_LOGIC.ParserState()
@@ -7387,8 +7486,7 @@ def _elaborate_live_roots(roots):
             # Their globals already contain the reachable type/callable graph.
             tree = ast.parse(textwrap.dedent(inspect.getsource(source)), filename)
         else:
-            with open(filename) as source_file:
-                tree = ast.parse(source_file.read(), filename)
+            tree = ast.parse(READ_SOURCE_TEXT(filename), filename)
         _discover_structs_from_module(module, parser_state)
         _discover_enums_from_module(module, parser_state)
         _discover_global_wires(tree, namespace, parser_state)
@@ -7532,8 +7630,7 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     main_func_ids = {id(f) for f in pypeline._main_registry}
 
     # ── Step 4: AST parse for hardware elaboration ──
-    with open(py_file, "r") as f:
-        source = f.read()
+    source = READ_SOURCE_TEXT(py_file)
     tree = ast.parse(source)
 
     # ── Step 4.5: discover global Wire[T] declarations (top file, no prefix) ──

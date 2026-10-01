@@ -1159,6 +1159,12 @@ AUTO_PIPELINE's `.latency` feedback, with a few deliberate differences:
   its logic, so a count change between passes must rename that entity, not reuse a
   skip-if-exists file.
 
+Automatic count selection uses endpoint-qualified isolated measurements to
+seed all groups, then whole-design feedback. A provisional seed may be confirmed
+down once per datapath shape without crossing its elaborated/user floor; after
+that, feedback is grow-only. A changed datapath is measured and seeded before
+pinned confirmation. See [sweep and confirmation rules](AUTO_MULTI_CYCLE_DESIGN.md#3-sweep-feedback).
+
 The library factories `make_stream_multi_cycle(func, latency)` (fixed `MULTI_CYCLE`) and
 `make_stream_auto_multi_cycle(func, *, latency=, start_latency=, max_latency=)` live in
 `include/pypeline/stream/stream_multi_cycle.py`; the auto one exposes its tag as `func_mcp.mcp`.

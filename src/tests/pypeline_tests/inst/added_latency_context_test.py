@@ -66,9 +66,15 @@ def _holders(ps):
 
 
 def _coarse(inst, mhz, state, ps, **kwargs):
+    # Same contract as DO_COARSE_THROUGHPUT_SWEEP: the winning table is
+    # returned too (the mini-sweep captures its concrete interior).
     state.met_timing = True
     state.initial_guess_latency = 1
-    return state, [0.5], None
+    table = AP.ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
+        inst, ps.LogicInstLookupTable[inst], [0.5], ps,
+        AP.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(ps), write_files=False,
+    )
+    return state, [0.5], table
 
 
 def _locked_plans(ps):
@@ -195,22 +201,35 @@ def test_seeding_exact_and_renamed_paths():
     for plan in _locked_plans(ps):
         SWEEP.SET_MINISWEEP_BOUNDARY_STRATEGY(plan, _func(ps, "helper"), "both", ps)
         SWEEP.APPLY_LOCKS(plan, ps, prev_tpl)
-    for rename in (False, True):
+    # "wrappers" renames each MAIN's direct children, like a latency-sized
+    # factory wrapper whose entity name changes; tagged interiors keep their
+    # relative paths. "interior" renames every level, which breaks the
+    # contract that an AUTO_PIPELINE'd function does not depend on .latency.
+    for rename in (None, "wrappers", "interior"):
         new = copy.copy(ps)
-        names = {i: i.replace(M, M + "renamed_") if rename else i for i in ps.LogicInstLookupTable}
         new.LogicInstLookupTable = {}
+        names = {}
         for i, logic in ps.LogicInstLookupTable.items():
             logic = copy.copy(logic)
-            prefix = "renamed_" if rename else ""
-            logic.submodule_instances = {prefix + k: v for k, v in logic.submodule_instances.items()}
-            logic.sub_inst_to_auto_pipeline_latency = {prefix + k: v for k, v in logic.sub_inst_to_auto_pipeline_latency.items()}
-            logic.sub_inst_to_auto_pipeline_key = {prefix + k: v for k, v in logic.sub_inst_to_auto_pipeline_key.items()}
+            if rename == "interior" or (rename == "wrappers" and M not in i):
+                logic.submodule_instances = {"renamed_" + k: v for k, v in logic.submodule_instances.items()}
+                logic.sub_inst_to_auto_pipeline_latency = {"renamed_" + k: v for k, v in logic.sub_inst_to_auto_pipeline_latency.items()}
+                logic.sub_inst_to_auto_pipeline_key = {"renamed_" + k: v for k, v in logic.sub_inst_to_auto_pipeline_key.items()}
+            names[i] = {None: i, "wrappers": i.replace(M, M + "renamed_", 1), "interior": i.replace(M, M + "renamed_")}[rename]
             new.LogicInstLookupTable[names[i]] = logic
         source = {i: tp.DEEPCOPY() for i, tp in prev_tpl.items()}
         # Exact tier must reject a stale, previously illegal interior too.
-        if not rename:
+        if rename is None:
             for inst in _insts(ps, "helper"):
                 source[inst].SET_HAS_OUT_REGS(True)
+        if rename == "interior":
+            try:
+                AP.SEED_TIMING_PARAMS_FROM_PREVIOUS(ps, source, new, _empty(new))
+            except AP.SeedReplayError as exc:
+                assert "must not depend on .latency" in str(exc), exc
+            else:
+                raise AssertionError("a changed AUTO_PIPELINE interior was replayed")
+            continue
         tpl, unseeded = AP.SEED_TIMING_PARAMS_FROM_PREVIOUS(ps, source, new, _empty(new))
         assert not unseeded
         for old_inst, inst in names.items():
@@ -220,6 +239,61 @@ def test_seeding_exact_and_renamed_paths():
                 assert tpl[inst]._slices == prev_tpl[old_inst]._slices, inst
                 assert tpl[inst]._has_output_regs == prev_tpl[old_inst]._has_output_regs
         AP.CHECK_ADDED_LATENCY_CONTEXTS(new, tpl)
+
+
+def test_holder_rebuilt_for_a_new_count_reuses_its_datapath_evidence():
+    """A cycle-count change rebuilds an AUTO_MULTI_CYCLE holder (its handshake
+    compares against .latency + 1) without changing the launch-to-capture
+    cone. WireGuard re-synthesized such holders for ~17 min per pass. With
+    isolated evidence for the same MCP_SHAPE, characterization derives the
+    per-cycle delay instead; without it, the holder is synthesized."""
+    import pypeline
+
+    synthesized = []
+
+    def fake_syn(inst, logic, ps, tpl, *a, **k):
+        synthesized.append(logic.func_name)
+        return logic.func_name
+
+    def fake_measured(logic, report, ps):
+        logic.delay = 50
+        logic.delay_is_estimated = False
+
+    def characterize(count):
+        synthesized.clear()
+        with tempfile.TemporaryDirectory() as out, patch.object(SYN, "SYN_OUTPUT_DIRECTORY", out):
+            pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE({} if count is None else {key: count})
+            try:
+                ps = PY_TO_LOGIC.PARSE_FILE(str(Path(__file__).with_name("added_latency_context_design.py")))
+            finally:
+                pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE({})
+            with patch.object(SYN, "SYN_TOOL", SimpleNamespace(SYN_AND_REPORT_TIMING=fake_syn, __name__="FAKE")), \
+                    patch.object(SYN, "PART_SET_TOOL", lambda *a, **k: None), \
+                    patch.object(SYN, "WRITE_BLACK_BOX_FILES", lambda *a, **k: None), \
+                    patch.object(SYN, "GET_CACHED_PATH_DELAY", lambda *a: None), \
+                    patch.object(SYN, "GET_NUM_PROCESSES", lambda: 1), \
+                    patch.object(SYN, "SET_MEASURED_DELAY_FROM_REPORT", fake_measured), \
+                    patch.object(SYN.DEVICE_MODELS, "part_supported", lambda part: False):
+                SYN.ADD_PATH_DELAY_TO_LOOKUP(ps)
+        holder = next(l for l in ps.FuncLogicLookupTable.values() if l.auto_multi_cycle_tuples)
+        group = MCP.COLLECT_AUTO_MULTI_CYCLE_GROUPS(ps)[key]
+        return ps, holder, MCP.MCP_SHAPE(group, ps)
+
+    ps = _state()
+    key = next(iter(MCP.COLLECT_AUTO_MULTI_CYCLE_GROUPS(ps)))
+    with patch.object(MCP, "ISOLATED_MCP_EVIDENCE", {}):
+        _ps1, holder1, shape1 = characterize(None)
+        assert holder1.func_name in synthesized, synthesized  # no evidence yet
+        MCP.ISOLATED_MCP_EVIDENCE[(key, shape1)] = 30.0  # as REMEMBER_ISOLATED_REPORTS records
+        _ps3, holder3, shape3 = characterize(3)
+        assert holder3.func_name != holder1.func_name  # rebuilt for the count
+        assert shape3 == shape1  # same datapath cone
+        assert holder3.func_name not in synthesized, synthesized
+        assert holder3.delay == int(10.0 * SYN.DELAY_UNIT_MULT), holder3.delay
+        # A different shape (no evidence) is synthesized again.
+        MCP.ISOLATED_MCP_EVIDENCE.clear()
+        _ps, holder, _shape = characterize(3)
+        assert holder.func_name in synthesized
 
 
 def test_gap_planning_and_coarse_slicing():

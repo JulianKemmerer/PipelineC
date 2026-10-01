@@ -28,7 +28,7 @@ def main():
     parser.add_argument("--out_dir", default=None)
     args = parser.parse_args()
 
-    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "device_models"]
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "device_models", "-j", "1"]
     if args.out_dir:
         cmd += ["--out_dir", args.out_dir]
     print("Running:", " ".join(cmd), flush=True)
@@ -81,8 +81,8 @@ def main():
         sys.exit(1)
     with open(history_paths[-1]) as f:
         history = json.load(f)
-    if history.get("schema_version") != 2 or history.get("build_complete") is not True:
-        print(f"FAIL: sweep_history.json not a complete schema 2 file: {history}")
+    if history.get("schema_version") != 3 or history.get("build_complete") is not True:
+        print(f"FAIL: sweep_history.json not a complete schema 3 file: {history}")
         sys.exit(1)
     final = history["mains"].get("sweep_planless_main", {}).get("final") or {}
     if not (

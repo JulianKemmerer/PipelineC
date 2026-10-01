@@ -32,7 +32,7 @@ same nonzero-exit timing-failure gate as an ordinary pipeline search.
 |---|---|
 | `src/SWEEP.py` | The common machinery: cut subtrees, slice landscapes, floor prediction, cut planning and typed placement, applying placements to `TimingParams`, hotspot attribution and mini-sweeps, plan accounting, `sweep_history.json`, and the drivers — `DO_THROUGHPUT_SWEEP` (entry point), `DO_PLANNED_THROUGHPUT_SWEEP` (the refinement loop), `DO_COARSE_THROUGHPUT_SWEEP` (`--coarse` and mini-sweeps), `DO_SEEDED_CONFIRM_OR_SWEEP` (the pin-and-confirm confirmation run). |
 | `src/SYN.py` | The synthesis API the sweep calls: delay collection, single-instance and whole-design synthesis, parsed timing reports ([`SYN_DESIGN.md`](SYN_DESIGN.md)). |
-| `src/AUTO_PIPELINE.py` | The pipeline representation the sweep edits, and AUTO_PIPELINE-specific feedback: constrained regions are planned and enforced on every iteration ([`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md#6-constrained-auto_pipeline-regions-latency--start_latency--max_latency)). |
+| `src/AUTO_PIPELINE.py` | The pipeline representation the sweep edits (including the concrete-pipeline snapshots that locks replay), and AUTO_PIPELINE-specific feedback: constrained regions are planned and enforced on every iteration ([`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md#6-constrained-auto_pipeline-regions-latency--start_latency--max_latency)). |
 | `src/AUTO_MULTI_CYCLE.py` | AUTO_MULTI_CYCLE feedback: failing multi-cycle paths raise their cycle count ([`AUTO_MULTI_CYCLE_DESIGN.md`](AUTO_MULTI_CYCLE_DESIGN.md#3-sweep-feedback)). |
 | `src/AUTO_FSM.py` | Wraps the whole sweep in its own schedule-and-confirm loop ([`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md#34-the-driver-loop)). |
 | `src/PYRTL.py`, `src/DEVICE_MODELS.py` | The `SYN_TOOL` backends the delay model and fast sweeps are built on — see [`DEVICE_MODELS_DESIGN.md`](DEVICE_MODELS_DESIGN.md) for the real sky130 liberty STA backend (`PART("sky130...")` / `--syn_tool device_models`) and why it exists (PyRTL's own cost model has no fanout/load term at all). |
@@ -50,7 +50,7 @@ frontier and estimated delays are part of the delay model in
 | **landscape** | the flattened delay axis of one cut subtree: where every nanosecond of logic lives and whether a cut may land there |
 | **segment** | one leaf-most piece of that axis (sliceable / atomic / locked) |
 | **placement** | one typed physical register location: an operation-instance input/output boundary or a genuine bit-internal leaf cut; `fixed` placements are retained by controlled internal experiments |
-| **floor** | the fmax that no amount of added registers can beat (longest un-cuttable stretch) |
+| **floor** (legacy internal name) | estimated minimum stage period, or reciprocal frequency ceiling; never an fmax lower bound |
 | **plan** | per-MAIN sweep state: cut subtrees, landscapes, cuts, learned scale factors, locks |
 | **measurement frontier** | the topmost fully-combinational funcs — the only hierarchical modules ever synthesized per-module; their measured through-delays calibrate the estimates of everything above (and thus how many cuts the first plan gets) |
 | **lock** | a mini-sweep result whose internal slices are frozen onto eligible instances of a func in the blamed MAIN (`params_are_fixed`); optional input/output banks are selected from parent dataflow rather than assumed per instance |
@@ -501,32 +501,31 @@ record.
 
 ### Floor
 
-*What fmax can this subtree never exceed?* The longest run of illegal units
+*Which stage span might limit this subtree?* The longest run of illegal units
 is the predicted minimum stage delay — reported with a blamed instance
 **before any synthesis run**.
 
-In the running example the longest illegal run is `acc`'s 5 units → floor =
-1000/5 = 200 MHz, comfortably above the 100 MHz goal, so the report is just
-informational:
-
-```
-[sweep] main=my_main subtree=my_main comb delay ~25.0 ns, target 10.0 ns
-        (100.0 MHz), predicted fmax floor (soft) ~200.0 MHz
-        due to acc (state_regs, 5.0 ns unsliceable)
-```
-
-If `acc` instead held 20 ns of division, the floor (50 MHz) would sit below
-the goal and the sweep says so up front:
-
-```
-[sweep] WARNING: predicted soft floor 50.0 MHz is below the 100.0 MHz goal - ...
-```
+In the running example, `acc` contributes 5 ns: a 200 MHz estimated ceiling
+above the 100 MHz goal. Predictions above the goal are suppressed. A 20 ns
+span instead predicts a 50 MHz ceiling below that goal and is reported with
+its blamed instance. These estimates are diagnostic hypotheses, not timing
+proof. Adjustable MCP spans are excluded: their cycle-normalized module delay
+mixes controller timing with a launch/capture budget that the sweep can change.
+Their endpoint-qualified timing drives MCP feedback separately.
 
 Floors come in two strengths:
 
 - **hard** — pure comb spans no register can ever land in (raw VHDL text
   leaves, comb trapped *inside* a stateful container between its
-  registers). A true ceiling: the sweep gives up on reaching it.
+  registers). "Hard" describes the lack of a legal register placement, not
+  certainty in the delay estimate. The early report never declares the goal
+  impossible from this model alone. The sweep stops at a hard floor
+  (`AT_EVIDENCED_HARD_FLOOR`) only when a result lands in the floor's band
+  *and* the measured failing path can run through the blamed span: its
+  containing function appears in an endpoint or netlist resource name
+  (`FAILING_PATH_REACHES_SPAN`). Otherwise it needs the soft-floor evidence:
+  measured delays and a repeated result
+  ([why](#hard-floors-need-path-evidence)).
 - **soft** (`state_regs`, `feedback_vars`, `fixed_latency`) — a stateful
   module's span is its estimated through-delay, which mixes paths that
   boundary registers CAN cut with internal ones they can't, so it is a
@@ -584,6 +583,49 @@ could restore a snapshot that measured well above its target and still exit
 iteration (e.g. one a floor-stop landed on afterward) and never re-checked
 against the snapshot actually written out.
 
+Confirmation stdout prints one verdict per MAIN using its worst reported path.
+Extra per-MCP paths contribute to that minimum after cycle normalization; they
+are not printed as competing final MAIN frequencies. Their endpoint scope,
+requirement and slack remain available in the observation's path evidence.
+
+### Concrete hotspot locks
+
+Before an isolated hotspot sweep, measurable combinational descendants are
+characterized in deterministic order. The stateful-subtree and hierarchy-mode
+restrictions of `MEASURE_DELAYS` still apply. Later fallback measurement reuses
+these results. Minimality probes reuse previously measured candidate points;
+they establish a bounded search result, not an exhaustive optimum.
+
+A lock stores each descendant's timing parameters relative to the helper root
+(`AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE`), including raw-leaf slices, exact
+bit boundaries and register flags. Applying it replays that measured interior
+directly (`AUTO_PIPELINE.RESTORE_CONCRETE_PIPELINE`). The coarse fractional
+cuts are retained for diagnostics only: lowering them again against a
+refreshed delay model can silently build a different implementation. A model
+mismatch is reported without changing the concrete lock. Input/output boundary
+policies remain independent.
+
+Compatible concrete locks carry across re-elaboration. The key is the owning
+MAIN, the canonical function, the goal and the measured subtree delay model
+(`SUBTREE_MODEL_FINGERPRINT`: each descendant function's delay, estimate flag,
+wire types and delay components); descendants are measured with the same rules
+before minimizing and again before matching, so both sides of the key see the
+same model. A carried lock obeys the mini-sweep's own rules
+(`LOCK_BLOCKED_REASON`): only eligible instances in the owning MAIN, never a
+subtree root or MAIN, never inside a constrained AUTO_PIPELINE region, and
+never nested in another lock. Another MAIN never inherits it, so MAIN depths
+stay independent. Only the retained implementation's locks are stored. A MAIN
+preserved from a failed confirmation keeps a carried lock only if its
+preserved snapshot realizes exactly that interior
+(`AUTO_PIPELINE.CONCRETE_PIPELINE_CONTAINS`). Old Logic objects are not
+reused.
+
+If both failing endpoints are strictly inside a locked instance of the blamed
+hotspot, boundary-only experiments are skipped. The stop describes a search
+limitation; it does not prove the target impossible. Reopening an interior
+requires evidence from the same implementation in a context that fits the
+device.
+
 ### Plan
 
 `MainSweepPlan` (one per MAIN with a target MHz) holds the sweep's
@@ -611,14 +653,14 @@ MainSweepPlan(
 ```
 
 The history dumps to `<out_dir>/<top>/sweep_history.json` (`schema_version`
-2). Each goal main has its iteration records **and a `final` record for the
+3). Each goal main has its iteration records **and a `final` record for the
 design as built**. Read `final` for "what did this build achieve". The
 iteration log alone can't answer that: an assumed-met final iteration, a
 restored best/met snapshot and a [pin-and-confirm](AUTO_PIPELINE_DESIGN.md#5-latency-pin-and-confirm-loop-pypeline-designs-only) confirmation run are all not "the last
 iteration".
 
 ```json
-{"schema_version": 2, "build_complete": true,
+{"schema_version": 3, "build_complete": true,
  "mains": {"my_main": {
    "goal_mhz": 100.0,
    "iterations": [
@@ -651,10 +693,11 @@ iteration".
   `coarse_sweep` or `no_sweep`. `run`, `iter` and `iteration_index` name the
   record whose table was kept: a restored snapshot names its own iteration.
   `standalone_mhz` is the planless as-written check's number.
-- **`final.met`** agrees with the build's exit code by construction: a main in
-  `sweep_timing_failures` is `met: false`, and that tuple supplies
-  `achieved_mhz` and `failure_reason`. `met: null` means unverified
-  (`--no_sweep`, or no goal).
+- **`final.met`** is false for a measured failed MAIN. A MAIN without retained
+  snapshot evidence is `null` (`unknown_in_retained_snapshot`), even if an earlier
+  implementation passed or failed. Historical maxima never supply final MHz.
+  The build fails if any goal fails; an unknown MAIN is not independently blamed.
+  `--no_sweep` and goal-less MAINs also have no verified verdict.
 - **`mhz_is_lower_bound`.** A met main with no measured MHz has
   `achieved_mhz: null` and `mhz_is_lower_bound: true`: the goal is a lower
   bound on its fmax, never the fmax itself.
@@ -665,9 +708,55 @@ iteration".
   (`build_complete: false`), so a build that dies later still leaves data.
   The driver rewrites it at *Writing Results* (`build_complete: true`) before
   the TIMING NOT MET exit, so failing builds get it too. A `--comb`
-  characterization build records nothing and writes no file.
+  characterization can also retain an observation without a verified goal verdict.
+
+Schema 3 retains the schema-2 final field names. `observations` records each
+actual backend call, its implementation/constraint signature, input signature,
+cache origin, endpoints/coverage, utilization, and latency changes. AUTO_PIPELINE
+depths are keyed `AUTO_PIPELINE:<owning MAIN>:<canonical key>`, which survives
+re-elaboration; `auto_pipeline_instances` keeps each key's physical instance
+paths, which latency-sized wrappers rename between passes. A previous value
+that is missing therefore means the region did not exist, not that a renamed one was 0.
+`retained_observation` identifies the final restored implementation, including
+its MCP counts; it need not be the last synthesis. Decision records separately
+identify `reused_observation` when feedback changed no realized implementation.
+`build_complete: false` remains provisional, particularly when `.latency`
+changes cause the next pass to build different hardware.
+
+Sweep cost records distinguish backend observations, new Vivado launches, cache reads,
+and distinct implementations. Per-MAIN FF estimates expose estimated register growth
+after iterations with no reported failure in that MAIN, within one elaboration pass.
+These are compiler estimates, not measured mapped FF counts; latency-driven shape
+changes across passes are recorded separately.
+
 
 ## 3. The refinement loop
+
+Only MAINs implicated by failing timing evidence are nudged or densified.
+Every other MAIN replays its previous concrete placement. An explicit trim
+probe may reduce a previously passing MAIN. With optional multi-path reports,
+independent MAINs and MCP groups receive feedback together; each MAIN's worst
+pipelinable path is acted on first. Failing evidence is processed before
+passing evidence: after a failing multi-cycle or pipelined path in one
+observation, a later passing path never marks that MAIN met or replaces a
+planless MAIN's verdict. Missing paths alone never prove a pass on
+a failing clock. A passing base worst-path report supplies the clock's goal
+lower bound to unnamed MAINs.
+
+Before synthesis, the realized implementation signature
+(`IMPLEMENTATION_SIGNATURE`: each MAIN's entity hash, its target clock and the
+MCP counts) is compared against observations already made in this pass. If
+unchanged, the existing report is fed to the next decision-ladder step, without
+another backend call. More than eight successive unchanged decisions stop
+honestly with `no_realized_change`.
+A provisional MCP confirm-down trial is a backend run and counts against the
+synthesis budget; a trial whose signature was already observed is reused.
+A MAIN whose feedback just produced a new model-independent candidate (a fresh
+concrete lock, a boundary policy or a same-depth refinement) is not counted as
+stagnant until that candidate has been synthesized, so the broad measured
+fallback does not run ahead of it. Densify and global-scale feedback, which rely
+on the delay model, still trigger the fallback.
+Planning attempts and synthesis observations are therefore different counts.
 
 ```
                  +--------------------------------------------+
@@ -689,6 +778,13 @@ iteration".
           |                    near-zero slack no matter how over-registered.
           |                    If the retry fails timing, restore the
           |                    fewest-stage met result and finish.
+          |                    Measure the smaller implementation even when
+          |                    the passing result has little timing margin:
+          |                    cut-count ratios do not bound its frequency.
+          |                    Stages can have unequal delays, and the worst
+          |                    path can be in an unchanged subtree. The effort
+          |                    budget bounds probe cost; zero accepts the first
+          |                    passing result without probing.
           |               otherwise: done (Met timing...)
           |
           no
@@ -703,7 +799,7 @@ iteration".
           |-- yes --> try it once before any denser schedule
           |-- no/failed --> continue with ordinary feedback below
           |
-   at hard floor? / soft floor + stagnant? --> stop, warn, keep best (exit 0)
+   at estimated hard limit? / soft limit + stagnant? --> stop, keep best (timing failure)
           |
    fmax flat 3x (1% of target) while cuts grew, delays measured?
           |-- yes --> stop(plateau), warn (blame soft floor if any), keep best
@@ -713,8 +809,8 @@ iteration".
    hotspot found:   func_delay_scale[hotspot] *= target/achieved  -> replan
    same hotspot 2x: isolated mini-sweep, lock eligible instances in this MAIN
                     (the isolated probe measures that helper itself)
-   hotspot locked:  try the opposite compact boundary side, then bounded
-                    one-sided/both-sided fallback policies before rescaling
+   hotspot locked:  both endpoints strictly inside the lock -> stop honestly;
+                    otherwise try bounded boundary policies
    hotspot cannot be auto-pipelined (no eligible in-MAIN instance, state regs, ...):
                     rescale once (boundary registers may cut its IO paths),
                     then if fmax stagnates stop and tell the user PLAINLY:
@@ -725,7 +821,7 @@ iteration".
                     -- saturated landscape -- drops those nudges again)
           |
    fmax stagnant (within 1% of target, twice) or out of ideas,
-   estimates in play -> MEASURE_DELAYS all of them (once), keep going
+   estimates in play -> MEASURE_DELAYS eligible combinational functions (once), keep going
           |
    iteration cap (12) -> stop with warning, keep best result
 ```
@@ -740,14 +836,15 @@ compact repeated-helper solution before global densification skips past it:
 2. densify cuts in the attributed func (`func_delay_scale`) — replan;
 3. still attributed to the same helper on the next full-design result →
    isolated **mini-sweep**: measure
-   the hotspot's own delay first if it is fully comb (the coarse initial
+   relevant estimated descendants and the hotspot, within the existing fully
+   combinational measurement frontier (the coarse initial
    guess divides delay by target period — an inflated estimate would
    over-pipeline the lock from the start; a hotspot with state below keeps
    its estimate, the loop self-corrects), coarse-sweep upward from that
    guess, then **bisect downward** (`MINISWEEP_TRIM_PROBES` single-latency
    runs) between the last failing and first passing latency before locking
-   — the lock lands on the proven-minimal latency, never the first passing
-   overshoot. A zero-cut isolated pass is deliberately not locked: adding
+   — the lock retains the best tested passing latency, with bounded rather
+   than exhaustive minimality evidence. Previously measured probe points are reused. A zero-cut isolated pass is deliberately not locked: adding
    IO registers alone would add latency without splitting the hot path.
    `MINISWEEP_LOCK_TARGETS` scopes probing, conflicts, and locks to eligible
    instances in the blamed MAIN; another MAIN owns its own locks. Ineligible
@@ -1144,3 +1241,13 @@ and max-capacitance dominate in a way no isolated leaf measurement sees
 stage-local ripple-borrow subtract is far worse still, 99.16). Isolated
 leaf delay is a planning heuristic, not a QoR prediction — this is the
 concrete instance to point to when that distinction needs defending.
+
+### Hard floors need path evidence
+
+"Hard" means no legal register placement exists in a span, while the span's
+delay can still be an estimate. The standalone WireGuard encrypt build
+(Vivado 2019.2, xc7a200tffg1156-2, 80 MHz goal) blamed a 46.5 MHz hard
+ceiling on a MAC state MUX and then measured 81.5 MHz. A ChaCha path landing
+near 46.5 MHz on the way would have stopped the search at that estimate, so
+`AT_EVIDENCED_HARD_FLOOR` also requires the measured failing path to reach the
+blamed span (`FAILING_PATH_REACHES_SPAN`).

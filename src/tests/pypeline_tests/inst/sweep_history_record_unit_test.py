@@ -187,7 +187,7 @@ def test_writer_schema_and_planless_entry():
                 SYN.LOGIC_IS_ZERO_DELAY,
             ) = saved
     assert on_disk == doc
-    assert on_disk["schema_version"] == SWEEP.SWEEP_HISTORY_SCHEMA_VERSION == 2
+    assert on_disk["schema_version"] == SWEEP.SWEEP_HISTORY_SCHEMA_VERSION == 3
     assert on_disk["build_complete"] is True
     entry = on_disk["mains"]["planless_main"]
     assert entry["goal_mhz"] == 1.0 and len(entry["iterations"]) == 1

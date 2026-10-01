@@ -15,6 +15,16 @@ from common import INST_DIR, Test, main
 
 def get_tests() -> list:
     tests = []
+    # Two pinned hash seeds: no sweep decision may depend on set iteration order.
+    for name, seed in (("sweep_evidence_test", "1"), ("sweep_evidence_test_seed777", "777")):
+        tests.append(
+            Test(
+                name=name,
+                category="unit",
+                cmd=[INST_DIR / "sweep_evidence_test.py"],
+                env={"PYTHONHASHSEED": seed},
+            )
+        )
     tests.append(
         Test(
             name="added_latency_context_test",
@@ -64,7 +74,7 @@ def get_tests() -> list:
     )
     # Pure-unit tests for the AUTO_PIPELINE .latency machinery
     # (AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES grouping + divergence detection,
-    # AUTO_PIPELINE.SEED_TIMING_PARAMS_FROM_PREVIOUS two-tier matching + call-site-change
+    # AUTO_PIPELINE.SEED_TIMING_PARAMS_FROM_PREVIOUS concrete region replay + call-site-change
     # detection, CANONICAL_CALLABLE_KEY determinism, latency cache/read-flag
     # behavior) against hand-built fixtures -- no design build involved.
     tests.append(

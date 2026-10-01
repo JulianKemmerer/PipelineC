@@ -487,6 +487,18 @@ def vga_pixel_gen():
     ...
 ```
 
+A sweep changes only pipelines implicated by failing timing reports. Identical
+functions in separate MAINs can retain independent depths. Results in
+`sweep_history.json` distinguish measured MHz, goal lower bounds, and unknown
+MAINs, and name the retained synthesis observation. Timing before `.latency`
+re-elaboration is provisional until the resulting hardware is confirmed.
+
+Vivado resource overflow warns by default. Use `--stop_on_over_capacity` to
+stop at the first whole-design netlist that exceeds device capacity, preserving
+its reports. Synthesis timing alone is not routed timing or fit. Complete logs
+are reused only for matching HDL, constraints, tool and report recipe; an
+incomplete matching log requires explicit manual handling.
+
 ### FPGA target device
 
 Call `PART()` once at module level to tell the synthesiser which device to target:

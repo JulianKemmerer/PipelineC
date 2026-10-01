@@ -81,6 +81,42 @@ def test_at_predicted_floor_stress_symmetry():
         assert got == expected, (curr, floor, target, got, expected)
 
 
+def test_hard_floor_stop_needs_the_failing_path_to_reach_the_span():
+    # WireGuard standalone 80 MHz: an estimated 46.5 MHz "hard" ceiling from
+    # a MUX inside the MAC's state container, while the measured design
+    # reached 81.5 MHz. A result near 46.5 MHz on a ChaCha path is no
+    # evidence of that ceiling.
+    from types import SimpleNamespace
+
+    import C_TO_LOGIC
+
+    M = C_TO_LOGIC.SUBMODULE_MARKER
+    logic = lambda f: SimpleNamespace(func_name=f)
+    ps = SimpleNamespace(LogicInstLookupTable={
+        "main": logic("main"),
+        "main" + M + "region": logic("region_func"),
+        "main" + M + "region" + M + "mac": logic("poly1305_mac_state"),
+        "main" + M + "region" + M + "mac" + M + "mux": logic("MUX_uint1_t"),
+    })
+    blame = SimpleNamespace(inst_path="main" + M + "region" + M + "mac" + M + "mux", reason="inside_state_regs_container", hard=True)
+    plan = SimpleNamespace(main_inst="main", subtrees=["main" + M + "region"], same_mhz_count=0,
+                           predicted_hard_floor=lambda: (46.5, blame))
+    chacha = SimpleNamespace(start_reg_name="region_func/chacha20_block_step/reg_a", end_reg_name="region_func/chacha20_block_step/reg_b", netlist_resources=[])
+    mac = SimpleNamespace(start_reg_name="region_func/poly1305_mac_state/acc_reg", end_reg_name="region_func/poly1305_mac_state/out_reg", netlist_resources=[])
+    assert not SWEEP.AT_EVIDENCED_HARD_FLOOR(plan, 45.0, 80.0, chacha, ps, delays_measured=False)
+    assert SWEEP.AT_EVIDENCED_HARD_FLOOR(plan, 45.0, 80.0, mac, ps, delays_measured=False)
+    # Soft-floor evidence rule: measured delays and a repeated result.
+    plan.same_mhz_count = 1
+    assert not SWEEP.AT_EVIDENCED_HARD_FLOOR(plan, 45.0, 80.0, chacha, ps, delays_measured=False)
+    assert SWEEP.AT_EVIDENCED_HARD_FLOOR(plan, 45.0, 80.0, chacha, ps, delays_measured=True)
+    # Outside the band nothing changes.
+    assert not SWEEP.AT_EVIDENCED_HARD_FLOOR(plan, 70.0, 80.0, mac, ps, delays_measured=True)
+    # A span directly in a subtree root can't be told apart: old behavior.
+    blame.inst_path = "main" + M + "region" + M + "mux2"
+    plan.same_mhz_count = 0
+    assert SWEEP.AT_EVIDENCED_HARD_FLOOR(plan, 45.0, 80.0, chacha, ps, delays_measured=False)
+
+
 # ─── 3b: BEST_SNAPSHOT_MET_ALL_GOALS ─────────────────────────────────────
 
 
@@ -238,6 +274,7 @@ if __name__ == "__main__":
     test_floor_above_target_never_triggers()
     test_none_floor_never_triggers()
     test_at_predicted_floor_stress_symmetry()
+    test_hard_floor_stop_needs_the_failing_path_to_reach_the_span()
     test_best_score_above_one_met_all_goals()
     test_best_score_exactly_one_met_all_goals()
     test_best_score_below_one_did_not_meet()

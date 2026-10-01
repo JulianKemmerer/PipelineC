@@ -1,7 +1,7 @@
 #!/usr/bin/env python3
 # In-process unit tests for the AUTO_PIPELINE .latency machinery:
 #   - AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES grouping + divergence detection
-#   - AUTO_PIPELINE.SEED_TIMING_PARAMS_FROM_PREVIOUS two-tier matching + the
+#   - AUTO_PIPELINE.SEED_TIMING_PARAMS_FROM_PREVIOUS concrete replay + the
 #     unseeded-auto_pipeline-instance (call-site-set-changed) detection
 #   - PY_TO_LOGIC.CANONICAL_CALLABLE_KEY determinism
 #   - pypeline.AUTO_PIPELINE latency cache + read-flag behavior
@@ -37,6 +37,8 @@ class FakeParserState:
 class FakeTimingParams:
     def __init__(self, latency, slices=None, in_regs=False, out_regs=False):
         self._latency = latency
+        self._exact_bit_boundaries = None
+        self.params_are_fixed = False
         self._slices = list(slices or [])
         self._has_input_regs = in_regs
         self._has_output_regs = out_regs
@@ -114,7 +116,7 @@ def test_harvest_no_auto_pipeline_is_empty():
     assert latencies == {} and divergences == {}
 
 
-def test_seed_two_tier_matching_and_unseeded_detection():
+def test_seed_exact_path_function_fallback_and_unseeded_detection():
     # Previous pass: main -> wrapper_v1 -> core (core sliced to 6 stages)
     prev = FakeParserState()
     prev.LogicInstLookupTable["main"] = make_logic("main_func")
@@ -123,7 +125,7 @@ def test_seed_two_tier_matching_and_unseeded_detection():
         "core_func"
     )
     prev_tpl = {
-        "main": FakeTimingParams(0, slices=[0.5]),  # exact-path (tier a) seed
+        "main": FakeTimingParams(0, slices=[0.5]),  # exact-path seed
         "main" + M + "wrap": FakeTimingParams(0),
         "main" + M + "wrap" + M + "core": FakeTimingParams(6, slices=[0.2, 0.4]),
     }
@@ -150,9 +152,9 @@ def test_seed_two_tier_matching_and_unseeded_detection():
     seeded, unseeded = AUTO_PIPELINE_MODULE.SEED_TIMING_PARAMS_FROM_PREVIOUS(
         prev, prev_tpl, new, new_tpl
     )
-    # Tier a: exact path
+    # Exact path
     assert seeded["main"]._slices == [0.5]
-    # Tier b: func-name match despite the renamed ancestor path
+    # Untagged-previous fallback: the only previous core, despite the renamed ancestor path
     assert seeded["main" + M + "wrap2" + M + "core"]._slices == [0.2, 0.4]
     # brand_new_func didn't exist last pass -> flagged (call-site set changed)
     assert unseeded == ["main" + M + "wrap2" + M + "newcore"], unseeded
@@ -160,6 +162,139 @@ def test_seed_two_tier_matching_and_unseeded_detection():
     # hash/name strings may cross the re-elaboration boundary)
     for tp in seeded.values():
         assert getattr(tp, "cache_invalidated", False)
+
+
+def test_seed_preserves_relative_instances_and_independent_mains():
+    def state(wrapper):
+        ps = FakeParserState()
+        table = {}
+        for main in ("enc", "dec"):
+            root = main + M + wrapper + M + "core"
+            ps.LogicInstLookupTable[main] = make_logic("main_" + main)
+            ps.LogicInstLookupTable[main + M + wrapper] = make_logic(wrapper, {"core": "same_key"})
+            ps.LogicInstLookupTable[root] = make_logic("same_core")
+            for local in ("first", "second"):
+                ps.LogicInstLookupTable[root + M + local] = make_logic("same_leaf")
+        table = {i: FakeTimingParams(0) for i in ps.LogicInstLookupTable}
+        return ps, table
+    prev, old = state("wrapper_v1")
+    new, fresh = state("wrapper_v2")
+    old["enc" + M + "wrapper_v1" + M + "core" + M + "first"]._has_output_regs = True
+    dec_leaf = old["dec" + M + "wrapper_v1" + M + "core" + M + "second"]
+    dec_leaf._slices = [0.3]
+    dec_leaf._exact_bit_boundaries = (3,)
+    dec_leaf.params_are_fixed = True
+    seeded, missing = AUTO_PIPELINE_MODULE.SEED_TIMING_PARAMS_FROM_PREVIOUS(prev, old, new, fresh)
+    assert not missing
+    for inst, tp in old.items():
+        other = seeded[inst.replace("wrapper_v1", "wrapper_v2")]
+        for attr in ("_slices", "_has_input_regs", "_has_output_regs", "_exact_bit_boundaries", "params_are_fixed"):
+            assert getattr(tp, attr) == getattr(other, attr), (inst, attr)
+
+
+def test_seed_ambiguous_region_implementations():
+    # Same-key replicas share one harvested depth, so differing placements
+    # replay the most common one (then the first path), deterministically.
+    # Without a shared key, differing placements are an error instead.
+    def run(new_key, counts):
+        prev, new = FakeParserState(), FakeParserState()
+        prev.LogicInstLookupTable["main"] = make_logic("main_func")
+        new.LogicInstLookupTable["main"] = make_logic("main_func")
+        for name in counts:
+            prev.LogicInstLookupTable["main" + M + name] = make_logic(name, {"core": "key"})
+            prev.LogicInstLookupTable["main" + M + name + M + "core"] = make_logic("core")
+        new.LogicInstLookupTable["main" + M + "renamed"] = make_logic("renamed", {"core": new_key})
+        new.LogicInstLookupTable["main" + M + "renamed" + M + "core"] = make_logic("core")
+        old = {i: FakeTimingParams(0) for i in prev.LogicInstLookupTable}
+        for name, in_regs in counts.items():
+            old["main" + M + name + M + "core"]._has_input_regs = in_regs
+            old["main" + M + name + M + "core"]._has_output_regs = not in_regs
+        fresh = {i: FakeTimingParams(0) for i in new.LogicInstLookupTable}
+        seeded, _ = AUTO_PIPELINE_MODULE.SEED_TIMING_PARAMS_FROM_PREVIOUS(prev, old, new, fresh)
+        return seeded["main" + M + "renamed" + M + "core"]
+
+    tie = run("key", {"left": True, "right": False})
+    assert tie._has_input_regs and not tie._has_output_regs  # first path
+    majority = run("key", {"a": True, "b": False, "c": False})
+    assert majority._has_output_regs and not majority._has_input_regs
+    try:
+        run("other_key", {"left": True, "right": False})
+    except AUTO_PIPELINE_MODULE.SeedReplayError as exc:
+        assert "different placements" in str(exc)
+    else:
+        raise AssertionError("untagged fallback picked one of differing placements")
+
+
+def test_seed_rejects_changed_region_interior():
+    prev, new = FakeParserState(), FakeParserState()
+    for state, leaf in ((prev, "leaf"), (new, "renamed_leaf")):
+        state.LogicInstLookupTable["main"] = make_logic("main_func", {"core": "key"})
+        state.LogicInstLookupTable["main" + M + "core"] = make_logic("core")
+        state.LogicInstLookupTable["main" + M + "core" + M + leaf] = make_logic("leaf")
+    old = {i: FakeTimingParams(0) for i in prev.LogicInstLookupTable}
+    fresh = {i: FakeTimingParams(0) for i in new.LogicInstLookupTable}
+    try:
+        AUTO_PIPELINE_MODULE.SEED_TIMING_PARAMS_FROM_PREVIOUS(prev, old, new, fresh)
+    except AUTO_PIPELINE_MODULE.SeedReplayError as exc:
+        assert "must not depend on .latency" in str(exc)
+    else:
+        raise AssertionError("changed region interior was replayed")
+
+
+def test_mcp_seed_only_passes_do_not_use_the_pass_budget():
+    # Scripted AUTO_PIPELINE latency passes: each confirmation result is
+    # (met, AUTO_PIPELINE latencies, AUTO_MULTI_CYCLE counts) after that pass.
+    # met=None is a pass that isolated MCP seeding ended before synthesis.
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    from contextlib import ExitStack
+    import AUTO_MULTI_CYCLE, SWEEP, SYN
+
+    def run(script):
+        state = {"lat": {"k": 3}, "mcp": {"m": 3}}
+        calls = []
+
+        def confirm(ps, params):
+            met, state["lat"], state["mcp"] = script[len(calls)]
+            calls.append(met)
+            return params, met
+
+        noop = lambda *a, **kw: None
+        with ExitStack() as stack:
+            for obj, name, value in [
+                (AUTO_PIPELINE_MODULE, "HARVEST_AUTO_PIPELINE_LATENCIES", lambda *a: (dict(state["lat"]), {})),
+                (AUTO_PIPELINE_MODULE, "CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED", noop),
+                (AUTO_PIPELINE_MODULE, "SEED_TIMING_PARAMS_FROM_PREVIOUS", lambda a, b, c, d: ({}, [])),
+                (AUTO_PIPELINE_MODULE, "GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP", lambda ps: {}),
+                (AUTO_PIPELINE_MODULE, "REENFORCE_AUTO_PIPELINE_REGIONS", lambda ps, t: t),
+                (AUTO_MULTI_CYCLE, "HARVEST_AUTO_MULTI_CYCLE_NCYCLES", lambda *a: dict(state["mcp"])),
+                (AUTO_MULTI_CYCLE, "AUTO_MULTI_CYCLE_BUILT_MATCHES_ELABORATED", lambda *a: False),
+                (AUTO_MULTI_CYCLE, "PRINT_AUTO_MULTI_CYCLE_NCYCLES", noop),
+                (pypeline, "SET_AUTO_PIPELINE_LATENCY_CACHE", noop),
+                (pypeline, "SET_AUTO_MULTI_CYCLE_LATENCY_CACHE", noop),
+                (PY_TO_LOGIC, "PARSE_FILE", lambda f: SimpleNamespace()),
+                (C_TO_LOGIC, "WRITE_0_ADDED_CLKS_INIT_FILES", noop),
+                (SYN, "ADD_PATH_DELAY_TO_LOOKUP", lambda ps: ps),
+                (SWEEP, "DO_SEEDED_CONFIRM_OR_SWEEP", confirm),
+            ]:
+                stack.enter_context(patch.object(obj, name, value))
+            params = SimpleNamespace(TimingParamsLookupTable={})
+            try:
+                AUTO_PIPELINE_MODULE.DO_AUTO_PIPELINE_LATENCY_PASSES(SimpleNamespace(), params, "d.py")
+            except SystemExit as exc:
+                return calls, str(exc)
+        return calls, None
+
+    cap = AUTO_PIPELINE_MODULE.AUTO_PIPELINE_MAX_LATENCY_PASSES
+    assert cap == 3
+    # The standalone 80 MHz shape: seeding changes a consumed count, so the
+    # next pass confirms the rebuilt handshake.
+    assert run([(None, {"k": 3}, {"m": 7}), (True, {"k": 3}, {"m": 7})]) == ([None, True], None)
+    # A skipped pass does not use the budget: two synthesized passes remain.
+    assert run([(None, {"k": 3}, {"m": 7}), (True, {"k": 4}, {"m": 7}), (True, {"k": 4}, {"m": 7})]) == ([None, True, True], None)
+    # Endless seeding is still bounded.
+    calls, error = run([(None, {"k": 3}, {"m": n}) for n in range(10, 20)])
+    assert calls == [None] * (cap + 1) and "consecutive re-elaborations" in error, (calls, error)
 
 
 def test_hash_ext_is_content_aware():
@@ -392,7 +527,11 @@ if __name__ == "__main__":
     test_harvest_agreeing_instances()
     test_harvest_divergent_instances()
     test_harvest_no_auto_pipeline_is_empty()
-    test_seed_two_tier_matching_and_unseeded_detection()
+    test_seed_exact_path_function_fallback_and_unseeded_detection()
+    test_seed_preserves_relative_instances_and_independent_mains()
+    test_seed_ambiguous_region_implementations()
+    test_seed_rejects_changed_region_interior()
+    test_mcp_seed_only_passes_do_not_use_the_pass_budget()
     test_hash_ext_is_content_aware()
     test_canonical_callable_key_deterministic()
     test_auto_pipeline_latency_cache_and_read_flag()

@@ -42,6 +42,7 @@ import VHDL
 # .latency-derived design change breaks timing under the pinned pipelining
 # and the fallback sweep then lands on different latencies.
 AUTO_PIPELINE_MAX_LATENCY_PASSES = 3
+CURRENT_LATENCY_PASS = 1
 
 
 # These are the parameters that describe how multiple pipelines are timed
@@ -2288,72 +2289,259 @@ def HARVEST_AUTO_PIPELINE_LATENCIES(parser_state, TimingParamsLookupTable):
     return latencies, divergences
 
 
+# Concrete pipelines: a subtree's timing params as data, independent of
+# fractional delay coordinates, so a lower-level placement can be replayed
+# exactly after re-elaboration or a delay-model refresh.
+
+
+def CAPTURE_CONCRETE_PIPELINE(root, table, parser_state):
+    """Portable descendant parameters: no references to a prior parse's Logic."""
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    result = {}
+    for inst in sorted(table):
+        if inst != root and not inst.startswith(root + marker):
+            continue
+        tp = table[inst]
+        logic = parser_state.LogicInstLookupTable[inst]
+        result[inst[len(root) :]] = {
+            "func": logic.func_name,
+            "types": sorted(getattr(logic, "wire_to_c_type", {}).items()),
+            "slices": list(tp._slices),
+            "exact_bits": copy.deepcopy(getattr(tp, "_exact_bit_boundaries", None)),
+            "input": tp._has_input_regs,
+            "output": tp._has_output_regs,
+            "fixed": tp.params_are_fixed,
+        }
+    return result
+
+
+def CONCRETE_PIPELINE_COMPATIBLE(root, snapshot, table, parser_state):
+    """Same relative instances, functions and wire types under root."""
+    if not snapshot:
+        return False
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    current = {
+        i[len(root) :] for i in table if i == root or i.startswith(root + marker)
+    }
+    if current != set(snapshot):
+        return False
+    for rel, record in snapshot.items():
+        logic = parser_state.LogicInstLookupTable[root + rel]
+        if (
+            logic.func_name != record["func"]
+            or sorted(getattr(logic, "wire_to_c_type", {}).items()) != record["types"]
+        ):
+            return False
+    return True
+
+
+def CONCRETE_PIPELINE_CONTAINS(main_snapshot, main_root, inst, concrete):
+    """True if a MAIN-level capture realizes exactly this lock's interior.
+
+    Boundary I/O banks are placed separately around locks, so only interior
+    slice positions are compared.
+    """
+    if not main_snapshot or not concrete or not inst.startswith(main_root):
+        return False
+    prefix = inst[len(main_root) :]
+    for rel, record in concrete.items():
+        realized = main_snapshot.get(prefix + rel)
+        if realized is None or realized["func"] != record["func"]:
+            return False
+        if (
+            realized["slices"] != record["slices"]
+            or realized["exact_bits"] != record["exact_bits"]
+        ):
+            return False
+    return True
+
+
+def RESTORE_CONCRETE_PIPELINE(root, snapshot, table, parser_state):
+    if not CONCRETE_PIPELINE_COMPATIBLE(root, snapshot, table, parser_state):
+        raise ValueError("Concrete pipeline no longer matches subtree " + root)
+    for rel, record in snapshot.items():
+        tp = table[root + rel]
+        tp._slices = list(record["slices"])
+        tp._exact_bit_boundaries = copy.deepcopy(record["exact_bits"])
+        tp._has_input_regs = record["input"]
+        tp._has_output_regs = record["output"]
+        tp.params_are_fixed = record["fixed"]
+        tp.INVALIDATE_CACHE()
+    return table
+
+
+class SeedReplayError(ValueError):
+    """A tagged region's interior changed between passes, so the previous
+    concrete implementation has no structural counterpart to replay."""
+
+
 def SEED_TIMING_PARAMS_FROM_PREVIOUS(
     prev_parser_state,
     prev_TimingParamsLookupTable,
     parser_state,
     TimingParamsLookupTable,
 ):
-    """Carry the previous pass's sweep solution (slices + IO reg flags) into
-    this pass's fresh zero-clock TimingParamsLookupTable so the stage-count
-    discovery isn't redone: the pin-and-confirm loop then needs only one
-    confirmation synthesis instead of a full sweep.
+    """Replay concrete instance parameters after latency-sized re-elaboration.
 
-    Two-tier instance matching:
-      a) exact full instance path (same func there too), else
-      b) func name (entity name). Load-bearing, not a nicety: entity names
-         encode closure values, so a .latency-derived parameter change (e.g.
-         FIFO depth) renames its factory-closure entity and every instance
-         path underneath it -- exactly where the AUTO_PIPELINE'd core lives.
-         The core func's own name is stable (its closure captures only the
-         user's func), so the func-name tier recovers its pipelining.
-    Instances with no match in either tier keep zero slices -- correct for
-    genuinely-new entities (the resized FIFO / widened counter: stateful,
-    never sliced).
-    Neither tier seeds non-empty params where the caller cannot absorb added
-    latency, including untagged MCP/FSM interiors and paths to deeper tags.
+    AUTO_PIPELINE regions are matched by owning MAIN and canonical call-site
+    key, then by relative descendant path. Empty instances are part of the
+    implementation: never spread one nonempty helper's placement to all calls
+    of that helper. Exact bit boundaries and fixed flags travel with slices
+    and IO banks. Renamed wrappers may use a function fallback only when all
+    previous occurrences in that MAIN agree, including empty occurrences.
 
-    Returns (TimingParamsLookupTable, unseeded_auto_pipeline_insts):
-    unseeded_auto_pipeline_insts lists AUTO_PIPELINE-tagged instances whose
-    func didn't exist at all in the previous pass -- i.e. the set of
-    AUTO_PIPELINE call sites changed between passes (Python control flow
-    branching on .latency's own value), which the driver makes a hard error.
+    A region prefers its exact previous path, then previous replicas with the
+    same local call-site name. Same-key replicas share one harvested depth, so
+    when their placements differ the most common one (then the first path) is
+    replayed and reported. A region whose interior no longer matches any
+    previous replica raises SeedReplayError before confirmation synthesis.
+
+    Returns the table and tagged instances without a previous counterpart.
     """
-    # All func names that existed last pass (for the call-site-change check:
-    # a tagged func whose discovered latency was 0 legitimately has empty
-    # params and must NOT be flagged just for lacking a non-empty seed)
-    prev_func_names = set()
-    # func name -> representative non-empty previous TimingParams
-    prev_func_to_params = {}
-    for prev_inst, prev_params in prev_TimingParamsLookupTable.items():
-        prev_logic = prev_parser_state.LogicInstLookupTable.get(prev_inst)
-        if prev_logic is None:
-            continue
-        prev_func_names.add(prev_logic.func_name)
-        if (
-            prev_logic.func_name not in prev_func_to_params
-            and not prev_params.IS_EMPTY()
-        ):
-            prev_func_to_params[prev_logic.func_name] = prev_params
+    import bisect
 
-    for inst_name, timing_params in TimingParamsLookupTable.items():
-        logic = parser_state.LogicInstLookupTable[inst_name]
-        prev_params = None
-        exact = prev_TimingParamsLookupTable.get(inst_name)
-        if exact is not None:
-            prev_logic = prev_parser_state.LogicInstLookupTable.get(inst_name)
-            if prev_logic is not None and prev_logic.func_name == logic.func_name:
-                prev_params = exact
-        if prev_params is None:
-            prev_params = prev_func_to_params.get(logic.func_name)
-        if prev_params is None or prev_params.IS_EMPTY():
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+
+    def owner(inst):
+        return inst.split(marker, 1)[0]
+
+    def identity(logic):
+        return (logic.func_name, tuple(sorted(logic.wire_to_c_type.items())))
+
+    def values(tp):
+        return (list(tp._slices), getattr(tp, "_exact_bit_boundaries", None),
+                tp._has_input_regs, tp._has_output_regs,
+                getattr(tp, "params_are_fixed", False))
+
+    def copy_params(inst, previous):
+        if not previous.IS_EMPTY() and ADDED_LATENCY_BLOCKER(inst, parser_state) is not None:
+            return
+        current = TimingParamsLookupTable[inst]
+        slices, bits, in_regs, out_regs, fixed = values(previous)
+        current.SET_SLICES(slices)
+        current.SET_HAS_IN_REGS(in_regs)
+        current.SET_HAS_OUT_REGS(out_regs)
+        current._exact_bit_boundaries = copy.deepcopy(bits)
+        current.params_are_fixed = fixed
+        current.INVALIDATE_CACHE()
+
+    def regions(state):
+        for inst, logic in state.LogicInstLookupTable.items():
+            for local, key in logic.sub_inst_to_auto_pipeline_key.items():
+                if key is not None:
+                    yield inst + marker + local, (owner(inst), key)
+
+    def subtree(keys, table, root):
+        # Descendant paths share the "root + marker" prefix, so they are one
+        # contiguous run of the sorted keys (whole-table scans per region
+        # replica are too slow at WireGuard scale).
+        start = bisect.bisect_left(keys, root + marker)
+        stop = bisect.bisect_left(keys, root + marker + "\U0010ffff")
+        rows = {i: table[i] for i in keys[start:stop]}
+        if root in table:
+            rows[root] = table[root]
+        return rows
+
+    prev_keys = sorted(prev_TimingParamsLookupTable)
+    keys = sorted(TimingParamsLookupTable)
+    snapshots = {}
+
+    def snapshot(old):
+        if old not in snapshots:
+            snapshots[old] = CAPTURE_CONCRETE_PIPELINE(
+                old, subtree(prev_keys, prev_TimingParamsLookupTable, old), prev_parser_state
+            )
+        return snapshots[old]
+
+    previous_regions = {}
+    previous_by_func = {}
+    for inst, tp in prev_TimingParamsLookupTable.items():
+        logic = prev_parser_state.LogicInstLookupTable.get(inst)
+        if logic is not None:
+            previous_by_func.setdefault((owner(inst), identity(logic)), []).append(inst)
+    for root, key in regions(prev_parser_state):
+        if root in prev_TimingParamsLookupTable:
+            previous_regions.setdefault(key, []).append(root)
+
+    agreed = {}
+
+    def agreed_previous(main, ident):
+        # Function fallback: only a placement shared by every previous
+        # occurrence in this MAIN (computed once per function identity).
+        if (main, ident) not in agreed:
+            olds = previous_by_func.get((main, ident), [])
+            first = prev_TimingParamsLookupTable[olds[0]] if olds else None
+            if first is not None and any(values(prev_TimingParamsLookupTable[o]) != values(first) for o in olds[1:]):
+                first = None
+            agreed[(main, ident)] = first
+        return agreed[(main, ident)]
+
+    covered = set()
+    unseeded = []
+    # Outer regions first: their relative mapping also owns all nested tags.
+    for root, key in sorted(regions(parser_state), key=lambda row: (row[0].count(marker), row[0])):
+        if root not in TimingParamsLookupTable or root in covered:
             continue
-        if ADDED_LATENCY_BLOCKER(inst_name, parser_state) is not None:
+        logic = parser_state.LogicInstLookupTable[root]
+        candidates = previous_regions.get(key, [])
+        keyed = bool(candidates)
+        if not candidates:
+            # Older/C fixtures can lack canonical tags. This fallback still
+            # requires the whole subtree to agree; it never selects a leaf's
+            # first nonempty implementation.
+            candidates = previous_by_func.get((owner(root), identity(logic)), [])
+        if not candidates:
+            unseeded.append(root)
             continue
-        # Setters invalidate calcd_total_latency/hash_ext caches themselves
-        timing_params.SET_SLICES(prev_params._slices)
-        timing_params.SET_HAS_IN_REGS(prev_params._has_input_regs)
-        timing_params.SET_HAS_OUT_REGS(prev_params._has_output_regs)
+        current = subtree(keys, TimingParamsLookupTable, root)
+        matches = [old for old in sorted(candidates)
+                   if CONCRETE_PIPELINE_COMPATIBLE(root, snapshot(old), current, parser_state)]
+        if not matches:
+            raise SeedReplayError(
+                "AUTO_PIPELINE: cannot replay " + root + ": no previous-pass "
+                "replica of this region has the same interior instances, "
+                "functions and types. An AUTO_PIPELINE'd function's interior "
+                "must not depend on .latency's own value."
+            )
+        if root in matches:
+            chosen = root
+        else:
+            local = root.rsplit(marker, 1)[-1]
+            narrowed = [old for old in matches if old.rsplit(marker, 1)[-1] == local] or matches
+            groups = {}
+            for old in narrowed:
+                groups.setdefault(repr(snapshot(old)), []).append(old)
+            if len(groups) > 1 and not keyed:
+                # Untagged function fallback: no harvested depth ties these
+                # candidates together, so any choice could change latency.
+                raise SeedReplayError(
+                    "AUTO_PIPELINE: cannot replay " + root + ": previous "
+                    "occurrences of its function have different placements"
+                )
+            chosen = min(groups.values(), key=lambda olds: (-len(olds), olds[0]))[0]
+            if len(groups) > 1:
+                print(
+                    f"AUTO_PIPELINE: {len(groups)} previous implementations of the "
+                    f"same region (same depth) differ; replaying {chosen} "
+                    f"({len(groups[repr(snapshot(chosen))])} of {len(narrowed)}) into {root}",
+                    flush=True,
+                )
+        for rel in snapshot(chosen):
+            inst = root + rel
+            copy_params(inst, prev_TimingParamsLookupTable[chosen + rel])
+            covered.add(inst)
+
+    for inst, tp in TimingParamsLookupTable.items():
+        if inst in covered:
+            continue
+        logic = parser_state.LogicInstLookupTable[inst]
+        exact_logic = prev_parser_state.LogicInstLookupTable.get(inst)
+        if inst in prev_TimingParamsLookupTable and exact_logic is not None and identity(exact_logic) == identity(logic):
+            copy_params(inst, prev_TimingParamsLookupTable[inst])
+            continue
+        previous = agreed_previous(owner(inst), identity(logic))
+        if previous is not None:
+            copy_params(inst, previous)
 
     # No cache computed against the previous pass's state may survive into
     # this table: the SET_* setters above no-op (keeping cached
@@ -2365,19 +2553,6 @@ def SEED_TIMING_PARAMS_FROM_PREVIOUS(
     for timing_params in TimingParamsLookupTable.values():
         timing_params.INVALIDATE_CACHE()
 
-    unseeded = set()
-    for inst_name, logic in parser_state.LogicInstLookupTable.items():
-        if not logic.sub_inst_to_auto_pipeline_key:
-            continue
-        for local_sub, canonical_key in logic.sub_inst_to_auto_pipeline_key.items():
-            if canonical_key is None:
-                continue
-            sub_inst = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + local_sub
-            sub_logic = parser_state.LogicInstLookupTable.get(sub_inst)
-            if sub_logic is None:
-                continue
-            if sub_logic.func_name not in prev_func_names:
-                unseeded.add(sub_inst)
     return TimingParamsLookupTable, sorted(unseeded)
 
 
@@ -2457,6 +2632,7 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
     seeds so only one confirmation synthesis is needed instead of a fresh sweep. A
     design with no AUTO_PIPELINE call sites, or one that never reads .latency, pays
     nothing beyond the in-memory harvest walk below."""
+    global CURRENT_LATENCY_PASS
     import pypeline
     import SWEEP
 
@@ -2500,12 +2676,26 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
             print(f"AUTO_PIPELINE {key}: {lat} clks", flush=True)
         return parser_state, multimain_timing_params
 
+    print("AUTO_PIPELINE: timing in the current latency-sized hardware is provisional; re-elaboration and confirmation are required.", flush=True)
     import PY_TO_LOGIC
     auto_pipeline_pass = 1
+    # Passes ended by isolated MCP seeding ran no synthesis; they have their
+    # own bound instead of using the confirmation-pass budget.
+    mcp_seed_passes = 0
+    consecutive_mcp_seed_passes = 0
     last_change_desc = None
     while True:
         auto_pipeline_pass += 1
-        if auto_pipeline_pass > AUTO_PIPELINE_MAX_LATENCY_PASSES:
+        CURRENT_LATENCY_PASS = auto_pipeline_pass
+        if consecutive_mcp_seed_passes > AUTO_PIPELINE_MAX_LATENCY_PASSES:
+            sys.exit(
+                f"AUTO_MULTI_CYCLE: isolated seeding changed consumed counts in "
+                f"{consecutive_mcp_seed_passes} consecutive re-elaborations "
+                f"(last change: {last_change_desc}). A multi-cycle count "
+                f"that changes its own datapath cannot settle; pin latency=N "
+                f"on the AUTO_MULTI_CYCLE."
+            )
+        if auto_pipeline_pass - mcp_seed_passes > AUTO_PIPELINE_MAX_LATENCY_PASSES:
             sys.exit(
                 f"AUTO_PIPELINE: .latency did not settle within "
                 f"{AUTO_PIPELINE_MAX_LATENCY_PASSES} passes "
@@ -2530,12 +2720,15 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
         parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
         C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(parser_state)
         parser_state = SYN.ADD_PATH_DELAY_TO_LOOKUP(parser_state)
-        seeded_tpl, unseeded_ap_insts = SEED_TIMING_PARAMS_FROM_PREVIOUS(
-            prev_parser_state,
-            prev_tpl,
-            parser_state,
-            GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state),
-        )
+        try:
+            seeded_tpl, unseeded_ap_insts = SEED_TIMING_PARAMS_FROM_PREVIOUS(
+                prev_parser_state,
+                prev_tpl,
+                parser_state,
+                GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state),
+            )
+        except SeedReplayError as err:
+            sys.exit(str(err))
         if unseeded_ap_insts:
             sys.exit(
                 "AUTO_PIPELINE: the set of AUTO_PIPELINE call sites "
@@ -2564,14 +2757,12 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
         if new_latencies == latencies and new_auto_multi_cycle == auto_multi_cycle:
             # The .latency values this pass's Python consumed equal
             # the stage counts actually built -- converged. (Meeting
-            # timing alone is NOT sufficient to stop: realizing the
-            # seeded fractional slices hierarchically -- e.g. into
-            # pipelined built-in div/mult entities with their own
-            # stage granularity -- can change an instance's total
-            # latency even on a passing confirmation run, and exiting
-            # then would build VHDL whose actual depth contradicts
-            # every .latency-derived constant baked into it, and
-            # desync the native simulator's latency emulation.)
+            # timing alone is NOT sufficient to stop: a fallback sweep,
+            # constrained-region enforcement or an MCP count change can
+            # alter what was built even on a passing confirmation, and
+            # exiting then would build VHDL whose actual depth
+            # contradicts every .latency-derived constant baked into
+            # it, and desync the native simulator's latency emulation.)
             break
         last_change_desc = ", ".join(
             f"{key}: {latencies.get(key)} -> {new_latencies.get(key)} clks"
@@ -2588,13 +2779,18 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
         )
         print(
             "AUTO_PIPELINE: "
-            + ("slice realization" if met else "fallback sweep")
+            + {True: "slice realization", False: "fallback sweep", None: "isolated AUTO_MULTI_CYCLE seeding"}[met]
             + f" changed discovered latencies ({last_change_desc}); "
             "re-elaborating...",
             flush=True,
         )
         latencies = new_latencies
         auto_multi_cycle = new_auto_multi_cycle
+        if met is None:
+            mcp_seed_passes += 1
+            consecutive_mcp_seed_passes += 1
+        else:
+            consecutive_mcp_seed_passes = 0
 
     return parser_state, multimain_timing_params
 

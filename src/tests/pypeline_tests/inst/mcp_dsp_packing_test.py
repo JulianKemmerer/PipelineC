@@ -86,7 +86,8 @@ def xdc_pairs(out):
 
 def selected_checkpoint(out, text):
     # Confirmation is the last top-level timing run (fresh or reused).
-    logs = re.findall(r"(?:Running:|Reading log) (.+/vivado_[0-9a-f]+\.log)", text)
+    # Top-level logs are vivado_<hash>_<input signature>.log (VIVADO.INPUT_MANIFEST).
+    logs = re.findall(r"(?:Running:|Reading log) (.+/vivado_[0-9a-f]+(?:_[0-9a-f]+)?\.log)", text)
     assert logs, "no top-level synthesis report"
     log = Path(logs[-1])
     checkpoints = list(log.parent.glob("*" + log.stem[len("vivado"):] + ".dcp"))
@@ -223,7 +224,12 @@ def main():
     audit(fixed, selected_checkpoint(fixed, text), route=True)
     swept = out / "automatic"
     text = build(swept, 1)
-    assert "action=auto_multi_cycle(" in text, "AUTO_MULTI_CYCLE never grew"
+    # The count may be raised by in-context feedback or seeded directly from
+    # endpoint-qualified isolated evidence before the first synthesis; either
+    # way it must end above its start (checked on the final counts below).
+    assert "action=auto_multi_cycle(" in text or re.search(
+        r"provisional seed \d+->\d+", text
+    ), "AUTO_MULTI_CYCLE never grew"
     assert "AUTO_PIPELINE Pass 2" in text, "no latency re-elaboration"
     assert "TIMING NOT MET" not in text
     counts = {key: int(n) for key, n in re.findall(r"^AUTO_MULTI_CYCLE (\S+): (\d+) cycles$", text, re.M)}

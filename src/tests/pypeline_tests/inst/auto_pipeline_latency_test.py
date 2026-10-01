@@ -6,13 +6,13 @@
 #  - pass 1 discovers a real (>0) latency for the AUTO_PIPELINE'd core
 #  - pass 2 re-elaborates with it, seeds the previous pipelining, and runs a
 #    seeded confirmation synthesis (not a second full sweep)
-#  - additional passes are allowed (and typical): realizing the seeded
-#    fractional slices hierarchically (e.g. into pipelined built-in div
-#    entities with their own stage granularity) can change the total latency
-#    on a passing confirmation, and the loop must keep re-elaborating until
-#    the .latency the design's Python consumed equals the stage counts
-#    actually built -- exiting early on "met" alone would bake contradictory
-#    .latency-derived constants into the final VHDL
+#  - additional passes are allowed when a fallback sweep, constrained-region
+#    enforcement or an AUTO_MULTI_CYCLE count change alters the built
+#    hardware (concrete replay itself preserves each region's depth); the
+#    loop must keep re-elaborating until the .latency the design's Python
+#    consumed equals the stage counts actually built -- exiting early on
+#    "met" alone would bake contradictory .latency-derived constants into
+#    the final VHDL
 #  - the loop settles within the pass cap and the build exits successfully
 #  - sweep_history.json's final records come from the confirmation run, not
 #    from pass 1's sweep (a passing confirmation runs no sweep of its own)
@@ -33,7 +33,7 @@ def main():
     parser.add_argument("--out_dir", default=None)
     args = parser.parse_args()
 
-    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "device_models"]
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "device_models", "-j", "1"]
     if args.out_dir:
         cmd += ["--out_dir", args.out_dir]
     print("Running:", " ".join(cmd), flush=True)
@@ -72,7 +72,7 @@ def main():
     if not re.search(r"^PASS .* \(confirmation run\)$", out, re.M):
         print("FAIL: confirmation synthesis did not pass timing")
         sys.exit(1)
-    if "falling back to a full throughput sweep" in out:
+    if "falling back to a full throughput sweep" in out or "replanning implicated pipelined MAINs" in out:
         print(
             "FAIL: confirmation fell back to a full sweep -- seeding "
             "did not carry the pass-1 pipelining over"

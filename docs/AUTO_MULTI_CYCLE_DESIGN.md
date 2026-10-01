@@ -112,7 +112,24 @@ Unmapped hierarchy is left unclassified rather than guessed.
 
 1. **Setup.** `COLLECT_AUTO_MULTI_CYCLE_GROUPS` gathers every instance's AUTO_MULTI_CYCLE paths by key; a key
    is one group with one count, since the design reads one `.latency` int. The counts are
-   seeded from the elaborated values.
+   initially taken from elaboration. `SEED_COUNTS` then uses valid isolated
+   endpoint reports for all groups, before the first sweep or pinned confirmation.
+   `requirement - slack` is raw effective launch-to-capture time, including timing
+   overhead; the cached scalar `Logic.delay` is per-cycle and is never used alone
+   to seed a group. The seed is `ceil(raw / goal_period)`, respecting fixed counts,
+   user starts and caps. Missing endpoint evidence leaves the elaborated count.
+   In a pin-and-confirm pass, a seed that changes a count the elaboration
+   consumed skips that pass's confirmation synthesis: the handshake reads
+   `.latency`, so the driver re-elaborates with the seeded count and confirms
+   that hardware instead ([AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md)).
+   The rebuilt holder is not re-synthesized during that pass's path-delay
+   characterization when every multi-cycle path it owns already has evidence
+   for its current `MCP_SHAPE`. Only the handshake's compare constant changed,
+   so `HOLDER_DELAY_FROM_EVIDENCE` gives raw delay / elaborated count, which is
+   what synthesis reports per cycle. For WireGuard's 5-lane Poly1305 MAC holders
+   (Vivado 2019.2, xc7a200t) that is 67.5 ns / 4 against a measured 16.8 ns, and
+   skipping their re-synthesis saves about 17 minutes per pass. A new shape, or
+   a holder with fixed (non-tag) paths, is still synthesized.
 2. **Matching.** For each report, `AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT` matches the report's
    start/end register cells against the XDC globs (`[*]` → `\[[^/]*\]`), excludes
    non-D destination pins, and requires
@@ -128,9 +145,18 @@ Unmapped hierarchy is left unclassified rather than guessed.
    - Needed > the cap: the plan stops with `stopped_reason = "auto_multi_cycle_latency_limit"` and
      `[sweep] WARNING: limited by AUTO_MULTI_CYCLE ...`, then TIMING NOT MET. Planless mains record
      the same reason.
-4. **Growth only.** The count never drops below its start: post-met trimming counts only
-   cuts.
-5. **Termination.** A changed count always earns another synthesis run, including for
+4. **Provisional seed correction.** After a pass, complete per-pair reports may
+   propose a smaller count once per canonical MCP group and datapath shape
+   (`MCP_SHAPE`). The shape follows the capture data cone, stopping at register
+   outputs, and includes callable identities and types, not timing hashes.
+   Changes confined to the count/ready controller do not reset this allowance.
+   The trial changes XDC overrides before harvesting, never drops below the
+   elaborated/user floor, and requires whole-design confirmation. Failure
+   restores the passing counts. Thereafter feedback is grow-only for that shape;
+   ordinary pipeline trimming still counts only cuts.
+5. **Termination.** Distinct groups receive feedback from their optional per-pair
+   reports in the same synthesis, so they need not serially become clock-worst.
+   A changed count always earns another synthesis run, including for
    planless designs, which otherwise stop after one run.
 6. **Bookkeeping.** Best and met snapshots, their restores, and `sweep_history.json`
    (`auto_multi_cycle_ncycles`) record the counts each run was *synthesized* with. The final
@@ -148,13 +174,20 @@ elaborated counts overlaid with the sweep's final overrides.
   elaborated counts and every `.latency` value design code read
   (`AUTO_MULTI_CYCLE_BUILT_MATCHES_ELABORATED`). The build prints `AUTO_MULTI_CYCLE: every .latency read
   matched the built multi-cycle count`, and a correct `start_latency=` costs nothing.
+- **Confirmation repair.** Resized datapaths are seeded from their new isolated
+  endpoint measurements before confirmation. An MCP-only failure raises counts
+  through the XDC overrides, preserves every pipeline, and re-confirms. It does
+  not restart the placement search. A fixed/capped failure remains a failure.
+  Repairs are bounded (`SWEEP.MAX_CONFIRMATION_MCP_REPAIRS`, 4 syntheses); a
+  confirmation still failing after that reports timing not met. Isolated
+  evidence from replicated instances keeps the worst raw delay.
 - **Pass 2.** Otherwise the loop runs even for designs with no AUTO_PIPELINE reads: it
   installs `pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE` next to the AUTO_PIPELINE cache before
   `PARSE_FILE`. Convergence requires both harvests to be unchanged, and every pass prints
   `AUTO_MULTI_CYCLE <key>: N cycles`.
 - **Renaming.** Re-elaborating renames the function holding the tagged registers (the
   resolved count is part of its identity). The fresh `MultiMainTimingParams` carries no
-  overrides, so the confirmation constrains the elaborated counts. Both
+  overrides; endpoint-qualified characterization can seed them before confirmation. Both
   exact-path and function-name pipeline seeding check the new caller chain;
   the renamed MCP interior and its primitive leaves remain combinational.
 - **Unread tags.** `CHECK_AUTO_MULTI_CYCLE_TAGS_READ` runs at the start of

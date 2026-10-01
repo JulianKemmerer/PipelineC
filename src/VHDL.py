@@ -1,7 +1,9 @@
 #!/usr/bin/env python
 
+import hashlib
 import math
 import os
+import re
 import shutil
 import sys
 
@@ -4828,15 +4830,7 @@ def _WRITE_GROW_ONLY_C_STRUCTS_PACKAGE(text, pkg_body_text, type_chunk_marks, pa
                 flush=True,
             )
 
-    body = prefix[1] + "".join(c[2] for c in merged)
-    rendered = prefix[0] + "".join(c[1] for c in merged)
-    rendered += RENDER_TEXT("""
-end c_structs_pkg;
-""", parser_state)
-    if body != "":
-        rendered += RENDER_TEXT("package body c_structs_pkg is\n", parser_state)
-        rendered += body
-        rendered += RENDER_TEXT("end package body c_structs_pkg;\n", parser_state)
+    rendered = RENDER_C_STRUCTS_PACKAGE(prefix, merged, parser_state)
 
     WRITE_TEXT_IF_CHANGED(path, rendered)
     if previous is None or previous.get("chunks") != merged or previous.get("prefix") != prefix:
@@ -4849,6 +4843,100 @@ end c_structs_pkg;
                 },
                 f,
             )
+
+
+def RENDER_C_STRUCTS_PACKAGE(prefix, chunks, parser_state):
+    """Package text from its fixed prefix and (key, decl, body) type chunks."""
+    body = prefix[1] + "".join(c[2] for c in chunks)
+    rendered = prefix[0] + "".join(c[1] for c in chunks)
+    rendered += RENDER_TEXT("""
+end c_structs_pkg;
+""", parser_state)
+    if body != "":
+        rendered += RENDER_TEXT("package body c_structs_pkg is\n", parser_state)
+        rendered += body
+        rendered += RENDER_TEXT("end package body c_structs_pkg;\n", parser_state)
+    return rendered
+
+
+C_STRUCTS_PKG_SCOPED_DIR = "c_structs_pkg_scoped"
+_VHDL_IDENTIFIER_RE = re.compile(r"[A-Za-z][A-Za-z0-9_]*")
+_DECLARED_NAME_RE = re.compile(r"\b(?:type|subtype|constant|function|procedure)\s+([A-Za-z]\w*)", re.I)
+_ENUM_LITERALS_RE = re.compile(r"\btype\s+\w+\s+is\s*\(([^)]*)\)", re.I)
+_SCOPED_INDEX = {}  # chunks file -> ((mtime_ns, size), prefix, chunks, name -> chunk)
+
+
+def SCOPED_C_STRUCTS_PACKAGE(vhdl_paths, parser_state):
+    """Path of a c_structs_pkg holding only the type chunks these files use.
+
+    An isolated synthesis lists the type package among its inputs, and the
+    package holds every type of the design: a latency-sized type changing
+    between passes invalidated every cached leaf and helper result, even
+    for functions that never use it. This package keeps the fixed prefix
+    and the chunks whose declared names (types, constants, conversion
+    functions, enum literals) appear in the given files, closed over the
+    chunks' own references, in package order. It is still named
+    c_structs_pkg. The file name is a hash of its text, so it is written
+    once and never changes. A missing chunk index or unreadable input
+    returns None: the caller keeps the full package.
+    """
+    import json
+    import threading
+
+    chunks_path = SYN.SYN_OUTPUT_DIRECTORY + "/" + C_STRUCTS_PKG_CHUNKS_FILE
+    try:
+        stat = os.stat(chunks_path)
+    except OSError:
+        return None
+    stamp = (stat.st_mtime_ns, stat.st_size)
+    cached = _SCOPED_INDEX.get(chunks_path)
+    if cached is None or cached[0] != stamp:
+        try:
+            with open(chunks_path) as f:
+                index = json.load(f)
+        except (OSError, ValueError):
+            return None
+        if index.get("format") != C_STRUCTS_PKG_CHUNKS_FORMAT:
+            return None
+        declared = {}
+        for n, (_key, decl, _body) in enumerate(index["chunks"]):
+            names = _DECLARED_NAME_RE.findall(decl)
+            for literals in _ENUM_LITERALS_RE.findall(decl):
+                names += [lit.strip() for lit in literals.split(",")]
+            for name in names:
+                declared.setdefault(name.lower(), n)
+        cached = (stamp, index["prefix"], index["chunks"], declared)
+        _SCOPED_INDEX[chunks_path] = cached
+    _stamp, prefix, chunks, declared = cached
+
+    frontier = []
+    for path in vhdl_paths:
+        try:
+            with open(path) as f:
+                frontier.append(f.read())
+        except OSError:
+            return None
+    needed = set()
+    while frontier:
+        for token in set(_VHDL_IDENTIFIER_RE.findall(frontier.pop())):
+            n = declared.get(token.lower())
+            if n is not None and n not in needed:
+                needed.add(n)
+                frontier.append(chunks[n][1] + chunks[n][2])
+    rendered = RENDER_C_STRUCTS_PACKAGE(
+        prefix, [c for n, c in enumerate(chunks) if n in needed], parser_state
+    )
+    digest = hashlib.sha256(rendered.encode()).hexdigest()[:16]
+    directory = SYN.SYN_OUTPUT_DIRECTORY + "/" + C_STRUCTS_PKG_SCOPED_DIR
+    path = directory + "/c_structs_pkg_" + digest + VHDL_PKG_EXT
+    if not os.path.exists(path):
+        # Readers may already be analyzing an identical file: never truncate.
+        os.makedirs(directory, exist_ok=True)
+        tmp = f"{path}.{os.getpid()}.{threading.get_ident()}.tmp"
+        with open(tmp, "w") as f:
+            f.write(rendered)
+        os.replace(tmp, path)
+    return path
 
 
 def LOGIC_NEEDS_GLOBAL_TO_MODULE(Logic, parser_state):

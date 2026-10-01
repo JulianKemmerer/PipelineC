@@ -84,6 +84,9 @@ FLOOR_TOLERANCE = 0.95
 # Consecutive unmet measured results, flat within noise while the cut count
 # grew, that stop the sweep as a plateau (see AT_PLATEAU)
 PLATEAU_STREAK = 3
+# Pinned confirmation: bounded MCP-count repairs (each is a full synthesis).
+# Counts jump straight to ceil(raw/period), so one or two normally suffice.
+MAX_CONFIRMATION_MCP_REPAIRS = 4
 
 # Coarse sweep: multiplier limit for individual module coarse register insertion
 # (the coarse sweep's give-up point)
@@ -114,6 +117,55 @@ def AT_PREDICTED_FLOOR(curr_mhz, floor, target_mhz, tolerance=FLOOR_TOLERANCE):
         and curr_mhz >= tolerance * floor
         and curr_mhz <= floor / tolerance
     )
+
+
+def FAILING_PATH_REACHES_SPAN(path_report, blame, plan, parser_state):
+    """Could this measured path run through the blamed unsliceable span?
+
+    The span's containing function must appear in an endpoint or netlist
+    resource name (the substring rule of RANK_PATH_FUNC_CANDIDATES). When
+    that can't discriminate (no names, no container, or the container is
+    the MAIN or a subtree root, which prefix every name), answer True.
+    """
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    inst = getattr(blame, "inst_path", None)
+    if inst is None or marker not in inst:
+        return True
+    container = parser_state.LogicInstLookupTable.get(inst.rsplit(marker, 1)[0])
+    if container is None:
+        return True
+    roots = {plan.main_inst} | set(plan.subtrees)
+    if container.func_name in {parser_state.LogicInstLookupTable[r].func_name for r in roots}:
+        return True
+    names = [n.lower() for n in (path_report.start_reg_name, path_report.end_reg_name) if n]
+    names += [r.lower() for r in getattr(path_report, "netlist_resources", ()) or ()]
+    if not names:
+        return True
+    return any(container.func_name.lower() in n for n in names)
+
+
+def AT_EVIDENCED_HARD_FLOOR(plan, curr_mhz, target_mhz, path_report, parser_state, delays_measured):
+    """Stop at a predicted hard floor only with evidence for it.
+
+    The floor is an estimate (seen for real: a 46.5 MHz WireGuard "hard"
+    ceiling while the same design measured 81.5 MHz). Being near it counts
+    only if the measured failing path can run through the blamed span, or,
+    as for soft floors, once delays are measured and the result repeated.
+    See AT_PREDICTED_FLOOR for the tolerance band.
+    """
+    floor, blame = plan.predicted_hard_floor()
+    if not AT_PREDICTED_FLOOR(curr_mhz, floor, target_mhz):
+        return False
+    if FAILING_PATH_REACHES_SPAN(path_report, blame, plan, parser_state):
+        return True
+    if plan.same_mhz_count >= 1 and delays_measured:
+        return True
+    print(
+        f"[sweep] Near the estimated ~{floor:.1f} MHz ceiling, but the failing path "
+        "does not run through its blamed span; continuing.",
+        flush=True,
+    )
+    return False
 
 
 def AT_PLATEAU(prev_history, curr_mhz, curr_cuts, target_mhz, streak=PLATEAU_STREAK):
@@ -1003,7 +1055,8 @@ class SliceLandscape:
         hard_best_w = 0.0
         hard_best_blame = None
         for u in range(n):
-            if not self.legal[u] and self.weight[u] > 0.0:
+            if (not self.legal[u] and self.weight[u] > 0.0
+                    and not getattr(self.blame[u], "adjustable_mcp", False)):
                 run_w += self.weight[u]
                 if self.blame[u] is not None:
                     run_blame = self.blame[u]
@@ -1262,6 +1315,10 @@ def BUILD_SLICE_LANDSCAPE(
                     child_blocker,
                 )
                 continue
+            # A scalar delay for a stateful MCP wrapper mixes cycle-normalized
+            # data paths with single-cycle control. It cannot bound stage Fmax.
+            seg.adjustable_mcp = any(getattr(parser_state.FuncLogicLookupTable[name], "auto_multi_cycle_tuples", None)
+                                     for name in SUBTREE_FUNCTIONS(child_inst, parser_state))
             seg.ancestor_funcs = child_ancestors
             seg.registered_bits = output_register_bits(sub_logic)
             components = getattr(sub_logic, "delay_components", None)
@@ -2965,7 +3022,10 @@ def MAIN_PIPELINE_DEPTH(main_inst, parser_state, TimingParamsLookupTable):
 # best/met snapshot and a pin-and-confirm confirmation run are all not "the
 # last iteration".
 
-SWEEP_HISTORY_SCHEMA_VERSION = 2
+SWEEP_HISTORY_SCHEMA_VERSION = 3
+STOP_ON_OVER_CAPACITY = False
+SYNTHESIS_OBSERVATIONS = []
+CARRIED_LOCKS = {}
 # Module level, not on a plan or MultiMainTimingParams: the AUTO_PIPELINE
 # pin-and-confirm loop re-parses the design and builds fresh timing params
 # between passes, and a fallback sweep's iterations must not erase an earlier
@@ -3011,6 +3071,9 @@ def RECORD_SWEEP_OUTCOME(main_func_name, goal_mhz, source, record=None, **fields
             iter=record.get("iter"),
             iteration_index=record.get("index"),
             achieved_mhz=record.get("achieved_mhz"),
+            input_signature=record.get("input_signature"),
+            implementation_signature=record.get("implementation_signature"),
+            observation_origin=record.get("observation_origin"),
         )
     outcome.update(fields)
     SWEEP_OUTCOMES[main_func_name] = outcome
@@ -3036,8 +3099,8 @@ def BUILD_FINAL_MAIN_RECORD(goal_mhz, outcome, failure, depth):
     achieved_mhz = rest.pop("achieved_mhz", None)
     failure_reason = None
     if failure is not None:
-        met = False
-        met_basis = "timing_failure"
+        met = None if failure[3] == "unknown_in_retained_snapshot" else False
+        met_basis = "unknown_in_retained_snapshot" if met is None else "timing_failure"
         failure_reason = failure[3]
         if failure[2] is not None:
             achieved_mhz = round(failure[2], 3)
@@ -3082,7 +3145,7 @@ def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
     'Writing Results' (build_complete=True) against the final table and the
     final sweep_timing_failures. Writes nothing when no run recorded anything
     (--comb characterization builds). Returns the written document."""
-    if not SWEEP_HISTORY and not SWEEP_OUTCOMES:
+    if not SWEEP_HISTORY and not SWEEP_OUTCOMES and not SYNTHESIS_OBSERVATIONS:
         return None
     failures = {
         failure[0]: failure
@@ -3136,9 +3199,47 @@ def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
     doc = {
         "schema_version": SWEEP_HISTORY_SCHEMA_VERSION,
         "build_complete": build_complete,
+        "stop_on_over_capacity": STOP_ON_OVER_CAPACITY,
+        "observations": SYNTHESIS_OBSERVATIONS,
+        "fit_status": SYNTHESIS_OBSERVATIONS[-1]["utilization"]["status"]
+        if SYNTHESIS_OBSERVATIONS
+        else "unknown",
         "mains": mains,
     }
-    auto_multi_cycle = getattr(multimain_timing_params, "auto_multi_cycle_ncycles", None)
+    if SYNTHESIS_OBSERVATIONS:
+        signature = IMPLEMENTATION_SIGNATURE(
+            parser_state, multimain_timing_params
+        )
+        doc["synthesis_cost"] = {
+            "observations": len(SYNTHESIS_OBSERVATIONS),
+            "new_backend_launches": sum(
+                o["cache_hit"] is False for o in SYNTHESIS_OBSERVATIONS
+            ),
+            "cache_reads": sum(o["cache_hit"] is True for o in SYNTHESIS_OBSERVATIONS),
+            "unknown_cache_origin": sum(
+                o["cache_hit"] is None for o in SYNTHESIS_OBSERVATIONS
+            ),
+            "distinct_implementations": len(
+                {o["implementation_signature"] for o in SYNTHESIS_OBSERVATIONS}
+            ),
+            "estimated_registers_added_without_prior_failure": sum(
+                sum(o.get("register_growth_without_prior_failure", {}).values())
+                for o in SYNTHESIS_OBSERVATIONS
+            ),
+        }
+        doc["retained_observation"] = next(
+            (
+                o
+                for o in reversed(SYNTHESIS_OBSERVATIONS)
+                if o["implementation_signature"] == signature
+            ),
+            None,
+        )
+        if doc["retained_observation"] is not None:
+            doc["fit_status"] = doc["retained_observation"]["utilization"]["status"]
+    auto_multi_cycle = getattr(
+        multimain_timing_params, "auto_multi_cycle_ncycles", None
+    )
     if auto_multi_cycle:
         doc["auto_multi_cycle_ncycles"] = dict(auto_multi_cycle)
     import AUTO_PIPELINE
@@ -3172,6 +3273,17 @@ def RECORD_CONFIRMATION_RESULTS(
     Call after sweep_timing_failures is set (the provisional write reads it)."""
     NEXT_SWEEP_HISTORY_RUN()
     tpl = multimain_timing_params.TimingParamsLookupTable
+    signature = IMPLEMENTATION_SIGNATURE(
+        parser_state, multimain_timing_params
+    )
+    observation = next(
+        (
+            o
+            for o in reversed(SYNTHESIS_OBSERVATIONS)
+            if o["implementation_signature"] == signature
+        ),
+        {},
+    )
     for main_inst in parser_state.main_mhz:
         main_logic = parser_state.LogicInstLookupTable[main_inst]
         main_func_name = main_logic.func_name
@@ -3191,6 +3303,11 @@ def RECORD_CONFIRMATION_RESULTS(
             goal_mhz,
             {
                 "iter": 1,
+                "implementation_signature": signature,
+                "input_signature": observation.get("input_signature"),
+                "observation_origin": "cache_hit"
+                if observation.get("cache_hit")
+                else "synthesis",
                 "main": main_func_name,
                 "goal_mhz": goal_mhz,
                 "achieved_mhz": None if curr_mhz is None else round(curr_mhz, 3),
@@ -3888,8 +4005,8 @@ def WRITE_PIPELINE_PLACEMENT_TRACE(
 class MiniSweepLock:
     """A proven helper interior plus independently selectable edge banks.
 
-    ``slices`` is the result of the isolated throughput measurement and is
-    immutable for the lifetime of this lock.  Input/output banks are a
+    ``concrete`` holds the measured descendant parameters. ``slices`` is
+    descriptive coarse-search bookkeeping, not a recipe to replay.  Input/output banks are a
     full-design scheduling decision: putting both on every serial instance
     creates an avoidable empty output-to-input cycle.
     """
@@ -3900,8 +4017,13 @@ class MiniSweepLock:
         has_input_regs=False,
         has_output_regs=False,
         boundary_strategy="topology_output",
+        concrete=None, model_fingerprint=None, winner_hash=None,
     ):
         self.slices = list(slices)
+        self.concrete = copy.deepcopy(concrete)
+        self.model_fingerprint = model_fingerprint
+        self.winner_hash = winner_hash
+        self.model_mismatch_reported = False
         self.has_input_regs = bool(has_input_regs)
         self.has_output_regs = bool(has_output_regs)
         self.boundary_strategy = boundary_strategy
@@ -3909,6 +4031,9 @@ class MiniSweepLock:
     def to_dict(self):
         return {
             "slices": list(self.slices),
+            "concrete": self.concrete,
+            "model_fingerprint": self.model_fingerprint,
+            "winner_hash": self.winner_hash,
             "input_registers": self.has_input_regs,
             "output_registers": self.has_output_regs,
             "boundary_strategy": self.boundary_strategy,
@@ -4018,6 +4143,7 @@ class MainSweepPlan:
         self.stopped_reason = None
         self.last_mhz = None
         self.last_achieved_mhz = None  # most recent eval (met or not)
+        self.last_worst_path = None  # path_report behind last_achieved_mhz
         self.same_mhz_count = 0
         # Cut-count history for minimality: largest total cut count known to
         # FAIL timing, and the total planned this iteration
@@ -4650,6 +4776,159 @@ def DESCRIBE_EXCLUDED_MINISWEEP_INSTANCES(excluded, parser_state):
     return f"; left {len(excluded)} instance(s) combinational (" + "; ".join(descriptions) + ")"
 
 
+def LOCK_BLOCKED_REASON(func, plan, targets, parser_state):
+    """Why `func` may not be locked in this plan, or None.
+
+    Shared by the mini-sweep and cross-pass lock carryover, so a carried lock
+    obeys exactly the rules that created it.
+    """
+    # Never mini-sweep a subtree root (or the main): "isolating" the whole
+    # subtree is just this sweep with even slices instead of planned cuts,
+    # and locking the root would freeze the entire plan
+    root_funcs = set(
+        parser_state.LogicInstLookupTable[d].func_name for d in plan.subtrees
+    )
+    root_funcs.add(parser_state.LogicInstLookupTable[plan.main_inst].func_name)
+    if func in root_funcs:
+        return "subtree root"
+    # Never lock inside, or around, a constrained AUTO_PIPELINE region: its
+    # register count is owned by ENFORCE_AUTO_PIPELINE_REGIONS
+    for func_inst in targets:
+        for region in getattr(plan, "regions", ()):
+            if _INSTS_CONFLICT(func_inst, region.inst):
+                return "constrained AUTO_PIPELINE region"
+    func_logic = parser_state.FuncLogicLookupTable[func]
+    if not func_logic.CAN_HAVE_ADDED_LATENCY(parser_state):
+        return "cannot have added latency"
+    if not AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
+        func, parser_state
+    ):
+        return "no hierarchy allowing added latency"
+    return None
+
+
+def SUBTREE_FUNCTIONS(root, parser_state):
+    """Deterministic descendants-before-parent order, shared funcs once."""
+    result, seen = [], set()
+
+    def visit(name):
+        if name in seen:
+            return
+        seen.add(name)
+        logic = parser_state.FuncLogicLookupTable[name]
+        for child in sorted(set(logic.submodule_instances.values())):
+            visit(child)
+        result.append(name)
+
+    visit(parser_state.LogicInstLookupTable[root].func_name)
+    return result
+
+
+def SUBTREE_MODEL_FINGERPRINT(root, parser_state):
+    """Hash of the subtree's delay model: per-function delay, estimate flag,
+    wire types and delay components."""
+    values = []
+    for name in SUBTREE_FUNCTIONS(root, parser_state):
+        logic = parser_state.FuncLogicLookupTable[name]
+        values.append(
+            (
+                name,
+                getattr(logic, "delay", None),
+                getattr(logic, "delay_is_estimated", False),
+                sorted(getattr(logic, "wire_to_c_type", {}).items()),
+                getattr(logic, "delay_components", None),
+            )
+        )
+    return hashlib.sha256(
+        json.dumps(values, sort_keys=True, default=str).encode()
+    ).hexdigest()
+
+
+def MEASURED_LOCK_MODEL(func, inst, parser_state):
+    """Measure the subtree (frontier rules apply), then fingerprint it.
+
+    Used before minimizing a hotspot and before matching a carried lock, so
+    both sides of a carryover key see the same measured model.
+    """
+    descendants = SUBTREE_FUNCTIONS(inst, parser_state)
+    if any(
+        getattr(parser_state.FuncLogicLookupTable[f], "delay_is_estimated", False)
+        for f in descendants
+    ):
+        SYN.MEASURE_DELAYS(descendants, parser_state)
+    return SUBTREE_MODEL_FINGERPRINT(inst, parser_state)
+
+
+def CARRIED_LOCK_KEY(plan, func, fingerprint, parser_state):
+    """Carried locks belong to their owning MAIN: independent depths per MAIN."""
+    main_name = parser_state.LogicInstLookupTable[plan.main_inst].func_name
+    return (main_name, func, plan.target_mhz, fingerprint)
+
+
+def LOAD_CARRIED_LOCKS(plan, parser_state, table, preserved_snapshot=None):
+    """Re-bind this MAIN's compatible concrete locks after re-elaboration."""
+    main_name = parser_state.LogicInstLookupTable[plan.main_inst].func_name
+    funcs = sorted(
+        {k[1] for k in CARRIED_LOCKS if k[0] == main_name and k[2] == plan.target_mhz}
+    )
+    restored_strategies = {}
+    for func in funcs:
+        targets, _excluded = MINISWEEP_LOCK_TARGETS(func, plan, parser_state)
+        if not targets:
+            continue
+        reason = LOCK_BLOCKED_REASON(func, plan, targets, parser_state)
+        if reason is not None:
+            print(f"[sweep] Not reusing lock for {func} in {main_name}: {reason}", flush=True)
+            continue
+        fingerprint = MEASURED_LOCK_MODEL(func, targets[0], parser_state)
+        lock = CARRIED_LOCKS.get(CARRIED_LOCK_KEY(plan, func, fingerprint, parser_state))
+        if lock is None:
+            print(
+                f"[sweep] Not reusing lock for {func} in {main_name}: its measured delay model changed",
+                flush=True,
+            )
+            continue
+        loaded = []
+        for inst in targets:
+            if any(_INSTS_CONFLICT(inst, other) for other in plan.locked):
+                continue
+            if not AUTO_PIPELINE.CONCRETE_PIPELINE_COMPATIBLE(inst, lock.concrete, table, parser_state):
+                continue
+            if preserved_snapshot is not None and not AUTO_PIPELINE.CONCRETE_PIPELINE_CONTAINS(
+                preserved_snapshot, plan.main_inst, inst, lock.concrete
+            ):
+                continue  # the preserved implementation is not this lock
+            plan.locked[inst] = copy.deepcopy(lock)
+            loaded.append(inst)
+        if loaded:
+            restored_strategies[func] = lock.boundary_strategy
+            print(
+                f"[sweep] Reusing concrete lock for {func} on {len(loaded)} instance(s) in {main_name}",
+                flush=True,
+            )
+    # Boundary banks depend on this pass's topology, not the last instance
+    # that populated the carryover cache.
+    for func, strategy in sorted(restored_strategies.items()):
+        SET_MINISWEEP_BOUNDARY_STRATEGY(plan, func, strategy, parser_state)
+    return restored_strategies
+
+
+def STORE_CARRIED_LOCKS(plans, parser_state):
+    """Keep only the retained implementation's locks, keyed by owning MAIN."""
+    for plan in plans.values():
+        main_name = parser_state.LogicInstLookupTable[plan.main_inst].func_name
+        for key in [k for k in CARRIED_LOCKS if k[0] == main_name and k[2] == plan.target_mhz]:
+            del CARRIED_LOCKS[key]
+        for inst, lock in sorted(plan.locked.items()):
+            if lock.concrete is None:
+                continue
+            func = parser_state.LogicInstLookupTable[inst].func_name
+            fingerprint = SUBTREE_MODEL_FINGERPRINT(inst, parser_state)
+            CARRIED_LOCKS[CARRIED_LOCK_KEY(plan, func, fingerprint, parser_state)] = (
+                copy.deepcopy(lock)
+            )
+
+
 def HOTSPOT_IS_LOCKED(hotspot_func, plan, parser_state):
     targets, _ = MINISWEEP_LOCK_TARGETS(hotspot_func, plan, parser_state)
     return bool(targets) and all(inst in plan.locked for inst in targets)
@@ -4673,27 +4952,7 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
         return False
     if HOTSPOT_IS_LOCKED(hotspot_func, plan, parser_state):
         return False  # already locked, sweeping it again changes nothing
-    # Never mini-sweep a subtree root (or the main): "isolating" the whole
-    # subtree is just this sweep with even slices instead of planned cuts,
-    # and locking the root would freeze the entire plan
-    root_funcs = set(
-        parser_state.LogicInstLookupTable[d].func_name for d in plan.subtrees
-    )
-    root_funcs.add(parser_state.LogicInstLookupTable[plan.main_inst].func_name)
-    if hotspot_func in root_funcs:
-        return False
-    # Never lock inside, or around, a constrained AUTO_PIPELINE region: its
-    # register count is owned by ENFORCE_AUTO_PIPELINE_REGIONS
-    for func_inst in targets:
-        for region in getattr(plan, "regions", ()):
-            if _INSTS_CONFLICT(func_inst, region.inst):
-                return False
-    func_logic = parser_state.FuncLogicLookupTable[hotspot_func]
-    if not func_logic.CAN_HAVE_ADDED_LATENCY(parser_state):
-        return False
-    if not AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
-        hotspot_func, parser_state
-    ):
+    if LOCK_BLOCKED_REASON(hotspot_func, plan, targets, parser_state) is not None:
         return False
     inst = targets[0]
     # The coarse sweep's initial guess divides this func's delay by the
@@ -4701,8 +4960,9 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     # delay would over-pipeline the lock from the start. Measure for real
     # (MEASURE_DELAYS skips stateful-subtree funcs; those keep the estimate
     # for the guess and the coarse loop self-corrects from below).
-    if func_logic.delay_is_estimated:
-        SYN.MEASURE_DELAYS([hotspot_func], parser_state)
+    # Keep MEASURE_DELAYS' state/frontier restrictions. Stabilize all
+    # geometry used by slicing, not just the helper's total delay.
+    MEASURED_LOCK_MODEL(hotspot_func, inst, parser_state)
     print(
         f"[sweep] Isolated coarse sweep of hotspot: {hotspot_func}"
         f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} "
@@ -4713,7 +4973,7 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     (
         inst_sweep_state,
         working_slices,
-        _,
+        winning_tpl,
     ) = DO_COARSE_THROUGHPUT_SWEEP(
         inst,
         plan.target_mhz,
@@ -4752,6 +5012,8 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
     # jump). Bisect between the largest known-FAILING latency and the met
     # one - reported slack is not usable for this (tools stop optimizing at
     # slack ~0), only pass/fail data points are.
+    concrete = AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(inst, winning_tpl, parser_state)
+    winner_hash = winning_tpl[inst].GET_HASH_EXT(winning_tpl, parser_state)
     met_latency = len(working_slices)
     initial_guess = inst_sweep_state.initial_guess_latency
     if met_latency > initial_guess:
@@ -4769,11 +5031,22 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
             f"(known failing: {lo}, met: {hi})",
             flush=True,
         )
+        known = getattr(inst_sweep_state, "coarse_results", {}).get(mid)
+        if known is not None:
+            print(f"[sweep] Reusing measured hotspot candidate at {mid} cuts", flush=True)
+            if known["met"]:
+                hi = len(known["slices"])  # same rule as a fresh probe below
+                working_slices = known["slices"]
+                concrete = known["concrete"]
+                winner_hash = known["hash"]
+            else:
+                lo = mid
+            continue
         probe_state = InstSweepState()
         (
             probe_state,
             probe_slices,
-            _,
+            probe_tpl,
         ) = DO_COARSE_THROUGHPUT_SWEEP(
             inst,
             plan.target_mhz,
@@ -4786,6 +5059,8 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
         if probe_state.met_timing and probe_slices is not None:
             hi = len(probe_slices)
             working_slices = probe_slices
+            concrete = AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(inst, probe_tpl, parser_state)
+            winner_hash = probe_tpl[inst].GET_HASH_EXT(probe_tpl, parser_state)
         else:
             lo = mid
     # Replace any conflicting (nested/containing) older locks
@@ -4796,6 +5071,9 @@ def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
         plan.locked[func_inst] = MiniSweepLock(
             working_slices,
             boundary_strategy="topology_output",
+            concrete=concrete,
+            model_fingerprint=SUBTREE_MODEL_FINGERPRINT(inst, parser_state),
+            winner_hash=winner_hash,
         )
     SET_MINISWEEP_BOUNDARY_STRATEGY(
         plan, hotspot_func, "topology_output", parser_state
@@ -4821,16 +5099,28 @@ def APPLY_LOCKS(plan, parser_state, TimingParamsLookupTable):
         AUTO_PIPELINE.CHECK_ADDED_LATENCY_CONTEXT(locked_inst, parser_state)
         lock = plan.locked[locked_inst]
         locked_logic = parser_state.LogicInstLookupTable[locked_inst]
-        TimingParamsLookupTable = (
-            AUTO_PIPELINE.ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
-                locked_inst,
-                locked_logic,
-                lock.slices,
-                parser_state,
-                TimingParamsLookupTable,
-                write_files=False,
+        if lock.concrete is not None:
+            TimingParamsLookupTable = AUTO_PIPELINE.RESTORE_CONCRETE_PIPELINE(
+                locked_inst, lock.concrete, TimingParamsLookupTable, parser_state
             )
-        )
+            if (lock.model_fingerprint != SUBTREE_MODEL_FINGERPRINT(locked_inst, parser_state)
+                    and not lock.model_mismatch_reported):
+                print(f"[sweep] Delay model changed for locked {locked_logic.func_name}; "
+                      "replaying its measured concrete interior unchanged.", flush=True)
+                lock.model_mismatch_reported = True
+        else:
+            # Legacy in-memory fixtures/constrained placements; measured
+            # mini-sweeps always create concrete locks above.
+            TimingParamsLookupTable = (
+                AUTO_PIPELINE.ADD_SLICES_DOWN_HIERARCHY_TIMING_PARAMS_AND_WRITE_VHDL_PACKAGES(
+                    locked_inst,
+                    locked_logic,
+                    lock.slices,
+                    parser_state,
+                    TimingParamsLookupTable,
+                    write_files=False,
+                )
+            )
         if type(TimingParamsLookupTable) is int:
             raise Exception(f"Bad locked slices for {locked_inst}: {lock.slices}")
         if lock.has_input_regs:
@@ -4903,8 +5193,8 @@ def PRINT_FLOOR_REPORT(plan, parser_state):
             f"subtree={root_logic.func_name} comb delay ~{total_ns:.1f} ns, "
             f"target {plan.target_period_ns:.1f} ns ({plan.target_mhz:.1f} MHz)"
         )
-        if floor is None:
-            msg += ", no unsliceable spans"
+        if floor is None or floor >= plan.target_mhz:
+            msg += ", no estimated span limit below the goal"
         else:
             blame = landscape.floor_blame
             is_hard = blame is not None and blame.hard
@@ -4912,22 +5202,22 @@ def PRINT_FLOOR_REPORT(plan, parser_state):
             if blame is not None:
                 blame_str = f" due to {blame.inst_path.split(C_TO_LOGIC.SUBMODULE_MARKER)[-1]} ({blame.reason}, {landscape.floor_ns:.1f} ns unsliceable)"
             soft_str = "" if is_hard else " (soft)"
-            msg += f", predicted fmax floor{soft_str} ~{floor:.1f} MHz{blame_str}"
+            msg += f", estimated frequency ceiling{soft_str} ~{floor:.1f} MHz{blame_str}"
             is_mux_bank = blame is not None and blame.reason == "mux_packed_bank"
             if floor < plan.target_mhz:
                 if is_mux_bank:
                     msg += (
-                        f"\n[sweep] WARNING: predicted floor {floor:.1f} MHz is a "
-                        "select-fanout floor (an unchunked packed MUX bank), not a "
-                        "true hard limit - chunked output banks can beat it at the "
-                        "same cut count; not a reason to raise the goal"
+                        f"\n[sweep] Estimated select-fanout ceiling {floor:.1f} MHz "
+                        "assumes an unchunked packed MUX bank; chunked output "
+                        "banks may improve timing at the same cut count"
                     )
                 elif is_hard:
-                    msg += f"\n[sweep] WARNING: predicted floor {floor:.1f} MHz is below the {plan.target_mhz:.1f} MHz goal - timing cannot be met by adding registers alone"
+                    msg += (f"\n[sweep] Estimated unsliceable span exceeds the {plan.target_mhz:.1f} MHz stage budget "
+                            "under the current placement model; this estimate is not a timing verdict")
                 else:
                     msg += (
-                        f"\n[sweep] WARNING: predicted soft floor {floor:.1f} MHz is below the {plan.target_mhz:.1f} MHz goal - "
-                        "goal may be unreachable (stateful submodule delay; boundary registers may still cut its IO paths)"
+                        f"\n[sweep] WARNING: estimated soft ceiling {floor:.1f} MHz is below the {plan.target_mhz:.1f} MHz goal - "
+                        "stateful delay estimates require in-context measurement; boundary registers may cut IO paths"
                     )
         print(msg, flush=True)
 
@@ -5079,11 +5369,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     # report whose critical path is one of them raises that count instead of
     # adding pipelining (AUTO_MULTI_CYCLE_FEEDBACK)
     auto_multi_cycle_groups = AUTO_MULTI_CYCLE.COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
-    multimain_timing_params.auto_multi_cycle_ncycles = {
-        key: n
-        for key, n in AUTO_MULTI_CYCLE.ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state).items()
-        if key in auto_multi_cycle_groups
-    }
+    AUTO_MULTI_CYCLE.SEED_COUNTS(parser_state, multimain_timing_params)
     best_auto_multi_cycle = None
     met_snapshot_auto_multi_cycle = None
     # main inst -> AUTO_MULTI_CYCLE limit blame, for planless mains stopped by a cap
@@ -5117,6 +5403,24 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     best_plan_boundary_diagnostics = None
     best_plan_regions = None
     met_snapshot_plan_regions = None
+    seen_implementations = {}
+    synthesis_attempts = 0
+    synthesis_budget = MAX_SWEEP_ITERS
+    repeated_decisions = 0
+    preserved_mains = getattr(multimain_timing_params, "confirmation_preserved_mains", None) or {}
+    # Consumed once: a later sweep on these params must not reuse stale snapshots.
+    multimain_timing_params.confirmation_preserved_mains = {}
+    for plan in plans.values():
+        plan.needs_replan = True
+        plan.realized_snapshot = preserved_mains.get(plan.main_inst)
+        if plan.realized_snapshot is not None:
+            plan.needs_replan = False
+        LOAD_CARRIED_LOCKS(
+            plan,
+            parser_state,
+            multimain_timing_params.TimingParamsLookupTable,
+            plan.realized_snapshot,
+        )
     internal_placement_config = LOAD_INTERNAL_PLACEMENT_CONFIG()
     if internal_placement_config is not None:
         print(
@@ -5143,7 +5447,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         # own before any containing landscape is built.
         try:
             for plan in plans.values():
-                if plan.regions:
+                if plan.regions and (plan.needs_replan or plan.trim_pending):
                     tpl = AUTO_PIPELINE.ENFORCE_AUTO_PIPELINE_REGIONS(
                         plan.regions,
                         parser_state,
@@ -5169,6 +5473,16 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         except AUTO_PIPELINE.AutoPipelineLatencyInfeasible as err:
             sys.exit(str(err))
         for plan in plans.values():
+            # A plan that replays its realized snapshot (below) keeps the
+            # landscape its cuts were planned on: cut offsets are units of
+            # THAT landscape. Rebuilding it after a delay-model refresh (the
+            # measured fallback) would leave the replayed cuts pointing past
+            # the new, shorter axis. It is rebuilt when the plan replans.
+            replays_snapshot = (
+                plan.realized_snapshot is not None
+                and not plan.needs_replan
+                and not plan.trim_pending
+            )
             # Build landscapes (locked subtree roots already carry their
             # pipeline from the lock - planning/slicing them again is illegal)
             for subtree_root in plan.subtrees:
@@ -5176,6 +5490,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     plan.landscapes[subtree_root] = None
                     plan.cuts[subtree_root] = []
                     plan.placements[subtree_root] = []
+                    continue
+                if replays_snapshot and plan.landscapes.get(subtree_root) is not None:
                     continue
                 plan.landscapes[subtree_root] = BUILD_SLICE_LANDSCAPE(
                     subtree_root, parser_state, tpl, plan.func_delay_scale
@@ -5185,13 +5501,17 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 internal_placement_config, plans, parser_state
             )
         for plan in plans.values():
+            if plan.realized_snapshot is not None and not plan.needs_replan and not plan.trim_pending:
+                AUTO_PIPELINE.RESTORE_CONCRETE_PIPELINE(plan.main_inst, plan.realized_snapshot, tpl, parser_state)
+                continue
             # Plan cuts. Replanning an unresolved plan to the identical cut
             # list would waste a whole synthesis run (a small budget change
             # can be eaten by cut quantization) - nudge the scale until the
             # plan actually changes. Direction follows intent: more cuts when
             # timing failed, fewer when probing down after having met (trim).
             plan_unresolved = (
-                not plan.met_timing
+                plan.needs_replan
+                and not plan.met_timing
                 and plan.stopped_reason is None
                 and plan.prev_total_cuts is not None
             )
@@ -5481,22 +5801,57 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 flush=True,
             )
 
-        print(
-            f"Running syn w timing params... (sweep iteration {iteration})",
-            flush=True,
-        )
-        print(f"Elapsed time: {str(timedelta(seconds=(timer() - SYN.START_TIME)))}...")
-        timing_report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
-            parser_state, multimain_timing_params
-        )
+        implementation = IMPLEMENTATION_SIGNATURE(parser_state, multimain_timing_params)
+        if implementation in seen_implementations:
+            # Re-run the feedback ladder on existing evidence; do not spend a
+            # synthesis on a quantized-away densification or boundary change.
+            timing_report = seen_implementations[implementation]
+            repeated_decisions += 1
+            print(f"[sweep] No realized HDL/constraint change: reusing observation for decision {iteration}", flush=True)
+            if repeated_decisions > 8:
+                for p in plans.values():
+                    if not p.met_timing:
+                        p.stopped_reason = "no_realized_change"
+                break
+        else:
+            repeated_decisions = 0
+            synthesis_attempts += 1
+            print(f"Running syn w timing params... (sweep iteration {synthesis_attempts}, decision {iteration})", flush=True)
+            print(f"Elapsed time: {str(timedelta(seconds=(timer() - SYN.START_TIME)))}...")
+            timing_report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
+                parser_state, multimain_timing_params
+            )
+            seen_implementations[implementation] = timing_report
+            RECORD_SYNTHESIS_OBSERVATION(parser_state, multimain_timing_params, timing_report, synthesis_attempts)
+        for plan in plans.values():
+            plan.realized_snapshot = AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(plan.main_inst, tpl, parser_state)
+            plan.needs_replan = False
+        # Feedback mutates locks/boundary policies for the NEXT implementation.
+        # A best/met snapshot must retain only the policies actually built.
+        built_plan_locks = {m:copy.deepcopy(p.locked) for m,p in plans.items()}
+        built_plan_boundary_diagnostics = {m:copy.deepcopy(p.mini_sweep_boundary_diagnostics) for m,p in plans.items()}
+        built_plan_regions = AUTO_PIPELINE.SNAPSHOT_AUTO_PIPELINE_REGIONS(plans)
         if len(timing_report.path_reports) == 0:
             print(timing_report.orig_text)
-            print("Using a bad syn log file?")
+            EXPLAIN_NO_PATHS(timing_report)
             sys.exit(-1)
         SYN.PRINT_MEASURED_AREA_IF_AVAILABLE(
             timing_report,
             SYN.ESTIMATE_DESIGN_AREA(parser_state, multimain_timing_params)["total_area"],
         )
+
+        if all(path.path_delay_ns > 0
+               and 1000.0 / path.path_delay_ns >= (SYN.GET_TARGET_MHZ(m, parser_state) or 0)
+               for path in SYN.TIMING_REPORT_PATHS(timing_report)
+               for m in GET_MAIN_INSTS_FOR_PATH_REPORT(path, parser_state, multimain_timing_params)):
+            observed_before = len(SYNTHESIS_OBSERVATIONS)
+            timing_report = CONFIRM_PROVISIONAL_MCP_SEEDS(
+                timing_report, parser_state, multimain_timing_params, seen_implementations
+            )
+            # A confirm-down trial is a real backend run: it counts.
+            synthesis_attempts += len(SYNTHESIS_OBSERVATIONS) - observed_before
+            implementation = IMPLEMENTATION_SIGNATURE(parser_state, multimain_timing_params)
+            seen_implementations[implementation] = timing_report
 
         # The AUTO_MULTI_CYCLE counts this run was synthesized with (feedback below
         # may raise them for the next run; snapshots must record these)
@@ -5508,8 +5863,16 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         overall_score = None
         evaluated_plans = set()  # main insts implicated in some path report
         any_report_failed = False
-        for reported_clock_group in timing_report.path_reports:
-            path_report = timing_report.path_reports[reported_clock_group]
+        handled_plans = set()
+        # Plans with a failing multi-cycle path this iteration: a later passing
+        # (optional) path must not mark them met or overwrite their record.
+        mcp_failed_plans = set()
+        # Plans whose next implementation is a new, model-independent candidate
+        # (fresh concrete lock, boundary policy, same-depth refinement): their
+        # repeated MHz is not stagnation yet - that candidate is observed first.
+        new_candidate_plans = set()
+        for path_report in FEEDBACK_PATHS(timing_report, parser_state, multimain_timing_params):
+            reported_clock_group = path_report.path_group
             curr_mhz = 1000.0 / path_report.path_delay_ns
             main_insts = GET_MAIN_INSTS_FOR_PATH_REPORT(
                 path_report, parser_state, multimain_timing_params
@@ -5554,7 +5917,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             auto_multi_cycle_changed = True
                     action, changed, blame = auto_multi_cycle_feedback
                     if main_inst not in plans:
-                        planless_results[main_inst] = (curr_mhz, met, target_mhz)
+                        if not _KEEP_WORST_PLANLESS(
+                            planless_results, main_inst, curr_mhz, met, target_mhz
+                        ):
+                            continue
                         if blame is not None:
                             planless_auto_multi_cycle_blame[main_inst] = blame
                         print(
@@ -5579,6 +5945,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         )
                         continue
                     plan = plans[main_inst]
+                    mcp_failed_plans.add(main_inst)
                     plan.last_achieved_mhz = curr_mhz
                     plan.trim_pending = False
                     plan.met_timing = False
@@ -5618,7 +5985,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     continue
                 if main_inst not in plans:
                     # Nothing cuttable for this main
-                    planless_results[main_inst] = (curr_mhz, met, target_mhz)
+                    if not _KEEP_WORST_PLANLESS(
+                        planless_results, main_inst, curr_mhz, met, target_mhz
+                    ):
+                        continue
                     iter_records[main_inst] = RECORD_SWEEP_ITERATION(
                         main_logic.func_name,
                         target_mhz,
@@ -5642,8 +6012,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         print(" ~", path_report.path_delay_ns, "ns of logic+routing ~")
                         print("END: =>", path_report.end_reg_name, flush=True)
                     continue
+                if main_inst in handled_plans:
+                    continue
+                if met and main_inst in mcp_failed_plans:
+                    continue  # its failing multi-cycle path decides this iteration
+                handled_plans.add(main_inst)
                 plan = plans[main_inst]
+                plan.needs_replan = not met
                 plan.last_achieved_mhz = curr_mhz
+                plan.last_worst_path = path_report
                 plan.trim_pending = False
                 total_cuts = PLAN_TOTAL_CUTS(plan)
                 latency = tpl[main_inst].GET_TOTAL_LATENCY(parser_state, tpl)
@@ -5686,9 +6063,6 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     # there - they are pessimistic estimates, not ceilings.
                     hard_floor, hard_blame = plan.predicted_hard_floor()
                     soft_floor, soft_blame = plan.predicted_floor()
-                    # See AT_PREDICTED_FLOOR's own docstring for the
-                    # symmetric-tolerance-band rationale.
-                    at_hard_floor = AT_PREDICTED_FLOOR(curr_mhz, hard_floor, target_mhz)
                     # A soft floor built from ESTIMATED spans is not evidence
                     # enough to give up: measure the real delays first (the
                     # ladder's escalation - fallback, minisweep - broke
@@ -5707,6 +6081,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         # reach its floor stop instead of densifying
                         # forever.
                         or SYN.HIER_SYN_MODE == "prim"
+                    )
+                    at_hard_floor = AT_EVIDENCED_HARD_FLOOR(
+                        plan, curr_mhz, target_mhz, path_report, parser_state,
+                        delays_measured,
                     )
                     at_soft_floor = (
                         AT_PREDICTED_FLOOR(curr_mhz, soft_floor, target_mhz)
@@ -5738,7 +6116,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             blame_str = f" due to {floor_blame.inst_path.split(C_TO_LOGIC.SUBMODULE_MARKER)[-1]} ({floor_blame.reason})"
                         kind_str = "predicted" if at_hard_floor else "empirical (soft)"
                         print(
-                            f"[sweep] WARNING: {main_logic.func_name} at {kind_str} fmax floor "
+                            f"[sweep] WARNING: {main_logic.func_name} at {kind_str} frequency ceiling "
                             f"(~{floor:.1f} MHz{blame_str}); cannot improve by adding registers. Keeping best result.",
                             flush=True,
                         )
@@ -5759,7 +6137,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             )[-1]
                             plan.plateau_blame = (
                                 f"likely limited by {blamed} ({soft_blame.reason}, "
-                                f"predicted soft floor ~{soft_floor:.1f} MHz)"
+                                f"estimated soft ceiling ~{soft_floor:.1f} MHz)"
                             )
                         blame_str = (
                             f" {plan.plateau_blame[0].upper()}{plan.plateau_blame[1:]}."
@@ -5850,11 +6228,14 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             # covers and single-sided endpoint variants before
                             # giving up or restoring the historical both-I/O
                             # shape.
-                            next_boundary_strategy = (
-                                TRY_NEXT_MINISWEEP_BOUNDARY_STRATEGY(
-                                    plan, hotspot_func, parser_state
-                                )
+                            internal_failure = PATH_INSIDE_LOCK(
+                                path_report, plan, parser_state, tpl, hotspot_func
                             )
+                            next_boundary_strategy = None if internal_failure else TRY_NEXT_MINISWEEP_BOUNDARY_STRATEGY(
+                                plan, hotspot_func, parser_state)
+                            if internal_failure:
+                                plan.same_mhz_count = max(1, plan.same_mhz_count)
+                                print("[sweep] Both failing endpoints are inside the concrete lock; boundary registers cannot split this path.", flush=True)
                             if next_boundary_strategy is not None:
                                 print(
                                     f"[sweep] Locked {hotspot_func}"
@@ -5872,14 +6253,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                     f"refine(minisweep boundary "
                                     f"{next_boundary_strategy})"
                                 )
+                                new_candidate_plans.add(main_inst)
                                 made_change = True
                             elif plan.same_mhz_count >= 1:
                                 print(
                                     f"[sweep] WARNING: {main_logic.func_name} limited by "
                                     f"already-locked {hotspot_func}"
                                     f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)} "
-                                    "(best isolated pipelining applied); "
-                                    "cannot improve further. Keeping best result."
+                                    "(concrete isolated implementation applied); "
+                                    "this search has no further applicable refinement. Keeping best result."
                                     + DESCRIBE_EXCLUDED_MINISWEEP_INSTANCES(
                                         MINISWEEP_LOCK_TARGETS(hotspot_func, plan, parser_state)[1],
                                         parser_state,
@@ -5924,6 +6306,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 if RUN_HOTSPOT_MINISWEEP(
                                     hotspot_func, plan, parser_state
                                 ):
+                                    new_candidate_plans.add(main_inst)
                                     action = f"minisweep({hotspot_func})"
                                     plan.hotspot_streak[hotspot_func] = 0
                                     made_change = True
@@ -6041,6 +6424,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 action = (
                                     "refine(chunked MUX boundaries)"
                                 )
+                                new_candidate_plans.add(main_inst)
                                 made_change = True
                     if not met and plan.placement_mode == "replace":
                         # Controlled frozen-placement A/B: synthesize exactly
@@ -6116,6 +6500,12 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 plan.history.append(record)
                 iter_records[main_inst] = record
 
+        for record in iter_records.values():
+            record.update(decision=iteration, synthesis_observations=synthesis_attempts,
+                          implementation_signature=implementation,
+                          input_signature=getattr(timing_report, "input_signature", None),
+                          observation_origin="reused_observation" if repeated_decisions else
+                              "cache" if getattr(timing_report, "cache_hit", False) else "synthesis")
         # Track best result so far (largest worst-case achieved/target ratio)
         if overall_score is not None and (
             best_score is None or overall_score > best_score
@@ -6124,18 +6514,13 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             best_tpl = copy.deepcopy(tpl)
             best_auto_multi_cycle = dict(synthesized_auto_multi_cycle)
             best_iter_records = iter_records
-            best_plan_regions = AUTO_PIPELINE.SNAPSHOT_AUTO_PIPELINE_REGIONS(plans)
+            best_plan_regions = copy.deepcopy(built_plan_regions)
             best_plan_cuts = {mi: copy.deepcopy(p.cuts) for mi, p in plans.items()}
             best_plan_placements = {
                 mi: copy.deepcopy(p.placements) for mi, p in plans.items()
             }
-            best_plan_locks = {
-                mi: copy.deepcopy(p.locked) for mi, p in plans.items()
-            }
-            best_plan_boundary_diagnostics = {
-                mi: copy.deepcopy(p.mini_sweep_boundary_diagnostics)
-                for mi, p in plans.items()
-            }
+            best_plan_locks = copy.deepcopy(built_plan_locks)
+            best_plan_boundary_diagnostics = copy.deepcopy(built_plan_boundary_diagnostics)
 
         # Plans never implicated in a failing path report have no timing
         # signal to react to - when every reported path meets its goal they
@@ -6211,7 +6596,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
 
         # Termination
         all_done = (
-            all(p.met_timing or p.stopped_reason is not None for p in plans.values())
+            all(p.met_timing or p.stopped_reason is not None or not p.needs_replan for p in plans.values())
             and len(plans) > 0
         )
         if len(plans) == 0 and not auto_multi_cycle_changed:
@@ -6237,20 +6622,15 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     met_snapshot_tpl = copy.deepcopy(tpl)
                     met_snapshot_auto_multi_cycle = dict(synthesized_auto_multi_cycle)
                     met_snapshot_iter_records = iter_records
-                    met_snapshot_plan_regions = AUTO_PIPELINE.SNAPSHOT_AUTO_PIPELINE_REGIONS(plans)
+                    met_snapshot_plan_regions = copy.deepcopy(built_plan_regions)
                     met_snapshot_plan_cuts = {
                         mi: copy.deepcopy(p.cuts) for mi, p in plans.items()
                     }
                     met_snapshot_plan_placements = {
                         mi: copy.deepcopy(p.placements) for mi, p in plans.items()
                     }
-                    met_snapshot_plan_locks = {
-                        mi: copy.deepcopy(p.locked) for mi, p in plans.items()
-                    }
-                    met_snapshot_plan_boundary_diagnostics = {
-                        mi: copy.deepcopy(p.mini_sweep_boundary_diagnostics)
-                        for mi, p in plans.items()
-                    }
+                    met_snapshot_plan_locks = copy.deepcopy(built_plan_locks)
+                    met_snapshot_plan_boundary_diagnostics = copy.deepcopy(built_plan_boundary_diagnostics)
                 trim_candidates = []
                 for p in plans.values():
                     if (
@@ -6271,6 +6651,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         continue  # minimal within one cut - proven
                     if desired <= 0 or desired >= met_cuts:
                         continue
+                    # A worst-stage measurement and a cut count do not bound
+                    # timing after trimming: stages can be uneven, and the
+                    # reported path may be in an unchanged subtree. Let the
+                    # bounded trim probe measure the smaller implementation.
                     trim_candidates.append((p, met_cuts, desired))
                 if (
                     trim_iters_used < PIPELINE_MIN_EFFORT
@@ -6330,11 +6714,17 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         # Fmax stuck at the same value while cuts keep growing means the
         # landscape geometry is wrong (cuts not landing on the real critical
         # path) - if estimates are in play they are the prime suspect
+        # A plan with a new model-independent candidate is not stagnant until
+        # that candidate has been synthesized: measuring every estimate first
+        # (the fallback below) cannot change a concrete lock or refinement.
         fmax_stagnant = any(
-            p.same_mhz_count >= 1 and not p.met_timing and p.stopped_reason is None
-            for p in plans.values()
+            p.same_mhz_count >= 1
+            and not p.met_timing
+            and p.stopped_reason is None
+            and m not in new_candidate_plans
+            for m, p in plans.items()
         )
-        if iteration >= MAX_SWEEP_ITERS or not made_change or fmax_stagnant:
+        if synthesis_attempts >= synthesis_budget or not made_change or fmax_stagnant:
             # Automatic fallback: if estimates are still in play, measure for
             # real once and keep sweeping - an estimate must never be the
             # reason the sweep fails
@@ -6361,9 +6751,9 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         p.last_mhz = None
                     # Grant at least two more iterations to replan with the
                     # measured (no longer estimated) delays
-                    iteration = min(iteration, MAX_SWEEP_ITERS - 2)
+                    synthesis_budget = max(synthesis_budget, synthesis_attempts + 2)
                     continue
-            if not (iteration >= MAX_SWEEP_ITERS or not made_change):
+            if not (synthesis_attempts >= synthesis_budget or not made_change):
                 # Only stagnation brought us here and the fallback already
                 # ran - keep iterating within the normal budget
                 continue
@@ -6413,6 +6803,18 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 p.met_timing = True
                 p.stopped_reason = None
 
+    # A retained snapshot can expose fewer MAINs than earlier observations.
+    # Only that snapshot's measurement/bound may decide a final MAIN verdict.
+    if final_iter_records is None:
+        final_iter_records = iter_records
+    for plan in plans.values():
+        record = final_iter_records.get(plan.main_inst)
+        plan.met_timing = bool(record and record.get("met"))
+        if record is None:
+            plan.stopped_reason = "unknown_in_retained_snapshot"
+
+    # Retain only locks from the implementation actually kept, not abandoned probes.
+    STORE_CARRIED_LOCKS(plans, parser_state)
     # Final summary + history dump
     for plan in plans.values():
         main_func_name = parser_state.LogicInstLookupTable[plan.main_inst].func_name
@@ -6464,11 +6866,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         if plan.met_timing:
             continue
         main_func_name = parser_state.LogicInstLookupTable[plan.main_inst].func_name
-        achieved = None
-        for h in plan.history:
-            if h.get("achieved_mhz") is not None:
-                if achieved is None or h["achieved_mhz"] > achieved:
-                    achieved = h["achieved_mhz"]
+        retained_record = (final_iter_records or iter_records).get(plan.main_inst, {})
+        achieved = retained_record.get("achieved_mhz")
         why = plan.stopped_reason or "unknown"
         if plan.plateau_blame is not None and plan.stopped_reason == "plateau":
             why += f": {plan.plateau_blame}"
@@ -6546,6 +6945,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
 class InstSweepState:
     def __init__(self):
         self.met_timing = False
+        self.coarse_results = {}
         self.timing_report = None  # Current timing report with multiple paths
         self.mhz_to_latency = {}  # BEST dict[mhz] = latency
         self.latency_to_mhz = {}  # BEST dict[latency] = mhz
@@ -6560,6 +6960,30 @@ class InstSweepState:
         self.worse_or_same_tries_count = 0
 
 
+def REPORT_CONFIRMATION_RESULTS(timing_report, parser_state, multimain_timing_params):
+    """One worst-path verdict per MAIN; per-MCP detail stays in path evidence.
+
+    Optional MCP paths are cycle-normalized observations, not extra final
+    frequencies for the MAIN. Aggregate before printing or recording failure.
+    """
+    measured_mhz = {}
+    for path in FEEDBACK_PATHS(timing_report, parser_state, multimain_timing_params):
+        mhz = 1000.0 / path.path_delay_ns
+        for main in GET_MAIN_INSTS_FOR_PATH_REPORT(path, parser_state, multimain_timing_params):
+            if SYN.GET_TARGET_MHZ(main, parser_state) is not None:
+                measured_mhz[main] = min(mhz, measured_mhz.get(main, mhz))
+    failures = []
+    for main, mhz in sorted(measured_mhz.items()):
+        goal = SYN.GET_TARGET_MHZ(main, parser_state)
+        name = parser_state.LogicInstLookupTable[main].func_name
+        verdict = "PASS" if mhz >= goal else "FAIL"
+        print(f"{verdict} {name}: {mhz:.2f} MHz vs {goal:.2f} MHz goal; "
+              "worst reported path (confirmation run)", flush=True)
+        if mhz < goal:
+            failures.append((name, goal, mhz, "confirmation run"))
+    return not failures, measured_mhz, failures
+
+
 def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
     """Pin-and-confirm pass 2: with pipelining seeded from the previous
     pass's sweep result (SEED_TIMING_PARAMS_FROM_PREVIOUS), run ONE
@@ -6567,7 +6991,9 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
 
     Returns (multimain_timing_params, met). met=True is the expected cheap
     path: the pinned stage counts still meet timing, so the .latency values
-    the design's Python consumed equal the stage counts actually built. On
+    the design's Python consumed equal the stage counts actually built.
+    met=None means isolated MCP seeding changed a consumed count, so no
+    synthesis ran and the driver re-elaborates with the seeded counts. On
     timing failure, falls back to the full planned sweep -- which replans
     from a fresh zero-clock table each iteration (informed by the disk-cached
     measured path delays), so the seeded table can't corrupt it."""
@@ -6621,52 +7047,74 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
             flush=True,
         )
 
-    print(
-        "Running one confirmation synthesis with pipelining pinned from the previous pass...",
-        flush=True,
-    )
-    timing_report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
-        parser_state, multimain_timing_params
-    )
+    seeded = AUTO_MULTI_CYCLE.SEED_COUNTS(parser_state, multimain_timing_params) or {}
+    consumed = AUTO_MULTI_CYCLE.ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state) if seeded else {}
+    stale = {k: (consumed[k], n) for k, n in sorted(seeded.items()) if k in consumed and consumed[k] != n}
+    if stale:
+        # The handshake compares against the .latency this elaboration
+        # consumed, so the driver must re-elaborate with the seeded counts
+        # whatever a synthesis now reports. Confirm that hardware instead.
+        print(
+            "[sweep] Isolated AUTO_MULTI_CYCLE seeds changed counts this elaboration consumed ("
+            + ", ".join(f"{k}: {a}->{b}" for k, (a, b) in stale.items())
+            + "); re-elaborating before confirmation synthesis.",
+            flush=True,
+        )
+        multimain_timing_params.sweep_timing_failures = []
+        return multimain_timing_params, None
+    groups = AUTO_MULTI_CYCLE.COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
+    confirmation_iteration = 0
+    while True:
+        confirmation_iteration += 1
+        print("Running confirmation synthesis with pipelining pinned from the previous pass...", flush=True)
+        timing_report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params)
+        RECORD_SYNTHESIS_OBSERVATION(parser_state, multimain_timing_params, timing_report,
+                                     f"confirmation-{confirmation_iteration}")
+        failed_non_mcp = set()
+        changed = False
+        for path in FEEDBACK_PATHS(timing_report, parser_state, multimain_timing_params):
+            mains = GET_MAIN_INSTS_FOR_PATH_REPORT(path, parser_state, multimain_timing_params)
+            goals = [SYN.GET_TARGET_MHZ(m, parser_state) for m in mains]
+            goals = [g for g in goals if g is not None]
+            if not goals or 1000.0 / path.path_delay_ns >= max(goals):
+                continue
+            group = AUTO_MULTI_CYCLE.AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT(
+                path, groups, parser_state, multimain_timing_params)
+            if group is None:
+                failed_non_mcp.update(mains)
+            else:
+                _, raised, _ = AUTO_MULTI_CYCLE.AUTO_MULTI_CYCLE_FEEDBACK(
+                    group, path, max(goals), multimain_timing_params)
+                changed |= raised
+        if changed and not failed_non_mcp:
+            if confirmation_iteration > MAX_CONFIRMATION_MCP_REPAIRS:
+                print(
+                    f"[sweep] MCP-only confirmation still failing after {MAX_CONFIRMATION_MCP_REPAIRS} "
+                    "count repairs; stopping this bounded repair (timing not met).",
+                    flush=True,
+                )
+                break
+            print("[sweep] MCP-only confirmation failure: preserving all pipelines and re-confirming adjusted constraints.", flush=True)
+            continue
+        break
     if len(timing_report.path_reports) == 0:
         print(timing_report.orig_text)
-        print("Using a bad syn log file?")
+        EXPLAIN_NO_PATHS(timing_report)
         sys.exit(-1)
     SYN.PRINT_MEASURED_AREA_IF_AVAILABLE(
         timing_report,
         SYN.ESTIMATE_DESIGN_AREA(parser_state, multimain_timing_params)["total_area"],
     )
-    met = True
-    confirmation_failures = []
-    measured_mhz = {}  # main inst -> worst reported MHz (sweep_history.json)
-    for reported_clock_group, path_report in timing_report.path_reports.items():
-        curr_mhz = 1000.0 / path_report.path_delay_ns
-        main_insts = GET_MAIN_INSTS_FOR_PATH_REPORT(
-            path_report, parser_state, multimain_timing_params
-        )
-        for main_inst in main_insts:
-            target_mhz = SYN.GET_TARGET_MHZ(main_inst, parser_state)
-            if target_mhz is None:
-                continue
-            passfail = "PASS" if curr_mhz >= target_mhz else "FAIL"
-            measured_mhz[main_inst] = min(
-                curr_mhz, measured_mhz.get(main_inst, curr_mhz)
-            )
-            print(
-                f"{passfail} {parser_state.LogicInstLookupTable[main_inst].func_name}: "
-                f"{curr_mhz:.2f} MHz vs {target_mhz:.2f} MHz goal (confirmation run)",
-                flush=True,
-            )
-            if curr_mhz < target_mhz:
-                met = False
-                confirmation_failures.append(
-                    (
-                        parser_state.LogicInstLookupTable[main_inst].func_name,
-                        target_mhz,
-                        curr_mhz,
-                        "confirmation run",
-                    )
-                )
+    if all(
+        SYN.GET_TARGET_MHZ(m, parser_state) is None
+        or 1000.0 / path.path_delay_ns >= SYN.GET_TARGET_MHZ(m, parser_state)
+        for path in FEEDBACK_PATHS(timing_report, parser_state, multimain_timing_params)
+        for m in GET_MAIN_INSTS_FOR_PATH_REPORT(path, parser_state, multimain_timing_params)
+    ):
+        timing_report = CONFIRM_PROVISIONAL_MCP_SEEDS(timing_report, parser_state, multimain_timing_params)
+    met, measured_mhz, confirmation_failures = REPORT_CONFIRMATION_RESULTS(
+        timing_report, parser_state, multimain_timing_params
+    )
     # Feed the driver's TIMING NOT MET exit gate: the confirmation's verdict
     # is the pass-2 result when it holds; when it fails, the fallback sweep
     # below sets its own sweep_timing_failures, which governs instead.
@@ -6678,10 +7126,14 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
     )
     if met:
         return multimain_timing_params, True
-    print(
-        "AUTO_PIPELINE confirmation run failed timing; falling back to a full throughput sweep...",
-        flush=True,
-    )
+    if not failed_non_mcp:
+        return multimain_timing_params, False
+    # Preserve every unaffected MAIN's realized implementation through fallback.
+    multimain_timing_params.confirmation_preserved_mains = {
+        m: AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(m, TimingParamsLookupTable, parser_state)
+        for m in parser_state.main_mhz if m not in failed_non_mcp
+    }
+    print("AUTO_PIPELINE confirmation failed: replanning implicated pipelined MAINs; preserving unaffected implementations.", flush=True)
     return DO_PLANNED_THROUGHPUT_SWEEP(
         parser_state, multimain_timing_params
     ), False
@@ -6766,6 +7218,7 @@ def DO_THROUGHPUT_SWEEP(
                 parser_state, multimain_timing_params
             )
 
+        RECORD_SYNTHESIS_OBSERVATION(parser_state, multimain_timing_params, timing_report, "comb")
         # Print a little timing info to characterize comb logic
         clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
             parser_state
@@ -7187,6 +7640,7 @@ def DO_COARSE_THROUGHPUT_SWEEP(
     #   Course adjust func latency
     # until mhz goals met
     while True:
+        candidate_cuts = inst_sweep_state.coarse_latency
         TimingParamsLookupTable = AUTO_PIPELINE.BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS(
             inst_name, logic, inst_sweep_state, parser_state
         )
@@ -7221,6 +7675,13 @@ def DO_COARSE_THROUGHPUT_SWEEP(
             stop_at_latency,
         )
 
+        inst_sweep_state.coarse_results[candidate_cuts] = {
+            "met": inst_sweep_state.met_timing,
+            "slices": list(TimingParamsLookupTable[inst_name]._slices),
+            "concrete": AUTO_PIPELINE.CAPTURE_CONCRETE_PIPELINE(inst_name, TimingParamsLookupTable, parser_state),
+            "hash": TimingParamsLookupTable[inst_name].GET_HASH_EXT(TimingParamsLookupTable, parser_state),
+        }
+
         # Intentionally stopping?
         if (
             stop_at_latency is not None
@@ -7236,3 +7697,317 @@ def DO_COARSE_THROUGHPUT_SWEEP(
                 "Unable to make further adjustments. Failed coarse grain attempt meet timing for this module."
             )
             return inst_sweep_state, working_slices, TimingParamsLookupTable
+
+
+def FEEDBACK_PATHS(report, parser_state, params):
+    """Independent MCP groups plus worst pipelining path per MAIN.
+
+    Dedup bits first. Failing evidence precedes passing evidence so a second
+    optional report can never erase a failure in the same implementation.
+    """
+    groups = AUTO_MULTI_CYCLE.COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
+    mcp, ordinary = {}, []
+    for row in SYN.DISTINCT_PATHS(SYN.TIMING_REPORT_PATHS(report)):
+        path = row["path"]
+        if not path.path_delay_ns > 0:
+            continue  # not setup-timing evidence
+        group = AUTO_MULTI_CYCLE.AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT(
+            path, groups, parser_state, params
+        )
+        if group is None:
+            ordinary.append(path)
+        elif group.key not in mcp or path.path_delay_ns > mcp[group.key].path_delay_ns:
+            mcp[group.key] = path
+
+    def failing(path):
+        goals = [
+            SYN.GET_TARGET_MHZ(m, parser_state)
+            for m in GET_MAIN_INSTS_FOR_PATH_REPORT(path, parser_state, params)
+        ]
+        return any(g is not None and 1000.0 / path.path_delay_ns < g for g in goals)
+
+    return sorted(
+        list(mcp.values()) + ordinary,
+        key=lambda p: (not failing(p), -p.path_delay_ns),
+    )
+
+
+def _KEEP_WORST_PLANLESS(results, main_inst, curr_mhz, met, target_mhz):
+    """A later, passing optional path never replaces a MAIN's failing verdict."""
+    old = results.get(main_inst)
+    if old is not None and old[0] / old[2] <= curr_mhz / target_mhz:
+        return False
+    results[main_inst] = (curr_mhz, met, target_mhz)
+    return True
+
+
+def PATH_INSIDE_LOCK(path, plan, parser_state, tpl, hotspot_func=None):
+    """Require two endpoints strictly within the same locked physical instance
+    (of `hotspot_func` when given)."""
+    if not path.start_reg_name or not path.end_reg_name:
+        return False
+    root = plan.main_inst
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    entity = VHDL.GET_ENTITY_NAME(
+        root, parser_state.LogicInstLookupTable[root], tpl, parser_state
+    )
+    for inst in plan.locked:
+        if (
+            hotspot_func is not None
+            and parser_state.LogicInstLookupTable[inst].func_name != hotspot_func
+        ):
+            continue
+        local = inst[len(root) :]
+        if local.startswith(marker):
+            local = local[len(marker) :]  # a prefix, not a character set
+        names = [
+            VHDL.WIRE_TO_VHDL_NAME(n, parser_state)
+            for n in local.split(C_TO_LOGIC.SUBMODULE_MARKER)
+            if n
+        ]
+        prefix = "/".join([entity] + names) + "/"
+        if all(
+            prefix in endpoint for endpoint in (path.start_reg_name, path.end_reg_name)
+        ):
+            # Input/output banks of the locked root are boundary evidence.
+            tails = [
+                e.split(prefix, 1)[1] for e in (path.start_reg_name, path.end_reg_name)
+            ]
+            if all("/" in tail or "raw_hdl_pipeline" in tail for tail in tails):
+                return True
+    return False
+
+
+def EXPLAIN_NO_PATHS(report):
+    """A report without timing paths: say whether the netlist was over capacity."""
+    utilization = getattr(report, "utilization", None) or {}
+    if utilization.get("status") == "over_capacity":
+        print(
+            "[sweep] DOES NOT FIT: the tool reported no timing paths for an over-capacity "
+            "netlist; resource overflow: "
+            + ", ".join(
+                f"{r['resource']} {r['used']}/{r['available']}"
+                for r in utilization.get("overutilization", [])
+            ),
+            flush=True,
+        )
+    else:
+        print("Using a bad syn log file?")
+
+
+def IMPLEMENTATION_SIGNATURE(parser_state, params):
+    """Decision signature: each MAIN's entity hash, its clock and the MCP counts.
+    The backend's input-byte/recipe signature is recorded separately."""
+    values = []
+    for root in sorted(parser_state.main_mhz):
+        values.append(
+            (
+                root,
+                params.TimingParamsLookupTable[root].GET_HASH_EXT(
+                    params.TimingParamsLookupTable, parser_state
+                ),
+            )
+        )
+    values.append(
+        (
+            "clocks",
+            [
+                (m, SYN.GET_TARGET_MHZ(m, parser_state))
+                for m in sorted(parser_state.main_mhz)
+            ],
+        )
+    )
+    values.append(
+        ("mcp", sorted(getattr(params, "auto_multi_cycle_ncycles", {}).items()))
+    )
+    return hashlib.sha256(json.dumps(values, sort_keys=True).encode()).hexdigest()
+
+
+def RECORD_SYNTHESIS_OBSERVATION(parser_state, params, report, iteration):
+    utilization = getattr(
+        report, "utilization", dict(status="unknown", resources={}, overutilization=[])
+    )
+    tpl = params.TimingParamsLookupTable
+    latencies = {
+        "MAIN:" + m: tpl[m].GET_TOTAL_LATENCY(parser_state, tpl)
+        for m in sorted(parser_state.main_mhz)
+    }
+    # Keyed by owning MAIN and canonical key, which survive re-elaboration;
+    # physical instance paths (renamed by latency-sized wrappers) are kept
+    # separately as evidence. Replicas of one key share one depth, else the
+    # harvest fails, so a list here only records that divergence.
+    regions = {}
+    for inst, logic in sorted(parser_state.LogicInstLookupTable.items()):
+        for local, key in sorted(
+            getattr(logic, "sub_inst_to_auto_pipeline_key", {}).items()
+        ):
+            child = inst + C_TO_LOGIC.SUBMODULE_MARKER + local
+            if key is not None and child in tpl:
+                owner = child.split(C_TO_LOGIC.SUBMODULE_MARKER, 1)[0]
+                regions.setdefault("AUTO_PIPELINE:" + owner + ":" + key, {})[child] = tpl[
+                    child
+                ].GET_TOTAL_LATENCY(parser_state, tpl)
+    for name, rows in regions.items():
+        depths = sorted(set(rows.values()))
+        latencies[name] = depths[0] if len(depths) == 1 else depths
+    previous = next(
+        (
+            o
+            for o in reversed(SYNTHESIS_OBSERVATIONS)
+            if o["utilization"]["status"] == "within_reported_limits"
+        ),
+        None,
+    )
+    delta = {
+        m: dict(previous=previous["latencies"].get(m), current=v)
+        for m, v in latencies.items()
+        if previous and previous["latencies"].get(m) != v
+    }
+    observation = dict(
+        run=SWEEP_HISTORY_RUN,
+        iteration=iteration,
+        auto_pipeline_pass=getattr(AUTO_PIPELINE, "CURRENT_LATENCY_PASS", 1),
+        log_path=getattr(report, "log_path", None),
+        cache_hit=getattr(report, "cache_hit", None),
+        input_signature=getattr(report, "input_signature", None),
+        elapsed_seconds=getattr(report, "elapsed_seconds", None),
+        optional_report_ms=getattr(report, "optional_report_ms", None),
+        implementation_signature=IMPLEMENTATION_SIGNATURE(
+            parser_state, params
+        ),
+        utilization=utilization,
+        latencies=latencies,
+        auto_pipeline_instances={name: sorted(rows) for name, rows in regions.items()},
+        latency_changes_since_fit=delta,
+        auto_multi_cycle_ncycles=dict(
+            getattr(params, "auto_multi_cycle_ncycles", {}) or {}
+        ),
+        coverage=getattr(report, "coverage", {}),
+        paths=[
+            dict(
+                **SYN.SERIALIZE_PATH_REPORT(row["path"]),
+                member_count=row["member_count"],
+                query_scopes=row["query_scopes"],
+            )
+            for row in SYN.DISTINCT_PATHS(SYN.TIMING_REPORT_PATHS(report))
+        ],
+    )
+    observation["estimated_main_ffs"] = dict(getattr(params, "sweep_main_ffs", {}))
+    observation["mains_with_reported_failure"] = sorted(
+        {
+            m
+            for path in SYN.TIMING_REPORT_PATHS(report)
+            for m in GET_MAIN_INSTS_FOR_PATH_REPORT(path, parser_state, params)
+            if (
+                SYN.GET_TARGET_MHZ(m, parser_state) is not None
+                and 1000.0 / path.path_delay_ns < SYN.GET_TARGET_MHZ(m, parser_state)
+            )
+        }
+    )
+    last = SYNTHESIS_OBSERVATIONS[-1] if SYNTHESIS_OBSERVATIONS else None
+    observation["register_growth_without_prior_failure"] = {}
+    if last and last["auto_pipeline_pass"] == observation["auto_pipeline_pass"]:
+        observation["register_growth_without_prior_failure"] = {
+            m: max(0, value - last["estimated_main_ffs"][m])
+            for m, value in observation["estimated_main_ffs"].items()
+            if m in last.get("estimated_main_ffs", {})
+            and m not in last.get("mains_with_reported_failure", [])
+        }
+    SYNTHESIS_OBSERVATIONS.append(observation)
+    if utilization["status"] != "over_capacity":
+        return observation
+    first = (
+        sum(
+            o["utilization"]["status"] == "over_capacity"
+            for o in SYNTHESIS_OBSERVATIONS
+        )
+        == 1
+    )
+    if first or STOP_ON_OVER_CAPACITY:
+        print(
+            f"\n[sweep] DOES NOT FIT: pass {observation['auto_pipeline_pass']}, iteration {iteration}",
+            flush=True,
+        )
+        for item in utilization["overutilization"]:
+            print(
+                f"  {item['resource']}: requested {item['used']}, available {item['available']}",
+                flush=True,
+            )
+        for resource, item in utilization["resources"].items():
+            if item["used"] > item["available"]:
+                print(
+                    f"  {resource}: used {item['used']}, available {item['available']}",
+                    flush=True,
+                )
+        print(
+            f"  Latency changes since last netlist within reported capacity: {delta or 'none recorded'}",
+            flush=True,
+        )
+        print(
+            "  Over-capacity synthesis timing does not establish achievable device timing.",
+            flush=True,
+        )
+    if STOP_ON_OVER_CAPACITY:
+        params.sweep_timing_failures = [
+            (
+                parser_state.LogicInstLookupTable[m].func_name,
+                SYN.GET_TARGET_MHZ(m, parser_state),
+                None,
+                "device_over_capacity",
+            )
+            for m in parser_state.main_mhz
+        ]
+        for m in parser_state.main_mhz:
+            RECORD_SWEEP_OUTCOME(
+                parser_state.LogicInstLookupTable[m].func_name,
+                SYN.GET_TARGET_MHZ(m, parser_state),
+                "over_capacity",
+            )
+        WRITE_SWEEP_HISTORY(parser_state, params, build_complete=False)
+        raise SystemExit(
+            "DOES NOT FIT: stopped before timing feedback (--stop_on_over_capacity). Artifacts preserved."
+        )
+    return observation
+
+
+def CONFIRM_PROVISIONAL_MCP_SEEDS(report, parser_state, params, seen_implementations=None):
+    """One batched downward trial of provisional MCP seeds.
+
+    With `seen_implementations` (the sweep's), an already-observed signature
+    is reused instead of synthesized; a backend run is recorded (and so counted
+    through SYNTHESIS_OBSERVATIONS by the caller).
+    """
+    proposals = AUTO_MULTI_CYCLE.PROPOSE_CONFIRM_DOWN(report, parser_state, params)
+    if not proposals:
+        return report
+    original = dict(params.auto_multi_cycle_ncycles)
+    params.auto_multi_cycle_ncycles.update(proposals)
+    print(
+        f"[sweep] Confirming provisional MCP seeds down once: {proposals}", flush=True
+    )
+    signature = None
+    if seen_implementations is not None:
+        signature = IMPLEMENTATION_SIGNATURE(parser_state, params)
+    if signature is not None and signature in seen_implementations:
+        print("[sweep] MCP confirm-down candidate already observed; reusing it.", flush=True)
+        trial = seen_implementations[signature]
+    else:
+        trial = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, params)
+        RECORD_SYNTHESIS_OBSERVATION(parser_state, params, trial, "mcp-confirm-down")
+        if signature is not None:
+            seen_implementations[signature] = trial
+    for path in SYN.TIMING_REPORT_PATHS(trial):
+        mains = GET_MAIN_INSTS_FOR_PATH_REPORT(path, parser_state, params)
+        goals = [SYN.GET_TARGET_MHZ(m, parser_state) for m in mains]
+        if any(g is not None and 1000.0 / path.path_delay_ns < g for g in goals):
+            params.auto_multi_cycle_ncycles = original
+            print(
+                "[sweep] MCP confirm-down failed; restoring the previous passing counts and observation.",
+                flush=True,
+            )
+            return report
+    print(
+        "[sweep] MCP confirm-down passed; counts are now grow-only for this datapath shape.",
+        flush=True,
+    )
+    return trial

@@ -27,7 +27,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
 )
 
-import C_TO_LOGIC  # noqa: F401  (import order: VHDL's import chain)
+import C_TO_LOGIC  # (also first: VHDL's import chain)
 import PY_TO_LOGIC
 import SYN
 import VHDL
@@ -137,6 +137,119 @@ def test_relayout_between_passes_keeps_package_valid():
             _check_relayout_passes()
         finally:
             pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({})
+
+
+def _isolated_files(parser_state, func_prefix):
+    """Isolated-synthesis VHDL list for the first encrypt-direction func_prefix call."""
+    import AUTO_PIPELINE
+
+    inst = min(
+        i for i, logic in parser_state.LogicInstLookupTable.items()
+        if logic.func_name.startswith(func_prefix + "_direction_encrypt")
+    )
+    logic = parser_state.LogicInstLookupTable[inst]
+    params = AUTO_PIPELINE.MultiMainTimingParams()
+    params.TimingParamsLookupTable = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
+    # As an isolated synthesis does: entity, then its top wrapper, then the list.
+    directory = SYN.GET_OUTPUT_DIRECTORY(logic)
+    os.makedirs(directory, exist_ok=True)
+    VHDL.WRITE_LOGIC_ENTITY(inst, logic, directory, parser_state, params.TimingParamsLookupTable)
+    VHDL.WRITE_LOGIC_TOP(inst, logic, directory, parser_state, params.TimingParamsLookupTable)
+    files, _top = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(params, parser_state, inst)
+    return files.split()
+
+
+def _scoped_package(files):
+    (pkg,) = [f for f in files if os.path.basename(f).startswith("c_structs_pkg")]
+    assert os.path.dirname(pkg).endswith(VHDL.C_STRUCTS_PKG_SCOPED_DIR), pkg
+    with open(pkg) as f:
+        return pkg, f.read()
+
+
+def _ghdl_analyze_files(files, label):
+    work = tempfile.mkdtemp(prefix="ghdl_work_", dir=SYN.SYN_OUTPUT_DIRECTORY)
+    # Vivado orders read_vhdl itself; GHDL needs packages, then submodules
+    # (listed after their users) before the entities that use them.
+    packages = [f for f in files if f.endswith(VHDL.VHDL_PKG_EXT)]
+    ordered = packages + [f for f in reversed(files) if f not in packages]
+    result = subprocess.run(
+        ["ghdl", "-a", "--std=08", "-frelaxed", "--workdir=" + work] + ordered,
+        cwd=work, capture_output=True, text=True,
+    )
+    assert result.returncode == 0, f"{label}: GHDL rejected:\n{result.stdout}{result.stderr}"
+
+
+def test_isolated_synthesis_reads_only_its_types():
+    """The WireGuard pass-2 cost: a lane-sized powers_t change invalidated
+    every isolated synthesis, used or not. Each isolated synthesis now reads
+    a c_structs_pkg holding only the types its files use. body (uint32_t
+    only) keeps the same package bytes across the relayout; mac (acc_t,
+    powers_t) gets a new one. Both analyze in GHDL."""
+    with tempfile.TemporaryDirectory(prefix="c_structs_pkg_scoped_test_") as out_dir:
+        SYN.SYN_OUTPUT_DIRECTORY = out_dir
+        top = SYN.TOP_LEVEL_MODULE
+        SYN.TOP_LEVEL_MODULE = top or "top"  # set by the driver
+        try:
+            ps1, _ = _parse_and_write_package({})
+            C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(ps1)  # every entity, as the driver does
+            names = _powers_types(ps1)
+            body1, mac1 = _isolated_files(ps1, "body_v"), _isolated_files(ps1, "mac")
+            body_pkg1, body_text = _scoped_package(body1)
+            mac_pkg1, mac_text = _scoped_package(mac1)
+            for direction, (_raw, emitted) in names.items():
+                assert emitted.lower() not in body_text.lower(), direction
+            emitted = names["encrypt"][1]
+            assert re.search(rf"(?im)^\s*type\s+{re.escape(emitted)}\s+is\s+record", mac_text)
+            # Unused: the other direction's types.
+            assert names["decrypt"][1].lower() not in mac_text.lower()
+            _ghdl_analyze_files(body1, "pass 1 body")
+            _ghdl_analyze_files(mac1, "pass 1 mac")
+
+            keys = {k for logic in ps1.FuncLogicLookupTable.values()
+                    for k in logic.sub_inst_to_auto_pipeline_key.values()}
+            cache = {k: PASS2_LATENCY["encrypt" if "direction_encrypt" in k else "decrypt"] for k in keys}
+            ps2, _ = _parse_and_write_package(cache)
+            C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(ps2)
+            body2, mac2 = _isolated_files(ps2, "body_v"), _isolated_files(ps2, "mac")
+            assert _scoped_package(body2)[0] == body_pkg1, "unrelated type change moved body's package"
+            assert _scoped_package(mac2)[0] != mac_pkg1, "mac's powers_t change was not seen"
+            _ghdl_analyze_files(mac2, "pass 2 mac")
+        finally:
+            SYN.TOP_LEVEL_MODULE = top
+            pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({})
+
+
+def test_scoped_package_selection_rules():
+    """Synthetic chunk index: a use of only an enum literal or a conversion
+    function pulls in its type; record fields pull in their element types;
+    unused types stay out; an unreadable input falls back (None)."""
+    import json
+    from types import SimpleNamespace
+
+    chunks = [
+        ["state_t", "type state_t is (IDLE, RUN);\n", ""],
+        ["pair_t", "type pair_t is record a : uint8_t; end record;\nfunction pair_t_to_slv(x : pair_t) return std_logic_vector;\n",
+         "function pair_t_to_slv(x : pair_t) return std_logic_vector is begin return std_logic_vector(x.a); end function;\n"],
+        ["outer_t", "type outer_t is record p : pair_t; end record;\n", ""],
+        ["unused_t", "type unused_t is record b : uint8_t; end record;\n", ""],
+    ]
+    with tempfile.TemporaryDirectory(prefix="c_structs_pkg_scoped_rules_") as out_dir:
+        SYN.SYN_OUTPUT_DIRECTORY = out_dir
+        with open(os.path.join(out_dir, VHDL.C_STRUCTS_PKG_CHUNKS_FILE), "w") as f:
+            json.dump({"format": VHDL.C_STRUCTS_PKG_CHUNKS_FORMAT,
+                       "prefix": ["package c_structs_pkg is\n", ""], "chunks": chunks}, f)
+        entity = os.path.join(out_dir, "e.vhd")
+        with open(entity, "w") as f:
+            f.write("signal s : outer_t;\n-- x <= IDLE;\nif st = IDLE then\n")
+        ps = SimpleNamespace()
+        with open(VHDL.SCOPED_C_STRUCTS_PACKAGE([entity], ps)) as f:
+            text = f.read()
+        for name in ("state_t", "pair_t", "outer_t", "pair_t_to_slv"):
+            assert name in text, name
+        assert "unused_t" not in text
+        # Package (dependency) order is kept.
+        assert text.index("type state_t") < text.index("type pair_t") < text.index("type outer_t")
+        assert VHDL.SCOPED_C_STRUCTS_PACKAGE([entity + ".missing"], ps) is None
 
 
 if __name__ == "__main__":

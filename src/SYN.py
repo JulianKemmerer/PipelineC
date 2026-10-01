@@ -21,6 +21,7 @@ AUTO_MULTI_CYCLE.py.
 """
 
 import datetime
+import hashlib
 import inspect
 import json
 import math
@@ -891,6 +892,94 @@ def WRITE_FINAL_FILES(multimain_timing_params, parser_state):
 
 
 # Wow this is hack AF
+def JSON_DIGEST(value):
+    """SHA256 of value's canonical JSON."""
+    return hashlib.sha256(
+        json.dumps(value, sort_keys=True, separators=(",", ":")).encode()
+    ).hexdigest()
+
+
+# Path evidence, independent of backend: the base one-worst-path-per-clock
+# report plus any optional extra paths (Vivado's per-MAIN, per-MCP-pair and
+# failing-endpoint queries, see docs/SYN_DESIGN.md#3-the-backend-contract).
+
+
+def TIMING_REPORT_PATHS(report):
+    """Base one-per-clock reports remain sufficient; optional paths add evidence."""
+    return list(report.path_reports.values()) + list(getattr(report, "extra_paths", ()))
+
+
+def PATH_REGISTER_BANK(name):
+    """Collapse payload indices, retaining hierarchy, fields and physical stages."""
+    if name is None:
+        return None
+    # raw_hdl_pipeline's following numeric index is a stage, not a data lane.
+    name = re.sub(r"(\[raw_hdl_pipeline\])\[(-?\d+)\]", r"\1[stage=\2]", name)
+    return re.sub(r"\[-?\d+(?::-?\d+)?\]", "[*]", name)
+
+
+def PATH_EVIDENCE_KEY(path):
+    return (
+        getattr(path, "path_group", None),
+        PATH_REGISTER_BANK(path.start_reg_name),
+        PATH_REGISTER_BANK(path.end_reg_name),
+    )
+
+
+def DISTINCT_PATHS(paths):
+    """One row per (clock, start bank, end bank), worst path first."""
+
+    def rank(path):
+        slack = getattr(path, "slack_ns", None)
+        return slack if slack is not None else -getattr(path, "path_delay_ns", 0)
+
+    grouped = {}
+    for path in paths:
+        key = PATH_EVIDENCE_KEY(path)
+        row = grouped.setdefault(key, dict(path=path, members=set(), scopes=set()))
+        # The same bit reported globally, per MAIN and per MCP counts once.
+        row["members"].add(
+            (
+                path.start_reg_name,
+                path.end_reg_name,
+                getattr(path, "start_pin_name", None),
+                getattr(path, "end_pin_name", None),
+            )
+        )
+        row["scopes"].add(getattr(path, "scope", "clock_worst"))
+        if rank(path) < rank(row["path"]):
+            row["path"] = path
+    return [
+        dict(
+            path=row["path"],
+            member_count=len(row["members"]),
+            query_scopes=sorted(row["scopes"]),
+        )
+        for row in sorted(
+            grouped.values(),
+            key=lambda x: (rank(x["path"]), str(PATH_EVIDENCE_KEY(x["path"]))),
+        )
+    ]
+
+
+def SERIALIZE_PATH_REPORT(path):
+    fields = (
+        "scope",
+        "path_group",
+        "start_reg_name",
+        "end_reg_name",
+        "start_pin_name",
+        "end_pin_name",
+        "source_ns_per_clock",
+        "requirement_ns",
+        "slack_ns",
+        "path_delay_ns",
+        "data_path_ns",
+        "logic_levels",
+    )
+    return {k: getattr(path, k, None) for k in fields}
+
+
 def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, TimingParamsLookupTable):
     main_insts = set()
     if path_report.start_reg_name is None:
@@ -1143,13 +1232,18 @@ def WRITE_REGISTERS_ESTIMATE_FILE(
 
     # For each main func write text
     text = ""
+    main_ffs = {}
     for main_func in parser_state.main_mhz:
         main_logic = parser_state.LogicInstLookupTable[main_func]
         main_func_text, main_func_ffs = GET_REGISTERS_ESTIMATE_TEXT_AND_FFS(
             main_logic, main_func, parser_state, TimingParamsLookupTable, ff_est_cache
         )
+        main_ffs[main_func] = main_func_ffs
         text += main_func_text
         text += "\n"
+
+    if inst_name is None:
+        multimain_timing_params.sweep_main_ffs = main_ffs
 
     print(f"Estimated register usage: {output_file}")
     f = open(output_file, "w")
@@ -2374,6 +2468,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
     # but must still place fixed AUTO_PIPELINE latency= registers
     # (BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS).
     # Make sure synthesis tool is set
+    import AUTO_MULTI_CYCLE
     import AUTO_PIPELINE
 
     import AUTO_FSM
@@ -2503,6 +2598,20 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
         elif LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=True):
             logic.delay = 0
             _SET_LOGIC_DELAY_COMPONENTS(logic, None)
+
+        # A multi-cycle holder rebuilt only for a new cycle count: its
+        # datapath was already synthesized (see HOLDER_DELAY_FROM_EVIDENCE)
+        if logic.delay is None:
+            derived = AUTO_MULTI_CYCLE.HOLDER_DELAY_FROM_EVIDENCE(logic, parser_state)
+            if derived is not None:
+                logic.delay = max(1, int(derived * DELAY_UNIT_MULT))
+                logic.delay_is_estimated = False
+                _SET_LOGIC_DELAY_COMPONENTS(logic, None)
+                print(
+                    f"Function: {logic.func_name} delay ~{derived:.3f} ns per cycle from isolated "
+                    "multi-cycle evidence of the same datapath (not re-synthesized)",
+                    flush=True,
+                )
 
         # Prepare for syn to determine
         if logic.delay is None:
@@ -2643,7 +2752,8 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
         if mhz is not None and mhz > min_mhz:
             min_mhz_func_name = main_to_min_mhz_func_name[main_inst]
             print(
-                f"Design likely limited to ~{min_mhz:.3f} MHz due to function: "
+                f"Isolated effective stage-delay estimate ~{1000.0/min_mhz:.3f} ns (~{min_mhz:.3f} MHz), "
+                "not a whole-design limit; MCP values use their current cycle allowance. Function: "
                 f"{min_mhz_func_name}{FUNC_SRC_LOC_STR(parser_state, min_mhz_func_name)}"
             )
     WRITE_MODULE_INSTANCES_REPORT_BY_DELAY_USAGE(parser_state)
@@ -2930,5 +3040,14 @@ def GET_VHDL_FILES_TCL_TEXT_AND_TOP(
 
         # Use next insts as current
         inst_names = set(next_inst_names)
+
+    if inst_name and not is_final_top:
+        # An isolated synthesis reads only the types its files use, so a
+        # type changing elsewhere in the design keeps its cached result.
+        full_pkg = SYN_OUTPUT_DIRECTORY + "/" + "c_structs_pkg" + VHDL.VHDL_PKG_EXT
+        others = [f for f in files_txt.split() if f != full_pkg]
+        scoped = VHDL.SCOPED_C_STRUCTS_PACKAGE(others, parser_state)
+        if scoped is not None:
+            files_txt = files_txt.replace(full_pkg + " ", scoped + " ", 1)
 
     return files_txt, top_entity_name

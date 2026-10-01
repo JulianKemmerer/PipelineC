@@ -35,6 +35,7 @@ Memory banks are never treated as zero-cycle combinational operators.
 | `SLICE_DOWN_HIERARCHY_WRITE_VHDL_PACKAGES`, `ADD_SLICES_DOWN_HIERARCHY_...`, `BUILD_AND_WRITE_COARSE_SLICED_TIMING_PARAMS`, `GET_BEST_GUESS_IDEAL_SLICES` | fractional (coarse/compatibility) slicing down the hierarchy |
 | `PiplineHDLParams`, `GET_PIPELINE_ARCH_DECL_TEXT`, `GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT`, `GET_STAGE_TEXT`, `GET_SUBMODULE_LEVEL_TEXT` | the pipelined VHDL architecture text (§3) |
 | `DO_PIPELINED_BUILD`, `DO_SWEEP_AND_AUTO_PIPELINE`, `DO_AUTO_PIPELINE_LATENCY_PASSES`, `HARVEST_AUTO_PIPELINE_LATENCIES`, `SEED_TIMING_PARAMS_FROM_PREVIOUS` | the build entry point and the `.latency` pin-and-confirm loop (§4, §5) |
+| `CAPTURE_CONCRETE_PIPELINE`, `CONCRETE_PIPELINE_COMPATIBLE`, `CONCRETE_PIPELINE_CONTAINS`, `RESTORE_CONCRETE_PIPELINE` | a subtree's timing params as data, keyed by path relative to its root (function, wire types, slices, exact bit boundaries, IO-register and fixed flags) and holding no reference to a parse's `Logic`; replayed exactly across re-elaboration (§5) and by the sweep's [hotspot locks](SWEEP_DESIGN.md#concrete-hotspot-locks) |
 | `BUILD_FIXED_AUTO_PIPELINE_TIMING_PARAMS`, `COLLECT_AUTO_PIPELINE_REGIONS`, `ENFORCE_AUTO_PIPELINE_REGIONS`, `REENFORCE_AUTO_PIPELINE_REGIONS`, `AUTO_PIPELINE_REGION_FEEDBACK`, ... | constrained call sites: `latency=` / `start_latency=` / `max_latency=` (§6) |
 | `FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL`, `FUNC_SUBTREE_HAS_AUTO_PIPELINE` | "can registers be added below here?" predicates, used by slicing, the sweep and SYN's delay collection |
 | `ADDED_LATENCY_BLOCKER`, `DESCRIBE_ADDED_LATENCY_BLOCKER`, `CHECK_ADDED_LATENCY_CONTEXT`, `CHECK_ADDED_LATENCY_CONTEXTS` | caller-context eligibility, source-located diagnostics, lowering guards, and the pre-write whole-table check (§2) |
@@ -411,16 +412,27 @@ repeat-the-sweep one:
    that name twice, see
    [VHDL_DESIGN.md](VHDL_DESIGN.md#generated-vhdl-is-the-same-in-every-pass-of-a-run)),
    re-run path delays (mostly disk-cached), then
-   `SEED_TIMING_PARAMS_FROM_PREVIOUS` carries pass 1's sweep solution (slices +
-   IO-reg flags) into the fresh zero-clk table. Matching is **two-tier**: exact
-   instance path first, else func (entity) name — the func-name tier is load-bearing
-   because entity names encode closure values, so a `.latency`-derived parameter
-   change (e.g. FIFO depth) renames its factory entity and every instance path
-   underneath, exactly where the AUTO_PIPELINE'd core lives (the core's own name is
-   stable — its closure captures only the user's func). Both tiers skip non-empty
-   params when the new instance has an added-latency blocker. Renaming an MCP
-   holder cannot seed slices or IO banks from another pipelined call into its
-   combinational interior or primitive leaves. Seeding ends by
+   `SEED_TIMING_PARAMS_FROM_PREVIOUS` carries the concrete solution into the
+   fresh zero-clk table (`CAPTURE_CONCRETE_PIPELINE` /
+   `CONCRETE_PIPELINE_COMPATIBLE`). AUTO_PIPELINE regions match by owning MAIN
+   and canonical call-site key; descendants match by relative instance path
+   within that region.
+   This survives a renamed FIFO or factory wrapper without confusing repeated
+   calls of the same helper. Empty placements are preserved alongside slices,
+   exact bit boundaries, IO banks and fixed flags. A region prefers its exact
+   previous path, then previous replicas with the same local call-site name.
+   Same-key replicas share one harvested depth, so when their placements
+   differ the most common one (ties: first path) is replayed and printed; any
+   choice keeps `.latency` true, and confirmation checks timing. A region whose
+   interior instances, functions or types match no previous replica breaks the
+   rule that an AUTO_PIPELINE'd function must not depend on `.latency`, and
+   fails (`SeedReplayError`) before confirmation synthesis. An exact full-path
+   match is used outside replayed regions. A function-name fallback there
+   requires all previous occurrences in that MAIN to agree, including empty
+   occurrences.
+   Matching checks function and wire types. Every nonempty placement also obeys
+   the new caller's added-latency eligibility; an MCP holder cannot inherit
+   registers from a pipelined occurrence elsewhere. Seeding ends by
    invalidating EVERY entry's cached hash/latency strings — cached hash
    chains embed child func names, and any cache carried across the
    re-elaboration boundary may reference since-renamed entities (the class
@@ -428,17 +440,15 @@ repeat-the-sweep one:
    design). Then `SWEEP.DO_SEEDED_CONFIRM_OR_SWEEP` runs **one** full-design
    synthesis. The loop stops only when the post-confirmation harvest
    **equals** the values this pass's Python consumed — meeting timing alone
-   is not sufficient: realizing the seeded fractional slices hierarchically
-   (e.g. into pipelined built-in div/mult entities with their own stage
-   granularity) can change an instance's total latency even on a passing
-   confirmation, and exiting then would build VHDL whose actual depth
-   contradicts every `.latency`-derived constant baked into it (and desync the
-   native simulator's latency emulation). When the totals change, the loop simply
-   re-elaborates with the fresh numbers (an extra pass, typically converging
-   immediately since the per-instance slices are already in place); on exit the
+   is not sufficient: a changed implementation from constrained-region enforcement
+   or fallback can alter a discovered latency, and MCP counts can grow after a
+   real shape change. Concrete replay alone must preserve an unchanged region's
+   entity hash and depth. If confirmed depths or MCP counts change, the loop
+   re-elaborates with those numbers; on exit the
    `.latency` values the design consumed provably equal the stage counts built. The
-   confirmation is guaranteed to be a REAL synthesis, not a cached-log
-   replay: timing hashes (`RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES`)
+   confirmation uses the current HDL/constraint/recipe identity: an exact match
+   may reuse a complete cached report, while changed inputs require synthesis.
+   Timing hashes (`RECURSIVE_GET_IO_REGS_AND_NO_SUBMODULE_SLICES`)
    record each child's func name alongside its subtree, so a design whose
    descendants renamed (resized FIFO) hashes differently from pass 1 even
    with identical slices — both the multimain top log name and every entity
@@ -459,10 +469,18 @@ repeat-the-sweep one:
    referenced inside a listed file must be defined by a listed file, turning
    any stale/mixed entity references into an immediate build error instead
    of a downstream GHDL/Vivado analysis failure.
-4. **Fallback (rare):** if the confirmation fails timing, it falls back to a full
-   planned sweep (which replans from a fresh zero-clk table each iteration, so the
-   seeds can't corrupt it), harvests again, and loops back to step 3 with the new
-   numbers. Bounded by `AUTO_PIPELINE_MAX_LATENCY_PASSES` (3 total passes); at
+4. **Repair or fallback:** endpoint-qualified isolated MCP measurements seed counts
+   before confirmation. If a seed changes a count this elaboration consumed, the
+   handshake's compare constant changes, so no confirmation is synthesized: the
+   pass re-elaborates with the seeded counts at once. Such passes don't count
+   against the pass limit below; more than `AUTO_PIPELINE_MAX_LATENCY_PASSES` of
+   them in a row fail the build, advising `latency=N` on the AUTO_MULTI_CYCLE.
+   If only MCP paths fail, update their constraints and re-confirm with every
+   pipeline pinned. If pipelined logic fails, replan only implicated MAINs;
+   replay unaffected MAIN placements and compatible concrete hotspot locks.
+   Harvest again and return to step 3 with the new numbers. Earlier timing
+   passes are provisional while `.latency` changes the hardware. Bounded by
+   `AUTO_PIPELINE_MAX_LATENCY_PASSES` (3 total passes); at
    the cap the build fails loudly, advising an explicit `latency=N` pin at the
    unstable call site.
 
@@ -611,10 +629,10 @@ for the full coverage list. The ones that exercise this module end to end
 | `sweep_float32_test.py` (registered once per backend, **every** `--syn_tool`) | a plain auto-pipelined float32 adder MAIN sweeps to its goal on every synthesis backend, not just sky130 -- see [pypeline_TESTS.md](pypeline_TESTS.md#per-syn_tool-sweep-coverage) |
 
 In-process: [`added_latency_context_test.py`](../src/tests/pypeline_tests/inst/added_latency_context_test.py)
-checks the shared caller rule, pre-write rejection, both seeding tiers, per-MAIN
+checks the shared caller rule, pre-write rejection, seeding eligibility, per-MAIN
 locks, and bridge gaps with an elaborated fixed/auto MCP design and synthetic
 delays. `auto_pipeline_harvest_test.py` (harvest grouping and divergence,
-two-tier seed matching, call-site-change detection, latency cache/read flag,
+concrete region replay, guarded fallback matching, call-site-change detection, latency cache/read flag,
 constructor validation), `auto_pipeline_region_planning_test.py` (region
 planning), `pipeline_latency_test.py` (fixed user pipelines),
 `typed_pipeline_placement_test.py` and `mux_fanout_planning_test.py`

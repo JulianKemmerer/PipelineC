@@ -277,7 +277,7 @@ def CHECK_MCP_TIMING_REPORT(timing_report, parser_state, multimain_timing_params
         top_path = VHDL.GET_ENTITY_NAME(root, root_logic, tpl, parser_state)
         for tup, start, end, auto in GET_MCP_CELL_PATHS(inst, root, top_path, parser_state):
             ncycles = int(MCP_EFFECTIVE_NCYCLES(tup, auto, multimain_timing_params))
-            for report in timing_report.path_reports.values():
+            for report in SYN.TIMING_REPORT_PATHS(timing_report):
                 source, dest = report.start_reg_name, report.end_reg_name
                 if not source or not dest or not _MCP_CELL_GLOB_REGEX(end).search(dest):
                     continue
@@ -398,3 +398,249 @@ def AUTO_MULTI_CYCLE_FEEDBACK(group, path_report, target_mhz, multimain_timing_p
         flush=True,
     )
     return f"auto_multi_cycle({label} {ncycles}->{needed})", True, None
+
+
+# Build-local evidence: never seed from the generic scalar operator-delay cache.
+# The key describes the datapath, independently of its current timing exception.
+ISOLATED_MCP_EVIDENCE = {}
+PROVISIONAL_MCP_SEEDS = {}
+CONFIRM_DOWN_USED = set()
+
+
+def MCP_SHAPE(group, parser_state):
+    """Fingerprint the capture data cone, excluding the count/ready controller.
+
+    Stop at register outputs: their next-state logic is outside this path.
+    Include helper bodies recursively so actual arithmetic/type changes still
+    invalidate evidence. Never key this on the wrapper's generated identity.
+    """
+    functions = {}
+
+    def function_shape(name):
+        if name not in functions:
+            logic = parser_state.FuncLogicLookupTable[name]
+            functions[name] = SYN.JSON_DIGEST(
+                {
+                    "function": name,
+                    "types": sorted(logic.wire_to_c_type.items()),
+                    "drivers": sorted(logic.wire_driven_by.items()),
+                    "children": sorted(
+                        (local, function_shape(child))
+                        for local, child in logic.submodule_instances.items()
+                    ),
+                }
+            )
+        return functions[name]
+
+    shapes = []
+    for inst, start, end in group.paths:
+        logic = parser_state.LogicInstLookupTable[inst]
+        memo = {}
+
+        def wire_shape(wire):
+            if wire in memo:
+                return memo[wire]
+            kind = logic.wire_to_c_type.get(wire)
+            if wire == start or wire in getattr(logic, "state_regs", {}):
+                result = ("register", wire, kind)
+            elif wire in logic.wire_driven_by:
+                result = ("wire", kind, wire_shape(logic.wire_driven_by[wire]))
+            elif C_TO_LOGIC.SUBMODULE_MARKER in wire:
+                local, port = wire.rsplit(C_TO_LOGIC.SUBMODULE_MARKER, 1)
+                child = logic.submodule_instances.get(local)
+                if child is None:
+                    result = ("leaf", wire, kind)
+                else:
+                    inputs = parser_state.FuncLogicLookupTable[child].inputs
+                    result = (
+                        "call",
+                        function_shape(child),
+                        port,
+                        kind,
+                        tuple(
+                            wire_shape(local + C_TO_LOGIC.SUBMODULE_MARKER + i)
+                            for i in inputs
+                        ),
+                    )
+            else:
+                result = ("leaf", wire, kind)
+            memo[wire] = SYN.JSON_DIGEST(result)
+            return memo[wire]
+
+        driver = logic.wire_driven_by.get(end)
+        if driver is None:
+            # Missing connectivity is not reusable characterization evidence.
+            # Keep the entire holder identity rather than assuming a data cone.
+            cone = (
+                "unknown",
+                logic.func_name,
+                sorted(logic.wire_to_c_type.items()),
+                sorted(logic.submodule_instances.items()),
+            )
+        else:
+            cone = wire_shape(driver)
+        shapes.append(
+            (
+                start,
+                end,
+                logic.wire_to_c_type.get(start),
+                logic.wire_to_c_type.get(end),
+                cone,
+            )
+        )
+    return SYN.JSON_DIGEST(sorted(shapes))
+
+
+def REMEMBER_ISOLATED_REPORTS(report, parser_state, params, top_inst):
+    groups = COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
+    root_logic = parser_state.LogicInstLookupTable[top_inst]
+    root_path = VHDL.GET_ENTITY_NAME(
+        top_inst, root_logic, params.TimingParamsLookupTable, parser_state
+    )
+    for group in groups.values():
+        delays = []
+        for inst, start_name, end_name in group.paths:
+            if inst != top_inst and not inst.startswith(
+                top_inst + C_TO_LOGIC.SUBMODULE_MARKER
+            ):
+                continue
+            for tup, start, end, auto in GET_MCP_CELL_PATHS(
+                inst, top_inst, root_path, parser_state
+            ):
+                if auto is None or auto.key != group.key:
+                    continue
+                n = int(MCP_EFFECTIVE_NCYCLES(tup, auto, params))
+                for path in SYN.TIMING_REPORT_PATHS(report):
+                    if (
+                        path.start_reg_name
+                        and path.end_reg_name
+                        and _MCP_CELL_GLOB_REGEX(start).search(path.start_reg_name)
+                        and _MCP_CELL_GLOB_REGEX(end).search(path.end_reg_name)
+                        and getattr(path, "end_pin_name", None) == "D"
+                        and math.isclose(
+                            path.requirement_ns,
+                            n * path.source_ns_per_clock,
+                            rel_tol=0,
+                            abs_tol=0.001 * (n + 1),
+                        )
+                    ):
+                        delays.append(path.requirement_ns - path.slack_ns)
+        if delays:
+            key = (group.key, MCP_SHAPE(group, parser_state))
+            # Replicated instances may be characterized by separate isolated
+            # runs (in any ThreadPool order): keep the worst, never the last.
+            ISOLATED_MCP_EVIDENCE[key] = max(delays + [ISOLATED_MCP_EVIDENCE.get(key, 0.0)])
+
+
+def HOLDER_DELAY_FROM_EVIDENCE(logic, parser_state):
+    """Per-cycle delay (ns) of a multi-cycle holder, from isolated endpoint
+    evidence of its exact datapath, or None.
+
+    A cycle-count change rebuilds the holder (its handshake compares against
+    .latency + 1), so characterization would synthesize the same
+    launch-to-capture cone again: about 17 minutes per pass for WireGuard's
+    5-lane MAC prologue and epilogue. MCP_SHAPE fingerprints that cone, so when
+    every multi-cycle path the holder owns has evidence for its current shape,
+    raw delay / elaborated count is what synthesis would report (for example,
+    67.5 ns / 4 against a measured 16.8 ns). Holders with fixed (non-tag)
+    multi-cycle paths, or with a shape never synthesized, return None.
+    """
+    tuples = getattr(logic, "auto_multi_cycle_tuples", None)
+    if not logic.mcp_tuples or not tuples:
+        return None
+    groups = None
+    worst = None
+    for ncycles, start, end in logic.mcp_tuples:
+        constraint = tuples.get((start, end))
+        if constraint is None:
+            return None
+        if groups is None:
+            groups = COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
+        group = groups.get(constraint.key)
+        if group is None:
+            return None
+        raw = ISOLATED_MCP_EVIDENCE.get((constraint.key, MCP_SHAPE(group, parser_state)))
+        if raw is None:
+            return None
+        per_cycle = raw / max(1, int(ncycles))
+        worst = per_cycle if worst is None else max(worst, per_cycle)
+    return worst
+
+
+def SEED_COUNTS(parser_state, params):
+    """Use endpoint-qualified raw requirement-minus-slack, before confirmation."""
+    groups = COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
+    current = dict(ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state))
+    current.update(getattr(params, "auto_multi_cycle_ncycles", {}) or {})
+    for key, group in groups.items():
+        if group.constraint.is_fixed():
+            continue
+        shape = MCP_SHAPE(group, parser_state)
+        raw = ISOLATED_MCP_EVIDENCE.get((key, shape))
+        goals = [
+            SYN.GET_TARGET_MHZ(
+                C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(i, parser_state),
+                parser_state,
+            )
+            for i, _, _ in group.paths
+        ]
+        goals = [g for g in goals if g is not None]
+        if raw is None or not goals:
+            continue
+        needed = max(1, math.ceil(raw * max(goals) / 1000.0 - 1e-9))
+        cap = group.constraint.upper_bound()
+        if cap is not None:
+            needed = min(cap, needed)
+        old = current[key]
+        if needed > old:
+            current[key] = needed
+            PROVISIONAL_MCP_SEEDS[(key, shape)] = dict(floor=old, seeded=needed)
+            print(
+                f"[sweep] AUTO_MULTI_CYCLE {key}: isolated endpoints ~{raw:.3f} ns raw; provisional seed {old}->{needed}",
+                flush=True,
+            )
+    params.auto_multi_cycle_ncycles = current
+    return current
+
+
+def PROPOSE_CONFIRM_DOWN(report, parser_state, params):
+    """One provisional-seed correction per group/datapath shape, after a pass.
+
+    Uses all reported physical pairs and never undercuts a user/elaborated
+    floor. Missing coverage leaves the seed alone. Timing confirmation is
+    still required; failed trials restore the passing counts.
+    """
+    groups = COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
+    proposals = {}
+    for key, group in sorted(groups.items()):
+        shape_key = (key, MCP_SHAPE(group, parser_state))
+        seed = PROVISIONAL_MCP_SEEDS.get(shape_key)
+        if (
+            seed is None
+            or shape_key in CONFIRM_DOWN_USED
+            or group.constraint.is_fixed()
+        ):
+            continue
+        # Dedicated queries provide one worst path for every replicated pair.
+        by_pair = {}
+        for path in getattr(report, "extra_paths", ()):
+            if not getattr(path, "scope", "").startswith("mcp:"):
+                continue
+            matched = AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT(
+                path, groups, parser_state, params
+            )
+            if matched is not None and matched.key == key:
+                by_pair[path.scope] = path
+        if len(by_pair) != len(group.paths):
+            continue
+        old = params.auto_multi_cycle_ncycles[key]
+        needed = max(seed["floor"], group.constraint.start_latency or 1)
+        for path in by_pair.values():
+            period = path.source_ns_per_clock
+            needed = max(
+                needed, math.ceil((path.requirement_ns - path.slack_ns) / period - 1e-9)
+            )
+        CONFIRM_DOWN_USED.add(shape_key)
+        if needed < old:
+            proposals[key] = needed
+    return proposals

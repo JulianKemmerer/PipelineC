@@ -32,6 +32,7 @@ default_top_module = "top"
 
 # Parse args
 parser = argparse.ArgumentParser(description="PypelineC:")
+parser.add_argument("--stop_on_over_capacity", action="store_true", help="Stop before timing feedback if whole-design synthesis exceeds device capacity (default: warn).")
 parser.add_argument(
     "src_file",
     type=str,
@@ -374,6 +375,7 @@ SYN.HIER_SYN_MODE = (
 )
 # Post-met pipeline stage reduction effort
 SWEEP.PIPELINE_MIN_EFFORT = args.pipeline_min_effort
+SWEEP.STOP_ON_OVER_CAPACITY = args.stop_on_over_capacity
 # Plan-only: skip all sweep synthesis iterations, emit the first guess as-is
 SWEEP.NO_SWEEP = args.no_sweep
 # Multiplier style
@@ -432,6 +434,8 @@ pypeline.SET_AUTO_PIPELINE_BUILD_MODE(
 if src_file.endswith(".c"):
     parser_state = C_TO_LOGIC.PARSE_FILE(src_file)
 elif src_file.endswith(".py"):
+    # Later AUTO_PIPELINE passes re-parse the design: freeze its source first
+    PY_TO_LOGIC.FREEZE_DESIGN_SOURCES(SYN.SYN_OUTPUT_DIRECTORY)
     # First parse only: runs the design's @initial(syn) hooks after its import,
     # before elaboration
     parser_state = PY_TO_LOGIC.PARSE_FILE(src_file, run_syn_initial_hooks=True)

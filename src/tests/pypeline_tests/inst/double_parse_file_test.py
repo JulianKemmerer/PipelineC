@@ -114,10 +114,76 @@ def test_var_ref_naming_design_reparses():
     parse_twice_and_compare(os.path.join(INST_DIR, "var_ref_naming_design.py"))
 
 
+def test_design_source_is_frozen_across_reparses():
+    # pypelinec re-parses the design in later AUTO_PIPELINE passes, possibly
+    # hours later. Edits to design files in the meantime must not reach those
+    # passes: re-imports, AST reads and inspect.getsource keep the first-read
+    # bytes, and source_provenance.json records the drift. The compiler's own
+    # modules, stdlib and generated output-directory source are not frozen.
+    # A subprocess keeps the import hook out of this test process.
+    import subprocess
+
+    code = r"""
+import inspect, json, os, pathlib, sys
+import PY_TO_LOGIC, SYN
+temp = pathlib.Path(sys.argv[1])
+out = temp / "out"
+SYN.SYN_OUTPUT_DIRECTORY = str(out)
+helper = temp / "freeze_helper.py"
+helper.write_text("from pypeline import hw_func, uint8_t\n\n@hw_func\ndef helper(x: uint8_t) -> uint8_t:\n    return x + 1\n")
+design = temp / "freeze_design.py"
+design.write_text("from pypeline import MAIN, uint8_t\nfrom freeze_helper import helper\n\n@MAIN\ndef freeze_main(x: uint8_t) -> uint8_t:\n    return helper(x)\n")
+os.chdir(temp)
+PY_TO_LOGIC.FREEZE_DESIGN_SOURCES(str(out))
+first = set(PY_TO_LOGIC.PARSE_FILE("freeze_design.py").FuncLogicLookupTable)
+helper.write_text(helper.read_text().replace("x + 1", "x * x"))
+design.write_text(design.read_text() + "\n# edited\n")
+second = set(PY_TO_LOGIC.PARSE_FILE("freeze_design.py").FuncLogicLookupTable)
+assert first == second, (sorted(first ^ second))
+assert not any("MULT" in f for f in second), sorted(second)
+assert "x + 1" in inspect.getsource(sys.modules["freeze_helper"].helper)
+assert "# edited" not in PY_TO_LOGIC.READ_SOURCE_TEXT("freeze_design.py")
+import linecache
+linecache.checkcache()  # inspect.getsource on the top design file reads this
+assert not any("# edited" in line for line in linecache.getlines(str(design)))
+assert not PY_TO_LOGIC._is_frozen_source(os.path.abspath(PY_TO_LOGIC.__file__))
+for packages in ("site-packages", "dist-packages"):
+    assert not PY_TO_LOGIC._is_frozen_source(str(temp / packages / "m.py"))
+assert PY_TO_LOGIC._is_frozen_source(str(temp / "lib" / "m.py"))
+generated = out / "generated.py"
+generated.write_text("x = 1")
+PY_TO_LOGIC.READ_SOURCE_TEXT(str(generated))
+generated.write_text("x = 2")
+assert PY_TO_LOGIC.READ_SOURCE_TEXT(str(generated)) == "x = 2"
+PY_TO_LOGIC.WRITE_SOURCE_PROVENANCE()
+sources = json.loads((out / "source_provenance.json").read_text())["sources"]
+assert sources[str(helper)]["disk_drift"] and sources[str(design)]["disk_drift"]
+assert any("/include/pypeline/" in p for p in sources), sorted(sources)
+assert not any(os.path.dirname(p) == os.path.dirname(PY_TO_LOGIC.__file__) for p in sources)
+assert json.__file__ not in sources and str(generated) not in sources
+import sysconfig
+stdlib = tuple(os.path.abspath(sysconfig.get_paths()[k]) + os.sep for k in ("stdlib", "platstdlib"))
+assert not any(p.startswith(stdlib) for p in sources), sorted(sources)
+assert not (out / "source_snapshot").exists()
+print("FROZEN OK")
+"""
+    with tempfile.TemporaryDirectory(prefix="design_source_freeze_") as temp:
+        result = subprocess.run(
+            [sys.executable, "-c", code, temp],
+            env=dict(os.environ, PYTHONPATH=os.path.join(INST_DIR, "../../../")),
+            capture_output=True,
+            text=True,
+        )
+    assert result.returncode == 0 and "FROZEN OK" in result.stdout, (
+        result.stdout[-2000:] + result.stderr[-3000:]
+    )
+
+
 if __name__ == "__main__":
     test_multi_file_design_reparses()
     test_stream_auto_pipeline_design_reparses()
     test_fir_design_reparses()
     test_auto_fsm_design_reparses()
     test_var_ref_naming_design_reparses()
+    test_design_source_is_frozen_across_reparses()
     print("All double PARSE_FILE tests passed.")

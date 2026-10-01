@@ -4933,6 +4933,26 @@ being called more than once per process:
   `AUTO_PIPELINE` objects against the current latency cache. Compiler modules predate
   the snapshot and survive (required: the latency cache lives in `pypeline` module
   state).
+- **Design source frozen for the whole build:** a later pass re-parses the design
+  hours after the first one. If a design file were edited in between, that pass
+  would elaborate different code than the one the sweep measured, or
+  `inspect.getsource` would return shifted lines. So `pypelinec` calls
+  `FREEZE_DESIGN_SOURCES(out_dir)` right before the first `PARSE_FILE`. After
+  that, three kinds of read return a file's first-read bytes for the rest of the
+  process:
+  - the import loader (`SourceFileLoader.get_code` is patched), so eviction
+    re-executes the frozen bytes against the new latency cache;
+  - `inspect.getsource` (`linecache` entries with `mtime=None`, keyed by the
+    absolute paths loaders and code objects use);
+  - direct AST reads (`READ_SOURCE_TEXT`).
+
+  Only re-read sources are frozen: the design's files and `include/pypeline`.
+  The compiler's own `src/*.py` modules, Python's stdlib and site/dist-packages,
+  and generated Python under the output directory load normally.
+  `<out_dir>/source_provenance.json` lists each frozen file's sha256 and size,
+  plus `disk_drift`: whether it changed on disk by exit, meaning an edit the
+  build did not use. It is evidence only, never part of a synthesis cache key.
+  Library callers of `PARSE_FILE` don't freeze anything.
 - **Per-parse compiler cache cleanup**: the re-parse branch runs
   `C_TO_LOGIC.DEL_ALL_CACHES()` + `SYN.DEL_ALL_CACHES()` (the same cleanup the C
   frontend runs at the end of its own `PARSE_FILE`) plus the zero-clk TimingParams
@@ -4944,7 +4964,10 @@ being called more than once per process:
 - The `.latency` read flag is reset at the top of every parse.
 
 `src/tests/pypeline_tests/inst/double_parse_file_test.py` regression-tests all of this
-in-process.
+in-process. Its freeze case runs in a subprocess, because the hook patches that
+process's import loader. It edits a two-file design between parses and checks
+that the second parse elaborates the frozen code, that `inspect.getsource` stays
+frozen, that the scope rules hold, and that the manifest records the drift.
 
 ### Test coverage
 

@@ -103,10 +103,22 @@ files are handled:
     package starts over. That includes format 1, keyed by C type, which may already
     hold duplicate declarations.
 - **Cost of a flip.** If a layout keeps changing between passes, the package starts over
-  on every change. Leaves synthesized under the previous package are then re-synthesized
-  by DEVICE_MODELS, which checks its VHDL inputs. Vivado replays an existing leaf log by
-  name without checking inputs, so it is unaffected. Passes that only add types, such as
-  AUTO_FSM schedule passes, still leave a warm rerun with nothing to re-synthesize.
+  on every change. Passes that only add types, such as AUTO_FSM schedule passes, still
+  leave a warm rerun with nothing to re-synthesize.
+- **Isolated syntheses read only their types.** Backends identify a synthesis by
+  its input bytes (DEVICE_MODELS, Vivado's `.inputs.json`). With the whole package
+  listed, one latency-sized type changing between passes would re-synthesize every
+  isolated function, used or not (18 Vivado runs, 33 min, in the standalone
+  WireGuard encrypt build at 80 MHz). So `SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP`
+  gives an isolated (non-top) synthesis `SCOPED_C_STRUCTS_PACKAGE`: the fixed
+  preamble plus the chunks whose declared names (type, constants, conversion
+  functions, enum literals) appear in its listed files, closed over the chunks'
+  own references, in package order. It is still `package c_structs_pkg`, written once
+  to `c_structs_pkg_scoped/c_structs_pkg_<hash>.pkg.vhd` (the hash of its text; atomic
+  rename, never truncated). Unused declarations can't change a netlist, and a missing
+  one fails analysis loudly rather than reusing a stale result. Without a readable
+  chunk index or input file, the full package is used. Whole-design syntheses and
+  the final file list keep the full package.
 - **Rendering.** Chunks are rendered (`RENDER_TEXT`) one at a time. Identifier
   translation is token-local, so this is byte-identical to rendering the whole package.
   A chunk's key is `RENDER_TEXT` of its declared type name, the same translation its
