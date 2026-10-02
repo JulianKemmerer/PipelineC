@@ -48,6 +48,11 @@ from pypeline import (
 # avoids dunder-style names.
 _VHDL_TEXT_FUNC_NAME = "vhdl"
 
+# Part the pipelinec driver settled after the first parse (--part, PART(...) or
+# the tool's default). Re-parses start from it: a CLI-only --part is otherwise
+# lost on every re-elaboration (AUTO_PIPELINE latency passes, AUTO_FSM, ...).
+RESOLVED_PART = None
+
 UNARY_OP_MAP = {
     ast.Invert: C_TO_LOGIC.UNARY_OP_NOT_NAME,
     ast.USub: C_TO_LOGIC.UNARY_OP_NEGATE_NAME,
@@ -7610,6 +7615,9 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     parser_state = _new_parser_state(module_globals)
 
     # ── Apply pypeline pragmas (PART, MAIN_MHZ) from the live module ──
+    # A PART() pragma can only repeat RESOLVED_PART: the driver's resolver
+    # already rejected any disagreement with --part.
+    parser_state.part = RESOLVED_PART
     if pypeline._part_registry is not None:
         parser_state.part = pypeline._part_registry
     if pypeline._syn_tool_registry is not None:

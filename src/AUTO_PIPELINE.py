@@ -2996,7 +2996,6 @@ def RAM_SEARCH(parser_state, args, src_file, build):
     choices = {key: RAM_CANDIDATES(**entry["options"]) for key, entry in entries.items()}
     initial = RAM_PLANS_FROM_STATE(parser_state)
     history, measured = [], {}
-    original_part = parser_state.part
 
     def evaluate(plans, state=None):
         signature = tuple(sorted(plans.items()))
@@ -3004,7 +3003,6 @@ def RAM_SEARCH(parser_state, args, src_file, build):
         if state is None:
             pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({})
             state = PY_TO_LOGIC.PARSE_FILE(src_file)
-            state.part = original_part
             if set(RAM_PLANS_FROM_STATE(state)) != set(initial):
                 raise ValueError(
                     "auto-pipelined RAM call sites changed during plan re-elaboration"

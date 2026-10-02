@@ -475,6 +475,7 @@ parser_state.part, _resolved_tool = SYN.RESOLVE_PART_AND_TOOL(
     src_tool=parser_state.syn_tool_name,
     allow_fail=True,
 )
+PY_TO_LOGIC.RESOLVED_PART = parser_state.part
 
 # A requested XC7 bitstream needs Project X-Ray conversion tools in addition
 # to the synthesis/P&R payload CHECK_TOOL_INSTALLED already verified. Diagnose

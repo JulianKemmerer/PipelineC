@@ -260,6 +260,23 @@ def get_tests() -> list:
             VIVADO,
         )
     )
+    # A Xilinx part given ONLY on the command line (the design has no PART())
+    # must survive the AUTO_PIPELINE .latency re-elaboration: pass 2 re-parses
+    # the design, and used to come back with part=None, crashing pass 2's first
+    # Vivado path-delay synthesis on "-part " + None. stream_auto_pipeline_test
+    # always reaches pass 2 (make_stream_auto_pipeline reads .latency). The
+    # part is the Versal one this was first reported on (Vitis AIE example).
+    tests.append(
+        _synth_test(
+            "auto_pipeline_latency_cli_part_vivado",
+            [
+                INST_DIR / "stream_auto_pipeline_test.py",
+                "--part",
+                "xcve2302-sfva784-2MP-e-S",
+            ],
+            VIVADO,
+        )
+    )
     # Pipelined (non---comb) NATIVE simulation: full build first, then the
     # native sim runs with the discovered latencies emulated. Self-checking
     # elastic stream design -- proves build -> harvest -> latency-emulated
