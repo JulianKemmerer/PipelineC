@@ -38,6 +38,10 @@ def make_fir_decim(
     symmetry="auto",
     skip_zero_taps=True,
     handshake="elastic",
+    *,
+    latency=None,
+    start_latency=None,
+    max_latency=None,
 ):
     """Build a decimate-by-`decim` streaming FIR. Returns (fir_decim, fir_decim_t).
 
@@ -70,7 +74,12 @@ def make_fir_decim(
     LAST_PHASE = decim - 1
 
     if handshake == "elastic":
-        sp_func, sp_t = make_stream_auto_pipeline(fir_core)
+        sp_func, sp_t = make_stream_auto_pipeline(
+            fir_core,
+            latency=latency,
+            start_latency=start_latency,
+            max_latency=max_latency,
+        )
 
         @struct
         class fir_decim_t(NamedTuple):
@@ -123,7 +132,12 @@ def make_fir_decim(
             return rv
 
         fir_core_ap, _fir_core_ap_call = _auto_pipeline_with_io_regs(
-            fir_core_stream, has_input_reg=True, has_output_reg=True
+            fir_core_stream,
+            has_input_reg=True,
+            has_output_reg=True,
+            latency=latency,
+            start_latency=start_latency,
+            max_latency=max_latency,
         )
 
         @hw_func

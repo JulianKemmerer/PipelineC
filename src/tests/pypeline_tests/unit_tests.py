@@ -94,6 +94,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "auto_pipeline_region_planning_test.py"],
         )
     )
+    # make_stream_auto_pipeline / DSP factory latency= / start_latency= /
+    # max_latency= forwarding to the single core AUTO_PIPELINE: .latency
+    # served per build mode, errors, identity, and native-sim cycle behavior.
+    tests.append(
+        Test(
+            name="stream_auto_pipeline_latency_args_test",
+            category="unit",
+            cmd=[INST_DIR / "stream_auto_pipeline_latency_args_test.py"],
+        )
+    )
     # AUTO_MULTI_CYCLE: constructor/.latency/keys/read tracking, identity following
     # the cycle count, SYN constraint overrides + hash, SWEEP report matching
     # and grow-only feedback, elaboration + cache re-parse renaming, and the

@@ -456,6 +456,14 @@ from a different angle:
   - `.latency` per build mode and cache;
   - the served-value predicate behind the pin-and-confirm pass-2 skip;
   - `AUTO_PIPELINE.CHECK_AUTO_PIPELINE_CONSTRAINTS_REALIZED`.
+- `stream_auto_pipeline_latency_args_test.py` (unit): `make_stream_auto_pipeline` and the
+  DSP factories pass `latency=` / `start_latency=` / `max_latency=` to their single core
+  AUTO_PIPELINE, in every handshake mode. It checks:
+  - `.latency` served per build mode;
+  - errors from bad combinations;
+  - key and repr stability across constructions;
+  - plain native sim, where a hint is cycle-identical to none and a fixed `latency=2`
+    delays the first result by 2 cycles.
 - `auto_pipeline_region_planning_test.py` (unit): `AUTO_PIPELINE.COUNT_TARGETED_PLACEMENTS`,
   plan trimming, cap bookkeeping, and hotspot-to-region attribution on synthetic
   landscapes.
@@ -463,9 +471,14 @@ from a different angle:
   fixed latency and ignores start/max. `pipeline_latency_test.py`'s gate test also runs
   it, both directly and through `pypelinec --sim --comb`, with the compiler import
   forbidden.
-- `auto_pipeline_constraints_test.py` (build_report_device_models): fixed and start regions are built
-  exactly and pass 2 is skipped, and a `max_latency` cap stops an unreachable goal
-  promptly.
+- `auto_pipeline_constraints_test.py` (build_report_device_models):
+  - fixed and start regions are built exactly and pass 2 is skipped;
+  - a `max_latency` cap stops an unreachable goal promptly;
+  - `make_stream_auto_pipeline(..., start_latency=1)`
+    (`stream_auto_pipeline_seeded_design.py`) serves 1 to the bootstrap FIFO sizing,
+    settles in one sweep iteration and skips pass 2;
+  - the same hint under a harder goal (`stream_auto_pipeline_grow_design.py`) still
+    grows the core, and pass 2 resizes the FIFO.
 - `auto_pipeline_c_pragma_test.py` (build_report_device_models): C `#pragma AUTOPIPELINE N` under
   `--comb`.
 - `self_check_fixed_auto_pipeline_test.py` (both native_vs_vhdl categories): compares

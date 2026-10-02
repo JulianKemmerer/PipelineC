@@ -43,6 +43,10 @@ def make_dc_block(
     rounding="truncate",
     overflow="wrap",
     handshake="elastic",
+    *,
+    latency=None,
+    start_latency=None,
+    max_latency=None,
 ):
     """Build a DC blocker. Returns (dc_block, dc_block_t).
 
@@ -59,6 +63,10 @@ def make_dc_block(
                                          stream_out_if: out_intrf.fb_t) -> dc_block_t
                "valid_only" -> dc_block(in_stream: make_stream_t(data_t))
                                    -> make_stream_t(out_t)
+    latency / start_latency / max_latency (keyword-only, default None):
+               forwarded to the core AUTO_PIPELINE in both handshake modes
+               (core registers only, never the I/O boundary registers); see
+               make_stream_auto_pipeline / AUTO_PIPELINE.
 
     The returned `dc_block` carries metadata attributes:
     .data_t .out_t .k .mean_t .diff_t .full_precision .rounding .overflow
@@ -98,7 +106,12 @@ def make_dc_block(
             return resize_fn(d)
 
     if handshake == "elastic":
-        sp_func, _sp_t = make_stream_auto_pipeline(dc_block_core)
+        sp_func, _sp_t = make_stream_auto_pipeline(
+            dc_block_core,
+            latency=latency,
+            start_latency=start_latency,
+            max_latency=max_latency,
+        )
         in_intrf = make_stream_interface(data_t)
         out_intrf = sp_func.out_intrf
 
@@ -147,7 +160,12 @@ def make_dc_block(
             return rv
 
         dc_block_core_ap, _dc_block_core_ap_call = _auto_pipeline_with_io_regs(
-            dc_block_core_stream, has_input_reg=True, has_output_reg=True
+            dc_block_core_stream,
+            has_input_reg=True,
+            has_output_reg=True,
+            latency=latency,
+            start_latency=start_latency,
+            max_latency=max_latency,
         )
         _core_ap = _dc_block_core_ap_call
 

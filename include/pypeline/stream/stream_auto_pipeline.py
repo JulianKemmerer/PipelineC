@@ -16,7 +16,7 @@ from fifo import make_fifo
 from stream.stream import make_stream_interface, make_stream_t
 
 
-def make_stream_auto_pipeline(func):
+def make_stream_auto_pipeline(func, *, latency=None, start_latency=None, max_latency=None):
     """Wraps a combinational hardware function in an AUTO_PIPELINE'd instance (with
     registered input/output) plus a free-running output FIFO, exposing a single
     valid/ready stream interface around it — pypeline equivalent of PipelineC's
@@ -32,6 +32,19 @@ def make_stream_auto_pipeline(func):
     matches it exactly). Because make_stream_auto_pipeline runs as plain factory
     Python, the AUTO_PIPELINE object is constructed eagerly here and captured
     by closure, which is what makes its .latency readable for sizing.
+
+    latency= / start_latency= / max_latency= (keyword-only, default None)
+    constrain that internal core AUTO_PIPELINE exactly as
+    AUTO_PIPELINE(func, latency=, start_latency=, max_latency=) does -- core
+    registers only, excluding the two boundary registers. The returned
+    stream function deliberately has no .latency of its own: valid/ready
+    handshaking is not a fixed latency. start_latency=S is a sweep hint: in a
+    synthesizing build the bootstrap elaboration sizes the FIFO from S, the
+    sweep's first iteration builds S core registers and grows from there if
+    timing fails (the post-met trim may still go below S), and a correct guess
+    skips the pin-and-confirm re-elaboration. Native sim and --comb /
+    --no_synth / --yosys_json builds ignore start_latency / max_latency (core
+    latency 0, as unconstrained); latency=N fixes the core at N everywhere.
 
     `func` must already be @hw_func-decorated, with a single annotated parameter and an
     annotated return type, e.g.:
@@ -74,7 +87,12 @@ def make_stream_auto_pipeline(func):
         return rv
 
     auto_pipelined_func, auto_pipeline_call = _auto_pipeline_with_io_regs(
-        func_stream, has_input_reg=True, has_output_reg=True
+        func_stream,
+        has_input_reg=True,
+        has_output_reg=True,
+        latency=latency,
+        start_latency=start_latency,
+        max_latency=max_latency,
     )
 
     # Total words that can be in flight at once = input reg + AUTO_PIPELINE'd

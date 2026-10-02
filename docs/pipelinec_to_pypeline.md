@@ -496,23 +496,28 @@ GLOBAL_VALID_READY_PIPELINE_INST(name, out_t, func, in_t, MAX_IN_FLIGHT)
 ```
 ```python
 # pypeline
-from stream.stream import make_stream_t
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
-stream_in_t  = make_stream_t(in_t)
-stream_out_t = make_stream_t(out_t)
-name_pipeline_func, name_pipeline_t = make_stream_auto_pipeline(func, MAX_IN_FLIGHT)
+# No MAX_IN_FLIGHT: the FIFO is sized from the core's discovered latency.
+name_pipeline_func, name_pipeline_t = make_stream_auto_pipeline(func)
+# ...or seed the throughput sweep with a known core depth (a starting guess,
+# not a fixed latency; latency= and max_latency= are also accepted):
+# name_pipeline_func, name_pipeline_t = make_stream_auto_pipeline(func, start_latency=4)
+in_intrf = name_pipeline_func.in_intrf
+out_intrf = name_pipeline_func.out_intrf
 
-name_in:          Wire[stream_in_t]
-name_out:         Wire[stream_out_t]
-name_out_ready:   Wire[uint1_t]      # driven by the downstream consumer
-name_in_ready:    Wire[uint1_t]      # read by the upstream producer
+name_in:        Wire[in_intrf.stream_t]    # driven by the upstream producer
+name_in_ready:  Wire[uint1_t]              # read by the upstream producer
+name_out:       Wire[out_intrf.stream_t]   # read by the downstream consumer
+name_out_ready: Wire[uint1_t]              # driven by the downstream consumer
 
 @MAIN
 def name_main():
-    result = name_pipeline_func(name_in, name_out_ready)
-    name_out      = result.stream_out
-    name_in_ready = result.stream_in.ready
+    result = name_pipeline_func(
+        in_intrf.fwd_t(stream=name_in), out_intrf.fb_t(ready=name_out_ready)
+    )
+    name_out      = result.stream_out_if.stream
+    name_in_ready = result.stream_in_if.ready
 ```
 
 See [pypeline_guide.md: Pipelined Stream Wrappers: `make_stream_auto_pipeline`](pypeline_guide.md#pipelined-stream-wrappers-make_stream_auto_pipeline).

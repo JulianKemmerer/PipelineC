@@ -86,7 +86,9 @@ def get_tests() -> list:
     # AUTO_PIPELINE latency constraints end to end: latency=2 / start_latency=1
     # call sites built with exactly those counts and the pin-and-confirm pass
     # skipped (every .latency read already matched), plus a max_latency=1 cap
-    # that stops an unreachable goal promptly with a warning naming it.
+    # that stops an unreachable goal promptly with a warning naming it. Then
+    # make_stream_auto_pipeline(..., start_latency=1): a matching seed sizes the
+    # bootstrap FIFO and skips pass 2; a too-small seed still grows (pass 2).
     tests.append(
         Test(
             name="auto_pipeline_constraints_test",

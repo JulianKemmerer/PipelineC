@@ -2221,10 +2221,22 @@ class AUTO_PIPELINE:
         return f"AUTO_PIPELINE({inner}{config})"
 
 
-def _auto_pipeline_with_io_regs(func, has_input_reg: bool, has_output_reg: bool):
+def _auto_pipeline_with_io_regs(
+    func,
+    has_input_reg: bool,
+    has_output_reg: bool,
+    *,
+    latency=None,
+    start_latency=None,
+    max_latency=None,
+):
     """Internal helper: AUTO_PIPELINE(func) plus optional unconditional
     every-cycle Reg[T] input/output boundary registers around the call
     (the registered-input/registered-output idiom).
+
+    latency= / start_latency= / max_latency= are forwarded unchanged to the
+    AUTO_PIPELINE(func, ...) constructed here (see AUTO_PIPELINE), so they
+    constrain func's core register count only, never the boundary registers.
 
     Returns (wrapped_func, auto_pipeline_call): wrapped_func has func's own
     (in_type) -> out_type signature; auto_pipeline_call is the AUTO_PIPELINE
@@ -2233,7 +2245,12 @@ def _auto_pipeline_with_io_regs(func, has_input_reg: bool, has_output_reg: bool)
     (callers account for them, e.g. total = has_input_reg + .latency +
     has_output_reg).
     """
-    ap = AUTO_PIPELINE(func)
+    ap = AUTO_PIPELINE(
+        func,
+        latency=latency,
+        start_latency=start_latency,
+        max_latency=max_latency,
+    )
     (in_type,) = hw_arg_types(func)
     out_type = hw_return_type(func)
 

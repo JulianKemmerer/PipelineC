@@ -62,6 +62,10 @@ def make_fir(
     symmetry="auto",
     skip_zero_taps=True,
     handshake="elastic",
+    *,
+    latency=None,
+    start_latency=None,
+    max_latency=None,
 ):
     """Build a single-rate streaming FIR filter. Returns (fir, fir_t).
 
@@ -87,6 +91,11 @@ def make_fir(
                                vendor-style free-running mode: no FIFO or
                                in-flight counter; input must be consumable
                                downstream every cycle.
+    latency / start_latency / max_latency (keyword-only, default None):
+               forwarded to the core AUTO_PIPELINE in both handshake modes
+               (core registers only, never the I/O boundary registers); see
+               make_stream_auto_pipeline / AUTO_PIPELINE.
+
     Elastic mode's output FIFO is sized automatically from the AUTO_PIPELINE'd
     core's tool-discovered .latency (see make_stream_auto_pipeline).
 
@@ -113,7 +122,12 @@ def make_fir(
     in_intrf = make_stream_interface(data_t)
 
     if handshake == "elastic":
-        sp_func, sp_t = make_stream_auto_pipeline(fir_core)
+        sp_func, sp_t = make_stream_auto_pipeline(
+            fir_core,
+            latency=latency,
+            start_latency=start_latency,
+            max_latency=max_latency,
+        )
 
         @struct
         class fir_t(NamedTuple):
@@ -164,7 +178,12 @@ def make_fir(
             return rv
 
         fir_core_ap, _fir_core_ap_call = _auto_pipeline_with_io_regs(
-            fir_core_stream, has_input_reg=True, has_output_reg=True
+            fir_core_stream,
+            has_input_reg=True,
+            has_output_reg=True,
+            latency=latency,
+            start_latency=start_latency,
+            max_latency=max_latency,
         )
 
         @hw_func

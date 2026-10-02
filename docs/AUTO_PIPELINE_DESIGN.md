@@ -514,6 +514,19 @@ see [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md)'s "Pipelined native sim" 
 N the same way. Unconstrained tags, the default, take none of the paths below, so
 designs without constraints plan, name and build exactly as before.
 
+Some library wrappers own exactly one core AUTO_PIPELINE and accept the same keyword-only
+arguments:
+- `make_stream_auto_pipeline`;
+- the DSP factories `make_fir`, `make_fir_decim`, `make_fir_interp`, `make_dc_block`,
+  `make_moving_avg` and `make_magnitude`.
+
+They pass the arguments unchanged into that core's tag through
+`pypeline._auto_pipeline_with_io_regs`, so the core becomes an ordinary constrained
+region. Its boundary registers stay outside the count. A stream wrapper exposes no
+`.latency` of its own, since valid/ready is not a fixed latency. It sizes its FIFO from the
+core tag's `.latency`. That is S during a sweep build's bootstrap with
+`start_latency=S`, so a correct seed lets the served-value skip below drop pass 2.
+
 **Planned sweep (`ENFORCE_AUTO_PIPELINE_REGIONS`).** A tagged instance is
 latency-decoupled from its container (`GET_SUBMODULE_LATENCY` reports it as 0), so each
 constrained instance is treated as its own *region*. Every iteration, right after
@@ -623,7 +636,7 @@ for the full coverage list. The ones that exercise this module end to end
 | test | proves |
 |---|---|
 | `auto_pipeline_latency_test.py` | end-to-end factory design (`make_stream_auto_pipeline`) through the full sweep **plus** the §5 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, the seeded confirmation synthesis passes with no fallback sweep, the loop settles within the pass cap, and `sweep_history.json` `final` records come from the confirmation run |
-| `auto_pipeline_constraints_test.py` | §6 constrained regions: `latency=2` / `start_latency=1` call sites built with exactly 2 / 1 registers and pass 2 skipped; a `max_latency=1` cap stops an unreachable goal promptly, naming the cap, then `TIMING NOT MET` |
+| `auto_pipeline_constraints_test.py` | §6 constrained regions: `latency=2` / `start_latency=1` call sites built with exactly 2 / 1 registers and pass 2 skipped; a `max_latency=1` cap stops an unreachable goal promptly, naming the cap, then `TIMING NOT MET`; `make_stream_auto_pipeline(..., start_latency=1)` sizes its bootstrap FIFO from the hint, settles in one sweep iteration and skips pass 2 when the hint matches, and grows past a too-small hint (pass 2 resizes the FIFO) |
 | `auto_pipeline_c_pragma_test.py` | C `#pragma AUTOPIPELINE 2` is a fixed latency, built with exactly 2 clocks even by a `--comb` build |
 | `sweep_fsm_auto_pipeline_test.py` | Reg-FSM main + AUTO_PIPELINE region: the cut subtree is the tagged child, the FSM's latency stays 0 |
 | `sweep_float32_test.py` (registered once per backend, **every** `--syn_tool`) | a plain auto-pipelined float32 adder MAIN sweeps to its goal on every synthesis backend, not just sky130 -- see [pypeline_TESTS.md](pypeline_TESTS.md#per-syn_tool-sweep-coverage) |

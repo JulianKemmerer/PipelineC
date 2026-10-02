@@ -982,10 +982,23 @@ harvested per call site and fed back into `.latency`. How the sweep, the coarse 
 and no-sweep builds enforce constraints is in
 [`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md#6-constrained-auto_pipeline-regions-latency--start_latency--max_latency).
 
-The internal helper `_auto_pipeline_with_io_regs(func, has_input_reg, has_output_reg)`
-(used by `make_stream_auto_pipeline` and the FIR library) wraps `AUTO_PIPELINE(func)` with
-optional unconditional `Reg[T]` boundary registers and returns
-`(wrapped_func, auto_pipeline_call)` so library code can read `.latency`.
+The internal helper
+`_auto_pipeline_with_io_regs(func, has_input_reg, has_output_reg, *, latency=None, start_latency=None, max_latency=None)`
+wraps `AUTO_PIPELINE(func, latency=, start_latency=, max_latency=)` with optional
+unconditional `Reg[T]` boundary registers. It returns `(wrapped_func, auto_pipeline_call)`
+so library code can read `.latency`. The constraints are passed through unchanged, so they
+cover the core only and never the boundary registers.
+
+`make_stream_auto_pipeline` uses the helper, and so do the DSP factories in valid_only
+mode (`make_fir`, `make_fir_decim`, `make_dc_block`, `make_moving_avg`, `make_magnitude`).
+Each of these factories takes the same keyword-only arguments, and so does
+`make_fir_interp` through `make_fir`. Each one passes them to its single core
+AUTO_PIPELINE, whose `.latency` also sizes the elastic FIFO.
+
+The stream wrapper itself has no `.latency`, because valid/ready is not a fixed latency.
+The factories capture these parameters like any others
+(`pypeline.capture_factory_args`), so their names appear in the generated entity names
+even when left at `None`.
 
 ### `AUTO_COMB_AREA_OPT(func)` — Zero-Cycle Resource Sharing
 

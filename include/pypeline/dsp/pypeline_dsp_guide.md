@@ -31,11 +31,11 @@ fir, fir_t = make_fir(
 )
 
 @MAIN(100.0)
-def top(stream_in: fir.in_stream_t, stream_out: fir.out_fb_t) -> fir_t:
-    return fir(stream_in, stream_out)
+def top(stream_in_if: fir.in_fwd_t, stream_out_if: fir.out_fb_t) -> fir_t:
+    return fir(stream_in_if, stream_out_if)
 ```
 
-`fir_t` has the same `.stream_out` / `.stream_in` port fields as
+`fir_t` has the same `.stream_out_if` / `.stream_in_if` port fields as
 `make_stream_auto_pipeline`, so filters chain like any stream pipeline instance. Remaining
 parameters:
 
@@ -45,6 +45,7 @@ parameters:
 | `symmetry` | `"auto"` | Detects symmetric/anti-symmetric **quantized** taps and folds them into pre-adders, halving the multipliers (like the vendor cores); `"none"` disables |
 | `skip_zero_taps` | `True` | Zero-coefficient taps are dropped at elaboration time — a half-band filter costs ~half the multipliers automatically |
 | `handshake` | `"elastic"` | `"elastic"` = valid/ready with an output FIFO and in-flight counter (FIFO sized automatically from the AUTO_PIPELINE'd core's tool-discovered `.latency`, see [Pipelined Stream Wrappers](../../../docs/pypeline_guide.md#pipelined-stream-wrappers-make_stream_auto_pipeline)); `"valid_only"` = vendor-style free-running stream (no FIFO — downstream must always accept) |
+| `latency` / `start_latency` / `max_latency` (keyword-only) | `None` | Passed to the core [`AUTO_PIPELINE`](../../../docs/pypeline_guide.md#auto_pipeline) in both handshake modes. They count core registers only, excluding the I/O boundary registers. `start_latency=S` seeds the throughput sweep, e.g. from a previously confirmed depth. A matching seed skips the pin-and-confirm pass, and timing failures still grow the core. `max_latency` caps it, and `latency` fixes it. Every other factory below (`make_fir_decim`, `make_fir_interp`, `make_dc_block`, `make_moving_avg`, `make_magnitude`) accepts the same three |
 
 Accumulator sizing is **exact**: interval arithmetic over the actual quantized
 coefficient values and `data_t`'s range, so no intermediate can overflow and no bit is

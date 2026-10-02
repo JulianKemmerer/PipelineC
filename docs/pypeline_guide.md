@@ -2535,6 +2535,11 @@ The rules for these arguments:
 - A constrained call site's function can't itself contain another AUTO_PIPELINE call
   site.
 - The old `depth=` argument is now `latency=`.
+- Library wrappers built around one internal AUTO_PIPELINE accept the same three
+  keyword arguments and pass them to that core:
+  - [`make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline);
+  - the DSP factories (`make_fir`, `make_fir_decim`, `make_fir_interp`,
+    `make_dc_block`, `make_moving_avg`, `make_magnitude`).
 
 #### `.latency`: reading back the discovered pipeline depth
 
@@ -4437,37 +4442,61 @@ global wires, since this is one locally-instantiated function rather than two `M
 joined by `Wire[T]`s.
 
 ```python
-from pypeline import hw_func, uint8_t, MAIN, uint1_t
-from stream.stream import make_stream_t
+from pypeline import hw_func, uint8_t, MAIN
 from stream.stream_auto_pipeline import make_stream_auto_pipeline
 
 @hw_func
 def div_inv(x: uint8_t) -> uint8_t:
     return x / ~x
 
-uint8_stream_t = make_stream_t(uint8_t)
 stream_auto_pipeline, stream_auto_pipeline_t = make_stream_auto_pipeline(div_inv)
 
 @MAIN(50.0)
 def buffered_div_inv(
-    stream_in: stream_auto_pipeline.in_stream_t, stream_out: stream_auto_pipeline.out_fb_t
+    stream_in_if: stream_auto_pipeline.in_fwd_t, stream_out_if: stream_auto_pipeline.out_fb_t
 ) -> stream_auto_pipeline_t:
-    return stream_auto_pipeline(stream_in, stream_out)
+    return stream_auto_pipeline(stream_in_if, stream_out_if)
 ```
 
-`make_stream_auto_pipeline(func)` returns `(stream_auto_pipeline_func, stream_auto_pipeline_t)`:
+`make_stream_auto_pipeline(func, *, latency=None, start_latency=None, max_latency=None)`
+returns `(stream_auto_pipeline_func, stream_auto_pipeline_t)`:
 
 | | Type | Meaning |
 |---|---|---|
-| `stream_auto_pipeline_func(stream_in, stream_out)` | `(in_stream_t, out_fb_t) -> stream_auto_pipeline_t` | one pipelined instance of `func`; ports are the two halves of a stream `@interface` |
-| `stream_auto_pipeline_t.stream_out` | `stream_t(out_type)` | `func`'s result, after AUTO_PIPELINE retiming and the output FIFO |
-| `stream_auto_pipeline_t.stream_in.ready` | `uint1_t` | high while the pipeline can accept a new `stream_in` (tracks in-flight count against the FIFO depth) |
+| `stream_auto_pipeline_func(stream_in_if, stream_out_if)` | `(in_fwd_t, out_fb_t) -> stream_auto_pipeline_t` | one pipelined instance of `func`; ports are the two halves of a stream `@interface` |
+| `stream_auto_pipeline_t.stream_out_if.stream` | `stream_t(out_type)` | `func`'s result, after AUTO_PIPELINE retiming and the output FIFO |
+| `stream_auto_pipeline_t.stream_in_if.ready` | `uint1_t` | high while the pipeline can accept a new `stream_in_if` word (tracks in-flight count against the FIFO depth) |
+
+The returned function also carries `.in_intrf`/`.out_intrf` and their halves
+`.in_fwd_t`, `.in_fb_t`, `.out_fwd_t`, `.out_fb_t` for declaring matching ports.
 
 The FIFO depth is `max(2, 1 + AUTO_PIPELINE latency + 1)` — input register,
 discovered core stages, and output register — so it can hold every word in flight and
 sustain one word per cycle while the consumer is ready. Before an automatic latency is
 known, the depth floors at two. Re-elaboration with the implemented `.latency` resizes
 the FIFO to the real pipeline depth.
+
+**Core latency constraints.** The keyword-only `latency=`, `start_latency=` and
+`max_latency=` are passed unchanged to the wrapper's single internal
+[`AUTO_PIPELINE`](#auto_pipeline). They count core registers only, not the two boundary
+registers. The returned stream function has no `.latency` of its own, because a
+valid/ready handshake is not a fixed latency.
+- **`start_latency=S`** is a starting guess for a synthesizing build, which saves sweep
+  iterations when the core's depth is already known (e.g. from a previous build).
+  - The bootstrap elaboration sizes the FIFO from S.
+  - The sweep's first iteration builds S core registers. It grows from there if timing
+    fails, and its post-met trim may still go below S.
+  - When the build lands exactly on S, the pin-and-confirm re-elaboration is skipped.
+- **`max_latency=M`** caps the core.
+- **`latency=N`** fixes the core at N registers in every build and in native simulation.
+
+Native simulation and `--comb`/`--no_synth`/`--yosys_json` builds ignore `start_latency`
+and `max_latency`, so the core stays a zero-latency passthrough there:
+
+```python
+# Seed the sweep from a previously confirmed core depth of 4
+chacha_pipeline, chacha_pipeline_t = make_stream_auto_pipeline(chacha_loop_body, start_latency=4)
+```
 
 `in_type`/`out_type` are inferred from `func`'s own annotations via `hw_arg_types`/
 `hw_return_type`, the same way

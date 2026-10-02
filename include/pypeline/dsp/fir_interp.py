@@ -110,6 +110,10 @@ def make_fir_interp(
     gain=None,
     symmetry="auto",
     skip_zero_taps=True,
+    *,
+    latency=None,
+    start_latency=None,
+    max_latency=None,
 ):
     """Build an interpolate-by-`interp` streaming FIR. Returns
     (fir_interp, fir_interp_t) with the same elastic stream interface and
@@ -119,6 +123,9 @@ def make_fir_interp(
     gain=None defaults to `interp` (zero-stuffing compensation), applied by
     scaling the float taps before quantization -- make sure coeff_t has the
     integer headroom for gain * max|tap|.
+
+    latency= / start_latency= / max_latency= (keyword-only) are forwarded to
+    the inner full-rate make_fir's core AUTO_PIPELINE (see make_fir).
     """
     if not (isinstance(interp, int) and interp >= 1):
         raise ValueError(f"make_fir_interp: interp must be an int >= 1, got {interp!r}")
@@ -137,6 +144,9 @@ def make_fir_interp(
         symmetry=symmetry,
         skip_zero_taps=skip_zero_taps,
         handshake="elastic",
+        latency=latency,
+        start_latency=start_latency,
+        max_latency=max_latency,
     )
 
     # Name the single output port `stream_out_if`, so the generated module's

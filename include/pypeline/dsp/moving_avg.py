@@ -43,6 +43,10 @@ def make_moving_avg(
     rounding="truncate",
     overflow="wrap",
     handshake="elastic",
+    *,
+    latency=None,
+    start_latency=None,
+    max_latency=None,
 ):
     """Build an n-sample moving average. Returns (moving_avg, moving_avg_t).
 
@@ -62,6 +66,10 @@ def make_moving_avg(
                                            stream_out_if: out_intrf.fb_t) -> moving_avg_t
                "valid_only" -> moving_avg(in_stream: make_stream_t(data_t))
                                    -> make_stream_t(out_t)
+    latency / start_latency / max_latency (keyword-only, default None):
+               forwarded to the core AUTO_PIPELINE in both handshake modes
+               (core registers only, never the I/O boundary registers); see
+               make_stream_auto_pipeline / AUTO_PIPELINE.
 
     The returned `moving_avg` carries metadata attributes:
     .data_t .out_t .n .normalize .sum_t .avg_t .full_precision .rounding
@@ -113,7 +121,12 @@ def make_moving_avg(
             return resize_fn(s)
 
     if handshake == "elastic":
-        sp_func, _sp_t = make_stream_auto_pipeline(moving_avg_core)
+        sp_func, _sp_t = make_stream_auto_pipeline(
+            moving_avg_core,
+            latency=latency,
+            start_latency=start_latency,
+            max_latency=max_latency,
+        )
         in_intrf = make_stream_interface(data_t)
         out_intrf = sp_func.out_intrf
 
@@ -166,7 +179,12 @@ def make_moving_avg(
             return rv
 
         moving_avg_core_ap, _moving_avg_core_ap_call = _auto_pipeline_with_io_regs(
-            moving_avg_core_stream, has_input_reg=True, has_output_reg=True
+            moving_avg_core_stream,
+            has_input_reg=True,
+            has_output_reg=True,
+            latency=latency,
+            start_latency=start_latency,
+            max_latency=max_latency,
         )
         _core_ap = _moving_avg_core_ap_call
 

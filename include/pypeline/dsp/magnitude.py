@@ -40,6 +40,10 @@ def make_magnitude(
     rounding="truncate",
     overflow="wrap",
     handshake="elastic",
+    *,
+    latency=None,
+    start_latency=None,
+    max_latency=None,
 ):
     """Build a power (I^2+Q^2) stage. Returns (magnitude, magnitude_t).
 
@@ -57,6 +61,10 @@ def make_magnitude(
                                (in_intrf built over make_complex_t(data_t))
                "valid_only" -> magnitude(in_stream: make_stream_t(complex_t))
                                    -> make_stream_t(out_t)
+    latency / start_latency / max_latency (keyword-only, default None):
+               forwarded to the core AUTO_PIPELINE in both handshake modes
+               (core registers only, never the I/O boundary registers); see
+               make_stream_auto_pipeline / AUTO_PIPELINE.
 
     The returned `magnitude` carries metadata attributes:
     .data_t .complex_t .out_t .acc_t .full_precision .rounding .overflow
@@ -91,7 +99,12 @@ def make_magnitude(
         return resize_fn(acc)
 
     if handshake == "elastic":
-        sp_func, _sp_t = make_stream_auto_pipeline(magnitude_core)
+        sp_func, _sp_t = make_stream_auto_pipeline(
+            magnitude_core,
+            latency=latency,
+            start_latency=start_latency,
+            max_latency=max_latency,
+        )
         in_intrf = sp_func.in_intrf
         out_intrf = sp_func.out_intrf
 
@@ -125,7 +138,12 @@ def make_magnitude(
             return rv
 
         magnitude_core_ap, _magnitude_core_ap_call = _auto_pipeline_with_io_regs(
-            magnitude_core_stream, has_input_reg=True, has_output_reg=True
+            magnitude_core_stream,
+            has_input_reg=True,
+            has_output_reg=True,
+            latency=latency,
+            start_latency=start_latency,
+            max_latency=max_latency,
         )
 
         @hw_func
