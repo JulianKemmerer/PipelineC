@@ -139,6 +139,88 @@ def test_relayout_between_passes_keeps_package_valid():
             pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({})
 
 
+def _declaration(package, emitted_name):
+    """The one record declaration of emitted_name (asserted unique)."""
+    declarations = re.findall(
+        rf"(?ims)^\s*type\s+{re.escape(emitted_name)}\s+is\s+record\b(.*?)end\s+record\s*;",
+        package,
+    )
+    assert len(declarations) == 1, (
+        f"{emitted_name} declared {len(declarations)} times (expected once)"
+    )
+    return " ".join(declarations[0].split())
+
+
+def _lane_sel_name(parser_state, direction):
+    names = parser_state.pypeline_emission_names
+    (raw,) = [
+        r for r in parser_state.struct_to_field_type_dict
+        if r.startswith("lane_sel_t_") and r.endswith("_direction_" + direction)
+    ]
+    return raw, names.identifier(raw)
+
+
+def test_resize_through_discovered_depths_in_one_out_dir():
+    """Harvested body depths 0, 1, 3, 6 (lanes 2, 3, 5, 8), then back to 1,
+    all in one output directory. Each pass re-elaborates the outer design
+    with that depth: powers_t and lane_sel_t (whose index width follows the
+    lane count) keep one VHDL name, are declared once with the current
+    layout, and the package plus the lane-select RTL analyze in GHDL. Only
+    encrypt's cache entry changes; decrypt's types stay byte-identical."""
+    decrypt_latency = 3
+    with tempfile.TemporaryDirectory(prefix="c_structs_pkg_depths_test_") as out_dir:
+        SYN.SYN_OUTPUT_DIRECTORY = out_dir
+        top = SYN.TOP_LEVEL_MODULE
+        SYN.TOP_LEVEL_MODULE = top or "top"
+        try:
+            ps1, _ = _parse_and_write_package({})
+            keys = {
+                k for logic in ps1.FuncLogicLookupTable.values()
+                for k in logic.sub_inst_to_auto_pipeline_key.values()
+            }
+            (enc_key,) = [k for k in keys if "direction_encrypt" in k]
+            (dec_key,) = [k for k in keys if "direction_decrypt" in k]
+            decrypt_declaration = None
+            for depth in (0, 1, 3, 6, 1):
+                lanes = depth + 2
+                cache = {enc_key: depth, dec_key: decrypt_latency}
+                ps, package = _parse_and_write_package(cache)
+                # The outer design was re-elaborated with this depth: one
+                # encrypt body call per lane.
+                calls = [
+                    local
+                    for logic in ps.FuncLogicLookupTable.values()
+                    for local, key in logic.sub_inst_to_auto_pipeline_key.items()
+                    if key == enc_key
+                ]
+                assert len(calls) == lanes, (depth, calls)
+                powers = _powers_types(ps)
+                assert _values_array_type(package, powers["encrypt"][1]) == f"uint32_t_{lanes}"
+                assert _values_array_type(package, powers["decrypt"][1]) == f"uint32_t_{decrypt_latency + 2}"
+                raw, emitted = _lane_sel_name(ps, "encrypt")
+                width = max(1, (lanes - 1).bit_length())
+                assert ps.struct_to_field_type_dict[raw]["lane"] == f"uint{width}_t", raw
+                assert f"lane : unsigned({width - 1} downto 0);" in _declaration(package, emitted), (
+                    depth, _declaration(package, emitted)
+                )
+                _raw_dec, emitted_dec = _lane_sel_name(ps, "decrypt")
+                current = (
+                    _declaration(package, powers["decrypt"][1]),
+                    _declaration(package, emitted_dec),
+                    powers["decrypt"][0],
+                )
+                if decrypt_declaration is None:
+                    decrypt_declaration = current
+                assert current == decrypt_declaration, (depth, current, decrypt_declaration)
+                _ghdl_analyze(f"depth {depth}")
+                C_TO_LOGIC.WRITE_0_ADDED_CLKS_INIT_FILES(ps)
+                pick = _isolated_files(ps, "pick")
+                _ghdl_analyze_files(pick, f"depth {depth} pick")
+        finally:
+            SYN.TOP_LEVEL_MODULE = top
+            pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({})
+
+
 def _isolated_files(parser_state, func_prefix):
     """Isolated-synthesis VHDL list for the first encrypt-direction func_prefix call."""
     import AUTO_PIPELINE

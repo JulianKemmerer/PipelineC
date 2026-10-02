@@ -198,6 +198,97 @@ def test_writer_schema_and_planless_entry():
     assert "pipeline_stages" not in final
 
 
+def test_retained_observation_matches_winner_and_constraints():
+    """A restored winner's retained observation is the newest one with its
+    exact implementation signature: entity hash, clocks AND multi-cycle
+    counts. A newer log of another implementation -- same HDL with different
+    MCP constraints, or an over-capacity netlist -- never supplies it."""
+    reset_records()
+    SWEEP.NEXT_SWEEP_HISTORY_RUN()
+    SWEEP.RECORD_SWEEP_OUTCOME("m", 50.0, "sweep", achieved_mhz=51.0)
+    entity = {"hash": "_winner"}
+    clock = {"mhz": 50.0}
+    parser_state = SimpleNamespace(
+        main_mhz={"m": 50.0},
+        LogicInstLookupTable={"m": SimpleNamespace(func_name="m")},
+    )
+    tpl = {"m": SimpleNamespace(GET_HASH_EXT=lambda table, ps: entity["hash"])}
+
+    def params(mcp):
+        return SimpleNamespace(
+            TimingParamsLookupTable=tpl,
+            sweep_timing_failures=[],
+            auto_multi_cycle_ncycles=dict(mcp),
+        )
+
+    def observation(signature, status, log):
+        return dict(
+            implementation_signature=signature,
+            utilization=dict(status=status, resources={}, overutilization=[]),
+            cache_hit=False,
+            log_path=log,
+        )
+
+    saved = (
+        SYN.SYN_OUTPUT_DIRECTORY,
+        SYN.TOP_LEVEL_MODULE,
+        SYN.GET_TARGET_MHZ,
+        SYN.LOGIC_IS_ZERO_DELAY,
+        list(SWEEP.SYNTHESIS_OBSERVATIONS),
+    )
+    with tempfile.TemporaryDirectory() as out_dir:
+        try:
+            SYN.SYN_OUTPUT_DIRECTORY = out_dir
+            SYN.TOP_LEVEL_MODULE = "top"
+            SYN.GET_TARGET_MHZ = lambda inst, ps: clock["mhz"]
+            SYN.LOGIC_IS_ZERO_DELAY = lambda logic, ps, allow_none_delay=False: True
+            winner = SWEEP.IMPLEMENTATION_SIGNATURE(parser_state, params({"k": 2}))
+            other_mcp = SWEEP.IMPLEMENTATION_SIGNATURE(parser_state, params({"k": 3}))
+            entity["hash"] = "_other"
+            other_hdl = SWEEP.IMPLEMENTATION_SIGNATURE(parser_state, params({"k": 2}))
+            entity["hash"] = "_winner"
+            clock["mhz"] = 60.0
+            other_clock = SWEEP.IMPLEMENTATION_SIGNATURE(parser_state, params({"k": 2}))
+            clock["mhz"] = 50.0
+            signatures = {winner, other_mcp, other_hdl, other_clock}
+            assert len(signatures) == 4, "signature ignores HDL, clock or MCP counts"
+            assert winner == SWEEP.IMPLEMENTATION_SIGNATURE(parser_state, params({"k": 2}))
+
+            SWEEP.SYNTHESIS_OBSERVATIONS[:] = [
+                observation(winner, "within_reported_limits", "winner.log"),
+                observation(other_mcp, "within_reported_limits", "same_hdl_other_mcp.log"),
+                observation(other_hdl, "over_capacity", "newer_failed.log"),
+            ]
+            doc = SWEEP.WRITE_SWEEP_HISTORY(parser_state, params({"k": 2}), build_complete=True)
+            assert doc["retained_observation"]["log_path"] == "winner.log", doc["retained_observation"]
+            assert doc["fit_status"] == "within_reported_limits"
+            assert doc["auto_multi_cycle_ncycles"] == {"k": 2}
+            assert doc["synthesis_cost"]["distinct_implementations"] == 3
+
+            # The same winner observed twice: the newest matching log is kept.
+            SWEEP.SYNTHESIS_OBSERVATIONS.append(
+                observation(winner, "within_reported_limits", "winner_again.log")
+            )
+            doc = SWEEP.WRITE_SWEEP_HISTORY(parser_state, params({"k": 2}), build_complete=True)
+            assert doc["retained_observation"]["log_path"] == "winner_again.log"
+
+            # Same HDL, other constraints: the k=2 logs cannot stand in for it.
+            doc = SWEEP.WRITE_SWEEP_HISTORY(parser_state, params({"k": 4}), build_complete=False)
+            assert doc["retained_observation"] is None
+            assert doc["build_complete"] is False
+            with open(os.path.join(out_dir, "top", "sweep_history.json")) as f:
+                assert json.load(f)["build_complete"] is False
+        finally:
+            (
+                SYN.SYN_OUTPUT_DIRECTORY,
+                SYN.TOP_LEVEL_MODULE,
+                SYN.GET_TARGET_MHZ,
+                SYN.LOGIC_IS_ZERO_DELAY,
+                SWEEP.SYNTHESIS_OBSERVATIONS[:],
+            ) = saved
+            reset_records()
+
+
 def test_writer_skips_when_nothing_recorded():
     reset_records()
     assert SWEEP.WRITE_SWEEP_HISTORY(None, None, build_complete=True) is None

@@ -332,7 +332,26 @@ stop.
 `added_latency_context_test.py` also runs path-delay characterization on two
 real parses at different AUTO_MULTI_CYCLE counts: the rebuilt holder keeps its
 `MCP_SHAPE` and reuses isolated evidence instead of being synthesized, while a
-holder without evidence is synthesized.
+holder without evidence is synthesized. The same characterization, with a
+fake backend that counts concurrent runs, checks the `-j` cap: both MCP
+holders and the AUTO_PIPELINE side go through one pool, `-j 1` never runs two
+at once and `-j 3` does overlap. It also requires every compiler `ThreadPool`
+to be sized by `SYN.GET_NUM_PROCESSES()`, and `--jobs 0` / `--jobs -2` to exit
+before parsing or creating the output directory.
+
+`sweep_history_record_unit_test.py` checks which observation
+`sweep_history.json` retains for the final implementation. It is the newest one
+whose `IMPLEMENTATION_SIGNATURE` matches, and that signature changes with the
+entity hash, the clock and the AUTO_MULTI_CYCLE counts. A newer log of
+another implementation (same HDL with other MCP counts, or an over-capacity
+netlist) never supplies the winner's observation, and a provisional write
+says `build_complete: false`.
+
+`double_parse_file_test.py`'s source-freeze case edits design files between
+two parses of one run. The second parse sees the first-read bytes, and
+`source_provenance.json` records each frozen file's first-read SHA-256, byte
+count and `disk_drift`. Compiler, stdlib, site-packages and output-directory
+sources are never frozen.
 
 `c_structs_pkg_relayout_test.py` also checks that an isolated synthesis reads a
 type package holding only its own types: a function that doesn't use the resized
@@ -472,7 +491,13 @@ from a different angle:
   - `AUTO_MULTI_CYCLE` report matching and grow-only sweep feedback on a synthetic Vivado report;
   - elaboration into `Logic.auto_multi_cycle_tuples`, where a cache re-parse changes the count and
     renames the holding entity;
-  - an unread tag refused by `AUTO_MULTI_CYCLE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ`.
+  - an unread tag refused by `AUTO_MULTI_CYCLE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ`;
+  - endpoint selection on the elaborated stream wrappers. The XDC, group
+    matching and isolated evidence take only `launch` -> `capture` D paths.
+    They reject the `cycles_since_launch` controller, look-alike names
+    (`not_launch_reg`) and CE pins. The isolated seed rounds raw delay up to
+    whole cycles, never below 1 or the elaborated count, never above
+    `max_latency`, and leaves `latency=` tags alone.
 - `stream_auto_multi_cycle_test.py` (native_sim and synth_vivado `--comb`): the handshake waits
   `.latency + 1` cycles for `start_latency=` and fixed `latency=`, and the Xilinx-part
   `--comb` build emits setup/hold exceptions for both wrappers.
@@ -737,6 +762,14 @@ real-parse counterpart of the package-merge cases above.
 - **What it catches.** With the previous merge, keyed by C type, pass 2's GHDL
   analysis fails with "already used for a declaration". That is the WireGuard
   shared build's Vivado `[Synth 8-989]` failure.
+- **Every depth, both directions.** A second case walks the encrypt body
+  through harvested depths 0, 1, 3, 6 and back to 1 (2, 3, 5, 8, 3 lanes) in one
+  output directory, with decrypt held at 3. Each pass must elaborate one body
+  call per lane. `powers_t` and `lane_sel_t` must each be declared once with the
+  current layout. `lane_sel_t`'s lane-index width follows the lane count
+  (1, 2, 3, 3, 2 bits). Decrypt's declarations must stay byte-identical. GHDL
+  must analyze the package and the isolated `pick` (dynamic lane mux) file
+  list.
 
 ## Operator-cost regression coverage
 

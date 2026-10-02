@@ -11,7 +11,9 @@
     and without a cap, on a synthetic Vivado multi-cycle path report;
   - elaboration: stream_auto_multi_cycle_test.py's AUTO_MULTI_CYCLE paths land in
     Logic.auto_multi_cycle_tuples, a cache re-parse changes the count AND renames the
-    holding entity, and an unread tag fails AUTO_MULTI_CYCLE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ.
+    holding entity, and an unread tag fails AUTO_MULTI_CYCLE.CHECK_AUTO_MULTI_CYCLE_TAGS_READ;
+  - endpoint selection on that design's elaborated wrappers (controller
+    counter, look-alike names and CE pins excluded) and isolated-seed rounding.
 """
 import os
 import sys
@@ -29,6 +31,7 @@ import C_TO_LOGIC
 import PY_TO_LOGIC
 import AUTO_PIPELINE
 import AUTO_MULTI_CYCLE as AUTO_MULTI_CYCLE_MODULE  # aliased: the pypeline tag has the same name
+import VHDL
 import VIVADO
 
 
@@ -290,6 +293,115 @@ def test_elaboration_and_cache_reparse():
     print("test_elaboration_and_cache_reparse PASS")
 
 
+def test_endpoint_selection_on_elaborated_wrapper():
+    """The real stream wrapper's launch/capture registers, and nothing else:
+    its cycles_since_launch controller, look-alike names and a CE pin are
+    neither constrained nor attributed to the group. Also checks the isolated
+    seed's delay-to-cycles rounding against the same elaborated groups."""
+    from types import SimpleNamespace
+    from unittest.mock import patch
+    import SYN
+
+    parser_state = PY_TO_LOGIC.PARSE_FILE(
+        os.path.join(THIS_DIR, "stream_auto_multi_cycle_test.py")
+    )
+    tpl = {
+        inst: AUTO_PIPELINE.TimingParams(inst, logic)
+        for inst, logic in parser_state.LogicInstLookupTable.items()
+    }
+    mtp = AUTO_PIPELINE.MultiMainTimingParams()
+    mtp.TimingParamsLookupTable = tpl
+    mtp.auto_multi_cycle_ncycles = AUTO_MULTI_CYCLE_MODULE.ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state)
+    groups = AUTO_MULTI_CYCLE_MODULE.COLLECT_AUTO_MULTI_CYCLE_GROUPS(parser_state)
+    holders = {
+        inst: logic
+        for inst, logic in parser_state.LogicInstLookupTable.items()
+        if logic.mcp_tuples
+    }
+    assert len(holders) == 2, sorted(holders)  # fixed latency=2 and start_latency=3
+    period = 10.0
+    for inst, logic in sorted(holders.items()):
+        main = C_TO_LOGIC.RECURSIVE_FIND_MAIN_FUNC_FROM_INST(inst, parser_state)
+        top = VHDL.GET_ENTITY_NAME(main, parser_state.LogicInstLookupTable[main], tpl, parser_state)
+        paths = AUTO_MULTI_CYCLE_MODULE.GET_MCP_CELL_PATHS(inst, main, top, parser_state)
+        assert len(paths) == 1, paths
+        tup, start, end, auto = paths[0]
+        assert (tup[1], tup[2]) == ("launch", "capture"), tup
+        assert start.endswith("/launch_reg[*]") and end.endswith("/capture_reg[*]")
+        prefix = start[: -len("launch_reg[*]")]
+        start_re = AUTO_MULTI_CYCLE_MODULE._MCP_CELL_GLOB_REGEX(start)
+        end_re = AUTO_MULTI_CYCLE_MODULE._MCP_CELL_GLOB_REGEX(end)
+        # Every other register of the holder is controller state, never an endpoint.
+        controller = set(logic.state_regs) - {"launch", "capture"}
+        assert "cycles_since_launch" in controller, sorted(logic.state_regs)
+        decoys = [prefix + reg + "_reg[2]" for reg in sorted(controller)] + [
+            prefix + "not_launch_reg[0]",
+            prefix + "not_capture_reg[0]",
+            prefix + "cycles_since_launch_reg[7]",
+            prefix + "launch_reg[0]_i_1",
+        ]
+        for name in decoys:
+            assert not start_re.search(name) and not end_re.search(name), name
+        ncycles = int(tup[0])
+        with patch.object(SYN, "SYN_TOOL", VIVADO):
+            xdc = AUTO_MULTI_CYCLE_MODULE.GET_MCP_PATH_CONSTRAINTS(inst, main, top, mtp, parser_state)
+        assert not any("cycles_since_launch" in line for line in xdc), xdc
+        assert sum("-setup" in line for line in xdc) == sum("-hold" in line for line in xdc) == 1
+        assert f"set_multicycle_path {ncycles - 1} -hold" in "\n".join(xdc)
+
+        def report(source, dest, pin="D"):
+            return SimpleNamespace(
+                start_reg_name=source, end_reg_name=dest, end_pin_name=pin,
+                start_pin_name="C", start_cell_type="FDRE",
+                source_ns_per_clock=period, requirement_ns=ncycles * period,
+                slack_ns=-1.0, path_delay_ns=ncycles * period + 1.0,
+            )
+
+        real = report(prefix + "launch_reg[3]", prefix + "capture_reg[5]")
+        wrong = [
+            report(prefix + "cycles_since_launch_reg[1]", prefix + "capture_reg[5]"),
+            report(prefix + "not_launch_reg[3]", prefix + "capture_reg[5]"),
+            report(prefix + "launch_reg[3]", prefix + "capture_reg[5]", pin="CE"),
+            report(prefix + "launch_reg[3]", prefix + "cycles_since_launch_reg[0]"),
+        ]
+        group = AUTO_MULTI_CYCLE_MODULE.AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT(real, groups, parser_state, mtp)
+        if auto is None:
+            assert group is None  # a fixed MULTI_CYCLE path has no group to grow
+            continue
+        assert group is not None and group.key == auto.key
+        for path in wrong:
+            assert AUTO_MULTI_CYCLE_MODULE.AUTO_MULTI_CYCLE_GROUP_FOR_PATH_REPORT(path, groups, parser_state, mtp) is None, path
+        # Isolated characterization keeps only the real launch->capture D path.
+        timing = SimpleNamespace(path_reports={"clk": real}, extra_paths=wrong)
+        with patch.object(AUTO_MULTI_CYCLE_MODULE, "ISOLATED_MCP_EVIDENCE", {}) as evidence:
+            AUTO_MULTI_CYCLE_MODULE.REMEMBER_ISOLATED_REPORTS(timing, parser_state, mtp, main)
+            shape = AUTO_MULTI_CYCLE_MODULE.MCP_SHAPE(group, parser_state)
+            assert evidence == {(auto.key, shape): ncycles * period + 1.0}, evidence
+            timing.path_reports = {}
+            evidence.clear()
+            AUTO_MULTI_CYCLE_MODULE.REMEMBER_ISOLATED_REPORTS(timing, parser_state, mtp, main)
+            assert evidence == {}, evidence
+
+    # Seed rounding: ceil(raw delay / period), at least 1, capped, grow-only,
+    # and only for start_latency= tags (latency= is fixed).
+    (auto_key,) = [k for k, g in groups.items() if not g.constraint.is_fixed()]
+    shape = AUTO_MULTI_CYCLE_MODULE.MCP_SHAPE(groups[auto_key], parser_state)
+    start = AUTO_MULTI_CYCLE_MODULE.ELABORATED_AUTO_MULTI_CYCLE_NCYCLES(parser_state)[auto_key]
+    assert start == 3
+    for raw, expected in ((0.1, 3), (30.0, 3), (30.0 + 1e-12, 3), (30.5, 4), (61.0, 7), (1000.0, 8)):
+        with patch.object(AUTO_MULTI_CYCLE_MODULE, "ISOLATED_MCP_EVIDENCE", {(auto_key, shape): raw}), \
+                patch.object(AUTO_MULTI_CYCLE_MODULE, "PROVISIONAL_MCP_SEEDS", {}) as seeds, \
+                patch.object(SYN, "GET_TARGET_MHZ", lambda inst, ps: 1000.0 / period):
+            params = SimpleNamespace(auto_multi_cycle_ncycles={})
+            counts = AUTO_MULTI_CYCLE_MODULE.SEED_COUNTS(parser_state, params)
+            assert counts[auto_key] == expected, (raw, counts)
+            assert all(n >= 1 for n in counts.values())
+            assert bool(seeds) == (expected > start), (raw, seeds)
+            fixed = [k for k, g in groups.items() if g.constraint.is_fixed()]
+            assert all(counts[k] == 2 for k in fixed), counts
+    print("test_endpoint_selection_on_elaborated_wrapper PASS")
+
+
 def test_unread_tag_fails_build_check():
     parser_state = PY_TO_LOGIC.PARSE_FILE(
         os.path.join(THIS_DIR, "auto_multi_cycle_unread_design.py")
@@ -314,5 +426,6 @@ if __name__ == "__main__":
     test_syn_counts_and_hash()
     test_report_matching_and_feedback()
     test_elaboration_and_cache_reparse()
+    test_endpoint_selection_on_elaborated_wrapper()
     test_unread_tag_fails_build_check()
     print("All AUTO_MULTI_CYCLE unit tests passed.")

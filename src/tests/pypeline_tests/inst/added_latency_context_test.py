@@ -296,6 +296,94 @@ def test_holder_rebuilt_for_a_new_count_reuses_its_datapath_evidence():
         assert holder.func_name in synthesized
 
 
+def test_jobs_cap_covers_mcp_characterization():
+    """-j N bounds every synthesis pool. Pre-pipelining characterization of
+    both MCP holders and the AUTO_PIPELINE side shares one pool: -j 1 runs one
+    backend process at a time, -j 3 overlaps them (so the probe can see
+    concurrency). Every compiler ThreadPool is sized by GET_NUM_PROCESSES, and
+    an invalid count stops pypelinec before it parses or creates anything."""
+    import re
+    import subprocess
+    import threading
+    import time
+    import pypeline
+
+    lock = threading.Lock()
+    active, peak, synthesized = [0], [0], []
+
+    def fake_syn(inst, logic, ps, tpl, *a, **k):
+        with lock:
+            active[0] += 1
+            peak[0] = max(peak[0], active[0])
+            synthesized.append(logic.func_name)
+        time.sleep(0.05)
+        with lock:
+            active[0] -= 1
+        return logic.func_name
+
+    def fake_measured(logic, report, ps):
+        logic.delay = 50
+        logic.delay_is_estimated = False
+
+    def characterize(jobs):
+        peak[0] = 0
+        synthesized.clear()
+        with tempfile.TemporaryDirectory() as out, patch.object(SYN, "SYN_OUTPUT_DIRECTORY", out), \
+                patch.object(MCP, "ISOLATED_MCP_EVIDENCE", {}):
+            pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE({})
+            ps = PY_TO_LOGIC.PARSE_FILE(str(Path(__file__).with_name("added_latency_context_design.py")))
+            with patch.object(SYN, "SYN_TOOL", SimpleNamespace(SYN_AND_REPORT_TIMING=fake_syn, __name__="FAKE")), \
+                    patch.object(SYN, "PART_SET_TOOL", lambda *a, **k: None), \
+                    patch.object(SYN, "WRITE_BLACK_BOX_FILES", lambda *a, **k: None), \
+                    patch.object(SYN, "GET_CACHED_PATH_DELAY", lambda *a: None), \
+                    patch.object(SYN, "NUM_PROCESSES", jobs), \
+                    patch.object(SYN, "SET_MEASURED_DELAY_FROM_REPORT", fake_measured), \
+                    patch.object(SYN.DEVICE_MODELS, "part_supported", lambda part: False):
+                SYN.ADD_PATH_DELAY_TO_LOOKUP(ps)
+        return ps
+
+    ps = characterize(1)
+    holders = {logic.func_name for logic in _holders(ps).values()}
+    assert len(holders) == 2, holders
+    assert holders <= set(synthesized), (holders, synthesized)
+    assert len(set(synthesized) - holders) >= 2, synthesized
+    assert peak[0] == 1, f"-j 1 ran {peak[0]} syntheses at once"
+    characterize(3)
+    assert 1 < peak[0] <= 3, f"-j 3 peak concurrency {peak[0]}"
+
+    # Every pool in the compiler is sized by the one -j knob.
+    src = Path(SYN.__file__).parent
+    pools = []
+    for path in sorted(src.glob("*.py")):
+        for number, line in enumerate(path.read_text().splitlines(), 1):
+            if re.search(r"\b(ThreadPool|ThreadPoolExecutor|ProcessPoolExecutor|Pool)\(", line) \
+                    and not line.lstrip().startswith(("#", "from ", "import ")):
+                pools.append((path.name, number, line.strip()))
+    assert pools, "no synthesis pools found: the audit is checking nothing"
+    # pypeline_sim_debug runs its native and VHDL simulations side by side
+    # from one warm build; neither synthesizes.
+    unbounded = [
+        p for p in pools
+        if "GET_NUM_PROCESSES()" not in p[2] and p[0] != "pypeline_sim_debug.py"
+    ]
+    assert not unbounded, unbounded
+
+    pypelinec = src / "pypelinec"
+    design = Path(__file__).with_name("added_latency_context_design.py")
+    for bad in ("0", "-2"):
+        with tempfile.TemporaryDirectory() as temp:
+            out = Path(temp) / "out"
+            result = subprocess.run(
+                [sys.executable, str(pypelinec), str(design), "--jobs", bad,
+                 "--out_dir", str(out), "--no_synth"],
+                capture_output=True, text=True, timeout=300,
+            )
+            assert result.returncode != 0, result.stdout[-2000:]
+            assert f"--jobs must be at least 1, got {bad}" in result.stderr, result.stderr[-2000:]
+            assert "PY_TO_LOGIC parsing" not in result.stdout, result.stdout[-2000:]
+            assert not out.exists(), sorted(p.name for p in out.iterdir())
+
+
 def test_gap_planning_and_coarse_slicing():
     ps = _state()
     tpl = _empty(ps)

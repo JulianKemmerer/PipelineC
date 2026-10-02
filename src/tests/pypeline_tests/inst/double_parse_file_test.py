@@ -118,7 +118,8 @@ def test_design_source_is_frozen_across_reparses():
     # pypelinec re-parses the design in later AUTO_PIPELINE passes, possibly
     # hours later. Edits to design files in the meantime must not reach those
     # passes: re-imports, AST reads and inspect.getsource keep the first-read
-    # bytes, and source_provenance.json records the drift. The compiler's own
+    # bytes, and source_provenance.json records their hashes, byte counts and
+    # the drift. The compiler's own
     # modules, stdlib and generated output-directory source are not frozen.
     # A subprocess keeps the import hook out of this test process.
     import subprocess
@@ -136,6 +137,7 @@ design.write_text("from pypeline import MAIN, uint8_t\nfrom freeze_helper import
 os.chdir(temp)
 PY_TO_LOGIC.FREEZE_DESIGN_SOURCES(str(out))
 first = set(PY_TO_LOGIC.PARSE_FILE("freeze_design.py").FuncLogicLookupTable)
+first_read = {str(p): p.read_bytes() for p in (helper, design)}
 helper.write_text(helper.read_text().replace("x + 1", "x * x"))
 design.write_text(design.read_text() + "\n# edited\n")
 second = set(PY_TO_LOGIC.PARSE_FILE("freeze_design.py").FuncLogicLookupTable)
@@ -158,6 +160,11 @@ assert PY_TO_LOGIC.READ_SOURCE_TEXT(str(generated)) == "x = 2"
 PY_TO_LOGIC.WRITE_SOURCE_PROVENANCE()
 sources = json.loads((out / "source_provenance.json").read_text())["sources"]
 assert sources[str(helper)]["disk_drift"] and sources[str(design)]["disk_drift"]
+import hashlib
+for path, data in first_read.items():  # the frozen bytes, not the edited disk
+    assert sources[path]["sha256"] == hashlib.sha256(data).hexdigest(), path
+    assert sources[path]["bytes"] == len(data), path
+assert not any(v["disk_drift"] for p, v in sources.items() if p not in first_read), sources
 assert any("/include/pypeline/" in p for p in sources), sorted(sources)
 assert not any(os.path.dirname(p) == os.path.dirname(PY_TO_LOGIC.__file__) for p in sources)
 assert json.__file__ not in sources and str(generated) not in sources
