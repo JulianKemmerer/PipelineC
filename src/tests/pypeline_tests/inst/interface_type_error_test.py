@@ -364,7 +364,6 @@ def drive_ready():
     good_if.ready = 1
 
 @MAIN
-@wires
 def m() -> uint1_t:
     drive_stream()
     drive_ready()

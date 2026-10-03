@@ -642,6 +642,29 @@ The `@MAIN` covers the same shapes on registers (scalar, signed, array element, 
 field, variable-index nested path) and asserts that augmented and plain forms agree every
 cycle. Every direct case except the typed-local copy fails on the tree before the fix.
 
+## `@wires` contract coverage
+
+`wires_contract_test.py` (`elab_introspect`) parses small temp designs in-process. It
+checks that a `@wires` function is literally just wires (see
+[Validation](PY_TO_LOGIC_DESIGN.md#validation--_validate_wires_funcs)).
+
+**Rejected,** each with an `ElaborationError` naming the function, the offending
+register or operator, and its line:
+- a testbench-shaped `@MAIN @wires` with a `Reg` counter (the WireGuard `encrypt_syn_tb`
+  bug, which left a measured MAIN without a timing verdict);
+- an adder;
+- a stateful callee;
+- a variable index;
+- an AND that feeds both the output and `sim_print`;
+- an auto-`@wires` `@cast` that adds;
+- an untagged raw-VHDL callee.
+
+**Accepted** in one design: struct rewiring, bit slices, concat, a constant shift, a
+cast, a constant index, `Wire`/`Input`/`Output` connections, nested `@wires`, a raw-VHDL
+`@wires` body, and `if flag: sim_finish()`, whose enable mux only feeds the builtin.
+
+With the check disabled, all seven rejection cases fail.
+
 ## Conditional import coverage
 
 `conditional_import_test.py` (`elab_introspect`) covers design modules chosen by

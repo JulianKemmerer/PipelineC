@@ -5390,15 +5390,63 @@ return logic
 `key` instead of `hw_name`. This means `@wires` works identically whether applied to a
 plain top-level `def` or to an inner `def` inside a `make_*` factory function.
 
-No elaboration-time validation enforces that the tagged function is "really" just
-wires — exactly like the C pragma, it's a trusted assertion consumed only by the
-synthesis/timing-estimation stage.
+### Validation — `_validate_wires_funcs`
+
+`LOGIC_IS_ZERO_DELAY` believes the tag, so the delay walk and the sweep never time a
+`@wires` function. A false tag therefore hides real timing. That happened with a
+WireGuard synthesizable-testbench `@MAIN @wires`: it had `Reg` counters, compares and
+ROM muxes, and its measured 9.55 ns path got no timing verdict in `sweep_history.json`.
+So `PARSE_FILE` checks the promise once logic trimming is done (dead logic doesn't count).
+
+Every instantiated function in `func_marked_wires` is walked recursively through its
+submodules:
+
+- **Registers.** Any `logic.state_regs` entry (a `Reg`) anywhere in the hierarchy is an
+  error. So is a callee with a nonzero `pipeline_latency`, or an AUTO_PIPELINE call site.
+  A `Feedback` is a wire and is allowed. The check reads `state_regs`, never
+  `uses_nonvolatile_state_regs`: `_elab_vhdl_text` sets that flag on every raw-VHDL body.
+- **Logic.** The walk descends into plain user functions. Every built-in, raw-VHDL or
+  black-box submodule must be `LOGIC_IS_ZERO_DELAY` on its own: constant refs and
+  shifts, bit manipulation, casts and VHDL expressions, clock crossings, black boxes, and
+  sim-control builtins. One exception: a submodule whose outputs only reach sim-control
+  builtins (`printf`/`sim_assert`/`sim_finish`) is simulation-only. The `MUX` that
+  `if flag: sim_finish()` builds for the builtin's `CLOCK_ENABLE` is the common case.
+  The fanout walk follows `wire_drives`, and any other endpoint (a function output, a
+  global write, a non-sim submodule) makes the logic real.
+- **Nested `@wires`** callees are skipped and checked under their own name.
+- **Raw VHDL can't be inspected.** A `@wires` function whose own body is `vhdl(...)` is
+  trusted as-is, statefulness included. An *untagged* raw-VHDL callee is an error. The
+  message suggests tagging it `@wires` if it is wires.
+
+A violation raises `ElaborationError`. The message names the function, the register or
+operator, and the source line from `submodule_instance_to_ast_meta`. It also tells the
+user to remove `@wires`, and to put `@hw_func` under a logic-bearing `@cast`.
+A function that wraps real hardware is simply not `@wires`. No "wrapper" tag exists or is
+needed: every operator is its own submodule, so delay is always derived from what a
+function instantiates.
+
+C `#pragma FUNC_WIRES` is still a trusted, unchecked assertion. For example,
+`examples/risc-v/barrel_risc-v.c` puts optional delay registers under it.
 
 ### Test coverage
 
 `src/tests/pypeline_tests/inst/func_wires_test.py` exercises both the plain top-level
 helper case and the `@MAIN`-stacked case (mirroring `leds_port.c`), plus a `sim_call()`
 smoke test proving the implied `@hw_func` wrapping works correctly.
+
+`src/tests/pypeline_tests/inst/wires_contract_test.py` (elab_introspect) covers the
+validation.
+- Rejected cases:
+  - a stateful testbench-shaped `@MAIN @wires`;
+  - an adder;
+  - a stateful callee;
+  - a variable index;
+  - logic that feeds both an output and `sim_print`;
+  - an auto-`@wires` `@cast` that adds;
+  - an untagged raw-VHDL callee.
+- One accepted design: rewiring, bit slices, concat, constant shift, cast, constant
+  index, `Wire`/`Input`/`Output` connections, nested `@wires`, raw-VHDL `@wires`, and
+  `if flag: sim_finish()`.
 
 ---
 

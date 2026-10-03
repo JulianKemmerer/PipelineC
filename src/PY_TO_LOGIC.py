@@ -6959,6 +6959,129 @@ def _validate_pipeline_latencies(parser_state):
                 }
 
 
+def _validate_wires_funcs(parser_state):
+    """@wires (#pragma FUNC_WIRES) promises a function synthesizes to nothing
+    but wires: zero delay, no registers, no logic. SYN.LOGIC_IS_ZERO_DELAY
+    trusts that promise, so the delay walk and the sweep never time the
+    function -- a broken one silently hides real timing (a stateful
+    synthesizable-testbench MAIN tagged @wires got no timing verdict at all).
+    Check every instantiated @wires function's hierarchy instead.
+
+    Allowed: whatever LOGIC_IS_ZERO_DELAY classifies as zero-delay on its own
+    (constant refs and shifts, bit manipulation, casts, clock crossings, black
+    boxes, sim_print/sim_assert/sim_finish), Feedback wires, plain user
+    functions made only of those, other @wires functions (each checked under
+    its own name), and logic whose every output only reaches sim-control
+    builtins (the clock-enable mux of `if flag: sim_finish()`: simulation
+    only, never synthesized). A @wires function whose own body is raw
+    vhdl(...) text is trusted: nothing in it can be inspected, statefulness
+    included. C #pragma FUNC_WIRES is not checked."""
+    import SYN
+
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    lookup = parser_state.FuncLogicLookupTable
+    wires_funcs = parser_state.func_marked_wires
+    fixed_latency = getattr(parser_state, "func_fixed_latency", {})
+    sim_only_memo = {}
+
+    def loc(logic, inst):
+        meta = logic.submodule_instance_to_ast_meta.get(inst)
+        if meta is None:
+            return ""
+        return f" [{os.path.basename(meta.src_file)}:{meta.line}]"
+
+    def drives_only_sim(logic, inst):
+        # Every path from inst's outputs ends at a sim-control builtin input,
+        # possibly through other such simulation-only logic
+        key = (logic.func_name, inst)
+        if key in sim_only_memo:
+            return sim_only_memo[key]
+        sim_only_memo[key] = False  # a loop is not simulation-only
+        sub_logic = lookup.get(logic.submodule_instances[inst])
+        todo = [inst + marker + out for out in sub_logic.outputs]
+        seen = set(todo)
+        reaches_sim = False
+        while todo:
+            driven = logic.wire_drives.get(todo.pop(), ())
+            if not driven:
+                return False  # a function output, global write or register
+            for wire in driven:
+                d_inst = wire.rsplit(marker, 1)[0] if marker in wire else None
+                if d_inst in logic.submodule_instances:
+                    d_func = logic.submodule_instances[d_inst]
+                    if not (
+                        C_TO_LOGIC.IS_SIM_CTRL_FUNC_NAME(d_func)
+                        or drives_only_sim(logic, d_inst)
+                    ):
+                        return False
+                    reaches_sim = True
+                elif wire not in seen:
+                    seen.add(wire)
+                    todo.append(wire)
+        sim_only_memo[key] = reaches_sim
+        return reaches_sim
+
+    def problem(func_name, seen):
+        """The first non-wires thing in func_name's hierarchy, or None."""
+        logic = lookup[func_name]
+        seen.add(func_name)
+        if logic.state_regs:
+            return f"holds register '{next(iter(logic.state_regs))}'"
+        auto_pipelined = getattr(logic, "sub_inst_to_auto_pipeline_latency", {})
+        for inst, sub in logic.submodule_instances.items():
+            sub_logic = lookup.get(sub)
+            if sub in wires_funcs or sub_logic is None:
+                continue
+            where = loc(logic, inst)
+            if inst in auto_pipelined:
+                return f"calls AUTO_PIPELINE'd '{sub}'{where}, which adds pipeline registers"
+            if fixed_latency.get(sub, 0) > 0:
+                return f"calls '{sub}'{where}, a fixed {fixed_latency[sub]}-clock pipeline"
+            if (
+                not sub_logic.is_c_built_in
+                and sub_logic.vhdl_module_text is None
+                and sub not in parser_state.func_marked_blackbox
+                and not sub_logic.is_clock_crossing
+            ):
+                # A plain user function: wires only if everything in it is
+                if sub not in seen:
+                    sub_problem = problem(sub, seen)
+                    if sub_problem is not None:
+                        return f"calls '{sub}'{where}, which {sub_problem}"
+            elif SYN.LOGIC_IS_ZERO_DELAY(
+                sub_logic, parser_state, allow_none_delay=True
+            ) or drives_only_sim(logic, inst):
+                continue
+            elif sub_logic.vhdl_module_text is not None:
+                return (
+                    f"calls raw-VHDL '{sub}'{where}, whose contents can't be "
+                    "checked (tag it @wires too if it is just wires)"
+                )
+            else:
+                return f"instantiates {sub}{where}"
+        return None
+
+    for func_name in sorted(wires_funcs):
+        logic = lookup.get(func_name)
+        if (
+            logic is None
+            or logic.vhdl_module_text is not None
+            or func_name not in parser_state.FuncToInstances
+        ):
+            continue
+        reason = problem(func_name, set())
+        if reason is not None:
+            raise ElaborationError(
+                f"@wires function '{func_name}'"
+                f"{SYN.FUNC_SRC_LOC_STR(parser_state, func_name)} is not just "
+                f"wires: it {reason}. @wires (#pragma FUNC_WIRES) promises the "
+                "function synthesizes to nothing but wires -- zero delay, no "
+                "registers, no logic -- so the compiler never times it. Remove "
+                "@wires and the function is timed like any other (a @cast with "
+                "real logic puts @hw_func under @cast)."
+            )
+
+
 def _build_func_call_graph(parser_state):
     """Populate func_name_to_calls / func_names_to_called_from (by function name,
     not per-call-site instance path) from each function's already-elaborated
@@ -7875,6 +7998,9 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     # Check for dangling logic after trim
     for l in parser_state.FuncLogicLookupTable.values():
         C_TO_LOGIC.FIND_DANGLING_LOGIC(logic)
+
+    # @wires promises zero delay; check it against the trimmed logic
+    _validate_wires_funcs(parser_state)
 
     # ── Build function-name call graph so RECURSIVE_FIND_MAIN_FUNCS can trace a
     # global var's use up through helper/factory functions to its owning MAIN(s) ──

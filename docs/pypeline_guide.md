@@ -4918,11 +4918,29 @@ point is just wires — mirroring `include/leds/leds_port.c`, which independentl
 def leds_module(): ...
 ```
 
-**This is purely a synthesis-time hint** — it has no effect on simulation behaviour (the
-function still runs as ordinary Python/hardware logic), and the compiler does not check
-that the function is actually wires-only. Tagging logic that has real delay (arithmetic,
-comparisons, anything beyond rewiring/casting) with `@wires` will make the synthesiser
-underestimate timing through it — use it only for genuinely free rewiring.
+**It is a synthesis-time hint** — it has no effect on simulation behaviour (the function
+still runs as ordinary Python/hardware logic). Because the compiler then never times a
+`@wires` function, elaboration checks that it really is just wires: nothing anywhere in
+its hierarchy may hold a register (`Reg`) or compute anything (arithmetic, comparisons,
+`if`/ternary muxes, variable array indexing, inversion). These are fine:
+
+- struct/array rewiring, constant indexing, bit slices, concatenation, constant shifts;
+- casts;
+- `Wire`/`Input`/`Output` connections and `Feedback` wires;
+- other `@wires` functions;
+- `sim_print`/`sim_assert`/`sim_finish`. Logic that only feeds them, like the condition
+  of `if done: sim_finish()`, never reaches synthesis.
+
+Anything else is an `ElaborationError` that names the register or operator and its source
+line. A `vhdl()` body can't be inspected, so a `@wires` function written in raw VHDL is
+trusted as-is, registers included. Calling an *untagged* `vhdl()` function from `@wires`
+is an error.
+
+**A function that wraps real hardware is not `@wires`**, even if its own body looks like
+wiring — a synthesizable testbench `@MAIN` that drives a design with counters and checks
+its output, for example. Leave it untagged and it is timed like any other function. No
+separate "wrapper" tag is needed: every operator is already its own submodule, so a
+function's delay is always derived from what it instantiates.
 
 See `src/tests/pypeline_tests/inst/func_wires_test.py` for the full example.
 

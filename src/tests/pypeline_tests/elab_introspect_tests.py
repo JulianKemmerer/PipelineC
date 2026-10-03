@@ -120,6 +120,19 @@ def get_tests() -> list:
             cmd=[INST_DIR / "global_wire_errors_test.py"],
         )
     )
+    # @wires must be literally just wires: registers or logic anywhere in its
+    # hierarchy (a stateful testbench MAIN, an adder, a variable index, a
+    # stateful callee, an auto-@wires @cast with logic, an untagged raw-VHDL
+    # callee) is an ElaborationError naming it. Rewiring, bit slices, casts,
+    # Input/Output connections, nested and raw-VHDL @wires, and an
+    # `if flag: sim_finish()` checker are accepted.
+    tests.append(
+        Test(
+            name="wires_contract_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "wires_contract_test.py"],
+        )
+    )
     # Calls PY_TO_LOGIC.PARSE_FILE twice in one process (what the
     # AUTO_PIPELINE pin-and-confirm driver loop does) and compares the
     # resulting parser_states -- guards the sys.modules eviction and

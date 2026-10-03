@@ -1206,7 +1206,10 @@ Python equivalent of PipelineC's `#pragma FUNC_WIRES <func_name>`. Tags a functi
 definition as pure rewiring/bit-casting logic with no real combinational delay, so the
 synthesizer treats its whole hierarchy as zero-delay instead of estimating timing for it
 (see `include/leds/leds_port.c` for the C original — it tags its
-`#pragma MAIN leds_module` function this way):
+`#pragma MAIN leds_module` function this way). Unlike the C pragma, the Pypeline tag is
+checked: elaboration rejects a `@wires` function with any register or logic in its
+hierarchy (see
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#validation--_validate_wires_funcs)):
 
 ```python
 from pypeline import wires
@@ -1611,7 +1614,8 @@ def f(x: src_t) -> dst_t:
 
 `@cast` applied to a **plain, undecorated** function wraps it with `@wires` itself (a cast
 is assumed to be pure rewiring unless the caller pre-wraps with plain `@hw_func` for real
-delay-bearing logic) and — critically — stamps `fn._pypeline_is_cast = True` **before**
+delay-bearing logic; an auto-wrapped cast that does compute something fails elaboration's
+`@wires` check, which says to add `@hw_func`) and — critically — stamps `fn._pypeline_is_cast = True` **before**
 that wrapping runs, not after. This ordering is load-bearing, not stylistic: `@wires`/
 `@hw_func` call `_sim_type_wrap`, which runs `_check_partial_interface_ports` as part of
 wrapping, and that check must see the cast marker to exempt an interface-half arg/return
