@@ -2378,7 +2378,10 @@ Two traps when writing a design that will be diffed against real VHDL:
   sub-module transitively, including "pass-through" modules that declare no `Wire[T]` of their
   own but import ones that do — e.g. a module whose only job is cross-module wiring between
   other modules' globals). Wire sim-keys are bare names (no module prefix); unique wire names
-  across sub-modules assumed.
+  across sub-modules assumed. HDL discovery reaches the same modules from the module-level
+  import statements that ran, including those chosen by a module-level `if`/`try`. A
+  `@MAIN` that sim would run but HDL cannot reach is a build error, so the two layers
+  agree on the MAIN set (see PY_TO_LOGIC_DESIGN.md, Conditional imports).
 - **Closures from factory functions** — add `@hw_func` to the inner closure definition.
   `_build_reg_sim_func` resolves `Reg[T]` annotations using closure-captured variables.
   Factories that accept and then call a caller-supplied function

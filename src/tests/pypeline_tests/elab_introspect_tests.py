@@ -77,6 +77,18 @@ def get_tests() -> list:
             cmd=[INST_DIR / "importfrom_test.py"],
         )
     )
+    # Modules chosen by module-level if/try imports: only the branch that ran
+    # is discovered (wires, functions, MAINs, alias prefix), across both
+    # choices, factories, a shared diamond and a capacity-changing re-parse;
+    # untaken modules stay out even when already loaded; a @MAIN whose module
+    # ran but was never discovered raises instead of vanishing.
+    tests.append(
+        Test(
+            name="conditional_import_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "conditional_import_test.py"],
+        )
+    )
     # In-process PARSE_FILE regression test for _elaborate_live_func's
     # struct-registration fallback -- checks
     # parser_state.struct_to_field_type_dict directly for a struct defined

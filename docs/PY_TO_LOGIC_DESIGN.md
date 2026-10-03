@@ -74,6 +74,8 @@ See [auto-pipelined RAM compilation](AUTO_PIPELINE_DESIGN.md#ram-compiler-sweep-
 - [Multi-File Import Support](#multi-file-import-support)
   - [Name Mangling Rule](#name-mangling-rule)
   - [`PARSE_FILE` Import Pre-Pass (`_process_imports`)](#parse_file-import-pre-pass-_process_imports)
+  - [Conditional Imports (module-level `if` / `try`)](#conditional-imports-module-level-if--try)
+  - [Registered MAINs Must Be Elaborated](#registered-mains-must-be-elaborated)
   - [Wire Access in Hardware Function Bodies](#wire-access-in-hardware-function-bodies)
   - [Function Name Mangling](#function-name-mangling)
   - [Cross-File Function Calls](#cross-file-function-calls)
@@ -2653,7 +2655,9 @@ the single-underscore prefix is distinct and does not conflict.
 Before elaborating any hardware functions, `PARSE_FILE` inserts the design file's
 directory into `sys.path` so that `import file_a` resolves relative to the design file.
 It then calls `_process_imports(tree, module_globals, parser_state, files_to_elaborate, top_file)`,
-which scans `tree.body` for both `ast.Import` **and** `ast.ImportFrom` nodes. Both forms
+which scans every module-level `ast.Import` **and** `ast.ImportFrom` node: those in
+`tree.body`, plus those inside module-level `if`/`try`/`with`/loop blocks that actually ran
+(see [Conditional imports](#conditional-imports-module-level-if--try)). Both forms
 share one helper, `_discover_and_queue_module(sub_mod, actual_name, parser_state,
 files_to_elaborate, top_file, processed_files)`, so a module's structs/wires/functions are
 discovered identically regardless of which import form reached it:
@@ -2688,9 +2692,9 @@ recurses into every newly discovered module's own tree. The `processed_files` se
 threaded through the whole recursion by reference (not recomputed per call), so a
 diamond-shaped import graph — two different modules each importing a shared third
 module, or the same module reached once via each import form — dedupes correctly
-regardless of which path reaches it first. Imports nested inside a `def`/`if`/`try`
-block are still not recognized — only top-level statements in each file's own
-`tree.body`.
+regardless of which path reaches it first. Imports inside a module-level `if`/`try`
+block are followed for the branch that ran (next section); imports inside a `def` or
+`class` body never are.
 
 **Framework/stdlib modules are queued for discovery too**, since every design file does
 `from pypeline import ...` and every `ast.ImportFrom` target is followed — so
@@ -2734,6 +2738,87 @@ be robust to it**:
   `main_func_ids = {id(f) for f in pypeline._main_registry}`, checked via
   `id(fglobals.get(node.name)) in main_func_ids` — true only for the exact function
   object `@MAIN` registered, never a same-named unrelated function in another file.
+
+### Conditional imports (module-level `if` / `try`)
+
+A design can choose its building blocks while it is being imported, the way the
+WireGuard dataflows pick a shared or a private Poly1305 resource:
+
+```python
+if sharing["poly1305"]:
+    import poly1305_mcp_shared        # owns MAINs and shared wires
+else:
+    import poly1305_private
+```
+
+Python runs one branch. The chosen module must be discovered like any top-level import
+(its wires, structs, functions and MAINs). The untaken module must stay out of the
+hardware: it may own MAINs or wires that nothing drives (a wire with no writer fails
+PARSE_FILE's "written by at least 1 function" check). Native sim always saw the chosen
+module, because `pypeline_sim._discover_wire_names` scans live module objects. Before
+this, HDL discovery scanned only `tree.body`, so the chosen module was invisible to
+elaboration. The result was `KeyError` or `Unknown reference base` the first time
+anything touched its wires.
+
+`_module_level_imports(tree)` yields `(node, conditional)` for every import that runs
+at module scope, in source order. Statements in `tree.body` give `conditional=False`.
+Those nested in `if`/`elif`/`else`, `try`/`except`/`else`/`finally`, `with`,
+`for`/`while` (and their `else`), and `match` arms give `conditional=True`. It never
+enters a `def` or `class` body, because an import there binds no module global. A
+top-level statement always ran, so it is handled exactly as before. A nested statement
+is followed only when `_nested_import_ran(node, module_globals)` proves from the
+module's **live bindings** that this statement is what bound them:
+
+- `import X [as Y]`: `Y` (or `X`) must hold a module whose `__name__` is `X`. Each alias
+  of `import A, B` is judged on its own. For `if c: import A as impl / else: import B as
+  impl`, only A's statement passes, so `module_alias_to_actual['impl'] = 'A'` and A's
+  prefix is used. Walking both branches would instead trip the alias-collision guard.
+- `from X import a [as b], ...`: `sys.modules[X]` must exist, and **every** bound name
+  must be the very object `X` has under that name (`is`). A single shared re-export
+  (`uint8_t`) proves nothing. For `*`, the names checked are `X.__all__`, or else X's
+  public names.
+
+Rejected alternatives:
+
+- **Re-evaluating the `if` test.** It can have side effects. `try`/`except` and loops
+  have no test to re-evaluate.
+- **Checking `sys.modules`.** An untaken branch's module may be loaded for another
+  reason: by the test harness, by another design file, or by
+  `importlib.import_module` under a different name.
+- **Walking every branch.** That drags in the untaken modules.
+
+Limits:
+
+- A nested statement whose name is rebound later at module level (`from X import f`
+  then `f = wrap(f)`) is not proven and is skipped. Write such imports at top level.
+- Dotted `import a.b` with no alias is skipped. This is unchanged: only `a` is bound.
+
+Everything after discovery is unchanged:
+
+- `processed_files` dedupes a shared module reached from several files (a diamond). It
+  is discovered once, under one prefix, with one copy of its MAINs.
+- Discovery recurses with the same walker, so a sub-module's own conditional imports are
+  followed too.
+- Every `PARSE_FILE` evicts and re-executes the design's modules, then rediscovers them.
+  A re-parse that changes a choice, or a shared resource's size (a lane count derived
+  from an `AUTO_PIPELINE.latency`), sees the new modules.
+- Source freezing is path-based (`_is_frozen_source`), so a conditionally imported file
+  is frozen at its first read like any other.
+
+### Registered MAINs must be elaborated
+
+Running the design registers every `@MAIN` it executes in `pypeline._main_registry`, and
+native sim runs all of them. Hardware reaches a MAIN only as a top-level def of a
+discovered file. A module that ran but was never discovered would silently drop its
+MAINs from the HDL while sim kept running them. This can happen with a module imported
+only inside a function body (`def f(): import res`), or with a `@MAIN` defined inside an
+`if` block or a factory. PARSE_FILE Step 7.5 therefore compares the registry against
+the elaborated top-level defs, by function identity like Steps 5/7. It raises
+`ElaborationError` naming each lost MAIN, its module and its source file, and tells the
+user to import that module at module level.
+
+`ELABORATE_LIVE_ROOTS` has no such check: it elaborates the roots it is given, not the
+registry.
 
 ### Elaboration ordering — sub-files first
 
@@ -2933,12 +3018,12 @@ are pre-existing and documented.
 - Each imported file is processed once even if imported under multiple aliases.
 - **Recursive (transitive) sub-file imports are followed automatically.** If
   `file_a.py` itself imports `file_c.py`, `file_c.py` is discovered and elaborated
-  too — no depth limit, and diamond-shaped graphs dedupe correctly. Only plain
-  top-level `import module_name` statements are scanned at each hop, same as the
-  top file's own restriction above; `from file_a import *` is still excluded, and
-  an `import` statement nested inside a function/`if`/`try` body is still invisible
-  to this discovery pass (it is not an `ast.walk` over the whole file, only
-  `tree.body`).
+  too — no depth limit, and diamond-shaped graphs dedupe correctly. Each hop scans
+  its module-level `import` / `from ... import` statements. That includes those
+  inside module-level `if`/`try`/`with`/loop blocks that ran (see
+  [Conditional imports](#conditional-imports-module-level-if--try)), but never
+  imports inside a function or class body. A `@MAIN` in a module reached only that
+  way raises (see [Registered MAINs must be elaborated](#registered-mains-must-be-elaborated)).
 - Because every file's own aliases are folded into the same shared
   `parser_state.module_alias_to_actual` dict, two different files that reuse the
   same local alias name for two *different* modules raise `ElaborationError`
@@ -2951,6 +3036,9 @@ are pre-existing and documented.
 |---|---|
 | Alias → actual module name | `parser_state.module_alias_to_actual` (dict) |
 | Cross-file alias collision guard | `_process_imports` — `ElaborationError` if an alias already maps to a different actual module |
+| Module-level imports, incl. inside `if`/`try`/`with`/loops | `_module_level_imports(tree)` → `(node, conditional)` |
+| Did a conditional import run? | `_nested_import_ran(node, module_globals)` — live-binding proof |
+| Registered-but-unelaborated `@MAIN` guard | `PARSE_FILE` Step 7.5 — `ElaborationError` naming the MAIN and module |
 | Sub-file wire discovery | `_discover_global_wires(..., name_prefix=actual_name)` |
 | Module-attr wire lookup | `FuncElaborator._resolve_module_wire_name(base, attr)` |
 | Bare-name sub-file wire lookup | `FuncElaborator._resolve_global_wire(bare_name)` |
@@ -5876,7 +5964,8 @@ top.py  (single-file or multi-file entry point)
   │
   ├─ _discover_global_wires(top.py)     Bare names — no prefix
   │
-  ├─ _process_imports(top_file=top.py)  For each 'import file_a' / 'import file_a as fa':
+  ├─ _process_imports(top_file=top.py)  For each module-level 'import file_a' / 'import file_a as fa'
+  │   │                                 (in an if/try block: only if _nested_import_ran):
   │   ├─ record 'fa' → 'file_a' in parser_state.module_alias_to_actual
   │   ├─ _discover_structs_from_module(file_a)
   │   ├─ _discover_global_wires(file_a.py, name_prefix='file_a')
@@ -5921,6 +6010,8 @@ top.py  (single-file or multi-file entry point)
   │                                   ast.Attribute: module-qualified call (mod.func(args)) →
   │                                     getattr lookup + FuncLogicLookupTable (sub-files pre-elaborated)
   │                   └─ bit_dup/rotl/rotr/bswap/bit_assign/array_uint/concat → BIT_MANIP submodules
+  │
+  ├─ Lost-MAIN guard (Step 7.5)         every registered @MAIN was elaborated, else ElaborationError
   │
   ├─ _build_inst_lookup()               Recursively populate LogicInstLookupTable
   │

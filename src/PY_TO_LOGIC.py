@@ -3238,6 +3238,11 @@ class FuncElaborator:
             )  # register in _vhdl_names_lower; base_var already sanitized by _parse_ref_toks
             ref_toks = (base_var,)
             self._declare_var(base_var, rhs_type, target)
+        elif base_var not in self.env:
+            # e.g. `mod.w = x` where mod is unbound (its import's branch didn't run)
+            raise ElaborationError(
+                f"Unknown reference base '{base_var}' in func '{self.func_name}'"
+            )
         self._write_ref(ref_toks, rhs_wire, rhs_type, stmt.value)
 
     def _elab_unpack_assign(self, stmt, target):
@@ -7125,6 +7130,64 @@ def _discover_and_queue_module(
     return has_content
 
 
+def _module_level_imports(tree):
+    """(node, conditional) for every ast.Import / ast.ImportFrom that executes at
+    module scope, in source order: tree.body's own statements (conditional=False,
+    they always ran) and those nested in module-level if/elif/else, try/except/
+    else/finally, with, for/while (+else) and match blocks (conditional=True:
+    the block may have run partly or not at all). def/class bodies are never
+    entered -- an import there binds no module global."""
+
+    def walk(stmts, conditional):
+        for stmt in stmts:
+            if isinstance(stmt, (ast.Import, ast.ImportFrom)):
+                yield stmt, conditional
+            elif not isinstance(
+                stmt, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)
+            ):
+                for field in ("body", "orelse", "finalbody"):
+                    yield from walk(getattr(stmt, field, None) or (), True)
+                # except handlers; `case` arms of a match (3.10+)
+                for block in getattr(stmt, "handlers", []) + getattr(stmt, "cases", []):
+                    yield from walk(block.body, True)
+
+    yield from walk(tree.body, False)
+
+
+def _nested_import_ran(node, module_globals):
+    """Whether a conditional import statement (see _module_level_imports) is what
+    actually bound its names, judged from the module's live globals -- never by
+    re-evaluating the branch condition (side effects; try/loop control flow has
+    no condition) and never by sys.modules presence alone (an untaken branch's
+    module may be loaded for another reason). For `import X [as Y]`, Y must hold
+    a module named X: `if c: import A as m / else: import B as m` proves only the
+    branch whose module m holds. For `from X import a [as b], ...`, EVERY bound
+    name must be the very object X has under that name -- one shared re-export
+    (e.g. uint8_t) is not proof. Returns the alias subset that ran for ast.Import
+    (each alias of `import A, B` binds independently), else a bool."""
+    if isinstance(node, ast.Import):
+        ran = []
+        for alias in node.names:
+            mod = module_globals.get(alias.asname or alias.name)
+            if isinstance(mod, _types.ModuleType) and mod.__name__ == alias.name:
+                ran.append(alias)
+        return ran
+    src = sys.modules.get(node.module) if node.module else None
+    if src is None:
+        return False
+    names = [(alias.name, alias.asname or alias.name) for alias in node.names]
+    if names == [("*", "*")]:
+        public = getattr(src, "__all__", None) or [
+            n for n in vars(src) if not n.startswith("_")
+        ]
+        names = [(n, n) for n in public]
+    missing = object()
+    return bool(names) and all(
+        local in module_globals and module_globals[local] is getattr(src, name, missing)
+        for name, local in names
+    )
+
+
 def _process_imports(
     tree,
     module_globals,
@@ -7133,11 +7196,17 @@ def _process_imports(
     top_file=None,
     processed_files=None,
 ):
-    """Scan top-level ast.Import and ast.ImportFrom nodes in tree.body,
-    recursing into each newly discovered sub-module's own tree so transitive
-    (multi-hop) import chains are followed automatically -- not just the top
-    file's direct imports, regardless of whether a given hop in the chain
-    uses 'import X' or 'from X import Y'.
+    """Scan the module-level ast.Import and ast.ImportFrom nodes of tree (see
+    _module_level_imports), recursing into each newly discovered sub-module's
+    own tree so transitive (multi-hop) import chains are followed automatically
+    -- not just the top file's direct imports, regardless of whether a given hop
+    in the chain uses 'import X' or 'from X import Y'.
+
+    Imports inside a module-level if/try/with/loop block are followed only when
+    _nested_import_ran proves from module_globals that the statement executed,
+    so a design can select its modules at elaboration time (`if share: import
+    shared_res / else: import private_res`) and the untaken branch's modules --
+    their wires, functions and MAINs -- stay out of the hardware.
 
     For each imported module that resolves to a local .py file:
     - Registers Wire[T]/Input[T]/Output[T] declarations in parser_state.global_vars
@@ -7171,9 +7240,12 @@ def _process_imports(
         processed_files = {entry[0]: True for entry in files_to_elaborate}
         if top_file:
             processed_files[os.path.abspath(top_file)] = True
-    for node in tree.body:
+    for node, conditional in _module_level_imports(tree):
         if isinstance(node, ast.Import):
-            for alias in node.names:
+            aliases = (
+                _nested_import_ran(node, module_globals) if conditional else node.names
+            )
+            for alias in aliases:
                 local_name = alias.asname or alias.name
                 if local_name not in module_globals:
                     continue
@@ -7221,6 +7293,8 @@ def _process_imports(
                 continue
             sub_mod = sys.modules.get(node.module)
             if sub_mod is None:
+                continue
+            if conditional and not _nested_import_ran(node, module_globals):
                 continue
             actual_name = node.module.replace(".", "_")
             # 'from X import Y' binds no module-qualified local name in the
@@ -7756,6 +7830,30 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
             parser_state.main_mhz[hw_name] = mhz
             parser_state.main_syn_mhz[hw_name] = mhz
             parser_state.main_clk_group[hw_name] = None
+
+    # ── Step 7.5: every @MAIN the design registered must have been elaborated ──
+    # Running the design registered it, so native sim runs it; hardware only
+    # reaches a MAIN as a top-level def of a discovered file. A module that ran
+    # without being discovered (imported only inside a function, say) would
+    # otherwise drop its MAINs from the hardware without a word.
+    elaborated_ids = {
+        id(fglobals.get(node.name)) for node, _, fglobals, _ in all_func_defs
+    }
+    lost_mains = [f for f in pypeline._main_registry if id(f) not in elaborated_ids]
+    if lost_mains:
+        lost = ", ".join(
+            f"'{f.__module__}.{f.__qualname__}' "
+            f"({inspect.getsourcefile(inspect.unwrap(f))})"
+            for f in lost_mains
+        )
+        raise ElaborationError(
+            f"@MAIN {lost} was registered when the design ran (native sim would "
+            f"run it) but never elaborated as hardware. Hardware discovery follows "
+            f"module-level `import` / `from ... import` statements, including ones "
+            f"inside module-level if/try blocks -- not imports inside a function "
+            f"body -- and a @MAIN must be a top-level def of its module. Import "
+            f"that module at module level in a design file."
+        )
 
     _build_inst_lookup(parser_state)
 

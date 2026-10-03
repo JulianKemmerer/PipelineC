@@ -826,10 +826,41 @@ Two aliases pointing at the same file both refer to the same hardware wires.
 
 **Recursive (transitive) imports are followed automatically.**
 If `file_a.py` itself imports `file_b.py`, `file_b` is discovered and elaborated
-too — you don't need to also import it from the top file. Top-level `import module_name`
-and `from module_name import ...` statements are followed at each hop (an `import`
-written inside a function/`if`/`try` body is not), so each file only needs to import
-what it directly uses, the same way plain Python code is organized.
+too — you don't need to also import it from the top file. Module-level `import module_name`
+and `from module_name import ...` statements are followed at each hop, including those
+inside a module-level `if`/`try` block that ran. An `import` inside a function body
+is not followed. So each file only needs to import what it directly uses, the same
+way plain Python code is organized.
+
+**Choosing modules at elaboration time.**
+A module-level `if` (or `try`/`except`) can select which file becomes hardware:
+
+```python
+import os
+
+if os.environ.get("SHARE_MAC") == "1":
+    import mac_shared as mac     # one resource, shared by both directions
+else:
+    import mac_private as mac
+
+@MAIN
+def top(x: uint8_t) -> uint8_t:
+    return mac.compute(x)
+```
+
+Only the branch that ran becomes hardware. Its wires, functions and `@MAIN`s are
+included, and its names are prefixed with the chosen module's name (`mac_shared_...`),
+never the alias. The other module stays out even if something else already loaded it.
+Two rules:
+
+- **Import the module in the branch.** Hardware follows the module the branch
+  imported, through its binding. A conditional `from X import f` counts only if `f`
+  (and every other name it imports) is still bound to `X`'s object, so don't rebind it
+  later in the same file.
+- **A module that holds a `@MAIN` must be imported at module level.** If it is only
+  imported inside a function (`def setup(): import mac_shared`), Python still runs it,
+  and native simulation would run its `@MAIN`. The hardware build stops with an error
+  naming that `@MAIN`, rather than silently leaving it out.
 
 Call hardware functions from imported files using attribute syntax:
 

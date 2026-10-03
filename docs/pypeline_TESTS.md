@@ -609,6 +609,45 @@ stubbing out `pypeline._check_no_local_binds_wire_name`.
 
 All cases except the positive control fail on the tree before the fix.
 
+## Conditional import coverage
+
+`conditional_import_test.py` (`elab_introspect`) covers design modules chosen by
+module-level `if`/`try` imports (see
+[Conditional imports](PY_TO_LOGIC_DESIGN.md#conditional-imports-module-level-if--try)). Each
+case writes small modules to a temp dir under fresh names. Environment variables set
+before each in-process `PARSE_FILE` pick the branch; the parse's `sys.modules` eviction
+re-executes the modules. Most choosable modules own a `@MAIN` that drives their wire.
+Every module that must stay out declares a wire nothing writes, so discovering it by
+mistake fails the "written by at least 1 function" check.
+
+- **Minimal repro and control.** A module-qualified wire write and call through a
+  module imported in an `if`, through `PARSE_FILE`, `ELABORATE_LIVE_ROOTS` and a
+  `pypelinec --no_synth` subprocess (source freezing included). The same design with
+  the import unconditional is the control. With the branch untaken, the unbound
+  module name is an `ElaborationError` ("Unknown reference base"), not a raw `KeyError`.
+- **Both choices.** `if: import A as impl / else: import B as impl` (same wire and
+  function names), parsed as a, b, a. Only the chosen prefix's wires, functions and
+  MAIN exist, and `module_alias_to_actual['impl']` is the chosen module.
+- **Other forms.** `elif` from-imports, and an `except ImportError:` handler that ran.
+- **Selected callable into a factory** (the WireGuard `chacha20_encrypt_shared` shape).
+  The chosen module's function is passed to another module's factory. The closure's
+  callee reads its own module's wire by bare name.
+- **Diamond and re-parse.** Two direction modules each conditionally import one shared
+  resource or their own private one. The shared module is discovered once, under its
+  own prefix, with one copy of its MAIN and one instance of each submit function.
+  `CAPACITY` (2, then 5) sizes a shared array wire across re-parses. Choosing private
+  removes the shared module entirely.
+- **Untaken but loaded.** One module is loaded before any parse, so eviction never
+  removes it. Another is loaded by the design via `importlib.import_module` under
+  another name. Neither is discovered from the untaken branch. That branch includes a
+  from-import that also names `uint8_t`, a shared object that alone proves nothing.
+- **Lost MAIN.** A `@MAIN` module imported only inside a function makes `PARSE_FILE`
+  raise, naming the MAIN and its module.
+
+Every case fails on the tree before the fix. Two wrong fixes are caught as well.
+Treating every nested import as taken fails "both choices" and "untaken". Treating a
+from-import as taken when its module is merely in `sys.modules` fails "untaken".
+
 ## `@initial` / `@final` hook coverage
 
 One design, `inst/hooks_design.py`, serves every hook test. Each hook appends its name to
