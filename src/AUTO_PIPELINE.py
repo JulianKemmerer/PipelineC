@@ -964,6 +964,12 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
     # Replaced wires_driven_so_far
     wires_driven_by_so_far = {}  # driven wire -> driving wire
 
+    # Readiness worklist bookkeeping. Initialized after constant/read-only
+    # network propagation so already-scheduled nodes are excluded from it.
+    submodule_waiters_by_wire = None
+    submodule_missing_input_count = None
+    submodules_ready = None
+
     def RECORD_DRIVEN_BY(driving_wire, driven_wire_or_wires):
         if type(driven_wire_or_wires) is list:
             driven_wires = driven_wire_or_wires
@@ -975,9 +981,15 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
         else:
             driven_wires = [driven_wire_or_wires]
         for driven_wire in driven_wires:
+            was_newly_driven = driven_wire not in wires_driven_by_so_far
             wires_driven_by_so_far[driven_wire] = driving_wire
             # Also set clks? Seems right?
             wire_to_remaining_clks_before_driven[driven_wire] = 0
+            if was_newly_driven and submodule_waiters_by_wire is not None:
+                for waiting_submodule in submodule_waiters_by_wire.pop(driven_wire, ()):
+                    submodule_missing_input_count[waiting_submodule] -= 1
+                    if submodule_missing_input_count[waiting_submodule] == 0:
+                        submodules_ready.add(waiting_submodule)
 
     # Some wires are driven to start with
     RECORD_DRIVEN_BY(None, logic.inputs)
@@ -1205,6 +1217,48 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             if not SYN.LOGIC_IS_ZERO_DELAY(sub_logic, parser_state, True):
                 continue
             things_to_follow.add(sub_inst_reached)
+
+    # Wires that must be driven before a submodule can be used:
+    # CLOCK ENABLE (if needed) + INPUTS. The one readiness definition shared by
+    # the worklist and the per level check below.
+    def SUBMODULE_PREREQUISITE_WIRES(submodule_inst):
+        submodule_inst_name = inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
+        submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
+        prerequisite_wires = []
+        if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(submodule_logic, parser_state):
+            ce_wire = (
+                submodule_inst + C_TO_LOGIC.SUBMODULE_MARKER + C_TO_LOGIC.CLOCK_ENABLE_NAME
+            )
+            prerequisite_wires.append(logic.wire_driven_by[ce_wire])
+        for input_port_name in submodule_logic.inputs:
+            prerequisite_wires.append(
+                C_TO_LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(
+                    logic, submodule_inst, input_port_name
+                )
+            )
+        return prerequisite_wires
+
+    # Do not rediscover readiness by rescanning every remaining submodule on
+    # every logic level. Build the dependency frontier once, then let
+    # RECORD_DRIVEN_BY advance only affected nodes.
+    submodule_waiters_by_wire = {}
+    submodule_missing_input_count = {}
+    submodules_ready = set()
+    for submodule_inst in sorted(not_fully_driven_submodules):
+        missing_wires = {
+            wire
+            for wire in SUBMODULE_PREREQUISITE_WIRES(submodule_inst)
+            if wire not in wires_driven_by_so_far
+        }
+        submodule_missing_input_count[submodule_inst] = len(missing_wires)
+        if len(missing_wires) == 0:
+            submodules_ready.add(submodule_inst)
+        else:
+            for wire in missing_wires:
+                submodule_waiters_by_wire.setdefault(wire, set()).add(submodule_inst)
+    # Likewise do not rescan every wire's remaining clocks on every level:
+    # submodule output wires are bucketed by the stage their latency elapses.
+    wires_maturing_at_stage = {}  # stage num -> submodule output wires
 
     # Pipeline is done when
     def PIPELINE_DONE():
@@ -1475,198 +1529,140 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             #   ALSO:
             #     Slicing between submodules is done via artificially delaying when submodules are instantiated/connected into later stages
             fully_driven_submodule_inst_this_level_2_logic = {}
-            # Get submodule logics
-            # Loop over each sumodule and check if all inputs are driven
-            not_fully_driven_submodules_iter = sorted(
-                not_fully_driven_submodules
-            )
+            # Loop over the submodules whose last prerequisite wire was driven
+            # since the previous level (woken by RECORD_DRIVEN_BY)
+            not_fully_driven_submodules_iter = sorted(submodules_ready)
+            submodules_ready.clear()
             for submodule_inst in not_fully_driven_submodules_iter:
                 submodule_inst_name = (
                     inst_name + C_TO_LOGIC.SUBMODULE_MARKER + submodule_inst
                 )
-                # Skip submodules weve done already
-                already_fully_driven = (
-                    submodule_inst in fully_driven_submodule_inst_2_logic
+                submodule_logic = parser_state.LogicInstLookupTable[submodule_inst_name]
+                # Check submodule signals that need to be driven before submodule can be used
+                # CLOCK ENABLE + INPUTS
+                submodule_input_port_driving_wires = SUBMODULE_PREREQUISITE_WIRES(
+                    submodule_inst
                 )
-                # Also skip if not the correct stage for this submodule
-                incorrect_stage_for_submodule = False
+                # Worklist invariant: a candidate is never already scheduled and
+                # has every prerequisite driven. A candidate dropped here would
+                # never be woken again, so fail loudly instead.
+                undriven_wires = [
+                    wire
+                    for wire in submodule_input_port_driving_wires
+                    if wire not in wires_driven_by_so_far
+                ]
+                if (
+                    submodule_inst in fully_driven_submodule_inst_2_logic
+                    or len(undriven_wires) > 0
+                ):
+                    raise Exception(
+                        f"Pipeline map worklist bug in {inst_name}: submodule "
+                        f"{submodule_inst} became ready but is already scheduled "
+                        f"or has undriven prerequisites {undriven_wires}"
+                    )
 
-                # if print_debug:
-                # print ""
-                # print "########"
-                # print "SUBMODULE INST",submodule_inst, "FULLY DRIVEN?:",already_fully_driven
+                # All inputs are driven
+                fully_driven_submodule_inst_2_logic[submodule_inst] = submodule_logic
+                fully_driven_submodule_inst_this_level_2_logic[submodule_inst] = (
+                    submodule_logic
+                )
+                not_fully_driven_submodules.remove(submodule_inst)
+                if bad_inf_loop:
+                    print("submodule", submodule_inst, "HAS ALL INPUTS DRIVEN")
 
-                if not already_fully_driven and not incorrect_stage_for_submodule:
-                    submodule_logic = parser_state.LogicInstLookupTable[
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+                if has_delay:
+                    # Record delay offset as max of driving wires
+                    # Do zero_clk_submodule_start_offset INPUT OFFSET as max of input wires
+                    # Start with 0 since submodule can have no inputs and this no input port delay offset
+                    input_port_delay_offsets = [0]
+                    for (
+                        submodule_input_port_driving_wire
+                    ) in submodule_input_port_driving_wires:
+                        # Some inputs might be constant, dont contribute to delay offset
+                        # Some inputs might also be global read wires, similar no delay
+                        if (
+                            submodule_input_port_driving_wire
+                            not in rv.const_network_wire_to_upstream_vars
+                            and submodule_input_port_driving_wire
+                            not in rv.read_only_global_network_wire_to_upstream_vars
+                        ):
+                            delay_offset = delay_offset_when_driven[
+                                submodule_input_port_driving_wire
+                            ]
+                            input_port_delay_offsets.append(delay_offset)
+                    max_input_port_delay_offset = max(input_port_delay_offsets)
+
+                    # All submodules should be driven at some offset right?
+                    # print "wires_driven_by_so_far",wires_driven_by_so_far
+                    # print "delay_offset_when_driven",delay_offset_when_driven
+                    rv.zero_clk_submodule_start_offset[submodule_inst] = (
+                        max_input_port_delay_offset
+                    )
+
+                    # Do  delay starting at the input offset
+                    # This delay_offset_when_driven value wont be used
+                    # until the stage when the output wire is read
+                    # So needs delay expected in last stage
+                    submodule_timing_params = TimingParamsLookupTable[
                         submodule_inst_name
                     ]
-
-                    # Check submodule signals that need to be driven before submodule can be used
-                    # CLOCK ENABLE + INPUTS
-                    submodule_has_all_inputs_driven = True
-                    submodule_input_port_driving_wires = []
-                    # Check clock enable
-                    if C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(
-                        submodule_logic, parser_state
-                    ):
-                        # print "logic.func_name", logic.func_name
-                        ce_wire = (
-                            submodule_inst
-                            + C_TO_LOGIC.SUBMODULE_MARKER
-                            + C_TO_LOGIC.CLOCK_ENABLE_NAME
+                    submodule_delay = parser_state.LogicInstLookupTable[
+                        submodule_inst_name
+                    ].delay
+                    # End offset is start offset plus delay
+                    # Ex. 0 delay in offset 0
+                    # Starts and ends in offset 0
+                    # Ex. 1 delay unit in offset 0
+                    # ALSO STARTS AND ENDS IN STAGE 0
+                    if submodule_delay > 0:
+                        abs_delay_end_offset = (
+                            submodule_delay
+                            + rv.zero_clk_submodule_start_offset[submodule_inst]
+                            - 1
                         )
-                        ce_driving_wire = logic.wire_driven_by[ce_wire]
-                        submodule_input_port_driving_wires.append(ce_driving_wire)
-                        if ce_driving_wire not in wires_driven_by_so_far:
-                            submodule_has_all_inputs_driven = False
-                    # Check each input
-                    if submodule_has_all_inputs_driven:
-                        for input_port_name in submodule_logic.inputs:
-                            driving_wire = (
-                                C_TO_LOGIC.GET_SUBMODULE_INPUT_PORT_DRIVING_WIRE(
-                                    logic, submodule_inst, input_port_name
-                                )
-                            )
-                            submodule_input_port_driving_wires.append(driving_wire)
-                            if driving_wire not in wires_driven_by_so_far:
-                                submodule_has_all_inputs_driven = False
-                                if bad_inf_loop:
-                                    print(
-                                        "!! "
-                                        + submodule_inst
-                                        + " input wire "
-                                        + input_port_name
-                                        + " not driven yet"
-                                    )
-                                    print(" ^ is driven by", driving_wire)
-                                    # print "  <<<<<<<<<<<<< ", driving_wire , "is not (fully?) driven?"
-                                    # print " <<<<<<<<<<<<< YOU ARE PROBABALY NOT DRIVING ALL LOCAL VARIABLES COMPLETELY(STRUCTS) >>>>>>>>>>>> "
-                                    # C_TO_LOGIC.PRINT_DRIVER_WIRE_TRACE(driving_wire, logic, wires_driven_by_so_far)
-                                break
-
-                    # If all inputs are driven
-                    if submodule_has_all_inputs_driven:
-                        fully_driven_submodule_inst_2_logic[submodule_inst] = (
-                            submodule_logic
-                        )
-                        fully_driven_submodule_inst_this_level_2_logic[
-                            submodule_inst
-                        ] = submodule_logic
-                        not_fully_driven_submodules.remove(submodule_inst)
-                        if bad_inf_loop:
-                            print("submodule", submodule_inst, "HAS ALL INPUTS DRIVEN")
-
-                        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-                        if has_delay:
-                            # Record delay offset as max of driving wires
-                            # Do zero_clk_submodule_start_offset INPUT OFFSET as max of input wires
-                            # Start with 0 since submodule can have no inputs and this no input port delay offset
-                            input_port_delay_offsets = [0]
-                            for (
-                                submodule_input_port_driving_wire
-                            ) in submodule_input_port_driving_wires:
-                                # Some inputs might be constant, dont contribute to delay offset
-                                # Some inputs might also be global read wires, similar no delay
-                                if (
-                                    submodule_input_port_driving_wire
-                                    not in rv.const_network_wire_to_upstream_vars
-                                    and submodule_input_port_driving_wire
-                                    not in rv.read_only_global_network_wire_to_upstream_vars
-                                ):
-                                    delay_offset = delay_offset_when_driven[
-                                        submodule_input_port_driving_wire
-                                    ]
-                                    input_port_delay_offsets.append(delay_offset)
-                            max_input_port_delay_offset = max(input_port_delay_offsets)
-
-                            # All submodules should be driven at some offset right?
-                            # print "wires_driven_by_so_far",wires_driven_by_so_far
-                            # print "delay_offset_when_driven",delay_offset_when_driven
-                            rv.zero_clk_submodule_start_offset[submodule_inst] = (
-                                max_input_port_delay_offset
-                            )
-
-                            # Do  delay starting at the input offset
-                            # This delay_offset_when_driven value wont be used
-                            # until the stage when the output wire is read
-                            # So needs delay expected in last stage
-                            submodule_timing_params = TimingParamsLookupTable[
-                                submodule_inst_name
-                            ]
-                            submodule_delay = parser_state.LogicInstLookupTable[
-                                submodule_inst_name
-                            ].delay
-                            # End offset is start offset plus delay
-                            # Ex. 0 delay in offset 0
-                            # Starts and ends in offset 0
-                            # Ex. 1 delay unit in offset 0
-                            # ALSO STARTS AND ENDS IN STAGE 0
-                            if submodule_delay > 0:
-                                abs_delay_end_offset = (
-                                    submodule_delay
-                                    + rv.zero_clk_submodule_start_offset[submodule_inst]
-                                    - 1
-                                )
-                            else:
-                                abs_delay_end_offset = (
-                                    rv.zero_clk_submodule_start_offset[submodule_inst]
-                                )
-                            rv.zero_clk_submodule_end_offset[submodule_inst] = (
-                                abs_delay_end_offset
-                            )
-
-                            # Do PARALLEL submodules map with start and end offsets from each stage
-                            # Dont do for 0 delay submodules, ok fine
-                            if submodule_delay > 0:
-                                start_offset = rv.zero_clk_submodule_start_offset[
-                                    submodule_inst
-                                ]
-                                end_offset = rv.zero_clk_submodule_end_offset[
-                                    submodule_inst
-                                ]
-                                for abs_delay in range(start_offset, end_offset + 1):
-                                    if abs_delay < 0:
-                                        print("<0 delay offset?")
-                                        print(start_offset, end_offset)
-                                        print(delay_offset_when_driven)
-                                        sys.exit(-1)
-                                    # Submodule isnts
-                                    if (
-                                        abs_delay
-                                        not in rv.zero_clk_per_delay_submodules_map
-                                    ):
-                                        rv.zero_clk_per_delay_submodules_map[
-                                            abs_delay
-                                        ] = []
-                                    if (
-                                        submodule_inst
-                                        not in rv.zero_clk_per_delay_submodules_map[
-                                            abs_delay
-                                        ]
-                                    ):
-                                        rv.zero_clk_per_delay_submodules_map[
-                                            abs_delay
-                                        ].append(submodule_inst)
-
-                        # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
-
                     else:
-                        # Otherwise save for later
-                        if bad_inf_loop:
-                            print(
-                                "submodule",
-                                submodule_inst,
-                                "does not have all inputs driven yet",
-                            )
+                        abs_delay_end_offset = (
+                            rv.zero_clk_submodule_start_offset[submodule_inst]
+                        )
+                    rv.zero_clk_submodule_end_offset[submodule_inst] = (
+                        abs_delay_end_offset
+                    )
 
-                else:
-                    # if not already_fully_driven and not incorrect_stage_for_submodule:
-                    if print_debug:
-                        if not already_fully_driven:
-                            print("submodule", submodule_inst)
-                            print("already_fully_driven", already_fully_driven)
-                            # if submodule_inst in timing_params.submodule_to_start_stage:
-                            # print "incorrect_stage_for_submodule",incorrect_stage_for_submodule," = ",stage_num, "stage_num != ", timing_params.submodule_to_start_stage[submodule_inst]
+                    # Do PARALLEL submodules map with start and end offsets from each stage
+                    # Dont do for 0 delay submodules, ok fine
+                    if submodule_delay > 0:
+                        start_offset = rv.zero_clk_submodule_start_offset[
+                            submodule_inst
+                        ]
+                        end_offset = rv.zero_clk_submodule_end_offset[
+                            submodule_inst
+                        ]
+                        for abs_delay in range(start_offset, end_offset + 1):
+                            if abs_delay < 0:
+                                print("<0 delay offset?")
+                                print(start_offset, end_offset)
+                                print(delay_offset_when_driven)
+                                sys.exit(-1)
+                            # Submodule isnts
+                            if (
+                                abs_delay
+                                not in rv.zero_clk_per_delay_submodules_map
+                            ):
+                                rv.zero_clk_per_delay_submodules_map[
+                                    abs_delay
+                                ] = []
+                            if (
+                                submodule_inst
+                                not in rv.zero_clk_per_delay_submodules_map[
+                                    abs_delay
+                                ]
+                            ):
+                                rv.zero_clk_per_delay_submodules_map[
+                                    abs_delay
+                                ].append(submodule_inst)
+
+                # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
 
             # print "got input driven submodules, wires_driven_by_so_far",wires_driven_by_so_far
             if bad_inf_loop:
@@ -1713,6 +1709,9 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                     wire_to_remaining_clks_before_driven[submodule_output_wire] = (
                         submodule_latency_from_container_logic
                     )
+                    wires_maturing_at_stage.setdefault(
+                        stage_num + submodule_latency_from_container_logic, []
+                    ).append(submodule_output_wire)
 
                     # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~ DELAY ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
                     # Set delay_offset_when_driven for this output wire
@@ -1761,7 +1760,9 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
             wires_starting_level = []
             # Also are added to wires driven so far
             # (done per submodule level iteration since ALSO DOES 0 CLK SUBMODULE OUTPUTS)
-            for wire in sorted(wire_to_remaining_clks_before_driven):
+            # (only bucketed submodule outputs can newly reach 0 remaining clks)
+            wires_ready_now = sorted(wires_maturing_at_stage.pop(stage_num, ()))
+            for wire in wires_ready_now:
                 if wire_to_remaining_clks_before_driven[wire] == 0:
                     if wire not in wires_driven_by_so_far:
                         if bad_inf_loop:
@@ -1803,6 +1804,46 @@ def GET_PIPELINE_MAP(inst_name, logic, parser_state, TimingParamsLookupTable):
                     max(rv.zero_clk_per_delay_submodules_map.keys()) + 1
                 )  # +1 since 0 indexed
         # ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+
+        # Nothing is ready and nothing matures in a later stage: no further
+        # stage can make progress (every newly driven wire goes through
+        # RECORD_DRIVEN_BY), so report what is stuck instead of spinning
+        # toward the stage limit
+        if (
+            len(submodules_ready) == 0
+            and len(wires_maturing_at_stage) == 0
+            and not PIPELINE_DONE()
+        ):
+            stuck_lines = []
+            for submodule_inst in sorted(not_fully_driven_submodules):
+                undriven_wires = [
+                    wire
+                    for wire in SUBMODULE_PREREQUISITE_WIRES(submodule_inst)
+                    if wire not in wires_driven_by_so_far
+                ]
+                stuck_lines.append(
+                    f"  submodule {submodule_inst} waits on: "
+                    + ", ".join(
+                        wire
+                        if logic.wire_driven_by.get(wire) is None
+                        else f"{wire} (driven by {logic.wire_driven_by[wire]})"
+                        for wire in undriven_wires
+                    )
+                )
+            for wire in sorted(logic.wires):
+                if wire not in wires_driven_by_so_far and not logic.WIRE_ALLOW_NO_DRIVEN_BY(
+                    wire, parser_state.FuncLogicLookupTable
+                ):
+                    stuck_lines.append(f"  wire {wire} is never driven")
+            max_lines = 20
+            if len(stuck_lines) > max_lines:
+                stuck_lines = stuck_lines[:max_lines] + [
+                    f"  ... {len(stuck_lines) - max_lines} more"
+                ]
+            raise Exception(
+                f"Cannot construct pipeline map for {inst_name} ({logic.func_name}): "
+                f"no progress possible after stage {stage_num}\n" + "\n".join(stuck_lines)
+            )
 
         # PER CLOCK decrement latencies
         if print_debug:

@@ -298,6 +298,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "vhdl_submodule_port_map_test.py"],
         )
     )
+    # GET_PIPELINE_MAP scheduler worklists (PR #312 + latency buckets):
+    # linear readiness/sort work for zero and nonzero latency chains, and a
+    # stuck graph fails fast naming the waiting submodule.
+    tests.append(
+        Test(
+            name="pipeline_map_scheduler_scalability_test",
+            category="unit",
+            cmd=[INST_DIR / "pipeline_map_scheduler_scalability_test.py"],
+        )
+    )
     # Byte-count regression for the cocotb/yosys "Argument list too long"
     # bug: a large design's VHDL file list, inlined whole into a single
     # generated recipe/command-line argument, can exceed Linux's
