@@ -3592,6 +3592,12 @@ r += 1   # desugared → r = r + 1 at elaboration time
 No new hardware primitives — the synthetic `BinOp` goes through the normal
 `_elab_binop` path and emits a standard `BIN_OP_PLUS_<type>` submodule instance.
 
+Native simulation desugars the same way: `_TypedAnnAssignRewriter.visit_AugAssign` in
+`pypeline.py` (Rule 5 in
+[`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#_typedannassignrewriter--truncation-at-every-typed-assignment)).
+That keeps a register's `reg[i] += 1` from editing committed state in place, and makes the
+result truncate to the target's declared type just as hardware does.
+
 ---
 
 ## Boolean Operators (`and` / `or`)

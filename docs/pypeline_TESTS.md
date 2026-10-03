@@ -609,6 +609,39 @@ stubbing out `pypeline._check_no_local_binds_wire_name`.
 
 All cases except the positive control fail on the tree before the fix.
 
+## Augmented assignment coverage
+
+`reg_aug_assign_test.py` covers `t op= rhs` in native simulation (see
+[Rule 5](pypeline_sim_DESIGN.md#_typedannassignrewriter--truncation-at-every-typed-assignment)).
+It is registered three times:
+
+- in `native_sim` as a plain Python test;
+- as `reg_aug_assign_convergence_test`, through `pypeline_sim.py --run all`;
+- in `native_vs_vhdl_sim`, which compares its `@MAIN` against GHDL cycle by cycle.
+
+The direct tests use a `_clock()` helper that evaluates a body several times inside one
+buffered clock, the way `pypeline_sim` does, and asserts that every evaluation agrees.
+
+- **The WireGuard repro.** `counters[0] += 1` on a `Reg[uint32_t[2]]` matches the plain
+  `counters[0] = counters[0] + 1`, at 1, 2 and 3 evaluations per clock.
+- **Width truncation.** Scalar `Reg[uint8_t]` `+=` and `Reg[int8_t]` `-=` wrap, and so do
+  array-element, struct-field and nested leaves.
+- **Struct field and nested variable index.** `s.a += 1` (which used to crash) and
+  `s.arr[idx] += 3`.
+- **Read-after-write.** Two `+=` writes in one body.
+- **Every operator.** `+= -= *= <<= >>= &= |= ^=` against a plain-assignment oracle, on
+  register array elements and on a scalar local chain.
+- **Feedback convergence.** A body that converges over several passes advances its
+  register once per call.
+- **State isolation.** The power-on value survives `sim_reset()`, and two instances don't
+  share cycle-0 state.
+- **Values, not aliases.** A typed local copy (`snap: T = reg`) and writes to array,
+  struct and scalar parameters never reach the caller's register.
+
+The `@MAIN` covers the same shapes on registers (scalar, signed, array element, struct
+field, variable-index nested path) and asserts that augmented and plain forms agree every
+cycle. Every direct case except the typed-local copy fails on the tree before the fix.
+
 ## Conditional import coverage
 
 `conditional_import_test.py` (`elab_introspect`) covers design modules chosen by

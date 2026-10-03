@@ -638,12 +638,30 @@ out: uint8_t = a if condition else b    # equivalent to the if/else above
 
 #### Augmented assignment
 
-`+=`, `-=`, `*=`, `|=`, `&=`, `^=` are supported and expand to the equivalent binary operation:
+`+=`, `-=`, `*=`, `<<=`, `>>=`, `|=`, `&=` and `^=` are supported and expand to the equivalent binary operation:
 
 ```python
 total: uint32_t = 0
 total += arr[0]   # equivalent to: total = total + arr[0]
 ```
+
+The target can be any assignable path, not just a name: an array element, a struct field
+or a nested path, including on `Reg[T]` and `Feedback[T]` values. As with the expanded
+form, the result is truncated to the target's declared type. Simulation and hardware agree
+on this:
+
+```python
+count: Reg[uint8_t] = 254
+hist: Reg[uint8_t[4]]
+pkt: Reg[pkt_t]
+count += 1            # 254, 255, 0, 1, ... (wraps at uint8_t)
+hist[bin] += 1        # hist[bin] = hist[bin] + 1, variable index
+pkt.stats.len += 4    # nested struct field
+```
+
+A register's new value is visible only after the clock edge. This holds for `+=` as much
+as for plain assignment, and for writes to function parameters too: a callee's writes to its
+arguments never reach the caller's values.
 
 #### Boolean operators
 

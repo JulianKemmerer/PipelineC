@@ -389,7 +389,8 @@ Regression test: `src/tests/pypeline_tests/inst/struct_ctor_narrow_test.py`.
 ### `_TypedAnnAssignRewriter` — Truncation at Every Typed Assignment
 
 An `ast.NodeTransformer` applied by `_build_reg_sim_func` to the function body AST.
-Applies two rewrite rules:
+Rules 1–2 cast scalar writes, Rules 3–4 handle struct/array locals and registers, Rule 5
+lowers augmented assignment onto Rules 2/4, and Rule 6 tracks typed parameters like locals:
 
 **Rule 1 — Annotated assignment** (`AnnAssign` with value, scalar int type):
 ```python
@@ -482,9 +483,10 @@ writes through `reg`.
 Before this rule existed, `reg.field = expr` (any nesting depth, scalar **or** array-typed field)
 fell through untouched, then ran as plain Python attribute assignment on the immutable
 `NamedTuple` returned by `_sim_reg_read` — raising `AttributeError: can't set attribute` at
-runtime. Single-element index writes on an already-reachable list (`reg.arr[i] = x`) never hit
-this gap, since mutating a list in place needs no `NamedTuple.__setattr__` call — which made the
-bug easy to miss until a whole-field write (`reg.arr = [...]`) was attempted. The
+runtime. Single-element index writes on an already-reachable list (`reg.arr[i] = x`) did not
+raise, since mutating a list in place needs no `NamedTuple.__setattr__` call. They were still
+wrong: the in-place write edited the committed register object itself (see Rule 5). That made
+the bug easy to miss until a whole-field write (`reg.arr = [...]`) was attempted. The
 `PY_TO_LOGIC.py` elaborator has an analogous gap for the same `obj.field = [...]` pattern; see
 [`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#compound-initializer-syntax).
 
@@ -535,6 +537,48 @@ not just a typing nicety, since it breaks the extremely common
 `dwidth_narrow` in `include/pypeline/axi/axis.py`, where `chunks[c].valid = wide.frag.keep[...]`
 (reading an array-of-scalar `keep` field) and `wide_out_reg.data.frag.keep = [0] * wide_n`
 (writing one) both fed an `if ~chunks[0].valid:` realignment loop.
+
+**Rule 5 — Augmented assignment to a tracked target** (`AugAssign` whose target is a Name
+tracked by Rule 2 or 3/3b/6, or an `Attribute`/`Subscript` chain rooted at a Rule 3/3b/6
+compound name):
+
+```python
+x += d            →    x = _sim_cast(x + d, declared_type)                       (Rule 2)
+reg.arr[i] += 3   →    reg = _sim_lens_set(reg, ["arr", i],
+                                           _sim_cast_deep(reg.arr[i] + 3, uint8_t))   (Rule 4)
+```
+
+`visit_AugAssign` builds `target = target op value`, using a copy of the target with
+`ctx=Load` as the read side, and hands it to `visit_Assign`. This is exactly
+`PY_TO_LOGIC._elab_aug_assign`'s desugaring. Index expressions are therefore evaluated on both
+the read side and the write side, as in hardware. Every operator works the same way. A target
+that isn't tracked (a plain Python loop counter, say) keeps Python semantics.
+
+Without this rule, `+=` ran as plain Python, which went wrong in three ways:
+
+- **Register state changed before the clock edge.** `reg_arr[i] += 1` edited the list returned
+  by `_sim_reg_read`. That list *is* the committed state. On cycle 0 it is the
+  `__reg_zero_<name>__` power-on object, shared by every instance of the function. Nothing
+  outside the body is supposed to see a write until the commit, but a body can run several
+  times per clock: `pypeline_sim._run_clock_cycle` runs every MAIN in the convergence loop and
+  again in the final pass, and Feedback convergence resets `reg = __reg_init_reg` (the same
+  object) each pass. So later evaluations saw the write early. One instance's cycle-0
+  increment also reached a second instance through the shared zero object, and it survived
+  `sim_reset()`.
+- **Struct fields crashed.** `reg_struct.field += 1` raised `AttributeError: can't set
+  attribute`.
+- **Scalars never wrapped.** Scalar `x += 1` skipped the declared-width cast, so a
+  `Reg[uint8_t]` counted 254, 255, 256 where hardware wraps to 0.
+
+`inst/reg_aug_assign_test.py` is the regression for all of these.
+
+**Rule 6 — Typed parameters are tracked like locals.** `track_params(func_def, sig_anns)` runs
+before the visit. It seeds `_compound_declared` (struct/array) and `_declared_types` (scalar
+int/enum) from the function's resolved `__annotations__`, the same objects step 9's annotation
+rebinding uses, so factory-local types resolve. Hardware ports are pass-by-value. Without this
+rule, `arr_param[i] = x` edited the caller's list in place, which could be a caller's
+committed `Reg` value. `struct_param.field = x` raised `AttributeError`, and a scalar parameter
+write skipped the cast.
 
 ### `_sim_cast_deep(value, ctype)` — Typed Casting Through Arrays
 
@@ -731,8 +775,10 @@ function body and compiles it via `exec`. Returns `(transformed_fn_or_None, has_
 4. **Apply `_GlobalWireRewriter`** — rewrites all wire reads/writes in the function body to
    `_sim_wire_read(name)` / `_sim_wire_write(name, value)` calls.
 
-5. **Apply `_TypedAnnAssignRewriter`** — rewrites typed local variable assignments (two rules
-   above). Skipped entirely when `SIM_RAW_INTS=True`.
+5. **Apply `_TypedAnnAssignRewriter`** — seeds typed parameters (Rule 6), then rewrites typed
+   local, register and parameter writes, including augmented assignment (Rules 1–5 above).
+   Skipped entirely when `SIM_RAW_INTS=True`, so raw mode keeps plain Python semantics for
+   compound writes, `+=` included.
 
 6. **Apply `_SimLoopInstanceRewriter`** — wraps each source `for`/`while` iteration in an
    exception-safe `_sim_loop_enter`/`_sim_loop_exit` pair. The frame contains the source-loop
@@ -1149,6 +1195,13 @@ register-write buffer described above — every convergence pass's writes to *an
 register land in that one shared buffer, and `_sim_reg_read` never observes them until the
 whole outer call finishes and the buffer flushes, so a child re-invoked mid-convergence always
 reads the true cycle-start value regardless of what earlier passes wrote.
+
+Both the per-pass reset and the write buffer assume the body never edits the object
+`_sim_reg_read` returned. `__reg_init_<name>` and the committed state are the *same* object as
+the register's local, so an in-place write would leak into the next pass and past the buffer.
+`_TypedAnnAssignRewriter` guarantees this for every write to a tracked register, local or
+parameter, including augmented assignment. Struct writes go through `_replace` and array writes
+through a copy in `_sim_lens_set`, so each write rebinds the local to a new object (Rules 4–6).
 
 **Without the outermost-call buffer, a `Feedback[T]` wire driven from a *stateful child's*
 `Reg`-backed output would corrupt values** on cycles where that child's old and new `Reg`

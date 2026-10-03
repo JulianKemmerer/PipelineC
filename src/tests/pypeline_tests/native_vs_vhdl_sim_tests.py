@@ -92,6 +92,10 @@ COMB_TEST_FILES = [
     # retain one native register bank per iteration ordinal, matching the
     # hardware elaborator's loop_instance_prefix hierarchy.
     ("sim_loop_reg_state_test.py", INST_DIR, []),
+    # Augmented assignment on Reg scalars, array elements, struct fields and
+    # a variable-index nested path: same values as GHDL every cycle,
+    # including wraparound at the declared width.
+    ("reg_aug_assign_test.py", INST_DIR, []),
     # Iteration-ordinal loop naming (_elab_for/_bind_const_target/
     # _elab_unpack_assign) through real GHDL: tuple/enumerate/zip/dict/str
     # iteration, tuple-target and tuple-unpack-assignment destructuring, a

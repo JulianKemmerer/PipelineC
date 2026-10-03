@@ -37,6 +37,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "cast_hw_func_test.py",
     "reg_undefined_width_test.py",
     "feedback_reeval_test.py",
+    "reg_aug_assign_test.py",
     "bit_math_test.py",
     "vhdl_text_test.py",
     "fifo_test.py",
@@ -120,6 +121,16 @@ def get_tests() -> list:
                 ],
             )
         )
+    # Augmented assignment through the multi-evaluation clock runner
+    # (convergence loop + final pass): a `reg[i] += 1` must not reach the
+    # committed register before the clock edge.
+    tests.append(
+        Test(
+            name="reg_aug_assign_convergence_test",
+            category="native_sim",
+            cmd=[PYPELINE_SIM, INST_DIR / "reg_aug_assign_test.py", "--run", "all"],
+        )
+    )
     tests.append(
         Test(
             name="sim_model_convergence_test",

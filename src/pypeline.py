@@ -6359,6 +6359,15 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
     `_build_reg_sim_func` handles their read/zero-init separately, but nested
     `.field=`/`[i]=` writes on them go through the same `_sim_lens_set` rewrite.
     Wire[T]/Input[T]/Output[T] still fall through both checks untouched.
+
+    5. `target op= expr` on a tracked target  →  `target = target op expr`, then
+       rule 2 or 4 -- exactly PY_TO_LOGIC._elab_aug_assign's desugaring. Left as
+       plain Python, `reg_arr[i] += 1` edited the committed register list in
+       place (visible to every later evaluation before the clock edge), and
+       scalar `x += 1` skipped the declared-width cast.
+    6. Typed parameters are tracked like locals (see track_params): hardware
+       ports are pass-by-value, so `arr_param[i] = x` must not edit the
+       caller's object, and a scalar parameter truncates like a typed local.
     """
 
     def __init__(self, eval_ns, ann_ctypes_out):
@@ -6367,6 +6376,16 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
         self._declared_types = {}  # var_name → ctype, populated by AnnAssign visits
         self._compound_declared = {}  # var_name → ctype, bare/typed struct or array locals
         self.modified = False  # True if any compound zero-init/lens rewrite happened
+
+    def track_params(self, func_def, sig_anns):
+        """Rule 6: track typed parameters (resolved annotation objects from the
+        function's __annotations__) exactly like declared locals."""
+        for arg in func_def.args.args + func_def.args.kwonlyargs:
+            ann_val = sig_anns.get(arg.arg)
+            if _is_compound_pypeline_type(ann_val):
+                self._compound_declared[arg.arg] = ann_val
+            elif _is_scalar_pypeline_int(ann_val):
+                self._declared_types[arg.arg] = ann_val
 
     def _make_cast(self, value_node, ctype, ref_node):
         """Return a _sim_cast(value_node, __sim_ann_L_C__) Call node."""
@@ -6565,6 +6584,34 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
                 )
                 return _ast.copy_location(new_node, node)
         return node
+
+    def visit_AugAssign(self, node):
+        """Rule 5: `target op= expr` on a tracked target is `target = target op
+        expr` (the same target expression on both sides, as the elaborator does),
+        then rule 2's cast or rule 4's lens write. Untracked targets -- e.g. a
+        plain Python loop counter -- keep Python semantics."""
+        self.generic_visit(node)
+        target = node.target
+        if isinstance(target, _ast.Name):
+            tracked = (
+                target.id in self._declared_types or target.id in self._compound_declared
+            )
+        else:
+            root, _, _ = self._chain_to_path(target)
+            tracked = root is not None and root in self._compound_declared
+        if not tracked:
+            return node
+        self.modified = True
+        read = _copy.deepcopy(target)
+        read.ctx = _ast.Load()
+        synth = _ast.copy_location(
+            _ast.Assign(
+                targets=[target],
+                value=_ast.BinOp(left=read, op=node.op, right=node.value),
+            ),
+            node,
+        )
+        return self.visit_Assign(synth)
 
 
 class _SimLoopInstanceRewriter(_ast.NodeTransformer):
@@ -6934,6 +6981,9 @@ def _build_reg_sim_func(fn):
     _typed_rewriter_modified = False
     if not SIM_RAW_INTS:
         _typed_rewriter = _TypedAnnAssignRewriter(_eval_ns, ann_ctypes_out)
+        _typed_rewriter.track_params(
+            func_def, getattr(orig_fn, "__annotations__", {})
+        )
         _typed_rewriter.visit(func_def)
         _ast.fix_missing_locations(func_def)
         _typed_rewriter_modified = _typed_rewriter.modified
