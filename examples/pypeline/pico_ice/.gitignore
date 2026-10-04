@@ -1,0 +1,8 @@
+gateware.*
+pypeline_output/
+pypelinec.log
+pll.v
+yosys_build.ys
+yosys_stderr.log
+dfu_util.log
+mpremote.log

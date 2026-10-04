@@ -1,0 +1,117 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="900" height="630" viewBox="0 0 900 630" font-family="Helvetica, Arial, sans-serif">
+  <!-- Where Pypeline generated code sits on an FPGA dev board.
+       Used by docs/README.md (Getting Started on a Dev Board). Hand-written SVG: edit as text. -->
+  <defs>
+    <marker id="arrow-end" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M0,0 L10,5 L0,10 z" fill="#e6e6e6"/>
+    </marker>
+    <marker id="arrow-start" viewBox="0 0 10 10" refX="1" refY="5" markerWidth="7" markerHeight="7" orient="auto">
+      <path d="M10,0 L0,5 L10,10 z" fill="#e6e6e6"/>
+    </marker>
+  </defs>
+
+  <!-- Background -->
+  <rect x="0" y="0" width="900" height="630" fill="#161616"/>
+
+  <!-- Your dev board -->
+  <rect x="10" y="10" width="880" height="610" fill="#1d2e1d" stroke="#4f7f4f" stroke-width="2"/>
+  <text x="28" y="42" font-size="20" fill="#e6e6e6">Your dev board</text>
+
+  <!-- Your FPGA -->
+  <rect x="215" y="30" width="660" height="575" fill="#121212" stroke="#8a8a8a" stroke-width="2"/>
+  <text x="235" y="62" font-size="19" fill="#e6e6e6">Your FPGA</text>
+
+  <!-- Your wrapper HDL -->
+  <rect x="235" y="80" width="620" height="505" fill="#3a2120" stroke="#c97a6d" stroke-width="2"/>
+  <text x="255" y="108" font-size="17" fill="#e6e6e6">Your top level wrapper: board.vhd / top.sv</text>
+  <text x="255" y="130" font-size="14" fill="#d9b8b2">plus pin constraints: .xdc / .pcf</text>
+
+  <!-- Board parts -->
+  <rect x="35" y="170" width="135" height="60" rx="8" fill="#2a2a2a" stroke="#9a9a9a" stroke-width="1.5"/>
+  <text x="102.5" y="195" font-size="15" fill="#e6e6e6" text-anchor="middle">Clock source</text>
+  <text x="102.5" y="215" font-size="13" fill="#bdbdbd" text-anchor="middle">(oscillator)</text>
+
+  <!-- Push button symbol -->
+  <g stroke="#e6e6e6" stroke-width="2" fill="none">
+    <line x1="40" y1="310" x2="65" y2="310"/>
+    <circle cx="70" cy="310" r="5"/>
+    <circle cx="130" cy="310" r="5"/>
+    <line x1="135" y1="310" x2="170" y2="310"/>
+    <line x1="62" y1="296" x2="138" y2="296"/>
+    <line x1="100" y1="296" x2="100" y2="282"/>
+  </g>
+  <text x="100" y="337" font-size="13" fill="#bdbdbd" text-anchor="middle">Button</text>
+
+  <!-- LED symbol, driven from the right -->
+  <g stroke="#e6e6e6" stroke-width="2" fill="none">
+    <line x1="40" y1="400" x2="78" y2="400"/>
+    <line x1="78" y1="386" x2="78" y2="414"/>
+    <line x1="106" y1="400" x2="170" y2="400"/>
+    <line x1="68" y1="418" x2="58" y2="430"/>
+    <line x1="80" y1="420" x2="70" y2="432"/>
+  </g>
+  <polygon points="106,386 106,414 78,400" fill="#e6e6e6"/>
+  <polygon points="56,433 58,425 63,429" fill="#e6e6e6"/>
+  <polygon points="68,435 70,427 75,431" fill="#e6e6e6"/>
+  <text x="100" y="452" font-size="13" fill="#bdbdbd" text-anchor="middle">LED</text>
+
+  <rect x="35" y="480" width="135" height="65" rx="8" fill="#2a2a2a" stroke="#9a9a9a" stroke-width="1.5"/>
+  <text x="102.5" y="507" font-size="15" fill="#e6e6e6" text-anchor="middle">Network /</text>
+  <text x="102.5" y="527" font-size="15" fill="#e6e6e6" text-anchor="middle">memory chips</text>
+
+  <!-- Wrapper IP blocks -->
+  <rect x="255" y="205" width="150" height="70" rx="6" fill="#3b2a12" stroke="#d49a3a" stroke-width="1.5"/>
+  <text x="330" y="234" font-size="15" fill="#e6e6e6" text-anchor="middle">Clock gen</text>
+  <text x="330" y="255" font-size="15" fill="#e6e6e6" text-anchor="middle">PLL IP</text>
+
+  <rect x="255" y="295" width="150" height="120" rx="6" fill="#3b2a12" stroke="#d49a3a" stroke-width="1.5"/>
+  <text x="330" y="337" font-size="15" fill="#e6e6e6" text-anchor="middle">Optional IO:</text>
+  <text x="330" y="358" font-size="15" fill="#e6e6e6" text-anchor="middle">tri-state, DDR,</text>
+  <text x="330" y="379" font-size="15" fill="#e6e6e6" text-anchor="middle">SERDES buffers</text>
+
+  <rect x="255" y="455" width="150" height="100" rx="6" fill="#3b2a12" stroke="#d49a3a" stroke-width="1.5"/>
+  <text x="330" y="485" font-size="15" fill="#e6e6e6" text-anchor="middle">Network /</text>
+  <text x="330" y="506" font-size="15" fill="#e6e6e6" text-anchor="middle">memory</text>
+  <text x="330" y="527" font-size="15" fill="#e6e6e6" text-anchor="middle">controller IP</text>
+
+  <!-- Pypeline generated top level -->
+  <rect x="470" y="150" width="365" height="410" rx="4" fill="#1b2840" stroke="#6f9bdc" stroke-width="2"/>
+  <text x="488" y="182" font-size="18" font-weight="bold" fill="#e6e6e6">Pypeline generated top.vhd</text>
+  <text x="488" y="206" font-size="14" fill="#a9c2e8">@MAIN functions from your .py design</text>
+  <line x1="470" y1="220" x2="835" y2="220" stroke="#6f9bdc" stroke-width="1"/>
+  <text x="488" y="246" font-size="14" fill="#e6e6e6">Clock ports: clk_25p0 from @MAIN(25.0),</text>
+  <text x="488" y="265" font-size="14" fill="#e6e6e6">or a fixed name from make_clock()</text>
+  <text x="488" y="349" font-size="14" fill="#e6e6e6">Input[T] ports</text>
+  <text x="488" y="389" font-size="14" fill="#e6e6e6">Output[T] ports</text>
+  <text x="488" y="509" font-size="14" fill="#e6e6e6">@MAIN argument / return</text>
+  <text x="488" y="528" font-size="14" fill="#e6e6e6">value ports</text>
+  <rect x="655" y="300" width="160" height="56" rx="6" fill="#243656" stroke="#6f9bdc" stroke-width="1.2"/>
+  <text x="735" y="323" font-size="13" fill="#a9c2e8" text-anchor="middle">@MAIN(25.0)</text>
+  <text x="735" y="343" font-size="14" fill="#e6e6e6" text-anchor="middle">blinky_main()</text>
+  <rect x="655" y="372" width="160" height="56" rx="6" fill="#243656" stroke="#6f9bdc" stroke-width="1.2"/>
+  <text x="735" y="395" font-size="13" fill="#a9c2e8" text-anchor="middle">@MAIN(25.0)</text>
+  <text x="735" y="415" font-size="14" fill="#e6e6e6" text-anchor="middle">vga_pmod_main()</text>
+  <text x="735" y="452" font-size="16" fill="#a9c2e8" text-anchor="middle">...</text>
+
+  <!-- Connections -->
+  <g stroke="#e6e6e6" stroke-width="2" fill="none">
+    <!-- Clock source to the PLL -->
+    <path d="M170,200 H215 V240 H255" marker-end="url(#arrow-end)"/>
+    <!-- ...or straight to the generated top level -->
+    <path d="M215,200 V160 H445 V243 H470" stroke-dasharray="7,5" marker-end="url(#arrow-end)"/>
+    <!-- PLL clock and locked signal -->
+    <path d="M405,258 H470" marker-end="url(#arrow-end)"/>
+    <!-- Button in, LED out, through optional IO buffers -->
+    <path d="M170,310 H255" marker-end="url(#arrow-end)"/>
+    <path d="M405,344 H470" marker-end="url(#arrow-end)"/>
+    <path d="M470,384 H405" marker-end="url(#arrow-end)"/>
+    <path d="M255,400 H170" marker-end="url(#arrow-end)"/>
+    <!-- Network / memory interfaces -->
+    <path d="M170,512 H255" marker-start="url(#arrow-start)" marker-end="url(#arrow-end)"/>
+    <path d="M405,512 H470" marker-start="url(#arrow-start)" marker-end="url(#arrow-end)"/>
+  </g>
+  <circle cx="215" cy="200" r="3.5" fill="#e6e6e6"/>
+  <text x="252" y="152" font-size="13" fill="#c8c8c8">or use the board clock directly</text>
+  <text x="408" y="278" font-size="12" fill="#c8c8c8">clock,</text>
+  <text x="408" y="293" font-size="12" fill="#c8c8c8">locked</text>
+</svg>

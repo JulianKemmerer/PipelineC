@@ -472,6 +472,12 @@ def blink() -> uint8_t:
     return cnt[23]   # MSB of a 24-bit counter blinks an LED
 ```
 
+Each argument of a `@MAIN` function becomes a top-level input port named
+`<main>_<argument>`, and its return value an output port named `<main>_return_output`
+(`blink_return_output` above). See
+[Top-level ports and clocks](README.md#top-level-ports-and-clocks) for every kind of port
+a design can have.
+
 ### Frequency constraint
 
 Pass the target clock frequency in MHz to constrain the synthesis tool:
@@ -1053,6 +1059,10 @@ def free_counter() -> uint32_t:
     return cnt          # returns the incremented value (cnt+1)
 ```
 
+[examples/pypeline/counter.py](../examples/pypeline/counter.py) is a complete counter
+`@MAIN`, with an extra `Output[T]` port for watching the register, and
+[blink.py](../examples/pypeline/blink.py) uses a counter to blink an LED.
+
 ### Clock enable via `if`
 
 Placing a register write inside an `if` block gates the update with that condition —
@@ -1370,6 +1380,9 @@ def simple_fsm(trigger: uint1_t) -> state_t:
         st = state_t.DONE
     return st
 ```
+
+[examples/pypeline/fsm.py](../examples/pypeline/fsm.py) is a complete state machine, with
+`@struct` outputs and an `Input[T]` port driven by a `@sim_input` function in simulation.
 
 The `@enum` decorator also accepts a plain class (auto-converted to `IntEnum`):
 
@@ -4571,6 +4584,10 @@ locals in its body to simulate correctly (see [Automatic (HLS-like) Implementati
 pipeline — AUTO_PIPELINE retiming plus the output FIFO — simulates through the Pypeline
 simulation APIs, including realistic backpressure when the consumer stalls. See
 `src/tests/pypeline_tests/inst/stream_auto_pipeline_test.py`.
+
+[examples/pypeline/stream_pipeline.py](../examples/pypeline/stream_pipeline.py) connects
+one to a producer and a consumer `@MAIN` through [global `Wire[T]`s](#global-signals), the
+pattern PipelineC's `GLOBAL_VALID_READY_PIPELINE_INST` macro provided.
 
 **See also:** [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation) ·
 [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo) ·

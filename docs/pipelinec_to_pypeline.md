@@ -520,7 +520,9 @@ def name_main():
     name_in_ready = result.stream_in_if.ready
 ```
 
-See [pypeline_guide.md: Pipelined Stream Wrappers: `make_stream_auto_pipeline`](pypeline_guide.md#pipelined-stream-wrappers-make_stream_auto_pipeline).
+See [pypeline_guide.md: Pipelined Stream Wrappers: `make_stream_auto_pipeline`](pypeline_guide.md#pipelined-stream-wrappers-make_stream_auto_pipeline),
+and [examples/pypeline/stream_pipeline.py](../examples/pypeline/stream_pipeline.py) for a
+complete design with a producer and a consumer `@MAIN`.
 
 ### 8d. GLOBAL_STREAM_FIFO — synchronous FIFO
 
@@ -937,3 +939,28 @@ its bit-packed float type.
 See [pypeline_guide.md](pypeline_guide.md#sim_print--printf-style-console-output) and
 [PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#sim_print--printf-style-console-output) for
 full details.
+
+### Debug ports: DEBUG_OUTPUT_DECL
+
+PipelineC's `DEBUG_OUTPUT_DECL(type, name)` declared an extra top-level output port for
+watching a signal. In pypeline that is just another `Output[T]` port (see
+[§5](#5-external-ports-decl_input--decl_output)), as in
+[examples/pypeline/counter.py](../examples/pypeline/counter.py):
+
+```c
+// PipelineC
+DEBUG_OUTPUT_DECL(uint16_t, counter_debug)
+...
+counter_debug = the_counter_reg;
+```
+
+```python
+# pypeline
+counter_debug: Output[uint16_t]
+...
+    counter_debug = the_counter_reg
+```
+
+The generated simulation templates don't print these ports the way PipelineC's
+`DEBUG_*` macros were printed. View them in a waveform, or print them from a Verilator
+`--main_cpp` driver (see [README.md: Simulation](README.md#simulation)).

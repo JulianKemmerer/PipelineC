@@ -247,6 +247,31 @@ def get_tests() -> list:
                 cmd=[PYPELINEC, DSP_DIR / fname, "--sim", "--comb", "--run", str(run_n)],
             )
         )
+    # docs/README.md's getting-started examples, for the same reason. Each run
+    # count is the one in that file's README command. pipeline.py is not here:
+    # its @MAIN takes arguments, which native simulation does not drive (it is
+    # a synth_tests.py entry instead).
+    for fname, run_n in [
+        ("blink.py", 3),
+        ("counter.py", 3),
+        ("fsm.py", 7),
+        ("stream_pipeline.py", 20),
+    ]:
+        tests.append(
+            Test(
+                name=f"example_{fname[: -len('.py')]}_sim",
+                category="native_sim",
+                cmd=[
+                    PYPELINEC,
+                    EXAMPLES_PYPELINE_DIR / fname,
+                    "--sim",
+                    "--comb",
+                    "--run",
+                    str(run_n),
+                ],
+                needs_out_dir=True,
+            )
+        )
     # PDW project: hysteresis SM / candidate-PDW extractor (3 @MAINs --
     # elastic, valid_only, and a CW/jamming max_width-cap check).
     tests.append(

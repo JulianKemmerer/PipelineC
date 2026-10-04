@@ -4,19 +4,71 @@
 
 We are happy to help, reach out: [PipelineC Discord](https://discord.gg/Aupm3DDrK2), [Mastodon](http://fosstodon.org/@pypelinec), [BlueSky](https://bsky.app/profile/pypelinec.bsky.social), [Discussions](https://github.com/JulianKemmerer/PipelineC/discussions) :)
 
-# Quick Start
+## Table of Contents
 
-Clone the repo:
+1. [Quick Start](#quick-start)
+   - [Next Steps](#next-steps)
+2. [Overview](#overview)
+   - [Direct RTL semantics](#direct-rtl-semantics)
+   - [Top-level ports and clocks](#top-level-ports-and-clocks)
+   - [Hierarchy and interconnect by composition](#hierarchy-and-interconnect-by-composition)
+   - [Parameterized, reusable hardware](#parameterized-reusable-hardware)
+   - [Automatic implementation with visible hardware](#automatic-implementation-with-visible-hardware)
+   - [Conventional output and incremental adoption](#conventional-output-and-incremental-adoption)
+3. [What the Tool Does](#what-the-tool-does)
+   - [Runs the design file as Python](#runs-the-design-file-as-python)
+   - [Writes VHDL](#writes-vhdl)
+   - [Measures timing with a synthesis tool](#measures-timing-with-a-synthesis-tool)
+   - [Pipelines logic to meet each clock](#pipelines-logic-to-meet-each-clock)
+   - [Simulates, optionally](#simulates-optionally)
+   - [Synthesis and place-and-route reports](#synthesis-and-place-and-route-reports)
+4. [Getting Started on a Dev Board](#getting-started-on-a-dev-board)
+   - [Video](#video)
+   - [Recommended Approach](#recommended-approach)
+   - [Before You Buy](#before-you-buy)
+   - [Download Tools](#download-tools)
+   - [Gather Dev Board Files](#gather-dev-board-files)
+   - [Everything Not-Pypeline](#everything-not-pypeline)
+   - [Bring In Pypeline](#bring-in-pypeline)
+   - [Tri-State and Other IO](#tri-state-and-other-io)
+5. [Tools & CLI](#tools--cli)
+   - [Common workflows](#common-workflows)
+   - [Automatic pipelining](#automatic-pipelining)
+   - [Simulation](#simulation)
+   - [Output directories: `--out_dir`](#output-directories---out_dir)
+   - [Build modes and output options](#build-modes-and-output-options)
+   - [Synthesis backends and target selection](#synthesis-backends-and-target-selection)
+   - [Automatic implementation and sweeps](#automatic-implementation-and-sweeps)
+   - [Generated files and reports](#generated-files-and-reports)
+   - [Using the output in an existing project](#using-the-output-in-an-existing-project)
+   - [Full bitstream builds: `--pins`](#full-bitstream-builds---pins)
+6. [Set up your tools](#set-up-your-tools)
+   - [Requirements](#requirements)
+   - [Synthesis tools](#synthesis-tools)
+   - [Simulation tools](#simulation-tools)
+   - [Nix](#nix)
+
+## Quick Start
+
+You need Linux, Python 3 and a C preprocessor (`cpp`), see [Requirements](#requirements).
+Clone the repo and put `pypelinec` on your `PATH`:
+
 ```
 git clone https://github.com/JulianKemmerer/PipelineC.git
 cd PipelineC/
+export PATH=$PATH:$(pwd)/src
 ```
 
+That is the whole install for writing, simulating and generating VHDL. Synthesis tools
+for timing feedback and bitstreams are installed separately, see
+[Set up your tools](#set-up-your-tools) (or use the [Nix](#nix) package for the open
+source tools).
+
 Try simulating the [blinking an LED](../examples/pypeline/blink.py) demo. This runs in
-Pypeline's native Python simulator, so it works right away for most people with no
-toolchain setup at all:
+Pypeline's native Python simulator, so it works right away with no toolchain setup at all:
+
 ```
-./src/pypelinec examples/pypeline/blink.py --sim --comb --run 3
+pypelinec examples/pypeline/blink.py --sim --comb --run 3
 ```
 
 Example console output:
@@ -33,6 +85,7 @@ counter=2 led=0
 ```
 
 That's `blink.py`:
+
 ```python
 from pypeline import *
 
@@ -58,8 +111,9 @@ def blink() -> uint1_t:
 ```
 
 You can also generate the design's real VHDL without running any synthesis tool:
+
 ```
-./src/pypelinec examples/pypeline/blink.py --comb --no_synth
+pypelinec examples/pypeline/blink.py --comb --no_synth
 ```
 
 Example console output: (final product is VHDL/Verilog files)
@@ -74,6 +128,7 @@ Output VHDL files: ./pipelinec_output_blink.py_304105/vhdl_files.txt
 
 The generated top-level VHDL entity (`top.vhd`) has one input clock (named from the
 `@MAIN(25.0)` frequency) and one output port (from `blink`'s `-> uint1_t` return value):
+
 ```vhdl
 entity top is
 port(
@@ -86,28 +141,24 @@ port(
 end top;
 ```
 
-## Next Steps
+### Next Steps
 
-Depending on what you're doing, 'install' could be as as simple as adding `pypelinec` to your `PATH` for convenience:
-```
-export PATH=$PATH:$(pwd)/src
-```
+* [Overview](#overview): how Pypeline describes hardware, and what becomes a port.
+* The [Pypeline language guide](pypeline_guide.md) walks through a full worked example
+  ([VGA test pattern](../examples/pypeline/vga_test_pattern.py)) and then covers every
+  language feature in its own section.
+* [What the Tool Does](#what-the-tool-does): from Python source to VHDL, timing reports
+  and automatic pipelining.
+* [Getting Started on a Dev Board](#getting-started-on-a-dev-board): from your board's
+  own blinking LED example to Pypeline running on hardware.
+* [Tools & CLI](#tools--cli) and [Set up your tools](#set-up-your-tools): commands,
+  simulators, synthesis backends, and installing them.
+* The [examples/pypeline](../examples/pypeline) directory has more example code.
+* Coming from the C front end? See [`docs/pipelinec_to_pypeline.md`](pipelinec_to_pypeline.md)
+  for a pattern-by-pattern translation reference. PipelineC also has a bigger
+  [list of examples](https://github.com/JulianKemmerer/PipelineC/wiki/Examples).
 
-Vendor toolchains (Vivado/Quartus/Diamond/etc.) still need their own proprietary installs
-regardless of which path you take.
-
-* Read the [Pypeline language guide](pypeline_guide.md). It walks
-  through a full worked example ([VGA test pattern](../examples/pypeline/vga_test_pattern.py))
-  and then covers every language feature in its own section.
-* See the [examples/pypeline](../examples/pypeline) directory for more example code.
-* [Install your toolchains.](#set-up-your-tools)
-* Putting a design on hardware for the first time? See
-  [Dev Board Setup](https://github.com/JulianKemmerer/PipelineC/wiki/Dev-Board-Setup).
-* Coming from the C front end? See
-  [`docs/pipelinec_to_pypeline.md`](pipelinec_to_pypeline.md) for a pattern-by-pattern
-  translation reference.
-
-# Overview
+## Overview
 
 Consider the following generic register + combinatorial logic, compared across Pypeline,
 VHDL, and Verilog:
@@ -188,7 +239,7 @@ assign output_wire = the_wire;
 
 <img alt="schematic of generic hdl" src="https://github.com/user-attachments/assets/e68811e2-591f-462d-88e7-22723233f33b" />
 
-## Direct RTL semantics
+### Direct RTL semantics
 
 The shorter Pypeline example above describes the same hardware without an event-driven
 process model. A typed function is a hardware module: arguments are input ports, its
@@ -205,7 +256,30 @@ register writes commit on a clock edge, and every call site creates a distinct m
 Functions marked [`@MAIN`](pypeline_guide.md#top-level-entry-points) become single-instance
 top-level modules whose typed arguments and return value define FPGA ports.
 
-## Hierarchy and interconnect by composition
+### Top-level ports and clocks
+
+The generated top-level module's ports all come from the source:
+
+| Source | Top-level VHDL port |
+|---|---|
+| any `@MAIN(25.0)` | clock input `clk_25p0`, one per distinct rate |
+| `pll_clk: Input[uint1_t] = make_clock(25.0)` | clock input `pll_clk`, replacing the rate-derived name |
+| `my_input: Input[uint1_t]`, `my_output: Output[uint1_t]` | `my_input`, `my_output`, named exactly |
+| argument `x` of `@MAIN` function `my_main` | input `my_main_x` |
+| return value of `@MAIN` function `my_main` | output `my_main_return_output` |
+
+A `uint1_t` port is a VHDL `unsigned(0 downto 0)`, and struct ports use the record types
+in `c_structs_pkg`. Global [`Input[T]`/`Output[T]`](pypeline_guide.md#inputt--outputt--top-level-fpga-ports)
+signals are the easiest way to give a design ports whose names match a board's pin
+constraints, and [`make_clock`](pypeline_guide.md#naming-a-clock-with-make_clock) gives a
+clock port a fixed name, as in the
+[pico-ice example](#pico-ice-example). The board modules in
+[include/pypeline/board](../include/pypeline/board) declare ports like these for supported
+boards. In native simulation, drive `Input[T]` ports from
+[`@sim_input`](pypeline_guide.md#sim_input--driving-simulation-inputs) functions, as
+[fsm.py](../examples/pypeline/fsm.py) does.
+
+### Hierarchy and interconnect by composition
 
 “Invocation is instantiation”: [calling a hardware
 function](pypeline_guide.md#calling-functions) creates and connects a module instance.
@@ -224,7 +298,7 @@ direction as the two halves of one typed port. For straight-line composition,
 let the source describe the forward dataflow while Pypeline generates the reverse-path
 wiring.
 
-## Parameterized, reusable hardware
+### Parameterized, reusable hardware
 
 A Pypeline design file is also a regular Python module. Module-level code executes at
 elaboration time, so ordinary Python can compute constants, inspect types, build lookup
@@ -240,16 +314,18 @@ This elaboration model goes beyond a fixed set of HDL `generate` constructs: Pyt
 can define new hardware abstractions, and those abstractions compose with the same
 functions, structs, arrays, streams, and interfaces used by hand-written Pypeline logic.
 
-## Automatic implementation with visible hardware
+### Automatic implementation with visible hardware
 
 Pure, feedback-free functions describe dataflow that Pypeline can transform into a
 hardware pipeline: combinational stages separated by inserted registers.
 
 ```python
 # Simple example of math pipeline
-def main(x1: float, x2: float, y1: float, y2: float) -> float:
-    x_sum: float = x1 + x2
-    y_sum: float = y1 + y2
+from floating_point import float32_t
+
+def main(x1: float32_t, x2: float32_t, y1: float32_t, y2: float32_t) -> float32_t:
+    x_sum: float32_t = x1 + x2
+    y_sum: float32_t = y1 + y2
     return x_sum + y_sum
 ```
 The above example instantiates 3 floating point adders. Two in parallel, and a third
@@ -264,7 +340,7 @@ The chosen latency remains visible to the design so handshakes and surrounding s
 can adapt to the result. This keeps cycles and interfaces explicit while moving
 repetitive implementation search into the compiler.
 
-## Conventional output and incremental adoption
+### Conventional output and incremental adoption
 
 Pypeline resolves factories, parameterized types, and interface composition during its
 own elaboration, rather than requiring every downstream EDA tool to implement equivalent
@@ -278,6 +354,464 @@ does not require rewriting every block at once.
 See the [examples](../examples/pypeline), the complete [language
 guide](pypeline_guide.md), and the guide's [Limitations / Not Yet
 Supported](pypeline_guide.md#limitations--not-yet-supported) section.
+
+## What the Tool Does
+
+![PypelineC tool flow: Python or C sources become a logic graph, which is written as VHDL directly or auto-pipelined using timing measured by synthesis tools, then simulated or built into a bitstream](images/flow.svg)
+
+`pypelinec DESIGN.py` turns a Python design file into VHDL. When a synthesis tool is
+available, it also measures the design's timing with that tool, and adds pipeline
+registers to pure functions until every `@MAIN` meets its clock. The diagram shows every
+path through the tool. The steps below follow one build; each links to the design
+document that explains how that part works.
+
+### Runs the design file as Python
+
+The design file is imported like any Python module, so its module-level code runs
+first: constants, factory calls, `@struct`/`@enum` types, `PART()`, board module
+imports. Then each `@MAIN` function, and every function it calls, becomes hardware: an
+`if` becomes a multiplexer, loops unroll, every call site is its own instance, and
+operators on library types like `float32_t` become instances of the library's
+implementations (see
+[Python vs Hardware Execution](pypeline_guide.md#python-vs-hardware-execution)). Source
+the elaborator can't turn into hardware stops the build here, before any VHDL is written.
+How: [PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md).
+
+### Writes VHDL
+
+Every hardware function becomes a human-readable VHDL-2008 entity. The top-level entity
+(`top`, or `--top NAME`) instantiates every `@MAIN` and has the design's
+[clock and IO ports](#top-level-ports-and-clocks); packages hold the struct, enum and
+global wire types. `vhdl_files.txt` lists the files, alongside tool-specific helpers like
+Vivado's `read_vhdl.tcl` (see [Generated files and reports](#generated-files-and-reports)).
+With `--comb --no_synth` the build stops here, with the design exactly as written: no
+synthesis tool needed. How: [VHDL_DESIGN.md](VHDL_DESIGN.md).
+
+### Measures timing with a synthesis tool
+
+The synthesis tool comes from `PART()`/`SYN_TOOL()` in the source or `--part`/
+`--syn_tool` (see [Synthesis backends and target selection](#synthesis-backends-and-target-selection)).
+With none selected, PyRTL's software delay model stands in. `pypelinec` runs the tool on
+pieces of the design to learn how long each operation takes, then on the whole design,
+and reads the achieved frequency of each clock and the slowest path from its timing
+report. Delays of built-in and library operations are cached per part and tool under
+`cache/delay/`, so most builds reuse earlier measurements instead of running the tool.
+`--comb` stops after one whole-design timing check, ex. for
+[counter.py](../examples/pypeline/counter.py) on the pico-ice's iCE40
+(`--comb --part ICE40UP5K-SG48 --syn_tool open_tools`):
+
+```
+Clock clk_25p0$SB_IO_IN_$glb_clk FMAX: 68.290 MHz (14.643 ns)
+```
+
+How: [SYN_DESIGN.md](SYN_DESIGN.md).
+
+### Pipelines logic to meet each clock
+
+For each `@MAIN` with a clock goal, `pypelinec` pipelines the logic it is allowed to: a
+`@MAIN` that is a pure function (no [`Reg[T]` state](pypeline_guide.md#registers-regt)),
+and calls tagged [`AUTO_PIPELINE`](pypeline_guide.md#auto_pipeline). It adds registers,
+writes the pipelined VHDL, synthesizes the whole design again, reads the timing report,
+and repeats: more registers where timing fails, fewer where it has slack. Logic with state
+is never changed, so it has to meet timing as written. The resulting latency is visible to
+the design, so FIFOs and handshakes can be sized from it.
+
+For example, `pypelinec examples/pypeline/pipeline.py` pipelines a floating point adder
+to meet 90 MHz. With no part selected it uses the PyRTL model. Iteration 4 tries fewer
+registers, misses timing, and the 26-register result from iteration 3 is kept:
+
+```
+[sweep] iter=1 main=my_pipeline goal=90.00MHz got=53.51MHz (18.69ns) cuts=7 ...
+[sweep] iter=2 main=my_pipeline goal=90.00MHz got=53.51MHz (18.69ns) cuts=8 ...
+[sweep] iter=3 main=my_pipeline goal=90.00MHz got=94.08MHz (10.63ns) cuts=26 ... action=met
+[sweep] iter=4 main=my_pipeline goal=90.00MHz got=77.91MHz (12.83ns) cuts=16 ...
+[sweep] my_pipeline: met timing, 26 slice(s) built (27 pipeline stages), cuts=26, locked=0 inst(s), iterations=4
+```
+
+When a clock goal can't be met, the build fails and prints the troublesome path. The
+counter has nothing to pipeline (its logic sits between registers and output ports), so
+with `@MAIN(400.0)` on the iCE40 it ends with:
+
+```
+[sweep] WARNING: counter fails timing (68.29 MHz vs 400.00 MHz goal) and auto-pipelining cannot help it (no sliceable logic and no AUTO_PIPELINE regions in this main) - restructure the design or lower the clock goal.
+START:  counter_debug[0]$SB_IO_OUT =>
+ ~ 14.643432420559378 ns of logic+routing ~
+END: => counter_return_output_SB_DFF_Q_D
+...
+================== TIMING NOT MET ================================
+ERROR: TIMING NOT MET: counter achieved 68.29 MHz vs 400.00 MHz goal (nothing_auto_pipelinable)
+```
+
+`sweep_history.json` records every iteration. `AUTO_MULTI_CYCLE`, `AUTO_FSM` and the
+other [automatic implementation](pypeline_guide.md#automatic-hls-like-implementation)
+features use the same timing feedback. See [Automatic pipelining](#automatic-pipelining) and
+[Automatic implementation and sweeps](#automatic-implementation-and-sweeps). How:
+[SWEEP_DESIGN.md](SWEEP_DESIGN.md), [AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md).
+
+### Simulates, optionally
+
+`--sim` simulates the design: with `--comb`, as written; otherwise the final, possibly
+pipelined design after the build. The native Python simulator runs the source itself,
+while `--cocotb --ghdl`, `--verilator` and others simulate the generated VHDL (see
+[Simulation](#simulation)). How:
+[pypeline_sim_DESIGN.md](pypeline_sim_DESIGN.md).
+
+### Synthesis and place-and-route reports
+
+Synthesis converts HDL into a netlist of FPGA elements, and place and route finds
+positions for those elements and connects them. The timing `pypelinec` reads comes from
+the same reports you will see when building a bitstream for a board, so it pays to be
+familiar with them. The examples below come from the
+[dev board examples](#getting-started-on-a-dev-board) and the counter above.
+
+#### Resources
+
+Synthesis tells you how your HDL compiled down into FPGA resources. The
+[pico-ice blinky](../examples/pypeline/pico_ice/top.py) uses a handful of lookup tables
+(LUTs), carry logic and flip-flops (FFs), plus the PLL:
+
+* [yosys](https://github.com/YosysHQ/yosys)'s `stat` command prints a resource summary
+  like so:
+
+```
+   Number of cells:                120
+     $scopeinfo                     11
+     SB_CARRY                       30
+     SB_DFFESR                       1
+     SB_DFFSR                       32
+     SB_LUT4                        45
+     SB_PLL40_PAD                    1
+```
+
+* [nextpnr](https://github.com/YosysHQ/nextpnr) prints something similar:
+
+```
+Info: Device utilisation:
+Info:              ICESTORM_LC:      49/   5280     0%
+Info:             ICESTORM_RAM:       0/     30     0%
+Info:                    SB_IO:      26/     96    27%
+Info:                    SB_GB:       2/      8    25%
+Info:             ICESTORM_PLL:       1/      1   100%
+...
+```
+
+* Vivado can be asked to `report_utilization`, which writes full reports, ex. the
+  [Arty example](../examples/pypeline/arty)'s `utilization.rpt`, with sections like so:
+
+```
++------------+------+---------------------+
+|  Ref Name  | Used | Functional Category |
++------------+------+---------------------+
+| FDRE       |   67 |        Flop & Latch |
+| LUT5       |   45 |                 LUT |
+| LUT6       |   22 |                 LUT |
+| OBUF       |   17 |                  IO |
+| LUT4       |   13 |                 LUT |
+| CARRY4     |    8 |          CarryLogic |
+| LUT3       |    4 |                 LUT |
+| LUT2       |    2 |                 LUT |
+| LUT1       |    2 |                 LUT |
+| MMCME2_ADV |    1 |               Clock |
+| IBUF       |    1 |                  IO |
+| BUFG       |    1 |               Clock |
++------------+------+---------------------+
+```
+
+#### Timing
+
+Part of solving the place and route problem is making sure the signals propagating
+between FPGA elements still meet the
+[timing requirements](https://nandland.com/lesson-12-setup-and-hold-time/) of the
+circuit, imposed by your selected operating frequency (FMAX) target. Sometimes this is not
+possible: the design has "failed to meet timing".
+
+* For the counter at 400 MHz above, [nextpnr](https://github.com/YosysHQ/nextpnr)'s log
+  (`<out_dir>/top/open_tools_*.log`) reports:
+
+```
+Warning: Max frequency for clock 'clk_400p0$SB_IO_IN_$glb_clk': 68.29 MHz (FAIL at 400.00 MHz)
+```
+
+  followed by the path in the design with the worst timing:
+
+```
+Info: Critical path report for clock 'clk_400p0$SB_IO_IN_$glb_clk' (posedge -> posedge):
+Info:       type curr  total name
+Info:   clk-to-q  1.39  1.39 Source counter_0clk_ae495f72.bin_op_plus_counter_py_l25_c4_ec24.left_SB_DFF_Q_15_DFFLC.O
+Info:    routing  3.60  4.99 Net counter_debug[0]$SB_IO_OUT (11,8) -> (11,1)
+...
+Info:      setup  1.23  14.64 Source counter_0clk_ae495f72.bin_op_plus_counter_py_l25_c4_ec24.left_SB_DFF_Q_DFFLC.I0
+Info: 8.06 ns logic, 6.58 ns routing
+```
+
+  Names point back to the Pypeline source: `counter_0clk_ae495f72` is an instance of the
+  `counter` function, and `bin_op_plus_counter_py_l25_c4` is the `+` at line 25, column 4
+  of `counter.py` (`the_counter_reg += 1`). `name_index.log` maps every generated name
+  to its source (see [Generated files and reports](#generated-files-and-reports)). A
+  board build that misses timing stops the same way, ex. the pico-ice Makefile with
+  `PLL_CLK_MHZ=100.0`:
+  `ERROR: Max frequency for clock 'pll_clk_$glb_clk': 59.73 MHz (FAIL at 100.00 MHz)`.
+
+* When Vivado fails to meet the timing requirements, its implementation log shows:
+
+```
+CRITICAL WARNING: [Timing 38-282] The design failed to meet the timing requirements. Please see the timing summary report for details on the timing violations.
+```
+
+  and the timing summary shows a failed, red, timing value:
+
+  ![Vivado timing summary showing a negative worst negative slack in red](https://github.com/user-attachments/assets/6bfc36fc-9c38-47e9-998b-375ac95f23a0)
+
+  `report_timing_summary` (the Arty example writes `timing_summary.rpt`) and
+  `report_timing` break down the paths with the worst timing. A design that meets timing
+  has a positive worst negative slack (WNS), like the Arty example at 25 MHz:
+
+```
+    WNS(ns)      TNS(ns)  TNS Failing Endpoints  TNS Total Endpoints      WHS(ns)      THS(ns)  THS Failing Endpoints  THS Total Endpoints
+    -------      -------  ---------------------  -------------------      -------      -------  ---------------------  -------------------
+     35.508        0.000                      0                   75        0.178        0.000                      0                   75
+
+All user specified timing constraints are met.
+```
+
+## Getting Started on a Dev Board
+
+This section takes a design from simulation onto an FPGA development board. Two boards
+are the running examples, and the same steps apply to most others:
+
+* [pico-ice](https://pico-ice.tinyvision.ai/): a Lattice iCE40 FPGA, built with open
+  source tools. Example: [examples/pypeline/pico_ice](../examples/pypeline/pico_ice).
+* [Arty A7](https://digilent.com/reference/programmable-logic/arty-a7/start): a Xilinx
+  Artix-7 FPGA, built with Vivado. Example: [examples/pypeline/arty](../examples/pypeline/arty).
+
+### Video
+
+[![PipelineC overview video](https://img.youtube.com/vi/wWdvuAQXeS0/0.jpg)](https://www.youtube.com/watch?v=wWdvuAQXeS0)
+
+The video walks through this flow with the PipelineC C front end. The board, tool and
+timing steps are the same for Pypeline.
+
+### Recommended Approach
+
+![Pypeline generated top.vhd instantiated inside your top level wrapper HDL, next to PLLs, IO buffers and controller IP, on an FPGA on your dev board](images/dev_board.svg)
+
+The recommended way of getting started is to:
+
+1. Begin with the Verilog or VHDL "blink an LED" example that comes with your development
+   board.
+   * You likely will not need to instantiate a PLL and can use a clock source provided by
+     your board.
+2. Once that entire flow is confirmed working and your LED blinks in hardware, swap out the
+   hand-written HDL for Pypeline generated code.
+   * Pypeline generates a single top-level module. Try
+     `pypelinec examples/pypeline/blink.py --comb --no_synth` using
+     [blink.py](../examples/pypeline/blink.py) (see [Quick Start](#quick-start)).
+   * The top-level module is named `top` by default; change it with `--top`. Its ports
+     come from the design, see [Top-level ports and clocks](#top-level-ports-and-clocks).
+
+The sections below detail these steps for the pico-ice and Arty boards.
+
+### Before You Buy
+
+You may be able to find old FPGA dev boards on eBay and such. Be aware that some FPGAs
+require paid licenses to use their tools, and that licenses can expire. Also be aware
+that old FPGAs may no longer have current versions of the required tooling. You might
+need to search for an archived version of the tool and run some old OS in a VM: not
+recommended. Instead, double check that the FPGA you want to buy has a current version of
+tooling that you can download and use on your modern OS.
+
+* Lattice FPGAs: [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build) open
+  source tools (iCE40 and ECP5), or Lattice tools
+* Xilinx FPGAs: the Vivado tool, or for some 7 Series parts the open source
+  [OpenXC7 flow](#synthesis-tools)
+
+Pypeline's native simulator and its VHDL generation need no FPGA tools at all, so you
+can start writing and simulating designs before choosing a board.
+
+Your FPGA dev board should come with a pinout listing what each FPGA pin is connected to
+on the board. A nice to have is the actual board schematic itself, but the pinout list is
+a must.
+
+* Lattice FPGAs: `.pcf` (iCE40) or `.lpf` (ECP5) files with pin locations
+* Xilinx FPGAs: `.xdc` files with pin locations
+
+Finally, your dev board should come with some kind of "from the factory" HDL (Verilog or
+VHDL) demo you can build and upload to the board. Typically this is simply blinking an
+LED.
+
+### Download Tools
+
+Download the tools needed:
+
+* Lattice FPGAs: [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build), or
+  [Lattice](https://www.latticesemi.com/en/Products/DesignSoftwareAndIP) tools
+* Xilinx FPGAs: [Vivado](https://www.xilinx.com/support/download.html) download
+
+Then see [Set up your tools](#set-up-your-tools) for telling Pypeline about your install
+setup.
+
+### Gather Dev Board Files
+
+Working with an FPGA requires HDL to describe the hardware, and pin constraints to say how
+the design maps onto the FPGA on your board. Finally, you will want to be familiar with
+the flow for going from HDL+constraints to the final bitstream you upload to the board.
+
+#### pico-ice Files
+
+The [pico-ice](https://pico-ice.tinyvision.ai/) board has a Lattice iCE40 FPGA. The
+[ice_makefile_blinky](https://github.com/tinyvision-ai-inc/pico-ice-sdk/tree/main/examples/ice_makefile_blinky)
+example is a perfect starting point. It provides the FPGA pinout file
+[ice40.pcf](https://github.com/tinyvision-ai-inc/pico-ice-sdk/blob/main/examples/ice_makefile_blinky/ice40.pcf)
+and example
+[Verilog](https://github.com/tinyvision-ai-inc/pico-ice-sdk/blob/main/examples/ice_makefile_blinky/top.sv)
+for blinking an LED.
+
+Building the HDL into a bitstream is simple using the provided
+[Makefile](https://github.com/tinyvision-ai-inc/pico-ice-sdk/blob/main/examples/ice_makefile_blinky/Makefile)
+based flow described in the
+[README](https://github.com/tinyvision-ai-inc/pico-ice-sdk/blob/main/examples/ice_makefile_blinky/README.md).
+Critically, simply have the [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build)
+installed and set the `OSS_CAD_SUITE` environment variable. The output of the build is a
+bitstream file you can upload to the FPGA.
+
+#### Arty Files
+
+The [Digilent Arty](https://digilent.com/reference/programmable-logic/arty-a7/start)
+boards have Xilinx 7 Series FPGAs. Digilent's [GitHub](https://github.com/digilent)
+provides many HDL tutorials and examples, and the required pin constraint `.xdc` files,
+ex. [Arty_Master.xdc](https://github.com/Digilent/Arty-A7-100-GPIO/blob/master/src/constraints/Arty_Master.xdc),
+or [digilent-xdc](https://github.com/Digilent/digilent-xdc) for all their boards.
+
+For instructions on how to put HDL and constraints into a Vivado project you can build,
+the [Digilent Vivado tutorial](https://digilent.com/reference/programmable-logic/guides/getting-started-with-vivado)
+is recommended.
+
+### Everything Not-Pypeline
+
+It is recommended to get your dev board's build flow working completely separate from
+Pypeline before starting. Getting familiar with seeing Verilog or VHDL will hopefully be
+similar to how you occasionally need to write assembly for your microcontroller. Getting
+this working proves that the whole flow works: tools, power supply, power cable,
+programming cable, etc.
+
+Pay attention to how the HDL source files and pin IO constraints are handled in the
+example projects you find:
+
+* For the [pico-ice](https://pico-ice.tinyvision.ai/) make flow: HDL (`.sv`) is processed
+  by [yosys](https://github.com/YosysHQ/yosys) for synthesis, and the pin constraints
+  (`.pcf`) are used by [nextpnr](https://github.com/YosysHQ/nextpnr) for place and route.
+* For the Arty flow with Vivado: HDL (`.vhd`) and constraint (`.xdc`) files are added to
+  the project before running synthesis or place and route.
+
+#### Power and Programming
+
+Both the pico-ice and Arty boards can be powered and programmed with a single USB cable.
+
+* The pico-ice build flow's `make prog_pico` uses `dfu-util` to upload the
+  `gateware.bin` bitstream to the FPGA.
+* Vivado's `Generate Bitstream` button and
+  [Hardware Manager](https://digilent.com/reference/programmable-logic/guides/vivado-hardware-manager)
+  produce the final `.bit` bitstream file and upload it to the FPGA.
+
+#### Clocks and PLL Generated Clocks
+
+Almost all dev boards provide at least one on-board, always running clock for your FPGA
+to use.
+
+* On the pico-ice board this is the default 12 MHz clock on pin 35 (`ICE_35`), provided
+  by the Raspberry Pi RP2040 as noted in the pin IO `.pcf` file.
+* On Arty boards there is typically a 100 MHz `CLK100MHZ` clock defined in the
+  constraints `.xdc` file.
+
+If other clock rates are needed then a PLL must be configured and instantiated:
+
+* The [OSS CAD Suite](https://github.com/YosysHQ/oss-cad-suite-build) provides the `icepll`
+  tool for producing configured iCE40 PLL blocks. [This](https://z80.ro/post/using_pll/)
+  write-up was helpful in getting started.
+  * You must also inform the place and route tool [nextpnr](https://github.com/YosysHQ/nextpnr)
+    of this new
+    [clock rate constraint](https://github.com/YosysHQ/nextpnr/blob/master/docs/constraints.md).
+* In Vivado one mechanism for clock configuration is the
+  [Clocking Wizard IP](https://www.xilinx.com/products/intellectual-property/clocking_wizard.html).
+  Another is instantiating a PLL/MMCM primitive directly in HDL, as the Arty example's
+  [board.vhd](../examples/pypeline/arty/board.vhd) does.
+
+In both cases, the on-board always running clock is the input to the PLL. The PLL is
+instantiated in the same area of VHDL or Verilog as your original blinking demo. The
+output clock(s) from the PLL can be used once the PLL's "locked" signal is asserted.
+Typically "not locked" is used as a reset condition, holding the design in reset until
+the PLL is stable.
+
+### Bring In Pypeline
+
+Once you are confident your VHDL/Verilog blinking/basic board setup is working, it is
+time to bring Pypeline into your design. Now would be the time to
+[ensure the pypelinec tool can find your install locations](#set-up-your-tools). Feel
+free to also check out the language guide's
+[Digital Logic Basics](pypeline_guide.md#digital-logic-basics) and its
+[worked VGA example](pypeline_guide.md#worked-example-vga-test-pattern).
+
+Both example projects run `pypelinec` with `--comb --no_synth`, which only writes the
+VHDL; removing those flags adds [timing feedback](#measures-timing-with-a-synthesis-tool)
+and [automatic pipelining](#pipelines-logic-to-meet-each-clock). The tools' reports are
+described in [Synthesis and place-and-route reports](#synthesis-and-place-and-route-reports).
+
+#### pico-ice Example
+
+The [pico_ice](../examples/pypeline/pico_ice) example is based on the original
+`ice_makefile_blinky` example, modified to include Pypeline in the build flow as described
+in its [README](../examples/pypeline/pico_ice/README.md) file.
+
+* [top.py](../examples/pypeline/pico_ice/top.py) is the Pypeline design: the logic for
+  counting off to blink an LED, plus its top-level IO (ex. which pin is the LED). Its
+  `Input[T]`/`Output[T]` names must match the `.sv` wrapper and `.pcf` files below, and
+  `make_clock` names its clock port `pll_clk` to match the PLL output in the wrapper.
+* [vga_top.py](../examples/pypeline/pico_ice/vga_top.py) is another design for the same
+  flow: a VGA test pattern on a VGA PMOD, using the `board.pico_ice.vga_pmod01` module
+  for its PMOD pins (`make clean all PYPELINE_TOP_FILE=vga_top.py`).
+* [top.sv](../examples/pypeline/pico_ice/top.sv) is the wrapper around the Pypeline
+  generated code, where things like PLL modules are instantiated.
+* [ice40.pcf](../examples/pypeline/pico_ice/ice40.pcf) is the pinout for this design.
+* The [Makefile](../examples/pypeline/pico_ice/Makefile) runs `pypelinec`, `icepll` for
+  the PLL, GHDL+yosys for synthesis, nextpnr for place and route, and `icepack` for the
+  bitstream, then can upload it to the board with `make prog_pico` (`make prog_pico2`
+  for the pico2-ice).
+* The full build and program can be done like so:
+  `make clean all OSS_CAD_SUITE=/path/to/oss-cad-suite && make prog_pico OSS_CAD_SUITE=/path/to/oss-cad-suite`
+
+#### Arty Example
+
+The [arty](../examples/pypeline/arty) example uses the same pieces in a Vivado flow, as
+described in its [README](../examples/pypeline/arty/README.md) file.
+
+* [top.py](../examples/pypeline/arty/top.py) is the Pypeline design: blinking RGB LED 0,
+  plus a VGA test pattern on a VGA PMOD in headers JA and JB. It imports
+  `board.arty.part35t` to set the FPGA part and `board.arty.vga_pmod_ja_jb` for the PMOD
+  pins. Its top-level IO must match the `.vhd` wrapper and `.xdc` files below.
+* [board.vhd](../examples/pypeline/arty/board.vhd) is the top-level wrapper around the
+  Pypeline generated `top` entity. An `MMCME2_BASE` primitive (Xilinx's PLL-like MMCM)
+  makes the design's 25 MHz clock from the board's 100 MHz `CLK100MHZ`, and the port map
+  of `top` connects Pypeline ports to board pins.
+* [arty.xdc](../examples/pypeline/arty/arty.xdc) holds the pin constraints, copied from
+  Digilent's master `.xdc` file.
+* The [Makefile](../examples/pypeline/arty/Makefile) runs `pypelinec`, then Vivado in batch
+  mode on [build.tcl](../examples/pypeline/arty/build.tcl): no Vivado project file to go
+  stale. The result is `board.bit`, which `make prog` loads onto the board. Prefer the
+  Vivado GUI? Make a new project, add `board.vhd` and `arty.xdc`, run
+  `source pypeline_output/read_vhdl.tcl` in the Tcl console, and click Generate Bitstream
+  (see [Using the output in an existing project](#using-the-output-in-an-existing-project)).
+* The full build and program can be done like so: `make clean all && make prog`
+
+### Tri-State and Other IO
+
+Often a specialized network or memory controller IP will want "direct control" of, or to
+be "directly connected" to, the FPGA's top-level IO signals. This is common for
+specialized IO like DDR or SERDES, as well as for tri-state high impedance signalling.
+Pypeline ports are one-directional, so instantiate these modules outside of Pypeline, in
+the wrapper HDL where PLLs and such also exist. Connect the interface exposed by those
+modules to regular one-directional Pypeline inputs and outputs. (Inside a design,
+[raw VHDL](pypeline_guide.md#raw-vhdl-passthrough-vhdl) can instantiate other vendor
+primitives and existing VHDL modules.)
 
 ## Tools & CLI
 
@@ -357,7 +891,21 @@ pypelinec examples/pypeline/vga_test_pattern.py --sim --comb --run 420000
 `pypelinec DESIGN.py --sim --run N` simulates the final, possibly automatically
 pipelined implementation. Add `--comb` to simulate the source
 without running automatic implementation first. With no external simulator selected,
-Pypeline uses its native Python simulator in strict, width-accurate mode.
+Pypeline uses its native Python simulator in strict, width-accurate mode. It prints a
+clock cycle counter and any `sim_print` output, ex. for
+[counter.py](../examples/pypeline/counter.py)
+(`pypelinec examples/pypeline/counter.py --sim --comb --run 3`):
+
+```
+Clock:  0
+Counter register value: 0
+
+Clock:  1
+Counter register value: 1
+
+Clock:  2
+Counter register value: 2
+```
 
 For lower-level native-simulator control:
 
@@ -399,14 +947,69 @@ generated VHDL (e.g. verifying a `vhdl()` passthrough or a hand-written `@sim_mo
 really matches its hardware), or when a design uses a feature the native simulator
 doesn't model yet.
 
-Other simulator/output selectors are `--edaplay`, `--modelsim`, `--cxxrtl`, and
-`--verilator`. `--makefile FILE` supplies an existing simulator Makefile;
-`--main_cpp FILE` supplies a C++ driver for CXXRTL or Verilator.
+`pypelinec` writes a template cocotb testbench that drives the clock and prints the cycle
+count along with `sim_print` output, ex.
+`pypelinec examples/pypeline/counter.py --comb --sim --cocotb --ghdl --run 3`:
+
+```
+Clock:  0
+Counter register value: 0
+^End Clock:  0
+
+Clock:  1
+Counter register value: 1
+
+Clock:  2
+Counter register value: 2
+...
+```
+
+The template drives only the clock, so any other inputs stay undriven ('U').
+`--makefile FILE` supplies an existing simulator Makefile instead of the generated one.
+The simulation also writes a standard `.vcd` waveform file, `<out_dir>/cocotb/top.vcd`,
+for viewers like [GTKWave](https://gtkwave.github.io/gtkwave/) and
+[Surfer](https://surfer-project.org/). For the counter, `counter_return_output` is always
+`the_counter_reg` plus one, from the adder before the output port:
+
+![Waveform of the counter: clk_25p0, counter_debug, counter_return_output, and the_counter_reg inside the counter instance, counting up each clock cycle](images/counter_waveform.svg)
 
 For designs with automatic latency, omit `--comb` from both native and generated-VHDL
 simulation and reuse or copy a warm output directory so both runs see the same converged
 implementation. Pair hand-written `vhdl()` with `@sim_model`; use the cycle-diff tool
 below when their timing may disagree.
+
+#### Other HDL simulators
+
+The other simulator selectors are `--modelsim`, `--verilator`, `--cxxrtl` and
+`--edaplay` (see [Simulation tools](#simulation-tools) for installs).
+
+`--modelsim` opens Modelsim with a project that compiles the generated VHDL. From its
+console, load the design, drive the clock and run; `sim_print` output shows up in the
+console:
+
+```
+vsim work.top
+add wave sim:/top/*
+force -freeze sim:/top/clk_25p0 1 0, 0 {20 ns} -r 40ns
+run 120ns
+# Counter register value: 0
+# Counter register value: 1
+# Counter register value: 2
+```
+
+`--verilator` first converts the generated VHDL to Verilog with GHDL and Yosys
+(`--cxxrtl` converts it to C++ the same way), which drops `sim_print` output. Print
+top-level ports from your own C++ driver instead, passed with `--main_cpp`, like
+[counter_verilator_main.cpp](../examples/pypeline/counter_verilator_main.cpp):
+
+```
+pypelinec examples/pypeline/counter.py --sim --comb --verilator --main_cpp examples/pypeline/counter_verilator_main.cpp
+...
+cycle 0: counter_debug: 0
+cycle 1: counter_debug: 1
+cycle 2: counter_debug: 2
+cycle 3: counter_debug: 3
+```
 
 #### `pypeline_sim_debug.py` — native-vs-VHDL cycle diff tool
 
@@ -644,6 +1247,9 @@ remove_files /home/user/pipelinec_output/*;
 source /home/user/pipelinec_output/read_vhdl.tcl;
 ```
 
+The [pico-ice](#pico-ice-example) and [Arty](#arty-example) examples are complete board
+projects built this way, with a Makefile and a Vivado batch script respectively.
+
 ### Full bitstream builds: `--pins`
 
 Some backends can also run the full build through to bitstream generation. Pass the
@@ -656,7 +1262,6 @@ pin-constraint file with `--pins`:
   `--syn_tool open_tools`. The flow runs nextpnr-xilinx, converts its FASM output with
   Project X-Ray, and writes `<out_dir>/top/top.bit`.
   * Test: `pypelinec ./examples/pypeline/blink.py --part xc7a35tcpg236-1 --syn_tool open_tools --pins ./src/tests/pypeline_tests/constraints/openxc7_basys3_blink.xdc`
-
 
 ## Set up your tools
 

@@ -4,11 +4,13 @@ Example project using a standard [Makefile](https://en.wikipedia.org/wiki/Make_%
 to build a project that can be loaded onto the board.
 
 It needs [oss-cad-suite](https://github.com/YosysHQ/oss-cad-suite-build) installed.
-See the [doc](https://pico-ice.tinyvision.ai/using_oss_cad_suite.html) for more.
+See the [doc](https://pico-ice.tinyvision.ai/md_programming__the__fpga.html) for more.
 
 Build with `make` and deploy it to the pico-ice with `make prog_pico`, and `make gateware.uf2` to generate an
-[uf2 image](https://pico-ice.tinyvision.ai/programming_the_fpga.html#using-a-drag-drop-or-file-copy-scheme)
+[uf2 image](https://pico-ice.tinyvision.ai/md_programming__the__fpga.html)
 to program with drag-and-drop.
+
+For the Pypeline (Python) version of this flow see [examples/pypeline/pico_ice](../../pypeline/pico_ice).
 
 If your design does not meet the default 12MHz timing, `nextpnr` will fail with an error like:
 `ERROR: Max frequency for clock 'clk_12p0$SB_IO_IN_$glb_clk': XX.XX MHz (FAIL at 12.00 MHz)`.

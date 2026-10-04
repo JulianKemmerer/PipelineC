@@ -260,6 +260,29 @@ def get_tests() -> list:
             VIVADO,
         )
     )
+    # docs/README.md's getting-started examples. Native simulation never emits
+    # VHDL, so these are what catch a documented example whose hardware stops
+    # building (pipeline.py's bare `float` once did, unnoticed). The board
+    # tops' PART()s pick their backends: iCE40 open tools and Artix-7 Vivado.
+    # Named explicitly: "counter" and "top" are too generic for the registry.
+    for name, path, tool in [
+        ("example_counter", EXAMPLES_PYPELINE_DIR / "counter.py", DM),
+        ("example_fsm", EXAMPLES_PYPELINE_DIR / "fsm.py", DM),
+        ("example_pipeline", EXAMPLES_PYPELINE_DIR / "pipeline.py", DM),
+        ("example_stream_pipeline", EXAMPLES_PYPELINE_DIR / "stream_pipeline.py", DM),
+        (
+            "example_pico_ice_top",
+            EXAMPLES_PYPELINE_DIR / "pico_ice" / "top.py",
+            OPEN_TOOLS,
+        ),
+        (
+            "example_pico_ice_vga_top",
+            EXAMPLES_PYPELINE_DIR / "pico_ice" / "vga_top.py",
+            OPEN_TOOLS,
+        ),
+        ("example_arty_top", EXAMPLES_PYPELINE_DIR / "arty" / "top.py", VIVADO),
+    ]:
+        tests.append(_synth_test(name, [path, "--comb"], tool))
     # Pipelined (non---comb) NATIVE simulation: full build first, then the
     # native sim runs with the discovered latencies emulated. Self-checking
     # elastic stream design -- proves build -> harvest -> latency-emulated

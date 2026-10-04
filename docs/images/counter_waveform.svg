@@ -1,0 +1,52 @@
+<svg xmlns="http://www.w3.org/2000/svg" width="1010" height="182" viewBox="0 0 1010 182" font-family="DejaVu Sans Mono, Menlo, Consolas, monospace">
+  <!-- Waveform of examples/pypeline/counter.py's cocotb+GHDL top.vcd, drawn like a waveform viewer. -->
+  <rect x="0" y="0" width="410" height="182" fill="#f2f2f2"/>
+  <rect x="410" y="0" width="600" height="182" fill="#000000"/>
+  <line x1="410" y1="0" x2="410" y2="182" stroke="#808080"/>
+  <text x="10" y="22" font-size="13" fill="#202020">Signals</text>
+  <line x1="0" y1="34" x2="1010" y2="34" stroke="#808080"/>
+  <line x1="420.0" y1="26" x2="420.0" y2="34" stroke="#c8c8c8"/>
+  <text x="423.0" y="22" font-size="11" fill="#c8c8c8">0 ns</text>
+  <line x1="420.0" y1="34" x2="420.0" y2="182" stroke="#333333" stroke-dasharray="2,4"/>
+  <line x1="565.0" y1="26" x2="565.0" y2="34" stroke="#c8c8c8"/>
+  <text x="568.0" y="22" font-size="11" fill="#c8c8c8">40 ns</text>
+  <line x1="565.0" y1="34" x2="565.0" y2="182" stroke="#333333" stroke-dasharray="2,4"/>
+  <line x1="710.0" y1="26" x2="710.0" y2="34" stroke="#c8c8c8"/>
+  <text x="713.0" y="22" font-size="11" fill="#c8c8c8">80 ns</text>
+  <line x1="710.0" y1="34" x2="710.0" y2="182" stroke="#333333" stroke-dasharray="2,4"/>
+  <line x1="855.0" y1="26" x2="855.0" y2="34" stroke="#c8c8c8"/>
+  <text x="858.0" y="22" font-size="11" fill="#c8c8c8">120 ns</text>
+  <line x1="855.0" y1="34" x2="855.0" y2="182" stroke="#333333" stroke-dasharray="2,4"/>
+  <text x="10" y="55.5" font-size="13" fill="#000000">top.clk_25p0</text>
+  <polyline points="420.0,60.0 420.0,60.0 420.0,42.0 492.5,42.0 492.5,60.0 565.0,60.0 565.0,42.0 637.5,42.0 637.5,60.0 710.0,60.0 710.0,42.0 782.5,42.0 782.5,60.0 855.0,60.0 855.0,42.0 927.5,42.0 927.5,60.0 1000.0,60.0" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <text x="10" y="89.5" font-size="13" fill="#000000">top.counter_debug[15:0]</text>
+  <path d="M420.0,85.0 L420.0,76.0 L420.0,76.0 L420.0,85.0 L420.0,94.0 L420.0,94.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <path d="M420.0,85.0 L424.0,76.0 L561.0,76.0 L565.0,85.0 L561.0,94.0 L424.0,94.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <text x="427.0" y="89.5" font-size="12" fill="#ffffff">0001</text>
+  <path d="M565.0,85.0 L569.0,76.0 L706.0,76.0 L710.0,85.0 L706.0,94.0 L569.0,94.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <text x="572.0" y="89.5" font-size="12" fill="#ffffff">0002</text>
+  <path d="M710.0,85.0 L714.0,76.0 L851.0,76.0 L855.0,85.0 L851.0,94.0 L714.0,94.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <text x="717.0" y="89.5" font-size="12" fill="#ffffff">0003</text>
+  <path d="M855.0,85.0 L859.0,76.0 L996.0,76.0 L1000.0,85.0 L996.0,94.0 L859.0,94.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <text x="862.0" y="89.5" font-size="12" fill="#ffffff">0004</text>
+  <text x="10" y="123.5" font-size="13" fill="#000000">top.counter_return_output[15:0]</text>
+  <path d="M420.0,119.0 L420.0,110.0 L420.0,110.0 L420.0,119.0 L420.0,128.0 L420.0,128.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <path d="M420.0,119.0 L424.0,110.0 L561.0,110.0 L565.0,119.0 L561.0,128.0 L424.0,128.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <text x="427.0" y="123.5" font-size="12" fill="#ffffff">0002</text>
+  <path d="M565.0,119.0 L569.0,110.0 L706.0,110.0 L710.0,119.0 L706.0,128.0 L569.0,128.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <text x="572.0" y="123.5" font-size="12" fill="#ffffff">0003</text>
+  <path d="M710.0,119.0 L714.0,110.0 L851.0,110.0 L855.0,119.0 L851.0,128.0 L714.0,128.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <text x="717.0" y="123.5" font-size="12" fill="#ffffff">0004</text>
+  <path d="M855.0,119.0 L859.0,110.0 L996.0,110.0 L1000.0,119.0 L996.0,128.0 L859.0,128.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <text x="862.0" y="123.5" font-size="12" fill="#ffffff">0005</text>
+  <text x="10" y="157.5" font-size="13" fill="#000000">top.counter_0clk_ae495f72.the_counter_reg[15:0]</text>
+  <path d="M420.0,153.0 L420.0,144.0 L420.0,144.0 L420.0,153.0 L420.0,162.0 L420.0,162.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <path d="M420.0,153.0 L424.0,144.0 L561.0,144.0 L565.0,153.0 L561.0,162.0 L424.0,162.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <text x="427.0" y="157.5" font-size="12" fill="#ffffff">0001</text>
+  <path d="M565.0,153.0 L569.0,144.0 L706.0,144.0 L710.0,153.0 L706.0,162.0 L569.0,162.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <text x="572.0" y="157.5" font-size="12" fill="#ffffff">0002</text>
+  <path d="M710.0,153.0 L714.0,144.0 L851.0,144.0 L855.0,153.0 L851.0,162.0 L714.0,162.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <text x="717.0" y="157.5" font-size="12" fill="#ffffff">0003</text>
+  <path d="M855.0,153.0 L859.0,144.0 L996.0,144.0 L1000.0,153.0 L996.0,162.0 L859.0,162.0 Z" fill="none" stroke="#3ddc3d" stroke-width="1.5"/>
+  <text x="862.0" y="157.5" font-size="12" fill="#ffffff">0004</text>
+</svg>

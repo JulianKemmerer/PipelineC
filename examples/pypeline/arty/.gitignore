@@ -1,0 +1,7 @@
+pypeline_output/
+pypelinec.log
+board.bit
+utilization.rpt
+timing_summary.rpt
+vivado*.log
+vivado*.jou
