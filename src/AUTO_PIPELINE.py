@@ -3916,6 +3916,13 @@ def _AUTO_PIPELINE_REGION_COUNT(region, period_ns, global_scale):
     if region.landscape is None:
         return 0, False
     cap = constraint.max_latency
+    if region.start_pending and any(
+        seg.kind == SWEEP.Segment.LOCKED for seg in region.landscape.segments
+    ):
+        # Mini-sweep locks (e.g. carried into a later pass) already hold part
+        # of the region's depth: S more cuts on top would over-pipeline it.
+        # Plan the rest from the clock period instead.
+        region.start_pending = False
     if period_ns is None:
         count = constraint.start_latency or 0
         calibrate = False
@@ -4265,6 +4272,16 @@ def AUTO_PIPELINE_REGION_FEEDBACK(plan, region, hotspot_func, target_mhz, curr_m
         )
     STOP_AT_AUTO_PIPELINE_LATENCY_LIMIT(plan, parser_state, [region], hotspot_func)
     return f"stop(auto-pipeline latency limit {region.label()})", False
+
+
+def RESET_REGION_CALIBRATION_AFTER_LOCK(plan, region):
+    """A mini-sweep just locked a helper inside `region`'s group. The group's
+    scale was calibrated (start_latency=) and grown against the unlocked
+    landscape the lock replaced, so plan what remains from the clock period."""
+    for r in plan.regions:
+        if r.group == region.group:
+            r.scale = 1.0
+            r.start_pending = False
 
 
 def SNAPSHOT_AUTO_PIPELINE_REGIONS(plans):

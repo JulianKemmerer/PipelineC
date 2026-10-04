@@ -326,8 +326,37 @@ frequency bound. It also reparses a real latency-sized hierarchy with renamed
 callers and additional replicas: every core must keep the same concrete timing
 parameters, entity hash and depth. Its reporting cases keep estimated ceilings
 distinct from timing verdicts and aggregate confirmation paths once per MAIN.
+The capacity case includes the verbatim WireGuard warning: 960 DSPs requested,
+740 available, while the mapped table caps at 740.
 `floor_and_bits_cap_unit_test.py` requires path evidence before a hard-floor
 stop.
+
+`sweep_cross_main_test.py` (`unit`) covers multi-MAIN feedback. Its evidence is
+the real clock-worst path of the WireGuard shared 70 MHz build: a testbench
+handshake whose Vivado names cross the ChaCha wrapper and both dataflows'
+FSMs.
+- **Path roles** (`SWEEP.PATH_MAIN_ROLES` over `SYN.PATH_CELLS_BY_MAIN`):
+  - the testbench owns the path;
+  - the other three only cross it, each blocked by its own stateful instance;
+  - an unrecognized deeper hierarchy counts as reachable;
+  - no-hierarchy names and a goal-less owner keep the old behavior.
+- **Attribution:** scoped to the encrypt plan, it no longer blames the
+  decrypt instance's `prep_auth_data_fsm`. The basis labels (inside /
+  endpoint / cells) are checked too.
+- **Scripted sweeps** (scripted sweep backend):
+  - a crossing path never re-pipelines the plans it crosses, and fails only
+    under its owner;
+  - best-result ties go to met own paths, then fewer stages (this case fails
+    under the old highest-ratio rule);
+  - the pass-2 confirmation keeps crossed MAINs and skips a fallback sweep
+    when only MAINs with nothing cuttable failed.
+- **Regions:**
+  - mini-sweep locks are allowed inside an uncapped `start_latency=` region;
+    `latency=`, `max_latency=` and cross-MAIN groups refuse them;
+  - the streak and budget rules hold;
+  - the start bootstrap is skipped over existing locks;
+  - a scripted start-only region grows once, then mini-sweeps, while a
+    capped one never locks inside.
 
 `added_latency_context_test.py` also runs path-delay characterization on two
 real parses at different AUTO_MULTI_CYCLE counts: the rebuilt holder keeps its
@@ -482,6 +511,13 @@ from a different angle:
     settles in one sweep iteration and skips pass 2;
   - the same hint under a harder goal (`stream_auto_pipeline_grow_design.py`) still
     grows the core, and pass 2 resizes the FIFO.
+- `auto_pipeline_region_minisweep_test.py` (build_report_device_models): `start_latency=`
+  is only a starting guess. A ChaCha-shaped chain
+  (`auto_pipeline_region_minisweep_design.py`: quarter rounds written in series on a
+  shared state, each word through only two of them) is built untagged and with
+  `start_latency=1`. Both must mini-sweep and lock the repeated `step` helper and
+  build the same depth in at most 3 syntheses. Before the fix, the hinted build
+  reached twice the depth in 5.
 - `auto_pipeline_c_pragma_test.py` (build_report_device_models): C `#pragma AUTOPIPELINE N` under
   `--comb`.
 - `self_check_fixed_auto_pipeline_test.py` (both native_vs_vhdl categories): compares

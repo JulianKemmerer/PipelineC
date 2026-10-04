@@ -749,6 +749,45 @@ planless MAIN's verdict. Missing paths alone never prove a pass on
 a failing clock. A passing base worst-path report supplies the clock's goal
 lower bound to unnamed MAINs.
 
+**A path a MAIN only crosses never re-pipelines it.** A path implicates every
+MAIN with a cell on it. A valid/ready handshake between two registers of one
+MAIN, though, can run through other MAINs' stream wrappers and FSMs, which
+auto-pipelining cannot register. `PATH_MAIN_ROLES` therefore reads Vivado's
+hierarchical names (`SYN.PATH_CELLS_BY_MAIN`): each name goes to its MAIN by
+entity prefix, then to its deepest instance through a trie of VHDL instance
+labels. Each implicated MAIN gets one of three roles:
+- **endpoint**: it owns the start or end register.
+- **through with reach**: some of its cells sit in an instance that can hold
+  added latency (`AUTO_PIPELINE.ADDED_LATENCY_BLOCKER` is None).
+- **crossing**: through, no such cell, and another MAIN with a goal owns an
+  endpoint.
+
+A crossing MAIN does not take the path as feedback:
+- it does not count as that MAIN's driver path;
+- it is kept on that MAIN's iteration record as `crossing_paths`, and a NOTE
+  says once why;
+- the endpoint owner reports the failure, its WARNING and failure reason
+  naming the crossed MAINs and what blocks them.
+
+The plan instead acts on its own worst path, which Vivado's per-MAIN
+endpoint reports always supply. The pass-2 confirmation uses the same rule
+(`PATH_OWNING_MAINS`): a crossed MAIN keeps its implementation. When only
+MAINs with nothing cuttable failed, the confirmation does not fall back to a
+sweep that could not change them.
+
+Two cases keep the old behavior, so a failure is never dropped:
+- names without hierarchy (PyRTL, sky130 instance names) give no roles at
+  all;
+- a name continuing into hierarchy the trie does not know counts as
+  reachable.
+
+Seen for real in the shared WireGuard build at 70 MHz: a testbench
+byte-source path (65.4 MHz) crossed the shared ChaCha wrapper and both
+dataflows' FSMs.
+- It drove ChaCha's growth (44→56 cuts) while ChaCha's own paths already met
+  at 50.
+- It stopped both dataflows as "unpipelinable", although their own paths met.
+
 Before synthesis, the realized implementation signature
 (`IMPLEMENTATION_SIGNATURE`: each MAIN's entity hash, its target clock and the
 MCP counts) is compared against observations already made in this pass. If
@@ -810,14 +849,19 @@ Planning attempts and synthesis observations are therefore different counts.
    fmax flat 3x (1% of target) while cuts grew, delays measured?
           |-- yes --> stop(plateau), warn (blame soft floor if any), keep best
           |
-   attribute critical path to a function (approximate)
+   attribute critical path to a function (approximate; only this MAIN's
+   names -- a path it only crosses never gets here, see above)
           |
    hotspot found:   func_delay_scale[hotspot] *= target/achieved  -> replan
+                    (inside a constrained region: grow the region's count)
    same hotspot 2x: isolated mini-sweep, lock eligible instances in this MAIN
-                    (the isolated probe measures that helper itself)
+                    (the isolated probe measures that helper itself; also
+                    inside an uncapped start_latency= region, never inside a
+                    latency= / max_latency= one)
    hotspot locked:  both endpoints strictly inside the lock -> stop honestly;
                     otherwise try bounded boundary policies
-   hotspot cannot be auto-pipelined (no eligible in-MAIN instance, state regs, ...):
+   hotspot cannot be auto-pipelined (no eligible in-MAIN instance, state regs,
+   or nothing matched and every cell of the path here is in such logic):
                     rescale once (boundary registers may cut its IO paths),
                     then if fmax stagnates stop and tell the user PLAINLY:
                     "critical path is in function F, which cannot be
@@ -855,7 +899,14 @@ compact repeated-helper solution before global densification skips past it:
    `MINISWEEP_LOCK_TARGETS` scopes probing, conflicts, and locks to eligible
    instances in the blamed MAIN; another MAIN owns its own locks. Ineligible
    instances stay combinational and are named in the log and trace. No eligible
-   in-MAIN instance makes the hotspot unpipelinable.
+   in-MAIN instance makes the hotspot unpipelinable. A hotspot inside an
+   uncapped `start_latency=` region takes this step too
+   (`REGION_INTERIOR_LOCK_BLOCKER`): the hint is only a starting count, so the
+   region must search like an untagged call site. Its region-wide growth only
+   spreads cuts over the delay model's layout, which can be far from the real
+   paths (see History: *start_latency regions and mini-sweeps*). After the
+   lock, `RESET_REGION_CALIBRATION_AFTER_LOCK` plans the rest of the region
+   from the clock period.
 4. fmax stuck while cuts grow and the targeted probe did not help → **measure**
    the remaining estimated delays for real and replan with true geometry.
 
@@ -884,7 +935,12 @@ attributes bloat designs — so exact hierarchical matching is never
 attempted. Instead:
 
 1. MAINs resolve via entity-name prefixes (
-   `GET_MAIN_INSTS_FROM_PATH_REPORT` — MAIN entities survive unmangled);
+   `GET_MAIN_INSTS_FROM_PATH_REPORT` — MAIN entities survive unmangled).
+   A plan then sees only its own MAIN's names (`SCOPED_PATH_REPORT`):
+   endpoints and cells of other MAINs are dropped. A shared helper has one
+   function name in every MAIN, so an unscoped substring match can blame a
+   plan for another MAIN's instance. Seen for real: the encrypt dataflow was
+   blamed on `prep_auth_data_fsm` from a cell in the *decrypt* instance;
 2. function-name *fragments* from the subtree's landscape (`SWEEP.
    RANK_PATH_FUNC_CANDIDATES`) are substring-matched against the report's
    register/netlist names (generated `REG_STAGEn_<wire>` FF names survive
@@ -922,7 +978,15 @@ attempted. Instead:
    candidates for the deepest one that auto-pipelining *can* help, so one
    stuck ancestor never masks a densifiable one on the same path;
 3. entity-local `REG_STAGEn` stage numbers are logged only — stage indices
-   are local to the entity the FF lives in, never global;
+   are local to the entity the FF lives in, never global. Messages state what
+   the attribution rests on (`ATTRIBUTION_BASIS`, recorded as
+   `bottleneck_basis`):
+   - the path "runs inside" a function whose name is in both endpoints;
+   - it "starts or ends in" one named in one endpoint;
+   - it "passes through logic of" one matched only by netlist cell names.
+
+   A cell-name match is a guess and is never printed as proof that the
+   path is inside that function;
 4. low confidence → no attribution → global rescale. PYRTL (the no-PART
    software timing model) reports a single fmax with no names at all and
    always takes this path — still floor-bounded and convergent.
@@ -957,11 +1021,25 @@ design would cost far more synthesis runs to reach the same result):
         bottleneck=fft_2pt_pipeline_no_handshake action=densify(fft_... x1.17)
 ```
 
-**Unmet timing fails the build.** The best pipeline found (largest
-worst-case achieved/target ratio across iterations) is still written out —
-those results are useful for debugging — but then the build prints an
+**Unmet timing fails the build.** The best pipeline found is still written
+out — those results are useful for debugging — but then the build prints an
 unmissable per-main error block and exits non-zero; simulation and
-bitstream generation are skipped:
+bitstream generation are skipped. "Best" is decided by `SNAPSHOT_BETTER`, in
+this order:
+1. the largest worst-case achieved/target ratio across the whole design,
+   where ratios within `SNAPSHOT_TIE_TOLERANCE` (1% of target, the
+   `same_mhz_count` rule) are the same result;
+2. then every plan's own paths met;
+3. then the highest own-path ratio;
+4. then fewer pipeline stages.
+
+Meeting every goal is never a tie with missing one. Seen for real: every
+WireGuard 70 MHz iteration failed on one testbench path at 65.407 vs
+65.389 MHz.
+- The old rule (ratio alone) restored the iteration whose ChaCha own path
+  still failed. Its deeper Poly1305 body sized 7 multiplier lanes, 960 DSPs
+  on a 740-DSP part.
+- The tie rule keeps the iteration with every own path met and 5 lanes.
 
 ```
 ================== TIMING NOT MET ================================
@@ -1010,6 +1088,11 @@ explicitly during the sweep:
   and feeds the `TIMING NOT MET` failure exit above;
 - a failing path attributed to an unpipelinable func stops the sweep with
   the culprit named and the reason (`unpipelinable_hotspot`);
+- a failing path between registers of a MAIN with nothing cuttable that only
+  crosses other MAINs' unregisterable logic (`crossing`, above) fails under
+  its owner. The reason is `nothing_auto_pipelinable: path crosses <MAIN>
+  (<blocking func>: <why>), ...`. The crossed MAINs' own verdicts come from
+  their own paths and carry the path in `crossing_paths`;
 - a flat fmax while cuts keep growing stops with `plateau`, naming the soft
   floor (if any) as the likely limit, even when that floor's prediction is
   far off;
@@ -1029,7 +1112,10 @@ feature's module:
   `APPLY_LOCKS`, `AUTO_PIPELINE.ENFORCE_AUTO_PIPELINE_REGIONS` plans and locks each
   constrained call site to its register count; `AUTO_PIPELINE.REGION_FOR_HOTSPOT` /
   `AUTO_PIPELINE_REGION_FEEDBACK` turn a hotspot inside a region into a region
-  count change, and `STOP_AT_AUTO_PIPELINE_LATENCY_LIMIT` stops at a cap.
+  count change, and `STOP_AT_AUTO_PIPELINE_LATENCY_LIMIT` stops at a cap. A
+  repeated helper inside an uncapped `start_latency=` region gets the
+  mini-sweep on its second consecutive attribution, as an untagged call site
+  would (`TRY_HOTSPOT_MINISWEEP`).
   `PLAN_TOTAL_CUTS` / `PLAN_TRIMMABLE_CUTS` / `PLAN_FINGERPRINT_PLACEMENTS` (here)
   count region cuts along with the main's own.
 - **AUTO_MULTI_CYCLE counts.** A failing path matched to an AUTO_MULTI_CYCLE group
@@ -1106,6 +1192,29 @@ snapshot keeps its iteration, and unverified builds get `met: null`.
 `sweep_plateau_unit_test.py` (also `unit_tests.py`) pins `AT_PLATEAU`: the
 sky130 trace stops at iteration 6 and not 5; still-improving,
 no-cut-growth, short, met, or incomplete windows never stop.
+
+`sweep_cross_main_test.py` (also `unit_tests.py`) works from the WireGuard
+shared 70 MHz evidence. The real clock-worst testbench path's Vivado names
+run on a fake hierarchy.
+- **Roles and attribution:**
+  - roles (endpoint / crossing, with the blocking functions);
+  - the encrypt plan's scoped attribution never blames the decrypt
+    instance's `prep_auth_data_fsm`;
+  - attribution basis labels.
+- **Scripted sweeps:**
+  - a crossing path never re-pipelines the plans it crosses and fails under
+    its owner;
+  - without hierarchy evidence the old behavior is kept;
+  - best-result ties go to met own paths: this one fails under the old
+    rule;
+  - the pass-2 confirmation keeps crossed MAINs and skips a fallback that
+    could not help.
+- **Regions:**
+  - region lock rules (start-only allowed; `latency=`, `max_latency=` and
+    groups shared with another MAIN refused);
+  - the mini-sweep streak;
+  - the start bootstrap skipped over existing locks;
+  - a scripted start-only region that grows, then mini-sweeps.
 
 ## 7. Limitations and future work
 
@@ -1257,3 +1366,56 @@ ceiling on a MAC state MUX and then measured 81.5 MHz. A ChaCha path landing
 near 46.5 MHz on the way would have stopped the search at that estimate, so
 `AT_EVIDENCED_HARD_FLOOR` also requires the measured failing path to reach the
 blamed span (`FAILING_PATH_REACHES_SPAN`).
+
+### start_latency regions and mini-sweeps
+
+`start_latency=S` was meant to save iterations. It also turned its call site
+into a constrained region, and region interiors refused mini-sweep locks, so
+a repeated helper inside could only grow with the whole region.
+
+The delay model lays out helpers written in series on a shared struct one
+after another, whatever their per-field dataflow. ChaCha's `block_step` calls
+8 quarter rounds on the whole 16-word state, but every word passes through
+only 2 of them. Measured with Vivado 2019.2 on xc7a200tffg1156-2:
+- an isolated quarter round is 8.5 ns;
+- a whole `block_step` is only 15.8 ns.
+
+Evenly spaced cuts therefore land out of phase with the round boundaries:
+- At 24 and at 33 cuts, the shared 70 MHz build kept the *same* failing
+  15.88 ns quarter-round-to-quarter-round path.
+- Own paths first met at 50 cuts (the private builds settled at 46).
+
+The isolated mini-sweep measures real paths. On the same part at 80 MHz,
+before the hint, it locked `block_step` at 1 cut with 9 shared output banks:
+ChaCha 20 clks in 5 iterations.
+
+`auto_pipeline_region_minisweep_test` reproduces this in miniature on sky130
+at 120 MHz:
+- with the old rule, `start_latency=1` grew to 31 cuts and trimmed to 22, in
+  5 syntheses;
+- the untagged call site locks `step` and ends at 11 in 3;
+- with the fix, both end at 11 in 3.
+
+Fixed and capped regions still never lock inside: their count is the
+constraint's, and a recount resets the interior.
+
+### Cross-MAIN handshake paths
+
+Implicating every MAIN with a cell on a path (`GET_MAIN_INSTS_FROM_PATH_REPORT`)
+is right for the failure, but wrong for feedback. In the shared WireGuard
+70 MHz build, a testbench byte-source handshake (both registers in
+`encrypt_syn_tb`) became the clock-worst path at 65.4 MHz from iteration 4.
+As the only report carrying netlist cells, it implicated:
+- ChaCha's stream wrapper (4 cells);
+- the encrypt dataflow (6 cells);
+- the decrypt dataflow (10 cells).
+
+Failing and longest, it was each plan's first evidence:
+- ChaCha grew 44→50→56 and was stopped as `plateau`, although its own
+  arithmetic met at 50.
+- Both dataflows, whose own paths passed at 71.7 MHz, were stopped as
+  `unpipelinable_hotspot`. The blame went to `prep_auth_data_fsm`, matched in
+  the *decrypt* instance's cells.
+
+`PATH_MAIN_ROLES` keeps that path as the owner's failure and as recorded
+crossing evidence. Only its owner acts on it.

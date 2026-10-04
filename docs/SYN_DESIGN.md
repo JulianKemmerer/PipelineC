@@ -213,6 +213,14 @@ error. `-j 1` is the fix there.
 timing components, and writes the disk cache for non-user code
 (`LOGIC_PATH_DELAY_IS_CACHEABLE`). `GET_MAIN_INSTS_FROM_PATH_REPORT` maps a
 whole-design report back to MAIN instances by entity-name prefix.
+`PATH_CELLS_BY_MAIN` goes one level further for Vivado-style hierarchical
+names. It places each endpoint and netlist cell in its MAIN (exact
+`<entity>/` prefix) and in the deepest instance whose VHDL labels prefix the
+name, using a trie of `VHDL.WIRE_TO_VHDL_NAME` local names cached per
+instance table. A name that continues into unknown hierarchy gets no owner.
+Names in other tools' formats match no MAIN, an empty result. The sweep
+uses this to tell a MAIN that owns a path from one it only crosses
+([`SWEEP_DESIGN.md` §3](SWEEP_DESIGN.md#3-the-refinement-loop)).
 
 
 ## 5. Delay model: leaf-only synthesis with estimates

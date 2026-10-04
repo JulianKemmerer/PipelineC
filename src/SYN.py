@@ -11,7 +11,7 @@ See docs/SYN_DESIGN.md. This module owns:
   `ADD_PATH_DELAY_TO_LOOKUP`), one instance (`RUN_INST_SYN_AND_UPDATE_CACHE`),
   the full multi-MAIN design, and the final bitstream;
 - the reports it expects: parsed timing paths (`SET_MEASURED_DELAY_FROM_REPORT`,
-  `GET_MAIN_INSTS_FROM_PATH_REPORT`), measured area, and pre-synthesis area /
+  `GET_MAIN_INSTS_FROM_PATH_REPORT`, `PATH_CELLS_BY_MAIN`), measured area, and pre-synthesis area /
   register estimates;
 - the on-disk path-delay and area caches, output directories, final files.
 
@@ -1030,6 +1030,93 @@ def SERIALIZE_PATH_REPORT(path):
         "logic_levels",
     )
     return {k: getattr(path, k, None) for k in fields}
+
+
+_PATH_TRIE_INST = "\0inst"
+
+
+def _VHDL_INSTANCE_TRIE(parser_state):
+    """main inst -> nested {lowercase VHDL instance label: node} trie of every
+    instance below it, each node naming its instance under _PATH_TRIE_INST.
+    Labels are the ones VHDL emission gives submodule instances
+    (WIRE_TO_VHDL_NAME of the local name), which Vivado keeps as hierarchy
+    in post-synthesis cell names. Cached per instance table."""
+    table = parser_state.LogicInstLookupTable
+    key = (id(table), len(table))
+    cached = getattr(parser_state, "_vhdl_instance_trie", None)
+    if cached is not None and cached[0] == key:
+        return cached[1]
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    tries = {}
+    for inst in table:
+        parts = inst.split(marker)
+        node = tries.setdefault(parts[0], {})
+        for local in parts[1:]:
+            node = node.setdefault(
+                VHDL.WIRE_TO_VHDL_NAME(local, parser_state).lower(), {}
+            )
+        node[_PATH_TRIE_INST] = inst
+    parser_state._vhdl_instance_trie = (key, tries)
+    return tries
+
+
+def PATH_CELLS_BY_MAIN(path_report, parser_state, TimingParamsLookupTable):
+    """Which MAIN, and which instance inside it, each name on a timing path
+    belongs to.
+
+    Returns {main inst: {"start": owner or None, "end": owner or None,
+    "cells": [(name, owner inst or None)]}} for the names that start with a
+    MAIN's entity name plus "/" (Vivado's hierarchical cell/net/pin names).
+    The owner is the deepest instance whose label path prefixes the name;
+    None when the name continues into hierarchy that was not recognized
+    (more than a cell plus a pin below the last matched instance), so the
+    caller cannot claim to know where it is. Names in other tools' formats
+    match no MAIN and are left out: an empty result means "no hierarchy
+    evidence", never "nothing on this path"."""
+    names = []
+    for name in [path_report.start_reg_name, path_report.end_reg_name] + sorted(
+        getattr(path_report, "netlist_resources", None) or ()
+    ):
+        if name is not None and name not in names:
+            names.append(name)
+    if not names:
+        return {}
+    prefixes = {}
+    for main_inst in parser_state.main_mhz:
+        entity = VHDL.GET_ENTITY_NAME(
+            main_inst,
+            parser_state.LogicInstLookupTable[main_inst],
+            TimingParamsLookupTable,
+            parser_state,
+        )
+        prefixes[entity.lower() + "/"] = main_inst
+    tries = _VHDL_INSTANCE_TRIE(parser_state)
+    by_main = {}
+    for name in names:
+        lower = name.lower()
+        main_inst = next((m for p, m in prefixes.items() if lower.startswith(p)), None)
+        if main_inst is None:
+            continue
+        node = tries.get(main_inst, {})
+        owner = main_inst
+        rest = lower.split("/")[1:]
+        consumed = 0
+        for label in rest:
+            child = node.get(label)
+            if child is None:
+                break
+            node = child
+            consumed += 1
+            owner = child.get(_PATH_TRIE_INST, owner)
+        if len(rest) - consumed > 2:
+            owner = None
+        row = by_main.setdefault(main_inst, {"start": None, "end": None, "cells": []})
+        if name == path_report.start_reg_name:
+            row["start"] = owner or main_inst
+        if name == path_report.end_reg_name:
+            row["end"] = owner or main_inst
+        row["cells"].append((name, owner))
+    return by_main
 
 
 def GET_MAIN_INSTS_FROM_PATH_REPORT(path_report, parser_state, TimingParamsLookupTable):

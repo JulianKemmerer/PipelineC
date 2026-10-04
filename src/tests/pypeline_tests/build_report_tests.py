@@ -97,6 +97,18 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # start_latency= is only a starting guess: a ChaCha-shaped repeated
+    # helper inside a start_latency=1 region takes the same mini-sweep lock
+    # and reaches the same depth as the untagged call site (two builds,
+    # ~1.5 min each).
+    tests.append(
+        Test(
+            name="auto_pipeline_region_minisweep_test",
+            category=DM,
+            cmd=[INST_DIR / "auto_pipeline_region_minisweep_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # C frontend `#pragma AUTOPIPELINE N`: a fixed latency, built with exactly
     # N clocks even by a --comb build.
     tests.append(

@@ -552,7 +552,10 @@ delay axis, and the container can't count the region's latency.
 - **Register count K.**
   - Fixed: K = N.
   - `start_latency` on its first iteration: K = S. The region's private budget divisor
-    `region.scale` is calibrated so that unchanged knobs keep reproducing S.
+    `region.scale` is calibrated so that unchanged knobs keep reproducing S. A
+    region whose landscape already holds mini-sweep locks (`Segment.LOCKED`,
+    e.g. carried into a later pass) skips this bootstrap: S more cuts on top
+    of the locks would over-pipeline it.
   - Otherwise: the planner's own count for the plan's clock period, with the budget
     divided by `global_scale * region.scale` and in-region weights including
     `func_delay_scale`, capped at M.
@@ -575,6 +578,11 @@ delay axis, and the container can't count the region's latency.
   - Region landscapes feed `SWEEP.RANK_PATH_FUNC_CANDIDATES`, and a region root counts as a
     valid attribution. When `REGION_FOR_HOTSPOT` places a critical path inside a region,
     that group's `region.scale` is multiplied (the `grow_auto_pipeline` action).
+    In an uncapped `start_latency=` region, the second consecutive attribution
+    to the same interior helper runs the mini-sweep instead, as for an
+    untagged call site (`SWEEP.TRY_HOTSPOT_MINISWEEP`). After the lock,
+    `RESET_REGION_CALIBRATION_AFTER_LOCK` resets the group's `region.scale` to
+    1.0, so the rest of the region is planned from the clock period.
   - Global replans grow regions too.
   - If nothing else in the plan can change and no region count moved, the region with
     the worst predicted stage gets one more register.
@@ -590,7 +598,13 @@ delay axis, and the container can't count the region's latency.
     inside capped regions;
   - an iteration's physical schedule fingerprint (region placements included) repeats
     one already tried while a region is at its cap. This stops before re-synthesizing.
-- **Mini-sweeps** never lock a hotspot that lies inside a region or contains one.
+- **Mini-sweeps** never lock a hotspot that contains a region, or that lies inside a
+  fixed (`latency=`) or capped (`max_latency=`) region: those own their count, and a
+  recount resets the interior. Inside an uncapped `start_latency=` region they do lock,
+  when every member of the region's group is in the blamed MAIN
+  (`SWEEP.REGION_INTERIOR_LOCK_BLOCKER`). The hint is a starting count only, and
+  region-wide growth over a serial-layout delay model can need twice the registers. See
+  [`SWEEP_DESIGN.md` History](SWEEP_DESIGN.md#start_latency-regions-and-mini-sweeps).
 - **Everything else includes regions:**
   - snapshots;
   - `sweep_history.json` and placement traces (`auto_pipeline_regions`);
@@ -637,6 +651,7 @@ for the full coverage list. The ones that exercise this module end to end
 |---|---|
 | `auto_pipeline_latency_test.py` | end-to-end factory design (`make_stream_auto_pipeline`) through the full sweep **plus** the §5 pin-and-confirm loop: pass 2 runs, harvested `.latency` > 0, the seeded confirmation synthesis passes with no fallback sweep, the loop settles within the pass cap, and `sweep_history.json` `final` records come from the confirmation run |
 | `auto_pipeline_constraints_test.py` | §6 constrained regions: `latency=2` / `start_latency=1` call sites built with exactly 2 / 1 registers and pass 2 skipped; a `max_latency=1` cap stops an unreachable goal promptly, naming the cap, then `TIMING NOT MET`; `make_stream_auto_pipeline(..., start_latency=1)` sizes its bootstrap FIFO from the hint, settles in one sweep iteration and skips pass 2 when the hint matches, and grows past a too-small hint (pass 2 resizes the FIFO) |
+| `auto_pipeline_region_minisweep_test.py` | `start_latency=1` is only a starting guess: a ChaCha-shaped chain of a repeated helper (quarter rounds written in series on a shared state) takes the same mini-sweep lock and reaches the same depth (11) in at most 3 syntheses, with and without the hint (before the fix the hinted build reached 22 in 5) |
 | `auto_pipeline_c_pragma_test.py` | C `#pragma AUTOPIPELINE 2` is a fixed latency, built with exactly 2 clocks even by a `--comb` build |
 | `sweep_fsm_auto_pipeline_test.py` | Reg-FSM main + AUTO_PIPELINE region: the cut subtree is the tagged child, the FSM's latency stays 0 |
 | `sweep_float32_test.py` (registered once per backend, **every** `--syn_tool`) | a plain auto-pipelined float32 adder MAIN sweeps to its goal on every synthesis backend, not just sky130 -- see [pypeline_TESTS.md](pypeline_TESTS.md#per-syn_tool-sweep-coverage) |

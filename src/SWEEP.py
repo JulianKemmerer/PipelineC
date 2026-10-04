@@ -4826,6 +4826,24 @@ def DESCRIBE_EXCLUDED_MINISWEEP_INSTANCES(excluded, parser_state):
     return f"; left {len(excluded)} instance(s) combinational (" + "; ".join(descriptions) + ")"
 
 
+def REGION_INTERIOR_LOCK_BLOCKER(region, plan, parser_state):
+    """Why a mini-sweep lock may not go inside `region`, or None.
+
+    A fixed (latency=) or capped (max_latency=) region owns its register
+    count and resets its interior on a recount, which would drop the lock.
+    Every member of the region's group must lie in this plan's MAIN: locks
+    are per MAIN, and group members must realize one .latency."""
+    if region.constraint.upper_bound() is not None:
+        return "constrained AUTO_PIPELINE region"
+    marker = C_TO_LOGIC.SUBMODULE_MARKER
+    for other in AUTO_PIPELINE.COLLECT_AUTO_PIPELINE_REGIONS(parser_state):
+        if other.group == region.group and not other.inst.startswith(
+            plan.main_inst + marker
+        ):
+            return "AUTO_PIPELINE region shared with another MAIN"
+    return None
+
+
 def LOCK_BLOCKED_REASON(func, plan, targets, parser_state):
     """Why `func` may not be locked in this plan, or None.
 
@@ -4841,12 +4859,20 @@ def LOCK_BLOCKED_REASON(func, plan, targets, parser_state):
     root_funcs.add(parser_state.LogicInstLookupTable[plan.main_inst].func_name)
     if func in root_funcs:
         return "subtree root"
-    # Never lock inside, or around, a constrained AUTO_PIPELINE region: its
-    # register count is owned by ENFORCE_AUTO_PIPELINE_REGIONS
+    # Never lock around a constrained AUTO_PIPELINE region, nor inside one
+    # whose register count a constraint owns (latency= / max_latency=: see
+    # ENFORCE_AUTO_PIPELINE_REGIONS). An uncapped start_latency= region is
+    # only a starting guess, so its interior takes locks like an untagged
+    # call site's would.
     for func_inst in targets:
         for region in getattr(plan, "regions", ()):
-            if _INSTS_CONFLICT(func_inst, region.inst):
+            if not _INSTS_CONFLICT(func_inst, region.inst):
+                continue
+            if not func_inst.startswith(region.inst + C_TO_LOGIC.SUBMODULE_MARKER):
                 return "constrained AUTO_PIPELINE region"
+            reason = REGION_INTERIOR_LOCK_BLOCKER(region, plan, parser_state)
+            if reason is not None:
+                return reason
     func_logic = parser_state.FuncLogicLookupTable[func]
     if not func_logic.CAN_HAVE_ADDED_LATENCY(parser_state):
         return "cannot have added latency"
@@ -4982,6 +5008,33 @@ def STORE_CARRIED_LOCKS(plans, parser_state):
 def HOTSPOT_IS_LOCKED(hotspot_func, plan, parser_state):
     targets, _ = MINISWEEP_LOCK_TARGETS(hotspot_func, plan, parser_state)
     return bool(targets) and all(inst in plan.locked for inst in targets)
+
+
+def TRY_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
+    """Count one more consecutive attribution to hotspot_func (resetting other
+    funcs' streaks); once it repeats MINISWEEP_HOTSPOT_STREAK times and
+    mini-sweep budget remains, run the isolated mini-sweep. True if it
+    locked the hotspot.
+
+    A repeated, attributed helper is worth an early isolated probe:
+    RUN_HOTSPOT_MINISWEEP measures that helper before making a lock, so an
+    estimate elsewhere in the hierarchy is not a reason to keep densifying
+    past a compact repeated solution. False leaves the caller's ordinary
+    feedback (densify, region growth) to run."""
+    plan.hotspot_streak[hotspot_func] = plan.hotspot_streak.get(hotspot_func, 0) + 1
+    for f in list(plan.hotspot_streak.keys()):
+        if f != hotspot_func:
+            plan.hotspot_streak[f] = 0
+    if (
+        plan.hotspot_streak[hotspot_func] < MINISWEEP_HOTSPOT_STREAK
+        or plan.minisweeps_used >= MAX_MINISWEEPS
+    ):
+        return False
+    plan.minisweeps_used += 1
+    if not RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
+        return False
+    plan.hotspot_streak[hotspot_func] = 0
+    return True
 
 
 def RUN_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
@@ -5230,6 +5283,271 @@ def GET_MAIN_INSTS_FOR_PATH_REPORT(path_report, parser_state, multimain_timing_p
     )
 
 
+def PATH_MAIN_ROLES(path_report, parser_state, multimain_timing_params):
+    """Each MAIN's role on one timing path, read from hierarchical names.
+
+    GET_MAIN_INSTS_FOR_PATH_REPORT implicates every MAIN with a cell on the
+    path. A valid/ready handshake between two registers of one MAIN can pass
+    through other MAINs' stream wrappers and FSMs: those MAINs are on the path,
+    but their auto-pipelining cannot register it. Seen for real (WireGuard,
+    shared, 70 MHz): a testbench byte-source path crossed the shared ChaCha
+    wrapper and both dataflows' FSMs, then drove all three plans ahead of
+    their own paths -- ChaCha grew while its arithmetic already met.
+
+    Returns None without hierarchy evidence (one MAIN, or names no MAIN
+    entity prefixes, e.g. PyRTL or sky130 instance names); callers then treat
+    every implicated MAIN as owning the path. Otherwise {main inst: role},
+    role a dict:
+      relation  "endpoint" (owns the start or end register) or "through"
+      start/end whether it owns that endpoint
+      names     the path's names inside this MAIN
+      reach     some of those can hold added latency (ADDED_LATENCY_BLOCKER
+                is None for the owning instance), or could not be placed
+      blockers  [(func, reason)] of the instances blocking the others
+      crossing  "through" without reach while another MAIN with a goal owns
+                an endpoint: that owner reports the failure; this MAIN
+                cannot change the path and takes no feedback from it
+    """
+    if len(parser_state.main_mhz) <= 1:
+        return None
+    by_main = SYN.PATH_CELLS_BY_MAIN(
+        path_report, parser_state, multimain_timing_params.TimingParamsLookupTable
+    )
+    if not by_main:
+        return None
+    roles = {}
+    for main_inst, row in by_main.items():
+        reach = False
+        blockers = {}
+        for _name, owner in row["cells"]:
+            if owner is None:
+                reach = True
+                continue
+            blocker = AUTO_PIPELINE.ADDED_LATENCY_BLOCKER(owner, parser_state)
+            if blocker is None:
+                reach = True
+                continue
+            logic = parser_state.LogicInstLookupTable[blocker]
+            blockers.setdefault(logic.func_name, WHY_NOT_SLICEABLE(logic, parser_state))
+        roles[main_inst] = dict(
+            relation="endpoint" if row["start"] or row["end"] else "through",
+            start=row["start"] is not None,
+            end=row["end"] is not None,
+            names=[name for name, _owner in row["cells"]],
+            reach=reach,
+            blockers=sorted(blockers.items()),
+            crossing=False,
+        )
+    owned = any(
+        role["relation"] == "endpoint"
+        and SYN.GET_TARGET_MHZ(main_inst, parser_state) is not None
+        for main_inst, role in roles.items()
+    )
+    for role in roles.values():
+        role["crossing"] = owned and role["relation"] == "through" and not role["reach"]
+    return roles
+
+
+def PATH_OWNING_MAINS(path_report, parser_state, multimain_timing_params):
+    """GET_MAIN_INSTS_FOR_PATH_REPORT minus the MAINs the path only crosses
+    (PATH_MAIN_ROLES): the MAINs whose verdict and implementation the path
+    belongs to."""
+    mains = GET_MAIN_INSTS_FOR_PATH_REPORT(
+        path_report, parser_state, multimain_timing_params
+    )
+    if len(mains) <= 1:
+        return mains
+    roles = PATH_MAIN_ROLES(path_report, parser_state, multimain_timing_params)
+    if roles is None:
+        return mains
+    return {m for m in mains if not (m in roles and roles[m]["crossing"])}
+
+
+def _SERIALIZE_MAIN_ROLES(path_report, parser_state, params):
+    """{"main_roles": {MAIN func: role}} for an observation path record when
+    the path implicates several MAINs and names carry hierarchy, else {}."""
+    if (
+        len(parser_state.main_mhz) <= 1
+        or path_report.start_reg_name is None
+        or path_report.end_reg_name is None
+    ):
+        return {}
+    if len(GET_MAIN_INSTS_FOR_PATH_REPORT(path_report, parser_state, params)) <= 1:
+        return {}
+    roles = PATH_MAIN_ROLES(path_report, parser_state, params)
+    if roles is None:
+        return {}
+    return {
+        "main_roles": {
+            parser_state.LogicInstLookupTable[m].func_name: {
+                "relation": r["relation"],
+                "crossing": r["crossing"],
+                "reach": r["reach"],
+                "blocked_by": [f"{f}: {why}" for f, why in r["blockers"]],
+            }
+            for m, r in sorted(roles.items())
+        }
+    }
+
+
+def SCOPED_PATH_REPORT(path_report, main_inst, roles):
+    """path_report as seen from one MAIN, for attribution: endpoints and
+    netlist resources that belong to OTHER MAINs are dropped (names no MAIN
+    prefixes stay). Shared helpers have one func name in every MAIN, so an
+    unscoped substring match can blame this MAIN's plan for a cell of another
+    MAIN's instance (seen for real: the encrypt plan blamed
+    prep_auth_data_fsm from a cell in the decrypt instance). Without roles,
+    the report itself."""
+    if roles is None or main_inst not in roles:
+        return path_report
+    others = set()
+    for other_inst, role in roles.items():
+        if other_inst != main_inst:
+            others.update(role["names"])
+    scoped = copy.copy(path_report)
+    if path_report.start_reg_name in others:
+        scoped.start_reg_name = None
+    if path_report.end_reg_name in others:
+        scoped.end_reg_name = None
+    scoped.netlist_resources = {
+        name for name in (getattr(path_report, "netlist_resources", None) or ())
+        if name not in others
+    }
+    return scoped
+
+
+def DESCRIBE_CROSSING(path_report, roles, parser_state):
+    """One line naming the MAINs a path only crosses (role "crossing") and
+    what blocks registers in each, e.g.
+    'chacha20_pipeline_shared (pipeline_func: state_regs)'."""
+    parts = []
+    for main_inst, role in sorted(roles.items()):
+        if not role["crossing"]:
+            continue
+        name = parser_state.LogicInstLookupTable[main_inst].func_name
+        if role["blockers"]:
+            name += " (" + ", ".join(f"{f}: {why}" for f, why in role["blockers"]) + ")"
+        parts.append(name)
+    return ", ".join(parts)
+
+
+def RECORD_CROSSING(crossings, printed, main_inst, path_report, curr_mhz, roles, parser_state):
+    """Keep a failing path that main_inst only crosses (PATH_MAIN_ROLES) for
+    its iteration record, and say once per sweep why it does not re-pipeline
+    that MAIN. FEEDBACK_PATHS orders failing paths worst first, so the first
+    path per register-bank pair is the worst one."""
+    key = SYN.PATH_EVIDENCE_KEY(path_report)
+    row = crossings.setdefault(main_inst, {})
+    if key in row:
+        return
+    owners = sorted(
+        parser_state.LogicInstLookupTable[m].func_name
+        for m, r in roles.items()
+        if r["relation"] == "endpoint"
+    )
+    blockers = [f"{f}: {why}" for f, why in roles[main_inst]["blockers"]]
+    row[key] = {
+        "owner_mains": owners,
+        "achieved_mhz": round(curr_mhz, 3),
+        "start_reg_name": path_report.start_reg_name,
+        "end_reg_name": path_report.end_reg_name,
+        "blocked_by": blockers,
+    }
+    if (main_inst, key) in printed:
+        return
+    printed.add((main_inst, key))
+    name = parser_state.LogicInstLookupTable[main_inst].func_name
+    print(
+        f"[sweep] NOTE: a failing {curr_mhz:.2f} MHz path between registers of "
+        f"{', '.join(owners)} crosses {name}"
+        + (f" ({', '.join(blockers)})" if blockers else "")
+        + ", whose logic on it cannot hold added latency; it is reported under "
+        f"{', '.join(owners)} and does not re-pipeline {name}.",
+        flush=True,
+    )
+
+
+def ATTRIBUTION_BASIS(path_report, func_name):
+    """How an attribution of path_report to func_name is evidenced, so a
+    message can say what was measured and what was guessed:
+      "inside"   the name is in every available endpoint (the path's
+                 registers are inside func_name)
+      "endpoint" in one endpoint name only
+      "cells"    only in netlist cell/net names: the path passes through its
+                 logic
+    None when the name is in none of them (e.g. named from the instance
+    hierarchy instead, see PATH_MAIN_ROLES)."""
+    if func_name is None:
+        return None
+    fl = func_name.lower()
+    endpoints = [
+        e.lower() for e in (path_report.start_reg_name, path_report.end_reg_name) if e
+    ]
+    if endpoints and all(fl in e for e in endpoints):
+        return "inside"
+    if any(fl in e for e in endpoints):
+        return "endpoint"
+    if any(fl in r.lower() for r in (getattr(path_report, "netlist_resources", None) or ())):
+        return "cells"
+    return None
+
+
+def DESCRIBE_HOTSPOT_LOCATION(basis, func_desc):
+    """Where the critical path is, worded by what the attribution rests on
+    (ATTRIBUTION_BASIS, or "hierarchy" for an instance-hierarchy blocker)."""
+    if basis == "inside":
+        return f"the critical path runs inside {func_desc}"
+    if basis == "endpoint":
+        return f"the critical path starts or ends in {func_desc}"
+    if basis == "cells":
+        return (
+            f"the critical path passes through logic of {func_desc} "
+            "(matched by netlist cell names; no register of the path is inside it)"
+        )
+    if basis == "hierarchy":
+        return (
+            f"every cell of the critical path in this MAIN sits in {func_desc} "
+            "(by instance hierarchy)"
+        )
+    return f"the critical path was attributed to {func_desc}"
+
+
+# Two whole-design results whose worst achieved/target ratios differ by less
+# than this are the same result (the same 1%-of-target rule same_mhz_count
+# uses): another criterion decides between them.
+SNAPSHOT_TIE_TOLERANCE = 0.01
+
+
+def SNAPSHOT_BETTER(candidate, best, tolerance=SNAPSHOT_TIE_TOLERANCE):
+    """Is the candidate synthesized implementation a better result to keep than
+    the best so far? Each is (whole-design worst ratio, own-path worst ratio
+    capped at 1.0, total pipeline stages):
+      1. meeting every goal beats not; otherwise a whole-design ratio more
+         than `tolerance` higher wins;
+      2. within tolerance: meeting every plan's own paths beats not, then a
+         plan own-path ratio more than `tolerance` higher;
+      3. still tied: fewer pipeline stages (fewer registers, and fewer lanes in
+         latency-sized designs);
+      4. otherwise the earlier result stays.
+    Seen for real (WireGuard, shared, 70 MHz): every iteration failed on the
+    same testbench handshake path, 65.407 vs 65.389 MHz. The old
+    highest-ratio rule kept the iteration whose ChaCha own path still failed
+    and whose deeper Poly1305 body sized 7 multiplier lanes (960 DSPs, over
+    capacity) over one with every own path met and 5 lanes."""
+    if best is None:
+        return True
+    (c_all, c_own, c_stages), (b_all, b_own, b_stages) = candidate, best
+    if (c_all >= 1.0) != (b_all >= 1.0):
+        return c_all >= 1.0
+    if abs(c_all - b_all) > tolerance:
+        return c_all > b_all
+    if (c_own >= 1.0) != (b_own >= 1.0):
+        return c_own >= 1.0
+    if abs(c_own - b_own) > tolerance:
+        return c_own > b_own
+    return c_stages < b_stages
+
+
 def PRINT_FLOOR_REPORT(plan, parser_state):
     for subtree_root in plan.subtrees:
         landscape = plan.landscapes.get(subtree_root)
@@ -5427,6 +5745,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
 
     best_tpl = None
     best_score = None
+    best_key = None
     # sweep_history.json provenance: main inst -> the record each synthesized
     # iteration appended; snapshots keep a reference to their iteration's
     # dict so a restored table reports the iteration it came from
@@ -5480,6 +5799,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             flush=True,
         )
 
+    # (main inst, path evidence key) crossing NOTEs already printed
+    printed_crossings = set()
     while True:
         iteration += 1
         # Did an AUTO_MULTI_CYCLE count change this iteration (needs another syn run)
@@ -5488,6 +5809,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         # AUTO_MULTI_CYCLE change) supersedes earlier ones
         planless_results = {}
         planless_auto_multi_cycle_blame = {}
+        # main inst -> the MAINs its kept failing (as written) path crosses
+        planless_crossing = {}
         # Fresh zero-clock table, then locks, then planned cuts
         tpl = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
         for plan in plans.values():
@@ -5919,11 +6242,20 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
         # (fresh concrete lock, boundary policy, same-depth refinement): their
         # repeated MHz is not stagnation yet - that candidate is observed first.
         new_candidate_plans = set()
+        # main inst -> {path evidence key: failing path this MAIN only crosses}
+        crossings = {}
+        # plan main inst -> worst achieved/target ratio of its own paths
+        plan_own_scores = {}
         for path_report in FEEDBACK_PATHS(timing_report, parser_state, multimain_timing_params):
             reported_clock_group = path_report.path_group
             curr_mhz = 1000.0 / path_report.path_delay_ns
             main_insts = GET_MAIN_INSTS_FOR_PATH_REPORT(
                 path_report, parser_state, multimain_timing_params
+            )
+            roles = (
+                PATH_MAIN_ROLES(path_report, parser_state, multimain_timing_params)
+                if len(main_insts) > 1
+                else None
             )
             if len(main_insts) == 0:
                 print(
@@ -5949,6 +6281,20 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                     overall_score = score
                 if main_inst in plans:
                     evaluated_plans.add(main_inst)
+                role = roles.get(main_inst) if roles else None
+                if role is not None and role["crossing"]:
+                    # Only crossed (see PATH_MAIN_ROLES): the endpoint owner
+                    # reports this path. Record it; never re-pipeline from it.
+                    if not met:
+                        RECORD_CROSSING(
+                            crossings, printed_crossings, main_inst, path_report,
+                            curr_mhz, roles, parser_state,
+                        )
+                    continue
+                if main_inst in plans:
+                    plan_own_scores[main_inst] = min(
+                        plan_own_scores.get(main_inst, score), score
+                    )
                 if auto_multi_cycle_group is not None and not met:
                     # The critical path is an AUTO_MULTI_CYCLE multi-cycle path: more
                     # cycles (not more pipelining) is the remedy, and this is
@@ -6037,6 +6383,10 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         planless_results, main_inst, curr_mhz, met, target_mhz
                     ):
                         continue
+                    crossed = DESCRIBE_CROSSING(path_report, roles, parser_state) if roles else ""
+                    planless_crossing.pop(main_inst, None)
+                    if crossed and not met:
+                        planless_crossing[main_inst] = crossed
                     iter_records[main_inst] = RECORD_SWEEP_ITERATION(
                         main_logic.func_name,
                         target_mhz,
@@ -6047,14 +6397,21 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             "achieved_mhz": round(curr_mhz, 3),
                             "met": met,
                             "action": "as_written",
+                            **({"crosses": crossed} if crossed and not met else {}),
                         },
                     )
                     if not met:
+                        crossed_str = (
+                            f" The path crosses {crossed}, which auto-pipelining "
+                            "cannot register either."
+                            if crossed
+                            else ""
+                        )
                         print(
                             f"[sweep] WARNING: {main_logic.func_name} fails timing "
                             f"({curr_mhz:.2f} MHz vs {target_mhz:.2f} MHz goal) and auto-pipelining "
                             "cannot help it (no sliceable logic and no AUTO_PIPELINE regions in this main) - "
-                            "restructure the design or lower the clock goal."
+                            f"restructure the design or lower the clock goal.{crossed_str}"
                         )
                         print("START: ", path_report.start_reg_name, "=>")
                         print(" ~", path_report.path_delay_ns, "ns of logic+routing ~")
@@ -6080,7 +6437,13 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         predicted_ns = max(
                             predicted_ns, PREDICTED_STAGE_NS(cuts, landscape)
                         )
+                # A region-only plan's stages are all in its regions
+                for region in plan.regions:
+                    predicted_ns = max(predicted_ns, region.predicted_ns)
+                # Attribution sees only this MAIN's names (SCOPED_PATH_REPORT)
+                scoped_path = SCOPED_PATH_REPORT(path_report, main_inst, roles)
                 hotspot_func = None
+                hotspot_basis = None
                 stage_info = ""
                 action = "met" if met else "?"
                 if met:
@@ -6131,7 +6494,7 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         or SYN.HIER_SYN_MODE == "prim"
                     )
                     at_hard_floor = AT_EVIDENCED_HARD_FLOOR(
-                        plan, curr_mhz, target_mhz, path_report, parser_state,
+                        plan, curr_mhz, target_mhz, scoped_path, parser_state,
                         delays_measured,
                     )
                     at_soft_floor = (
@@ -6207,8 +6570,22 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                             unpipelinable_reason,
                             stage_info,
                         ) = RESOLVE_PIPELINABLE_HOTSPOT(
-                            path_report, plan, parser_state
+                            scoped_path, plan, parser_state
                         )
+                        if (
+                            hotspot_func is None
+                            and role is not None
+                            and not role["reach"]
+                            and role["blockers"]
+                        ):
+                            # Nothing in this plan's landscapes matched, and
+                            # every cell of the path in this MAIN sits in an
+                            # instance that cannot hold added latency: name it
+                            # instead of blindly rescaling the whole plan.
+                            hotspot_func, unpipelinable_reason = role["blockers"][0]
+                            hotspot_basis = "hierarchy"
+                        else:
+                            hotspot_basis = ATTRIBUTION_BASIS(scoped_path, hotspot_func)
                         if (
                             hotspot_func is not None
                             and unpipelinable_reason is not None
@@ -6223,21 +6600,31 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 unpipelinable_reason,
                             )
                             if plan.same_mhz_count >= 1:
+                                where = DESCRIBE_HOTSPOT_LOCATION(
+                                    hotspot_basis,
+                                    f"function {hotspot_func}"
+                                    f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)}",
+                                )
                                 print(
                                     f"[sweep] WARNING: {main_logic.func_name} cannot meet {target_mhz:.2f} MHz: "
-                                    f"the critical path is in function {hotspot_func}"
-                                    f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)}, which cannot be "
+                                    f"{where}, which cannot be "
                                     f"auto-pipelined ({unpipelinable_reason}). Adding pipeline registers cannot "
                                     f"subdivide this path - restructure {hotspot_func} or lower the clock goal. "
                                     "Keeping best result.",
                                     flush=True,
                                 )
+                                print("START: ", path_report.start_reg_name, "=>")
+                                print("END: =>", path_report.end_reg_name, flush=True)
                                 plan.stopped_reason = "unpipelinable_hotspot"
                                 action = f"stop(unpipelinable {hotspot_func})"
                             else:
+                                where = DESCRIBE_HOTSPOT_LOCATION(
+                                    hotspot_basis,
+                                    f"{hotspot_func}"
+                                    f"{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)}",
+                                )
                                 print(
-                                    f"[sweep] NOTE: {main_logic.func_name} critical path attributed to "
-                                    f"{hotspot_func}{SYN.FUNC_SRC_LOC_STR(parser_state, hotspot_func)}, "
+                                    f"[sweep] NOTE: {main_logic.func_name}: {where}, "
                                     f"which cannot be auto-pipelined internally ({unpipelinable_reason}); "
                                     "registers at its boundaries may still help - replanning.",
                                     flush=True,
@@ -6251,21 +6638,6 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 )
                                 plan.global_scale *= step
                                 action = f"replan(global x{plan.global_scale:.2f}, {hotspot_func} unpipelinable)"
-                                made_change = True
-                        elif (
-                            hotspot_func is not None
-                            and AUTO_PIPELINE.REGION_FOR_HOTSPOT(hotspot_func, plan, parser_state)
-                            is not None
-                        ):
-                            action, region_changed = AUTO_PIPELINE.AUTO_PIPELINE_REGION_FEEDBACK(
-                                plan,
-                                AUTO_PIPELINE.REGION_FOR_HOTSPOT(hotspot_func, plan, parser_state),
-                                hotspot_func,
-                                target_mhz,
-                                curr_mhz,
-                                parser_state,
-                            )
-                            if region_changed:
                                 made_change = True
                         elif hotspot_func is not None and HOTSPOT_IS_LOCKED(
                             hotspot_func, plan, parser_state
@@ -6329,51 +6701,55 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                                 plan.global_scale *= step
                                 action = f"replan(global x{plan.global_scale:.2f}, hotspot {hotspot_func} locked)"
                                 made_change = True
-                        elif hotspot_func is not None:
-                            plan.hotspot_streak[hotspot_func] = (
-                                plan.hotspot_streak.get(hotspot_func, 0) + 1
+                        elif (
+                            hotspot_func is not None
+                            and AUTO_PIPELINE.REGION_FOR_HOTSPOT(hotspot_func, plan, parser_state)
+                            is not None
+                        ):
+                            region = AUTO_PIPELINE.REGION_FOR_HOTSPOT(
+                                hotspot_func, plan, parser_state
                             )
-                            # Other funcs' streaks reset
-                            for f in list(plan.hotspot_streak.keys()):
-                                if f != hotspot_func:
-                                    plan.hotspot_streak[f] = 0
-                            # A repeated, attributed helper is worth an early
-                            # isolated probe. RUN_HOTSPOT_MINISWEEP measures
-                            # that helper before making a lock, so an estimate
-                            # elsewhere in the hierarchy is not a reason to
-                            # keep globally densifying past a compact repeated
-                            # solution. If the probe cannot find a nonzero
-                            # internal cut, ordinary feedback densification
-                            # continues below.
+                            # A repeated helper inside an uncapped
+                            # start_latency= region takes the same measured
+                            # mini-sweep an untagged call site's would; a
+                            # region-wide count change only spreads cuts over
+                            # the delay model's geometry (see
+                            # REGION_INTERIOR_LOCK_BLOCKER).
                             if (
-                                plan.hotspot_streak[hotspot_func]
-                                >= MINISWEEP_HOTSPOT_STREAK
-                                and plan.minisweeps_used < MAX_MINISWEEPS
-                            ):
-                                plan.minisweeps_used += 1
-                                if RUN_HOTSPOT_MINISWEEP(
+                                hotspot_func != region.func_name
+                                and REGION_INTERIOR_LOCK_BLOCKER(
+                                    region, plan, parser_state
+                                )
+                                is None
+                                and TRY_HOTSPOT_MINISWEEP(
                                     hotspot_func, plan, parser_state
-                                ):
-                                    new_candidate_plans.add(main_inst)
-                                    action = f"minisweep({hotspot_func})"
-                                    plan.hotspot_streak[hotspot_func] = 0
-                                    made_change = True
-                                else:
-                                    # Couldn't fix in isolation: densify anyway
-                                    step = min(
-                                        max(
-                                            (target_mhz / curr_mhz) * 1.05,
-                                            FUNC_SCALE_MIN_STEP,
-                                        ),
-                                        FUNC_SCALE_MAX_STEP,
-                                    )
-                                    plan.func_delay_scale[hotspot_func] = (
-                                        plan.func_delay_scale.get(hotspot_func, 1.0)
-                                        * step
-                                    )
-                                    action = f"densify({hotspot_func} x{plan.func_delay_scale[hotspot_func]:.2f})"
-                                    made_change = True
+                                )
+                            ):
+                                AUTO_PIPELINE.RESET_REGION_CALIBRATION_AFTER_LOCK(
+                                    plan, region
+                                )
+                                new_candidate_plans.add(main_inst)
+                                action = f"minisweep({hotspot_func})"
+                                made_change = True
                             else:
+                                action, region_changed = AUTO_PIPELINE.AUTO_PIPELINE_REGION_FEEDBACK(
+                                    plan,
+                                    region,
+                                    hotspot_func,
+                                    target_mhz,
+                                    curr_mhz,
+                                    parser_state,
+                                )
+                                if region_changed:
+                                    made_change = True
+                        elif hotspot_func is not None:
+                            if TRY_HOTSPOT_MINISWEEP(hotspot_func, plan, parser_state):
+                                new_candidate_plans.add(main_inst)
+                                action = f"minisweep({hotspot_func})"
+                                made_change = True
+                            else:
+                                # Not yet repeated, or the isolated probe
+                                # couldn't fix it: densify
                                 step = min(
                                     max(
                                         (target_mhz / curr_mhz) * 1.05,
@@ -6527,6 +6903,11 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         "pipeline_stages": pipeline_stages,
                         "predicted_stage_ns": round(predicted_ns, 3),
                         "bottleneck": hotspot_func,
+                        **(
+                            {"bottleneck_basis": hotspot_basis}
+                            if hotspot_basis is not None
+                            else {}
+                        ),
                         "max_cap_violations": max_cap_violations,
                         "action": action,
                         **(
@@ -6548,16 +6929,30 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                 plan.history.append(record)
                 iter_records[main_inst] = record
 
+        for main_inst, record in iter_records.items():
+            if crossings.get(main_inst):
+                record["crossing_paths"] = list(crossings[main_inst].values())
         for record in iter_records.values():
             record.update(decision=iteration, synthesis_observations=synthesis_attempts,
                           implementation_signature=implementation,
                           input_signature=getattr(timing_report, "input_signature", None),
                           observation_origin="reused_observation" if repeated_decisions else
                               "cache" if getattr(timing_report, "cache_hit", False) else "synthesis")
-        # Track best result so far (largest worst-case achieved/target ratio)
-        if overall_score is not None and (
-            best_score is None or overall_score > best_score
-        ):
+        # Track best result so far: largest worst-case achieved/target ratio,
+        # ties (within SNAPSHOT_TIE_TOLERANCE) going to met own paths, then
+        # fewer stages -- see SNAPSHOT_BETTER
+        candidate_key = None
+        if overall_score is not None:
+            candidate_key = (
+                overall_score,
+                min([1.0] + [min(v, 1.0) for v in plan_own_scores.values()]),
+                sum(
+                    GET_SUBTREE_PIPELINE_STAGES(p, tpl, parser_state)
+                    for p in plans.values()
+                ),
+            )
+        if candidate_key is not None and SNAPSHOT_BETTER(candidate_key, best_key):
+            best_key = candidate_key
             best_score = overall_score
             best_tpl = copy.deepcopy(tpl)
             best_auto_multi_cycle = dict(synthesized_auto_multi_cycle)
@@ -6942,6 +7337,11 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
                         f"auto_multi_cycle_latency_limit: {planless_auto_multi_cycle_blame[main_inst]}"
                         if main_inst in planless_auto_multi_cycle_blame
                         else "nothing_auto_pipelinable"
+                        + (
+                            f": path crosses {planless_crossing[main_inst]}"
+                            if main_inst in planless_crossing
+                            else ""
+                        )
                     ),
                 )
             )
@@ -6952,11 +7352,17 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
     if final_iter_records is None:
         final_iter_records = iter_records
     for plan in plans.values():
+        record = final_iter_records.get(plan.main_inst)
         RECORD_SWEEP_OUTCOME(
             parser_state.LogicInstLookupTable[plan.main_inst].func_name,
             plan.target_mhz,
             "planned_sweep",
-            record=final_iter_records.get(plan.main_inst),
+            record=record,
+            **(
+                {"crossing_paths": record["crossing_paths"]}
+                if record and record.get("crossing_paths")
+                else {}
+            ),
             stopped_reason=plan.stopped_reason,
             cuts=PLAN_TOTAL_CUTS(plan),
             locked_instances=len(plan.locked),
@@ -7017,7 +7423,7 @@ def REPORT_CONFIRMATION_RESULTS(timing_report, parser_state, multimain_timing_pa
     measured_mhz = {}
     for path in FEEDBACK_PATHS(timing_report, parser_state, multimain_timing_params):
         mhz = 1000.0 / path.path_delay_ns
-        for main in GET_MAIN_INSTS_FOR_PATH_REPORT(path, parser_state, multimain_timing_params):
+        for main in PATH_OWNING_MAINS(path, parser_state, multimain_timing_params):
             if SYN.GET_TARGET_MHZ(main, parser_state) is not None:
                 measured_mhz[main] = min(mhz, measured_mhz.get(main, mhz))
     failures = []
@@ -7121,7 +7527,9 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
         failed_non_mcp = set()
         changed = False
         for path in FEEDBACK_PATHS(timing_report, parser_state, multimain_timing_params):
-            mains = GET_MAIN_INSTS_FOR_PATH_REPORT(path, parser_state, multimain_timing_params)
+            # A MAIN the path only crosses keeps its implementation; the
+            # endpoint owner carries the failure (PATH_MAIN_ROLES)
+            mains = PATH_OWNING_MAINS(path, parser_state, multimain_timing_params)
             goals = [SYN.GET_TARGET_MHZ(m, parser_state) for m in mains]
             goals = [g for g in goals if g is not None]
             if not goals or 1000.0 / path.path_delay_ns >= max(goals):
@@ -7175,6 +7583,15 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
     if met:
         return multimain_timing_params, True
     if not failed_non_mcp:
+        return multimain_timing_params, False
+    if not any(COLLECT_CUT_SUBTREES(m, parser_state) for m in failed_non_mcp):
+        # Only MAINs with nothing auto-pipelining can change failed: a
+        # fallback sweep could not change their paths either
+        print(
+            "AUTO_PIPELINE confirmation failed only in MAINs auto-pipelining cannot "
+            "change; keeping the confirmed implementation (timing not met).",
+            flush=True,
+        )
         return multimain_timing_params, False
     # Preserve every unaffected MAIN's realized implementation through fallback.
     multimain_timing_params.confirmation_preserved_mains = {
@@ -7934,22 +8351,44 @@ def RECORD_SYNTHESIS_OBSERVATION(parser_state, params, report, iteration):
                 **SYN.SERIALIZE_PATH_REPORT(row["path"]),
                 member_count=row["member_count"],
                 query_scopes=row["query_scopes"],
+                **_SERIALIZE_MAIN_ROLES(row["path"], parser_state, params),
             )
             for row in SYN.DISTINCT_PATHS(SYN.TIMING_REPORT_PATHS(report))
         ],
     )
     observation["estimated_main_ffs"] = dict(getattr(params, "sweep_main_ffs", {}))
+    failing = [
+        path
+        for path in SYN.TIMING_REPORT_PATHS(report)
+        if path.path_delay_ns > 0
+        and any(
+            SYN.GET_TARGET_MHZ(m, parser_state) is not None
+            and 1000.0 / path.path_delay_ns < SYN.GET_TARGET_MHZ(m, parser_state)
+            for m in GET_MAIN_INSTS_FOR_PATH_REPORT(path, parser_state, params)
+        )
+    ]
+    owning = {path_id: PATH_OWNING_MAINS(path, parser_state, params) for path_id, path in enumerate(failing)}
     observation["mains_with_reported_failure"] = sorted(
         {
             m
-            for path in SYN.TIMING_REPORT_PATHS(report)
-            for m in GET_MAIN_INSTS_FOR_PATH_REPORT(path, parser_state, params)
-            if (
-                SYN.GET_TARGET_MHZ(m, parser_state) is not None
-                and 1000.0 / path.path_delay_ns < SYN.GET_TARGET_MHZ(m, parser_state)
-            )
+            for path_id, path in enumerate(failing)
+            for m in owning[path_id]
+            if SYN.GET_TARGET_MHZ(m, parser_state) is not None
+            and 1000.0 / path.path_delay_ns < SYN.GET_TARGET_MHZ(m, parser_state)
         }
     )
+    # MAINs a failing path only crosses (PATH_MAIN_ROLES): on the path, but
+    # not its owner and unable to register it
+    crossed = sorted(
+        {
+            m
+            for path_id, path in enumerate(failing)
+            for m in GET_MAIN_INSTS_FOR_PATH_REPORT(path, parser_state, params)
+            if m not in owning[path_id]
+        }
+    )
+    if crossed:
+        observation["mains_crossed_by_failure"] = crossed
     last = SYNTHESIS_OBSERVATIONS[-1] if SYNTHESIS_OBSERVATIONS else None
     observation["register_growth_without_prior_failure"] = {}
     if last and last["auto_pipeline_pass"] == observation["auto_pipeline_pass"]:

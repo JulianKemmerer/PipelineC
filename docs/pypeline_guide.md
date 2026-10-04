@@ -2578,7 +2578,9 @@ AUTO_PIPELINE(some_func, start_latency=2, max_latency=5)  # guess and limit toge
   contract. `latency=` can't be combined with the other two arguments.
 - **`start_latency=S` is a starting guess.** Timing-driven implementation starts with
   `S` registers, may add more when timing fails, and may remove unnecessary registers
-  after timing is met. Its bootstrap elaboration reads `.latency == S`; plain source
+  after timing is met. Past the first iteration the search is the same as for an
+  untagged call site, including the measured mini-sweep of a repeated helper inside
+  it, so a hint can save iterations but never changes where the search can go. Its bootstrap elaboration reads `.latency == S`; plain source
   simulation and non-automatic elaboration read 0 until an implemented latency is
   supplied.
 - **`max_latency=M` is a limit.** Automatic implementation never builds more than `M`
@@ -4541,7 +4543,8 @@ valid/ready handshake is not a fixed latency.
   iterations when the core's depth is already known (e.g. from a previous build).
   - The bootstrap elaboration sizes the FIFO from S.
   - The sweep's first iteration builds S core registers. It grows from there if timing
-    fails, and its post-met trim may still go below S.
+    fails (by the same search as an untagged core), and its post-met trim may still go
+    below S.
   - When the build lands exactly on S, the pin-and-confirm re-elaboration is skipped.
 - **`max_latency=M`** caps the core.
 - **`latency=N`** fixes the core at N registers in every build and in native simulation.

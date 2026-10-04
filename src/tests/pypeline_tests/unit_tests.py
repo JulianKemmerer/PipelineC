@@ -228,6 +228,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "path_attribution_test.py"],
         )
     )
+    # Multi-MAIN feedback (real WireGuard shared 70 MHz names): a path that
+    # only crosses a MAIN never re-pipelines it, attribution sees only the
+    # plan's own MAIN, best-result ties go to met own paths then fewer
+    # stages, and start_latency= regions take the mini-sweep ladder.
+    tests.append(
+        Test(
+            name="sweep_cross_main_test",
+            category="unit",
+            cmd=[INST_DIR / "sweep_cross_main_test.py"],
+        )
+    )
     # Generated VHDL doesn't change between parse passes of one run:
     # c_structs_pkg only grows within one output directory, and shared C
     # built-in entities name no call site. Every synthesized leaf hashes these

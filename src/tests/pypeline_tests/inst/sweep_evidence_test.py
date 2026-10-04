@@ -109,6 +109,20 @@ def test_requested_overflow_survives_final_table_at_capacity():
         == "over_capacity"
     )
     assert VIVADO.PARSE_UTILIZATION("")["status"] == "unknown"
+    # Verbatim from the shared WireGuard 70 MHz confirmation (latency-sized
+    # MAC lanes C=7): Vivado remaps the excess into LUTs and its table caps
+    # at the device's 740, but the requested 960 is the fit evidence.
+    real = (
+        "WARNING: [Synth 8-3323] Resources of type DSP have been overutilized. "
+        "Used = 960, Available = 740. Use report_utilization command for details.\n"
+        + header
+        + "| DSPs | 740 | 0 | 740 | 100.00 |\n"
+    )
+    report = VIVADO.PARSE_UTILIZATION(real)
+    assert report["status"] == "over_capacity"
+    assert report["resources"]["DSPs"]["used"] == 740
+    assert report["overutilization"][0]["used"] == 960
+    assert report["overutilization"][0]["available"] == 740
 
 
 def test_utilization_tables_are_read_by_header_columns():
@@ -1181,7 +1195,9 @@ def test_pipelined_confirmation_failure_preserves_unaffected_mains():
             (VHDL, "WRITE_MULTIMAIN_TOP", noop),
             (AUTO_PIPELINE, "INVALIDATE_MODIFIED_INST_ANCESTOR_CACHES", lambda *a: set()),
             (AUTO_PIPELINE, "WRITE_ALL_NON_ZERO_CLK_VHDL_FILES", noop),
-            (SWEEP, "COLLECT_CUT_SUBTREES", lambda *a: []),
+            # Both MAINs are pipelined (a fallback sweep can replan them)
+            (SWEEP, "COLLECT_CUT_SUBTREES", lambda m, p: [m]),
+            (SWEEP, "SUMMARIZE_SUBTREE_PIPELINE", lambda *a: (False, [], 0)),
             (SWEEP, "RECORD_CONFIRMATION_RESULTS", noop),
             (SWEEP, "SYNTHESIS_OBSERVATIONS", []),
             (SWEEP, "GET_MAIN_INSTS_FOR_PATH_REPORT", lambda p, *a: {p.start_reg_name.split("/")[0]}),
