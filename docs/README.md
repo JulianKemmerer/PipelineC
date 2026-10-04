@@ -6,52 +6,16 @@ We are happy to help, reach out: [PipelineC Discord](https://discord.gg/Aupm3DDr
 
 ## Table of Contents
 
-1. [Quick Start](#quick-start)
-   - [Next Steps](#next-steps)
-2. [Overview](#overview)
-   - [Direct RTL semantics](#direct-rtl-semantics)
-   - [Top-level ports and clocks](#top-level-ports-and-clocks)
-   - [Hierarchy and interconnect by composition](#hierarchy-and-interconnect-by-composition)
-   - [Parameterized, reusable hardware](#parameterized-reusable-hardware)
-   - [Automatic implementation with visible hardware](#automatic-implementation-with-visible-hardware)
-   - [Conventional output and incremental adoption](#conventional-output-and-incremental-adoption)
-3. [What the Tool Does](#what-the-tool-does)
-   - [Runs the design file as Python](#runs-the-design-file-as-python)
-   - [Writes VHDL](#writes-vhdl)
-   - [Measures timing with a synthesis tool](#measures-timing-with-a-synthesis-tool)
-   - [Pipelines logic to meet each clock](#pipelines-logic-to-meet-each-clock)
-   - [Simulates, optionally](#simulates-optionally)
-   - [Synthesis and place-and-route reports](#synthesis-and-place-and-route-reports)
-4. [Getting Started on a Dev Board](#getting-started-on-a-dev-board)
-   - [Video](#video)
-   - [Recommended Approach](#recommended-approach)
-   - [Before You Buy](#before-you-buy)
-   - [Download Tools](#download-tools)
-   - [Gather Dev Board Files](#gather-dev-board-files)
-   - [Everything Not-Pypeline](#everything-not-pypeline)
-   - [Bring In Pypeline](#bring-in-pypeline)
-   - [Tri-State and Other IO](#tri-state-and-other-io)
-5. [Tools & CLI](#tools--cli)
-   - [Common workflows](#common-workflows)
-   - [Automatic pipelining](#automatic-pipelining)
-   - [Simulation](#simulation)
-   - [Output directories: `--out_dir`](#output-directories---out_dir)
-   - [Build modes and output options](#build-modes-and-output-options)
-   - [Synthesis backends and target selection](#synthesis-backends-and-target-selection)
-   - [Automatic implementation and sweeps](#automatic-implementation-and-sweeps)
-   - [Generated files and reports](#generated-files-and-reports)
-   - [Using the output in an existing project](#using-the-output-in-an-existing-project)
-   - [Full bitstream builds: `--pins`](#full-bitstream-builds---pins)
-6. [Set up your tools](#set-up-your-tools)
-   - [Requirements](#requirements)
-   - [Synthesis tools](#synthesis-tools)
-   - [Simulation tools](#simulation-tools)
-   - [Nix](#nix)
+1. [Quick Start](#quick-start): Install, Simulate, Generate VHDL
+2. [Overview](#overview): Semantics, Ports and Clocks, Automatic Implementations
+3. [What the Tool Does](#what-the-tool-does): Elaboration, Timing Feedback, HLS-like Adjustments, Reports
+4. [Getting Started on a Dev Board](#getting-started-on-a-dev-board): Board Files, Clocks, Wrapper HDL, Example Projects
+5. [Tools & CLI](#tools--cli): Commands, Simulation, Synthesis Backends, Output Files
+6. [Set up your tools](#set-up-your-tools): Synthesis and Simulation Tool Installs
 
 ## Quick Start
 
-You need Linux, Python 3 and a C preprocessor (`cpp`), see [Requirements](#requirements).
-Clone the repo and put `pypelinec` on your `PATH`:
+On Linux, clone the repo and put `pypelinec` on your `PATH`:
 
 ```
 git clone https://github.com/JulianKemmerer/PipelineC.git
@@ -59,13 +23,11 @@ cd PipelineC/
 export PATH=$PATH:$(pwd)/src
 ```
 
-That is the whole install for writing, simulating and generating VHDL. Synthesis tools
-for timing feedback and bitstreams are installed separately, see
-[Set up your tools](#set-up-your-tools) (or use the [Nix](#nix) package for the open
-source tools).
+Now you can run native Python-based simulation and generate VHDL.
+EDA tools for timing feedback and bitstreams are installed separately, see
+[Set up your tools](#set-up-your-tools) (or use the [Nix](#nix) package for one possible open source flow).
 
-Try simulating the [blinking an LED](../examples/pypeline/blink.py) demo. This runs in
-Pypeline's native Python simulator, so it works right away with no toolchain setup at all:
+Try the [blinking an LED](../examples/pypeline/blink.py) demo. It should work right away with no toolchain setup at all:
 
 ```
 pypelinec examples/pypeline/blink.py --sim --comb --run 3
@@ -110,7 +72,7 @@ def blink() -> uint1_t:
     return led
 ```
 
-You can also generate the design's real VHDL without running any synthesis tool:
+Generate the design's real VHDL without running any synthesis tool:
 
 ```
 pypelinec examples/pypeline/blink.py --comb --no_synth
@@ -143,20 +105,19 @@ end top;
 
 ### Next Steps
 
-* [Overview](#overview): how Pypeline describes hardware, and what becomes a port.
+* [Overview](#overview): how Pypeline HDL translates to hardware.
 * The [Pypeline language guide](pypeline_guide.md) walks through a full worked example
   ([VGA test pattern](../examples/pypeline/vga_test_pattern.py)) and then covers every
   language feature in its own section.
-* [What the Tool Does](#what-the-tool-does): from Python source to VHDL, timing reports
-  and automatic pipelining.
+* [What the Tool Does](#what-the-tool-does): from Python source to VHDL, timing reports,
+  and automatic HLS-like functionality.
 * [Getting Started on a Dev Board](#getting-started-on-a-dev-board): from your board's
   own blinking LED example to Pypeline running on hardware.
 * [Tools & CLI](#tools--cli) and [Set up your tools](#set-up-your-tools): commands,
   simulators, synthesis backends, and installing them.
 * The [examples/pypeline](../examples/pypeline) directory has more example code.
 * Coming from the C front end? See [`docs/pipelinec_to_pypeline.md`](pipelinec_to_pypeline.md)
-  for a pattern-by-pattern translation reference. PipelineC also has a bigger
-  [list of examples](https://github.com/JulianKemmerer/PipelineC/wiki/Examples).
+  for a pattern-by-pattern translation reference.
 
 ## Overview
 
@@ -173,6 +134,7 @@ VHDL, and Verilog:
 <td valign="top">
 
 ```python
+# Combinatorial logic with a storage register
 def some_func_name(input: some_type_t) -> some_type_t:
     the_reg: Reg[some_type_t]
 
@@ -359,9 +321,8 @@ Supported](pypeline_guide.md#limitations--not-yet-supported) section.
 
 ![PypelineC tool flow: Python or C sources become a logic graph, which is written as VHDL directly or auto-pipelined using timing measured by synthesis tools, then simulated or built into a bitstream](images/flow.svg)
 
-`pypelinec DESIGN.py` turns a Python design file into VHDL. When a synthesis tool is
-available, it also measures the design's timing with that tool, and adds pipeline
-registers to pure functions until every `@MAIN` meets its clock. The diagram shows every
+A command like `pypelinec DESIGN.py` turns a Python design file into VHDL. When a synthesis tool is
+available, it also measures the design's timing with that tool, and makes automatic HLS-like design changes until timing is met. The diagram shows every
 path through the tool. The steps below follow one build; each links to the design
 document that explains how that part works.
 
@@ -406,17 +367,31 @@ Clock clk_25p0$SB_IO_IN_$glb_clk FMAX: 68.290 MHz (14.643 ns)
 
 How: [SYN_DESIGN.md](SYN_DESIGN.md).
 
-### Pipelines logic to meet each clock
+### Automatically adjusts implementations (HLS-like)
 
-For each `@MAIN` with a clock goal, `pypelinec` pipelines the logic it is allowed to: a
-`@MAIN` that is a pure function (no [`Reg[T]` state](pypeline_guide.md#registers-regt)),
-and calls tagged [`AUTO_PIPELINE`](pypeline_guide.md#auto_pipeline). It adds registers,
-writes the pipelined VHDL, synthesizes the whole design again, reads the timing report,
-and repeats: more registers where timing fails, fewer where it has slack. Logic with state
-is never changed, so it has to meet timing as written. The resulting latency is visible to
-the design, so FIFOs and handshakes can be sized from it.
+When a design asks for it, `pypelinec` searches for an implementation that meets each
+`@MAIN` clock goal without changing what the logic computes. Each candidate is
+synthesized and its timing checked, so the search takes several iterations of the
+measurements above:
 
-For example, `pypelinec examples/pypeline/pipeline.py` pipelines a floating point adder
+| Feature | What is searched | Where it applies |
+|---|---|---|
+| [`AUTO_PIPELINE`](pypeline_guide.md#auto_pipeline) | How many pipeline registers, and where | A `@MAIN` that is a pure function, and calls tagged `AUTO_PIPELINE` |
+| [`AUTO_MULTI_CYCLE`](pypeline_guide.md#auto_multi_cycle) | How many clock cycles a multi-cycle path may take (Vivado only) | Paths tagged `AUTO_MULTI_CYCLE`, ex. inside `make_stream_auto_multi_cycle` |
+| [`AUTO_FSM`](pypeline_guide.md#auto_fsm-experimental) (experimental) | A minimum-area, resource-shared state machine schedule, re-scheduled with smaller states while timing fails | Calls tagged `AUTO_FSM` |
+| [`AUTO_PIPELINE_RAM`](pypeline_guide.md#auto_pipeline_ram) | RAM register and bank structure (ECP5 open tools) | Automatically pipelined RAMs |
+
+Untagged logic with [`Reg[T]` state](pypeline_guide.md#registers-regt) is never changed,
+so it has to meet timing as written.
+[`AUTO_COMB_AREA_OPT` / `AUTO_COMB_DELAY_OPT`](pypeline_guide.md#auto_comb_area_opt--auto_comb_delay_opt-experimental)
+(experimental) also search, over equivalent combinational rewrites ranked by measured
+operation delays and areas, but they add no cycles and need no timing iterations.
+
+Chosen pipeline latencies and cycle counts are visible to the design through `.latency`.
+The source is elaborated again with the chosen values and synthesized once more to
+confirm them, so FIFOs, counters and handshakes sized from `.latency` match the hardware.
+
+**Pipelining.** For example, `pypelinec examples/pypeline/pipeline.py` pipelines a floating point adder
 to meet 90 MHz. With no part selected it uses the PyRTL model. Iteration 4 tries fewer
 registers, misses timing, and the 26-register result from iteration 3 is kept:
 
@@ -428,7 +403,28 @@ registers, misses timing, and the 26-register result from iteration 3 is kept:
 [sweep] my_pipeline: met timing, 26 slice(s) built (27 pipeline stages), cuts=26, locked=0 inst(s), iterations=4
 ```
 
-When a clock goal can't be met, the build fails and prints the troublesome path. The
+**Multi-cycle paths.** The test design
+[auto_multi_cycle_sweep_design.py](../src/tests/pypeline_tests/inst/auto_multi_cycle_sweep_design.py)
+puts a 16-round add/xor mixing chain behind `make_stream_auto_multi_cycle`, with a 100 MHz
+goal on an Artix-7 with Vivado. As written the chain only reaches 17.69 MHz, so the
+multi-cycle count is raised from 1 to 6 cycles, the design is elaborated again with 6, and
+a confirmation run passes:
+
+```
+[sweep] auto_multi_cycle_sweep_main synthesized as written (standalone check): 17.69 MHz vs 100.00 MHz goal - FAIL: ...
+[sweep] AUTO_MULTI_CYCLE stream.stream_multi_cycle.make_stream_auto_multi_cycle_line137_0: isolated endpoints ~56.528 ns raw; provisional seed 1->6
+...
+[sweep] AUTO_MULTI_CYCLE stream.stream_multi_cycle.make_stream_auto_multi_cycle_line137_0 (unconstrained): 6 cycle(s) constrained on 1 multi-cycle path(s)
+...
+================== AUTO_PIPELINE Pass 2: Re-elaborating with Discovered Latencies ================================
+AUTO_MULTI_CYCLE stream.stream_multi_cycle.make_stream_auto_multi_cycle_line137_0: 6 cycles
+...
+Running confirmation synthesis with pipelining pinned from the previous pass...
+...
+PASS auto_multi_cycle_sweep_main: 106.15 MHz vs 100.00 MHz goal; worst reported path (confirmation run)
+```
+
+**When a goal can't be met.** The build fails and prints the troublesome path. The
 counter has nothing to pipeline (its logic sits between registers and output ports), so
 with `@MAIN(400.0)` on the iCE40 it ends with:
 
@@ -442,16 +438,16 @@ END: => counter_return_output_SB_DFF_Q_D
 ERROR: TIMING NOT MET: counter achieved 68.29 MHz vs 400.00 MHz goal (nothing_auto_pipelinable)
 ```
 
-`sweep_history.json` records every iteration. `AUTO_MULTI_CYCLE`, `AUTO_FSM` and the
-other [automatic implementation](pypeline_guide.md#automatic-hls-like-implementation)
-features use the same timing feedback. See [Automatic pipelining](#automatic-pipelining) and
+`sweep_history.json` records every iteration (and `auto_pipeline_ram_history.json` every
+RAM plan tried). See [Automatic pipelining](#automatic-pipelining) and
 [Automatic implementation and sweeps](#automatic-implementation-and-sweeps). How:
-[SWEEP_DESIGN.md](SWEEP_DESIGN.md), [AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md).
+[SWEEP_DESIGN.md](SWEEP_DESIGN.md), [AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md),
+[AUTO_MULTI_CYCLE_DESIGN.md](AUTO_MULTI_CYCLE_DESIGN.md),
+[AUTO_FSM_DESIGN.md](AUTO_FSM_DESIGN.md).
 
-### Simulates, optionally
+### Simulates
 
-`--sim` simulates the design: with `--comb`, as written; otherwise the final, possibly
-pipelined design after the build. The native Python simulator runs the source itself,
+`--sim` simulates. With `--comb`, the design with no temporal changes or optimizations is simulated. Otherwise the final, possibly automatically adjusted, design is simulated after the build. The native Python simulator runs the source itself,
 while `--cocotb --ghdl`, `--verilator` and others simulate the generated VHDL (see
 [Simulation](#simulation)). How:
 [pypeline_sim_DESIGN.md](pypeline_sim_DESIGN.md).
@@ -577,7 +573,7 @@ All user specified timing constraints are met.
 ## Getting Started on a Dev Board
 
 This section takes a design from simulation onto an FPGA development board. Two boards
-are the running examples, and the same steps apply to most others:
+are used as examples, and the same steps apply to most others:
 
 * [pico-ice](https://pico-ice.tinyvision.ai/): a Lattice iCE40 FPGA, built with open
   source tools. Example: [examples/pypeline/pico_ice](../examples/pypeline/pico_ice).
@@ -593,7 +589,7 @@ timing steps are the same for Pypeline.
 
 ### Recommended Approach
 
-![Pypeline generated top.vhd instantiated inside your top level wrapper HDL, next to PLLs, IO buffers and controller IP, on an FPGA on your dev board](images/dev_board.svg)
+![Pypeline generated top.vhd, with @MAIN functions at different clock rates, instantiated inside your top level wrapper HDL next to a PLL, tri-state buffers, and DDR, SERDES and IP blocks, on an FPGA on your dev board](images/dev_board.svg)
 
 The recommended way of getting started is to:
 
@@ -753,7 +749,7 @@ free to also check out the language guide's
 
 Both example projects run `pypelinec` with `--comb --no_synth`, which only writes the
 VHDL; removing those flags adds [timing feedback](#measures-timing-with-a-synthesis-tool)
-and [automatic pipelining](#pipelines-logic-to-meet-each-clock). The tools' reports are
+and [automatic implementation adjustments](#automatically-adjusts-implementations-hls-like). The tools' reports are
 described in [Synthesis and place-and-route reports](#synthesis-and-place-and-route-reports).
 
 #### pico-ice Example
@@ -807,9 +803,9 @@ described in its [README](../examples/pypeline/arty/README.md) file.
 Often a specialized network or memory controller IP will want "direct control" of, or to
 be "directly connected" to, the FPGA's top-level IO signals. This is common for
 specialized IO like DDR or SERDES, as well as for tri-state high impedance signalling.
-Pypeline ports are one-directional, so instantiate these modules outside of Pypeline, in
+Pypeline ports are unidirectional, so instantiate these modules outside of Pypeline, in
 the wrapper HDL where PLLs and such also exist. Connect the interface exposed by those
-modules to regular one-directional Pypeline inputs and outputs. (Inside a design,
+modules to regular unidirectional Pypeline inputs and outputs. (Inside a design,
 [raw VHDL](pypeline_guide.md#raw-vhdl-passthrough-vhdl) can instantiate other vendor
 primitives and existing VHDL modules.)
 
@@ -824,14 +820,11 @@ belong in the [Pypeline HDL Language Guide](pypeline_guide.md).
 # Generate combinational VHDL without invoking synthesis
 pypelinec examples/pypeline/blink.py --comb --no_synth
 
-# Characterize combinational timing without automatic pipelining
+# Characterize combinational timing without automatic adjustments
 pypelinec examples/pypeline/pipeline.py --comb
 
 # Run timing-driven automatic implementation using source PART/SYN_TOOL/@MAIN settings
 pypelinec examples/pypeline/pipeline.py
-
-# Exercise HDL generation and synthesis for a small wrapper
-pypelinec design_synth_top.py --comb --syn_tool device_models
 ```
 
 Run `pypelinec --help` for the complete current option list.
@@ -889,7 +882,7 @@ pypelinec examples/pypeline/vga_test_pattern.py --sim --comb --run 420000
 ```
 
 `pypelinec DESIGN.py --sim --run N` simulates the final, possibly automatically
-pipelined implementation. Add `--comb` to simulate the source
+adjusted implementation. Add `--comb` to simulate the source
 without running automatic implementation first. With no external simulator selected,
 Pypeline uses its native Python simulator in strict, width-accurate mode. It prints a
 clock cycle counter and any `sim_print` output, ex. for
@@ -1360,7 +1353,7 @@ These are only needed for `--sim` runs (see [Simulation](#simulation)):
 
 ### Nix
 
-For a more officially-packaged install currently limited to open source tools, the repo provides a Nix package
+For a more officially-packaged install currently limited to a minimal set of open source tools, the repo provides a Nix package
 (`default.nix`/`nix/package.nix`). It installs a self-contained PyRTL + GHDL + Yosys toolchain in one step, the same flow tools like [Latchup.app](https://latchup.app) are built around:
 ```
 nix-build default.nix
