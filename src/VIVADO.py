@@ -44,6 +44,21 @@ DEFAULT_PART = "xc7a35ticsg324-1l"
 
 
 FIXED_PKG_PATH = VIVADO_DIR + "/scripts/rt/data/fixed_pkg_2008.vhd"
+# First release whose ieee library has native VHDL-2008 fixed/float packages.
+NATIVE_FIXED_PKG_VERSION = (2022, 2)
+
+
+def PARSE_VIVADO_VERSION(ver_output):
+    """`vivado -version` output -> (year, release[, update]) int tuple, or None.
+
+    Update releases have three parts ("Vivado v2023.2.2 (64-bit)"), so the
+    version is not a float; compared as a tuple, 2022.10 also sorts after
+    2022.2, which float comparison gets wrong.
+    """
+    match = re.search(r"\bv(\d+)\.(\d+)(?:\.(\d+))?\b", ver_output)
+    if match is None:
+        return None
+    return tuple(int(part) for part in match.groups() if part is not None)
 
 # Do full place and route for timing results
 # for "all" modules or just the "top" module
@@ -434,12 +449,12 @@ def GET_SYN_IMP_AND_REPORT_TIMING_TCL(
     # Add in VHDL 2008 fixed/float support for pre 2022.2
     # (currently the only reason why we need to know vivado version...)
     global VIVADO_VERSION, VIVADO_VERSION_ID
-    if VIVADO_VERSION is None and os.path.exists(VIVADO_PATH):
+    if VIVADO_VERSION_ID is None and os.path.exists(VIVADO_PATH):
         ver_output = C_TO_LOGIC.GET_SHELL_CMD_OUTPUT(VIVADO_PATH + " -version")
         VIVADO_VERSION_ID = ver_output.strip()
-        VIVADO_VERSION = ver_output.split("\n")[0].split(" ")[1].strip("v")
+        VIVADO_VERSION = PARSE_VIVADO_VERSION(ver_output)
     if VIVADO_VERSION:
-        if float(VIVADO_VERSION) < 2022.2:
+        if VIVADO_VERSION < NATIVE_FIXED_PKG_VERSION:
             rv += "add_files -norecurse " + FIXED_PKG_PATH + "\n"
             rv += (
                 "set_property library ieee_proposed [get_files "

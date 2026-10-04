@@ -5206,13 +5206,15 @@ def hex(value):
 # ─────────────────────────────────────────────
 
 
-def sim_print(s, debug=False):
+def sim_print(s, *, debug=False):
     """printf-style console output: prints during simulation (once per cycle, using
     converged wire values -- same @sim_output-style semantics) and elaborates to a real
     VHDL write(output, ...) statement in hardware.
 
     Takes exactly one positional argument, matching how it's normally written -- an
-    f-string or a plain string literal, e.g.::
+    f-string or a plain string literal (debug is keyword-only, so a C-printf-style
+    sim_print("n", n) is a TypeError in simulation just as it is an elaboration
+    error, instead of binding n to debug), e.g.::
 
         sim_print(f"n={n} hex={hex(n)} ch={chr(n)}")
         sim_print("starting up")

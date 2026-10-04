@@ -495,7 +495,8 @@ re-elaboration is provisional until the resulting hardware is confirmed.
 
 Vivado resource overflow warns by default. Use `--stop_on_over_capacity` to
 stop at the first whole-design netlist that exceeds device capacity, preserving
-its reports. Synthesis timing alone is not routed timing or fit. Complete logs
+its reports. Either way, a build that ends on an over-capacity netlist fails
+(`DOES NOT FIT`), even if that netlist met timing. Synthesis timing alone is not routed timing or fit. Complete logs
 are reused only for matching HDL, constraints, tool and report recipe; an
 incomplete matching log requires explicit manual handling.
 
@@ -1968,8 +1969,14 @@ result); bind it to its own type (or let Python infer it) rather than assuming t
 the same type as its operands:
 
 ```python
-sum_t = add.__annotations__["return"]   # the actual (wider) result type
+from pypeline import hw_return_type
+
+sum_t = hw_return_type(add)   # the actual (wider) result type: Q5.12
 ```
+
+`hw_return_type` (see [Introspecting a function's types](#introspecting-a-functions-types-hw_arg_types--hw_return_type))
+reads the operator's declared return type, so `sum_t` is the same type object `add`
+returns.
 
 `+`/`-` require both operands to share the same `frac_bits` (mismatched `frac_bits` raises
 `TypeError` at the point you build the adder/subtractor — resize one operand first via

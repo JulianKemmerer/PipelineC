@@ -20,7 +20,7 @@ sys.path.insert(
 )
 from fractions import Fraction
 
-from pypeline import MAIN, sim_call
+from pypeline import MAIN, hw_return_type, sim_call
 from fixed_point import (
     make_fixed_t,
     make_fixed_adder,
@@ -42,9 +42,9 @@ from fixed_point import (
 
 q4_12 = make_fixed_t(4, 12)
 q4_12_add, q4_12_sub, q4_12_mul, q4_12_neg = register_fixed_ops(q4_12)
-q4_12_sum_t = q4_12_add.__annotations__["return"]
-q4_12_diff_t = q4_12_sub.__annotations__["return"]
-q4_12_prod_t = q4_12_mul.__annotations__["return"]
+q4_12_sum_t = hw_return_type(q4_12_add)
+q4_12_diff_t = hw_return_type(q4_12_sub)
+q4_12_prod_t = hw_return_type(q4_12_mul)
 
 # Sign-mismatched pair, reused by both @MAIN coverage and the native-sim tests.
 signed_t = make_fixed_t(4, 4, signed=True)
@@ -52,9 +52,9 @@ unsigned_t = make_fixed_t(6, 4, signed=False)
 mixed_add = make_fixed_adder(signed_t, unsigned_t)
 mixed_sub = make_fixed_subtractor(signed_t, unsigned_t)
 mixed_mul = make_fixed_multiplier(signed_t, unsigned_t)
-mixed_add_t = mixed_add.__annotations__["return"]
-mixed_sub_t = mixed_sub.__annotations__["return"]
-mixed_mul_t = mixed_mul.__annotations__["return"]
+mixed_add_t = hw_return_type(mixed_add)
+mixed_sub_t = hw_return_type(mixed_sub)
+mixed_mul_t = hw_return_type(mixed_mul)
 
 # Resize pairs, one per rounding mode (narrowing, SHIFT>0) plus the
 # widening/no-shift branch (SHIFT<=0), both overflow modes.

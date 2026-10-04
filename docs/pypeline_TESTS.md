@@ -344,8 +344,11 @@ before parsing or creating the output directory.
 whose `IMPLEMENTATION_SIGNATURE` matches, and that signature changes with the
 entity hash, the clock and the AUTO_MULTI_CYCLE counts. A newer log of
 another implementation (same HDL with other MCP counts, or an over-capacity
-netlist) never supplies the winner's observation, and a provisional write
-says `build_complete: false`.
+netlist) never supplies the winner's observation or its `fit_status`, and a
+provisional write says `build_complete: false`. When the retained
+implementation is itself over capacity, a met MAIN's final record is
+`met: false` (`device_over_capacity`), and `ADD_OVER_CAPACITY_FAILURES` puts
+it in the exit code's failure list.
 
 `double_parse_file_test.py`'s source-freeze case edits design files between
 two parses of one run. The second parse sees the first-read bytes, and

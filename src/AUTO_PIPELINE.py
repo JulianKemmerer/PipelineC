@@ -3057,7 +3057,7 @@ def RAM_SEARCH(parser_state, args, src_file, build):
             flush=True,
         )
         state, timing = build(state)
-        report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(state, timing)
+        report = SYN.RUN_MULTIMAIN_SYN(state, timing)
         clocks, _ = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(state)
         mhz = {
             clk: 1000.0 / path.path_delay_ns

@@ -48,6 +48,58 @@ import pypeline
 from utilities import REPO_ABS_DIR
 
 START_TIME = timer()
+# When the design finished parsing/elaborating (set by the driver), and every
+# whole-design synthesis run as (seconds, cache_hit): for ELAPSED_SUMMARY_STR.
+PARSE_DONE_TIME = None
+MULTIMAIN_SYN_RUNS = []
+
+
+def DURATION_STR(seconds):
+    """H:MM:SS, whole seconds, for build progress prints."""
+    return str(datetime.timedelta(seconds=round(seconds)))
+
+
+def ELAPSED_STR():
+    """Wall time since the compiler started, as DURATION_STR."""
+    return DURATION_STR(timer() - START_TIME)
+
+
+def RUN_MULTIMAIN_SYN(parser_state, multimain_timing_params):
+    """SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN, then one line saying how long
+    that whole-design run took and the build's elapsed time."""
+    started = timer()
+    report = SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
+        parser_state, multimain_timing_params
+    )
+    seconds = timer() - started
+    cache_hit = getattr(report, "cache_hit", None) is True
+    MULTIMAIN_SYN_RUNS.append((seconds, cache_hit))
+    print(
+        f"Whole-design synthesis took {DURATION_STR(seconds)}"
+        f"{' (reused cached log)' if cache_hit else ''}, elapsed time {ELAPSED_STR()}",
+        flush=True,
+    )
+    return report
+
+
+def ELAPSED_SUMMARY_STR():
+    """One line for the end of a build: total wall time, then how much of it
+    was parsing/elaboration and whole-design synthesis (the remainder is
+    per-function characterization, HDL writing, simulation, ...)."""
+    parts = []
+    if PARSE_DONE_TIME is not None:
+        parts.append(f"parse/elaborate {DURATION_STR(PARSE_DONE_TIME - START_TIME)}")
+    if MULTIMAIN_SYN_RUNS:
+        cached = sum(hit for _seconds, hit in MULTIMAIN_SYN_RUNS)
+        runs = len(MULTIMAIN_SYN_RUNS)
+        parts.append(
+            f"whole-design synthesis {DURATION_STR(sum(s for s, _hit in MULTIMAIN_SYN_RUNS))}"
+            f" over {runs} run{'s' if runs != 1 else ''}"
+            + (f" ({cached} cached)" if cached else "")
+        )
+    detail = f" ({', '.join(parts)})" if parts else ""
+    return f"Total elapsed time: {ELAPSED_STR()}{detail}"
+
 
 OUTPUT_DIR_NAME = "pipelinec_output"
 SYN_OUTPUT_DIRECTORY = None  # Auto created with pid and filename or from user
@@ -1472,7 +1524,7 @@ def RUN_INST_SYN_AND_UPDATE_CACHE(
         "slices...",
         flush=True,
     )
-    print(f"Elapsed time: {str(datetime.timedelta(seconds=(timer() - START_TIME)))}...")
+    print(f"Elapsed time: {ELAPSED_STR()}...", flush=True)
     inst_sweep_state.timing_report = SYN_TOOL.SYN_AND_REPORT_TIMING(
         inst_name, logic, parser_state, TimingParamsLookupTable
     )
@@ -2664,7 +2716,7 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
             # Get result
             my_async_result = func_name_to_async_result[logic_func_name]
             print(
-                f"Function {len(func_names_done_so_far)}/{len(funcs_to_synth)}, elapsed time {str(datetime.timedelta(seconds=(timer() - START_TIME)))}..."
+                f"Function {len(func_names_done_so_far)}/{len(funcs_to_synth)}, elapsed time {ELAPSED_STR()}..."
             )
             owner = func_name_to_async_owner[logic_func_name]
             print("...Waiting on synthesis for:", owner, flush=True)

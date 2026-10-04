@@ -182,8 +182,9 @@ their `Site Type` header columns, so releases that add a `Prohibited` column
 still parse. Whole-design observations record final
 counts, requested overflow and changes in MAIN/AUTO_PIPELINE latency since
 the last observation within reported capacity. The default is a prominent
-warning; `--stop_on_over_capacity` exits nonzero before timing feedback or a
-confirmation fallback. Backends without capacity evidence report `unknown`.
+warning, and the sweep continues; `--stop_on_over_capacity` exits nonzero before timing feedback or a
+confirmation fallback. Either way an over-capacity final netlist is never a
+pass (see §8). Backends without capacity evidence report `unknown`.
 Synthesis timing and reported capacity do not establish routed timing or fit.
 
 ## 4. Kinds of synthesis runs
@@ -192,7 +193,7 @@ Synthesis timing and reported capacity do not establish routed timing or fit.
 |---|---|---|
 | per-function delay measurement | `ADD_PATH_DELAY_TO_LOOKUP` (the pre-synthesis wave), `MEASURE_DELAYS` (re-measure named functions), `ESTIMATE_HIER_PATH_DELAYS` (no synthesis: pipeline-map estimates) | every build; the sweep's measured-delay fallback; `AUTO.TimingModel` reads the results |
 | one instance at a given latency | `RUN_INST_SYN_AND_UPDATE_CACHE` | the coarse sweep and hotspot mini-sweeps |
-| the whole multi-MAIN design | `SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN` | each planned-sweep iteration, the pin-and-confirm confirmation, `--comb` characterization |
+| the whole multi-MAIN design | `SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN`, always called through `SYN.RUN_MULTIMAIN_SYN` (which times it) | each planned-sweep iteration, the pin-and-confirm confirmation, `--comb` characterization |
 | the final bitstream | `GENERATE_FINAL_BITSTREAM`, dispatching to a backend `GENERATE_BITSTREAM` hook when present | `--pins` builds (after the design's `@final(syn)` hooks, which run right after the final VHDL is written -- see `PY_TO_LOGIC_DESIGN.md`) |
 
 **Parallelism is a memory budget.** Per-function delay measurement and the
@@ -502,13 +503,34 @@ line in `SWEEP.py` that names a hotspot or a MAIN. Reading a failing build's own
 output no longer requires separately grepping `module_instances.log`/`pipeline_map.log`
 just to find which line of which file a printed name refers to.
 
+### Also produced: elapsed time on stdout
+
+Times are `H:MM:SS` wall clock from compiler start (`SYN.ELAPSED_STR`). The build prints:
+
+- `Parsing done, elapsed time ...` once the design is parsed and elaborated.
+- `Elapsed time: ...` before each per-function or sweep synthesis.
+- `Whole-design synthesis took ..., elapsed time ...` after every whole-design run
+  (`SYN.RUN_MULTIMAIN_SYN`). The line notes when a cached log was reused.
+- `Throughput sweep done, elapsed time ...` before *Writing Results*.
+- `Total elapsed time: ... (parse/elaborate ..., whole-design synthesis ... over N runs)`
+  as the very last line of every build that got past argument checks, whether it
+  succeeds, fails timing, or raises (an `atexit` hook, `SYN.ELAPSED_SUMMARY_STR`). The
+  rest of the total is per-function characterization, HDL writing, simulation and
+  bitstream generation. A comb-only native `--sim` skips the build and this line.
+
 ## 8. Command line
 
 `--stop_on_over_capacity` is opt-in and applies to whole-design synthesis,
 including pinned confirmation and combinational builds. It preserves artifacts,
 records `device_over_capacity`, and exits with `DOES NOT FIT` before using that
-netlist's timing to change the design. Without it, the sweep warns and retains
-the over-capacity qualification in its history.
+netlist's timing to change the design. Without it, the sweep warns, keeps
+going, and retains the over-capacity qualification in its history. The build
+still fails if the implementation it ends on is over capacity:
+`SWEEP.ADD_OVER_CAPACITY_FAILURES` gives each MAIN that otherwise met its goal
+a `device_over_capacity` failure (`ERROR: DOES NOT FIT`), and its
+`sweep_history.json` `final.met` is false. Fit is judged only from that
+implementation's own observation (`retained_observation`). With no matching
+observation, `fit_status` is `unknown`.
 
 | flag | meaning |
 |---|---|

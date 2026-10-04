@@ -43,9 +43,7 @@ import math
 import os
 import re
 import sys
-from datetime import timedelta
 from multiprocessing.pool import ThreadPool
-from timeit import default_timer as timer
 
 import AUTO_MULTI_CYCLE
 import AUTO_PIPELINE
@@ -2987,6 +2985,14 @@ def PRINT_TIMING_FAILURES(multimain_timing_params) -> bool:
         achieved_str = (
             f"{achieved_mhz:.2f} MHz" if achieved_mhz is not None else "unknown"
         )
+        if why == "device_over_capacity":
+            print(
+                f"ERROR: DOES NOT FIT: {main_func_name} met its {goal_mhz:.2f} MHz "
+                f"goal ({achieved_str}) only in an over-capacity netlist, which "
+                "does not establish device timing",
+                flush=True,
+            )
+            continue
         print(
             f"ERROR: TIMING NOT MET: {main_func_name} achieved {achieved_str} "
             f"vs {goal_mhz:.2f} MHz goal ({why})",
@@ -3080,15 +3086,18 @@ def RECORD_SWEEP_OUTCOME(main_func_name, goal_mhz, source, record=None, **fields
     return outcome
 
 
-def BUILD_FINAL_MAIN_RECORD(goal_mhz, outcome, failure, depth):
+def BUILD_FINAL_MAIN_RECORD(goal_mhz, outcome, failure, depth, fit_status=None):
     """One main's sweep_history.json "final" record (pure).
 
-    outcome  its SWEEP_OUTCOMES entry, or None if no run recorded one
-    failure  its (name, goal_mhz, achieved_mhz, why) sweep_timing_failures
-             tuple, or None. That list gates the build's exit code, so it --
-             not the outcome -- decides a failed verdict.
-    depth    {"auto_pipelined", "slices_built", "pipeline_stages"} read off
-             the final table, or None
+    outcome     its SWEEP_OUTCOMES entry, or None if no run recorded one
+    failure     its (name, goal_mhz, achieved_mhz, why) sweep_timing_failures
+                tuple, or None. That list gates the build's exit code, so it --
+                not the outcome -- decides a failed verdict.
+    depth       {"auto_pipelined", "slices_built", "pipeline_stages"} read off
+                the final table, or None
+    fit_status  the retained observation's utilization status, or None. An
+                over-capacity netlist's timing is never a pass: a main that
+                would otherwise be met is met=False (device_over_capacity).
 
     A main that met its goal without any path report naming it never had an
     MHz measured: achieved_mhz stays None and the goal is only a lower bound
@@ -3101,6 +3110,8 @@ def BUILD_FINAL_MAIN_RECORD(goal_mhz, outcome, failure, depth):
     if failure is not None:
         met = None if failure[3] == "unknown_in_retained_snapshot" else False
         met_basis = "unknown_in_retained_snapshot" if met is None else "timing_failure"
+        if failure[3] == "device_over_capacity":
+            met_basis = "device_over_capacity"
         failure_reason = failure[3]
         if failure[2] is not None:
             achieved_mhz = round(failure[2], 3)
@@ -3119,6 +3130,9 @@ def BUILD_FINAL_MAIN_RECORD(goal_mhz, outcome, failure, depth):
     else:
         met = True
         met_basis = "no_failing_path_reported"
+    if met is True and fit_status == "over_capacity":
+        met = False
+        met_basis = failure_reason = "device_over_capacity"
     lower_bound = met is True and achieved_mhz is None
     final = {
         "met": met,
@@ -3154,6 +3168,14 @@ def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
         )
     }
     tpl = multimain_timing_params.TimingParamsLookupTable
+    retained = (
+        RETAINED_OBSERVATION(parser_state, multimain_timing_params)
+        if SYNTHESIS_OBSERVATIONS
+        else None
+    )
+    # Only the built implementation's own observation says whether it fits; a
+    # newer log of another implementation says nothing about it.
+    fit_status = retained["utilization"]["status"] if retained else "unknown"
     mains = {}
     for main_inst in parser_state.main_mhz:
         main_logic = parser_state.LogicInstLookupTable[main_inst]
@@ -3194,6 +3216,7 @@ def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
                 SWEEP_OUTCOMES.get(main_func_name),
                 failures.get(main_func_name),
                 depth,
+                fit_status,
             ),
         }
     doc = {
@@ -3201,15 +3224,10 @@ def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
         "build_complete": build_complete,
         "stop_on_over_capacity": STOP_ON_OVER_CAPACITY,
         "observations": SYNTHESIS_OBSERVATIONS,
-        "fit_status": SYNTHESIS_OBSERVATIONS[-1]["utilization"]["status"]
-        if SYNTHESIS_OBSERVATIONS
-        else "unknown",
+        "fit_status": fit_status,
         "mains": mains,
     }
     if SYNTHESIS_OBSERVATIONS:
-        signature = IMPLEMENTATION_SIGNATURE(
-            parser_state, multimain_timing_params
-        )
         doc["synthesis_cost"] = {
             "observations": len(SYNTHESIS_OBSERVATIONS),
             "new_backend_launches": sum(
@@ -3227,16 +3245,7 @@ def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
                 for o in SYNTHESIS_OBSERVATIONS
             ),
         }
-        doc["retained_observation"] = next(
-            (
-                o
-                for o in reversed(SYNTHESIS_OBSERVATIONS)
-                if o["implementation_signature"] == signature
-            ),
-            None,
-        )
-        if doc["retained_observation"] is not None:
-            doc["fit_status"] = doc["retained_observation"]["utilization"]["status"]
+        doc["retained_observation"] = retained
     auto_multi_cycle = getattr(
         multimain_timing_params, "auto_multi_cycle_ncycles", None
     )
@@ -3262,6 +3271,54 @@ def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
     return doc
 
 
+def RETAINED_OBSERVATION(parser_state, multimain_timing_params):
+    """The newest SYNTHESIS_OBSERVATIONS entry of the implementation these
+    timing params build (same IMPLEMENTATION_SIGNATURE), or None."""
+    signature = IMPLEMENTATION_SIGNATURE(parser_state, multimain_timing_params)
+    return next(
+        (
+            o
+            for o in reversed(SYNTHESIS_OBSERVATIONS)
+            if o["implementation_signature"] == signature
+        ),
+        None,
+    )
+
+
+def ADD_OVER_CAPACITY_FAILURES(parser_state, multimain_timing_params):
+    """Without --stop_on_over_capacity the sweep only warns about an
+    over-capacity netlist and keeps going, but the build it ends on must still
+    fit to pass. When the retained observation is over capacity, each main
+    whose final record would otherwise say met gets a device_over_capacity
+    sweep_timing_failures entry, so the exit code agrees with final.met.
+    Returns the added entries."""
+    if not SYNTHESIS_OBSERVATIONS:
+        return []
+    retained = RETAINED_OBSERVATION(parser_state, multimain_timing_params)
+    if retained is None or retained["utilization"]["status"] != "over_capacity":
+        return []
+    failures = list(
+        getattr(multimain_timing_params, "sweep_timing_failures", None) or []
+    )
+    failing = {failure[0] for failure in failures}
+    added = []
+    for main_inst in sorted(parser_state.main_mhz):
+        main_func_name = parser_state.LogicInstLookupTable[main_inst].func_name
+        if main_func_name in failing:
+            continue
+        goal_mhz = SYN.GET_TARGET_MHZ(main_inst, parser_state)
+        outcome = SWEEP_OUTCOMES.get(main_func_name)
+        final = BUILD_FINAL_MAIN_RECORD(
+            goal_mhz, outcome, None, None, fit_status="over_capacity"
+        )
+        if final["met_basis"] == "device_over_capacity":
+            added.append(
+                (main_func_name, goal_mhz, final["achieved_mhz"], "device_over_capacity")
+            )
+    multimain_timing_params.sweep_timing_failures = failures + added
+    return added
+
+
 def RECORD_CONFIRMATION_RESULTS(
     parser_state, multimain_timing_params, measured_mhz, met
 ):
@@ -3276,14 +3333,7 @@ def RECORD_CONFIRMATION_RESULTS(
     signature = IMPLEMENTATION_SIGNATURE(
         parser_state, multimain_timing_params
     )
-    observation = next(
-        (
-            o
-            for o in reversed(SYNTHESIS_OBSERVATIONS)
-            if o["implementation_signature"] == signature
-        ),
-        {},
-    )
+    observation = RETAINED_OBSERVATION(parser_state, multimain_timing_params) or {}
     for main_inst in parser_state.main_mhz:
         main_logic = parser_state.LogicInstLookupTable[main_inst]
         main_func_name = main_logic.func_name
@@ -5817,10 +5867,8 @@ def DO_PLANNED_THROUGHPUT_SWEEP(parser_state, multimain_timing_params):
             repeated_decisions = 0
             synthesis_attempts += 1
             print(f"Running syn w timing params... (sweep iteration {synthesis_attempts}, decision {iteration})", flush=True)
-            print(f"Elapsed time: {str(timedelta(seconds=(timer() - SYN.START_TIME)))}...")
-            timing_report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
-                parser_state, multimain_timing_params
-            )
+            print(f"Elapsed time: {SYN.ELAPSED_STR()}...", flush=True)
+            timing_report = SYN.RUN_MULTIMAIN_SYN(parser_state, multimain_timing_params)
             seen_implementations[implementation] = timing_report
             RECORD_SYNTHESIS_OBSERVATION(parser_state, multimain_timing_params, timing_report, synthesis_attempts)
         for plan in plans.values():
@@ -7067,7 +7115,7 @@ def DO_SEEDED_CONFIRM_OR_SWEEP(parser_state, multimain_timing_params):
     while True:
         confirmation_iteration += 1
         print("Running confirmation synthesis with pipelining pinned from the previous pass...", flush=True)
-        timing_report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, multimain_timing_params)
+        timing_report = SYN.RUN_MULTIMAIN_SYN(parser_state, multimain_timing_params)
         RECORD_SYNTHESIS_OBSERVATION(parser_state, multimain_timing_params, timing_report,
                                      f"confirmation-{confirmation_iteration}")
         failed_non_mcp = set()
@@ -7214,9 +7262,7 @@ def DO_THROUGHPUT_SWEEP(
             sys.exit(-1)
         else:
             # Regular multi main top comb logic
-            timing_report = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(
-                parser_state, multimain_timing_params
-            )
+            timing_report = SYN.RUN_MULTIMAIN_SYN(parser_state, multimain_timing_params)
 
         RECORD_SYNTHESIS_OBSERVATION(parser_state, multimain_timing_params, timing_report, "comb")
         # Print a little timing info to characterize comb logic
@@ -7992,7 +8038,7 @@ def CONFIRM_PROVISIONAL_MCP_SEEDS(report, parser_state, params, seen_implementat
         print("[sweep] MCP confirm-down candidate already observed; reusing it.", flush=True)
         trial = seen_implementations[signature]
     else:
-        trial = SYN.SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN(parser_state, params)
+        trial = SYN.RUN_MULTIMAIN_SYN(parser_state, params)
         RECORD_SYNTHESIS_OBSERVATION(parser_state, params, trial, "mcp-confirm-down")
         if signature is not None:
             seen_implementations[signature] = trial

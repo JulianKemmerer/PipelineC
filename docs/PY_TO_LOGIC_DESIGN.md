@@ -2934,6 +2934,18 @@ This happens at three sites in `PARSE_FILE`:
 - **`main_mhz` registration**: uses `hw_name` so the synthesiser sees `file_a_main` as
   the MAIN entry point, not `main`.
 
+**Bare-name calls bind to the calling module's own name.** Step 6 pre-registers every
+file's functions before any is elaborated, so the table holds both the top file's
+`step` (key `step`) and an imported file's own `step` (key `file_a_step`). In
+`_elab_call`, a bare `step(x)` accepts a table entry only when that entry's
+`pypeline_entity_callables` callable is the object the calling module binds `step` to.
+It tries the bare key, then the sub-file's prefixed key, then `_elaborate_live_func` on
+the live binding (which finds an imported function's own key). Before this check, a
+sub-file's `step` resolved to the top file's `step`, still an empty stub because
+sub-files elaborate first, and trimming crashed with `KeyError: None`
+(`cross_file_helper_name_test.py`). A `@MAIN` named after its own module (`counter.py`
+defining `counter`) only triggers prefix elision; it does not collide.
+
 **Intra-sub-file calls**: when `file_a.main` calls `adder_extra(x, y)`, `_elab_call`
 first attempts `f"{module_prefix}_{callee_name}"` in `FuncLogicLookupTable` before
 falling through to `_elaborate_live_func`. This ensures the call site references the
@@ -6060,7 +6072,8 @@ top.py  (single-file or multi-file entry point)
   │               ├─ _elab_bit_slice    BIT_SLICE submodule (scalar x[hi:lo] or s.field[hi:lo])
   │               ├─ _elab_tuple_concat TUPLE_CONCAT submodule ((a, b, c))
   │               └─ _elab_call         AUTO_PIPELINE tag call → elaborate func, tag inst + constraint
-  │                                   ast.Name: try prefixed name (sub-file), FuncLogicLookupTable, _elaborate_live_func
+  │                                   ast.Name: FuncLogicLookupTable bare then prefixed (sub-file) key, each only if
+  │                                     its registered callable is the module's binding; else _elaborate_live_func
   │                                   ast.Attribute: module-qualified call (mod.func(args)) →
   │                                     getattr lookup + FuncLogicLookupTable (sub-files pre-elaborated)
   │                   └─ bit_dup/rotl/rotr/bswap/bit_assign/array_uint/concat → BIT_MANIP submodules

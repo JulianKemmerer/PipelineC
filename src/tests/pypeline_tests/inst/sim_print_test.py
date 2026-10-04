@@ -107,6 +107,23 @@ def test_sim_call_always_fires():
     print("test_sim_call_always_fires PASS")
 
 
+def test_extra_positional_arg_rejected_in_sim():
+    """sim_print("n", n) is an elaboration error (exactly one positional argument).
+    Native sim used to accept it by binding n to debug=, printing just "n" and, once n
+    went nonzero, a [SIM DEBUG PRINT ...] tag. It must fail the same way elaboration does."""
+    buf = io.StringIO()
+    with contextlib.redirect_stdout(buf):
+        try:
+            sim_print("n", 1)
+        except TypeError:
+            pass
+        else:
+            raise AssertionError("sim_print accepted a second positional argument")
+        sim_print("still fine", debug=False)
+    assert buf.getvalue() == "still fine\n", repr(buf.getvalue())
+    print("test_extra_positional_arg_rejected_in_sim PASS")
+
+
 def test_bare_char_array_elaborates():
     """A bare {expr} for a char_t[N] array now auto-infers %s at elaboration time, and
     matches it in simulation via CharArray's NUL-stopped __str__ -- no wrapper call
@@ -173,6 +190,7 @@ if __name__ == "__main__":
     test_counter_prints()
     test_print_name()
     test_sim_call_always_fires()
+    test_extra_positional_arg_rejected_in_sim()
     test_bare_char_array_elaborates()
     test_bare_char_scalar_rejected_at_elaboration()
     print("All sim_print tests passed.")

@@ -2,8 +2,10 @@
 # -*- coding: utf-8 -*-
 
 import argparse
+import atexit
 import os
 import sys
+from timeit import default_timer as timer
 
 sys.dont_write_bytecode = True
 
@@ -417,6 +419,10 @@ SYN.MUX_DELAY_KEY_BY_WIDTH = args.mux_delay_by_width
 # model instead, for A/B comparison.
 AUTO.FORCE_ABSTRACT_AREA = args.auto_fsm_abstract_area
 
+# Every exit from here on -- done, TIMING NOT MET, or an error -- ends by
+# saying how long the build ran and where the time went
+atexit.register(lambda: print(SYN.ELAPSED_SUMMARY_STR(), flush=True))
+
 print(
     "================== Parsing C Code to Logical Hierarchy ================================",
     flush=True,
@@ -461,6 +467,9 @@ elif src_file.endswith(".py"):
             flush=True,
         )
 
+
+SYN.PARSE_DONE_TIME = timer()
+print(f"Parsing done, elapsed time {SYN.ELAPSED_STR()}", flush=True)
 
 # Settle part and tool from all four possible sources (--part / PART(...),
 # --syn_tool / SYN_TOOL(...)) now that the design has been parsed and its own
@@ -570,9 +579,12 @@ if not args.no_synth:
         "================== Writing Results of Throughput Sweep ================================",
         flush=True,
     )
+    print(f"Throughput sweep done, elapsed time {SYN.ELAPSED_STR()}", flush=True)
     SWEEP.PRINT_PIPELINE_DEPTH_SUMMARY(
         parser_state, multimain_timing_params.TimingParamsLookupTable
     )
+    # An over-capacity final netlist fails the build even when its timing met
+    SWEEP.ADD_OVER_CAPACITY_FAILURES(parser_state, multimain_timing_params)
     # The machine-readable verdict for the design as built, written before the
     # TIMING NOT MET exit below so failing builds get it too
     SWEEP.WRITE_SWEEP_HISTORY(

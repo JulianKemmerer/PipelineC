@@ -89,6 +89,15 @@ def get_tests() -> list:
             cmd=[INST_DIR / "conditional_import_test.py"],
         )
     )
+    # A sub-file's bare helper call binds to that file's own (or imported)
+    # function, never the top file's same-named one pre-registered in Step 6.
+    tests.append(
+        Test(
+            name="cross_file_helper_name_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "cross_file_helper_name_test.py"],
+        )
+    )
     # In-process PARSE_FILE regression test for _elaborate_live_func's
     # struct-registration fallback -- checks
     # parser_state.struct_to_field_type_dict directly for a struct defined

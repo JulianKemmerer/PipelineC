@@ -352,7 +352,7 @@ library: `fm_radio_decim.py` (a synthesizable I/Q 5× decimator pair at 125 MHz 
 pypeline port of `examples/sdr/fm_radio.c`'s front end) and the `*_tb.py` files listed
 above alongside each block. Every one of them is registered as a test
 (`src/tests/pypeline_tests/native_sim_tests.py`, `synth_tests.py`: the PDW synth tops
-under `synth_vivado`, `fm_radio_decim.py` under `synth_device_models`) so a documented
+and `fm_radio_decim.py` under `synth_vivado`) so a documented
 example cannot rot unnoticed; the library's own unit tests are the `inst/` files named
 under each block above.
 

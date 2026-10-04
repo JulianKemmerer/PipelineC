@@ -1709,8 +1709,11 @@ falling through to the same `print(s)`. The path is made absolute (`os.path.absp
 basename) so the tag reads as clickable `path:line` text in terminals/editors that recognize
 that shape:
 
+`debug` is keyword-only. Elaboration already rejects a second positional argument, and
+before that rule existed native sim bound C-printf-style `sim_print("n", n)` to `debug=n`:
+
 ```python
-def sim_print(s, debug=False):
+def sim_print(s, *, debug=False):
     if _sim_converging:
         return SimVal(0)
     if debug:

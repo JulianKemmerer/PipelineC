@@ -272,12 +272,116 @@ def test_retained_observation_matches_winner_and_constraints():
             doc = SWEEP.WRITE_SWEEP_HISTORY(parser_state, params({"k": 2}), build_complete=True)
             assert doc["retained_observation"]["log_path"] == "winner_again.log"
 
-            # Same HDL, other constraints: the k=2 logs cannot stand in for it.
+            # Same HDL, other constraints: the k=2 logs cannot stand in for it,
+            # nor can the newest log's fit status.
             doc = SWEEP.WRITE_SWEEP_HISTORY(parser_state, params({"k": 4}), build_complete=False)
             assert doc["retained_observation"] is None
+            assert doc["fit_status"] == "unknown", doc["fit_status"]
             assert doc["build_complete"] is False
             with open(os.path.join(out_dir, "top", "sweep_history.json")) as f:
                 assert json.load(f)["build_complete"] is False
+        finally:
+            (
+                SYN.SYN_OUTPUT_DIRECTORY,
+                SYN.TOP_LEVEL_MODULE,
+                SYN.GET_TARGET_MHZ,
+                SYN.LOGIC_IS_ZERO_DELAY,
+                SWEEP.SYNTHESIS_OBSERVATIONS[:],
+            ) = saved
+            reset_records()
+
+
+def test_over_capacity_record_is_never_a_pass():
+    """Default mode (no --stop_on_over_capacity) keeps sweeping an
+    over-capacity netlist; meeting timing there is still not a pass."""
+    measured = {"source": "planned_sweep", "achieved_mhz": 81.0}
+    final = SWEEP.BUILD_FINAL_MAIN_RECORD(80.0, measured, None, None, "over_capacity")
+    assert final["met"] is False and final["met_basis"] == "device_over_capacity"
+    assert final["failure_reason"] == "device_over_capacity"
+    assert final["achieved_mhz"] == 81.0
+    assumed = {"source": "planned_sweep"}
+    final = SWEEP.BUILD_FINAL_MAIN_RECORD(80.0, assumed, None, None, "over_capacity")
+    assert final["met"] is False and final["mhz_is_lower_bound"] is False
+    assert final["lower_bound_mhz"] is None
+    # Fit does not change a verdict that was not a pass.
+    final = SWEEP.BUILD_FINAL_MAIN_RECORD(
+        80.0, measured, ("m", 80.0, 70.0, "timing_not_met"), None, "over_capacity"
+    )
+    assert final["met"] is False and final["met_basis"] == "timing_failure"
+    for unverified in ({"source": "comb"}, {"source": "no_sweep"}):
+        final = SWEEP.BUILD_FINAL_MAIN_RECORD(80.0, unverified, None, None, "over_capacity")
+        assert final["met"] is None and final["met_basis"] == "unverified"
+    # The --stop_on_over_capacity failure tuple names its own basis.
+    final = SWEEP.BUILD_FINAL_MAIN_RECORD(
+        80.0, {"source": "over_capacity"}, ("m", 80.0, None, "device_over_capacity"), None
+    )
+    assert final["met"] is False and final["met_basis"] == "device_over_capacity"
+    # Fit evidence alone does not fail anything.
+    final = SWEEP.BUILD_FINAL_MAIN_RECORD(80.0, measured, None, None, "within_reported_limits")
+    assert final["met"] is True and final["met_basis"] == "measured"
+
+
+def test_over_capacity_final_netlist_fails_the_build():
+    """The retained (built) implementation is over capacity but met timing:
+    final.met is False and sweep_timing_failures -- the exit code's list --
+    gets a device_over_capacity entry. A goal-less MAIN is not blamed."""
+    reset_records()
+    SWEEP.NEXT_SWEEP_HISTORY_RUN()
+    SWEEP.RECORD_SWEEP_OUTCOME("m", 80.0, "planned_sweep", achieved_mhz=81.0)
+    SWEEP.RECORD_SWEEP_OUTCOME("goalless", None, "planned_sweep")
+    goals = {"m": 80.0, "goalless": None}
+    parser_state = SimpleNamespace(
+        main_mhz=dict(goals),
+        LogicInstLookupTable={n: SimpleNamespace(func_name=n) for n in goals},
+    )
+    tpl = {n: SimpleNamespace(GET_HASH_EXT=lambda table, ps: "_h") for n in goals}
+    params = SimpleNamespace(
+        TimingParamsLookupTable=tpl, sweep_timing_failures=[], auto_multi_cycle_ncycles={}
+    )
+    saved = (
+        SYN.SYN_OUTPUT_DIRECTORY,
+        SYN.TOP_LEVEL_MODULE,
+        SYN.GET_TARGET_MHZ,
+        SYN.LOGIC_IS_ZERO_DELAY,
+        list(SWEEP.SYNTHESIS_OBSERVATIONS),
+    )
+    with tempfile.TemporaryDirectory() as out_dir:
+        try:
+            SYN.SYN_OUTPUT_DIRECTORY = out_dir
+            SYN.TOP_LEVEL_MODULE = "top"
+            SYN.GET_TARGET_MHZ = lambda inst, ps: goals[inst]
+            SYN.LOGIC_IS_ZERO_DELAY = lambda logic, ps, allow_none_delay=False: True
+            built = SWEEP.IMPLEMENTATION_SIGNATURE(parser_state, params)
+            fits = dict(status="within_reported_limits", resources={}, overutilization=[])
+            over = dict(fits, status="over_capacity")
+            # Only another implementation is over capacity: nothing added.
+            SWEEP.SYNTHESIS_OBSERVATIONS[:] = [
+                dict(implementation_signature="other", utilization=over, cache_hit=False),
+                dict(implementation_signature=built, utilization=fits, cache_hit=False),
+                dict(implementation_signature="newer", utilization=over, cache_hit=False),
+            ]
+            assert SWEEP.ADD_OVER_CAPACITY_FAILURES(parser_state, params) == []
+            doc = SWEEP.WRITE_SWEEP_HISTORY(parser_state, params, build_complete=True)
+            assert doc["fit_status"] == "within_reported_limits"
+            assert doc["mains"]["m"]["final"]["met"] is True
+
+            # The built implementation itself is over capacity.
+            SWEEP.SYNTHESIS_OBSERVATIONS.append(
+                dict(implementation_signature=built, utilization=over, cache_hit=False)
+            )
+            provisional = SWEEP.WRITE_SWEEP_HISTORY(parser_state, params, build_complete=False)
+            assert provisional["mains"]["m"]["final"]["met"] is False
+            added = SWEEP.ADD_OVER_CAPACITY_FAILURES(parser_state, params)
+            assert added == [("m", 80.0, 81.0, "device_over_capacity")], added
+            assert params.sweep_timing_failures == added
+            # Idempotent: an already-failing main is not added twice.
+            assert SWEEP.ADD_OVER_CAPACITY_FAILURES(parser_state, params) == []
+            doc = SWEEP.WRITE_SWEEP_HISTORY(parser_state, params, build_complete=True)
+            assert doc["fit_status"] == "over_capacity"
+            final = doc["mains"]["m"]["final"]
+            assert final["met"] is False and final["met_basis"] == "device_over_capacity"
+            assert doc["mains"]["goalless"]["final"]["met"] is None
+            assert SWEEP.PRINT_TIMING_FAILURES(params) is True
         finally:
             (
                 SYN.SYN_OUTPUT_DIRECTORY,

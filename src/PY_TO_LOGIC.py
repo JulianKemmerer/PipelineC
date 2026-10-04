@@ -5013,13 +5013,28 @@ class FuncElaborator:
                 return self._elab_strlen_call(expr)
             if callee_name in _BIT_MANIP_FUNC_NAMES:
                 return self._elab_bit_manip_call(expr)
-            callee_def = self.parser_state.FuncLogicLookupTable.get(
-                _hw_func_name(None, callee_name)
-            )
+            # A table entry counts only if it is the function this module's name
+            # is bound to: Step 6 pre-registers every file's defs, so a sub-file's
+            # own `step` would otherwise resolve to the top file's same-named
+            # `step` (a stub at that point, or the wrong hardware).
+            bound = self.module_globals.get(callee_name)
+
+            def _bound_entry(key):
+                entry = self.parser_state.FuncLogicLookupTable.get(key)
+                entity = getattr(
+                    self.parser_state, "pypeline_entity_callables", {}
+                ).get(key)
+                if entry is not None and (
+                    bound is None or entity is None or entity is bound
+                ):
+                    return entry
+                return None
+
+            callee_def = _bound_entry(_hw_func_name(None, callee_name))
             if callee_def is None and self.module_prefix:
                 # For sub-file functions, helpers are pre-elaborated under a prefixed name.
                 prefixed = _hw_func_name(self.module_prefix, callee_name)
-                prefixed_def = self.parser_state.FuncLogicLookupTable.get(prefixed)
+                prefixed_def = _bound_entry(prefixed)
                 if prefixed_def is not None:
                     callee_def = prefixed_def
                     callee_name = prefixed

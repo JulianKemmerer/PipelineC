@@ -697,7 +697,13 @@ iteration".
   snapshot evidence is `null` (`unknown_in_retained_snapshot`), even if an earlier
   implementation passed or failed. Historical maxima never supply final MHz.
   The build fails if any goal fails; an unknown MAIN is not independently blamed.
-  `--no_sweep` and goal-less MAINs also have no verified verdict.
+  `--no_sweep` and goal-less MAINs also have no verified verdict. A MAIN that
+  met its goal only in an over-capacity retained netlist is `met: false`
+  (`met_basis: "device_over_capacity"`), and the build fails.
+- **`fit_status`** (top level) is the retained observation's utilization
+  status: `within_reported_limits`, `over_capacity`, or `unknown` when no
+  observation matches the final implementation. A newer log of a different
+  implementation never supplies it.
 - **`mhz_is_lower_bound`.** A met main with no measured MHz has
   `achieved_mhz: null` and `mhz_is_lower_bound: true`: the goal is a lower
   bound on its fmax, never the fmax itself.

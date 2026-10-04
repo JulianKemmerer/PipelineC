@@ -340,6 +340,15 @@ def get_tests() -> list:
             cmd=[INST_DIR / "openxc7_unit_test.py"],
         )
     )
+    # `vivado -version` parsing: three-part update releases and the
+    # pre-2022.2 fixed_pkg cutoff. No Vivado run.
+    tests.append(
+        Test(
+            name="vivado_version_unit_test",
+            category="unit",
+            cmd=[INST_DIR / "vivado_version_unit_test.py"],
+        )
+    )
     return tests
 
 
