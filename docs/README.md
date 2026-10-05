@@ -1193,10 +1193,15 @@ Automatic features add these controls and reports:
 The output directory contains intermediate sweep shapes as well as the final design.
 Consume the explicit manifests and indexes instead of globbing generated directories:
 
-- `vhdl_files.txt` is the authoritative dependency-ordered list of final VHDL sources.
-  It is one whitespace-separated line of absolute paths and can be used as a GHDL
-  response-file list. Do not compile a directory glob: it can mix incompatible timing
-  variants left by sweep iterations.
+- `vhdl_files.txt` is the authoritative list of final VHDL sources. It is one
+  whitespace-separated line of absolute paths and can be used as a GHDL response-file
+  list. The packages come first, but the entity files are not in compile order
+  (parents are listed before the entities they instantiate), so give the list to a
+  tool that resolves the order itself: `ghdl -i` then `ghdl -m`, a ModelSim project
+  with `project calculateorder` (what `--modelsim` does), or Vivado `read_vhdl`.
+  Analyzing it one file at a time in list order (`ghdl -a`, bare `vcom`) fails. Do not
+  compile a directory glob: it can mix incompatible timing variants left by sweep
+  iterations.
 - `top/top.vhd` is the stable public top after final timing selection.
   `c_structs_pkg.pkg.vhd` contains translated structs, arrays, enums, and conversions;
   `global_wires_pkg.pkg.vhd` contains shared-global records.

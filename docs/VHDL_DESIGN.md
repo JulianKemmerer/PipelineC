@@ -39,8 +39,9 @@ A normal build emits:
 - built-in support entities such as FIFO implementations when referenced;
 - one or more generated entities for each distinct logic/timing shape;
 - a final `top/top.vhd`; and
-- `vhdl_files.txt`, the exact dependency-ordered file list for the final
-  artifact.
+- `vhdl_files.txt`, the exact file list for the final artifact (packages
+  first, then entity files parents-before-children, so it is not a compile
+  order; consumers resolve the order themselves).
 
 Downstream simulation and synthesis should consume `vhdl_files.txt`, not a
 directory glob. Intermediate sweep candidates can coexist in the output
@@ -300,7 +301,7 @@ listed file hash are byte-identical; recipe-specific artifacts and caches are
 documented in `DEVICE_MODELS_DESIGN.md`.
 
 The opt-in Divider QoR harness in
-`src/tests/pypeline_tests/divider_qor_bench.py` copies the dependency-ordered
+`src/tests/pypeline_tests/divider_qor_bench.py` copies the listed
 final files into an immutable evidence snapshot, compiles that snapshot with
 GHDL, and remaps the same bytes for the accepted STA and cell result. This
 prevents a restored best sweep snapshot from being paired with the mapped
