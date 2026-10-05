@@ -16,6 +16,10 @@ Each clock cycle:
 
 Global wires persist their values across cycles; registers commit at end of each.
 
+A @MAIN's arguments are top-level input ports that nothing drives here, so every call
+passes a fresh typed zero for each (like an undriven Input[T]) and drops the return
+value (an output port); a notice names such MAINs once at the start of the run.
+
 Multi-file designs are supported: @MAIN functions and Wire[T]/Input[T]/Output[T]
 declarations in imported sub-modules are discovered automatically, transitively --
 including "pass-through" modules that declare no Wire[T] of their own but import
@@ -31,6 +35,7 @@ _sim_wire_state.
 import argparse
 import copy
 import importlib.util
+import inspect
 import itertools
 import sys
 import os
@@ -144,6 +149,20 @@ def run_sim(
         print("No @MAIN functions found in design — nothing to simulate.")
         return
 
+    # A @MAIN's arguments are top-level input ports with no driver in native sim:
+    # they read as typed zeros, like an undriven Input[T] (see _call_main).
+    main_arg_types = {}
+    for fn in mains:
+        arg_types = pypeline.hw_arg_types(fn)
+        main_arg_types[fn] = arg_types
+        if arg_types:
+            arg_names = ", ".join(inspect.signature(inspect.unwrap(fn)).parameters)
+            print(
+                f"Native sim: @MAIN {fn.__name__}'s arguments ({arg_names}) are "
+                f"top-level input ports with no driver; they read as zero every "
+                f"cycle. Drive values through Input[T] wires and @sim_input."
+            )
+
     pipeline_models = set()
     if pypeline._pipeline_latency_declared:
         candidates = [
@@ -234,7 +253,7 @@ def run_sim(
             print("Clock: ", cycle, flush=True)
             cycles_run = cycle + 1
             try:
-                _run_clock_cycle(mains, cycle)
+                _run_clock_cycle(mains, main_arg_types, cycle)
             except pypeline.SimFinish:
                 print("")
                 print(f"sim_finish() called — stopping early at cycle {cycle}")
@@ -265,7 +284,13 @@ def run_sim(
         pypeline.RUN_FINAL_HOOKS("sim", pending_exc=pending_exc)
 
 
-def _run_clock_cycle(mains: list, cycle: int) -> None:
+def _call_main(main_fn, arg_types: tuple) -> None:
+    # Fresh zeros on every call, so no call can see an argument object a previous
+    # call (or cycle) was handed.
+    pypeline.sim_call(main_fn, *(pypeline.sim_zero(t) for t in arg_types))
+
+
+def _run_clock_cycle(mains: list, main_arg_types: dict, cycle: int) -> None:
     # Apply pipelined MAINs' N-cycles-old write-sets first: the wire values
     # everyone reads this cycle are what those MAINs computed N cycles ago
     # (their outputs crossing N pipeline register stages in hardware). Values
@@ -284,7 +309,7 @@ def _run_clock_cycle(mains: list, cycle: int) -> None:
     pypeline._sim_reg_begin_buffer()
     pypeline._sim_converging = True
     try:
-        _convergence_loop(mains, cycle)
+        _convergence_loop(mains, main_arg_types, cycle)
     finally:
         pypeline._sim_converging = False
 
@@ -294,7 +319,7 @@ def _run_clock_cycle(mains: list, cycle: int) -> None:
     for main_fn in mains:
         pypeline._sim_current_main = main_fn
         try:
-            pypeline.sim_call(main_fn)
+            _call_main(main_fn, main_arg_types[main_fn])
         finally:
             pypeline._sim_current_main = None
 
@@ -309,7 +334,7 @@ def _run_clock_cycle(mains: list, cycle: int) -> None:
         info["collector"].clear()
 
 
-def _convergence_loop(mains: list, cycle: int) -> None:
+def _convergence_loop(mains: list, main_arg_types: dict, cycle: int) -> None:
     _MAX_EXECUTIONS = 10_000  # guard against combinatorial loops
 
     # Start with every MAIN in the queue (first cycle, or after clock edge).
@@ -336,7 +361,7 @@ def _convergence_loop(mains: list, cycle: int) -> None:
         # so we know which MAINs to re-queue when a wire changes.
         pypeline._sim_current_main = main_fn
         try:
-            pypeline.sim_call(main_fn)
+            _call_main(main_fn, main_arg_types[main_fn])
         finally:
             pypeline._sim_current_main = None
         total_executions += 1

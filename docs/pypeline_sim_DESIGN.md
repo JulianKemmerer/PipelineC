@@ -2464,6 +2464,10 @@ Two traps when writing a design that will be diffed against real VHDL:
   limitations (plain int operands, shifts, `__radd__`).
 - **`Input[T]` wires** — initialized to zero at `sim_reset()`; driving a per-cycle value is
   supported via `@sim_input` (see above).
+- **`@MAIN` arguments** — top-level input ports with no driver: `pypeline_sim.py`
+  (`_call_main`) passes a fresh `sim_zero` of each `hw_arg_types` entry on every call and
+  drops the return value (an output port), printing one notice per such MAIN at the start
+  of the run. There is no way to drive them; use `Input[T]` + `@sim_input` instead.
 - **Raw VHDL (`vhdl(...)`)** — simulable only with an attached `@sim_model`
   (see `sim_model` section above); without one, calling the function in simulation raises
   `NotImplementedError`. `make_fifo` attaches a `collections.deque`-based FWFT model (see

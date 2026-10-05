@@ -478,6 +478,11 @@ Each argument of a `@MAIN` function becomes a top-level input port named
 [Top-level ports and clocks](README.md#top-level-ports-and-clocks) for every kind of port
 a design can have.
 
+Native simulation has nothing to drive those argument ports with, so they read as zero
+every cycle (it prints a notice saying so), and the return value is not observed. To
+give a design stimulus and check its results in simulation, use `Input[T]`/`Output[T]`
+globals with [`@sim_input`](#sim_input--driving-simulation-inputs) and `@sim_output`.
+
 ### Frequency constraint
 
 Pass the target clock frequency in MHz to constrain the synthesis tool:

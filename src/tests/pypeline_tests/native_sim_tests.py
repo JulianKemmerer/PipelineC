@@ -132,6 +132,15 @@ def get_tests() -> list:
             cmd=[PYPELINE_SIM, INST_DIR / "reg_aug_assign_test.py", "--run", "all"],
         )
     )
+    # @MAIN arguments are undriven top-level input ports: native sim passes
+    # typed zeros (it used to call every MAIN with no arguments and crash).
+    tests.append(
+        Test(
+            name="main_args_sim_test",
+            category="native_sim",
+            cmd=[PYPELINE_SIM, INST_DIR / "main_args_sim_test.py", "--run", "all"],
+        )
+    )
     tests.append(
         Test(
             name="sim_model_convergence_test",
@@ -249,13 +258,13 @@ def get_tests() -> list:
             )
         )
     # docs/README.md's getting-started examples, for the same reason. Each run
-    # count is the one in that file's README command. pipeline.py is not here:
-    # its @MAIN takes arguments, which native simulation does not drive (it is
-    # a synth_tests.py entry instead).
+    # count is the one in that file's README command (pipeline.py has none, and
+    # its @MAIN arguments read as zero here, so 2 cycles just checks it runs).
     for fname, run_n in [
         ("blink.py", 3),
         ("counter.py", 3),
         ("fsm.py", 7),
+        ("pipeline.py", 2),
         ("stream_pipeline.py", 20),
     ]:
         tests.append(

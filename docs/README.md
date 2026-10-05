@@ -958,6 +958,8 @@ Counter register value: 2
 ```
 
 The template drives only the clock, so any other inputs stay undriven ('U').
+Native simulation reads the same undriven inputs, `Input[T]` wires and `@MAIN`
+arguments, as zero, so the two simulations can differ on a design that depends on them.
 `--makefile FILE` supplies an existing simulator Makefile instead of the generated one.
 The simulation also writes a standard `.vcd` waveform file, `<out_dir>/cocotb/top.vcd`,
 for viewers like [GTKWave](https://gtkwave.github.io/gtkwave/) and
