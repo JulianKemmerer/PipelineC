@@ -1,5 +1,6 @@
 import ast
 import atexit
+import builtins
 import functools
 import hashlib
 import importlib.machinery
@@ -41,6 +42,7 @@ from pypeline import (
     collapse_overflow_name,
     _local_name_bindings,
     _wire_name_bind_message,
+    _str_to_scalar_message,
 )
 
 # Recognized by name in FuncElaborator._elab_stmt as a raw-VHDL-passthrough statement.
@@ -4278,6 +4280,11 @@ class FuncElaborator:
         declared target array.
         """
         coord_str = _loc_str(self.src_file, ast_node)
+        if target_ctype is not None and not _is_array(target_ctype):
+            raise ElaborationError(
+                f"{_str_to_scalar_message(py_str, target_ctype)} "
+                f"(at {self.src_file}:{getattr(ast_node, 'lineno', '?')})"
+            )
         # Wire value carries literal surrounding quotes, matching the C frontend's own
         # string-constant wire encoding (c_ast string constants keep their quote chars
         # in .value) -- VHDL.C_CONST_STR_TO_VHDL_CONST_STR expects them already present,
@@ -5043,6 +5050,18 @@ class FuncElaborator:
                 live_func = self.module_globals.get(callee_name)
                 if live_func is not None and callable(live_func):
                     callee_def = self._elaborate_live_func(callee_name, live_func)
+                elif hasattr(builtins, callee_name):
+                    # A Python builtin (ord("A"), min(3, 4), len(CONST_LIST)):
+                    # module_globals never holds builtins, but eval() does, so
+                    # a constant call folds exactly as native sim computes it.
+                    val = self._try_eval_const(expr)
+                    if isinstance(val, (int, bool)) and not isinstance(val, type):
+                        return self._elab_python_value(val, expr)
+                    raise ElaborationError(
+                        f"Python builtin '{callee_name}(...)' is only supported "
+                        f"with compile-time constant arguments, where it folds "
+                        f"to a constant (at {self.src_file}:{expr.lineno})"
+                    )
                 else:
                     raise NotImplementedError(
                         f"Call to unknown function '{callee_name}'"

@@ -231,6 +231,17 @@ def get_tests() -> list:
             cmd=[INST_DIR / "cast_error_test.py"],
         )
     )
+    # Scalar char constants: a bare constant builtin call (c = ord("A"))
+    # folds in elaboration as it runs in native sim, a builtin on a hardware
+    # value is a clear error, and a str into a scalar char_t raises the same
+    # "use ord(...)" message on both sides (was two internal errors).
+    tests.append(
+        Test(
+            name="ord_char_literal_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "ord_char_literal_test.py"],
+        )
+    )
     # name_index.log side-tables: pypeline_name_full/pypeline_type_canonical
     # get populated exactly when a canonical name actually collapses, and
     # pypeline_canonical_name_owner raises on a genuine collision (two

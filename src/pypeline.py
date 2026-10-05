@@ -5563,6 +5563,18 @@ class CharArray(list):
     __hash__ = None
 
 
+def _str_to_scalar_message(value, ctype):
+    """Shared error text (native sim and PY_TO_LOGIC) for a Python str assigned
+    or passed to a non-array type: a str is not an integer, so "A" is not
+    char_t 65 -- ord("A") is."""
+    hint = f"use ord({value!r}) for its character code, or " if len(value) == 1 else ""
+    return (
+        f"string {value!r} cannot be used as a value of non-array type "
+        f"'{_ctype_str(ctype)}': a Python str is not an integer -- {hint}"
+        f"declare a char_t[N] array to hold a string"
+    )
+
+
 def _sim_cast_deep(value, ctype):
     """Cast value to ctype, recursing through arrays so every scalar leaf becomes a
     typed SimVal -- mirrors hardware where an array's elements all share one declared
@@ -5580,6 +5592,8 @@ def _sim_cast_deep(value, ctype):
         return value
     elem_ctype = _array_elem_ctype(ctype)
     if elem_ctype is None:
+        if isinstance(value, str):
+            raise TypeError(_str_to_scalar_message(value, ctype))
         return _sim_cast(value, ctype)
     elem_name = getattr(elem_ctype, "_ctype_name", None)
     if isinstance(value, str):
@@ -6390,11 +6404,18 @@ class _TypedAnnAssignRewriter(_ast.NodeTransformer):
                 self._declared_types[arg.arg] = ann_val
 
     def _make_cast(self, value_node, ctype, ref_node):
-        """Return a _sim_cast(value_node, __sim_ann_L_C__) Call node."""
+        """Return a _sim_cast(value_node, __sim_ann_L_C__) Call node. A str
+        literal goes to _sim_cast_deep instead, whose clear "use ord(...)"
+        error the hot-path _sim_cast deliberately doesn't check for."""
         key = f"__sim_ann_{ref_node.lineno}_{ref_node.col_offset}__"
         self._ann_ctypes_out[key] = ctype
+        is_str_literal = isinstance(value_node, _ast.Constant) and isinstance(
+            value_node.value, str
+        )
         return _ast.Call(
-            func=_ast.Name(id="_sim_cast", ctx=_ast.Load()),
+            func=_ast.Name(
+                id="_sim_cast_deep" if is_str_literal else "_sim_cast", ctx=_ast.Load()
+            ),
             args=[value_node, _ast.Name(id=key, ctx=_ast.Load())],
             keywords=[],
         )
@@ -7358,6 +7379,8 @@ def _sim_cast_call_arg(pt, v):
         return _sim_cast(v, pt)
     if _is_char_like_array(pt):
         return _sim_cast_deep(v, pt)
+    if isinstance(v, str) and _is_scalar_pypeline_int(pt):
+        raise TypeError(_str_to_scalar_message(v, pt))
     return v
 
 
@@ -7605,6 +7628,8 @@ def _sim_type_wrap(fn):
                 new_kwargs[k] = _sim_cast(v, pt)
             elif pt is not None and _is_char_like_array(pt):
                 new_kwargs[k] = _sim_cast_deep(v, pt)
+            elif isinstance(v, str) and _is_scalar_pypeline_int(pt):
+                raise TypeError(_str_to_scalar_message(v, pt))
         # Scope key must be `wrapper` (the object register_operator(...,
         # scope=...) was actually called with -- registration happens after
         # `@hw_func` has already wrapped the function, so the name in the
@@ -7632,6 +7657,8 @@ def _sim_type_wrap(fn):
             result = _sim_cast(result, ret_t)
         elif ret_t is not None and _is_char_like_array(ret_t):
             result = _sim_cast_deep(result, ret_t)
+        elif isinstance(result, str) and _is_scalar_pypeline_int(ret_t):
+            raise TypeError(_str_to_scalar_message(result, ret_t))
         return result
 
     if SIM_RAW_INTS:

@@ -1515,6 +1515,16 @@ even when it holds `"sensor1"` (7 characters). This matches PipelineC's C-side `
 exactly: it's a compile-time constant (the array size), not a runtime scan for a
 null terminator.
 
+A single scalar `char_t` holds a character code, not a string. Write `ord("A")` (C's
+`'A'`), not `"A"`. A Python builtin with constant arguments (`ord`, `min`, `len` of a
+constant list, ...) folds to a constant at elaboration, the same value native sim
+computes. Assigning a `str` to a scalar raises an error that points to `ord(...)`:
+
+```python
+c: char_t = ord("A")   # 65
+c = "A"                # error: a Python str is not an integer -- use ord('A')
+```
+
 In simulation, a `char_t[N]` value is a `CharArray` (a list of `SimVal`s that also behaves
 like the Python string it represents) — pass and compare plain Python `str` values
 directly, with no conversion helpers needed:

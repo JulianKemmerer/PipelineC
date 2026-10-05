@@ -31,11 +31,6 @@ class my_fsm_outputs_t(NamedTuple):
 # Module input signal, a top-level input port
 some_input_signal: Input[uint1_t]
 
-# Character constants: plain Python, evaluated at elaboration time
-CHAR_A = ord("A")
-CHAR_B = ord("B")
-CHAR_C = ord("C")
-
 # Simulation only: drive some_input_signal high every 5th clock cycle
 sim_cycle = [0]
 
@@ -57,15 +52,15 @@ def fsm() -> my_fsm_outputs_t:
     # State machine logic
     if state == my_state_t.STATE_A:
         sim_print("State A!")
-        outputs.some_output_signal = CHAR_A
+        outputs.some_output_signal = ord("A")
         state = my_state_t.STATE_B
     elif state == my_state_t.STATE_B:
         sim_print("State B!")
-        outputs.some_output_signal = CHAR_B
+        outputs.some_output_signal = ord("B")
         state = my_state_t.STATE_C
     else:  # state == my_state_t.STATE_C
         sim_print("State C!")
-        outputs.some_output_signal = CHAR_C
+        outputs.some_output_signal = ord("C")
         if some_input_signal:
             state = my_state_t.STATE_A
         else:
