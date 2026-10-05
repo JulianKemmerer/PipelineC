@@ -520,6 +520,12 @@ def name_main():
     name_in_ready = result.stream_in_if.ready
 ```
 
+To accept a word every cycle, `MAX_IN_FLIGHT` must cover the time each word holds an
+in-flight slot. For a pipeline of latency L that is at least L+5 cycles: the input and
+output registers, the FIFO's two cycles, and the registered ready. A smaller value runs at
+`MAX_IN_FLIGHT`/(L+5) words per cycle. `make_stream_auto_pipeline` sets this limit from
+the discovered latency.
+
 See [pypeline_guide.md: Pipelined Stream Wrappers: `make_stream_auto_pipeline`](pypeline_guide.md#pipelined-stream-wrappers-make_stream_auto_pipeline),
 and [examples/pypeline/stream_pipeline.py](../examples/pypeline/stream_pipeline.py) for a
 complete design with a producer and a consumer `@MAIN`.

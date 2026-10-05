@@ -495,7 +495,7 @@ from a different angle:
   - errors from bad combinations;
   - key and repr stability across constructions;
   - plain native sim, where a hint is cycle-identical to none and a fixed `latency=2`
-    delays the first result by 2 cycles.
+    delays every result by exactly 2 cycles.
 - `auto_pipeline_region_planning_test.py` (unit): `AUTO_PIPELINE.COUNT_TARGETED_PLACEMENTS`,
   plan trimming, cap bookkeeping, and hotspot-to-region attribution on synthetic
   landscapes.
@@ -523,6 +523,33 @@ from a different angle:
 - `self_check_fixed_auto_pipeline_test.py` (both native_vs_vhdl categories): compares
   the native delay line against the `--comb` VHDL's fixed registers, and against the
   planned sweep's enforced region.
+
+## Stream wrapper throughput coverage
+
+`make_stream_auto_pipeline` must accept one word per cycle (II=1) while its consumer is
+ready. Every elastic DSP factory sits on top of it. The data-only tests above pass at
+any rate, so these tests check the rate itself.
+- `stream_ii1_throughput_test.py` (native_sim, `sim_call`), with an always-valid
+  producer and an always-ready consumer:
+  - `make_stream_auto_pipeline(..., latency=L)` for L = 0-5 and 8: inputs are accepted on
+    consecutive cycles, and results come out on consecutive cycles starting exactly
+    L+4 cycles after the first accept;
+  - a consumer stalled for 40 cycles: exactly L+5 words are admitted, and all of them
+    come out in order. Fewer means too few credits; more means credits the FIFO cannot
+    hold;
+  - the elastic `make_fir`, `make_fir_decim` (D = 1, 2, 3), `make_fir_interp`
+    (I = 2, 4), `make_dc_block`, `make_moving_avg` and `make_magnitude` at core
+    latencies 0 and 2: inputs and results at their nominal rates.
+
+  Mutation-checked: the old in-flight limit of `max(2, L+2)` fails all three tests.
+- `self_check_stream_auto_pipeline_ii1_test.py` (`native_vs_vhdl_sim --comb`, plus
+  `native_sim`): two wrappers with fixed core latencies 0 and 3. `sim_assert`s check
+  that ready stays high after the first accept and that result k arrives on cycle
+  first accept + L + 4 + k. Its debug probes are cycle-diffed between native sim and
+  cocotb+GHDL.
+- `self_check_stream_auto_pipeline_test.py` (`native_pipelined_sim_test`,
+  synth_device_models): the same no-stall and no-bubble asserts at the latency a full
+  build discovers.
 
 ## AUTO_MULTI_CYCLE coverage
 

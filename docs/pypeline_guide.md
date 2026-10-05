@@ -2481,7 +2481,7 @@ The table describes the requested transformation, not ordinary synthesis CSE.
 
 | Feature | Trade-off | Core `.latency` | Stream wrapper |
 |---|---|---|---|
-| `AUTO_PIPELINE` | Extra registers for timing, II=1 | Inserted register slices | `make_stream_auto_pipeline` |
+| `AUTO_PIPELINE` | Extra registers for timing, II=1 | Inserted register slices | `make_stream_auto_pipeline` (`latency + 4` cycles, II=1) |
 | `AUTO_MULTI_CYCLE` | Longer settling interval, lower throughput | Allowed path cycles | `make_stream_auto_multi_cycle` (II=`latency + 1`) |
 | `AUTO_COMB_AREA_OPT` (Experimental) | Smaller estimated area, potentially longer combinational delay | Always 0 | `make_stream_auto_comb_area_opt` (two boundary cycles, II=1) |
 | `AUTO_COMB_DELAY_OPT` (Experimental) | Shorter estimated delay, potentially larger area | Always 0 | `make_stream_auto_comb_delay_opt` (two boundary cycles, II=1) |
@@ -4496,8 +4496,8 @@ each output actually moves when the opposite side's input changes.
 
 ```text
 in_if -->|Reg|--> [ AUTO_PIPELINE'd func ] -->|Reg|--> [ output FIFO ] --> out_if
-        (input reg)   (free-running,             (output reg)   (sized from
-                        N-stage pipeline)                        .latency)
+        (input reg)   (free-running,             (output reg)   (L+4 words,
+                        L-stage pipeline)                        sized from .latency)
 ```
 
 `include/pypeline/stream/stream_auto_pipeline.py`'s `make_stream_auto_pipeline` wraps a single
@@ -4536,16 +4536,26 @@ returns `(stream_auto_pipeline_func, stream_auto_pipeline_t)`:
 |---|---|---|
 | `stream_auto_pipeline_func(stream_in_if, stream_out_if)` | `(in_fwd_t, out_fb_t) -> stream_auto_pipeline_t` | one pipelined instance of `func`; ports are the two halves of a stream `@interface` |
 | `stream_auto_pipeline_t.stream_out_if.stream` | `stream_t(out_type)` | `func`'s result, after AUTO_PIPELINE retiming and the output FIFO |
-| `stream_auto_pipeline_t.stream_in_if.ready` | `uint1_t` | high while the pipeline can accept a new `stream_in_if` word (tracks in-flight count against the FIFO depth) |
+| `stream_auto_pipeline_t.stream_in_if.ready` | `uint1_t` | high while the pipeline can accept a new `stream_in_if` word (registered; high while fewer than L+5 words are in flight) |
 
 The returned function also carries `.in_intrf`/`.out_intrf` and their halves
 `.in_fwd_t`, `.in_fb_t`, `.out_fwd_t`, `.out_fb_t` for declaring matching ports.
 
-The FIFO depth is `max(2, 1 + AUTO_PIPELINE latency + 1)` — input register,
-discovered core stages, and output register — so it can hold every word in flight and
-sustain one word per cycle while the consumer is ready. Before an automatic latency is
-known, the depth floors at two. Re-elaboration with the implemented `.latency` resizes
-the FIFO to the real pipeline depth.
+**Throughput: one word per cycle.** With core latency L, the wrapper admits up to
+L+5 words that have not yet been read out of the FIFO. That is exactly how many cycles
+each admitted word holds a place: the input register, L core registers, the output
+register, the FIFO's two cycles from push to output, and the registered `ready`.
+So while the consumer keeps `ready` high, the wrapper accepts a new word every cycle
+(II=1), and a word accepted on cycle t comes out on cycle t+L+4. `ready` is low on
+the first cycle after reset.
+
+If the consumer stalls, the pipeline keeps running into the FIFO. The FIFO's L+4
+words of memory plus its output register hold all L+5 admitted words, so nothing is
+lost; `ready` drops once L+5 words are waiting and rises as the consumer reads them.
+
+L comes from the core's `.latency`. Native simulation and `--comb` builds use L=0
+unless `latency=N` fixes it. A synthesizing build re-elaborates with the implemented
+`.latency`, which resizes the FIFO and the in-flight limit to the real pipeline depth.
 
 **Core latency constraints.** The keyword-only `latency=`, `start_latency=` and
 `max_latency=` are passed unchanged to the wrapper's single internal
@@ -4583,7 +4593,8 @@ locals in its body to simulate correctly (see [Automatic (HLS-like) Implementati
 [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions), the whole
 pipeline — AUTO_PIPELINE retiming plus the output FIFO — simulates through the Pypeline
 simulation APIs, including realistic backpressure when the consumer stalls. See
-`src/tests/pypeline_tests/inst/stream_auto_pipeline_test.py`.
+`src/tests/pypeline_tests/inst/stream_auto_pipeline_test.py`, and
+`stream_ii1_throughput_test.py` next to it for the one-word-per-cycle checks.
 
 [examples/pypeline/stream_pipeline.py](../examples/pypeline/stream_pipeline.py) connects
 one to a producer and a consumer `@MAIN` through [global `Wire[T]`s](#global-signals), the

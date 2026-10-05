@@ -15,6 +15,7 @@ from common import EXAMPLES_PYPELINE_DIR, INST_DIR, PYPELINEC, PYPELINE_SIM, Tes
 # fmt: off
 PLAIN_PYTHON_TEST_FILES = [
     "stream_auto_pipeline_test.py",
+    "stream_ii1_throughput_test.py",
     "auto_pipeline_test.py",
     "auto_pipeline_fixed_latency_sim_test.py",
     "auto_fsm_test.py",
@@ -485,6 +486,20 @@ def get_tests() -> list:
             cmd=[
                 PYPELINEC,
                 INST_DIR / "self_check_fifo_test.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "all",
+            ],
+        )
+    )
+    tests.append(
+        Test(
+            name="self_check_stream_auto_pipeline_ii1_test",
+            category="native_sim",
+            cmd=[
+                PYPELINEC,
+                INST_DIR / "self_check_stream_auto_pipeline_ii1_test.py",
                 "--sim",
                 "--comb",
                 "--run",

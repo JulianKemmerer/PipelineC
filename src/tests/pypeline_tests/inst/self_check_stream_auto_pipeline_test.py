@@ -9,7 +9,8 @@ FIFO), then the native simulator runs with the discovered latencies emulated
 elastic-handshake checks, so the same design also passes at zero latency
 (plain native sim / --comb) — what the non---comb run proves is that the
 whole flow (build -> harvested latencies -> native sim with delay emulation
-and a .latency-sized FIFO) runs end to end and still self-checks clean.
+and a .latency-sized FIFO) runs end to end and still self-checks clean,
+including one word per cycle (II=1) at the discovered latency.
 
 Pass/fail = clean sim_finish() vs sim_assert abort vs never finishing.
 """
@@ -107,6 +108,13 @@ def self_check_stream_auto_pipeline() -> stream_auto_pipeline.out_fwd_t:
         uint8_stream_intrf.fwd_t(stream=stream_in_if),
         uint8_stream_intrf.fb_t(ready=1),
     )
+
+    # One word per cycle (II=1): once the first word is in, ready stays high
+    # while words remain, and results come out back to back.
+    if (in_count > 0) & stream_in_if.valid:
+        sim_assert(o.stream_in_if.ready, f"input stalled after {in_count} words")
+    if (out_count > 0) & (out_count < NUM_OUTPUTS):
+        sim_assert(o.stream_out_if.stream.valid, f"output bubble after {out_count} results")
 
     if stream_in_if.valid & o.stream_in_if.ready:
         in_count += 1

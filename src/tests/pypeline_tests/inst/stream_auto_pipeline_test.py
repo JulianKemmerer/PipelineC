@@ -102,6 +102,6 @@ def test_stream_auto_pipeline_stall_and_resume():
 
 
 if __name__ == "__main__":
-    test_stream_auto_pipeline_steady_drain()
-    test_stream_auto_pipeline_stall_and_resume()
-    print("OK: stream_auto_pipeline(...) simulation model behaves correctly")
+    from _test_main import run_module_tests
+
+    run_module_tests()

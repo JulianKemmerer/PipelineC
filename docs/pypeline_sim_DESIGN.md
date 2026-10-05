@@ -1382,16 +1382,23 @@ last clock edge — before any push/pop for this cycle is applied. Push/pop only
 This mirrors the real FIFO's independent read/write pointers into the same memory,
 without needing to model pointers or a memory array directly.
 
-**Deliberate, documented deviation from cycle-accuracy.** The real
-`pipelinec_fifo_fwft` entity has a one-word FWFT "prefetch register" that can
-transiently hold one item beyond `2**DEPTH_LOG2`, and a 2-cycle (not 1-cycle)
-push→visible latency when starting from empty. The model reproduces neither — it
-backpressures at or before real hardware's true capacity limit, never after, which is
-the safe direction for verifying overflow-avoidance and dataflow correctness (e.g.
-`make_stream_auto_pipeline`'s `MAX_IN_FLIGHT`-sized never-overflow invariant) without
-attempting cycle-exact co-simulation against GHDL.
+**Output register.** Like the real `pipelinec_fifo_fwft` entity, the model keeps a
+separate one-word output register (`out_valid`/`out_data`, the VHDL's
+`valid_out_pipe_reg`/`data_out_pipe_reg`) between `self.q` and the
+`data_out`/`data_out_valid` pins. It reloads whenever the consumer takes its word or it
+is empty. This reproduces two properties of the hardware:
+- **2-cycle push-to-valid latency:** one edge for the push to land in memory, one more
+  to load the output register.
+- **`capacity + 1` words of storage:** the output register holds one word beyond the
+  `2**DEPTH_LOG2` memory, and `data_in_ready` does not count it.
 
-**Empty-queue placeholder.** `data_out` when `self.q` is empty is `sim_zero(data_t)` — a
+`make_stream_auto_pipeline` relies on both. Its in-flight limit of L+5 includes the
+FIFO's two cycles, and its FIFO of depth L+4 holds L+5 words. `fifo_test.py` checks the
+`capacity + 1` storage. `self_check_fifo_test` and
+`self_check_stream_auto_pipeline_ii1_test` compare the timing against GHDL cycle by
+cycle (`native_vs_vhdl_sim`).
+
+**Empty placeholder.** `data_out` when the output register is empty is `sim_zero(data_t)` — a
 correctly-typed but otherwise arbitrary value. Real hardware gives no guarantee about
 `data_out`'s content when `data_out_valid` is 0 either; consumers must always gate on
 `data_out_valid`, never read `data_out` directly.
@@ -1907,7 +1914,7 @@ Before importing the design, `run_sim`:
 - calls `pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE(auto_pipeline_latencies)` — so every
   `AUTO_PIPELINE(func)` object *constructed during the import* captures its real `._latency` (set
   in `__init__` from the cache). This is what makes `.latency`-derived structure — most
-  importantly `make_stream_auto_pipeline`'s `fifo_depth = max(2, 1 + latency + 1)` — elaborate to the
+  importantly `make_stream_auto_pipeline`'s FIFO depth (`latency + 4`) and in-flight limit (`latency + 5`) — elaborate to the
   *same* shape the VHDL build's pin-and-confirm final pass produced. Get this wrong and the
   native FIFO would be a different depth than the hardware and diverge immediately.
 - calls `_evict_design_modules()`, which deletes from `sys.modules` every module imported since
@@ -2680,7 +2687,11 @@ same-cycle push+pop ordering, and a multi-cycle reference-model soak against an
 independent plain-Python `deque`), `inst/stream_fifo_test.py` and
 `inst/stream_auto_pipeline_test.py` (integration through the `stream_t` wrappers — the latter
 including a steady-drain and a stall-and-resume backpressure scenario, both checked
-against `sim_call(div_inv, x)` as ground truth), and `fifo_sim_model_convergence_test`
+against `sim_call(div_inv, x)` as ground truth), `inst/stream_ii1_throughput_test.py`
+(one word per cycle through `make_stream_auto_pipeline` at core latencies 0-8 and through
+every elastic DSP factory, plus exactly L+5 words admitted against a stalled consumer),
+`inst/self_check_stream_auto_pipeline_ii1_test.py` (the same rate and the exact `L+4`
+latency, cycle-diffed against GHDL), and `fifo_sim_model_convergence_test`
 (`inst/fifo_sim_model_test.py` under `--run 16`), which mirrors
 `sim_model_convergence_test`'s pattern to prove the FIFO's deque state doesn't double-push
 per cycle under wire convergence.

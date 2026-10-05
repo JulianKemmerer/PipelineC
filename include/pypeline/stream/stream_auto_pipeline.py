@@ -27,9 +27,10 @@ def make_stream_auto_pipeline(func, *, latency=None, start_latency=None, max_lat
     AUTO_PIPELINE'd instance's .latency — the tool-discovered pipeline depth —
     so there is no MAX_IN_FLIGHT parameter to guess. .latency reads 0 until
     the pipelinec driver's pin-and-confirm pass installs the real value
-    (native sim / --comb builds stay at 0, where the effective pipeline
-    latency really is just the 2 boundary registers and the FIFO floor of 2
-    matches it exactly). Because make_stream_auto_pipeline runs as plain factory
+    (native sim / --comb builds stay at 0 unless latency=N fixes it). With
+    core latency L, up to L+5 words are in flight, enough to accept one word
+    per cycle while the consumer is ready; a word accepted on cycle t is
+    presented on cycle t+L+4. Because make_stream_auto_pipeline runs as plain factory
     Python, the AUTO_PIPELINE object is constructed eagerly here and captured
     by closure, which is what makes its .latency readable for sizing.
 
@@ -95,15 +96,17 @@ def make_stream_auto_pipeline(func, *, latency=None, start_latency=None, max_lat
         max_latency=max_latency,
     )
 
-    # Total words that can be in flight at once = input reg + AUTO_PIPELINE'd
-    # core stages + output reg; the FIFO must hold all of them if downstream
-    # stalls, and allowing exactly that many in flight sustains 1 word/cycle.
-    # make_fifo requires depth >= 2 (also the 0-latency native-sim/comb floor).
-    fifo_depth = max(2, 1 + auto_pipeline_call.latency + 1)
+    # A word's credit is out for L+5 cycles: input reg, L core regs, output
+    # reg, the FIFO's 2-cycle push-to-valid, and the registered ready. That
+    # many credits sustain 1 word/cycle. If the consumer stalls, all of them
+    # end up in the FIFO: L+4 words of memory (make_fifo rounds up to a power
+    # of two) plus the FIFO's output register.
+    max_in_flight = auto_pipeline_call.latency + 5
+    fifo_depth = max_in_flight - 1
 
     fifo_func, fifo_t = make_fifo(out_type, fifo_depth)
 
-    counter_t = make_uint_t(fifo_depth.bit_length())
+    counter_t = make_uint_t(max_in_flight.bit_length())
 
     @struct
     class stream_auto_pipeline_t(NamedTuple):
@@ -130,7 +133,7 @@ def make_stream_auto_pipeline(func, *, latency=None, start_latency=None, max_lat
         no_handshake_out: out_plain_t = auto_pipelined_func(no_handshake_in)
 
         # Free-flowing pipeline output into the FIFO; FIFO never overflows because
-        # ready already accounted for in_flight < fifo_depth.
+        # ready already accounted for in_flight < max_in_flight.
         f = fifo_func(
             stream_out_if.ready, no_handshake_out.data, no_handshake_out.valid
         )
@@ -140,9 +143,9 @@ def make_stream_auto_pipeline(func, *, latency=None, start_latency=None, max_lat
         accepted: uint1_t = stream_in_if.stream.valid & o.stream_in_if.ready
         retired: uint1_t = o.stream_out_if.stream.valid & stream_out_if.ready
 
-        ready_reg = in_flight < fifo_depth
+        ready_reg = in_flight < max_in_flight
         if accepted & ~retired:
-            ready_reg = in_flight < (fifo_depth - 1)
+            ready_reg = in_flight < (max_in_flight - 1)
             in_flight += 1
         elif retired & ~accepted:
             ready_reg = 1

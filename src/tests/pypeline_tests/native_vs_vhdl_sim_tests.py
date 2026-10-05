@@ -52,6 +52,9 @@ COMB_TEST_FILES = [
     ("pipeline_latency_sim_test.py", INST_DIR, []),
     ("self_check_counter_test.py", INST_DIR, []),
     ("self_check_fifo_test.py", INST_DIR, []),
+    # make_stream_auto_pipeline at fixed core latencies 0 and 3: one word per
+    # cycle in, results back to back exactly L+4 cycles after the first accept.
+    ("self_check_stream_auto_pipeline_ii1_test.py", INST_DIR, []),
     # make_ram/make_stream_ram: the hand-written simulation model against the
     # generated raw VHDL -- init from Python values across element types,
     # multi-port traffic, byte enables, a pure caller aligned around

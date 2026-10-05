@@ -197,9 +197,12 @@ def test_native_sim_latency():
     assert [d for _, d in outputs(plain)] == expected, outputs(plain)
     assert [d for _, d in outputs(fixed)] == expected, outputs(fixed)
     assert all(expected), expected
-    # The 2 fixed core registers delay the first result by exactly 2 cycles
-    # (later spacing differs: the FIFO, and so in-flight capacity, grows to 4)
-    assert outputs(fixed)[0][0] == outputs(plain)[0][0] + 2, (outputs(plain), outputs(fixed))
+    # The 2 fixed core registers delay every result by exactly 2 cycles: both
+    # run at one word per cycle, so only the latency differs
+    assert [c for c, _ in outputs(fixed)] == [c + 2 for c, _ in outputs(plain)], (
+        outputs(plain),
+        outputs(fixed),
+    )
 
 
 def test_dsp_factories_forward():
