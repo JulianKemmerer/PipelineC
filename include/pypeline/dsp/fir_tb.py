@@ -13,10 +13,17 @@ Three layers, all reusable on their own:
     (prints the wireguard-style "ERROR: ..." / "... DONE!" convention and
     asserts on mismatch) with optional matplotlib plots.
 
-@sim_input/@sim_output only exist in the native simulator, so a testbench
+@sim_input/@sim_output only run in the native simulator, so a testbench
 @MAIN built from these pieces runs under `pypelinec <file> --sim --comb --run N`
 (or, calling the native simulator directly, `python3 src/pypeline_sim.py <file> --run N`)
 -- never under GHDL/cocotb.
+
+The driver values reach the filter through module-level Input[T] wires, never
+locals: a @sim_input result stored in a local is an error (its value exists
+only in simulation). The same top therefore also elaborates to HDL, where the
+wires become top-level ports -- a pipelined (non---comb) --sim run needs that.
+drive_in returns the plain stream type (tb.in_t) and drive_ready a uint1_t;
+an elastic filter's .fwd_t/.fb_t port halves are built inline at the call.
 
 Minimal testbench skeleton (see also src/tests/pypeline_tests/inst/
 fir_sim_tb_test.py):
@@ -25,11 +32,14 @@ fir_sim_tb_test.py):
     stim = quantize_samples(sine(200, 5), fir.data_t)
     tb = make_fir_tb(fir, stim, ready_pattern="random", name="my_fir")
 
+    stream_in: Input[tb.in_t]
+    out_ready: Input[uint1_t]
+
     @MAIN
     def my_fir_tb():
-        stream_in_if = tb.drive_in()
+        stream_in = tb.drive_in()
         out_ready = tb.drive_ready()
-        o = fir(stream_in_if, out_ready)   # out_ready is fir.out_fb_t
+        o = fir(fir.in_fwd_t(stream=stream_in), fir.out_fb_t(out_ready))
         tb.observe(o)
 
 Shared testbench state lives in dicts mutated in place (never rebound):
@@ -215,8 +225,10 @@ def make_fir_tb(
     plot:         on completion, write <name>_tb.png (input, response, output
                   overlay); set PYPELINE_TB_SHOW=1 to also plt.show().
 
-    Returns SimpleNamespace(drive_in, drive_ready, observe, state, expected,
-    deadline, min_cycles).
+    Returns SimpleNamespace(drive_in, drive_ready, observe, in_t, state,
+    expected, deadline, min_cycles). drive_in returns in_t, the filter's plain
+    input stream type; drive_ready returns uint1_t. Assign both to module-level
+    Input[T] wires (see the module docstring).
     """
     if expected is None:
         expected = golden_fir(fir, stimulus_q)
@@ -228,9 +240,9 @@ def make_fir_tb(
         deadline = 4 * (n_in + n_out) + 256
 
     elastic = fir.handshake == "elastic"
-    # Holds the input port's feedforward HALF in elastic mode and a real
-    # standalone make_stream_t in valid_only mode -- hence the neutral name.
-    in_port_t = fir.in_fwd_t if fir.handshake == "elastic" else fir.in_stream_t
+    # The plain input stream in both modes (never the elastic port's .fwd_t
+    # half: an Input[T] wire can't hold a port-pairing type).
+    in_t = fir.in_intrf.stream_t if elastic else fir.in_stream_t
     data_t = fir.data_t
 
     rng = random.Random(seed)
@@ -247,30 +259,15 @@ def make_fir_tb(
         "out_hist": [],  # consumed output samples (raw ints)
     }
 
-    if elastic:
-        in_plain_t = fir.in_intrf.stream_t
-
-        @sim_input
-        def drive_in() -> in_port_t:
-            # (observe() advanced st["idx"] at the end of the previous cycle if
-            # that cycle's presented sample was accepted.)
-            if st["idx"] < n_in:
-                st["presented_valid"] = 1
-                return in_port_t(
-                    stream=in_plain_t(data=data_t(val=stimulus_q[st["idx"]]), valid=1)
-                )
-            st["presented_valid"] = 0
-            return in_port_t(stream=in_plain_t(data=data_t(val=0), valid=0))
-
-    else:
-
-        @sim_input
-        def drive_in() -> in_port_t:
-            if st["idx"] < n_in:
-                st["presented_valid"] = 1
-                return in_port_t(data=data_t(val=stimulus_q[st["idx"]]), valid=1)
-            st["presented_valid"] = 0
-            return in_port_t(data=data_t(val=0), valid=0)
+    @sim_input
+    def drive_in() -> in_t:
+        # (observe() advanced st["idx"] at the end of the previous cycle if
+        # that cycle's presented sample was accepted.)
+        if st["idx"] < n_in:
+            st["presented_valid"] = 1
+            return in_t(data=data_t(val=stimulus_q[st["idx"]]), valid=1)
+        st["presented_valid"] = 0
+        return in_t(data=data_t(val=0), valid=0)
 
     def _ready_value():
         if ready_pattern == "always":
@@ -279,16 +276,14 @@ def make_fir_tb(
             return 1 if rng.random() < 0.7 else 0
         return 1 if ready_pattern(st["cycle"]) else 0
 
-    # drive_ready() yields the output port's *reverse half* so it can be passed
-    # straight into the filter's stream_out port.
-    out_fb_t = fir.out_fb_t
-
+    # drive_ready() yields the plain ready bit; an elastic testbench wraps it
+    # as fir.out_fb_t(...) at the filter's stream_out port.
     if elastic:
 
         @sim_input
-        def drive_ready() -> out_fb_t:
+        def drive_ready() -> uint1_t:
             st["ready_now"] = _ready_value()
-            return out_fb_t(st["ready_now"])
+            return st["ready_now"]
 
     else:
 
@@ -402,6 +397,7 @@ def make_fir_tb(
         drive_in=drive_in,
         drive_ready=drive_ready,
         observe=observe,
+        in_t=in_t,
         state=st,
         expected=expected,
         deadline=deadline,

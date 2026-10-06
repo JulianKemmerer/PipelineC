@@ -13,7 +13,7 @@ Run the simulation (writes fir_decim5_tb.png; PYPELINE_TB_SHOW=1 for a window):
     pypelinec examples/pypeline/dsp/fir_decim_tb.py --sim --comb --run 1800
 """
 
-from pypeline import MAIN
+from pypeline import MAIN, Input, uint1_t
 
 from fixed_point import make_fixed_t
 from dsp.fir_decim import make_fir_decim
@@ -53,9 +53,17 @@ stim = quantize_samples(two_tone(300, cycles_a=6, cycles_b=90, amplitude=0.35), 
 tb = make_fir_tb(fir_decim5, stim, name="fir_decim5", plot=True)
 
 
+# The drivers reach the filter through module-level Input[T] wires, never
+# locals, so this top also elaborates to HDL (the wires become ports).
+stream_in: Input[tb.in_t]
+out_ready: Input[uint1_t]
+
+
 @MAIN
 def fir_decim5_tb():
     stream_in = tb.drive_in()
     out_ready = tb.drive_ready()
-    o = fir_decim5(stream_in, out_ready)
+    o = fir_decim5(
+        fir_decim5.in_fwd_t(stream=stream_in), fir_decim5.out_fb_t(out_ready)
+    )
     tb.observe(o)

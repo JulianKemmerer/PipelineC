@@ -43,7 +43,12 @@ from pypeline import (
     _local_name_bindings,
     _wire_name_bind_message,
     _str_to_scalar_message,
+    SimOnlyCallInElab,
+    _sim_only_kind,
+    _sim_only_target_desc,
+    _sim_only_call_message,
 )
+import pypeline as _pypeline_mod
 
 # Recognized by name in FuncElaborator._elab_stmt as a raw-VHDL-passthrough statement.
 # Distinct from C_TO_LOGIC.VHDL_FUNC_NAME ("__vhdl__") — Pypeline's user-facing surface
@@ -2139,6 +2144,39 @@ class FuncElaborator:
                 call_node,
             )
 
+    def _sim_only_callee(self, call_node):
+        """The @sim_input/@sim_output function call_node calls, else None.
+        Evaluates only the callee expression, never the call."""
+        callee = self._try_eval_const(call_node.func)
+        return callee if _sim_only_kind(callee) is not None else None
+
+    def _assign_target_is_wire(self, target):
+        """True if an assignment target is a module-level wire or a field/element
+        of one: `w`, `w.f`, `w[i]`, `mod.w`, `mod.w.f` (mod an imported module
+        declaring w) -- the targets a sim-only call may be assigned to."""
+        node = target
+        while isinstance(node, (ast.Attribute, ast.Subscript)):
+            if (
+                isinstance(node, ast.Attribute)
+                and isinstance(node.value, ast.Name)
+                and self._resolve_module_wire_name(node.value.id, node.attr)
+                is not None
+            ):
+                return True
+            node = node.value
+        return isinstance(node, ast.Name) and self._resolve_global_wire(node.id) is not None
+
+    def _raise_sim_only_local(self, callee, target, call_node):
+        raise ElaborationError(
+            _sim_only_call_message(
+                self.func_name,
+                callee.__name__,
+                _sim_only_kind(callee),
+                _sim_only_target_desc(target),
+            ),
+            call_node,
+        )
+
     def _resolve_global_wire(self, bare_name):
         """Return the global_vars key of the Wire/Input/Output that bare_name names
         in this function, else None.
@@ -2272,12 +2310,26 @@ class FuncElaborator:
         """
         if not allow_hw_shadow and self._refs_hw_local(node):
             return None
+        # A @sim_input/@sim_output reached by this eval (directly, or inside a
+        # plain-Python helper) raises instead of running: folding its value
+        # would silently build simulation stimulus into hardware.
+        prev_flag = _pypeline_mod._const_folding
+        _pypeline_mod._const_folding = True
         try:
             expr = ast.Expression(body=node)
             ast.fix_missing_locations(expr)
             val = eval(compile(expr, "<const_eval>", "eval"), self._make_eval_ns())
+        except SimOnlyCallInElab as e:
+            raise ElaborationError(
+                _sim_only_call_message(
+                    self.func_name, e.fn.__name__, _sim_only_kind(e.fn)
+                ),
+                node,
+            ) from None
         except Exception:
             return None
+        finally:
+            _pypeline_mod._const_folding = prev_flag
         if isinstance(node, ast.Call):
             self._check_no_indirect_interface_pairing_return(node, val)
         return val
@@ -3002,6 +3054,19 @@ class FuncElaborator:
                 ast.fix_missing_locations(synthetic_if)
                 self._elab_if(synthetic_if)
             return
+        # x = some_sim_input_fn() / x = some_sim_output_fn() -- the whole RHS is
+        # a bare call to a sim-only function. Checked before every path below
+        # that const-evaluates the RHS (unpacking, the local-Name fold): those
+        # would RUN it and build its value into hardware. Into a module-level
+        # wire (or a field/element of one) it is a hardware no-op -- the
+        # @sim_input return-value form, mirroring _elab_stmt's bare-statement
+        # skip; into anything else it is an error.
+        if isinstance(stmt.value, ast.Call):
+            sim_callee = self._sim_only_callee(stmt.value)
+            if sim_callee is not None:
+                if self._assign_target_is_wire(target):
+                    return
+                self._raise_sim_only_local(sim_callee, target, stmt.value)
         # a, b = <rhs>  (including nested a, (b, c) = <rhs>) -- unpacking
         # assignment. Handled entirely separately from the single-target
         # paths below (_parse_ref_toks has no Tuple/List case).
@@ -3068,17 +3133,6 @@ class FuncElaborator:
             ctor_callee = self._try_eval_const(stmt.value.func)
             # Before the _try_eval_const(stmt.value) below, which would run it
             self._reject_hook_call(ctor_callee, stmt.value)
-            # x = some_sim_input_fn() / x = some_sim_output_fn() — the whole RHS is a
-            # bare call to a sim-only function (@sim_input's return-value form, or the
-            # symmetric case for @sim_output). This must be checked, and must return,
-            # before the next block's _try_eval_const(stmt.value) below, which would
-            # otherwise actually INVOKE the sim-only function during elaboration — mirrors
-            # the bare-statement skip in _elab_stmt (both markers checked there too), just
-            # for the assignment-RHS shape instead of a standalone expression statement.
-            if getattr(ctor_callee, "_is_sim_input", False) or getattr(
-                ctor_callee, "_is_sim_output", False
-            ):
-                return  # sim-only call on the RHS — whole assignment is a hardware no-op
             is_struct_ctor_call = (
                 ctor_callee is not None
                 and hasattr(ctor_callee, "_fields")
@@ -3313,6 +3367,12 @@ class FuncElaborator:
             self._elab_assign(real_assign)
 
     def _elab_ann_assign(self, stmt):
+        # `x: T = sim_fn()` -- an annotated target is always a local (Wire/Input/
+        # Output annotations are rejected inside functions), never a wire.
+        if isinstance(stmt.value, ast.Call):
+            sim_callee = self._sim_only_callee(stmt.value)
+            if sim_callee is not None:
+                self._raise_sim_only_local(sim_callee, stmt.target, stmt.value)
         var_name = self._hw_name(stmt.target.id)
         # Detect Reg[T] annotation — hardware state register.
         # allow_hw_shadow: an annotation is never evaluated as ordinary Python
@@ -4959,6 +5019,16 @@ class FuncElaborator:
         auto_pipeline_call = None
         auto_fsm_call = None
         tag_probe = self._try_eval_const(expr.func)
+        # A sim-only call reaching here is used as a hardware value (bare-statement
+        # and wire-target forms are skipped before any _elab_call) -- without this,
+        # its body would be elaborated as a submodule.
+        if _sim_only_kind(tag_probe) is not None:
+            raise ElaborationError(
+                _sim_only_call_message(
+                    self.func_name, tag_probe.__name__, _sim_only_kind(tag_probe)
+                ),
+                expr,
+            )
         if getattr(tag_probe, "_is_auto_pipeline_pragma", False):
             auto_pipeline_call = tag_probe
             callee_name = getattr(auto_pipeline_call.func, "__name__", "auto_pipelined")

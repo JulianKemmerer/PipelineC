@@ -31,7 +31,7 @@ sys.path.insert(
 )
 import random
 
-from pypeline import MAIN
+from pypeline import MAIN, Input, uint1_t
 
 from fixed_point import make_fixed_t
 from dsp.fir import make_fir
@@ -64,16 +64,25 @@ stim_v = quantize_samples(white_noise(80, random.Random(42)), data_t)
 tb_v = make_fir_tb(fir_v, stim_v, name="fir_valid_only")
 
 
+# The drivers reach the filters through module-level Input[T] wires, never
+# locals, so this top also elaborates to HDL (the wires become ports).
+elastic_in: Input[tb_e.in_t]
+elastic_ready: Input[uint1_t]
+
+
 @MAIN
 def fir_elastic_tb():
-    stream_in = tb_e.drive_in()
-    out_ready = tb_e.drive_ready()
-    o = fir_e(stream_in, out_ready)
+    elastic_in = tb_e.drive_in()
+    elastic_ready = tb_e.drive_ready()
+    o = fir_e(fir_e.in_fwd_t(stream=elastic_in), fir_e.out_fb_t(elastic_ready))
     tb_e.observe(o)
+
+
+valid_only_in: Input[tb_v.in_t]
 
 
 @MAIN
 def fir_valid_only_tb():
-    stream_in = tb_v.drive_in()
-    out_stream = fir_v(stream_in)
+    valid_only_in = tb_v.drive_in()
+    out_stream = fir_v(valid_only_in)
     tb_v.observe(out_stream)

@@ -5497,32 +5497,52 @@ def vga_test_pattern():
 
 **`@sim_input`'s return-value form needs a second guard.** `in1 = in_return()` is an
 `ast.Assign`, not a bare `ast.Expr(ast.Call)`, so it doesn't hit the guard above at all —
-it's handled by `_elab_assign` instead. In `_elab_assign`, a guard runs immediately after
-resolving the RHS callee (`ctor_callee = self._try_eval_const(stmt.value.func)`, a cheap
-name lookup that does not call it) and before `_try_eval_const(stmt.value)` — evaluating
-the whole call expression would **actually invoke** `in_return()` during elaboration, a
-sim-only function that may not even be representable as hardware. The guard makes the
-whole assignment a no-op instead:
+it's handled by `_elab_assign` instead. There, right after the IfExp lowering and
+**before** every path that const-evaluates the RHS (tuple unpacking, the local-Name
+`const_env` fold, compound init), `_sim_only_callee` resolves just the callee (a cheap
+lookup that does not call it). If it is sim-only, the target decides:
 
 ```python
 if isinstance(stmt.value, ast.Call):
-    ctor_callee = self._try_eval_const(stmt.value.func)
-    if getattr(ctor_callee, "_is_sim_input", False) or getattr(
-        ctor_callee, "_is_sim_output", False
-    ):
-        return  # sim-only call on the RHS — whole assignment is a hardware no-op
-    is_struct_ctor_call = ctor_callee is not None and hasattr(ctor_callee, "_fields")
-    ...
+    sim_callee = self._sim_only_callee(stmt.value)
+    if sim_callee is not None:
+        if self._assign_target_is_wire(target):
+            return  # into a module-level wire: whole assignment is a hardware no-op
+        self._raise_sim_only_local(sim_callee, target, stmt.value)
 ```
+
+`_assign_target_is_wire` accepts a module-level wire or a field/element of one: `w`,
+`w.f`, `w[i]`, `mod.w`, `mod.w.f` (resolved through `_resolve_global_wire` /
+`_resolve_module_wire_name`). The wire becomes an input port or an undriven wire in HDL.
+Anything else — a local, an annotated local (`_elab_ann_assign` has the same check), a
+field of a local, an unpacking target — is an `ElaborationError`: the value exists only in
+simulation. Before this check ran first, the local-Name fold `eval()`ed `in_return()`
+itself and built its value into hardware as a constant.
 
 `_is_sim_output` is included here too, for the symmetric (if unusual) case of a
 `@sim_output` function's return value being assigned rather than discarded.
 
+**No elaboration-time eval ever runs a sim-only body.** `_try_eval_const` sets
+`pypeline._const_folding` around its `eval()`. A `@sim_input`/`@sim_output` wrapper reached
+then — directly, nested in an expression, or inside a plain-Python helper — raises
+`pypeline.SimOnlyCallInElab` instead of running (and before touching `_sim_input_cache`),
+and `_try_eval_const` re-raises it as an `ElaborationError` naming the function. A sim-only
+call used as a value that is not const-evaluable (`return in_return(x)` with hardware `x`)
+reaches `_elab_call`, which rejects it the same way instead of elaborating the body as a
+submodule. Native sim's decoration-time local-constant scan (`_build_reg_sim_func`) uses
+the same flag, so it never fires a stimulus's side effects at import either.
+
+**Native sim rejects the same set at decoration time.** `pypeline._check_sim_only_call_sites`
+(run for every hw function body, skipped for sim-only bodies, which are plain Python)
+raises `pypeline.SimOnlyCallSiteError` with the same message text
+(`pypeline._sim_only_call_message`). A testbench that passes `--sim --comb` can't then fail
+only when a pipelined run elaborates it. It resolves callees statically from globals and
+closure, so a call hidden inside a helper is left to elaboration.
+
 **Constraints:**
-- Only bare function-call expression statements, and direct `name = call()`/
-  `attr = call()` assignments where the *entire* RHS is nothing but the sim-only call, are
-  recognized. A sim-only call embedded inside a larger expression (`x = in_return() + 1`)
-  is unsupported and falls through to ordinary expression elaboration.
+- Allowed: a bare call statement, and an assignment whose *entire* RHS is the sim-only
+  call into a module-level wire (or a field/element of one). Everything else is an error
+  in both layers.
 - The callee must be resolvable via `_try_eval_const`. If not, the marker check is `False`
   against `None` and ordinary elaboration proceeds (`NotImplementedError` for the
   bare-statement case).

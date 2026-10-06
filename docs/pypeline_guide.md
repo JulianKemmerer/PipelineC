@@ -5089,6 +5089,15 @@ result cache, not a fixed call location, is what guarantees this — so a non-id
 driving value (a counter, a random sample, a queue pop) advances exactly once per cycle
 even though a `@MAIN` body actually runs at least twice per cycle internally.
 
+A return-value call must be the whole right-hand side, and its target a module-level
+`Wire[T]`/`Input[T]`/`Output[T]` (or a field/element of one, also `module.wire.field`).
+Storing it in a local (`x = in_return()`) or using it inside an expression
+(`in_return() + 1`) is an error, in native sim at import and in elaboration (see
+[Limitations](#limitations--not-yet-supported)). The value only exists in simulation, so
+hardware has nothing to build from it. An `Input[T]` becomes
+a real top-level port instead, which is what lets the same top elaborate (a pipelined
+`--sim` run elaborates it first). Elaboration also never runs a `@sim_input` body.
+
 That cache is keyed by the function alone, not by its arguments. Calling one `@sim_input`
 function twice in a cycle with different arguments currently returns the first call's
 value both times ([#355](https://github.com/JulianKemmerer/PipelineC/issues/355)). Use a separate function for each value.
@@ -5399,6 +5408,7 @@ tracks the row.
 | Simulation | **Simulation of `vhdl()`** | Needs a model | `vhdl()`-based functions raise `NotImplementedError` in simulation unless a [`@sim_model`](#sim_model--python-simulation-models-for-hardware-functions) is attached (as `make_fifo`, `make_ram` and `make_stream_ram` do, covering `make_stream_fifo`/`make_stream_auto_pipeline` too) | — |
 | Simulation | **Two calls to one stateful function on the same source line** | Wrong in native simulation | Native simulation keys register state by source line, so `acc(a) + acc(b)` shares one register there but has two in hardware. Put each call on its own line (see [Registers in simulation](#registers-in-simulation--multiple-instances)) | [#353](https://github.com/JulianKemmerer/PipelineC/issues/353) |
 | Simulation | **`@sim_input` called with different arguments in one cycle** | Wrong in native simulation | The once-per-cycle cache ignores arguments, so every call in a cycle returns the first call's value. Use one function per value | [#355](https://github.com/JulianKemmerer/PipelineC/issues/355) |
+| Simulation | **A `@sim_input` result stored in a local, or used inside an expression** | Rejected | `x = stim()` and `stim() + 1` raise a clear error in native sim (at import) and in elaboration. Declare a module-level `Input[T]` and assign the call to it as its own statement (`in0 = stim()`); it becomes a real top-level port (see [`@sim_input`](#sim_input--driving-simulation-inputs)). A future version could accept a local by turning it into an implicit `Input[T]` port of the function's return type | — |
 | Simulation | **`sim_print` of a `uint32_t` value ≥ 2³¹** | Fails in VHDL only | `sim_print` lowers to `integer'image(to_integer(x))`, and VHDL's `integer` is 32-bit *signed*, so GHDL raises `overflow detected` at runtime. Native simulation prints it happily, so this only ever appears in a cocotb/GHDL run — mask or narrow the value before probing it | [#360](https://github.com/JulianKemmerer/PipelineC/issues/360) |
 | Simulation | **`sim_print` on the `sim_finish()` cycle** | Missing in VHDL simulation | Native simulation prints the line; in GHDL the run ends before it is written. Print one cycle before finishing | [#361](https://github.com/JulianKemmerer/PipelineC/issues/361) |
 | Simulation | **`@initial`/`@final` under `sim_call`** | Not run | Hooks run in clocked simulation runs (`pypelinec --sim`, `pypeline_sim.py`) and `pypelinec` builds. A plain Python script that drives `sim_call` itself has no run start/end for the tools to hook — call its setup/teardown code directly | — |

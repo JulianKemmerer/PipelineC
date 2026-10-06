@@ -18,7 +18,7 @@ Run the simulation:
 """
 
 import math
-from pypeline import MAIN
+from pypeline import MAIN, Input, uint1_t
 
 from fixed_point import make_fixed_t
 from dsp.magnitude import make_magnitude
@@ -79,11 +79,19 @@ tb_e = make_block_tb(
 )
 
 
+# The drivers reach the blocks through module-level Input[T] wires, never
+# locals, so this top also elaborates to HDL (the wires become ports).
+elastic_in: Input[tb_e.in_t]
+elastic_ready: Input[uint1_t]
+
+
 @MAIN(125.0)
 def magnitude_elastic_tb():
-    stream_in = tb_e.drive_in()
-    out_ready = tb_e.drive_ready()
-    o = magnitude_e(stream_in, out_ready)
+    elastic_in = tb_e.drive_in()
+    elastic_ready = tb_e.drive_ready()
+    o = magnitude_e(
+        magnitude_e.in_fwd_t(stream=elastic_in), magnitude_e.out_fb_t(elastic_ready)
+    )
     tb_e.observe(o)
 
 
@@ -106,8 +114,11 @@ tb_v = make_block_tb(
 )
 
 
+valid_only_in: Input[tb_v.in_t]
+
+
 @MAIN(125.0)
 def magnitude_valid_only_tb():
-    stream_in = tb_v.drive_in()
-    o = magnitude_v(stream_in)
+    valid_only_in = tb_v.drive_in()
+    o = magnitude_v(valid_only_in)
     tb_v.observe(o)

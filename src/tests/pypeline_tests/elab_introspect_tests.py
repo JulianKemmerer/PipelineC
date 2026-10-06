@@ -45,6 +45,18 @@ def get_tests() -> list:
             cmd=[INST_DIR / "local_binds_global_wire_test.py"],
         )
     )
+    # A @sim_input/@sim_output value reaches hardware only through a module-level
+    # wire: a local capture or a nested use is rejected by native sim AND
+    # elaboration (elaboration used to RUN the stimulus and bake its value in as
+    # a constant), elaboration never runs a sim-only body, and the bare-call and
+    # wire-target forms (incl. module.wire.field) still work.
+    tests.append(
+        Test(
+            name="sim_input_local_error_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "sim_input_local_error_test.py"],
+        )
+    )
     # Regression-tests a FuncLogicLookupTable closure-callable naming
     # collision: same signature on both sides means no type error either
     # way, so it's undetectable except by inspecting FuncLogicLookupTable

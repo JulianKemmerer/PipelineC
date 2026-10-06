@@ -17,7 +17,7 @@ itself is real synthesizable hardware.
 """
 
 import math
-from pypeline import MAIN
+from pypeline import MAIN, Input, uint1_t
 
 from fixed_point import make_fixed_t
 from dsp.fir import make_fir
@@ -68,9 +68,15 @@ stim = quantize_samples(two_tone(256, cycles_a=8, cycles_b=96, amplitude=0.4), d
 tb = make_fir_tb(fir, stim, name="fir_lowpass", plot=True)
 
 
+# The drivers reach the filter through module-level Input[T] wires, never
+# locals, so this top also elaborates to HDL (the wires become ports).
+stream_in: Input[tb.in_t]
+out_ready: Input[uint1_t]
+
+
 @MAIN
 def fir_lowpass_tb():
     stream_in = tb.drive_in()
     out_ready = tb.drive_ready()
-    o = fir(stream_in, out_ready)
+    o = fir(fir.in_fwd_t(stream=stream_in), fir.out_fb_t(out_ready))
     tb.observe(o)

@@ -298,9 +298,9 @@ def write_results():
 less its result checks. It sustains 2.0 B/cycle: a 4-byte bus drained every other cycle.
 
 Two cautions:
-- Assign `@sim_input` results to an `Input[T]`, not a local. HDL elaboration currently
-  mishandles a local (it errors for a compound type and can bake in a constant for a
-  scalar), and a non-`--comb` run elaborates the top.
+- Assign `@sim_input` results to an `Input[T]`, not a local. A local is rejected by
+  both native sim and elaboration: its value exists only in simulation, and a
+  non-`--comb` run elaborates the top, where the `Input[T]` becomes a real port.
 - Don't name a `@sim_output` parameter after a module-level wire: the wire name always
   wins inside its module.
 

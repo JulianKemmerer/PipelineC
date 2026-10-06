@@ -14,7 +14,7 @@ Run the simulation:
 """
 
 import random
-from pypeline import MAIN
+from pypeline import MAIN, Input, uint1_t
 
 from fixed_point import make_fixed_t
 from dsp.moving_avg import make_moving_avg
@@ -66,11 +66,17 @@ tb_e = make_block_tb(
 )
 
 
+# The drivers reach the blocks through module-level Input[T] wires, never
+# locals, so this top also elaborates to HDL (the wires become ports).
+elastic_in: Input[tb_e.in_t]
+elastic_ready: Input[uint1_t]
+
+
 @MAIN(125.0)
 def moving_avg_elastic_tb():
-    stream_in = tb_e.drive_in()
-    out_ready = tb_e.drive_ready()
-    o = ma_e(stream_in, out_ready)
+    elastic_in = tb_e.drive_in()
+    elastic_ready = tb_e.drive_ready()
+    o = ma_e(ma_e.in_fwd_t(stream=elastic_in), ma_e.out_fb_t(elastic_ready))
     tb_e.observe(o)
 
 
@@ -81,8 +87,11 @@ expected_v = golden_moving_avg(ma_v, STIM)
 tb_v = make_block_tb(ma_v, STIM, expected_v, name="moving_avg_valid_only")
 
 
+valid_only_in: Input[tb_v.in_t]
+
+
 @MAIN(125.0)
 def moving_avg_valid_only_tb():
-    stream_in = tb_v.drive_in()
-    o = ma_v(stream_in)
+    valid_only_in = tb_v.drive_in()
+    o = ma_v(valid_only_in)
     tb_v.observe(o)

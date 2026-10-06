@@ -8,9 +8,22 @@ golden models + a @sim_input/@sim_output testbench factory), re-exporting
 fir_tb's generators and golden_resize rather than duplicating them so a
 testbench needs one import line.
 
-@sim_input/@sim_output only exist in the native simulator, so a testbench
+@sim_input/@sim_output only run in the native simulator, so a testbench
 @MAIN built from make_block_tb runs under
-`pypelinec <file> --sim --comb --run N` (never under GHDL/cocotb).
+`pypelinec <file> --sim --comb --run N` (never under GHDL/cocotb). As with
+fir_tb, drive_in (tb.in_t) and drive_ready (uint1_t) are assigned to
+module-level Input[T] wires, never locals, and an elastic block's
+.fwd_t/.fb_t port halves are built inline at the call:
+
+    stream_in: Input[tb.in_t]
+    out_ready: Input[uint1_t]
+
+    @MAIN
+    def my_tb():
+        stream_in = tb.drive_in()
+        out_ready = tb.drive_ready()
+        o = block(block.in_fwd_t(stream=stream_in), block.out_fb_t(out_ready))
+        tb.observe(o)
 """
 
 import random
@@ -158,8 +171,10 @@ def make_block_tb(
                 generous bound from the stimulus size). Run the sim for MORE
                 than tb.min_cycles.
 
-    Returns SimpleNamespace(drive_in, drive_ready, observe, state, expected,
-    deadline, min_cycles).
+    Returns SimpleNamespace(drive_in, drive_ready, observe, in_t, state,
+    expected, deadline, min_cycles). drive_in returns in_t, the block's plain
+    input stream type; drive_ready returns uint1_t. Assign both to module-level
+    Input[T] wires (see the module docstring).
     """
     n_in = len(stimulus)
     n_out = len(expected)
@@ -186,33 +201,17 @@ def make_block_tb(
         "out_hist": [],
     }
 
-    if elastic:
-        # NOT `in_stream_t`: this is the input port's feedforward HALF, not a
-        # standalone valid-only stream. The valid_only branch below is the one
-        # that really gets a make_stream_t.
-        in_port_t = block.in_fwd_t
-        in_plain_t = block.in_intrf.stream_t
+    # The plain input stream in both modes (never the elastic port's .fwd_t
+    # half: an Input[T] wire can't hold a port-pairing type).
+    in_t = block.in_intrf.stream_t if elastic else block.in_stream_t
 
-        @sim_input
-        def drive_in() -> in_port_t:
-            if st["idx"] < n_in:
-                st["presented_valid"] = 1
-                return in_port_t(
-                    stream=in_plain_t(data=in_value(stimulus[st["idx"]]), valid=1)
-                )
-            st["presented_valid"] = 0
-            return in_port_t(stream=in_plain_t(data=in_value(idle_raw), valid=0))
-
-    else:
-        in_stream_t = block.in_stream_t
-
-        @sim_input
-        def drive_in() -> in_stream_t:
-            if st["idx"] < n_in:
-                st["presented_valid"] = 1
-                return in_stream_t(data=in_value(stimulus[st["idx"]]), valid=1)
-            st["presented_valid"] = 0
-            return in_stream_t(data=in_value(idle_raw), valid=0)
+    @sim_input
+    def drive_in() -> in_t:
+        if st["idx"] < n_in:
+            st["presented_valid"] = 1
+            return in_t(data=in_value(stimulus[st["idx"]]), valid=1)
+        st["presented_valid"] = 0
+        return in_t(data=in_value(idle_raw), valid=0)
 
     def _ready_value():
         if ready_pattern == "always":
@@ -221,14 +220,14 @@ def make_block_tb(
             return 1 if rng.random() < 0.7 else 0
         return 1 if ready_pattern(st["cycle"]) else 0
 
-    out_fb_t = block.out_fb_t
-
+    # The plain ready bit; an elastic testbench wraps it as
+    # block.out_fb_t(...) at the block's stream_out port.
     if elastic:
 
         @sim_input
-        def drive_ready() -> out_fb_t:
+        def drive_ready() -> uint1_t:
             st["ready_now"] = _ready_value()
-            return out_fb_t(st["ready_now"])
+            return st["ready_now"]
 
     else:
 
@@ -300,6 +299,7 @@ def make_block_tb(
         drive_in=drive_in,
         drive_ready=drive_ready,
         observe=observe,
+        in_t=in_t,
         state=st,
         expected=expected,
         deadline=deadline,

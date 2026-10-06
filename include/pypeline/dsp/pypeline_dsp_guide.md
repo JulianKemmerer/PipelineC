@@ -84,13 +84,22 @@ from dsp.fir_tb import make_fir_tb, quantize_samples, two_tone
 stim = quantize_samples(two_tone(256, cycles_a=8, cycles_b=96), data_t)
 tb = make_fir_tb(fir, stim, ready_pattern="random", name="my_fir", plot=True)
 
+stream_in: Input[tb.in_t]  # the filter's plain input stream type
+out_ready: Input[uint1_t]
+
 @MAIN
 def my_fir_tb():
     stream_in = tb.drive_in()     # holds each sample until the filter accepts it
     out_ready = tb.drive_ready()  # "always" | "random" stalls | callable(cycle)
-    o = fir(stream_in, out_ready)
+    o = fir(fir.in_fwd_t(stream=stream_in), fir.out_fb_t(out_ready))
     tb.observe(o)                 # checks against the exact golden model
 ```
+
+The driver values go into module-level `Input[T]` wires, not locals: a `@sim_input`
+result stored in a local is an error, since its value exists only in simulation. That
+keeps the testbench top elaborable to HDL (the wires become ports), which a pipelined
+(non-`--comb`) `--sim` run needs. An elastic filter's `.fwd_t`/`.fb_t` port halves
+are built inline at the call; a `valid_only` filter takes `stream_in` directly.
 
 Signal generators (`impulse`/`step`/`sine`/`two_tone`/`chirp`/`white_noise`), an exact
 integer golden model (`golden_fir` — convolution plus a bit-exact mirror of
@@ -325,11 +334,14 @@ from dsp.dsp_tb import make_block_tb, golden_magnitude, quantize_samples, sine
 expected = golden_magnitude(magnitude, iq_pairs)   # or golden_dc_block / golden_moving_avg
 tb = make_block_tb(magnitude, iq_pairs, expected, name="my_magnitude")
 
+stream_in: Input[tb.in_t]
+out_ready: Input[uint1_t]
+
 @MAIN
 def my_magnitude_tb():
     stream_in = tb.drive_in()
     out_ready = tb.drive_ready()
-    o = magnitude(stream_in, out_ready)
+    o = magnitude(magnitude.in_fwd_t(stream=stream_in), magnitude.out_fb_t(out_ready))
     tb.observe(o)
 ```
 

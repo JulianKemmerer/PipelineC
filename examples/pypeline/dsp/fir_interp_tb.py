@@ -16,7 +16,7 @@ Run the simulation (writes fir_interp4_tb.png; PYPELINE_TB_SHOW=1 for a window):
 """
 
 import math
-from pypeline import MAIN
+from pypeline import MAIN, Input, uint1_t
 
 from fixed_point import make_fixed_t
 from dsp.fir_interp import make_fir_interp
@@ -68,9 +68,17 @@ stim = quantize_samples(sine(64, cycles=3, amplitude=0.7), data_t)
 tb = make_fir_tb(fir_interp4, stim, name="fir_interp4", plot=True)
 
 
+# The drivers reach the filter through module-level Input[T] wires, never
+# locals, so this top also elaborates to HDL (the wires become ports).
+stream_in: Input[tb.in_t]
+out_ready: Input[uint1_t]
+
+
 @MAIN
 def fir_interp4_tb():
     stream_in = tb.drive_in()
     out_ready = tb.drive_ready()
-    o = fir_interp4(stream_in, out_ready)
+    o = fir_interp4(
+        fir_interp4.in_fwd_t(stream=stream_in), fir_interp4.out_fb_t(out_ready)
+    )
     tb.observe(o)

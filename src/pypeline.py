@@ -1523,10 +1523,13 @@ def sim_output(fn):
     calls (it runs against a rebuilt, detached copy of the module's globals
     dict), not from other code reading the true module attribute externally.
     """
+    fn._pypeline_sim_only = True  # its own body is plain Python: no call-site check
     hw_fn = _sim_type_wrap(fn)
 
     @_functools.wraps(fn)
     def wrapper(*args, **kwargs):
+        if _const_folding:
+            raise SimOnlyCallInElab(wrapper)
         if _sim_converging:
             return SimVal(0)
         return hw_fn(*args, **kwargs)
@@ -1546,7 +1549,13 @@ def sim_input(fn):
         bare statement: `in_global()`.
       - return-value form: the function's own body has no wire reference; its
         return value is captured by the calling @MAIN/@hw_func's own (already
-        AST-rewritten) assignment: `in1 = in_return()`.
+        AST-rewritten) assignment: `in1 = in_return()`. The call must be the
+        whole right-hand side and the target a module-level Wire[T]/Input[T]/
+        Output[T] (or a field/element of one, also `module.wire.field`). A local
+        target (`x = in_return()`), or the call nested in an expression, is an
+        error in both native sim (SimOnlyCallSiteError) and elaboration: the
+        value exists only in simulation, and HDL needs a real port
+        (`in1: Input[T]`) to carry it.
 
     Both forms may be called from anywhere in the design -- a top-level @MAIN
     body or a nested plain-Python helper -- any number of times, not just once
@@ -1573,10 +1582,14 @@ def sim_input(fn):
     called with different arguments within the same cycle returns the first
     call's cached result regardless of the later call's own arguments.
     """
+    fn._pypeline_sim_only = True  # its own body is plain Python: no call-site check
     hw_fn = _sim_type_wrap(fn)
 
     @_functools.wraps(fn)
     def wrapper(*args, **kwargs):
+        if _const_folding:
+            # Before the cache: elaboration must never run (or cache) the body.
+            raise SimOnlyCallInElab(wrapper)
         key = id(wrapper)
         if key in _sim_input_cache:
             return _sim_input_cache[key]
@@ -5442,6 +5455,37 @@ _sim_pipelined_main_info: dict = {}
 _sim_wire_readers: dict = {}  # wire name → set of MAINs that have read it
 _sim_active: bool = False  # True only while pypeline_sim.py is driving a simulation run
 _sim_input_cache: dict = {}  # id(@sim_input wrapper) → cached result for the current cycle
+# True only while an expression is being evaluated as a constant: HDL
+# elaboration's PY_TO_LOGIC._try_eval_const, and native sim's decoration-time
+# local-constant scan in _build_reg_sim_func. A @sim_input/@sim_output reached
+# then raises SimOnlyCallInElab instead of running: its value is never a
+# constant, and running it there would fire its side effects (a counter step,
+# a queue pop) outside any simulated cycle.
+_const_folding: bool = False
+
+
+class SimOnlyCallInElab(Exception):
+    """Raised by a @sim_input/@sim_output wrapper called while _const_folding.
+    PY_TO_LOGIC turns it into an ElaborationError; native sim's scan treats the
+    expression as not constant. .fn is the wrapper that was called."""
+
+    def __init__(self, fn):
+        super().__init__(fn.__name__)
+        self.fn = fn
+
+
+class _ConstFolding:
+    """`with _ConstFolding():` around a speculative constant eval (see
+    _const_folding). Re-entrant: restores the previous value."""
+
+    def __enter__(self):
+        global _const_folding
+        self._prev = _const_folding
+        _const_folding = True
+
+    def __exit__(self, *exc):
+        global _const_folding
+        _const_folding = self._prev
 
 
 def _sim_current_inst_path():
@@ -5957,6 +6001,164 @@ def _check_no_local_binds_wire_name(
         raise GlobalWireNameError(
             _wire_name_bind_message(fn.__qualname__, name, kind, what)
             + f" (at {src_file}:{getattr(node, 'lineno', func_def.lineno)})"
+        )
+
+
+class SimOnlyCallSiteError(Exception):
+    """A @sim_input/@sim_output call whose value would reach hardware other than
+    through a module-level wire: assigned to a local (plain, annotated, a field
+    of one, an unpacking target) or nested inside an expression.
+
+    Its value exists only in simulation. Elaboration rejects the same set
+    (PY_TO_LOGIC.ElaborationError); before that, it RAN the function and built
+    the value into hardware as a constant. Raised at decoration time, so a
+    testbench that passes --sim --comb can't fail only once a pipelined run
+    elaborates it."""
+
+
+def _sim_only_kind(callee):
+    """'@sim_input' / '@sim_output' for a sim-only function, else None."""
+    if getattr(callee, "_is_sim_input", False):
+        return "@sim_input"
+    if getattr(callee, "_is_sim_output", False):
+        return "@sim_output"
+    return None
+
+
+def _sim_only_target_desc(target):
+    """How a sim-only-call error names a non-wire assignment target."""
+    if isinstance(target, _ast.Name):
+        return f"local '{target.id}'"
+    if isinstance(target, (_ast.Tuple, _ast.List)):
+        names = [n.id for n in _ast.walk(target) if isinstance(n, _ast.Name)]
+        return f"unpacking target '{', '.join(names)}'"
+    root = target
+    while isinstance(root, (_ast.Attribute, _ast.Subscript)):
+        root = root.value
+    if isinstance(root, _ast.Name):
+        return f"a field/element of local '{root.id}'"
+    return "a local"
+
+
+def _sim_only_call_message(func_name, callee_name, kind, target_desc=None):
+    """Shared error text (native sim and elaboration). target_desc names the
+    local the call is assigned to; None means the call is used as a value."""
+    where = (
+        f"storing it in {target_desc}" if target_desc else "using it as a value"
+    )
+    if kind == "@sim_input":
+        fix = (
+            f"Assign the call, as its own statement, to a module-level wire -- "
+            f"`in0: Input[T]` at module level, then `in0 = {callee_name}()` -- "
+            f"which becomes a real input port in HDL."
+        )
+    else:
+        fix = (
+            f"Call a @sim_output as its own statement; it returns nothing to "
+            f"hardware. To feed a value into hardware, assign a @sim_input to a "
+            f"module-level Input[T]."
+        )
+    return (
+        f"'{callee_name}()' is a {kind} function: its value exists only in "
+        f"simulation, so {where} in '{func_name}' leaves hardware nothing to "
+        f"build from it. {fix}"
+    )
+
+
+def _iter_body_nodes(func_def):
+    """ast.walk over func_def's own body, not descending into nested function,
+    lambda or class definitions (plain Python, not this function's hardware)."""
+    stack = list(func_def.body)
+    while stack:
+        node = stack.pop()
+        yield node
+        for child in _ast.iter_child_nodes(node):
+            if not isinstance(
+                child,
+                (_ast.FunctionDef, _ast.AsyncFunctionDef, _ast.Lambda, _ast.ClassDef),
+            ):
+                stack.append(child)
+
+
+def _check_sim_only_call_sites(
+    fn, func_def, src_file, eval_ns, wire_names, wire_module_attrs
+):
+    """Native-sim side of the sim-only call rule (see SimOnlyCallSiteError).
+
+    A @sim_input/@sim_output call is allowed only as a bare statement, or as the
+    whole right-hand side of an assignment to a module-level wire: `w = f()`,
+    `w.field = f()`, `w[i] = f()`, `alias.w.field = f()`. wire_names: bare wire
+    names declared in fn's module; wire_module_attrs: {(alias, wire): key} for
+    imported modules. Callees are resolved best-effort from eval_ns (globals +
+    closure); an unresolvable callee is skipped, as is a call hidden inside a
+    plain-Python helper -- elaboration still catches those."""
+    shadowed = {name for name, _node, _kind in _local_name_bindings(func_def)}
+    for node in _iter_body_nodes(func_def):
+        if isinstance(node, _ast.Assign):
+            shadowed.update(
+                n.id
+                for t in node.targets
+                for n in _ast.walk(t)
+                if isinstance(n, _ast.Name) and isinstance(n.ctx, _ast.Store)
+            )
+
+    def resolve(func_expr):
+        attrs = []
+        while isinstance(func_expr, _ast.Attribute):
+            attrs.append(func_expr.attr)
+            func_expr = func_expr.value
+        if not isinstance(func_expr, _ast.Name) or func_expr.id in shadowed:
+            return None
+        if func_expr.id not in eval_ns:
+            return None
+        obj = eval_ns[func_expr.id]
+        for attr in reversed(attrs):
+            try:
+                obj = getattr(obj, attr)
+            except Exception:
+                return None
+        return obj
+
+    def is_wire_target(target):
+        node = target
+        while isinstance(node, (_ast.Attribute, _ast.Subscript)):
+            if (
+                isinstance(node, _ast.Attribute)
+                and isinstance(node.value, _ast.Name)
+                and (node.value.id, node.attr) in wire_module_attrs
+            ):
+                return True
+            node = node.value
+        return isinstance(node, _ast.Name) and node.id in wire_names
+
+    allowed = set()  # id(Call) in a sanctioned position
+    local_target = {}  # id(Call) -> the non-wire target it is assigned to
+    for node in _iter_body_nodes(func_def):
+        if isinstance(node, _ast.Expr) and isinstance(node.value, _ast.Call):
+            allowed.add(id(node.value))
+        elif isinstance(node, _ast.Assign) and isinstance(node.value, _ast.Call):
+            if len(node.targets) == 1 and is_wire_target(node.targets[0]):
+                allowed.add(id(node.value))
+            else:
+                local_target[id(node.value)] = node.targets[0]
+        elif isinstance(node, _ast.AnnAssign) and isinstance(node.value, _ast.Call):
+            local_target[id(node.value)] = node.target
+    for node in _iter_body_nodes(func_def):
+        if not isinstance(node, _ast.Call) or id(node) in allowed:
+            continue
+        callee = resolve(node.func)
+        kind = _sim_only_kind(callee)
+        if kind is None:
+            continue
+        target = local_target.get(id(node))
+        raise SimOnlyCallSiteError(
+            _sim_only_call_message(
+                fn.__qualname__,
+                callee.__name__,
+                kind,
+                _sim_only_target_desc(target) if target is not None else None,
+            )
+            + f" (at {src_file}:{node.lineno})"
         )
 
 
@@ -6958,6 +7160,15 @@ def _build_reg_sim_func(fn):
         global_wire_names,
         {alias for alias, _ in module_wire_attrs},
     )
+    if not getattr(orig_fn, "_pypeline_sim_only", False):
+        _check_sim_only_call_sites(
+            fn,
+            func_def,
+            _sim_src_file,
+            _eval_ns,
+            global_wire_names,
+            module_wire_attrs,
+        )
     wire_leaf_ctypes_out: dict = {}
     _wire_rewriter_modified = False
     if global_wire_names or module_wire_attrs:
@@ -7042,10 +7253,13 @@ def _build_reg_sim_func(fn):
             and isinstance(stmt.targets[0], _ast.Name)
         ):
             try:
-                _local_const_ns[stmt.targets[0].id] = eval(
-                    compile(_ast.Expression(body=stmt.value), "<local_const>", "eval"),
-                    {**_eval_ns, **_local_const_ns},
-                )
+                with _ConstFolding():
+                    _local_const_ns[stmt.targets[0].id] = eval(
+                        compile(
+                            _ast.Expression(body=stmt.value), "<local_const>", "eval"
+                        ),
+                        {**_eval_ns, **_local_const_ns},
+                    )
             except Exception:
                 pass
             continue
@@ -7075,10 +7289,13 @@ def _build_reg_sim_func(fn):
             if stmt.value is not None:
                 # Reg[T] = val: evaluate the init expression for the power-on default.
                 try:
-                    init_val = eval(
-                        compile(_ast.Expression(body=stmt.value), "<reg_init>", "eval"),
-                        _merged_ns,
-                    )
+                    with _ConstFolding():
+                        init_val = eval(
+                            compile(
+                                _ast.Expression(body=stmt.value), "<reg_init>", "eval"
+                            ),
+                            _merged_ns,
+                        )
                     # Dict-style struct init {"field": val} → convert to NamedTuple
                     # so that field access (pt.x) works in the simulated body; this
                     # must happen before _sim_cast_deep below, whose struct fast path
