@@ -7,6 +7,8 @@ keyword-only arguments to their single core AUTO_PIPELINE:
     also sizes the FIFO), and bad combinations raise its errors;
   - .latency served per build mode: a sweep build's bootstrap reads
     start_latency, --comb-like builds read 0, latency=N reads N everywhere;
+  - a pinned latency in the cache flows to the returned function's
+    .auto_pipeline.latency and .max_in_flight;
   - no arguments builds an unconstrained tag, and repeated constructions
     keep the same key and repr (re-elaboration);
   - plain native sim: a start_latency hint is cycle-identical to no hint,
@@ -139,6 +141,23 @@ def test_stable_identity():
         _restore_auto_pipeline_state()
 
 
+def test_pinned_latency_metadata():
+    """A pin-and-confirm pass re-executes the factory with the harvested core
+    depth cached; the exported .auto_pipeline / .max_in_flight follow it."""
+    try:
+        ap, _ = _make_one("sweep")
+        for pinned in (0, 3, 7):
+            pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE({ap.canonical_key: pinned})
+            pypeline.SET_AUTO_PIPELINE_BUILD_MODE("sweep")
+            with _RecordAutoPipelines() as rec:
+                sap, _ = make_stream_auto_pipeline(div_inv)
+            assert sap.auto_pipeline is rec.made[0]
+            assert sap.auto_pipeline.latency == pinned, (pinned, sap.auto_pipeline.latency)
+            assert sap.max_in_flight == pinned + 5, (pinned, sap.max_in_flight)
+    finally:
+        _restore_auto_pipeline_state()
+
+
 def test_bad_arguments():
     bad = [
         ({"start_latency": 3, "max_latency": 2}, ValueError),
@@ -238,6 +257,7 @@ def test_dsp_factories_forward():
 if __name__ == "__main__":
     test_forwarding_and_build_modes()
     test_stable_identity()
+    test_pinned_latency_metadata()
     test_bad_arguments()
     test_native_sim_latency()
     test_dsp_factories_forward()

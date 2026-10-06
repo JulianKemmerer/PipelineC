@@ -11,8 +11,9 @@ Checks, with an always-valid producer and an always-ready consumer:
 - make_stream_auto_pipeline(latency=L): inputs are accepted on consecutive
   cycles, results come out on consecutive cycles, the first result L+4 cycles
   after the first accept;
-- a stalled consumer: exactly L+5 words are admitted, and all of them come out
-  in order afterwards (the FIFO holds every admitted word);
+- the returned function's .auto_pipeline.latency is L and .max_in_flight L+5;
+- a stalled consumer: exactly .max_in_flight words are admitted, and all of
+  them come out in order afterwards (the FIFO holds every admitted word);
 - the elastic make_fir / make_fir_decim / make_fir_interp / make_dc_block /
   make_moving_avg / make_magnitude: input and output at their nominal rates.
 """
@@ -65,6 +66,14 @@ def _sap_cycle(sap, data, valid, ready):
     )
 
 
+def test_stream_auto_pipeline_sizing_metadata():
+    for L, sap in SAPS.items():
+        assert sap.auto_pipeline.latency == L, (L, sap.auto_pipeline.latency)
+        assert sap.max_in_flight == L + 5, (L, sap.max_in_flight)
+        assert type(sap.max_in_flight) is int
+        assert not hasattr(sap, "latency")
+
+
 def test_stream_auto_pipeline_one_word_per_cycle():
     for L, sap in SAPS.items():
         sim_reset()
@@ -105,9 +114,9 @@ def test_stream_auto_pipeline_stall_admits_round_trip():
             if int(r.stream_out_if.stream.valid) and ready:
                 got.append(int(r.stream_out_if.stream.data))
             if cycle == stall - 1:
-                assert sent == L + 5, (
+                assert sent == L + 5 == sap.max_in_flight, (
                     f"latency={L}: a stalled consumer should admit exactly "
-                    f"L+5={L + 5} words, admitted {sent}"
+                    f"max_in_flight={sap.max_in_flight} words, admitted {sent}"
                 )
                 assert not got
         # Every admitted word was held (none dropped by a full FIFO)
