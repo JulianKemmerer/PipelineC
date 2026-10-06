@@ -223,11 +223,12 @@ def check_taps(taps):
     """Every probe fires exactly once per simulated cycle, so within a phase all
     taps must report the SAME cycle count.
 
-    This guards the epoch de-duplication in stream_perf._EpochTap: a body
-    declaring Feedback[T] re-executes until it converges, and if that buffering
-    ever broke, the taps inside such a body would inflate while the ones
-    outside it would not -- which shows up here as a spread, and would silently
-    overstate every per-cycle rate.
+    This guards the once-per-cycle invariant stream_perf._EpochTap relies on:
+    probes are `@sim_output`, which pypeline runs only in each cycle's final,
+    converged pass (including inside a Feedback[T] body's convergence loop),
+    with the epoch buffer as a backstop. If either ever broke, some taps would
+    inflate while others would not -- which shows up here as a spread, and
+    would silently overstate every per-cycle rate.
     """
     counts = sorted({(t or {}).get("cycles") for t in taps.values()} - {None})
     if not counts:
