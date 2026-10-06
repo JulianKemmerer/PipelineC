@@ -551,6 +551,36 @@ any rate, so these tests check the rate itself.
   synth_device_models): the same no-stall and no-bubble asserts at the latency a full
   build discovers.
 
+## Stream performance measurement coverage
+
+The library is in `include/pypeline/stream/stream_perf*.py` and `stream_bottleneck.py`;
+see [its guide](../include/pypeline/stream/pypeline_stream_perf_guide.md). Its metric
+definitions are what measured designs get compared on, so each one is checked against
+hand-worked numbers.
+- `stream_perf_test.py` (native_sim, plain Python plus `sim_call`):
+  - boundary metrics and per-packet latencies on a hand-worked beat trace;
+  - each tap's cycle partition, the epoch keeping only a cycle's last sample, buffer
+    conservation and underflow, the arbiter's four-way split, and registry matching;
+  - the bottleneck walk past a relaying block and a fork, the idle-label and no-tap
+    cases, headline and report formatting, and `buffer_tap_errors`;
+  - a probed FIFO between `ConvergedAxisSimSource` and a backpressuring
+    `ConvergedAxisSimSink`, measured by a `PhaseRunner`.
+- `stream_perf_probe_test.py` (native_sim via `pypelinec --sim --comb`, and
+  synth_device_models `--comb`): two MAINs run the same probed producer → FIFO →
+  consumer chain, closed through `Feedback[T]`. Its `@final(sim=True)` hook checks:
+  - MAIN-labelled tap names and one count per cycle;
+  - each consumer's service period (3 and 2);
+  - the verdict landing on the consumer, past the relaying FIFO.
+
+  The synth entry proves the probes elaborate away. Mutation-checked: a wrong expected
+  period fails.
+- `stream_perf_tb_test.py` (same two categories): the guide's complete testbench. A
+  `PhaseRunner`, converged AXIS source/sink and a probed FIFO plus skid buffer, with the
+  consumer ready every other cycle. Its `@final` hook checks:
+  - every packet checked, with exact byte accounting;
+  - 2.0 B/cycle sustained;
+  - consistent taps, buffer conservation and the verdict.
+
 ## AUTO_MULTI_CYCLE coverage
 
 `AUTO_MULTI_CYCLE(latency= / start_latency= / max_latency=)` and the multi-cycle stream wrappers:

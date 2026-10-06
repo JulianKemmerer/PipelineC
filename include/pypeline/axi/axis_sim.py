@@ -45,6 +45,12 @@ scope as `make_axis_byte_source`/`make_axis_byte_sink` in `axis.py`. A caller
 wanting backpressure on the source side uses `set_pause_generator`; nothing
 analogous is provided for the sink (it always presents ready=1 to its step()
 caller's own port-driving code, matching every existing testbench).
+
+`ConvergedAxisSimSource`/`ConvergedAxisSimSink` (end of this file) are the
+variants for designs whose `ready` depends on same-cycle logic or whose
+output is backpressured: the source presents from `@sim_input` but only
+advances on the converged handshake committed from `@sim_output`, and the
+sink accepts only real transfers and checks that a stalled beat is held.
 """
 
 from collections import deque
@@ -265,3 +271,99 @@ class Scoreboard:
         result["expected"] = expected
         result["got"] = got
         return result
+
+
+class ConvergedAxisSimSource:
+    """AXIS source with separate presentation and converged acceptance, for
+    designs whose `ready` depends on same-cycle downstream logic (arbiters,
+    combinational forks).
+
+    `AxisSimSource.step(ready)` advances as soon as it is handed a ready, but a
+    `@sim_input` runs BEFORE the design converges, so the ready it could see
+    may still change -- advancing on it can drop a word the DUT never
+    accepted. This wrapper splits the cycle in two:
+
+        drive(pause=False)   from @sim_input: the word to present this cycle
+        commit(ready)        from @sim_output: the converged ready; advances
+                             only on a real transfer, returns True if one
+                             happened
+
+    `drive(pause=True)` inserts a gap only between accepted beats: an already
+    presented (stalled) beat is held unchanged until accepted, as AXIS
+    requires. Do not attach a pause generator to the wrapped source.
+    """
+
+    def __init__(self, axis_intrf, n):
+        self._source = AxisSimSource(axis_intrf, n)
+        self._offered = None
+        self._held = False
+        self._null = self._source._null_word()
+
+    def send(self, frame):
+        self._source.send(frame)
+
+    send_nowait = send
+
+    def idle(self):
+        return self._source.idle()
+
+    def drive(self, pause=False):
+        self._offered = self._null if pause and not self._held else self._source.step(0)
+        self._held = bool(self._offered.stream.valid)
+        return self._offered
+
+    def commit(self, ready):
+        accepted = bool(self._offered is not None and self._offered.stream.valid and ready)
+        if accepted:
+            self._source.step(1)
+            self._held = False
+        self._offered = None
+        return accepted
+
+
+class ConvergedAxisSimSink:
+    """AXIS sink that may backpressure: `step(word, ready, sideband=None)`
+    from `@sim_output` with the converged output word and the ready the
+    testbench drove this cycle. Only real transfers (valid & ready) reach the
+    wrapped `AxisSimSink` (and its scoreboard), and a stalled beat must stay
+    exactly the same -- data, keep, eod and the optional `sideband` value
+    (e.g. a status bit beside the stream) -- until accepted, or an
+    `AssertionError` is raised. Counts `accepted_beats` and `stalled_cycles`.
+    """
+
+    def __init__(self, axis_intrf, n, scoreboard=None):
+        self._sink = AxisSimSink(axis_intrf, n, scoreboard=scoreboard)
+        self._n = n
+        self._stalled = None
+        self.accepted_beats = 0
+        self.stalled_cycles = 0
+
+    def step(self, word, ready=1, sideband=None):
+        stream = word.stream
+        payload = (
+            tuple(int(stream.data.frag.data[i]) for i in range(self._n)),
+            tuple(int(stream.data.frag.keep[i]) for i in range(self._n)),
+            int(stream.data.eod[0]),
+            None if sideband is None else int(sideband),
+        )
+        if self._stalled is not None:
+            assert stream.valid and payload == self._stalled, (
+                "AXIS output changed or withdrew valid while stalled"
+            )
+        self._stalled = payload if stream.valid and not ready else None
+        if stream.valid and not ready:
+            self.stalled_cycles += 1
+        if stream.valid and ready:
+            self.accepted_beats += 1
+            self._sink.step(word)
+
+    def recv_nowait(self):
+        return self._sink.recv_nowait()
+
+    recv = recv_nowait
+
+    def check_nowait(self):
+        return self._sink.check_nowait()
+
+    def empty(self):
+        return self._sink.empty()

@@ -55,19 +55,20 @@ For getting started information see the [README](README.md).
 31. [Multi-Cycle Stream Wrapper: `make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle)
 32. [Combinational Optimization Stream Wrappers: `make_stream_auto_comb_area_opt` / `make_stream_auto_comb_delay_opt` (Experimental)](#combinational-optimization-stream-wrappers-make_stream_auto_comb_area_opt--make_stream_auto_comb_delay_opt-experimental)
 33. [Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental)
+34. [Stream Performance Measurement: Probes & Bottlenecks](#stream-performance-measurement-probes--bottlenecks)
 
 **Part IV — Escape hatches**
 
-34. [Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
-35. [Fixed User Pipelines: `@pipeline_latency`](#fixed-user-pipelines)
-36. [Just-Wires Synthesis Hint: `@wires`](#just-wires-synthesis-hint-wires)
+35. [Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
+36. [Fixed User Pipelines: `@pipeline_latency`](#fixed-user-pipelines)
+37. [Just-Wires Synthesis Hint: `@wires`](#just-wires-synthesis-hint-wires)
 
 **Part V — Reference**
 
-37. [Simulation Reference](#simulation-reference)
-38. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
-39. [Source Naming Rules](#source-naming-rules)
-40. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
+38. [Simulation Reference](#simulation-reference)
+39. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
+40. [Source Naming Rules](#source-naming-rules)
+41. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
 
 ---
 
@@ -4795,6 +4796,23 @@ wrapper's hardware identity depend on a schedule that is not known during initia
 installs a schedule, so `fsm.latency` stays 0 and the wrapper degrades to a correct
 1-cycle-latency, 1-cycle-II stream. When native simulation is supplied an implemented
 schedule, it uses that schedule's actual latency instead.
+
+## Stream Performance Measurement: Probes & Bottlenecks
+
+The stream performance library measures a valid/ready design in native simulation:
+throughput versus packet size, per-packet latency and, through probes placed inside the
+design's own hardware functions, which block is the bottleneck and why.
+
+It has four parts:
+- the probes (`hs`, `stream_hs`, `state`, `occupancy`, `arb`) and the probed buffers
+  (`make_probed_stream_fifo`, `make_probed_skid_buffer`);
+- a phase-plan testbench runner (`PhaseRunner`, `StreamMeter`);
+- block-graph bottleneck attribution (`stream_bottleneck`);
+- report helpers (cycles → Gb/s, CSV, markdown).
+
+The probes are `@sim_output` calls, so they add no hardware. See
+[`include/pypeline/stream/pypeline_stream_perf_guide.md`](../include/pypeline/stream/pypeline_stream_perf_guide.md),
+next to the library source, for the full reference and a complete testbench.
 
 ---
 

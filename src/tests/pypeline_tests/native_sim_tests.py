@@ -44,6 +44,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "fifo_test.py",
     "stream_fifo_test.py",
     "skid_buffer_test.py",
+    "stream_perf_test.py",
     "ram_test.py",
     "stream_ram_test.py",
     "axis_test.py",
@@ -139,6 +140,41 @@ def get_tests() -> list:
             name="main_args_sim_test",
             category="native_sim",
             cmd=[PYPELINE_SIM, INST_DIR / "main_args_sim_test.py", "--run", "all"],
+        )
+    )
+    # In-design stream performance probes under the real multi-MAIN runner:
+    # MAIN-qualified tap names, one count per cycle through Feedback[T]
+    # convergence, and the bottleneck verdict (checked in its @final hook).
+    tests.append(
+        Test(
+            name="stream_perf_probe_test",
+            category="native_sim",
+            cmd=[
+                PYPELINEC,
+                INST_DIR / "stream_perf_probe_test.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "200",
+            ],
+            needs_out_dir=True,
+        )
+    )
+    # A complete stream performance testbench (PhaseRunner, converged AXIS
+    # source/sink, probed FIFO + skid buffer), checked in its @final hook.
+    tests.append(
+        Test(
+            name="stream_perf_tb_test",
+            category="native_sim",
+            cmd=[
+                PYPELINEC,
+                INST_DIR / "stream_perf_tb_test.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "all",
+            ],
+            needs_out_dir=True,
         )
     )
     tests.append(

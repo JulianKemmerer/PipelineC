@@ -110,6 +110,11 @@ SYNTH_TEST_FILES = [
     # All four skid-buffer modes plus the AXIS face are separate @MAIN tops in
     # this one file, so this entry elaborates every generated body.
     ("skid_buffer_test.py", INST_DIR, ["--comb"], DM),
+    # The stream performance probes are @sim_output calls the elaborator must
+    # delete (argument tuples included) inside probed FIFOs, skid buffers,
+    # FSMs and Feedback-closed chains.
+    ("stream_perf_probe_test.py", INST_DIR, ["--comb"], DM),
+    ("stream_perf_tb_test.py", INST_DIR, ["--comb"], DM),
     ("interface_factory_two_widths_test.py", INST_DIR, ["--comb"], DM),
     ("axis_test.py", INST_DIR, ["--comb"], DM),
     ("dwidth_converter_test.py", INST_DIR, ["--comb"], DM),

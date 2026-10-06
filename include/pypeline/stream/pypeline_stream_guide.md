@@ -132,6 +132,9 @@ port.
 | `type_bytes_sw_test.py` | the software helpers, cross-checked against the generated hardware |
 | `host_types_test.py`, `host_types_build_test.py` | the generated standalone host module, run where Pypeline cannot be imported |
 
+To measure a stream design's throughput, latency and bottlenecks in simulation, see the
+[stream performance library guide](pypeline_stream_perf_guide.md).
+
 **See also:** [the main guide's Byte-Stream Serialization section](../../../docs/pypeline_guide.md#byte-stream-serialization-make_serializer--make_deserializer) ·
 [Struct ↔ AXI-Stream](../../../docs/pypeline_guide.md#struct--axi-stream-make_axis_to_type--make_type_to_axis) ·
 [Struct/type ↔ bytes conversion](../../../docs/pypeline_guide.md#structtype--bytes-conversion)
