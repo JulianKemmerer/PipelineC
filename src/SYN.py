@@ -24,6 +24,7 @@ represented is AUTO_PIPELINE.py; multi-cycle path constraints are
 AUTO_MULTI_CYCLE.py.
 """
 
+import contextlib
 import datetime
 import hashlib
 import json
@@ -146,6 +147,11 @@ INF_MHZ = 1000  # Impossible timing goal
 #           delays (--no_hier_syn cmd line flag). Gives up the automatic
 #           estimate-was-inaccurate fallback to real synthesis.
 HIER_SYN_MODE = "leaf"
+# Before estimating a delay or an area, use an earlier run's synthesis of the
+# same exact inputs when the output directory or the --syn_cache store holds
+# one (STORED_MEASUREMENT). In every HIER_SYN_MODE. False
+# (--no_stored_measurements): estimate as if no earlier run existed.
+USE_STORED_MEASUREMENTS = True
 # Experimental planner geometry: use a timing backend's measured
 # combinational component as the relative leaf weight, then normalize it at
 # the measured frontier before placement. This stays internal and defaults
@@ -1402,7 +1408,10 @@ def GET_ESTIMATED_COMBINATIONAL_AREA(logic, parser_state, area_memo=None):
     counterpart to GET_REGISTERS_ESTIMATE_TEXT_AND_FFS's sequential walk.
     Every non-shared call site becomes its own hardware instance, so a leaf
     used N times contributes N times its area, exactly like the FF walk
-    counts every instance's own registers.
+    counts every instance's own registers. A function a synthesis run
+    measured -- this build's, or an earlier run of its exact inputs -- counts
+    that measured area instead of its leaves' sum, and an uncached leaf its own
+    measured area (MEASURED_AREA).
 
     Returns (area, unit, missing_leaf_func_names). A leaf with no cached
     area contributes 0.0 and its func_name to the missing set rather than
@@ -1431,10 +1440,14 @@ def GET_ESTIMATED_COMBINATIONAL_AREA(logic, parser_state, area_memo=None):
         else:
             cached = GET_CACHED_LEAF_AREA(logic, parser_state)
             if cached is None:
+                cached = MEASURED_AREA(logic, parser_state)
+            if cached is None:
                 result = (0.0, unit, frozenset({logic.func_name}))
             else:
                 value, cached_unit = cached
                 result = (value, cached_unit, frozenset())
+    elif (measured := MEASURED_AREA(logic, parser_state)) is not None:
+        result = (measured[0], measured[1], frozenset())
     else:
         total = 0.0
         missing = set()
@@ -2235,8 +2248,44 @@ SYNTHESIS_STORE_LAYOUT = "v1"
 _synthesis_reuse_stats_lock = threading.Lock()
 SYNTHESIS_REUSE_STATS = {"out_dir": 0, "store": 0, "run": 0, "stale": 0}
 
+# A lookup (STORED_MEASUREMENT) calls a backend exactly as a real run would,
+# inside REUSE_ONLY: every backend's reuse decision goes through
+# REUSE_SYNTHESIS_LOG or SYNTHESIS_STORE_FETCH, and there a miss raises
+# SynthesisNotStored instead of letting the backend go on to run the tool.
+# Per thread: real runs in the synthesis thread pool are unaffected.
+_reuse_only = threading.local()
+
+
+class SynthesisNotStored(Exception):
+    """Inside REUSE_ONLY: no earlier result for these exact inputs."""
+
+
+class SynthesisRanDuringLookup(Exception):
+    """Inside REUSE_ONLY: a backend ran its tool anyway (an internal error)."""
+
+
+@contextlib.contextmanager
+def REUSE_ONLY():
+    _reuse_only.active = True
+    try:
+        yield
+    finally:
+        _reuse_only.active = False
+
+
+def REUSE_ONLY_MISS():
+    """Called where a backend would go on to run: inside REUSE_ONLY, stop."""
+    if getattr(_reuse_only, "active", False):
+        raise SynthesisNotStored()
+
 
 def COUNT_SYNTHESIS_RESULT(kind):
+    if kind == "run" and getattr(_reuse_only, "active", False):
+        # A backend that decides to run without asking REUSE_SYNTHESIS_LOG or
+        # SYNTHESIS_STORE_FETCH must call REUSE_ONLY_MISS first
+        raise SynthesisRanDuringLookup(
+            "internal error: a backend ran synthesis while only looking up an earlier result"
+        )
     with _synthesis_reuse_stats_lock:
         SYNTHESIS_REUSE_STATS[kind] += 1
 
@@ -2406,6 +2455,7 @@ def REUSE_SYNTHESIS_LOG(
         print("Reading log", log_path, store, flush=True)
         with open(log_path, "r", errors=read_errors) as f:
             return f.read()
+    REUSE_ONLY_MISS()
     return None
 
 
@@ -2426,7 +2476,17 @@ def _synthesis_store_entry_dir(tool, signature):
 def SYNTHESIS_STORE_FETCH(tool, signature, files, manifest):
     """Copy a stored result into place: files maps each stored name to its
     destination path. Only an entry whose full recorded identity equals
-    manifest is used (a truncated or foreign entry is a miss)."""
+    manifest is used (a truncated or foreign entry is a miss).
+
+    Every backend asks the store last, right before it would run, so inside
+    REUSE_ONLY a miss raises SynthesisNotStored."""
+    if _SYNTHESIS_STORE_COPY(tool, signature, files, manifest):
+        return True
+    REUSE_ONLY_MISS()
+    return False
+
+
+def _SYNTHESIS_STORE_COPY(tool, signature, files, manifest):
     if SYNTHESIS_STORE_DIR is None:
         return False
     entry = _synthesis_store_entry_dir(tool, signature)
@@ -2746,6 +2806,14 @@ def SET_MEASURED_DELAY_FROM_REPORT(logic, parsed_timing_report, parser_state):
     logic.delay_is_estimated = False
     delay_components = _PATH_REPORT_DELAY_COMPONENTS(path_report)
     _SET_LOGIC_DELAY_COMPONENTS(logic, delay_components)
+    # The same run measured area too, where the backend can (DEVICE_MODELS).
+    # Kept for every function, user code included (MEASURED_AREA).
+    # combinational_cell_area, deliberately NOT total_cell_area: see the
+    # leaf-area cache write below.
+    area_value = getattr(path_report, "combinational_cell_area", None)
+    area_unit = getattr(path_report, "area_unit", None)
+    if area_value is not None and area_unit is not None:
+        logic.measured_area = (area_value, area_unit)
     if logic.delay > 0 and AUTO_PIPELINE.FUNC_HAS_HIER_ALLOWING_ADDED_LATENCY_TO_RAW_VHDL(
         logic.func_name, parser_state
     ):
@@ -2794,8 +2862,6 @@ def SET_MEASURED_DELAY_FROM_REPORT(logic, parsed_timing_report, parser_state):
         # harness flip-flop, 11.7x its real combinational area (218.8032
         # um2). combinational_cell_area (MEASURE_NETLIST_AREA already splits
         # it by each cell's own is_sequential flag) excludes them.
-        area_value = getattr(path_report, "combinational_cell_area", None)
-        area_unit = getattr(path_report, "area_unit", None)
         if area_value is not None and area_unit is not None:
             WRITE_CACHED_LEAF_AREA(logic, parser_state, area_value, area_unit)
 
@@ -2824,6 +2890,149 @@ def ESTIMATE_HIER_PATH_DELAYS(funcs_to_estimate, parser_state, quiet=False):
                 f"Function: {logic.func_name} estimated path delay: {logic.delay / DELAY_UNIT_MULT:.3f} ns (derived from submodules)"
             )
         parser_state.FuncLogicLookupTable[logic_func_name] = logic
+
+
+def _HAS_SYNTHESIS_LOG(directory):
+    # Every backend's result is a log; pipeline_map.log is SYN's own diagnostic
+    try:
+        return any(
+            name.endswith(".log") and name != "pipeline_map.log"
+            for name in os.listdir(directory)
+        )
+    except OSError:
+        return False
+
+
+def STORED_MEASUREMENT(logic, parser_state, inst_name=None, TimingParamsLookupTable=None):
+    """An earlier run's synthesis report for exactly this function's
+    zero-added-clock inputs, or None (docs/SYN_DESIGN.md#stored-measurements).
+
+    Calls the backend as for a real run, inside REUSE_ONLY: the backend renders
+    the inputs and looks in the output directory's logs, then the --syn_cache
+    store, but never runs the tool. A hit is a real measurement, so callers use
+    it in place of an estimate. Asked once per function per parse: the answers
+    live on parser_state, so a re-parse (the next AUTO_PIPELINE pass) asks
+    again and finds what the previous pass synthesized.
+
+    Only once ADD_PATH_DELAY_TO_LOOKUP has started on this parse: it leaves
+    the zero-added-clock timing params here. Before that the parse may be
+    incomplete (AUTO_COMB_OPT prices candidates during elaboration).
+    """
+    if not USE_STORED_MEASUREMENTS:
+        return None
+    if TimingParamsLookupTable is None:
+        TimingParamsLookupTable = getattr(parser_state, "stored_measurement_timing_params", None)
+        if TimingParamsLookupTable is None:
+            return None
+    func_name = logic.func_name
+    memo = getattr(parser_state, "stored_measurements", None)
+    if memo is None:
+        memo = parser_state.stored_measurements = {}
+    if func_name in memo:
+        return memo[func_name]
+    memo[func_name] = None
+    logic = parser_state.FuncLogicLookupTable.get(func_name, logic)
+    if inst_name is None:
+        insts = parser_state.FuncToInstances.get(func_name)
+        if not insts:
+            return None
+        inst_name = list(insts)[0]  # Any inst will do, as for a real run
+    # Never synthesized per function, so never stored
+    if LOGIC_IS_ZERO_DELAY(logic, parser_state, allow_none_delay=True):
+        return None
+    # Cheap before rendering and hashing the inputs: without a store, only a log
+    # in the function's own output directory can be an earlier result
+    if SYNTHESIS_STORE_DIR is None and not _HAS_SYNTHESIS_LOG(GET_OUTPUT_DIRECTORY(logic)):
+        return None
+    try:
+        with REUSE_ONLY():
+            report = SYN_TOOL.SYN_AND_REPORT_TIMING(
+                inst_name, logic, parser_state, TimingParamsLookupTable
+            )
+    except SynthesisNotStored:
+        return None
+    except SynthesisRanDuringLookup:
+        raise
+    except Exception as e:
+        # An earlier result this build cannot use (an errored Vivado log, a
+        # netlist with no timing paths, ...) is no measurement: estimate as if
+        # it were not there. A real run of it would raise the same error.
+        print(f"Function: {func_name}: not using its earlier synthesis result: {e}", flush=True)
+        return None
+    paths = list(report.path_reports.values())
+    if len(paths) != 1 or paths[0].path_delay_ns is None:
+        print(
+            f"Function: {func_name}: not using its earlier synthesis result: "
+            f"{len(paths)} timing paths reported, expected one with a delay",
+            flush=True,
+        )
+        return None
+    memo[func_name] = report
+    return report
+
+
+def STORED_DELAY_IS_USABLE(logic, parser_state):
+    """Whether an earlier run of this function measured the delay a build would
+    otherwise estimate for it.
+
+    A fully combinational subtree's run measures its input-to-output through
+    delay. A stateful module that slicing never enters (an atomic span) gets
+    one whole-module run in "leaf" mode anyway, so its stored run is the number
+    "prim" mode would estimate. A stateful module on the estimate chain is
+    the exception: its run reports an internal critical path, a different
+    quantity (see FUNC_PATH_DELAY_IS_ESTIMABLE).
+    """
+    import AUTO_PIPELINE
+
+    import AUTO_FSM
+
+    if not FUNC_SUBTREE_HAS_STATE(logic.func_name, parser_state):
+        return True
+    return not (
+        AUTO_PIPELINE.FUNC_SUBTREE_HAS_AUTO_PIPELINE(logic.func_name, parser_state)
+        or AUTO_FSM.FUNC_SUBTREE_HAS_AUTO_FSM(logic.func_name, parser_state)
+    )
+
+
+def SET_STORED_DELAY(logic, parser_state, inst_name, TimingParamsLookupTable):
+    """Measure logic's delay from an earlier run of its exact inputs, if one
+    exists (STORED_MEASUREMENT). True when it did."""
+    report = STORED_MEASUREMENT(logic, parser_state, inst_name, TimingParamsLookupTable)
+    if report is None:
+        return False
+    SET_MEASURED_DELAY_FROM_REPORT(logic, report, parser_state)
+    print(
+        f"Function: {logic.func_name} stored path delay: "
+        f"{logic.delay / DELAY_UNIT_MULT:.3f} ns (an earlier run synthesized these exact inputs)",
+        flush=True,
+    )
+    return True
+
+
+def MEASURED_AREA(logic, parser_state):
+    """(value, unit): the combinational cell area that a synthesis run of
+    exactly this function measured, or None. The run is one this build did, or
+    an earlier run of the same inputs (STORED_MEASUREMENT). Only DEVICE_MODELS
+    measures area. The area estimates use it in place of summing the
+    function's leaves (GET_ESTIMATED_COMBINATIONAL_AREA,
+    AUTO.ESTIMATE_ENTITY_AREA)."""
+    if SYN_TOOL is not DEVICE_MODELS:
+        return None
+    logic = parser_state.FuncLogicLookupTable.get(logic.func_name, logic)
+    measured = getattr(logic, "measured_area", None)
+    if measured is None:
+        report = STORED_MEASUREMENT(logic, parser_state)
+        if report is not None:
+            path_report = list(report.path_reports.values())[0]
+            value = getattr(path_report, "combinational_cell_area", None)
+            unit = getattr(path_report, "area_unit", None)
+            if value is not None and unit is not None:
+                measured = logic.measured_area = (value, unit)
+    # A unit other than the active model's is not comparable (see
+    # GET_CACHED_LEAF_AREA)
+    if measured is None or measured[1] != DEVICE_MODELS.AREA_UNIT:
+        return None
+    return measured
 
 
 def MEASURE_DELAYS(func_names, parser_state):
@@ -2914,6 +3123,9 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
     TimingParamsLookupTable = AUTO_PIPELINE.GET_ZERO_ADDED_CLKS_TIMING_PARAMS_LOOKUP(parser_state)
     multimain_timing_params = AUTO_PIPELINE.MultiMainTimingParams()
     multimain_timing_params.TimingParamsLookupTable = TimingParamsLookupTable
+    # The parse is complete: area estimates may look up earlier runs from here
+    # on (STORED_MEASUREMENT)
+    parser_state.stored_measurement_timing_params = TimingParamsLookupTable
 
     # Re-write black box modules that are no longer in final state starting throughput sweep
     WRITE_BLACK_BOX_FILES(parser_state, multimain_timing_params, False)
@@ -3037,7 +3249,10 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
         # datapath was already synthesized (see HOLDER_DELAY_FROM_EVIDENCE)
         if logic.delay is None:
             derived = AUTO_MULTI_CYCLE.HOLDER_DELAY_FROM_EVIDENCE(logic, parser_state)
-            if derived is not None:
+            # An earlier run of exactly this holder beats the derivation
+            if derived is not None and not SET_STORED_DELAY(
+                logic, parser_state, inst_name, TimingParamsLookupTable
+            ):
                 logic.delay = max(1, int(derived * DELAY_UNIT_MULT))
                 logic.delay_is_estimated = False
                 _SET_LOGIC_DELAY_COMPONENTS(logic, None)
@@ -3057,7 +3272,14 @@ def ADD_PATH_DELAY_TO_LOOKUP(parser_state, root_func_names=None):
                 # Estimates are guidance for slice placement only - full design
                 # synthesis during the throughput sweep remains the ground truth,
                 # and MEASURE_DELAYS() is the fallback when estimates are off.
-                funcs_to_estimate.append(logic_func_name)
+                # An earlier run of these exact inputs is a measurement, though.
+                if not (
+                    STORED_DELAY_IS_USABLE(logic, parser_state)
+                    and SET_STORED_DELAY(
+                        logic, parser_state, inst_name, TimingParamsLookupTable
+                    )
+                ):
+                    funcs_to_estimate.append(logic_func_name)
             else:
                 cache_key, owner = CLAIM_MUX_PATH_DELAY_SYNTH_OWNER(
                     logic, parser_state, mux_cache_key_to_async_owner

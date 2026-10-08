@@ -9,6 +9,10 @@
 #    build additionally prints one "Measured area: ..." line taken from the
 #    exact mapped netlist that synthesis run, produced free by the same
 #    DEVICE_MODELS._run_synth_and_sta call that already measures delay.
+#  - mode 3 (stored measurements): after a --full_hier_syn build synthesized
+#    the MAIN, a --no_hier_syn build sharing its --syn_cache store reports the
+#    MAIN's measured combinational area and delay instead of estimating them;
+#    --no_stored_measurements estimates as mode 1 did.
 # Uses an isolated PYPELINEC_CACHE_DIR whose area/ is private (so this test
 # never depends on, or writes into, the real committed cache/area) while its
 # delay/ is the committed cache/delay -- see _cache_isolation.
@@ -165,6 +169,81 @@ def main():
         sys.exit(1)
     if float(m3.group(1)) <= 0.0:
         print(f"FAIL: measured area is not positive: {m3.group(1)}")
+        sys.exit(1)
+
+    # ---- Mode 3: an earlier run's measurement replaces the leaf sum ----
+    # A --full_hier_syn build synthesizes the MAIN itself; a later
+    # --no_hier_syn build sharing its --syn_cache store must report that
+    # run's combinational area and delay, not the sum of its leaves
+    # (SYN.MEASURED_AREA / SYN.STORED_MEASUREMENT), and must estimate as
+    # mode 1 did under --no_stored_measurements.
+    store = os.path.join(base_out_dir, "mode3_store")
+    full_out = os.path.join(base_out_dir, "mode3_full")
+    result4 = _run(
+        MODE1_DESIGN,
+        ["--full_hier_syn", "--no_sweep", "--syn_cache", store],
+        full_out,
+        cache_root,
+    )
+    if result4.returncode != 0:
+        print("FAIL: mode-3 --full_hier_syn build did not succeed")
+        sys.exit(1)
+    # The MAIN's directory sits under its source file's path
+    main_logs = glob.glob(
+        os.path.join(full_out, "**", "leaf_1ll_cap_design", "device_models_0CLK_*.log"),
+        recursive=True,
+    )
+    main_comb = None
+    for path in main_logs:
+        m = re.search(r"^Combinational cell area: ([\d.]+) um2", open(path).read(), re.M)
+        if m:
+            main_comb = float(m.group(1))
+    if main_comb is None:
+        print(f"FAIL: no isolated MAIN run with an area in {main_logs}")
+        sys.exit(1)
+
+    def comb_area(text):
+        m = re.search(r"Estimated area: [\d.]+ um2 \(comb ([\d.]+) ", text)
+        return float(m.group(1)) if m else None
+
+    result5 = _run(
+        MODE1_DESIGN,
+        ["--no_hier_syn", "--no_sweep", "--syn_cache", store],
+        os.path.join(base_out_dir, "mode3_prim"),
+        cache_root,
+    )
+    if result5.returncode != 0:
+        print("FAIL: mode-3 --no_hier_syn build did not succeed")
+        sys.exit(1)
+    if not re.search(
+        r"^Function: leaf_1ll_cap_design stored path delay", result5.stdout, re.M
+    ):
+        print("FAIL: the MAIN's delay was not read from the earlier run")
+        sys.exit(1)
+    if comb_area(result5.stdout) is None or abs(comb_area(result5.stdout) - main_comb) > 0.05:
+        print(
+            f"FAIL: --no_hier_syn comb area {comb_area(result5.stdout)} is not "
+            f"the MAIN's measured {main_comb}"
+        )
+        sys.exit(1)
+    if "Synthesizing function" in result5.stdout:
+        print("FAIL: a lookup ran synthesis")
+        sys.exit(1)
+
+    result6 = _run(
+        MODE1_DESIGN,
+        ["--no_hier_syn", "--no_sweep", "--syn_cache", store, "--no_stored_measurements"],
+        os.path.join(base_out_dir, "mode3_prim_off"),
+        cache_root,
+    )
+    if result6.returncode != 0:
+        print("FAIL: mode-3 --no_stored_measurements build did not succeed")
+        sys.exit(1)
+    if comb_area(result6.stdout) is None or abs(comb_area(result6.stdout) - comb) > 0.05:
+        print(
+            f"FAIL: --no_stored_measurements comb area {comb_area(result6.stdout)} "
+            f"is not mode 1's leaf sum {comb}"
+        )
         sys.exit(1)
 
     if cleanup:

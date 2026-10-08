@@ -627,8 +627,11 @@ in.
    but its `.area` is missing — `ADD_PATH_DELAY_TO_LOOKUP` forces one real
    synthesis to fill both, mirroring the existing clause that does the same
    for a missing combinational-planner-weights sidecar. The hierarchy above
-   the leaves is always the cheap estimate; no whole-design synthesis
-   happens under `--no_sweep`.
+   the leaves is the cheap estimate, except for a function whose exact
+   inputs an earlier run synthesized (in the output directory or the
+   `--syn_cache` store): its measured area counts instead
+   ([SYN_DESIGN.md §6](SYN_DESIGN.md#stored-measurements)). No whole-design
+   synthesis happens under `--no_sweep`.
 2. **Normal use** (a real confirmation or throughput-sweep synthesis runs):
    the exact measured area comes free from that run's own mapped netlist,
    reported alongside the estimate with their delta.
@@ -657,7 +660,9 @@ both subtrees.
 **Consumed by AUTO_FSM's minimum-area search.** Under `--syn_tool device_models`,
 `AUTO_FSM.py`'s ranking (`docs/AUTO_FSM_DESIGN.md` §3.8) uses real cached
 leaf/register/multiplexer µm² from this cache wherever a measurement exists,
-falling back to its own abstract per-bit model (scaled into µm² by a
+and a hierarchical entity's own measured area where a synthesis run of it
+exists ([SYN_DESIGN.md §6](SYN_DESIGN.md#stored-measurements)), falling back
+to its own abstract per-bit model (scaled into µm² by a
 constant refit from this cache, `AUTO.UM2_PER_ABSTRACT_AREA_UNIT`) only
 where one does not — `--auto_fsm_abstract_area` forces the old abstract-only
 ranking for comparison. Every non-sky130 tool is unaffected: the abstract

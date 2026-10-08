@@ -712,6 +712,10 @@ class Logic:
         # internal experimental gate decides whether a planner consumes it.
         self.delay_components = None
         self.planner_delay = None
+        # (value, unit) combinational cell area from a synthesis run of exactly
+        # this function, when the backend measures area (DEVICE_MODELS); see
+        # SYN.MEASURED_AREA
+        self.measured_area = None
 
         # Save C code text for later
         self.c_code_text = None
@@ -815,6 +819,7 @@ class Logic:
             else None
         )
         rv.planner_delay = self.planner_delay
+        rv.measured_area = getattr(self, "measured_area", None)
         rv.c_code_text = self.c_code_text
         rv.containing_funcs = set(self.containing_funcs)
         rv.ref_submodule_instance_to_input_port_driven_ref_toks = (
@@ -1076,6 +1081,15 @@ class Logic:
             raise Exception("Mismatch planner delay!")
         if self.planner_delay is None:
             self.planner_delay = logic_b.planner_delay
+        measured_area = getattr(self, "measured_area", None)
+        measured_area_b = getattr(logic_b, "measured_area", None)
+        if (
+            measured_area is not None
+            and measured_area_b is not None
+            and measured_area != measured_area_b
+        ):
+            raise Exception("Mismatch measured area!")
+        self.measured_area = measured_area if measured_area is not None else measured_area_b
 
         # NExt user inst name?
         if self.next_user_inst_name != logic_b.next_user_inst_name:

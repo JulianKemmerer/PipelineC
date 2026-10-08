@@ -1959,6 +1959,9 @@ def SYN_AND_REPORT_TIMING_NEW(
             flush=True,
         )
     if not reuse_existing_log:
+        # A store hit that failed validation above still runs: not during a
+        # lookup (SYN.STORED_MEASUREMENT)
+        SYN.REUSE_ONLY_MISS()
         print("Running:", log_path, flush=True)
         log_text = _run_synth_and_sta(
             vhdl_files_texts,

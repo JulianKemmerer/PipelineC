@@ -395,8 +395,10 @@ def get_tests() -> list:
     # validation and the shared store in-process, then PyRTL builds -- an
     # operand swap keeps every name yet must re-synthesize and rewrite the
     # final pipelined VHDL in a reused --out_dir (both failed before), two
-    # output directories sharing --syn_cache, and a simulation-only -D
-    # reusing every result. About a minute.
+    # output directories sharing --syn_cache, earlier runs of f and g used
+    # instead of estimates (store, output directory, --no_hier_syn, and
+    # --no_stored_measurements off), and a simulation-only -D reusing every
+    # result. About a minute.
     tests.append(
         Test(
             name="syn_cache_test",
@@ -446,7 +448,9 @@ def get_tests() -> list:
     # sky130 area estimate/measurement reporting, both operating modes:
     # mode 1 (--no_hier_syn --no_sweep) prints an estimate and leaves every
     # leaf area-cached; mode 2 (a real confirmation/sweep synthesis) also
-    # prints the exact measured area from that run's own mapped netlist.
+    # prints the exact measured area from that run's own mapped netlist;
+    # mode 3: a --no_hier_syn build reports the MAIN's area and delay from an
+    # earlier --full_hier_syn run in the shared --syn_cache store.
     tests.append(
         Test(
             name="area_estimate_build_report_test",

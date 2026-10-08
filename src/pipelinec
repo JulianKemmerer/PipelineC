@@ -227,7 +227,12 @@ parser.add_argument(
 )
 parser.add_argument(
     "--no_hier_syn",
-    help="Opposite of --full_hier_syn: never synthesize any hierarchical module (including MAINs and stateful atomic spans) -- only true primitive leaf functions are ever synthesized. Everything else is estimated from submodule delays. Fastest possible pre-pipelining delay collection, especially with a warm cache/delay, but gives up the automatic estimate-was-inaccurate fallback to real synthesis: a stalled sweep stops at its best result instead of measuring for real.",
+    help="Opposite of --full_hier_syn: never synthesize any hierarchical module (including MAINs and stateful atomic spans) -- only true primitive leaf functions are ever synthesized. Everything else is estimated from submodule delays, unless an earlier run synthesized it (see --no_stored_measurements). Fastest possible pre-pipelining delay collection, especially with a warm cache/delay, but gives up the automatic estimate-was-inaccurate fallback to real synthesis: a stalled sweep stops at its best result instead of measuring for real.",
+    action="store_true",
+)
+parser.add_argument(
+    "--no_stored_measurements",
+    help="Estimate delays and areas as if no earlier run existed. By default, before estimating a function's delay or area, a build uses an earlier synthesis of the same exact inputs when this --out_dir or the --syn_cache store holds one (never running the tool to get it), so the plan can depend on what earlier builds left behind.",
     action="store_true",
 )
 parser.add_argument(
@@ -434,6 +439,7 @@ SYN.CONVERT_FINAL_TOP_VERILOG = args.verilog
 SYN.HIER_SYN_MODE = (
     "full" if args.full_hier_syn else ("prim" if args.no_hier_syn else "leaf")
 )
+SYN.USE_STORED_MEASUREMENTS = not args.no_stored_measurements
 # Post-met pipeline stage reduction effort
 SWEEP.PIPELINE_MIN_EFFORT = args.pipeline_min_effort
 SWEEP.STOP_ON_OVER_CAPACITY = args.stop_on_over_capacity

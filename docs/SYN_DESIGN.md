@@ -131,6 +131,11 @@ and these functions:
 - optionally `FUNC_IS_PRIMITIVE` / `GET_PRIMITIVE_MODULE_TEXT`, for tools with
   vendor primitives that `VHDL.py` instantiates directly.
 
+A per-function run decides on reuse through `SYN.REUSE_SYNTHESIS_LOG` or
+`SYN.SYNTHESIS_STORE_FETCH`, and calls `SYN.REUSE_ONLY_MISS()` before any other
+path to a run. That is what lets a lookup ask the backend for an earlier result
+without running it ([§6 Stored measurements](#stored-measurements)).
+
 Each returns a `ParsedTimingReport`: `orig_text` (the tool log) and
 `path_reports`, a dict from path group (clock) to that group's worst
 `PathReport`. The compiler reads these `PathReport` fields:
@@ -191,7 +196,7 @@ Synthesis timing and reported capacity do not establish routed timing or fit.
 
 | run | entry point | used by |
 |---|---|---|
-| per-function delay measurement | `ADD_PATH_DELAY_TO_LOOKUP` (the pre-synthesis wave), `MEASURE_DELAYS` (re-measure named functions), `ESTIMATE_HIER_PATH_DELAYS` (no synthesis: pipeline-map estimates) | every build; the sweep's measured-delay fallback; `AUTO.TimingModel` reads the results |
+| per-function delay measurement | `ADD_PATH_DELAY_TO_LOOKUP` (the pre-synthesis wave), `MEASURE_DELAYS` (re-measure named functions), `ESTIMATE_HIER_PATH_DELAYS` (no synthesis: pipeline-map estimates), `STORED_MEASUREMENT` (no synthesis: an earlier run of the same inputs, §6) | every build; the sweep's measured-delay fallback; `AUTO.TimingModel` reads the results |
 | one instance at a given latency | `RUN_INST_SYN_AND_UPDATE_CACHE` | the coarse sweep and hotspot mini-sweeps |
 | the whole multi-MAIN design | `SYN_TOOL.SYN_AND_REPORT_TIMING_MULTIMAIN`, always called through `SYN.RUN_MULTIMAIN_SYN` (which times it) | each planned-sweep iteration, the pin-and-confirm confirmation, `--comb` characterization |
 | the final bitstream | `GENERATE_FINAL_BITSTREAM`, dispatching to a backend `GENERATE_BITSTREAM` hook when present | `--pins` builds (after the design's `@final(syn)` hooks, which run right after the final VHDL is written -- see `PY_TO_LOGIC_DESIGN.md`) |
@@ -210,7 +215,8 @@ error. `-j 1` is the fix there.
 
 `SET_MEASURED_DELAY_FROM_REPORT` turns a per-function report into
 `Logic.delay` (integer tenths of a nanosecond, `DELAY_UNIT_MULT`), records its
-timing components, and writes the disk cache for non-user code
+timing components and measured area (`Logic.measured_area`, DEVICE_MODELS),
+and writes the disk cache for non-user code
 (`LOGIC_PATH_DELAY_IS_CACHEABLE`). `GET_MAIN_INSTS_FROM_PATH_REPORT` maps a
 whole-design report back to MAIN instances by entity-name prefix.
 `PATH_CELLS_BY_MAIN` goes one level further for Vivado-style hierarchical
@@ -234,7 +240,9 @@ There is also a third, opposite mode: `--no_hier_syn`
 (`HIER_SYN_MODE == "prim"`) synthesizes **only** true primitive leaves (funcs
 with no submodules) and estimates every hierarchical module above them,
 including MAINs and stateful atomic spans that `"leaf"` mode would otherwise
-give one whole-module synthesis run. It also disables `MEASURE_DELAYS` for
+give one whole-module synthesis run. An earlier run of a module's exact inputs
+still replaces its estimate, since reading one synthesizes nothing
+([§6](#stored-measurements)). It also disables `MEASURE_DELAYS` for
 any hierarchical func, so the automatic "estimate proved inaccurate, measure
 for real" fallback described below never fires -- a `--no_hier_syn` sweep
 that stalls stops at its best result instead. Meant for fast iteration on
@@ -256,8 +264,9 @@ vice versa). A `--no_hier_syn`
 build therefore leaves every touched leaf area-cached as a side effect, even
 though `--no_hier_syn` disables the delay estimate-vs-measure fallback.
 `SYN.WRITE_AREA_ESTIMATE_FILE` prints one `Estimated area: ...` line (cheap,
-hierarchy-summed from that cache) next to the existing `Estimated register
-usage: ...` line, and any real whole-design confirmation/sweep synthesis
+hierarchy-summed from that cache; a function a synthesis run measured counts
+that measurement instead, see [§6](#stored-measurements)) next to the existing
+`Estimated register usage: ...` line, and any real whole-design confirmation/sweep synthesis
 additionally prints the exact `Measured area: ...` from its own mapped
 netlist. See `docs/DEVICE_MODELS_DESIGN.md`'s area section for the full
 model, its accuracy, and its known limits.
@@ -322,7 +331,9 @@ frontier total.
 Hierarchical functions on the pipelining path are **estimated** instead:
 `delay = zero-clk pipeline map total` (the critical topological path through
 already-known child delays), marked `logic.delay_is_estimated`, never
-written to the disk cache. Estimates over-estimate badly — they can't see
+written to the disk cache. That is, unless an earlier run synthesized the same
+exact inputs: that measurement is used instead, in every mode
+([§6 Stored measurements](#stored-measurements)). Estimates over-estimate badly — they can't see
 cross-boundary synthesis optimizations (wireguard: leaf-sum 1128 ns vs
 ~150 ns synthesized, mostly collapsed carry chains).
 
@@ -508,6 +519,59 @@ several share. Examples: WireGuard's per-profile build directories, a fresh
   - Each build ends with `Synthesis results: N reused from the output directory,
     M from the store DIR, K new run(s)`, plus a count of stale logs set aside.
 
+### Stored measurements
+
+An earlier run of a function's exact inputs is a measurement, so a build uses it
+wherever it would otherwise estimate (`STORED_MEASUREMENT`):
+- **A hierarchical function's delay**, which "leaf" and "prim" mode derive from its
+  submodules (§5). Only when the run measured what the estimate stands for
+  (`STORED_DELAY_IS_USABLE`):
+  - a fully combinational subtree's run is its through delay;
+  - an atomic span's run is what "leaf" mode synthesizes anyway.
+
+  A stateful module on the estimate chain stays estimated, because its run reports an
+  internal critical path.
+- **A multi-cycle holder's per-cycle delay**, otherwise derived from isolated MCP
+  evidence (`AUTO_MULTI_CYCLE.HOLDER_DELAY_FROM_EVIDENCE`).
+- **Area, sky130 only** (`MEASURED_AREA`). In `GET_ESTIMATED_COMBINATIONAL_AREA` (the
+  `Estimated area:` line) and `AUTO.ESTIMATE_ENTITY_AREA` (AUTO_FSM schedule pricing):
+  - a measured function counts its combinational cell area instead of its leaves' sum;
+  - an uncached leaf counts its own run.
+
+  Every per-function run a build does records its area (`Logic.measured_area`), user
+  code included, so this build's own runs count too.
+
+**How a lookup asks without running.** It calls the backend exactly as for a real run,
+inside `REUSE_ONLY`.
+- The backend renders the inputs and checks the output directory, then the store, as
+  above. A hit is read and parsed as usual.
+- Every backend's reuse decision goes through `REUSE_SYNTHESIS_LOG` or
+  `SYNTHESIS_STORE_FETCH`. Inside `REUSE_ONLY`, a miss there raises `SynthesisNotStored`
+  instead of returning to a run.
+- DEVICE_MODELS also calls `REUSE_ONLY_MISS` where a store hit that failed its own
+  validation would re-run. A new backend that can decide to run anywhere else must do
+  the same.
+- A run counted inside a lookup raises `SynthesisRanDuringLookup`, so a backend that
+  breaks this rule fails loudly instead of synthesizing.
+- A result the build cannot use (an errored Vivado log, a netlist with no timing
+  paths) is reported, and the build estimates.
+
+**When lookups happen.**
+- Only once `ADD_PATH_DELAY_TO_LOOKUP` has started on a parse. Before that the parse
+  may be incomplete: AUTO_COMB_OPT prices candidates during elaboration.
+- Once per function per parse (`parser_state.stored_measurements`). The next
+  AUTO_PIPELINE pass re-parses, so it finds what `MEASURE_DELAYS` synthesized in the
+  previous pass. Before lookups existed, every pass estimated those functions again.
+- In every `HIER_SYN_MODE`, `--no_hier_syn` included: a lookup never runs a tool.
+- Each hit prints `Function: f stored path delay: ... ns (an earlier run synthesized
+  these exact inputs)` and counts in the `Synthesis results:` line.
+
+**Reproducibility.** A plan now depends on what earlier builds left in the output
+directory or the store. Rebuilding in the same `--out_dir` can plan from measurements
+the first build made, as `cache/delay` already does for operators.
+`--no_stored_measurements` (`USE_STORED_MEASUREMENTS = False`) estimates as if no
+earlier run existed.
+
 ## 7. Constraints and output files
 
 - **Clock constraints.** `GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH` picks the file
@@ -636,7 +700,8 @@ observation, `fit_status` is `unknown`.
 | `--comb` | no pipelining; one synthesis run reporting combinational fmax per clock |
 | `--no_synth` | like `--comb`, without synthesis: just write the combinational HDL |
 | `--full_hier_syn` | synthesize every hierarchy level for path delays (no estimates) |
-| `--no_hier_syn` | opposite of `--full_hier_syn`: never synthesize any hierarchical module (incl. MAINs, stateful atomic spans) -- only true primitive leaves are synthesized, everything else estimated. Gives up the automatic estimate-was-inaccurate fallback to real synthesis. |
+| `--no_hier_syn` | opposite of `--full_hier_syn`: never synthesize any hierarchical module (incl. MAINs, stateful atomic spans) -- only true primitive leaves are synthesized, everything else estimated (or read from an earlier run, §6). Gives up the automatic estimate-was-inaccurate fallback to real synthesis. |
+| `--no_stored_measurements` | estimate delays and areas as if no earlier run existed: don't use an earlier synthesis of the same exact inputs from the output directory or the `--syn_cache` store in place of an estimate (§6) |
 | `--mux_delay_by_width` / `--no_mux_delay_by_width` | force width-keyed or collapsed MUX delay-cache entries |
 | `--syn_cache DIR` | share synthesis results between output directories through the store DIR (§6) |
 | `--syn_cache_prune DAYS` | at the end of the build, remove `--syn_cache` entries unused for DAYS days |

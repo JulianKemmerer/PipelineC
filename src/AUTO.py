@@ -2175,6 +2175,9 @@ def _leaf_area_um2(parser_state, entity, logic, tally=None):
             cached = SYN.GET_CACHED_LEAF_AREA(logic, parser_state)
         except Exception:
             cached = None
+        if cached is None:
+            # A user-code leaf has no cache entry, but may have a run
+            cached = SYN.MEASURED_AREA(logic, parser_state)
         if cached is not None and cached[0] > 0.0:
             _tally(tally, "measured")
             return cached[0]
@@ -2240,7 +2243,10 @@ def _mux_bank_area_um2(parser_state, ctype, tally=None):
 
 def ESTIMATE_ENTITY_AREA(parser_state, entity, memo=None, tally=None):
     """Estimated area of one entity INCLUDING everything it instantiates, in
-    the model's current output unit (see _area_unit_scale).
+    the model's current output unit (see _area_unit_scale). Under sky130, an
+    entity a synthesis run measured (SYN.MEASURED_AREA: this build's run, or
+    an earlier run of its exact inputs) is that measurement, not the sum of
+    its leaves.
 
     Memoized per entity, which matters: a float64 multiplier's tree is large,
     and the sweep asks for these numbers hundreds of times.
@@ -2253,8 +2259,14 @@ def ESTIMATE_ENTITY_AREA(parser_state, entity, memo=None, tally=None):
     if logic is None:
         return 0.0
     memo[entity] = 0.0  # cycle guard; real value written below
+    measured = None
+    if logic.submodule_instances and _area_unit_scale(parser_state) != 1.0:
+        measured = SYN.MEASURED_AREA(logic, parser_state)
     if not logic.submodule_instances:
         total = _leaf_area_um2(parser_state, entity, logic, tally)
+    elif measured is not None and measured[0] > 0.0:
+        _tally(tally, "measured")
+        total = measured[0]
     else:
         total = sum(
             ESTIMATE_ENTITY_AREA(parser_state, sub, memo, tally)

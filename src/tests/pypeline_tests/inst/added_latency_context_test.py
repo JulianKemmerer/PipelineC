@@ -246,12 +246,19 @@ def test_holder_rebuilt_for_a_new_count_reuses_its_datapath_evidence():
     compares against .latency + 1) without changing the launch-to-capture
     cone. WireGuard re-synthesized such holders for ~17 min per pass. With
     isolated evidence for the same MCP_SHAPE, characterization derives the
-    per-cycle delay instead; without it, the holder is synthesized."""
+    per-cycle delay instead; without it, the holder is synthesized. An
+    earlier run of exactly the rebuilt holder (SYN.STORED_MEASUREMENT) beats
+    the derivation."""
     import pypeline
 
     synthesized = []
+    stored = set()
 
     def fake_syn(inst, logic, ps, tpl, *a, **k):
+        if logic.func_name in stored:
+            # An earlier result: read, not run
+            return SimpleNamespace(path_reports={"clk": SimpleNamespace(path_delay_ns=5.0)})
+        SYN.REUSE_ONLY_MISS()  # the backend contract: a lookup never runs
         synthesized.append(logic.func_name)
         return logic.func_name
 
@@ -261,7 +268,12 @@ def test_holder_rebuilt_for_a_new_count_reuses_its_datapath_evidence():
 
     def characterize(count):
         synthesized.clear()
-        with tempfile.TemporaryDirectory() as out, patch.object(SYN, "SYN_OUTPUT_DIRECTORY", out):
+        # A --syn_cache store is where a fresh output directory finds an
+        # earlier run (without one, a lookup needs a log already in the
+        # function's own directory); fake_syn stands in for its contents
+        store = "<store>" if stored else None
+        with tempfile.TemporaryDirectory() as out, patch.object(SYN, "SYN_OUTPUT_DIRECTORY", out), \
+                patch.object(SYN, "SYNTHESIS_STORE_DIR", store):
             pypeline.SET_AUTO_MULTI_CYCLE_LATENCY_CACHE({} if count is None else {key: count})
             try:
                 ps = PY_TO_LOGIC.PARSE_FILE(str(Path(__file__).with_name("added_latency_context_design.py")))
@@ -290,6 +302,13 @@ def test_holder_rebuilt_for_a_new_count_reuses_its_datapath_evidence():
         assert shape3 == shape1  # same datapath cone
         assert holder3.func_name not in synthesized, synthesized
         assert holder3.delay == int(10.0 * SYN.DELAY_UNIT_MULT), holder3.delay
+        # An earlier run of this exact holder: its measurement, not the derivation
+        stored.add(holder3.func_name)
+        _ps, holder, _shape = characterize(3)
+        stored.clear()
+        assert holder.func_name == holder3.func_name
+        assert holder.func_name not in synthesized, synthesized
+        assert holder.delay == 50, holder.delay  # fake_measured's, not 10 ns derived
         # A different shape (no evidence) is synthesized again.
         MCP.ISOLATED_MCP_EVIDENCE.clear()
         _ps, holder, _shape = characterize(3)
@@ -312,6 +331,7 @@ def test_jobs_cap_covers_mcp_characterization():
     active, peak, synthesized = [0], [0], []
 
     def fake_syn(inst, logic, ps, tpl, *a, **k):
+        SYN.REUSE_ONLY_MISS()  # the backend contract: a lookup never runs
         with lock:
             active[0] += 1
             peak[0] = max(peak[0], active[0])

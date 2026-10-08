@@ -1102,6 +1102,12 @@ timing-params caches, etc.), instead of a freshly generated default directory.
   re-synthesizing. Entries are validated in full on every use. `--syn_cache_prune DAYS`
   drops entries unused for that long, and deleting the store is always safe. See
   [SYN_DESIGN.md](SYN_DESIGN.md#shared-synthesis-store---syn_cache-dir).
+- **Measurements instead of estimates.** Before estimating a function's delay or area,
+  a build checks the output directory and the store for an earlier synthesis of that
+  function's exact inputs, and uses it if found. It never runs the tool just to look.
+  A plan can therefore depend on what earlier builds left behind;
+  `--no_stored_measurements` turns this off. See
+  [SYN_DESIGN.md](SYN_DESIGN.md#stored-measurements).
 - **Default and layout.** Without `--out_dir`, a new output directory is created inside
   the current one. `built_in/` holds the VHDL for built-in operators and muxes, `<top>/`
   (named by `--top`) holds the final top level, and code from each source file goes in a
@@ -1120,6 +1126,7 @@ timing-params caches, etc.), instead of a freshly generated default directory.
 | `--no_synth` | Generate combinational HDL without invoking a synthesis backend |
 | `--full_hier_syn` | Measure every hierarchy level rather than estimating hierarchy from measured leaves |
 | `--no_hier_syn` | Measure primitive leaves only; fastest warm-cache path, but disables fallback when hierarchy estimates are inaccurate |
+| `--no_stored_measurements` | Estimate hierarchy delays and areas even when this `--out_dir` or the `--syn_cache` store holds an earlier synthesis of the same exact inputs (by default such a measurement replaces the estimate) |
 | `--pipeline_min_effort N` | After timing is met, allow up to N additional full-design runs to reduce register count; zero accepts the first passing result |
 | `--mult infer\|fabric` | Infer target multiplier/DSP primitives or force multipliers into fabric logic |
 | `--verilog` | Convert the final VHDL top to Verilog through GHDL and Yosys |

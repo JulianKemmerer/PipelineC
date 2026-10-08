@@ -10,7 +10,10 @@ In-process:
     (with the reason) instead of reading it;
   - the shared store round-trips a result, ignores unreadable and foreign
     entries, replaces a damaged one on the next insert, and prunes entries
-    unused for N days and half-written entries as old.
+    unused for N days and half-written entries as old;
+  - inside REUSE_ONLY (a lookup), a miss in the output directory and the
+    store stops the backend instead of letting it run, a hit reads, and a
+    run fails loudly.
 Builds (PyRTL, seconds each):
   - stale-input regression: swapping a subtraction's operands keeps every
     entity and log name, and must re-synthesize in a reused --out_dir. Before
@@ -19,6 +22,11 @@ Builds (PyRTL, seconds each):
     Before, an existing entity file from an earlier run was never rewritten;
   - two fresh output directories sharing --syn_cache: the second synthesizes
     nothing and ends with the same results;
+  - stored measurements: after a --full_hier_syn build measured f and g, a
+    default build uses those runs instead of estimating f and g, from the
+    store in a fresh output directory, from the output directory alone, and
+    under --no_hier_syn, without running synthesis; --no_stored_measurements
+    estimates them as before;
   - a -D value only simulation code reads changes no HDL, so a build with
     another value reuses every result;
   - a --yosys_json netlist export always runs (yosys only), even in a fresh
@@ -65,6 +73,25 @@ from pypeline import MAIN, uint16_t
 @MAIN(150.0)
 def top(x: uint16_t, y: uint16_t) -> uint16_t:
     return {expr}
+"""
+
+# f and g are hierarchical and fully combinational: estimated from their
+# submodules in the default and --no_hier_syn modes, synthesized by
+# --full_hier_syn
+HIER_DESIGN = """
+from pypeline import MAIN, hw_func, uint16_t
+
+@hw_func
+def g(a: uint16_t, b: uint16_t) -> uint16_t:
+    return (a + b) ^ (a - b)
+
+@hw_func
+def f(a: uint16_t, b: uint16_t) -> uint16_t:
+    return g(a, b) + g(b, a)
+
+@MAIN(50.0)
+def top(a: uint16_t, b: uint16_t) -> uint16_t:
+    return f(a, b) + b
 """
 
 SIM_PARAM_DESIGN = """
@@ -204,6 +231,41 @@ def test_store(tmp):
         SYN.SYNTHESIS_STORE_DIR = old
 
 
+def test_reuse_only(tmp):
+    d = os.path.join(tmp, "lookup")
+    os.makedirs(d)
+    hdl = _write(os.path.join(d, "top.vhd"), "entity top is end;\n")
+    manifest = SYN.SYNTHESIS_INPUT_MANIFEST("t", "p", "top", hdl)
+    log = os.path.join(d, "t.log")
+    store = os.path.join(tmp, "lookup_store")
+    old = SYN.SYNTHESIS_STORE_DIR
+    try:
+        for store_dir in (None, store):
+            SYN.SYNTHESIS_STORE_DIR = store_dir
+            try:
+                with SYN.REUSE_ONLY():
+                    SYN.REUSE_SYNTHESIS_LOG("t", log, manifest)
+                raise AssertionError("a lookup miss must stop the backend, not let it run")
+            except SYN.SynthesisNotStored:
+                pass
+        _expect(SYN.REUSE_SYNTHESIS_LOG("t", log, manifest) is None, "outside a lookup a miss runs")
+        _write(log, "report")
+        SYN.RECORD_SYNTHESIS_LOG("t", log, manifest)
+        with SYN.REUSE_ONLY():
+            _expect(SYN.REUSE_SYNTHESIS_LOG("t", log, manifest) == "report", "a lookup hit reads")
+        os.remove(log)
+        with SYN.REUSE_ONLY():
+            _expect(SYN.REUSE_SYNTHESIS_LOG("t", log, manifest) == "report", "a lookup hit from the store")
+        try:
+            with SYN.REUSE_ONLY():
+                SYN.COUNT_SYNTHESIS_RESULT("run")
+            raise AssertionError("a run during a lookup must fail loudly")
+        except SYN.SynthesisRanDuringLookup:
+            pass
+    finally:
+        SYN.SYNTHESIS_STORE_DIR = old
+
+
 # ─────────────────────────────── builds ───────────────────────────────
 
 
@@ -272,6 +334,37 @@ def test_shared_store(out):
     _expect(h1["mains"]["top"]["final"] == h2["mains"]["top"]["final"], "same results from the store")
 
 
+def path_delays(log):
+    return dict(re.findall(r"^(\w+) Path delay \(maybe to be pipelined\): ([\d.]+) ns$", log, re.M))
+
+
+def test_stored_measurements(out):
+    design = _write(os.path.join(out, "hier.py"), HIER_DESIGN)
+    rc, full = run([design, "--out_dir", "m1", "--syn_cache", "mstore", "--full_hier_syn"], out)
+    _expect(rc == 0, "--full_hier_syn build")
+    measured = path_delays(full)
+    _expect({"f", "g"} <= set(measured), f"--full_hier_syn did not measure f and g: {measured}")
+    for case, args in (
+        ("the store, in a fresh output directory", ["--out_dir", "m2", "--syn_cache", "mstore"]),
+        ("the output directory, without a store", ["--out_dir", "m1"]),
+        ("--no_hier_syn", ["--out_dir", "m3", "--syn_cache", "mstore", "--no_hier_syn"]),
+    ):
+        rc, log = run([design] + args, out)
+        _expect(rc == 0, f"{case}: build")
+        _expect(not re.search(r"^Function: [fg] estimated path delay", log, re.M),
+                f"{case}: f or g was estimated although an earlier run measured it")
+        stored = set(re.findall(r"^Function: (\w+) stored path delay", log, re.M))
+        _expect({"f", "g"} <= stored, f"{case}: stored path delays {stored}")
+        delays = path_delays(log)
+        _expect(all(delays.get(n) == measured[n] for n in ("f", "g")),
+                f"{case}: {delays} differ from the measured {measured}")
+        _expect(results_line(log)[2] == 0, f"{case}: a lookup ran synthesis")
+    rc, log = run([design, "--out_dir", "m4", "--syn_cache", "mstore", "--no_stored_measurements"], out)
+    _expect(rc == 0, "--no_stored_measurements build")
+    estimated = set(re.findall(r"^Function: (\w+) estimated path delay", log, re.M))
+    _expect(estimated == {"f", "g"}, f"--no_stored_measurements estimated {estimated}, not f and g")
+
+
 def test_sim_only_param_reuses(out):
     design = os.path.join(out, "simparam.py")
     _write(design, SIM_PARAM_DESIGN)
@@ -310,10 +403,12 @@ def main():
         test_manifest_identity(unit)
         test_reuse_log(unit)
         test_store(unit)
+        test_reuse_only(unit)
         print("In-process synthesis cache tests passed.", flush=True)
         test_stale_inputs_rebuild(out)
         test_final_vhdl_follows_edit(out)
         test_shared_store(out)
+        test_stored_measurements(out)
         test_sim_only_param_reuses(out)
     if args.cases in ("all", "netlist"):
         test_yosys_json_never_cached(out)
