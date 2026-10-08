@@ -20,6 +20,9 @@ from pypeline import (
     arith_result_type,
     make_uint_t,
     array_to_uint_le,
+    register_operator,
+    register_left_operator,
+    INFERRED,
 )
 
 
@@ -168,10 +171,39 @@ def make_soft_mult_shift_add(l_t, r_t):
     return soft_mult_shift_add
 
 
-def make_soft_mult_karatsuba(l_t, r_t, threshold=16):
+def make_inferred_mult(l_t, r_t):
+    """The built-in inferred HDL `*` as a factory, pinned so that no operator
+    registration can replace it -- neither a global INFERRED_MULT matcher
+    (register_soft_mult, register_mult_karatsuba_inferred_leaves) nor an
+    exact-type registration at these widths. The pin is a scoped INFERRED
+    registration on this function itself, which elaboration and native sim
+    both push while it runs.
+
+    Meant as a make_soft_mult_karatsuba leaf: under a global Karatsuba
+    registration an unpinned leaf `*` would dispatch straight back into
+    Karatsuba (or into some other soft multiplier). Inferred means the vendor
+    tool chooses the mapping -- DSP blocks where it sees fit, fabric
+    otherwise -- not a guaranteed DSP."""
+    _, _, out_t = arith_result_type("INFERRED_MULT", l_t, r_t)
+
+    @hw_func
+    def inferred_mult(a: l_t, b: r_t) -> out_t:
+        result: out_t = a * b
+        return result
+
+    register_operator("INFERRED_MULT", l_t, r_t, INFERRED, scope=inferred_mult)
+    # An INFERRED exact hit falls through to the left-operand registry.
+    register_left_operator("INFERRED_MULT", l_t, INFERRED, scope=inferred_mult)
+    return inferred_mult
+
+
+def make_soft_mult_karatsuba(l_t, r_t, threshold=16, leaf=make_soft_mult_shift_add):
     """Recursive Karatsuba multiply. Below `threshold` bits, falls back to
-    the shift-and-add multiplier (same style as a soft library implementation
-    pinning its own base case rather than recursing forever).
+    `leaf(l_t, r_t)` -- by default the shift-and-add multiplier (same style
+    as a soft library implementation pinning its own base case rather than
+    recursing forever). `leaf` is any multiplier factory and is used at every
+    recursion level; make_inferred_mult gives the FPGA-oriented hybrid (see
+    make_mult_karatsuba_inferred_leaves).
 
     threshold must be >= 3: a 3-bit operand splits into half=1 / hi=2 with
     mid = max(1,2)+1 = 3 bits, so the middle sub-multiply is the same width
@@ -202,11 +234,16 @@ def make_soft_mult_karatsuba(l_t, r_t, threshold=16):
             "so the middle sub-multiply is the same width as its parent and the "
             "recursion never terminates below this threshold."
         )
+    if not callable(leaf):
+        raise TypeError(
+            f"make_soft_mult_karatsuba: leaf must be a multiplier factory "
+            f"leaf(l_t, r_t) -> hw_func (got {leaf!r})."
+        )
     eff_l_t, eff_r_t, out_t = arith_result_type("INFERRED_MULT", l_t, r_t)
     n_bits = max(len(eff_l_t), len(eff_r_t))
 
     if n_bits <= threshold:
-        return make_soft_mult_shift_add(l_t, r_t)
+        return leaf(l_t, r_t)
 
     from pypeline import make_uint_t
 
@@ -215,9 +252,9 @@ def make_soft_mult_karatsuba(l_t, r_t, threshold=16):
     hi_t = make_uint_t(n_bits - half)
     mid_t = make_uint_t(max(half, n_bits - half) + 1)
 
-    mult_lo = make_soft_mult_karatsuba(lo_t, lo_t, threshold)
-    mult_hi = make_soft_mult_karatsuba(hi_t, hi_t, threshold)
-    mult_mid = make_soft_mult_karatsuba(mid_t, mid_t, threshold)
+    mult_lo = make_soft_mult_karatsuba(lo_t, lo_t, threshold, leaf)
+    mult_hi = make_soft_mult_karatsuba(hi_t, hi_t, threshold, leaf)
+    mult_mid = make_soft_mult_karatsuba(mid_t, mid_t, threshold, leaf)
 
     @hw_func
     def soft_mult_karatsuba(a: l_t, b: r_t) -> out_t:
@@ -238,6 +275,22 @@ def make_soft_mult_karatsuba(l_t, r_t, threshold=16):
         return result
 
     return soft_mult_karatsuba
+
+
+def make_mult_karatsuba_inferred_leaves(l_t, r_t, threshold=34):
+    """FPGA hybrid: the same sum-form Karatsuba recursion as
+    make_soft_mult_karatsuba, but bottoming out in pinned inferred `*`
+    (make_inferred_mult) instead of shift-and-add, so the vendor tool can map
+    each leaf to a DSP block. Opt-in only; no soft-operator default uses it.
+
+    threshold=34 splits a 130-bit product into 65/65/66-bit products and then
+    nine 32-34-bit leaves (two 32, four 33, three 34) -- the structure of the
+    FPGA-House-AG ChaCha20Poly1305 mul_136_kar.vhd reference
+    (docs/SYN_DESIGN.md#karatsuba-with-inferred-leaves), which motivated this
+    configuration. A 64-bit product becomes three 32/32/33-bit leaves.
+    Measured DSP48E1 counts are in that doc section. Unsigned operands only,
+    like every multiplier in this module."""
+    return make_soft_mult_karatsuba(l_t, r_t, threshold, leaf=make_inferred_mult)
 
 
 # ─────────────────────────────────────────────

@@ -1052,6 +1052,52 @@ real-parse counterpart of the package-merge cases above.
   must analyze the package and the isolated `pick` (dynamic lane mux) file
   list.
 
+## Karatsuba leaf coverage
+
+`make_soft_mult_karatsuba`'s `leaf=` policy and the opt-in hybrid with inferred leaves
+(`make_mult_karatsuba_inferred_leaves`, threshold 34) are covered at four levels:
+
+- **`soft_ops_test.py` (native_sim).** Values only. Both leaf policies, called directly:
+  - exhaustive 5×5 and unequal 6×3 at thresholds 3 and 4;
+  - widths 8 and 9 around threshold 8;
+  - zero/maximal/half-boundary edges and seeded random products at 64, 65, 66, 130,
+    130×67 and 37×20 bits.
+
+  The registrations are checked by their captured factory arguments:
+  - `register_soft_mult_karatsuba()` is still threshold 16 with shift-and-add leaves;
+  - `register_soft_mult()` and `register_soft_ops()` still give carry-save with
+    `max_width=2`;
+  - `register_mult_karatsuba_inferred_leaves()` is threshold 34 with `make_inferred_mult`,
+    and it is unsigned-only.
+
+  Native sim's `*` is always a Python product and never dispatches a registered
+  `INFERRED_MULT`. That is why redispatch is checked on the hierarchy instead.
+- **`soft_mult_karatsuba_leaves_test.py` (elab_introspect).** Each
+  `soft_mult_karatsuba_leaves_design.py` `-D CASE` is parsed in its own subprocess, and the
+  test counts what every leaf elaborated to, with multiplicity:
+  - 130 bits gives two uint32, four uint33 and three uint34 built-in multiplies;
+  - 64 bits gives uint32, uint32 and uint33;
+  - 37×20 gives uint18, uint19 and uint20;
+  - leaves stay built-in under the hybrid's own global registration and under a global
+    soft multiplier plus an exact uint34 soft registration;
+  - default soft Karatsuba keeps shift-and-add leaves;
+  - three 40-bit configurations (two leaf policies, two thresholds) are three entities.
+
+  Mutation-checked: without the leaf's scoped `INFERRED` pin, the global case recurses
+  (`RecursionError`) and the exact-registration case elaborates the soft multiplier.
+- **`self_check_mult_karatsuba_test.py` (native_vs_vhdl_sim, `--comb`).** A registered
+  130-bit `*`, direct 64×64 and 37×20 hybrids, and a 12-bit soft-leaf Karatsuba, each
+  `sim_assert`ed against `make_inferred_mult`. Probes print 16-bit product slices, because
+  the VHDL `sim_print` formats values through a 32-bit integer, so a wider value overflows
+  in GHDL.
+- **`self_check_mult_karatsuba_pipelined_test.py` (native_vs_vhdl_sim, sky130).** A 16×16
+  hybrid at threshold 6 under `@MAIN(150.0)`. The sweep builds 3 stages; the operands ride
+  along with the product, and the checker compares against `make_inferred_mult`.
+
+The area of the 130- and 64-bit hybrid is a manual Vivado probe,
+`qor/multiplier/karatsuba_inferred_leaves.py`. It is not registered in `run_all`; see
+[`SYN_DESIGN.md`](SYN_DESIGN.md#karatsuba-with-inferred-leaves).
+
 ## Operator-cost regression coverage
 
 The `include/pypeline/` libraries are audited for operations built out of

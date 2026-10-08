@@ -13,6 +13,9 @@ for new library code). Register once, globally, or scoped to one function:
     from operators.soft import register_soft_mult, register_soft_mult_karatsuba
     register_soft_mult()                      # carry-save, max_width=2 (default flavor)
     register_soft_mult_karatsuba()            # overrides it -- last registration wins
+
+    from operators.soft import register_mult_karatsuba_inferred_leaves
+    register_mult_karatsuba_inferred_leaves() # FPGA hybrid: Karatsuba over inferred `*` leaves
 """
 import functools
 
@@ -32,6 +35,7 @@ from operators.soft_mult import (
     make_soft_mult_shift_add,
     make_soft_mult_karatsuba,
     make_soft_mult_carry_save,
+    make_mult_karatsuba_inferred_leaves,
 )
 from operators.soft_div import (
     make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod,
@@ -106,10 +110,15 @@ def register_soft_mult_shift_add(scope=None):
     )
 
 
-def register_soft_mult_karatsuba(threshold=None, scope=None):
+def register_soft_mult_karatsuba(threshold=None, leaf=None, scope=None):
     """See register_soft_mult -- same unsigned-only restriction, same reason
     (make_soft_mult_karatsuba bottoms out in make_soft_mult_shift_add and
     inherits its unsigned-only partial-product summation).
+
+    leaf: base-case multiplier factory, forwarded to make_soft_mult_karatsuba
+    (default None keeps its shift-and-add leaves). For inferred `*` leaves
+    use register_mult_karatsuba_inferred_leaves, which also picks the
+    FPGA-oriented threshold.
 
     threshold: base-case width override, forwarded to make_soft_mult_karatsuba.
     Default None uses that factory's own default rather than duplicating the
@@ -119,9 +128,32 @@ def register_soft_mult_karatsuba(threshold=None, scope=None):
     the measurement behind the current default (16: no threshold below the
     operand width ever beat "don't split" at uint8/uint16, measured directly;
     unmeasured above 16 bits, where a real optimum may still exist)."""
-    factory = make_soft_mult_karatsuba
+    overrides = {}
     if threshold is not None:
-        factory = functools.partial(make_soft_mult_karatsuba, threshold=threshold)
+        overrides["threshold"] = threshold
+    if leaf is not None:
+        overrides["leaf"] = leaf
+    factory = make_soft_mult_karatsuba
+    if overrides:
+        factory = functools.partial(make_soft_mult_karatsuba, **overrides)
+    register_operator("INFERRED_MULT", any_uint_t, any_uint_t, factory, scope=scope)
+
+
+def register_mult_karatsuba_inferred_leaves(threshold=None, scope=None):
+    """Opt-in FPGA hybrid: make_mult_karatsuba_inferred_leaves (Karatsuba
+    recursion, pinned inferred `*` leaves, threshold 34 by default) for
+    any_uint_t x any_uint_t. Signed multiply falls through to the built-in
+    `*`, as with register_soft_mult. The leaves stay inferred even though
+    this registration covers their widths too -- see make_inferred_mult.
+
+    Every product at or below the threshold is one inferred leaf, so this
+    changes nothing for narrow multiplies. To limit it to one width, register
+    the factory's result for exact types instead:
+        register_operator("INFERRED_MULT", uint130_t, uint130_t,
+                          make_mult_karatsuba_inferred_leaves(uint130_t, uint130_t))"""
+    factory = make_mult_karatsuba_inferred_leaves
+    if threshold is not None:
+        factory = functools.partial(make_mult_karatsuba_inferred_leaves, threshold=threshold)
     register_operator("INFERRED_MULT", any_uint_t, any_uint_t, factory, scope=scope)
 
 

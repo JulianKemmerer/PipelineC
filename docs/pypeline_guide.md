@@ -2226,6 +2226,29 @@ from operators.soft import register_soft_mult_karatsuba
 register_soft_mult_karatsuba()       # swap in a different flavor; last registration wins
 ```
 
+Karatsuba has two leaf modes. Its default base case is soft shift-and-add below 16 bits,
+which keeps the multiplier all-fabric and is meant for ASIC-style builds. On an FPGA,
+the leaves can instead be ordinary inferred `*`, so the vendor tool can map each one to a
+DSP block. You opt into this mode explicitly; no default changes:
+
+```python
+from operators.soft import register_mult_karatsuba_inferred_leaves
+register_mult_karatsuba_inferred_leaves()   # every unsigned * above 34 bits
+
+# Or for one width only, as an exact-type registration or a direct call:
+from operators.soft_mult import make_mult_karatsuba_inferred_leaves
+mul130 = make_mult_karatsuba_inferred_leaves(uint130_t, uint130_t)   # threshold=34
+register_operator("INFERRED_MULT", uint130_t, uint130_t, mul130)
+```
+
+At threshold 34, a 130 × 130 product becomes nine 32–34-bit inferred leaves. A Karatsuba
+inside a DSP-block design of this shape (the FPGA-House-AG `mul_136_kar.vhd` ChaCha20-Poly1305
+multiplier) motivated this configuration. Measured DSP and LUT counts are in
+[`SYN_DESIGN.md`](SYN_DESIGN.md#karatsuba-with-inferred-leaves). The leaves are pinned to
+the built-in `*`, so no `*` registration, including the hybrid's own, can redispatch them.
+Pass any other multiplier factory as `make_soft_mult_karatsuba(l_t, r_t, threshold, leaf=...)`
+for a different leaf.
+
 Five operator families — int unary negate, int `>`/`>=`/`<`/`<=`, `/`, `%`, and
 variable-amount shift — are registered soft **by default** (before your design file is even
 imported), since they have no other inferred/raw-VHDL lowering. Register something more

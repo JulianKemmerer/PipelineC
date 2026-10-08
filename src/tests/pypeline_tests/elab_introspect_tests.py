@@ -216,6 +216,16 @@ def get_tests() -> list:
             cmd=[INST_DIR / "operator_scope_test.py"],
         )
     )
+    # Karatsuba leaf policies: which multiplier each leaf elaborated to
+    # (built-in vs soft shift-and-add), under global/exact registrations
+    # that would otherwise redispatch the leaves; one subprocess per case.
+    tests.append(
+        Test(
+            name="soft_mult_karatsuba_leaves_test",
+            category="elab_introspect",
+            cmd=[INST_DIR / "soft_mult_karatsuba_leaves_test.py"],
+        )
+    )
     # Checks parser_state.clk_mhz / SYN.GET_ALL_USER_CLOCKS directly for
     # make_clock(), plus the *type* of ElaborationError each invalid use
     # raises (non-uint1_t wire, tagging an Output, two clocks at the same

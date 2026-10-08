@@ -1812,7 +1812,8 @@ above, using generic (matcher-based) registrations so one call covers every widt
 
 ```
 soft_add.py    make_soft_add_ripple, make_soft_add_carry_select, make_soft_sub
-soft_mult.py   make_soft_mult_shift_add, make_soft_mult_karatsuba
+soft_mult.py   make_soft_mult_shift_add, make_soft_mult_karatsuba(leaf=), make_soft_mult_carry_save,
+               make_inferred_mult, make_mult_karatsuba_inferred_leaves (FPGA hybrid, opt-in)
 soft_div.py    make_soft_div, make_soft_mod           (restoring division, unsigned)
 soft_cmp.py    make_soft_cmp_prefix(op)               (parallel-prefix magnitude compare, default)
                make_soft_cmp_sub_swapped(op)          (widen/subtract/sign-bit, narrow-width alt)
@@ -1840,6 +1841,17 @@ from operators.soft import register_soft_mult, register_soft_mult_karatsuba
 register_soft_mult()               # carry-save, max_width=2 (default flavor)
 register_soft_mult_karatsuba()     # overrides it -- last registration wins
 ```
+
+`make_soft_mult_karatsuba`'s base case is a parameter, `leaf` (any multiplier factory,
+used at every recursion level, default `make_soft_mult_shift_add`). `make_inferred_mult`
+is the built-in `*` as a factory, pinned against redispatch: it registers `INFERRED` for its
+own exact operand types, `scope=` itself. Elaboration of a factory closure and native sim
+both push that scope, and a scoped exact entry overrides every global exact or matcher
+entry, so the leaf stays a built-in multiply even under a global registration that matches
+its width. `make_mult_karatsuba_inferred_leaves` (threshold 34) and
+`register_mult_karatsuba_inferred_leaves` are the opt-in FPGA hybrid; see
+[`SYN_DESIGN.md`](SYN_DESIGN.md#karatsuba-with-inferred-leaves). `threshold` and `leaf` are
+captured factory arguments, so each configuration is its own entity and cache identity.
 
 `register_inferred_ops(mult=True, scope=hot_func)` is the escape hatch: pin one op back to
 the built-in inferred path (via the `INFERRED` sentinel) for one scope, overriding a broader

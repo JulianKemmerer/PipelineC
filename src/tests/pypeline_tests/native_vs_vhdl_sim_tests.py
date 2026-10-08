@@ -106,6 +106,10 @@ COMB_TEST_FILES = [
     # make_soft_mult_carry_save (soft_mult.py) all in one accumulation
     # chain -- see the design file's own docstring for the full list.
     ("self_check_loop_unpack_test.py", INST_DIR, []),
+    # Karatsuba hybrid (inferred leaves) registered for a plain 130-bit `*`,
+    # direct 64x64 / 37x20 hybrids and a soft-leaf Karatsuba, each checked
+    # against the pinned built-in multiply.
+    ("self_check_mult_karatsuba_test.py", INST_DIR, []),
     ("global_wire_partial_field_test.py", INST_DIR, []),
     ("global_wire_read_write_test.py", INST_DIR, []),
     ("global_wire_split_driver_test.py", INST_DIR, []),
@@ -181,6 +185,13 @@ NON_COMB_TEST_FILES = [
     ("self_check_fixed_auto_pipeline_test.py", INST_DIR, ["--pipeline_min_effort", "0"]),
     (
         "native_vs_vhdl_pipelined_main_test.py",
+        INST_DIR,
+        ["--pipeline_min_effort", "0"],
+    ),
+    # Sliced 16x16 Karatsuba with inferred leaves (threshold 6): cuts land
+    # between the whole leaf multiplies and the recombination adds.
+    (
+        "self_check_mult_karatsuba_pipelined_test.py",
         INST_DIR,
         ["--pipeline_min_effort", "0"],
     ),

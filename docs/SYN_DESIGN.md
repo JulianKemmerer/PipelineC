@@ -945,6 +945,55 @@ bits — the original motivation for Karatsuba's presence in this library —
 remains open. `register_soft_mult_karatsuba(threshold=...)` still reaches
 any threshold explicitly.
 
+### Karatsuba with inferred leaves
+
+On an FPGA with DSP blocks, a Karatsuba multiplier should bottom out in small inferred
+multiplies, not in soft shift-and-add. `make_mult_karatsuba_inferred_leaves` is that
+opt-in hybrid; `register_mult_karatsuba_inferred_leaves` registers it. It is
+`make_soft_mult_karatsuba` with `leaf=make_inferred_mult` and `threshold=34`. Each split
+saves one of four sub-products; the three remaining ones are tiled onto DSPs by the
+vendor tool. A 130-bit product splits into 65/65/66-bit products and then nine leaves:
+two of 32 bits, four of 33 bits and three of 34 bits. A 64-bit product splits into
+32/32/33-bit leaves.
+
+The hardware reference that motivated this configuration is FPGA-House-AG's ChaCha20-Poly1305
+[`mul_136_kar.vhd`](https://github.com/FPGA-House-AG/ChaCha20Poly1305/blob/7e75c097af32429ff2c7979b976fe876efbdb9f3/src_dsp_opt/mul_136_kar.vhd):
+a registered three-level Karatsuba over 17 × 17 vendor multiplies. The library reuses
+its own combinational recursion instead of importing that RTL.
+
+Vivado 2019.2 synthesis (`-mode out_of_context`) on `xc7a200tffg1156-2`, built with
+`src/tests/pypeline_tests/qor/multiplier/karatsuba_inferred_leaves.py`. The probe has
+registered inputs and output and no internal registers. The hybrid is registered for
+exact types (`-D VARIANT=inferred|hybrid|soft -D WIDTH=130|64`):
+
+| Product | Implementation | DSP48E1 | Slice LUTs | Slice Registers |
+| ---: | --- | ---: | ---: | ---: |
+| 130 × 130 | inferred `*` | 64 | 1,276 | 724 |
+| 130 × 130 | hybrid, threshold 34 | **36** | 2,082 | 1,040 |
+| 130 × 130 | all-soft Karatsuba (default `register_soft_mult_karatsuba`) | 0 | 11,444 | 1,040 |
+| 64 × 64 | inferred `*` | 16 | 176 | 358 |
+| 64 × 64 | hybrid, threshold 34 | **12** | 465 | 512 |
+
+- **Agreement with the earlier probe.** These match an earlier standalone probe of the
+  same arithmetic, written as a hand-coded sum-form Karatsuba, to within one Slice LUT
+  for the hybrids. Its DSP counts were 64/36 and 16/12. Its Slice Registers are 520 and
+  256 lower in every row, which is exactly the input/output register bits that
+  pypelinec's top-level wrapper adds.
+- **Timing.** Timing from these builds is not a multiplier fmax: DSP register
+  absorption moves arithmetic across the measured register span. Still, the unpipelined
+  130-bit hybrid's worst internal path is about 26 ns in both probes. That is far from
+  60 MHz, so a real design needs the hybrid auto-pipelined.
+- **Inferred leaves are not a DSP guarantee.** The vendor tool decides the mapping. The
+  recombination adds and subtracts can also be absorbed into DSP post-adders, which is
+  why counting leaves does not predict DSPs. The same earlier evaluation tried a
+  three-level *difference-form* Karatsuba, padded to 136 bits with 27 17-bit leaves.
+  Vivado mapped it to 45 DSPs and 5,503 Slice LUTs, worse than this hybrid on both
+  counts. That form is not implemented here.
+- **Defaults are unchanged.** `register_soft_mult()` (carry-save) and
+  `register_soft_mult_karatsuba()` (threshold 16, shift-and-add leaves) stay
+  ASIC-oriented. The all-soft row above shows what that costs on an FPGA. It matches the
+  earlier probe's 0 DSPs and 11,444 Slice LUTs exactly.
+
 ### Carry-save multiplier: default, and why it replaced shift-and-add
 
 `register_soft_mult()` registers `make_soft_mult_carry_save` (`max_width=2`),

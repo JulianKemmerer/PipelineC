@@ -49,6 +49,8 @@ from operators.soft_mult import (
     make_soft_mult_karatsuba,
     make_soft_add_tree_shifted,
     make_soft_mult_carry_save,
+    make_inferred_mult,
+    make_mult_karatsuba_inferred_leaves,
 )
 from operators.soft_div import (
     make_soft_div, make_soft_mod, make_soft_signed_div, make_soft_signed_mod,
@@ -464,6 +466,7 @@ def test_soft_mult_registration_unsigned_only():
         soft_lib.register_soft_mult_shift_add,
         soft_lib.register_soft_mult_karatsuba,
         soft_lib.register_soft_mult_carry_save,
+        soft_lib.register_mult_karatsuba_inferred_leaves,
     ):
         register()
         assert _resolve_generic_operator("INFERRED_MULT", "uint10_t", "uint10_t") is not None, (
@@ -549,6 +552,116 @@ def test_soft_mult_default_is_carry_save():
     got = sim_call(default_mult, SimVal(37, ut8), SimVal(6, ut8))
     check("register_soft_mult default (37,6)", got, 37 * 6)
     print("test_soft_mult_default_is_carry_save passed")
+
+
+def _mult_vectors(l_bits, r_bits, n_random, seed):
+    """Zero/one/maximal/half-boundary operands plus seeded random pairs."""
+    import random
+
+    def edges(bits):
+        top = (1 << bits) - 1
+        half = bits // 2
+        return sorted({0, 1, top, top - 1, 1 << (bits - 1), (1 << half) - 1, 1 << half})
+
+    rng = random.Random(seed)
+    vectors = list(itertools.product(edges(l_bits), edges(r_bits)))
+    vectors += [(rng.getrandbits(l_bits), rng.getrandbits(r_bits)) for _ in range(n_random)]
+    return vectors
+
+
+def _check_mult(label, mult, l_t, r_t, vectors):
+    for a, b in vectors:
+        got = sim_call(mult, SimVal(a, l_t), SimVal(b, r_t))
+        check(f"{label}({a},{b})", got, a * b)
+
+
+_KARATSUBA_LEAVES = (
+    ("shift_add", make_soft_mult_shift_add),
+    ("inferred", make_inferred_mult),
+)
+
+
+def test_karatsuba_leaf_policies():
+    """Both Karatsuba leaf policies, called directly: exhaustive small and
+    unequal widths deep enough to recurse, both sides of a threshold, and
+    zero/maximal/random wide operands."""
+    ut5, ut6, ut3 = make_uint_t(5), make_uint_t(6), make_uint_t(3)
+    for name, leaf in _KARATSUBA_LEAVES:
+        for threshold in (3, 4):
+            mult = make_soft_mult_karatsuba(ut5, ut5, threshold, leaf=leaf)
+            _check_mult(f"karatsuba_{name}_t{threshold}_5x5", mult, ut5, ut5,
+                        itertools.product(range(32), range(32)))
+            mult = make_soft_mult_karatsuba(ut6, ut3, threshold, leaf=leaf)
+            _check_mult(f"karatsuba_{name}_t{threshold}_6x3", mult, ut6, ut3,
+                        itertools.product(range(64), range(8)))
+        # n == threshold is a single leaf; n == threshold + 1 splits.
+        for bits in (8, 9):
+            ut = make_uint_t(bits)
+            mult = make_soft_mult_karatsuba(ut, ut, 8, leaf=leaf)
+            _check_mult(f"karatsuba_{name}_t8_{bits}", mult, ut, ut,
+                        _mult_vectors(bits, bits, 40, seed=bits))
+        ut64 = make_uint_t(64)
+        mult = make_soft_mult_karatsuba(ut64, ut64, leaf=leaf)
+        _check_mult(f"karatsuba_{name}_64", mult, ut64, ut64, _mult_vectors(64, 64, 10, seed=64))
+
+    for l_bits, r_bits in ((64, 64), (65, 65), (66, 66), (130, 130), (130, 67), (37, 20)):
+        l_t, r_t = make_uint_t(l_bits), make_uint_t(r_bits)
+        mult = make_mult_karatsuba_inferred_leaves(l_t, r_t)
+        _check_mult(f"karatsuba_inferred_leaves_{l_bits}x{r_bits}", mult, l_t, r_t,
+                    _mult_vectors(l_bits, r_bits, 100, seed=l_bits * 1000 + r_bits))
+
+    try:
+        make_soft_mult_karatsuba(ut5, ut5, leaf="inferred")
+        check("karatsuba leaf='inferred' should raise", False, True)
+    except TypeError:
+        pass
+    print("test_karatsuba_leaf_policies passed")
+
+
+def test_karatsuba_defaults_unchanged():
+    """The leaf option is opt-in: the soft registrations keep their factories
+    and defaults (shift-and-add leaves at threshold 16, carry-save with
+    max_width=2)."""
+    import operators.soft as soft_lib
+    from PY_TO_LOGIC import CANONICAL_CALLABLE_KEY
+
+    ut40 = make_uint_t(40)
+    for kwargs, threshold in (({}, 16), ({"threshold": 20}, 20)):
+        soft_lib.register_soft_mult_karatsuba(**kwargs)
+        kar = _resolve_generic_operator("INFERRED_MULT", "uint40_t", "uint40_t")
+        args = kar._pypeline_factory_args
+        assert args["threshold"] == threshold and args["leaf"] is make_soft_mult_shift_add, args
+
+    ut8 = make_uint_t(8)
+    for register in (soft_lib.register_soft_mult, soft_lib.register_soft_ops):
+        register()
+        default_mult = _resolve_generic_operator("INFERRED_MULT", "uint8_t", "uint8_t")
+        assert CANONICAL_CALLABLE_KEY(default_mult) == CANONICAL_CALLABLE_KEY(
+            make_soft_mult_carry_save(ut8, ut8, max_width=2)
+        ), f"{register.__name__} must still register carry-save, max_width=2"
+    print("test_karatsuba_defaults_unchanged passed")
+
+
+def test_karatsuba_inferred_leaves_registered():
+    """register_mult_karatsuba_inferred_leaves() resolves to the threshold-34
+    hybrid, and the resolved hybrid -- run with that registration active --
+    still multiplies correctly. Native sim never dispatches a registered
+    INFERRED_MULT for a plain `*` (SimVal.__mul__ is a Python product), so
+    leaf pinning against this and other registrations is checked on the
+    elaborated hierarchy in soft_mult_karatsuba_leaves_test.py instead."""
+    import operators.soft as soft_lib
+
+    ut130 = make_uint_t(130)
+    soft_lib.register_mult_karatsuba_inferred_leaves()
+    kar = _resolve_generic_operator("INFERRED_MULT", "uint130_t", "uint130_t")
+    args = kar._pypeline_factory_args
+    assert args["threshold"] == 34 and args["leaf"] is make_inferred_mult, args
+    # At or below the threshold the registration resolves to the leaf itself.
+    leaf = _resolve_generic_operator("INFERRED_MULT", "uint20_t", "uint20_t")
+    assert leaf.__name__ == "inferred_mult", leaf
+    _check_mult("registered_inferred_leaves_130", kar, ut130, ut130,
+                _mult_vectors(130, 130, 50, seed=130130))
+    print("test_karatsuba_inferred_leaves_registered passed")
 
 
 _CMP_OPS = (
@@ -759,6 +872,9 @@ if __name__ == "__main__":
     test_soft_mult_karatsuba_threshold_override()
     test_soft_mult_carry_save_max_width_override()
     test_soft_mult_default_is_carry_save()
+    test_karatsuba_leaf_policies()
+    test_karatsuba_defaults_unchanged()
+    test_karatsuba_inferred_leaves_registered()
     test_soft_cmp()
     test_soft_cmp_mixed_width()
     test_soft_eq()
