@@ -360,6 +360,16 @@ Two more hooks decide *which* functions get delays, for AUTO_FSM's scheduler
 
 ## 6. Caches
 
+Three places hold measurements:
+- **The shared operator cache (`cache/`).** Built-in operator delay and area, keyed by
+  name.
+- **The output directory.** Every synthesis log a build wrote, reused for exactly the
+  same inputs.
+- **An optional synthesis store (`--syn_cache DIR`).** Shares those logs between output
+  directories.
+
+### Shared operator cache (`cache/`)
+
 Measurements outlive a build in one committed `cache/` tree next to `src/`,
 holding two subtrees. `PYPELINEC_CACHE_DIR` relocates the whole root
 (`GET_CACHE_ROOT_DIR`) -- there is no per-subtree override, so a build can never
@@ -392,8 +402,43 @@ type. `USE_COMBINATIONAL_PLANNER_WEIGHTS` selects whether the planner weighs
 the combinational component or the full register-to-register delay
 (`GET_PLANNER_DELAY`); it is part of the cache directory so the two never mix.
 
-Vivado's build-local log names contain both the recursive timing hash and a
-SHA256-derived input signature. `VIVADO.INPUT_MANIFEST` hashes the actual
+### Synthesis logs in the output directory
+
+**Every backend reuses a log only for identical inputs.** A log's name comes from the
+entity name and its timing hash. That hash covers function names, I/O registers, MCP
+constraints and leaf slices, not every detail of a function body: swapping a
+subtraction's operands keeps every name. So a name alone never proves a log is current.
+- **Building the identity.** Each backend first renders the run's HDL and constraints,
+  then builds its input identity, then decides.
+- **For backends without their own record** (OPEN_TOOLS, QUARTUS, DIAMOND, GOWIN,
+  EFINITY, CC_TOOLS, PYRTL), the identity is `SYN.SYNTHESIS_INPUT_MANIFEST`:
+  - the ordered HDL and constraint files, by basename and SHA-256;
+  - the part and top entity;
+  - the tool installation (each executable's size and modification time);
+  - the compiler modules that write the run's scripts (their SHA-256);
+  - run settings such as the nextpnr seed.
+- **Reuse.** A log is reused only when its `<log>.inputs.json` record equals that
+  identity (`SYN.REUSE_SYNTHESIS_LOG`).
+- **The record marks completion.** It is written only after a run succeeds
+  (`SYN.RECORD_SYNTHESIS_LOG`), so a run that died leaves a log without one.
+- **Stale logs** are moved aside (`<log>.stale`, `.stale2`, ...), never read and never
+  deleted. A stale log has either no record (an older compiler wrote it, or its run
+  did not finish) or a record that differs. The build prints which input changed, for
+  example `Not reusing .../pyrtl_0CLK_c9594139.log: its inputs differ: HDL
+  top_0CLK_c9594139.vhd changed`.
+- **Never reused:** final bitstream builds (OPEN_TOOLS XC7 final top, GOWIN final),
+  `--yosys_json` netlist exports (the run exists to write the netlist, which a reused
+  log would not), and runs asked for `use_existing_log_file=False`.
+
+**Generated VHDL follows the same rule.** `AUTO_PIPELINE.WRITE_ALL_NON_ZERO_CLK_VHDL_FILES`
+renders every final pipelined entity once per process, and `WRITE_TEXT_IF_CHANGED`
+leaves identical files untouched. It used to skip any entity file already on disk.
+Inside one build that was sound, because the design source is frozen. Across builds
+in a reused `--out_dir`, it kept a same-named entity's earlier VHDL after the source
+changed.
+
+**Vivado and sky130 keep their older, stricter records.** Vivado's build-local log
+names contain both the recursive timing hash and a SHA256-derived input signature. `VIVADO.INPUT_MANIFEST` hashes the actual
 HDL and XDC bytes, part, Vivado version, and normalized TCL/report recipe.
 Relocating the output directory does not change identity. Changing a clock,
 MCP allowance, or report recipe does. Each observation has its own TCL,
@@ -415,10 +460,53 @@ completion marker and no ERROR lines (`VIVADO.REQUIRE_COMPLETE_LOG`).
 Incomplete or errored matching logs raise a clear error; they are never
 overwritten or automatically retried. Inspect and manually move aside only
 that exact artifact before retrying. Reuse is reported as a cache hit.
+DEVICE_MODELS validates its `<log>_timing.json` against the exact ordered VHDL,
+liberty, recipe and mapping-tool hashes (`_synthesis_input_identity`), and re-measures
+on a mismatch.
 
 Design Python source is frozen for the whole build, so later passes elaborate
 what the first parse read
 ([PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#repeated-parse_file-support-the-pin-and-confirm-loops-foundation)).
+Neither design source nor design parameters (`-D`) are part of any identity; only the
+HDL they produce is. A parameter only simulation code reads therefore reuses every
+result.
+
+### Shared synthesis store (`--syn_cache DIR`)
+
+The output directory's logs serve one directory. `--syn_cache DIR` adds a store that
+several share. Examples: WireGuard's per-profile build directories, a fresh
+`--out_dir` next to a warm one, or a `measure.py` re-run.
+
+- **Lookup.** When the output directory has no matching log, the backend looks for
+  `DIR/v1/<tool>/<sig[:2]>/<sig>/`. On a hit it copies the entry's files into place
+  under this run's own names, writes the local record, and proceeds exactly as if
+  the log had been found locally:
+  - the log;
+  - for sky130, also the `_timing.json` report and the mapped netlist it names;
+  - never the tool's other outputs (a Vivado `.dcp` checkpoint, nextpnr's netlists).
+    For those, build without the store into a fresh output directory.
+
+  `sig` is `SYN.SYNTHESIS_INPUT_MANIFEST`'s signature, `VIVADO.INPUT_MANIFEST`'s
+  signature, or DEVICE_MODELS' `identity_sha256`. Every backend goes through
+  `SYN.SYNTHESIS_STORE_FETCH` and `SYN.SYNTHESIS_STORE_INSERT`.
+- **Insert.** After every successful run. A temporary directory is renamed into place,
+  so a reader sees a complete entry or none, and concurrent writers of one identity are
+  harmless because their files are identical. A damaged entry is replaced by the next
+  insert.
+- **Validation.** Each entry keeps its full identity in `manifest.json`. A fetch uses an
+  entry only if that identity equals the run's, field for field, not just the hash
+  prefix in the directory name. An unreadable or foreign entry is a miss, and the build
+  says so.
+- **Parsing.** Logs are stored raw and parsed on every use, so parser fixes apply to
+  stored results without invalidating them.
+- **Hygiene.**
+  - A hit refreshes the entry's `manifest.json` time.
+  - `--syn_cache_prune DAYS` removes entries no build has used for that long, at
+    the end of the build, and any half-written entry an interrupted insert left
+    that long ago.
+  - Deleting the store is always safe.
+  - Each build ends with `Synthesis results: N reused from the output directory,
+    M from the store DIR, K new run(s)`, plus a count of stale logs set aside.
 
 ## 7. Constraints and output files
 
@@ -550,6 +638,8 @@ observation, `fit_status` is `unknown`.
 | `--full_hier_syn` | synthesize every hierarchy level for path delays (no estimates) |
 | `--no_hier_syn` | opposite of `--full_hier_syn`: never synthesize any hierarchical module (incl. MAINs, stateful atomic spans) -- only true primitive leaves are synthesized, everything else estimated. Gives up the automatic estimate-was-inaccurate fallback to real synthesis. |
 | `--mux_delay_by_width` / `--no_mux_delay_by_width` | force width-keyed or collapsed MUX delay-cache entries |
+| `--syn_cache DIR` | share synthesis results between output directories through the store DIR (§6) |
+| `--syn_cache_prune DAYS` | at the end of the build, remove `--syn_cache` entries unused for DAYS days |
 | `--verilog`, `--yosys_json`, `--xo_axis`, `--pins FILE` | final-output variants: Verilog top, netlist export only, Vivado AXIS XO, bitstream with pin constraints |
 
 Sweep flags (`--coarse`, `--no_sweep`, `--pipeline_min_effort`, ...) are in
@@ -665,20 +755,11 @@ section, below.
    delay from every future estimate. Preferring fewer, coarser-grained
    entities (one `@hw_func` per structural level rather than per bit-slice/
    concat node) reduces how many entities are even candidates for this.
-2. **Caching for AUTO_FSM's operand-mux measurement entities doesn't fire**
-   ([#364](https://github.com/JulianKemmerer/PipelineC/issues/364); see
-   [`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md#35-delay-measurement)). `_IS_PYPELINE_OPERATOR_LIBRARY_CODE` is meant to classify
-   `include/pypeline/operators/` entities as non-user code so their delays
-   are cacheable in `cache/delay`, but it calls `inspect.getsourcefile`
-   on the `@hw_func` wrapper callable rather than the wrapped function, so
-   it always resolves to `pypeline.py` and never fires. An `inspect.unwrap`
-   at that lookup would fix it. Nothing is incorrect meanwhile — the
-   affected delays are just measured every build instead of once.
-3. **`INFERRED_MULT` raw-vs-soft comparison is skipped under the PyRTL tool**
+2. **`INFERRED_MULT` raw-vs-soft comparison is skipped under the PyRTL tool**
    in the operator QoR benchmark (§9) — PyRTL has no DSP-inference cost
    model, so multiplier coverage there is sky130/Vivado-only
    ([#352](https://github.com/JulianKemmerer/PipelineC/discussions/352)).
-4. **`PLUS` has the same PyRTL blind spot as `INFERRED_MULT`, with a bigger
+3. **`PLUS` has the same PyRTL blind spot as `INFERRED_MULT`, with a bigger
    real-hardware caveat.** PyRTL's own sweep shows `soft_carry_select`
    beating `raw_default` by a wide margin (uint32 `+` uint32 at 6 cuts: 219
    vs. 119 MHz) — flipping the default on that data alone would be a

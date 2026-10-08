@@ -1520,6 +1520,13 @@ Imports the design file (triggering all `@MAIN`/`@hw_func` decorations, populati
 and runs N simulated clock cycles, bracketed by the design's `@initial`/`@final(sim)`
 hooks (see [Start/end-of-run hooks](#initial--final--startend-of-run-hooks) below).
 
+`-D NAME=VALUE` sets design parameters, as for `pypelinec` (see
+[Build Parameters](pypeline_guide.md#build-parameters-param-and--d)). `main` installs
+the table with `pypeline.SET_DESIGN_PARAMS` before the import. `_import_design` resets
+the `param()` declarations, then runs the same post-import `-D` checks as `PARSE_FILE`
+and prints the parameter table once per process. In the `pypelinec --sim` flow the
+table is the one the build installed, so the simulation sees the build's values.
+
 ### Per Clock Cycle
 
 (Once per run, before cycle 0: the `@initial(sim)` hooks; once after the last cycle,

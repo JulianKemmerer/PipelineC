@@ -37,6 +37,7 @@ SRC = os.path.join(HERE, "../../../")
 sys.path.insert(0, SRC)
 
 import PY_TO_LOGIC as py  # noqa: E402
+import pypeline  # noqa: E402
 import SYN  # noqa: E402
 
 TMP = tempfile.mkdtemp(prefix="conditional_import_")
@@ -46,8 +47,7 @@ _counter = itertools.count()
 
 HEADER = """\
 # pyright: reportInvalidTypeForm=none
-import os
-from pypeline import MAIN, Wire, hw_func, uint8_t
+from pypeline import MAIN, Wire, hw_func, param, uint8_t
 """
 
 
@@ -100,17 +100,13 @@ def _untaken(prefix):
     return name
 
 
-def _parse(path, **env):
-    saved = {k: os.environ.get(k) for k in env}
-    os.environ.update(env)
+def _parse(path, **params):
+    """PARSE_FILE with these -D design parameters installed."""
+    pypeline.SET_DESIGN_PARAMS(params)
     try:
         return py.PARSE_FILE(path)
     finally:
-        for k, v in saved.items():
-            if v is None:
-                os.environ.pop(k, None)
-            else:
-                os.environ[k] = v
+        pypeline.SET_DESIGN_PARAMS({})
 
 
 def _prefixes(state):
@@ -162,7 +158,7 @@ def test_minimal_conditional_import():
     for how, imports in (
         (
             "conditional",
-            f"if os.environ.get('COND_IMPORT_LEAF', '1') == '1':\n    import {leaf}\n",
+            f"if param('COND_IMPORT_LEAF', True):\n    import {leaf}\n",
         ),
         ("unconditional", f"import {leaf}\n"),
     ):
@@ -214,7 +210,7 @@ def test_if_else_alias_picks_the_chosen_module():
     top = _write(
         _fresh("cond_alias_top"),
         f"""
-        if os.environ["COND_IMPORT_SEL"] == "a":
+        if param("COND_IMPORT_SEL") == "a":
             import {a} as impl
         else:
             import {b} as impl
@@ -240,7 +236,7 @@ def test_elif_try_and_from_imports():
     top = _write(
         _fresh("cond_from_top"),
         f"""
-        SEL = os.environ["COND_IMPORT_SEL"]
+        SEL = param("COND_IMPORT_SEL")
         if SEL == "a":
             from {a} import read_value
         elif SEL == "b":
@@ -287,7 +283,7 @@ def test_selected_callable_passed_to_factory():
         f"""
         from {factory} import make_wrapper
 
-        if os.environ["COND_IMPORT_SEL"] == "a":
+        if param("COND_IMPORT_SEL") == "a":
             import {a}
             chosen = {a}.read_value
         else:
@@ -319,7 +315,7 @@ def _diamond():
     _write(
         shared,
         """
-        CAPACITY = int(os.environ["COND_IMPORT_CAPACITY"])
+        CAPACITY = param("COND_IMPORT_CAPACITY", type=int)
 
         enc_req: Wire[uint8_t]
         dec_req: Wire[uint8_t]
@@ -361,7 +357,7 @@ def _diamond():
         _write(
             mids[direction],
             f"""
-            if os.environ["COND_IMPORT_SHARE"] == "1":
+            if param("COND_IMPORT_SHARE", False):
                 import {shared}
                 submit = {shared}.submit_{direction}
             else:
@@ -406,7 +402,7 @@ def test_diamond_shared_resource_and_reparse():
         mains_by_capacity[capacity] = sorted(state.main_mhz)
     assert mains_by_capacity[2] == mains_by_capacity[5], mains_by_capacity
 
-    state = _parse(top, COND_IMPORT_SHARE="0", COND_IMPORT_CAPACITY="2")
+    state = _parse(top, COND_IMPORT_SHARE="0")
     assert shared not in _prefixes(state)
     assert not [n for n in state.global_vars if n.startswith(shared)], sorted(
         state.global_vars
@@ -430,7 +426,7 @@ def test_untaken_branch_excluded_even_if_loaded():
 
         _side_loaded = importlib.import_module("{design_loaded}")
 
-        if os.environ["COND_IMPORT_SEL"] == "a":
+        if param("COND_IMPORT_SEL") == "a":
             import {chosen} as impl
             from {chosen} import read_value
         else:

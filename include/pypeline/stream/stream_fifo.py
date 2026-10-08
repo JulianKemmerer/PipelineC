@@ -3,6 +3,7 @@ from pypeline import struct, NamedTuple, hw_func
 
 from fifo import make_fifo
 from stream.stream import make_stream_interface, make_stream_t
+from stream.stream_perf import stream_fifo_capacity_beats
 
 
 def make_stream_fifo(data_t, depth: int, mode: str = "fwft"):
@@ -14,6 +15,12 @@ def make_stream_fifo(data_t, depth: int, mode: str = "fwft"):
     Returns (stream_fifo_func, stream_fifo_t):
         stream_fifo_func(in_stream_if: stream_intrf.fwd_t, out_stream_if: stream_intrf.fb_t) -> stream_fifo_t
         stream_fifo_t fields: .out_stream_if (stream_intrf.fwd_t), .in_stream_if (stream_intrf.fb_t)
+
+    Sizing metadata on the returned function, for callers that budget storage
+    around it:
+        .depth           the requested depth
+        .capacity_beats  words it can hold: the memory rounded up to a power of
+                         two, plus the FWFT output register
     """
     stream_intrf = make_stream_interface(data_t)
     plain_t = make_stream_t(data_t)
@@ -37,4 +44,6 @@ def make_stream_fifo(data_t, depth: int, mode: str = "fwft"):
     stream_fifo.stream_intrf = stream_intrf
     stream_fifo.fwd_t = stream_intrf.fwd_t
     stream_fifo.fb_t = stream_intrf.fb_t
+    stream_fifo.depth = depth
+    stream_fifo.capacity_beats = stream_fifo_capacity_beats(depth)
     return stream_fifo, stream_fifo_t

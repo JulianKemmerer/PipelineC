@@ -3028,7 +3028,7 @@ def MAIN_PIPELINE_DEPTH(main_inst, parser_state, TimingParamsLookupTable):
 # best/met snapshot and a pin-and-confirm confirmation run are all not "the
 # last iteration".
 
-SWEEP_HISTORY_SCHEMA_VERSION = 3
+SWEEP_HISTORY_SCHEMA_VERSION = 4
 STOP_ON_OVER_CAPACITY = False
 SYNTHESIS_OBSERVATIONS = []
 CARRIED_LOCKS = {}
@@ -3253,6 +3253,10 @@ def WRITE_SWEEP_HISTORY(parser_state, multimain_timing_params, build_complete):
         doc["auto_multi_cycle_ncycles"] = dict(auto_multi_cycle)
     import AUTO_PIPELINE
 
+    if AUTO_PIPELINE.LATENCY_PASS_RECORDS:
+        # Schema 4: the bottom-up values each pin-and-confirm pass read, built
+        # and where they were read (AUTO_PIPELINE.RECORD_LATENCY_PASS)
+        doc["latency_passes"] = AUTO_PIPELINE.LATENCY_PASS_RECORDS
     if AUTO_PIPELINE.RAM_COLLECT(parser_state):
         doc["auto_pipeline_rams"] = AUTO_PIPELINE.RAM_REPORT_PLANS(parser_state)
         doc["auto_pipeline_ram_iterations"] = getattr(

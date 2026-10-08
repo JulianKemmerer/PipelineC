@@ -240,8 +240,9 @@ def get_tests() -> list:
                 "open_tools",
                 "--pipeline_min_effort",
                 "0",
+                "-D",
+                "AUTO_PIPELINE_RAM_AUTO=1",
             ],
-            env={"AUTO_PIPELINE_RAM_AUTO": "1"},
             needs_out_dir=True,
         )
     )

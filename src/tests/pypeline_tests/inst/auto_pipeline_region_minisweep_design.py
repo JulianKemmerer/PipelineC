@@ -7,7 +7,7 @@ half what the delay model's serial layout says. Evenly spaced cuts land out of
 phase with the round boundaries; the measured mini-sweep of `step` (one cut
 per step, shared boundary banks) is what reaches the goal compactly.
 
-AUTO_PIPELINE_REGION_MINISWEEP_START_LATENCY=<S> tags the call site
+-D AUTO_PIPELINE_REGION_MINISWEEP_START_LATENCY=<S> tags the call site
 start_latency=S, a starting guess only: the sweep must end at the same depth
 as the untagged call site (unset)."""
 import os
@@ -17,7 +17,7 @@ sys.path.insert(
     0, os.path.join(os.path.dirname(os.path.abspath(__file__)), "../../../")
 )
 
-from pypeline import AUTO_PIPELINE, MAIN, NamedTuple, Reg, hw_func, rotl, struct, uint1_t, uint32_t
+from pypeline import AUTO_PIPELINE, MAIN, NamedTuple, Reg, hw_func, param, rotl, struct, uint1_t, uint32_t
 
 
 @struct
@@ -65,9 +65,9 @@ def chain(s: st4_t) -> st4_t:
     return f
 
 
-_START = os.environ.get("AUTO_PIPELINE_REGION_MINISWEEP_START_LATENCY")
+_START = param("AUTO_PIPELINE_REGION_MINISWEEP_START_LATENCY", type=int)
 CHAIN_AP = (
-    AUTO_PIPELINE(chain, start_latency=int(_START))
+    AUTO_PIPELINE(chain, start_latency=_START)
     if _START is not None
     else AUTO_PIPELINE(chain)
 )

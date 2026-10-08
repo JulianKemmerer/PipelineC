@@ -11,7 +11,7 @@ The cap here is deliberately tight enough that the default schedule would blow
 straight through it, so the test is about the cap being MET, not about it
 happening to be satisfied anyway.
 
-Set PYPELINE_AUTO_FSM_IMPOSSIBLE_LATENCY=1 to build the same design with a cap of
+Build with -D PYPELINE_AUTO_FSM_IMPOSSIBLE_LATENCY=1 to build the same design with a cap of
 2 (one execution state) at a clock goal where five dependent adds plus their
 operand multiplexers do not fit one state. No amount of area shortens a
 dependency chain, so the cap is genuinely unreachable and the build must FAIL
@@ -32,6 +32,7 @@ from pypeline import (
     Reg,
     hw_func,
     int16_t,
+    param,
     struct,
     uint1_t,
 )
@@ -57,7 +58,7 @@ def add_chain(x: chain_in_t) -> int16_t:
     return t4
 
 
-_IMPOSSIBLE = os.environ.get("PYPELINE_AUTO_FSM_IMPOSSIBLE_LATENCY") == "1"
+_IMPOSSIBLE = param("PYPELINE_AUTO_FSM_IMPOSSIBLE_LATENCY", False)
 
 # Sharing all five adds onto one adder costs one state each (one operation per
 # unit per state is what makes a unit shareable at all): 5 states, latency 6. A

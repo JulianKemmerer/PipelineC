@@ -327,52 +327,51 @@ def SYN_AND_REPORT_TIMING_NEW(
 
     log_path = output_directory + "/" + log_file_name
 
-    # Use same configs based on to speed up run time?
-    log_to_read = log_path
-
-    # If log file exists dont run syn
-    if os.path.exists(log_to_read) and use_existing_log_file:
-        # print "SKIPPED:", syn_imp_bash_cmd
-        print("Reading log", log_to_read)
-        f = open(log_path, "r")
-        log_text = f.read()
-        f.close()
+    # Render this run's inputs first: whether a log may be reused depends on
+    # them (SYN.REUSE_SYNTHESIS_LOG)
+    if inst_name:
+        VHDL.WRITE_LOGIC_ENTITY(
+            inst_name,
+            Logic,
+            output_directory,
+            parser_state,
+            multimain_timing_params.TimingParamsLookupTable,
+        )
+        VHDL.WRITE_LOGIC_TOP(
+            inst_name,
+            Logic,
+            output_directory,
+            parser_state,
+            multimain_timing_params.TimingParamsLookupTable,
+        )
     else:
-        # Write top level vhdl for this module/multimain
-        if inst_name:
-            VHDL.WRITE_LOGIC_ENTITY(
-                inst_name,
-                Logic,
-                output_directory,
-                parser_state,
-                multimain_timing_params.TimingParamsLookupTable,
-            )
-            VHDL.WRITE_LOGIC_TOP(
-                inst_name,
-                Logic,
-                output_directory,
-                parser_state,
-                multimain_timing_params.TimingParamsLookupTable,
-            )
-        else:
-            VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
+        VHDL.WRITE_MULTIMAIN_TOP(parser_state, multimain_timing_params)
 
-        # Generate files for this SYN
+    # Constraints
+    # Write clock xdc and include it
+    constraints_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(
+        multimain_timing_params, parser_state, inst_name
+    )
+    clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
+        parser_state, inst_name
+    )
 
-        # Constraints
-        # Write clock xdc and include it
-        constraints_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(
-            multimain_timing_params, parser_state, inst_name
-        )
-        clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
-            parser_state, inst_name
-        )
+    # Which vhdl files?
+    vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
+        multimain_timing_params, parser_state, inst_name
+    )
 
-        # Which vhdl files?
-        vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
-            multimain_timing_params, parser_state, inst_name
-        )
-
+    manifest = SYN.SYNTHESIS_INPUT_MANIFEST(
+        "quartus",
+        parser_state.part,
+        top_entity_name,
+        vhdl_files_texts,
+        [constraints_filepath],
+        tool_paths=[QUARTUS_PATH + "/quartus_sh", QUARTUS_PATH + "/quartus_sta"],
+        recipe_modules=[sys.modules[__name__]],
+    )
+    log_text = SYN.REUSE_SYNTHESIS_LOG("quartus", log_path, manifest, use_existing_log_file)
+    if log_text is None:
         sh_file = top_entity_name + ".sh"
         sh_tcl_file = top_entity_name + ".sh.tcl"
         sta_tcl_file = top_entity_name + ".sta.tcl"
@@ -446,6 +445,7 @@ project_close
         f = open(log_path, "r")
         log_text = f.read()
         f.close()
+        SYN.RECORD_SYNTHESIS_LOG("quartus", log_path, manifest)
         # print("log:",log_text)
         # sys.exit(0)
 

@@ -1,7 +1,6 @@
 # pyright: reportInvalidTypeForm=none
 """Cycle oracle: banked raw RAM, pure-caller alignment, and stalled streams."""
 
-import os
 import sys
 from pathlib import Path
 
@@ -9,6 +8,7 @@ ROOT = Path(__file__).resolve().parents[4]
 sys.path[:0] = [str(ROOT / "src"), str(ROOT / "include/pypeline")]
 from pypeline import (
     MAIN,
+    param,
     Reg,
     NamedTuple,
     hw_func,
@@ -24,10 +24,10 @@ from pypeline import (
 from ram import make_auto_pipeline_ram
 from stream.stream_ram import make_stream_auto_pipeline_ram
 
-L = int(os.environ.get("AUTO_PIPELINE_RAM_LATENCY", "7"))
+L = param("AUTO_PIPELINE_RAM_LATENCY", 7)
 constraints = (
     dict(start_latency=3, max_latency=3)
-    if os.environ.get("AUTO_PIPELINE_RAM_AUTO")
+    if param("AUTO_PIPELINE_RAM_AUTO", False)
     else dict(latency=L)
 )
 raw, raw_t = make_auto_pipeline_ram(uint32_t, 4096, ports=("w", "r"), **constraints)

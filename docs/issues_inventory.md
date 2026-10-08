@@ -63,7 +63,7 @@ Issues #353 and later include their reproducers in the issue itself.
 
 - `python3 src/tests/pypeline_tests/run_all.py` runs the Python suites. It accepts `-j N` and `--category …`.
 - `src/tests/c_tests/test_builds.sh "--comb --no_synth"` builds the C examples.
-- `python3 src/tests/pypeline_tests/known_issues_tests.py` runs expect-fail reproducers of known Python-side bugs, including those for [#361][i361] and [#364][i364]. A fixed bug shows up as XPASS.
+- `python3 src/tests/pypeline_tests/known_issues_tests.py` runs expect-fail reproducers of known Python-side bugs, including the one for [#361][i361]. A fixed bug shows up as XPASS.
 
 ## Ranking
 
@@ -106,9 +106,8 @@ Within each group, bugs that affect both front ends come first, problems in the 
 | 26 | [#286][i286] | C | The tool does not run on macOS | No, from the thread |
 | 27 | [#52][i52] | C | A typedef alias gives a misleading type error | Yes |
 | 28 | [#76][i76] | Both | No `switch` (C) or `match` (Python) | C yes; Python from the code |
-| 29 | [#364][i364] | Python | Operator-library delays are measured every build instead of cached | Yes |
-| 30 | [#365][i365] | Both | `--coarse --sweep` may crash on narrow leaves | Not reproduced |
-| 31 | [#366][i366] | Python | AUTO_FSM deeply opened schedules may fail to elaborate | No, needs a long AUTO_FSM search |
+| 29 | [#365][i365] | Both | `--coarse --sweep` may crash on narrow leaves | Not reproduced |
+| 30 | [#366][i366] | Python | AUTO_FSM deeply opened schedules may fail to elaborate | No, needs a long AUTO_FSM search |
 
 ## Wrong hardware, or simulation disagrees with hardware
 
@@ -546,14 +545,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 
 ## Slower builds, and reports not yet reproduced
 
-### 29. [#364][i364]: operator-library delays are measured every build instead of cached
-
-- **Front ends:** Python. Build time only; timing results are unaffected.
-- **What happens:** `SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE` is meant to recognize entities from `include/pypeline/operators/` (the soft operators and AUTO_FSM's operand multiplexers) so their measured delays go into `cache/delay`. It calls `inspect.getsourcefile` on the `@hw_func` wrapper instead of the wrapped function, so it always sees `pypeline.py` and never fires.
-- **Where to look:** `src/SYN.py:1569`. `docs/SYN_DESIGN.md` §10 suggests `inspect.unwrap` at that lookup.
-- **Reproduce:** `python3 src/tests/pypeline_tests/known_issues_tests.py -k never_fires` reports XFAIL while the bug is present.
-
-### 30. [#365][i365]: `--coarse --sweep` may crash on narrow leaves
+### 29. [#365][i365]: `--coarse --sweep` may crash on narrow leaves
 
 - **Front ends:** both (shared pipelining code).
 - **What happens (from the docs):** on a design with many 1-3 bit leaves at a high cut count, `--coarse --sweep` can raise `GET_BITS_PER_STAGE_DICT: interior zero-bit stage … for a 2-bit op`. The planned sweep caps legal cuts at the leaf's width minus one (`SWEEP.SliceLandscape.finalize()`); the coarse path uses `RAW_VHDL.LEAF_MAX_SPLIT_SLICES`, which returns no cap for bit-split leaves.
@@ -561,7 +553,7 @@ Within each group, bugs that affect both front ends come first, problems in the 
 - **Reproduce:** not reproduced yet. A chain of four `uint2_t` adds built with `--syn_tool pyrtl --coarse --start 12 --stop 12` completed normally.
 - **Workaround:** use the default planned sweep.
 
-### 31. [#366][i366]: AUTO_FSM deeply opened schedules may fail to elaborate
+### 30. [#366][i366]: AUTO_FSM deeply opened schedules may fail to elaborate
 
 - **Front ends:** Python (AUTO_FSM is Python-only and experimental).
 - **What happens (from the docs):** rescheduling the donut design (`examples/pypeline/vga_donut.py`) under a tightened budget produced a 412-operation, 131-state plan whose generated source failed to elaborate with "Bit index [14:14] out of range for uint9_t". The default control path avoids it only by meeting timing before the search opens the schedule that far.
@@ -597,7 +589,6 @@ Within each group, bugs that affect both front ends come first, problems in the 
 [i361]: https://github.com/JulianKemmerer/PipelineC/issues/361
 [i362]: https://github.com/JulianKemmerer/PipelineC/issues/362
 [i363]: https://github.com/JulianKemmerer/PipelineC/issues/363
-[i364]: https://github.com/JulianKemmerer/PipelineC/issues/364
 [i365]: https://github.com/JulianKemmerer/PipelineC/issues/365
 [i366]: https://github.com/JulianKemmerer/PipelineC/issues/366
 [i367]: https://github.com/JulianKemmerer/PipelineC/issues/367

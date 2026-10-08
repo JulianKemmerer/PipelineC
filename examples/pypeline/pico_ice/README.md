@@ -74,10 +74,10 @@ The Makefile uses that one variable to:
 
 1. Generate `pll.v` with `icepll`. `icepll` picks the closest rate it can make; the
    "Achieved output frequency" comment at the top of `pll.v` shows it.
-2. Export `PLL_CLK_MHZ` to `pypelinec`. The design is plain Python, so it reads the rate
-   with `os.environ` and uses it in `make_clock(PLL_CLK_MHZ)` and `@MAIN(PLL_CLK_MHZ)`.
-   `make_clock` names the clock port `pll_clk` to match the wrapper, rather than the
-   default rate-derived name such as `clk_25p0`.
+2. Pass it to `pypelinec` as `-D PLL_CLK_MHZ=...`. The design declares the parameter with
+   `PLL_CLK_MHZ = param("PLL_CLK_MHZ", 25.0)` and uses it in `make_clock(PLL_CLK_MHZ)` and
+   `@MAIN(PLL_CLK_MHZ)`. `make_clock` names the clock port `pll_clk` to match the wrapper,
+   rather than the default rate-derived name such as `clk_25p0`.
 3. Tell `nextpnr-ice40` the target clock rate (`--freq $(PLL_CLK_MHZ)`).
 
 The PLL's `locked` output is the `pll_locked` input; [top.py](top.py) holds its logic in

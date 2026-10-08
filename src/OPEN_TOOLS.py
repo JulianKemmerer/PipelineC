@@ -686,6 +686,22 @@ class PathReport:
                 in_netlist_resources = True
 
 
+def _CACHE_TOOL_PATHS(part, is_xc7):
+    """Executables (and the XC7 chipdb) whose installation identifies a run
+    for SYN.SYNTHESIS_INPUT_MANIFEST. Missing tools are recorded as missing, not raised here:
+    a run raises if it actually needs one."""
+    paths = [os.path.join(YOSYS_BIN_PATH or "", "yosys")]
+    if GHDL_BIN_PATH:
+        paths.append(os.path.join(GHDL_BIN_PATH, "ghdl"))
+    if is_xc7:
+        paths.append(GET_XC7_TOOL_PATH(XC7_NEXTPNR_EXE))
+        paths.append(GET_XC7_CHIPDB_PATH(part))
+    else:
+        exe_ext = "ice40" if part.lower().startswith("ice") else "ecp5"
+        paths.append(os.path.join(NEXTPNR_BIN_PATH or "", "nextpnr-" + exe_ext))
+    return paths
+
+
 # Returns parsed timing report
 def SYN_AND_REPORT_TIMING(
     inst_name,
@@ -792,63 +808,72 @@ def SYN_AND_REPORT_TIMING_NEW(
         log_file_name = log_file_name[:-4] + f"_seed{nextpnr_seed}.log"
     log_path = output_directory + "/" + log_file_name
 
-    # Use same configs based on to speed up run time?
-    log_to_read = log_path
+    if (xc7_final_top or YOSYS_JSON_ONLY) and os.path.exists(log_path):
+        # Always re-run (never cached, below), and the script appends (&>>):
+        # start from an empty log so a run never parses an earlier run's report.
+        os.remove(log_path)
+
+    # Render this run's inputs first: whether a log may be reused depends on
+    # them (SYN.REUSE_SYNTHESIS_LOG)
+    if inst_name:
+        VHDL.WRITE_LOGIC_ENTITY(
+            inst_name,
+            Logic,
+            output_directory,
+            parser_state,
+            multimain_timing_params.TimingParamsLookupTable,
+        )
+        VHDL.WRITE_LOGIC_TOP(
+            inst_name,
+            Logic,
+            output_directory,
+            parser_state,
+            multimain_timing_params.TimingParamsLookupTable,
+        )
+    else:
+        # Final XC7 implementation builds the board-facing top that
+        # SYN.WRITE_FINAL_FILES already wrote (as Vivado's final build
+        # does), not a hashed characterization top.
+        if not xc7_final_top:
+            VHDL.WRITE_MULTIMAIN_TOP(
+                parser_state, multimain_timing_params, False
+            )
+
+    # Constraints
+    # Write clock xdc and include it
+    constraints_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(
+        multimain_timing_params, parser_state, inst_name
+    )
+    clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
+        parser_state, inst_name
+    )
+
+    # Which vhdl files?
+    vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
+        multimain_timing_params, parser_state, inst_name, xc7_final_top
+    )
 
     # Final xc7 implementation produces the user bitstream and must not be
-    # silently replaced by a cached characterization/multimain result.
-    if not xc7_final_top and os.path.exists(log_to_read) and use_existing_log_file:
-        # print "SKIPPED:", syn_imp_bash_cmd
-        print("Reading log", log_to_read)
-        f = open(log_path, "r")
-        log_text = f.read()
-        f.close()
-    else:
-        if xc7_final_top and os.path.exists(log_path):
-            # Always re-run, and the script below appends (&>>): start from an
-            # empty log so a run never parses an earlier run's report.
-            os.remove(log_path)
-        # Write top level vhdl for this module/multimain
-        if inst_name:
-            VHDL.WRITE_LOGIC_ENTITY(
-                inst_name,
-                Logic,
-                output_directory,
-                parser_state,
-                multimain_timing_params.TimingParamsLookupTable,
-            )
-            VHDL.WRITE_LOGIC_TOP(
-                inst_name,
-                Logic,
-                output_directory,
-                parser_state,
-                multimain_timing_params.TimingParamsLookupTable,
-            )
-        else:
-            # Final XC7 implementation builds the board-facing top that
-            # SYN.WRITE_FINAL_FILES already wrote (as Vivado's final build
-            # does), not a hashed characterization top.
-            if not xc7_final_top:
-                VHDL.WRITE_MULTIMAIN_TOP(
-                    parser_state, multimain_timing_params, False
-                )
-
-        # Generate files for this SYN
-
-        # Constraints
-        # Write clock xdc and include it
-        constraints_filepath = SYN.WRITE_CLK_CONSTRAINTS_FILE(
-            multimain_timing_params, parser_state, inst_name
+    # silently replaced by a cached characterization/multimain result. A
+    # --yosys_json run exists to write its netlist, which a reused log (above
+    # all one from the --syn_cache store) would not; it always runs too.
+    manifest = None
+    log_text = None
+    if not xc7_final_top and not YOSYS_JSON_ONLY:
+        manifest = SYN.SYNTHESIS_INPUT_MANIFEST(
+            "open_tools",
+            parser_state.part,
+            top_entity_name,
+            vhdl_files_texts,
+            [constraints_filepath],
+            tool_paths=_CACHE_TOOL_PATHS(parser_state.part, is_xc7),
+            recipe_modules=[sys.modules[__name__]],
+            extra={"nextpnr_seed": nextpnr_seed},
         )
-        clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
-            parser_state, inst_name
+        log_text = SYN.REUSE_SYNTHESIS_LOG(
+            "open_tools", log_path, manifest, use_existing_log_file
         )
-
-        # Which vhdl files?
-        vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
-            multimain_timing_params, parser_state, inst_name, xc7_final_top
-        )
-
+    if log_text is None:
         if GHDL_PREFIX is None:
             raise Exception("ghdl not installed?")
         if YOSYS_BIN_PATH is None:
@@ -1002,6 +1027,8 @@ export GHDL_PREFIX="""
         f = open(log_path, "r")
         log_text = f.read()
         f.close()
+        if manifest is not None:
+            SYN.RECORD_SYNTHESIS_LOG("open_tools", log_path, manifest)
 
         # If just outputting json have to stop now?
         if YOSYS_JSON_ONLY:

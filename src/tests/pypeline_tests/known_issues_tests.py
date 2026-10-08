@@ -76,18 +76,11 @@ def get_tests() -> list:
             requires=["ghdl"],
         )
     )
-    # SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE never fires for any real
-    # operator-library callable (it inspects the @hw_func wrapper's source
-    # file, always pypeline.py, instead of the wrapped function's) -- build
-    # time only, delay numbers are unaffected either way.
-    tests.append(
-        Test(
-            name="operator_library_predicate_never_fires_known_issue",
-            category="known_issues",
-            cmd=[INST_DIR / "operator_library_predicate_never_fires_known_issue.py"],
-            expect_fail=True,
-        )
-    )
+    # (operator_library_predicate_never_fires_known_issue was here while
+    # SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE, meant to put operator-library
+    # delays in the name-keyed cache/delay, never fired (#364). The predicate
+    # is removed: those synthesis runs are reused by their exact inputs
+    # instead, see SYN.LOGIC_PATH_DELAY_IS_CACHEABLE.)
     # (pdw_tb was here while Path B's delay line was misaligned. That is
     # fixed -- make_delay_line is now self-timed off the FSM's gate_advance --
     # so it lives in native_sim_tests.py as a normal passing test.)
@@ -106,11 +99,11 @@ def get_tests() -> list:
             Test(
                 name=f"sweep_float32_{tool}_known_issue",
                 category="known_issues",
-                cmd=[PYPELINEC, INST_DIR / "sweep_float32_test.py"]
+                cmd=[PYPELINEC, INST_DIR / "sweep_float32_test.py",
+                     "-D", f"SWEEP_FLOAT32_MHZ={SWEEP_FLOAT32_MHZ[tool]}"]
                 + SYN_TOOL_ARGS[tool],
                 needs_out_dir=True,
                 expect_fail=True,
-                env={"SWEEP_FLOAT32_MHZ": SWEEP_FLOAT32_MHZ[tool]},
             )
         )
     return tests

@@ -1,10 +1,9 @@
 # pyright: reportInvalidTypeForm=none
 """Variable-input DSP chain shared by fixed/auto MCPs and an AUTO_PIPELINE call."""
-import os
 from typing import NamedTuple
 
 from pypeline import (
-    AUTO_PIPELINE, MAIN, PART, Reg, hw_func, struct,
+    AUTO_PIPELINE, MAIN, PART, Reg, hw_func, param, struct,
     uint1_t, uint16_t, uint32_t,
 )
 from stream.stream import make_stream_interface
@@ -32,7 +31,7 @@ def dsp_chain(i: operands_t) -> uint32_t:
 word_if = make_stream_interface(operands_t)
 fixed_mcp, fixed_t = make_stream_multi_cycle(dsp_chain, 4)
 auto_mcp, auto_t = make_stream_auto_multi_cycle(
-    dsp_chain, start_latency=int(os.environ.get("MCP_DSP_START", "1")),
+    dsp_chain, start_latency=param("MCP_DSP_START", 1),
 )
 BODY = AUTO_PIPELINE(dsp_chain)
 

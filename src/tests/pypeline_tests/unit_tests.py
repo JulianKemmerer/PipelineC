@@ -104,6 +104,26 @@ def get_tests() -> list:
             cmd=[INST_DIR / "stream_auto_pipeline_latency_args_test.py"],
         )
     )
+    # Design parameters: param() precedence (-D, env=, default), conversion
+    # and choices errors, duplicate declarations, one resolution per process,
+    # cpp-style injected globals and the post-import -D checks, per-parse
+    # re-registration, and the report/--list_params/provenance records.
+    tests.append(
+        Test(
+            name="design_params_test",
+            category="unit",
+            cmd=[INST_DIR / "design_params_test.py"],
+        )
+    )
+    # The bottom-up value report: .latency read sites (direct and via a
+    # library factory) and RECORD_LATENCY_PASS's read-vs-built rows.
+    tests.append(
+        Test(
+            name="bottom_up_report_test",
+            category="unit",
+            cmd=[INST_DIR / "bottom_up_report_test.py"],
+        )
+    )
     # AUTO_MULTI_CYCLE: constructor/.latency/keys/read tracking, identity following
     # the cycle count, SYN constraint overrides + hash, SWEEP report matching
     # and grow-only feedback, elaboration + cache re-parse renaming, and the

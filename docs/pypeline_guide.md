@@ -23,15 +23,16 @@ For getting started information see the [README](README.md).
 10. [Feedback Wires: `Feedback[T]`](#feedback-wires-feedbackt)
 11. [Bit Manipulation](#bit-manipulation)
 12. [Basic Types](#basic-types)
-13. [Parametric Hardware with Factory Functions](#parametric-hardware-with-factory-functions)
-14. [Factory-Generated Types](#factory-generated-types)
-15. [Custom Operators](#custom-operators)
-16. [Global Signals](#global-signals)
+13. [Build Parameters: `param()` and `-D`](#build-parameters-param-and--d)
+14. [Parametric Hardware with Factory Functions](#parametric-hardware-with-factory-functions)
+15. [Factory-Generated Types](#factory-generated-types)
+16. [Custom Operators](#custom-operators)
+17. [Global Signals](#global-signals)
 
 **Part II — Temporal behavior**
 
-17. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle)
-18. [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation)
+18. [Multi-Cycle Paths: `MULTI_CYCLE[...]`](#multi-cycle-paths-multi_cycle)
+19. [Automatic (HLS-like) Implementation](#automatic-hls-like-implementation)
     - [`AUTO_PIPELINE(...)`](#auto_pipeline)
       - [`AUTO_PIPELINE_RAM`](#auto_pipeline_ram)
     - [`AUTO_MULTI_CYCLE(...)`](#auto_multi_cycle)
@@ -40,35 +41,35 @@ For getting started information see the [README](README.md).
 
 **Part III — Ports and streams**
 
-19. [Keep-Tagged Lanes: `kept_data_bus_t`](#keep-tagged-lanes-kept_data_bus_t)
-20. [N-Dimensional Stream Fragments: `ndarray_fragment_t`](#n-dimensional-stream-fragments-ndarray_fragment_t)
-21. [Streams: `stream_t`](#streams-stream_t)
-22. [Bidirectional Ports: `@interface`](#bidirectional-ports-interface)
-23. [AXI-Stream: `axis_t`](#axi-stream-axis_t)
-24. [Byte-Stream Serialization: `make_serializer` / `make_deserializer`](#byte-stream-serialization-make_serializer--make_deserializer)
-25. [Struct ↔ AXI-Stream: `make_axis_to_type` / `make_type_to_axis`](#struct--axi-stream-make_axis_to_type--make_type_to_axis)
-26. [Host Type Export Declarations](#host-type-export-declarations)
-27. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
-28. [RAMs: `make_ram` / `make_stream_ram`](#rams-make_ram--make_stream_ram)
-29. [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer)
-30. [Pipelined Stream Wrappers: `make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline)
-31. [Multi-Cycle Stream Wrapper: `make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle)
-32. [Combinational Optimization Stream Wrappers: `make_stream_auto_comb_area_opt` / `make_stream_auto_comb_delay_opt` (Experimental)](#combinational-optimization-stream-wrappers-make_stream_auto_comb_area_opt--make_stream_auto_comb_delay_opt-experimental)
-33. [Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental)
-34. [Stream Performance Measurement: Probes & Bottlenecks](#stream-performance-measurement-probes--bottlenecks)
+20. [Keep-Tagged Lanes: `kept_data_bus_t`](#keep-tagged-lanes-kept_data_bus_t)
+21. [N-Dimensional Stream Fragments: `ndarray_fragment_t`](#n-dimensional-stream-fragments-ndarray_fragment_t)
+22. [Streams: `stream_t`](#streams-stream_t)
+23. [Bidirectional Ports: `@interface`](#bidirectional-ports-interface)
+24. [AXI-Stream: `axis_t`](#axi-stream-axis_t)
+25. [Byte-Stream Serialization: `make_serializer` / `make_deserializer`](#byte-stream-serialization-make_serializer--make_deserializer)
+26. [Struct ↔ AXI-Stream: `make_axis_to_type` / `make_type_to_axis`](#struct--axi-stream-make_axis_to_type--make_type_to_axis)
+27. [Host Type Export Declarations](#host-type-export-declarations)
+28. [FIFOs: `make_stream_fifo`](#fifos-make_stream_fifo)
+29. [RAMs: `make_ram` / `make_stream_ram`](#rams-make_ram--make_stream_ram)
+30. [Skid Buffers: `make_skid_buffer`](#skid-buffers-make_skid_buffer)
+31. [Pipelined Stream Wrappers: `make_stream_auto_pipeline`](#pipelined-stream-wrappers-make_stream_auto_pipeline)
+32. [Multi-Cycle Stream Wrapper: `make_stream_multi_cycle`](#multi-cycle-stream-wrapper-make_stream_multi_cycle)
+33. [Combinational Optimization Stream Wrappers: `make_stream_auto_comb_area_opt` / `make_stream_auto_comb_delay_opt` (Experimental)](#combinational-optimization-stream-wrappers-make_stream_auto_comb_area_opt--make_stream_auto_comb_delay_opt-experimental)
+34. [Stream Wrapper for AUTO_FSM: `make_stream_auto_fsm` (Experimental)](#stream-wrapper-for-auto_fsm-make_stream_auto_fsm-experimental)
+35. [Stream Performance Measurement: Probes & Bottlenecks](#stream-performance-measurement-probes--bottlenecks)
 
 **Part IV — Escape hatches**
 
-35. [Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
-36. [Fixed User Pipelines: `@pipeline_latency`](#fixed-user-pipelines)
-37. [Just-Wires Synthesis Hint: `@wires`](#just-wires-synthesis-hint-wires)
+36. [Raw VHDL Passthrough: `vhdl()`](#raw-vhdl-passthrough-vhdl)
+37. [Fixed User Pipelines: `@pipeline_latency`](#fixed-user-pipelines)
+38. [Just-Wires Synthesis Hint: `@wires`](#just-wires-synthesis-hint-wires)
 
 **Part V — Reference**
 
-38. [Simulation Reference](#simulation-reference)
-39. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
-40. [Source Naming Rules](#source-naming-rules)
-41. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
+39. [Simulation Reference](#simulation-reference)
+40. [DSP: Filters & Signal Conditioning](#dsp-filters--signal-conditioning)
+41. [Source Naming Rules](#source-naming-rules)
+42. [Limitations / Not Yet Supported](#limitations--not-yet-supported)
 
 ---
 
@@ -864,12 +865,14 @@ is not followed. So each file only needs to import what it directly uses, the sa
 way plain Python code is organized.
 
 **Choosing modules at elaboration time.**
-A module-level `if` (or `try`/`except`) can select which file becomes hardware:
+A module-level `if` (or `try`/`except`) can select which file becomes hardware. The
+choice is usually a [build parameter](#build-parameters-param-and--d), set with
+`pypelinec top.py -D SHARE_MAC=1`:
 
 ```python
-import os
+from pypeline import param
 
-if os.environ.get("SHARE_MAC") == "1":
+if param("SHARE_MAC", False, help="one MAC shared by both directions"):
     import mac_shared as mac     # one resource, shared by both directions
 else:
     import mac_private as mac
@@ -932,14 +935,10 @@ def connector():
     file_b.state.count = file_a.counters.total[0]
 ```
 
-Module-level constants from sub-files are not directly accessible by name inside a
-hardware function body.
-Copy them at module level in the top file first:
-
-```python
-import my_lib
-SHIFT = my_lib.SHIFT_AMOUNT   # now available as a plain Python int in this module
-```
+Module-level constants from sub-files work inside a hardware function body like any
+other Python name: as `my_lib.SHIFT_AMOUNT`, or bare after `from my_lib import
+SHIFT_AMOUNT`. A bare `SHIFT_AMOUNT` that this file never imported is an unknown name,
+as it would be in Python.
 
 ### Tuple and list unpacking
 
@@ -1733,6 +1732,120 @@ in simulation, for every fixture type and both endians.
 it returns can be passed straight back into `sim_call()` as an argument. It raises
 `ValueError` if `len(data) != byte_length(t)`.
 
+
+---
+
+## Build Parameters: `param()` and `-D`
+
+Most designs have a few choices made per build: a clock goal, a data width, whether
+two blocks share one resource, a testbench mode. Declare each one with `param()`, and
+set it on the command line with `-D NAME=VALUE`:
+
+```python
+from pypeline import MAIN, make_uint_t, param
+
+WIDTH = param("WIDTH", 8, choices=(8, 16, 32), help="data path width in bits")
+CLK_MHZ = param("CLK_MHZ", 100.0, help="clock goal")
+
+data_t = make_uint_t(WIDTH)
+
+@MAIN(CLK_MHZ)
+def top(x: data_t) -> data_t:
+    return x + 1
+```
+
+```
+pypelinec top.py -D WIDTH=16 -D CLK_MHZ=125     # build
+pypelinec top.py --sim --comb -D WIDTH=16       # native simulation, same values
+python3 src/pypeline_sim.py top.py --run 100 -D WIDTH=16
+pypelinec top.py --list_params                  # what can be set, and to what
+```
+
+`param()` returns a plain Python value. Use it anywhere elaboration-time Python is
+allowed:
+- clock rates (`@MAIN(CLK_MHZ)`);
+- widths (`make_uint_t(WIDTH)`);
+- factory arguments;
+- array sizes;
+- which module to import (see [Choosing modules at elaboration time](#calling-functions-across-files));
+- `max_latency=` caps.
+
+Inside a hardware body, an `int` or `bool` parameter is a constant, like any other
+module-level constant.
+
+- **Where the value comes from.** In order: `-D NAME=VALUE`, then the `env=` variable
+  if you gave one and it is set, then the default. A name resolves once per build, so
+  every re-elaboration pass and every simulation import sees the same value.
+- **Types.** The default's type converts the `-D` text:
+  - `int` accepts `16` or `0x10`;
+  - `float` accepts `125`;
+  - `bool` accepts `1/0`, `true/false`, `yes/no` and `on/off`, and a bare `-D NAME` means `True`;
+  - a tuple default takes a comma list (`-D SIZES=16,64,256`).
+
+  For a parameter with no default (`param("DEPTH", type=int)`), `type=` converts the
+  text; `None` means "not given". Without a `type`, the text is read as a Python
+  literal, else kept as a string.
+- **`choices=`** lists the allowed values. Anything else stops the build with one line
+  naming the parameter, the value, where it came from and where it is declared:
+  ```
+  ERROR: Design parameter WIDTH: 12 is not one of (8, 16, 32) (from -D on the command line; declared at top.py:3)
+  ```
+- **Declare each parameter once.** Put shared parameters in one module and import the
+  values (`from config import WIDTH`, or `config.WIDTH`, which also works inside
+  hardware bodies). A second `param()` with the same name must match the first.
+- **Every build records its values.** The build prints the table after the design is
+  imported, and writes it to `<out_dir>/source_provenance.json` (`design_params`):
+  ```
+  Design parameters:
+    CLK_MHZ = 125.0 (-D)  top.py:4
+    WIDTH   = 16 (-D)  top.py:3
+  ```
+- **A misspelled `-D` name is an error**, not silently ignored (see below).
+- **`env=`.** Pass `env="VAR"` only if a build system can set nothing but the
+  environment. `-D` and the default are the normal paths.
+
+### Values read by name: injected globals
+
+A `-D NAME=VALUE` that no `param()` declares becomes a global name in every design
+module, like a C preprocessor macro. Its text is read as a Python literal (`3`, `2.5`,
+`(1, 2)`, `'x'`), else kept as a string:
+
+```python
+data_t = make_uint_t(WIDTH)      # built with: pypelinec top.py -D WIDTH=12
+
+@MAIN
+def top(x: data_t) -> data_t:
+    return x + INC               # ... -D INC=3
+```
+
+After the design is imported, the build checks every `-D` name and stops if:
+- **No design module reads the name and no `param()` declares it.** The message suggests close matches, so `-D WIDHT=16` fails with "Did you mean WIDTH?".
+- **A design module assigns the name at module level.** That module would silently ignore the command line.
+- **A module reads a `param()`-declared name as a bare global.** That only works while `-D` happens to give it.
+
+Prefer `param()` for anything with a sensible default. It documents itself in
+`--list_params`, and editors and type checkers can see it. Injected names suit
+required values without a default; add `# pyright: reportUndefinedVariable=none` to
+files that read them.
+
+### Top-down and bottom-up values
+
+Two kinds of build-time values flow through a design:
+
+| | Top-down (`param()`, `-D`) | Bottom-up (`.latency`) |
+|---|---|---|
+| Decided by | you, before elaboration | the build itself, during implementation |
+| Examples | clock goal, width, sharing choice, testbench mode | AUTO_PIPELINE depth, AUTO_MULTI_CYCLE cycle count, AUTO_FSM latency, auto-pipelined RAM plan |
+| Read with | `param()` (or an injected global) | the AUTO object's `.latency`, or a library factory's [sizing attributes](#passing-a-bottom-up-value-to-the-rest-of-the-design) |
+| Fixed when | before the first import, for the whole build | after re-elaboration: the build re-imports the design until every value read equals what was built |
+
+Keep the directions apart:
+- A parameter never depends on a bottom-up value.
+- A parameter can bound one. For example, `max_latency=param("MAX_LANES", 8) - 2`
+  caps a pipeline whose depth sets a lane count.
+
+The [`.latency` section](#latency-reading-back-the-discovered-pipeline-depth) shows how
+bottom-up values reach the rest of a design, and the report each build prints about them.
 
 ---
 
@@ -2647,6 +2760,70 @@ Python — typically at a factory function's own top level — and capture the o
 closure into whatever `@hw_func` body calls it. That's what makes `.latency` readable
 by the surrounding Python. Constructing it inline inside a `@hw_func` body still
 pipelines correctly, but nothing outside that body can read its `.latency`.
+
+#### Passing a bottom-up value to the rest of the design
+
+Read the value where the producing block is built, then pass the plain `int` into the
+factory of whatever it sizes. Don't send it through a module-level variable that some
+other file reads later:
+
+```python
+core, core_t = make_stream_auto_pipeline(round_func)
+# Storage that must cover everything the core can have in flight
+fifo, fifo_t = make_stream_fifo(data_t, 4 * core.max_in_flight + 8)
+```
+
+The library documents the bottom-up values its factories expose. These attributes are
+regenerated by every re-elaboration pass:
+
+| Factory | Attribute | Value |
+|---|---|---|
+| `make_stream_auto_pipeline` | `.auto_pipeline` | the core `AUTO_PIPELINE`; `.auto_pipeline.latency` is its depth L, excluding the two boundary registers |
+| | `.max_in_flight` | the credit limit, L+5 |
+| `make_stream_auto_multi_cycle` | `.mcp` | the `AUTO_MULTI_CYCLE` tag; `.mcp.latency` is the cycle count (the fixed `make_stream_multi_cycle` takes its count as an argument) |
+| `make_stream_fifo` | `.depth` | the requested depth |
+| | `.capacity_beats` | words it can hold: the power-of-two memory plus the FWFT output register |
+| `make_skid_buffer`, `make_stream_ram`, `make_stream_auto_fsm` | `.latency` | their fixed latency |
+
+A stream wrapper around an AUTO_PIPELINE has no `.latency` of its own, because a
+valid/ready handshake is not a fixed latency. Read its `.auto_pipeline` and
+`.max_in_flight` instead.
+
+Three rules keep the re-elaboration loop short:
+- **Size storage and counters outside AUTO_PIPELINE'd functions.** A value captured by
+  an AUTO_PIPELINE'd function's closure is part of that function's identity, and the
+  set of AUTO_PIPELINE call sites must not change between passes.
+- **Every value that reshapes logic can cost a pass.** A chain like depth → lane count →
+  multi-cycle count → FIFO depth may need one pass per link. The build stops after
+  three passes that don't settle.
+- **Cap a depth that sizes compute.** When a depth sets how much compute you build (for
+  example interleaved lanes = depth + 2), cap it with `max_latency=`, often a
+  [build parameter](#build-parameters-param-and--d), so that a faster clock goal cannot
+  silently grow the design past the device.
+
+#### The pass report
+
+After each implementation pass whose elaboration read a bottom-up value, the build
+prints what was read, what the build then made, and where in the source it was read:
+
+```
+Bottom-up values read during pass 1 elaboration (read -> built):
+  AUTO_PIPELINE func_core_start_latency_1: 1 -> 5  <- differs
+      read at include/pypeline/stream/stream_auto_pipeline.py:111 (via top.py:20)
+      read at top.py:21
+  => re-elaborate with the built values (pass 2)
+Bottom-up values read during pass 2 elaboration (read -> built):
+  AUTO_PIPELINE func_core_start_latency_1: 5 -> 5
+      ...
+  => converged: every read matches what was built
+```
+
+A read inside a library factory names the library line and the design line that called
+the factory. A read inside a hardware body, such as the multi-cycle wrapper comparing
+its counter against `.latency`, names that body's line. The same records are written
+to `sweep_history.json` as
+`latency_passes`. A `start_latency=` that matches what gets built avoids the extra
+pass entirely.
 
 #### Example
 
@@ -5233,6 +5410,12 @@ its simulation.
   as the syn `@initial` hooks, and sim `@final` hooks from the same import as the sim
   `@initial` hooks, so state each pair shares survives. Syn and sim hooks may see
   **different** imports of the design, though — don't share state between them.
+- **A syn `@final` hook reading `.latency` gets stale values after a re-elaboration.** The
+  syn hooks run from the **first** import, so a `.latency` the hook reads (directly or
+  through a variable from that import) returns the bootstrap value: 0, or
+  `start_latency`. It does not see what the build re-elaborated with. Size hardware from
+  `.latency` in elaboration code, which every pass re-runs. For what was built, read
+  `sweep_history.json` (`latency_passes`, and each MAIN's `final` record) after the build.
 
 ### `sim_print(..., debug=True)` — tagged prints
 

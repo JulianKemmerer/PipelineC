@@ -889,6 +889,31 @@ returned by the factory.
 
 See [pypeline_guide.md: Parametric Hardware with Factory Functions](pypeline_guide.md#parametric-hardware-with-factory-functions).
 
+A `#define` that selects a build configuration becomes a build parameter. In C it
+might be a clock rate or an `#ifdef` that picks a module. In Pypeline you declare it
+with `param()`, read it as ordinary Python, and set it on the command line with `-D`,
+as the C preprocessor's `-D` would:
+
+```c
+// PipelineC
+#ifndef CLK_MHZ
+#define CLK_MHZ 100.0
+#endif
+#ifdef SHARE_MAC
+#include "mac_shared.c"
+#endif
+```
+```python
+# pypeline — pypelinec top.py -D CLK_MHZ=125 -D SHARE_MAC=1
+CLK_MHZ = param("CLK_MHZ", 100.0)
+if param("SHARE_MAC", False):
+    import mac_shared
+```
+
+A `-D` name the design never declares with `param()` is still readable as a plain
+global, like an undefined-in-source C macro. See
+[pypeline_guide.md: Build Parameters](pypeline_guide.md#build-parameters-param-and--d).
+
 ---
 
 ## 13. Not Yet Supported

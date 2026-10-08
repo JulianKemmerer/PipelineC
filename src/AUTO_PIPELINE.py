@@ -2665,6 +2665,77 @@ def AUTO_PIPELINE_SERVED_VALUES_MATCH(served, latencies):
     return True
 
 
+# One record per pin-and-confirm pass whose design execution read a bottom-up
+# value: what each .latency read returned, what the sweep then built, and
+# where in the design the value was read. SWEEP.WRITE_SWEEP_HISTORY writes it
+# as sweep_history.json "latency_passes".
+LATENCY_PASS_RECORDS = []
+
+
+def _short_site(site):
+    def short(path_line):
+        path, _, line = path_line.rpartition(":")
+        try:
+            rel = os.path.relpath(path) if os.path.isabs(path) else path
+        except ValueError:  # another drive than the working directory (Windows)
+            rel = path
+        return (path if rel.startswith("..") else rel) + ":" + line
+
+    head, sep, via = site.partition(" (via ")
+    return short(head) + (f" (via {short(via[:-1])})" if sep else "")
+
+
+def RECORD_LATENCY_PASS(pass_number, built_auto_pipeline, built_auto_multi_cycle, outcome):
+    """Print and record which bottom-up values the design's Python read during
+    this pass's elaboration, what the build then realized for them, and where
+    they were read -- the reason another pass is (or is not) needed."""
+    import pypeline
+
+    rows = []
+    for kind, served, sites, built in (
+        (
+            "AUTO_PIPELINE",
+            pypeline.AUTO_PIPELINE_SERVED_LATENCIES(),
+            pypeline.AUTO_PIPELINE_READ_SITES(),
+            built_auto_pipeline,
+        ),
+        (
+            "AUTO_MULTI_CYCLE",
+            pypeline.AUTO_MULTI_CYCLE_SERVED_LATENCIES(),
+            pypeline.AUTO_MULTI_CYCLE_READ_SITES(),
+            built_auto_multi_cycle,
+        ),
+    ):
+        for key in sorted(served):
+            values = sorted(served[key])
+            built_value = built.get(key)
+            rows.append(
+                {
+                    "kind": kind,
+                    "key": key,
+                    "read": values,
+                    "built": built_value,
+                    "matches": built_value is None or values == [built_value],
+                    "read_at": sites.get(key, []),
+                }
+            )
+    if not rows:
+        return
+    LATENCY_PASS_RECORDS.append({"pass": pass_number, "outcome": outcome, "reads": rows})
+    print(
+        f"Bottom-up values read during pass {pass_number} elaboration (read -> built):",
+        flush=True,
+    )
+    for row in rows:
+        read = row["read"][0] if len(row["read"]) == 1 else row["read"]
+        built_text = "not built" if row["built"] is None else str(row["built"])
+        flag = "" if row["matches"] else "  <- differs"
+        print(f"  {row['kind']} {row['key']}: {read} -> {built_text}{flag}", flush=True)
+        for site in row["read_at"]:
+            print(f"      read at {_short_site(site)}", flush=True)
+    print(f"  => {outcome}", flush=True)
+
+
 def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_file):
     """AUTO_PIPELINE .latency pin-and-confirm passes (Pypeline designs only, see
     docs/AUTO_PIPELINE_DESIGN.md): if the design's Python read any AUTO_PIPELINE(...).latency,
@@ -2696,6 +2767,7 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
         )
         AUTO_MULTI_CYCLE.PRINT_AUTO_MULTI_CYCLE_NCYCLES(auto_multi_cycle)
     if auto_multi_cycle_match and not (latencies and pypeline.AUTO_PIPELINE_LATENCY_WAS_READ()):
+        RECORD_LATENCY_PASS(1, latencies, auto_multi_cycle, "every read matched what was built; no re-elaboration")
         return parser_state, multimain_timing_params
     if (
         auto_multi_cycle_match
@@ -2706,6 +2778,7 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
             )
         )
     ):
+        RECORD_LATENCY_PASS(1, latencies, auto_multi_cycle, "every read matched what was built; no re-elaboration")
         # Fixed latency=N call sites, a correct start_latency=S guess, or a
         # discovered 0: what the Python read is what was built.
         print(
@@ -2717,6 +2790,7 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
             print(f"AUTO_PIPELINE {key}: {lat} clks", flush=True)
         return parser_state, multimain_timing_params
 
+    RECORD_LATENCY_PASS(1, latencies, auto_multi_cycle, "re-elaborate with the built values (pass 2)")
     print("AUTO_PIPELINE: timing in the current latency-sized hardware is provisional; re-elaboration and confirmation are required.", flush=True)
     import PY_TO_LOGIC
     auto_pipeline_pass = 1
@@ -2795,7 +2869,16 @@ def DO_AUTO_PIPELINE_LATENCY_PASSES(parser_state, multimain_timing_params, src_f
             parser_state, multimain_timing_params.TimingParamsLookupTable
         )
         new_auto_multi_cycle = AUTO_MULTI_CYCLE.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(parser_state, multimain_timing_params)
-        if new_latencies == latencies and new_auto_multi_cycle == auto_multi_cycle:
+        converged = new_latencies == latencies and new_auto_multi_cycle == auto_multi_cycle
+        RECORD_LATENCY_PASS(
+            auto_pipeline_pass,
+            new_latencies,
+            new_auto_multi_cycle,
+            "converged: every read matches what was built"
+            if converged
+            else f"re-elaborate with the built values (pass {auto_pipeline_pass + 1})",
+        )
+        if converged:
             # The .latency values this pass's Python consumed equal
             # the stage counts actually built -- converged. (Meeting
             # timing alone is NOT sufficient to stop: a fallback sweep,
@@ -3222,6 +3305,16 @@ def DO_PIPELINED_BUILD(parser_state, args, src_file):
     return DO_SWEEP_AND_AUTO_PIPELINE(parser_state, args, src_file)
 
 
+# Entity files WRITE_ALL_NON_ZERO_CLK_VHDL_FILES rendered in this process.
+# Within one build an entity name fixes its rendered content (design source is
+# frozen and the name carries the timing hash), so a file written earlier in
+# the run is skipped. A file found on disk from an EARLIER run is not trusted:
+# the timing hash covers names and slices, not every detail of a function body
+# (swapped operands keep every name), so it is rendered again; VHDL's
+# WRITE_TEXT_IF_CHANGED leaves it untouched when identical.
+_NON_ZERO_CLK_FILES_WRITTEN = set()
+
+
 def WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(
     TimingParamsLookupTable, parser_state, extra_insts=None
 ):
@@ -3255,7 +3348,8 @@ def WRITE_ALL_NON_ZERO_CLK_VHDL_FILES(
                 if not os.path.exists(wr_syn_out_dir):
                     os.makedirs(wr_syn_out_dir)
                 wr_filename = wr_syn_out_dir + "/" + entity_name + ".vhd"
-                if not os.path.exists(wr_filename):
+                if wr_filename not in _NON_ZERO_CLK_FILES_WRITTEN:
+                    _NON_ZERO_CLK_FILES_WRITTEN.add(wr_filename)
                     VHDL.WRITE_LOGIC_ENTITY(
                         inst_name_to_wr,
                         wr_logic,

@@ -497,9 +497,36 @@ Hard errors (instead of silently-wrong hardware):
 - **No settling within the pass cap:** a `.latency`-derived change keeps perturbing
   timing enough to change the discovered stage counts themselves.
 
+**The pass report.** Each pass prints what its elaboration read, what was then built,
+and where in the source each value was read. This makes a re-elaboration
+explainable, and so makes clear which source line turned a bottom-up value into
+hardware.
+- **Recording reads.** `AUTO_PIPELINE.latency` (in sweep/fixed builds) and
+  `AUTO_MULTI_CYCLE.latency`/`.ncycles` record a site per read, beside the served value
+  (`pypeline.AUTO_PIPELINE_READ_SITES`, `AUTO_MULTI_CYCLE_READ_SITES`). The site is the
+  first frame outside `pypeline.py`. When that frame is in `include/pypeline` (a
+  factory sizing its own FIFO), it also names the nearest design frame:
+  `stream_auto_pipeline.py:111 (via top.py:20)`. A read inside a hardware body
+  happens while the elaborator folds a constant, in code compiled under a pseudo
+  file name (`<const_eval>`) that keeps the body's line numbers. Its site is the
+  elaborated function's own file at that line (the nearest frame whose `self` has a
+  `src_file`), for example `stream_multi_cycle.py:161`, the multi-cycle wrapper's
+  handshake compare.
+- **Recording each pass.** `AUTO_PIPELINE.RECORD_LATENCY_PASS` runs after pass 1's
+  skip-or-loop decision, and after each later pass's harvest. It records
+  `{pass, outcome, reads: [{kind, key, read, built, matches, read_at}]}` in
+  `LATENCY_PASS_RECORDS` and prints them. A pass whose elaboration read nothing
+  records nothing.
+- **sweep_history.json.** `SWEEP.WRITE_SWEEP_HISTORY` writes the records as
+  `latency_passes` (schema 4; see [SWEEP_DESIGN.md](SWEEP_DESIGN.md#plan)).
+- **Tests.** `bottom_up_report_test.py` (unit) covers the sites and rows.
+  `design_params_build_test.py` covers a re-elaborating sky130 build.
+
 Repeated-`PARSE_FILE` support (sys.modules eviction of the design import graph,
 per-parse compiler-cache cleanup via `DEL_ALL_CACHES`) lives in `PY_TO_LOGIC.py` —
-see `PY_TO_LOGIC_DESIGN.md`'s AUTO_PIPELINE section.
+see `PY_TO_LOGIC_DESIGN.md`'s AUTO_PIPELINE section. Design parameters (`param()`,
+`-D`) resolve once per process and are identical in every pass (see
+[pypeline_DESIGN.md](pypeline_DESIGN.md#design-parameters-param--d)).
 
 The converged harvest has one more consumer: a non-`--comb` `--sim` run hands it
 (plus the final per-MAIN latencies) to the native simulator at the end of the build,

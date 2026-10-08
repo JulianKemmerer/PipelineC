@@ -1,4 +1,5 @@
 import os
+import sys
 import xml.etree.ElementTree as ET
 
 import C_TO_LOGIC
@@ -498,17 +499,9 @@ def SYN_AND_REPORT_TIMING_NEW(
         os.makedirs(output_directory)
     log_path = f"{output_directory}/impl/gwsynthesis/{top_entity_name}_syn.rpt.html"
     # log_path = f"{output_directory}/impl/pnr/{top_entity_name}.tr"
-    # Use same configs based on to speed up run time?
-    log_to_read = log_path
 
-    # If log file exists dont run syn
-    if not is_final_top and os.path.exists(log_to_read) and use_existing_log_file:
-        # print "SKIPPED:", syn_imp_bash_cmd
-        print("Reading log", log_to_read)
-        with open(log_to_read, "r") as f:
-            log_text = f.read()
-            return ParsedHTMLTimingReport(log_text)
-    # Write top level vhdl for this module/multimain
+    # Render this run's inputs first: whether a log may be reused depends on
+    # them (SYN.REUSE_SYNTHESIS_LOG)
     if inst_name:
         VHDL.WRITE_LOGIC_ENTITY(
             inst_name,
@@ -542,6 +535,24 @@ def SYN_AND_REPORT_TIMING_NEW(
     vhdl_files_texts, top_entity_name = SYN.GET_VHDL_FILES_TCL_TEXT_AND_TOP(
         multimain_timing_params, parser_state, inst_name, is_final_top
     )
+
+    # A final (bitstream) build always runs
+    manifest = None
+    if not is_final_top:
+        manifest = SYN.SYNTHESIS_INPUT_MANIFEST(
+            "gowin",
+            parser_state.part,
+            top_entity_name,
+            vhdl_files_texts,
+            [constraints_filepath],
+            tool_paths=[GOWIN_PATH],
+            recipe_modules=[sys.modules[__name__]],
+        )
+        log_text = SYN.REUSE_SYNTHESIS_LOG(
+            "gowin", log_path, manifest, use_existing_log_file, read_errors="replace"
+        )
+        if log_text is not None:
+            return ParsedHTMLTimingReport(log_text)
 
     # Generate TCL file
     tcl_file = top_entity_name + ".tcl"
@@ -588,6 +599,8 @@ run {"all" if is_final_top else "syn"}
     # Read and parse log
     with open(log_path, "r", errors="replace") as f:
         log_text = f.read()
+    if manifest is not None:
+        SYN.RECORD_SYNTHESIS_LOG("gowin", log_path, manifest)
     return ParsedHTMLTimingReport(log_text)
 
 

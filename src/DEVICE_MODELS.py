@@ -14,6 +14,7 @@ import os, re, math
 import shlex
 import time
 
+
 ops = {}
 
 
@@ -1905,8 +1906,35 @@ def SYN_AND_REPORT_TIMING_NEW(
     if reuse_existing_log:
         mismatch_reason = _cached_timing_mismatch_reason(log_path, synthesis_inputs)
         reuse_existing_log = mismatch_reason is None
+    # The same inputs synthesized for another output directory (--syn_cache):
+    # the log, its structured report and the mapped netlist it names, restored
+    # under this run's own names, then validated like any other cached report
+    store_files = {
+        "log": log_path,
+        "timing_json": os.path.splitext(log_path)[0] + "_timing.json",
+        "mapped_json": _get_synthesis_recipe_artifact_paths(top_entity_name, output_directory)[
+            "mapped_json"
+        ],
+    }
+    from_store = False
+    if (
+        not reuse_existing_log
+        and use_existing_log_file
+        and SYN.SYNTHESIS_STORE_FETCH(
+            "device_models",
+            synthesis_inputs["identity_sha256"],
+            store_files,
+            synthesis_inputs,
+        )
+    ):
+        mismatch_reason = _cached_timing_mismatch_reason(log_path, synthesis_inputs)
+        reuse_existing_log = from_store = mismatch_reason is None
     if reuse_existing_log:
-        print("Reading log", log_path)
+        if from_store:
+            print("Reading log", log_path, f"(from synthesis store {SYN.SYNTHESIS_STORE_DIR})")
+        else:
+            SYN.COUNT_SYNTHESIS_RESULT("out_dir")
+            print("Reading log", log_path)
         log_text = open(log_path).read()
         # Component-planner caches have a distinct identity in SYN.py, while
         # an output directory may still contain a V2 log written before
@@ -1938,6 +1966,13 @@ def SYN_AND_REPORT_TIMING_NEW(
             output_directory,
             log_path,
             synthesis_inputs=synthesis_inputs,
+        )
+        SYN.COUNT_SYNTHESIS_RESULT("run")
+        SYN.SYNTHESIS_STORE_INSERT(
+            "device_models",
+            synthesis_inputs["identity_sha256"],
+            store_files,
+            synthesis_inputs,
         )
 
     parsed = ParsedTimingReport(log_text)

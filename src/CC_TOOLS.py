@@ -110,20 +110,9 @@ def SYN_AND_REPORT_TIMING_NEW(
         os.makedirs(output_directory)
     log_path = output_directory + "/" + log_file_name
     syn_log_path = output_directory + "/syn_" + log_file_name  # Need separate logs?
-    # Use same configs based on to speed up run time?
-    log_to_read = log_path
 
-    # If log file exists dont run syn
-    if os.path.exists(log_to_read) and use_existing_log_file:
-        # print "SKIPPED:", syn_imp_bash_cmd
-        print("Reading log", log_to_read)
-        f = open(log_path, "r")
-        log_text = f.read()
-        f.close()
-        return ParsedTimingReport(log_text)
-    # Not from log:
-
-    # Write top level vhdl for this module/multimain
+    # Render this run's inputs first: whether a log may be reused depends on
+    # them (SYN.REUSE_SYNTHESIS_LOG)
     if inst_name:
         VHDL.WRITE_LOGIC_ENTITY(
             inst_name,
@@ -152,6 +141,27 @@ def SYN_AND_REPORT_TIMING_NEW(
         parser_state, inst_name
     )
 
+    # Imported lazily (not at module scope) to avoid a circular-import order
+    # dependency: SYN imports CC_TOOLS before OPEN_TOOLS, and OPEN_TOOLS
+    # itself imports SYN back, so a top-level "import OPEN_TOOLS" here can
+    # observe a partially-initialized OPEN_TOOLS module depending on which
+    # module happens to be imported first.
+    import OPEN_TOOLS
+
+    manifest = SYN.SYNTHESIS_INPUT_MANIFEST(
+        "cc_tools",
+        parser_state.part,
+        top_entity_name,
+        vhdl_files_texts,
+        [constraints_filepath],
+        tool_paths=[CC_TOOLS_PATH + "/bin/yosys/yosys", CC_TOOLS_PATH + "/bin/p_r/p_r"],
+        recipe_modules=[sys.modules[__name__], OPEN_TOOLS],
+    )
+    log_text = SYN.REUSE_SYNTHESIS_LOG("cc_tools", log_path, manifest, use_existing_log_file)
+    if log_text is not None:
+        return ParsedTimingReport(log_text)
+    # Not from log:
+
     # Generate build scripts
     # TODO dont base on cc-toolchain directory?
     CC_TOOLS_YOSYS = CC_TOOLS_PATH + "/bin/yosys/yosys"
@@ -161,13 +171,6 @@ def SYN_AND_REPORT_TIMING_NEW(
     shutil.rmtree(temp_local_out_dir, ignore_errors=True)
     os.makedirs(temp_local_out_dir)
     os.makedirs(f"{output_directory}/net", exist_ok=True)
-    # Imported lazily (not at module scope) to avoid a circular-import order
-    # dependency: SYN imports CC_TOOLS before OPEN_TOOLS, and OPEN_TOOLS
-    # itself imports SYN back, so a top-level "import OPEN_TOOLS" here can
-    # observe a partially-initialized OPEN_TOOLS module depending on which
-    # module happens to be imported first.
-    import OPEN_TOOLS
-
     yosys_script_arg = OPEN_TOOLS.WRITE_YOSYS_SCRIPT(
         [
             f"ghdl --std=08 --warn-no-binding -C --ieee=synopsys {vhdl_files_texts}"
@@ -198,4 +201,5 @@ def SYN_AND_REPORT_TIMING_NEW(
     log_text = f.read()
     f.close()
     shutil.rmtree(temp_local_out_dir, ignore_errors=True)
+    SYN.RECORD_SYNTHESIS_LOG("cc_tools", log_path, manifest)
     return ParsedTimingReport(log_text)

@@ -424,9 +424,11 @@ def _evict_design_modules():
 
 def _import_design(path: str):
     """Import a pypeline design file, triggering all decorator registrations."""
-    # Clear any previously registered MAINs/hooks from a prior import in the same process.
+    # Clear any previously registered MAINs/hooks/param() declarations from a
+    # prior import in the same process (param() values persist: one per process).
     pypeline._main_registry.clear()
     pypeline._hook_registry.clear()
+    pypeline.RESET_DESIGN_PARAM_DECLARATIONS()
 
     abs_path = os.path.abspath(path)
     spec = importlib.util.spec_from_file_location("pypeline_design", abs_path)
@@ -460,7 +462,13 @@ def _import_design(path: str):
     import operators.soft as _pypeline_default_soft_ops
 
     _pypeline_default_soft_ops.register_sw_lib_replacements()
+    modules_before = set(sys.modules)
     spec.loader.exec_module(module)
+    # Same -D checks and parameter table as PY_TO_LOGIC.PARSE_FILE
+    pypeline.CHECK_DESIGN_PARAM_USE(
+        pypeline.DESIGN_PARAM_SOURCE_FILES(set(sys.modules) - modules_before, abs_path)
+    )
+    pypeline.PRINT_DESIGN_PARAM_BANNER_ONCE()
     return module
 
 
@@ -489,7 +497,19 @@ def main() -> None:
             "bit-indexing on arithmetic results will not work."
         ),
     )
+    parser.add_argument(
+        "-D",
+        "--define",
+        action="append",
+        default=[],
+        metavar="NAME[=VALUE]",
+        help="Set a design parameter, as for pypelinec (see param()). Repeatable.",
+    )
     args = parser.parse_args()
+    try:
+        pypeline.SET_DESIGN_PARAMS(pypeline.PARSE_DESIGN_PARAM_DEFINES(args.define))
+    except pypeline.DesignParamError as e:
+        parser.error(str(e))
     run_sim(args.design_file, args.run, sim_mode=args.mode)
 
 

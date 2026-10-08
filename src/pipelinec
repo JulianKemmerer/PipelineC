@@ -55,6 +55,24 @@ parser.add_argument(
     help="Output directory. Default is a new directory inside the current directory.",
 )
 parser.add_argument(
+    "-D",
+    "--define",
+    action="append",
+    default=[],
+    metavar="NAME[=VALUE]",
+    help="Set design parameter NAME (Pypeline designs). The design reads it with "
+    "NAME = param('NAME', default), or, if it declares no such param(), as a "
+    "plain global like a C macro. A bare -D NAME means True. Repeatable. "
+    "Every build prints and records (source_provenance.json) each parameter's "
+    "value and where it came from.",
+)
+parser.add_argument(
+    "--list_params",
+    action="store_true",
+    help="Import the design (no elaboration), list the parameters it declares "
+    "with param() -- type, default, allowed values, help -- and exit.",
+)
+parser.add_argument(
     "--verilog",
     help="Use GHDL+Yosys to convert the final top level VHDL files to Verilog.",
     action="store_true",
@@ -260,6 +278,25 @@ parser.add_argument(
     help="Specify a pin constraints file.",
 )
 parser.add_argument(
+    "--syn_cache",
+    type=str,
+    default=None,
+    metavar="DIR",
+    help="Share synthesis results between output directories through the store "
+    "DIR: a run whose exact inputs (HDL and constraint bytes, part, tool, "
+    "recipe) were synthesized before reuses that result. Without it, each "
+    "--out_dir's own logs are its cache. Entries are validated in full on "
+    "every use; deleting DIR is always safe.",
+)
+parser.add_argument(
+    "--syn_cache_prune",
+    type=float,
+    default=None,
+    metavar="DAYS",
+    help="At the end of the build, remove --syn_cache store entries no build "
+    "has used for DAYS days.",
+)
+parser.add_argument(
     "-j",
     "--jobs",
     type=int,
@@ -317,6 +354,28 @@ src_file = os.path.abspath(args.src_file)
 pins_file = os.path.abspath(args.pins) if args.pins else None
 if not (src_file.endswith(".c") or src_file.endswith(".py")):
     sys.exit(f"Unrecognized source file type: {src_file} (expected .c or .py)")
+
+# Design parameters (-D): installed before anything imports the design -- the
+# comb native-sim shortcut below, --list_params, or the first PARSE_FILE --
+# and kept for every later re-elaboration pass and simulation import
+import pypeline
+
+try:
+    _design_defines = pypeline.PARSE_DESIGN_PARAM_DEFINES(args.define)
+    if _design_defines and not src_file.endswith(".py"):
+        sys.exit(
+            "-D sets Pypeline (.py) design parameters; a C design uses #define."
+        )
+    pypeline.SET_DESIGN_PARAMS(_design_defines)
+    if args.list_params:
+        if not src_file.endswith(".py"):
+            sys.exit("--list_params applies to Pypeline (.py) designs.")
+        pypeline._design_param_banner_printed = True  # the listing says it all
+        pypeline_sim._import_design(src_file)
+        print(pypeline.DESIGN_PARAM_LIST_TEXT(src_file))
+        sys.exit(0)
+except pypeline.DesignParamError as e:
+    sys.exit(f"ERROR: {e}")
 
 # Output dir:
 #   Use what user provided
@@ -389,7 +448,10 @@ SIM.SET_SIM_TOOL(args, src_file)
 # A comb-only native Pypeline (.py) simulation run needs no build at all -- see
 # SIM.NATIVE_SIM_SKIPS_BUILD.
 if SIM.NATIVE_SIM_SKIPS_BUILD(args):
-    SIM.DO_OPTIONAL_SIM(True, None, args, source_file=src_file)
+    try:
+        SIM.DO_OPTIONAL_SIM(True, None, args, source_file=src_file)
+    except pypeline.DesignParamError as e:
+        sys.exit(f"ERROR: {e}")
     sys.exit(0)
 # AXIS XO file switch
 SYN.WRITE_AXIS_XO_FILE = args.xo_axis
@@ -412,6 +474,12 @@ elif args.part is not None:
 if args.jobs is not None and args.jobs < 1:
     sys.exit(f"--jobs must be at least 1, got {args.jobs}")
 SYN.NUM_PROCESSES = args.jobs
+# Synthesis results shared by several output directories (SYN.SYNTHESIS_STORE_DIR)
+if args.syn_cache_prune is not None and not args.syn_cache:
+    sys.exit("--syn_cache_prune needs --syn_cache DIR (the store to prune).")
+if args.syn_cache:
+    SYN.SYNTHESIS_STORE_DIR = os.path.abspath(args.syn_cache)
+    os.makedirs(SYN.SYNTHESIS_STORE_DIR, exist_ok=True)
 # Mux path-delay cache key override (None = automatic per SYN_TOOL)
 SYN.MUX_DELAY_KEY_BY_WIDTH = args.mux_delay_by_width
 # AUTO_FSM area-search escape hatch: real sky130 um2 is used automatically
@@ -422,6 +490,24 @@ AUTO.FORCE_ABSTRACT_AREA = args.auto_fsm_abstract_area
 # Every exit from here on -- done, TIMING NOT MET, or an error -- ends by
 # saying how long the build ran and where the time went
 atexit.register(lambda: print(SYN.ELAPSED_SUMMARY_STR(), flush=True))
+
+
+def _syn_cache_exit():
+    # Registered after the elapsed summary, so it prints just before it
+    line = SYN.SYNTHESIS_REUSE_SUMMARY_LINE()
+    if line:
+        print(line, flush=True)
+    if args.syn_cache_prune is not None:
+        removed = SYN.SYNTHESIS_STORE_PRUNE(args.syn_cache_prune)
+        print(
+            f"Synthesis store {SYN.SYNTHESIS_STORE_DIR}: removed {removed} "
+            f"entr{'y' if removed == 1 else 'ies'} unused for "
+            f"{args.syn_cache_prune:g} days",
+            flush=True,
+        )
+
+
+atexit.register(_syn_cache_exit)
 
 print(
     "================== Parsing C Code to Logical Hierarchy ================================",
@@ -444,7 +530,10 @@ elif src_file.endswith(".py"):
     PY_TO_LOGIC.FREEZE_DESIGN_SOURCES(SYN.SYN_OUTPUT_DIRECTORY)
     # First parse only: runs the design's @initial(syn) hooks after its import,
     # before elaboration
-    parser_state = PY_TO_LOGIC.PARSE_FILE(src_file, run_syn_initial_hooks=True)
+    try:
+        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file, run_syn_initial_hooks=True)
+    except pypeline.DesignParamError as e:
+        sys.exit(f"ERROR: {e}")
     # Every struct this design serializes to bytes registered itself while the
     # design was imported (pypeline._host_register, called from
     # make_type_to_bytes/make_type_from_bytes). Write the standalone Python

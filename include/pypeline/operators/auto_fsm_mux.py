@@ -20,13 +20,12 @@ FSM source:
   * ONE ENTITY PER (element type, fold count). The factory is memoized, so one
     shape is one canonical entity name -- a pure function of (type, n), stable
     across the driver's repeated re-elaborations. That stability is what lets
-    its measured delay be cached on disk and reused build after build.
+    one measurement serve every pass of a build.
 
-  * LIVES IN include/pypeline/operators/. Not because it is an operator
-    overload, but because SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE treats
-    everything under this directory as shipped library code rather than user
-    code -- which is exactly what makes a measured delay eligible for
-    cache/delay. A mux shape measured once is measured for good.
+  * LIVES IN include/pypeline/operators/, with the other shipped operator
+    code, though it is not an operator overload. Its measurement is an
+    ordinary synthesis run, reused whenever its inputs are identical: from
+    the output directory, or across output directories with --syn_cache.
 
 The entity AUTO_FSM measures IS the entity AUTO_FSM instantiates: the generated
 FSM calls the very same memoized hw_func whose delay the scheduler read.

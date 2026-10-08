@@ -8,7 +8,7 @@ old macro library. Only every 5th sample launches a computation into the
 auto-pipelined blob; the output stream runs at 1/5 the input rate, and
 backpressure freezes the sample window exactly.
 
-Run the simulation (writes fir_decim5_tb.png; PYPELINE_TB_SHOW=1 for a window):
+Run the simulation (writes fir_decim5_tb.png; add -D PYPELINE_TB_SHOW=1 for a window):
 
     pypelinec examples/pypeline/dsp/fir_decim_tb.py --sim --comb --run 1800
 """

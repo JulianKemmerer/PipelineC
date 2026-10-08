@@ -200,8 +200,9 @@ OpenXC7 sibling uses that same source but adds `--part xc7a35tcpg236-1`, since
 selecting `open_tools` alone intentionally retains the established ECP5
 default.
 
-**Per-tool clock goals** come from `synth_tests.SWEEP_FLOAT32_MHZ`, passed via
-`Test.env` as `SWEEP_FLOAT32_MHZ`. A float32 adder's unpipelined fmax differs
+**Per-tool clock goals** come from `synth_tests.SWEEP_FLOAT32_MHZ`, passed on each
+registration's command line as `-D SWEEP_FLOAT32_MHZ=<goal>` (the design reads it with
+`param()`). A float32 adder's unpipelined fmax differs
 by an order of magnitude between an ASIC standard-cell model and an FPGA, so
 one shared goal would either cut nothing on the fast tools or churn on the
 slow ones. Each goal sits above the design's comb fmax (so the sweep must
@@ -766,8 +767,9 @@ With the check disabled, all seven rejection cases fail.
 `conditional_import_test.py` (`elab_introspect`) covers design modules chosen by
 module-level `if`/`try` imports (see
 [Conditional imports](PY_TO_LOGIC_DESIGN.md#conditional-imports-module-level-if--try)). Each
-case writes small modules to a temp dir under fresh names. Environment variables set
-before each in-process `PARSE_FILE` pick the branch; the parse's `sys.modules` eviction
+case writes small modules to a temp dir under fresh names. Design parameters installed
+with `pypeline.SET_DESIGN_PARAMS` before each in-process `PARSE_FILE` pick the branch
+(the generated modules read them with `param()`). The parse's `sys.modules` eviction
 re-executes the modules. Most choosable modules own a `@MAIN` that drives their wire.
 Every module that must stay out declares a wire nothing writes, so discovering it by
 mistake fails the "written by at least 1 function" check.
@@ -800,11 +802,82 @@ Every case fails on the tree before the fix. Two wrong fixes are caught as well.
 Treating every nested import as taken fails "both choices" and "untaken". Treating a
 from-import as taken when its module is merely in `sys.modules` fails "untaken".
 
+## Design parameter coverage
+
+`param()` and `-D NAME=VALUE` (see
+[Build Parameters](pypeline_guide.md#build-parameters-param-and--d)). Every test design
+that varies per registration reads its settings through `param()`, and each
+registration passes `-D` on the command line. Examples are the
+`SWEEP_FLOAT32_MHZ` matrix, the `AUTO_PIPELINE_RAM_*` builds and the `MCP_DSP_START`
+packing runs.
+
+- **`design_params_test.py`** (unit, in-process):
+  - precedence: `-D`, then `env=` (only when set and non-empty), then the default;
+  - conversion per type, including errors that name the source and the declaration line;
+  - `choices`, matching and conflicting duplicate declarations, and a bare `-D NAME`;
+  - invalid names (a builtin, a keyword, a dunder);
+  - one resolution per process, which a new table resets;
+  - builtins injection and its restore;
+  - the post-import checks: an unused name (with its suggestion), a module-level shadow,
+    and a declared name read as a bare global, while a real injected read passes;
+  - per-parse re-registration in `PARSE_FILE`;
+  - the report, banner, `--list_params` text and `source_provenance.json`.
+- **`design_params_build_test.py`** (build_report_device_models), through the drivers:
+  - `-D` changes a port width and a constant in `--comb --no_synth` VHDL;
+  - the printed and recorded parameter tables;
+  - `--list_params` lists declarations without elaborating;
+  - a value outside `choices` and a misspelled name fail with one line;
+  - injected globals reach module code and a hardware body;
+  - native sim sees the values from `pypeline_sim.py` and from `pypelinec --sim --comb`.
+
+  Its last case is a re-elaborating sky130 build
+  (`design_params_pass2_design.py`, about 5 minutes). It must import the design with
+  identical values in every pass, and print and record the bottom-up value report.
+- **`bottom_up_report_test.py`** (unit): `.latency` read sites, both a direct design read
+  and a read inside `make_stream_auto_pipeline` that names the calling design line. Also
+  AUTO_MULTI_CYCLE `.latency`/`.ncycles` sites, and `AUTO_PIPELINE.RECORD_LATENCY_PASS`
+  rows (read vs built, match, sites) and their printed table. An in-process parse of
+  `stream_auto_multi_cycle_test.py` checks that the multi-cycle wrapper's hardware-body
+  read names `stream_multi_cycle.py` at that line, never the elaborator's `<const_eval>`.
+
+## Synthesis cache coverage
+
+`syn_cache_test.py` (build_report_pyrtl, about a minute) covers synthesis result reuse
+(see [SYN_DESIGN.md §6](SYN_DESIGN.md#6-caches)).
+- **In-process:**
+  - `SYN.SYNTHESIS_INPUT_MANIFEST` is path-independent and changes with HDL bytes,
+    constraints, part, tool installation, recipe module and run settings;
+  - `SYN.REUSE_SYNTHESIS_LOG` reads only a log whose record matches. A log with no record, or a
+    different one, is moved aside (`.stale`, `.stale2`, ...), and so is any log
+    before a requested fresh run;
+  - the store round-trips under another directory's log name, ignores unreadable and
+    foreign entries, replaces a damaged entry on the next insert, and prunes by age,
+    half-written entries from an interrupted insert included.
+- **PyRTL builds:**
+  - **Stale inputs.** Swapping a subtraction's operands keeps every log name. The
+    rebuild in the same `--out_dir` must set every log aside, naming the changed
+    HDL, and re-synthesize.
+  - **Final VHDL.** The same kind of edit on a pipelined design keeps the pipelined
+    entity's file name, and that file must be rewritten.
+  - **Shared store.** A second fresh directory sharing `--syn_cache` synthesizes
+    nothing and ends with the same final record.
+  - **Simulation-only parameter.** A `-D` value only simulation code reads reuses
+    every result.
+  - **Netlist export.** Two `--yosys_json` runs into fresh directories sharing one
+    store must both run yosys and write the netlist. A store hit restores only a log,
+    so before this rule the second run wrote no netlist.
+
+The stale-input and final-VHDL cases fail on the tree before this change. The old
+log was read, nothing was re-synthesized, and the same-named pipelined entity kept
+its earlier VHDL.
+
 ## `@initial` / `@final` hook coverage
 
 One design, `inst/hooks_design.py`, serves every hook test. Each hook appends its name to
-`EVENTS` and prints `HOOK: <name>`. The `HOOKS_TEST_MODE` environment variable picks the
+`EVENTS` and prints `HOOK: <name>`. The `HOOKS_TEST_MODE` design parameter picks the
 variant: `finish`, `cutoff`, `assert`, `final_raises`, `hook_finish` or `call_from_hw`.
+Subprocess runs pass it as `-D HOOKS_TEST_MODE=...`, and `hooks_test` installs it with
+`pypeline.SET_DESIGN_PARAMS`.
 
 - **`hooks_test`** (`native_sim`, plain `python3`) runs the design in-process through
   `pypeline_sim.run_sim` and reads `EVENTS` through a hook's `__globals__`. Checks:

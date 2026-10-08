@@ -187,9 +187,10 @@ class Test:
         default_factory=list
     )  # external tool names (shutil.which) needed to run at all
     # Extra environment variables for the subprocess, on top of the inherited
-    # environment. Lets one design file be registered several times with a
-    # different parameter each -- the per-SYN_TOOL sweep matrix uses it to give
-    # each backend its own clock goal without a near-duplicate design per tool.
+    # environment (PYTHONHASHSEED, tool settings). Design parameters go on the
+    # command line instead (cmd += ["-D", "NAME=VALUE"]): that is how one design
+    # file is registered several times, e.g. the per-SYN_TOOL sweep matrix
+    # giving each backend its own clock goal.
     env: dict = dataclasses.field(default_factory=dict)
 
 

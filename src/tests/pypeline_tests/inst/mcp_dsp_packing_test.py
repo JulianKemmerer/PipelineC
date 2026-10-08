@@ -1,7 +1,6 @@
 #!/usr/bin/env python3
 """Real Vivado MCP packing/coverage test; --prepare-only needs no Vivado run."""
 import argparse
-import os
 from pathlib import Path
 import re
 import subprocess
@@ -27,14 +26,13 @@ def run(cmd, out, name, env=None):
 
 
 def build(out, start, prepare=False, comb=False, name="build"):
-    env = dict(os.environ)
-    env["MCP_DSP_START"] = str(start)
-    cmd = [sys.executable, SRC / "pypelinec", DESIGN, "--out_dir", out]
+    cmd = [sys.executable, SRC / "pypelinec", DESIGN, "--out_dir", out,
+           "-D", f"MCP_DSP_START={start}"]
     if prepare:
         cmd += ["--comb", "--no_synth"]
     elif comb:
         cmd.append("--comb")
-    text = run(cmd, out, name, env)
+    text = run(cmd, out, name)
     if not prepare:
         # Let the outer suite verify this backend actually ran.
         for line in text.splitlines():
@@ -51,9 +49,11 @@ def oracle(a, b, salt):
 
 
 def native_protocol(count):
-    os.environ["MCP_DSP_START"] = str(count)
-    import mcp_dsp_packing_design as design
+    import pypeline
     from pypeline import sim_call, sim_reset
+
+    pypeline.SET_DESIGN_PARAMS({"MCP_DSP_START": str(count)})
+    import mcp_dsp_packing_design as design
 
     for wrapper, n in ((design.fixed_mcp, 4), (design.auto_mcp, count)):
         for a, b, salt in ((17, 41, [13, 29]), (65535, 65535, [65535, 65535]), (0, 0, [0, 0]), (1, 19, [32768, 2])):

@@ -57,6 +57,7 @@ one paragraph per change.
 - [Struct Support](#struct-support)
 - [Annotation Types](#annotation-types)
 - [`PART()` and `@MAIN` Pragmas](#part-and-main-pragmas)
+- [Design Parameters (`param()`, `-D`)](#design-parameters-param--d)
 - [Operator Registry](#operator-registry)
 - [Casting](#casting)
 - [`SimVal` — Typed Simulation Integer](#simval--typed-simulation-integer)
@@ -1257,6 +1258,60 @@ flag). See
 | `_main_registry` | `list` | All `@MAIN`-wrapped functions, in decoration order | `pypeline_sim.py` — to discover MAINs for multi-MAIN sim |
 | `_main_mhz_registry` | `dict[str, float]` | `func.__name__` → MHz | `PY_TO_LOGIC.PARSE_FILE` — populates `parser_state.main_mhz` |
 | `_part_registry` | `str \| None` | FPGA part string | `PY_TO_LOGIC.PARSE_FILE` — populates `parser_state.part` |
+| `_design_param_decls` | `dict[str, _ParamDecl]` | `param()` declarations of the current design import (reset per import) | `DESIGN_PARAM_LIST_TEXT` (`--list_params`), the parameter banner, `DESIGN_PARAM_REPORT` (`source_provenance.json`) |
+| `_design_param_values` | `dict[str, (value, source)]` | Each design parameter's value and its source (`-D`, `env:VAR`, `default`), resolved once per process | every later `param()` call: re-elaboration passes and simulation imports |
+| `_design_param_defines` | `dict[str, str \| True]` | The `-D` table (`SET_DESIGN_PARAMS`); every name is also installed in `builtins` | `param()`, the injected-global checks |
+
+`param()` and `-D NAME=VALUE` are described for users in
+[Build Parameters](pypeline_guide.md#build-parameters-param-and--d) and below in
+[Design Parameters](#design-parameters-param--d).
+
+---
+
+## Design Parameters (`param()`, `-D`)
+
+The user-facing rules are in
+[Build Parameters](pypeline_guide.md#build-parameters-param-and--d). Everything here is
+in `pypeline.py`'s "Design parameters" section. The elaborator's part (per-parse reset,
+injected constants in hardware bodies, provenance) is in
+[PY_TO_LOGIC_DESIGN.md](PY_TO_LOGIC_DESIGN.md#design-parameters-param--d).
+
+- **State** lives in this runtime module, like the AUTO_PIPELINE latency cache, so
+  eviction between passes never drops it:
+  - `_design_param_defines` holds the `-D` table, installed by `SET_DESIGN_PARAMS`
+    before the first import;
+  - `_design_param_values` holds `name -> (value, source)`. A name resolves once per
+    process, at its first `param()` call, so every parse and every simulation import
+    returns the same value, and an `env=` variable is read once;
+  - `_design_param_decls` holds the declarations of the current import.
+    `PARSE_FILE` and `pypeline_sim._import_design` reset it
+    (`RESET_DESIGN_PARAM_DECLARATIONS`), and the re-executed design re-registers.
+- **Injected globals.** `SET_DESIGN_PARAMS` also installs every `-D` name in
+  `builtins` (parsed as a Python literal, else a string), saving whatever it replaced.
+  A new table restores it.
+- **Checks after each import** (`CHECK_DESIGN_PARAM_USE`). Only run when a `-D` table
+  is installed. They cover the design's own source files (`DESIGN_PARAM_SOURCE_FILES`):
+  the top file plus the modules the import loaded, minus the standard library,
+  installed packages, `src/*.py` and `include/`. `symtable` reads each file (the frozen
+  text, when frozen) and lists:
+  - module-scope bindings, including `global` assignments in functions;
+  - unbound global reads, at module scope and in every nested scope.
+
+  From those, the check rejects:
+  - an injected name nothing reads (with `difflib` suggestions);
+  - an injected name some file binds at module level;
+  - a declared name some file reads as an unbound global.
+- **Recording.** `PRINT_DESIGN_PARAM_BANNER_ONCE` prints the table after the first
+  import of a process. `DESIGN_PARAM_REPORT()` is the `design_params` record in
+  `source_provenance.json`, and `DESIGN_PARAM_LIST_TEXT` is the `--list_params` output.
+- **Drivers.** `pipelinec` and `pypeline_sim.py` both parse `-D`
+  (`PARSE_DESIGN_PARAM_DEFINES`). `pipelinec` installs the table before anything
+  imports the design: the comb native-sim shortcut, `--list_params`, or the first
+  `PARSE_FILE`. It turns `DesignParamError` into a one-line error.
+
+`design_params_test.py` (unit) and `design_params_build_test.py`
+(build_report_device_models) cover it; see
+[pypeline_TESTS.md](pypeline_TESTS.md#design-parameter-coverage).
 
 ---
 
@@ -2070,6 +2125,8 @@ shared `Logic.vhdl_module_text` field (also used by the C frontend's `__vhdl__("
 | `NamedTuple` | Re-export of `typing.NamedTuple` |
 | `@struct` | Adds `__class_getitem__`, stamps canonical `_pypeline_ctype_name`, wraps scalar fields in sim |
 | `@MAIN` | Registers a function as a hardware entry point; implies `@hw_func`; appends to `_main_registry` |
+| `param(name, default, *, type, choices, help, env)` | Declares a build parameter and returns its value for this build: `-D NAME=VALUE`, else environment variable `env` (only when given and set), else `default` ([Design Parameters](#design-parameters-param--d)) |
+| `SET_DESIGN_PARAMS`, `PARSE_DESIGN_PARAM_DEFINES`, `CHECK_DESIGN_PARAM_USE`, `DESIGN_PARAM_REPORT`, `DESIGN_PARAM_LIST_TEXT`, `PRINT_DESIGN_PARAM_BANNER_ONCE` | Driver side of `param()`: install and parse the `-D` table, check how the design uses injected names after an import, and produce the `source_provenance.json` record, the `--list_params` text and the build banner |
 | `@sim_output` | Marks a function as simulation output-only; no-op during convergence passes; executes in final pass per cycle |
 | `sim_print(fstring_or_str)` | printf-style console output — same once-per-cycle firing as `@sim_output`, but *also* elaborates to a real VHDL `write(output, ...)` statement (see `PY_TO_LOGIC_DESIGN.md`) |
 | `sim_assert(cond, msg=None)` | simulation-only condition check — raises `AssertionError` in native sim, elaborates to VHDL `assert ... report ... severity failure;` (see `PY_TO_LOGIC_DESIGN.md`) |

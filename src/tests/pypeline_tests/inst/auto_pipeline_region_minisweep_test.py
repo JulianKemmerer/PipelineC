@@ -20,7 +20,7 @@ import sys
 THIS_DIR = os.path.dirname(os.path.abspath(__file__))
 PYPELINEC = os.path.join(THIS_DIR, "../../../pypelinec")
 DESIGN = os.path.join(THIS_DIR, "auto_pipeline_region_minisweep_design.py")
-ENV = "AUTO_PIPELINE_REGION_MINISWEEP_START_LATENCY"
+PARAM = "AUTO_PIPELINE_REGION_MINISWEEP_START_LATENCY"
 MAX_FULL_SYN_RUNS = 3
 
 
@@ -30,16 +30,14 @@ def fail(msg):
 
 
 def build(out_dir, start_latency):
-    env = dict(os.environ)
-    env.pop(ENV, None)
-    if start_latency is not None:
-        env[ENV] = str(start_latency)
     cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "device_models"]
     if out_dir:
         cmd += ["--out_dir", out_dir]
-    print(f"Running ({ENV}={start_latency}):", " ".join(cmd), flush=True)
+    if start_latency is not None:
+        cmd += ["-D", f"{PARAM}={start_latency}"]
+    print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
     )
     out = result.stdout
     print(out)

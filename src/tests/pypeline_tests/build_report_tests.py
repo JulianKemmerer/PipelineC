@@ -97,6 +97,18 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    # -D through the drivers: VHDL changes, the printed/recorded parameter
+    # table, --list_params, bad values and names, injected globals, native sim
+    # from pypeline_sim.py and pypelinec, and identical values in every pass of
+    # a re-elaborating sky130 build (~5 min, that one build).
+    tests.append(
+        Test(
+            name="design_params_build_test",
+            category=DM,
+            cmd=[INST_DIR / "design_params_build_test.py"],
+            needs_out_dir=True,
+        )
+    )
     # start_latency= is only a starting guess: a ChaCha-shaped repeated
     # helper inside a start_latency=1 region takes the same mini-sweep lock
     # and reaches the same depth as the untagged call site (two builds,
@@ -382,6 +394,21 @@ def get_tests() -> list:
     # fail its pipelined build with the clear PYRTL "no timing paths" error --
     # not the old divide-by-zero / float-parse failure, and not by getting
     # stuck in the single-stateful-main coarse sweep first.
+    # Synthesis result reuse (SYN.py): the input manifest, out_dir log
+    # validation and the shared store in-process, then PyRTL builds -- an
+    # operand swap keeps every name yet must re-synthesize and rewrite the
+    # final pipelined VHDL in a reused --out_dir (both failed before), two
+    # output directories sharing --syn_cache, and a simulation-only -D
+    # reusing every result. About a minute.
+    tests.append(
+        Test(
+            name="syn_cache_test",
+            category=PYRTL,
+            cmd=[INST_DIR / "syn_cache_test.py"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+        )
+    )
     tests.append(
         Test(
             name="pyrtl_no_timing_paths_build_report_test",

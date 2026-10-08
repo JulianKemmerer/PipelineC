@@ -2987,21 +2987,17 @@ result = pypeline_tests.abs_int32(a)   # make_abs(int32_t, uint32_t) result
 
 ### Module-level constants from imported files
 
-Constants defined in a sub-file (e.g. `SHIFT_AMOUNT = 5` in `pypeline_tests.py`) are
-**not** directly accessible in hardware function bodies of the top file. The elaborator
-resolves bare names against `module_globals` of the top file; a bare `SHIFT_AMOUNT` is
-not there, and `pypeline_tests.SHIFT_AMOUNT` in a hardware body is an `ast.Attribute`
-that `_resolve_module_wire_name` rejects (not a wire).
+A constant defined in a sub-file (e.g. `SHIFT_AMOUNT = 5` in `pypeline_tests.py`)
+reaches a hardware body of another file the same ways it reaches Python code:
+- **`pypeline_tests.SHIFT_AMOUNT`.** That is an `ast.Attribute`.
+  `_resolve_module_wire_name` finds no wire, and `_elab_ref_read` falls back to
+  `_try_eval_const`, which evaluates the attribute against the file's globals.
+- **Bare `SHIFT_AMOUNT` after `from pypeline_tests import SHIFT_AMOUNT`.** The name is
+  in `module_globals`, step 3 of `_elab_name`.
 
-The correct pattern is to copy the constant at module level in the top file:
-
-```python
-import pypeline_tests
-SHIFT_AMOUNT = pypeline_tests.SHIFT_AMOUNT   # now in module_globals as a plain int
-```
-
-Inside hardware function bodies, `SHIFT_AMOUNT` is then resolved via `module_globals`
-as an elaboration-time constant (integer), not a hardware wire.
+A bare name the file never imported is an unknown name, as in Python. This is how a
+`param()` value declared in one config module is used everywhere (see
+[Design parameters](#design-parameters-param--d)).
 
 ### Struct types — no mangling
 
@@ -5068,12 +5064,39 @@ being called more than once per process:
   rejects — into VHDL), and `_other_partial_logic_cache` would merge Logic objects
   mutated by the previous parse's trimming.
 - The `.latency` read flag is reset at the top of every parse.
+- **Design parameters** keep their values across parses. Their declarations
+  re-register per parse (next section).
 
 `src/tests/pypeline_tests/inst/double_parse_file_test.py` regression-tests all of this
 in-process. Its freeze case runs in a subprocess, because the hook patches that
 process's import loader. It edits a two-file design between parses and checks
 that the second parse elaborates the frozen code, that `inspect.getsource` stays
 frozen, that the scope rules hold, and that the manifest records the drift.
+
+### Design parameters (`param()`, `-D`)
+
+The user-facing rules are in
+[Build Parameters](pypeline_guide.md#build-parameters-param-and--d). `param()`, the `-D`
+table, the injected-global checks and the parameter report live in `pypeline.py`
+([pypeline_DESIGN.md](pypeline_DESIGN.md#design-parameters-param--d)). The elaborator's
+part:
+
+- **Per parse.** `PARSE_FILE` clears the previous import's declarations
+  (`RESET_DESIGN_PARAM_DECLARATIONS`) before re-executing the design, which declares
+  them again. Values survive eviction, so every pass sees the ones the first parse saw.
+- **After the import**, `PARSE_FILE` runs `pypeline.CHECK_DESIGN_PARAM_USE` over
+  `pypeline.DESIGN_PARAM_SOURCE_FILES` (the modules loaded since the first parse) and
+  then `pypeline.PRINT_DESIGN_PARAM_BANNER_ONCE`. The check reads the frozen source
+  text through `READ_SOURCE_TEXT`.
+- **Injected globals in hardware bodies.** Plain Python, and `_try_eval_const`'s
+  `eval`, see builtins without help. `_elab_name` gets an explicit last step: an
+  injected `int` or `bool` becomes a constant. Any module binding or global wire found
+  earlier shadows it, as in Python.
+- **Recording.** `WRITE_SOURCE_PROVENANCE` writes `pypeline.DESIGN_PARAM_REPORT()` as
+  `design_params`.
+
+`design_params_test.py` (unit) and `design_params_build_test.py` (build_report_device_models)
+cover it; see [pypeline_TESTS.md](pypeline_TESTS.md#design-parameter-coverage).
 
 ### Test coverage
 

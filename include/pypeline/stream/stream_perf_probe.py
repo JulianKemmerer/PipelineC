@@ -67,7 +67,6 @@ from stream.stream_perf import (
     HandshakeTap,
     StateTap,
     TapRegistry,
-    stream_fifo_capacity_beats,
 )
 
 # The one registry per process. Never rebind; see ENABLEMENT above.
@@ -230,7 +229,7 @@ def make_probed_stream_fifo(data_t, depth: int, tap_name: str, mode: str = "fwft
     """
     fifo, result_t = make_stream_fifo(data_t, depth, mode)
     intrf = fifo.stream_intrf
-    capacity = stream_fifo_capacity_beats(depth)
+    capacity = fifo.capacity_beats
 
     @hw_func
     def probed_stream_fifo(

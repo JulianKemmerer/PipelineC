@@ -8,7 +8,7 @@ valid/ready stream -- pipeline depth is chosen by the tool for the target
 FPGA/fmax, never hard-coded (see docs/pypeline_guide.md "DSP: FIR filters").
 
 Run the simulation (writes fir_lowpass_tb.png in the current directory;
-set PYPELINE_TB_SHOW=1 to also open a window):
+add -D PYPELINE_TB_SHOW=1 to also open a window):
 
     pypelinec examples/pypeline/dsp/fir_lowpass_tb.py --sim --comb --run 2400
 

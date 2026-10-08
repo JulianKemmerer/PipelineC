@@ -105,7 +105,7 @@ Signal generators (`impulse`/`step`/`sine`/`two_tone`/`chirp`/`white_noise`), an
 integer golden model (`golden_fir` — convolution plus a bit-exact mirror of
 `make_fixed_resize`, so checks are `==` on raw ints, never float tolerance), and
 optional matplotlib plots (`plot=True` writes `<name>_tb.png`: input, quantized-tap
-frequency response, golden-vs-hardware output overlay; `PYPELINE_TB_SHOW=1` opens a
+frequency response, golden-vs-hardware output overlay; `-D PYPELINE_TB_SHOW=1` opens a
 window). The checker prints `ERROR: ...` on mismatch and `<name>: ... Test DONE!` on
 completion, and asserts if the run hasn't finished by `tb.deadline` cycles — pass
 `--run` greater than `tb.min_cycles`.

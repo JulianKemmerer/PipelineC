@@ -1,4 +1,5 @@
 import os
+import sys
 
 import C_TO_LOGIC
 import SYN
@@ -245,21 +246,9 @@ def SYN_AND_REPORT_TIMING_NEW(
     if not os.path.exists(output_directory):
         os.makedirs(output_directory)
     log_path = output_directory + "/" + log_file_name
-    # Use same configs based on to speed up run time?
-    log_to_read = log_path
 
-    # If log file exists dont run syn
-    if os.path.exists(log_to_read) and use_existing_log_file:
-        # print "SKIPPED:", syn_imp_bash_cmd
-        print("Reading log", log_to_read)
-        f = open(log_path, "r")
-        log_text = f.read()
-        f.close()
-        return ParsedTimingReport(log_text)
-
-    # Not from log:
-
-    # Write top level vhdl for this module/multimain
+    # Render this run's inputs first: whether a log may be reused depends on
+    # them (SYN.REUSE_SYNTHESIS_LOG)
     if inst_name:
         VHDL.WRITE_LOGIC_ENTITY(
             inst_name,
@@ -288,6 +277,21 @@ def SYN_AND_REPORT_TIMING_NEW(
     clk_to_mhz, constraints_filepath = SYN.GET_CLK_TO_MHZ_AND_CONSTRAINTS_PATH(
         parser_state, inst_name
     )
+
+    manifest = SYN.SYNTHESIS_INPUT_MANIFEST(
+        "efinity",
+        parser_state.part,
+        top_entity_name,
+        vhdl_files_texts,
+        [constraints_filepath],
+        tool_paths=[EFINITY_PATH],
+        recipe_modules=[sys.modules[__name__]],
+    )
+    log_text = SYN.REUSE_SYNTHESIS_LOG("efinity", log_path, manifest, use_existing_log_file)
+    if log_text is not None:
+        return ParsedTimingReport(log_text)
+
+    # Not from log:
 
     # Generate project xml file
     # Based on opening the GUI and seeing what it wrote for a minimal project?
@@ -426,6 +430,7 @@ efx_run.py """
     f = open(log_path, "r")
     log_text = f.read()
     f.close()
+    SYN.RECORD_SYNTHESIS_LOG("efinity", log_path, manifest)
     # print("log:",log_text)
     # sys.exit(0)
 

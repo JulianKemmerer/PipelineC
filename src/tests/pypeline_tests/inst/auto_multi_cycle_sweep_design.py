@@ -6,16 +6,15 @@
 # handshake check (sim_assert in the MAIN) proves the re-elaborated design
 # waits exactly as many cycles as the path is constrained for.
 #
-# Environment (read at import, so each variant is a different design):
+# Design parameters (-D NAME=VALUE; each variant is a different design):
 #   AUTO_MULTI_CYCLE_SWEEP_START  start_latency= (unset: default start of 1)
 #   AUTO_MULTI_CYCLE_SWEEP_MAX    max_latency=   (unset: no cap)
-import os
-
 from pypeline import (
     MAIN,
     PART,
     Reg,
     hw_func,
+    param,
     sim_assert,
     uint1_t,
     uint16_t,
@@ -26,11 +25,6 @@ from stream.stream import make_stream_interface
 from stream.stream_multi_cycle import make_stream_auto_multi_cycle
 
 PART("xc7a35ticsg324-1l")
-
-
-def _env_int(name):
-    value = os.environ.get(name)
-    return int(value) if value else None
 
 
 ROUNDS = 16
@@ -47,8 +41,8 @@ def mix(x: uint32_t) -> uint32_t:
 word_intrf = make_stream_interface(uint32_t)
 mix_mcp, mix_mcp_t = make_stream_auto_multi_cycle(
     mix,
-    start_latency=_env_int("AUTO_MULTI_CYCLE_SWEEP_START"),
-    max_latency=_env_int("AUTO_MULTI_CYCLE_SWEEP_MAX"),
+    start_latency=param("AUTO_MULTI_CYCLE_SWEEP_START", type=int),
+    max_latency=param("AUTO_MULTI_CYCLE_SWEEP_MAX", type=int),
 )
 
 

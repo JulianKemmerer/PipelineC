@@ -29,8 +29,6 @@ SV_TOP_FILE ?= $(TOP_NAME).sv
 
 # Only one PLL producing one clock in design for now...
 PLL_CLK_MHZ ?= 25.0
-# The .py design reads the same rate from the environment
-export PLL_CLK_MHZ
 # Default nextpnr targetting the PLL clock freq
 NEXTPNR_FREQ ?= $(PLL_CLK_MHZ)
 NEXTPNR_ARGS ?= --freq $(NEXTPNR_FREQ)
@@ -68,6 +66,6 @@ gateware.bin: $(SV_TOP_FILE)
 
 # Pypeline design -> VHDL files listed in pypeline_output/vhdl_files.txt
 pypeline:
-	$(PYPELINEC) $(PYPELINE_TOP_FILE) --top pypeline_top --out_dir pypeline_output --comb --no_synth > pypelinec.log
+	$(PYPELINEC) $(PYPELINE_TOP_FILE) --top pypeline_top --out_dir pypeline_output --comb --no_synth -D PLL_CLK_MHZ=$(PLL_CLK_MHZ) > pypelinec.log
 
 .SUFFIXES: .v .sv .asc .bin .uf2

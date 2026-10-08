@@ -27,21 +27,13 @@ def run(out_dir, start=None, max_latency=None, extra=()):
     if out_dir:
         cmd += ["--out_dir", out_dir]
     cmd += list(extra)
-    env = dict(os.environ)
-    env.pop("AUTO_MULTI_CYCLE_SWEEP_START", None)
-    env.pop("AUTO_MULTI_CYCLE_SWEEP_MAX", None)
     if start is not None:
-        env["AUTO_MULTI_CYCLE_SWEEP_START"] = str(start)
+        cmd += ["-D", f"AUTO_MULTI_CYCLE_SWEEP_START={start}"]
     if max_latency is not None:
-        env["AUTO_MULTI_CYCLE_SWEEP_MAX"] = str(max_latency)
-    print(
-        "Running:",
-        f"AUTO_MULTI_CYCLE_SWEEP_START={start} AUTO_MULTI_CYCLE_SWEEP_MAX={max_latency}",
-        " ".join(cmd),
-        flush=True,
-    )
+        cmd += ["-D", f"AUTO_MULTI_CYCLE_SWEEP_MAX={max_latency}"]
+    print("Running:", " ".join(cmd), flush=True)
     result = subprocess.run(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
     )
     print(result.stdout)
     return result.returncode, result.stdout

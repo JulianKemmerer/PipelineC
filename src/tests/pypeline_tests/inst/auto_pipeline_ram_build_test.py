@@ -3,7 +3,6 @@
 
 import argparse
 import json
-import os
 from pathlib import Path
 import subprocess
 import sys
@@ -20,15 +19,9 @@ def main():
     assert args.syn_tool == "open_tools"
     out = Path(args.out_dir)
 
-    def build(name, env, flags=(), success=True):
+    def build(name, params, flags=(), success=True):
         directory = out / name
         directory.mkdir(parents=True, exist_ok=True)
-        clean_env = {
-            k: v
-            for k, v in os.environ.items()
-            if not k.startswith("AUTO_PIPELINE_RAM_")
-        }
-        clean_env.update({k: str(v) for k, v in env.items()})
         cmd = [
             sys.executable,
             str(ROOT / "src/pypelinec"),
@@ -40,10 +33,11 @@ def main():
             "--out_dir",
             str(directory),
             *flags,
+            *(arg for k, v in params.items() for arg in ("-D", f"{k}={v}")),
         ]
         with (directory / "build.log").open("w") as log:
             rc = subprocess.run(
-                cmd, env=clean_env, stdout=log, stderr=subprocess.STDOUT
+                cmd, stdout=log, stderr=subprocess.STDOUT
             ).returncode
         text = (directory / "build.log").read_text()
         print(text, flush=True)

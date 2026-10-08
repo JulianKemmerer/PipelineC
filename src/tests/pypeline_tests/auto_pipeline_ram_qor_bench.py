@@ -19,10 +19,7 @@ def run_case(out, size, latency, seed):
     directory = out / f"size{size}_latency{latency}_seed{seed}"
     directory.mkdir(parents=True, exist_ok=True)
     env = {
-        **{k: v for k, v in os.environ.items() if not k.startswith("AUTO_PIPELINE_RAM_")},
-        "AUTO_PIPELINE_RAM_SIZE": str(size),
-        "AUTO_PIPELINE_RAM_LATENCY": str(latency),
-        "AUTO_PIPELINE_RAM_MHZ": "80",
+        **os.environ,
         "PIPELINEC_OPEN_TOOLS_SEED": str(seed),
         "PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG": "1",
     }
@@ -35,6 +32,9 @@ def run_case(out, size, latency, seed):
         "open_tools",
         "--out_dir",
         str(directory),
+        "-D", f"AUTO_PIPELINE_RAM_SIZE={size}",
+        "-D", f"AUTO_PIPELINE_RAM_LATENCY={latency}",
+        "-D", "AUTO_PIPELINE_RAM_MHZ=80",
     ]
     with (directory / "build.log").open("w") as log:
         rc = subprocess.run(

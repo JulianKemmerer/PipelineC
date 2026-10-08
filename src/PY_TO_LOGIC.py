@@ -4283,6 +4283,17 @@ class FuncElaborator:
             if _is_scalar(typ, self.parser_state):
                 return wire, typ
             return self._read_ref((global_key,), typ, expr)
+        # 5. A -D design parameter read as an injected global (pypeline
+        # SET_DESIGN_PARAMS puts those in builtins; like Python, any module
+        # binding above shadows it)
+        if python_name in _pypeline_mod._design_param_injected:
+            val = getattr(builtins, python_name)
+            if isinstance(val, (int, bool)):
+                return self._elab_python_value(val, expr)
+            raise ElaborationError(
+                f"-D design parameter '{python_name}' ({type(val).__name__}) "
+                f"is not a hardware-usable value"
+            )
         raise ElaborationError(
             f"Unknown name '{python_name}' in func '{self.func_name}'"
         )
@@ -7637,7 +7648,14 @@ def WRITE_SOURCE_PROVENANCE():
     os.makedirs(_freeze_output_dir, exist_ok=True)
     with open(os.path.join(_freeze_output_dir, "source_provenance.json"), "w") as f:
         json.dump(
-            dict(source_policy="design-frozen-at-first-read", sources=sources), f, indent=2
+            dict(
+                source_policy="design-frozen-at-first-read",
+                sources=sources,
+                # -D / environment / default value of every design parameter
+                design_params=_pypeline_mod.DESIGN_PARAM_REPORT(),
+            ),
+            f,
+            indent=2,
         )
         f.write("\n")
 
@@ -7845,6 +7863,9 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     pypeline._part_registry = None
     pypeline._syn_tool_registry = None
     pypeline.CLEAR_AUTO_PIPELINE_LATENCY_READ_FLAG()
+    # param() values persist (one resolution per process); declarations
+    # re-register as the design re-executes
+    pypeline.RESET_DESIGN_PARAM_DECLARATIONS()
 
     # Make imports relative to the design file's directory work (e.g. 'import file_a')
     import sys
@@ -7902,6 +7923,14 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     spec = importlib.util.spec_from_file_location("pypeline_design", py_file)
     module = importlib.util.module_from_spec(spec)
     spec.loader.exec_module(module)
+
+    # -D names must reach the design (param() or a global some module reads)
+    pypeline.CHECK_DESIGN_PARAM_USE(
+        pypeline.DESIGN_PARAM_SOURCE_FILES(
+            set(sys.modules) - _modules_before_first_parse, py_file
+        )
+    )
+    pypeline.PRINT_DESIGN_PARAM_BANNER_ONCE()
 
     if run_syn_initial_hooks:
         pypeline._syn_hook_snapshot = pypeline.SNAPSHOT_HOOKS()

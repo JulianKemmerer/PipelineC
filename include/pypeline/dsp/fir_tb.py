@@ -48,11 +48,13 @@ globals, so rebinding a name would not be visible across calls.
 """
 
 import math
-import os
 import random
 from types import SimpleNamespace
 
-from pypeline import sim_input, sim_output, sim_print, uint1_t
+from pypeline import param, sim_input, sim_output, sim_print, uint1_t
+
+# -D PYPELINE_TB_SHOW=1: also open a window for each plot=True testbench plot
+SHOW_PLOTS = param("PYPELINE_TB_SHOW", False, help="open a matplotlib window for FIR testbench plots")
 
 
 # ─────────────────────────────────────────────
@@ -223,7 +225,7 @@ def make_fir_tb(
                   (default: generous bound from the stimulus size). Run the
                   sim for MORE than tb.deadline cycles (tb.min_cycles).
     plot:         on completion, write <name>_tb.png (input, response, output
-                  overlay); set PYPELINE_TB_SHOW=1 to also plt.show().
+                  overlay); build with -D PYPELINE_TB_SHOW=1 to also plt.show().
 
     Returns SimpleNamespace(drive_in, drive_ready, observe, in_t, state,
     expected, deadline, min_cycles). drive_in returns in_t, the filter's plain
@@ -356,7 +358,7 @@ def make_fir_tb(
     def _plot():
         import matplotlib
 
-        if os.environ.get("PYPELINE_TB_SHOW") != "1":
+        if not SHOW_PLOTS:
             matplotlib.use("Agg")
         import matplotlib.pyplot as plt
 
@@ -390,7 +392,7 @@ def make_fir_tb(
         fname = f"{name}_tb.png"
         fig.savefig(fname)
         sim_print(f"{name}: wrote {fname}")
-        if os.environ.get("PYPELINE_TB_SHOW") == "1":
+        if SHOW_PLOTS:
             plt.show()
 
     return SimpleNamespace(

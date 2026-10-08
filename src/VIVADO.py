@@ -726,6 +726,19 @@ def _RUN_IDENTIFIED(
         flags=re.M,
     )
     hit = os.path.exists(log_path)
+    from_store = False
+    if (
+        not hit
+        and use_existing_log_file
+        and SYN.SYNTHESIS_STORE_FETCH(
+            "vivado", manifest["signature"], {"log": log_path}, manifest
+        )
+    ):
+        # The same inputs were synthesized for another output directory
+        Path(str(base) + ".inputs.json").write_text(
+            json.dumps(manifest, indent=2) + "\n"
+        )
+        hit = from_store = True
     if hit:
         # Never overwrite a failed/partial log, including explicit force callers.
         log_text = Path(log_path).read_text()
@@ -736,7 +749,11 @@ def _RUN_IDENTIFIED(
                 + log_path
                 + "; move it aside explicitly before requesting a rerun"
             )
-        print("Reading log", log_path, flush=True)
+        if from_store:
+            print("Reading log", log_path, f"(from synthesis store {SYN.SYNTHESIS_STORE_DIR})", flush=True)
+        else:
+            SYN.COUNT_SYNTHESIS_RESULT("out_dir")
+            print("Reading log", log_path, flush=True)
     else:
         Path(tcl_path).write_text(tcl)
         Path(str(base) + ".inputs.json").write_text(
@@ -767,6 +784,8 @@ def _RUN_IDENTIFIED(
             raise RuntimeError(
                 "Vivado exited " + str(result.returncode) + ": " + log_path
             )
+        SYN.COUNT_SYNTHESIS_RESULT("run")
+        SYN.SYNTHESIS_STORE_INSERT("vivado", manifest["signature"], {"log": log_path}, manifest)
     report = ParsedTimingReport(log_text)
     report.log_path = log_path
     report.input_signature = manifest["signature"]

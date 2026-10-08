@@ -6,15 +6,13 @@ Top-level IO here must match top.sv (the wrapper) and ice40.pcf (the pins).
 Build with the Makefile next to this file, see README.md.
 """
 
-import os
-
 from pypeline import *
 
 PART("ICE40UP5K-SG48")  # iCE40 UltraPlus 5K, on both the pico-ice and pico2-ice
 
-# The Makefile exports the PLL output rate it asks icepll for.
-# A design file is plain Python, so it can read that setting directly.
-PLL_CLK_MHZ = float(os.environ.get("PLL_CLK_MHZ", "25.0"))
+# The Makefile passes the PLL output rate it asks icepll for as
+# -D PLL_CLK_MHZ=..., and param() reads it (25.0 when not given).
+PLL_CLK_MHZ = param("PLL_CLK_MHZ", 25.0, help="PLL output clock rate in MHz")
 
 # Clock input from the PLL in top.sv. make_clock() gives the port a fixed name
 # to match the wrapper, instead of a rate-derived name like clk_25p0.

@@ -10,8 +10,8 @@ We are happy to help, reach out: [PipelineC Discord](https://discord.gg/Aupm3DDr
 2. [Overview](#overview): Semantics, Ports and Clocks, Automatic Implementations
 3. [What the Tool Does](#what-the-tool-does): Elaboration, Timing Feedback, HLS-like Adjustments, Reports
 4. [Getting Started on a Dev Board](#getting-started-on-a-dev-board): Board Files, Clocks, Wrapper HDL, Example Projects
-5. [Tools & CLI](#tools--cli): Commands, Simulation, Synthesis Backends, Output Files
-6. [Set up your tools](#set-up-your-tools): Synthesis and Simulation Tool Installs
+5. [Tools & CLI](#tools--cli): Commands, Design Parameters, Simulation, Synthesis Backends, Output Files
+6. [Set up your tools](#set-up-your-tools): Synthesis and Simulation Tool Installs, Environment Variables
 
 ## Quick Start
 
@@ -829,6 +829,30 @@ pypelinec examples/pypeline/pipeline.py
 
 Run `pypelinec --help` for the complete current option list.
 
+### Design parameters: `-D`
+
+A design declares its per-build choices with `param()` (see
+[Build Parameters](pypeline_guide.md#build-parameters-param-and--d)), and `-D NAME=VALUE`
+sets them. `pypelinec` and `pypeline_sim.py` take the same options:
+
+```sh
+pypelinec design.py --list_params              # what the design declares: type, default, allowed values
+pypelinec design.py -D WIDTH=16 -D CLK_MHZ=125
+python3 src/pypeline_sim.py design.py --run 100 -D WIDTH=16
+```
+
+- **Repeat `-D` for each value.** A bare `-D NAME` means `True`.
+- **Undeclared names.** A name no `param()` declares becomes a global the design reads by
+  name, like a C preprocessor macro.
+- **Unused names.** A name the design never uses stops the build, with suggestions.
+- **Bad values.** A bad value stops the build before elaboration, naming the parameter,
+  the value, where it came from and the declaration line.
+- **Recorded values.** The build prints every parameter's value and its source (`-D`,
+  environment or default) after importing the design. It also records them in
+  `<out_dir>/source_provenance.json` under `design_params`.
+- **Shared by every pass and simulation.** Values are fixed for the whole build. Every
+  re-elaboration pass and the simulation of a `--sim` build see the same values.
+
 ### Automatic pipelining
 **Quickly render basic un-pipelined combinatorial logic VHDL:**
 ```
@@ -1062,10 +1086,22 @@ timing-params caches, etc.), instead of a freshly generated default directory.
   native and VHDL runs agree on the same discovered pipeline latencies.
 - **Resuming.** If a run stops before it finishes, rerun it with the same `--out_dir` to
   pick up where it left off. This helps with large designs and long synthesis sweeps.
-- **Stale files.** If you see odd behavior, start again from a fresh output directory
-  ([#82](https://github.com/JulianKemmerer/PipelineC/issues/82)). If
-  a run was stopped during synthesis, delete the failed run's (tool-specific) synthesis
-  log before trying again.
+- **Reusing after edits.** A synthesis log is reused only for exactly the same inputs:
+  HDL bytes, constraints, part, tool and recipe.
+  - **Edits.** After you edit the design, each log whose inputs changed is set aside
+    (`<log>.stale`) and re-run, and the build says which input changed. Generated
+    VHDL is rewritten whenever its content changes.
+  - **Interrupted runs.** A run stopped during synthesis leaves a log with no input
+    record, and the next run sets it aside the same way.
+  - **Vivado** keeps its stricter rule: an errored or incomplete log stops the build
+    until you move that exact log aside. See
+    [SYN_DESIGN.md](SYN_DESIGN.md#synthesis-logs-in-the-output-directory).
+- **Sharing results between directories.** `--syn_cache DIR` adds a store that any
+  number of output directories share. A run whose exact inputs were synthesized for
+  another directory, or another build profile, reuses that result instead of
+  re-synthesizing. Entries are validated in full on every use. `--syn_cache_prune DAYS`
+  drops entries unused for that long, and deleting the store is always safe. See
+  [SYN_DESIGN.md](SYN_DESIGN.md#shared-synthesis-store---syn_cache-dir).
 - **Default and layout.** Without `--out_dir`, a new output directory is created inside
   the current one. `built_in/` holds the VHDL for built-in operators and muxes, `<top>/`
   (named by `--top`) holds the final top level, and code from each source file goes in a
@@ -1357,6 +1393,23 @@ These are only needed for `--sim` runs (see [Simulation](#simulation)):
 * **cocotb + GHDL**: Follow the [cocotb install instructions](https://docs.cocotb.org/).
   GHDL is currently the only simulator supported, and `ghdl` must be on the `PATH`. Use
   `--cocotb --ghdl`.
+
+### Environment variables
+
+These describe the machine and its tools, not the design. A design's own choices are
+[`-D` parameters](#design-parameters--d).
+
+| Variable | Sets |
+|---|---|
+| `XILINX_VIVADO` | Vivado install root, when `vivado` is not on the `PATH` |
+| `OSS_CAD_SUITE` | OSS CAD Suite root (Yosys, nextpnr, GHDL, icepack, ...) |
+| `OPENXC7` | OpenXC7 bundle root (nextpnr-xilinx) |
+| `OPENXC7_CHIPDB`, `PRJXRAY_DB_DIR` | Nonstandard OpenXC7 chipdb and Project X-Ray database locations |
+| `PYPELINEC_YOSYS_GHDL_PLUGIN` | Yosys GHDL plugin module to load (default `ghdl`) |
+| `PIPELINEC_SKY130_LIB_PATH` | A sky130 liberty file other than the vendored one |
+| `PIPELINEC_OPEN_TOOLS_SEED` | nextpnr placement seed (default 1) |
+| `PYPELINEC_CACHE_DIR` | Root of the shared built-in operator delay/area cache (default: `cache/` in the checkout) |
+| `PYPELINE_SIM_SOFT_OPS` | Which software operator models native simulation executes (see [Simulation](#simulation)) |
 
 ### Nix
 

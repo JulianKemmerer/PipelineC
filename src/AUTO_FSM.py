@@ -4323,15 +4323,12 @@ def _AUTO_FSM_MUX_ENTITIES(parser_state):
     # small (one 3-to-8-way mux per shared unit input port), so this is a
     # handful of quick runs.
     #
-    # They live under include/pypeline/operators/ intending
-    # _IS_PYPELINE_OPERATOR_LIBRARY_CODE to classify them as non-user code and
-    # so make each shape cacheable in cache/delay. NOTE that predicate does
-    # not currently fire, for these or for the soft-operator library it was
-    # written for: it calls inspect.getsourcefile on the callable recorded in
-    # pypeline_entity_callables, which is deliberately the @hw_func WRAPPER (see
-    # _elaborate_live_func), and a wrapper's source file is pypeline.py. An
-    # inspect.unwrap at that lookup would fix it. Delays are correct meanwhile;
-    # they are just measured every build instead of once.
+    # They live under include/pypeline/operators/ with the other shipped
+    # operator code. Each measurement is an ordinary synthesis run, reused
+    # whenever its inputs are identical: from the output directory, or across
+    # output directories with --syn_cache (SYN.REUSE_SYNTHESIS_LOG). They stay
+    # out of the name-keyed cache/delay, which would not notice an edited
+    # library (SYN.LOGIC_PATH_DELAY_IS_CACHEABLE).
     cached = getattr(parser_state, "_auto_fsm_mux_entities_cache", None)
     if cached is not None:
         return cached

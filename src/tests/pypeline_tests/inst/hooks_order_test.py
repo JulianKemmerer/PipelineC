@@ -40,13 +40,12 @@ SYN_FINALS = ["both_final", "syn_final"]
 
 
 def _run(variant, out_dir):
-    env = dict(os.environ)
-    env["HOOKS_TEST_MODE"] = "call_from_hw" if variant == "call_from_hw" else "finish"
-    cmd = [sys.executable, PYPELINEC, DESIGN, "--out_dir", out_dir]
+    mode = "call_from_hw" if variant == "call_from_hw" else "finish"
+    cmd = [sys.executable, PYPELINEC, DESIGN, "--out_dir", out_dir, "-D", f"HOOKS_TEST_MODE={mode}"]
     cmd += VARIANT_ARGS[variant]
     print("Running:", " ".join(cmd), flush=True)
     proc = subprocess.run(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
     )
     print(proc.stdout, flush=True)
     return proc.returncode, proc.stdout.splitlines()

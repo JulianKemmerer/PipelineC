@@ -653,14 +653,14 @@ MainSweepPlan(
 ```
 
 The history dumps to `<out_dir>/<top>/sweep_history.json` (`schema_version`
-3). Each goal main has its iteration records **and a `final` record for the
+4). Each goal main has its iteration records **and a `final` record for the
 design as built**. Read `final` for "what did this build achieve". The
 iteration log alone can't answer that: an assumed-met final iteration, a
 restored best/met snapshot and a [pin-and-confirm](AUTO_PIPELINE_DESIGN.md#5-latency-pin-and-confirm-loop-pypeline-designs-only) confirmation run are all not "the last
 iteration".
 
 ```json
-{"schema_version": 3, "build_complete": true,
+{"schema_version": 4, "build_complete": true,
  "mains": {"my_main": {
    "goal_mhz": 100.0,
    "iterations": [
@@ -728,6 +728,21 @@ its MCP counts; it need not be the last synthesis. Decision records separately
 identify `reused_observation` when feedback changed no realized implementation.
 `build_complete: false` remains provisional, particularly when `.latency`
 changes cause the next pass to build different hardware.
+
+Schema 4 adds `latency_passes`, present when some pin-and-confirm pass's elaboration
+read a bottom-up value. It has one record per such pass:
+`{"pass": N, "outcome": "...", "reads": [...]}`. Each read entry holds:
+- `kind`: `AUTO_PIPELINE` or `AUTO_MULTI_CYCLE`;
+- `key`: the canonical key;
+- `read`: the values `.latency` returned;
+- `built`: what the build realized, or null if not built;
+- `matches`;
+- `read_at`: each `"file:line"` that read the value. A read inside a library factory
+  appends `" (via design_file:line)"`. A read inside a hardware body names that body's
+  file and line.
+
+It is the machine-readable form of the table each pass prints. See
+[AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md#5-latency-pin-and-confirm-loop-pypeline-designs-only).
 
 Sweep cost records distinguish backend observations, new Vivado launches, cache reads,
 and distinct implementations. Per-MAIN FF estimates expose estimated register growth

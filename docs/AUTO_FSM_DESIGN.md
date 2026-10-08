@@ -419,14 +419,13 @@ own right. They are small — one 3-to-8-way mux per shared unit input port — 
 this is a handful of quick synthesis runs, not a meaningful build cost.
 **The entity AUTO_FSM measures is the entity AUTO_FSM instantiates.**
 
-The module lives under `include/pypeline/operators/` so that
-`SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE` classifies it as shipped library code
-rather than user code, which is what makes a measured delay eligible for
-`cache/delay` — though this classification does not currently fire ([#364](https://github.com/JulianKemmerer/PipelineC/issues/364)) for
-these entities (or for the soft-operator library the same predicate was
-written for), so both are re-measured each build rather than read from disk;
-see [`SYN_DESIGN.md`](SYN_DESIGN.md#10-limitations-and-future-work)'s Limitations section for why and the
-fix. The delays are correct either way — this only affects build time.
+The module lives under `include/pypeline/operators/` with the other shipped
+operator code. Each measurement is an ordinary synthesis run, reused whenever
+its inputs are identical: from the output directory, or across output
+directories with `--syn_cache`
+([`SYN_DESIGN.md`](SYN_DESIGN.md#shared-synthesis-store---syn_cache-dir)). The
+delays stay out of the name-keyed `cache/delay`, which would not notice an
+edited library.
 
 Real numbers matter here: on the PYRTL flow a 6-way `int16_t` mux measures
 4.29 ns against a flat-constant estimate's 1.0 ns — a 4× error in the one
@@ -788,12 +787,9 @@ Three hooks decide *which* functions get delays. The first two live in
   right for its fmax number and wrong for its operand multiplexers, whose real
   delay is the most load-bearing input to how finely to share. Those few
   entities — one 3-to-8-way multiplexer per shared unit input port — are
-  therefore measured in their own right, a handful of quick runs. They live
-  under `include/pypeline/operators/` so that
-  `SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE` would make each shape disk-cacheable;
-  that classification currently never fires ([#364](https://github.com/JulianKemmerer/PipelineC/issues/364); details in
-  [`SYN_DESIGN.md`](SYN_DESIGN.md#10-limitations-and-future-work)), so they are
-  measured every build instead of once.
+  therefore measured in their own right, a handful of quick runs. Each run is
+  reused whenever its inputs are identical (the output directory's logs, or
+  the `--syn_cache` store).
 - **`parser_state.func_force_estimated`** — the bootstrap passthrough looks
   exactly like a measurement frontier (fully combinational, inside a stateful
   caller) and would get one whole-blob synthesis of precisely the giant parallel

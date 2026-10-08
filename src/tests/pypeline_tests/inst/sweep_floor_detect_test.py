@@ -56,11 +56,11 @@ def main():
         "--out_dir",
         out_dir,
         "-j", "1",
+        "-D", f"SWEEP_FLOOR_DETECT_MHZ={goal_mhz}",
     ]
-    env = dict(os.environ, SWEEP_FLOOR_DETECT_MHZ=str(goal_mhz))
     print(f"Running (goal {goal_mhz} MHz):", " ".join(cmd), flush=True)
     result = subprocess.run(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
     )
     out = result.stdout
     print(out)

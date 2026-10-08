@@ -1,7 +1,7 @@
 # pyright: reportInvalidTypeForm=none
 """@initial/@final hooks under the native sim (pypeline_sim.run_sim, in-process).
 
-Runs hooks_design.py once per HOOKS_TEST_MODE and checks its EVENTS log:
+Runs hooks_design.py once per HOOKS_TEST_MODE design parameter and checks its EVENTS log:
 - sim @initial hooks all run before the first @sim_input
 - sim @final hooks all run after the last @sim_output, after sim_finish(), a
   --run N cutoff, or an error, and the error that ended the run is still the
@@ -30,7 +30,7 @@ SIM_FINALS = {"both_final", "sim_final"}
 
 def _run(mode, num_cycles):
     """Returns (EVENTS, exception raised by run_sim or None)."""
-    os.environ["HOOKS_TEST_MODE"] = mode
+    pypeline.SET_DESIGN_PARAMS({"HOOKS_TEST_MODE": mode})
     err = None
     try:
         pypeline_sim.run_sim(DESIGN, num_cycles)

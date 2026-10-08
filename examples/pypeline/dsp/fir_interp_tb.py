@@ -10,7 +10,7 @@ into the coefficient constants at elaboration time).
 Output rate = 4x input rate: with the consumer taking one beat per cycle, the
 filter's ready naturally throttles the input to one sample per 4 cycles.
 
-Run the simulation (writes fir_interp4_tb.png; PYPELINE_TB_SHOW=1 for a window):
+Run the simulation (writes fir_interp4_tb.png; add -D PYPELINE_TB_SHOW=1 for a window):
 
     pypelinec examples/pypeline/dsp/fir_interp_tb.py --sim --comb --run 1600
 """

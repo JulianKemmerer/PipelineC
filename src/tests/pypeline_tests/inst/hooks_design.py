@@ -4,8 +4,8 @@ in-process) and hooks_order_test.py (pypelinec subprocesses: native, pipelined
 native, cocotb+GHDL).
 
 Every hook appends its name to EVENTS and prints a "HOOK: <name>" marker, so a
-test can check both what ran and in what order. HOOKS_TEST_MODE (environment)
-picks a variant:
+test can check both what ran and in what order. The HOOKS_TEST_MODE design
+parameter (-D HOOKS_TEST_MODE=...) picks a variant:
   finish       -- the counter calls sim_finish() on cycle NUM_CYCLES-1
   cutoff       -- no sim_finish(); the run ends at --run N
   assert       -- @sim_output fails an assert on cycle 2
@@ -26,6 +26,7 @@ from pypeline import (
     Reg,
     final,
     initial,
+    param,
     sim_finish,
     sim_input,
     sim_output,
@@ -33,7 +34,7 @@ from pypeline import (
     wires,
 )
 
-MODE = os.environ.get("HOOKS_TEST_MODE", "finish")
+MODE = param("HOOKS_TEST_MODE", "finish")
 NUM_CYCLES = 5
 # The counter never reaches 255 within any test's cycle count
 FINISH_AT = 255 if MODE == "cutoff" else NUM_CYCLES - 1

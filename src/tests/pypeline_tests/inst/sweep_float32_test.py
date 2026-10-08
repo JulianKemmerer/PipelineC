@@ -9,8 +9,8 @@
 # the whole point of the matrix -- every backend builds THE SAME design, so a
 # failure is about the backend and nothing else.
 #
-# The clock goal comes from SWEEP_FLOAT32_MHZ (set per registration via
-# Test.env) because a float32 adder's unpipelined fmax differs by an order of
+# The clock goal comes from -D SWEEP_FLOAT32_MHZ (set per registration in
+# synth_tests.py) because a float32 adder's unpipelined fmax differs by an order of
 # magnitude between an ASIC standard-cell model and an FPGA: one shared goal
 # would either cut nothing on the fast tools or churn on the slow ones. Each
 # goal is picked to need a few sweep iterations, not zero and not many.
@@ -23,10 +23,10 @@ sys.path.insert(0, os.path.join(_HERE, "../../../"))
 # Path for floating_point (include/pypeline) import
 sys.path.insert(0, os.path.join(_HERE, "../../../../include/pypeline"))
 
-from pypeline import MAIN
+from pypeline import MAIN, param
 from floating_point import float32_t
 
-_MHZ = float(os.environ.get("SWEEP_FLOAT32_MHZ", "25.0"))
+_MHZ = param("SWEEP_FLOAT32_MHZ", 25.0)
 
 
 @MAIN(_MHZ)

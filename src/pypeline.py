@@ -1731,6 +1731,531 @@ def RUN_FINAL_HOOKS(flow, hooks=None, pending_exc=None):
 
 
 # ─────────────────────────────────────────────
+# Design parameters: param() and -D NAME=VALUE
+# ─────────────────────────────────────────────
+
+import builtins as _builtins
+import keyword as _keyword
+import os as _param_os
+import sys as _param_sys
+
+# The -D table the driver installed (SET_DESIGN_PARAMS): name -> value text, or
+# True for a bare `-D NAME`. Like the AUTO_PIPELINE caches below, design
+# parameter state lives in this runtime module because PY_TO_LOGIC evicts the
+# design's modules between re-elaboration passes but never this one.
+_design_param_defines: dict = {}
+# name -> (value, source). A name resolves once per process, so every
+# re-elaboration pass and every simulation import of one build sees the value
+# the first import saw (an environment variable is read once, too).
+_design_param_values: dict = {}
+# name -> _ParamDecl for the current design import; reset per import, like the
+# MAIN and hook registries (RESET_DESIGN_PARAM_DECLARATIONS).
+_design_param_decls: dict = {}
+# -D names installed into builtins (cpp-style injected globals) -> the value
+# they replaced there (_NOT_INJECTED when there was none).
+_design_param_injected: dict = {}
+_NOT_INJECTED = object()
+_design_param_banner_printed = False
+
+
+class DesignParamError(ValueError):
+    """A -D value, a param() declaration, or how the design uses them is invalid."""
+
+
+def _parse_param_bool(text):
+    lowered = text.strip().lower()
+    if lowered in ("1", "true", "yes", "on"):
+        return True
+    if lowered in ("0", "false", "no", "off"):
+        return False
+    raise ValueError("expected 1/0, true/false, yes/no or on/off")
+
+
+def _parse_param_int(text):
+    try:
+        return int(text)
+    except ValueError:
+        return int(text, 0)  # 0x10, 0b101
+
+
+def _parse_param_literal(text):
+    """A Python literal when the text is one (3, 2.5, (1, 2), 'x'), else the text."""
+    import ast
+
+    try:
+        return ast.literal_eval(text)
+    except (ValueError, SyntaxError):
+        return text
+
+
+def _parse_param_sequence(text, default):
+    """Comma-separated items ("16,64,256", optionally bracketed), each parsed
+    like the default's first element."""
+    body = text.strip()
+    if body[:1] + body[-1:] in ("()", "[]"):
+        body = body[1:-1]
+    items = [item.strip() for item in body.split(",") if item.strip()]
+    sample = default[0] if default else None
+    if sample is None:
+        return [_parse_param_literal(item) for item in items]
+    if isinstance(sample, bool):
+        return [_parse_param_bool(item) for item in items]
+    if isinstance(sample, int):
+        return [_parse_param_int(item) for item in items]
+    return [type(sample)(item) for item in items]
+
+
+def CHECK_DESIGN_PARAM_NAME(name):
+    """A -D or param() name must be a plain identifier that shadows nothing
+    Python itself provides (it may become a builtins entry)."""
+    if not isinstance(name, str) or not name.isidentifier() or _keyword.iskeyword(name):
+        raise DesignParamError(f"Design parameter name {name!r} is not a Python identifier")
+    if name.startswith("__") or (
+        hasattr(_builtins, name) and name not in _design_param_injected
+    ):
+        raise DesignParamError(
+            f"Design parameter name {name!r} would shadow the Python builtin of "
+            f"that name; choose another name"
+        )
+
+
+class _ParamDecl:
+    """One param() declaration: how to read its value and where it was declared."""
+
+    def __init__(self, name, default, type_, choices, help_, env, site):
+        # The -D rules: a name -D could never set (a builtin's) is an error here too
+        try:
+            CHECK_DESIGN_PARAM_NAME(name)
+        except DesignParamError as e:
+            raise DesignParamError(f"param(): {e} (at {site})") from None
+        self.name = name
+        self.default = default
+        self.type = type_ if type_ is not None or default is None else type(default)
+        self.choices = tuple(choices) if choices is not None else None
+        self.help = help_
+        self.env = env
+        self.site = site
+        if self.choices is not None and default is not None and default not in self.choices:
+            raise DesignParamError(
+                f"param({name!r}): default {default!r} is not one of {self.choices} (at {site})"
+            )
+
+    def same_as(self, other):
+        return (
+            type(self.default) is type(other.default)
+            and self.default == other.default
+            and self.type is other.type
+            and self.choices == other.choices
+            and self.env == other.env
+        )
+
+    def _error(self, problem, source):
+        where = {
+            "-D": "-D on the command line",
+            "default": "its default",
+        }.get(source, "environment variable " + source[len("env:"):])
+        return DesignParamError(
+            f"Design parameter {self.name}: {problem} (from {where}; declared at {self.site})"
+        )
+
+    def convert(self, raw, source):
+        if raw is True:  # bare `-D NAME`
+            if self.type in (None, bool):
+                return True
+            raise self._error(f"needs a value: -D {self.name}=...", source)
+        try:
+            if self.type is None:
+                return _parse_param_literal(raw)
+            if self.type is bool:
+                return _parse_param_bool(raw)
+            if self.type is int:
+                return _parse_param_int(raw)
+            if self.type in (tuple, list):
+                return self.type(_parse_param_sequence(raw, self.default))
+            return self.type(raw)
+        except (ValueError, TypeError) as e:
+            raise self._error(f"{raw!r} is not a valid value ({e})", source) from None
+
+    def resolve(self):
+        if self.name in _design_param_defines:
+            raw, source = _design_param_defines[self.name], "-D"
+        elif self.env is not None and _param_os.environ.get(self.env, "") != "":
+            raw, source = _param_os.environ[self.env], "env:" + self.env
+        else:
+            return self.default, "default"
+        value = self.convert(raw, source)
+        if self.choices is not None and value not in self.choices:
+            raise self._error(f"{value!r} is not one of {self.choices}", source)
+        return value, source
+
+
+def param(name, default=None, *, type=None, choices=None, help="", env=None):
+    """Declare a build parameter and return its value for this build.
+
+    The value comes from `-D NAME=VALUE` on the pypelinec / pypeline_sim.py
+    command line, else from environment variable `env` (only when given and
+    set), else `default`. It is a plain Python value, usable anywhere
+    elaboration-time Python is: clock rates, widths, factory arguments, which
+    module to import. Each build prints and records every parameter's value
+    and where it came from. See docs/pypeline_guide.md, "Build Parameters".
+
+    type: how -D/environment text is converted; inferred from the default.
+        bool accepts 1/0, true/false, yes/no, on/off; a tuple or list default
+        takes comma-separated items. With neither a default nor a type, the
+        text is read as a Python literal, else kept as a string.
+    choices: the allowed values; anything else is an error naming where the
+        value came from.
+    help: one line shown by `pypelinec design.py --list_params`.
+    """
+    frame = _param_sys._getframe(1)
+    site = f"{frame.f_code.co_filename}:{frame.f_lineno}"
+    decl = _ParamDecl(name, default, type, choices, help, env, site)
+    previous = _design_param_decls.get(name)
+    if previous is None:
+        _design_param_decls[name] = decl
+    elif not previous.same_as(decl):
+        raise DesignParamError(
+            f"param({name!r}) is declared differently at {previous.site} and "
+            f"{site}; declare it once and import the value"
+        )
+    if name not in _design_param_values:
+        _design_param_values[name] = decl.resolve()
+    value = _design_param_values[name][0]
+    return list(value) if isinstance(value, list) else value
+
+
+def SET_DESIGN_PARAMS(defines=None) -> None:
+    """Driver hook: install the -D table (name -> value text, or True for a
+    bare `-D NAME`) before the first design import, replacing any earlier one.
+
+    Every name is also installed in builtins, so a design can read an
+    undeclared -D name as a plain global, like a C preprocessor macro.
+    CHECK_DESIGN_PARAM_USE (below) rejects the mistakes that allows."""
+    global _design_param_defines, _design_param_banner_printed
+    _design_param_banner_printed = False
+    for name, previous in _design_param_injected.items():
+        if previous is _NOT_INJECTED:
+            _builtins.__dict__.pop(name, None)
+        else:
+            setattr(_builtins, name, previous)
+    _design_param_injected.clear()
+    defines = dict(defines or {})
+    for name in defines:
+        CHECK_DESIGN_PARAM_NAME(name)
+    _design_param_defines = defines
+    _design_param_values.clear()
+    _design_param_decls.clear()
+    for name, raw in defines.items():
+        _design_param_injected[name] = _builtins.__dict__.get(name, _NOT_INJECTED)
+        setattr(_builtins, name, True if raw is True else _parse_param_literal(raw))
+
+
+def RESET_DESIGN_PARAM_DECLARATIONS() -> None:
+    """Forget the previous design import's param() declarations (values stay)."""
+    _design_param_decls.clear()
+
+
+def DESIGN_PARAM_DEFINES() -> dict:
+    return dict(_design_param_defines)
+
+
+def DESIGN_PARAM_DECLARATIONS() -> dict:
+    return dict(_design_param_decls)
+
+
+def DESIGN_PARAM_VALUES() -> dict:
+    return dict(_design_param_values)
+
+
+# Driver side (pypelinec and pypeline_sim.py): -D parsing, the checks that keep
+# cpp-style injected globals honest, and the table every build prints and
+# records in source_provenance.json.
+
+_PARAM_SRC_DIR = _param_os.path.dirname(_param_os.path.abspath(__file__))
+_PARAM_LIBRARY_DIR = (
+    _param_os.path.join(_param_os.path.dirname(_PARAM_SRC_DIR), "include") + _param_os.sep
+)
+
+
+def PARSE_DESIGN_PARAM_DEFINES(items):
+    """-D arguments ("NAME=VALUE", or "NAME" for True) -> {name: text or True}.
+    Giving one name two different values is an error."""
+    defines = {}
+    for item in items or ():
+        name, sep, value = item.partition("=")
+        name = name.strip()
+        raw = value if sep else True
+        CHECK_DESIGN_PARAM_NAME(name)
+        if name in defines and defines[name] != raw:
+            raise DesignParamError(
+                f"-D {name} is given twice with different values "
+                f"({defines[name]!r} and {raw!r})"
+            )
+        defines[name] = raw
+    return defines
+
+
+def _param_system_roots():
+    import sysconfig
+
+    paths = sysconfig.get_paths()
+    return tuple(
+        _param_os.path.abspath(paths[key]) + _param_os.sep
+        for key in ("stdlib", "platstdlib", "purelib", "platlib")
+        if key in paths
+    )
+
+
+def DESIGN_PARAM_SOURCE_FILES(module_names, top_file):
+    """The design's own .py files: the top file plus every module a design
+    import loaded that is not the standard library, an installed package, the
+    compiler (src/*.py) or the Pypeline library (include/)."""
+    files = {_param_os.path.abspath(top_file)}
+    system = _param_system_roots()
+    for name in module_names:
+        path = getattr(_param_sys.modules.get(name), "__file__", None)
+        if not path or not path.endswith(".py"):
+            continue
+        path = _param_os.path.abspath(path)
+        parts = path.split(_param_os.sep)
+        if (
+            path.startswith(system)
+            or "site-packages" in parts
+            or "dist-packages" in parts
+            or _param_os.path.dirname(path) == _PARAM_SRC_DIR
+            or path.startswith(_PARAM_LIBRARY_DIR)
+        ):
+            continue
+        files.add(path)
+    return sorted(files)
+
+
+def _param_source_text(path):
+    # Under pypelinec the design source is frozen: check the bytes the build
+    # executed, not a file edited since.
+    ptl = _param_sys.modules.get("PY_TO_LOGIC")
+    if ptl is not None:
+        return ptl.READ_SOURCE_TEXT(path)
+    with open(path, "r") as f:
+        return f.read()
+
+
+def _param_scan_globals(path):
+    """(names bound at module scope, names read as unbound globals) in one file."""
+    import symtable
+
+    text = _param_source_text(path)
+    table = symtable.symtable(text, path, "exec")
+    bound, reads = set(), set()
+    for sym in table.get_symbols():
+        if sym.is_assigned() or sym.is_imported():
+            bound.add(sym.get_name())
+        elif sym.is_referenced():
+            reads.add(sym.get_name())
+    pending = list(table.get_children())
+    while pending:
+        scope = pending.pop()
+        for sym in scope.get_symbols():
+            if sym.is_declared_global() and sym.is_assigned():
+                bound.add(sym.get_name())
+            elif sym.is_global() and sym.is_referenced():
+                reads.add(sym.get_name())
+        pending.extend(scope.get_children())
+    return bound, reads - bound, text
+
+
+def _param_binding_line(text, name):
+    """First module-level line binding `name` (for error messages only)."""
+    import ast
+
+    pending = list(ast.parse(text).body)
+    while pending:
+        node = pending.pop(0)
+        if isinstance(node, (ast.FunctionDef, ast.AsyncFunctionDef, ast.ClassDef)):
+            if node.name == name:
+                return node.lineno
+            continue
+        if isinstance(node, (ast.Import, ast.ImportFrom)):
+            if any((a.asname or a.name.split(".")[0]) == name for a in node.names):
+                return node.lineno
+            continue
+        if isinstance(
+            node, (ast.Lambda, ast.ListComp, ast.SetComp, ast.DictComp, ast.GeneratorExp)
+        ):
+            continue
+        if isinstance(node, ast.Name) and node.id == name and isinstance(node.ctx, ast.Store):
+            return node.lineno
+        pending.extend(ast.iter_child_nodes(node))
+    return None
+
+
+def _param_short_path(path):
+    try:
+        rel = _param_os.path.relpath(path)
+    except ValueError:  # another drive than the working directory (Windows)
+        return path
+    return path if rel.startswith("..") else rel
+
+
+def _param_short_site(site):
+    path, _, line = site.rpartition(":")
+    return f"{_param_short_path(path)}:{line}"
+
+
+def CHECK_DESIGN_PARAM_USE(design_files):
+    """After a design import: every -D name must reach the design, either
+    through param() or as an injected global some design module reads.
+
+    Fails on an injected name nothing reads (a typo), one a design module
+    assigns at module level (that module would ignore the command line), and a
+    declared name read as a bare global (it only resolves while -D gives it).
+    """
+    import difflib
+
+    defines = DESIGN_PARAM_DEFINES()
+    if not defines:
+        return
+    declared = DESIGN_PARAM_DECLARATIONS()
+    scans = {path: _param_scan_globals(path) for path in design_files}
+    all_reads = set()
+    for _, reads, _ in scans.values():
+        all_reads |= reads
+    errors = []
+    for name in sorted(defines):
+        readers = [path for path, (_, reads, _) in scans.items() if name in reads]
+        if name in declared:
+            for path in readers:
+                errors.append(
+                    f"-D {name}: {_param_short_path(path)} reads {name} as a bare "
+                    f"global, which only works while -D gives it. {name} is declared "
+                    f"with param() at {_param_short_site(declared[name].site)}; "
+                    f"import that value instead."
+                )
+            continue
+        binders = [path for path, (bound, _, _) in scans.items() if name in bound]
+        for path in binders:
+            line = _param_binding_line(scans[path][2], name)
+            where = _param_short_path(path) + ("" if line is None else f":{line}")
+            errors.append(
+                f"-D {name}: {where} assigns {name} at module level, so that module "
+                f"ignores the command-line value. Declare it there with "
+                f"{name} = param({name!r}, <default>) instead."
+            )
+        if not binders and not readers:
+            python_builtins = set(dir(_builtins)) - set(defines)
+            candidates = (set(declared) | all_reads) - python_builtins - {name}
+            guesses = difflib.get_close_matches(name, sorted(candidates), n=3)
+            known = ", ".join(sorted(declared)) or "none"
+            errors.append(
+                f"-D {name}: nothing in this design uses it -- no param() declares "
+                f"it and no design module reads it as a global."
+                + (f" Did you mean {' or '.join(guesses)}?" if guesses else "")
+                + f" (Declared parameters: {known}.)"
+            )
+    if errors:
+        raise DesignParamError("Design parameter errors:\n  " + "\n  ".join(errors))
+
+
+def _param_json_safe(value):
+    if isinstance(value, (tuple, list)):
+        return [_param_json_safe(v) for v in value]
+    if value is None or isinstance(value, (bool, int, float, str)):
+        return value
+    return repr(value)
+
+
+def _param_rows():
+    """(name, value, source, declaration or None) for every parameter the
+    current design import declared or the -D table injected."""
+    defines = DESIGN_PARAM_DEFINES()
+    declared = DESIGN_PARAM_DECLARATIONS()
+    values = DESIGN_PARAM_VALUES()
+    rows = []
+    for name in sorted(declared):
+        decl = declared[name]
+        value, source = values.get(name, (decl.default, "default"))
+        rows.append((name, value, source, decl))
+    for name in sorted(set(defines) - set(declared)):
+        raw = defines[name]
+        value = True if raw is True else _parse_param_literal(raw)
+        rows.append((name, value, "injected", None))
+    return rows
+
+
+def DESIGN_PARAM_REPORT():
+    """One JSON-ready record per parameter, for source_provenance.json."""
+    records = []
+    for name, value, source, decl in _param_rows():
+        record = {"name": name, "value": _param_json_safe(value), "source": source}
+        if decl is not None:
+            record.update(
+                declared_at=decl.site,
+                type=getattr(decl.type, "__name__", None) if decl.type else None,
+                default=_param_json_safe(decl.default),
+                choices=None if decl.choices is None else _param_json_safe(decl.choices),
+                help=decl.help or None,
+            )
+        records.append(record)
+    return records
+
+
+def DESIGN_PARAM_BANNER_LINES():
+    rows = _param_rows()
+    if not rows:
+        return []
+    width = max(len(name) for name, *_ in rows)
+    lines = ["Design parameters:"]
+    for name, value, source, decl in rows:
+        where = f"  {_param_short_site(decl.site)}" if decl is not None else ""
+        lines.append(f"  {name:<{width}} = {value!r} ({source}){where}")
+    return lines
+
+
+def PRINT_DESIGN_PARAM_BANNER_ONCE():
+    """Print the parameter table after the first design import of a process
+    (re-elaboration passes and simulation imports see the same values)."""
+    global _design_param_banner_printed
+    if _design_param_banner_printed:
+        return
+    lines = DESIGN_PARAM_BANNER_LINES()
+    if lines:
+        _design_param_banner_printed = True
+        print("\n".join(lines), flush=True)
+
+
+def DESIGN_PARAM_LIST_TEXT(design_file):
+    """--list_params output: every parameter the design declares, with its
+    type, default, allowed values and help, and any injected -D names."""
+    rows = _param_rows()
+    shown = _param_short_path(design_file)
+    out = [f"Design parameters of {shown} (set with -D NAME=VALUE):"]
+    if not rows:
+        out.append("  (none declared)")
+    for name, value, source, decl in rows:
+        if decl is None:
+            out.append(f"  {name} = {value!r} (injected global, read by name)")
+            continue
+        if decl.type is None:
+            kind = "literal"
+        elif decl.type in (bool, int, float, str, tuple, list):
+            kind = decl.type.__name__
+        else:
+            kind = "text"  # converted by a custom type= function
+        line = f"  {name}: {kind} = {value!r} ({source})"
+        if source != "default":
+            line += f"; default {decl.default!r}"
+        if decl.choices is not None:
+            line += f"; one of {', '.join(repr(c) for c in decl.choices)}"
+        if decl.env is not None:
+            line += f"; environment fallback {decl.env}"
+        out.append(line)
+        if decl.help:
+            out.append(f"      {decl.help}")
+        out.append(f"      declared at {_param_short_site(decl.site)}")
+    return "\n".join(out)
+
+
+# ─────────────────────────────────────────────
 # AUTO_PIPELINE: tool-pipelined regions with .latency feedback
 # ─────────────────────────────────────────────
 
@@ -1778,6 +2303,9 @@ _auto_pipeline_build_mode = None
 # driver compares them against the harvested stage counts: when every read
 # already equals what was built, the pin-and-confirm re-elaboration is skipped.
 _auto_pipeline_served: list = []
+# (AUTO_PIPELINE object, "file:line" that read it) for the same reads: the
+# pass report (AUTO_PIPELINE.RECORD_LATENCY_PASS) says where each value went.
+_auto_pipeline_read_sites: list = []
 # Per-construction serial: disambiguates plain-native-sim delay-line keys
 # without importing the compiler (see AUTO_PIPELINE._sim_key).
 _auto_pipeline_serial: int = 0
@@ -1812,6 +2340,7 @@ def CLEAR_AUTO_PIPELINE_LATENCY_READ_FLAG() -> None:
     global _auto_pipeline_latency_was_read
     _auto_pipeline_latency_was_read = False
     _auto_pipeline_served.clear()
+    _auto_pipeline_read_sites.clear()
     # AUTO_MULTI_CYCLE construction ordinals and reads are per design execution too
     RESET_AUTO_MULTI_CYCLE_TRACKING()
 
@@ -1827,6 +2356,61 @@ def AUTO_PIPELINE_SERVED_LATENCIES() -> dict:
     for ap, value in _auto_pipeline_served:
         served.setdefault(ap.canonical_key, set()).add(value)
     return served
+
+
+def AUTO_PIPELINE_READ_SITES() -> dict:
+    """canonical_key -> "file:line" sites that read .latency during the current
+    design execution, first read first (pypelinec builds only)."""
+    sites = {}
+    for ap, site in _auto_pipeline_read_sites:
+        found = sites.setdefault(ap.canonical_key, [])
+        if site not in found:
+            found.append(site)
+    return sites
+
+
+_PYPELINE_LIBRARY_DIR = _param_os.path.join(
+    _param_os.path.dirname(_param_os.path.dirname(_param_os.path.abspath(__file__))),
+    "include",
+    "pypeline",
+) + _param_os.sep
+
+
+def _latency_read_site():
+    """Where a bottom-up .latency value was read: "file:line" of the first frame
+    outside this module, and when that is Pypeline library code (a factory
+    sizing its own FIFO), also the nearest design-file frame that called it.
+
+    A read inside a hardware body happens while PY_TO_LOGIC folds a constant
+    expression, compiled under a pseudo file name (<const_eval> and the like)
+    with the function's own source line numbers; the file is then the one the
+    elaborator (the nearest frame whose `self` has a src_file) is elaborating."""
+    abspath = _param_os.path.abspath
+    frame = _param_sys._getframe(1)
+    while frame is not None and frame.f_code.co_filename == __file__:
+        frame = frame.f_back
+    if frame is None:
+        return "<unknown>"
+    if frame.f_code.co_filename.startswith("<"):
+        outer = frame.f_back
+        while outer is not None:
+            src_file = getattr(outer.f_locals.get("self"), "src_file", None)
+            if isinstance(src_file, str):
+                return f"{abspath(src_file)}:{frame.f_lineno}"
+            outer = outer.f_back
+    path = abspath(frame.f_code.co_filename)
+    site = f"{path}:{frame.f_lineno}"
+    if not path.startswith(_PYPELINE_LIBRARY_DIR):
+        return site
+    outer = frame.f_back
+    while outer is not None and (
+        outer.f_code.co_filename == __file__
+        or abspath(outer.f_code.co_filename).startswith(_PYPELINE_LIBRARY_DIR)
+    ):
+        outer = outer.f_back
+    if outer is None:
+        return site
+    return f"{site} (via {abspath(outer.f_code.co_filename)}:{outer.f_lineno})"
 
 
 def _auto_pipeline_latency_suffix(latency, start_latency, max_latency) -> str:
@@ -2082,6 +2666,7 @@ class AUTO_PIPELINE:
         _auto_pipeline_latency_was_read = True
         if _auto_pipeline_build_mode is not None:
             _auto_pipeline_served.append((self, self._latency))
+            _auto_pipeline_read_sites.append((self, _latency_read_site()))
         return self._latency
 
     @property
@@ -3688,6 +4273,8 @@ _auto_multi_cycle_latency_cache: dict = {}
 # an AUTO_MULTI_CYCLE nothing in the design reads can't have its handshake follow the
 # sweep, and the driver fails the build on it (AUTO_MULTI_CYCLE_UNREAD_KEYS).
 _auto_multi_cycle_served: dict = {}
+# canonical_key -> "file:line" sites of those reads, first read first
+_auto_multi_cycle_read_sites: dict = {}
 # canonical_key -> AUTO_MULTI_CYCLE constructed during the current design execution
 _auto_multi_cycle_constructed: dict = {}
 # (module, code name, line) -> constructions seen at that source site during
@@ -3725,6 +4312,7 @@ def RESET_AUTO_MULTI_CYCLE_TRACKING() -> None:
     """Forget constructions/reads from a previous design execution (called
     before every design (re-)execution: PARSE_FILE, native-sim import)."""
     _auto_multi_cycle_served.clear()
+    _auto_multi_cycle_read_sites.clear()
     _auto_multi_cycle_constructed.clear()
     _auto_multi_cycle_site_counts.clear()
 
@@ -3732,6 +4320,11 @@ def RESET_AUTO_MULTI_CYCLE_TRACKING() -> None:
 def AUTO_MULTI_CYCLE_SERVED_LATENCIES() -> dict:
     """canonical_key -> set of .latency values design code read."""
     return {key: set(values) for key, values in _auto_multi_cycle_served.items()}
+
+
+def AUTO_MULTI_CYCLE_READ_SITES() -> dict:
+    """canonical_key -> "file:line" sites that read .latency, first read first."""
+    return {key: list(sites) for key, sites in _auto_multi_cycle_read_sites.items()}
 
 
 def AUTO_MULTI_CYCLE_CONSTRUCTED() -> dict:
@@ -3879,6 +4472,10 @@ class AUTO_MULTI_CYCLE:
     @property
     def latency(self) -> int:
         _auto_multi_cycle_served.setdefault(self.canonical_key, set()).add(self._ncycles)
+        sites = _auto_multi_cycle_read_sites.setdefault(self.canonical_key, [])
+        site = _latency_read_site()
+        if site not in sites:
+            sites.append(site)
         return self._ncycles
 
     @property

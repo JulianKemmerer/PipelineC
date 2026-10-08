@@ -81,8 +81,8 @@ def main():
         sys.exit(1)
     with open(history_paths[-1]) as f:
         history = json.load(f)
-    if history.get("schema_version") != 3 or history.get("build_complete") is not True:
-        print(f"FAIL: sweep_history.json not a complete schema 3 file: {history}")
+    if history.get("schema_version") != 4 or history.get("build_complete") is not True:
+        print(f"FAIL: sweep_history.json not a complete schema 4 file: {history}")
         sys.exit(1)
     final = history["mains"].get("sweep_planless_main", {}).get("final") or {}
     if not (

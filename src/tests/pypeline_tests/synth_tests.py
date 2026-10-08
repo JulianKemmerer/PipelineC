@@ -364,10 +364,9 @@ def get_tests() -> list:
         tests.append(
             _synth_test(
                 f"sweep_float32_{tool}",
-                [INST_DIR / "sweep_float32_test.py"]
+                [INST_DIR / "sweep_float32_test.py", "-D", f"SWEEP_FLOAT32_MHZ={goal_mhz}"]
                 + SWEEP_FLOAT32_EXTRA_ARGS.get(tool, []),
                 tool,
-                env={"SWEEP_FLOAT32_MHZ": goal_mhz},
             )
         )
 
@@ -382,9 +381,10 @@ def get_tests() -> list:
                 INST_DIR / "sweep_float32_test.py",
                 "--part",
                 "xc7a35tcpg236-1",
+                "-D",
+                "SWEEP_FLOAT32_MHZ=200.0",
             ],
             OPEN_TOOLS,
-            env={"SWEEP_FLOAT32_MHZ": 200.0},
         )
     )
     # --pins on OpenXC7: a full and a --comb build of blink.py, each checked

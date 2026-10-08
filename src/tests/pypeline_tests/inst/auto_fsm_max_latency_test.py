@@ -31,15 +31,12 @@ def fail(msg):
 
 
 def run_build(out_dir, impossible=False):
-    env = dict(os.environ)
-    if impossible:
-        env["PYPELINE_AUTO_FSM_IMPOSSIBLE_LATENCY"] = "1"
-    else:
-        env.pop("PYPELINE_AUTO_FSM_IMPOSSIBLE_LATENCY", None)
     cmd = [sys.executable, PYPELINEC, DESIGN, "--syn_tool", "device_models", "--out_dir", out_dir]
+    if impossible:
+        cmd += ["-D", "PYPELINE_AUTO_FSM_IMPOSSIBLE_LATENCY=1"]
     print("Running:", " ".join(cmd), f"(impossible={impossible})", flush=True)
     result = subprocess.run(
-        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True, env=env
+        cmd, stdout=subprocess.PIPE, stderr=subprocess.STDOUT, text=True
     )
     return result.returncode, result.stdout
 

@@ -50,14 +50,11 @@ def build(tool, out_dir, goal_mhz, timeout, comb=False):
         sys.executable, str(PYPELINEC), str(DESIGN),
         "--syn_tool", tool,
         "--out_dir", str(out_dir / ("comb_o" if comb else "o")),
+        "-D", f"SWEEP_FLOAT32_MHZ={goal_mhz}",
     ]
     if comb:
         cmd.append("--comb")
-    env = dict(
-        os.environ,
-        SWEEP_FLOAT32_MHZ=str(goal_mhz),
-        PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG="1",
-    )
+    env = dict(os.environ, PIPELINEC_INTERNAL_SKIP_PIPELINE_MAP_PNG="1")
     what = "comb" if comb else f"sweep goal {goal_mhz} MHz"
     print(f"[{tool}] {what} -> {log_path}", flush=True)
     with open(log_path, "w") as f:

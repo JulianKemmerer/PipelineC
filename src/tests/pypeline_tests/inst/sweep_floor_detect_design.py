@@ -5,7 +5,7 @@
 # floor up front, blame this submodule, and stop quickly instead of blindly
 # adding more and more cuts.
 #
-# The goal comes from SWEEP_FLOOR_DETECT_MHZ (default 100), because the two
+# The goal comes from -D SWEEP_FLOOR_DETECT_MHZ (default 100), because the two
 # tools stop this design on different evidence:
 #  - sky130, 100 MHz: the measured plateau (51.4 MHz) sits far above the
 #    pessimistic soft-floor prediction (~37 MHz), outside
@@ -24,6 +24,7 @@ sys.path.insert(
 from pypeline import (
     MAIN,
     hw_func,
+    param,
     Reg,
     uint8_t,
     sim_call,
@@ -40,7 +41,7 @@ def slow_acc(x: uint8_t) -> uint8_t:
     return acc
 
 
-GOAL_MHZ = float(os.environ.get("SWEEP_FLOOR_DETECT_MHZ", "100.0"))
+GOAL_MHZ = param("SWEEP_FLOOR_DETECT_MHZ", 100.0)
 
 
 @MAIN(GOAL_MHZ)

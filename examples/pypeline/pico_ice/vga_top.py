@@ -10,8 +10,6 @@ module instead of the Arty one. Build with:
 Top-level IO here must match top.sv (the wrapper) and ice40.pcf (the pins).
 """
 
-import os
-
 from pypeline import *
 
 # VGA PMOD output wire, driving ports named after the ICE_XX pins
@@ -21,14 +19,15 @@ from vga.timing import make_vga_timing, VGA_640_480
 
 PART("ICE40UP5K-SG48")  # iCE40 UltraPlus 5K, on both the pico-ice and pico2-ice
 
-PLL_CLK_MHZ = float(os.environ.get("PLL_CLK_MHZ", "25.0"))
+PLL_CLK_MHZ = param("PLL_CLK_MHZ", 25.0, help="PLL output clock rate in MHz")
 
 vga_timing = make_vga_timing(VGA_640_480)
 # Plain Python check at elaboration time: the PLL must make the pixel clock
 if PLL_CLK_MHZ != vga_timing.pixel_clk_mhz:
     raise ValueError(
         f"640x480 VGA needs a {vga_timing.pixel_clk_mhz} MHz pixel clock, "
-        f"build with PLL_CLK_MHZ={vga_timing.pixel_clk_mhz}"
+        f"build with make PLL_CLK_MHZ={vga_timing.pixel_clk_mhz} "
+        f"(pypelinec -D PLL_CLK_MHZ={vga_timing.pixel_clk_mhz})"
     )
 
 # Clock input from the PLL in top.sv, named to match the wrapper
