@@ -842,8 +842,12 @@ packing runs.
 
 ## Synthesis cache coverage
 
-`syn_cache_test.py` (build_report_pyrtl, about a minute) covers synthesis result reuse
-(see [SYN_DESIGN.md §6](SYN_DESIGN.md#6-caches)).
+`syn_cache_test.py` covers synthesis result reuse
+(see [SYN_DESIGN.md §6](SYN_DESIGN.md#6-caches)). `run_all` registers it twice, since
+every synthesis run in a `build_report_<tool>` test must use that tool:
+`syn_cache_test` (`--cases pyrtl`, build_report_pyrtl, about a minute) and
+`syn_cache_netlist_test` (`--cases netlist`, build_report_open_tools: the netlist export
+is a yosys run). A direct run does both.
 - **In-process:**
   - `SYN.SYNTHESIS_INPUT_MANIFEST` is path-independent and changes with HDL bytes,
     constraints, part, tool installation, recipe module and run settings;
@@ -863,9 +867,9 @@ packing runs.
     nothing and ends with the same final record.
   - **Simulation-only parameter.** A `-D` value only simulation code reads reuses
     every result.
-  - **Netlist export.** Two `--yosys_json` runs into fresh directories sharing one
-    store must both run yosys and write the netlist. A store hit restores only a log,
-    so before this rule the second run wrote no netlist.
+- **Netlist export** (`syn_cache_netlist_test`). Two `--yosys_json` runs into fresh
+  directories sharing one store must both run yosys and write the netlist. A store hit
+  restores only a log, so before this rule the second run wrote no netlist.
 
 The stale-input and final-VHDL cases fail on the tree before this change. The old
 log was read, nothing was re-synthesized, and the same-named pipelined entity kept

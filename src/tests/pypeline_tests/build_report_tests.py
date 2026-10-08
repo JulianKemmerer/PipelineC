@@ -24,6 +24,7 @@ from common import INST_DIR, Test, main, syn_tool_category
 DM = syn_tool_category("build_report", "device_models")
 VIVADO = syn_tool_category("build_report", "vivado")
 PYRTL = syn_tool_category("build_report", "pyrtl")
+OPEN_TOOLS = syn_tool_category("build_report", "open_tools")
 
 
 def get_tests() -> list:
@@ -390,10 +391,6 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
-    # A design that synthesizes away to nothing (no top-level outputs) must
-    # fail its pipelined build with the clear PYRTL "no timing paths" error --
-    # not the old divide-by-zero / float-parse failure, and not by getting
-    # stuck in the single-stateful-main coarse sweep first.
     # Synthesis result reuse (SYN.py): the input manifest, out_dir log
     # validation and the shared store in-process, then PyRTL builds -- an
     # operand swap keeps every name yet must re-synthesize and rewrite the
@@ -404,11 +401,27 @@ def get_tests() -> list:
         Test(
             name="syn_cache_test",
             category=PYRTL,
-            cmd=[INST_DIR / "syn_cache_test.py"],
+            cmd=[INST_DIR / "syn_cache_test.py", "--cases", "pyrtl"],
             needs_out_dir=True,
             requires=["yosys", "ghdl"],
         )
     )
+    # The same file's --yosys_json case: the netlist export is a yosys run
+    # (OPEN_TOOLS), so it sits in that tool's category. It must run even when
+    # the store holds an identical export, since a hit restores only a log.
+    tests.append(
+        Test(
+            name="syn_cache_netlist_test",
+            category=OPEN_TOOLS,
+            cmd=[INST_DIR / "syn_cache_test.py", "--cases", "netlist"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+        )
+    )
+    # A design that synthesizes away to nothing (no top-level outputs) must
+    # fail its pipelined build with the clear PYRTL "no timing paths" error --
+    # not the old divide-by-zero / float-parse failure, and not by getting
+    # stuck in the single-stateful-main coarse sweep first.
     tests.append(
         Test(
             name="pyrtl_no_timing_paths_build_report_test",

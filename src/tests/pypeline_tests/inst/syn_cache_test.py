@@ -24,6 +24,11 @@ Builds (PyRTL, seconds each):
   - a --yosys_json netlist export always runs (yosys only), even in a fresh
     output directory whose store holds an identical earlier export: a store
     hit restores a log, never the netlist the run exists to write.
+
+run_all registers two tests from this file, because every synthesis run in a
+build_report_<tool> test must use that tool: syn_cache_test (--cases pyrtl,
+build_report_pyrtl) and syn_cache_netlist_test (--cases netlist, the yosys
+export, build_report_open_tools). A direct run does both.
 """
 import argparse
 import glob
@@ -292,21 +297,27 @@ def test_yosys_json_never_cached(out):
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out_dir", default=None)
-    out = parser.parse_args().out_dir or tempfile.mkdtemp(prefix="syn_cache_test_")
+    parser.add_argument("--cases", choices=("all", "pyrtl", "netlist"), default="all",
+                        help="pyrtl: in-process cases and PyRTL builds; netlist: the "
+                        "--yosys_json export (a yosys run); all: both")
+    args = parser.parse_args()
+    out = args.out_dir or tempfile.mkdtemp(prefix="syn_cache_test_")
     os.makedirs(out, exist_ok=True)
-    unit = os.path.join(out, "unit")
-    shutil.rmtree(unit, ignore_errors=True)
-    os.makedirs(unit)
-    test_manifest_identity(unit)
-    test_reuse_log(unit)
-    test_store(unit)
-    print("In-process synthesis cache tests passed.", flush=True)
-    test_stale_inputs_rebuild(out)
-    test_final_vhdl_follows_edit(out)
-    test_shared_store(out)
-    test_sim_only_param_reuses(out)
-    test_yosys_json_never_cached(out)
-    print("All synthesis cache tests passed.")
+    if args.cases in ("all", "pyrtl"):
+        unit = os.path.join(out, "unit")
+        shutil.rmtree(unit, ignore_errors=True)
+        os.makedirs(unit)
+        test_manifest_identity(unit)
+        test_reuse_log(unit)
+        test_store(unit)
+        print("In-process synthesis cache tests passed.", flush=True)
+        test_stale_inputs_rebuild(out)
+        test_final_vhdl_follows_edit(out)
+        test_shared_store(out)
+        test_sim_only_param_reuses(out)
+    if args.cases in ("all", "netlist"):
+        test_yosys_json_never_cached(out)
+    print(f"Synthesis cache tests passed ({args.cases} cases).")
 
 
 if __name__ == "__main__":
