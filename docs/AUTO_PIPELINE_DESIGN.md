@@ -701,9 +701,10 @@ types and initialization conventions, with a synchronous memory access at
 every implementation point. Their minimum latency is **one enabled clock**.
 They never use a zero-cycle asynchronous-read memory as a timing baseline.
 
-The initial supported synthesis target is ECP5 with `OPEN_TOOLS` (GHDL,
-Yosys, nextpnr-ecp5), tested on `LFE5U-85F-6BG381C`. A synthesis build using a
-different backend is rejected. Native simulation and VHDL emission do not
+Supported synthesis targets are Vivado (validated on `xc7a200tffg1156-2`) and
+ECP5 with `OPEN_TOOLS` (GHDL, Yosys, nextpnr-ecp5), tested on
+`LFE5U-85F-6BG381C`. A synthesis build using another backend is rejected.
+Native simulation and VHDL emission do not
 require an FPGA tool. The manual `make_ram` and `make_stream_ram` factories
 retain their existing implementations and semantics.
 
@@ -816,11 +817,19 @@ Disabled clocks do not count toward either interval. The tree pads the
 address space to a power of two, so non-power-of-two sizes can leave unused
 capacity in the last banks.
 
-Leaf depth is bounded by ECP5 BRAM geometry: the search stops subdividing
+Leaf depth is bounded by the resolved target's BRAM geometry: the search stops subdividing
 when a leaf no longer needs serial depth cascading. Width packing remains
 the synthesis tool's responsibility. A fixed latency beyond useful
 subdivision adds output delay registers to satisfy the exact contract;
 automatic timing search does not treat padding as a way to improve timing.
+
+ECP5 uses DP16KD aspect ratios; Vivado uses RAMB36 aspect ratios, with depths
+32768/16384/8192/4096/2048/1024 for widths 1/2/4/9/18/36. The 512×72 mode
+is available to simple dual-port memory, while true dual-port memory stops
+at width 36. Byte enables reserve nine physical bits per eight data bits.
+Wider words span primitives. CLI and source `PART`/tool settings are resolved
+before the initial physical plan is finalized: a fixed-latency build must
+also re-elaborate if its initial target-independent import used different geometry.
 
 One writer with any number of readers is supported by BRAM replication.
 Two writable ports are supported when the logical ports fit the two physical
@@ -830,6 +839,14 @@ arbitration are outside this implementation. The `ram_style=block` and
 `no_rw_check` attributes survive the GHDL import into Yosys, even with GHDL's
 unhandled-attribute warning. Live storage must map to block RAM; it must not
 silently become a register array.
+
+Two-writer memories follow [AMD's dual-port inference template](https://docs.amd.com/r/2023.1-English/ug901-vivado-synthesis/Dual-Port-Block-RAM-with-Two-Write-Ports-in-Read-First-Mode-VHDL):
+one shared variable for each bank, with a separate clocked process per port.
+ROMs and single-writer memories retain signal storage. All processes share
+the same clock enable. This changes inference, not the collision contract:
+cross-port read/write collisions and overlapping writes remain unspecified.
+GHDL needs `-frelaxed` for the shared-variable form; the open-tools flow and
+`--cocotb --ghdl` supply it automatically when needed.
 
 ### RAM compiler, sweep, and simulation
 
@@ -843,13 +860,17 @@ The outer RAM search invokes the ordinary throughput sweep on each
 candidate. Thus a RAM remains stateful, and normal operator pipelining still
 works elsewhere in the same design. All instances sharing a factory key
 use one plan, evaluated against the entire design's clock requirements.
-The search advances a bounded frontier across RAM groups, then tries
-per-group latency reductions and same-latency alternatives. This avoids
+The search advances a bounded frontier across RAM groups. Once timing passes,
+it measures the groups' lowest latencies together; a passing joint trim reaches
+the minimum possible total RAM latency in one build. If that probe fails, the
+search retains per-group latency reductions and same-latency alternatives. This avoids
 stalling when several RAMs tie for the worst path. It does not claim an
 exhaustive search over every combination of several independent RAMs.
 
 Passing candidates are ranked by total RAM latency and then BRAM/LUT/FF
-usage. If no candidate meets timing, the best measured frequency-to-goal
+usage. Vivado's RAMB36 count is normalized to two RAMB18 units; the Block RAM
+Tile subtotal is not counted again. Reports retain physical RAMB18/RAMB36,
+LUT, FF and DSP counts. ECP5 retains DP16KD/LUT4/DFF reporting. If no candidate meets timing, the best measured frequency-to-goal
 ratio is retained and the build fails with a latency-limit/subdivision
 diagnostic. More stages need not be faster: placement, BRAM timing, and
 routing eventually dominate.
@@ -864,6 +885,10 @@ probes. `sweep_history.json` includes selected RAM plans; the companion
 and the winner.
 
 The simulator receives the final plans before importing the design. The
+native source-only path also reconciles source/CLI targets after import: if a
+bootstrap fixed-latency plan used different geometry, it re-imports before
+running hooks or clocks. Explicit/replayed plans are preserved. This handles
+a late `PART` declaration without requiring an installed synthesis tool. The
 existing RAM model implements the equal-depth tree as a logical memory with
 the same write stage and output delay. Writes commit once per enabled clock,
 including during delta-cycle convergence. Pure callers use the existing
@@ -893,7 +918,8 @@ also surviving an arbitrarily long downstream stall. `.latency` describes
 the core; `.min_response_latency=L+2` describes the unstalled wrapper.
 
 Coverage includes native contract/random-stall tests, native/GHDL cycle
-comparison, real ECP5 BRAM mapping, constraint/search tests, and the QoR
+comparison (including two writers and clock-enable pauses), real Vivado and
+ECP5 BRAM mapping, constraint/search tests, and the ECP5 QoR
 frontier benchmark:
 
 ```sh
@@ -907,7 +933,7 @@ over placement seeds 1–3. It retains mapped-cell counts and per-seed results
 in `ram_qor.json`. `PIPELINEC_OPEN_TOOLS_SEED` selects the nextpnr seed and is
 included in the synthesis log cache name; the default remains one.
 
-Representative seed-1 measurements on `LFE5U-85F-6BG381C`, with one write
+Historical seed-1 measurements on `LFE5U-85F-6BG381C`, with one write
 port and one read port, are retained with plans, mapped-cell counts, tool
 versions, and a reproduction command in
 [`auto_pipeline_ram_ecp5.json`](../src/tests/pypeline_tests/qor/auto_pipeline_ram_ecp5.json):
@@ -925,6 +951,16 @@ three-cycle unsplit implementation, while the smaller memory already
 approaches its timing limit without splitting. Placement seeds and register
 overhead matter; the search measures candidates instead of assuming that
 adding stages always helps.
+
+The Vivado-support regression rerun on 2026-10-10 uses the current fixture's
+dense irregular initialization. Its 64K x 32 seed-1 results are **81.87, 84.83,
+and 80.44 MHz** at latencies 3, 7, and 9, with **128 DP16KD** at every point.
+The seven-cycle candidate improves timing by 3.6% over three cycles; adding
+another two cycles loses that gain. The historical fixture used sparse
+initialization and different instance names, so its timing is retained as
+historical evidence rather than relabeled as the new result. The fresh plans,
+counts, tool versions and reproduction command are in
+[`auto_pipeline_ram_ecp5_regression.json`](../src/tests/pypeline_tests/qor/auto_pipeline_ram_ecp5_regression.json).
 
 ## History
 

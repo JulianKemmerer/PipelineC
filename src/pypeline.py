@@ -2273,6 +2273,10 @@ _auto_pipeline_latency_cache: dict = {}
 # These live in the runtime module so compiler/design module eviction cannot
 # discard the selected topology (latency alone is insufficient).
 _auto_pipeline_ram_plan_cache: dict = {}
+# Bootstrap factories seen during the current import. Native simulation uses
+# these to reconcile a late PART/CLI target before any clocks or hooks run.
+_auto_pipeline_ram_served: dict = {}
+_auto_pipeline_ram_native_target = None
 
 
 def SET_AUTO_PIPELINE_RAM_PLAN_CACHE(plans):

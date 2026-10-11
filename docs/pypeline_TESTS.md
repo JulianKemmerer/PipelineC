@@ -16,17 +16,6 @@ category per synthesis tool -- one pair for every backend `pypelinec` can select
 
 ## Categories
 
-Auto-pipelined RAM coverage includes `auto_pipeline_ram_test` (plan constraints, native
-memory contracts, byte enables, reader replication, randomized stalls, and sustained
-throughput), `self_check_auto_pipeline_ram_test` (native/GHDL cycle parity and bypass
-alignment and clock-enable pauses), `self_check_auto_pipeline_ram_selected_plan`
-(native/GHDL parity after the synthesis-selected plan is installed), and ECP5
-`auto_pipeline_ram_build_test` / `auto_pipeline_ram_qor_test`
-(actual BRAM mapping, exact/flexible latency, failure bounds, and splitting gains).
-The [RAM benchmark](AUTO_PIPELINE_DESIGN.md#ram-stream-wrapper-and-verification) records the
-full three-seed 16K/64K frequency/resource frontier. Run the complete suite with
-`python3 src/tests/pypeline_tests/run_all.py -j 5 --no_timeout`.
-
 | Category | What it checks | Verdict |
 |---|---|---|
 | `native_sim` | Python golden-model checks (`sim_call`) and `pypeline_sim.py` multi-MAIN runs; fixed user pipelines selectively prepare alignment | exit code, plus in-process `assert`s |
@@ -96,10 +85,12 @@ is to run one design on *every* backend.
   `PART` selects another backend -- a part and a tool that disagree are a hard
   error ([`SYN_DESIGN.md` §2](SYN_DESIGN.md#2-choosing-a-tool)), so a design
   meant to be built under several tools simply sets no `PART`.
-- **`vivado`, only for Vivado-specific features.** Today that means MULTI_CYCLE
-  path constraints (`AUTO_MULTI_CYCLE.GET_MCP_PATH_CONSTRAINTS` supports only Vivado) and
-  the PDW synth tops' real-part Block RAM and 125 MHz checks. Use a part with
-  a committed cache (`xc7a35ticsg324-1l`, `xc7a100tcsg324-1`); a part without
+- **`vivado`, for Vivado-specific behavior and target checks.** This covers
+  MULTI_CYCLE path constraints (`AUTO_MULTI_CYCLE.GET_MCP_PATH_CONSTRAINTS`
+  supports only Vivado), automatic RAM inference and selected-plan replay,
+  and the PDW synth tops' AIR7310 Block RAM and 125 MHz checks on
+  `xc7a200tffg1156-2`. Use a part with a committed cache
+  (`xc7a35ticsg324-1l`, `xc7a100tcsg324-1`, `xc7a200tffg1156-2`); a part without
   one re-characterizes every leaf on every run.
 - **`pyrtl`, only for PyRTL-specific behavior.** Two tests use it:
   - `pyrtl_no_timing_paths_build_report_test.py` guards a fix inside
@@ -904,6 +895,35 @@ Subprocess runs pass it as `-D HOOKS_TEST_MODE=...`, and `hooks_test` installs i
     `--comb` build writes its final files twice and syn `@final` must still run once.
 
 ## RAM coverage
+
+Automatic RAM coverage (`make_auto_pipeline_ram` and `make_stream_auto_pipeline_ram`):
+
+- `auto_pipeline_ram_test` (`unit`): target resolution before fixed-plan emission,
+  ECP5/Vivado geometry boundaries, consecutive native-run target isolation,
+  latency constraints, resource parsing and ranking
+  without BRAM subtotal double-counting, byte enables, two writers, replicated readers,
+  native memory ordering, randomized stream stalls and sustained throughput.
+  Measured-search tests cover joint trimming, per-group fallback and restoration
+  of the selected graph and reports after losing probes.
+- `self_check_auto_pipeline_ram_test` (`native_vs_vhdl_sim`): cycle parity for banked
+  RAM, a pure caller's bypass alignment, two byte-enabled writers, clock-enable
+  pauses and stream backpressure. The `selected_plan` and `selected_plan_vivado`
+  variants repeat parity after a full synthesis sweep installs the winning plans.
+- `self_check_auto_pipeline_ram_target_test` and its CLI-target variant
+  (`native_vs_vhdl_sim`): fixed-latency banking and write visibility agree with
+  Vivado geometry even when `PART` is declared after the RAM factory, or only
+  supplied by `--part`. Native target reconciliation requires no FPGA tools.
+- `auto_pipeline_ram_build_test` (`build_report_open_tools`) and
+  `auto_pipeline_ram_build_vivado_test` (`build_report_vivado`): actual BRAM mapping
+  for ROMs, single and dual writers, replicated readers, initialization and byte
+  enables; register-array fallback is a failure. They check fixed/flexible latencies,
+  trimming a start guess, and a capped timing failure.
+- `auto_pipeline_ram_qor_test` (`build_report_open_tools`): the 64K memory's
+  splitting gains. The [RAM benchmark](AUTO_PIPELINE_DESIGN.md#ram-stream-wrapper-and-verification)
+  supports the full three-seed 16K/64K frequency/resource frontier.
+
+The two-writer VHDL uses shared variables; the simulator driver supplies GHDL's
+`-frelaxed` option. ROMs and single-writer RAM use signals.
 
 `make_ram` (`include/pypeline/ram.py`) and `make_stream_ram` (`stream/stream_ram.py`) share one
 VHDL generator and one simulation model. Coverage:

@@ -1,0 +1,1668 @@
+{
+  "measurement_date": "2026-10-10",
+  "part": "xc7a200tffg1156-2",
+  "clock_mhz": 125.0,
+  "tool": "Vivado 2019.2",
+  "timing_kind": "out-of-context synthesis; no placement/routing or AirStack integration",
+  "baseline_source": {
+    "revision": "2be7c274c8388905296a0afc143e1cfd6ea6ef2b",
+    "changes": "Only the four existing PDW PART literals changed to xc7a200tffg1156-2; the new standalone measurement wrapper was copied into the snapshot.",
+    "implementations": "Manual NCO/log ROMs and CORDIC angle",
+    "command": "python3 <baseline>/src/pypelinec <baseline>/examples/pypeline/dsp/pdw/<top>.py --comb --out_dir /tmp/pdw-baseline/<top> -j 2",
+    "latencies": {
+      "nco": 5,
+      "measurement": 16
+    }
+  },
+  "reproduction": [
+    "python3 src/pypelinec examples/pypeline/dsp/pdw/pulse_gen_synth_top.py --out_dir /tmp/pdw-generator -j 1",
+    "python3 src/pypelinec examples/pypeline/dsp/pdw/pulse_measure_synth_top.py -D PDW_ATAN2_METHOD=cordic --out_dir /tmp/pdw-measure-cordic -j 1",
+    "python3 src/pypelinec examples/pypeline/dsp/pdw/pulse_measure_synth_top.py -D PDW_ATAN2_METHOD=rom --out_dir /tmp/pdw-measure-rom -j 1",
+    "python3 src/pypelinec examples/pypeline/dsp/pdw/top.py -D PDW_ATAN2_METHOD=cordic --no_hier_syn --out_dir /tmp/pdw-top-cordic -j 1",
+    "python3 src/pypelinec examples/pypeline/dsp/pdw/top.py -D PDW_ATAN2_METHOD=rom --no_hier_syn --out_dir /tmp/pdw-top-rom -j 1"
+  ],
+  "baseline": {
+    "pulse_gen_synth_top": {
+      "achieved_mhz": {
+        "clk_125p0": 165.782
+      },
+      "resources": {
+        "RAMB18": 1,
+        "RAMB36": 0,
+        "LUT": 520,
+        "FF": 345,
+        "DSP": 4
+      },
+      "bram18_units": 1,
+      "fit_status": "within_reported_limits",
+      "input_signature": "ea6cc736057b30a65ef327a75d840de7a998d0dff42945a68a6d25d1fb491acf",
+      "main_latencies": {
+        "MAIN:pulse_gen_top": 0
+      },
+      "dsp_latencies": {},
+      "selected_ram_plans": {},
+      "ram_search_iterations": []
+    },
+    "pulse_detect_synth_top": {
+      "achieved_mhz": {
+        "clk_125p0": 157.011
+      },
+      "resources": {
+        "RAMB18": 0,
+        "RAMB36": 0,
+        "LUT": 728,
+        "FF": 627,
+        "DSP": 0
+      },
+      "bram18_units": 0,
+      "fit_status": "within_reported_limits",
+      "input_signature": "428091425f18ef3b412416ea4e4ec1da5e0b053b8674123ff83865dc5b667332",
+      "main_latencies": {
+        "MAIN:pulse_detect_fsm_top": 0
+      },
+      "dsp_latencies": {},
+      "selected_ram_plans": {},
+      "ram_search_iterations": []
+    },
+    "pulse_measure_synth_top": {
+      "achieved_mhz": {
+        "clk_125p0": 146.735
+      },
+      "resources": {
+        "RAMB18": 1,
+        "RAMB36": 0,
+        "LUT": 5649,
+        "FF": 2961,
+        "DSP": 0
+      },
+      "bram18_units": 1,
+      "fit_status": "within_reported_limits",
+      "input_signature": "5a9ff96d84acc1b8c26d7d95c694465b3db32820ed2a330a55ab0c5acb8c514e",
+      "main_latencies": {
+        "MAIN:pulse_measure_top": 0
+      },
+      "dsp_latencies": {},
+      "selected_ram_plans": {},
+      "ram_search_iterations": []
+    },
+    "pulse_extract_synth_top": {
+      "achieved_mhz": {
+        "clk_125p0": 146.735
+      },
+      "resources": {
+        "RAMB18": 3,
+        "RAMB36": 21,
+        "LUT": 6193,
+        "FF": 3864,
+        "DSP": 0
+      },
+      "bram18_units": 45,
+      "fit_status": "within_reported_limits",
+      "input_signature": "ba495fe1cdadb73e507a2075182b4f904a1f35b111f01bc1809c37e5d6142074",
+      "main_latencies": {
+        "MAIN:pulse_extract_top": 0
+      },
+      "dsp_latencies": {},
+      "selected_ram_plans": {},
+      "ram_search_iterations": []
+    },
+    "top": {
+      "achieved_mhz": {
+        "clk_125p0": 146.735
+      },
+      "resources": {
+        "RAMB18": 5,
+        "RAMB36": 21,
+        "LUT": 12764,
+        "FF": 6127,
+        "DSP": 10
+      },
+      "bram18_units": 47,
+      "fit_status": "within_reported_limits",
+      "input_signature": "5ca1cb0d2033ac40d48bcf75abc5bed57c6c46db483f75c215aa06247a8eef73",
+      "main_latencies": {
+        "MAIN:ctrl_main": 0,
+        "MAIN:pdw_main": 0,
+        "MAIN:pulse_gen_main": 0,
+        "MAIN:rst_main": 0,
+        "AUTO_PIPELINE:pdw_main:dc_block_core_stream_data_t_fixed_t_val_uint32_t_int_bits_32_frac_bits_0_signed_False_k_10_out_t_None_rounding_3a464995": 0,
+        "AUTO_PIPELINE:pdw_main:magnitude_core_stream_data_t_fixed_t_val_int16_t_int_bits_16_frac_bits_0_signed_True_out_t_None_rounding_truncate_11700e89": 0,
+        "AUTO_PIPELINE:pdw_main:moving_avg_core_stream_data_t_fixed_t_val_int44_t_int_bits_34_frac_bits_10_signed_True_n_4_out_t_None_normalize_True_f788819e": 0
+      },
+      "dsp_latencies": {},
+      "selected_ram_plans": {},
+      "ram_search_iterations": []
+    }
+  },
+  "automatic_roms": {
+    "auto-gen": {
+      "achieved_mhz": {
+        "clk_125p0": 133.191
+      },
+      "resources": {
+        "RAMB18": 1,
+        "RAMB36": 0,
+        "LUT": 520,
+        "FF": 311,
+        "DSP": 4
+      },
+      "bram18_units": 1,
+      "fit_status": "within_reported_limits",
+      "input_signature": "5b7f51634ab70b8ad7df3289c049b24289057fb03da8fab5e79743588b61b289",
+      "main_latencies": {
+        "MAIN:pulse_gen_top": 0
+      },
+      "dsp_latencies": {
+        "nco": 3
+      },
+      "selected_ram_plans": {
+        "93dfaaefa45fe9f397a9417ed65cdc3571032246cb1182cc99e13e5e01abaafe": {
+          "size": 1024,
+          "width": 17,
+          "ports": [
+            "r",
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 3,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 3,
+            "max_latency": null
+          }
+        }
+      },
+      "ram_search_iterations": [
+        {
+          "iteration": 0,
+          "plans": {
+            "93dfaaefa45fe9f397a9417ed65cdc3571032246cb1182cc99e13e5e01abaafe": {
+              "input_regs": 1,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 3,
+              "banks": 1,
+              "read_after_write_gap": 2
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 165.78249336870027
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 1,
+            "RAMB36": 0,
+            "LUT": 510,
+            "FF": 366,
+            "DSP": 4
+          }
+        },
+        {
+          "iteration": 1,
+          "plans": {
+            "93dfaaefa45fe9f397a9417ed65cdc3571032246cb1182cc99e13e5e01abaafe": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 133.19126265316996
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 1,
+            "RAMB36": 0,
+            "LUT": 520,
+            "FF": 311,
+            "DSP": 4
+          }
+        }
+      ]
+    },
+    "measure-cordic": {
+      "achieved_mhz": {
+        "clk_125p0": 146.735
+      },
+      "resources": {
+        "RAMB18": 3,
+        "RAMB36": 0,
+        "LUT": 5581,
+        "FF": 2938,
+        "DSP": 0
+      },
+      "bram18_units": 3,
+      "fit_status": "within_reported_limits",
+      "input_signature": "ecda8a297f40c2279affeee5a1c875c02dec50627754d02a6698ff0082f96046",
+      "main_latencies": {
+        "MAIN:pulse_measure_top": 0
+      },
+      "dsp_latencies": {
+        "angle": 16,
+        "log": 3,
+        "measurement": 16
+      },
+      "selected_ram_plans": {
+        "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+          "size": 1024,
+          "width": 10,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        },
+        "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+          "size": 64,
+          "width": 16,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        },
+        "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+          "size": 64,
+          "width": 16,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        }
+      },
+      "ram_search_iterations": [
+        {
+          "iteration": 0,
+          "plans": {
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 146.7351430667645
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 3,
+            "RAMB36": 0,
+            "LUT": 5582,
+            "FF": 2938,
+            "DSP": 0
+          }
+        },
+        {
+          "iteration": 1,
+          "plans": {
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 146.7351430667645
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 3,
+            "RAMB36": 0,
+            "LUT": 5582,
+            "FF": 2938,
+            "DSP": 0
+          }
+        },
+        {
+          "iteration": 2,
+          "plans": {
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 146.7351430667645
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 3,
+            "RAMB36": 0,
+            "LUT": 5582,
+            "FF": 2937,
+            "DSP": 0
+          }
+        },
+        {
+          "iteration": 3,
+          "plans": {
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 146.7351430667645
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 3,
+            "RAMB36": 0,
+            "LUT": 5581,
+            "FF": 2938,
+            "DSP": 0
+          }
+        }
+      ]
+    },
+    "measure-rom": {
+      "achieved_mhz": {
+        "clk_125p0": 142.816
+      },
+      "resources": {
+        "RAMB18": 3,
+        "RAMB36": 4,
+        "LUT": 1591,
+        "FF": 1066,
+        "DSP": 2
+      },
+      "bram18_units": 11,
+      "fit_status": "within_reported_limits",
+      "input_signature": "affd74252ce6514a72b2be0a085baebf4be68e9aac880b90373d4d695d36193c",
+      "main_latencies": {
+        "MAIN:pulse_measure_top": 0
+      },
+      "dsp_latencies": {
+        "angle": 8,
+        "log": 3,
+        "measurement": 8
+      },
+      "selected_ram_plans": {
+        "9ee2d4cfdd950a454b7773be4f15be7497a8134a5b6bf33add34c7ea2d310b3a": {
+          "size": 4096,
+          "width": 18,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        },
+        "1b44453c4c8b1959a8a8de8524b8f7120c92e9952ecc4ba53cbb15d5ad82d824": {
+          "size": 4096,
+          "width": 14,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        },
+        "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+          "size": 1024,
+          "width": 10,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        },
+        "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+          "size": 64,
+          "width": 16,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        },
+        "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+          "size": 64,
+          "width": 16,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        }
+      },
+      "ram_search_iterations": [
+        {
+          "iteration": 0,
+          "plans": {
+            "9ee2d4cfdd950a454b7773be4f15be7497a8134a5b6bf33add34c7ea2d310b3a": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "1b44453c4c8b1959a8a8de8524b8f7120c92e9952ecc4ba53cbb15d5ad82d824": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 156.9612305760477
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 3,
+            "RAMB36": 4,
+            "LUT": 1590,
+            "FF": 1101,
+            "DSP": 2
+          }
+        },
+        {
+          "iteration": 1,
+          "plans": {
+            "9ee2d4cfdd950a454b7773be4f15be7497a8134a5b6bf33add34c7ea2d310b3a": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "1b44453c4c8b1959a8a8de8524b8f7120c92e9952ecc4ba53cbb15d5ad82d824": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 142.81633818908884
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 3,
+            "RAMB36": 4,
+            "LUT": 1590,
+            "FF": 1101,
+            "DSP": 2
+          }
+        },
+        {
+          "iteration": 2,
+          "plans": {
+            "9ee2d4cfdd950a454b7773be4f15be7497a8134a5b6bf33add34c7ea2d310b3a": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "1b44453c4c8b1959a8a8de8524b8f7120c92e9952ecc4ba53cbb15d5ad82d824": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 142.81633818908884
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 3,
+            "RAMB36": 4,
+            "LUT": 1590,
+            "FF": 1101,
+            "DSP": 2
+          }
+        },
+        {
+          "iteration": 3,
+          "plans": {
+            "9ee2d4cfdd950a454b7773be4f15be7497a8134a5b6bf33add34c7ea2d310b3a": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "1b44453c4c8b1959a8a8de8524b8f7120c92e9952ecc4ba53cbb15d5ad82d824": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 142.81633818908884
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 3,
+            "RAMB36": 4,
+            "LUT": 1590,
+            "FF": 1100,
+            "DSP": 2
+          }
+        },
+        {
+          "iteration": 4,
+          "plans": {
+            "9ee2d4cfdd950a454b7773be4f15be7497a8134a5b6bf33add34c7ea2d310b3a": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "1b44453c4c8b1959a8a8de8524b8f7120c92e9952ecc4ba53cbb15d5ad82d824": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 142.81633818908884
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 3,
+            "RAMB36": 4,
+            "LUT": 1592,
+            "FF": 1065,
+            "DSP": 2
+          }
+        },
+        {
+          "iteration": 5,
+          "plans": {
+            "9ee2d4cfdd950a454b7773be4f15be7497a8134a5b6bf33add34c7ea2d310b3a": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "1b44453c4c8b1959a8a8de8524b8f7120c92e9952ecc4ba53cbb15d5ad82d824": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 142.81633818908884
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 3,
+            "RAMB36": 4,
+            "LUT": 1591,
+            "FF": 1066,
+            "DSP": 2
+          }
+        }
+      ]
+    },
+    "top-cordic": {
+      "achieved_mhz": {
+        "clk_125p0": 134.264
+      },
+      "resources": {
+        "RAMB18": 7,
+        "RAMB36": 21,
+        "LUT": 12697,
+        "FF": 6069,
+        "DSP": 10
+      },
+      "bram18_units": 49,
+      "fit_status": "within_reported_limits",
+      "input_signature": "418af349e558bfd170d48768078cd93b0a286385db06e72fe3dc6851288730b6",
+      "main_latencies": {
+        "MAIN:ctrl_main": 0,
+        "MAIN:pdw_main": 0,
+        "MAIN:pulse_gen_main": 0,
+        "MAIN:rst_main": 0,
+        "AUTO_PIPELINE:pdw_main:dc_block_core_stream_data_t_fixed_t_val_uint32_t_int_bits_32_frac_bits_0_signed_False_k_10_out_t_None_rounding_3a464995": 0,
+        "AUTO_PIPELINE:pdw_main:magnitude_core_stream_data_t_fixed_t_val_int16_t_int_bits_16_frac_bits_0_signed_True_out_t_None_rounding_truncate_11700e89": 0,
+        "AUTO_PIPELINE:pdw_main:moving_avg_core_stream_data_t_fixed_t_val_int44_t_int_bits_34_frac_bits_10_signed_True_n_4_out_t_None_normalize_True_f788819e": 0
+      },
+      "dsp_latencies": {
+        "nco": 3,
+        "angle": 16,
+        "log": 3,
+        "measurement": 16
+      },
+      "selected_ram_plans": {
+        "93dfaaefa45fe9f397a9417ed65cdc3571032246cb1182cc99e13e5e01abaafe": {
+          "size": 1024,
+          "width": 17,
+          "ports": [
+            "r",
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 3,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 3,
+            "max_latency": null
+          }
+        },
+        "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+          "size": 1024,
+          "width": 10,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        },
+        "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+          "size": 64,
+          "width": 16,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        },
+        "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+          "size": 64,
+          "width": 16,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        }
+      },
+      "ram_search_iterations": [
+        {
+          "iteration": 0,
+          "plans": {
+            "93dfaaefa45fe9f397a9417ed65cdc3571032246cb1182cc99e13e5e01abaafe": {
+              "input_regs": 1,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 3,
+              "banks": 1,
+              "read_after_write_gap": 2
+            },
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 146.7351430667645
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 7,
+            "RAMB36": 21,
+            "LUT": 12687,
+            "FF": 6124,
+            "DSP": 10
+          }
+        },
+        {
+          "iteration": 1,
+          "plans": {
+            "93dfaaefa45fe9f397a9417ed65cdc3571032246cb1182cc99e13e5e01abaafe": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 134.2642320085929
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 7,
+            "RAMB36": 21,
+            "LUT": 12697,
+            "FF": 6069,
+            "DSP": 10
+          }
+        }
+      ],
+      "critical_paths": {
+        "clk_125p0": {
+          "start": "ctrl_main_0CLK_2212f81e/pdw_ctrl_top_py_l234_c8_ec72/regs_reg[pulse_gen_width][10]",
+          "end": "pulse_gen_main_0CLK_34cd93a1/pulse_gen_top_py_l264_c8_el272_ec5/nco_pulse_gen_py_l160_c8_ec59/BIN_OP_PLUS_nco_py_l178_c19_ec30/ARG0",
+          "slack_ns": 0.552,
+          "path_delay_ns": 7.448
+        }
+      }
+    },
+    "top-rom": {
+      "achieved_mhz": {
+        "clk_125p0": 132.873
+      },
+      "resources": {
+        "RAMB18": 7,
+        "RAMB36": 25,
+        "LUT": 8532,
+        "FF": 4195,
+        "DSP": 12
+      },
+      "bram18_units": 57,
+      "fit_status": "within_reported_limits",
+      "input_signature": "849db88671cca2227a4a6a743992ff3bd81dadd4de6046f0cffb1a635a9a1526",
+      "main_latencies": {
+        "MAIN:ctrl_main": 0,
+        "MAIN:pdw_main": 0,
+        "MAIN:pulse_gen_main": 0,
+        "MAIN:rst_main": 0,
+        "AUTO_PIPELINE:pdw_main:dc_block_core_stream_data_t_fixed_t_val_uint32_t_int_bits_32_frac_bits_0_signed_False_k_10_out_t_None_rounding_3a464995": 0,
+        "AUTO_PIPELINE:pdw_main:magnitude_core_stream_data_t_fixed_t_val_int16_t_int_bits_16_frac_bits_0_signed_True_out_t_None_rounding_truncate_11700e89": 0,
+        "AUTO_PIPELINE:pdw_main:moving_avg_core_stream_data_t_fixed_t_val_int44_t_int_bits_34_frac_bits_10_signed_True_n_4_out_t_None_normalize_True_f788819e": 0
+      },
+      "dsp_latencies": {
+        "nco": 3,
+        "angle": 8,
+        "log": 3,
+        "measurement": 8
+      },
+      "selected_ram_plans": {
+        "93dfaaefa45fe9f397a9417ed65cdc3571032246cb1182cc99e13e5e01abaafe": {
+          "size": 1024,
+          "width": 17,
+          "ports": [
+            "r",
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 3,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 3,
+            "max_latency": null
+          }
+        },
+        "9ee2d4cfdd950a454b7773be4f15be7497a8134a5b6bf33add34c7ea2d310b3a": {
+          "size": 4096,
+          "width": 18,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        },
+        "1b44453c4c8b1959a8a8de8524b8f7120c92e9952ecc4ba53cbb15d5ad82d824": {
+          "size": 4096,
+          "width": 14,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        },
+        "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+          "size": 1024,
+          "width": 10,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        },
+        "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+          "size": 64,
+          "width": 16,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        },
+        "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+          "size": 64,
+          "width": 16,
+          "ports": [
+            "r"
+          ],
+          "byte_write_enables": false,
+          "latency": 1,
+          "start_latency": 2,
+          "max_latency": null,
+          "input_regs": 0,
+          "output_regs": 0,
+          "split_depth": 0,
+          "request_levels": 0,
+          "response_levels": 0,
+          "banks": 1,
+          "read_after_write_gap": 1,
+          "constraints": {
+            "latency": null,
+            "start_latency": 2,
+            "max_latency": null
+          }
+        }
+      },
+      "ram_search_iterations": [
+        {
+          "iteration": 0,
+          "plans": {
+            "93dfaaefa45fe9f397a9417ed65cdc3571032246cb1182cc99e13e5e01abaafe": {
+              "input_regs": 1,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 3,
+              "banks": 1,
+              "read_after_write_gap": 2
+            },
+            "9ee2d4cfdd950a454b7773be4f15be7497a8134a5b6bf33add34c7ea2d310b3a": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "1b44453c4c8b1959a8a8de8524b8f7120c92e9952ecc4ba53cbb15d5ad82d824": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 1,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 2,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 132.87270794578794
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 7,
+            "RAMB36": 25,
+            "LUT": 8521,
+            "FF": 4285,
+            "DSP": 12
+          }
+        },
+        {
+          "iteration": 1,
+          "plans": {
+            "93dfaaefa45fe9f397a9417ed65cdc3571032246cb1182cc99e13e5e01abaafe": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "9ee2d4cfdd950a454b7773be4f15be7497a8134a5b6bf33add34c7ea2d310b3a": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "1b44453c4c8b1959a8a8de8524b8f7120c92e9952ecc4ba53cbb15d5ad82d824": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            },
+            "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+              "input_regs": 0,
+              "output_regs": 0,
+              "split_depth": 0,
+              "request_levels": 0,
+              "response_levels": 0,
+              "latency": 1,
+              "banks": 1,
+              "read_after_write_gap": 1
+            }
+          },
+          "achieved_mhz": {
+            "clk_125p0": 132.87270794578794
+          },
+          "met": true,
+          "resources": {
+            "RAMB18": 7,
+            "RAMB36": 25,
+            "LUT": 8532,
+            "FF": 4195,
+            "DSP": 12
+          }
+        }
+      ],
+      "critical_paths": {
+        "clk_125p0": {
+          "start": "pdw_main_0CLK_33f7e75e/pulse_detect_top_py_l539_c8_el546_ec5/freq_accum_pulse_detect_py_l1069_c11_el1075_ec5/o_first_re_reg[0]",
+          "end": "pdw_main_0CLK_33f7e75e/pulse_extract_top_py_l548_c8_el559_ec5/pulse_measure_pulse_extract_py_l677_c8_el685_ec5/angle_unit_pulse_measure_py_l131_c9_el133_ec5/imeta_reg[swap][0]_srl6",
+          "slack_ns": 0.474,
+          "path_delay_ns": 7.526
+        }
+      }
+    }
+  },
+  "validation": {
+    "mathematical_atan2_vectors": 129606,
+    "worst_atan2_error_turns": 2.965863e-05,
+    "required_error_turns_exclusive": 6e-05,
+    "native_table_boundary_vectors": 24576,
+    "native_pdw_40bit_vectors": 517,
+    "ram_mapping_backends": [
+      "Vivado",
+      "ECP5 OPEN_TOOLS"
+    ],
+    "native_ghdl_checks": "Two-writer and banked RAM, selected plans, byte enables, CE pauses, stream stalls, late source and CLI targets; unequal DSP ROM latencies and signed-39/40-bit atan2 extremes.",
+    "pdw_angle_methods": [
+      "cordic",
+      "rom"
+    ],
+    "pdw_tests": "Measurement including log latency beyond angle, reset/PRI, generator, extraction and end-to-end independent packet checks.",
+    "ecp5_qor": "auto_pipeline_ram_ecp5_regression.json"
+  },
+  "default_selection": {
+    "method": "rom",
+    "correctness_passed": true,
+    "rom_composed_meets_125_mhz": true,
+    "rom_fits": true,
+    "cordic_composed_meets_125_mhz": true,
+    "rom_lut_reduction_without_ff_increase": true,
+    "lut_delta_rom_minus_cordic": -4165,
+    "ff_delta_rom_minus_cordic": -1874,
+    "bram18_units_delta_rom_minus_cordic": 8,
+    "dsp_delta_rom_minus_cordic": 2
+  }
+}

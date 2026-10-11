@@ -36,8 +36,8 @@ STRUCTURE: a hand-built pipeline with one register stage per iteration, NOT an
 unrolled combinational blob and NOT an AUTO_FSM.
 
   * Combinational would put `n_iters` dependent add/subtracts in one path. Every
-    testbench and synthesis top in the PDW project builds with `--comb` (no
-    auto-pipelining), where that becomes the design's critical path outright.
+    fixed pipeline stage must meet timing even in a full automatic-ROM sweep;
+    the compiler cannot slice a stateful stage's recurrence.
   * AUTO_FSM shares by entity, so 14 iterations x 3 rails = 42 same-width adds
     folded onto one unit -- 42 states, and src/tests/pypeline_tests/synth_tests.py
     documents the min-area search as superlinear in folds (it once hung for
@@ -48,7 +48,9 @@ unrolled combinational blob and NOT an AUTO_FSM.
 One register stage per iteration keeps the critical path at a single add/sub
 regardless of build mode, accepts a new input every cycle (so there is no busy
 signal and no overrun policy to get wrong), and costs ~1100 LUTs + ~1100 FFs --
-under 2% of an xc7a100t.
+under 2% of the historical xc7a100t proxy. For a BRAM/DSP alternative using
+normalized reciprocal and arctangent tables without a divider, see
+make_lut_atan2 in dsp/lut_atan2.py. Compare both in the composed design.
 """
 
 import math
@@ -552,7 +554,6 @@ def golden_cordic_rotate(rot, phase, amplitude):
     else:
         oi, oq = cy, -cx
     return _sext(oi, amp_bits), _sext(oq, amp_bits)
-
 
 
 def _sext(v, bits):

@@ -29,12 +29,14 @@ import cmath
 import math
 import random
 
-from pypeline import MAIN, int16_t, sim_call, sim_reset, uint1_t, uint32_t
+import pypeline as py
+from pypeline import MAIN, int16_t, sim_call, sim_reset, uint1_t, uint32_t, param
+from AUTO_PIPELINE import RamPlan
 
 from dsp.nco import golden_lut_nco, make_lut_nco, sine_quarter_table
 
 
-nco, nco_t = make_lut_nco(int16_t)  # the PDW generator's configuration
+nco, nco_t = make_lut_nco(int16_t, auto_pipeline_ram=param("NCO_AUTO_RAM", True))
 
 # A second, coarser instance: a table/index mistake that happens to cancel at
 # one size rarely does at two.
@@ -69,6 +71,29 @@ def _phase_err_bound(block, amplitude):
     return abs(amplitude) * half_bin_rad + 1.0
 
 
+def test_automatic_and_manual_latency():
+    saved = py.AUTO_PIPELINE_RAM_PLAN_CACHE()
+    rng = random.Random(212)
+    requests = [(rng.randrange(TURN), rng.randrange(-32768, 32768)) for _ in range(60)]
+    try:
+        units = [make_lut_nco(int16_t, auto_pipeline_ram=False)[0]]
+        assert units[0].latency == 5
+        for latency in (1, 2, 3, 5):
+            py.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(
+                {nco.rom._auto_pipeline_ram["key"]: RamPlan(0, latency - 1)}
+            )
+            unit, _ = make_lut_nco(int16_t)
+            assert unit.latency == latency + 2
+            units.append(unit)
+        for unit in units:
+            sim_reset()
+            assert _run(unit, requests) == [
+                golden_lut_nco(unit, ph, am) for ph, am in requests
+            ]
+    finally:
+        py.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(saved)
+
+
 def test_table_contents():
     t = sine_quarter_table(10, 16)
     assert len(t) == 1024
@@ -83,7 +108,9 @@ def test_matches_golden_model():
     rng = random.Random(8675309)
     reqs = [(0, 1000), (1 << 30, 1000), (1 << 31, 1000), (3 << 30, 1000)]
     reqs += [(rng.randrange(TURN), rng.randrange(-32768, 32768)) for _ in range(500)]
-    reqs += [(rng.randrange(TURN), a) for a in (-32768, 32767, 0, -1, 1) for _ in range(20)]
+    reqs += [
+        (rng.randrange(TURN), a) for a in (-32768, 32767, 0, -1, 1) for _ in range(20)
+    ]
     got = _run(nco, reqs)
     assert len(got) == len(reqs)
     for (ph, am), hw in zip(reqs, got):
@@ -111,9 +138,13 @@ def test_golden_accuracy_vs_math():
             i, q = golden_lut_nco(block, ph, amp)
             err = max(abs(i - amp * math.cos(theta)), abs(q - amp * math.sin(theta)))
             worst = max(worst, err)
-        assert worst <= bound, f"table_bits={block.table_bits} amp={amp}: worst {worst:.2f} > {bound:.2f}"
-        print(f"test_golden_accuracy_vs_math: table_bits={block.table_bits} amp={amp} "
-              f"worst {worst:.2f} LSB (bound {bound:.2f})")
+        assert (
+            worst <= bound
+        ), f"table_bits={block.table_bits} amp={amp}: worst {worst:.2f} > {bound:.2f}"
+        print(
+            f"test_golden_accuracy_vs_math: table_bits={block.table_bits} amp={amp} "
+            f"worst {worst:.2f} LSB (bound {bound:.2f})"
+        )
 
 
 def test_quadrant_axes():
@@ -200,7 +231,9 @@ def test_spur_level():
         mask[(peak + d) % n] = False
     sfdr = 20.0 * math.log10(spec[peak] / spec[mask].max())
     assert sfdr > 66.0, f"SFDR {sfdr:.1f} dB"
-    print(f"test_spur_level passed (SFDR {sfdr:.1f} dBc at table_bits={nco.table_bits})")
+    print(
+        f"test_spur_level passed (SFDR {sfdr:.1f} dBc at table_bits={nco.table_bits})"
+    )
 
 
 def test_frequency_estimate_unbiased():
@@ -227,7 +260,7 @@ def test_frequency_estimate_unbiased():
         want = freq / TURN if freq < TURN // 2 else freq / TURN - 1.0
         err = abs(est - want)
         worst = max(worst, err)
-        assert err < 2.0 ** -15, f"f={f_turns}: estimate {est} vs {want} (err {err:.2e})"
+        assert err < 2.0**-15, f"f={f_turns}: estimate {est} vs {want} (err {err:.2e})"
     print(f"test_frequency_estimate_unbiased passed (worst {worst:.2e} turn)")
 
 
@@ -245,6 +278,7 @@ def test_pipeline_latency():
 
 
 if __name__ == "__main__":
+    test_automatic_and_manual_latency()
     test_table_contents()
     test_matches_golden_model()
     test_golden_accuracy_vs_math()

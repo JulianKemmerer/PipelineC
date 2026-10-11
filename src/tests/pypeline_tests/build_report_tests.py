@@ -29,12 +29,66 @@ OPEN_TOOLS = syn_tool_category("build_report", "open_tools")
 
 def get_tests() -> list:
     tests = []
-    tests.append(Test(name="auto_comb_delay_opt_build_test", category=DM,
-                      cmd=[INST_DIR / "auto_comb_delay_opt_build_test.py"], needs_out_dir=True,
-                      requires=["yosys", "ghdl"]))
-    tests.append(Test(name="auto_comb_area_opt_build_test", category=DM,
-                      cmd=[INST_DIR / "auto_comb_area_opt_build_test.py"], needs_out_dir=True,
-                      requires=["yosys", "ghdl"]))
+    tests.append(
+        Test(
+            name="auto_pipeline_ram_build_test",
+            category=OPEN_TOOLS,
+            cmd=[
+                INST_DIR / "auto_pipeline_ram_build_test.py",
+                "--syn_tool",
+                "open_tools",
+            ],
+            needs_out_dir=True,
+        )
+    )
+    tests.append(
+        Test(
+            name="auto_pipeline_ram_qor_test",
+            category=OPEN_TOOLS,
+            cmd=[
+                INST_DIR.parent / "auto_pipeline_ram_qor_bench.py",
+                "--sizes",
+                "65536",
+                "--latencies",
+                "3",
+                "7",
+                "9",
+                "--seeds",
+                "1",
+                "-j",
+                "1",
+                "--require_improvement",
+            ],
+            needs_out_dir=True,
+        )
+    )
+    tests.append(
+        Test(
+            name="auto_pipeline_ram_build_vivado_test",
+            category=VIVADO,
+            cmd=[INST_DIR / "auto_pipeline_ram_build_test.py", "--syn_tool", "vivado"],
+            needs_out_dir=True,
+        )
+    )
+
+    tests.append(
+        Test(
+            name="auto_comb_delay_opt_build_test",
+            category=DM,
+            cmd=[INST_DIR / "auto_comb_delay_opt_build_test.py"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+        )
+    )
+    tests.append(
+        Test(
+            name="auto_comb_area_opt_build_test",
+            category=DM,
+            cmd=[INST_DIR / "auto_comb_area_opt_build_test.py"],
+            needs_out_dir=True,
+            requires=["yosys", "ghdl"],
+        )
+    )
     tests.append(
         Test(
             name="generated_naming_build_test",
@@ -52,7 +106,11 @@ def get_tests() -> list:
         Test(
             name="sweep_floor_detect_test",
             category=DM,
-            cmd=[INST_DIR / "sweep_floor_detect_test.py", "--syn_tool", "device_models"],
+            cmd=[
+                INST_DIR / "sweep_floor_detect_test.py",
+                "--syn_tool",
+                "device_models",
+            ],
             needs_out_dir=True,
         )
     )

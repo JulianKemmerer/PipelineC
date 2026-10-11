@@ -1703,7 +1703,7 @@ def _verify_records_against_packets():
         prev_toa = rec["toa"]
     sim_print(
         f"pdw_tb: pdw_verify cross-checked {len(recs)} records against their "
-        f"own released samples ({n_checks} asserted checks, FFT vs CORDIC)"
+        f"own released samples ({n_checks} asserted checks, FFT vs {_MEAS.atan2_method} atan2)"
     )
 
 

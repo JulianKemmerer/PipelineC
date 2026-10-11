@@ -25,7 +25,7 @@ from pypeline import (
 
 from pulse_gen import make_pulse_gen
 
-PART("xc7a100tcsg324-1")  # Artix-7 100T, same part as board/arty/part100t.py
+PART("xc7a200tffg1156-2")  # AIR7310: XC7A200T-2FFG1156C, 125 MHz
 
 pulse_gen, out_stream_t = make_pulse_gen()
 

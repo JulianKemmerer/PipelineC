@@ -16,6 +16,7 @@ See docs/AUTO_PIPELINE_DESIGN.md. This module owns:
 The search for good slices -- iterating synthesis toward a timing goal -- is
 SWEEP.py; the synthesis runs and reports themselves are SYN.py.
 """
+
 import copy
 from dataclasses import asdict, dataclass, replace
 import json
@@ -2997,7 +2998,27 @@ def RAM_VALIDATE_PORTS(ports):
         )
 
 
-def RAM_MAX_SPLIT_DEPTH(size, width, ports, byte_write_enables):
+def RAM_MAX_SPLIT_DEPTH(size, width, ports, byte_write_enables, target="ecp5"):
+    if target == "vivado":
+        # RAMB36: true dual port through x36; x72 is simple dual port only.
+        # Byte enables consume the 8 data bits of each 9-bit physical lane.
+        sdp = (ports.count("w") == 1 and "rw" not in ports) or ports == ("r",)
+        max_width = 72 if sdp else 36
+        packed_width = ((width + 7) // 8) * 9 if byte_write_enables else width
+        physical_width = next(
+            (
+                w
+                for w in (1, 2, 4, 9, 18, 36, 72)
+                if w >= packed_width and w <= max_width
+            ),
+            max_width,
+        )
+        depth = {1: 32768, 2: 16384, 4: 8192, 9: 4096, 18: 2048, 36: 1024, 72: 512}[
+            physical_width
+        ]
+        return max(0, (size - 1).bit_length() - (depth.bit_length() - 1))
+    if target != "ecp5":
+        raise ValueError(f"unsupported automatic RAM target: {target}")
     # ECP5: 16K data bits; 9/18/36-bit configurations include parity lanes.
     # The 36-bit SDP mode does not provide independently enabled byte lanes.
     max_width = (
@@ -3018,9 +3039,12 @@ def RAM_CANDIDATES(
     latency=None,
     start_latency=None,
     max_latency=None,
+    target="ecp5",
 ):
     plans = [RamPlan(), RamPlan(output_regs=1), RamPlan(input_regs=1), RamPlan(1, 1)]
-    for d in range(1, RAM_MAX_SPLIT_DEPTH(size, width, ports, byte_write_enables) + 1):
+    for d in range(
+        1, RAM_MAX_SPLIT_DEPTH(size, width, ports, byte_write_enables, target) + 1
+    ):
         plans.extend(
             (
                 RamPlan(1, 1, d, d - 1, d),
@@ -3072,19 +3096,119 @@ def RAM_PLANS_FROM_STATE(parser_state):
 def RAM_VALIDATE_BACKEND(parser_state):
     import SYN
     import OPEN_TOOLS
+    import VIVADO
 
     if (
         RAM_COLLECT(parser_state)
         and SYN.SYN_TOOL is not None
+        and SYN.SYN_TOOL is not VIVADO
         and (
             SYN.SYN_TOOL is not OPEN_TOOLS
             or not str(parser_state.part).upper().startswith("LFE5")
         )
     ):
         raise ValueError(
-            "make_auto_pipeline_ram: synthesis currently requires ECP5 OPEN_TOOLS "
-            "(--syn_tool open_tools); other backends have not been validated"
+            "make_auto_pipeline_ram: synthesis requires Vivado or ECP5 OPEN_TOOLS; "
+            "other backends have not been validated"
         )
+
+
+def RAM_TARGET(parser_state):
+    import SYN
+    import VIVADO
+
+    tool = SYN.SYN_TOOL or SYN.PART_TO_TOOL(parser_state.part)
+    return "vivado" if tool is VIVADO else "ecp5"
+
+
+def RAM_PREPARE_TARGET(parser_state, src_file):
+    """Resolve bootstrap geometry after CLI and source PART/tool reconciliation.
+
+    Factory keys stay logical: a selected physical plan can be replayed by native
+    simulation without an installed synthesis tool. Hooks run only on first parse.
+    """
+    import pypeline
+    import PY_TO_LOGIC
+    import SYN
+
+    plans = {}
+    for entry in RAM_COLLECT(parser_state).values():
+        options = dict(entry["options"])
+        if pypeline.AUTO_PIPELINE_BUILD_MODE() != "sweep" or SYN.SYN_TOOL is None:
+            options["start_latency"] = None
+        plans[entry["key"]] = RAM_CANDIDATES(
+            **options, target=RAM_TARGET(parser_state)
+        )[0]
+    if plans != RAM_PLANS_FROM_STATE(parser_state):
+        pypeline.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(plans)
+        part, tool = parser_state.part, parser_state.syn_tool_name
+        parser_state = PY_TO_LOGIC.PARSE_FILE(src_file)
+        parser_state.part, parser_state.syn_tool_name = part, tool
+    return parser_state
+
+
+def RAM_REQUIRES_RELAXED_VHDL(parser_state):
+    return any(
+        sum(p != "r" for p in e["options"]["ports"]) == 2
+        for e in RAM_COLLECT(parser_state).values()
+    )
+
+
+def RAM_PREPARE_NATIVE(cli_part=None, cli_tool=None):
+    """Return the profile needing re-import, without requiring installed tools.
+
+    Honor replayed/explicit plans. Only bootstrap plans are reconciled after
+    the entire source import has declared its PART and synthesis tool.
+    """
+    import pypeline
+    import SYN
+    import VIVADO
+
+    entries = pypeline._auto_pipeline_ram_served
+    if not entries:
+        return None
+    part = SYN._RECONCILE(
+        "FPGA part", cli_part, "--part", pypeline._part_registry, 'PART("...")'
+    )
+    tool_name = SYN._RECONCILE(
+        "synthesis tool",
+        cli_tool,
+        "--syn_tool",
+        pypeline._syn_tool_registry,
+        'SYN_TOOL("...")',
+    )
+    tool = SYN.GET_TOOL_MODULE(tool_name) if tool_name else SYN.PART_TO_TOOL(part)
+    if tool_name and part and not SYN.TOOL_MATCHES_PART(tool, part):
+        raise ValueError(f"Part '{part}' contradicts synthesis tool '{tool_name}'")
+    target = "vivado" if tool is VIVADO else "ecp5"
+    plans = pypeline.AUTO_PIPELINE_RAM_PLAN_CACHE()
+    changed = False
+    for key, entry in entries.items():
+        if entry["from_cache"]:
+            continue
+        options = dict(entry["options"], start_latency=None)
+        plan = RAM_CANDIDATES(**options, target=target)[0]
+        plans[key] = plan
+        changed |= plan != entry["plan"]
+    if changed:
+        pypeline.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(plans)
+        return target
+    return None
+
+
+def RAM_RESOURCE_SCORE(resources):
+    """Compare area within a backend; preserve raw counts in the history."""
+    if any(key in resources for key in ("RAMB18", "RAMB36", "LUT", "FF")):
+        return (
+            resources.get("RAMB18", 0) + 2 * resources.get("RAMB36", 0),
+            resources.get("LUT", 0),
+            resources.get("FF", 0),
+        )
+    return (
+        resources.get("DP16KD", 0),
+        resources.get("LUT4", 0),
+        resources.get("DFF", 0),
+    )
 
 
 def RAM_REPORT_PLANS(parser_state):
@@ -3117,7 +3241,10 @@ def RAM_SEARCH(parser_state, args, src_file, build):
 
     RAM_VALIDATE_BACKEND(parser_state)
     entries = {e["key"]: e for e in RAM_COLLECT(parser_state).values()}
-    choices = {key: RAM_CANDIDATES(**entry["options"]) for key, entry in entries.items()}
+    choices = {
+        key: RAM_CANDIDATES(**entry["options"], target=RAM_TARGET(parser_state))
+        for key, entry in entries.items()
+    }
     initial = RAM_PLANS_FROM_STATE(parser_state)
     history, measured = [], {}
     original_part = parser_state.part
@@ -3164,11 +3291,7 @@ def RAM_SEARCH(parser_state, args, src_file, build):
         history.append(record)
         # Prefer meeting the goal, fewer cycles, then lower area. On failure
         # retain the highest measured worst-clock/goal ratio.
-        area = (
-            resources.get("DP16KD", 0),
-            resources.get("LUT4", 0),
-            resources.get("DFF", 0),
-        )
+        area = RAM_RESOURCE_SCORE(resources)
         score = (
             met,
             -sum(p.latency for p in plans.values())
@@ -3196,6 +3319,17 @@ def RAM_SEARCH(parser_state, args, src_file, build):
             if best[0][0]:
                 break
         if best[0][0]:
+            # A passing joint trim reaches the minimum possible total latency
+            # in one measured build. If it fails, retain the ordinary per-group
+            # probes below: independently feasible reductions can still win.
+            plans = {
+                key: min(options, key=lambda p: p.latency)
+                for key, options in choices.items()
+            }
+            signature = tuple(sorted(plans.items()))
+            trial = measured.get(signature) or evaluate(plans)
+            if trial[0] > best[0]:
+                best = trial
             for key in sorted(choices):
                 for plan in sorted(choices[key], key=lambda p: p.latency):
                     if plan.latency > best[1][key].latency:
@@ -3224,7 +3358,16 @@ def RAM_SEARCH(parser_state, args, src_file, build):
     output = os.path.join(SYN.SYN_OUTPUT_DIRECTORY, SYN.TOP_LEVEL_MODULE)
     os.makedirs(output, exist_ok=True)
     with open(os.path.join(output, "auto_pipeline_ram_history.json"), "w") as f:
-        json.dump(dict(selected=RAM_REPORT_PLANS(state), iterations=history), f, indent=2)
+        json.dump(
+            dict(
+                target=RAM_TARGET(state),
+                part=state.part,
+                selected=RAM_REPORT_PLANS(state),
+                iterations=history,
+            ),
+            f,
+            indent=2,
+        )
     for key, plan in best[1].items():
         print(
             f"AUTO_PIPELINE_RAM {key}: {plan.latency} clocks, {plan.banks} banks, read_after_write_gap={plan.read_after_write_gap}",
@@ -4409,6 +4552,7 @@ def RESTORE_AUTO_PIPELINE_REGIONS(plans, snapshot):
 # at their stage. VHDL.py emits everything else about an entity and calls these
 # for its architecture once the TimingParams are final.
 # ─────────────────────────────────────────────
+
 
 # Post processed version of pipeline map with info specific to how auto-pipelined HDL is rendered
 class PiplineHDLParams:

@@ -7862,6 +7862,8 @@ def PARSE_FILE(py_file, run_syn_initial_hooks=False):
     pypeline._hook_registry.clear()
     pypeline._part_registry = None
     pypeline._syn_tool_registry = None
+    pypeline._auto_pipeline_ram_native_target = None
+    pypeline._auto_pipeline_ram_served.clear()
     pypeline.CLEAR_AUTO_PIPELINE_LATENCY_READ_FLAG()
     # param() values persist (one resolution per process); declarations
     # re-register as the design re-executes

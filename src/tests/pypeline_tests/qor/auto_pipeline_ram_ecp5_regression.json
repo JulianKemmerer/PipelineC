@@ -1,0 +1,140 @@
+{
+  "part": "LFE5U-85F-6BG381C",
+  "results": [
+    {
+      "size": 65536,
+      "latency": 3,
+      "seed": 1,
+      "mhz": 81.87,
+      "plan": {
+        "size": 65536,
+        "width": 32,
+        "ports": [
+          "w",
+          "r"
+        ],
+        "byte_write_enables": false,
+        "latency": 3,
+        "start_latency": null,
+        "max_latency": null,
+        "input_regs": 1,
+        "output_regs": 1,
+        "split_depth": 0,
+        "request_levels": 0,
+        "response_levels": 0,
+        "banks": 1,
+        "read_after_write_gap": 2,
+        "constraints": {
+          "latency": 3,
+          "start_latency": null,
+          "max_latency": null
+        }
+      },
+      "cells": {
+        "$specify2": 19,
+        "TRELLIS_FF": 435,
+        "DP16KD": 128,
+        "LUT4": 130
+      }
+    },
+    {
+      "size": 65536,
+      "latency": 7,
+      "seed": 1,
+      "mhz": 84.83,
+      "plan": {
+        "size": 65536,
+        "width": 32,
+        "ports": [
+          "w",
+          "r"
+        ],
+        "byte_write_enables": false,
+        "latency": 7,
+        "start_latency": null,
+        "max_latency": null,
+        "input_regs": 1,
+        "output_regs": 1,
+        "split_depth": 2,
+        "request_levels": 2,
+        "response_levels": 2,
+        "banks": 4,
+        "read_after_write_gap": 4,
+        "constraints": {
+          "latency": 7,
+          "start_latency": null,
+          "max_latency": null
+        }
+      },
+      "cells": {
+        "$specify2": 19,
+        "TRELLIS_FF": 912,
+        "DP16KD": 128,
+        "LUT4": 141
+      }
+    },
+    {
+      "size": 65536,
+      "latency": 9,
+      "seed": 1,
+      "mhz": 80.44,
+      "plan": {
+        "size": 65536,
+        "width": 32,
+        "ports": [
+          "w",
+          "r"
+        ],
+        "byte_write_enables": false,
+        "latency": 9,
+        "start_latency": null,
+        "max_latency": null,
+        "input_regs": 1,
+        "output_regs": 1,
+        "split_depth": 3,
+        "request_levels": 3,
+        "response_levels": 3,
+        "banks": 8,
+        "read_after_write_gap": 5,
+        "constraints": {
+          "latency": 9,
+          "start_latency": null,
+          "max_latency": null
+        }
+      },
+      "cells": {
+        "$specify2": 19,
+        "TRELLIS_FF": 1329,
+        "DP16KD": 128,
+        "LUT4": 290
+      }
+    }
+  ],
+  "median_mhz": {
+    "65536": {
+      "3": 81.87,
+      "7": 84.83,
+      "9": 80.44
+    }
+  },
+  "measurement_date": "2026-10-10",
+  "width": 32,
+  "ports": [
+    "w",
+    "r"
+  ],
+  "tools": {
+    "yosys": "0.48+51 (git 17a53b838)",
+    "ghdl": "5.0.0-dev (4.1.0.r453.g85927f052.dirty)",
+    "nextpnr_ecp5": "0.7-142-g55bd7608"
+  },
+  "command": "python3 src/tests/pypeline_tests/auto_pipeline_ram_qor_bench.py --out_dir /tmp/auto_pipeline_ram_qor --sizes 65536 --latencies 3 7 9 --seeds 1 -j 1 --require_improvement",
+  "fixture": "Current observable fixture uses dense irregular initialization. Historical auto_pipeline_ram_ecp5.json used sparse initialization and different instance names; its timing numbers are not measurements of this fixture.",
+  "timing_kind": "nextpnr-ecp5 place and route, seed 1",
+  "checks": {
+    "bram_count_each": 128,
+    "banking_improves_over_three_cycles": true,
+    "best_latency": 7,
+    "improvement_percent": 3.615
+  }
+}

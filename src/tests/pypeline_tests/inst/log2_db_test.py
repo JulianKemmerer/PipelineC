@@ -30,7 +30,9 @@ sys.path.insert(
 import math
 import random
 
-from pypeline import MAIN, sim_call, sim_reset, uint1_t
+import pypeline as py
+from pypeline import MAIN, sim_call, sim_reset, uint1_t, param
+from AUTO_PIPELINE import RamPlan
 
 from fixed_point import make_fixed_t
 from dsp.log2_db import golden_log2_db, make_log2_db
@@ -38,12 +40,13 @@ from dsp.log2_db import golden_log2_db, make_log2_db
 
 # The PDW project's power_t: 46 bits, 12 fractional (dc_k=10 + log2(ma_n)=2).
 power_t = make_fixed_t(34, 12, signed=True)
-log2_db, log2_db_t = make_log2_db(power_t)
+AUTO_RAM = param("LOG2_DB_AUTO_RAM", True)
+log2_db, log2_db_t = make_log2_db(power_t, auto_pipeline_ram=AUTO_RAM)
 
 # A second shape with a different binary point -- the noise estimate carries 10
 # fractional bits, not 12, and getting that scaling wrong is silent.
 mean_t = make_fixed_t(33, 10, signed=True)
-log2_db_mean, log2_db_mean_t = make_log2_db(mean_t)
+log2_db_mean, log2_db_mean_t = make_log2_db(mean_t, auto_pipeline_ram=AUTO_RAM)
 
 # The same two shapes through the ROM-less method.
 log2_db_pwl, log2_db_pwl_t = make_log2_db(power_t, method="pwl")
@@ -52,6 +55,11 @@ log2_db_pwl_mean, log2_db_pwl_mean_t = make_log2_db(mean_t, method="pwl")
 # (block, block on mean_t, worst-case dB error allowed against 10*log10)
 METHODS = (
     (log2_db, log2_db_mean, 0.01),
+    (
+        make_log2_db(power_t, auto_pipeline_ram=False)[0],
+        make_log2_db(mean_t, auto_pipeline_ram=False)[0],
+        0.01,
+    ),
     (log2_db_pwl, log2_db_pwl_mean, 0.10),
 )
 
@@ -121,8 +129,10 @@ def test_accuracy_vs_log10():
             db, _f = golden_log2_db(block, raw)
             model_worst = max(model_worst, abs(db / 256.0 - _ref_db(raw, 12)))
         assert model_worst < budget, f"{block.method}: model worst {model_worst:.4f}"
-        print(f"test_accuracy_vs_log10 passed ({block.method}: worst {worst:.4f} dB "
-              f"in hardware, {model_worst:.4f} dB over 300k in the model)")
+        print(
+            f"test_accuracy_vs_log10 passed ({block.method}: worst {worst:.4f} dB "
+            f"in hardware, {model_worst:.4f} dB over 300k in the model)"
+        )
 
 
 def test_methods_agree():
@@ -147,11 +157,15 @@ def test_fractional_bits_are_subtracted():
     for block, _mean_block, _budget in METHODS:
         sim_reset()
         got = _run(block, power_t, [1 << 12])
-        assert got[0][0] == 0, f"{block.method}: raw=4096 (value 1.0) should be 0 dB, got {got[0][0]/256.0}"
+        assert (
+            got[0][0] == 0
+        ), f"{block.method}: raw=4096 (value 1.0) should be 0 dB, got {got[0][0]/256.0}"
         # Full-scale must still fit in int16 -- this is what the subtraction buys.
         got = _run(block, power_t, [(1 << 45) - 1])
         db = got[0][0] / 256.0
-        assert 95.0 < db < 100.0, f"{block.method}: full scale should be ~99.4 dB, got {db}"
+        assert (
+            95.0 < db < 100.0
+        ), f"{block.method}: full scale should be ~99.4 dB, got {db}"
         assert -32768 <= got[0][0] <= 32767
     print(f"test_fractional_bits_are_subtracted passed (full scale {db:.2f} dB)")
 
@@ -166,10 +180,18 @@ def test_decade_and_octave_steps():
         got = _run(block, power_t, raws)
         d = [g[0] / 256.0 for g in got]
         tol = 2 * budget
-        assert abs((d[1] - d[0]) - 3.0103) < tol, f"{block.method}: octave step {d[1]-d[0]}"
-        assert abs((d[2] - d[0]) - 6.0206) < tol, f"{block.method}: two octaves {d[2]-d[0]}"
-        assert abs((d[3] - d[0]) - 10.0) < tol, f"{block.method}: decade step {d[3]-d[0]}"
-        assert abs((d[4] - d[0]) - 20.0) < tol, f"{block.method}: two decades {d[4]-d[0]}"
+        assert (
+            abs((d[1] - d[0]) - 3.0103) < tol
+        ), f"{block.method}: octave step {d[1]-d[0]}"
+        assert (
+            abs((d[2] - d[0]) - 6.0206) < tol
+        ), f"{block.method}: two octaves {d[2]-d[0]}"
+        assert (
+            abs((d[3] - d[0]) - 10.0) < tol
+        ), f"{block.method}: decade step {d[3]-d[0]}"
+        assert (
+            abs((d[4] - d[0]) - 20.0) < tol
+        ), f"{block.method}: two decades {d[4]-d[0]}"
     print("test_decade_and_octave_steps passed")
 
 
@@ -181,11 +203,15 @@ def test_nonpositive_is_floored_and_flagged():
         got = _run(block, power_t, [0, -1, -(1 << 40), 1 << 20])
         for i, (db, fl) in enumerate(got[:3]):
             assert fl == 1, f"{block.method}: input {i} should be flagged floored"
-            assert db == block.db_floor, f"{block.method}: expected floor {block.db_floor}, got {db}"
+            assert (
+                db == block.db_floor
+            ), f"{block.method}: expected floor {block.db_floor}, got {db}"
         assert got[3][1] == 0, "positive input must not be flagged"
         assert got[3][0] > 0
-    print(f"test_nonpositive_is_floored_and_flagged passed "
-          f"(floor {log2_db.db_floor/256.0:.2f} dB)")
+    print(
+        f"test_nonpositive_is_floored_and_flagged passed "
+        f"(floor {log2_db.db_floor/256.0:.2f} dB)"
+    )
 
 
 def test_different_binary_point_instance():
@@ -193,10 +219,12 @@ def test_different_binary_point_instance():
     match across the two instances even though the raw integers differ."""
     for block, mean_block, _budget in METHODS:
         sim_reset()
-        got_p = _run(block, power_t, [1 << 12, 1 << 22])          # values 1.0, 1024.0
-        got_m = _run(mean_block, mean_t, [1 << 10, 1 << 20])      # values 1.0, 1024.0
+        got_p = _run(block, power_t, [1 << 12, 1 << 22])  # values 1.0, 1024.0
+        got_m = _run(mean_block, mean_t, [1 << 10, 1 << 20])  # values 1.0, 1024.0
         for (dp, _a), (dm, _b) in zip(got_p, got_m):
-            assert dp == dm, f"{block.method}: same value, different frac_bits: {dp} vs {dm}"
+            assert (
+                dp == dm
+            ), f"{block.method}: same value, different frac_bits: {dp} vs {dm}"
         assert got_p[0][0] == 0
         assert abs(got_p[1][0] / 256.0 - 30.103) < 0.1
     print("test_different_binary_point_instance passed")
@@ -211,14 +239,18 @@ def test_monotonic():
         got = _run(block, power_t, raws)
         prev = -1 << 30
         for raw, (db, _f) in zip(raws, got):
-            assert db >= prev, f"{block.method}: non-monotonic at raw={raw}: {db} < {prev}"
+            assert (
+                db >= prev
+            ), f"{block.method}: non-monotonic at raw={raw}: {db} < {prev}"
             prev = db
         # Octave boundaries are where the two ROM tables hand over -- every one,
         # in the model, from just below to just above.
         for e in range(1, 45):
             below, _f = golden_log2_db(block, (1 << e) - 1)
             at, _f = golden_log2_db(block, 1 << e)
-            assert at >= below, f"{block.method}: non-monotonic across 2^{e}: {at} < {below}"
+            assert (
+                at >= below
+            ), f"{block.method}: non-monotonic across 2^{e}: {at} < {below}"
     print("test_monotonic passed")
 
 
@@ -233,8 +265,40 @@ def test_pipeline_latency():
             if int(r.valid):
                 seen.append(c)
         assert seen == list(range(block.latency, block.latency + n)), seen
-    assert log2_db.latency == log2_db_pwl.latency, "the methods are meant to be interchangeable"
+    assert log2_db.latency == max(log2_db.log_rom.latency, log2_db.exp_rom.latency) + 2
+    assert METHODS[1][0].latency == log2_db_pwl.latency == 4
     print("test_pipeline_latency passed")
+
+
+def test_independent_rom_latencies():
+    """Floors, bubbles and data must agree when either table is the slow one."""
+    saved = py.AUTO_PIPELINE_RAM_PLAN_CACHE()
+    try:
+        for ml, el in ((1, 4), (4, 1), (3, 2)):
+            py.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(
+                {
+                    log2_db.log_rom._auto_pipeline_ram["key"]: RamPlan(0, ml - 1),
+                    log2_db.exp_rom._auto_pipeline_ram["key"]: RamPlan(0, el - 1),
+                }
+            )
+            unit, _ = make_log2_db(power_t)
+            assert unit.latency == max(ml, el) + 2
+            sim_reset()
+            requests = [
+                (v, v % 3 != 1) for v in (-1, 0, 1, 4096, 1024, -555, (1 << 45) - 1)
+            ] * 4
+            pending = []
+            for c in range(len(requests) + unit.latency):
+                raw, valid = requests[c] if c < len(requests) else (0, False)
+                pending.append((valid, golden_log2_db(unit, raw)))
+                result = sim_call(unit, power_t(val=raw), int(valid))
+                if c >= unit.latency:
+                    expected_valid, expected = pending.pop(0)
+                    assert bool(result.valid) == expected_valid
+                    if expected_valid:
+                        assert (int(result.db), int(result.floored)) == expected
+    finally:
+        py.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(saved)
 
 
 if __name__ == "__main__":
@@ -247,4 +311,5 @@ if __name__ == "__main__":
     test_different_binary_point_instance()
     test_monotonic()
     test_pipeline_latency()
+    test_independent_rom_latencies()
     print("All log2_db tests passed")

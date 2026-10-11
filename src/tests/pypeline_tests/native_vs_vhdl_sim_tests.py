@@ -44,6 +44,9 @@ from common import (
 # selects the full-build pipelined compare (pypeline_sim_debug.py builds once
 # then runs native + VHDL concurrently, each in its own copy of the warm build).
 COMB_TEST_FILES = [
+    ("self_check_auto_pipeline_ram_target_test.py", INST_DIR, []),
+    ("self_check_dsp_rom_test.py", INST_DIR, []),
+    ("lut_atan2_test.py", INST_DIR, []),
     ("self_check_auto_pipeline_ram_test.py", INST_DIR, []),
     ("self_check_auto_comb_area_opt_composition_test.py", INST_DIR, []),
     ("self_check_auto_comb_delay_opt_composition_test.py", INST_DIR, []),
@@ -220,7 +223,14 @@ def get_tests() -> list:
         Test(
             name=filename[: -len(".py")] + "_comb",
             category="native_vs_vhdl_sim",
-            cmd=[PYPELINE_SIM_DEBUG, source_dir / filename, "--sim", "--comb", "--run", "all"]
+            cmd=[
+                PYPELINE_SIM_DEBUG,
+                source_dir / filename,
+                "--sim",
+                "--comb",
+                "--run",
+                "all",
+            ]
             + extra_args,
             needs_out_dir=True,
         )
@@ -257,7 +267,102 @@ def get_tests() -> list:
             needs_out_dir=True,
         )
     )
+    tests.append(
+        Test(
+            name="self_check_auto_pipeline_ram_selected_plan_vivado",
+            category="native_vs_vhdl_sim",
+            cmd=[
+                PYPELINE_SIM_DEBUG,
+                INST_DIR / "self_check_auto_pipeline_ram_test.py",
+                "--sim",
+                "--run",
+                "all",
+                "--syn_tool",
+                "vivado",
+                "--part",
+                "xc7a200tffg1156-2",
+                "--pipeline_min_effort",
+                "0",
+                "-D",
+                "AUTO_PIPELINE_RAM_AUTO=1",
+            ],
+            needs_out_dir=True,
+        )
+    )
 
+    tests.append(
+        Test(
+            name="self_check_dsp_rom_swap",
+            category="native_vs_vhdl_sim",
+            cmd=[
+                PYPELINE_SIM_DEBUG,
+                INST_DIR / "self_check_dsp_rom_test.py",
+                "--comb",
+                "--sim",
+                "--run",
+                "all",
+                "-D",
+                "DSP_ROM_SWAP=1",
+            ],
+            needs_out_dir=True,
+        )
+    )
+    tests.append(
+        Test(
+            name="lut_atan2_pdw_width",
+            category="native_vs_vhdl_sim",
+            cmd=[
+                PYPELINE_SIM_DEBUG,
+                INST_DIR / "lut_atan2_test.py",
+                "--comb",
+                "--sim",
+                "--run",
+                "all",
+                "-D",
+                "ATAN2_TEST_INPUT_WIDTH=40",
+            ],
+            needs_out_dir=True,
+        )
+    )
+    for name, rl, al in (("recip_slow", 3, 1), ("angle_slow", 1, 3)):
+        tests.append(
+            Test(
+                name="lut_atan2_" + name,
+                category="native_vs_vhdl_sim",
+                cmd=[
+                    PYPELINE_SIM_DEBUG,
+                    INST_DIR / "lut_atan2_test.py",
+                    "--comb",
+                    "--sim",
+                    "--run",
+                    "all",
+                    "-D",
+                    f"ATAN2_TEST_RECIP_LATENCY={rl}",
+                    "-D",
+                    f"ATAN2_TEST_ANGLE_LATENCY={al}",
+                ],
+                needs_out_dir=True,
+            )
+        )
+    tests.append(
+        Test(
+            name="self_check_auto_pipeline_ram_cli_target",
+            category="native_vs_vhdl_sim",
+            cmd=[
+                PYPELINE_SIM_DEBUG,
+                INST_DIR / "self_check_auto_pipeline_ram_target_test.py",
+                "--comb",
+                "--sim",
+                "--run",
+                "all",
+                "--part",
+                "xc7a200tffg1156-2",
+                "-D",
+                "RAM_TARGET_IN_SOURCE=0",
+            ],
+            needs_out_dir=True,
+        )
+    )
     return tests
 
 

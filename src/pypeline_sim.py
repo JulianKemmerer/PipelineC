@@ -82,6 +82,8 @@ def run_sim(
     pipeline_timing=None,
     auto_multi_cycle_latencies=None,
     auto_pipeline_ram_plans=None,
+    part=None,
+    syn_tool=None,
 ) -> None:
     """Run the native simulation.
 
@@ -98,6 +100,10 @@ def run_sim(
     for selective execution around @pipeline_latency boundaries. Plain native
     runs leave these parameters None: explicit user registers still advance,
     and only callers needing fixed-pipeline alignment prepare a stage model.
+    Replayed RAM plans preserve geometry and write visibility. Without a build,
+    source/CLI part and tool declarations settle fixed RAM geometry after import,
+    before hooks or clocks, while flexible RAMs retain their one-cycle default.
+    Each run starts with fresh RAM plans unless plans are explicitly replayed.
     """
     # Apply sim mode before importing the design: @hw_func decorators read these
     # flags at decoration time, so they must be set before _import_design runs.
@@ -118,8 +124,7 @@ def run_sim(
     # AUTO_PIPELINE objects capture ._latency at construction (import time),
     # and .latency-derived structure (e.g. make_stream_auto_pipeline FIFO depths)
     # must elaborate identically to the VHDL build's pin-and-confirm pass.
-    if auto_pipeline_ram_plans is not None:
-        pypeline.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(auto_pipeline_ram_plans)
+    pypeline.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(auto_pipeline_ram_plans or {})
     if auto_pipeline_latencies:
         pypeline.SET_AUTO_PIPELINE_LATENCY_CACHE(auto_pipeline_latencies)
     # Same reasoning for AUTO_FSM: the tag captures ._schedule/._latency at
@@ -134,7 +139,19 @@ def run_sim(
     # the design's re-import, exactly as they did for each build pass.
     pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
     _evict_design_modules()
+    pypeline._auto_pipeline_ram_native_target = None
+    modules_before = set(sys.modules)
     module = _import_design(design_file)
+    if auto_pipeline_ram_plans is None and pypeline._auto_pipeline_ram_served:
+        import AUTO_PIPELINE
+
+        target = AUTO_PIPELINE.RAM_PREPARE_NATIVE(part, syn_tool)
+        if target is not None:
+            pypeline._auto_pipeline_ram_native_target = target
+            for name in set(sys.modules) - modules_before:
+                del sys.modules[name]
+            pypeline.RESET_AUTO_MULTI_CYCLE_TRACKING()
+            module = _import_design(design_file)
 
     wire_info = _discover_wire_names(module)
 
@@ -428,6 +445,9 @@ def _import_design(path: str):
     # prior import in the same process (param() values persist: one per process).
     pypeline._main_registry.clear()
     pypeline._hook_registry.clear()
+    pypeline._part_registry = None
+    pypeline._syn_tool_registry = None
+    pypeline._auto_pipeline_ram_served.clear()
     pypeline.RESET_DESIGN_PARAM_DECLARATIONS()
 
     abs_path = os.path.abspath(path)

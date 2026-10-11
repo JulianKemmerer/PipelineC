@@ -84,7 +84,11 @@ def ensure_host_types():
     if _CACHED is not None:
         return _CACHED
 
-    root = _SCRATCH_ROOT if os.path.isdir(_SCRATCH_ROOT) else None
+    root = (
+        _SCRATCH_ROOT
+        if os.path.isdir(_SCRATCH_ROOT) and os.access(_SCRATCH_ROOT, os.W_OK)
+        else None
+    )
     out_dir = tempfile.mkdtemp(prefix="pdw_host_", dir=root)
     path = generate(out_dir)
 

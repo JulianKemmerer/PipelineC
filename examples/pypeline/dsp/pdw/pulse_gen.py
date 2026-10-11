@@ -35,8 +35,9 @@ sample `n` with LFSR step `n`, not `n - latency`.
 
 WHY THE NCO IS A ROM, NOT A CORDIC. It used to be a 16-iteration rotation
 CORDIC, with an 18-cycle latency and an amplitude 0.35% high from its shift-add
-gain compensation. `make_lut_nco` has a 5-cycle latency and an exact amplitude.
-Measured on pulse_gen_synth_top.py (xc7a100t), this whole block went from 2742
+gain compensation. `make_lut_nco` has an exact amplitude; its latency follows
+the selected automatic ROM plus two arithmetic stages. Historical measurements
+on pulse_gen_synth_top.py (xc7a100t, manual five-cycle NCO) went from 2742
 LUTs, 1373 flip-flops and 133.3 MHz to 520 LUTs, 345 flip-flops and 141.5 MHz,
 for one RAMB18 and two DSP48s. The table's phase truncation costs spurs at
 -72 dBc and no frequency bias (see dsp/nco.py). For a stimulus that feeds a
@@ -291,8 +292,9 @@ def make_pulse_gen(
     return pulse_gen, out_stream_t
 
 
-def golden_pulse_gen(gen, n_samples, _pri, _width, _amplitude, _freq=0,
-                     _chirp_rate=0, _noise_amp=0):
+def golden_pulse_gen(
+    gen, n_samples, _pri, _width, _amplitude, _freq=0, _chirp_rate=0, _noise_amp=0
+):
     """Bit-exact Python model of `make_pulse_gen`'s output stream.
 
     Returns a list of `(i, q)` int16 pairs, one per cycle, INCLUDING the
@@ -308,8 +310,10 @@ def golden_pulse_gen(gen, n_samples, _pri, _width, _amplitude, _freq=0,
     scalar call and concatenate the results; it has to drive one model through
     the whole run exactly as it drives the hardware through it.
     """
+
     def _at(v, k):
         return v[k] if isinstance(v, (list, tuple)) else v
+
     nco = gen.nco
     seed_i, seed_q = gen.lfsr_seeds
     poly_i, poly_q = gen.lfsr_polys

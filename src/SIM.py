@@ -144,13 +144,18 @@ def _DO_OPTIONAL_SIM(
                         for name, tp in multimain_timing_params.TimingParamsLookupTable.items()
                     }
                 if multimain_timing_params is not None:
-                    ap_latencies, _divergences = AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES(
-                        parser_state, multimain_timing_params.TimingParamsLookupTable
+                    ap_latencies, _divergences = (
+                        AUTO_PIPELINE.HARVEST_AUTO_PIPELINE_LATENCIES(
+                            parser_state,
+                            multimain_timing_params.TimingParamsLookupTable,
+                        )
                     )
                     # The multi-cycle counts actually constrained, so AUTO_MULTI_CYCLE
                     # handshakes count the same cycles as the built VHDL
-                    auto_multi_cycle_latencies = AUTO_MULTI_CYCLE.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(
-                        parser_state, multimain_timing_params
+                    auto_multi_cycle_latencies = (
+                        AUTO_MULTI_CYCLE.HARVEST_AUTO_MULTI_CYCLE_NCYCLES(
+                            parser_state, multimain_timing_params
+                        )
                     )
                 # The AUTO_FSM schedules the build actually used. Taken from
                 # pypeline's installed cache rather than re-derived: the schedule
@@ -172,6 +177,8 @@ def _DO_OPTIONAL_SIM(
                 auto_fsm_schedules=auto_fsm_schedules,
                 pipeline_timing=pipeline_timing,
                 auto_multi_cycle_latencies=auto_multi_cycle_latencies,
+                part=getattr(args, "part", None),
+                syn_tool=getattr(args, "syn_tool", None),
             )
     else:
         print("WARNING: Unknown simulation tool:", SIM_TOOL.__name__)

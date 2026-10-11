@@ -36,8 +36,11 @@ def _drive(stim):
         if c < len(stim):
             s = stim[c]
             fa = FA(
-                first_re=s["fre"], first_im=s["fim"],
-                last_re=s["lre"], last_im=s["lim"], valid=1,
+                first_re=s["fre"],
+                first_im=s["fim"],
+                last_re=s["lre"],
+                last_im=s["lim"],
+                valid=1,
             )
             r = sim_call(
                 meas,
@@ -61,13 +64,17 @@ def _drive(stim):
                 rst=0,
             )
         if int(r.valid):
-            got.append({
-                "freq_start": int(r.freq_start), "freq_stop": int(r.freq_stop),
-                "peak_power_db": int(r.peak_power_db),
-                "noise_power_db": int(r.noise_power_db),
-                "pri": int(r.pri), "freq_degenerate": int(r.freq_degenerate),
-                "pri_valid": int(r.pri_valid),
-            })
+            got.append(
+                {
+                    "freq_start": int(r.freq_start),
+                    "freq_stop": int(r.freq_stop),
+                    "peak_power_db": int(r.peak_power_db),
+                    "noise_power_db": int(r.noise_power_db),
+                    "pri": int(r.pri),
+                    "freq_degenerate": int(r.freq_degenerate),
+                    "pri_valid": int(r.pri_valid),
+                }
+            )
     return got
 
 
@@ -75,9 +82,20 @@ def _golden(stim):
     prev_toa, have_prev = 0, False
     exp = []
     for s in stim:
-        exp.append(golden_pulse_measure(
-            meas, s["fre"], s["fim"], s["lre"], s["lim"],
-            s["noise"], s["peak"], s["toa"], prev_toa, have_prev))
+        exp.append(
+            golden_pulse_measure(
+                meas,
+                s["fre"],
+                s["fim"],
+                s["lre"],
+                s["lim"],
+                s["noise"],
+                s["peak"],
+                s["toa"],
+                prev_toa,
+                have_prev,
+            )
+        )
         if s["accept"]:
             prev_toa, have_prev = s["toa"], True
     return exp
@@ -92,13 +110,18 @@ def _rand_stim(n, seed):
         m2 = 2 ** rng.randint(10, 36)
         a1, a2 = rng.uniform(-math.pi, math.pi), rng.uniform(-math.pi, math.pi)
         toa += rng.randrange(50, 5000)
-        out.append({
-            "fre": int(m1 * math.cos(a1)), "fim": int(m1 * math.sin(a1)),
-            "lre": int(m2 * math.cos(a2)), "lim": int(m2 * math.sin(a2)),
-            "noise": rng.randrange(1, 1 << 26),
-            "peak": rng.randrange(1 << 20, 1 << 44),
-            "toa": toa, "accept": rng.randrange(2),
-        })
+        out.append(
+            {
+                "fre": int(m1 * math.cos(a1)),
+                "fim": int(m1 * math.sin(a1)),
+                "lre": int(m2 * math.cos(a2)),
+                "lim": int(m2 * math.sin(a2)),
+                "noise": rng.randrange(1, 1 << 26),
+                "peak": rng.randrange(1 << 20, 1 << 44),
+                "toa": toa,
+                "accept": rng.randrange(2),
+            }
+        )
     return out
 
 
@@ -116,11 +139,27 @@ def test_known_angles_and_levels():
     failure has somewhere to show up."""
     stim = [
         # +45 deg and -45 deg -> +1/8 and -1/8 turn.
-        {"fre": 1 << 30, "fim": 1 << 30, "lre": 1 << 30, "lim": -(1 << 30),
-         "noise": 1 << 20, "peak": 1 << 40, "toa": 5000, "accept": 1},
+        {
+            "fre": 1 << 30,
+            "fim": 1 << 30,
+            "lre": 1 << 30,
+            "lim": -(1 << 30),
+            "noise": 1 << 20,
+            "peak": 1 << 40,
+            "toa": 5000,
+            "accept": 1,
+        },
         # Exactly on the +y axis -> +1/4 turn; PRI = 5500 - 5000.
-        {"fre": 0, "fim": 1 << 30, "lre": 1 << 30, "lim": 0,
-         "noise": 1 << 20, "peak": 1 << 40, "toa": 5500, "accept": 1},
+        {
+            "fre": 0,
+            "fim": 1 << 30,
+            "lre": 1 << 30,
+            "lim": 0,
+            "noise": 1 << 20,
+            "peak": 1 << 40,
+            "toa": 5500,
+            "accept": 1,
+        },
     ]
     got = _drive(stim)
     assert abs(got[0]["freq_start"] / 65536.0 - 0.125) < 1e-3, got[0]
@@ -139,8 +178,16 @@ def test_known_angles_and_levels():
 def test_pri_counts_accepted_pulses_only():
     """A rejected pulse must not become the reference for the next PRI."""
     stim = [
-        {"fre": 1 << 30, "fim": 0, "lre": 1 << 30, "lim": 0, "noise": 1 << 20,
-         "peak": 1 << 40, "toa": t, "accept": a}
+        {
+            "fre": 1 << 30,
+            "fim": 0,
+            "lre": 1 << 30,
+            "lim": 0,
+            "noise": 1 << 20,
+            "peak": 1 << 40,
+            "toa": t,
+            "accept": a,
+        }
         for t, a in ((1000, 1), (1100, 0), (1500, 1))
     ]
     got = _drive(stim)
@@ -152,12 +199,45 @@ def test_pri_counts_accepted_pulses_only():
 
 
 def test_degenerate_phasor_is_flagged():
-    stim = [{"fre": 0, "fim": 0, "lre": 0, "lim": 0, "noise": 1 << 20,
-             "peak": 1 << 40, "toa": 9000, "accept": 1}]
+    stim = [
+        {
+            "fre": 0,
+            "fim": 0,
+            "lre": 0,
+            "lim": 0,
+            "noise": 1 << 20,
+            "peak": 1 << 40,
+            "toa": 9000,
+            "accept": 1,
+        }
+    ]
     got = _drive(stim)
     assert got[0]["freq_degenerate"] == 1, got[0]
     assert got[0]["freq_start"] == 0 and got[0]["freq_stop"] == 0, got[0]
     print("test_degenerate_phasor_is_flagged passed")
+
+
+def test_selected_rom_alignment():
+    """The slowest table can be power or noise, even slower than atan2."""
+    import pypeline as py
+    from AUTO_PIPELINE import RamPlan
+
+    global meas
+    original = meas
+    saved = py.AUTO_PIPELINE_RAM_PLAN_CACHE()
+    try:
+        for slow_table in (original.log_db.exp_rom, original.log_db_noise.exp_rom):
+            py.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(
+                {slow_table._auto_pipeline_ram["key"]: RamPlan(0, 19)}
+            )
+            meas, _ = make_pulse_measure(_DP, atan2_method=original.atan2_method)
+            assert meas.latency == 22
+            test_matches_golden_model()
+            test_pri_counts_accepted_pulses_only()
+            test_degenerate_phasor_is_flagged()
+    finally:
+        meas = original
+        py.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(saved)
 
 
 if __name__ == "__main__":
@@ -165,4 +245,5 @@ if __name__ == "__main__":
     test_known_angles_and_levels()
     test_pri_counts_accepted_pulses_only()
     test_degenerate_phasor_is_flagged()
+    test_selected_rom_alignment()
     print("All pulse_measure tests passed")

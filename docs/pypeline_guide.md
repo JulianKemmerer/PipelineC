@@ -3041,8 +3041,12 @@ consumed. It exposes the core `.latency` and `.min_response_latency == .latency 
 After filling, it can sustain one accepted request per enabled clock (II=1) while the
 consumer remains ready.
 
-Automatic RAM plan selection is currently supported by the ECP5 open-source synthesis
-flow. Backend availability and RAM-plan reports are documented under [Automatic
+Automatic RAM plan selection supports Vivado and the ECP5 open-source synthesis
+flow. The resolved target determines BRAM depth/width geometry before plans are
+finalized, including fixed-latency builds. Two-writer memories use shared storage
+with a separate clocked process per port; GHDL simulation requires `-frelaxed`
+(supplied automatically by `--cocotb --ghdl`). ROMs and single-writer memories
+retain signal-based storage. Backend availability and RAM-plan reports are documented under [Automatic
 implementation and sweeps](README.md#automatic-implementation-and-sweeps).
 
 <a id="auto_multi_cycle"></a>

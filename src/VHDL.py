@@ -6076,6 +6076,11 @@ def CONST_VAL_STR_TO_VHDL(val_str, c_type, parser_state, wire_name=None, ast_nod
             return "to_unsigned(" + str(value_num) + ", " + str(width) + ")"
     elif C_TYPE_IS_INT_N(c_type):
         width = GET_WIDTH_FROM_C_TYPE_STR(parser_state, c_type)
+        if not -2147483648 <= value_num <= 2147483647:
+            # numeric_std.to_signed takes a VHDL integer, even when its result
+            # is wider. Emit the two's-complement bits for wide constants.
+            bits = format(int(value_num) & ((1 << width) - 1), f"0{width}b")
+            return f'signed\'("{bits}")'
         return "to_signed(" + str(value_num) + ", " + str(width) + ")"
     elif C_TO_LOGIC.C_TYPE_IS_FLOAT_TYPE(c_type):
         e, m = C_TO_LOGIC.C_FLOAT_E_M_TYPE_TO_E_M(c_type)

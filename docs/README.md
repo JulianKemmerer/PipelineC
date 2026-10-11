@@ -379,7 +379,7 @@ measurements above:
 | [`AUTO_PIPELINE`](pypeline_guide.md#auto_pipeline) | How many pipeline registers, and where | A `@MAIN` that is a pure function, and calls tagged `AUTO_PIPELINE` |
 | [`AUTO_MULTI_CYCLE`](pypeline_guide.md#auto_multi_cycle) | How many clock cycles a multi-cycle path may take (Vivado only) | Paths tagged `AUTO_MULTI_CYCLE`, ex. inside `make_stream_auto_multi_cycle` |
 | [`AUTO_FSM`](pypeline_guide.md#auto_fsm-experimental) (experimental) | A minimum-area, resource-shared state machine schedule, re-scheduled with smaller states while timing fails | Calls tagged `AUTO_FSM` |
-| [`AUTO_PIPELINE_RAM`](pypeline_guide.md#auto_pipeline_ram) | RAM register and bank structure (ECP5 open tools) | Automatically pipelined RAMs |
+| [`AUTO_PIPELINE_RAM`](pypeline_guide.md#auto_pipeline_ram) | RAM register and bank structure (Vivado / ECP5 open tools) | Automatically pipelined RAMs |
 
 Untagged logic with [`Reg[T]` state](pypeline_guide.md#registers-regt) is never changed,
 so it has to meet timing as written.
@@ -1226,10 +1226,16 @@ Automatic features add these controls and reports:
   `--auto_fsm_unshare SUBSTR=N`, and `--auto_fsm_ctl {auto,v3,v2,onehot}` are
   diagnostic/A-B controls; the defaults perform the normal minimum-area search and
   automatically select a control encoding.
-- Auto-pipelined RAM plan search is currently synthesis-supported by the ECP5 open-tools
-  flow. Its selected plans also appear in `sweep_history.json`, while
+- Auto-pipelined RAM plan search supports Vivado and the ECP5 open-tools flow.
+  Target-specific BRAM geometry is resolved before choosing plans, including fixed
+  latency builds. Passing candidates rank by total latency, then BRAM/LUT/register
+  counts; Vivado area ranking counts each RAMB36 as two RAMB18 units and excludes
+  the overlapping Block RAM Tile subtotal. Raw Vivado RAMB18/RAMB36/LUT/FF/DSP and
+  ECP5 DP16KD/LUT4/DFF counts remain visible in the reports.
+  Selected plans also appear in `sweep_history.json`, while
   `auto_pipeline_ram_history.json` records all tried plans, frequencies, resources, and
-  the winner.
+  the winner. Two-writer inferred memories use a shared variable and separate clocked
+  port processes; `--cocotb --ghdl` supplies their required `-frelaxed` option.
 
 ### Generated files and reports
 

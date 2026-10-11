@@ -60,6 +60,7 @@ def PARSE_VIVADO_VERSION(ver_output):
         return None
     return tuple(int(part) for part in match.groups() if part is not None)
 
+
 # Do full place and route for timing results
 # for "all" modules or just the "top" module
 DO_PNR = None  # None|"all"|"top"
@@ -74,6 +75,7 @@ class ParsedTimingReport:
 
         self.orig_text = syn_output
         self.utilization = PARSE_UTILIZATION(syn_output)
+        self.ram_resources = PARSE_RAM_RESOURCES(syn_output)
         self.extra_paths, self.coverage = PARSE_EXTRA_PATHS(syn_output)
         report_times = re.findall(r"^PYPELINEC_REPORT_MS (\d+)$", syn_output, re.M)
         self.optional_report_ms = int(report_times[-1]) if report_times else None
@@ -221,6 +223,24 @@ class ParsedTimingReport:
         if len(self.path_reports) == 0 and self.utilization["status"] != "over_capacity":
             print("Bad synthesis log?:", syn_output)
             raise Exception(f"Bad synthesis log?:{syn_output}")
+
+
+def PARSE_RAM_RESOURCES(text):
+    """Use utilization's physical rows, never the overlapping BRAM subtotal."""
+    rows = PARSE_UTILIZATION(text)["resources"]
+    result = {}
+    for key, labels in {
+        "RAMB18": ("RAMB18",),
+        "RAMB36": ("RAMB36/FIFO", "RAMB36"),
+        "LUT": ("Slice LUTs", "CLB LUTs"),
+        "FF": ("Slice Registers", "CLB Registers"),
+        "DSP": ("DSPs",),
+    }.items():
+        for label in labels:
+            if label in rows:
+                result[key] = rows[label]["used"]
+                break
+    return result
 
 
 def PARSE_UTILIZATION(text):
@@ -750,7 +770,12 @@ def _RUN_IDENTIFIED(
                 + "; move it aside explicitly before requesting a rerun"
             )
         if from_store:
-            print("Reading log", log_path, f"(from synthesis store {SYN.SYNTHESIS_STORE_DIR})", flush=True)
+            print(
+                "Reading log",
+                log_path,
+                f"(from synthesis store {SYN.SYNTHESIS_STORE_DIR})",
+                flush=True,
+            )
         else:
             SYN.COUNT_SYNTHESIS_RESULT("out_dir")
             print("Reading log", log_path, flush=True)
@@ -760,6 +785,10 @@ def _RUN_IDENTIFIED(
             json.dumps(manifest, indent=2) + "\n"
         )
         print("Running:", log_path, flush=True)
+        # Vivado's .Xil scratch name includes its PID. Separate observations
+        # can have the same PID in containers, so do not share a working dir.
+        work_directory = Path(str(base) + ".work")
+        work_directory.mkdir(parents=True, exist_ok=True)
         result = subprocess.run(
             [
                 VIVADO_PATH,
@@ -772,6 +801,7 @@ def _RUN_IDENTIFIED(
                 "-mode",
                 "batch",
             ],
+            cwd=work_directory,
             stdout=subprocess.PIPE,
             stderr=subprocess.STDOUT,
             text=True,
@@ -785,7 +815,9 @@ def _RUN_IDENTIFIED(
                 "Vivado exited " + str(result.returncode) + ": " + log_path
             )
         SYN.COUNT_SYNTHESIS_RESULT("run")
-        SYN.SYNTHESIS_STORE_INSERT("vivado", manifest["signature"], {"log": log_path}, manifest)
+        SYN.SYNTHESIS_STORE_INSERT(
+            "vivado", manifest["signature"], {"log": log_path}, manifest
+        )
     report = ParsedTimingReport(log_text)
     report.log_path = log_path
     report.input_signature = manifest["signature"]

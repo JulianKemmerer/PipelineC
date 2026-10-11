@@ -1,5 +1,5 @@
 #!/usr/bin/env python3
-"""ECP5 inference, exact constraints, measured search, and failure diagnostics."""
+"""ECP5/Vivado inference, constraints, measured search, and failure diagnostics."""
 
 import argparse
 import json
@@ -14,10 +14,12 @@ DESIGN = Path(__file__).with_name("auto_pipeline_ram_design.py")
 def main():
     parser = argparse.ArgumentParser()
     parser.add_argument("--out_dir", required=True)
-    parser.add_argument("--syn_tool", default="open_tools")
+    parser.add_argument(
+        "--syn_tool", default="open_tools", choices=("open_tools", "vivado")
+    )
     args = parser.parse_args()
-    assert args.syn_tool == "open_tools"
     out = Path(args.out_dir)
+    target_args = ["--part", "xc7a200tffg1156-2"] if args.syn_tool == "vivado" else []
 
     def build(name, params, flags=(), success=True):
         directory = out / name
@@ -28,6 +30,7 @@ def main():
             str(DESIGN),
             "--syn_tool",
             args.syn_tool,
+            *target_args,
             "--pipeline_min_effort",
             "0",
             "--out_dir",
@@ -36,9 +39,7 @@ def main():
             *(arg for k, v in params.items() for arg in ("-D", f"{k}={v}")),
         ]
         with (directory / "build.log").open("w") as log:
-            rc = subprocess.run(
-                cmd, stdout=log, stderr=subprocess.STDOUT
-            ).returncode
+            rc = subprocess.run(cmd, stdout=log, stderr=subprocess.STDOUT).returncode
         text = (directory / "build.log").read_text()
         print(text, flush=True)
         assert (rc == 0) == success, (directory, rc)
@@ -47,6 +48,9 @@ def main():
         return directory, history, plan, text
 
     for latency, ports, bytes_ in (
+        (1, "r", 0),
+        (3, "rw", 1),
+        (3, "r,r", 0),
         (1, "w,r", 0),
         (3, "rw,rw", 0),
         (5, "w,r", 1),
@@ -64,12 +68,23 @@ def main():
             ("--comb",),
         )
         assert plan["latency"] == latency
-        counts = {}
-        for path in (directory / "top").glob("top_*.json"):
-            for module in json.loads(path.read_text())["modules"].values():
-                for cell in module.get("cells", {}).values():
-                    counts[cell["type"]] = counts.get(cell["type"], 0) + 1
-        assert counts.get("DP16KD", 0) > 0, counts
+        if args.syn_tool == "vivado":
+            sys.path.insert(0, str(ROOT / "src"))
+            from VIVADO import PARSE_RAM_RESOURCES
+
+            counts = PARSE_RAM_RESOURCES(
+                Path(history["retained_observation"]["log_path"]).read_text()
+            )
+            assert counts["RAMB18"] + 2 * counts["RAMB36"] >= 4, counts
+            assert counts["FF"] < 4096, counts  # catch register-array fallback
+        else:
+            counts = {}
+            for path in (directory / "top").glob("top_*.json"):
+                for module in json.loads(path.read_text())["modules"].values():
+                    for cell in module.get("cells", {}).values():
+                        counts[cell["type"]] = counts.get(cell["type"], 0) + 1
+            assert counts.get("DP16KD", 0) >= 4, counts
+            assert counts.get("TRELLIS_FF", 0) < 4096, counts
         assert plan["banks"] > 1 if latency > 3 else plan["banks"] == 1
     _, history, plan, _ = build(
         "automatic", dict(AUTO_PIPELINE_RAM_MHZ=60, AUTO_PIPELINE_RAM_START=3)
@@ -86,7 +101,7 @@ def main():
         and "auto-pipelined RAM latency limit" in text
         and "TIMING NOT MET" in text
     )
-    print("All automatic pipeline RAM ECP5 build tests passed.")
+    print(f"All automatic pipeline RAM {args.syn_tool} build tests passed.")
 
 
 if __name__ == "__main__":

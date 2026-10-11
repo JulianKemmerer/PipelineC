@@ -31,6 +31,10 @@ constraints = (
     else dict(latency=L)
 )
 raw, raw_t = make_auto_pipeline_ram(uint32_t, 4096, ports=("w", "r"), **constraints)
+dual, dual_t = make_auto_pipeline_ram(
+    uint32_t, 4096, ports=("rw", "rw"), byte_write_enables=True, **constraints
+)
+dual_in_t = dual.p0_in_t
 stream, stream_t = make_stream_auto_pipeline_ram(
     uint32_t, 4096, ports=("w", "r"), **constraints
 )
@@ -68,6 +72,7 @@ def self_check_auto_pipeline_ram() -> uint32_t:
     received: Reg[uint8_t]
     acks: Reg[uint8_t]
     checked: Reg[uint8_t]
+    dual_checked: Reg[uint8_t]
     index: addr_t = addr_t(raw_cycle & 15)
     address: addr_t = index | ((index & 1) << 11)
     w: wr_t
@@ -79,8 +84,33 @@ def self_check_auto_pipeline_ram() -> uint32_t:
     r.addr = address
     r.valid = (raw_cycle >= 48) & (raw_cycle < 64)
     raw_data: uint32_t = 0
+    dual_data: uint32_t = 0
     # A conditional call gates CLOCK_ENABLE for every stage and memory write.
     if (tick & 3) != 1:
+        d0: dual_in_t
+        d1: dual_in_t
+        d0.addr = address
+        d1.addr = address ^ 1024
+        d0.valid = w.valid | r.valid
+        d1.valid = d0.valid
+        d0.wr_data = 0x11223344
+        d1.wr_data = 0xAABBCCDD
+        d0.wr_en[0] = w.valid
+        d0.wr_en[2] = w.valid
+        d1.wr_en[1] = w.valid
+        d1.wr_en[3] = w.valid
+        two: dual_t = dual(d0, d1)
+        if two.p0.valid & (two.p0.wr_en[0] == 0):
+            sim_assert(two.p0.rd_data == 0x00220044, "dual port byte write p0")
+            sim_assert(two.p1.rd_data == 0xAA00CC00, "dual port byte write p1")
+            sim_assert(
+                two.p1.addr == (two.p0.addr ^ 1024), "dual port response address"
+            )
+            high: uint16_t = two.p1.rd_data[31:16]
+            low: uint16_t = two.p1.rd_data[15:0]
+            sim_print(f"dual {two.p0.addr} {two.p0.rd_data} {high} {low}", debug=True)
+            dual_checked += 1
+        dual_data = two.p0.rd_data ^ two.p1.rd_data
         plain: aligned_t = aligned(w, r)
         raw_data = plain.data
         if plain.valid:
@@ -126,9 +156,10 @@ def self_check_auto_pipeline_ram() -> uint32_t:
         received += 1
     if tick == 200:
         sim_assert(checked == 16, "raw response count")
+        sim_assert(dual_checked == 16, "dual port response count")
         sim_assert(acks == 16, "write acknowledgement count")
         sim_assert(received == 16, "stream response count")
         sim_finish()
     tick += 1
     # Keep memory data observable during the synthesis-selected-plan test.
-    return raw_data ^ streamed.p1_resp_if.stream.data.rd_data
+    return raw_data ^ dual_data ^ streamed.p1_resp_if.stream.data.rd_data

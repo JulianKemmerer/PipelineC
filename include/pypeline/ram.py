@@ -39,12 +39,15 @@ Semantics shared by both:
   - a `size` that is not a power of two wraps the address `mod size` in
     simulation only; an out-of-range address is undefined in hardware.
 
-The memory is a signal-based array of std_logic_vector written from one
-clocked process (no shared variables: the cocotb/PyRTL GHDL runs do not pass
--frelaxed). Elements are packed with the same leaf walk `type_to_bytes` uses,
+Manual memory is a signal-based array of std_logic_vector written from one
+clocked process. Automatic RAM uses shared-variable storage and separate
+clocked port processes for two writers (Vivado's BRAM inference template);
+ROMs and single-writer automatic RAM retain signals. GHDL needs -frelaxed for
+two-writer automatic RAM; the compiler's GHDL flows supply it. Elements are packed with the same leaf walk `type_to_bytes` uses,
 so `init=` becomes a plain bit-string aggregate generated here from Python
 values, and the model starts from the very same normalized values.
 """
+
 import copy
 import hashlib
 import pypeline as py
@@ -232,7 +235,9 @@ def ram_canon_value(t, v, where):
 
 def _check_nonneg_int(func_name, name, value):
     if isinstance(value, bool) or not isinstance(value, int) or value < 0:
-        raise ValueError(f"{func_name}: {name} must be a non-negative int, got {value!r}")
+        raise ValueError(
+            f"{func_name}: {name} must be a non-negative int, got {value!r}"
+        )
 
 
 class RamConfig:
@@ -489,7 +494,9 @@ def ram_vhdl_text(cfg, handshake):
 
     d(f"-- {'stream ' if handshake else ''}RAM: {cfg.describe()}")
     d(f"constant RAM_SIZE : integer := {cfg.size};")
-    d(f"type ram_mem_t is array(0 to RAM_SIZE-1) of std_logic_vector({cfg.width - 1} downto 0);")
+    d(
+        f"type ram_mem_t is array(0 to RAM_SIZE-1) of std_logic_vector({cfg.width - 1} downto 0);"
+    )
     d(f"signal ram_mem : ram_mem_t := {_vhdl_init_aggregate(cfg)};")
     for p in layouts:
         for stage in range(L + 1):
@@ -560,13 +567,21 @@ def ram_vhdl_text(cfg, handshake):
         s(f"{p.out_prefix}addr <= unsigned({last}({aw - 1} downto 0));")
         if p.writable:
             s(f"{p.sig}_wd <= {last}({p.wd_hi} downto {p.wd_lo});")
-            s(f"{p.out_prefix}wr_data <= " + _vhdl_from_slv(cfg.elem_t, f"{p.sig}_wd") + ";")
+            s(
+                f"{p.out_prefix}wr_data <= "
+                + _vhdl_from_slv(cfg.elem_t, f"{p.sig}_wd")
+                + ";"
+            )
             if cfg.byte_write_enables:
                 for j in range(cfg.we_bits):
                     bit = p.we_lo + j
-                    s(f"{p.out_prefix}wr_en({j}) <= unsigned({last}({bit} downto {bit}));")
+                    s(
+                        f"{p.out_prefix}wr_en({j}) <= unsigned({last}({bit} downto {bit}));"
+                    )
             else:
-                s(f"{p.out_prefix}wr_en <= unsigned({last}({p.we_lo} downto {p.we_lo}));")
+                s(
+                    f"{p.out_prefix}wr_en <= unsigned({last}({p.we_lo} downto {p.we_lo}));"
+                )
         s(f"{p.out_valid} <= unsigned({last}({p.valid_bit} downto {p.valid_bit}));")
         if p.readable:
             # A combinational read with no register after it is a live read.
@@ -584,7 +599,9 @@ def ram_vhdl_text(cfg, handshake):
         if p.writable:
             if cfg.byte_write_enables:
                 for j in range(cfg.we_bits):
-                    t(f"if {bR}({p.valid_bit}) = '1' and {bR}({p.we_lo + j}) = '1' then")
+                    t(
+                        f"if {bR}({p.valid_bit}) = '1' and {bR}({p.we_lo + j}) = '1' then"
+                    )
                     t(
                         f"  ram_mem({p.sig}_a)({8 * j + 7} downto {8 * j}) <= "
                         f"{bR}({p.wd_lo + 8 * j + 7} downto {p.wd_lo + 8 * j});"
@@ -652,11 +669,15 @@ def ram_model_class(cfg, handshake, port_out_types, out_t, resp_stream_types=Non
     zero_elem = sim_zero(elem_t)
     zero_we = [0] * cfg.we_bits if cfg.byte_write_enables else 0
     byte_masks = (
-        [0xFF << (8 * j) for j in range(cfg.we_bits)] if cfg.byte_write_enables else None
+        [0xFF << (8 * j) for j in range(cfg.we_bits)]
+        if cfg.byte_write_enables
+        else None
     )
     empty = ((0, 0, zero_elem, zero_we), zero_elem)
     if handshake:
-        names = [n for i in range(len(kinds)) for n in (f"p{i}_req", f"p{i}_resp_ready")]
+        names = [
+            n for i in range(len(kinds)) for n in (f"p{i}_req", f"p{i}_resp_ready")
+        ]
         payload_types = [t.__annotations__["data"] for t in resp_stream_types]
     else:
         names = [f"p{i}" for i in range(len(kinds))]
@@ -705,7 +726,11 @@ def ram_model_class(cfg, handshake, port_out_types, out_t, resp_stream_types=Non
                     x = args[i]
                     valid = int(x.valid) & 1
                 if writable:
-                    we = [int(e) & 1 for e in x.wr_en] if byte_masks else int(x.wr_en) & 1
+                    we = (
+                        [int(e) & 1 for e in x.wr_en]
+                        if byte_masks
+                        else int(x.wr_en) & 1
+                    )
                     b0 = (valid, x.addr, own(x.wr_data), we)
                 else:
                     b0 = (valid, x.addr, zero_elem, zero_we)
@@ -727,7 +752,9 @@ def ram_model_class(cfg, handshake, port_out_types, out_t, resp_stream_types=Non
                     if writable and at_ram[0]:
                         if byte_masks is None:
                             if at_ram[3]:
-                                self.pending.append((index, write_value(at_ram[2]), None))
+                                self.pending.append(
+                                    (index, write_value(at_ram[2]), None)
+                                )
                         else:
                             mask = 0
                             for j, m in enumerate(byte_masks):
@@ -754,7 +781,9 @@ def ram_model_class(cfg, handshake, port_out_types, out_t, resp_stream_types=Non
                     fields["rd_data"] = own(rd)
                 if handshake:
                     payload = payload_types[i](**fields)
-                    out_fields[f"p{i}_resp"] = resp_stream_types[i](data=payload, valid=out[0])
+                    out_fields[f"p{i}_resp"] = resp_stream_types[i](
+                        data=payload, valid=out[0]
+                    )
                     out_fields[f"p{i}_req_ready"] = advance
                 else:
                     fields["valid"] = out[0]
@@ -830,8 +859,12 @@ def make_ram(
     in_ts, out_ts = [], []
     for kind in cfg.ports:
         req_fields, resp_fields = ram_port_payload_fields(cfg, kind)
-        in_ts.append(ram_make_struct(f"ram_{kind}_in_t", req_fields + [("valid", uint1_t)]))
-        out_fields = [f for f in resp_fields if f[0] != "rd_data"] + [("valid", uint1_t)]
+        in_ts.append(
+            ram_make_struct(f"ram_{kind}_in_t", req_fields + [("valid", uint1_t)])
+        )
+        out_fields = [f for f in resp_fields if f[0] != "rd_data"] + [
+            ("valid", uint1_t)
+        ]
         if kind != "w":
             out_fields.append(("rd_data", cfg.elem_t))
         out_ts.append(ram_make_struct(f"ram_{kind}_out_t", out_fields))
@@ -894,6 +927,8 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
     """
     decl, body, clocked = [], [], []
     d, s, c = decl.append, body.append, clocked.append
+    dual_writer = sum(k != "r" for k in cfg.ports) == 2
+    memory_processes = [[] for _ in cfg.ports]
     L, D = plan.latency, plan.split_depth
     bank_depth = 1 << max(0, cfg.addr_width - D)
     local_bits = max(0, cfg.addr_width - D)
@@ -913,9 +948,11 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
         if len(entries) < bank_depth:
             entries.append("others => (others => '0')")
         mem = f"auto_pipeline_ram_mem_b{b}"
-        d(f"signal {mem} : auto_pipeline_ram_mem_t := ({', '.join(entries)});")
-        d(f'attribute ram_style of {mem} : signal is "block";')
-        d(f"attribute no_rw_check of {mem} : signal is true;")
+        storage = "shared variable" if dual_writer else "signal"
+        object_class = "variable" if dual_writer else "signal"
+        d(f"{storage} {mem} : auto_pipeline_ram_mem_t := ({', '.join(entries)});")
+        d(f'attribute ram_style of {mem} : {object_class} is "block";')
+        d(f"attribute no_rw_check of {mem} : {object_class} is true;")
 
     def qdecl(name):
         d(
@@ -924,6 +961,10 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
         d(f"signal {name}_v : std_logic := '0';")
 
     for p in layouts:
+        # Vivado requires one write port per process. A shared variable avoids
+        # multiple signal drivers in simulation; legal accesses are race-free
+        # under the automatic RAM collision contract. ECP5 accepts it too.
+        m = memory_processes[p.i].append if dual_writer else c
         for stage in range(L + 1):
             d(
                 f"signal {p.b(stage)} : std_logic_vector({p.bw-1} downto 0) := (others => '0');"
@@ -993,7 +1034,7 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
                     c(f"{q} <= {memory_q};")
                     c(f"{q}_v <= {memory_q}_v;")
                 c(f"{memory_q}_v <= {req}({p.valid_bit});")
-                c(
+                m(
                     f"if {req}({p.valid_bit}) = '1' then {memory_q} <= {mem}({addr}); end if;"
                 )
             if p.writable:
@@ -1003,13 +1044,14 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
                         if cfg.byte_write_enables
                         else (0, cfg.width - 1)
                     )
-                    c(
+                    m(
                         f"if {req}({p.valid_bit}) = '1' and {req}({p.we_lo+byte}) = '1' then"
                     )
-                    c(
-                        f"  {mem}({addr})({hi} downto {lo}) <= {req}({p.wd_lo+hi} downto {p.wd_lo+lo});"
+                    assignment = ":=" if dual_writer else "<="
+                    m(
+                        f"  {mem}({addr})({hi} downto {lo}) {assignment} {req}({p.wd_lo+hi} downto {p.wd_lo+lo});"
                     )
-                    c("end if;")
+                    m("end if;")
         if p.readable:
             for level in reversed(range(D)):
                 # Register the levels nearest the leaves first.
@@ -1049,11 +1091,13 @@ def _auto_pipeline_ram_vhdl(cfg, plan):
                     else f"{p.out_prefix}wr_en"
                 )
                 s(f"{target} <= unsigned({last}({p.we_lo+j} downto {p.we_lo+j}));")
-    s(
-        "process(clk) begin\n  if rising_edge(clk) then\n    if CLOCK_ENABLE(0) = '1' then"
-    )
-    body.extend("      " + line for line in clocked)
-    s("    end if;\n  end if;\nend process;")
+    for statements in [clocked, *memory_processes]:
+        if statements:
+            s(
+                "process(clk) begin\n  if rising_edge(clk) then\n    if CLOCK_ENABLE(0) = '1' then"
+            )
+            body.extend("      " + line for line in statements)
+            s("    end if;\n  end if;\nend process;")
     # The same caller contract as the native model. These checks have no
     # hardware cost and do not impose read-first/priority logic on inference.
     s("-- synthesis translate_off")
@@ -1184,6 +1228,9 @@ def make_auto_pipeline_ram(
     enabled-cycle separation required before a dependent read. Same-address
     collisions and rd_data on an rw write are unspecified. See the RAM section
     of docs/AUTO_PIPELINE_DESIGN.md.
+
+    Synthesis supports Vivado and ECP5 OPEN_TOOLS, using the resolved target's
+    BRAM geometry. Native/HDL-only builds use one cycle unless latency is fixed.
     """
     import AUTO_PIPELINE
 
@@ -1205,11 +1252,18 @@ def make_auto_pipeline_ram(
         max_latency=max_latency,
     )
     plan = py.AUTO_PIPELINE_RAM_PLAN_CACHE().get(key)
+    from_cache = plan is not None
     if plan is None:
         native_options = dict(options)
         if py.AUTO_PIPELINE_BUILD_MODE() != "sweep":
             native_options["start_latency"] = None
-        plan = AUTO_PIPELINE.RAM_CANDIDATES(**native_options)[0]
+        plan = AUTO_PIPELINE.RAM_CANDIDATES(
+            **native_options,
+            target=getattr(py, "_auto_pipeline_ram_native_target", None) or "ecp5",
+        )[0]
+    py.__dict__.setdefault("_auto_pipeline_ram_served", {})[key] = dict(
+        options=options, plan=plan, from_cache=from_cache
+    )
     cfg.in_regs = plan.write_stage
     cfg.out_regs = plan.output_regs + plan.response_levels
     cfg.latency = plan.latency

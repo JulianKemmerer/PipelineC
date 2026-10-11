@@ -27,6 +27,7 @@ PLAIN_PYTHON_TEST_FILES = [
     "fixed_point_test.py",
     "cordic_test.py",
     "lut_nco_test.py",
+    "lut_atan2_test.py",
     "log2_db_test.py",
     "pypeline_test.py",
     "sim_loop_reg_state_test.py",
@@ -290,7 +291,14 @@ def get_tests() -> list:
             Test(
                 name=fname[: -len(".py")],
                 category="native_sim",
-                cmd=[PYPELINEC, DSP_DIR / fname, "--sim", "--comb", "--run", str(run_n)],
+                cmd=[
+                    PYPELINEC,
+                    DSP_DIR / fname,
+                    "--sim",
+                    "--comb",
+                    "--run",
+                    str(run_n),
+                ],
             )
         )
     # docs/README.md's getting-started examples, for the same reason. Each run
@@ -345,6 +353,8 @@ def get_tests() -> list:
             cmd=[
                 PYPELINEC,
                 EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_extract_tb.py",
+                "-D",
+                "PDW_ATAN2_METHOD=cordic",
                 "--sim",
                 "--comb",
                 "--run",
@@ -370,6 +380,22 @@ def get_tests() -> list:
             ],
         )
     )
+    tests.append(
+        Test(
+            name="pulse_extract_tb_rom",
+            category="native_sim",
+            cmd=[
+                PYPELINEC,
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_extract_tb.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "800",
+                "-D",
+                "PDW_ATAN2_METHOD=rom",
+            ],
+        )
+    )
     # PDW project: the per-pulse measurement engine on its own. pdw_tb.py
     # already checks it bit-exactly inside the whole pipeline, but only over
     # the few phasor magnitudes and power levels the real detector happens to
@@ -379,9 +405,8 @@ def get_tests() -> list:
         Test(
             name="pulse_measure_test",
             category="native_sim",
-            cmd=[
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_measure_test.py"
-            ],
+            env={"PDW_ATAN2_METHOD": "cordic"},
+            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_measure_test.py"],
         )
     )
     # PDW project: the AXIS-written control register file. pdw_tb.py exercises
@@ -394,9 +419,7 @@ def get_tests() -> list:
         Test(
             name="pdw_ctrl_test",
             category="native_sim",
-            cmd=[
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_ctrl_test.py"
-            ],
+            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_ctrl_test.py"],
         )
     )
     # PDW project: reset semantics -- block, drain, clear. pdw_tb.py only ever
@@ -409,9 +432,19 @@ def get_tests() -> list:
         Test(
             name="pdw_reset_test",
             category="native_sim",
+            env={"PDW_ATAN2_METHOD": "cordic"},
             cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_reset_test.py"],
         )
     )
+    for filename in ("pulse_measure_test.py", "pdw_reset_test.py"):
+        tests.append(
+            Test(
+                name=filename[:-3] + "_rom",
+                category="native_sim",
+                cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / filename],
+                env={"PDW_ATAN2_METHOD": "rom"},
+            )
+        )
     # PDW project: the internal-error alarm, on its own. The alarm's job is to
     # destroy a known number of ADC samples so the platform raises an overflow
     # software can see, so the property that matters is "exactly N samples were
@@ -424,9 +457,7 @@ def get_tests() -> list:
         Test(
             name="pdw_alarm_test",
             category="native_sim",
-            cmd=[
-                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_alarm_test.py"
-            ],
+            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_alarm_test.py"],
         )
     )
     # PDW project: airt_pdw_test.py's capture loop, with no radio. That script
@@ -493,6 +524,26 @@ def get_tests() -> list:
                 # its deadline assert; its @final hook checks the run finished
                 "--run",
                 "all",
+                "-D",
+                "PDW_ATAN2_METHOD=cordic",
+            ],
+        )
+    )
+    tests.append(
+        Test(
+            name="pdw_tb_rom",
+            category="native_sim",
+            long_pole=True,
+            timeout=4 * 3600,
+            cmd=[
+                PYPELINEC,
+                EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_tb.py",
+                "--sim",
+                "--comb",
+                "--run",
+                "all",
+                "-D",
+                "PDW_ATAN2_METHOD=rom",
             ],
         )
     )

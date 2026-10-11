@@ -12,7 +12,7 @@ difference is how you get SNR. This block is that conversion.
 
 Two implementations of the same interface, chosen by `method=`:
 
-  "rom" (default)  Both terms are table lookups, from two `ram.make_ram` ROMs:
+  "rom" (default)  Both terms are table lookups, from two automatic RAM ROMs:
                    `(e - frac_bits) * 3.0103 dB` indexed by the leading-zero
                    count, and `3.0103 * log2(1 + m)` indexed by the top
                    `mant_bits` (10) mantissa bits. Every table entry is rounded
@@ -45,8 +45,8 @@ the raw range reaches 135.5 dB, past Q8.8's +128, while the true represented
 range is -36.1 .. +99.4 dB and fits comfortably. Both methods compute
 `dB(e - in_t.frac_bits)`, not `dB(e)`.
 
-Output is signed Q8.8 dB (one LSB = 1/256 dB), saturated at the ends. Both
-methods have `.latency` 4 and the same ports, so they are interchangeable.
+Output is signed Q8.8 dB (one LSB = 1/256 dB), saturated at the ends. Read
+`.latency`: ROM mode takes max(table latencies)+2; PWL takes four cycles.
 """
 
 import math
@@ -63,7 +63,7 @@ from pypeline import (
 )
 
 from bits import make_clz, make_shifter_sl
-from ram import make_ram
+from ram import make_ram, make_auto_pipeline_ram
 
 # dB per unit of log2, in the output's Q8.8 units: 10/log2(10) * 256. The "pwl"
 # method uses it rounded; the "rom" method folds the exact value into its tables.
@@ -127,7 +127,9 @@ def rom_log2_tables(width, frac_bits, mant_bits=10):
     return log_tab, exp_tab
 
 
-def make_log2_db(in_t, mant_bits=None, seg_bits=2, method="rom"):
+def make_log2_db(
+    in_t, mant_bits=None, seg_bits=2, method="rom", *, auto_pipeline_ram=True
+):
     """Build a linear->dB converter. Returns (log2_db, log2_db_t).
 
     in_t:      a `fixed_t` (from fixed_point.make_fixed_t). Its `.frac_bits`
@@ -138,6 +140,11 @@ def make_log2_db(in_t, mant_bits=None, seg_bits=2, method="rom"):
     mant_bits: mantissa bits used. Default 10 for "rom" (a 1024-entry table,
                one RAMB18) and 8 for "pwl".
     seg_bits:  "pwl" only: 2^seg_bits chord segments.
+    auto_pipeline_ram: keyword-only, default True. ROM searches start at two
+               cycles per table on Vivado/ECP5; native/HDL-only uses one cycle.
+               False keeps manual two-cycle ROMs and existing backend support.
+               Ignored for PWL. Independently selected ROMs are aligned with
+               valid and floored flags before the final sum.
 
         log2_db(v: in_t, valid_in: uint1_t) -> log2_db_t
         log2_db_t: .db (int16_t, Q8.8 dB), .valid, .floored
@@ -146,19 +153,21 @@ def make_log2_db(in_t, mant_bits=None, seg_bits=2, method="rom"):
     (the dB of the smallest representable positive quantity) rather than a
     measurement.
 
-    Latency is 4 cycles for both methods, fully pipelined. Read `.latency`
-    rather than assuming it.
+    Fully pipelined, one result per enabled clock. Read `.latency`: automatic
+    ROM mode is max(table latencies)+2; manual ROM and PWL modes take four.
     """
     if method not in LOG2_DB_METHODS:
         raise ValueError(
             f"make_log2_db: method must be one of {LOG2_DB_METHODS}, got {method!r}"
         )
     if method == "rom":
-        return _make_log2_db_rom(in_t, 10 if mant_bits is None else mant_bits)
+        return _make_log2_db_rom(
+            in_t, 10 if mant_bits is None else mant_bits, auto_pipeline_ram
+        )
     return _make_log2_db_pwl(in_t, 8 if mant_bits is None else mant_bits, seg_bits)
 
 
-def _make_log2_db_rom(in_t, mant_bits):
+def _make_log2_db_rom(in_t, mant_bits, auto_pipeline_ram):
     """method="rom". Returns (log2_db, log2_db_t)."""
     val_t = in_t.typeof("val")
     W = len(val_t)
@@ -187,20 +196,21 @@ def _make_log2_db_rom(in_t, mant_bits):
     exp_elem_t = make_int_t(exp_span.bit_length() + 1)
     acc_t = make_int_t(max(exp_span.bit_length() + 3, 18))
 
-    # read_latency=1 is the block RAM's own read register; out_regs=1 its
-    # optional output register, so the add below starts from a register rather
-    # than a ~2.5 ns block-RAM clock-to-out. That puts the whole ROM stage in
-    # the two cycles the "pwl" method spends on its multiply, so both methods
-    # have the same latency.
-    log_rom, _log_rom_t = make_ram(
-        log_elem_t, 1 << M, ports=("r",), read_latency=1, out_regs=1, init=LOG_TAB
+    factory = make_auto_pipeline_ram if auto_pipeline_ram else make_ram
+    constraints = (
+        dict(start_latency=2) if auto_pipeline_ram else dict(read_latency=1, out_regs=1)
     )
-    exp_rom, _exp_rom_t = make_ram(
-        exp_elem_t, len(EXP_TAB), ports=("r",), read_latency=1, out_regs=1, init=EXP_TAB
+    log_rom, _log_rom_t = factory(
+        log_elem_t, 1 << M, ports=("r",), init=LOG_TAB, **constraints
     )
-    if log_rom.latency != exp_rom.latency:
-        raise ValueError("make_log2_db: the two ROMs must have equal latency")
-    ROM_LAT = log_rom.latency
+    exp_rom, _exp_rom_t = factory(
+        exp_elem_t, len(EXP_TAB), ports=("r",), init=EXP_TAB, **constraints
+    )
+    ROM_LAT = max(log_rom.latency, exp_rom.latency)
+    LOG_DELAY = ROM_LAT - log_rom.latency
+    EXP_DELAY = ROM_LAT - exp_rom.latency
+    LOG_STORAGE = max(1, LOG_DELAY)
+    EXP_STORAGE = max(1, EXP_DELAY)
 
     @struct
     class log2_db_t(NamedTuple):
@@ -240,6 +250,23 @@ def _make_log2_db_rom(in_t, mant_bits):
         lr = log_rom(log_rom.p0_in_t(addr=mant, valid=a_valid))
         er = exp_rom(exp_rom.p0_in_t(addr=a_lz, valid=a_valid))
 
+        # Each ROM is searched independently. Delay its complete response so
+        # a table value and its valid flag always describe the same input.
+        l_aligned = lr.p0
+        e_aligned = er.p0
+        ld: Reg[log_rom.p0_out_t[LOG_STORAGE]]
+        ed: Reg[exp_rom.p0_out_t[EXP_STORAGE]]
+        if LOG_DELAY > 0:
+            l_aligned = ld[LOG_DELAY - 1]
+            for j in range(LOG_DELAY - 1, 0, -1):
+                ld[j] = ld[j - 1]
+            ld[0] = lr.p0
+        if EXP_DELAY > 0:
+            e_aligned = ed[EXP_DELAY - 1]
+            for j in range(EXP_DELAY - 1, 0, -1):
+                ed[j] = ed[j - 1]
+            ed[0] = er.p0
+
         # The floored flag rides alongside the ROM reads. Read the tail before
         # shifting: it is then the flag of the request the ROMs answer now.
         fl_d: Reg[uint1_t[ROM_LAT]]
@@ -250,8 +277,8 @@ def _make_log2_db_rom(in_t, mant_bits):
             nfl[j + 1] = fl_d[j]
 
         # ---- stage C: sum and clamp ----------------------------------------
-        l_val: acc_t = lr.p0.rd_data
-        e_val: acc_t = er.p0.rd_data
+        l_val: acc_t = l_aligned.rd_data
+        e_val: acc_t = e_aligned.rd_data
         total: acc_t = e_val + l_val
         floor_acc: acc_t = DB_FLOOR
         hi_acc: acc_t = DB_MAX
@@ -266,7 +293,7 @@ def _make_log2_db_rom(in_t, mant_bits):
         # Register updates last, in REVERSE pipeline order (see the "pwl"
         # method's note on why that order is load-bearing).
         c_db = clamped[15:0]
-        c_valid = lr.p0.valid
+        c_valid = l_aligned.valid & e_aligned.valid
         c_floored = fl_tail
         fl_d = nfl
         a_mag = mag_in
@@ -526,6 +553,8 @@ def golden_log2_db(block, raw):
             seg = mant >> low_bits
             low = mant & ((1 << low_bits) - 1)
             e = (W - 1) - lz
-            db = (e - F) * DB_PER_LOG2_Q8 + A_TAB[seg] + ((B_TAB[seg] * low) >> low_bits)
+            db = (
+                (e - F) * DB_PER_LOG2_Q8 + A_TAB[seg] + ((B_TAB[seg] * low) >> low_bits)
+            )
     db = max(-32768, min(32767, db))
     return db, raw <= 0

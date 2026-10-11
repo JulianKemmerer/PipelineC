@@ -200,12 +200,11 @@ One shift-and-add iteration per pipeline stage: no multiplier, no lookup table, 
 no ROM. Both modes share the same iteration hardware and the same `atan(2^-i)` angle
 table, which is elaboration-time constant.
 
-Which mode needs this and which does not is not symmetric. **Rotation mode now has a
-cheaper alternative**: [`make_lut_nco`](#make_lut_nco--an-nco-from-a-sine-rom) does the
-same job from a [`make_ram`](../../../docs/pypeline_guide.md#rams-make_ram--make_stream_ram)
-sine ROM and one multiplier per rail, and is the better choice wherever a block RAM is
-available. **Vectoring mode has no such shortcut**: a table `atan2` has to divide `y`
-by `x` before it can look anything up, so the CORDIC stays the right shape for it.
+Both modes have table-based alternatives. [`make_lut_nco`](#make_lut_nco--an-nco-from-a-sine-rom)
+uses a sine ROM and one multiplier per rail. `make_lut_atan2`, below, uses normalized
+reciprocal and arctangent tables plus a multiply, avoiding a general divider.
+CORDIC trades more shift/add logic and pipeline registers for no BRAM or DSP usage;
+choose using timing and resource measurements in the composed design.
 
 * **Vectoring mode** (`make_cordic_atan2`) drives the *y* rail to zero, so the
   accumulated angle is `atan2(y, x)`:
@@ -248,6 +247,39 @@ Tests: `src/tests/pypeline_tests/inst/cordic_test.py` (all four quadrants, both 
 the `(0,0)` degenerate case, the ±½-turn boundary, pipeline throughput, and a second
 instance at different widths, against both a bit-exact model and `math.atan2`).
 
+## `make_lut_atan2` — an angle from reciprocal and arctangent ROMs
+
+```python
+from dsp.lut_atan2 import make_lut_atan2, golden_lut_atan2
+
+angle, angle_t = make_lut_atan2(make_int_t(39))
+# angle(x_in, y_in, valid_in) -> {.angle (int16_t turns), .valid, .degenerate}
+# golden_lut_atan2(angle, x, y) -> (angle_bits, degenerate)
+```
+
+The interface matches vectoring CORDIC. Signs and octant reduce the input to
+`0 <= minor/major <= 1`; both magnitudes are normalized to 17 significant bits.
+A 4096-entry reciprocal table (18 fractional bits), one multiplication, and a
+4096-entry arctangent table approximate the ratio's angle. Tables are generated
+at elaboration time. Axes, diagonals, `(0, 0)` and signed-turn wrapping are handled
+explicitly, including the most negative signed inputs. Only `(0, 0)` sets
+`.degenerate`. This is a [reciprocal/table architecture](https://www.acsel-lab.com/arithmetic/arith22/papers/8664a034.pdf),
+so it needs no general divider.
+
+Both ROMs use `make_auto_pipeline_ram`, starting synthesis search at two cycles
+each. `.latency` is `reciprocal_rom.latency + angle_rom.latency + 6` (eight cycles
+in native or HDL-only builds). Quadrant metadata follows the selected delays.
+The pipeline accepts one vector per enabled clock; a conditional call pauses all
+stages. Vivado and ECP5 open tools are the supported synthesis backends.
+
+`lut_atan2_test.py` checks a bit-exact model against `math.atan2` on exhaustive
+small inputs, randomized full-width inputs, normalization/table boundaries,
+signed extremes, axes, diagonals and zero vectors. The error bound is **less than
+6e-5 turns** across input scales. It drives both sides of every table boundary
+through the native pipeline at sustained throughput, and checks bubbles,
+unequal selected ROM latencies and native/GHDL parity with clock-enable pauses.
+The parity matrix includes PDW's 40-bit accumulator width and signed extremes.
+
 ## `make_lut_nco` — an NCO from a sine ROM
 
 ```python
@@ -257,16 +289,23 @@ nco, nco_t = make_lut_nco(int16_t, table_bits=10, phase_bits=32)
 # nco(phase, amplitude, valid_in) -> {.i, .q, .valid}   amplitude*(cos, sin)(phase)
 ```
 
-The same interface as `make_cordic_rotate`, from one `make_ram` ROM read on two ports
+The same interface as `make_cordic_rotate`, from one automatic ROM read on two ports
 and one multiplier per rail. The ROM holds a quarter wave of sine sampled at the
 **centre** of each of its `2^table_bits` phase bins, which is what makes the mirror
 for the other quadrants a plain bitwise NOT of the index and makes the phase
 truncation round rather than floor. The top two phase bits pick the quadrant and the
 signs are applied to the amplitude before the multiply.
 
-* **Latency 5**, fully pipelined: the ROM's input register, block-RAM read and output
-  register, the multiply, and a round/saturate output register.
-* **Measured cost.** Swapped in for a 16-iteration `make_cordic_rotate`, it took
+* **Latency `nco.rom.latency + 2`**, fully pipelined: selected ROM stages, the
+  multiply, and a round/saturate output register. Amplitude, signs and valid
+  follow the selected ROM latency.
+* **Automatic/manual choice.** Keyword-only `auto_pipeline_ram=True` uses the
+  automatic factory, starting its synthesis search at three ROM cycles.
+  Native/HDL-only builds use a one-cycle ROM, hence three NCO cycles. Set
+  `auto_pipeline_ram=False` for the manual three-cycle ROM and five-cycle NCO,
+  retaining the manual factory's existing backend compatibility. Automatic
+  synthesis supports Vivado and ECP5 open tools; run a full sweep, without `--comb`.
+* **Historical manual-ROM cost.** Swapped in for a 16-iteration `make_cordic_rotate`, it took
   the PDW example's generator from 2,742 LUTs and 1,373 flip-flops to 520 LUTs and
   345 flip-flops, plus one RAMB18 and two DSP48s, on xc7a100t. Its fmax went from
   133.3 MHz to 141.5 MHz.
@@ -280,7 +319,9 @@ signs are applied to the amplitude before the multiply.
 Tests: `src/tests/pypeline_tests/inst/lut_nco_test.py` (bit-exact against
 `golden_lut_nco`, the model against `math.cos`/`math.sin` over every phase bin at two
 table sizes, the four axis crossings, constant envelope and zero mean over a full
-circle, saturation at amplitude −32768, measured SFDR, and frequency-estimate bias).
+circle, saturation at amplitude −32768, measured SFDR, frequency-estimate bias,
+automatic/manual modes and selected ROM latencies). `self_check_dsp_rom_test.py`
+checks selected latency and clock-enable pauses against GHDL.
 
 ## `make_log2_db` — linear power to dBFS
 
@@ -294,7 +335,7 @@ log_pwl, log_pwl_t = make_log2_db(power_t, method="pwl")  # no ROM
 
 Count-leading-zeros gives the exponent `e`; the mantissa `m` is the bits below the
 leading one; `dB = 3.0103 · ((e − frac_bits) + log₂(1+m))`. Two interchangeable
-implementations, both with `.latency` 4:
+implementations with the same ports; consumers must read `.latency`:
 
 | `method=` | Exponent term | Mantissa term | Worst-case error |
 |---|---|---|---|
@@ -309,6 +350,15 @@ exactly. The PWL method's error is almost all its chords and 8-bit mantissa (0.0
 even with an exact constant in place of 771); use it where a ROM is unwanted. Output
 is signed **Q8.8** dB (1 LSB = 1/256 dB), saturated at both ends.
 
+Keyword-only `auto_pipeline_ram=True` makes each ROM automatic, starting search
+at two ROM cycles. The two table responses and their valid flags are aligned to
+the slower selected latency; the floored flag follows the same input.
+`.latency = max(log_rom.latency, exp_rom.latency) + 2`, so native/HDL-only builds
+take three cycles. `auto_pipeline_ram=False` keeps manual ROMs and four cycles,
+including existing backend compatibility. The `"pwl"` method is unchanged at
+four cycles and ignores this option. Automatic ROM synthesis supports Vivado
+and ECP5 open tools and requires a full sweep for timing-driven selection.
+
 > **The input's fractional bits are subtracted, and they must be.** `in_t` is a
 > `fixed_t`, so the integer the hardware holds is `2^frac_bits` times the value it
 > represents. The block computes `(e - in_t.frac_bits) * K + correction`, not
@@ -321,7 +371,10 @@ Tests: `src/tests/pypeline_tests/inst/log2_db_test.py` (both methods through eve
 check: accuracy vs `10·log10` in hardware and over 300k inputs in the model, each
 against its own budget; the two methods against each other; decade/octave steps, the
 fractional-bits subtraction, non-positive input, monotonicity including every octave
-boundary, and two instances with different binary points).
+boundary, two instances with different binary points, automatic/manual modes
+and deliberately unequal table latencies). `self_check_dsp_rom_test.py` checks
+both orders of unequal ROM latency, valid/floor alignment and clock-enable
+pauses against GHDL.
 
 ## `dsp/dsp_tb.py` — testbench library for magnitude/dc_block/moving_avg
 
@@ -372,8 +425,8 @@ under each block above.
 example — a whole SDR design rather than one block — with its own
 [README](../../../examples/pypeline/dsp/pdw/README.md). It is the biggest consumer of
 this library: `make_magnitude` → `make_dc_block` → `make_moving_avg` in `valid_only`
-mode form its detector's front end, `make_cordic_atan2` and `make_log2_db` are there
-because its measurement engine needed them, and `make_lut_nco` is its stimulus
+mode form its detector's front end; selectable `make_cordic_atan2` / `make_lut_atan2`
+and automatic-ROM `make_log2_db` convert its per-pulse measurements, and `make_lut_nco` is its stimulus
 generator's carrier.
 
 ## Roadmap (not yet implemented)

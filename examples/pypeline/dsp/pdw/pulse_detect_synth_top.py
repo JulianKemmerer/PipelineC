@@ -24,7 +24,7 @@ from pulse_detect import make_pulse_detect_fsm
 
 from fixed_point import make_fixed_t
 
-PART("xc7a100tcsg324-1")  # Artix-7 100T, same part as board/arty/part100t.py
+PART("xc7a200tffg1156-2")  # AIR7310: XC7A200T-2FFG1156C, 125 MHz
 
 power_t = make_fixed_t(32, 0, signed=False)  # README's uint32_t power format
 

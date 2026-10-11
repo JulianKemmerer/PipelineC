@@ -244,6 +244,8 @@ def make_stream_auto_pipeline_ram(
     .latency is the core latency; .min_response_latency includes the FIFO's
     two cycles. Credits reserve storage until a response is consumed. All
     ports accept independently, and every accepted request gets a response.
+    The core supports Vivado and ECP5 OPEN_TOOLS synthesis; selected target
+    geometry and latency also determine the response FIFO's credit capacity.
     """
     core, core_t = make_auto_pipeline_ram(
         elem_t,

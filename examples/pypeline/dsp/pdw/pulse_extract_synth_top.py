@@ -27,7 +27,7 @@ from pypeline import MAIN, PART, Input, uint1_t, uint32_t
 from pulse_detect import make_pulse_detect
 from pulse_extract import make_pulse_extract
 
-PART("xc7a100tcsg324-1")  # Artix-7 100T, same part as board/arty/part100t.py
+PART("xc7a200tffg1156-2")  # AIR7310: XC7A200T-2FFG1156C, 125 MHz
 
 # Built against a pulse_detect instance for its types only (complex_t /
 # gated_sample_t / candidate_pdw_t / width_t); no detector logic is

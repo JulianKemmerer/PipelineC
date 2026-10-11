@@ -2,7 +2,7 @@
 """Table-lookup NCO: `phase -> amplitude * (cos, sin)` from a quarter-wave sine ROM.
 
 The same interface as `dsp/cordic.py`'s `make_cordic_rotate`, built the other
-way: one block-RAM ROM (`ram.make_ram`) read on two ports, and one multiplier
+way: one block-RAM ROM (`ram.make_auto_pipeline_ram`) read on two ports, and one multiplier
 per rail, instead of `n_iters` shift-and-add stages.
 
     nco, nco_t = make_lut_nco(int16_t, table_bits=10, phase_bits=32)
@@ -12,7 +12,7 @@ per rail, instead of `n_iters` shift-and-add stages.
 naturally -- feed it from a free-running accumulator, exactly as for the
 CORDIC. `.i`/`.q` are `amplitude*cos(phase)` / `amplitude*sin(phase)`.
 
-WHEN TO USE WHICH. Measured in the PDW example's generator
+WHEN TO USE WHICH. Historical manual-ROM measurements in the PDW example's generator
 (examples/pypeline/dsp/pdw/pulse_gen_synth_top.py, xc7a100t, Vivado), where the
 NCO is most of the block:
 
@@ -56,8 +56,8 @@ is at most one bin, i.e. 2^-(table_bits+2)/M turns of frequency -- below one
 LSB of a 16-bit turns output at the defaults. What truncation does produce is
 spurs, about 6 dB per index bit below the carrier (~72 dBc at table_bits=10).
 
-Latency is `.latency` = 5, fully pipelined, one result per cycle:
-  3  the ROM -- input register, block-RAM read, block-RAM output register
+Latency is `.latency` = rom.latency + 2, one result per enabled clock:
+  L  the ROM -- automatic search starts at 3 cycles, native/HDL-only uses 1
   1  the multiply (one DSP48 per rail: 17-bit signed x 18-bit signed)
   1  round, saturate, output register
 """
@@ -74,7 +74,7 @@ from pypeline import (
     uint1_t,
 )
 
-from ram import make_ram
+from ram import make_ram, make_auto_pipeline_ram
 
 
 def sine_quarter_table(table_bits, table_frac):
@@ -91,7 +91,7 @@ def sine_quarter_table(table_bits, table_frac):
     ]
 
 
-def make_lut_nco(amp_t, table_bits=10, phase_bits=32):
+def make_lut_nco(amp_t, table_bits=10, phase_bits=32, *, auto_pipeline_ram=True):
     """Build a ROM-based NCO. Returns (lut_nco, lut_nco_t).
 
         lut_nco(phase, amplitude, valid_in) -> lut_nco_t
@@ -102,6 +102,10 @@ def make_lut_nco(amp_t, table_bits=10, phase_bits=32):
                 len(amp_t)+1 bits: the default 10 is 1024 x 17 bits, one RAMB18.
     phase_bits: width of the phase input. Only the top table_bits+2 bits are
                 used; the rest is what makes the accumulator's frequency exact.
+    auto_pipeline_ram: keyword-only, default True. Automatic ROM synthesis
+                supports Vivado and ECP5 OPEN_TOOLS. False keeps the manual
+                three-cycle ROM (five-cycle NCO) and its backend compatibility.
+                Amplitude/sign/valid alignment follows the selected ROM latency.
 
     `amplitude` may be negative (the output is then inverted). The one value
     whose product does not fit, `amplitude = -2^(A-1)` at the positive peak,
@@ -120,16 +124,19 @@ def make_lut_nco(amp_t, table_bits=10, phase_bits=32):
     TABLE = sine_quarter_table(N, TF)
 
     tab_t = make_uint_t(TF + 1)  # holds 2^TF exactly (see sine_quarter_table)
-    # in_regs=1 isolates the quadrant-fold logic from the block RAM's address
-    # setup, out_regs=1 is the block RAM's own output register, so the DSP48
-    # after it starts from a register rather than a ~2.5 ns clock-to-out.
-    rom, _rom_t = make_ram(
+    # The automatic search starts at the manual implementation's three clocks.
+    # Native/HDL-only builds use the automatic factory's one-clock default.
+    factory = make_auto_pipeline_ram if auto_pipeline_ram else make_ram
+    constraints = (
+        dict(start_latency=3)
+        if auto_pipeline_ram
+        else dict(read_latency=1, in_regs=1, out_regs=1)
+    )
+    rom, _rom_t = factory(
         tab_t,
         1 << N,
         ports=("r", "r"),
-        read_latency=1,
-        in_regs=1,
-        out_regs=1,
+        **constraints,
         init=TABLE,
     )
     ROM_LAT = rom.latency

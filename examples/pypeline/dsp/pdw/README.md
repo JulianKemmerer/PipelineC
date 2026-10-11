@@ -11,10 +11,12 @@ Radio module for the same job, so its documentation reads across:
 I/Q and computes its characteristics, and `gr_pdw_record.py` produces gr-pdw's
 own nine-column record.
 
-**Target and part.** The deployment target is a Deepwave AIR-T (AIR7310); the
-in-repo synthesis checks build against `xc7a100tcsg324-1` (Artix-7 100T) as a
-timing proxy, since that is the part this repo can run end to end. Every fmax
-number below is that part at the 125 MHz system clock.
+**Target and part.** The deployment target is Deepwave AIR-T AIR7310. Its
+[specification](https://deepwavedigital.com/wp-content/uploads/2024/07/AIR7310_Flyer_r1.0.pdf)
+lists **XC7A200T-2FFG1156C**; every PDW synthesis entry point targets Vivado part
+**`xc7a200tffg1156-2` at 125 MHz**. These are synthesis timing checks, not routed
+timing or validation inside the integrated AirStack project. Historical 100T
+proxy measurements remain explicitly identified in [Synthesis checks](#synthesis-checks).
 
 ```
  1. STIMULUS & EXTERNAL LOOPBACK
@@ -45,8 +47,8 @@ number below is that part at the 125 MHz system clock.
  |    Store:    every gate beat into the data FIFO, one descriptor per      |
  |              completed pulse into the descriptor FIFO                    |
  |    Qualify:  glitch (width < min_width), CW (width >= max_width)         |
- |    Measure:  pulse_measure, once per pulse, ~16 cycles pipelined --      |
- |              CORDIC atan2 for frequency, ROM log2->dB, PRI               |
+ |    Measure:  pulse_measure, once per pulse, selected pipeline latency   |
+ |              selectable atan2, automatic ROM log2->dB, PRI              |
  |    Release:  accepted -> emit valid_pdw_t, then the packet               |
  |              rejected -> drop the record, flush the beats                |
  +-------------------------------------------------------------------------+
@@ -58,8 +60,8 @@ number below is that part at the 125 MHz system clock.
 ## Architecture
 
 **1. Stimulus.** `pulse_gen` synthesizes RF pulses with a real carrier (an NCO
-built from a quarter-wave sine ROM, `make_lut_nco`), an optional LFM chirp and an
-optional LFSR noise source, all deterministic so golden models stay bit-exact. It drives TX0 for a
+built from an automatically pipelined quarter-wave sine ROM, `make_lut_nco`),
+an optional LFM chirp and an optional LFSR noise source, all deterministic so golden models stay bit-exact. It drives TX0 for a
 physical loopback cable, and `CTRL_FLAG_LOOPBACK_EN` shortcuts the same samples
 straight into the detector.
 
@@ -125,6 +127,17 @@ pulse. Adding them needs Path B's delay line deepened by `N_pre` and the gate
 held open `N_post` beats past `gate_last` — at which point `pkt_samples` stops
 equalling `pulse_width`, which is why it is a separate field rather than a
 derived one.
+
+The measurement engine defaults to ROM atan2, with
+`PDW_ATAN2_METHOD=cordic|rom` selecting either implementation, and uses automatic
+ROMs for the two logarithm converters. It aligns frequency, power, noise, valid
+and PRI fields to the longest selected conversion latency. The packet-release
+engine reads that latency; reset still blocks output, drains storage and clears
+PRI history. Power and conjugate products retain DSP multipliers; filters,
+accumulation, thresholds and PRI remain arithmetic. Their wide, runtime inputs
+make direct truth tables impractical, and their existing operations already fit
+DSP or carry-chain hardware. The nonlinear sine, logarithm and angle functions
+are the useful table candidates.
 
 **4. Outputs.** On acceptance the engine emits a `valid_pdw_t` on its own
 AXI-Stream master as one 40-byte frame, and releases the packet, `tlast`-framed,
@@ -486,19 +499,19 @@ convenience carrying the DSP-latency bias above.
 # Measurements
 
 Detection alone makes an energy detector; the measurement is what makes a PDW.
-The organizing idea, and what makes a CORDIC and two logarithms fit in a design
-with ~5% timing margin:
+The organizing idea separates sample-rate work from per-pulse conversion:
 
 * **Fast path — every sample, 125 MSPS.** Kept tiny: four multipliers (a
   conjugate product), a few accumulators, one leaky integrator. No CORDIC, no
   logarithm, no division.
-* **Measurement path — once per pulse**, iterative and pipelined, ~16 cycles. A
-  pulse closes at most every `min_width` samples and realistically every PRI
-  (~125,000 samples), so this hardware is idle almost all the time.
+* **Measurement path — once per pulse**, fully pipelined. Each angle and log
+  converter accepts one input per enabled clock. Idle gaps between pulses do
+  not relax the 125 MHz timing requirement. The selected implementation's
+  `.latency` determines when all fields become valid together.
 
-Measured cost of the fast-path addition: **zero timing margin** (the detector
-closes at 130.9 MHz before and after) and about 400 LUTs, 350 flip-flops and 4
-DSP48s.
+The historical 100T proxy measurement of the fast-path addition was about
+400 LUTs, 350 flip-flops and four DSP48s, with unchanged 130.9 MHz detector timing.
+Current 200T measurements are in [Synthesis checks](#synthesis-checks).
 
 ## Frequency
 
@@ -516,10 +529,17 @@ products of the pulse, and a ping-pong block accumulator holding the most recent
 LFM chirp gives two different ones — modulation-on-pulse detection for the cost
 of one extra accumulator pair.
 
-The angle comes from a vectoring-mode CORDIC; see
-[the DSP guide](../../../../include/pypeline/dsp/pypeline_dsp_guide.md#make_cordic_atan2--make_cordic_rotate--angles-without-a-multiplier-or-a-rom)
-for its properties. Angles are in **turns**, so converting to Hz is a pure scale
-by the sample rate with no π anywhere.
+`PDW_ATAN2_METHOD=cordic|rom` selects vectoring CORDIC or the default
+[`make_lut_atan2`](../../../../include/pypeline/dsp/pypeline_dsp_guide.md#make_lut_atan2--an-angle-from-reciprocal-and-arctangent-roms).
+The ROM method reduces signs and octants, normalizes to 17 significant bits,
+looks up a reciprocal with 18 fractional bits, multiplies, then looks up the
+arctangent. Both tables have 4096 entries and use automatic RAM. It avoids a
+general divider, trading BRAM and DSPs for shift/add logic and registers.
+Axes, diagonals, zero vectors and wrapping are explicit; accuracy is bounded
+below 6e-5 turns across input scales. Both implementations emit signed 16-bit
+**turns**, so converting to Hz is a pure scale by the sample rate. The golden
+model dispatches through the selected implementation. See [Synthesis checks](#synthesis-checks)
+for the measured default-selection decision.
 
 **This is a deliberate divergence from gr-pdw's algorithm**, and the first thing
 its authors would ask about. gr-pdw zero-pads the pulse, takes an FFT and picks
@@ -534,7 +554,12 @@ bin.
 `peak_power_db` and `noise_power_db` come from a shared
 [`make_log2_db`](../../../../include/pypeline/dsp/pypeline_dsp_guide.md#make_log2_db--linear-power-to-dbfs)
 conversion, its default ROM method: both the exponent and the mantissa terms are
-table lookups, good to 0.008 dB. Two things specific to this design:
+table lookups, good to 0.008 dB. These already were ROMs before automatic RAM
+support; the change replaces their manual register placement. Each table starts
+its synthesis search at two cycles, and each converter aligns its independently
+selected table responses, valid and floored flag. The measurement engine then
+aligns both converters with the angle outputs and PRI using the maximum latency.
+Two things specific to this design:
 
 * **The fractional bits must be subtracted** — `power_t` is fixed-point, so the
   integer the hardware holds is 2¹² times the value it represents. `log2_db`
@@ -752,7 +777,7 @@ signature and reports it rather than hanging. The fallback is the
 ## Verifying records against their own samples
 
 `pdw_verify.py` checks each record against the packet it describes using an
-**FFT**, where the hardware uses phasor accumulation plus a CORDIC atan2. The
+**FFT**, where the hardware uses phasor accumulation plus the selected atan2. The
 difference is the point: two independent algorithms agreeing is evidence, while a
 Python re-implementation of the phasor method would only re-check the arithmetic
 and would agree with a conceptually wrong design. It takes its FFT over the same
@@ -976,7 +1001,7 @@ Everything lives flat in this directory. Hardware first, then host-side.
 | `pulse_gen.py` | Stimulus generator: NCO carrier, LFM chirp, LFSR noise |
 | `pulse_detect.py` | `make_pulse_detect` (the composed Path A + Path B block) and its parts: `make_pulse_detect_fsm`, `make_delay_line`, `make_pdw_gate`, `make_freq_accum` |
 | `pulse_extract.py` | `make_pulse_extract`: qualification (`make_pdw_qualify`) and store-and-forward release (`make_packet_store`) |
-| `pulse_measure.py` | Per-pulse measurement: CORDIC atan2 ×2, log2→dB ×2, PRI |
+| `pulse_measure.py` | Per-pulse measurement: selectable CORDIC/ROM atan2 ×2, automatic ROM log2→dB ×2, PRI |
 | `pdw_ctrl.py` | The AXIS-written control register file and `pdw_ctrl_t` |
 | `pdw_alarm.py` | The internal-error alarm |
 | `pdw_paths.py` | One `sys.path` setup, imported by every module above |
@@ -1097,10 +1122,16 @@ mis-wired to a stale register and everything else would still pass.
 
 Everything here tests *this example project*, not the Pypeline DSP library —
 whose own unit tests live in `src/tests/pypeline_tests/inst/` (`cordic_test.py`,
-`lut_nco_test.py`, `log2_db_test.py`, `magnitude_test.py`, ...). That is why these files stay next to
+`lut_atan2_test.py`, `lut_nco_test.py`, `log2_db_test.py`, `magnitude_test.py`, ...). That is why these files stay next to
 the design; one under `inst/` would need a `sys.path` hack back into this
-directory to import it. All ten are registered in
-`src/tests/pypeline_tests/native_sim_tests.py`.
+directory to import it. They are registered in
+`src/tests/pypeline_tests/native_sim_tests.py`. Measurement, reset and end-to-end
+entries run with both angle methods. Measurement tests also force either log
+converter to take longer than atan2, checking every field and PRI alignment.
+The DSP tests cover automatic/manual ROM modes and unequal table latencies;
+`self_check_dsp_rom_test.py` and `lut_atan2_test.py` provide native/GHDL parity,
+including bubbles and clock-enable pauses. RAM backend, mapping and selected-plan
+coverage belongs in the [test-suite RAM section](../../../../docs/pypeline_TESTS.md#ram-coverage).
 
 ```
 python3 src/tests/pypeline_tests/run_all.py -k pdw
@@ -1113,7 +1144,8 @@ python3 src/tests/pypeline_tests/run_all.py -k pulse
 |---|---|
 | `pulse_gen_synth_top.py` | Generator alone, including its NCO. `rst` is a real port, so the reset's fanout to every register is measured rather than optimised away |
 | `pulse_detect_synth_top.py` | Hysteresis FSM alone (elastic, the heavier path), `rst` likewise a real port |
-| `pulse_extract_synth_top.py` | Engine alone at the real 16K FIFO depth. Also the only real timing check on the measurement engine — its CORDIC and both logarithm converters are instantiated inside it. `rst` drives the three FIFO read enables, so it sits directly in the release path |
+| `pulse_measure_synth_top.py` | Measurement alone, exposing all inputs and outputs for CORDIC/ROM timing and area comparisons |
+| `pulse_extract_synth_top.py` | Engine alone at the real 16K FIFO depth, including its angle and logarithm converters. `rst` drives the three FIFO read enables, so it sits directly in the release path |
 | `top.py` | Everything composed: all seven AXIS ports, both record serializers, the control deserializer, the broadcast interlock and the seven-input reset OR |
 
 These are not redundant with the native-sim testbenches: native sim never emits
@@ -1121,7 +1153,81 @@ VHDL, so it cannot catch anything Vivado rejects. Several real bugs here were
 only ever visible at this level — see
 [the guide's limitations table](../../../../docs/pypeline_guide.md#limitations--not-yet-supported).
 
-**Results** on `xc7a100tcsg324-1` at the 125 MHz target:
+Build designs containing automatic ROMs with **full synthesis sweeps**, without
+`--comb`. The NCO starts its ROM search at three cycles, and each log/atan2
+table at two. A start value is a guess that the sweep can trim; native and
+HDL-only flexible RAMs use one cycle. All alignment follows the selected delays.
+
+```sh
+for method in cordic rom; do
+  python3 src/pypelinec examples/pypeline/dsp/pdw/pulse_measure_synth_top.py \
+    -D "PDW_ATAN2_METHOD=$method" --out_dir "/tmp/pdw-measure-$method" -j 1
+  python3 src/pypelinec examples/pypeline/dsp/pdw/top.py --no_hier_syn \
+    -D "PDW_ATAN2_METHOD=$method" --out_dir "/tmp/pdw-top-$method" -j 1
+done
+```
+
+`--no_hier_syn` limits preliminary characterization to primitive leaves; these
+remain full RAM/operator sweeps with whole-design timing checks. The reports
+retain selected plans, achieved clocks and raw RAMB18/RAMB36/LUT/register/DSP counts.
+
+**Fresh 200T baseline**, captured before changing the DSP implementations,
+with manual NCO/log ROMs and CORDIC atan2:
+
+| Build | MHz | LUTs | Registers | RAMB18 | RAMB36 | DSPs |
+|---|---:|---:|---:|---:|---:|---:|
+| Generator | 165.782 | 520 | 345 | 1 | 0 | 4 |
+| Detector FSM | 157.011 | 728 | 627 | 0 | 0 | 0 |
+| Measurement | 146.735 | 5,649 | 2,961 | 1 | 0 | 0 |
+| Extraction engine | 146.735 | 6,193 | 3,864 | 3 | 21 | 0 |
+| Composed design | 146.735 | 12,764 | 6,127 | 5 | 21 | 10 |
+
+**Automatic ROM standalone builds** on the same 200T at the 125 MHz goal:
+
+| Build | MHz | DSP latency | LUTs | Registers | RAMB18 | RAMB36 | DSPs |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Generator | 133.191 | NCO: 3 | 520 | 311 | 1 | 0 | 4 |
+| CORDIC measurement | 146.735 | 16 | 5,581 | 2,938 | 3 | 0 | 0 |
+| ROM measurement | 142.816 | 8 | 1,591 | 1,066 | 3 | 4 | 2 |
+
+Every standalone ROM selects one cycle. The automatic NCO trades timing margin
+for two fewer cycles and 34 fewer registers; it still meets 125 MHz. The ROM
+angle trades four RAMB36s and two DSPs for fewer measurement LUTs/registers and
+half the measurement latency. Vivado shares the identical tables across the
+two endpoint converters using both physical read ports.
+
+**Composed automatic-ROM builds**, using full sweeps on the same 200T:
+
+| Angle method | MHz | Measurement latency | LUTs | Registers | RAMB18 | RAMB36 | DSPs |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| CORDIC | 134.264 | 16 | 12,697 | 6,069 | 7 | 21 | 10 |
+| ROM (**default**) | 132.873 | 8 | 8,532 | 4,195 | 7 | 25 | 12 |
+
+All ROMs select one cycle, including both angle tables. The NCO takes three
+cycles and each log converter takes three; measurement alignment follows the
+longest selected conversion. ROM atan2 saves **4,165 LUTs (32.8%) and 1,874
+registers (30.9%)** against CORDIC in the composed design, for **four additional
+RAMB36s and two DSPs**. Both builds meet 125 MHz and fit the part. ROM is the
+default because correctness passes, composed timing reaches the target, and
+LUT usage falls without increasing register usage. CORDIC remains selectable
+with `-D PDW_ATAN2_METHOD=cordic` or the matching environment variable.
+
+The automatic NCO's shorter implementation reduces the CORDIC composition's
+timing margin relative to the manual-ROM baseline, while still meeting the
+goal. The ROM composition's limiting path is the accumulated phasor entering
+the angle converter's magnitude/octant stage. These are **Vivado 2019.2
+out-of-context synthesis** measurements, not routed timing or integrated
+AirStack validation.
+
+The [200T measurement artifact](../../../../src/tests/pypeline_tests/qor/pdw_vivado_200t.json)
+records baseline revision `2be7c27`, the part-only baseline adjustments,
+reproduction commands, retained synthesis signatures, selected RAM plans,
+search histories, latencies, resource counts and the default-selection checks.
+The baseline snapshot used manual NCO/log ROMs and CORDIC; its standalone
+measurement wrapper exposes the same inputs and outputs as the new wrapper.
+
+**Historical proxy results** on `xc7a100tcsg324-1` at the 125 MHz target, using
+manual NCO/log ROMs and CORDIC atan2 (not AIR7310's part):
 
 | Build | fmax |
 |---|---|
@@ -1130,7 +1236,7 @@ only ever visible at this level — see
 | `pulse_extract_synth_top.py` (incl. the measurement engine) | 126.7 MHz |
 | `top.py`, everything composed | **128.6 MHz** |
 
-The composed design uses 20.1% of the part's LUTs (12,764), 4.8% of its
+That historical composed build uses 20.1% of the proxy part's LUTs (12,764), 4.8% of its
 flip-flops (6,127), 17.4% of its block RAM and 4.2% of its DSP48s. The
 16,384-deep packet FIFO, the Path B delay line, the NCO's sine table and the log
 converter's mantissa table all infer block RAM. Making every top-level port an
@@ -1144,15 +1250,14 @@ The NCO's latency went from 18 cycles to 5, and its amplitude is now exact rathe
 than 0.35% high. `log2_db`'s default is now its ROM method: 0.046 dB worst-case error
 became 0.008 dB, with the same latency and slightly less logic. The composed
 design lost 2,339 LUTs and 1,124 flip-flops and kept its fmax, because its
-critical path is elsewhere. Both are `make_ram` ROMs. `make_auto_pipeline_ram`
-cannot be used here: its synthesis support is ECP5 with OPEN_TOOLS only, and it
-rejects a Vivado build.
+critical path is elsewhere. Those measurements used `make_ram` ROMs.
+`make_auto_pipeline_ram` now supports Vivado, and the NCO/log defaults use it.
+The selectable ROM atan2 uses a reciprocal table and multiplication rather than
+a general divider; running only once per pulse does not remove its area or
+single-cycle timing cost.
 
-The frequency `atan2` stays a CORDIC. A table-based `atan2` has to divide first,
-and it runs once per pulse, so it has no per-sample cost to save.
-
-**Where the margin is.** Slack at 125 MHz, per destination register, composed
-build:
+**Historical 100T margin.** Slack at 125 MHz, per destination register, in the
+composed proxy build above:
 
 | Slack | Path |
 |---|---|
@@ -1161,8 +1266,8 @@ build:
 | 0.53 ns | the `valid_pdw_t` serializer's buffer |
 | 0.73 ns | the NCO's signed-amplitude delay line |
 
-That is thin for a build inside AirStack's own project on the real part. If it
-misses, the first path is cheap to fix: split the `atan2` magnitude stage, at +1
+Those proxy margins did not establish integrated AirStack timing. If integration
+misses timing, the first path is cheap to fix: split the `atan2` magnitude stage, at +1
 cycle, once per pulse. The second is a genuine per-sample recurrence, and it sets
 the ceiling after that.
 

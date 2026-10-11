@@ -94,7 +94,7 @@ from pulse_extract import (
     make_pulse_extract,
 )
 
-PART("xc7a100tcsg324-1")  # Artix-7 100T, same part as board/arty/part100t.py
+PART("xc7a200tffg1156-2")  # AIR7310: XC7A200T-2FFG1156C, 125 MHz
 
 # One bus width for every port: 4 byte lanes = 32 bits.
 AXIS_N = 4
@@ -194,6 +194,7 @@ def rst_main():
     # pin-to-logic delays.
     rst_r = any_rst
     ctrl_rst_r = tx0_s_axis_rst
+
 
 # ---------------------------------------------------------------------------
 # ctrl_main -- the control register file (see the README's Control registers).
@@ -517,12 +518,8 @@ def pdw_main():
     )
     lb_mask: uint32_t = CTRL_FLAG_LOOPBACK_EN
     loopback_en: uint1_t = (ctrl_regs.flags & lb_mask) != 0
-    sample: pulse_detect.complex_t = (
-        loopback_sample if loopback_en else rx_sample
-    )
-    src_valid: uint1_t = (
-        pulse_gen_valid if loopback_en else rx0_s_axis_tvalid
-    )
+    sample: pulse_detect.complex_t = loopback_sample if loopback_en else rx_sample
+    src_valid: uint1_t = pulse_gen_valid if loopback_en else rx0_s_axis_tvalid
     # BLOCK: one gate stops the whole detector. pulse_detect drives Path A
     # (magnitude) and Path B (the delay line) from this same stream, and every
     # piece of state downstream -- the hysteresis SM, the noise estimator, the
@@ -534,9 +531,7 @@ def pdw_main():
     # discard them too. Accepting a beat this design has just declared itself
     # not ready for would process a sample the host was told was lost.
     sample_valid: uint1_t = src_valid & (~global_rst) & (~al.active)
-    in_stream: pulse_detect.in_stream_t = pulse_detect.in_stream_t(
-        sample, sample_valid
-    )
+    in_stream: pulse_detect.in_stream_t = pulse_detect.in_stream_t(sample, sample_valid)
 
     # The engine's candidate-stream ready is a constant 1 (see
     # make_pulse_extract), so it can be fed in directly here rather than routed
@@ -648,9 +643,7 @@ def pdw_main():
         axis_out_if=pdw_tx.axis_fb_t(pdw_skid_rdy),
     )
     pdw_ready = vt.stream_in_if.ready
-    vk = pdw_skid(
-        stream_in_if=vt.axis_out_if, stream_out_if=pdw_tx.axis_fb_t(pdw_rdy)
-    )
+    vk = pdw_skid(stream_in_if=vt.axis_out_if, stream_out_if=pdw_tx.axis_fb_t(pdw_rdy))
     pdw_skid_rdy = vk.stream_in_if.ready
 
     rx1_m_axis_tdata = array_to_uint_le(vk.stream_out_if.stream.data.frag.data)
