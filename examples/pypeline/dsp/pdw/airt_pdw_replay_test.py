@@ -60,7 +60,10 @@ _SCRATCH = "/media/1TB/tmp"
 
 def _tmp(name):
     root = _SCRATCH if os.path.isdir(_SCRATCH) else None
-    d = tempfile.mkdtemp(prefix="pdw_replay_", dir=root)
+    try:
+        d = tempfile.mkdtemp(prefix="pdw_replay_", dir=root)
+    except OSError:
+        d = tempfile.mkdtemp(prefix="pdw_replay_")
     return os.path.join(d, name)
 
 

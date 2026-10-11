@@ -1155,7 +1155,7 @@ def _words(frame):
 # rows are asserted.
 import pdw_verify  # noqa: E402
 
-_VERIFY_ASSERT = ("FFT vs CORDIC", "pkt_samples ==", "pulse_width ==",
+_VERIFY_ASSERT = ("FFT vs hardware", "pkt_samples ==", "pulse_width ==",
                   "peak_power_db vs", "toa strictly", "pri == toa delta")
 try:
     import numpy as _np  # noqa: F401

@@ -385,7 +385,7 @@ def test_wrong_commanded_carrier_is_caught():
     # The hardware<->software leg must still pass: the record correctly
     # describes the samples, they are just not the samples that were ordered.
     assert not any(
-        "FFT vs CORDIC" in n for n in bad
+        "FFT vs hardware" in n for n in bad
     ), f"the record matches its own samples, so those checks should pass: {bad}"
     print("test_wrong_commanded_carrier_is_caught passed")
 
@@ -398,7 +398,63 @@ def test_snr_bound_is_caught():
     print("test_snr_bound_is_caught passed")
 
 
+def test_host_power_is_normalized_to_cs16_dbfs():
+    import gr_pdw_record as G
+
+    samples = make_pulse(amp=800)
+    rec = make_record(samples)
+    decoded = G.decode(rec, FS)
+    iq = samples.astype(np.float64)
+    peak = float((iq[0::2] ** 2 + iq[1::2] ** 2).max())
+    expected = 10 * math.log10(peak / 32768 ** 2)
+    assert abs(decoded["pulse_power_db"] - expected) < 1 / DB_Q8_8
+    assert decoded["snr_db"] == 40
+    calibrated = G.decode(rec, FS, ref_level_db=12)
+    assert calibrated["pulse_power_db"] == decoded["pulse_power_db"] + 12
+    row, = G.to_gr_pdw_rows([rec], FS, ref_level_db=12)
+    assert row[3] == calibrated["pulse_power_db"]
+    assert row[4] == calibrated["noise_power_db"]
+    print("test_host_power_is_normalized_to_cs16_dbfs passed")
+
+
+def test_rf_amplitude_uses_the_received_reference():
+    cfg = dict(cfg_for(amp=800), flags=0)
+    samples = make_pulse(amp=400)
+    rec = make_record(samples)
+    rows = pdw_verify.check(rec, samples, FS, cfg=cfg, rx_amplitude=400)
+    assert not _failed(rows), _failed(rows)
+    rows = pdw_verify.check(rec, samples, FS, cfg=cfg, rx_amplitude=800)
+    assert _failed(rows) == ["expected RX amplitude vs samples"], _failed(rows)
+    print("test_rf_amplitude_uses_the_received_reference passed")
+
+
+def test_commanded_chirp_uses_its_midpoint():
+    step = 1e-4
+    cfg = cfg_for(chirp=round(step * (1 << 32)))
+    samples = make_pulse(chirp=step)
+    rows = _run(make_record(samples, chirp=step), samples, cfg)
+    assert not _failed(rows), _failed(rows)
+    # The unmodulated command is a deliberately wrong reference for this packet.
+    wrong = _run(make_record(samples, chirp=step), samples, cfg_for())
+    assert _failed(wrong) == ["commanded carrier vs FFT"], _failed(wrong)
+    print("test_commanded_chirp_uses_its_midpoint passed")
+
+
+def test_frequency_comparison_wraps_at_nyquist():
+    samples = make_pulse(amp=800, freq_frac=0.49999)
+    rec = make_record(samples, freq_frac=0.49999)
+    # -32768 and a tone just below +Fs/2 are less than one angle count apart.
+    rec["freq_start"] = rec["freq_stop"] = -32768
+    rows = _run(rec, samples)
+    assert not _failed(rows), _failed(rows)
+    print("test_frequency_comparison_wraps_at_nyquist passed")
+
+
 if __name__ == "__main__":
+    test_host_power_is_normalized_to_cs16_dbfs()
+    test_rf_amplitude_uses_the_received_reference()
+    test_commanded_chirp_uses_its_midpoint()
+    test_frequency_comparison_wraps_at_nyquist()
     print(f"pdw_verify_test: fs={FS / 1e6:.1f} MSPS amp={AMP} width={WIDTH}")
     print(f"  generated host types: {HOST.__file__}")
     test_generated_module_carries_the_designs_types()

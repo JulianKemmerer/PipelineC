@@ -70,6 +70,7 @@ from pypeline_host_types import (  # noqa: E402
     FREQ_BLOCK_K,
     POWER_FRAC_BITS,
     STATUS_PRI_INVALID,
+    CTRL_FLAG_LOOPBACK_EN,
 )
 
 # Q8.8 dB: one LSB = 1/256 dB. Both dB fields use it.
@@ -224,6 +225,7 @@ def check(
     freq_tol_bins=0.5,
     power_ratio_tol=0.35,
     amplitude_tol=0.10,
+    rx_amplitude=None,
 ):
     """Check one record against its samples. Returns a list of check rows.
 
@@ -274,16 +276,17 @@ def check(
         tol_counts = freq_tol_bins * bin_t * TURNS_16
         hw_counts = rec[field]
         sw_counts = sw_turns * TURNS_16
+        error = abs((hw_counts - sw_counts + TURNS_16 / 2) % TURNS_16 - TURNS_16 / 2)
         rows.append(
             _row(
-                f"{field} (FFT vs CORDIC)",
-                abs(hw_counts - sw_counts) <= tol_counts,
+                f"{field} (FFT vs hardware)",
+                error <= tol_counts,
                 hw_counts,
                 round(sw_counts, 1),
                 round(tol_counts, 1),
                 f"{hw_counts / TURNS_16 * fs / 1e6:+.4f} MHz hw, "
                 f"{sw_turns * fs / 1e6:+.4f} MHz sw, "
-                f"d={abs(hw_counts - sw_counts):.1f}",
+                f"d={error:.1f}",
             )
         )
 
@@ -334,23 +337,30 @@ def check(
     # ---- commanded <-> software ----------------------------------------
     if cfg is not None:
         want_turns = cfg["pulse_gen_freq"] / float(1 << 32)
+        chirp_step = cfg.get("pulse_gen_chirp_rate", 0) / float(1 << 32)
+        want_turns += chirp_step * (cfg["pulse_gen_width"] - 1) / 2.0
+        want_turns = (want_turns + 0.5) % 1.0 - 0.5
         tol_c = freq_tol_bins * m["bin_turns"]
+        carrier_error = abs((m["freq_center_turns"] - want_turns + 0.5) % 1.0 - 0.5)
         rows.append(
             _row(
                 "commanded carrier vs FFT",
-                abs(m["freq_center_turns"] - want_turns) <= tol_c,
+                carrier_error <= tol_c,
                 round(want_turns, 6),
                 round(m["freq_center_turns"], 6),
                 round(tol_c, 6),
                 "proves the samples are the pulse that was ordered",
             )
         )
-        amp = cfg["pulse_gen_amplitude"]
+        loopback = bool(cfg.get("flags", 0) & CTRL_FLAG_LOOPBACK_EN)
+        amp = abs(cfg["pulse_gen_amplitude"]) if loopback else rx_amplitude
         if amp:
             rel = abs(m["peak_amplitude"] - amp) / amp
             rows.append(
                 _row(
-                    "commanded amplitude vs samples",
+                    "commanded amplitude vs samples"
+                    if loopback
+                    else "expected RX amplitude vs samples",
                     rel <= amplitude_tol,
                     amp,
                     round(m["peak_amplitude"], 1),

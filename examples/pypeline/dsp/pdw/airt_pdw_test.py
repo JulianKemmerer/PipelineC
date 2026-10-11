@@ -89,6 +89,8 @@ antenna.
 """
 
 import argparse
+import math
+from pathlib import Path
 import struct
 import sys
 import time
@@ -120,6 +122,8 @@ CH_CTRL_TX = 0  # writeStream: pdw_ctrl_t frames
 CH_REPLAY_TX = 1  # activated (and optionally primed); never carries real data
 CH_PKT_RX = 0  # readStream: pulse packets
 CH_PDW_RX = 1  # readStream: valid_pdw_t records
+DESIGN_RATE_HZ = 125e6
+BITSTREAM_GUIDE = "https://docs.deepwave.ai/AirStack/Bitstream/programming_guide/"
 
 # One CS16 element is one 32-bit AXIS beat is 4 bytes. The packing matches
 # exactly -- I = tdata[15:0] = the even int16, Q = tdata[31:16] = the odd one --
@@ -197,9 +201,14 @@ def overflow_message(label, got, n_elems, alarm_armed):
             "design has no port for ADC channel 1); on the packets stream "
             "(RX0), rx0_s_axis_tready not reaching dwd_rx0_m_axis_tready. "
         )
-    return head + cause + (
-        "AirStack also stops ADC sample flow on an overflow, so nothing "
-        "resumes without a reset -- resync."
+    return (
+        head
+        + cause
+        + (
+            "Reset/drain and restart before resuming capture. Transport details: "
+            + BITSTREAM_GUIDE
+            + "#data-transport-application-notes"
+        )
     )
 
 
@@ -307,7 +316,10 @@ WANT_HEADROOM_S = 2.0
 
 def queue_headroom_s(pulses_per_sec):
     """Seconds this host may stall before a descriptor is dropped."""
-    return PKT_QUEUE_DEPTH / float(pulses_per_sec)
+    rate = float(pulses_per_sec)
+    if not math.isfinite(rate) or rate <= 0:
+        raise ValueError("pulses_per_sec must be finite and positive")
+    return PKT_QUEUE_DEPTH / rate
 
 
 def build_config(
@@ -322,6 +334,9 @@ def build_config(
     threshold_scale=0.6,
     alarm=False,
     alarm_test=False,
+    rx_amplitude=None,
+    threshold_high_power=None,
+    threshold_low_power=None,
 ):
     """A physically-described pulse -> a `pdw_ctrl_t` config dict.
 
@@ -330,13 +345,11 @@ def build_config(
 
     THRESHOLDS. `threshold_high` is set to `threshold_scale` of the pulse's
     expected linear power and `threshold_low` to half that -- the same 0.6/0.3
-    ratio ../pdw_tb.py calibrates its own phases with. "Expected power" is
-    `amplitude**2`, since the generator's NCO emits a constant-magnitude
-    carrier at that peak I/Q amplitude, SCALED BY POWER_SCALE because that is
-    the fixed-point format the comparison actually happens in -- see the
-    constant. Note the direction of any residual error is safe: underestimating
-    the power makes the thresholds more permissive and the pulse is still
-    detected, whereas overestimating would silently detect nothing.
+    ratio ../pdw_tb.py calibrates its own phases with. Internal loopback uses
+    the generator amplitude squared; RF uses an optional received-amplitude
+    reference. Explicit high/low powers can instead set the receive thresholds
+    before amplitude calibration. Both forms are in linear CS16 count-squared
+    units and are converted to the design's fixed-point format with POWER_SCALE.
 
     AMPLITUDE IS CAPPED near 1024, not by the int16 rail but by that same
     scaling: the uint32_t threshold ports and the record's `peak_power` both
@@ -351,6 +364,7 @@ def build_config(
 
     PULSE RATE IS A CORRECTNESS CONSTRAINT, not a taste. See MIN_HEADROOM_S.
     """
+    headroom = queue_headroom_s(pulses_per_sec)
     pri = int(round(fs / pulses_per_sec))
     width = int(round(fs * pulse_width_s))
     if width < 1:
@@ -362,7 +376,6 @@ def build_config(
             f"pri ({pri}) must be >= width ({width}) + IDLE_MARGIN "
             f"({IDLE_MARGIN}); raise pulse_width_s or lower pulses_per_sec"
         )
-    headroom = queue_headroom_s(pulses_per_sec)
     if headroom < MIN_HEADROOM_S:
         raise ValueError(
             f"pulses_per_sec={pulses_per_sec} leaves only {headroom:.2f} s of "
@@ -394,7 +407,41 @@ def build_config(
         if not alarm:
             raise ValueError("alarm_test needs alarm=True -- see CTRL_FLAG_ALARM_TEST")
         flags |= CTRL_FLAG_ALARM_TEST
-    expected_power = amplitude * amplitude
+    explicit_thresholds = (
+        threshold_high_power is not None or threshold_low_power is not None
+    )
+    if explicit_thresholds and (
+        threshold_high_power is None or threshold_low_power is None
+    ):
+        raise ValueError("supply both --threshold-high-power and --threshold-low-power")
+    if not loopback:
+        if rx_amplitude is None and not explicit_thresholds:
+            raise ValueError(
+                "--no-loopback needs --rx-amplitude or both --threshold-high-power "
+                "and --threshold-low-power (linear CS16 count-squared units)"
+            )
+        if rx_amplitude is not None and (
+            not math.isfinite(rx_amplitude) or not 0 < rx_amplitude <= MAX_AMPLITUDE
+        ):
+            raise ValueError(
+                f"rx_amplitude must be in 0..{MAX_AMPLITUDE}, exclusive of 0"
+            )
+    threshold_amplitude = abs(amplitude) if loopback else rx_amplitude
+    if explicit_thresholds:
+        high, low = threshold_high_power, threshold_low_power
+    else:
+        expected_power = threshold_amplitude * threshold_amplitude
+        high, low = (
+            threshold_scale * expected_power,
+            threshold_scale * 0.5 * expected_power,
+        )
+    if not math.isfinite(high) or not math.isfinite(low) or not 0 <= low < high:
+        raise ValueError("threshold powers must be finite and satisfy 0 <= low < high")
+    high_raw, low_raw = int(high * POWER_SCALE), int(low * POWER_SCALE)
+    if high_raw > 0xFFFFFFFF or high_raw == low_raw:
+        raise ValueError(
+            "threshold powers overflow uint32 or become equal after fixed-point conversion"
+        )
     return {
         "pulse_gen_pri": pri,
         "pulse_gen_width": width,
@@ -402,18 +449,35 @@ def build_config(
         "pulse_gen_chirp_rate": chirp_rate,
         "pulse_gen_amplitude": amplitude,
         "pulse_gen_noise_amp": noise_amp,
-        "threshold_high": int(threshold_scale * expected_power * POWER_SCALE),
-        "threshold_low": int(threshold_scale * 0.5 * expected_power * POWER_SCALE),
+        "threshold_high": high_raw,
+        "threshold_low": low_raw,
         "max_width": width * 4,
         "min_width": max(1, width // 4),
         "flags": flags,
     }
 
 
-def describe(cfg, fs):
+def describe(cfg, fs, rx_amplitude=None):
     """A config dict -> human-readable lines, for logs and --dry-run."""
     pri, width = cfg["pulse_gen_pri"], cfg["pulse_gen_width"]
     freq_turns = cfg["pulse_gen_freq"]  # already signed: the field is int32
+    threshold_amplitude = (
+        abs(cfg["pulse_gen_amplitude"])
+        if cfg["flags"] & CTRL_FLAG_LOOPBACK_EN
+        else rx_amplitude
+    )
+    threshold_detail = (
+        f"(= power {cfg['threshold_high'] / POWER_SCALE:.0f} / "
+        f"{cfg['threshold_low'] / POWER_SCALE:.0f}"
+    )
+    if threshold_amplitude:
+        threshold_power = threshold_amplitude**2
+        threshold_detail += (
+            f", {cfg['threshold_high'] / POWER_SCALE / threshold_power:.2f}/"
+            f"{cfg['threshold_low'] / POWER_SCALE / threshold_power:.2f} of "
+            f"{'TX' if cfg['flags'] & CTRL_FLAG_LOOPBACK_EN else 'RX'} amplitude^2"
+        )
+    threshold_detail += ")"
     pps = fs / pri
     flag_names = []
     if cfg["flags"] & CTRL_FLAG_LOOPBACK_EN:
@@ -423,8 +487,7 @@ def describe(cfg, fs):
     if cfg["flags"] & CTRL_FLAG_ALARM_TEST:
         flag_names.append("alarm-test")
     return [
-        f"PRI          {pri} samples ({pri / fs * 1e3:.3f} ms, "
-        f"{pps:.3f} pulses/s)",
+        f"PRI          {pri} samples ({pri / fs * 1e3:.3f} ms, " f"{pps:.3f} pulses/s)",
         f"width        {width} samples ({width / fs * 1e6:.3f} us)",
         f"carrier      {freq_turns / TURNS_32 * fs / 1e6:+.4f} MHz "
         f"({freq_turns / TURNS_32:+.6f} turns/sample)",
@@ -435,11 +498,7 @@ def describe(cfg, fs):
         # they mean and a reviewer checking them against an amplitude would
         # otherwise conclude they are wildly wrong.
         f"thresholds   hi {cfg['threshold_high']}  lo {cfg['threshold_low']}  "
-        f"(= power {cfg['threshold_high'] / POWER_SCALE:.0f} / "
-        f"{cfg['threshold_low'] / POWER_SCALE:.0f}, i.e. "
-        f"{cfg['threshold_high'] / POWER_SCALE / max(1, cfg['pulse_gen_amplitude'] ** 2):.2f}"
-        f"/{cfg['threshold_low'] / POWER_SCALE / max(1, cfg['pulse_gen_amplitude'] ** 2):.2f}"
-        f" of amplitude^2)",
+        + threshold_detail,
         f"width limits min {cfg['min_width']}  max {cfg['max_width']}",
         # Not decoration: this is the number that says how long this host may
         # stall before the design silently corrupts every later packet.
@@ -521,8 +580,9 @@ def validate_record(rec, cfg=None, prev_toa=None):
 # ─────────────────────────────────────────────
 
 
-def read_exact(sdr, stream, n_elems, timeout_us, deadline_s, alarm_armed=False,
-               label="RX"):
+def read_exact(
+    sdr, stream, n_elems, timeout_us, deadline_s, alarm_armed=False, label="RX"
+):
     """Read exactly `n_elems` CS16 elements, accumulating across partial reads.
 
     This is the load-bearing helper. readStream may return fewer elements than
@@ -598,17 +658,50 @@ class RadioSource:
 
     def record(self):
         buf = read_exact(
-            self.sdr, self.rx_pdw, RECORD_ELEMS, self.args.timeout_us,
-            self.deadline, self.alarm_armed, label=f"RX{CH_PDW_RX} records",
+            self.sdr,
+            self.rx_pdw,
+            RECORD_ELEMS,
+            self.args.timeout_us,
+            self.deadline,
+            self.alarm_armed,
+            label=f"RX{CH_PDW_RX} records",
         )
         return cs16_to_bytes(buf, RECORD_ELEMS)
 
     def packet(self, n_elems):
         buf = read_exact(
-            self.sdr, self.rx_pkt, n_elems, self.args.timeout_us,
-            self.deadline, self.alarm_armed, label=f"RX{CH_PKT_RX} packets",
+            self.sdr,
+            self.rx_pkt,
+            n_elems,
+            self.args.timeout_us,
+            self.deadline,
+            self.alarm_armed,
+            label=f"RX{CH_PKT_RX} packets",
         )
         return buf, cs16_to_bytes(buf, n_elems)
+
+    def probe_alarm_overflow(self):
+        """Check RX0 if the alarm test cannot obtain another RX1 record.
+
+        Any samples read here are discarded: an alarm test always stops and
+        closes its streams, so their framing will not be reused.
+        """
+        import numpy as np
+        import SoapySDR
+
+        end = time.monotonic() + 0.25
+        buf = np.empty(2, np.int16)
+        while time.monotonic() < end:
+            result = self.sdr.readStream(
+                self.rx_pkt, [buf], 1, timeoutUs=min(self.args.timeout_us, 100_000)
+            )
+            if result.ret == SoapySDR.SOAPY_SDR_OVERFLOW:
+                return f"RX{CH_PKT_RX} packets"
+            if result.ret < 0 and result.ret != SoapySDR.SOAPY_SDR_TIMEOUT:
+                raise RuntimeError(
+                    f"alarm probe failed: {SoapySDR.errToStr(result.ret)} ({result.ret})"
+                )
+        return None
 
 
 class ReplaySource:
@@ -656,12 +749,12 @@ Try, in order:
 """.strip()
 
 ALARM_TEST_OK = """OVERFLOW on {label}, as --alarm-test commanded: the internal-error
-alarm reaches the host. Rung 6 PASSES. Stopping here -- AirStack keeps the ADC
-stream down until a reset, and the test bit would fire again on every resync.
+alarm reaches the host. Rung 6 PASSES. Stopping here; reset/drain the streams
+before normal capture. The test bit would fire again on every resync.
 Re-run without --alarm-test (keep --alarm) to capture.""".strip()
 
-ALARM_TEST_MISSING = """--alarm-test: NO OVERFLOW was observed, so the alarm path does NOT reach
-the host, and a real alarm would go unseen. Check, in order:
+ALARM_TEST_MISSING = """--alarm-test: NO OVERFLOW was observed; the alarm path has not been proven.
+Check, in order:
   * --dry-run shows flags with bits 1 AND 2 set (alarm + alarm-test)
   * the wrapper connects rx0_s_axis_tready to dwd_rx0_m_axis_tready -- a
     constant 1 there hides every alarm
@@ -669,7 +762,15 @@ the host, and a real alarm would go unseen. Check, in order:
     no ADC tvalid it drops nothing and only its ALARM_MAX_CYCLES backstop ends
     it, silently""".strip()
 
-SILENCE_HELP = """
+ALARM_TEST_TIMEOUT = (
+    "--alarm-test: INCONCLUSIVE after a transport timeout. A timeout alone "
+    "does not establish whether the alarm reached the host. See "
+    + BITSTREAM_GUIDE
+    + "#data-transport-application-notes"
+)
+
+SILENCE_HELP = (
+    """
 No records at all, which is the one symptom this design cannot narrow down on
 its own -- there is no RX2 in 2-channel mode, so a rejected pulse and a dead
 design look identical from here. Work down README.md's bring-up ladder rather
@@ -677,16 +778,21 @@ than guessing; in cost order the causes are:
 
   * a channel reset still asserted. global_rst is the OR of all seven, so
     rx2_m_axis_rst floating or held is enough. Check the wrapper tie-offs.
-  * the configuration never landed, or was wiped. AirStack is documented to
-    pulse dwd_tx_axis_rst between transmissions, and tx0's reset is what the
+  * the configuration never landed, or was wiped. An unexpected TX0 reset is
+    enough to clear it; tx0's reset is what the
     control register file follows -- reverting it to CTRL_DEFAULTS, whose
     thresholds are 0xFFFFFFFF, which is indistinguishable from dead. Put a
-    receiver on the TX0 SMA and look for the generator's pulse train: that is
+    receiver on the first TX connector while capture is active and look for
+    the generator's pulse train: that is
     the one measurement that separates this cause from the others.
   * thresholds wrong by the x4096 scaling. --dry-run prints them both ways.
   * every pulse rejected as a glitch or as CW. Widen min_width/max_width.
   * the wrong bitstream, or none. Check rung 1.
 """.strip()
+    + "\n  * RX DMA transport settings: "
+    + BITSTREAM_GUIDE
+    + "#data-transport-application-notes"
+)
 
 
 def preflight(sdr, args):
@@ -695,8 +801,7 @@ def preflight(sdr, args):
     from SoapySDR import SOAPY_SDR_RX, SOAPY_SDR_TX
 
     print("-- preflight --")
-    # The BitStream version is the one that matters: 2.1.0 is where AirStack
-    # documents pulsing dwd_tx_axis_rst between transmissions, which is rung 3.
+    # Platform identity is informational; image selection belongs to platform setup.
     try:
         info = sdr.getHardwareInfo()
     except Exception:  # noqa: BLE001 - informational only
@@ -708,22 +813,48 @@ def preflight(sdr, args):
     except Exception:  # noqa: BLE001
         pass
 
-    fs = sdr.getSampleRate(SOAPY_SDR_RX, CH_PKT_RX)
-    print(f"  rate       {fs / 1e6:.3f} MSPS")
-    # Deepwave enforces that the sample rate equals the AXIS master clock, so a
-    # mismatch is not a performance question -- every sample-derived number
-    # this script prints would be wrong by that ratio.
-    tx_fs = sdr.getSampleRate(SOAPY_SDR_TX, CH_CTRL_TX)
-    if abs(tx_fs - fs) > 1.0:
-        raise SystemExit(
-            f"RX rate {fs} and TX rate {tx_fs} differ. The design is one clock "
-            "domain; every derived time and frequency below would be wrong."
+    master = sdr.getMasterClockRate()
+    if not math.isfinite(master) or abs(master - DESIGN_RATE_HZ) > 1.0:
+        raise RuntimeError(
+            f"master clock is {master} Hz; this bring-up requires 125 MHz"
         )
+    print(f"  master     {master / 1e6:.3f} MHz")
+    for direction, channels, label in (
+        (SOAPY_SDR_RX, (CH_PKT_RX, CH_PDW_RX), "RX"),
+        (SOAPY_SDR_TX, (CH_CTRL_TX, CH_REPLAY_TX), "TX"),
+    ):
+        for ch in channels:
+            rate = sdr.getSampleRate(direction, ch)
+            if not math.isfinite(rate) or abs(rate - master) > 1.0:
+                raise RuntimeError(
+                    f"{label}{ch} rate {rate} Hz differs from master {master} Hz"
+                )
+    fs = master
+    try:
+        pages = (
+            Path("/sys/module/xdma/parameters/rx_buffer_size_pages").read_text().strip()
+        )
+    except OSError:
+        pages = "unavailable"
+    print(f"  RX DMA     rx_buffer_size_pages={pages}")
+    print(f"  transport  {BITSTREAM_GUIDE}#data-transport-application-notes")
     print(
         f"  queue      {queue_headroom_s(args.pulses_per_sec):.2f} s of headroom "
         f"at {args.pulses_per_sec} pulses/s ({PKT_QUEUE_DEPTH} descriptors)"
     )
     return fs
+
+
+def activate_checked(sdr, stream, active, label):
+    """Advance the bring-up ladder only after the stream actually activates."""
+    import SoapySDR
+
+    status = sdr.activateStream(stream)
+    if status != 0:
+        raise RuntimeError(
+            f"activateStream({label}) failed: {SoapySDR.errToStr(status)} ({status})"
+        )
+    active.append(stream)
 
 
 def resync(sdr, streams, active, cfg, args):
@@ -737,9 +868,13 @@ def resync(sdr, streams, active, cfg, args):
     """
     for s in list(active):
         try:
-            sdr.deactivateStream(s)
-        except Exception:  # noqa: BLE001
-            pass
+            status = sdr.deactivateStream(s)
+        except Exception as e:
+            raise RuntimeError(f"resync could not deactivate stream {s}: {e}") from e
+        if status != 0:
+            raise RuntimeError(
+                f"resync could not deactivate stream {s}: status {status}"
+            )
     active.clear()
     # RST_MIN_HOLD_CYCLES (16448) at 125 MHz is ~132 us; the drain is only as
     # fast as the data, so a short reset leaves buffers partly full. Milliseconds
@@ -747,13 +882,15 @@ def resync(sdr, streams, active, cfg, args):
     time.sleep(max(0.05, args.settle))
 
     tx_ctrl, tx_replay, rx_pkt, rx_pdw = streams
-    sdr.activateStream(tx_ctrl)
-    active.append(tx_ctrl)
+    activate_checked(sdr, tx_ctrl, active, "TX0 control")
     write_frame(sdr, tx_ctrl, pdw_ctrl_t.to_bytes(pdw_ctrl_t(**cfg)))
     time.sleep(args.settle)
-    for s in (rx_pkt, rx_pdw, tx_replay):
-        sdr.activateStream(s)
-        active.append(s)
+    for s, label in (
+        (rx_pkt, "RX0 packets"),
+        (rx_pdw, "RX1 records"),
+        (tx_replay, "TX1 replay"),
+    ):
+        activate_checked(sdr, s, active, label)
     if args.prime_tx1:
         try:
             write_frame(sdr, tx_replay, bytes(64 * BYTES_PER_ELEM))
@@ -769,8 +906,7 @@ def run(args):
     sdr = SoapySDR.Device(dict(driver=args.driver))
 
     if args.rate:
-        for d, ch in ((SOAPY_SDR_RX, CH_PKT_RX), (SOAPY_SDR_TX, CH_CTRL_TX)):
-            sdr.setSampleRate(d, ch, args.rate)
+        sdr.setMasterClockRate(args.rate)
     fs = preflight(sdr, args)
     if args.stage == "preflight":
         print("\nstage=preflight: stopping here")
@@ -778,10 +914,16 @@ def run(args):
     if args.freq:
         sdr.setFrequency(SOAPY_SDR_RX, CH_PKT_RX, args.freq)
         sdr.setFrequency(SOAPY_SDR_TX, CH_CTRL_TX, args.freq)
+    if args.rx_gain is not None:
+        if sdr.hasGainMode(SOAPY_SDR_RX, CH_PKT_RX):
+            sdr.setGainMode(SOAPY_SDR_RX, CH_PKT_RX, False)
+        sdr.setGain(SOAPY_SDR_RX, CH_PKT_RX, args.rx_gain)
+    if args.tx_gain is not None:
+        sdr.setGain(SOAPY_SDR_TX, CH_CTRL_TX, args.tx_gain)
 
     cfg = build_cfg(args, fs)
     print()
-    for line in describe(cfg, fs):
+    for line in describe(cfg, fs, args.rx_amplitude):
         print("  " + line)
     print()
 
@@ -792,15 +934,17 @@ def run(args):
     rx_pdw = sdr.setupStream(SOAPY_SDR_RX, SOAPY_SDR_CS16, [CH_PDW_RX])
     streams = [tx_ctrl, tx_replay, rx_pkt, rx_pdw]
     active = []
+    # Arm the alarm while configured, but fire its test only after verified traffic.
+    startup_cfg = dict(cfg, flags=cfg["flags"] & ~CTRL_FLAG_ALARM_TEST)
 
     try:
         # --- step 2: the control channel, alone ---------------------------
         print(f"activating TX{CH_CTRL_TX} (control) -- datapath stays held")
-        sdr.activateStream(tx_ctrl)
-        active.append(tx_ctrl)
+        time.sleep(max(0.05, args.settle))
+        activate_checked(sdr, tx_ctrl, active, "TX0 control")
 
         # --- step 3: configure while the datapath is still in reset -------
-        raw = pdw_ctrl_t.to_bytes(pdw_ctrl_t(**cfg))
+        raw = pdw_ctrl_t.to_bytes(pdw_ctrl_t(**startup_cfg))
         print(
             f"writing {len(raw)}-byte pdw_ctrl_t frame ({CTRL_ELEMS} beats, END_BURST)"
         )
@@ -808,9 +952,9 @@ def run(args):
         time.sleep(args.settle)
         if args.stage == "ctrl":
             print(
-                "\nstage=ctrl: stopping here. The frame was accepted; whether it\n"
-                "SURVIVED is rung 3 and cannot be read back -- put a receiver on\n"
-                "the TX0 SMA and look for the generator's pulse train."
+                "\nstage=ctrl: control frame accepted while the generator stays in reset.\n"
+                "Run --stage capture --duration 30 to observe the generator on the\n"
+                "first TX connector with all streams active."
             )
             return 0
 
@@ -819,9 +963,12 @@ def run(args):
             f"activating RX{CH_PKT_RX} (packets), RX{CH_PDW_RX} (records), "
             f"TX{CH_REPLAY_TX} (replay)"
         )
-        for s in (rx_pkt, rx_pdw, tx_replay):
-            sdr.activateStream(s)
-            active.append(s)
+        for s, label in (
+            (rx_pkt, "RX0 packets"),
+            (rx_pdw, "RX1 records"),
+            (tx_replay, "TX1 replay"),
+        ):
+            activate_checked(sdr, s, active, label)
 
         if args.prime_tx1:
             # The replay leg's tready gates the packet release path through the
@@ -846,12 +993,22 @@ def run(args):
         if args.alarm_test:
             print(
                 "alarm test: expecting ONE readStream OVERFLOW, most likely on "
-                f"RX{CH_PKT_RX}, from the alarm the design fired as it left reset\n"
+                f"RX{CH_PKT_RX}; the test will fire after a verified record/packet pair\n"
             )
         source = RadioSource(sdr, rx_pdw, rx_pkt, args, armed)
         return capture(
-            source, cfg, fs, args,
-            reset=lambda: resync(sdr, streams, active, cfg, args),
+            source,
+            cfg,
+            fs,
+            args,
+            reset=lambda: resync(sdr, streams, active, startup_cfg, args),
+            fire_alarm=(
+                lambda: write_frame(
+                    sdr, tx_ctrl, pdw_ctrl_t.to_bytes(pdw_ctrl_t(**cfg))
+                )
+            )
+            if args.alarm_test
+            else None,
         )
 
     finally:
@@ -867,7 +1024,7 @@ def run(args):
                 pass
 
 
-def capture(source, cfg, fs, args, reset=None):
+def capture(source, cfg, fs, args, reset=None, fire_alarm=None):
     """Read records and their packets, verify each, report. Radio or replay."""
     records = []
     prev_toa = None
@@ -881,11 +1038,16 @@ def capture(source, cfg, fs, args, reset=None):
     # its absence is. getattr: callers that predate the option leave it unset.
     alarm_test = bool(getattr(args, "alarm_test", False))
     alarm_seen = False
+    alarm_sent = fire_alarm is None
+    alarm_inconclusive = False
+    pulse_limit = (
+        max(2, args.pulses) if alarm_test and fire_alarm is not None else args.pulses
+    )
 
     i = 0
     try:
         while True:
-            if end_at is None and i >= args.pulses:
+            if end_at is None and i >= pulse_limit:
                 break
             # A resync does not advance `i`, so a fault that reappears
             # immediately after every reset would otherwise spin here forever
@@ -909,12 +1071,24 @@ def capture(source, cfg, fs, args, reset=None):
                 break
             except StreamTimeout as e:
                 print(f"pulse {i}: no PDW record ({e})")
+                if alarm_test:
+                    label = (
+                        source.probe_alarm_overflow()
+                        if alarm_sent and hasattr(source, "probe_alarm_overflow")
+                        else None
+                    )
+                    if label:
+                        print(ALARM_TEST_OK.format(label=label))
+                        alarm_seen = True
+                        break
+                    print(ALARM_TEST_TIMEOUT)
+                    alarm_inconclusive = True
                 if i == 0 and not alarm_test:
                     print("\n" + SILENCE_HELP)
                 n_failed += 1
                 break
             except StreamDesync as e:
-                if alarm_test and isinstance(e, StreamOverflow):
+                if alarm_test and alarm_sent and isinstance(e, StreamOverflow):
                     print(f"pulse {i}: " + ALARM_TEST_OK.format(label=e.label))
                     alarm_seen = True
                     break
@@ -947,11 +1121,15 @@ def capture(source, cfg, fs, args, reset=None):
                 pkt_buf, pkt_raw = source.packet(rec["pkt_samples"])
             except StreamTimeout as e:
                 print(f"pulse {i}: record received but its packet did not arrive ({e})")
-                print("\n" + WEDGE_HELP)
+                if alarm_test:
+                    print(ALARM_TEST_TIMEOUT)
+                    alarm_inconclusive = True
+                else:
+                    print("\n" + WEDGE_HELP)
                 n_failed += 1
                 break
             except StreamDesync as e:
-                if alarm_test and isinstance(e, StreamOverflow):
+                if alarm_test and alarm_sent and isinstance(e, StreamOverflow):
                     print(f"pulse {i}: " + ALARM_TEST_OK.format(label=e.label))
                     alarm_seen = True
                     break
@@ -997,7 +1175,14 @@ def capture(source, cfg, fs, args, reset=None):
                     "detector overflowed at some point, not that this pulse did"
                 )
 
-            rows = pdw_verify.check(rec, pkt_buf, fs, cfg=cfg, prev_toa=prev_toa)
+            rows = pdw_verify.check(
+                rec,
+                pkt_buf,
+                fs,
+                cfg=cfg,
+                prev_toa=prev_toa,
+                rx_amplitude=getattr(args, "rx_amplitude", None),
+            )
             for line in pdw_verify.format_rows(rows):
                 print(line)
             if not pdw_verify.all_ok(rows):
@@ -1009,11 +1194,15 @@ def capture(source, cfg, fs, args, reset=None):
             slowest = max(slowest, dt)
             print()
             i += 1
+            if alarm_test and not alarm_sent and pdw_verify.all_ok(rows):
+                fire_alarm()
+                alarm_sent = True
+                print("alarm test: verified traffic established; test alarm fired")
     finally:
         if cap:
             cap.close()
 
-    if alarm_test and not alarm_seen:
+    if alarm_test and not alarm_seen and not alarm_inconclusive:
         print("\n" + ALARM_TEST_MISSING + "\n")
         n_failed += 1
     print(f"{len(records)} pulses captured, {n_failed} with failures", end="")
@@ -1049,6 +1238,9 @@ def build_cfg(args, fs):
         threshold_scale=args.threshold_scale,
         alarm=args.alarm,
         alarm_test=args.alarm_test,
+        rx_amplitude=args.rx_amplitude,
+        threshold_high_power=args.threshold_high_power,
+        threshold_low_power=args.threshold_low_power,
     )
 
 
@@ -1059,7 +1251,7 @@ def main(argv=None):
         "--rate",
         type=float,
         default=0.0,
-        help="sample rate in Hz; 0 = leave the radio's current rate",
+        help="set the master clock/sample rate in Hz; bring-up requires 125e6; 0 = leave as-is",
     )
     p.add_argument(
         "--freq",
@@ -1091,10 +1283,44 @@ def main(argv=None):
         "~1024-sample time constant so it does not erode the "
         "measured peak power",
     )
-    p.add_argument("--amplitude", type=int, default=800,
-                   help="peak I/Q amplitude. Capped near 1024 (not by the int16 "
-                        "rail but by the uint32 threshold/peak_power ports, which "
-                        "hold power x 4096) -- see POWER_SCALE")
+    p.add_argument(
+        "--amplitude",
+        type=int,
+        default=800,
+        help="peak I/Q amplitude. Capped near 1024 (not by the int16 "
+        "rail but by the uint32 threshold/peak_power ports, which "
+        "hold power x 4096) -- see POWER_SCALE",
+    )
+    p.add_argument(
+        "--rx-amplitude",
+        type=float,
+        default=None,
+        help="expected received CS16 pulse amplitude; sets RF thresholds and enables its amplitude check",
+    )
+    p.add_argument(
+        "--threshold-high-power",
+        type=float,
+        default=None,
+        help="explicit upper threshold in linear CS16 count-squared units; supply with --threshold-low-power",
+    )
+    p.add_argument(
+        "--threshold-low-power",
+        type=float,
+        default=None,
+        help="explicit lower threshold in linear CS16 count-squared units; overrides --threshold-scale",
+    )
+    p.add_argument(
+        "--rx-gain",
+        type=float,
+        default=None,
+        help="manual RX0 gain in dB; leave current gain when omitted",
+    )
+    p.add_argument(
+        "--tx-gain",
+        type=float,
+        default=None,
+        help="TX0 stimulus gain in dB; leave current gain when omitted",
+    )
     p.add_argument(
         "--freq-frac",
         type=float,
@@ -1133,7 +1359,7 @@ def main(argv=None):
     p.add_argument(
         "--alarm-test",
         action="store_true",
-        help="fire one alarm immediately, to prove the signalling path works "
+        help="fire one alarm after a verified record/packet pair, to prove the signalling path works "
         "while everything else is known good (rung 6). Needs --alarm",
     )
     p.add_argument(
@@ -1198,18 +1424,24 @@ def main(argv=None):
         return _dispatch(args)
     except ValueError as e:
         raise SystemExit(f"configuration error: {e}")
+    except RuntimeError as e:
+        raise SystemExit(f"radio error: {e}")
 
 
 def _dispatch(args):
     if args.dry_run:
         fs = args.rate or 125e6
         cfg = build_cfg(args, fs)
-        raw = pdw_ctrl_t.to_bytes(pdw_ctrl_t(**cfg))
+        startup_cfg = dict(cfg, flags=cfg["flags"] & ~CTRL_FLAG_ALARM_TEST)
+        raw = pdw_ctrl_t.to_bytes(pdw_ctrl_t(**startup_cfg))
         print(f"dry run at fs = {fs / 1e6:.3f} MSPS")
-        for line in describe(cfg, fs):
+        for line in describe(cfg, fs, args.rx_amplitude):
             print("  " + line)
         print(f"  frame: {len(raw)} bytes / {CTRL_ELEMS} CS16 elements")
         print(f"  raw:   {raw.hex()}")
+        if args.alarm_test:
+            test_raw = pdw_ctrl_t.to_bytes(pdw_ctrl_t(**cfg))
+            print(f"  after a verified pair, test frame: {test_raw.hex()}")
         print(f"  record reads: {RECORD_ELEMS} elements each")
         print(
             f"  capture: {args.pulses} pulses at {args.pulses_per_sec}/s "
@@ -1221,8 +1453,10 @@ def _dispatch(args):
         source = ReplaySource(args.replay)
         fs = args.rate or source.fs
         cfg = build_cfg(args, fs)
-        print(f"replaying {args.replay}: {len(source.items)} pulses at "
-              f"fs = {fs / 1e6:.3f} MSPS\n")
+        print(
+            f"replaying {args.replay}: {len(source.items)} pulses at "
+            f"fs = {fs / 1e6:.3f} MSPS\n"
+        )
         return 1 if capture(source, cfg, fs, args) else 0
 
     return 1 if run(args) else 0

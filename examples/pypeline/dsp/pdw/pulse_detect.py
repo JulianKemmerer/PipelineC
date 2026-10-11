@@ -55,10 +55,10 @@ this isn't expected to need it; if it ever misses timing, above_high/below_low
 are pure feedforward and can be moved into an auto-pipelined comparator stage
 ahead of the FSM.
 
-`toa` is implemented: a free-running counter of this block's own accepted
+`toa` is implemented: a counter of this block's own accepted
 input samples, latched on the IDLE->PULSE edge. It counts CONDITIONED-power
-samples, so it trails the raw ADC sample index by the DSP chain's latency --
-a constant bias this block cannot see and therefore does not correct.
+samples; transport latency delays processing, not the accepted sample index.
+Threshold/filter response shifts detection; input-valid gaps pause the counter.
 
 Remaining TODOs, owned by the storage engine, not this block:
   - gate_ready / backpressure on the gate stream: the SM is real-time and
@@ -152,10 +152,10 @@ def make_pulse_detect_fsm(data_t, width_t=uint32_t, handshake="elastic"):
     class candidate_pdw_t(NamedTuple):
         # toa: sampled off a free-running counter on the IDLE->PULSE edge (see
         # toa_counter/toa_latch below). It counts THIS block's own accepted
-        # input samples, i.e. the conditioned power stream -- which trails the
-        # raw ADC sample index by the DSP chain's latency. That bias is a
-        # constant, so it is documented rather than corrected for here (this
-        # block cannot see its own upstream latency).
+        # input samples, i.e. the conditioned power stream. Transport latency
+        # delays processing, not the sample index: do not subtract DSP latency.
+        # The threshold/filter response determines the detected edge; valid
+        # gaps pause the counter rather than representing elapsed clock time.
         toa: uint64_t
         pulse_width: width_t
         peak_power: data_t

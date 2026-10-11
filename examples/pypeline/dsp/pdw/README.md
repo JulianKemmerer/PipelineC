@@ -18,6 +18,83 @@ lists **XC7A200T-2FFG1156C**; every PDW synthesis entry point targets Vivado par
 timing or validation inside the integrated AirStack project. Historical 100T
 proxy measurements remain explicitly identified in [Synthesis checks](#synthesis-checks).
 
+## Table of contents
+
+* [First bench run](#first-bench-run)
+* [Architecture](#architecture)
+* [Streams and stream interfaces: where backpressure begins](#streams-and-stream-interfaces-where-backpressure-begins)
+  * [What happens at the overflow point](#what-happens-at-the-overflow-point)
+  * [The two asymmetries](#the-two-asymmetries)
+* [Top-Level Ports](#top-level-ports)
+  * [Reset](#reset)
+    * [Two domains, and the bring-up sequence they exist for](#two-domains-and-the-bring-up-sequence-they-exist-for)
+    * [Block, drain, clear](#block-drain-clear)
+    * [What reset does not reach](#what-reset-does-not-reach)
+  * [Control registers (`pdw_ctrl_t`)](#control-registers-pdw_ctrl_t)
+* [Record formats](#record-formats)
+  * [Mapping to gr-pdw's record](#mapping-to-gr-pdws-record)
+* [Measurements](#measurements)
+  * [Frequency](#frequency)
+  * [Power and the noise floor](#power-and-the-noise-floor)
+  * [PRI](#pri)
+  * [Known limitation: I/Q DC offset](#known-limitation-iq-dc-offset)
+  * [Self-timed alignment opportunities](#self-timed-alignment-opportunities)
+* [Host software (AirStack / SoapySDR)](#host-software-airstack--soapysdr)
+  * [Channel map (2-channel bitstream mode)](#channel-map-2-channel-bitstream-mode)
+  * [Bring-up order](#bring-up-order)
+  * [Framing, without an end-of-burst on receive](#framing-without-an-end-of-burst-on-receive)
+  * [The TX1 replay leg can wedge the packet path](#the-tx1-replay-leg-can-wedge-the-packet-path)
+  * [Verifying records against their own samples](#verifying-records-against-their-own-samples)
+  * [Recording and replaying a session](#recording-and-replaying-a-session)
+  * [The options that matter for bring-up](#the-options-that-matter-for-bring-up)
+* [Bring-up and debugging](#bring-up-and-debugging)
+  * [The one symptom](#the-one-symptom)
+  * [The internal-error alarm](#the-internal-error-alarm)
+  * [The ladder](#the-ladder)
+  * [Failure-mode reference](#failure-mode-reference)
+* [Files](#files)
+* [Testing](#testing)
+  * [`pdw_tb.py`](#pdw_tbpy)
+  * [Where the tests live](#where-the-tests-live)
+  * [Synthesis checks](#synthesis-checks)
+
+## First bench run
+
+Platform preparation belongs in the [Deepwave BitStream guide](https://docs.deepwave.ai/AirStack/Bitstream/programming_guide/):
+[loading the bitstream](https://docs.deepwave.ai/AirStack/Bitstream/programming_guide/#loading-airstack-bitstream-files-onto-the-air-t),
+[clock selection](https://docs.deepwave.ai/AirStack/Bitstream/programming_guide/#master-clock-rate), and
+[DMA transport settings](https://docs.deepwave.ai/AirStack/Bitstream/programming_guide/#data-transport-application-notes).
+
+From the repository root, prepare the four-file host bundle using your completed
+build's generated types. Replace `PDW_BUILD` with its output directory:
+
+```sh
+PDW_BUILD=/tmp/pdw-top-rom
+mkdir -p "$PDW_BUILD/air-t-host"
+cp examples/pypeline/dsp/pdw/airt_pdw_test.py \
+   examples/pypeline/dsp/pdw/gr_pdw_record.py \
+   examples/pypeline/dsp/pdw/pdw_verify.py \
+   "$PDW_BUILD/host/pypeline_host_types.py" "$PDW_BUILD/air-t-host/"
+python3 "$PDW_BUILD/air-t-host/airt_pdw_test.py" --dry-run --rate 125e6
+```
+
+Copy those four files to one directory on the radio. Begin with internal
+loopback and the default four pulses/second, 500-sample width and amplitude 800:
+
+```sh
+python3 airt_pdw_test.py --stage preflight --rate 125e6
+python3 airt_pdw_test.py --stage ctrl --rate 125e6
+python3 airt_pdw_test.py --stage capture --rate 125e6 --duration 30 --record first.pdwcap
+python3 airt_pdw_test.py --replay first.pdwcap
+python3 airt_pdw_test.py --rate 125e6 --alarm --alarm-test
+```
+
+`--stage ctrl` proves the control write was accepted while the datapath stays in
+reset. Observe the generator during the **active capture run**; `ctrl` and
+`streams` both close their channels before returning. RTL/Soapy channel 0 is the
+first physical connector, labelled TX1/RX1 on the AIR7310 enclosure. TX0 still
+drives RF in internal loopback, so use the intended bench terminations.
+
 ```
  1. STIMULUS & EXTERNAL LOOPBACK
   +-----------------+     TX0 stream     +------------+      External cable
@@ -313,8 +390,8 @@ the consumer: `pdw_reset_test.py` holds the packet port's ready low for the whol
 reset window and still gets a byte-exact drain. Because the drain is only as fast
 as the data, **reset must be held** — emptying a full packet FIFO takes its depth
 in cycles, ~131 µs at 125 MHz, and `top.py` exports `RST_MIN_HOLD_CYCLES`
-(16448). Any real platform reset exceeds it comfortably; a shorter one leaves
-buffers partly full.
+(16448). The host holds reset for at least 50 ms at startup and resync; a shorter
+platform pulse can leave buffers partly full and must not be treated as a flush.
 
 **The two record serializers** are the one part the read-enable trick cannot
 reach: their `buf`/`fill` empty only through `tready`. Each therefore sits behind
@@ -432,8 +509,8 @@ pulse report the same number.
 | `peak_power` | `uint32_t` | Validated peak power, linear (`power_t` truncated) |
 | `pkt_samples` | `uint32_t` | AXI-Stream payload size — tells DMA how many samples to slice. **Equals `pulse_width` today**; margins are unbuilt |
 | `pri` | `uint32_t` | Samples since the previous **accepted** pulse |
-| `peak_power_db` | `int16_t` | Peak power in dBFS, Q8.8 (1 LSB = 1/256 dB) |
-| `noise_power_db` | `int16_t` | Noise floor in dBFS, Q8.8 |
+| `peak_power_db` | `int16_t` | Peak power in dB relative to one ADC count squared, Q8.8 (1 LSB = 1/256 dB) |
+| `noise_power_db` | `int16_t` | Noise floor in the same count-squared dB units, Q8.8 |
 | `freq_start` | `int16_t` | Frequency over the first samples, turns × 2¹⁶ — the full range spans ±½ turn, so multiply by the sample rate for Hz |
 | `freq_stop` | `int16_t` | Frequency over the last samples. Differs from `freq_start` exactly when the pulse is modulated |
 | `status_flags` | `uint32_t` | bit 0 = ADC clip, 1 = DSP overflow, 2 = packet FIFO full, 3 = frequency degenerate, 4 = PRI invalid |
@@ -458,14 +535,15 @@ per-packet framing suggests:
 * **Bit 2, packet FIFO full, is unreachable in a delivered record** — see
   [What happens at the overflow point](#what-happens-at-the-overflow-point).
 
-**`toa` as built.** A free-running counter inside the SM, latched on the
+**`toa` as built.** An accepted-sample counter inside the SM, latched on the
 `IDLE -> PULSE` edge (read-before-increment, so it is the index of the same
 sample that sets `pulse_width = 1`). It counts the SM's own *accepted input
-samples* — the conditioned power stream — so it trails the raw ADC sample index
-by a constant DSP-chain latency. The SM cannot see its own upstream latency, so
-that bias is documented rather than corrected; subtract
-`pulse_detect.get_dsp_latency()` if an absolute ADC-referenced time is needed.
-PRI is immune to it, since a constant offset cancels in a difference.
+samples* — the conditioned power stream. Pipeline transport delays when that
+sample is processed, but does not add its cycle count to the sample's index:
+**do not subtract `pulse_detect.get_dsp_latency()` from TOA.** The moving average
+and hysteresis thresholds can shift the detected edge relative to the waveform's
+leading edge. Input-valid gaps pause this counter, so TOA is not a wall-clock
+timestamp. PRI is the difference between accepted-pulse TOAs in the same epoch.
 
 **`peak_power`**, in both structs, is `power_t` truncated to `uint32_t`. Keep a
 pulse's peak under 2³² in `power_t`'s scaled units or this field silently wraps;
@@ -482,8 +560,8 @@ HDF5 flow work on FPGA output unmodified:
 | `pdw_channel` | `channel` |
 | `pulse_width_samps` | `pulse_width` |
 | `pulse_width_secs` | `pulse_width / fs` |
-| `pulse_power` | `peak_power_db / 256 + ref_level` |
-| `noise_power` | `noise_power_db / 256 + ref_level` |
+| `pulse_power` | `peak_power_db / 256 - full_scale_power_db + ref_level` |
+| `noise_power` | `noise_power_db / 256 - full_scale_power_db + ref_level` |
 | `freq_start` | `freq_start / 65536 × fs` |
 | `stop_freq` | `freq_stop / 65536 × fs` |
 | `toa_course` | `toa // fs` |
@@ -491,10 +569,13 @@ HDF5 flow work on FPGA output unmodified:
 
 Two caveats, both stated in that module's docstring rather than papered over:
 `ref_level` is a **host-side additive offset**, exactly as in gr-pdw (its USRP
-calibration-table blocks stay on the host; the FPGA emits dBFS); and **TOA is not
+calibration-table blocks stay on the host). The host first subtracts
+`full_scale_power_db = 20·log10(32768)` to normalize the wire values to dBFS,
+using a full-scale CS16 complex-tone amplitude of 32768. Amplitude 800 therefore
+reports approximately −32.25 dBFS, rather than +58.06 dB. **TOA is not
 a unix timestamp** — this design has no PPS input and no time-of-day register, so
 `toa` counts samples since reset and the coarse/fine split is a formatting
-convenience carrying the DSP-latency bias above.
+convenience; threshold response and input-valid gaps have the effects above.
 
 # Measurements
 
@@ -580,8 +661,9 @@ sample-excision guard a CFAR noise estimator uses, and it needs no knowledge of
 pipeline latency — which matters, because those latencies are AUTO_PIPELINE
 results deliberately not available at elaboration time.
 
-With the guard in place, a phase driven with `noise_amp=8` measures a **16.22
-dBFS** floor against **16.2 dBFS** predicted by hand from the LFSR's statistics;
+With the guard in place, a phase driven with `noise_amp=8` measures a **16.22 dB
+count-squared** floor against **16.2 dB** predicted from the LFSR's statistics
+(approximately −74.09 dBFS after host normalization);
 phases with no noise report the converter's floor, as they should.
 
 ## PRI
@@ -600,6 +682,33 @@ $|d|^2/|s|^2$. The internal generator is zero-mean by construction (the LFSR
 noise is read as signed, deliberately), so this does not show up in simulation,
 but a real receiver's ADC/mixer offset would. Correcting it needs an I/Q DC
 blocker ahead of the conjugate product, which is not built.
+
+## Self-timed alignment opportunities
+
+Path B already follows `gate_advance`, and packet release already waits for a
+descriptor and `m.valid`. Prefer that completion-driven style over deriving
+register-array lengths from an automatic component's `.latency`.
+
+The remaining opportunities are:
+
+| Path | Current alignment | Self-timed alternative |
+|---|---|---|
+| `pulse_measure` | `LAT = max(angle, power-log, noise-log)` and delay arrays | Queue each converter's results and the PRI/qualification metadata; emit only when all queue heads are present, then pop them together |
+| NCO and atan2 ROM sidebands | `ROM_LAT`, `RL` and `AL` size amplitude, sign and quadrant delay arrays | Queue request metadata and response data; join them in request order when the response `valid` arrives |
+| `log2_db` table join | Delay the faster mantissa/exponent result to the slower table | Queue both results and the floor flag; join completed responses |
+| Candidate to frequency accumulator | `FL` delays peak, TOA and acceptance | Queue those fields at candidate completion and pair them with `freq_acc.valid` |
+
+These are proposed conversions, not implemented changes. Queue depth would be a
+capacity bound on outstanding work, like Path B's `delay_depth`, rather than an
+exact latency. Each conversion must preserve input bubbles, clock-enable pauses,
+one-result-per-clock throughput, overflow reporting, and reset-by-draining.
+Queue **response data too**: a fast ROM may answer before a metadata FIFO has
+presented its first word. Joining only current `valid` pulses would lose or pair
+the wrong transaction when the branches have different delays.
+
+This would remove the design's latency-dependent re-elaboration and alignment
+arrays. The compiler would still re-elaborate while trying automatic RAM plans;
+avoiding those implementation-search passes is a separate compiler change.
 
 # Host software (AirStack / SoapySDR)
 
@@ -718,8 +827,8 @@ assign dwd_tx1_m_axis_tready = 1'b1;            // TIE-OFF: software's TX1 write
 assign dwd_rx1_m_axis_tready = 1'b1;            // TIE-OFF: ADC 1, discarded
 ```
 
-**CS16 is this design's own packing.** Deepwave specifies
-`I = tdata[15:0]; Q = tdata[31:16]` — identical to this project. A CS16 buffer is
+**CS16 is this design's own packing:** `I = tdata[15:0]; Q = tdata[31:16]`.
+A CS16 buffer is
 interleaved little-endian `int16`, so four bytes of an `np.int16` buffer **are**
 one 32-bit AXIS beat: `np.frombuffer(raw, '<i2')` and `.tobytes()` are
 reinterprets, never conversions, with no byte swapping anywhere. A 40-byte record
@@ -829,6 +938,17 @@ a replay parses what the radio sent, not something the script already interprete
 carries the generator's samples to the radio. Bench work wants a cable and
 terminator, not an antenna.
 
+For `--no-loopback`, start with explicit `--threshold-high-power` and
+`--threshold-low-power` values in **linear CS16 count-squared units**, or supply
+`--rx-amplitude` in **CS16 counts** to derive them. The amplitude reference is
+optional: it enables the receive amplitude check once the received level is
+known. Without it, the record/payload checks still run, and the script does not
+compare the received amplitude to the TX digital amplitude. `--rx-gain` selects
+manual RX0 gain and `--tx-gain` sets TX0 stimulus gain;
+keep the cable attenuation and those gains fixed while verifying a calibration.
+The received reference must stay at or below `MAX_AMPLITUDE` because the record's
+linear peak-power field has the same range limit as the threshold ports.
+
 # Bring-up and debugging
 
 ## The one symptom
@@ -860,12 +980,10 @@ three conditions and why each is permanent and invisible. Until the alarm, the
 only thing that noticed any of them was a `sim_assert`, which halts GHDL and
 compiles to nothing whatsoever in a bitstream.
 
-With no spare channel to report on, the alarm borrows the one back-channel that
-exists. AirStack documents that on the ADC receive interface *"constant flow
-control `tready` assertion is assumed, deasserting `tready` drops `tdata` samples
-causing overflow"*, and that overflow events are reported by its API. So
-`pdw_alarm.py` deasserts `rx0_s_axis_tready` on purpose, the platform drops
-samples, and `readStream` returns `SOAPY_SDR_OVERFLOW`.
+With no spare channel to report on, the alarm borrows the ADC-input back-channel:
+`pdw_alarm.py` deasserts `rx0_s_axis_tready` on purpose, and the host looks for
+`SOAPY_SDR_OVERFLOW`. See the
+[BitStream transport notes](https://docs.deepwave.ai/AirStack/Bitstream/programming_guide/#data-transport-application-notes).
 
 **Nothing else in this design can cause that overflow.** In AirStack's default
 passthrough bitstream a host that falls behind back-pressures the ADC and
@@ -874,9 +992,8 @@ which its FIFOs absorb — and past `PKT_QUEUE_DEPTH` they corrupt *silently*.
 So an unarmed overflow means a wrapper fault, never a slow host (see the tie-offs
 above).
 
-**AirStack also stops ADC sample flow on an overflow** (*"to prevent using
-unaligned data streams, overflow events also terminate sample flow from the
-radio"*) until the stream is reset. Three consequences follow:
+**After an alarm, reset and restart the streams** before normal capture resumes.
+The project's consequences are:
 
 * An alarm is always followed by a resync. `--resync-on-error` does this
   automatically.
@@ -920,14 +1037,16 @@ overflow means.
 
 ## The ladder
 
-**Rung 0 — before the radio.** `run_all.py` green for the ten PDW entries. Then
+**Rung 0 — before the radio.** Run the project tests, including the selected
+whole-top `pdw_tb` variant (see [Where the tests live](#where-the-tests-live)). Then
 `python3 pdw_host_gen.py <dir>` and `--dry-run`, so the exact frame bytes are
 known before any are sent.
 
-**Rung 1 — platform identity.** `--stage preflight`. Driver and **BitStream
-version** (rung 3 depends on it), sample rate — Deepwave enforces that it equals
-the AXIS master clock — and the queue headroom the configured pulse rate buys.
-*Failure:* wrong or absent bitstream.
+**Rung 1 — clock and platform information.** `--stage preflight --rate 125e6`
+sets the master clock and checks all four channel rates against it. The script
+prints driver/firmware information, the RX DMA buffer parameter when available,
+and queue headroom. Firmware identity is informational; this stage does not
+prove that a particular custom image is loaded.
 
 **Rung 2 — TX0 accepts the control frame.** `--stage ctrl`. Activate TX0 alone,
 write the 40-byte frame with `END_BURST`, confirm `writeStream` returns 10.
@@ -935,20 +1054,19 @@ write the 40-byte frame with `END_BURST`, confirm `writeStream` returns 10.
 `tx0_s_axis_tready`, which is tied high unconditionally — so a stall is a wrapper
 or channel-map fault, not a design one.
 
-**Rung 3 — does the configuration survive?** Do this before anything that depends
-on it. AirStack 2.1.0 asserts `dwd_tx_axis_rst[*]` for 64 cycles *"during the idle
-time between one transmission ending and the queued start time of the
-following"*. `tx0_s_axis_rst` is both the register file's reset — reverting it to
-`CTRL_DEFAULTS`, whose `0xFFFFFFFF` thresholds are indistinguishable from dead
-hardware — and a term in `global_rst`, where 64 cycles is far short of
-`RST_MIN_HOLD_CYCLES` and leaves buffers *partly* drained. It is documented for
-queued *timed* writes, which this script does not use, so it may never fire.
-**There is no register readback, so the discriminator is external:** put a
-spectrum analyser or second receiver on the TX0 SMA. Config landed ⇒ pulses at the
-commanded PRI and carrier; reverted ⇒ amplitude 0, silence. *If it fires*, drop
-the runtime `if rst: regs = pdw_ctrl_t(...)` in `pdw_ctrl.py` — the
-elaboration-time `Reg[pdw_ctrl_t] = CTRL_DEFAULTS` still makes power-on safe,
-while a spurious reset then only flushes the deserializer.
+**Rung 3 — does the configuration survive?** Connect the observer first, then
+run `--stage capture --duration 30` and observe the generator on physical TX1
+(RTL/Soapy TX0) **while all streams are active**. `--stage ctrl` leaves the
+generator in reset and closes TX0 on exit; it cannot produce this observation.
+Pulses at the commanded PRI/carrier support configuration retention. Silence
+still needs to be distinguished from gain settings or gating in the TX path.
+
+For platform reset behavior, consult the
+[BitStream reset/time documentation](https://docs.deepwave.ai/AirStack/Bitstream/programming_guide/#time-api).
+In this project, `tx0_s_axis_rst` clears the configuration and participates in
+`global_rst`. Preserving just the registers would not fix a reset that partially
+drains packet storage. Keep the existing reset/drain contract; if an unexpected
+reset occurs, capture it with an ILA and restart with a full drain.
 
 **Rung 4 — a record appears.** `--stage capture`, RX0/RX1/TX1 activated and TX1
 primed. *Failures in likelihood order:* nothing at all → rung 3, then the ×4096
@@ -960,12 +1078,14 @@ pulse. *Failure:* `freq_start`/`freq_stop` off by a large constant is a channel-
 or I/Q-packing fault, not a measurement one — CS16 and this design's packing are
 byte-identical, so any offset means the streams are crossed.
 
-**Rung 6 — the alarm path.** `--alarm --alarm-test`, once, while everything else
-is known good. The design fires one alarm as its datapath leaves reset. The
-script treats the OVERFLOW as the result it is testing for: it prints
-`Rung 6 PASSES`, stops, and exits 0. A run that captures cleanly with no overflow
-**fails**, because the alarm path does not reach the host. Skipping this rung
-means the first alarm ever seen will be during a real fault.
+**Rung 6 — the alarm path.** `--alarm --alarm-test`, once normal capture works.
+The script first verifies a record/packet pair, then writes the test flag. An
+explicit OVERFLOW produces `Rung 6 PASSES` and stops the run. If RX1 times out,
+the script checks RX0 for a pending overflow before declaring the test
+inconclusive. A timeout alone is not proof that the alarm path is broken; use
+these [transport notes](https://docs.deepwave.ai/AirStack/Bitstream/programming_guide/#data-transport-application-notes)
+to investigate it. A completed capture with no overflow leaves the alarm test
+unproven and returns a failure status.
 
 **Rung 7 — soak and stress.** `--duration` with `--resync-on-error`, sweeping the
 pulse rate toward the queue-headroom limit, adding `--chirp-rate` (the only real
@@ -973,13 +1093,20 @@ test of `freq_stop`), `--noise-amp` and `--threshold-scale`, with `--record`
 throughout so a session that goes wrong stays replayable.
 
 **Rung 8 — real RF.** `--no-loopback`, TX0 → attenuator → RX0 by cable — the
-analog path last, with every digital question already answered.
+analog path last, with every digital question already answered. For initial
+capture, use explicit receive thresholds and adjust them to the received signal;
+keep the selected gains and attenuation fixed. Once the level is known, supply
+`--rx-amplitude` to derive thresholds and enable the amplitude check. For example,
+`--no-loopback --threshold-high-power 2000 --threshold-low-power 1000` selects
+those two count-squared thresholds without an amplitude reference; these values
+illustrate the units, rather than specifying a calibration for every RF path.
 
 ## Failure-mode reference
 
 | Symptom | Most likely | How to tell |
 |---|---|---|
 | no records at all | a reset still asserted, or config never landed | rung 3's TX0 measurement; then check the wrapper tie-offs |
+| transport TIMEOUT, especially with small frames | DMA configuration or unavailable data | preflight's RX DMA setting and the linked transport notes; a timeout does not uniquely identify a detector fault |
 | no records, config confirmed live | thresholds, or everything rejected | `--dry-run` prints thresholds in both raw and power units; widen `min_width`/`max_width` |
 | one record, then nothing on RX0 | TX1 replay leg wedged | `--prime-tx1`, or tie `tx1_m_axis_tready` high |
 | records stop after N pulses | host stalled past the queue headroom | the capture loop prints slowest-iteration vs headroom |
@@ -997,7 +1124,7 @@ Everything lives flat in this directory. Hardware first, then host-side.
 
 | File | What |
 |---|---|
-| `top.py` | The composed design and every top-level AXIS port. Three `@MAIN`s: reset tree, control register file, datapath |
+| `top.py` | The composed design and every top-level AXIS port. Four `@MAIN`s: reset tree, control register file, generator and detector/extraction datapath |
 | `pulse_gen.py` | Stimulus generator: NCO carrier, LFM chirp, LFSR noise |
 | `pulse_detect.py` | `make_pulse_detect` (the composed Path A + Path B block) and its parts: `make_pulse_detect_fsm`, `make_delay_line`, `make_pdw_gate`, `make_freq_accum` |
 | `pulse_extract.py` | `make_pulse_extract`: qualification (`make_pdw_qualify`) and store-and-forward release (`make_packet_store`) |
@@ -1022,6 +1149,7 @@ Everything lives flat in this directory. Hardware first, then host-side.
 | `pdw_alarm_test.py` | The alarm alone. Its job is to destroy a known number of ADC samples, so the property tested is "exactly N samples were dropped", not "tready went low" — and those diverge only when the input is **gapped**. Carries its own negative control: the same stimulus through a deliberately-wrong cycle-counting model, asserted to get a different answer | `sim_call` |
 | `pdw_verify_test.py` | That `pdw_verify.py` actually catches a wrong record. Mostly negative controls: corrupt one field, assert the check for **that** field fails and the others do not. Also generates `pypeline_host_types.py` and checks the host files compose with it | numpy, synthetic pulses |
 | `airt_pdw_replay_test.py` | `airt_pdw_test.py`'s capture loop with no radio — the framing, `validate_record`, the resync paths, what an OVERFLOW is reported as, and `--alarm-test`'s pass and fail, served from a `--record` file | numpy, `pdw_verify_test`'s helpers |
+| `airt_pdw_host_test.py` | The live-radio `run()` path with a SoapySDR stand-in: clock/rate selection, activation errors, cleanup, RF threshold choices, delayed alarm firing, and checking RX0 after an RX1 timeout | mocked SoapySDR, generated host types |
 | `pdw_tb.py` | The whole `top.py` — see below | `@sim_input`/`@sim_output`, exact Python golden model |
 
 `pulse_extract_tb.py` exists alongside `pdw_tb.py` rather than being folded into
@@ -1137,6 +1265,20 @@ coverage belongs in the [test-suite RAM section](../../../../docs/pypeline_TESTS
 python3 src/tests/pypeline_tests/run_all.py -k pdw
 python3 src/tests/pypeline_tests/run_all.py -k pulse
 ```
+
+There is **one** whole-top testbench source, `pdw_tb.py`. `pdw_tb_rom` runs it
+with the default ROM atan2; the entry named `pdw_tb` runs it with CORDIC atan2.
+Both use the same stimulus, golden model and checks. To run only the default
+whole-top native simulation:
+
+```sh
+python3 src/tests/pypeline_tests/run_all.py --category native_sim --test pdw_tb_rom -j 1
+```
+
+`airt_pdw_host_test.py` exercises clock selection, activation failures, RF
+threshold calibration and the live alarm-test sequence with a SoapySDR stand-in.
+It complements the capture-file replay tests, which do not execute `run()`.
+
 
 ## Synthesis checks
 

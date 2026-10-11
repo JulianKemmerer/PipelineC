@@ -14,8 +14,8 @@ pulse_detect.py. This block only converts them:
 
     first_re/first_im  --atan2-->  freq_start   (turns x 2^16)
     last_re /last_im   --atan2-->  freq_stop    (turns x 2^16)
-    peak_power         --log-->    peak_power_db  (Q8.8 dBFS)
-    noise_est          --log-->    noise_power_db (Q8.8 dBFS)
+    peak_power         --log-->    peak_power_db  (Q8.8 dB re 1 count squared)
+    noise_est          --log-->    noise_power_db (Q8.8 dB re 1 count squared)
     toa - prev_toa     -------->   pri            (samples)
 
 FULLY PIPELINED, NO BACKPRESSURE. Both angle methods and the log converter accept
@@ -63,9 +63,9 @@ def make_pulse_measure(pulse_detect, cordic_iters=14, *, atan2_method=None):
     `valid_in` is the gate_last / candidate cycle. `count_pri` should be the
     qualification verdict's accept bit: PRI is measured between ACCEPTED
     pulses, so a rejected glitch does not corrupt the interval reported for the
-    next real pulse. (PRI is also the one measurement immune to `toa`'s
-    documented DSP-latency bias, since a constant offset cancels in a
-    difference.)
+    next real pulse. PRI follows the accepted-sample TOA counter; input-valid
+    gaps pause that counter. Pipeline transport latency does not need to be
+    subtracted from either timestamp before taking their difference.
 
     `rst` is active high and clears the PRI state. It MUST be driven from the
     same reset that clears pulse_detect's `toa_counter`, since PRI is a
@@ -110,8 +110,8 @@ def make_pulse_measure(pulse_detect, cordic_iters=14, *, atan2_method=None):
     class pulse_measure_t(NamedTuple):
         freq_start: int16_t  # turns x 2^16; multiply by fs for Hz
         freq_stop: int16_t
-        peak_power_db: int16_t  # Q8.8 dBFS
-        noise_power_db: int16_t  # Q8.8 dBFS
+        peak_power_db: int16_t  # Q8.8 dB re 1 count squared
+        noise_power_db: int16_t  # Q8.8 dB re 1 count squared
         pri: uint32_t  # samples since the previous accepted pulse
         valid: uint1_t
         freq_degenerate: uint1_t  # phasor was exactly zero; frequencies are 0

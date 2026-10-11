@@ -476,6 +476,13 @@ def get_tests() -> list:
             cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "airt_pdw_replay_test.py"],
         )
     )
+    tests.append(
+        Test(
+            name="airt_pdw_host_test",
+            category="native_sim",
+            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "airt_pdw_host_test.py"],
+        )
+    )
     # PDW project: the independent software check of a PDW record against its
     # own pulse samples (FFT here vs the hardware's phasor/CORDIC, so the two
     # are genuinely different algorithms). Mostly negative controls: corrupt

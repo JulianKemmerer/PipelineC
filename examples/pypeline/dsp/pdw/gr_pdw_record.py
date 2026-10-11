@@ -24,23 +24,27 @@ WHAT MAPS CLEANLY, AND WHAT DOES NOT
 ------------------------------------
 Seven of gr-pdw's nine columns come straight across. Two need saying out loud:
 
-* `pulse_power` / `noise_power` are dBFS here. gr-pdw computes
+* The wire's `peak_power_db` / `noise_power_db` are dB relative to one ADC
+  count squared. This module normalizes them to dBFS using a full-scale
+  complex-tone amplitude of 32768 in CS16 units. gr-pdw computes
   `pulse_power = dbfs + ref_level`, where `ref_level` comes from its USRP
   calibration-table block. That block stays on the host; pass the same number
   as `ref_level_db` and the columns match. Uncalibrated, gr-pdw reports dBFS
-  too, so leaving it at 0.0 is the honest default.
+  too, so leaving it at 0.0 reports normalized dBFS.
 
 * `toa_course` / `toa_fine` are NOT a unix timestamp. gr-pdw's coarse column
   is integer unix seconds, taken from the host clock. This design has no PPS
-  input and no time-of-day register, so its `toa` is a free-running count of
-  samples since FPGA reset, split here at the sample rate purely so the two
-  columns have their usual meaning relative to each other. It also carries a
-  constant bias of the detector's DSP-chain latency (see ../README.md). Add
+  input and no time-of-day register, so its `toa` counts accepted samples since
+  reset. The coarse/fine split preserves their relative meaning, including
+  the detector's threshold/filter response delay and pauses for input-valid
+  gaps (see README.md). Add
   `epoch_s` if you have a reference for when the counter started.
 
 Nothing here imports numpy or h5py; `to_gr_pdw_rows()` returns plain lists,
 and `to_numpy()` is available if numpy happens to be installed.
 """
+
+import math
 
 from pypeline_host_types import (
     STATUS_ADC_CLIP,
@@ -90,6 +94,8 @@ GR_PDW_COLUMNS = (
 
 Q8_8 = 256.0  # dB fixed-point scale
 TURNS = 65536.0  # frequency fixed-point scale (full int16 range = one circle)
+CS16_FULL_SCALE_AMPLITUDE = 1 << 15
+FULL_SCALE_POWER_DB = 20.0 * math.log10(CS16_FULL_SCALE_AMPLITUDE)
 
 
 def records_from_bytes(data):
@@ -125,8 +131,12 @@ def decode(rec, fs, ref_level_db=0.0):
         "pkt_samples": rec["pkt_samples"],
         "pri_samples": rec["pri"],
         "pri_secs": rec["pri"] / fs,
-        "pulse_power_db": rec["peak_power_db"] / Q8_8 + ref_level_db,
-        "noise_power_db": rec["noise_power_db"] / Q8_8 + ref_level_db,
+        "pulse_power_db": rec["peak_power_db"] / Q8_8
+        - FULL_SCALE_POWER_DB
+        + ref_level_db,
+        "noise_power_db": rec["noise_power_db"] / Q8_8
+        - FULL_SCALE_POWER_DB
+        + ref_level_db,
         "snr_db": (rec["peak_power_db"] - rec["noise_power_db"]) / Q8_8,
         # Baseband frequency offset from the tuned centre, in Hz. Signed:
         # the estimator resolves the full +-fs/2.
@@ -134,7 +144,11 @@ def decode(rec, fs, ref_level_db=0.0):
         "freq_stop_hz": rec["freq_stop"] / TURNS * fs,
         # Non-zero chirp rate is modulation on pulse (an LFM chirp).
         "chirp_rate_hz_per_s": (
-            (rec["freq_stop"] - rec["freq_start"]) / TURNS * fs * fs / rec["pulse_width"]
+            (rec["freq_stop"] - rec["freq_start"])
+            / TURNS
+            * fs
+            * fs
+            / rec["pulse_width"]
             if rec["pulse_width"]
             else 0.0
         ),
@@ -154,13 +168,14 @@ def to_gr_pdw_rows(records, fs, ref_level_db=0.0, epoch_s=0):
     rows = []
     for rec in records:
         toa = rec["toa"]
+        d = decode(rec, fs, ref_level_db)
         rows.append(
             [
                 float(rec["channel"]),
                 float(rec["pulse_width"]),
                 rec["pulse_width"] / fs,
-                rec["peak_power_db"] / Q8_8 + ref_level_db,
-                rec["noise_power_db"] / Q8_8 + ref_level_db,
+                d["pulse_power_db"],
+                d["noise_power_db"],
                 rec["freq_start"] / TURNS * fs,
                 rec["freq_stop"] / TURNS * fs,
                 float(int(toa // fs) + epoch_s),
@@ -191,7 +206,7 @@ def write_csv(path, records, fs, ref_level_db=0.0, epoch_s=0):
 
 if __name__ == "__main__":
     # Round-trip demonstration with one synthetic pulse: 1 us at 125 MSPS,
-    # +fs/8 baseband, 55 dBFS peak over a 16 dBFS floor.
+    # +fs/8 baseband, 55 dB peak over a 16 dB floor in count-squared units.
     FS = 125e6
     demo = {
         "toa": 375_000_123,
@@ -219,5 +234,9 @@ if __name__ == "__main__":
     print(f"  frequency   : {d['freq_start_hz'] / 1e6:+.3f} MHz")
     print(f"  PRI         : {d['pri_secs'] * 1e3:.3f} ms")
     print("gr-pdw row:")
-    print("  " + ", ".join(f"{c}={v:g}" for c, v in
-                           zip(GR_PDW_COLUMNS, to_gr_pdw_rows([back], FS)[0])))
+    print(
+        "  "
+        + ", ".join(
+            f"{c}={v:g}" for c, v in zip(GR_PDW_COLUMNS, to_gr_pdw_rows([back], FS)[0])
+        )
+    )
