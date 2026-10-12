@@ -19,11 +19,11 @@ pulse_detect.py. This block only converts them:
     toa - prev_toa     -------->   pri            (samples)
 
 FULLY PIPELINED, NO BACKPRESSURE. Both angle methods and the log converter accept
-a new input every cycle, so this block does too: there is no busy state, no
-overrun case, and no "measurement invalid" status to define. The hysteresis SM
+a new input every cycle, so this block does too: there is no busy state. The hysteresis SM
 can close a pulse as often as every couple of samples and every one of them
-gets measured. The cost is a fixed `.latency`, which the storage engine
-absorbs by waiting for the measurement before releasing a packet (see
+gets measured within the bounded outstanding-work capacity. Queue heads join
+the two angles, both logarithms and PRI metadata by completion. The storage
+engine waits for the measurement before releasing a packet (see
 pulse_extract.py) -- the packet's own beats are still filling the
 data FIFO meanwhile, so the wait is free.
 
@@ -52,9 +52,12 @@ from dsp.cordic import golden_cordic_atan2, make_cordic_atan2
 from dsp.lut_atan2 import golden_lut_atan2, make_lut_atan2
 from dsp.log2_db import golden_log2_db, make_log2_db
 from pypeline import param
+from stream.valid_join import make_valid_join
 
 
-def make_pulse_measure(pulse_detect, cordic_iters=14, *, atan2_method=None):
+def make_pulse_measure(
+    pulse_detect, cordic_iters=14, *, atan2_method=None, join_depth=32
+):
     """Build the per-pulse measurement block. Returns (pulse_measure, pulse_measure_t).
 
         pulse_measure(freq_acc, noise_est, peak_power, toa, valid_in, count_pri,
@@ -72,10 +75,13 @@ def make_pulse_measure(pulse_detect, cordic_iters=14, *, atan2_method=None):
     difference of two TOAs and the two would otherwise straddle a counter
     epoch -- see the reset block for what that produces.
 
-    All outputs are co-timed, `.latency` cycles after `valid_in`.
+    All outputs describe the same candidate when `.valid` asserts.
     PDW_ATAN2_METHOD=cordic|rom selects the angle implementation (default rom);
     atan2_method overrides it for a factory call. All measurement fields align
-    to the maximum selected angle, power-log and noise-log latency.
+    in request order through bounded queues; `join_depth` defaults to 32
+    memory words per branch. Overflow reaches the extraction alarm. Reset
+    drains all joins and clears PRI history. `get_latency()` is available to
+    tests/models under continuous CE, without any eager latency query.
     """
     power_t = pulse_detect.power_t
     noise_t = pulse_detect.noise_t
@@ -91,20 +97,24 @@ def make_pulse_measure(pulse_detect, cordic_iters=14, *, atan2_method=None):
     if atan2_method == "cordic":
         angle_unit, angle_t = make_cordic_atan2(acc_t, n_iters=cordic_iters)
     elif atan2_method == "rom":
-        angle_unit, angle_t = make_lut_atan2(acc_t)
+        angle_unit, angle_t = make_lut_atan2(acc_t, join_depth=join_depth)
     else:
         raise ValueError("make_pulse_measure: atan2_method must be cordic or rom")
     # Two separate converters: peak power is the dc-blocked, moving-averaged
     # `power_t` (12 fractional bits) and the noise floor is the raw
     # `magnitude` output (0 fractional bits). Feeding both through one
     # instance would silently mis-scale one of them by 36 dB.
-    log_db, _log_db_t = make_log2_db(power_t)
-    log_db_noise, _log_db_noise_t = make_log2_db(noise_t)
+    log_db, _log_db_t = make_log2_db(power_t, join_depth=join_depth)
+    log_db_noise, _log_db_noise_t = make_log2_db(noise_t, join_depth=join_depth)
 
-    LAT = max(angle_unit.latency, log_db.latency, log_db_noise.latency)
-    POWER_DELAY = LAT - log_db.latency
-    NOISE_DELAY = LAT - log_db_noise.latency
-    ANGLE_DELAY = LAT - angle_unit.latency
+    @struct
+    class pri_meta_t(NamedTuple):
+        pri: uint32_t
+        valid: uint1_t
+
+    join, _ = make_valid_join(
+        (angle_t, angle_t, log_db.out_t, log_db_noise.out_t, pri_meta_t), join_depth
+    )
 
     @struct
     class pulse_measure_t(NamedTuple):
@@ -116,6 +126,7 @@ def make_pulse_measure(pulse_detect, cordic_iters=14, *, atan2_method=None):
         valid: uint1_t
         freq_degenerate: uint1_t  # phasor was exactly zero; frequencies are 0
         pri_valid: uint1_t  # 0 on the first accepted pulse after reset
+        overflow: uint1_t  # sticky alignment-queue overflow; reset required
 
     @hw_func
     def pulse_measure(
@@ -128,19 +139,41 @@ def make_pulse_measure(pulse_detect, cordic_iters=14, *, atan2_method=None):
         rst: uint1_t,
     ) -> pulse_measure_t:
         # ---- frequency: one atan2 per endpoint, in parallel ---------------
-        cs = angle_unit(
-            x_in=freq_acc.first_re, y_in=freq_acc.first_im, valid_in=valid_in
-        )
-        ce = angle_unit(x_in=freq_acc.last_re, y_in=freq_acc.last_im, valid_in=valid_in)
+        if atan2_method == "rom":
+            cs = angle_unit(
+                x_in=freq_acc.first_re,
+                y_in=freq_acc.first_im,
+                valid_in=valid_in,
+                rst=rst,
+            )
+            ce = angle_unit(
+                x_in=freq_acc.last_re,
+                y_in=freq_acc.last_im,
+                valid_in=valid_in,
+                rst=rst,
+            )
+            angle_overflow: uint1_t = cs.overflow | ce.overflow
+        else:
+            cs = angle_unit(
+                x_in=freq_acc.first_re,
+                y_in=freq_acc.first_im,
+                valid_in=valid_in & ~rst,
+            )
+            ce = angle_unit(
+                x_in=freq_acc.last_re,
+                y_in=freq_acc.last_im,
+                valid_in=valid_in & ~rst,
+            )
+            angle_overflow: uint1_t = 0
 
         # ---- power and noise in dB ----------------------------------------
-        lp = log_db(v=peak_power, valid_in=valid_in)
-        ln = log_db_noise(v=noise_est, valid_in=valid_in)
+        lp = log_db(v=peak_power, valid_in=valid_in, rst=rst)
+        ln = log_db_noise(v=noise_est, valid_in=valid_in, rst=rst)
 
         # ---- PRI ----------------------------------------------------------
         prev_toa: Reg[uint64_t]
         have_prev: Reg[uint1_t]
-        take: uint1_t = valid_in & count_pri
+        take: uint1_t = valid_in & count_pri & ~rst
         delta: uint64_t = toa - prev_toa
         zero32: uint32_t = 0
         pri_now: uint32_t = delta[31:0] if have_prev else zero32
@@ -149,45 +182,22 @@ def make_pulse_measure(pulse_detect, cordic_iters=14, *, atan2_method=None):
             prev_toa = toa
             have_prev = 1
 
-        # Align every field to the slowest selected implementation. The extra
-        # array element permits the existing post-update/pass-through idiom.
-        db_p: Reg[int16_t[POWER_DELAY + 1]]
-        db_n: Reg[int16_t[NOISE_DELAY + 1]]
-        angle_s: Reg[angle_t[ANGLE_DELAY + 1]]
-        angle_e: Reg[angle_t[ANGLE_DELAY + 1]]
-        pri_d: Reg[uint32_t[LAT + 1]]
-        priv_d: Reg[uint1_t[LAT + 1]]
-        ndb_p: int16_t[POWER_DELAY + 1]
-        ndb_n: int16_t[NOISE_DELAY + 1]
-        npri: uint32_t[LAT + 1]
-        npriv: uint1_t[LAT + 1]
-        ndb_p[0] = lp.db
-        ndb_n[0] = ln.db
-        for k in range(POWER_DELAY):
-            ndb_p[k + 1] = db_p[k]
-        for k in range(NOISE_DELAY):
-            ndb_n[k + 1] = db_n[k]
-        for k in range(ANGLE_DELAY, 0, -1):
-            angle_s[k] = angle_s[k - 1]
-            angle_e[k] = angle_e[k - 1]
-        angle_s[0] = cs
-        angle_e[0] = ce
-        npri[0] = pri_now
-        npriv[0] = pri_ok
-        for k in range(LAT):
-            npri[k + 1] = pri_d[k]
-            npriv[k + 1] = priv_d[k]
-
-        # Advance the delay lines BEFORE reading their tails. The CORDIC
-        # presents its result post-update too, so reading these pre-update
-        # would put every dB and PRI field one cycle behind the frequency
-        # fields of the same pulse -- each measurement would carry the previous
-        # pulse's power. The frequencies would still look perfect, which is
-        # what makes this worth stating rather than leaving to the reader.
-        db_p = ndb_p
-        db_n = ndb_n
-        pri_d = npri
-        priv_d = npriv
+        # Every branch supplies one word per candidate, including rejected
+        # candidates. Join the oldest complete transaction without counting
+        # cycles or deriving any storage size from a converter's latency.
+        j = join(
+            cs,
+            cs.valid,
+            ce,
+            ce.valid,
+            lp,
+            lp.valid,
+            ln,
+            ln.valid,
+            pri_meta_t(pri=pri_now, valid=pri_ok),
+            valid_in,
+            rst,
+        )
 
         # ---- reset ---------------------------------------------------------
         # NOT optional, and not merely tidy: pulse_detect's `toa_counter` is
@@ -197,26 +207,22 @@ def make_pulse_measure(pulse_detect, cordic_iters=14, *, atan2_method=None):
         # wrapped value reported as a real PRI. Clearing `have_prev` alongside
         # makes that pulse report pri_valid=0 / STATUS_PRI_INVALID instead --
         # exactly what the first accepted pulse after power-on already does.
-        # Clear delayed PRI-valid flags too, so an in-flight measurement
-        # cannot claim a PRI spanning reset. The extraction engine blocks
-        # measurement release and drains its descriptors during reset.
+        # The join drains in-flight PRI metadata as well. The extraction
+        # engine also blocks release and drains descriptors during reset.
         if rst:
             prev_toa = 0
             have_prev = 0
-            for k in range(LAT + 1):
-                priv_d[k] = 0
 
         o: pulse_measure_t
-        o.freq_start = angle_s[ANGLE_DELAY].angle
-        o.freq_stop = angle_e[ANGLE_DELAY].angle
-        o.peak_power_db = db_p[POWER_DELAY]
-        o.noise_power_db = db_n[NOISE_DELAY]
-        o.pri = pri_d[LAT]
-        o.valid = angle_s[ANGLE_DELAY].valid
-        o.freq_degenerate = (
-            angle_s[ANGLE_DELAY].degenerate | angle_e[ANGLE_DELAY].degenerate
-        )
-        o.pri_valid = priv_d[LAT]
+        o.freq_start = j.p0.angle
+        o.freq_stop = j.p1.angle
+        o.peak_power_db = j.p2.db
+        o.noise_power_db = j.p3.db
+        o.pri = j.p4.pri
+        o.valid = j.valid
+        o.freq_degenerate = j.p0.degenerate | j.p1.degenerate
+        o.pri_valid = j.p4.valid
+        o.overflow = j.overflow | angle_overflow | lp.overflow | ln.overflow
         return o
 
     pulse_measure.out_t = pulse_measure_t
@@ -227,7 +233,15 @@ def make_pulse_measure(pulse_detect, cordic_iters=14, *, atan2_method=None):
     pulse_measure.noise_t = noise_t
     pulse_measure.power_t = power_t
     pulse_measure.acc_t = acc_t
-    pulse_measure.latency = LAT
+    angle_latency = (
+        angle_unit.get_latency if atan2_method == "rom" else lambda: angle_unit.latency
+    )
+    pulse_measure.get_latency = (
+        lambda: max(angle_latency(), log_db.get_latency(), log_db_noise.get_latency())
+        + 3
+    )
+    pulse_measure.join_depth = join_depth
+    pulse_measure._sim_clocked_pipeline_boundary = True
     return pulse_measure, pulse_measure_t
 
 

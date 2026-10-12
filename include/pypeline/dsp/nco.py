@@ -6,7 +6,7 @@ way: one block-RAM ROM (`ram.make_auto_pipeline_ram`) read on two ports, and one
 per rail, instead of `n_iters` shift-and-add stages.
 
     nco, nco_t = make_lut_nco(int16_t, table_bits=10, phase_bits=32)
-    o = nco(phase, amplitude, valid_in)      # -> .i, .q, .valid
+    o = nco(phase, amplitude, valid_in, rst)  # -> .i, .q, .valid, .overflow
 
 `phase` is unsigned `phase_bits` wide, turns x 2^phase_bits, wrapping
 naturally -- feed it from a free-running accumulator, exactly as for the
@@ -56,8 +56,12 @@ is at most one bin, i.e. 2^-(table_bits+2)/M turns of frequency -- below one
 LSB of a 16-bit turns output at the defaults. What truncation does produce is
 spurs, about 6 dB per index bit below the carrier (~72 dBc at table_bits=10).
 
-Latency is `.latency` = rom.latency + 2, one result per enabled clock:
+Results join signed amplitudes and ROM responses by validity, one per enabled
+clock. `get_latency()` is diagnostic only: rom.latency + 5 under continuous CE.
+No factory or alignment queue needs the automatic ROM's selected latency:
   L  the ROM -- automatic search starts at 3 cycles, native/HDL-only uses 1
+  2  response FIFO (metadata is queued independently)
+  1  registered completion join
   1  the multiply (one DSP48 per rail: 17-bit signed x 18-bit signed)
   1  round, saturate, output register
 """
@@ -75,6 +79,7 @@ from pypeline import (
 )
 
 from ram import make_ram, make_auto_pipeline_ram
+from stream.valid_join import make_valid_join
 
 
 def sine_quarter_table(table_bits, table_frac):
@@ -91,11 +96,13 @@ def sine_quarter_table(table_bits, table_frac):
     ]
 
 
-def make_lut_nco(amp_t, table_bits=10, phase_bits=32, *, auto_pipeline_ram=True):
+def make_lut_nco(
+    amp_t, table_bits=10, phase_bits=32, *, auto_pipeline_ram=True, join_depth=32
+):
     """Build a ROM-based NCO. Returns (lut_nco, lut_nco_t).
 
-        lut_nco(phase, amplitude, valid_in) -> lut_nco_t
-        lut_nco_t: .i, .q (amp_t), .valid
+        lut_nco(phase, amplitude, valid_in, rst) -> lut_nco_t
+        lut_nco_t: .i, .q (amp_t), .valid, .overflow
 
     amp_t:      signed output (and amplitude input) type, e.g. int16_t.
     table_bits: quarter-wave table index width. 2^table_bits entries of
@@ -105,7 +112,13 @@ def make_lut_nco(amp_t, table_bits=10, phase_bits=32, *, auto_pipeline_ram=True)
     auto_pipeline_ram: keyword-only, default True. Automatic ROM synthesis
                 supports Vivado and ECP5 OPEN_TOOLS. False keeps the manual
                 three-cycle ROM (five-cycle NCO) and its backend compatibility.
-                Amplitude/sign/valid alignment follows the selected ROM latency.
+                Signed amplitudes and table responses join in request order.
+    join_depth: unmatched-word memory bound per branch (default 32), independent
+                of selected ROM latency. Overflow is sticky and requires reset.
+
+    Pass rst=0 explicitly when no reset is needed. Reset blocks valid, drains
+    queues and clears pipeline valid flags. Hold it through upstream drain and
+    FIFO emptying. Conditional calls pause all state, including FIFO reads.
 
     `amplitude` may be negative (the output is then inverted). The one value
     whose product does not fit, `amplitude = -2^(A-1)` at the positive peak,
@@ -139,7 +152,6 @@ def make_lut_nco(amp_t, table_bits=10, phase_bits=32, *, auto_pipeline_ram=True)
         **constraints,
         init=TABLE,
     )
-    ROM_LAT = rom.latency
     phase_t = make_uint_t(phase_bits)
     addr_t = rom.addr_t
     quad_t = make_uint_t(2)
@@ -153,22 +165,39 @@ def make_lut_nco(amp_t, table_bits=10, phase_bits=32, *, auto_pipeline_ram=True)
     INDEX_MASK = (1 << N) - 1
 
     @struct
+    class amplitudes_t(NamedTuple):
+        cos: samp_t
+        sin: samp_t
+
+    @struct
+    class table_pair_t(NamedTuple):
+        cos: tab_t
+        sin: tab_t
+
+    join, _ = make_valid_join((amplitudes_t, table_pair_t), join_depth)
+
+    @struct
     class lut_nco_t(NamedTuple):
         i: amp_t
         q: amp_t
         valid: uint1_t
+        overflow: uint1_t
 
     @hw_func
-    def lut_nco(phase: phase_t, amplitude: amp_t, valid_in: uint1_t) -> lut_nco_t:
+    def lut_nco(
+        phase: phase_t, amplitude: amp_t, valid_in: uint1_t, rst: uint1_t
+    ) -> lut_nco_t:
         # ---- output stage: round, saturate, register ----------------------
         # Presented first, then computed, so the output is a real register.
         o_i_r: Reg[amp_t]
         o_q_r: Reg[amp_t]
         o_v_r: Reg[uint1_t]
+        overflow_r: Reg[uint1_t]
         o: lut_nco_t
         o.i = o_i_r
         o.q = o_q_r
-        o.valid = o_v_r
+        o.valid = o_v_r & ~rst
+        o.overflow = overflow_r & ~rst
 
         p_i_r: Reg[prod_t]
         p_q_r: Reg[prod_t]
@@ -209,38 +238,35 @@ def make_lut_nco(amp_t, table_bits=10, phase_bits=32, *, auto_pipeline_ram=True)
         s_sin: samp_t = amp_n if neg_sin else amp_w
 
         r = rom(
-            rom.p0_in_t(addr=a_cos, valid=valid_in),
-            rom.p1_in_t(addr=a_sin, valid=valid_in),
+            rom.p0_in_t(addr=a_cos, valid=valid_in & ~rst),
+            rom.p1_in_t(addr=a_sin, valid=valid_in & ~rst),
         )
 
-        # The signed amplitudes ride alongside the ROM read. Read the tail
-        # BEFORE shifting: it then holds the value from exactly ROM_LAT cycles
-        # ago, which is the request r.p0/r.p1 are answering this cycle.
-        sc_d: Reg[samp_t[ROM_LAT]]
-        ss_d: Reg[samp_t[ROM_LAT]]
-        sc_tail: samp_t = sc_d[ROM_LAT - 1]
-        ss_tail: samp_t = ss_d[ROM_LAT - 1]
-        nsc: samp_t[ROM_LAT]
-        nss: samp_t[ROM_LAT]
-        nsc[0] = s_cos
-        nss[0] = s_sin
-        for j in range(ROM_LAT - 1):
-            nsc[j + 1] = sc_d[j]
-            nss[j + 1] = ss_d[j]
-
-        t_cos: tabs_t = r.p0.rd_data
-        t_sin: tabs_t = r.p1.rd_data
+        # Both ports have the same RAM plan and answer the same request.
+        # Queue the complete response as well as the signed amplitudes.
+        j = join(
+            amplitudes_t(cos=s_cos, sin=s_sin),
+            valid_in,
+            table_pair_t(cos=r.p0.rd_data, sin=r.p1.rd_data),
+            r.p0.valid & r.p1.valid,
+            rst,
+        )
+        t_cos: tabs_t = j.p1.cos
+        t_sin: tabs_t = j.p1.sin
 
         # Register updates in reverse pipeline order: each stage reads its
         # predecessor's value from before that predecessor is updated.
         o_i_r = sat_i[A - 1 : 0]
         o_q_r = sat_q[A - 1 : 0]
         o_v_r = p_v_r
-        p_i_r = sc_tail * t_cos
-        p_q_r = ss_tail * t_sin
-        p_v_r = r.p0.valid
-        sc_d = nsc
-        ss_d = nss
+        p_i_r = j.p0.cos * t_cos
+        p_q_r = j.p0.sin * t_sin
+        p_v_r = j.valid
+        overflow_r = j.overflow
+        if rst:
+            p_v_r = 0
+            o_v_r = 0
+            overflow_r = 0
         return o
 
     lut_nco.amp_t = amp_t
@@ -250,9 +276,10 @@ def make_lut_nco(amp_t, table_bits=10, phase_bits=32, *, auto_pipeline_ram=True)
     lut_nco.phase_bits = phase_bits
     lut_nco.table = TABLE
     lut_nco.rom = rom
-    # ROM (input register, block-RAM read, output register) + multiply +
-    # output register. Read this rather than recomputing it.
-    lut_nco.latency = ROM_LAT + 2
+    # Inspect timing only when requested by a test/model, never during factory
+    # construction: an eager ROM latency query forces compiler re-elaboration.
+    lut_nco.get_latency = lambda: rom.latency + 5
+    lut_nco.join_depth = join_depth
     # To native simulation this is a STATEFUL block, like make_cordic_rotate: it
     # takes the ROM's physical outputs and aligns them with its own registers,
     # so there is nothing outside it to align around the ROM. Saying so stops a

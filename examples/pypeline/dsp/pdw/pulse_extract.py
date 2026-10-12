@@ -24,8 +24,8 @@ suggests rewinding a write pointer. That is not available: `make_fifo`
 src/vhdl/pipelinec_fifo_fwft.vhd exposing only push/pop -- no pointers, no
 occupancy, no commit/drop (the upstream axis_fifo.v this was derived from has
 FRAME_FIFO/DROP_BAD_FRAME logic, but it was stripped out; restoring it is a
-possible future optimisation). There is no RAM primitive in the Pypeline
-library either.
+possible future optimisation). Using plain FIFOs avoids a separate RAM
+pointer/commit implementation here.
 
 So the equivalent behaviour is built from two plain FIFOs plus a counter:
 
@@ -78,6 +78,7 @@ from pypeline import (
 
 from fifo import make_fifo
 from stream.stream import make_stream_interface
+from stream.valid_join import make_valid_join
 from pulse_measure import make_pulse_measure
 from dsp.fir_common import data_range
 
@@ -429,9 +430,7 @@ def make_packet_store(
 
         # ---- read side ----
         o.pkt_out_if.stream.data.sample = df.data_out
-        o.pkt_out_if.stream.data.last = (
-            releasing & df.data_out_valid & (remaining == 1)
-        )
+        o.pkt_out_if.stream.data.last = releasing & df.data_out_valid & (remaining == 1)
         o.pkt_out_if.stream.valid = releasing & df.data_out_valid
         o.pdw_out_if.stream.data = cur
         o.pdw_out_if.stream.valid = state == store_state_t.EMIT_PDW
@@ -527,7 +526,7 @@ def make_packet_store(
     return packet_store, packet_store_t
 
 
-def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16):
+def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16, *, join_depth=32):
     """The whole README box 3, wired to a `pulse_detect` instance. Returns
     (pulse_extract, pulse_extract_t).
 
@@ -559,9 +558,9 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16):
             orphaned in the data FIFO, so EVERY later packet is offset by them
             until reset. Corrupting and permanent; there is no recovery short
             of a reset, which is why it is reported rather than handled.
-          .meas_drop (uint1_t) -- sticky: same for the measurement FIFO, which
-            instead pairs every later record with the wrong pulse's frequency,
-            dB and PRI.
+          .meas_drop (uint1_t) -- sticky: a measurement or alignment FIFO lost
+            a word, breaking pairing with the pulse's frequency, dB and PRI.
+            Feeds the same internal-error alarm and requires reset.
 
     `peak_power` is truncated from the detector's full-precision `power_t`
     (46 bits with the default dc_k/ma_n) to the record format's uint32_t. Keep
@@ -577,7 +576,9 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16):
     rail_lo, rail_hi = data_range(rail_t)
     rail_val_t = rail_t.typeof("val")
 
-    pulse_measure, pulse_measure_t = make_pulse_measure(pulse_detect)
+    pulse_measure, pulse_measure_t = make_pulse_measure(
+        pulse_detect, join_depth=join_depth
+    )
     packet_store, _packet_store_t = make_packet_store(
         pulse_detect.complex_t,
         pulse_detect.gated_sample_t,
@@ -588,13 +589,17 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16):
         n_pkts=n_pkts,
     )
     pdw_qualify, verdict_t = make_pdw_qualify(pulse_detect.width_t)
-    power_val_t = pulse_detect.power_t.typeof("val")
-    # freq_acc/noise_est land this many cycles after gate_last (freq_accum
-    # carries a pipeline register -- see make_freq_accum). Anything latched on
-    # gate_last has to be delayed by the same amount before it can be paired
-    # with them, or a pulse would be measured with its own frequency and the
-    # NEXT pulse's peak power.
-    FL = pulse_detect.freq_latency
+
+    @struct
+    class candidate_meta_t(NamedTuple):
+        peak: pulse_detect.power_t
+        toa: uint64_t
+        accept: uint1_t
+        noise: pulse_detect.noise_t
+
+    input_join, _ = make_valid_join(
+        (candidate_meta_t, pulse_detect.freq_accum_t), join_depth
+    )
 
     @struct
     class pulse_extract_t(NamedTuple):
@@ -632,7 +637,10 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16):
         i_val: rail_val_t = gated_in.data.i.val
         q_val: rail_val_t = gated_in.data.q.val
         clipped: uint1_t = (
-            (i_val == rail_hi) | (i_val == rail_lo) | (q_val == rail_hi) | (q_val == rail_lo)
+            (i_val == rail_hi)
+            | (i_val == rail_lo)
+            | (q_val == rail_hi)
+            | (q_val == rail_lo)
         )
         # Both ternary branches must be the SAME type, so the set-bit
         # constants need widening to uint16_t explicitly -- a bare
@@ -646,41 +654,29 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16):
         dsp_bit: uint32_t = dsp_set if dsp_overflow else zero32
         beat_status: uint32_t = clip_bit | dsp_bit
 
-        # Delay the gate_last-timed inputs of the measurement by FL so they
-        # arrive with freq_acc. Only the fields the measurement consumes are
-        # delayed; the descriptor still uses the undelayed candidate.
-        peak_d: Reg[power_val_t[FL + 1]]
-        toa_d: Reg[uint64_t[FL + 1]]
-        acc_d: Reg[uint1_t[FL + 1]]
-        npeak: power_val_t[FL + 1]
-        ntoa: uint64_t[FL + 1]
-        nacc: uint1_t[FL + 1]
-        npeak[0] = candidate.peak_power.val
-        ntoa[0] = candidate.toa
-        nacc[0] = v.accept & pdw_in_if.stream.valid
-        for k in range(FL):
-            npeak[k + 1] = peak_d[k]
-            ntoa[k + 1] = toa_d[k]
-            nacc[k + 1] = acc_d[k]
-        peak_d = npeak
-        toa_d = ntoa
-        acc_d = nacc
-        # Only the ACCEPT flags need clearing: peak_d/toa_d carry data that is
-        # never read except under acc_d, and both shift unconditionally, so
-        # they flush themselves within FL cycles. Zeroing two wide delay lines
-        # for no observable difference would cost mux width on a design with
-        # ~2 ns of margin.
-        if rst:
-            for k in range(FL + 1):
-                acc_d[k] = 0
+        # One candidate and one frequency response per completed pulse. The
+        # descriptor stays immediate; the measurement waits for both queue
+        # heads. The noise estimate belongs to candidate completion too.
+        j = input_join(
+            candidate_meta_t(
+                peak=candidate.peak_power,
+                toa=candidate.toa,
+                accept=v.accept,
+                noise=noise_est,
+            ),
+            pdw_in_if.stream.valid,
+            freq_acc,
+            freq_acc.valid,
+            rst,
+        )
 
         m = pulse_measure(
-            freq_acc=freq_acc,
-            noise_est=noise_est,
-            peak_power=pulse_detect.power_t(val=peak_d[FL]),
-            toa=toa_d[FL],
-            valid_in=freq_acc.valid,
-            count_pri=acc_d[FL],
+            freq_acc=j.p1,
+            noise_est=j.p0.noise,
+            peak_power=j.p0.peak,
+            toa=j.p0.toa,
+            valid_in=j.valid,
+            count_pri=j.p0.accept,
             rst=rst,
         )
 
@@ -704,7 +700,7 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16):
         o.verdict = v
         o.fifo_full = ps.fifo_full
         o.desc_drop = ps.desc_drop
-        o.meas_drop = ps.meas_drop
+        o.meas_drop = ps.meas_drop | j.overflow | m.overflow
         o.measure = m
         return o
 
@@ -721,5 +717,5 @@ def make_pulse_extract(pulse_detect, depth=16384, n_pkts=16):
     pulse_extract.n_pkts = n_pkts
     pulse_extract.pulse_measure = pulse_measure
     pulse_extract.pulse_measure_t = pulse_measure_t
-    pulse_extract.measure_latency = pulse_measure.latency
+    pulse_extract.join_depth = join_depth
     return pulse_extract, pulse_extract_t

@@ -998,7 +998,6 @@ def make_pulse_detect(
     delay_line, _delay_data_t = make_delay_line(magnitude.complex_t, depth=delay_depth)
     pdw_gate, gated_sample_t = make_pdw_gate(magnitude.complex_t)
     freq_accum, freq_accum_t = make_freq_accum(magnitude.complex_t, block_k=freq_block_k)
-    FA_LAT = freq_accum.latency
     # The noise floor is measured on the PRE-dc_block magnitude (raw I^2+Q^2,
     # 0 fractional bits) -- see the estimator below -- so it is a different
     # type, and a different binary point, from peak_power.
@@ -1014,10 +1013,9 @@ def make_pulse_detect(
         pdw_out_if: detect_fsm.out_fwd_t
         gated_out: gated_sample_t
         overflow: uint1_t
-        # Raw measurement inputs, all valid on the gate_last beat -- i.e. on
-        # the same cycle as the candidate PDW, so a consumer latches one
-        # coherent set. Turning these into frequencies and decibels happens
-        # downstream in pulse_measure (once per pulse), not here (every sample).
+        # noise_est is captured on candidate completion. freq_acc has its own
+        # completion valid; extraction joins the two transactions in order.
+        # Converting to frequencies and decibels happens once per pulse.
         freq_acc: freq_accum_t
         noise_est: noise_t
 
@@ -1125,17 +1123,9 @@ def make_pulse_detect(
             noise_acc = noise_acc + ((mag_sh - noise_acc) >> noise_k)
         noise_now: noise_val_t = noise_acc >> noise_k
 
-        # freq_accum carries a pipeline register (see its docstring: it is
-        # what keeps the 125 MSPS datapath under 8 ns), so its result lands
-        # FA_LAT cycles after gate_last. Delay the noise floor by the same
-        # amount so a consumer can latch `freq_acc` and `noise_est` on one
-        # cycle and get a coherent set, rather than having to know the skew.
-        nse_d: Reg[noise_val_t[FA_LAT + 1]]
-        nnse: noise_val_t[FA_LAT + 1]
-        nnse[0] = noise_now
-        for k in range(FA_LAT):
-            nnse[k + 1] = nse_d[k]
-        nse_d = nnse
+        # The extraction engine captures this floor on candidate completion
+        # and joins it with the later frequency response. No frequency-path
+        # latency is needed to align the noise estimate.
 
         # Reset the noise estimator too. It would re-converge on its own, but
         # letting it carry a pre-reset floor across means the first pulses
@@ -1144,14 +1134,12 @@ def make_pulse_detect(
         # which is the failure mode the excision guard above exists to avoid.
         if rst:
             noise_acc = 0
-            for k in range(FA_LAT + 1):
-                nse_d[k] = 0
 
         o.pdw_out_if = pd_o.pdw_out_if
         o.gated_out = gate_o
         o.overflow = pd_o.overflow
         o.freq_acc = fa_o
-        o.noise_est = noise_t(val=nse_d[FA_LAT])
+        o.noise_est = noise_t(val=noise_now)
         return o
 
     pulse_detect.rail_t = rail_t_actual
@@ -1164,10 +1152,8 @@ def make_pulse_detect(
     pulse_detect.freq_accum_t = freq_accum_t
     pulse_detect.freq_acc_t = freq_accum.acc_t
     pulse_detect.freq_block_k = freq_block_k
-    # Cycles from gate_last to freq_acc.valid (and to the matching
-    # noise_est). Consumers must delay anything they latch on gate_last --
-    # the candidate's peak/toa, the qualification verdict -- by this much
-    # before pairing it with a measurement. Never hardcode it.
+    # Diagnostic/testbench timing from gate_last to freq_acc.valid. The
+    # extraction engine joins responses with candidate metadata by validity.
     pulse_detect.freq_latency = freq_accum.latency
     pulse_detect.noise_k = noise_k
     pulse_detect.noise_t = noise_t

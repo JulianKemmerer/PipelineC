@@ -38,7 +38,7 @@ proxy measurements remain explicitly identified in [Synthesis checks](#synthesis
   * [Power and the noise floor](#power-and-the-noise-floor)
   * [PRI](#pri)
   * [Known limitation: I/Q DC offset](#known-limitation-iq-dc-offset)
-  * [Self-timed alignment opportunities](#self-timed-alignment-opportunities)
+  * [Self-timed alignment](#self-timed-alignment)
 * [Host software (AirStack / SoapySDR)](#host-software-airstack--soapysdr)
   * [Channel map (2-channel bitstream mode)](#channel-map-2-channel-bitstream-mode)
   * [Bring-up order](#bring-up-order)
@@ -207,9 +207,9 @@ derived one.
 
 The measurement engine defaults to ROM atan2, with
 `PDW_ATAN2_METHOD=cordic|rom` selecting either implementation, and uses automatic
-ROMs for the two logarithm converters. It aligns frequency, power, noise, valid
-and PRI fields to the longest selected conversion latency. The packet-release
-engine reads that latency; reset still blocks output, drains storage and clears
+ROMs for the two logarithm converters. It joins frequency, power, noise and PRI
+when all result queues have a head for the same candidate. Packet release waits
+for the corresponding measurement. Reset blocks output, drains storage and clears
 PRI history. Power and conjugate products retain DSP multipliers; filters,
 accumulation, thresholds and PRI remain arithmetic. Their wide, runtime inputs
 make direct truth tables impractical, and their existing operations already fit
@@ -283,6 +283,8 @@ nothing whatsoever in a bitstream. Both are reachable from a host that stalls:
 is back-pressured for exactly as long as the host spends between reads. All
 three conditions are latched (`fifo_full`, `desc_drop`, `meas_drop`) and feed
 the **internal-error alarm**, which is the only way a host ever learns of them.
+Alignment-queue overflow also feeds `meas_drop`; NCO alignment overflow feeds
+the alarm directly. Both destroy transaction pairing and require a reset.
 `PKT_QUEUE_DEPTH` (16) and `PKT_FIFO_DEPTH` are exported to the host so
 `airt_pdw_test.py` sizes its pulse rate against the real numbers.
 
@@ -338,7 +340,7 @@ Every channel carries an active-high `*_axis_rst` — seven in all. They OR into
 one `global_rst`, one register stage behind the pins (`RST_LATENCY`, exported
 from `top.py`). That register is a fanout break, not a metastability
 synchroniser: these resets are synchronous to the design clock, but the reset
-reaches the detector's input valid, a 320-bit control-register mux, three FIFO
+reaches the detector's input valid, a 320-bit control-register mux, packet and alignment FIFO
 read enables and a few dozen register clears — more than a seven-input OR of
 pins should drive combinationally in a design with ~2 ns of margin.
 
@@ -376,11 +378,15 @@ The generator's NCO is also fed zero amplitude while reset is held. That matters
 because of the bring-up order below: the configuration lands while the datapath
 is still in reset, and reset pins the PRI counter at 0, which is *inside* a
 pulse. Without the gate, the NCO pipeline fills with the carrier during reset and
-the first pulse after release comes out `nco.latency` samples wider than
+the first pulse after release comes out a pipeline-fill interval wider than
 commanded — enough to fail `pdw_verify`'s width check on pulse 0 of every hardware
-run. `pdw_tb.py` could not see this, because it lands its configuration on the
-release cycle itself. `pulse_gen_tb.py`'s `pulse_gen_reset_tb` holds reset with a
-live configuration, and fails without the gate.
+run. The NCO now also blocks requests/valid and drains its alignment queues;
+the generator uses zero carrier while NCO valid is low, since an empty FIFO's
+payload may still contain old RAM data. `pdw_tb.py` could not see the original
+reset-fill problem, because it lands its configuration on the
+release cycle itself. `pulse_gen_tb.py`'s `pulse_gen_reset_tb` checks a live
+configuration at power-on and a mid-run reset after FIFO addresses have wrapped,
+including the silent refill interval and the first pulse's exact width.
 
 **Drain.** While reset is asserted every FIFO read enable is forced and the
 buffers empty into the bit bucket — not a convenience but the only mechanism
@@ -588,7 +594,8 @@ The organizing idea separates sample-rate work from per-pulse conversion:
 * **Measurement path — once per pulse**, fully pipelined. Each angle and log
   converter accepts one input per enabled clock. Idle gaps between pulses do
   not relax the 125 MHz timing requirement. The selected implementation's
-  `.latency` determines when all fields become valid together.
+  Queue heads determine when all fields become valid together, without reading
+  the selected pipeline latencies during construction.
 
 The historical 100T proxy measurement of the fast-path addition was about
 400 LUTs, 350 flip-flops and four DSP48s, with unchanged 130.9 MHz detector timing.
@@ -638,8 +645,9 @@ conversion, its default ROM method: both the exponent and the mantissa terms are
 table lookups, good to 0.008 dB. These already were ROMs before automatic RAM
 support; the change replaces their manual register placement. Each table starts
 its synthesis search at two cycles, and each converter aligns its independently
-selected table responses, valid and floored flag. The measurement engine then
-aligns both converters with the angle outputs and PRI using the maximum latency.
+selected table responses and floored flag through a completion join. The
+measurement engine joins both completed converters with the angle outputs and
+PRI metadata in candidate order.
 Two things specific to this design:
 
 * **The fractional bits must be subtracted** — `power_t` is fixed-point, so the
@@ -683,32 +691,61 @@ noise is read as signed, deliberately), so this does not show up in simulation,
 but a real receiver's ADC/mixer offset would. Correcting it needs an I/Q DC
 blocker ahead of the conjugate product, which is not built.
 
-## Self-timed alignment opportunities
+## Self-timed alignment
 
 Path B already follows `gate_advance`, and packet release already waits for a
 descriptor and `m.valid`. Prefer that completion-driven style over deriving
 register-array lengths from an automatic component's `.latency`.
 
-The remaining opportunities are:
+The remaining paths now use
+[`make_valid_join`](../../../../include/pypeline/stream/pypeline_stream_guide.md#completion-joins-make_valid_join):
 
-| Path | Current alignment | Self-timed alternative |
+| Path | Previous latency counting | Implemented completion join |
 |---|---|---|
-| `pulse_measure` | `LAT = max(angle, power-log, noise-log)` and delay arrays | Queue each converter's results and the PRI/qualification metadata; emit only when all queue heads are present, then pop them together |
-| NCO and atan2 ROM sidebands | `ROM_LAT`, `RL` and `AL` size amplitude, sign and quadrant delay arrays | Queue request metadata and response data; join them in request order when the response `valid` arrives |
-| `log2_db` table join | Delay the faster mantissa/exponent result to the slower table | Queue both results and the floor flag; join completed responses |
-| Candidate to frequency accumulator | `FL` delays peak, TOA and acceptance | Queue those fields at candidate completion and pair them with `freq_acc.valid` |
+| `pulse_measure` | `LAT = max(angle, power-log, noise-log)` and delay arrays | Five queues: start angle, stop angle, peak dB, noise dB and PRI; pop together only when every head is present |
+| NCO and atan2 ROM sidebands | `ROM_LAT`, `RL` and `AL` size amplitude, sign and quadrant delay arrays | Queue signed amplitudes or quadrant metadata and the ROM responses; join in request order |
+| `log2_db` table join | Delay the faster mantissa/exponent result to the slower table | Queue both table values and the floor flag; join completed responses |
+| Candidate to frequency accumulator | `FL` delays peak, TOA, acceptance and noise | Capture peak, TOA, acceptance and noise at candidate completion; queue frequency responses separately and join by validity |
 
-These are proposed conversions, not implemented changes. Queue depth would be a
-capacity bound on outstanding work, like Path B's `delay_depth`, rather than an
-exact latency. Each conversion must preserve input bubbles, clock-enable pauses,
-one-result-per-clock throughput, overflow reporting, and reset-by-draining.
-Queue **response data too**: a fast ROM may answer before a metadata FIFO has
-presented its first word. Joining only current `valid` pulses would lose or pair
-the wrong transaction when the branches have different delays.
+Each branch enqueues only valid words. A result emits when **all heads are
+valid**, and all heads pop on that same enabled clock. This preserves transaction
+order through bubbles and unequal or variable completion delays. Both metadata
+and **response data** are queued: a fast ROM can answer before its metadata FIFO
+presents a head. No transaction IDs are needed because every branch produces
+one result per request in order, including rejected candidates.
 
-This would remove the design's latency-dependent re-elaboration and alignment
-arrays. The compiler would still re-elaborate while trying automatic RAM plans;
-avoiding those implementation-search passes is a separate compiler change.
+Each join captures the completed heads into an output register. This cuts the
+FIFO BRAM output path before downstream arithmetic: the first synthesis attempt
+exposed an 8.90 ns path from the frequency FIFO into atan2's quadrant comparison.
+The added register follows completion, so no delay counter or re-elaboration
+dependency is introduced.
+
+`join_depth=32` defaults to 32 memory words plus a FWFT output word per branch.
+It bounds unmatched work, like Path B's `delay_depth`; it is not an exact delay.
+Leave capacity for FIFO warm-up as well as branch skew. One result per enabled
+clock is sustained once the branches are flowing. FIFO reads and writes now
+both honor clock enable, matching native simulation. Reset blocks writes/output,
+drains every queue independently and clears PRI history; the existing minimum
+reset hold remains sufficient for the default design. There is no new FIFO reset
+primitive. Overflow is sticky, asserts in simulation and reaches the hardware
+alarm; reset is required after any word loss.
+
+These factories no longer query automatic `.latency` during construction, so
+alignment no longer forces latency-dependent re-elaboration. The compiler still
+re-elaborates while searching automatic RAM implementations. `get_latency()` is
+an explicit **diagnostic/model** query under continuous clock enable, not a
+hardware alignment dependency. Selected one-cycle ROMs give NCO/log conversion
+latencies of six clocks and ROM atan2 of fourteen; the measurement join adds three,
+giving seventeen clocks (nineteen with the default fourteen-iteration CORDIC).
+Queues add storage and a little transport delay in exchange for removing the
+per-path delay bookkeeping. They do not make the arithmetic smaller by themselves.
+
+Converter calls now take explicit `rst` (use `0` when unused) and report
+`.overflow`. Two compiler limitations encountered here have focused reproducers
+in `known_issues_tests.py`: omitted hardware default arguments leave ports
+undriven, and nested record names beginning `signed_` take the wrong VHDL scalar
+conversion path. Calls pass reset explicitly and the NCO uses `amplitudes_t`.
+The existing enum-name workaround is unchanged.
 
 # Host software (AirStack / SoapySDR)
 
@@ -1018,7 +1055,7 @@ account.
 | Fire one now | `CTRL_FLAG_ALARM_TEST` (bit 2), or `--alarm-test` |
 | Samples destroyed per alarm | `ALARM_DROP_SAMPLES` = 4096 (32.8 µs at 125 MSPS) |
 | Backstop | `ALARM_MAX_CYCLES` = 2²⁰ (~8.4 ms) |
-| Triggers | `packet_store`'s sticky `fifo_full`, `desc_drop`, `meas_drop` |
+| Triggers | Sticky packet `fifo_full`, descriptor `desc_drop`, measurement/alignment `meas_drop`, or generator NCO alignment overflow |
 
 **Off by default**, in `CTRL_DEFAULTS` and in the script. Arming it means
 consenting to destroy real samples to send a one-bit message, which is only the
@@ -1145,6 +1182,7 @@ Everything lives flat in this directory. Hardware first, then host-side.
 | `pulse_extract_tb.py` | The engine alone, hand-fed synthetic gate streams — accept path + PDW/packet ordering, glitch reject, CW reject, `status_flags`, long-stall backpressure | `sim_assert`, hardware-generated stimulus |
 | `pulse_measure_test.py` | The measurement engine over its full input range, where a width or normalization mistake shows up (`pdw_tb.py` only covers the levels the real detector happens to produce) | `sim_call` vs a bit-exact model |
 | `pdw_ctrl_test.py` | Reset defaults, apply latency (measured, then checked against the advertised attribute), ready never dropping, back-to-back writes, and the two malformed cases — a padded frame whose excess must be dropped and a runt that must leave the registers untouched, neither desyncing the frame after it; plus reset, and an abandoned frame flushed rather than joined to the next | `sim_call`, `type_to_bytes` + `AxisSimSource` |
+| `pulse_extract_alignment_test.py` | 28 candidates with independently delayed frequency responses, live noise changing between candidates, glitch/CW rejection and accepted-pulse PRI; exact records and packets, with no `freq_latency` attribute | `sim_call`, ROM and CORDIC |
 | `pdw_reset_test.py` | Reset semantics for the composed datapath — a reset landing **mid-pulse**: nothing emitted for the interrupted pulse, its buffered samples drained rather than prepended to the next packet, TOA and PRI restarting, and the release artifact bounded below `min_width`. Both the drain term and the `gate_armed` clear have negative controls | `sim_call` on `pulse_detect` + `pulse_extract` wired as `top.py` wires them |
 | `pdw_alarm_test.py` | The alarm alone. Its job is to destroy a known number of ADC samples, so the property tested is "exactly N samples were dropped", not "tready went low" — and those diverge only when the input is **gapped**. Carries its own negative control: the same stimulus through a deliberately-wrong cycle-counting model, asserted to get a different answer | `sim_call` |
 | `pdw_verify_test.py` | That `pdw_verify.py` actually catches a wrong record. Mostly negative controls: corrupt one field, assert the check for **that** field fails and the others do not. Also generates `pypeline_host_types.py` and checks the host files compose with it | numpy, synthetic pulses |
@@ -1254,11 +1292,17 @@ whose own unit tests live in `src/tests/pypeline_tests/inst/` (`cordic_test.py`,
 the design; one under `inst/` would need a `sys.path` hack back into this
 directory to import it. They are registered in
 `src/tests/pypeline_tests/native_sim_tests.py`. Measurement, reset and end-to-end
-entries run with both angle methods. Measurement tests also force either log
+entries run with both angle methods. Candidate/frequency alignment tests also
+run both methods with independently scheduled responses and no detector latency
+attribute. Measurement tests force either log
 converter to take longer than atan2, checking every field and PRI alignment.
 The DSP tests cover automatic/manual ROM modes and unequal table latencies;
 `self_check_dsp_rom_test.py` and `lut_atan2_test.py` provide native/GHDL parity,
-including bubbles and clock-enable pauses. RAM backend, mapping and selected-plan
+including bubbles, clock-enable pauses and in-flight reset drain. `valid_join_test.py`
+checks independent arrivals, sustained one-result-per-clock throughput, reset
+with unmatched heads and overflow; `self_timed_factory_test.py` forbids automatic
+latency reads during construction. The generator reset bench also has native/GHDL
+parity, checking old FIFO contents cannot leak during refill. RAM backend, mapping and selected-plan
 coverage belongs in the [test-suite RAM section](../../../../docs/pypeline_TESTS.md#ram-coverage).
 
 ```
@@ -1287,7 +1331,7 @@ It complements the capture-file replay tests, which do not execute `run()`.
 | `pulse_gen_synth_top.py` | Generator alone, including its NCO. `rst` is a real port, so the reset's fanout to every register is measured rather than optimised away |
 | `pulse_detect_synth_top.py` | Hysteresis FSM alone (elastic, the heavier path), `rst` likewise a real port |
 | `pulse_measure_synth_top.py` | Measurement alone, exposing all inputs and outputs for CORDIC/ROM timing and area comparisons |
-| `pulse_extract_synth_top.py` | Engine alone at the real 16K FIFO depth, including its angle and logarithm converters. `rst` drives the three FIFO read enables, so it sits directly in the release path |
+| `pulse_extract_synth_top.py` | Engine alone at the real 16K FIFO depth, including its angle and logarithm converters. `rst` drains packet and alignment FIFOs, so it sits directly in the release path |
 | `top.py` | Everything composed: all seven AXIS ports, both record serializers, the control deserializer, the broadcast interlock and the seven-input reset OR |
 
 These are not redundant with the native-sim testbenches: native sim never emits
@@ -1324,7 +1368,32 @@ with manual NCO/log ROMs and CORDIC atan2:
 | Extraction engine | 146.735 | 6,193 | 3,864 | 3 | 21 | 0 |
 | Composed design | 146.735 | 12,764 | 6,127 | 5 | 21 | 10 |
 
-**Automatic ROM standalone builds** on the same 200T at the 125 MHz goal:
+**Self-timed composed ROM build** (2026-10-11), full Vivado 2019.2 sweep on
+`xc7a200tffg1156-2`, with 32-word alignment queues and registered join outputs:
+
+| Build | PDW MHz | Generator/control MHz | LUTs | Registers | RAMB18 | RAMB36 | DSPs |
+|---|---:|---:|---:|---:|---:|---:|---:|
+| Self-timed ROM (**current**) | 127.600 | 137.212 | 9,172 | 4,709 | 11 | 29 | 12 |
+| Previous latency-counted ROM | 132.873 | 134.264 | 8,532 | 4,195 | 7 | 25 | 12 |
+
+All four mains meet 125 MHz and the design fits; reset has a measured lower bound
+of 125 MHz in the whole-design report. All six automatic ROMs select one cycle.
+The queue implementation adds 640 LUTs, 514 registers, four RAMB18s and four
+RAMB36s; DSP count is unchanged. Alignment is simpler to maintain, with some
+extra storage and transport delay. The retained PDW margin is about 0.16 ns at
+125 MHz. These are synthesis results, not routed AirStack timing.
+
+The [self-timed measurement artifact](../../../../src/tests/pypeline_tests/qor/pdw_self_timed_vivado_200t.json)
+retains the command, signatures, selected RAM plans, clocks, resources and
+verification results. Both complete native variants pass 7,323 clocks: 18
+candidates, 12 released records/packets, six expected rejects and 82 independent
+verifier assertions each. Native/GHDL joins, ROM orderings, clock-enable pauses
+and generator refill/reset checks pass; removing the generator's NCO-valid mask
+fails the mid-run refill check in GHDL. Top elaboration, variable completion and
+converter native/GHDL parity also pass with the committed compiler separately
+from the compiler changes already in the working tree.
+
+**Pre-join automatic ROM standalone builds** on the same 200T at the 125 MHz goal:
 
 | Build | MHz | DSP latency | LUTs | Registers | RAMB18 | RAMB36 | DSPs |
 |---|---:|---:|---:|---:|---:|---:|---:|
@@ -1338,14 +1407,14 @@ angle trades four RAMB36s and two DSPs for fewer measurement LUTs/registers and
 half the measurement latency. Vivado shares the identical tables across the
 two endpoint converters using both physical read ports.
 
-**Composed automatic-ROM builds**, using full sweeps on the same 200T:
+**Pre-join composed automatic-ROM builds**, using full sweeps on the same 200T:
 
 | Angle method | MHz | Measurement latency | LUTs | Registers | RAMB18 | RAMB36 | DSPs |
 |---|---:|---:|---:|---:|---:|---:|---:|
 | CORDIC | 134.264 | 16 | 12,697 | 6,069 | 7 | 21 | 10 |
 | ROM (**default**) | 132.873 | 8 | 8,532 | 4,195 | 7 | 25 | 12 |
 
-All ROMs select one cycle, including both angle tables. The NCO takes three
+In those earlier builds, all ROMs select one cycle, including both angle tables. The NCO takes three
 cycles and each log converter takes three; measurement alignment follows the
 longest selected conversion. ROM atan2 saves **4,165 LUTs (32.8%) and 1,874
 registers (30.9%)** against CORDIC in the composed design, for **four additional
@@ -1429,7 +1498,7 @@ rather than guessed. Two generalize:
   products, not just their sums, removes the choice. A path that depends on a
   synthesizer's packing decision is not meeting timing, it is winning a coin toss.
 
-Every register added along the way is reported through a `.latency` attribute and
-consumed as one (`freq_accum.latency`, `cordic_atan2.latency`, ...). Nothing
-downstream hardcodes a delay, which is why all of these changes were made without
-touching the testbenches' alignment logic or the golden model's structure.
+The historical design propagated added registers through `.latency` attributes.
+The current design goes further: completion joins absorb those delays without
+querying them to construct hardware. Tests and independent models can still
+inspect timing explicitly, while the datapath waits for valid results.

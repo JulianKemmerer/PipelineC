@@ -253,11 +253,12 @@ instance at different widths, against both a bit-exact model and `math.atan2`).
 from dsp.lut_atan2 import make_lut_atan2, golden_lut_atan2
 
 angle, angle_t = make_lut_atan2(make_int_t(39))
-# angle(x_in, y_in, valid_in) -> {.angle (int16_t turns), .valid, .degenerate}
+# angle(x_in, y_in, valid_in, rst) -> {.angle (int16_t turns), .valid, .degenerate, .overflow}
 # golden_lut_atan2(angle, x, y) -> (angle_bits, degenerate)
 ```
 
-The interface matches vectoring CORDIC. Signs and octant reduce the input to
+The angle convention matches vectoring CORDIC; the LUT version also takes reset
+and reports alignment overflow. Signs and octant reduce the input to
 `0 <= minor/major <= 1`; both magnitudes are normalized to 17 significant bits.
 A 4096-entry reciprocal table (18 fractional bits), one multiplication, and a
 4096-entry arctangent table approximate the ratio's angle. Tables are generated
@@ -267,8 +268,10 @@ explicitly, including the most negative signed inputs. Only `(0, 0)` sets
 so it needs no general divider.
 
 Both ROMs use `make_auto_pipeline_ram`, starting synthesis search at two cycles
-each. `.latency` is `reciprocal_rom.latency + angle_rom.latency + 6` (eight cycles
-in native or HDL-only builds). Quadrant metadata follows the selected delays.
+each. Two completion joins pair response data with normalized numerator/quadrant
+metadata. No ROM latency is queried during construction. Diagnostic
+`get_latency()` is `reciprocal_rom.latency + angle_rom.latency + 12` (fourteen
+cycles in native or HDL-only builds).
 The pipeline accepts one vector per enabled clock; a conditional call pauses all
 stages. Vivado and ECP5 open tools are the supported synthesis backends.
 
@@ -286,23 +289,25 @@ The parity matrix includes PDW's 40-bit accumulator width and signed extremes.
 from dsp.nco import make_lut_nco
 
 nco, nco_t = make_lut_nco(int16_t, table_bits=10, phase_bits=32)
-# nco(phase, amplitude, valid_in) -> {.i, .q, .valid}   amplitude*(cos, sin)(phase)
+# nco(phase, amplitude, valid_in, rst) -> {.i, .q, .valid, .overflow}
 ```
 
-The same interface as `make_cordic_rotate`, from one automatic ROM read on two ports
+The same phase/amplitude and I/Q conventions as `make_cordic_rotate`, with reset
+and overflow ports, from one automatic ROM read on two ports
 and one multiplier per rail. The ROM holds a quarter wave of sine sampled at the
 **centre** of each of its `2^table_bits` phase bins, which is what makes the mirror
 for the other quadrants a plain bitwise NOT of the index and makes the phase
 truncation round rather than floor. The top two phase bits pick the quadrant and the
 signs are applied to the amplitude before the multiply.
 
-* **Latency `nco.rom.latency + 2`**, fully pipelined: selected ROM stages, the
-  multiply, and a round/saturate output register. Amplitude, signs and valid
-  follow the selected ROM latency.
+* **Completion-driven alignment**, fully pipelined: a queue of signed amplitudes
+  joins a queue of two-port ROM responses before multiplication and rounding.
+  Diagnostic `get_latency()` is `nco.rom.latency + 5`; hardware construction
+  does not query that latency.
 * **Automatic/manual choice.** Keyword-only `auto_pipeline_ram=True` uses the
   automatic factory, starting its synthesis search at three ROM cycles.
-  Native/HDL-only builds use a one-cycle ROM, hence three NCO cycles. Set
-  `auto_pipeline_ram=False` for the manual three-cycle ROM and five-cycle NCO,
+  Native/HDL-only builds use a one-cycle ROM, hence six NCO cycles. Set
+  `auto_pipeline_ram=False` for the manual three-cycle ROM and eight-cycle NCO,
   retaining the manual factory's existing backend compatibility. Automatic
   synthesis supports Vivado and ECP5 open tools; run a full sweep, without `--comb`.
 * **Historical manual-ROM cost.** Swapped in for a 16-iteration `make_cordic_rotate`, it took
@@ -321,7 +326,7 @@ Tests: `src/tests/pypeline_tests/inst/lut_nco_test.py` (bit-exact against
 table sizes, the four axis crossings, constant envelope and zero mean over a full
 circle, saturation at amplitude −32768, measured SFDR, frequency-estimate bias,
 automatic/manual modes and selected ROM latencies). `self_check_dsp_rom_test.py`
-checks selected latency and clock-enable pauses against GHDL.
+checks selected latency, bubbles, clock-enable pauses and reset drain against GHDL.
 
 ## `make_log2_db` — linear power to dBFS
 
@@ -330,12 +335,13 @@ from dsp.log2_db import make_log2_db
 
 log_db, log_db_t = make_log2_db(power_t)                  # method="rom", the default
 log_pwl, log_pwl_t = make_log2_db(power_t, method="pwl")  # no ROM
-# log_db(v: power_t, valid_in: uint1_t) -> {.db (int16_t Q8.8), .valid, .floored}
+# log_db(v: power_t, valid_in: uint1_t, rst: uint1_t)
+# -> {.db (int16_t Q8.8), .valid, .floored, .overflow}
 ```
 
 Count-leading-zeros gives the exponent `e`; the mantissa `m` is the bits below the
 leading one; `dB = 3.0103 · ((e − frac_bits) + log₂(1+m))`. Two interchangeable
-implementations with the same ports; consumers must read `.latency`:
+implementations with the same ports; consumers use `.valid` for completion:
 
 | `method=` | Exponent term | Mantissa term | Worst-case error |
 |---|---|---|---|
@@ -351,10 +357,10 @@ even with an exact constant in place of 771); use it where a ROM is unwanted. Ou
 is signed **Q8.8** dB (1 LSB = 1/256 dB), saturated at both ends.
 
 Keyword-only `auto_pipeline_ram=True` makes each ROM automatic, starting search
-at two ROM cycles. The two table responses and their valid flags are aligned to
-the slower selected latency; the floored flag follows the same input.
-`.latency = max(log_rom.latency, exp_rom.latency) + 2`, so native/HDL-only builds
-take three cycles. `auto_pipeline_ram=False` keeps manual ROMs and four cycles,
+at two ROM cycles. The two table responses and floor flag each enter a queue;
+they join in input order without counting cycles. Diagnostic
+`get_latency() = max(log_rom.latency, exp_rom.latency) + 5`, so native/HDL-only builds
+take six cycles. `auto_pipeline_ram=False` keeps manual ROMs and seven cycles,
 including existing backend compatibility. The `"pwl"` method is unchanged at
 four cycles and ignores this option. Automatic ROM synthesis supports Vivado
 and ECP5 open tools and requires a full sweep for timing-driven selection.
@@ -374,7 +380,17 @@ fractional-bits subtraction, non-positive input, monotonicity including every oc
 boundary, two instances with different binary points, automatic/manual modes
 and deliberately unequal table latencies). `self_check_dsp_rom_test.py` checks
 both orders of unequal ROM latency, valid/floor alignment and clock-enable
-pauses against GHDL.
+pauses and in-flight reset against GHDL.
+
+For all three ROM converters, keyword-only `join_depth=32` bounds unmatched
+words per branch, independently of the RAM plans. Each FIFO has that many memory
+words rounded up to a power of two, plus a FWFT output word; allow capacity for
+warm-up as well as branch skew. Call with explicit `rst=0` when reset is unused.
+Reset blocks requests/output and drains queues; hold it through upstream pipeline
+and FIFO drain. `.overflow` latches until reset and asserts in simulation. The
+log converter's PWL implementation accepts the same reset/overflow ports; it
+clears valid flags and always reports overflow zero. See
+[`make_valid_join`](../stream/pypeline_stream_guide.md#completion-joins-make_valid_join).
 
 ## `dsp/dsp_tb.py` — testbench library for magnitude/dc_block/moving_avg
 

@@ -25,7 +25,7 @@ flowgraph, and it is what makes a measured noise floor and SNR mean anything.
 All three are deterministic, so golden models stay bit-exact -- `noise_amp`
 seeds a fixed LFSR, not a random number generator.
 
-TIMING. The whole output is delayed by `pulse_gen.latency` cycles relative to
+TIMING. The whole output is delayed by `pulse_gen.get_latency()` cycles relative to
 the internal PRI counter, because the pulse envelope is applied as the NCO's
 amplitude input and therefore rides through its pipeline. That is deliberate:
 gating the amplitude rather than the output keeps the envelope and the carrier
@@ -63,7 +63,6 @@ from pypeline import (
     uint32_t,
 )
 
-from stream.stream import make_stream_t
 from dsp.nco import golden_lut_nco, make_lut_nco
 
 # Galois LFSR feedback polynomials (maximal length, period 2^32-1) and seeds.
@@ -113,7 +112,13 @@ def make_pulse_gen(
                 bit-identical to the one after configuration. Does NOT gate
                 `valid` -- see the reset block.
     """
-    out_stream_t = make_stream_t(iq_t)
+
+    @struct
+    class out_stream_t(NamedTuple):
+        data: iq_t
+        valid: uint1_t
+        overflow: uint1_t
+
     nco, nco_t = make_lut_nco(amplitude_t, table_bits=nco_table_bits, phase_bits=32)
     # 4 signed bytes summed: +-512, so 11 bits signed; times a 16-bit scale.
     byte_t = make_int_t(8)  # reinterpret an LFSR byte as signed
@@ -147,7 +152,7 @@ def make_pulse_gen(
         # which is INSIDE a pulse (0 < width), and the documented bring-up
         # writes the configuration while the datapath is still held -- so
         # without this term the NCO's pipeline fills with the carrier at phase
-        # 0 for as long as reset lasts, and the first `nco.latency` samples
+        # 0 for as long as reset lasts, and the initial pipeline-fill samples
         # after release are that stale carrier, prepended to the first real
         # pulse. On hardware that made pulse 0 come out `latency` samples wider
         # than commanded and fail pdw_verify's width check; pdw_tb never saw it
@@ -157,7 +162,7 @@ def make_pulse_gen(
         zero_amp: amplitude_t = 0
         amp_on: uint1_t = pulse_active & (~rst)
         amp_now: amplitude_t = amplitude if amp_on else zero_amp
-        n = nco(phase=phase_acc, amplitude=amp_now, valid_in=1)
+        n = nco(phase=phase_acc, amplitude=amp_now, valid_in=1, rst=rst)
 
         # ---- noise: 4 disjoint bytes of each LFSR, read as SIGNED, summed --
         # The intermediate int8_t is load bearing. Slicing a uint32_t yields an
@@ -204,6 +209,12 @@ def make_pulse_gen(
         # check can see.
         sig_i: wide_t = n.i
         sig_q: wide_t = n.q
+        # The DAC stream is always valid, but FIFO/ROM payloads are undefined
+        # without their own valid. Emit zero carrier while the NCO refills,
+        # even if drained RAM locations still contain a previous pulse.
+        if ~n.valid:
+            sig_i = 0
+            sig_q = 0
         ni_w: wide_t = noise_i_r
         nq_w: wide_t = noise_q_r
         sum_i: wide_t = sig_i + ni_w
@@ -276,12 +287,13 @@ def make_pulse_gen(
             noise_q_r = 0
             out_i_r = 0
             out_q_r = 0
-        return out_stream_t(data=sample, valid=1)  # always valid: fixed-rate DAC stream
+        # Always valid: a fixed-rate DAC stream, including the NCO fill.
+        return out_stream_t(data=sample, valid=1, overflow=n.overflow)
 
     pulse_gen.iq_t = iq_t
     pulse_gen.out_stream_t = out_stream_t
     pulse_gen.nco = nco
-    pulse_gen.latency = nco.latency + 1
+    pulse_gen.get_latency = lambda: nco.get_latency() + 1
     pulse_gen.lfsr_seeds = (LFSR_SEED_I, LFSR_SEED_Q)
     pulse_gen.lfsr_polys = (LFSR_POLY_I, LFSR_POLY_Q)
     pulse_gen.noise_shift = NOISE_SHIFT
@@ -298,7 +310,7 @@ def golden_pulse_gen(
     """Bit-exact Python model of `make_pulse_gen`'s output stream.
 
     Returns a list of `(i, q)` int16 pairs, one per cycle, INCLUDING the
-    `gen.latency` cycles of NCO fill at the start (during which the carrier
+    `gen.get_latency()` cycles of NCO fill at the start (during which the carrier
     is zero but the noise is already running -- see the module docstring).
     Cycle 0 is the first cycle out of reset; the hardware feeds its NCO zero
     amplitude during reset precisely so that this holds.
@@ -350,7 +362,7 @@ def golden_pulse_gen(
         amp_now = amplitude if pulse_active else 0
         pipe.append((phase_acc, amp_now))
 
-        if len(pipe) > nco.latency:
+        if len(pipe) > nco.get_latency():
             ph, am = pipe.pop(0)
             ci, cq = golden_lut_nco(nco, ph, am)
         else:

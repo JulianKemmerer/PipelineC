@@ -85,7 +85,7 @@ def lut_atan2_check() -> uint16_t:
         x: input_t = xs[index]
         y: input_t = ys[index]
         valid: uint1_t = sent < COUNT
-        result = block(x, y, valid)
+        result = block(x, y, valid, 0)
         if result.valid:
             expected: input_t = expected_angles[received & 63]
             degen: uint1_t = degenerate[received & 63]
@@ -134,14 +134,14 @@ def test_numeric_accuracy():
 def check_pipeline(unit, vectors=VECTORS, bubbles=True):
     py.sim_reset()
     pending = deque()
-    for cycle in range(len(vectors) + unit.latency + 4):
+    for cycle in range(len(vectors) + unit.get_latency() + 4):
         active = cycle < len(vectors) and (not bubbles or cycle % 5 != 2)
         x, y = vectors[cycle] if cycle < len(vectors) else (0, 0)
         pending.append((active, golden_lut_atan2(unit, x, y)))
-        result = py.sim_call(unit, x, y, int(active))
-        if cycle >= unit.latency:
+        result = py.sim_call(unit, x, y, int(active), 0)
+        if cycle >= unit.get_latency():
             valid, expected = pending.popleft()
-            assert bool(result.valid) == valid, (cycle, unit.latency)
+            assert bool(result.valid) == valid, (cycle, unit.get_latency())
             if valid:
                 assert (int(result.angle), int(result.degenerate)) == expected, (
                     cycle,
@@ -183,7 +183,7 @@ def test_pipeline_and_selected_plans():
                 }
             )
             unit, _ = make_lut_atan2(input_t)
-            assert unit.latency == rlat + alat + 6
+            assert unit.get_latency() == rlat + alat + 12
             check_pipeline(unit)
     finally:
         py.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(saved)

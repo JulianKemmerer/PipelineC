@@ -32,6 +32,7 @@ from pypeline import (
     int32_t,
     make_int_t,
     sim_assert,
+    sim_print,
     uint1_t,
     uint32_t,
 )
@@ -47,7 +48,7 @@ TONE_FREQ = 1 << 30
 NOISE_AMP = 400
 
 pulse_gen, out_stream_t = make_pulse_gen()
-LAT = pulse_gen.latency
+LAT = pulse_gen.get_latency()
 
 # The table NCO's amplitude is exact to a rounding step: |cos|^2 + |sin|^2 of
 # the same bin centre is 1 to within 2^-16. Allow 1%, which a gain error of the
@@ -276,6 +277,11 @@ def pulse_gen_noise_tb():
 # be draining when the check below starts looking.
 RST_CYCLES = 40
 FIRST_PULSE_AT = RST_CYCLES + LAT  # release, then the pipeline fill
+# After the first reset, 185 requests have wrapped the 32-word queues. Their
+# next empty RAM location still holds request 153 (phase 3: nonzero carrier),
+# so ignoring NCO valid would leak a real old pulse into the refill interval.
+MID_RST_AT = 225
+MID_RST_END = MID_RST_AT + RST_CYCLES
 
 
 @MAIN(125.0)
@@ -294,7 +300,7 @@ def pulse_gen_reset_tb():
     """
     cyc: Reg[uint32_t] = 0
     t: uint32_t = cyc
-    in_rst: uint1_t = t < RST_CYCLES
+    in_rst: uint1_t = (t < RST_CYCLES) | ((t >= MID_RST_AT) & (t < MID_RST_END))
     o = pulse_gen(
         pri=TEST_PRI,
         width=TEST_WIDTH,
@@ -307,6 +313,13 @@ def pulse_gen_reset_tb():
     cyc = t + 1
 
     live: uint1_t = (o.data.i != 0) | (o.data.q != 0)
+    sim_print(f"generator reset {t} {o.data.i} {o.data.q}", debug=True)
+    if (t >= MID_RST_END) & (t < MID_RST_END + LAT):
+        sim_assert(~live, "stale FIFO data leaked while the NCO refilled")
+    elif (t >= MID_RST_END + LAT) & (t < MID_RST_END + LAT + TEST_WIDTH):
+        sim_assert(live, "first pulse missing after mid-run reset")
+    elif (t >= MID_RST_END + LAT + TEST_WIDTH) & (t < MID_RST_END + LAT + TEST_PRI):
+        sim_assert(~live, "first pulse widened after mid-run reset")
     if t < FIRST_PULSE_AT:
         sim_assert(
             live == 0,

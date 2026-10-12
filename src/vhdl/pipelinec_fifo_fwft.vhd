@@ -18,7 +18,9 @@ entity pipelinec_fifo_fwft is
     data_in   : in  std_logic_vector(DATA_WIDTH-1 downto 0);
     valid_out  : out std_logic;
     ready_in  : in  std_logic;
-    data_out   : out std_logic_vector(DATA_WIDTH-1 downto 0)
+    data_out   : out std_logic_vector(DATA_WIDTH-1 downto 0);
+    -- Optional for legacy C wrappers; Pypeline propagates the caller's CE.
+    clock_enable : in std_logic := '1'
   );
 end entity pipelinec_fifo_fwft;
 
@@ -56,7 +58,7 @@ architecture rtl of pipelinec_fifo_fwft is
 
 begin
   por <= '0' when rising_edge(clk);
- 
+
   -- full when first MSB different but rest same
   full <= '1' when wr_ptr_reg = (rd_ptr_reg xor mask) else '0';
   full_cur <= '1' when wr_ptr_cur_reg = (rd_ptr_reg xor mask) else '0';
@@ -67,7 +69,7 @@ begin
 
   ready_out_internal <= not full; -- and not por;
   ready_out <= ready_out_internal;
-  
+
   valid_out_pipe <= valid_out_pipe_reg;
   data_out_pipe <= data_out_pipe_reg;
 
@@ -75,43 +77,47 @@ begin
   process (clk)
   begin
     if rising_edge(clk) then
-      if ready_out_internal = '1' and valid_in = '1' then
-        -- transfer in
-        -- normal FIFO mode
-        mem(to_integer(wr_ptr_reg(ADDR_WIDTH-1 downto 0))) <= data_in;
-        wr_ptr_reg <= wr_ptr_reg + 1;
+      if clock_enable = '1' then
+        if ready_out_internal = '1' and valid_in = '1' then
+          -- transfer in
+          -- normal FIFO mode
+          mem(to_integer(wr_ptr_reg(ADDR_WIDTH-1 downto 0))) <= data_in;
+          wr_ptr_reg <= wr_ptr_reg + 1;
+        end if;
+        --if por = '1' then
+        --  wr_ptr_reg <= (others => '0');
+        --  wr_ptr_cur_reg <= (others => '0');
+        --end if;
       end if;
-      --if por = '1' then
-      --  wr_ptr_reg <= (others => '0');
-      --  wr_ptr_cur_reg <= (others => '0');
-      --end if;
     end if;
   end process;
- 
+
   -- Read logic
   process (clk)
   begin
     if rising_edge(clk) then
-      if ready_in = '1' then
-        -- output ready; invalidate stage
-        valid_out_pipe_reg <= '0';
-      end if;     
-      
-      if ready_in = '1' or valid_out_pipe_reg = '0' then
-        -- output ready or bubble in pipeline; read new data from FIFO
-        valid_out_pipe_reg <= '0';
-        data_out_pipe_reg <= mem(to_integer(rd_ptr_reg(ADDR_WIDTH-1 downto 0)));
-        if empty = '0' and pipe_ready = '1' then
-          -- not empty, increment pointer
-          valid_out_pipe_reg <= '1';
-          rd_ptr_reg <= rd_ptr_reg + 1;
+      if clock_enable = '1' then
+        if ready_in = '1' then
+          -- output ready; invalidate stage
+          valid_out_pipe_reg <= '0';
         end if;
-      end if;
 
-      --if por = '1' then
-      --  rd_ptr_reg <= (others => '0');
-      --  valid_out_pipe_reg <= '0';
-      --end if;
+        if ready_in = '1' or valid_out_pipe_reg = '0' then
+          -- output ready or bubble in pipeline; read new data from FIFO
+          valid_out_pipe_reg <= '0';
+          data_out_pipe_reg <= mem(to_integer(rd_ptr_reg(ADDR_WIDTH-1 downto 0)));
+          if empty = '0' and pipe_ready = '1' then
+            -- not empty, increment pointer
+            valid_out_pipe_reg <= '1';
+            rd_ptr_reg <= rd_ptr_reg + 1;
+          end if;
+        end if;
+
+        --if por = '1' then
+        --  rd_ptr_reg <= (others => '0');
+        --  valid_out_pipe_reg <= '0';
+        --end if;
+      end if;
     end if;
   end process;
 

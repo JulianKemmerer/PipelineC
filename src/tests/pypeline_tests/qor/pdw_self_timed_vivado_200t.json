@@ -1,0 +1,305 @@
+{
+  "schema_version": 1,
+  "date": "2026-10-11",
+  "part": "xc7a200tffg1156-2",
+  "tool": "Vivado 2019.2",
+  "scope": "out-of-context synthesis, fully pipelined top.py; no routed or AirStack integration timing",
+  "compiler_base_revision": "2fe880d19852b8df0df1aae00f469c8be6fe8ce1",
+  "compiler_working_tree_changes_present": true,
+  "committed_compiler_compatibility": {
+    "top_elaboration": "PASS",
+    "variable_completion_native": "PASS",
+    "converter_native_vs_ghdl": "MATCH 141 cycles"
+  },
+  "command": "python3 src/pypelinec examples/pypeline/dsp/pdw/top.py --no_hier_syn -D PDW_ATAN2_METHOD=rom --out_dir /tmp/pdw-self-timed-20261011/top-rom -j 1",
+  "join_depth": 32,
+  "registered_join_output": true,
+  "goal_mhz": 125,
+  "build_complete": true,
+  "fit_status": "within_reported_limits",
+  "mains": {
+    "rst_main": {
+      "met": true,
+      "achieved_mhz": null,
+      "mhz_is_lower_bound": true,
+      "lower_bound_mhz": 125.0,
+      "met_basis": "no_failing_path_reported",
+      "source": "as_written",
+      "run": 2,
+      "iter": 1,
+      "iteration_index": 1,
+      "failure_reason": null,
+      "auto_pipelined": false,
+      "slices_built": null,
+      "pipeline_stages": null,
+      "input_signature": null,
+      "implementation_signature": null,
+      "observation_origin": null,
+      "standalone_mhz": 529.661
+    },
+    "ctrl_main": {
+      "met": true,
+      "achieved_mhz": 137.212,
+      "mhz_is_lower_bound": false,
+      "lower_bound_mhz": null,
+      "met_basis": "measured",
+      "source": "as_written",
+      "run": 2,
+      "iter": 1,
+      "iteration_index": 1,
+      "failure_reason": null,
+      "auto_pipelined": false,
+      "slices_built": null,
+      "pipeline_stages": null,
+      "input_signature": "89b2e5aa096ea3d0dea59ddefc516ba1d108677c6e3a7e546d680105d0f64755",
+      "implementation_signature": "82fb8b1a8659990fae7602edaa3748f041e9a3196ba7b83bf9a640cee276c12c",
+      "observation_origin": "synthesis",
+      "standalone_mhz": 238.265
+    },
+    "pulse_gen_main": {
+      "met": true,
+      "achieved_mhz": 137.212,
+      "mhz_is_lower_bound": false,
+      "lower_bound_mhz": null,
+      "met_basis": "measured",
+      "source": "planned_sweep",
+      "run": 2,
+      "iter": 1,
+      "iteration_index": 1,
+      "failure_reason": null,
+      "auto_pipelined": true,
+      "slices_built": 0,
+      "pipeline_stages": 1,
+      "input_signature": "89b2e5aa096ea3d0dea59ddefc516ba1d108677c6e3a7e546d680105d0f64755",
+      "implementation_signature": "82fb8b1a8659990fae7602edaa3748f041e9a3196ba7b83bf9a640cee276c12c",
+      "observation_origin": "synthesis",
+      "stopped_reason": null,
+      "cuts": 0,
+      "locked_instances": 0
+    },
+    "pdw_main": {
+      "met": true,
+      "achieved_mhz": 127.6,
+      "mhz_is_lower_bound": false,
+      "lower_bound_mhz": null,
+      "met_basis": "measured",
+      "source": "planned_sweep",
+      "run": 2,
+      "iter": 1,
+      "iteration_index": 1,
+      "failure_reason": null,
+      "auto_pipelined": true,
+      "slices_built": 0,
+      "pipeline_stages": 1,
+      "input_signature": "89b2e5aa096ea3d0dea59ddefc516ba1d108677c6e3a7e546d680105d0f64755",
+      "implementation_signature": "82fb8b1a8659990fae7602edaa3748f041e9a3196ba7b83bf9a640cee276c12c",
+      "observation_origin": "synthesis",
+      "stopped_reason": null,
+      "cuts": 0,
+      "locked_instances": 0
+    }
+  },
+  "resources": {
+    "Slice LUTs": {
+      "used": 9172,
+      "available": 134600
+    },
+    "Slice Registers": {
+      "used": 4709,
+      "available": 269200
+    },
+    "RAMB18": {
+      "used": 11,
+      "available": 730
+    },
+    "RAMB36/FIFO": {
+      "used": 29,
+      "available": 365
+    },
+    "DSPs": {
+      "used": 12,
+      "available": 740
+    }
+  },
+  "auto_pipeline_rams": {
+    "93dfaaefa45fe9f397a9417ed65cdc3571032246cb1182cc99e13e5e01abaafe": {
+      "size": 1024,
+      "width": 17,
+      "ports": [
+        "r",
+        "r"
+      ],
+      "byte_write_enables": false,
+      "latency": 1,
+      "start_latency": 3,
+      "max_latency": null,
+      "input_regs": 0,
+      "output_regs": 0,
+      "split_depth": 0,
+      "request_levels": 0,
+      "response_levels": 0,
+      "banks": 1,
+      "read_after_write_gap": 1,
+      "constraints": {
+        "latency": null,
+        "start_latency": 3,
+        "max_latency": null
+      }
+    },
+    "9ee2d4cfdd950a454b7773be4f15be7497a8134a5b6bf33add34c7ea2d310b3a": {
+      "size": 4096,
+      "width": 18,
+      "ports": [
+        "r"
+      ],
+      "byte_write_enables": false,
+      "latency": 1,
+      "start_latency": 2,
+      "max_latency": null,
+      "input_regs": 0,
+      "output_regs": 0,
+      "split_depth": 0,
+      "request_levels": 0,
+      "response_levels": 0,
+      "banks": 1,
+      "read_after_write_gap": 1,
+      "constraints": {
+        "latency": null,
+        "start_latency": 2,
+        "max_latency": null
+      }
+    },
+    "1b44453c4c8b1959a8a8de8524b8f7120c92e9952ecc4ba53cbb15d5ad82d824": {
+      "size": 4096,
+      "width": 14,
+      "ports": [
+        "r"
+      ],
+      "byte_write_enables": false,
+      "latency": 1,
+      "start_latency": 2,
+      "max_latency": null,
+      "input_regs": 0,
+      "output_regs": 0,
+      "split_depth": 0,
+      "request_levels": 0,
+      "response_levels": 0,
+      "banks": 1,
+      "read_after_write_gap": 1,
+      "constraints": {
+        "latency": null,
+        "start_latency": 2,
+        "max_latency": null
+      }
+    },
+    "60ba274c68ff4ff8a962ad167f4d9d20066fa26ba58147eeaaa33d32499c8141": {
+      "size": 1024,
+      "width": 10,
+      "ports": [
+        "r"
+      ],
+      "byte_write_enables": false,
+      "latency": 1,
+      "start_latency": 2,
+      "max_latency": null,
+      "input_regs": 0,
+      "output_regs": 0,
+      "split_depth": 0,
+      "request_levels": 0,
+      "response_levels": 0,
+      "banks": 1,
+      "read_after_write_gap": 1,
+      "constraints": {
+        "latency": null,
+        "start_latency": 2,
+        "max_latency": null
+      }
+    },
+    "c23a9e8513fe5ab20437edcd2df50bf12c2074e7d44979f89b7602a9718256b9": {
+      "size": 64,
+      "width": 16,
+      "ports": [
+        "r"
+      ],
+      "byte_write_enables": false,
+      "latency": 1,
+      "start_latency": 2,
+      "max_latency": null,
+      "input_regs": 0,
+      "output_regs": 0,
+      "split_depth": 0,
+      "request_levels": 0,
+      "response_levels": 0,
+      "banks": 1,
+      "read_after_write_gap": 1,
+      "constraints": {
+        "latency": null,
+        "start_latency": 2,
+        "max_latency": null
+      }
+    },
+    "93bc9f81c9502a4131e323cff9ecd2004cc6f70e6d262b7c5b4a8adc0583e10f": {
+      "size": 64,
+      "width": 16,
+      "ports": [
+        "r"
+      ],
+      "byte_write_enables": false,
+      "latency": 1,
+      "start_latency": 2,
+      "max_latency": null,
+      "input_regs": 0,
+      "output_regs": 0,
+      "split_depth": 0,
+      "request_levels": 0,
+      "response_levels": 0,
+      "banks": 1,
+      "read_after_write_gap": 1,
+      "constraints": {
+        "latency": null,
+        "start_latency": 2,
+        "max_latency": null
+      }
+    }
+  },
+  "retained_synthesis": {
+    "log_path": "/tmp/pdw-self-timed-20261011/top-rom/top/vivado_76c82db3_89b2e5aa096ea3d0.log",
+    "input_signature": "89b2e5aa096ea3d0dea59ddefc516ba1d108677c6e3a7e546d680105d0f64755",
+    "implementation_signature": "82fb8b1a8659990fae7602edaa3748f041e9a3196ba7b83bf9a640cee276c12c"
+  },
+  "pre_join_rom_baseline": {
+    "pdw_mhz": 132.873,
+    "slice_luts": 8532,
+    "slice_registers": 4195,
+    "ramb18": 7,
+    "ramb36": 25,
+    "dsps": 12
+  },
+  "verification": {
+    "whole_native": {
+      "rom": {
+        "cycles": 7323,
+        "candidates": 18,
+        "released": 12,
+        "rejects": 6,
+        "independent_assertions": 82
+      },
+      "cordic": {
+        "cycles": 7323,
+        "candidates": 18,
+        "released": 12,
+        "rejects": 6,
+        "independent_assertions": 82
+      },
+      "environment": {
+        "PYPELINE_SIM_SOFT_OPS": "none"
+      }
+    },
+    "measurement_both_methods": "PASS, full ranges, bubbles, forced 20-cycle ROM and in-flight reset",
+    "extraction_both_methods": "PASS, exact packets, variable frequency completion and candidate noise snapshot",
+    "reset_both_methods": "PASS",
+    "native_vs_ghdl": "PASS for joins, both log ROM orderings, atan2 widths/ROM orderings and generator reset",
+    "negative_control": "Removing generator NCO-valid mask fails GHDL at refill after mid-run reset",
+    "known_compiler_issues": "XFAIL: omitted hw_func defaults and signed_ record prefixes"
+  }
+}

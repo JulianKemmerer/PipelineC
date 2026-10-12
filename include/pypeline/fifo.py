@@ -54,6 +54,7 @@ generic map(
   DATA_WIDTH => WIDTH
 )port map(
   clk => clk,
+  clock_enable => CLOCK_ENABLE(0),
   data_in => din_slv,
   valid_in => data_in_valid(0) and CLOCK_ENABLE(0),
   ready_out => return_output.data_in_ready(0),

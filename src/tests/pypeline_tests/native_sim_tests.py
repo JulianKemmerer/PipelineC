@@ -44,6 +44,8 @@ PLAIN_PYTHON_TEST_FILES = [
     "vhdl_text_test.py",
     "fifo_test.py",
     "stream_fifo_test.py",
+    "valid_join_test.py",
+    "self_timed_factory_test.py",
     "skid_buffer_test.py",
     "stream_perf_test.py",
     "ram_test.py",
@@ -436,7 +438,15 @@ def get_tests() -> list:
             cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pdw_reset_test.py"],
         )
     )
-    for filename in ("pulse_measure_test.py", "pdw_reset_test.py"):
+    tests.append(
+        Test(
+            name="pulse_extract_alignment_test",
+            category="native_sim",
+            cmd=[EXAMPLES_PYPELINE_DIR / "dsp" / "pdw" / "pulse_extract_alignment_test.py"],
+            env={"PDW_ATAN2_METHOD": "cordic"},
+        )
+    )
+    for filename in ("pulse_measure_test.py", "pdw_reset_test.py", "pulse_extract_alignment_test.py"):
         tests.append(
             Test(
                 name=filename[:-3] + "_rom",

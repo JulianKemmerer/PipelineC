@@ -66,27 +66,27 @@ METHODS = (
 
 @MAIN(125.0)
 def log2_db_main(v: power_t, valid_in: uint1_t) -> log2_db_t:
-    return log2_db(v, valid_in)
+    return log2_db(v, valid_in, 0)
 
 
 @MAIN(125.0)
 def log2_db_mean_main(v: mean_t, valid_in: uint1_t) -> log2_db_mean_t:
-    return log2_db_mean(v, valid_in)
+    return log2_db_mean(v, valid_in, 0)
 
 
 @MAIN(125.0)
 def log2_db_pwl_main(v: power_t, valid_in: uint1_t) -> log2_db_pwl_t:
-    return log2_db_pwl(v, valid_in)
+    return log2_db_pwl(v, valid_in, 0)
 
 
 def _run(block, in_t, raws):
     out = []
-    for c in range(len(raws) + block.latency + 4):
+    for c in range(len(raws) + block.get_latency() + 4):
         if c < len(raws):
             v, val = 1, raws[c]
         else:
             v, val = 0, 0
-        r = sim_call(block, in_t(val=val), v)
+        r = sim_call(block, in_t(val=val), v, 0)
         if int(r.valid):
             out.append((int(r.db), int(r.floored)))
     return out
@@ -259,14 +259,14 @@ def test_pipeline_latency():
         sim_reset()
         seen = []
         n = 12
-        for c in range(n + block.latency + 4):
+        for c in range(n + block.get_latency() + 4):
             v = 1 if c < n else 0
-            r = sim_call(block, power_t(val=(1 << 20) + c), v)
+            r = sim_call(block, power_t(val=(1 << 20) + c), v, 0)
             if int(r.valid):
                 seen.append(c)
-        assert seen == list(range(block.latency, block.latency + n)), seen
-    assert log2_db.latency == max(log2_db.log_rom.latency, log2_db.exp_rom.latency) + 2
-    assert METHODS[1][0].latency == log2_db_pwl.latency == 4
+        assert seen == list(range(block.get_latency(), block.get_latency() + n)), seen
+    assert log2_db.get_latency() == max(log2_db.log_rom.latency, log2_db.exp_rom.latency) + 5
+    assert METHODS[1][0].get_latency() == 7 and log2_db_pwl.get_latency() == 4
     print("test_pipeline_latency passed")
 
 
@@ -282,17 +282,17 @@ def test_independent_rom_latencies():
                 }
             )
             unit, _ = make_log2_db(power_t)
-            assert unit.latency == max(ml, el) + 2
+            assert unit.get_latency() == max(ml, el) + 5
             sim_reset()
             requests = [
                 (v, v % 3 != 1) for v in (-1, 0, 1, 4096, 1024, -555, (1 << 45) - 1)
             ] * 4
             pending = []
-            for c in range(len(requests) + unit.latency):
+            for c in range(len(requests) + unit.get_latency()):
                 raw, valid = requests[c] if c < len(requests) else (0, False)
                 pending.append((valid, golden_log2_db(unit, raw)))
-                result = sim_call(unit, power_t(val=raw), int(valid))
-                if c >= unit.latency:
+                result = sim_call(unit, power_t(val=raw), int(valid), 0)
+                if c >= unit.get_latency():
                     expected_valid, expected = pending.pop(0)
                     assert bool(result.valid) == expected_valid
                     if expected_valid:

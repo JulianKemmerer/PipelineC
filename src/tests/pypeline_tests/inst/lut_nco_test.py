@@ -47,19 +47,19 @@ TURN = 1 << 32
 
 @MAIN(125.0)
 def lut_nco_main(phase: uint32_t, amplitude: int16_t, valid_in: uint1_t) -> nco_t:
-    return nco(phase, amplitude, valid_in)
+    return nco(phase, amplitude, valid_in, 0)
 
 
 def _run(block, reqs):
     """Push (phase, amplitude) one per cycle, drain, return emitted (i, q)."""
     out = []
-    for c in range(len(reqs) + block.latency + 4):
+    for c in range(len(reqs) + block.get_latency() + 4):
         if c < len(reqs):
             ph, am = reqs[c]
             v = 1
         else:
             ph, am, v = 0, 0, 0
-        r = sim_call(block, ph, am, v)
+        r = sim_call(block, ph, am, v, 0)
         if int(r.valid):
             out.append((int(r.i), int(r.q)))
     return out
@@ -77,13 +77,13 @@ def test_automatic_and_manual_latency():
     requests = [(rng.randrange(TURN), rng.randrange(-32768, 32768)) for _ in range(60)]
     try:
         units = [make_lut_nco(int16_t, auto_pipeline_ram=False)[0]]
-        assert units[0].latency == 5
+        assert units[0].get_latency() == 8
         for latency in (1, 2, 3, 5):
             py.SET_AUTO_PIPELINE_RAM_PLAN_CACHE(
                 {nco.rom._auto_pipeline_ram["key"]: RamPlan(0, latency - 1)}
             )
             unit, _ = make_lut_nco(int16_t)
-            assert unit.latency == latency + 2
+            assert unit.get_latency() == latency + 5
             units.append(unit)
         for unit in units:
             sim_reset()
@@ -268,13 +268,13 @@ def test_pipeline_latency():
     sim_reset()
     seen = []
     n = 12
-    for c in range(n + nco.latency + 4):
+    for c in range(n + nco.get_latency() + 4):
         v = 1 if c < n else 0
-        r = sim_call(nco, c << 24, 1000, v)
+        r = sim_call(nco, c << 24, 1000, v, 0)
         if int(r.valid):
             seen.append(c)
-    assert seen == list(range(nco.latency, nco.latency + n)), seen
-    print(f"test_pipeline_latency passed (latency {nco.latency})")
+    assert seen == list(range(nco.get_latency(), nco.get_latency() + n)), seen
+    print(f"test_pipeline_latency passed (latency {nco.get_latency()})")
 
 
 if __name__ == "__main__":

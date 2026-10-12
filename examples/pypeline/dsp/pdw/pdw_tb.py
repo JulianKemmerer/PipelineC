@@ -429,7 +429,7 @@ for _p in PHASES:
 # The generator's output trails its control inputs by the NCO pipeline depth
 # (the pulse envelope is applied as the NCO's amplitude input -- see
 # pulse_gen.py). Read it from the hardware rather than writing a number.
-GEN_LAT = top.pulse_gen.latency
+GEN_LAT = top.pulse_gen.get_latency()
 
 
 def _nominal_windows(start, pri, width, n_periods):
@@ -928,8 +928,8 @@ for _s in range(TOTAL_SAMPLES):
             # than asserted away.
             # The measurement, from the accumulations this same walk built.
             # `_fa_out` is what the hardware presents one cycle after
-            # gate_last; `noise_now` and the candidate's peak/toa are what it
-            # delays by freq_latency to meet it there.
+            # gate_last. Candidate completion captures `noise_now`, peak and
+            # TOA into an ordered queue; extraction waits for the response.
             _m = golden_pulse_measure(
                 _MEAS,
                 _fa_out[0],

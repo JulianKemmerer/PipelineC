@@ -257,6 +257,7 @@ tx0_m_axis_tready: Input[uint1_t]
 # instantiating a second, independently-counting pulse_gen.
 pulse_gen_sample: Wire[pulse_gen.iq_t]
 pulse_gen_valid: Wire[uint1_t]
+pulse_gen_overflow: Wire[uint1_t]
 
 
 @MAIN(125.0)
@@ -287,6 +288,7 @@ def pulse_gen_main():
     tx0_m_axis_tlast = 0
     pulse_gen_sample = o.data
     pulse_gen_valid = gen_valid
+    pulse_gen_overflow = o.overflow
 
 
 # ---------------------------------------------------------------------------
@@ -565,7 +567,7 @@ def pdw_main():
     # holding tready low for good -- see its docstring.
     alarm_test_mask: uint32_t = CTRL_FLAG_ALARM_TEST
     alarm_test: uint1_t = (ctrl_regs.flags & alarm_test_mask) != 0
-    alarm_trig = alarm_test | e.fifo_full | e.desc_drop | e.meas_drop
+    alarm_trig = alarm_test | e.fifo_full | e.desc_drop | e.meas_drop | pulse_gen_overflow
 
     # DRAIN: while reset is asserted every sink is forced ready, so the whole
     # chain empties into the bit bucket. That is the ONLY way to clear any of

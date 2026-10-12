@@ -9,6 +9,9 @@ credits. Its port interfaces match `make_stream_ram`, while accepted requests ke
 advancing during downstream stalls. See the [auto-pipelined RAM guide and bank-tree
 diagram](../../../docs/AUTO_PIPELINE_DESIGN.md#8-auto-pipelined-ram).
 
+For valid-only branches that complete independently, see
+[Completion joins](#completion-joins-make_valid_join) below.
+
 This is the pypeline answer to "I have a `@struct` on one side and bytes on the other."
 It replaces old PipelineC's `include/stream/serializer.h`,
 `include/stream/deserializer.h` and the conversion macros in `include/axi/axis.h`
@@ -131,6 +134,42 @@ port.
 | `self_check_type_axis_test.py` | the whole path through real GHDL, cycle-diffed against native sim |
 | `type_bytes_sw_test.py` | the software helpers, cross-checked against the generated hardware |
 | `host_types_test.py`, `host_types_build_test.py` | the generated standalone host module, run where Pypeline cannot be imported |
+| `valid_join_test.py` | independent arrivals, sustained II=1, bounded overflow, clock-enable pauses and reset drain; native/GHDL cycle parity |
+
+## Completion joins: `make_valid_join`
+
+```python
+from stream.valid_join import make_valid_join
+
+join, result_t = make_valid_join((metadata_t, response_t), depth=32)
+# join(metadata, metadata_valid, response, response_valid, rst)
+# -> result_t{p0: metadata_t, p1: response_t, valid, overflow}
+```
+
+Each branch supplies one word per transaction, in the same order. The helper
+queues each branch independently, emits when every head is valid, and pops all
+heads on that clock, capturing the result into an output register. Queue
+**responses as well as metadata**: a one-cycle ROM
+can respond before a metadata FIFO exposes its first word. Two or more branches
+may have different types and completion times. Sustained throughput is one joined
+result per enabled clock; a conditional call freezes FIFO reads and writes too.
+The output register cuts BRAM clock-to-output paths before downstream arithmetic;
+joining adds three enabled clocks after the last arriving branch (two for the
+FIFO head and one for the result register), independently of upstream latency.
+
+This is a **valid-only** boundary: downstream always accepts, and upstream cannot
+be stalled. `depth` is a capacity bound on unmatched words in each branch, not a
+latency setting. FIFO memory rounds up to a power of two and has a separate
+output word. Leave room for FIFO warm-up; a full memory cannot accept a write
+on the same clock that a pop frees a location. Overflow latches `.overflow` and
+asserts in simulation because losing a word destroys all later pairing.
+
+Reset blocks input writes/output and drains each FIFO independently, including
+an unmatched head; it does not add a FIFO flush/reset primitive. Hold reset
+through upstream pipeline draining and queue emptying, then restart all branches
+in the same transaction epoch. Feed `.overflow` into the design's error path.
+The PDW example uses this helper for candidate/frequency pairing and its parallel
+measurements; NCO, atan2 and logarithm ROMs use it for their sidebands/results.
 
 To measure a stream design's throughput, latency and bottlenecks in simulation, see the
 [stream performance library guide](pypeline_stream_perf_guide.md).

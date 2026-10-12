@@ -60,11 +60,13 @@ def self_check_dsp_rom() -> uint16_t:
     n_received: Reg[uint16_t]
     l_received: Reg[uint16_t]
     last: Reg[uint16_t]
+    rst: uint1_t = (tick >= 5) & (tick < 30)
     if (tick & 3) != 1:
-        active: uint1_t = (sent < 32) & ((tick & 7) != 3)
+        active: uint1_t = ~rst & (sent < 32) & ((tick & 7) != 3)
         idx: uint16_t = sent & 31
-        nr = nco(phases[idx], amps[idx], active)
-        lr = log(power_t(val=powers[idx]), active)
+        nr = nco(phases[idx], amps[idx], active, rst)
+        lr = log(power_t(val=powers[idx]), active, rst)
+        sim_assert(~(rst & (nr.valid | lr.valid)), "DSP response leaked during reset")
         if active:
             sent += 1
         if nr.valid:
@@ -80,7 +82,11 @@ def self_check_dsp_rom() -> uint16_t:
             sim_print(f"log {lr.db} {lr.floored}", debug=True)
             l_received += 1
             last = lr.db
-    if tick == 100:
+    if rst:
+        sent = 0
+        n_received = 0
+        l_received = 0
+    if tick == 140:
         sim_assert(n_received == 32, "NCO response count")
         sim_assert(l_received == 32, "log response count")
         sim_finish()

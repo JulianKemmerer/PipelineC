@@ -46,7 +46,9 @@ range is -36.1 .. +99.4 dB and fits comfortably. Both methods compute
 `dB(e - in_t.frac_bits)`, not `dB(e)`.
 
 Output is signed Q8.8 dB (one LSB = 1/256 dB), saturated at the ends. Read
-`.latency`: ROM mode takes max(table latencies)+2; PWL takes four cycles.
+`get_latency()`: ROM mode takes max(table latencies)+5; PWL takes four cycles.
+ROM responses and the floor flag join by validity, without delay arrays or
+latency queries during factory construction.
 """
 
 import math
@@ -64,6 +66,7 @@ from pypeline import (
 
 from bits import make_clz, make_shifter_sl
 from ram import make_ram, make_auto_pipeline_ram
+from stream.valid_join import make_valid_join
 
 # dB per unit of log2, in the output's Q8.8 units: 10/log2(10) * 256. The "pwl"
 # method uses it rounded; the "rom" method folds the exact value into its tables.
@@ -128,7 +131,13 @@ def rom_log2_tables(width, frac_bits, mant_bits=10):
 
 
 def make_log2_db(
-    in_t, mant_bits=None, seg_bits=2, method="rom", *, auto_pipeline_ram=True
+    in_t,
+    mant_bits=None,
+    seg_bits=2,
+    method="rom",
+    *,
+    auto_pipeline_ram=True,
+    join_depth=32,
 ):
     """Build a linear->dB converter. Returns (log2_db, log2_db_t).
 
@@ -145,16 +154,20 @@ def make_log2_db(
                False keeps manual two-cycle ROMs and existing backend support.
                Ignored for PWL. Independently selected ROMs are aligned with
                valid and floored flags before the final sum.
+    join_depth: unmatched-word memory bound per ROM-join branch (default 32).
+               Ignored for PWL; independent of selected table latencies.
 
-        log2_db(v: in_t, valid_in: uint1_t) -> log2_db_t
-        log2_db_t: .db (int16_t, Q8.8 dB), .valid, .floored
+        log2_db(v: in_t, valid_in: uint1_t, rst: uint1_t) -> log2_db_t
+        log2_db_t: .db (int16_t, Q8.8 dB), .valid, .floored, .overflow
 
     `.floored` marks an input at or below zero, whose `.db` is the floor value
     (the dB of the smallest representable positive quantity) rather than a
     measurement.
 
-    Fully pipelined, one result per enabled clock. Read `.latency`: automatic
-    ROM mode is max(table latencies)+2; manual ROM and PWL modes take four.
+    Fully pipelined, one result per enabled clock. Pass rst=0 explicitly when
+    unused. Reset blocks output and drains queues; hold through upstream/FIFO
+    drain. Overflow is sticky until reset (always zero for PWL). Diagnostic
+    get_latency() is max(table latencies)+5 for ROM mode and four for PWL.
     """
     if method not in LOG2_DB_METHODS:
         raise ValueError(
@@ -162,12 +175,12 @@ def make_log2_db(
         )
     if method == "rom":
         return _make_log2_db_rom(
-            in_t, 10 if mant_bits is None else mant_bits, auto_pipeline_ram
+            in_t, 10 if mant_bits is None else mant_bits, auto_pipeline_ram, join_depth
         )
     return _make_log2_db_pwl(in_t, 8 if mant_bits is None else mant_bits, seg_bits)
 
 
-def _make_log2_db_rom(in_t, mant_bits, auto_pipeline_ram):
+def _make_log2_db_rom(in_t, mant_bits, auto_pipeline_ram, join_depth):
     """method="rom". Returns (log2_db, log2_db_t)."""
     val_t = in_t.typeof("val")
     W = len(val_t)
@@ -206,28 +219,27 @@ def _make_log2_db_rom(in_t, mant_bits, auto_pipeline_ram):
     exp_rom, _exp_rom_t = factory(
         exp_elem_t, len(EXP_TAB), ports=("r",), init=EXP_TAB, **constraints
     )
-    ROM_LAT = max(log_rom.latency, exp_rom.latency)
-    LOG_DELAY = ROM_LAT - log_rom.latency
-    EXP_DELAY = ROM_LAT - exp_rom.latency
-    LOG_STORAGE = max(1, LOG_DELAY)
-    EXP_STORAGE = max(1, EXP_DELAY)
+    join, _ = make_valid_join((log_elem_t, exp_elem_t, uint1_t), join_depth)
 
     @struct
     class log2_db_t(NamedTuple):
         db: int16_t  # Q8.8 dB
         valid: uint1_t
         floored: uint1_t  # input was <= 0; .db is the floor, not a measurement
+        overflow: uint1_t
 
     @hw_func
-    def log2_db(v: in_t, valid_in: uint1_t) -> log2_db_t:
+    def log2_db(v: in_t, valid_in: uint1_t, rst: uint1_t) -> log2_db_t:
         # Present the registered result first, then compute the next one.
         c_db: Reg[int16_t]
         c_valid: Reg[uint1_t]
         c_floored: Reg[uint1_t]
+        c_overflow: Reg[uint1_t]
         o: log2_db_t
         o.db = c_db
-        o.valid = c_valid
+        o.valid = c_valid & ~rst
         o.floored = c_floored
+        o.overflow = c_overflow & ~rst
 
         # ---- stage A: clamp + count-leading-zeros ------------------------
         a_mag: Reg[mag_t]
@@ -247,43 +259,26 @@ def _make_log2_db_rom(in_t, mant_bits, auto_pipeline_ram):
         # table directly -- (e - F) * 3.0103 dB, rounded per entry.
         norm: mag_t = shift_fn(a_mag, a_lz)
         mant: mant_t = norm[W - 2 : W - 1 - M]
-        lr = log_rom(log_rom.p0_in_t(addr=mant, valid=a_valid))
-        er = exp_rom(exp_rom.p0_in_t(addr=a_lz, valid=a_valid))
-
-        # Each ROM is searched independently. Delay its complete response so
-        # a table value and its valid flag always describe the same input.
-        l_aligned = lr.p0
-        e_aligned = er.p0
-        ld: Reg[log_rom.p0_out_t[LOG_STORAGE]]
-        ed: Reg[exp_rom.p0_out_t[EXP_STORAGE]]
-        if LOG_DELAY > 0:
-            l_aligned = ld[LOG_DELAY - 1]
-            for j in range(LOG_DELAY - 1, 0, -1):
-                ld[j] = ld[j - 1]
-            ld[0] = lr.p0
-        if EXP_DELAY > 0:
-            e_aligned = ed[EXP_DELAY - 1]
-            for j in range(EXP_DELAY - 1, 0, -1):
-                ed[j] = ed[j - 1]
-            ed[0] = er.p0
-
-        # The floored flag rides alongside the ROM reads. Read the tail before
-        # shifting: it is then the flag of the request the ROMs answer now.
-        fl_d: Reg[uint1_t[ROM_LAT]]
-        fl_tail: uint1_t = fl_d[ROM_LAT - 1]
-        nfl: uint1_t[ROM_LAT]
-        nfl[0] = a_floored
-        for j in range(ROM_LAT - 1):
-            nfl[j + 1] = fl_d[j]
+        lr = log_rom(log_rom.p0_in_t(addr=mant, valid=a_valid & ~rst))
+        er = exp_rom(exp_rom.p0_in_t(addr=a_lz, valid=a_valid & ~rst))
+        j = join(
+            lr.p0.rd_data,
+            lr.p0.valid,
+            er.p0.rd_data,
+            er.p0.valid,
+            a_floored,
+            a_valid,
+            rst,
+        )
 
         # ---- stage C: sum and clamp ----------------------------------------
-        l_val: acc_t = l_aligned.rd_data
-        e_val: acc_t = e_aligned.rd_data
+        l_val: acc_t = j.p0
+        e_val: acc_t = j.p1
         total: acc_t = e_val + l_val
         floor_acc: acc_t = DB_FLOOR
         hi_acc: acc_t = DB_MAX
         lo_acc: acc_t = DB_MIN
-        picked: acc_t = floor_acc if fl_tail else total
+        picked: acc_t = floor_acc if j.p2 else total
         clamped: acc_t = picked
         if picked > hi_acc:
             clamped = hi_acc
@@ -293,13 +288,17 @@ def _make_log2_db_rom(in_t, mant_bits, auto_pipeline_ram):
         # Register updates last, in REVERSE pipeline order (see the "pwl"
         # method's note on why that order is load-bearing).
         c_db = clamped[15:0]
-        c_valid = l_aligned.valid & e_aligned.valid
-        c_floored = fl_tail
-        fl_d = nfl
+        c_valid = j.valid
+        c_floored = j.p2
+        c_overflow = j.overflow
         a_mag = mag_in
         a_lz = lz_in
-        a_valid = valid_in
+        a_valid = valid_in & ~rst
         a_floored = nonpos
+        if rst:
+            a_valid = 0
+            c_valid = 0
+            c_overflow = 0
         return o
 
     log2_db.method = "rom"
@@ -313,8 +312,9 @@ def _make_log2_db_rom(in_t, mant_bits, auto_pipeline_ram):
     log2_db.width = W
     log2_db.log_rom = log_rom
     log2_db.exp_rom = exp_rom
-    # stage A + the ROM (read register + output register) + stage C.
-    log2_db.latency = 1 + ROM_LAT + 1
+    # Diagnostic only: stage A + ROM + completion FIFO + stage C.
+    log2_db.get_latency = lambda: max(log_rom.latency, exp_rom.latency) + 5
+    log2_db.join_depth = join_depth
     # A stateful block to native simulation, exactly like the "pwl" method: it
     # aligns the ROMs' physical outputs with its own registers, so nothing
     # outside needs aligning around them. See dsp/nco.py's identical note.
@@ -330,8 +330,8 @@ def _make_log2_db_pwl(in_t, mant_bits, seg_bits):
           power estimate legitimately goes negative between pulses, and dB of a
           non-positive number does not exist.
 
-        log2_db(v: in_t, valid_in: uint1_t) -> log2_db_t
-        log2_db_t: .db (int16_t, Q8.8 dB), .valid, .floored
+        log2_db(v: in_t, valid_in: uint1_t, rst: uint1_t) -> log2_db_t
+        log2_db_t: .db (int16_t, Q8.8 dB), .valid, .floored, .overflow
 
     `.floored` marks an input at or below zero, whose `.db` is the floor value
     (the dB of the smallest representable positive quantity) rather than a
@@ -388,9 +388,10 @@ def _make_log2_db_pwl(in_t, mant_bits, seg_bits):
         db: int16_t  # Q8.8 dB
         valid: uint1_t
         floored: uint1_t  # input was <= 0; .db is the floor, not a measurement
+        overflow: uint1_t
 
     @hw_func
-    def log2_db(v: in_t, valid_in: uint1_t) -> log2_db_t:
+    def log2_db(v: in_t, valid_in: uint1_t, rst: uint1_t) -> log2_db_t:
         b_db: Reg[int16_t]
         b_valid: Reg[uint1_t]
         b_floored: Reg[uint1_t]
@@ -400,8 +401,9 @@ def _make_log2_db_pwl(in_t, mant_bits, seg_bits):
         # combinational path straight out of the piecewise-linear table.
         o: log2_db_t
         o.db = b_db
-        o.valid = b_valid
+        o.valid = b_valid & ~rst
         o.floored = b_floored
+        o.overflow = 0
 
         # ---- stage A: clamp + count-leading-zeros ------------------------
         a_mag: Reg[mag_t]
@@ -512,8 +514,13 @@ def _make_log2_db_pwl(in_t, mant_bits, seg_bits):
         b1_floored = a_floored
         a_mag = mag_in
         a_lz = lz_in
-        a_valid = valid_in
+        a_valid = valid_in & ~rst
         a_floored = nonpos
+        if rst:
+            a_valid = 0
+            b1_valid = 0
+            b2_valid = 0
+            b_valid = 0
         return o
 
     log2_db.method = "pwl"
@@ -527,6 +534,7 @@ def _make_log2_db_pwl(in_t, mant_bits, seg_bits):
     log2_db.frac_bits = F
     log2_db.width = W
     log2_db.latency = 4
+    log2_db.get_latency = lambda: 4
     return log2_db, log2_db_t
 
 
