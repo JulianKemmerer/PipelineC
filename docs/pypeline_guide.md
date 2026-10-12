@@ -449,7 +449,7 @@ Designs that communicate through global `Wire[T]` signals require all `@MAIN`
 functions to advance together. Within each simulated cycle, the complete-design
 simulator repeatedly evaluates affected functions until the global wires converge,
 then performs one final side-effect pass and commits register values. A failure to
-converge within 1,000 delta iterations reports a combinational loop or unstable model.
+converge within 10,000 delta iterations reports a combinational loop or unstable model.
 
 Use `sim_call` for a single function and the complete-design simulator for a hierarchy
 with global wires or multiple `@MAIN` functions. Simulator selection, accuracy modes,
@@ -2428,8 +2428,10 @@ def a_b_connect():
 ```
 
 Rules:
-- Each `Wire[T]` must have **exactly one** writer function (with exactly one instance
-  in the design hierarchy).
+- Each `Wire[T]` must have at least one writer function, and each writer function has
+  exactly one instance in the design hierarchy. Several writer functions may split a
+  compound wire between them (see
+  [Splitting a compound wire](#splitting-a-compound-wire-across-multiple-writer-functions)).
 - Any number of functions may read it.
 - `Wire[T]` is **not** a register — it carries no value across clock cycles.
 - No `global` statement is needed. Inside the module that declares it, a wire's name
@@ -2475,14 +2477,13 @@ def writer():
     point_out.x = point_out.x + 1   # writes 0 + 1 = 1
 ```
 
-Only the sole writer function of a wire may read it this way. A function that merely
-*reads* a wire it does not also write still cannot write to it (and a different
-function may not write a wire another function already writes — see the exactly-one-
-writer rule above).
+This applies to the leaves a function writes itself. Leaves of a split wire that
+another function writes read that function's live value (see
+[Splitting a compound wire](#splitting-a-compound-wire-across-multiple-writer-functions)).
 
 ### Partially-driven compound wires read undriven fields as zero
 
-If a `Wire[T]`'s single writer function only assigns some fields of a struct (or some
+If a `Wire[T]`'s writer function only assigns some fields of a struct (or some
 elements of an array), the untouched fields/elements read as zero everywhere the wire
 is read — exactly as if the writer had first assigned the whole wire to a zero value,
 then overwritten the fields it actually drives.
@@ -2578,6 +2579,98 @@ In simulation, drive an `Input[T]`'s per-cycle value with `@sim_input` — see
 my_wire: Wire[uint32_t]       # correct
 my_wire: Wire[uint32_t] = 0  # error — initialisers are not allowed on Wire/Input/Output
 ```
+
+### Global wires in pipelined code
+
+A function has pipeline stages when the compiler adds registers to it (see
+[Part II](#part-ii--temporal-behavior)). That covers an `AUTO_PIPELINE`-tagged
+function, a `@MAIN` the sweep pipelines, and a helper the sweep slices inside one of
+those. A [`@pipeline_latency`](#fixed-user-pipelines) function supplies its own
+registers and gets none added, so its body keeps ordinary same-cycle wire timing.
+Inside a function with pipeline stages, every global wire it touches behaves like an
+extra argument or return value of **that function**:
+
+- **Reads** are sampled together with the function's arguments, at its first stage.
+  Every read of a wire in the function sees that one sample, however late the
+  pipeline uses it; delay registers carry the value to its uses.
+- **Writes** are published together with its return value, at its last stage. A wire
+  computed early is held in delay registers until then. Several writes in the function
+  still follow program order, and other functions see the final value.
+- The input/output registers the sweep may add to a function hold its global reads
+  and writes too, so they stay lined up with its arguments and return value.
+
+A global wire is connected straight to the function that uses it, with no registers in
+between, and the alignment above concerns only that function's own stages. A function
+called inside a pipeline sits at some stage of it. Its global reads and writes line up
+with *its own* arguments and return value at that stage, not with the enclosing
+pipeline's inputs and outputs:
+
+```python
+g: Wire[uint16_t]
+
+@hw_func
+def read_g(x: uint16_t) -> uint16_t:
+    return x + g              # no stages of its own: reads g when it runs
+
+@hw_func
+def core(x: uint16_t) -> pair_t:
+    q: uint16_t = slow(x)     # say this fills core's 2 stages
+    early: uint16_t = read_g(x)   # at core's stage 0: g as x entered
+    late: uint16_t = read_g(q)    # at core's stage 2: g two cycles later
+    return pair_t(a=early, b=late)
+
+AP = AUTO_PIPELINE(core, latency=2)
+```
+
+`early` and `late` see `g` from different cycles. If `core` read `g` itself, both uses
+would see the sample taken with `x`. For a compound wire, the fields one function
+writes are published together. Another function writing other fields of the same wire
+keeps its own timing.
+
+#### `VOLATILE` wires
+
+Alignment costs delay registers when a wire is used far from a function's first or last
+stage. Some signals don't need to line up with the data, for example configuration and
+mode settings or status and debug outputs. Declare those `VOLATILE`:
+
+```python
+threshold: Input[uint32_t, VOLATILE]   # Wire[T, VOLATILE] and Output[T, VOLATILE] too
+status: Wire[status_t, VOLATILE]
+```
+
+Inside pipelined functions a `VOLATILE` wire is neither aligned nor registered:
+
+- Each operation that consumes it reads it at the stage where that operation runs, so
+  two reads in one function can see values from different cycles.
+- A write is driven as soon as its value is ready, wherever the pipeline's stages put
+  that. Different `VOLATILE` wires, and different writer functions, can change at
+  different times.
+- Limitation: the fields one function writes into one compound `VOLATILE` wire are
+  driven together, when the last of them is ready. Use separate wires (or separate
+  writer functions) for outputs that should appear independently.
+
+In code without pipeline stages, such as a stateful `@MAIN` or a `--comb` build,
+`VOLATILE` makes no difference.
+
+#### Limitations
+
+- **Arguments and return values are always aligned.** There is no `VOLATILE` argument
+  or return value yet. For an unaligned input, read a `VOLATILE` wire inside the
+  function instead of passing the value in.
+- **Native simulation models only some global wires in pipelines.** For a pipelined
+  `@MAIN` or an `AUTO_PIPELINE` call with latency, it evaluates the function's body at
+  the cycle the inputs enter. It publishes the writes with the delayed return value.
+  That is exact for non-`VOLATILE` wires used directly in that function's own body.
+
+  Two cases stop native simulation with `SimPipelineModelError`: a global wire used
+  by a function called inside the pipeline, and a `VOLATILE` wire used by the
+  pipelined function. Simulate the generated hardware instead (`--cocotb --ghdl`), or
+  move the access into the pipelined function and pass the value as an argument or
+  return value.
+
+  Code that runs without pipeline stages has no such limit. That covers stateful
+  `@MAIN`s and every `--comb` simulation apart from `AUTO_PIPELINE(..., latency=N)`
+  call sites.
 
 ---
 
@@ -5633,10 +5726,9 @@ sim_print(f"n={n} hex={hex(n)}", debug=True)
 Use `debug=True` for prints that should be compared cycle-by-cycle between native and
 VHDL simulation. Plain `sim_print(...)` (`debug=False`, the default) is not a comparison
 probe. For a pipelined comparison, valid-gate every probe, place it in stateful code
-outside the pipelined combinational region, and bundle co-timed outputs of a pipelined
-pure `@MAIN` into one struct wire. Native delay lines warm up with typed zeros while VHDL
-pipeline registers may be unknown, and separate output wires can have distinct physical
-cone depths; those three source rules avoid false cycle mismatches.
+outside the pipelined combinational region. Native delay lines warm up with typed zeros
+while VHDL pipeline registers may be unknown; those two source rules avoid false cycle
+mismatches.
 
 `hex(...)`/`chr(...)`/plain `{expr}` interpolation rules are unaffected by `debug`; using
 `from pypeline import hex` (not Python's builtin) matters here more than usual, since only

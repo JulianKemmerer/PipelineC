@@ -8,6 +8,7 @@ import MODELSIM
 import pypeline_sim
 import SYN
 import AUTO_PIPELINE
+import C_TO_LOGIC
 import AUTO_MULTI_CYCLE
 import VERILATOR
 import VHDL
@@ -123,10 +124,6 @@ def _DO_OPTIONAL_SIM(
                 main_latencies = GET_MAIN_FUNC_LATENCIES(
                     parser_state, multimain_timing_params
                 )
-                # Fail loudly (rather than silently mis-model) if the design
-                # uses a pipelined-native-sim construct the emulation can't
-                # represent accurately -- see CHECK_PIPELINED_NATIVE_SIM_SUPPORTED.
-                CHECK_PIPELINED_NATIVE_SIM_SUPPORTED(parser_state, main_latencies)
                 if multimain_timing_params is not None and any(
                     parser_state.func_fixed_latency.get(logic.func_name, 0)
                     for logic in parser_state.LogicInstLookupTable.values()
@@ -150,6 +147,13 @@ def _DO_OPTIONAL_SIM(
                             multimain_timing_params.TimingParamsLookupTable,
                         )
                     )
+                # Fail loudly (rather than silently mis-model) if the design
+                # uses a pipelined-native-sim construct the emulation can't
+                # represent accurately -- see CHECK_PIPELINED_NATIVE_SIM_SUPPORTED.
+                CHECK_PIPELINED_NATIVE_SIM_SUPPORTED(
+                    parser_state, main_latencies, ap_latencies
+                )
+                if multimain_timing_params is not None:
                     # The multi-cycle counts actually constrained, so AUTO_MULTI_CYCLE
                     # handshakes count the same cycles as the built VHDL
                     auto_multi_cycle_latencies = (
@@ -269,46 +273,71 @@ def GET_MAIN_FUNC_LATENCIES(parser_state, multimain_timing_params=None):
     return main_func_to_latency
 
 
-def CHECK_PIPELINED_NATIVE_SIM_SUPPORTED(parser_state, main_latencies):
-    """Fail loudly (sys.exit) if the design relies on a pipelined-native-sim
-    construct the emulation cannot model accurately, rather than silently
-    producing cycle-wrong results (see pypeline_sim_DESIGN.md's "Pipelined
-    native sim" Limitations subsection).
+def CHECK_PIPELINED_NATIVE_SIM_SUPPORTED(parser_state, main_latencies, ap_latencies=None):
+    """Fail loudly (sys.exit) before native sim starts if a pipelined region
+    uses global wires in a way the emulation cannot model, rather than
+    silently producing cycle-wrong results (see pypeline_sim_DESIGN.md's
+    "Pipelined native sim" Limitations).
 
-    Currently enforced: a naturally-pipelined *pure* @MAIN (total latency > 0,
-    i.e. the sweep sliced the MAIN itself -- distinct from an AUTO_PIPELINE
-    child inside a stateful MAIN, which reports 0 to its container) must write
-    at most ONE global wire. The native sim delays every wire such a MAIN
-    writes by that MAIN's single total latency N, but the generated VHDL
-    emerges each *separate* write-only global wire at its own "fully driven
-    last" pipeline stage -- its own cone depth -- so a MAIN writing two wires
-    of different depth (e.g. a deep result wire and a shallow passthrough) is
-    cycle-wrong on the shallower one. Fields carried in ONE struct wire are
-    fine: VHDL registers the whole struct together to its deepest field's
-    stage, so they stay aligned in both sims. The fix is therefore to bundle
-    the MAIN's co-timed outputs into a single struct wire (which also aligns
-    them in hardware). This is intentionally conservative -- two separate
-    equal-depth wires would match, but native sim has no per-wire stage
-    information at sim time to prove that, so it refuses rather than guess.
+    A pipelined region is a naturally pipelined pure @MAIN (total latency > 0)
+    or an AUTO_PIPELINE call site with latency > 0. Hardware aligns a global
+    wire with the arguments/return of the function that uses it, at whatever
+    pipeline stage that function sits. Native sim evaluates the region's whole
+    body at entry and publishes its global writes with its delayed return, so
+    it is exact for non-VOLATILE wires used in the region root's own body only.
+    Refused here: VOLATILE wires used by the root, and any global wire used by
+    a function called inside the region. pypeline._sim_region_for is the
+    runtime twin of this check (it also covers plain native runs with no
+    build).
     """
-    if not main_latencies:
-        return
-    for hw_name, latency in main_latencies.items():
-        if latency <= 0:
-            continue
-        logic = parser_state.FuncLogicLookupTable.get(hw_name)
+    import AUTO
+
+    roots = set()
+    for hw_name, latency in (main_latencies or {}).items():
+        if latency > 0:
+            roots.add(hw_name)
+    if ap_latencies:
+        for logic in parser_state.FuncLogicLookupTable.values():
+            for inst, key in getattr(logic, "sub_inst_to_auto_pipeline_key", {}).items():
+                if ap_latencies.get(key, 0) > 0:
+                    roots.add(logic.submodule_instances[inst])
+    problems = []
+    for root in sorted(roots):
+        logic = parser_state.FuncLogicLookupTable.get(root)
         if logic is None:
             continue
-        written = sorted(getattr(logic, "write_only_global_wires", {}).keys())
-        if len(written) > 1:
-            sys.exit(
-                "ERROR: pipelined native sim cannot accurately model MAIN "
-                f"'{hw_name}': it is pipelined ({latency} clks) and writes "
-                f"{len(written)} separate global wires ({', '.join(written)}). "
-                "Native sim delays every wire a pipelined MAIN writes by the "
-                "MAIN's total latency, but each separate wire emerges at its "
-                "own pipeline depth in the generated VHDL, so wires of "
-                "differing depth would be cycle-wrong. Bundle these outputs "
-                "into a SINGLE struct wire (which also aligns them in "
-                "hardware), or build/simulate with --comb (zero latency)."
-            )
+        own = {
+            **logic.read_only_global_wires,
+            **logic.write_only_global_wires,
+        }
+        volatile = sorted(
+            wire
+            for wire, info in own.items()
+            if AUTO_PIPELINE.GLOBAL_WIRE_TIMING(info) == "volatile"
+            and wire not in logic.readback_global_wires.values()
+        )
+        if volatile:
+            problems.append(f"'{root}' uses VOLATILE global wire(s) {', '.join(volatile)}")
+        for path, ent, kind, detail in AUTO.FIND_EFFECTS(
+            parser_state, root, include_self=False
+        ):
+            if kind == "global":
+                problems.append(
+                    f"'{ent}' (instance {C_TO_LOGIC.SUBMODULE_MARKER.join(path)} "
+                    f"inside pipelined '{root}') uses global wire(s) {', '.join(detail)}"
+                )
+    if problems:
+        sys.exit(
+            "ERROR: native sim cannot model these global wire uses inside "
+            "pipelined logic:\n  "
+            + "\n  ".join(problems)
+            + "\nHardware wires a global directly to the function that uses it "
+            "and aligns it with that function's own arguments/return at the "
+            "pipeline stage the function is placed (VOLATILE: per consumer "
+            "stage). Native sim only models non-VOLATILE global wires used "
+            "directly in the body of the pipelined @MAIN or AUTO_PIPELINE-tagged "
+            "function itself. Simulate the generated hardware instead "
+            "(--cocotb --ghdl), or move the wire access into the pipelined "
+            "function and pass values as arguments/return values. See "
+            "pypeline_guide.md 'Global wires in pipelined code'."
+        )

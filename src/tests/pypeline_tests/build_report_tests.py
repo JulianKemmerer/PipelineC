@@ -409,6 +409,18 @@ def get_tests() -> list:
             requires=["ghdl"],
         )
     )
+    # Global wires below the root of a pipelined function and VOLATILE ones:
+    # per-instance hardware timing self-checked under cocotb+GHDL, and the
+    # native sim refusals (SimPipelineModelError) for what it cannot model.
+    tests.append(
+        Test(
+            name="global_wire_pipeline_instance_test",
+            category=DM,
+            cmd=[INST_DIR / "global_wire_pipeline_instance_test.py"],
+            needs_out_dir=True,
+            requires=["ghdl"],
+        )
+    )
     # Regression guard for the D1 fix (RAW_VHDL.SPLIT_KIND_1LL leaves -
     # MUX/AND/OR/XOR - expose real operation boundaries without pretending
     # their one logic level has an arbitrary interior): a serial 1LL-only gate

@@ -103,7 +103,9 @@ UPDATE.latency                           # fixed in->out cycle count; 0 until kn
 **Contract**
 
 - `func` must be `@hw_func`-decorated, **pure** (no `Reg`/`Feedback`/global wires
-  anywhere in its call subtree), take exactly **one** annotated argument, and
+  anywhere in its call subtree; `BUILD_SCHEDULE` checks the whole subtree with
+  `AUTO.FIND_EFFECTS` and names the offending callee, so an impure callee cannot hide
+  inside a shared unit), take exactly **one** annotated argument, and
   have an annotated return type. Bundle multiple inputs into an `@struct` — the
   same single-argument rule `make_stream_auto_pipeline` and `make_stream_multi_cycle`
   follow.

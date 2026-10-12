@@ -1373,6 +1373,65 @@ def _subtree_entities(parser_state, entity, out=None):
     return out
 
 
+def FIND_EFFECTS(parser_state, entity, include_self=True):
+    """What keeps a function's elaborated subtree from being a pure function of
+    its arguments, as (instance path, entity, kind, detail) tuples in
+    depth-first order, each entity visited once. Kinds, in per-entity order:
+
+      "unresolved" -- no elaborated Logic (the walk stops there);
+      "state"      -- Reg[T] state_regs (detail: names);
+      "feedback"   -- Feedback[T] (detail: names);
+      "global"     -- global wires read or written (detail: wire names);
+      "temporal"   -- AUTO_PIPELINE/AUTO_FSM call sites or a fixed latency;
+      "raw_vhdl"   -- a raw vhdl() body, whose purity cannot be established.
+
+    include_self=False reports only strict descendants. Shared by
+    AUTO_COMB_OPT.check_pure, AUTO_FSM target validation and the pipelined
+    native sim check (SIM.CHECK_PIPELINED_NATIVE_SIM_SUPPORTED); see
+    docs/AUTO_DESIGN.md.
+    """
+    found = []
+    seen = set()
+
+    def visit(ent, path, is_root):
+        if ent in seen:
+            return
+        seen.add(ent)
+        logic = parser_state.FuncLogicLookupTable.get(ent)
+        if logic is None:
+            found.append((path, ent, "unresolved", ()))
+            return
+        if not is_root or include_self:
+            if logic.state_regs:
+                found.append((path, ent, "state", tuple(sorted(logic.state_regs))))
+            if logic.feedback_vars:
+                found.append((path, ent, "feedback", tuple(sorted(logic.feedback_vars))))
+            readback_to_wire = {
+                rb: wire for wire, rb in getattr(logic, "readback_global_wires", {}).items()
+            }
+            wires = {
+                readback_to_wire.get(w, w)
+                for d in (logic.read_only_global_wires, logic.write_only_global_wires)
+                for w in d
+            }
+            if wires:
+                found.append((path, ent, "global", tuple(sorted(wires))))
+            if (
+                logic.sub_inst_to_auto_pipeline_key
+                or logic.sub_inst_to_auto_fsm_key
+                or parser_state.func_fixed_latency.get(ent, 0) > 0
+            ):
+                found.append((path, ent, "temporal", ()))
+            if logic.vhdl_module_text is not None:
+                found.append((path, ent, "raw_vhdl", ()))
+        for inst, sub in logic.submodule_instances.items():
+            if "CLOCK_ENABLE" not in sub:
+                visit(sub, path + (inst,), False)
+
+    visit(entity, (), True)
+    return found
+
+
 _DELAY_MEMO_ATTR = "_auto_fsm_delay_memo"
 
 

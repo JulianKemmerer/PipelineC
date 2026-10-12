@@ -469,6 +469,19 @@ no lowering for `>`, fell through to the SW_LIB C path, and crashed on the unset
 
 See [Default replacements for SW_LIB-only operators](pypeline_DESIGN.md#default-replacements-for-sw_lib-only-operators).
 
+**Known issue: a wire-only `@pipeline_latency` body.**
+`pipeline_latency_wire_body_design.py` (known_issues) declares `@pipeline_latency(1)`
+on `return x`. Its entity's sensitivity list ends in a dangling comment, which GHDL
+rejects. The cocotb/GHDL run fails while that happens, and passes once the VHDL is
+legal. Tracked as bug [#371](https://github.com/JulianKemmerer/PipelineC/issues/371).
+
+**Known issue: extra cuts in a fixed AUTO_PIPELINE.**
+`fixed_auto_pipeline_extra_cuts_test.py` (known_issues) builds
+`AUTO_PIPELINE(core, latency=2)`, where two `@pipeline_latency(1)` calls already
+supply the latency and `x + 1` runs in parallel. It fails while the built core
+instantiates a pipelined adder, and passes once the adder stays combinational.
+Tracked as bug [#372](https://github.com/JulianKemmerer/PipelineC/issues/372).
+
 ## AUTO_PIPELINE latency constraint coverage
 
 Each test below covers `AUTO_PIPELINE(func, latency= / start_latency= / max_latency=)`
@@ -759,6 +772,60 @@ stubbing out `pypeline._check_no_local_binds_wire_name`.
   zeroes the wires on the next invocation. Elaboration registers both wires as written.
 
 All cases except the positive control fail on the tree before the fix.
+
+## Global wire semantics and pipeline timing coverage
+
+**Combinational semantics.** These run native sim and the `--comb` native-vs-VHDL
+cycle diff:
+
+| Test | What it covers |
+|---|---|
+| `global_wire_partial_field_test` | partial struct writer: the unwritten field reads zero |
+| `global_wire_read_write_test` | own read-before-write reads zero; write/read/augmented-assignment order |
+| `global_wire_split_driver_test`, `global_wire_array_split_test` | several writers own disjoint fields/elements |
+| `global_wire_readback_test` | foreign fields live, own fields zero (`_PYPELINE_READBACK`) |
+| `global_wire_hier_writer_test` | a writer below a `@MAIN` |
+| `global_wire_cond_driver_test` | conditional writes, with a zero alternative |
+| `global_wire_dynamic_index_write_test` | one dynamic element driven, the others zero |
+
+The remaining global wire tests:
+- `global_wire_nested_split_test` runs in `synth_tests.py` (`--comb`) and native sim.
+  It is not in the cycle diff; see the comment in `native_vs_vhdl_sim_tests.py`.
+- `global_wire_errors_test` (`elab_introspect`) covers the ownership, direction,
+  overlap and dynamic-index errors.
+
+**Pipeline timing.** See the guide's
+[Global wires in pipelined code](pypeline_guide.md#global-wires-in-pipelined-code).
+
+- `global_wire_pipeline_aligned_test` (`native_vs_vhdl_sim`, `--comb`): ten
+  `AUTO_PIPELINE` cores, nine with fixed `latency=2`, using globals in their own
+  bodies:
+  - a late read, early and late uses of one struct wire, two separate wires;
+  - shallow, partial, array, split and readback writes;
+  - an unused readback (it used to emit an undeclared VHDL variable);
+  - a `VOLATILE` read and write through an unconstrained call (zero latency).
+
+  The checker asserts every value against its counter in both sims. On the tree
+  before this change, 9 of the 13 underlying cases mismatched.
+- `global_wire_pipelined_main_test` (`native_vs_vhdl_sim`, non-`--comb`): a
+  sweep-pipelined pure `@MAIN` writes a shallow wire and a deep wire, and reads its
+  own wire before and after writing it. Native sim used to refuse two written wires,
+  and its write collector read stale values.
+- `global_wire_pipeline_instance_test` (`build_report_device_models`, needs GHDL):
+  - The cocotb/GHDL self-check of `global_wire_pipeline_instance_design.py` shows
+    per-instance timing: a helper at stage 0 and at stage 2 sees `g` from different
+    cycles, a `VOLATILE` read happens at its consumer's stage, and a `VOLATILE` write
+    is driven immediately.
+  - Native sim must refuse `global_wire_pipeline_refusal_design.py` (nested read,
+    then `VOLATILE` read) with `SimPipelineModelError`.
+- `native_pipeline_region_test` (`unit`, no build): a pipelined region's own-read
+  overlay returns (0, 3) where the collector used to return (9, 9). It also covers
+  `AUTO_PIPELINE` writes delayed with the return value over Layer-1 `sim_call`
+  cycles, and the nested-read refusal.
+- `auto_fsm_purity_test` (`elab_introspect`): `BUILD_SCHEDULE` rejects a callee
+  reading a global and a callee holding `Reg` state; both used to be kept as opaque
+  units. It also rejects a direct global read and still schedules a pure core. The
+  two callee cases fail on the tree before the change.
 
 ## Augmented assignment coverage
 
@@ -1289,8 +1356,12 @@ A design registered in `native_vs_vhdl_sim_tests.py` must:
   happily -- a VHDL-only failure by construction. `self_check_type_axis_test.py`
   carries a comment marking where it deliberately stays under the limit.
 
+For a pipelined entry, use global wires only in the body of the pipelined `@MAIN` or
+`AUTO_PIPELINE` function itself, and no `VOLATILE` ones. Native sim refuses anything else
+(`SimPipelineModelError`).
+
 See `docs/pypeline_sim_DESIGN.md`'s Limitations section for the full contract
-(including the two hard-error cases enforced by the elaborator/simulator directly).
+(including the hard-error cases enforced by the simulator directly).
 
 ## Testing generated host code
 

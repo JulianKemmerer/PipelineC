@@ -1973,6 +1973,21 @@ Key implementation points:
 - **Aliasing.** Both the pushed `now` and the returned `committed[0]` are `deepcopy`d: `func` may
   return an object aliasing its input, and `committed[0]` is handed to every re-evaluation in the
   cycle, so caller mutation must not corrupt the committed line.
+- **Global wires in the body.** In hardware a pipelined function treats the globals in its own
+  body like arguments and return values. Reads are sampled with the arguments; writes are
+  published with the return value (see the guide's
+  [Global wires in pipelined code](pypeline_guide.md#global-wires-in-pipelined-code)). So
+  `_sim_delay_line` evaluates `func` inside a **region context**
+  (`_sim_run_in_region`; see "Region contexts" below):
+  - Reads see this cycle's values, which are the entry sample.
+  - `_sim_wire_write`/`_sim_wire_lens_write`/`_sim_wire_reset_claims` divert into the
+    region's collector.
+  - The collector is pushed onto a second committed line, `_SIM_AP_WRITES_KEY`, next to
+    the return line.
+  - `_sim_apply_ap_delayed_writes` replays that line's oldest set at each cycle start:
+    in `pypeline_sim._run_clock_cycle`, and for Layer 1 at the outermost `sim_call`. The
+    writes therefore appear with the N-cycles-old return value. Call sites holding such
+    a line are listed in `_sim_ap_write_sites`.
 - The surrounding elastic handshake of `make_stream_auto_pipeline` (its `ready`/in-flight `Reg[T]` and
   output FIFO) is **not** emulated here — those are ordinary stateful sim constructs that native
   sim already models exactly. Only the feed-forward AUTO_PIPELINE core inside gets the delay line.
@@ -2027,8 +2042,43 @@ hardware mux.
 
 **Why write-side, not read-side.** Delaying writes (rather than shadowing each reader N cycles
 back) needs no read-set discovery or snapshotting, and it keeps `sim_assert`s *inside* the
-pipelined MAIN evaluating on real current values (no spurious warm-up failures). The cost is the
-per-wire-uniformity assumption in Limitations below.
+pipelined MAIN evaluating on real current values (no spurious warm-up failures). Hardware
+publishes every global write of the MAIN with its return value: aligned writes are held to the
+last stage, through the output registers. So one delay N per MAIN is exact for every wire it
+writes.
+
+#### Region contexts (`_sim_regions`, `pypeline.py`)
+
+The pipelined MAIN's `_sim_pipelined_main_info` entry, which carries `"root"` and `"name"`, and
+each AUTO_PIPELINE call with latency are **region contexts**. `pypeline_sim._call_main` and
+`_sim_delay_line` enter one with `_sim_run_in_region(region, func, ...)`. Region entry resets a
+per-invocation `"overlay"`. `_sim_regions` is a stack; when it is empty, the wire hot paths pay
+one truthiness test.
+
+- **Own view.** While writes divert into the collector, `_sim_wire_state` still holds the
+  published, N-cycles-old values. The overlay holds this invocation's own view of the wires
+  it writes:
+  - `_sim_wire_reset_claims` zeroes the claimed paths in it;
+  - writes update it;
+  - `_sim_wire_read`/`_sim_wire_lens_read` read it first.
+
+  Read-before-write is therefore zero and read-after-write is the new value, like the
+  hardware's alias chain. Foreign leaves come from the published state.
+- **Whose body is running.** While a region is active, the `_sim_type_wrap` wrappers call each
+  rewritten sim body (and each `sim_model`) through `_sim_owned_body_call`, recording the
+  `hw_func` wrapper as `_sim_body_owner`. `@sim_input`/`@sim_output` bodies record
+  `_SIM_ONLY_BODY`.
+- **Refusal (`_sim_region_for`).** The model is exact only for non-`VOLATILE` wires used in
+  the region root's own body, with no pipelined region around it. Any other access raises
+  `SimPipelineModelError`, naming the wire, the function and the reason:
+  - a global used by a function called inside the region;
+  - a `VOLATILE` wire;
+  - a region nested in another.
+
+  In hardware those are read at stages native sim does not model.
+  `SIM.CHECK_PIPELINED_NATIVE_SIM_SUPPORTED` makes the same refusal statically before a
+  post-build native run, listing every offender. The runtime check also covers plain native
+  runs with no build.
 
 #### Latency invariants the driver depends on
 
@@ -2126,6 +2176,17 @@ for their compiler-added latency. Tagged bodies execute their own state instead.
 The evaluator accounts for caller I/O registers and translates hardware global
 wire names back to the simulator's module-qualified wire keys.
 
+Global wires follow the emitter's timing (`AUTO_PIPELINE.GLOBAL_WIRE_TIMING`):
+- **Aligned reads** come from the register lifetimes. They pass through the input
+  registers when the entity has them (`ALIGNED_GLOBAL_READS`).
+- **Aligned writes** are taken at the last stage and delayed by the output register
+  (`ALIGNED_GLOBAL_WRITES`).
+- **`VOLATILE` writes** are taken at their drive stage.
+
+A readback input, or a wire whose regions several functions write, would need the
+top level's per-region masking. `_Graph` refuses those with a `RuntimeError` instead of
+writing the whole base.
+
 All state changes use `_sim_reg_write` and the existing per-cycle buffer. Repeated
 convergence evaluations read the same cycle-start state; only the final pending
 writes commit. A disabled submodule still computes combinational outputs but its
@@ -2171,27 +2232,23 @@ refused rather than silently mis-simulated); the rest are constraints on how you
   valid bit carried through the same pipeline gates false in both sims during warm-up (`'U'` in
   VHDL, `0` in native), so gated probes agree from the first meaningful cycle; an un-gated data
   print can never match during warm-up.
-- **[HARD ERROR] A pipelined pure MAIN writing more than one separate global wire.** Mechanism
-  B delays *all* of a pure MAIN's output wires by that MAIN's single total latency N. But the
-  generated VHDL emerges each **separate** write-only global wire at *its own* "fully driven
-  last" stage — its own cone depth — not at the module's total latency. So a pure pipelined MAIN
-  that writes two separate wires of different depth (e.g. a deep `heavy(heavy(x))` result wire
-  and a shallow passthrough wire) would **diverge** on the shallower wire: native over-delays it
-  to N, VHDL emerges it earlier. Verified empirically — for a MAIN with a depth-10 deep wire and
-  a ~0-depth shallow wire, at the cycle the deep wire's `seq=0` emerges, native reports `shallow
-  seq=0` while VHDL reports `shallow seq=10` (a 10-cycle skew, exactly N − depth\_shallow). Since
-  native sim has no per-wire stage information at sim time, it cannot tell a divergent pair from
-  two coincidentally-equal-depth wires, so `SIM.CHECK_PIPELINED_NATIVE_SIM_SUPPORTED` **refuses
-  the design** (`sys.exit`) whenever a pipelined pure MAIN writes more than one global wire —
-  conservative, but never silently wrong. **Fields carried in one struct wire are fine and are
-  the fix**: VHDL registers the whole struct together to its deepest field's stage, so all
-  fields emerge aligned in both sims (this is exactly what the shipped
-  `native_vs_vhdl_pipelined_main_test` does — data + seq + valid in one struct — and it matches
-  cleanly). Bundle a pipelined MAIN's co-timed outputs into one struct wire (which also aligns
-  them in hardware), or build with `--comb`. A precise (non-conservative) version would export
-  each wire's end-stage from the pipeline map and give it its own delay line — left as future
-  work ([#351](https://github.com/JulianKemmerer/PipelineC/discussions/351)). Mechanism A does not have this issue: an AUTO_PIPELINE core is a single function whose
-  whole return value, struct included, is delayed together.
+- **[HARD ERROR] Global wires native sim cannot place in time.** Hardware connects a global
+  wire directly to the function that uses it. The function sees the wire aligned with its own
+  arguments/return, at whatever stage of the enclosing pipeline it sits. A `VOLATILE` wire is
+  read at each consumer's stage.
+
+  The output-delay model evaluates the whole region at entry, so it is exact only for
+  non-`VOLATILE` wires used in the body of the pipelined `@MAIN` or `AUTO_PIPELINE` function
+  itself. Everything else raises `SimPipelineModelError` (see "Region contexts" above), and
+  `SIM.CHECK_PIPELINED_NATIVE_SIM_SUPPORTED` exits before a post-build run.
+
+  Use cocotb/GHDL for such designs, or move the wire access into the pipelined function.
+  Modeling them natively would need a stage-by-stage evaluator: future work. The fixed
+  user pipelines' `_Graph` already evaluates stage by stage, but it is not activated for these
+  regions.
+
+  (This replaced a refusal of any pipelined MAIN writing more than one wire. Hardware used to
+  drive each separate wire when ready rather than with the return value.)
 - **[HARD ERROR] `sim_print(debug=True)` inside a pipelined comb region.** A `debug=True` print
   fires in native sim at the cycle its inputs arrive (stage 0), but in VHDL at whatever pipeline
   stage the retiming placed that logic — so it cannot be cycle-compared. If such a print executes
@@ -2447,8 +2504,8 @@ Two traps when writing a design that will be diffed against real VHDL:
   multi-file designs supported (`_discover_wire_names` recursively scans *every* imported
   sub-module transitively, including "pass-through" modules that declare no `Wire[T]` of their
   own but import ones that do — e.g. a module whose only job is cross-module wiring between
-  other modules' globals). Wire sim-keys are bare names (no module prefix); unique wire names
-  across sub-modules assumed. HDL discovery reaches the same modules from the module-level
+  other modules' globals). Wire sim-keys are module-qualified (`<module>.<wire>`), so
+  same-named wires in different modules stay distinct. HDL discovery reaches the same modules from the module-level
   import statements that ran, including those chosen by a module-level `if`/`try`. A
   `@MAIN` that sim would run but HDL cannot reach is a build error, so the two layers
   agree on the MAIN set (see PY_TO_LOGIC_DESIGN.md, Conditional imports).

@@ -126,6 +126,33 @@ def get_tests() -> list:
             requires=["ghdl"],
         )
     )
+    # @pipeline_latency(N >= 1) (C: FUNC_LATENCY) on a wire-only body renders a
+    # process sensitivity list ending in a dangling comment: illegal VHDL that
+    # GHDL rejects. Issue #371.
+    tests.append(
+        Test(
+            name="pipeline_latency_wire_body_known_issue",
+            category="known_issues",
+            cmd=[PYPELINEC, INST_DIR / "pipeline_latency_wire_body_design.py",
+                 "--comb", "--sim", "--cocotb", "--ghdl", "--run", "all"],
+            needs_out_dir=True,
+            expect_fail=True,
+            requires=["ghdl"],
+        )
+    )
+    # AUTO_PIPELINE(func, latency=N) still places N cuts when func's
+    # @pipeline_latency calls already supply N cycles; they land in a parallel
+    # branch (extra registers there, later VOLATILE/C global writes from it).
+    # Issue #372.
+    tests.append(
+        Test(
+            name="fixed_auto_pipeline_extra_cuts_known_issue",
+            category="known_issues",
+            cmd=[INST_DIR / "fixed_auto_pipeline_extra_cuts_test.py"],
+            needs_out_dir=True,
+            expect_fail=True,
+        )
+    )
     # (operator_library_predicate_never_fires_known_issue was here while
     # SYN._IS_PYPELINE_OPERATOR_LIBRARY_CODE, meant to put operator-library
     # delays in the name-keyed cache/delay, never fired (#364). The predicate

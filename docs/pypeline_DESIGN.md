@@ -904,6 +904,31 @@ already-committed leaves within the same simulated cycle's convergence loop, sin
 `_sim_wire_state` is shared, persistent process state, not per-invocation-scoped. See
 [`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md).
 
+### Pipeline timing: aligned globals and `VOLATILE`
+
+`Wire[T, VOLATILE]` (also `Input`/`Output`) passes a second subscript to the metaclass.
+`_wire_ann_args` splits it into the inner ctype and `volatile=True`, which `_WireType`,
+`_InputType` and `_OutputType` store. Any other second argument is a `TypeError`.
+`VOLATILE` is the `_VolatileMarker` singleton.
+
+A function with pipeline stages treats every global it touches like an extra argument
+or return value. Reads are sampled with its arguments, and writes are published with its
+return value, through its IO registers if it has them. The wire itself is connected
+directly to the function instance that uses it, wherever it sits in an enclosing
+pipeline. A `VOLATILE` wire is not aligned: each consumer reads it at its own stage, and
+writes are driven when ready.
+
+Elaboration records this as `VariableInfo.pipeline_timing` ("aligned"/"volatile"; see
+[`PY_TO_LOGIC_DESIGN.md`](PY_TO_LOGIC_DESIGN.md#global-wires-wiret)). The emitter
+applies it in [`AUTO_PIPELINE_DESIGN.md`](AUTO_PIPELINE_DESIGN.md#global-wires-in-pipelines).
+User guide: [Global wires in pipelined code](pypeline_guide.md#global-wires-in-pipelined-code).
+
+Native sim models aligned globals used in a pipelined region root's own body exactly,
+and refuses the rest with `SimPipelineModelError`. See
+[`pypeline_sim_DESIGN.md`](pypeline_sim_DESIGN.md#pipelined-native-sim-non---comb-pipelinec---sim)
+(`_sim_regions`, `_sim_region_for`). `_build_reg_sim_func` and
+`pypeline_sim._discover_wire_names` record `VOLATILE` sim keys in `_sim_wire_volatile`.
+
 ### `Input[T]` / `_InputType`
 
 Module-level annotation declaring a **top-level FPGA input port**.
@@ -914,7 +939,8 @@ Module-level annotation declaring a **top-level FPGA input port**.
 ### `Output[T]` / `_OutputType`
 
 Module-level annotation declaring a **top-level FPGA output port**.
-- Exactly one writing function, exactly one hierarchy instance
+- At least one writing function, each with exactly one hierarchy instance; a compound
+  `Output[T]` may be split across writers exactly like a `Wire[T]`
 - Name appears verbatim as VHDL entity port (no module prefix)
 - Must be a legal VHDL identifier
 

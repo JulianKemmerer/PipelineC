@@ -67,9 +67,35 @@ class _Graph:
             if name == inst or name.startswith(inst + C.SUBMODULE_MARKER)
         ]
         self.map = AUTO_PIPELINE.GET_PIPELINE_MAP(inst, self.logic, state, timing)
-        self.ranges = AUTO_PIPELINE.PiplineHDLParams(
+        params = AUTO_PIPELINE.PiplineHDLParams(
             inst, self.logic, state, timing, self.map
-        ).wire_to_reg_stage_start_end
+        )
+        self.ranges = params.wire_to_reg_stage_start_end
+        # Global wires are aligned with this function's arguments/return
+        # (input/output regs included) unless VOLATILE, exactly like the VHDL
+        # (AUTO_PIPELINE.GLOBAL_WIRE_TIMING). Readback and multi-writer splits
+        # need per-region masking this evaluator does not do: refuse loudly.
+        self.aligned_reads = set(AUTO_PIPELINE.ALIGNED_GLOBAL_READS(self.logic, params))
+        self.aligned_writes = set(AUTO_PIPELINE.ALIGNED_GLOBAL_WRITES(self.logic, state))
+        for wire in self.logic.readback_global_wires:
+            raise RuntimeError(
+                f"pipeline_latency: native sim of '{self.logic.func_name}' cannot "
+                f"model it reading back global wire {wire!r}, which it also "
+                f"writes. Simulate the generated hardware instead (--cocotb --ghdl)."
+            )
+        for wire in self.logic.write_only_global_wires:
+            writers = [
+                name
+                for name, other in state.FuncLogicLookupTable.items()
+                if wire in other.write_only_global_wires
+            ]
+            if len(writers) > 1:
+                raise RuntimeError(
+                    f"pipeline_latency: native sim of '{self.logic.func_name}' "
+                    f"cannot model global wire {wire!r}, whose regions are "
+                    f"written by several functions ({', '.join(sorted(writers))}). "
+                    f"Simulate the generated hardware instead (--cocotb --ghdl)."
+                )
         self.children = {}
         self.ops = {}
         self.callables = state.pypeline_entity_callables
@@ -86,6 +112,22 @@ class _Graph:
                 self.children[sub] = _Graph(child_inst, state, timing, types, contains)
             elif entity not in self.callables:
                 self.ops[sub] = AUTO.DECODE_OP(self.logic, sub, entity, state)
+            elif (
+                entity not in state.func_fixed_latency
+                and not child.uses_nonvolatile_state_regs
+                and timing[child_inst].GET_TOTAL_LATENCY(state, timing) > 0
+            ):
+                # A sliced native leaf runs at its start stage and has its
+                # result delayed (_call). Its global wires would be sampled and
+                # written at the wrong stages: refuse instead of mis-simulating.
+                for _path, ent, kind, detail in AUTO.FIND_EFFECTS(state, entity):
+                    if kind == "global":
+                        raise RuntimeError(
+                            f"pipeline_latency: native sim of '{self.logic.func_name}' "
+                            f"cannot model pipelined '{entity}' using global wire(s) "
+                            f"{', '.join(detail)} (in '{ent}'). Simulate the "
+                            f"generated hardware instead (--cocotb --ghdl)."
+                        )
         self.constants = {}
         for wire in self.logic.wires:
             if C.WIRE_IS_CONSTANT(wire):
@@ -203,17 +245,13 @@ class _Graph:
         else:
             current = {}
         for wire in logic.read_only_global_wires:
-            original = next(
-                (
-                    name
-                    for name, rb in logic.readback_global_wires.items()
-                    if rb == wire
-                ),
-                wire,
-            )
-            values[wire] = p._sim_wire_read(
-                self.state.pypeline_global_wire_names[original]
-            )
+            values[wire] = p._sim_wire_read(self.state.pypeline_global_wire_names[wire])
+            # Aligned reads are sampled with the arguments, input regs included
+            if self.tp._has_input_regs and wire in self.aligned_reads:
+                current[wire] = values[wire]
+                values[wire] = copy.deepcopy(
+                    old.get(("input", wire), p.sim_zero(self.type(wire)))
+                )
         pending = {}
         outputs = {}
 
@@ -274,10 +312,19 @@ class _Graph:
             pending[("input", port)] = copy.deepcopy(value)
         p._sim_reg_write(path, _REG_KEY, pending)
         for wire in logic.write_only_global_wires:
-            start, _ = self.ranges.get(wire, (0, 0))
+            if wire in self.aligned_writes:
+                # Published with the return: last stage, output regs included
+                value = read(wire, self.map.num_stages - 1)
+                if self.tp._has_output_regs:
+                    value = _delay(
+                        value, 1, self.type(wire), "__sim_pipeline_output__" + wire
+                    )
+            else:
+                # VOLATILE: driven as soon as its final value is ready
+                start, _ = self.ranges.get(wire, (0, 0))
+                value = read(wire, start or 0)
             p._sim_wire_write(
-                self.state.pypeline_global_wire_names[wire],
-                copy.deepcopy(read(wire, start or 0)),
+                self.state.pypeline_global_wire_names[wire], copy.deepcopy(value)
             )
         if C.RETURN_WIRE_NAME not in logic.outputs:
             return None

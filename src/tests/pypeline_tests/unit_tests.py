@@ -32,6 +32,15 @@ def get_tests() -> list:
             cmd=[INST_DIR / "added_latency_context_test.py"],
         )
     )
+    # Native pipelined-region model of global wires: own-read view, delayed
+    # AUTO_PIPELINE writes, nested-read refusal (no build)
+    tests.append(
+        Test(
+            name="native_pipeline_region_test",
+            category="unit",
+            cmd=[INST_DIR / "native_pipeline_region_test.py"],
+        )
+    )
     tests.append(
         Test(
             name="auto_pipeline_ram_test",

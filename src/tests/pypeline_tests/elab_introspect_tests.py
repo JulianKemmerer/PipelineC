@@ -22,6 +22,10 @@ def get_tests() -> list:
                       cmd=[INST_DIR / "auto_comb_delay_opt_test.py"]))
     tests.append(Test(name="auto_comb_area_opt_test", category="elab_introspect",
                       cmd=[INST_DIR / "auto_comb_area_opt_test.py"]))
+    # AUTO_FSM rejects impure callees (global wires, Reg state) in its whole
+    # subtree, not just the levels its scheduler opens (AUTO.FIND_EFFECTS)
+    tests.append(Test(name="auto_fsm_purity_test", category="elab_introspect",
+                      cmd=[INST_DIR / "auto_fsm_purity_test.py"]))
     # A hardware local must shadow a same-named module global/closure name in
     # every constant-folding path (_try_eval_const and friends). Failure modes
     # range from a raw KeyError to silent miscompiles (const-folded array index,

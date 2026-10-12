@@ -190,6 +190,20 @@ calibrated, is in [`AUTO_FSM_DESIGN.md`](AUTO_FSM_DESIGN.md#38-consuming-real-sk
 message naming the feature and the offending function or operation.
 `AUTO_FSM.AutoFsmInternalError` subclasses it for compiler invariants.
 
+`FIND_EFFECTS(parser_state, entity, include_self=True)` walks an elaborated
+subtree once per entity. It lists what keeps the subtree from being a pure function
+of its arguments, as `(instance path, entity, kind, detail)`:
+`unresolved`, `state` (Reg), `feedback`, `global` (wire names, readback mapped to its
+wire), `temporal` (AUTO_PIPELINE/AUTO_FSM calls or a fixed latency) and `raw_vhdl`.
+
+Its users:
+- `AUTO_COMB_OPT.check_pure` rejects any kind.
+- `AUTO_FSM.BUILD_SCHEDULE` rejects `state`, `feedback` and `global` anywhere in the
+  subtree. It does so before building the DAG, so an impure callee can no longer stay
+  behind as one shared unit.
+- `SIM.CHECK_PIPELINED_NATIVE_SIM_SUPPORTED` (`include_self=False`) rejects
+  `global` below a pipelined region's root.
+
 `GRAPH_VERSION` and `TIMING_VERSION` are part of `AUTO_COMB_OPT`'s plan key and
 the timing report; bump the first when a rewrite or the graph encoding changes
 meaning, the second when the timing model does.

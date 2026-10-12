@@ -353,6 +353,57 @@ serial `chacha20_block_step` instances: one internal slice per helper plus
 nine producer-output banks rendered as 19 slices / 20 stages, with no
 redundant output-to-input register pairs.
 
+### Global wires in pipelines
+
+An entity's global wires reach it through its `global_to_module`/`module_to_global`
+records. Those records are connected directly through the hierarchy: a child
+instance's record is port-mapped from its parent's live record, with no stage
+registers, wherever the child sits in the parent's pipeline. Timing is
+therefore decided per entity, inside that entity's own pipeline, by
+`GLOBAL_WIRE_TIMING(var_info)`, which reads `VariableInfo.pipeline_timing`:
+
+| Timing | Set by | Read | Write |
+|---|---|---|---|
+| `"aligned"` | Pypeline `Wire`/`Input`/`Output` | sampled at stage 0 with the arguments | published at the last stage with the return value |
+| `"volatile"` | Pypeline `Wire[T, VOLATILE]` etc. | each consumer reads the live wire at its own stage | driven when its final value is ready |
+| `"legacy"` | C frontend (default) | sampled at the network's earliest use; skipped for C `volatile` globals | driven when ready |
+
+How `PiplineHDLParams` implements it:
+- **Reads.** The read-only global network (`GET_PIPELINE_MAP`) carries wires
+  derived from a global up to the submodule inputs that consume them. The
+  network's register lifetimes start at the base global's stage: 0 for aligned,
+  the earliest use for legacy, each wire's own first read for volatile. The
+  prologue `VAR_g := global_to_module.g` reads the live record before the stage
+  loop; the lifetime registers carry that sample to later stages.
+- **Writes.** `ALIGNED_GLOBAL_WRITES` (shared, aligned write-only globals) are
+  added to the final stage's driver wires, next to `Logic.outputs`. So
+  `VAR_w` is registered from its drive stage to the last stage. The post-loop
+  `module_to_global.w <= VAR_w` then emits the last-stage value. Volatile and
+  legacy writes have an empty lifetime and leave as soon as they are driven.
+- **IO banks.** `ALIGNED_GLOBAL_READS` (declared variables only) join
+  `input_registers_t`, captured from `global_to_module` as
+  `global_<name>`. `ALIGNED_GLOBAL_WRITES` join `output_registers_t`, and
+  `module_to_global` is driven from `io_registers_r`. `IO_REG_BANKS` is the one
+  definition of whether a bank exists: the sweep placed it, and it holds
+  arguments, clock enable, aligned reads, return or aligned writes. A function
+  whose only IO is global wires used to declare `io_registers_t` signals without
+  the type (issue #175).
+- **Trimmed reads.** The prologue skips a read whose variable trimming
+  removed (for example an unused `_PYPELINE_READBACK`), instead of naming an
+  undeclared variable.
+- **Clock enable.** When the entity needs one, global writes are still gated by
+  the live stage-0 `clk_en_internal` (see
+  [#122](https://github.com/JulianKemmerer/PipelineC/issues/122)).
+- **Compound wires.** One writer's owned regions are assembled into one record
+  and leave together, aligned or not. Other writers of the same wire keep their own
+  timing (`VHDL.BUILD_MULTI_WRITER_REGIONS`).
+
+Zero-latency entities render identical text under every policy (all lifetimes
+are empty). That is why entity names need no policy term: a pipelined entity's
+text changes, `VHDL.WRITE_TEXT_IF_CHANGED` rewrites it, and synthesis logs are
+reused only for identical inputs. User-facing contract:
+[Global wires in pipelined code](pypeline_guide.md#global-wires-in-pipelined-code).
+
 ## 4. Build entry points
 
 `src/pipelinec` calls `AUTO_PIPELINE.DO_PIPELINED_BUILD` for every non-`--comb`

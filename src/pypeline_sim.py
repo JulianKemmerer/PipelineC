@@ -242,6 +242,9 @@ def run_sim(
                 "latency": latency,
                 "queue": deque(),
                 "collector": [],
+                # Region context (pypeline._sim_regions) entered by _call_main
+                "root": fn,
+                "name": fn.__qualname__,
             }
 
     # Activate simulation mode so @hw_func wrappers use sim bodies instead of
@@ -304,7 +307,14 @@ def run_sim(
 def _call_main(main_fn, arg_types: tuple) -> None:
     # Fresh zeros on every call, so no call can see an argument object a previous
     # call (or cycle) was handed.
-    pypeline.sim_call(main_fn, *(pypeline.sim_zero(t) for t in arg_types))
+    args = [pypeline.sim_zero(t) for t in arg_types]
+    region = pypeline._sim_pipelined_main_info.get(main_fn)
+    if region is None:
+        pypeline.sim_call(main_fn, *args)
+    else:
+        # A pipelined pure MAIN: its global writes go to its collector, its own
+        # reads see its own writes (see pypeline._sim_region_for)
+        pypeline._sim_run_in_region(region, pypeline.sim_call, main_fn, *args)
 
 
 def _run_clock_cycle(mains: list, main_arg_types: dict, cycle: int) -> None:
@@ -318,6 +328,8 @@ def _run_clock_cycle(mains: list, main_arg_types: dict, cycle: int) -> None:
     for info in pypeline._sim_pipelined_main_info.values():
         if len(info["queue"]) >= info["latency"]:
             pypeline._sim_apply_delayed_writes(info["queue"].popleft())
+    # Likewise each AUTO_PIPELINE call site's global writes from N cycles ago.
+    pypeline._sim_apply_ap_delayed_writes()
     # Reset @sim_input's once-per-cycle result cache before anything else runs
     # this cycle, so the first call anywhere (convergence loop or final pass)
     # computes fresh and every later call this cycle reuses that same result.
@@ -416,6 +428,8 @@ def _discover_wire_names(module) -> list:
                 if qualified not in result_keys:
                     result.append((qualified, pypeline._wire_ann_inner_ctype(ann)))
                     result_keys.add(qualified)
+                if ann.volatile:
+                    pypeline._sim_wire_volatile.add(qualified)
         for attr in vars(mod).values():
             if isinstance(attr, types.ModuleType):
                 _scan(attr)

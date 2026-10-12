@@ -11096,6 +11096,11 @@ class VariableInfo:
         self.is_static_local = False
         self.path_id = None  # Use associated path id, for clk cross
         self.used_in_funcs = set()  # Global id occurs in funcs
+        # Global wire timing inside a pipelined function (AUTO_PIPELINE.GLOBAL_WIRE_TIMING):
+        # "legacy" (C: read at earliest use, written when ready),
+        # "aligned" (Pypeline Wire: read with the args, written with the return),
+        # "volatile" (Pypeline Wire[T, VOLATILE]: read per consumer stage, written when ready).
+        self.pipeline_timing = "legacy"
 
 
 def GET_GLOBAL_VAR_INFO(parser_state):

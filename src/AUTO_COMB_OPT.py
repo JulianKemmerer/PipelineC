@@ -14,26 +14,15 @@ import AUTO
 _PLANS = {}
 
 
-def check_pure(parser_state, entity, seen=None):
-    seen = set() if seen is None else seen
-    if entity in seen:
-        return
-    seen.add(entity)
-    logic = parser_state.FuncLogicLookupTable.get(entity)
-    if logic is None:
-        raise AUTO.AutoError("AUTO_COMB_OPT: unresolved operation " + entity)
-    if (logic.state_regs or logic.feedback_vars or logic.read_only_global_wires
-            or logic.write_only_global_wires or logic.sub_inst_to_auto_pipeline_key
-            or logic.sub_inst_to_auto_fsm_key
-            or parser_state.func_fixed_latency.get(entity, 0) > 0):
+def check_pure(parser_state, entity):
+    for _path, ent, kind, _detail in AUTO.FIND_EFFECTS(parser_state, entity):
+        if kind == "unresolved":
+            raise AUTO.AutoError("AUTO_COMB_OPT: unresolved operation " + ent)
+        if kind == "raw_vhdl":
+            raise AUTO.AutoError("AUTO_COMB_OPT: raw VHDL purity cannot be established: " + ent)
         raise AUTO.AutoError(
-            "AUTO_COMB_OPT: " + entity + " is not pure combinational logic (state, global wires or temporal AUTO call)"
+            "AUTO_COMB_OPT: " + ent + " is not pure combinational logic (state, global wires or temporal AUTO call)"
         )
-    if logic.vhdl_module_text is not None:
-        raise AUTO.AutoError("AUTO_COMB_OPT: raw VHDL purity cannot be established: " + entity)
-    for sub in logic.submodule_instances.values():
-        if "CLOCK_ENABLE" not in sub:
-            check_pure(parser_state, sub, seen)
 
 
 class CombEmitter(AUTO._GraphCodegen):

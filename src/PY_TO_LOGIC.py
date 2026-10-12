@@ -6825,6 +6825,11 @@ def _discover_global_wires(tree, module_globals, parser_state, name_prefix=None)
         var_info = C_TO_LOGIC.VariableInfo()
         var_info.name = reg_name
         var_info.type_name = _inner_ctype_to_str(ann_val.inner_ctype, parser_state)
+        # Inside a pipelined function a global is aligned with that function's
+        # args/return unless declared Wire[T, VOLATILE] (AUTO_PIPELINE.GLOBAL_WIRE_TIMING)
+        var_info.pipeline_timing = (
+            "volatile" if getattr(ann_val, "volatile", False) else "aligned"
+        )
         parser_state.global_vars[reg_name] = var_info
         parser_state.pypeline_global_wire_names[reg_name] = (
             f"{module_globals['__name__']}.{node.target.id}"

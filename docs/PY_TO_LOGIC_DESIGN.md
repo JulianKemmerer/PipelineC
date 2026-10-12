@@ -2285,6 +2285,15 @@ def a_b_connect():
 `reg_name = f"{name_prefix}_{bare_name}"` if a prefix is given, else `bare_name`.
 An initializer on the declaration is an `ElaborationError`.
 
+`var_info.pipeline_timing` is set to `"volatile"` for `Wire/Input/Output[T, VOLATILE]`
+and to `"aligned"` otherwise (C globals keep the `"legacy"` default). Every function's
+`read_only_global_wires`/`write_only_global_wires` entry is this same object, and so is
+the `_PYPELINE_READBACK` input. So the policy reaches each user unchanged.
+`AUTO_PIPELINE.GLOBAL_WIRE_TIMING` reads it when a user function gets pipeline stages:
+aligned wires are sampled with its arguments and published with its return value. See
+[AUTO_PIPELINE_DESIGN.md](AUTO_PIPELINE_DESIGN.md#global-wires-in-pipelines). It is
+deliberately not `is_volatile`, which also relaxes clock-crossing checks.
+
 For the top-level design file, `name_prefix=None` (names used verbatim). For imported
 sub-files, `name_prefix=actual_module_name` so all wires are registered under the
 module-prefixed hardware name. See **Multi-File Import Support** for details.
@@ -2500,8 +2509,8 @@ unmodified for `Attribute`/`Subscript` targets, including global-wire fields
 - Global wires can be read from any number of functions (including non-`@MAIN`
   functions), including their own writer functions (see readback above).
 - The writer function itself may also read the wire it writes (see "Write side" above) —
-  this is not an error; only a genuinely different function attempting to write a
-  wire another function already writes is an error (the exactly-one-writer rule).
+  this is not an error. Another writer function may write only leaves disjoint from
+  this one's (the overlap rule above).
 
 ### Implementation mapping
 
@@ -2577,8 +2586,9 @@ end of elaboration, exactly as for `Wire[T]`.
 - `Input[T]` is **globally read-only**. Any attempt to write it causes an immediate
   `ElaborationError` in `_declare_global_write_wire` (before `read_only_global_wires`
   conflict check, keyed on `parser_state.input_wires`).
-- `Output[T]` requires exactly one writing function with exactly one hierarchy instance
-  — the same single-writer / single-instance rule as `Wire[T]`.
+- `Output[T]` follows the same writer rules as `Wire[T]`: at least one writing function,
+  each with exactly one hierarchy instance, with disjoint leaves when several writers
+  split a compound port.
 - Neither `Input[T]` nor `Output[T]` may appear inside a function body — `ElaborationError`.
 - No initializer allowed at declaration — `ElaborationError`.
 

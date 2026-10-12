@@ -1824,6 +1824,29 @@ def BUILD_SCHEDULE(
     delays = _schedule_delays(parser_state, func_entity, snapshot)
 
     AUTO._seed_struct_widths(parser_state)
+    # The whole subtree must be pure, not just the levels BUILD_DAG opens: an
+    # impure child kept as one shared unit would be time-multiplexed across
+    # states (its state stepped / its global wires sampled per use).
+    for path, ent, kind, detail in AUTO.FIND_EFFECTS(parser_state, func_entity):
+        if kind not in ("state", "feedback", "global"):
+            continue
+        what = {
+            "state": "holds Reg state",
+            "feedback": "holds Feedback state",
+            "global": "reads or writes global wires",
+        }[kind]
+        where = (
+            "it"
+            if not path
+            else f"its callee {ent!r} (instance {C_TO_LOGIC.SUBMODULE_MARKER.join(path)})"
+        )
+        raise AUTO.AutoError(
+            f"AUTO_FSM: {func_entity!r} is not a pure function of its argument: "
+            f"{where} {what} ({', '.join(detail)}). Only a pure combinational "
+            f"function can be turned into an FSM -- move the state or global "
+            f"wire use out into the calling function and pass values as "
+            f"arguments/return values."
+        )
     opened = tuple(sorted(set(opened)))
     dag = AUTO._resolve_inlined(
         AUTO.BUILD_DAG(parser_state, func_entity, delays, budget_du, opened)

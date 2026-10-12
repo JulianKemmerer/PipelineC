@@ -1057,10 +1057,10 @@ There are three constraints on a pipelined (non-`--comb`) compare:
   on a valid bit carried through the same pipeline.
 - **Probe from stateful code, not inside the pipelined comb.** A print inside a
   pipelined region fires at stage-0 timing natively but at its retimed stage in VHDL.
-- **Bundle co-timed outputs of a pipelined pure MAIN into one struct wire.** Native
-  delays every wire a pipelined MAIN writes by that MAIN's total latency, but VHDL
-  emerges each *separate* wire at its own cone depth — so a shallow side wire alongside
-  a deep one diverges. Fields of one struct wire emerge together in both and match.
+- **Use global wires only in the pipelined function's own body.** Native sim models a
+  pipelined function's non-`VOLATILE` globals there exactly, and stops with
+  `SimPipelineModelError` otherwise (see the guide's
+  [Global wires in pipelined code](pypeline_guide.md#global-wires-in-pipelined-code)).
 
 The tool reports the first cycle where the two runs' debug-tagged lines differ, plus
 the total mismatch count, and exits non-zero on any mismatch. Full raw stdout from both

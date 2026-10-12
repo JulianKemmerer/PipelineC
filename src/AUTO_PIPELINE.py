@@ -4581,6 +4581,54 @@ def RESTORE_AUTO_PIPELINE_REGIONS(plans, snapshot):
 
 
 # Post processed version of pipeline map with info specific to how auto-pipelined HDL is rendered
+def GLOBAL_WIRE_TIMING(var_info):
+    """Timing of a global wire inside the pipelined function that uses it: "legacy",
+    "aligned" or "volatile" (C_TO_LOGIC.VariableInfo.pipeline_timing). See
+    docs/AUTO_PIPELINE_DESIGN.md "Global wires in pipelines"."""
+    return getattr(var_info, "pipeline_timing", "legacy")
+
+
+def ALIGNED_GLOBAL_READS(Logic, pipeline_hdl_params):
+    """Declared read globals sampled with the function's args (stage 0, input regs)."""
+    return [
+        wire
+        for wire, var_info in Logic.read_only_global_wires.items()
+        if GLOBAL_WIRE_TIMING(var_info) == "aligned"
+        and wire in pipeline_hdl_params.wire_to_reg_stage_start_end
+    ]
+
+
+def ALIGNED_GLOBAL_WRITES(Logic, parser_state):
+    """Shared written globals published with the function's return (last stage, output regs)."""
+    return [
+        wire
+        for wire, var_info in Logic.write_only_global_wires.items()
+        if GLOBAL_WIRE_TIMING(var_info) == "aligned"
+        and VHDL.GLOBAL_VAR_IS_SHARED(wire, parser_state)
+    ]
+
+
+def GLOBAL_IO_REG_NAME(wire, Logic):
+    # Prefixed so a global can never collide with an argument of the same name
+    return "global_" + VHDL.WIRE_TO_VHDL_NAME(wire, Logic)
+
+
+def IO_REG_BANKS(timing_params, Logic, parser_state, pipeline_hdl_params):
+    """(input bank exists, output bank exists): a bank exists only when the sweep
+    placed it and it holds something (args/clock enable/aligned global reads, or
+    return/aligned global writes). One definition for declarations and logic."""
+    needs_clk_en = C_TO_LOGIC.LOGIC_NEEDS_CLOCK_ENABLE(Logic, parser_state)
+    has_in = timing_params._has_input_regs and (
+        len(Logic.inputs) > 0
+        or needs_clk_en
+        or len(ALIGNED_GLOBAL_READS(Logic, pipeline_hdl_params)) > 0
+    )
+    has_out = timing_params._has_output_regs and (
+        len(Logic.outputs) > 0 or len(ALIGNED_GLOBAL_WRITES(Logic, parser_state)) > 0
+    )
+    return has_in, has_out
+
+
 class PiplineHDLParams:
     def __init__(
         self, inst_name, Logic, parser_state, TimingParamsLookupTable, pipeline_map
@@ -4649,6 +4697,15 @@ class PiplineHDLParams:
                 self.stage_to_driver_wires[self.pipeline_map.num_stages - 1] = []
             self.stage_to_driver_wires[self.pipeline_map.num_stages - 1].append(
                 output_port
+            )
+        # Aligned global writes are published with the return: read in final stage
+        for global_wire in ALIGNED_GLOBAL_WRITES(Logic, parser_state):
+            if global_wire not in self.wire_to_reg_stage_start_end:
+                continue
+            if self.pipeline_map.num_stages - 1 not in self.stage_to_driver_wires:
+                self.stage_to_driver_wires[self.pipeline_map.num_stages - 1] = []
+            self.stage_to_driver_wires[self.pipeline_map.num_stages - 1].append(
+                global_wire
             )
         # Vol written at input read at output
         vol_state_regs = []
@@ -4812,11 +4869,18 @@ class PiplineHDLParams:
                 )
                 for upstream_var in upstream_vars:
                     ro_var_info = Logic.read_only_global_wires[upstream_var]
-                    if ro_var_info.is_volatile:
+                    timing = GLOBAL_WIRE_TIMING(ro_var_info)
+                    # Volatile: each consumer reads the live wire at its own stage
+                    if ro_var_info.is_volatile or timing == "volatile":
                         continue
-                    # non vol read only global wire downstream from upstream_var
-                    # Find earliest use of all wires
-                    earliest_start_stage = upstream_var_to_earliest_stage[upstream_var]
+                    # Aligned: sampled with the args at stage 0, carried to every use.
+                    # Legacy: sampled at the earliest use of the whole network.
+                    if timing == "aligned":
+                        earliest_start_stage = 0
+                    else:
+                        earliest_start_stage = upstream_var_to_earliest_stage[
+                            upstream_var
+                        ]
                     if earliest_start_stage < start_stage:
                         self.wire_to_reg_stage_start_end[wire] = (
                             earliest_start_stage,
@@ -4965,6 +5029,12 @@ type raw_hdl_register_pipeline_t is array(0 to ADDED_PIPELINE_LATENCY) of raw_hd
             in_regs_rec += (
                 " " + C_TO_LOGIC.CLOCK_ENABLE_NAME + " : unsigned(0 downto 0);\n"
             )
+        # Aligned global reads are sampled with the args
+        for global_wire in ALIGNED_GLOBAL_READS(Logic, pipeline_hdl_params):
+            vhdl_type_str = VHDL.WIRE_TO_VHDL_TYPE_STR(global_wire, Logic, parser_state)
+            in_regs_rec += (
+                " " + GLOBAL_IO_REG_NAME(global_wire, Logic) + " : " + vhdl_type_str + ";\n"
+            )
         if in_regs_rec != "":
             rv += """
 -- Type holding all input registers
@@ -4979,6 +5049,12 @@ type input_registers_t is record\n"""
             vhdl_type_str = VHDL.WIRE_TO_VHDL_TYPE_STR(output_port, Logic, parser_state)
             vhdl_name = VHDL.WIRE_TO_VHDL_NAME(output_port, Logic)
             out_regs_rec += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
+        # Aligned global writes are published with the return
+        for global_wire in ALIGNED_GLOBAL_WRITES(Logic, parser_state):
+            vhdl_type_str = VHDL.WIRE_TO_VHDL_TYPE_STR(global_wire, Logic, parser_state)
+            out_regs_rec += (
+                " " + GLOBAL_IO_REG_NAME(global_wire, Logic) + " : " + vhdl_type_str + ";\n"
+            )
         if out_regs_rec != "":
             rv += """
 -- Type holding all output registers
@@ -5032,15 +5108,18 @@ type feedback_vars_t is record"""
             rv += " " + vhdl_name + " : " + vhdl_type_str + ";\n"
         rv += "end record;\n"
 
-    has_io_regs = timing_params._has_input_regs or timing_params._has_output_regs
+    has_in_regs, has_out_regs = IO_REG_BANKS(
+        timing_params, Logic, parser_state, pipeline_hdl_params
+    )
+    has_io_regs = has_in_regs or has_out_regs
     if has_io_regs:
         record_text = ""
         # Input regs
-        if timing_params._has_input_regs and ((len(Logic.inputs) > 0) or needs_clk_en):
+        if has_in_regs:
             record_text += """
     input_regs : input_registers_t;"""
         # Output regs
-        if timing_params._has_output_regs and len(Logic.outputs) > 0:
+        if has_out_regs:
             record_text += """
     output_regs : output_registers_t;"""
         if record_text != "":
@@ -5095,6 +5174,14 @@ type feedback_vars_t is record"""
                     )
                     + ";\n"
                 )
+            for global_wire in ALIGNED_GLOBAL_READS(Logic, pipeline_hdl_params):
+                func_text += (
+                    " rv.input_regs."
+                    + GLOBAL_IO_REG_NAME(global_wire, Logic)
+                    + " := "
+                    + VHDL.WIRE_TO_VHDL_NULL_STR(global_wire, Logic, parser_state)
+                    + ";\n"
+                )
 
         # Output regs
         if timing_params._has_output_regs:
@@ -5104,6 +5191,14 @@ type feedback_vars_t is record"""
                     + VHDL.WIRE_TO_VHDL_NAME(output_port, Logic)
                     + " := "
                     + VHDL.WIRE_TO_VHDL_NULL_STR(output_port, Logic, parser_state)
+                    + ";\n"
+                )
+            for global_wire in ALIGNED_GLOBAL_WRITES(Logic, parser_state):
+                func_text += (
+                    " rv.output_regs."
+                    + GLOBAL_IO_REG_NAME(global_wire, Logic)
+                    + " := "
+                    + VHDL.WIRE_TO_VHDL_NULL_STR(global_wire, Logic, parser_state)
                     + ";\n"
                 )
         # Function to null out IO regs
@@ -5261,11 +5356,12 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
         Logic, parser_state
     )  # , TimingParamsLookupTable)
     # needs_module_to_global = LOGIC_NEEDS_MODULE_TO_GLOBAL(Logic, parser_state)#, TimingParamsLookupTable)
-    has_in_regs = timing_params._has_input_regs and (
-        (len(Logic.inputs) > 0) or needs_clk_en
+    has_in_regs, has_out_regs = IO_REG_BANKS(
+        timing_params, Logic, parser_state, pipeline_hdl_params
     )
-    has_out_regs = timing_params._has_output_regs and (len(Logic.outputs) > 0)
     has_io_regs = has_in_regs or has_out_regs
+    aligned_global_reads = ALIGNED_GLOBAL_READS(Logic, pipeline_hdl_params)
+    aligned_global_writes = ALIGNED_GLOBAL_WRITES(Logic, parser_state)
     rv = ""
     rv += "\n"
 
@@ -5436,6 +5532,14 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
                 + C_TO_LOGIC.CLOCK_ENABLE_NAME
                 + """;\n"""
             )
+        for global_wire in aligned_global_reads:
+            rv += (
+                """ io_registers.input_regs."""
+                + GLOBAL_IO_REG_NAME(global_wire, Logic)
+                + """ <= global_to_module."""
+                + VHDL.WIRE_TO_VHDL_NAME(global_wire, Logic)
+                + """;\n"""
+            )
 
     if is_raw_hdl and needs_regs:
         # Raw hdl regs
@@ -5480,13 +5584,23 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
         rv += " " + "-- Reads from global variables\n"
         # Read each global into VAR_ variable
         for ro_var in Logic.read_only_global_wires:
+            # Trimming can leave no variable for an unused read (ex. readback)
+            if (
+                not is_raw_hdl
+                and ro_var not in pipeline_hdl_params.wire_to_reg_stage_start_end
+            ):
+                continue
+            # Aligned reads sampled with the args go through the input regs too
+            if has_in_regs and ro_var in aligned_global_reads:
+                source = "io_registers_r.input_regs." + GLOBAL_IO_REG_NAME(ro_var, Logic)
+            else:
+                source = "global_to_module." + VHDL.WIRE_TO_VHDL_NAME(ro_var, Logic)
             rv += (
                 "     "
                 + "VAR_"
                 + VHDL.WIRE_TO_VHDL_NAME(ro_var, Logic)
                 + " := "
-                + "global_to_module."
-                + VHDL.WIRE_TO_VHDL_NAME(ro_var, Logic)
+                + source
                 + ";\n"
             )
         # Write the text for each submodule level ~logic level in this stage
@@ -5629,7 +5743,9 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
             vhdl_name = VHDL.WIRE_TO_VHDL_NAME(state_reg, Logic)
             rv += "REG_COMB_" + vhdl_name + " <= " + "REG_VAR_" + vhdl_name + ";\n"
 
-    # Shared write only globals drive from 'when fully driven last' anywhere pipeline
+    # Shared write only globals: volatile/legacy drive from 'when fully driven last'
+    # anywhere in pipeline, aligned ones from the last stage (PiplineHDLParams
+    # registers them there) and through the output regs with the return.
     if len(Logic.write_only_global_wires) > 0:
         rv += "-- Global wires driven various places in pipeline\n"
         for var_name in Logic.write_only_global_wires:
@@ -5638,17 +5754,23 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
             # text += "     " + "VAR_" + WIRE_TO_VHDL_NAME(var_name, logic) + " := " + GET_RHS(driver_of_global_wire, inst_name, logic, parser_state, TimingParamsLookupTable) + ";\n"
             # Do final write into wire var
             if VHDL.GLOBAL_VAR_IS_SHARED(var_name, parser_state):
+                if has_out_regs and var_name in aligned_global_writes:
+                    dest = "io_registers.output_regs." + GLOBAL_IO_REG_NAME(
+                        var_name, Logic
+                    )
+                else:
+                    dest = "module_to_global." + VHDL.WIRE_TO_VHDL_NAME(var_name, Logic)
                 if needs_clk_en:
                     rv += (
                         "if clk_en_internal='1' then\n"
-                        + "  module_to_global."
-                        + VHDL.WIRE_TO_VHDL_NAME(var_name, Logic)
+                        + "  "
+                        + dest
                         + " <= VAR_"
                         + VHDL.WIRE_TO_VHDL_NAME(var_name, Logic)
                         + ";\n"
                         + "else\n"
-                        + "  module_to_global."
-                        + VHDL.WIRE_TO_VHDL_NAME(var_name, Logic)
+                        + "  "
+                        + dest
                         + " <= "
                         + VHDL.STATE_REG_TO_VHDL_INIT_STR(var_name, Logic, parser_state)
                         + ";\n"
@@ -5656,8 +5778,7 @@ def GET_PIPELINE_LOGIC_COMB_PROCESS_TEXT(
                     )
                 else:
                     rv += (
-                        "module_to_global."
-                        + VHDL.WIRE_TO_VHDL_NAME(var_name, Logic)
+                        dest
                         + " <= VAR_"
                         + VHDL.WIRE_TO_VHDL_NAME(var_name, Logic)
                         + ";\n"
@@ -5746,6 +5867,16 @@ end process;
                 + " <= "
                 + "io_registers_r.output_regs."
                 + VHDL.WIRE_TO_VHDL_NAME(output_wire, Logic)
+                + ";\n"
+            )
+        # Aligned global writes leave through the output regs with the return
+        for global_wire in ALIGNED_GLOBAL_WRITES(Logic, parser_state):
+            rv += (
+                " module_to_global."
+                + VHDL.WIRE_TO_VHDL_NAME(global_wire, Logic)
+                + " <= "
+                + "io_registers_r.output_regs."
+                + GLOBAL_IO_REG_NAME(global_wire, Logic)
                 + ";\n"
             )
 

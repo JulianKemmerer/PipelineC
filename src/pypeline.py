@@ -3586,10 +3586,25 @@ class AUTO_PIPELINE:
         if committed is None:
             out_t = hw_return_type(self.func)
             committed = [sim_zero(out_t) for _ in range(self._latency)]
-        now = self.func(*args, **kwargs)
+        # Global wires used in func's own body are aligned with its arguments
+        # and return value in hardware: read at entry, writes published with
+        # the delayed return (a parallel committed line of write-sets,
+        # replayed at cycle start by _sim_apply_ap_delayed_writes).
+        region = {"root": self.func, "name": f"AUTO_PIPELINE({self.func.__qualname__})"}
+        now = _sim_run_in_region(region, self.func, *args, **kwargs)
         _sim_reg_write(
             inst_path, _SIM_AP_DELAY_KEY, committed[1:] + [_copy.deepcopy(now)]
         )
+        writes = _sim_reg_read(inst_path, _SIM_AP_WRITES_KEY, None)
+        if region["collector"] or writes is not None:
+            if writes is None:
+                writes = [[] for _ in range(self._latency)]
+            _sim_reg_write(
+                inst_path,
+                _SIM_AP_WRITES_KEY,
+                writes[1:] + [_copy.deepcopy(region["collector"])],
+            )
+            _sim_ap_write_sites.add(inst_path)
         return _copy.deepcopy(committed[0])
 
     def __repr__(self):
@@ -5462,22 +5477,54 @@ class Feedback(metaclass=_FeedbackMeta):
 # ───────────────────────────────────────────────
 
 
+class _VolatileMarker:
+    """`VOLATILE` -- the optional second argument of Wire/Input/Output[T, VOLATILE].
+
+    By default a function with pipeline stages treats every global it touches like
+    an extra argument/return: reads are sampled with its arguments, writes are
+    published with its return value. A VOLATILE wire is not aligned: each operation
+    reads it at the stage where that operation runs (so different reads can see
+    different cycles) and writes are driven as soon as their value is ready. No
+    delay registers are added for it. See pypeline_guide.md "Global wires in
+    pipelined code".
+    """
+
+    def __repr__(self):
+        return "VOLATILE"
+
+
+VOLATILE = _VolatileMarker()
+
+
+def _wire_ann_args(kind, item):
+    """Split a Wire/Input/Output[...] subscript into (inner ctype, volatile)."""
+    if isinstance(item, tuple):
+        if len(item) == 2 and item[1] is VOLATILE:
+            return item[0], True
+        raise TypeError(
+            f"{kind}[...] takes one hardware type, optionally followed by VOLATILE: "
+            f"{kind}[T] or {kind}[T, VOLATILE]; got {kind}{list(item)}"
+        )
+    return item, False
+
+
 class _WireType:
     """Produced by Wire[T]. Marks a module-level variable as a global combinatorial wire."""
 
-    def __init__(self, inner_ctype):
+    def __init__(self, inner_ctype, volatile=False):
         self.inner_ctype = inner_ctype
+        self.volatile = volatile
 
     def __str__(self):
-        return f"Wire[{self.inner_ctype}]"
+        return f"Wire[{self.inner_ctype}{', VOLATILE' if self.volatile else ''}]"
 
     def __repr__(self):
         return str(self)
 
 
 class _WireMeta(type):
-    def __getitem__(cls, inner_type):
-        return _WireType(inner_type)
+    def __getitem__(cls, item):
+        return _WireType(*_wire_ann_args("Wire", item))
 
 
 def _wire_ann_inner_ctype(ann):
@@ -5519,19 +5566,20 @@ class Wire(metaclass=_WireMeta):
 class _InputType:
     """Produced by Input[T]. Marks a module-level variable as a top-level design input."""
 
-    def __init__(self, inner_ctype):
+    def __init__(self, inner_ctype, volatile=False):
         self.inner_ctype = inner_ctype
+        self.volatile = volatile
 
     def __str__(self):
-        return f"Input[{self.inner_ctype}]"
+        return f"Input[{self.inner_ctype}{', VOLATILE' if self.volatile else ''}]"
 
     def __repr__(self):
         return str(self)
 
 
 class _InputMeta(type):
-    def __getitem__(cls, inner_type):
-        return _InputType(inner_type)
+    def __getitem__(cls, item):
+        return _InputType(*_wire_ann_args("Input", item))
 
 
 class Input(metaclass=_InputMeta):
@@ -5550,19 +5598,20 @@ class Input(metaclass=_InputMeta):
 class _OutputType:
     """Produced by Output[T]. Marks a module-level variable as a top-level design output."""
 
-    def __init__(self, inner_ctype):
+    def __init__(self, inner_ctype, volatile=False):
         self.inner_ctype = inner_ctype
+        self.volatile = volatile
 
     def __str__(self):
-        return f"Output[{self.inner_ctype}]"
+        return f"Output[{self.inner_ctype}{', VOLATILE' if self.volatile else ''}]"
 
     def __repr__(self):
         return str(self)
 
 
 class _OutputMeta(type):
-    def __getitem__(cls, inner_type):
-        return _OutputType(inner_type)
+    def __getitem__(cls, item):
+        return _OutputType(*_wire_ann_args("Output", item))
 
 
 class Output(metaclass=_OutputMeta):
@@ -6928,6 +6977,109 @@ _sim_current_main = None  # MAIN fn currently executing (for reader tracking)
 # matching hardware where its outputs cross N pipeline register stages).
 _sim_pipelined_main_info: dict = {}
 _sim_wire_readers: dict = {}  # wire name → set of MAINs that have read it
+# Pipelined regions native sim is evaluating, innermost last: a pipelined pure
+# MAIN (its _sim_pipelined_main_info entry) or an AUTO_PIPELINE call with
+# latency > 0 (_sim_delay_line). Each is a dict: "root" (the hw_func wrapper
+# whose own body may use global wires), "name" (for messages), "collector"
+# (this evaluation's delayed write entries, (wire, lens path, value)) and
+# "overlay" (wire -> this invocation's own view of the wires it writes). Hardware
+# aligns a pipelined function's global reads with its arguments and its global
+# writes with its return value, so native sim evaluates the root at entry and
+# publishes the collected writes with the delayed return. Empty list = feature
+# off (one truthiness test on the wire hot paths).
+_sim_regions: list = []
+# The hw_func wrapper whose rewritten sim body is executing -- tracked only while
+# a region is active (see _sim_type_wrap); _SIM_ONLY_BODY for @sim_input/@sim_output.
+_sim_body_owner = None
+_SIM_ONLY_BODY = object()
+_sim_wire_volatile: set = set()  # sim keys of Wire/Input/Output[T, VOLATILE]
+# AUTO_PIPELINE call sites (instance paths) holding delayed global writes,
+# replayed at each cycle start by _sim_apply_ap_delayed_writes.
+_sim_ap_write_sites: set = set()
+_SIM_AP_WRITES_KEY = "__sim_auto_pipeline_writes__"
+
+
+class SimPipelineModelError(RuntimeError):
+    """Native sim cannot reproduce the hardware timing of a global wire use
+    inside pipelined logic (see _sim_region_for)."""
+
+
+def _sim_run_in_region(region, func, *args, **kwargs):
+    """Evaluate a pipelined region's root with its global-wire writes diverted
+    into region["collector"] and an empty per-invocation overlay."""
+    region["collector"] = region.get("collector", [])
+    region["overlay"] = {}
+    _sim_regions.append(region)
+    try:
+        return func(*args, **kwargs)
+    finally:
+        _sim_regions.pop()
+
+
+def _sim_region_for(name, action):
+    """The innermost pipelined region a global wire access belongs to. Raises
+    SimPipelineModelError unless native sim models it exactly: a non-VOLATILE
+    wire used in the region root's own body, no pipelined region around it.
+    Hardware wires a global directly to the function that uses it and aligns
+    it with that function's own arguments/return; for a function called inside
+    a pipeline that alignment happens at the stage it is placed, which native
+    sim (whole-body evaluation at entry) does not know."""
+    region = _sim_regions[-1]
+    owner = _sim_body_owner
+    if owner is _SIM_ONLY_BODY:
+        return region
+    if name in _sim_wire_volatile:
+        reason = (
+            "it is declared VOLATILE (hardware reads it at each consumer's "
+            "pipeline stage and drives it as soon as its value is ready)"
+        )
+    elif owner is not region["root"]:
+        owner_name = getattr(owner, "__qualname__", repr(owner))
+        reason = (
+            f"'{owner_name}' is called inside the pipeline, at a stage native "
+            f"sim does not model (hardware aligns the wire with "
+            f"'{owner_name}''s own arguments/return at that stage)"
+        )
+    elif len(_sim_regions) > 1:
+        reason = (
+            f"'{region['name']}' is itself called inside pipelined "
+            f"'{_sim_regions[-2]['name']}', at a stage native sim does not model"
+        )
+    else:
+        return region
+    raise SimPipelineModelError(
+        f"Native sim cannot model global wire {name!r} {action} inside "
+        f"pipelined '{region['name']}': {reason}. Native sim only models "
+        f"non-VOLATILE global wires used directly in the body of the pipelined "
+        f"function itself (the @MAIN or the AUTO_PIPELINE-tagged function). "
+        f"Simulate the generated hardware instead (--cocotb --ghdl), or move "
+        f"the wire access into "
+        f"'{getattr(region['root'], '__qualname__', region['name'])}' and pass "
+        f"the value as an argument/return value. See pypeline_guide.md 'Global "
+        f"wires in pipelined code'."
+    )
+
+
+def _sim_owned_body_call(owner, body, args, kwargs):
+    """Run a rewritten sim body with `owner` recorded as _sim_body_owner. Only
+    used while a pipelined region is active (the wrappers test _sim_regions)."""
+    global _sim_body_owner
+    prev = _sim_body_owner
+    _sim_body_owner = owner
+    try:
+        return body(*args, **kwargs)
+    finally:
+        _sim_body_owner = prev
+
+
+def _sim_apply_ap_delayed_writes() -> None:
+    """At a cycle start, publish each AUTO_PIPELINE call site's global writes
+    from N cycles ago (its committed write line, see _sim_delay_line) --
+    alongside the N-cycles-old return value the call returns this cycle."""
+    for inst_path in _sim_ap_write_sites:
+        pending = _sim_reg_read(inst_path, _SIM_AP_WRITES_KEY, None)
+        if pending:
+            _sim_apply_delayed_writes(pending[0])
 _sim_active: bool = False  # True only while pypeline_sim.py is driving a simulation run
 _sim_input_cache: dict = {}  # id(@sim_input wrapper) → cached result for the current cycle
 # True only while an expression is being evaluated as a constant: HDL
@@ -7192,6 +7344,10 @@ def _sim_wire_read(name: str):
     """
     if _sim_current_main is not None:
         _sim_wire_readers.setdefault(name, set()).add(_sim_current_main)
+    if _sim_regions:
+        overlay = _sim_region_for(name, "read")["overlay"]
+        if name in overlay:
+            return overlay[name]
     if name not in _sim_wire_state:
         raise RuntimeError(
             f"Wire {name!r} was read but never discovered/initialized by "
@@ -7207,20 +7363,19 @@ def _sim_wire_write(name: str, value, claim_key=None) -> None:
     _GlobalWireRewriter) records a whole-wire () claim for that function's
     per-invocation zero-reset (see _sim_wire_reset_claims).
 
-    When the executing MAIN is a pipelined pure MAIN (see
-    _sim_pipelined_main_info), the write is diverted into its per-cycle
-    collector instead of _sim_wire_state -- pypeline_sim applies it N cycles
-    later. Claim recording still happens: the diverted reset-claims path
-    relies on _sim_wire_claims to know which leaves to zero."""
-    if _sim_pipelined_main_info:
-        info = _sim_pipelined_main_info.get(_sim_current_main)
-        if info is not None:
-            info["collector"].append((name, (), value))
-            if claim_key is not None:
-                _sim_wire_claims.setdefault(claim_key, {}).setdefault(name, set()).add(
-                    ()
-                )
-            return
+    Inside a pipelined region (_sim_regions: a pipelined pure MAIN or an
+    AUTO_PIPELINE call with latency), the write is diverted into the region's
+    collector, published N cycles later with its return value, and recorded
+    in the region's overlay for this invocation's own reads. Claim recording
+    still happens: the diverted reset-claims path relies on _sim_wire_claims
+    to know which leaves to zero."""
+    if _sim_regions:
+        region = _sim_region_for(name, "written")
+        region["collector"].append((name, (), value))
+        region["overlay"][name] = value
+        if claim_key is not None:
+            _sim_wire_claims.setdefault(claim_key, {}).setdefault(name, set()).add(())
+        return
     _sim_wire_state[name] = value
     if claim_key is not None:
         _sim_wire_claims.setdefault(claim_key, {}).setdefault(name, set()).add(())
@@ -7243,7 +7398,11 @@ def _sim_wire_lens_read(name: str, path: list):
     leaf change)."""
     if _sim_current_main is not None:
         _sim_wire_readers.setdefault(name, set()).add(_sim_current_main)
-    obj = _sim_wire_current_or_zero(name)
+    obj = None
+    if _sim_regions:
+        obj = _sim_region_for(name, "read")["overlay"].get(name)
+    if obj is None:
+        obj = _sim_wire_current_or_zero(name)
     for elem in path:
         obj = getattr(obj, elem) if isinstance(elem, str) else obj[int(elem)]
     return obj
@@ -7259,19 +7418,23 @@ def _sim_wire_lens_write(name: str, path: list, value, claim_key=None) -> None:
     element(s) actually touched -- for that function's per-invocation
     zero-reset (see _sim_wire_reset_claims).
 
-    Diverted into the executing pipelined MAIN's collector exactly like
+    Diverted into a pipelined region's collector and overlay exactly like
     _sim_wire_write (lens path preserved so partial/field writes replay
     leaf-wise N cycles later without clobbering other writers' leaves)."""
     norm_path = tuple(p if isinstance(p, str) else int(p) for p in path)
-    if _sim_pipelined_main_info:
-        info = _sim_pipelined_main_info.get(_sim_current_main)
-        if info is not None:
-            info["collector"].append((name, norm_path, value))
-            if claim_key is not None:
-                _sim_wire_claims.setdefault(claim_key, {}).setdefault(name, set()).add(
-                    norm_path
-                )
-            return
+    if _sim_regions:
+        region = _sim_region_for(name, "written")
+        region["collector"].append((name, norm_path, value))
+        overlay = region["overlay"]
+        base = overlay.get(name)
+        if base is None:
+            base = _sim_wire_current_or_zero(name)
+        overlay[name] = _sim_lens_set(base, path, value)
+        if claim_key is not None:
+            _sim_wire_claims.setdefault(claim_key, {}).setdefault(name, set()).add(
+                norm_path
+            )
+        return
     base = _sim_wire_current_or_zero(name)
     _sim_wire_state[name] = _sim_lens_set(base, path, value)
     if claim_key is not None:
@@ -7314,24 +7477,22 @@ def _sim_wire_reset_claims(claim_key) -> None:
     already-committed leaves of the same wire within one cycle's convergence
     loop.
 
-    When the executing MAIN is pipelined (_sim_pipelined_main_info), the
-    zeroing diverts into its collector as zero-valued entries instead of
-    touching _sim_wire_state -- otherwise each of that MAIN's invocations
-    would wipe the N-cycles-old write-set pypeline_sim applied at the start
-    of this cycle. Ordered replay of the collector (zeros first, then this
-    invocation's writes; later invocations append again) reproduces the
-    reset -> write -> final-pass-wins semantics inside the delayed view."""
-    info = (
-        _sim_pipelined_main_info.get(_sim_current_main)
-        if _sim_pipelined_main_info
-        else None
-    )
+    Inside a pipelined region (_sim_regions), the zeroing diverts into the
+    region's collector as zero-valued entries and into its overlay, instead
+    of touching _sim_wire_state -- otherwise each invocation would wipe the
+    N-cycles-old write-set published at the start of this cycle. Ordered
+    replay of the collector (zeros first, then this invocation's writes;
+    later invocations append again) reproduces the reset -> write ->
+    final-pass-wins semantics inside the delayed view; the overlay gives
+    this invocation's own reads the same zeros."""
     for wire_name, paths in _sim_wire_claims.get(claim_key, {}).items():
+        region = _sim_region_for(wire_name, "written") if _sim_regions else None
         ctype = _sim_wire_ctype.get(wire_name)
         if () in paths:
             if ctype is not None:
-                if info is not None:
-                    info["collector"].append((wire_name, (), _make_sim_zero(ctype)))
+                if region is not None:
+                    region["collector"].append((wire_name, (), _make_sim_zero(ctype)))
+                    region["overlay"][wire_name] = _make_sim_zero(ctype)
                 else:
                     _sim_wire_state[wire_name] = _make_sim_zero(ctype)
             continue
@@ -7339,8 +7500,15 @@ def _sim_wire_reset_claims(claim_key) -> None:
             leaf_ctype = _sim_ctype_at_path(ctype, path)
             if leaf_ctype is None:
                 continue
-            if info is not None:
-                info["collector"].append((wire_name, path, _make_sim_zero(leaf_ctype)))
+            if region is not None:
+                region["collector"].append((wire_name, path, _make_sim_zero(leaf_ctype)))
+                overlay = region["overlay"]
+                base = overlay.get(wire_name)
+                if base is None:
+                    base = _sim_wire_current_or_zero(wire_name)
+                overlay[wire_name] = _sim_lens_set(
+                    base, list(path), _make_sim_zero(leaf_ctype)
+                )
                 continue
             base = _sim_wire_current_or_zero(wire_name)
             _sim_wire_state[wire_name] = _sim_lens_set(
@@ -7349,12 +7517,13 @@ def _sim_wire_reset_claims(claim_key) -> None:
 
 
 def _sim_apply_delayed_writes(entries) -> None:
-    """Replay one popped pipelined-MAIN write-set (list of (wire_name,
+    """Replay one pipelined region's write-set (list of (wire_name,
     lens_path, value) entries, in recorded order) onto _sim_wire_state --
-    called by pypeline_sim at the start of the cycle N cycles after the set
-    was collected. Ordered replay reproduces the original invocation
+    called at the start of the cycle N cycles after the set was collected
+    (pypeline_sim for MAINs, _sim_apply_ap_delayed_writes for AUTO_PIPELINE
+    call sites). Ordered replay reproduces the original invocation
     sequence (reset zeros, then writes; final pass last), so the net state
-    equals what the MAIN would have written live."""
+    equals what the region would have written live."""
     for name, path, value in entries:
         if path == ():
             _sim_wire_state[name] = value
@@ -7369,6 +7538,7 @@ def sim_reset():
     _sim_wire_state.clear()
     _sim_wire_claims.clear()
     _sim_input_cache.clear()
+    _sim_ap_write_sites.clear()
 
 
 def _sim_reg_begin_buffer():
@@ -8621,6 +8791,11 @@ def _build_reg_sim_func(fn):
             if isinstance(_ann, (_WireType, _InputType, _OutputType)):
                 module_wire_attrs[(_alias, _wname)] = f"{_obj.__name__}.{_wname}"
                 module_wire_ctypes[(_alias, _wname)] = _wire_ann_inner_ctype(_ann)
+                if _ann.volatile:
+                    _sim_wire_volatile.add(f"{_obj.__name__}.{_wname}")
+    for _name, _ann in fn.__globals__.get("__annotations__", {}).items():
+        if isinstance(_ann, (_WireType, _InputType, _OutputType)) and _ann.volatile:
+            _sim_wire_volatile.add(f"{_own_mod_name}.{_name}")
     # Register every discovered wire's ctype globally (keyed by qualified sim name)
     # so _sim_wire_lens_read/_sim_wire_lens_write can build a typed zero default for
     # a compound wire before any whole-wire write has ever landed in _sim_wire_state.
@@ -9300,6 +9475,9 @@ def _sim_type_wrap(fn):
     # A stateless transformed source loop maintains only temporary iteration
     # frames inside sim_body_fn and keeps the wrapper fast path.
     sim_body_fn, has_state = _build_reg_sim_func(fn)
+    # Whose body a wire access runs in, while a pipelined region is active
+    # (_sim_region_for): this wrapper, or exempt for @sim_input/@sim_output.
+    _sim_only_body = getattr(fn, "_pypeline_sim_only", False)
 
     # sim_model routing cell: sim_model(target) fills this one-element list
     # with (model, kind, copy_state); every wrapper variant checks it per call
@@ -9334,9 +9512,22 @@ def _sim_type_wrap(fn):
         saved = _push_scoped_registrations(wrapper)
         try:
             if _model_cell[0] is not None:
-                result = _call_sim_model(_model_cell[0], new_args, new_kwargs)
+                if _sim_regions:
+                    result = _sim_owned_body_call(
+                        wrapper, _call_sim_model, (_model_cell[0], new_args, new_kwargs), {}
+                    )
+                else:
+                    result = _call_sim_model(_model_cell[0], new_args, new_kwargs)
             elif sim_body_fn is not None:
-                result = sim_body_fn(*new_args, **new_kwargs)
+                if _sim_regions:
+                    result = _sim_owned_body_call(
+                        _SIM_ONLY_BODY if _sim_only_body else wrapper,
+                        sim_body_fn,
+                        new_args,
+                        new_kwargs,
+                    )
+                else:
+                    result = sim_body_fn(*new_args, **new_kwargs)
             else:
                 result = fn(*new_args, **new_kwargs)
         finally:
@@ -9371,6 +9562,10 @@ def _sim_type_wrap(fn):
                         (fn.__qualname__, _sim_capture_call_loc(_sys._getframe(1)))
                     )
                     try:
+                        if _sim_regions:
+                            return _sim_owned_body_call(
+                                wrapper, _call_sim_model, (_model_cell[0], args, kwargs), {}
+                            )
                         return _call_sim_model(_model_cell[0], args, kwargs)
                     finally:
                         _sim_inst_stack.pop()
@@ -9378,11 +9573,16 @@ def _sim_type_wrap(fn):
                 # `wrapper`, not the pre-wrap `fn` this closure captured.
                 saved = _push_scoped_registrations(wrapper)
                 try:
-                    return (
-                        sim_body_fn(*args, **kwargs)
-                        if sim_body_fn is not None
-                        else fn(*args, **kwargs)
-                    )
+                    if sim_body_fn is None:
+                        return fn(*args, **kwargs)
+                    if _sim_regions:
+                        return _sim_owned_body_call(
+                            _SIM_ONLY_BODY if _sim_only_body else wrapper,
+                            sim_body_fn,
+                            args,
+                            kwargs,
+                        )
+                    return sim_body_fn(*args, **kwargs)
                 finally:
                     _pop_scoped_registrations(saved)
         else:
@@ -9406,12 +9606,21 @@ def _sim_type_wrap(fn):
                 saved = _push_scoped_registrations(wrapper)
                 try:
                     if _model_cell[0] is not None:
+                        if _sim_regions:
+                            return _sim_owned_body_call(
+                                wrapper, _call_sim_model, (_model_cell[0], args, kwargs), {}
+                            )
                         return _call_sim_model(_model_cell[0], args, kwargs)
-                    return (
-                        sim_body_fn(*args, **kwargs)
-                        if sim_body_fn is not None
-                        else fn(*args, **kwargs)
-                    )
+                    if sim_body_fn is None:
+                        return fn(*args, **kwargs)
+                    if _sim_regions:
+                        return _sim_owned_body_call(
+                            _SIM_ONLY_BODY if _sim_only_body else wrapper,
+                            sim_body_fn,
+                            args,
+                            kwargs,
+                        )
+                    return sim_body_fn(*args, **kwargs)
                 finally:
                     _pop_scoped_registrations(saved)
                     _sim_inst_stack.pop()
@@ -9745,6 +9954,7 @@ def sim_call(func, *args, **kwargs):
         if _pipeline_latency_declared:
             _prepare_pipeline_latency_sim(func)
         _sim_input_cache.clear()
+        _sim_apply_ap_delayed_writes()
         _sim_reg_begin_buffer()
     _sim_active = True
     saved = _push_scoped_registrations(func)
